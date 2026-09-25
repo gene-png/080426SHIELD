@@ -5861,6 +5861,23 @@ column reproduces the recorded 4/11 and 2/13 exactly.
   4/11 for both: it measured the classifier, not the gate, and the re-review of
   `8cb5248` caught it.
 
+**Re-measured 2026-09-25 with the shipped gate at `f41f5ae`** (after round 4
+added `.gitignore`, `.dockerignore`, `Dockerfile*` and `.babelrc*`), per PR:
+
+    python apps/api/scripts/check_condition5.py --repo . --range "$sha^1..$sha" --paths-file <today's 28-entry list>
+
+- 2026-08-26 (`fdfde7d^1`): cleared `1bc5733`, `16267b0`, `634f6ea`, `65e0f31`;
+  the other eleven trip. **4/11**, unchanged.
+- 2026-09-21 (`897eeae`): the classifier clears `2500d0e`, `c5540b6`,
+  `b516891` and `7c2802c`. The list-change trip, read from the diffs because
+  the gate cannot run on commits that predate its list, also trips `b516891`,
+  which added compose to the list. **3/12**, unchanged.
+
+The round-4 shapes moved no verdict. The measured gain over the old rule is
+ONE PR in thirty (`7c2802c`, an `ai/engine.py` docstring). A compose-only rule
+(unchanged YAML node tree in `docker-compose*.yml`, nothing else) also gains
+exactly one (`b516891`, compose comments), at the same 4/11 and 3/12.
+
 **Reporting, not requiring.** It runs as its own job in `audit-gate.yml`,
 "Condition 5 report". That job is green whenever it could look, including when
 condition 5 trips, and red only on could-not-look. It is not a required check:

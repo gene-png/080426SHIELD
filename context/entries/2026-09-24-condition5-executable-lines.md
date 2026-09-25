@@ -176,3 +176,17 @@ pytest config does not print. Every run exited 1 and named its test FAILED.
   absolute path in that service.
 - The base-copy test has a `--report` variant, asserting the TRIPPED text.
 - Red on revert: five mutations, each red.
+
+## Round 5, and the owner's re-measurement (2026-09-25)
+
+- `./scripts:/opt/${NAME}` (a target that starts with `/` but is interpolated)
+  is now could-not-look, and red on revert. The docstring and D-095 list every
+  shape. The docstring no longer says editing only the gate defeats the report,
+  because the base copy judges that edit.
+- `--show-toplevel`, `ls-tree --full-tree` and `--repo ../..` are three
+  INDEPENDENT guards for round 4's CI-path defect: reverting any one alone stays
+  green, and reverting all fails. That is why the red-on-revert for it reverts
+  them together.
+- **Re-measured with the shipped gate at `f41f5ae`:** 4/11 and 3/12, per-PR
+  verdicts in D-095. The round-4 shapes moved nothing. The gain over the old
+  rule is ONE PR in thirty, the same as a compose-only rule's.
