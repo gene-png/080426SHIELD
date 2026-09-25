@@ -174,33 +174,94 @@ function ReasonField({
         </label>
       ) : null}
       {showNarrative ? (
-        <label className="flex flex-col gap-1">
-          <span className="text-xs font-medium uppercase tracking-wide text-ink-tertiary">
-            What could not be established
-          </span>
-          <textarea
-            // Keyed on the STORED value too, so a refused save's rollback
-            // remounts the box with what was stored instead of leaving the
-            // unsaved text on screen as if it had been kept.
-            key={`${coverage?.id ?? "none"}-narrative-${coverage?.narrative ?? ""}`}
-            aria-label={`What could not be established for ${techniqueId}`}
-            defaultValue={coverage?.narrative ?? ""}
-            disabled={readOnly}
-            rows={3}
-            // The API's `narrative` max_length.
-            maxLength={8000}
-            onBlur={(e) => {
-              const v = e.currentTarget.value.trim();
-              if (v === (coverage?.narrative ?? "")) return;
-              // Cleared means NONE, never "": a blank string would read as a
-              // narrative given to any check that asks whether one exists.
-              void onPatch({ narrative: v === "" ? null : v });
-            }}
-            className="w-full rounded-md border border-border bg-surface-card p-2 text-sm text-ink-primary focus:outline-2 focus:outline-brand-500"
-          />
-        </label>
+        <NarrativeField
+          techniqueId={techniqueId}
+          coverage={coverage}
+          readOnly={readOnly}
+          onPatch={onPatch}
+        />
       ) : null}
     </div>
+  );
+}
+
+/** The API's `narrative` max_length (`schemas/attack.py`), mirrored here. */
+const NARRATIVE_MAX = 8000;
+
+/**
+ * #554: what could not be established, for an unverified row.
+ *
+ * CONTROLLED, and resynced from the stored value only when that value differs
+ * from what this box last saved. A successful save leaves the stored value
+ * equal to it, so the box is never reset under the consultant's cursor (#603
+ * round 2). A refused save rolls the stored value back to something else, and
+ * the box shows it, so unsaved text never looks kept. Switching technique
+ * always resyncs.
+ *
+ * The cap is VISIBLE: a live count, and a warning at the limit. The browser's
+ * `maxLength` would otherwise cut a long paste in silence, and blur would save
+ * the cut text.
+ */
+function NarrativeField({
+  techniqueId,
+  coverage,
+  readOnly,
+  onPatch,
+}: {
+  techniqueId: string;
+  coverage: AttackCoverageRow | null;
+  readOnly: boolean;
+  onPatch: (patch: AttackCoveragePatch) => void | Promise<void>;
+}): JSX.Element {
+  const stored = coverage?.narrative ?? null;
+  const [draft, setDraft] = React.useState(stored ?? "");
+  const lastSaved = React.useRef<string | null>(stored);
+  const rowId = coverage?.id ?? null;
+  const lastRowId = React.useRef<string | null>(rowId);
+  React.useEffect(() => {
+    if (rowId !== lastRowId.current || stored !== lastSaved.current) {
+      lastRowId.current = rowId;
+      lastSaved.current = stored;
+      setDraft(stored ?? "");
+    }
+  }, [rowId, stored]);
+  const atLimit = draft.length >= NARRATIVE_MAX;
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-xs font-medium uppercase tracking-wide text-ink-tertiary">
+        What could not be established
+      </span>
+      <textarea
+        aria-label={`What could not be established for ${techniqueId}`}
+        value={draft}
+        disabled={readOnly}
+        rows={3}
+        maxLength={NARRATIVE_MAX}
+        onChange={(e) => setDraft(e.currentTarget.value)}
+        onBlur={() => {
+          const v = draft.trim();
+          const next = v === "" ? null : v;
+          if (next === (stored ?? null)) return;
+          // Cleared means NONE, never "": a blank string would read as a
+          // narrative given to any check that asks whether one exists.
+          lastSaved.current = next;
+          void onPatch({ narrative: next });
+        }}
+        className="w-full rounded-md border border-border bg-surface-card p-2 text-sm text-ink-primary focus:outline-2 focus:outline-brand-500"
+      />
+      <span
+        data-testid="narrative-count"
+        className={
+          atLimit
+            ? "text-xs font-medium text-status-warning-fg"
+            : "text-xs text-ink-tertiary"
+        }
+      >
+        {atLimit
+          ? `${draft.length} / ${NARRATIVE_MAX} -- limit reached; anything longer is not kept.`
+          : `${draft.length} / ${NARRATIVE_MAX}`}
+      </span>
+    </label>
   );
 }
 

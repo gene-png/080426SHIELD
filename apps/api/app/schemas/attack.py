@@ -267,6 +267,10 @@ class AttackCoveragePatch(BaseModel):
     # #554. Validated against the row's resulting status in `patch_coverage`,
     # typed, rather than as an enum here: a code's validity depends on the status.
     reason_code: str | None = Field(default=None, max_length=48)
+    # The web mirrors this limit as NARRATIVE_MAX in
+    # `apps/web/src/components/admin/attack/AttackTechniquePanel.tsx` (a live
+    # count, and a warning at the limit). Change both, or the box and the API
+    # disagree about what is kept.
     narrative: str | None = Field(default=None, max_length=8000)
 
 

@@ -556,7 +556,11 @@ def patch_coverage(
     if "reason_code" in data:
         row.reason_code = data["reason_code"]
     if "narrative" in data:
-        row.narrative = data["narrative"]
+        # A blank narrative is NONE, never "": the release gate will ask whether
+        # an unverified row carries one, and whitespace must not answer yes.
+        # Normalised here because the web is not the only writer.
+        raw = data["narrative"]
+        row.narrative = raw if raw is not None and raw.strip() else None
     if "notes" in data:
         row.notes = data["notes"]
     if "evidence_artifact_id" in data:

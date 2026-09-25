@@ -402,44 +402,47 @@ describe("AttackTechniquePanel — narrative limits (#603 review)", () => {
     expect(onPatch).toHaveBeenCalledWith({ narrative: null });
   });
 
+  function withNarrative(narrative: string | null) {
+    return (
+      <AttackTechniquePanel
+        technique={TECHNIQUE}
+        coverage={row({ id: "c2", status: "gap", narrative })}
+        coverageDefinitions={[]}
+        reasonCodes={REASONS}
+        onPatch={vi.fn()}
+      />
+    );
+  }
+
   it("shows the stored narrative again after a refused save rolls back", () => {
-    const { rerender } = render(
-      <AttackTechniquePanel
-        technique={TECHNIQUE}
-        coverage={row({ id: "c2", status: "gap", narrative: "Stored." })}
-        coverageDefinitions={[]}
-        reasonCodes={REASONS}
-        onPatch={vi.fn()}
-      />,
-    );
-    const textbox = screen.getAllByRole("textbox", {
-      name: "What could not be established for T1003",
-    })[0];
-    fireEvent.change(textbox, { target: { value: "Unsaved edit" } });
-    // The workspace applies the edit optimistically, then rolls back to the
+    const { rerender } = render(withNarrative("Stored."));
+    fireEvent.change(box(), { target: { value: "Unsaved edit" } });
+    fireEvent.blur(box());
+    // The workspace applies the save optimistically, then rolls back to the
     // stored row when the API refuses it.
-    rerender(
-      <AttackTechniquePanel
-        technique={TECHNIQUE}
-        coverage={row({ id: "c2", status: "gap", narrative: "Unsaved edit" })}
-        coverageDefinitions={[]}
-        reasonCodes={REASONS}
-        onPatch={vi.fn()}
-      />,
+    rerender(withNarrative("Unsaved edit"));
+    rerender(withNarrative("Stored."));
+    expect(box()).toHaveValue("Stored.");
+  });
+
+  it("never resets the box under the cursor after a SUCCESSFUL save", () => {
+    const { rerender } = render(withNarrative("Stored."));
+    fireEvent.change(box(), { target: { value: "Saved" } });
+    fireEvent.blur(box());
+    // The consultant is back in the box and typing BEFORE the save's rerender
+    // lands -- the stored value then changes to what was saved. That is a
+    // success, and must not throw away what is being typed.
+    fireEvent.change(box(), { target: { value: "Saved, then more" } });
+    rerender(withNarrative("Saved"));
+    expect(box()).toHaveValue("Saved, then more");
+  });
+
+  it("shows a live count, and warns at the limit instead of cutting in silence", () => {
+    render(withNarrative("abc"));
+    expect(screen.getByTestId("narrative-count").textContent).toBe("3 / 8000");
+    fireEvent.change(box(), { target: { value: "x".repeat(8000) } });
+    expect(screen.getByTestId("narrative-count").textContent).toBe(
+      "8000 / 8000 -- limit reached; anything longer is not kept.",
     );
-    rerender(
-      <AttackTechniquePanel
-        technique={TECHNIQUE}
-        coverage={row({ id: "c2", status: "gap", narrative: "Stored." })}
-        coverageDefinitions={[]}
-        reasonCodes={REASONS}
-        onPatch={vi.fn()}
-      />,
-    );
-    expect(
-      screen.getByRole("textbox", {
-        name: "What could not be established for T1003",
-      }),
-    ).toHaveValue("Stored.");
   });
 });
