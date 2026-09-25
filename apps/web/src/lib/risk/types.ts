@@ -25,6 +25,14 @@ export interface RiskGate {
    * unfinished work.
    */
   synthesizable_missing?: string[];
+  /**
+   * #556: the approved ATT&CK input was scored against a catalog other than the
+   * current one, so generating refuses it. The server's own sentence, which
+   * names the remedy; null when there is nothing to say. NOT an entry in
+   * `synthesizable_missing`, whose banner says "until these are approved" --
+   * this input already is. Optional so an older client parses a newer response.
+   */
+  attack_catalog_mismatch?: string | null;
 }
 
 export interface RiskEntry {

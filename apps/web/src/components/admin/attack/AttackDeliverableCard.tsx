@@ -29,6 +29,10 @@ export interface AttackDeliverableCardProps {
   assessmentStatus: AttackAssessmentStatus | null;
   deliverable: AttackDeliverable | null;
   onChange: (next: AttackDeliverable) => void;
+  /** #556: the assessment was scored against another ATT&CK catalog. The API
+   *  refuses to finalize it or release its deliverable, so neither is offered;
+   *  the step above says why. */
+  catalogStale?: boolean;
 }
 
 // UTC, naming the zone -- the same instant the admin deliverables table shows.
@@ -52,6 +56,7 @@ export function AttackDeliverableCard({
   assessmentStatus,
   deliverable,
   onChange,
+  catalogStale = false,
 }: AttackDeliverableCardProps): JSX.Element {
   const [busy, setBusy] = React.useState<"finalize" | "release" | null>(null);
   const [confirmingRelease, setConfirmingRelease] = React.useState(false);
@@ -59,7 +64,8 @@ export function AttackDeliverableCard({
   const [error, setError] = React.useState<string | null>(null);
 
   const canFinalize =
-    assessmentStatus === "approved" || assessmentStatus === "released";
+    !catalogStale &&
+    (assessmentStatus === "approved" || assessmentStatus === "released");
 
   async function onFinalize(): Promise<void> {
     setBusy("finalize");
@@ -191,7 +197,7 @@ export function AttackDeliverableCard({
                 <button
                   type="button"
                   onClick={() => void onRelease()}
-                  disabled={busy !== null}
+                  disabled={busy !== null || catalogStale}
                   className="rounded-md bg-brand-500 px-3 py-1.5 text-xs font-semibold text-ink-on-accent disabled:opacity-60"
                 >
                   {busy === "release" ? "Releasing…" : "Yes, release"}
@@ -209,7 +215,7 @@ export function AttackDeliverableCard({
               <button
                 type="button"
                 onClick={() => setConfirmingRelease(true)}
-                disabled={busy !== null}
+                disabled={busy !== null || catalogStale}
                 className="rounded-md border border-brand-500 px-4 py-2 text-sm font-semibold text-brand-600 hover:bg-brand-50 disabled:opacity-60"
               >
                 Release to client
