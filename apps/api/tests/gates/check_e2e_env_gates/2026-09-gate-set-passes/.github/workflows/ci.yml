@@ -1,0 +1,7 @@
+jobs:
+  e2e:
+    steps:
+      - name: run
+        env:
+          E2E_PERF: "1"
+        run: npx playwright test

@@ -1,0 +1,10 @@
+{
+ "incident": "#483: E2E_PERF and E2E_OIDC gated test.skip() in two specs, one a smoke spec, and no workflow set either, so both self-skipped on every CI run until #560 (06fa7ce) moved them to e2e/manual/. A gate variable no workflow sets, unexempted, must be a finding naming the variable.",
+ "expect": 1,
+ "adversarial": true,
+ "argv": [
+  "--root",
+  "{dir}"
+ ],
+ "stdout_contains": "E2E_PERF: read by"
+}
