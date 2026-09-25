@@ -31,13 +31,27 @@ limits.
   below the root (a `tests/pytest.ini`), so a disk path matches a node file
   that equals it or is a `/`-bounded suffix of it.
 - **The clean line** now also says `N of N test files on disk collected`.
-- **#544 is a pin, not a read.** A new test requires CI's `pytest -m unit`
-  step and the gate's step to sit in ONE job, so job and workflow env reach
-  both. It also requires identical step-level `env` and `working-directory`,
-  and no step BETWEEN the two writing `$GITHUB_ENV` or `$GITHUB_PATH`, which
-  would change the environment of the later step only (review of `52b80c9`).
-  The pin is a pure function over a parsed workflow, so synthetic workflows
-  test it.
+- **#544 is a pin, not a read, and the pin is a derivation.** A test
+  requires the gate step to be the step IMMEDIATELY before CI's
+  `pytest -m unit` step, in the same job, with the same step `env`,
+  `working-directory` and `shell` (a login shell can source a profile). So every job, workflow and earlier-step environment
+  reaches both, and no step can change one without the other. The
+  `check_e2e_env_gates` step, which sat between them, moved above the gate in
+  `ci.yml`; it reads only `e2e/` and the workflows and writes nothing, so the
+  order is harmless.
+
+  Round 1 matched step text for `GITHUB_ENV`/`GITHUB_PATH`, and review of
+  `0cf0420` showed what that missed: `uses:` actions that export, scripts that
+  write the file, and `${{ steps.X.outputs }}` in an env. Adjacency leaves no
+  step for any of them to be in. The pin is a pure function over a parsed
+  workflow, tested against synthetic workflows with each refusal's exact
+  message.
+- **The file scan is pytest's own.** It uses pytest's own matcher,
+  `_pytest.pathlib.fnmatch_ex`, called directly, with `python_files` and
+  `norecursedirs` taken from pytest via the probe. A pattern with a separator
+  is therefore matched against the absolute path, as pytest does. Round 1's
+  hand-written root-relative match missed `tests/unit/*_spec.py` (review of
+  `0cf0420`).
 
 ## Measured, before writing the check
 
@@ -60,12 +74,19 @@ test files on disk collected`.
   - a `PYTEST_ADDOPTS` env added to CI's pytest step only, written into
     `ci.yml` and restored.
 
-  After review, 3 of 3 more went red:
+  After the first review, 3 of 3 more went red:
   - the hard-coded `test_*.py`, caught by a self-removing `*_test.py` and a
     configured `python_files`;
   - the `GITHUB_ENV` check dropped;
   - a `GITHUB_ENV` writer inserted into the real `ci.yml` between the two
     steps, then restored.
+
+  After the second review, 4 of 4 more went red:
+  - the round-1 root-relative matcher, caught by `tests/unit/*_spec.py`;
+  - `norecursedirs` ignored;
+  - adjacency not required;
+  - a `uses:` step inserted into the real `ci.yml` between the two, then
+    restored.
 
 ## Limits
 
@@ -73,6 +94,5 @@ test files on disk collected`.
   collection is not seen.
 - A conftest hook deselecting individual items applies to both collections,
   and is still invisible.
-- Environment set outside the step, such as a runner image or a composite
-  action, is not seen. Nor is a step between the two that changes the
-  environment by any route other than `$GITHUB_ENV` or `$GITHUB_PATH`.
+- The environment pin sees what the workflow file shows. A variable a tool
+  sets for itself when invoked is not seen.

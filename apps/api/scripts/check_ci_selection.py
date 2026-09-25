@@ -27,8 +27,10 @@ So every file on disk under `tests/unit` that pytest's `python_files`
 names must contribute at least one node id to the unselected collection,
 unless its baseline entry is `{"reason": ..., "uncollected_file": true}`. The
 patterns are PYTEST'S OWN ANSWER -- the probe plugin writes
-`config.getini("python_files")` -- not a copy: a hard-coded `test_*.py` missed
-the default's second half, `*_test.py`.
+`config.getini("python_files")` and `norecursedirs` -- and they are matched
+with pytest's own `fnmatch_ex`, not a copy of it: a hard-coded `test_*.py`
+missed the default's second half, `*_test.py`, and a hand-written matcher
+missed a pattern holding a path separator.
 
 THE BASELINE RATCHETS. A baselined node id that is now selected, or no longer
 exists, is a finding too: delete it from the baseline, so the backlog is
@@ -75,11 +77,12 @@ at the granularity of a FILE: a module that removes only some of its tests at
 collection time is not seen. A conftest hook that deselects individual items
 applies to BOTH collections, so it is invisible too. Environment on CI's
 pytest step is pinned equal to this step's by `pin_violations` in
-`test_ci_selection_gate.py` (#544), not read here: one job, identical step
-`env` and `working-directory`, and no step between the two writing
-`$GITHUB_ENV` or `$GITHUB_PATH`. A variable set some other way (a runner
-image, a composite action, or a step between them that changes the
-environment by a route other than those two files) is not seen.
+`test_ci_selection_gate.py` (#544), not read here. The pin is a derivation:
+this step must be the step IMMEDIATELY before pytest, in the same job, with
+the same step `env`, `working-directory` and `shell`, so every job, workflow and
+earlier-step environment reaches both and no step can change one without the
+other. What it cannot see is a difference the workflow file does not show,
+such as a variable a tool sets for itself when invoked.
 """
 
 from __future__ import annotations
@@ -89,7 +92,6 @@ import os
 import subprocess
 import sys
 import tempfile
-from fnmatch import fnmatch
 from pathlib import Path
 
 CI_SELECTOR = ("-m", "unit", "tests/unit")
@@ -98,14 +100,21 @@ _ALL = ("tests/unit",)
 _PROBE_NAME = "_ci_selection_probe"
 _PROBE_OUT = "CHECK_CI_SELECTION_OUT"
 _PROBE_SOURCE = f"""\
+import json
 import os
 
 
 def pytest_collection_finish(session):
     with open(os.environ["{_PROBE_OUT}"], "w", encoding="utf-8") as fh:
         fh.write("\\n".join(item.nodeid for item in session.items))
-    with open(os.environ["{_PROBE_OUT}"] + ".python_files", "w", encoding="utf-8") as fh:
-        fh.write("\\n".join(session.config.getini("python_files")))
+    with open(os.environ["{_PROBE_OUT}"] + ".config", "w", encoding="utf-8") as fh:
+        json.dump(
+            {{
+                "python_files": list(session.config.getini("python_files")),
+                "norecursedirs": list(session.config.getini("norecursedirs")),
+            }},
+            fh,
+        )
 """
 
 
@@ -115,9 +124,9 @@ class CouldNotLook(Exception):
 
 def _collect(
     root: Path, args: tuple[str, ...], *, clear_addopts: bool
-) -> tuple[set[str], list[str]]:
-    """(node ids, python_files) for `args`, both as the probe plugin reports
-    them: pytest's own answer, not a reading of its config files."""
+) -> tuple[set[str], dict[str, list[str]]]:
+    """(node ids, {python_files, norecursedirs}) for `args`, as the probe
+    plugin reports them: pytest's own answer, not a reading of its config."""
     with tempfile.TemporaryDirectory() as tmp:
         probe_dir = Path(tmp)
         (probe_dir / f"{_PROBE_NAME}.py").write_text(_PROBE_SOURCE, encoding="utf-8")
@@ -148,13 +157,13 @@ def _collect(
                 "so there is no answer to read"
             )
         ids = {line for line in out.read_text(encoding="utf-8").splitlines() if line}
-        patterns_file = Path(str(out) + ".python_files")
-        if not patterns_file.is_file():
-            raise CouldNotLook("the probe plugin wrote no `python_files` -- it did not finish")
-        patterns = [p for p in patterns_file.read_text(encoding="utf-8").splitlines() if p]
-        if not patterns:
+        config_file = Path(str(out) + ".config")
+        if not config_file.is_file():
+            raise CouldNotLook("the probe plugin wrote no file config -- it did not finish")
+        config = json.loads(config_file.read_text(encoding="utf-8"))
+        if not config.get("python_files"):
             raise CouldNotLook("pytest reported an EMPTY `python_files`, so no file is a test file")
-        return ids, patterns
+        return ids, config
 
 
 def _load_baseline(path: Path) -> dict[str, dict]:
@@ -191,20 +200,35 @@ def _load_baseline(path: Path) -> dict[str, dict]:
     return data
 
 
-def files_named_by_python_files(root: Path, python_files: list[str]) -> set[str]:
-    """Root-relative `.py` files under `tests/unit` that `python_files` names.
+def files_named_by_python_files(root: Path, config: dict[str, list[str]]) -> set[str]:
+    """Root-relative `.py` files under `tests/unit` that pytest would collect
+    as test modules, decided by PYTEST'S OWN MATCHER.
 
-    pytest matches a pattern against the file's BASENAME unless the pattern
-    holds a path separator, and then against the path; this does the same.
-    The default is `test_*.py *_test.py`, and a scan of only the first half
-    left a self-removing `*_test.py` invisible (review of 52b80c9)."""
+    `_pytest.pathlib.fnmatch_ex` is the function pytest applies to
+    `python_files` and to `norecursedirs`; calling it is not a
+    reimplementation, it is the same code in the same interpreter. A pattern
+    with a separator is matched against the ABSOLUTE path, so
+    `tests/unit/*_spec.py` works as it does in pytest -- a hand-written match
+    against the root-relative path missed it (review of 0cf0420). Directories
+    matching `norecursedirs` are not descended, as pytest does not."""
+    try:
+        from _pytest.pathlib import fnmatch_ex
+    except ImportError as exc:  # pragma: no cover - pytest is what this gate runs
+        raise CouldNotLook(f"cannot import pytest's own matcher: {exc}") from exc
     found = set()
-    for path in (root / "tests" / "unit").rglob("*.py"):
-        rel = path.relative_to(root).as_posix()
-        for pat in python_files:
-            if ("/" in pat and fnmatch(rel, "*/" + pat.lstrip("/"))) or fnmatch(path.name, pat):
-                found.add(rel)
-                break
+    for dirpath, dirnames, filenames in os.walk(root.resolve() / "tests" / "unit"):
+        here = Path(dirpath)
+        dirnames[:] = [
+            d
+            for d in dirnames
+            if not any(fnmatch_ex(pat, here / d) for pat in config["norecursedirs"])
+        ]
+        for name in filenames:
+            path = here / name
+            if name.endswith(".py") and any(
+                fnmatch_ex(pat, path) for pat in config["python_files"]
+            ):
+                found.add(path.relative_to(root.resolve()).as_posix())
     return found
 
 
@@ -293,13 +317,13 @@ def main(argv: list[str]) -> int:
         if not (root / "tests" / "unit").is_dir():
             raise CouldNotLook(f"{root / 'tests' / 'unit'} does not exist -- wrong directory?")
         baseline = _load_baseline(baseline_path)
-        everything, python_files = _collect(root, _ALL, clear_addopts=True)
+        everything, file_config = _collect(root, _ALL, clear_addopts=True)
         selected, _ = _collect(root, CI_SELECTOR, clear_addopts=False)
         if not everything:
             raise CouldNotLook(
                 "collected ZERO tests with no selector. An empty collection is not a " "clean one."
             )
-        on_disk = files_named_by_python_files(root, python_files)
+        on_disk = files_named_by_python_files(root, file_config)
     except CouldNotLook as exc:
         print(f"check-ci-selection: could not look -- {exc}")
         return 2
