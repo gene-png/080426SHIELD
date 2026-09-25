@@ -41,7 +41,8 @@
 # ## Proven discriminating, not merely green
 #
 # Red-on-revert on 2026-09-09, mutation proved landed by grep before the
-# result was read:
+# result was read (the script's own statuses AS OF THAT DATE; since #618 a real
+# type error returns 1, because 2 now means could-not-look):
 #
 #     baseline  0
 #     mutated   2   (a deliberate type error appended to lib/api.ts)
@@ -352,10 +353,11 @@ tsc() {
   local total outside
   total="$(printf '%s
 ' "$out" | grep -c 'error TS' || true)"
-  # Errors from OUTSIDE apps/web are not this worktree's code. CI runs
-  # `pnpm -F web typecheck` and is green on main, so when these appear they are
-  # the mount, not the branch -- and reporting them without saying so sends an
-  # author to debug someone else's package.
+  # Errors from OUTSIDE apps/web: packages/ IS mounted from this worktree, so
+  # they may be the branch's own code, or dependency skew from the primary
+  # tree's packages/*/node_modules. This returns 2 (could not fully look)
+  # rather than 1 because the two cannot be told apart here; the message below
+  # says to read them. Conservative, never a false green.
   outside="$(printf '%s
 ' "$out" | grep 'error TS' | grep -c '\.\./\.\./packages/' || true)"
   echo "verify-in-worktree: tsc -- ${total} error(s), ${outside} of them outside apps/web (packages/*, i.e. the mount, not this branch)"
