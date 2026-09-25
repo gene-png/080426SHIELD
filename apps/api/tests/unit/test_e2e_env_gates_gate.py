@@ -1,9 +1,10 @@
 """The e2e env-gate check (#540, Playwright half): a spec gated on a variable
 no workflow sets never runs in CI.
 
-#483 is the instance: `E2E_PERF` and `E2E_OIDC` gate `test.skip(...)` in two
-specs, one of them a smoke spec, and no workflow step sets either, so both
-specs have self-skipped on every CI run. Written BEFORE the check.
+#483 was the instance: `E2E_PERF` and `E2E_OIDC` gated `test.skip(...)` in two
+specs, one of them a smoke spec, and no workflow step set either, so both
+specs self-skipped on every CI run until #560 (`06fa7ce`) moved them to
+`e2e/manual/`. Written BEFORE the check.
 """
 
 from __future__ import annotations
@@ -77,7 +78,10 @@ def test_a_gate_a_workflow_sets_is_clean(tmp_path, capsys) -> None:
 
 def test_an_exempted_gate_passes_and_is_printed_with_its_reason(tmp_path, capsys) -> None:
     root = _repo(
-        tmp_path, {"perf.spec.ts": GATED}, UNSET_WORKFLOW, {"E2E_PERF": {"reason": "#483"}}
+        tmp_path,
+        {"perf.spec.ts": GATED},
+        UNSET_WORKFLOW,
+        {"E2E_PERF": {"specs": ["e2e/perf.spec.ts"], "reason": "#483"}},
     )
     code, out = _run(root, capsys)
     assert code == 0, out
@@ -85,14 +89,24 @@ def test_an_exempted_gate_passes_and_is_printed_with_its_reason(tmp_path, capsys
 
 
 def test_an_exemption_for_a_variable_now_set_is_stale(tmp_path, capsys) -> None:
-    root = _repo(tmp_path, {"perf.spec.ts": GATED}, SET_WORKFLOW, {"E2E_PERF": {"reason": "#483"}})
+    root = _repo(
+        tmp_path,
+        {"perf.spec.ts": GATED},
+        SET_WORKFLOW,
+        {"E2E_PERF": {"specs": ["e2e/perf.spec.ts"], "reason": "#483"}},
+    )
     code, out = _run(root, capsys)
     assert code == 1, out
     assert "stale" in out.lower(), out
 
 
 def test_an_exemption_no_spec_uses_is_stale(tmp_path, capsys) -> None:
-    root = _repo(tmp_path, {"perf.spec.ts": GATED}, SET_WORKFLOW, {"E2E_GONE": {"reason": "old"}})
+    root = _repo(
+        tmp_path,
+        {"perf.spec.ts": GATED},
+        SET_WORKFLOW,
+        {"E2E_GONE": {"specs": ["e2e/gone.spec.ts"], "reason": "old"}},
+    )
     code, out = _run(root, capsys)
     assert code == 1, out
 
@@ -113,7 +127,12 @@ def test_node_modules_is_not_scanned(tmp_path, capsys) -> None:
 
 
 def test_an_exemption_without_a_reason_is_refused(tmp_path, capsys) -> None:
-    root = _repo(tmp_path, {"perf.spec.ts": GATED}, UNSET_WORKFLOW, {"E2E_PERF": {"reason": " "}})
+    root = _repo(
+        tmp_path,
+        {"perf.spec.ts": GATED},
+        UNSET_WORKFLOW,
+        {"E2E_PERF": {"specs": ["e2e/perf.spec.ts"], "reason": " "}},
+    )
     code, out = _run(root, capsys)
     assert code == 2, out
 
@@ -221,3 +240,44 @@ def test_other_spellings_of_a_gate_are_seen(tmp_path, capsys, spec: str) -> None
     code, out = _run(_repo(tmp_path, {"perf.spec.ts": spec}, UNSET_WORKFLOW, {}), capsys)
     assert code == 1, out
     assert "E2E_PERF" in out, out
+
+
+# --- review of 3bc0975: exemptions are spec-scoped --------------------------------------
+
+
+def test_an_exempted_variable_read_by_an_unlisted_spec_is_a_finding(tmp_path, capsys) -> None:
+    # E2E_API_URL's exemption was written about one spec's configuration
+    # default. Keyed on the name alone, a NEW spec gating on it for real passed.
+    root = _repo(
+        tmp_path,
+        {"perf.spec.ts": GATED, "new.spec.ts": GATED},
+        UNSET_WORKFLOW,
+        {"E2E_PERF": {"specs": ["e2e/perf.spec.ts"], "reason": "configuration here"}},
+    )
+    code = gate.main(["gate", "--root", str(root)])
+    out = capsys.readouterr().out
+    assert code == 1, out
+    assert "E2E_PERF: read by e2e/new.spec.ts" in out and "covers only e2e/perf.spec.ts" in out, out
+
+
+def test_a_listed_spec_that_no_longer_reads_the_variable_is_stale(tmp_path, capsys) -> None:
+    root = _repo(
+        tmp_path,
+        {"perf.spec.ts": GATED},
+        UNSET_WORKFLOW,
+        {"E2E_PERF": {"specs": ["e2e/perf.spec.ts", "e2e/old.spec.ts"], "reason": "#483"}},
+    )
+    code = gate.main(["gate", "--root", str(root)])
+    out = capsys.readouterr().out
+    assert code == 1, out
+    assert "exemption is STALE for e2e/old.spec.ts" in out, out
+
+
+def test_an_exemption_with_no_specs_is_could_not_look(tmp_path, capsys) -> None:
+    root = _repo(
+        tmp_path, {"perf.spec.ts": GATED}, UNSET_WORKFLOW, {"E2E_PERF": {"reason": "#483"}}
+    )
+    code = gate.main(["gate", "--root", str(root)])
+    out = capsys.readouterr().out
+    assert code == 2, out
+    assert "needs a non-empty `specs` list" in out, out

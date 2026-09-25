@@ -510,7 +510,8 @@ jobs:
       # #540: a test that exists but never runs. A test CI does not select, or
       # a spec gated on a variable no workflow sets, reads as covered and never
       # executes -- worse than a vacuous test, which at least reports. Both
-      # gates allow the known backlog only with reasons (#500, #483) and
+      # gates allow the known backlog only with reasons (#500; #483's two until
+      # #560 moved them to e2e/manual/) and
       # ratchet: a baselined test that now runs or no longer exists, and an
       # exemption for a variable now set or no longer read, are findings.
       - name: every unit test is one CI runs (#540)

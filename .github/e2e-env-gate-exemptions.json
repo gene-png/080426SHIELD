@@ -1,5 +1,6 @@
 {
   "E2E_API_URL": {
+    "specs": ["e2e/session/session-survives-refresh.spec.ts"],
     "reason": "Configuration with a default (`?? \"http://localhost:8000\"` in session-survives-refresh.spec.ts), not a skip gate. That spec's real gate is E2E_SESSION_TTL, which ci.yml sets."
   }
 }

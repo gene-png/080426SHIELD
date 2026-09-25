@@ -1,8 +1,9 @@
 """A Playwright spec gated on a variable no workflow sets never runs in CI (#540).
 
-WHY THIS EXISTS. #483: `E2E_PERF` and `E2E_OIDC` gate `test.skip(...)` in two
-specs -- one a smoke spec -- and no workflow step sets either, so both have
-self-skipped on every CI run while reading as part of the suite. The pytest
+WHY THIS EXISTS. #483: `E2E_PERF` and `E2E_OIDC` gated `test.skip(...)` in two
+specs -- one a smoke spec -- and no workflow step set either, so both
+self-skipped on every CI run while reading as part of the suite, until #560
+(`06fa7ce`) moved them to `e2e/manual/*.manual.ts`. The pytest
 half of #540 is `check_ci_selection.py`; whether every spec on disk is in the
 set CI runs is `check_e2e_spec_listing.py`. This is the env-gate half.
 
@@ -20,9 +21,14 @@ Set means an `env:` key at workflow, job or step level, or an assignment
 script with shell comments stripped -- AND a value that could enable a gate:
 empty, "0" and "false" do not count.
 
-THE EXEMPTIONS RATCHET. An exemption for a variable a workflow now sets is
-STALE, and so is one no skipping spec reads any more. Both are findings, so
-the list only shrinks, and every run prints what it exempts.
+THE EXEMPTIONS ARE SPEC-SCOPED, AND RATCHET. Each entry names the `specs` it
+covers, with a `reason`. An exempted variable read by a skipping spec the
+entry does NOT list is a finding: keyed on the name alone, E2E_API_URL's
+exemption -- written about one spec's configuration default -- would have
+passed a new spec gating on it for real (review of 3bc0975). An exemption a
+workflow now sets, one no skipping spec reads, and a listed spec that no
+longer reads it are all STALE findings, so the list only shrinks, and every
+run prints what it exempts.
 
 WHAT COUNTS AS A SKIPPING SPEC: `test.skip(`, `test.fixme(`,
 `test.describe.skip(` / `.fixme(`, and `testInfo.skip(` / `.fixme(`, any
@@ -38,7 +44,9 @@ LIMITS, stated so a clean run is not read as more than it is:
     (`=== "1"`) is not checked, only that it is not empty/"0"/"false".
   * A variable that is CONFIGURATION with a default, not a gate
     (E2E_API_URL), is reported unless exempted, because this cannot tell a
-    gate from a setting. Exempt it with that reason.
+    gate from a setting. Exempt it for the specs that use it that way.
+  * Only `*.spec.ts` is scanned. A spec renamed out of that pattern -- #560's
+    own mechanism -- leaves CI with every gate green (#579).
 
 EXIT CODES (D-051): 0 every gate variable is set or exempted; 1 a finding; 2
 could not look -- no `e2e/` or no spec files under it, no workflows, a
@@ -157,6 +165,13 @@ def _load_exemptions(root: Path) -> dict[str, dict]:
         isinstance(v, dict) and str(v.get("reason", "")).strip() for v in data.values()
     ):
         raise CouldNotLook(f"{path}: every entry needs a non-empty `reason`")
+    for var, entry in data.items():
+        specs = entry.get("specs")
+        if not isinstance(specs, list) or not specs or not all(isinstance(s, str) for s in specs):
+            raise CouldNotLook(
+                f"{path}: {var} needs a non-empty `specs` list -- an exemption keyed on the "
+                "variable alone would cover every future spec that reads it"
+            )
     return data
 
 
@@ -187,12 +202,26 @@ def main(argv: list[str]) -> int:
     for var, specs in sorted(gates.items()):
         where = ", ".join(specs)
         if var in exemptions:
+            listed = set(exemptions[var]["specs"])
             if is_set(var, settings):
                 findings.append(
                     f"{var}: exemption is STALE -- a workflow now sets it. Remove the exemption."
                 )
-            else:
-                print(f"  exempted: {var} ({where}): {exemptions[var]['reason']}")
+                continue
+            unlisted = [s for s in specs if s not in listed]
+            if unlisted:
+                findings.append(
+                    f"{var}: read by {', '.join(unlisted)}, which skips, and its exemption covers "
+                    f"only {', '.join(sorted(listed))}. Set it in a workflow, or exempt that spec "
+                    "with its own reason."
+                )
+            for gone in sorted(listed - set(specs)):
+                findings.append(
+                    f"{var}: exemption is STALE for {gone} -- that spec no longer reads it."
+                )
+            covered = ", ".join(s for s in specs if s in listed)
+            if covered:
+                print(f"  exempted: {var} ({covered}): {exemptions[var]['reason']}")
         elif not is_set(var, settings):
             findings.append(
                 f"{var}: read by {where}, which skips, and NO workflow sets it to a value "

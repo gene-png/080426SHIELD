@@ -10,7 +10,8 @@ test, which at least reports. Both instances turned up in one day:
 - the #535/#536 leak tests shipped unmarked, so CI's `pytest -m unit
   tests/unit` would have selected 0 of their 61 tests, while local runs that
   named the file directly passed;
-- #483: `E2E_PERF` and `E2E_OIDC` gate specs that no workflow sets.
+- #483: `E2E_PERF` and `E2E_OIDC` gated specs that no workflow set, until #560
+  (`06fa7ce`) moved them to `e2e/manual/`.
 
 `check_test_integrity.py` catches tests that cannot fail. Nothing caught tests
 that never run. It is tier-3 by consequence, and it is the gate that protects

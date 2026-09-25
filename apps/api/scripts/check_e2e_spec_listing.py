@@ -20,7 +20,9 @@ cannot see a test that SKIPS at runtime; `check_e2e_env_gates.py` covers only
 the skips keyed on an environment variable, so an unconditional `test.skip()`
 or `test.describe.skip` is listed, never runs, and neither gate reports it.
 And it describes the E2E job's main run, not the Demo job's
-`npx playwright test demo/`, which is a subset.
+`npx playwright test demo/`, which is a subset. Only `*.spec.ts` is compared: a
+spec renamed out of that pattern -- #560's own mechanism -- leaves CI with this
+gate and the env-gate check both green (#579).
 
 EXIT CODES (D-051): 0 every spec on disk is listed; 1 at least one is not; 2
 could not look -- the list file is missing, names no spec, or has no
