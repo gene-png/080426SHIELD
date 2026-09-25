@@ -105,6 +105,21 @@ DEFERRED: dict[str, str] = {
     # thing it guards -- and what this file now enforces for them is the half
     # that was actually missing: that a workflow INVOKES them. Both shipped
     # with neither, and ran nowhere for weeks.
+    "prepush_hook_status.sh": (
+        "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
+        "It EXTRACTS the api-unit-tests hook's `bash -c` body from "
+        "`.pre-commit-config.yaml` (parsed as YAML; exit 2 unless exactly one "
+        "hook with that shape), checks its registration (stages [pre-push], "
+        "always_run true, pass_filenames false), and runs the body against a "
+        "stub `docker` in six states: suite passes 0, suite fails 1, and 2 with "
+        "the cause and both bypasses for the container down, compose failing, "
+        "`docker info` failing, and docker absent. Its `--self-test` applies "
+        "two mutations, #143's `|| echo skipped` and a NOT RUN branch exiting "
+        "0, proves each landed, and requires exactly its named check red. "
+        "LIMITS: the stub stands in for docker, so it proves the hook's shell "
+        "logic, not a real container; the registration check has no mutation in "
+        "the self-test (it was shown red once by deleting `always_run`)."
+    ),
     "verify_in_worktree_mounts.sh": (
         "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
         "Both states are covered internally and BOTH ARE REAL RUNS: the passing "

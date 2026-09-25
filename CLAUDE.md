@@ -351,8 +351,8 @@ recorded with a real exit code and a real date, and was the minority outcome
   container: ~3 min, 13–16 under load, testing its tree, not the pushed ref
   (#203). `NOT RUN` exits 2 and names its cause. Git Bash:
   `SKIP=api-unit-tests git push`; PowerShell:
-  `$env:SKIP="api-unit-tests"; git push; Remove-Item Env:SKIP` (both run
-  2026-09-25, `git push` stood in). **Agents push with SKIP**: CI runs the
+  `$env:SKIP="api-unit-tests"; git push; Remove-Item Env:SKIP` (each run
+  2026-09-25 in its shell, a child process standing in for `git push`). **Agents push with SKIP**: CI runs the
   suite, and the shared stack may be another agent's. Existing clones: re-run
   `pre-commit install`.
 - Backend unit tests: `docker compose exec -T api pytest -m unit -q`

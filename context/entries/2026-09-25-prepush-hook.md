@@ -5,7 +5,7 @@ the coordinator's recommendation: every change here alters every developer's
 push, including on Windows and PowerShell, and the owner should see that on
 its own rather than bundled into a gate PR.
 
-## What changed in `.pre-commit-config.yaml`
+## What changed in `.pre-commit-config.yaml` (at `2d1da6a`, superseded below)
 
 - **#143 repaired.** `pytest ... || echo "skipped"` printed "skipped" over a
   FAILING suite and let the push through. The container check is now the `if`,
@@ -29,7 +29,7 @@ its own rather than bundled into a gate PR.
 - **It says which tree it tests**: the one the shared api container mounts,
   which may not be the ref being pushed (#203).
 
-## Measured
+## Measured (at `2d1da6a`, superseded below)
 
 With a stub `docker` on PATH, running the hook's own entry:
 
@@ -88,3 +88,35 @@ Stub-measured, running the hook's own entry:
 | compose missing | 2 | NOT RUN - docker compose failed - (its error) |
 | `docker info` denied | 2 | NOT RUN - docker info failed ... - (its error) |
 | docker not on PATH | 2 | NOT RUN - docker is not on PATH |
+
+## After the second review (`23353a4`)
+
+- **The hook's behaviour is a committed gate**, `tests/gates/prepush_hook_status.sh`,
+  run in `ci.yml`'s shell-gates step with its `--self-test`. It parses
+  `.pre-commit-config.yaml`, checks the registration (`stages: [pre-push]`,
+  `always_run: true`, `pass_filenames: false`), and runs the hook's own
+  `bash -c` body against a stub `docker` in six states: suite passes 0, suite
+  fails 1, and 2 with the cause and both bypasses for the container down,
+  compose failing, `docker info` failing and docker absent. The self-test
+  puts #143's `|| echo skipped` back, and separately makes the container-down
+  branch exit 0; each must turn exactly its named check red, and does.
+  Deleting `always_run` was also run once and went red on the registration
+  check.
+- **`always_run: true`**, so a push whose files match no pattern still runs the
+  suite.
+- **pre-commit itself was run**, 4.6.2 in a venv, from Git Bash on 2026-09-25,
+  with docker taken off PATH so nothing touched the shared stack:
+  `pre-commit run --hook-stage pre-push --from-ref origin/main --to-ref HEAD`.
+  Exactly one hook ran at the pre-push stage, `api-unit-tests`: it printed
+  "NOT RUN - docker is not on PATH" with both bypasses, the hook exited 2,
+  and pre-commit exited 1, which is the status a `pre-push` git hook returns
+  to refuse a push. With `SKIP=api-unit-tests` it printed "Skipped" and
+  pre-commit exited 0. NOT RUN: a real `git push` through an installed hook,
+  because installing one writes the `.git/hooks` every worktree shares.
+- **CLAUDE.md's bypass marker** now says each form was run in its own shell,
+  with a child process standing in for `git push`. The Git Bash form was run
+  that way on 2026-09-25 (GNU bash 5.2.37): the child saw `SKIP`, the session
+  did not keep it.
+- Advisories (a compose WARN standing in for the cause; CLAUDE.md not saying
+  NOT RUN blocks the push, nor that Git Bash refuses every push by default)
+  are filed as #589.

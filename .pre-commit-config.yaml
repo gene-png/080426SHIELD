@@ -132,4 +132,7 @@ repos:
         language: system
         verbose: true
         pass_filenames: false
+        # Runs on every push, including one that changes no file pre-commit would
+        # match; without it, a push of only non-matching files skips the suite.
+        always_run: true
         stages: [pre-push]
