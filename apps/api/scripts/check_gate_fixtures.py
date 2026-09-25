@@ -23,7 +23,7 @@ in DEFERRED with a reason. A covered gate must have:
   * at least one case the gate PASSES (exit 0);
   * at least one case the gate FAILS with exit 1 -- the NEGATIVE CONTROL, without
     which the suite proves the gate runs and not that it discriminates. A 2 does
-    not satisfy it: 1 and 2 are the codes D-051 exists to keep apart;
+    not satisfy it: 1 and 2 are the codes D-090 exists to keep apart;
   * at least one case expecting exit 2, so the fail-closed half is covered too,
     and it carries `stdout_contains` -- a gate has several "could not look"
     branches and the code alone cannot say which one fired;
@@ -62,7 +62,7 @@ That is the same scoping as the tier-1 claim below: form is mechanisable,
 implication is not. Read "traceable incident" as a convention this file makes
 visible, not a guarantee it enforces -- the enforcement is a reader.
 
-## Fail-closed, per D-051
+## Fail-closed, per D-090
 
 Exit 2 is "I could not look": fixture root missing, no gates discovered, a gate
 directory with no cases, a malformed `case.json`, DEFERRED naming a gate that
@@ -772,7 +772,7 @@ def _contract_failures(gate: str, cases: list[dict]) -> list[str]:
             f"{gate}: NO NEGATIVE CONTROL -- no case expects exit 1, so these "
             f"fixtures prove the gate runs, not that it discriminates"
         )
-    # Exit 1 and exit 2 are the two codes D-051 exists to keep apart, so the
+    # Exit 1 and exit 2 are the two codes D-090 exists to keep apart, so the
     # negative control must be a 1 specifically. `!= 0` admitted a 2, which would
     # have let a gate be "covered" by fixtures proving only that it can refuse to
     # look -- the two branches merged, inside the gate whose organising principle

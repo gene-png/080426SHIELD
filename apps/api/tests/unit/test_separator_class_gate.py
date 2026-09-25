@@ -99,8 +99,8 @@ def test_main_returns_2_when_the_file_cannot_be_tokenized() -> None:
 
     `check()` has always returned 2 for a tokenize failure; `main()` never read
     it, so the code fell through to the findings print and exited **1**. The
-    docstring promised an exit code that was unreachable -- a gate citing D-051
-    while failing it. This pins the branch rather than the sentence.
+    docstring promised an exit code that was unreachable -- a gate citing the exit
+    convention (then as D-051; D-090 records it) while failing it. This pins the branch rather than the sentence.
 
     Distinct from the missing-file and empty-file cases already covered: those
     fail before `check()` is ever called, so they could never have caught this.

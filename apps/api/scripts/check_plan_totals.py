@@ -57,7 +57,7 @@ So this half stays human: **when the total changes, grep the section for the old
 number.** The gate covers the arithmetic, which is mechanical; it does not cover
 the retelling, which is not.
 
-EXIT CODES, per this repo's fail-closed convention (D-051):
+EXIT CODES, per this repo's fail-closed convention (D-090):
   0 - the parts sum to the stated total
   1 - they do not
   2 - the table could not be found or parsed (an unreadable input is NOT a pass)
@@ -257,5 +257,5 @@ if __name__ == "__main__":
     except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
         nl = chr(10)
         sys.stderr.write(f"check-plan-totals: CRASHED: {type(exc).__name__}: {exc}{nl}")
-        sys.stderr.write(f"A crash is not a clean report and not a violation (D-051).{nl}")
+        sys.stderr.write(f"A crash is not a clean report and not a violation (D-090).{nl}")
         raise SystemExit(2) from exc

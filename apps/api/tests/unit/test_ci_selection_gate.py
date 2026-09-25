@@ -133,7 +133,7 @@ def test_a_malformed_baseline_entry_is_refused(tmp_path, capsys, entry: dict) ->
     assert code == 2, out
 
 
-# --- could not look: never clean (D-051) -------------------------------------------
+# --- could not look: never clean (D-090) -------------------------------------------
 
 
 def test_the_wrong_directory_is_could_not_look_not_clean(tmp_path, capsys) -> None:

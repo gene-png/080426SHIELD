@@ -5868,3 +5868,45 @@ un-dispositioned gaps before an assessment ships.
 risk-acceptance vocabulary (artifact names, control references) against the
 FedRAMP and NIST sources, not against this record. "Moderate" is #557's
 wording; the platform targets Moderate and High, so check the High baseline too.
+
+## D-090 — The gates' exit convention: 0 clean, 1 a violation, 2 could not look
+
+**2026-09-25 · governance/gates** · #553
+
+**Decision (recorded, not new).** Every gate in this repo exits:
+
+- **0** when it looked and found nothing to report, and its output says what
+  it read;
+- **1** when it found a real violation, and names it;
+- **2** when it could not look: missing or unreadable input, a parse failure,
+  an unknown or malformed argument, or a crash. A crash handler converts an
+  uncaught exception to 2 and prints "A crash is not a clean report and not a
+  violation"; `test_gate_crash_exit_code.py` enforces that half.
+
+"I could not look" never shares a branch with "nothing to complain about" or
+with "I found a violation". Before a new checker's first line, list every
+`return 0` / `continue` / `pass` it will have and what the input looked like
+there; an answer of "there was nothing there" is the bug (CLAUDE.md's
+silent-success bullet). The HTTP form of the same distinction is a typed
+could-not-look response (#550).
+
+**Why a record now.** The convention is written in CLAUDE.md's fail-closed
+bullet, but no D-record decided it, and the gates cited it as D-051. D-051 is the #72 two-tier sweep; it does not state the
+convention. A correct constraint cited to a record that lacks it is worse than
+an unexplained one: a reader told to verify opens D-051, does not find the
+rule, and may discard it.
+
+**The repointing.** Citations that mean the exit convention now cite D-090:
+gate docstrings (`EXIT CODES`, "fail-closed convention"), every crash
+handler's message, could-not-look messages, the fixture incidents about
+fail-closed branches, the unit tests about could-not-look, and the ci.yml and
+`web_install_guard.sh` comments. Citations that mean what D-051 decided keep
+it: tests that cannot fail (#72), and "a rule depending on someone remembering
+needs a mechanism". Sentences recording that a gate once cited D-051 keep the
+history and name both. Measured on this branch before commit, 2026-09-25:
+
+    git grep -c "D-051" origin/main -- ':!DECISIONS.md'   # 47 files, 79 lines
+    git grep -c "D-051" -- ':!DECISIONS.md'               # 17 files, 25 lines
+
+The 25 remaining were each read and classified as D-051's own subject or as
+history. Older D-records are append-only and are not edited.

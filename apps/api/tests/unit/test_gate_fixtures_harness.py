@@ -362,7 +362,7 @@ def test_a_missing_shell_gate_directory_is_not_an_empty_list(tmp_path: Path) -> 
     must be the one that fails closed — and `main` does, with exit 2.
 
     Asserted as a pair rather than trusting the helper: an empty list and "the
-    directory is not there" are the same value, which is the shape D-051 is
+    directory is not there" are the same value, which is the shape D-090 is
     about. The helper is allowed to conflate them only because nothing reads it
     without checking `is_dir()` first.
     """

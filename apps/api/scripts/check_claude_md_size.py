@@ -70,7 +70,7 @@ gate goes green while rules are still being cut. The way to close that is to
 MEASURE the next reader that truncates and lower the constant, not to guess a
 percentage now.
 
-## Fail-closed, per D-051
+## Fail-closed, per D-090
 
 Exit 2 is "I could not look": a target that does not exist, is a directory, or
 cannot be decoded; an unknown option. Exit 1 is "I looked and it is too big".
@@ -122,7 +122,7 @@ condition 5, and NEITHER CAN TELL WHICH ONE IT IS: nothing in either agent's
 output distinguishes "this PR is clear" from "I could not see the clause that
 would have caught it".
 
-That is D-051's distinction -- "I checked and it passes" versus "I could not
+That is D-090's distinction -- "I checked and it passes" versus "I could not
 look" -- missing from the governance layer itself. Keeping this file under the
 limit fixes today's instance and not the mechanism: it goes over budget again
 eventually, or a reader arrives with a limit below 150,000, and it recurs
@@ -438,5 +438,5 @@ if __name__ == "__main__":
     except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
         nl = chr(10)
         sys.stderr.write(f"check-claude-md-size: CRASHED: {type(exc).__name__}: {exc}{nl}")
-        sys.stderr.write(f"A crash is not a clean report and not a violation (D-051).{nl}")
+        sys.stderr.write(f"A crash is not a clean report and not a violation (D-090).{nl}")
         raise SystemExit(2) from exc
