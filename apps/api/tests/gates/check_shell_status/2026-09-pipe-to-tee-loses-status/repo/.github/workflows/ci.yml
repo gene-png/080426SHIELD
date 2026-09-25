@@ -1,0 +1,6 @@
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - run: python -m scripts.check_x | tee out.txt

@@ -127,6 +127,15 @@ jobs:
       - name: control-character sweep
         run: python apps/api/scripts/check_no_control_chars.py .
 
+      # A gate's exit status must reach the result (#213): no gate piped without
+      # pipefail (R1), swallowed by `|| echo` or `|| exit 0` (R2), followed
+      # mid-script by `&& ...` (R3), or overwritten without errexit (R4). Reads
+      # every workflow `run:`, the pre-commit hooks, every `.sh` file, and
+      # CLAUDE.md's code blocks. A line-level floor, not a parser (#568).
+      # #143's pre-push hook was the live instance when this landed.
+      - name: gate statuses reach the result
+        run: python apps/api/scripts/check_shell_status.py --root .
+
       # DELIVERY_PLAN's stated total vs the sum of its own rows. Two instances,
       # both written by someone who had just written the rule against them --
       # the second inside a section headed "and the parts sum to it". Same
@@ -469,24 +478,20 @@ jobs:
             echo "Cannot tell new findings from accepted ones. This is not a clean report." >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
             exit 2
           fi
-          python apps/api/scripts/check_recalled_counts.py --advisory --porcelain > /tmp/live.txt
-          code=$?
-          if [ "$code" -ne 0 ]; then
-            echo "gate exited $code before producing a list" >&2
-            cat /tmp/live.txt
-            # The summary, not just the log. This branch used to write only to
-            # stdout/stderr, so a missing context/*.md exited 2, continue-on-error
-            # kept the job green, and the run summary was EMPTY -- indistinguishable
-            # on that page from "no new findings". Silence, from the one mechanism
-            # this step exists to deliver through.
-            {
-              echo "### Recalled counts (advisory): GATE DID NOT PRODUCE A LIST"
-              echo
-              echo "Exit code $code. This is not a clean report and not a finding."
-              echo "Most likely a target named in ADVISORY_TARGETS no longer exists."
-            } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
-            exit "$code"
-          fi
+          # The summary, not just the log. This branch used to write only to
+          # stdout/stderr, so a missing context/*.md exited 2, continue-on-error
+          # kept the job green, and the run summary was EMPTY -- indistinguishable
+          # on that page from "no new findings". The gate's own stderr, above,
+          # carries its exit reason. Written in the one `|| { echo ...; exit N; }`
+          # shape check_shell_status.py whitelists (#563): a list that never
+          # appeared is could-not-look, so 2.
+          python apps/api/scripts/check_recalled_counts.py --advisory --porcelain > /tmp/live.txt || {
+            echo "gate exited non-zero before producing a list; its reason is above" >&2
+            echo "### Recalled counts (advisory): GATE DID NOT PRODUCE A LIST" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+            echo "This is not a clean report and not a finding. The gate's reason is in the step log." >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+            echo "Most likely a target named in ADVISORY_TARGETS no longer exists." >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+            exit 2
+          }
           grep -v '^#' "$base" | tr -d '\r' | sort > /tmp/base.txt
           tr -d '\r' < /tmp/live.txt | sort > /tmp/now.txt
           comm -13 /tmp/base.txt /tmp/now.txt > /tmp/new.txt

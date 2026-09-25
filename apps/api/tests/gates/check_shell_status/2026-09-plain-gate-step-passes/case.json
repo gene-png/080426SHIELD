@@ -1,0 +1,10 @@
+{
+ "incident": "The ordinary shape: a gate alone in a step. Its status is the step's status.",
+ "expect": 0,
+ "adversarial": false,
+ "stdout_contains": "none of R1-R4 found",
+ "argv": [
+  "--root",
+  "{dir}/repo"
+ ]
+}

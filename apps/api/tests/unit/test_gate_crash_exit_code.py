@@ -95,6 +95,10 @@ GATES = [
     ("check_ci_selection", "sys.argv"),
     ("check_e2e_env_gates", "sys.argv"),
     ("check_e2e_spec_listing", "sys.argv"),
+    # #213's shell-status gate. Added WITH its entry, because the two
+    # enumerations diverging is what `test_universe_equals_the_other_gate_
+    # enumeration` catches -- and it did, on #545.
+    ("check_shell_status", "sys.argv"),
 ]
 
 MARKER = 'if __name__ == "__main__":'

@@ -1,0 +1,8 @@
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          python -m scripts.check_x && echo gate-ok
+          git push

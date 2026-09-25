@@ -1,0 +1,8 @@
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          pytest -m unit || exit 0
+          git push

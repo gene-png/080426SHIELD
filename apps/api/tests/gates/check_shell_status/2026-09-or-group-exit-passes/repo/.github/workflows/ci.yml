@@ -1,0 +1,8 @@
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          pytest -m unit || { echo 'suite failed'; exit 1; }
+          echo done

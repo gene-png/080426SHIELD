@@ -1,0 +1,6 @@
+repos:
+  - repo: local
+    hooks:
+      - id: api-unit-tests
+        entry: bash -c 'docker compose exec -T api pytest -m unit 2>/dev/null || echo "skipped (api container not running)"'
+        language: system

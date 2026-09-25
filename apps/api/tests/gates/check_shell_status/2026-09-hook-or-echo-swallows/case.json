@@ -1,0 +1,10 @@
+{
+ "incident": "#143: the pre-push hook ran `pytest ... || echo skipped`, so a failing suite printed 'skipped (api container not running)' and pushed. The gate must see through `bash -c` and `docker compose exec` to find it.",
+ "expect": 1,
+ "adversarial": false,
+ "stdout_contains": "R2 swallow",
+ "argv": [
+  "--root",
+  "{dir}/repo"
+ ]
+}

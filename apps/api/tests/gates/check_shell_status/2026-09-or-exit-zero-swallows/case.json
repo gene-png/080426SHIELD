@@ -1,0 +1,10 @@
+{
+ "incident": "ADVERSARIAL. #143 in another spelling: `|| exit 0` turns a red suite into a clean exit. The round-1 rescue accepted any `exit` and so reopened #143; only a status-keeping exit is a rescue.",
+ "expect": 1,
+ "adversarial": true,
+ "stdout_contains": "R2 swallow",
+ "argv": [
+  "--root",
+  "{dir}/repo"
+ ]
+}

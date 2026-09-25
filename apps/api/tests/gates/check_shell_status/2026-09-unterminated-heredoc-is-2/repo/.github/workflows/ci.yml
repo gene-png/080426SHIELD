@@ -1,0 +1,9 @@
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          cat <<EOF
+          text
+          pytest || echo skipped

@@ -1,0 +1,10 @@
+{
+ "incident": "ADVERSARIAL. #143 with its usual redirect. The first version read the `&` of `2>&1` as a background operator and split the statement, so `|| echo` was never seen after the gate.",
+ "expect": 1,
+ "adversarial": true,
+ "stdout_contains": "R2 swallow",
+ "argv": [
+  "--root",
+  "{dir}/repo"
+ ]
+}

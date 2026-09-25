@@ -1,0 +1,10 @@
+{
+ "incident": "ADVERSARIAL. #213 instance 1, 2026-09-24: a gate at the head of an `&&` list followed by more lines. `&&` looks like it guards the push, but bash exempts the failing gate from `set -e`, so the next line runs. This happened twice in one session.",
+ "expect": 1,
+ "adversarial": true,
+ "stdout_contains": "R3 mid-list",
+ "argv": [
+  "--root",
+  "{dir}/repo"
+ ]
+}
