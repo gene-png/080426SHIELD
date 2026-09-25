@@ -44,7 +44,7 @@ objects, and the report is no longer a step of the merge-rule job.
   - the `_HSPACE` bullet shrinks to its rule plus a D-058 pointer, which pays
     for the additions under the size gate.
 
-## The measurement, against both recorded windows
+## The measurement, against both recorded windows (SUPERSEDED: under the shipped gate the windows are 4/11 and 3/12; see the round-2 section below)
 
 The windows are the 15 most recent PR merges at each date. For 08-26 that is
 at `fdfde7d^1`, the commit before D-059 landed; for 09-21 it is at `897eeae`,
@@ -84,7 +84,8 @@ It found ten things, and all were real. What changed:
 - **`--no-renames`**, so a moved file shows its old, listed path.
 - **The workflow-derived set** (every `.py` / `.sh` a `run:` names) is judged
   too. It adds `scripts/red-on-revert.sh` and two others the list does not
-  name. Compose-invoked scripts are still not derived, and the output says so.
+  name. (Round 1: compose-invoked scripts were not yet derived. Round 2 derives
+  them.)
 - **YAML is compared as a node tree** and **JSON with numbers as text**.
   Python equality let `on` become `yes`, `1` become `1.0`, and `1` become
   `true`.
@@ -96,7 +97,7 @@ It found ten things, and all were real. What changed:
   list change, gives **4/11 and 3/12**: `b516891` added compose to the list.
   The first version said 4/11 for both (corrected after re-review).
 
-Eight new red-on-revert checks, one per fix, each went red on its named test.
+Round 1: eight red-on-revert checks, one per fix, each went red on its named test.
 A first harness misread them as green: it grepped for a summary line this
 pytest config does not print. Every run exited 1 and named its test FAILED.
 
@@ -112,8 +113,8 @@ pytest config does not print. Every run exited 1 and named its test FAILED.
 
 - **The base's copy of the gate judges the PR in CI**, never the PR's own
   copy, which ran on the merge ref and could certify itself. With no copy at
-  the base, the PR trips. A test rigs a head copy to answer "not tripped", and
-  the base copy still trips it.
+  the base, the PR trips. (The round-2 test named for this could not fail:
+  it ran the tree's own gate and only compared the base copy. See round 3.)
 - **Compose is derived** by mapping command, entrypoint and healthcheck paths
   through the bind mounts, so `sh /app/web-install-if-stale.sh` is
   `scripts/web-install-if-stale.sh`. Compose's `!reset` tag reads as data. A
@@ -130,3 +131,26 @@ pytest config does not print. Every run exited 1 and named its test FAILED.
 - Filed as #572: the residuals no other check covers, the whitespace blind spot
   in `shell_changed`, and the merge rule's own conditions, which the list does
   not protect.
+
+## After the re-review of `5a25a2a` (round 3)
+
+- **What the base copy does NOT protect, now said plainly** in the workflow
+  comment, the gate's docstring, D-095 and the printed report. The workflow is
+  the PR's own (`on: pull_request`), so a PR editing that step or this gate is
+  not protected by the report. Only branch protection can close that, and it
+  is the owner's (#572).
+- **The base-copy test now EXECUTES both copies** as subprocesses. The PR's
+  rigged copy (`main` returns 0) certifies itself; the base's copy trips the
+  same PR. Red on revert: a gate that skipped its own file turns it red.
+- **Config is derived by name shape** at the top of the repo, apps/web and
+  apps/api: package.json, pnpm-workspace.yaml, conftest.py, tsconfig*.json,
+  *.config.*, *.setup.*, *.toml/.ini/.cfg, .prettier*, .eslintrc*. Deeper
+  config is a stated residual.
+- **Compose mounts are merged across files**, a relative long-syntax source
+  resolves, and a command path under a mount that needs interpolation is exit
+  2. The live `${GCLOUD_CONFIG_DIR...}` mount is irrelevant, because nothing
+  runs from under it, so it does not make the gate refuse every PR.
+- **The CI step names each cause**: an unresolvable base ref is exit 2, a base
+  with no gate trips, and any other `git show` failure is exit 2.
+- The CLAUDE.md marker says the last column was read from the diffs.
+- Red on revert: six mutations, each red on its named test.

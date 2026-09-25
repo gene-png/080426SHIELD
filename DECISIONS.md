@@ -5758,9 +5758,17 @@ attesting it. Its exit 2 reads as tripped.
   `pyproject.toml`). On 2026-09-24 it added twelve files the list does not
   name, `scripts/red-on-revert.sh` and `scripts/web-install-if-stale.sh`
   among them.
-- **The base's copy judges.** CI runs `check_condition5.py` as it is at the
-  merge base, never the PR's own copy, so a PR cannot rewrite the gate that
-  judges it. With no copy at the base, the PR trips.
+- **The base's copy judges**, so a PR cannot certify itself by editing
+  `check_condition5.py`: CI runs the file as it is at the merge base, and a
+  base with no copy trips. **It does NOT protect against a PR that edits the
+  workflow step**, which is the PR's own (`on: pull_request`). No in-repo
+  change can close that; only branch protection can, and that is the owner's
+  (#572). Such a PR trips condition 5 through `.github/workflows/**` only if a
+  human reads the diff.
+- **Config by name shape** at the top of the repo, apps/web and apps/api is
+  derived, so a first-draft list cannot miss `vitest.setup.ts` or a root
+  `conftest.py`. Compose mounts are merged across files, and a command path
+  under a mount that needs interpolation is exit 2.
 - **Residual, covered by no other check:** a script reached from a sourced
   file or another script, a path spelled through a `$VAR`, and lockfile
   changes. CLAUDE.md's derive-the-set grep reads workflows only, which this

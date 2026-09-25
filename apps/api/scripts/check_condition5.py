@@ -23,18 +23,25 @@ THE PATHS IT JUDGES. Two sources, and in `--range` mode (the CI form) both:
     (dotted `-m` modules resolved, `working-directory` applied, `/app/...` and
     bare container paths tried under `apps/api/`); every one a compose
     `command` / `entrypoint` / healthcheck names, mapped through the service's
-    bind mounts (`sh /app/web-install-if-stale.sh` is
-    `scripts/web-install-if-stale.sh`); and the GATE CONFIGURATION the tools
-    those workflows run read -- `package.json`, `apps/web/package.json`, the
-    prettier, eslint, vitest and tsconfig files when a workflow runs
-    pnpm/npm/npx/node, and `pyproject.toml` / pytest config when one runs
-    pytest/ruff/black/bandit.
+    bind mounts merged across compose files (`sh /app/web-install-if-stale.sh`
+    is `scripts/web-install-if-stale.sh`; a path under a mount whose source
+    needs interpolation is exit 2); and GATE CONFIGURATION by name shape at the
+    top of the repo, apps/web and apps/api (package.json, pnpm-workspace.yaml,
+    conftest.py, tsconfig*.json, *.config.*, *.setup.*, *.toml/.ini/.cfg,
+    .prettier*, .eslintrc*).
+
+WHAT THIS CANNOT PROTECT, and no in-repo change can: CI runs the merge base's
+copy of this file, but the WORKFLOW that runs it is the PR's own
+(`on: pull_request`), so a PR that edits that step, or this file, can make the
+report say anything. Such a PR trips condition 5 through
+`.github/workflows/**` and `check_*.py` only if a human reads the diff. Only
+branch protection can close this; it is the owner's (#572).
 
 RESIDUAL, stated because the verdict is only as wide as its sources and NO
 other check covers it -- CLAUDE.md's derive-the-set grep reads workflows
 only, which this already derives: a script reached from a sourced file or
-another script; a path spelled through a `$VAR`; and dependency changes
-(lockfiles) that change a tool's version. In `--old-root` mode nothing is
+another script; a path spelled through a `$VAR`; config deeper than the three
+top levels; and dependency changes (lockfiles) that change a tool's version. In `--old-root` mode nothing is
 derived, and the output says so.
 
 WHAT COUNTS AS AN EXECUTABLE CHANGE, per file type. Every rule leans toward
@@ -192,15 +199,28 @@ def is_listed(path: str, patterns: list[str]) -> bool:
 # --- the workflow-derived set --------------------------------------------------------
 
 
-_NODE_TOOLS = re.compile(r"\b(pnpm|npm|npx|node)\b")
-_PY_TOOLS = re.compile(r"\b(pytest|ruff|black|bandit|pip-audit)\b")
-_NODE_CONFIG = re.compile(
-    r"^(package\.json|apps/web/package\.json|\.prettierrc[^/]*|\.prettierignore"
-    r"|apps/web/(eslint|vitest)\.config\.[^/]+|apps/web/tsconfig[^/]*\.json)$"
+# GATE CONFIGURATION, by name shape, at the three levels a tool reads it from:
+# the repo root, apps/web and apps/api. Trip-when-in-doubt rather than a list
+# of the files someone thought of -- the first list missed vitest.setup.ts,
+# apps/api/conftest.py (a collection hook there can deselect every test),
+# ruff.toml, next.config.mjs and pnpm-workspace.yaml. Deeper config is a
+# stated residual.
+_CONFIG_DIRS = ("", "apps/web", "apps/api")
+_CONFIG_NAME = re.compile(
+    r"^(package\.json|pnpm-workspace\.yaml|conftest\.py|tsconfig[^/]*\.json"
+    r"|[^/]*\.config\.[^/]+|[^/]*\.setup\.[^/]+|[^/]*\.(toml|ini|cfg)"
+    r"|\.prettier[^/]*|\.eslintrc[^/]*)$"
 )
-_PY_CONFIG = re.compile(
-    r"^(pyproject\.toml|apps/api/pyproject\.toml|apps/api/pytest\.ini|apps/api/setup\.cfg)$"
-)
+
+
+def gate_config(tracked: set[str]) -> set[str]:
+    """Tracked config files at the top of the repo, apps/web and apps/api."""
+    out = set()
+    for f in tracked:
+        head, _, name = f.rpartition("/")
+        if head in _CONFIG_DIRS and _CONFIG_NAME.match(name):
+            out.add(f)
+    return out
 
 
 def _script_candidates(token: str, wd: str, *, module: bool = False) -> list[str]:
@@ -231,7 +251,6 @@ def scripts_from_workflows(workflows: dict[str, str], tracked: set[str]) -> set[
     except ImportError as exc:
         raise CouldNotLook("PyYAML is not installed, so the workflows cannot be read") from exc
     found: set[str] = set()
-    runs: list[str] = []
     for name, src in workflows.items():
         try:
             doc = yaml.safe_load(src)
@@ -246,7 +265,6 @@ def scripts_from_workflows(workflows: dict[str, str], tracked: set[str]) -> set[
                 run = step.get("run") if isinstance(step, dict) else None
                 if not isinstance(run, str):
                     continue
-                runs.append(run)
                 wd = step.get("working-directory") or job_wd
                 tokens = _TOKEN.findall(run)
                 for k, token in enumerate(tokens):
@@ -255,26 +273,46 @@ def scripts_from_workflows(workflows: dict[str, str], tracked: set[str]) -> set[
                         if cand in tracked:
                             found.add(cand)
                             break
-    text = "\n".join(runs)
-    if _NODE_TOOLS.search(text):
-        found |= {f for f in tracked if _NODE_CONFIG.match(f)}
-    if _PY_TOOLS.search(text):
-        found |= {f for f in tracked if _PY_CONFIG.match(f)}
-    return found
+    return found | gate_config(tracked)
+
+
+UNRESOLVABLE = "?"
 
 
 def _compose_mounts(service: dict) -> list[tuple[str, str]]:
-    """(container target, repo-relative host source) for each bind mount from the repo."""
+    """(container target, repo-relative host source) for each bind mount.
+
+    A named volume is not a mount from the repo and is skipped. A host path
+    outside the repo (absolute, `~`) is skipped. A source compose would have
+    to interpolate (`${VAR}`) cannot be resolved here: it is kept with source
+    UNRESOLVABLE, and a command path under its target is could-not-look,
+    never a silent skip.
+    """
     out = []
     for vol in service.get("volumes") or []:
         if isinstance(vol, str):
             parts = vol.split(":")
-            src, dst = (parts[0], parts[1]) if len(parts) >= 2 else ("", "")
+            if len(parts) < 2:
+                continue
+            # A `${VAR:-$HOME/x}` source contains colons of its own; the target
+            # is the first part that starts with "/" after the source.
+            k = next((i for i in range(1, len(parts)) if parts[i].startswith("/")), None)
+            if k is None:
+                continue
+            src, dst = ":".join(parts[:k]), parts[k]
+            is_path = src.startswith((".", "/", "~", "$"))
         elif isinstance(vol, dict) and vol.get("type") == "bind":
             src, dst = str(vol.get("source", "")), str(vol.get("target", ""))
+            is_path = True
         else:
             continue
-        if src.startswith(".") and dst.startswith("/"):
+        if not is_path or not dst.startswith("/"):
+            continue  # a named volume
+        if "$" in src:
+            out.append((dst.rstrip("/"), UNRESOLVABLE))
+        elif src.startswith(("/", "~")):
+            continue  # a host path outside the repo
+        else:
             out.append((dst.rstrip("/"), posixpath.normpath(src)))
     return sorted(out, key=lambda m: -len(m[0]))
 
@@ -298,36 +336,47 @@ def scripts_from_compose(composes: dict[str, str], tracked: set[str]) -> set[str
         return loader.construct_scalar(node)
 
     ComposeLoader.add_multi_constructor("!", _plain)
-    found: set[str] = set()
+    # Mounts are merged per SERVICE across every compose file: an override
+    # file's command runs with the mounts the base file declares.
+    services: dict[str, dict] = {}
     for name, src in composes.items():
         try:
-            loader = ComposeLoader  # a SafeLoader subclass: only plain-data tags are added
-            loaded = yaml.load(src, Loader=loader)  # noqa: S506  # nosec B506
-            doc = loaded or {}
+            loaded = yaml.load(src, Loader=ComposeLoader)  # noqa: S506  # nosec B506
         except yaml.YAMLError as exc:
             raise CouldNotLook(f"{name} does not parse as YAML: {exc}") from exc
-        for service in (doc.get("services") or {}).values():
-            if not isinstance(service, dict):
-                continue
-            mounts = _compose_mounts(service)
-            words = []
-            for key in ("command", "entrypoint"):
-                val = service.get(key)
-                words += val if isinstance(val, list) else [val] if isinstance(val, str) else []
-            test = (service.get("healthcheck") or {}).get("test")
-            words += test if isinstance(test, list) else [test] if isinstance(test, str) else []
-            for token in _TOKEN.findall(" ".join(str(w) for w in words)):
-                for dst, host in mounts:
-                    if token == dst or token.startswith(dst + "/"):
-                        cand = posixpath.normpath(host + token[len(dst) :])
-                        if cand in tracked and cand.endswith((".py", ".sh")):
-                            found.add(cand)
+        for sname, service in ((loaded or {}).get("services") or {}).items():
+            if isinstance(service, dict):
+                entry = services.setdefault(sname, {"mounts": [], "words": []})
+                entry["mounts"] += _compose_mounts(service)
+                for key in ("command", "entrypoint"):
+                    val = service.get(key)
+                    entry["words"] += (
+                        val if isinstance(val, list) else [val] if isinstance(val, str) else []
+                    )
+                test = (service.get("healthcheck") or {}).get("test")
+                entry["words"] += (
+                    test if isinstance(test, list) else [test] if isinstance(test, str) else []
+                )
+    found: set[str] = set()
+    for sname, entry in services.items():
+        mounts = sorted(set(entry["mounts"]), key=lambda m: -len(m[0]))
+        for token in _TOKEN.findall(" ".join(str(w) for w in entry["words"])):
+            for dst, host in mounts:
+                if token == dst or token.startswith(dst + "/"):
+                    if host == UNRESOLVABLE:
+                        raise CouldNotLook(
+                            f"compose service {sname!r} runs {token!r} from a mount whose "
+                            f"source ({dst}) needs interpolation, so its repo path is unknown"
+                        )
+                    cand = posixpath.normpath(host + token[len(dst) :])
+                    if cand in tracked and cand.endswith((".py", ".sh")):
+                        found.add(cand)
+                    break
+            else:
+                for cand in _script_candidates(token, ""):
+                    if cand in tracked:
+                        found.add(cand)
                         break
-                else:
-                    for cand in _script_candidates(token, ""):
-                        if cand in tracked:
-                            found.add(cand)
-                            break
     return found
 
 
@@ -696,7 +745,9 @@ def main(argv: list[str]) -> int:
     print(f"check-condition5: condition 5 not tripped -- {len(names)} changed file(s); {how}.")
     print(
         "  Not derived, and covered by NO other check: scripts reached from sourced files "
-        "or other scripts, paths spelled through a $VAR, and lockfile changes."
+        "or other scripts, paths spelled through a $VAR, config below the repo root, "
+        "apps/web and apps/api, and lockfile changes. And a PR editing this gate or "
+        "the workflow step that runs it is NOT protected by this report (#572)."
     )
     return 0
 

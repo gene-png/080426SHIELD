@@ -310,20 +310,34 @@ jobs:
           python-version: "3.12"
 
       - name: Condition 5, computed
-        # THE BASE'S COPY of the gate judges the PR, never the PR's own copy:
-        # this runs on the PR's merge ref, so `scripts/check_condition5.py` would
-        # let a PR flip one comparison and certify itself. With no copy at the
-        # base (the PR introducing the gate), condition 5 is tripped.
+        # THE BASE'S COPY of the gate judges the PR, so a PR cannot certify
+        # itself by editing check_condition5.py. It does NOT stop a PR editing
+        # THIS STEP: the workflow is the PR's own (`on: pull_request`), and no
+        # in-repo change can close that -- only branch protection can (#572).
+        # Such a PR trips condition 5 through `.github/workflows/**` only when a
+        # human reads the diff.
+        #
+        # Each failure names its own cause: an unresolvable base ref is exit 2
+        # (could not look); a base with no copy of the gate is the PR that
+        # introduces it, and trips; any other `git show` failure is exit 2.
         # No pipe into `tee`: a `run:` step here is `bash -e` without pipefail,
         # so a pipe would report tee's status and lose the 2 (#213).
         working-directory: apps/api
         run: |
           python -m pip install --quiet "pyyaml>=6.0"
+          base="origin/${{ github.base_ref }}"
+          gate="apps/api/scripts/check_condition5.py"
           rc=0
-          if git show "origin/${{ github.base_ref }}:apps/api/scripts/check_condition5.py" > /tmp/check_condition5_base.py; then
-            python /tmp/check_condition5_base.py --report --repo .. --range "origin/${{ github.base_ref }}..HEAD" > /tmp/condition5.txt || rc=$?
+          if ! git rev-parse --verify --quiet "$base" > /dev/null; then
+            echo "check-condition5: could not look -- the base ref $base does not resolve." > /tmp/condition5.txt
+            rc=2
+          elif ! git cat-file -e "$base:$gate" 2> /dev/null; then
+            echo "check-condition5: the base has no $gate, so this PR introduces the gate. Condition 5 TRIPPED: it comes back to the human." > /tmp/condition5.txt
+          elif git show "$base:$gate" > /tmp/check_condition5_base.py; then
+            python /tmp/check_condition5_base.py --report --repo .. --range "$base..HEAD" > /tmp/condition5.txt || rc=$?
           else
-            echo "check-condition5: the base has no check_condition5.py, so this PR introduces the gate. Condition 5 TRIPPED: it comes back to the human." > /tmp/condition5.txt
+            echo "check-condition5: could not look -- git show $base:$gate failed." > /tmp/condition5.txt
+            rc=2
           fi
           cat /tmp/condition5.txt
           cat /tmp/condition5.txt >> "$GITHUB_STEP_SUMMARY"

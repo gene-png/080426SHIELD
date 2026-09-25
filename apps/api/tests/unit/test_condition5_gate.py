@@ -424,13 +424,22 @@ def test_compose_scripts_are_mapped_through_bind_mounts() -> None:
     }
 
 
-def test_gate_configuration_is_derived_when_its_tool_runs() -> None:
-    wf = "jobs:\n  j:\n    steps:\n      - run: pnpm format:check\n      - run: ruff check .\n"
-    tracked = {"package.json", "apps/web/package.json", "pyproject.toml", "README.md"}
-    assert gate.scripts_from_workflows({"ci.yml": wf}, tracked) == {
+def test_gate_configuration_is_derived_by_shape_at_the_top_levels() -> None:
+    tracked = {
         "package.json",
-        "apps/web/package.json",
+        "pnpm-workspace.yaml",
         "pyproject.toml",
+        "apps/api/conftest.py",
+        "apps/api/ruff.toml",
+        "apps/web/vitest.setup.ts",
+        "apps/web/next.config.mjs",
+        "apps/web/src/lib/x.config.ts",  # deeper: a stated residual, not derived
+        "README.md",
+    }
+    wf = "jobs:\n  j:\n    steps:\n      - run: echo hi\n"
+    assert gate.scripts_from_workflows({"ci.yml": wf}, tracked) == tracked - {
+        "apps/web/src/lib/x.config.ts",
+        "README.md",
     }
 
 
@@ -446,6 +455,9 @@ def test_separator_class_marker_is_a_directive() -> None:
 
 
 def test_ci_runs_the_base_copy_of_the_gate_not_the_prs() -> None:
+    # A STRUCTURE check of this repo's workflow, and only that: the PR's own
+    # workflow runs, so a PR can edit this step and this test together. What it
+    # guards is an accidental revert, not a hostile one (#572).
     import yaml
 
     if _WORKFLOWS is None:
@@ -453,30 +465,74 @@ def test_ci_runs_the_base_copy_of_the_gate_not_the_prs() -> None:
     doc = yaml.safe_load((_WORKFLOWS / "audit-gate.yml").read_text(encoding="utf-8"))
     runs = [s.get("run", "") for s in doc["jobs"]["condition-5-report"]["steps"]]
     step = next(r for r in runs if "check_condition5" in r)
-    assert 'git show "origin/${{ github.base_ref }}:apps/api/scripts/check_condition5.py"' in step
+    assert 'git rev-parse --verify --quiet "$base"' in step
+    assert 'git cat-file -e "$base:$gate"' in step
     assert "python /tmp/check_condition5_base.py" in step
     assert (
         "python scripts/check_condition5.py" not in step
     ), "the PR's own copy must not judge the PR"
 
 
-def test_the_base_copy_trips_a_pr_whose_own_copy_says_clear(tmp_path, capsys) -> None:
-    real = (pathlib.Path(gate.__file__)).read_text(encoding="utf-8")
+def test_the_base_copy_trips_a_pr_whose_own_copy_says_clear(tmp_path) -> None:
+    # EXECUTES both copies as CI would: the PR's rigged copy certifies itself,
+    # and the base's copy -- the one CI runs -- trips the same PR.
+    import sys
+
+    real = pathlib.Path(gate.__file__).read_text(encoding="utf-8")
+    anchor = "def main(argv: list[str]) -> int:\n"
+    assert real.count(anchor) == 1
+    rigged = real.replace(anchor, anchor + "    return 0  # rigged: always 'not tripped'\n")
     listed = _LIST.replace("p11/**", "apps/api/scripts/check_*.py")
     r = _repo(
         tmp_path,
         _base({"CLAUDE.md": _md(listed), "apps/api/scripts/check_condition5.py": real}),
     )
-    rigged = real.replace(
-        "    return ast.dump(_strip_docstrings(t_old)) != ast.dump(_strip_docstrings(t_new))",
-        "    return False",
-    )
-    assert rigged != real
     _commit(r, {"apps/api/scripts/check_condition5.py": rigged})
-    cmd = ["git", "-C", str(r), "show", "main:apps/api/scripts/check_condition5.py"]
-    proc = subprocess.run(cmd, check=True, capture_output=True, text=True)  # noqa: S603,S607
-    base_copy = proc.stdout
-    assert base_copy == real
-    # The base's copy -- the one CI runs -- judges the rigged change executable.
-    rc, out = _run(r, capsys)
-    assert rc == 1 and "apps/api/scripts/check_condition5.py" in out, out
+
+    def show(ref: str) -> str:
+        cmd = ["git", "-C", str(r), "show", f"{ref}:apps/api/scripts/check_condition5.py"]
+        return subprocess.run(cmd, check=True, capture_output=True, text=True).stdout  # noqa: S603
+
+    def run_copy(src: str) -> tuple[int, str]:
+        f = tmp_path / "copy_under_test.py"
+        f.write_text(src, encoding="utf-8")
+        cmd = [sys.executable, str(f), "--range", "main..pr", "--repo", str(r)]
+        proc = subprocess.run(cmd, capture_output=True, text=True)  # noqa: S603
+        return proc.returncode, proc.stdout
+
+    head_src, base_src = show("pr"), show("main")
+    assert head_src == rigged and base_src == real
+    head_rc, head_out = run_copy(head_src)
+    assert head_rc == 0, head_out  # the PR's own copy would certify itself
+    base_rc, base_out = run_copy(base_src)
+    assert base_rc == 1, base_out
+    assert (
+        "executable change in a condition-5 path: apps/api/scripts/check_condition5.py" in base_out
+    )
+
+
+def test_compose_mounts_merge_across_files_and_refuse_what_they_cannot_resolve() -> None:
+    base = (
+        "services:\n"
+        "  web:\n"
+        "    volumes:\n"
+        "      - ./scripts/x.sh:/app/x.sh:ro\n"
+        "      - type: bind\n"
+        "        source: tools\n"
+        "        target: /tools\n"
+        "      - ${HOME_DIR:-$HOME/.cfg}:/cfg:ro\n"
+    )
+    override = "services:\n  web:\n    command: sh /app/x.sh && sh /tools/y.sh\n"
+    tracked = {"scripts/x.sh", "tools/y.sh"}
+    # The override's command runs with the base file's mounts, and a relative
+    # long-syntax source resolves.
+    assert (
+        gate.scripts_from_compose(
+            {"docker-compose.yml": base, "docker-compose.demo.yml": override}, tracked
+        )
+        == tracked
+    )
+    # A command path under a mount that needs interpolation is could-not-look.
+    uses_cfg = "services:\n  web:\n    command: sh /cfg/z.sh\n"
+    with pytest.raises(gate.CouldNotLook, match="interpolation"):
+        gate.scripts_from_compose({"docker-compose.yml": base, "o.yml": uses_cfg}, tracked)
