@@ -1,4 +1,4 @@
-# 2026-09-25: a Tailwind class naming an undefined design token fails a test (#151)
+# 2026-09-25: a Tailwind colour class naming a preset namespace but an undefined token fails a test (#151)
 
 Branch `track1/tailwind-token-gate`, branch-start base `2028f38`.
 
@@ -6,8 +6,18 @@ Branch `track1/tailwind-token-gate`, branch-start base `2028f38`.
 
 A utility naming a colour token the design-system preset does not define
 compiles to no CSS at all, and typecheck, ESLint and every test passed over
-it. On `main`, 18 occurrences across 9 files rendered nothing: hover
-backgrounds, a panel background, border colours, and a focus ring.
+it. On `main` there were 18 such occurrences across 9 files. What each looked
+like before the fix, per class:
+
+- `bg-surface-muted` (3) and `bg-surface-default` (1): no background, so the
+  panel or code block was transparent over its parent.
+- `hover:bg-surface-muted` (6): no hover background on six secondary buttons.
+- `border-border-default` (7): no utility, BUT `globals.css`'s `*` rule
+  already sets `border-color: var(--border-default)`, so these borders looked
+  as intended, and still do.
+- `ring-brand-200` (1): the ring itself existed (`ring-2`), in its default
+  colour; the ProgressStages current-stage halo is RECOLOURED to brand-300,
+  not made to appear.
 
 ## What changed
 
@@ -32,8 +42,9 @@ backgrounds, a panel background, border colours, and a focus ring.
   - `bg-surface-default` → `bg-surface-card`;
   - `ring-brand-200` → `ring-brand-300`, the nearest defined step.
 
-These now render where they rendered nothing, so client-facing screens change
-(merge-rule condition 6).
+So what changes on screen: four backgrounds and six hover states appear, and
+one halo is recoloured; the seven border sites look the same. That is
+client-facing (merge-rule condition 6).
 
 ## Proof
 
@@ -50,3 +61,28 @@ Only colour utilities naming a preset namespace are checked. Stock palettes,
 spacing, typography and arbitrary values are not. Variants and modifiers are
 stripped before compiling, so it proves the utility exists, not every variant
 of it.
+
+## After the first review (`f765535`)
+
+- **CI was red, and I had dismissed the signal.** The static import of the
+  preset pulled `tailwind-preset.ts` into apps/web's tsc program, and its
+  `import type ... from "tailwindcss"` does not resolve from
+  `packages/design-system`, which declares no tailwindcss dependency. CI's
+  typecheck and `next build` both failed. My local run showed the same error
+  and I set it aside as the #175 mount artifact without checking. The preset
+  is now imported at runtime through a variable, which vitest resolves and
+  tsc does not follow. Proved in a CLEAN container (`node:22-bookworm`, a
+  copy of the tree, `pnpm install --frozen-lockfile`): typecheck exit 0,
+  `pnpm -F web build` exit 0 with CI's env, the test 4 passed. With the static
+  import put back, the same clean typecheck exits 2 with CI's exact TS2307.
+- **LIMITS narrowed to what is caught**, by the coordinator's call: the
+  hand-written utility list (now with v4's `drop-shadow-`, `inset-ring-`,
+  `inset-shadow-`, `text-shadow-`), a misspelled namespace passing, the
+  three runtime-assembly shapes flagged and no others, and why `*.test.ts(x)`
+  is excluded. The residuals are filed as #608.
+- **Runtime assembly** is flagged in three shapes now (namespace then `${`,
+  namespace then a quote and `+`, `}-` then a namespace), each tested.
+- **The temp directory** is removed in a `finally`.
+- **The rendering description** is per class (above): the border sites look
+  unchanged, and the ring is a recolour.
+

@@ -4,9 +4,9 @@
  * to a rule (#151).
  *
  * A `className` is a string, and a utility naming a token the preset does not
- * define compiles to no CSS at all: `hover:bg-surface-muted` rendered nothing,
- * `ring-brand-200` drew no focus ring, `border-border-default` no border
- * colour. Typecheck, ESLint and every other test passed over them.
+ * define compiles to no CSS at all: `hover:bg-surface-muted` emitted nothing,
+ * and `ring-brand-200` emitted no ring colour. Typecheck, ESLint and every
+ * other test passed over them.
  *
  * The verdict is TAILWIND'S, not a reading of the preset: every candidate is
  * handed to the real compiler (`@tailwindcss/postcss` with this app's own
@@ -15,12 +15,18 @@
  * namespace added there is covered without anyone editing this file.
  *
  * LIMITS, stated so a green run is not read as more than it is:
- *  - Only colour utilities (`bg-`, `text-`, `border-`, `ring-`, ...) followed
- *    by a PRESET namespace (`surface-`, `ink-`, ...) are checked. Stock
- *    palettes, spacing, typography and arbitrary values are not.
- *  - Candidates come from string literals in the files Tailwind scans. A class
- *    assembled at runtime (`bg-status-${tone}-fg`) cannot be checked, so such
- *    a literal FAILS this test as "could not look" rather than passing.
+ *  - A candidate is a utility from COLOUR_UTILITIES below, a hand-written list,
+ *    followed by a PRESET namespace. A utility missing from that list is not a
+ *    candidate. So is a MISSPELLED namespace: `bg-surfce-card` names no preset
+ *    namespace, is never compiled, and passes. Stock palettes, spacing,
+ *    typography and arbitrary values are not checked (#608).
+ *  - Runtime assembly is flagged only in three shapes: a preset namespace
+ *    followed by `${` (`bg-status-${tone}-fg`, `bg-status-warning-${x}`), by a
+ *    closing quote and `+` (`"bg-status-" + tone`), or preceded by `}-`
+ *    (`${u}-surface-card`). Any other construction is unseen (#608).
+ *  - `*.test.ts` / `*.test.tsx` files are excluded: tests quote class names as
+ *    fixtures and needles, including the undefined ones this file names as
+ *    negative controls, and Tailwind does not ship them to a browser.
  *  - Variants and modifiers are stripped before compiling (`hover:`, `/50`),
  *    so this proves the utility exists, not that every variant of it does.
  */
@@ -28,6 +34,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -39,7 +46,16 @@ import tailwind from "@tailwindcss/postcss";
 import postcss from "postcss";
 import { describe, expect, it } from "vitest";
 
-import preset from "@shield/design-system/tailwind-preset";
+// Imported at RUNTIME through a variable, not with a static `import`: a static
+// import pulls `tailwind-preset.ts` into apps/web's tsc program, and that file's
+// `import type ... from "tailwindcss"` does not resolve from
+// `packages/design-system`, which declares no tailwindcss dependency -- CI's
+// web typecheck and `next build` both failed on it (review of f765535).
+// Vitest's module runner resolves and transforms it here exactly as before.
+const PRESET = "@shield/design-system/tailwind-preset";
+const { default: preset } = (await import(/* @vite-ignore */ PRESET)) as {
+  default: { theme: { extend: { colors: Record<string, unknown> } } };
+};
 
 const WEB = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 const CONFIG = join(WEB, "tailwind.config.ts");
@@ -75,7 +91,12 @@ const COLOUR_UTILITIES = [
   "via",
   "bg",
   "to",
-];
+  // Tailwind v4 colour utilities (review of f765535).
+  "drop-shadow",
+  "inset-ring",
+  "inset-shadow",
+  "text-shadow",
+].sort((a, b) => b.length - a.length); // longest first, so `text-shadow` wins over `text`
 const NAMESPACES = Object.keys(preset.theme.extend.colors);
 
 const alt = (xs: string[]) => xs.map((x) => x.replace(/[-]/g, "\\-")).join("|");
@@ -85,9 +106,15 @@ const CANDIDATE = new RegExp(
   `(?<![\\w-])(?:[\\w\\[\\]&.-]+:)*!?((?:${alt(COLOUR_UTILITIES)})-(?:${alt(NAMESPACES)})(?:-[\\w-]+)?)(?:/[\\w.\\[\\]]+)?(?![\\w-])`,
   "g",
 );
-// A class assembled at runtime from a preset namespace.
+// A class assembled at runtime from a preset namespace, in the three shapes
+// LIMITS names: namespace then `${`, namespace then a closing quote and `+`,
+// or `}-` then a namespace.
 const DYNAMIC = new RegExp(
-  `(?:${alt(COLOUR_UTILITIES)})-(?:${alt(NAMESPACES)})-?\\$\\{`,
+  [
+    `(?<![\\w-])(?:${alt(COLOUR_UTILITIES)})-(?:${alt(NAMESPACES)})(?:-[\\w-]*)?\\$\\{`,
+    `(?<![\\w-])(?:${alt(COLOUR_UTILITIES)})-(?:${alt(NAMESPACES)})-[\\w-]*["'\`]\\s*\\+`,
+    `\\}-(?:${alt(NAMESPACES)})-`,
+  ].join("|"),
   "g",
 );
 
@@ -124,26 +151,31 @@ function scan(): { uses: Map<string, string[]>; dynamic: string[] } {
 /** Tailwind's own answer: which of these candidates emit a rule? */
 async function emitted(candidates: string[]): Promise<Set<string>> {
   const dir = mkdtempSync(join(tmpdir(), "tw-tokens-"));
-  const src = join(dir, "candidates.html");
-  writeFileSync(src, `<div class="${candidates.join(" ")}"></div>\n`);
-  const css = [
-    `@import "tailwindcss/theme.css" layer(theme);`,
-    `@import "tailwindcss/utilities.css" layer(utilities) source(none);`,
-    `@config "${CONFIG.replace(/\\/g, "/")}";`,
-    `@source "${src.replace(/\\/g, "/")}";`,
-  ].join("\n");
-  const result = await postcss([tailwind({ base: dir })]).process(css, {
-    from: join(dir, "in.css"),
-  });
-  // A class counts as emitted if its selector appears anywhere in the output,
-  // not only as `.x {`: `divide-*` compiles to a child selector
-  // (`.divide-x > :not(:last-child)`). Candidates carry no variant or modifier,
-  // so they contain only [a-z0-9-] and need no CSS escaping.
-  const out = new Set<string>();
-  for (const c of candidates) {
-    if (new RegExp(`\\.${c}(?![\\w-])`).test(result.css)) out.add(c);
+  try {
+    const src = join(dir, "candidates.html");
+    writeFileSync(src, `<div class="${candidates.join(" ")}"></div>\n`);
+    const css = [
+      `@import "tailwindcss/theme.css" layer(theme);`,
+      `@import "tailwindcss/utilities.css" layer(utilities) source(none);`,
+      `@config "${CONFIG.replace(/\\/g, "/")}";`,
+      `@source "${src.replace(/\\/g, "/")}";`,
+    ].join("\n");
+    const result = await postcss([tailwind({ base: dir })]).process(css, {
+      from: join(dir, "in.css"),
+    });
+    // A class counts as emitted if its selector appears anywhere in the
+    // output, not only as `.x {`: `divide-*` compiles to a child selector
+    // (`.divide-x > :not(:last-child)`). Candidates carry no variant or
+    // modifier, so they contain only [a-z0-9-] and need no CSS escaping.
+    const out = new Set<string>();
+    for (const c of candidates) {
+      if (new RegExp(`\\.${c}(?![\\w-])`).test(result.css)) out.add(c);
+    }
+    return out;
+  } finally {
+    // One temp directory per call, removed whatever happened (review of f765535).
+    rmSync(dir, { recursive: true, force: true });
   }
-  return out;
 }
 
 // One real compile is several seconds in the container, past vitest's 5s default.
@@ -178,8 +210,16 @@ describe("design-system colour tokens (#151)", () => {
 
   it("no class is assembled at runtime from a preset namespace (could not look)", () => {
     // The detector itself, so an empty list is not a detector that matches nothing.
-    const assembled = "bg-status-" + "$" + "{tone}-fg";
-    expect([...assembled.matchAll(DYNAMIC)]).toHaveLength(1);
+    // Each of the three shapes LIMITS names is recognised.
+    const D = "$";
+    for (const shape of [
+      `bg-status-${D}{tone}-fg`,
+      `bg-status-warning-${D}{x}`,
+      `"bg-status-" + tone`,
+      `${D}{u}-surface-card`,
+    ]) {
+      expect([...shape.matchAll(DYNAMIC)], shape).toHaveLength(1);
+    }
     expect(dynamic).toEqual([]);
   });
 
