@@ -7,7 +7,7 @@
 
 /**
  * Stamped on the NextAuth session token when the session is over. Three
- * causes: the backend refused a refresh (`reauth_required` for the daily
+ * causes: the backend refused a refresh (`reauth_required` for the
  * forced-reauth ceiling, `refresh_reused` for a rotated-out token), OR the
  * `jwt` callback found the session's end already passed -- the ceiling or an
  * idle-lapsed refresh expiry -- and ended it WITHOUT calling the backend, so
