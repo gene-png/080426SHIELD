@@ -138,40 +138,36 @@ function ReasonField({
   const chosen = offered.find((r) => r.code === current) ?? null;
   if (offered.length === 0) return null;
   return (
-    <div className="flex flex-col gap-3">
-      {offered.length > 0 ? (
-        <label className="flex flex-col gap-1">
-          <span className="text-xs font-medium uppercase tracking-wide text-ink-tertiary">
-            Reason
-          </span>
-          <select
-            key={`${coverage?.id ?? "none"}-${status ?? "unscored"}`}
-            aria-label={`Reason for ${techniqueId}`}
-            value={current ?? ""}
-            disabled={readOnly}
-            onChange={(e) =>
-              void onPatch({ reason_code: e.currentTarget.value || null })
-            }
-            className="w-full rounded-md border border-border bg-surface-card p-2 text-sm text-ink-primary focus:outline-2 focus:outline-brand-500"
-          >
-            <option value="">No reason given</option>
-            {offered.map((r) => (
-              <option key={r.code} value={r.code}>
-                {r.code.replace(/_/g, " ")}
-              </option>
-            ))}
-          </select>
-          {chosen ? (
-            <span
-              className="text-xs text-ink-secondary"
-              data-testid="reason-definition"
-            >
-              {chosen.definition}
-            </span>
-          ) : null}
-        </label>
+    <label className="flex flex-col gap-1">
+      <span className="text-xs font-medium uppercase tracking-wide text-ink-tertiary">
+        Reason
+      </span>
+      <select
+        key={`${coverage?.id ?? "none"}-${status ?? "unscored"}`}
+        aria-label={`Reason for ${techniqueId}`}
+        value={current ?? ""}
+        disabled={readOnly}
+        onChange={(e) =>
+          void onPatch({ reason_code: e.currentTarget.value || null })
+        }
+        className="w-full rounded-md border border-border bg-surface-card p-2 text-sm text-ink-primary focus:outline-2 focus:outline-brand-500"
+      >
+        <option value="">No reason given</option>
+        {offered.map((r) => (
+          <option key={r.code} value={r.code}>
+            {r.code.replace(/_/g, " ")}
+          </option>
+        ))}
+      </select>
+      {chosen ? (
+        <span
+          className="text-xs text-ink-secondary"
+          data-testid="reason-definition"
+        >
+          {chosen.definition}
+        </span>
       ) : null}
-    </div>
+    </label>
   );
 }
 

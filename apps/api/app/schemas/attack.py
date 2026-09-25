@@ -276,8 +276,10 @@ class AttackCoveragePatch(BaseModel):
     # typed, rather than as an enum here: a code's validity depends on the status.
     reason_code: str | None = Field(default=None, max_length=48)
     # No web editor exists yet. The narrative editor (#615) must mirror this
-    # limit -- counting code points of the TRIMMED value, the measure applied
-    # to what is stored -- and whoever changes it here must change it there.
+    # limit by counting the code points of the value it SENDS: pydantic's
+    # max_length measures the raw string, untrimmed, and the route stores it
+    # as sent (only a blank one becomes NULL). Whoever changes it here must
+    # change it there.
     narrative: str | None = Field(default=None, max_length=8000)
 
 
