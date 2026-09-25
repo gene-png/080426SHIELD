@@ -139,6 +139,9 @@ def test_a_malformed_baseline_entry_is_refused(tmp_path, capsys, entry: dict) ->
 def test_the_wrong_directory_is_could_not_look_not_clean(tmp_path, capsys) -> None:
     code, out = _run(tmp_path, _baseline(tmp_path, {}), capsys)
     assert code == 2, out
+    # The BRANCH, not only the code: exit 2 is also what pytest's own failure
+    # to collect produces, so a code-only check passes with this guard deleted.
+    assert "does not exist -- wrong directory?" in out, out
 
 
 def test_an_empty_collection_is_could_not_look(tmp_path, capsys) -> None:

@@ -8,5 +8,5 @@
   "--baseline",
   "{dir}/baseline.json"
  ],
- "stdout_contains": "could not look"
+ "stdout_contains": "does not exist -- wrong directory?"
 }

@@ -97,7 +97,12 @@ the api image.
 - **pytest:** 9 tests in 2 files (#500): 8 in `test_admin_removal.py` and 1 in
   `test_self_assessment.py`.
 - **Playwright env gates:** `E2E_PERF` and `E2E_OIDC` (#483). `E2E_API_URL` is
-  exempted as configuration with a default.
+  exempted as configuration with a default. **These two exemptions END when
+  #560 lands**, because #560 moves both specs to `e2e/manual/`, and the gate
+  then reports the exemptions as stale. Whichever of #545 and #560 lands
+  second removes them. If #560 merges after #545's last CI run, `main` turns
+  red, so land #560 first and re-run #545's CI, or remove the E2E_PERF and E2E_OIDC entries in
+  whichever lands second.
 - **Playwright listing:** all 47 spec files on disk are in CI's run today.
 
 ## Limits

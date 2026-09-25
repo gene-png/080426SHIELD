@@ -8,5 +8,5 @@
   "--list-file",
   "{dir}/list.txt"
  ],
- "stdout_contains": "could not look"
+ "stdout_contains": "no `Total: N tests in M files` line"
 }
