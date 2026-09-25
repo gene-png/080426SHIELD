@@ -1278,11 +1278,7 @@ recorded with a real exit code and a real date, and was the minority outcome
   - `_redacted_form`'s docstring claiming it used "the SAME redactor the egress
     path uses" while calling one rule out of ten. The docstring even argued
     correctly that a second copy would drift, directly above the second copy.
-  - `redact.py` — "Every separator in the module is now built from [`_HSPACE`]",
-    itself written as a correction to an earlier note that HAD gone stale.
-    `_RE_CONTACT_HINT` uses bare `\s` twice, and `check_separator_classes.py`
-    cannot see it: that gate flags hand-ENUMERATED classes, not `\s`. Wrong on
-    arrival rather than stale. Tracked as **#158**.
+  - `redact.py`'s separator note, wrong on arrival rather than stale (#158).
 
   Every one was found by reading the CODE and comparing, never by reading the
   prose — which is the only method that works, because the prose is accurate.
