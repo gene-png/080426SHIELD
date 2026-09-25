@@ -45,5 +45,5 @@ Branch `track2/attack-computed-parents`, from `main` at `2028f38`.
   and one exporter test picking T1003, now use standalone techniques.
 - **Populations** (D-094): DRAFTs correct at their next write or at approve.
   APPROVED-never-released assessments are never recomputed. The shared dev DB
-  had 0 of them on 2026-09-25. Whether any deployment needs a one-time pass is
-  the owner's call.
+  had 0 of them on 2026-09-25. **The owner decided (2026-09-25): no one-time
+  recompute.**
