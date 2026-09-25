@@ -16,8 +16,9 @@ Branch `track2/attack-reason-ui`, from `main` at `2028f38`.
   definition is shown under the select.
 - **A narrative field** ("What could not be established") shows for an
   `unable_to_determine` row, or any row already carrying a narrative, and saves
-  on blur. It shows a live "N / 8000" count, with a warning at the API's limit,
-  so the browser's cap never cuts a long paste in silence. Clearing it sends
+  on blur. It shows a live "N / 8000" count. There is no browser cap: an
+  over-long narrative is kept whole, the count says how far over, and it is not
+  saved until it is shortened, so a paste is never cut. Clearing it sends
   null. The box is controlled, and resyncs from the stored value only when that
   value differs from what the box last saved. A successful save never resets
   it under the cursor; a refused save shows the stored value again.

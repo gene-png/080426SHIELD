@@ -198,9 +198,16 @@ const NARRATIVE_MAX = 8000;
  * the box shows it, so unsaved text never looks kept. Switching technique
  * always resyncs.
  *
- * The cap is VISIBLE: a live count, and a warning at the limit. The browser's
- * `maxLength` would otherwise cut a long paste in silence, and blur would save
- * the cut text.
+ * The cap is VISIBLE and never cuts. There is no `maxLength`: a paste that
+ * runs over keeps every character, the count says how far over, and blur does
+ * NOT save while it is over, so the text stays in the box for the consultant
+ * to shorten. A browser cap would drop text in silence, and the API's 422
+ * would be the only sign.
+ *
+ * ACCEPTED, stated: if another session changes this row's narrative while it
+ * is being typed here, the box resyncs to that value and the unsaved typing is
+ * lost. Nothing polls or pushes a row's changes to an open workspace today, so
+ * one user cannot reach it; a live-update feature would have to revisit this.
  */
 function NarrativeField({
   techniqueId,
@@ -225,7 +232,7 @@ function NarrativeField({
       setDraft(stored ?? "");
     }
   }, [rowId, stored]);
-  const atLimit = draft.length >= NARRATIVE_MAX;
+  const over = draft.length - NARRATIVE_MAX;
   return (
     <label className="flex flex-col gap-1">
       <span className="text-xs font-medium uppercase tracking-wide text-ink-tertiary">
@@ -236,9 +243,11 @@ function NarrativeField({
         value={draft}
         disabled={readOnly}
         rows={3}
-        maxLength={NARRATIVE_MAX}
         onChange={(e) => setDraft(e.currentTarget.value)}
         onBlur={() => {
+          // Over the limit: keep the text, save nothing, and let the count
+          // say why. Never truncate on the consultant's behalf.
+          if (over > 0) return;
           const v = draft.trim();
           const next = v === "" ? null : v;
           if (next === (stored ?? null)) return;
@@ -252,13 +261,13 @@ function NarrativeField({
       <span
         data-testid="narrative-count"
         className={
-          atLimit
+          over > 0
             ? "text-xs font-medium text-status-warning-fg"
             : "text-xs text-ink-tertiary"
         }
       >
-        {atLimit
-          ? `${draft.length} / ${NARRATIVE_MAX} -- limit reached; anything longer is not kept.`
+        {over > 0
+          ? `${draft.length} / ${NARRATIVE_MAX}: ${over} over; shorten it, it will not be saved.`
           : `${draft.length} / ${NARRATIVE_MAX}`}
       </span>
     </label>

@@ -388,9 +388,9 @@ describe("AttackTechniquePanel — narrative limits (#603 review)", () => {
     });
   }
 
-  it("caps the narrative at the API's 8000 characters", () => {
+  it("never cuts a narrative: there is no browser length cap", () => {
     reasonPanel(row({ status: "gap", narrative: "x" }));
-    expect(box()).toHaveAttribute("maxLength", "8000");
+    expect(box()).not.toHaveAttribute("maxLength");
   });
 
   it("sends null, never an empty string, when the narrative is cleared", () => {
@@ -437,12 +437,35 @@ describe("AttackTechniquePanel — narrative limits (#603 review)", () => {
     expect(box()).toHaveValue("Saved, then more");
   });
 
-  it("shows a live count, and warns at the limit instead of cutting in silence", () => {
+  it("shows a live count, and stays quiet at exactly the limit", () => {
     render(withNarrative("abc"));
     expect(screen.getByTestId("narrative-count").textContent).toBe("3 / 8000");
     fireEvent.change(box(), { target: { value: "x".repeat(8000) } });
     expect(screen.getByTestId("narrative-count").textContent).toBe(
-      "8000 / 8000 -- limit reached; anything longer is not kept.",
+      "8000 / 8000",
+    );
+  });
+
+  it("keeps an over-long narrative whole, says how far over, and does not save it", () => {
+    const onPatch = vi.fn();
+    render(
+      <AttackTechniquePanel
+        technique={TECHNIQUE}
+        coverage={row({ id: "c3", status: "gap", narrative: "Stored." })}
+        coverageDefinitions={[]}
+        reasonCodes={REASONS}
+        onPatch={onPatch}
+      />,
+    );
+    const long = "y".repeat(9000);
+    fireEvent.change(box(), { target: { value: long } });
+    fireEvent.blur(box());
+    // Nothing truncated: all 9000 characters are still in the box.
+    expect((box() as HTMLTextAreaElement).value).toHaveLength(9000);
+    // Nothing saved while over.
+    expect(onPatch).not.toHaveBeenCalled();
+    expect(screen.getByTestId("narrative-count").textContent).toBe(
+      "9000 / 8000: 1000 over; shorten it, it will not be saved.",
     );
   });
 });

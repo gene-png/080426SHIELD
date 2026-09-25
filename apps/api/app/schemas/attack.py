@@ -269,8 +269,8 @@ class AttackCoveragePatch(BaseModel):
     reason_code: str | None = Field(default=None, max_length=48)
     # The web mirrors this limit as NARRATIVE_MAX in
     # `apps/web/src/components/admin/attack/AttackTechniquePanel.tsx` (a live
-    # count, and a warning at the limit). Change both, or the box and the API
-    # disagree about what is kept.
+    # count, and no save while over). Change both, or the box and the API
+    # disagree about what can be saved.
     narrative: str | None = Field(default=None, max_length=8000)
 
 
