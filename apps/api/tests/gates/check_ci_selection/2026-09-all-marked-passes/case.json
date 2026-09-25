@@ -1,0 +1,11 @@
+{
+ "incident": "Control: every collected test is selected by CI's selector, so the gate must pass and say what it counted.",
+ "expect": 0,
+ "adversarial": false,
+ "argv": [
+  "--root",
+  "{dir}",
+  "--baseline",
+  "{dir}/baseline.json"
+ ]
+}

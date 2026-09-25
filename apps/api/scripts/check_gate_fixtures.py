@@ -105,6 +105,16 @@ DEFERRED: dict[str, str] = {
     # thing it guards -- and what this file now enforces for them is the half
     # that was actually missing: that a workflow INVOKES them. Both shipped
     # with neither, and ran nowhere for weeks.
+    "verify_in_worktree_status.sh": (
+        "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
+        "Both states are covered internally with REAL RUNS of the script under a "
+        "stub `docker` on PATH: the refusing state (marker, 127, 125, a "
+        "verdict-shaped exit with no evidence the tool ran) must exit 2 with the "
+        "cause named and NO bound printed; the passing state (a positive control) "
+        "must print its bound and its own status. A TERM mid-self-test must give "
+        "143 with no probe left. Red-on-revert, 2026-09-24: four mutations, each "
+        "red on its named failure."
+    ),
     "verify_in_worktree_mounts.sh": (
         "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
         "Both states are covered internally and BOTH ARE REAL RUNS: the passing "

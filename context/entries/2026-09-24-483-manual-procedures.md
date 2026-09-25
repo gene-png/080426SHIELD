@@ -52,4 +52,4 @@ in CI.
 
 #545's env-gate check exempts `E2E_OIDC` and `E2E_PERF`, and it scans only
 `*.spec.ts`. Once this lands, both exemptions are stale, and #545's own gate
-reports them as stale. Whichever of the two lands second removes them.
+reports them as stale. Whichever of the two landed second was to remove them; #560 landed first, so #545 removed them.
