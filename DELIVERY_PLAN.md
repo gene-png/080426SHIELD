@@ -1706,18 +1706,27 @@ wrong.** An earlier draft of this section said "the §14 gate now blocks" and "a
 red suite can no longer merge". Both are overstatements, and an adversarial
 audit caught them contradicting the bullets directly below them:
 
-- Required checks bind **a non-admin merging via a pull request**. This repo has
-  no such person today.
-- `enforce_admins` is **false** — both developers are admins and bypass every
-  check above.
-- **A pull request is not required** to push to `main`, and
+- **Re-measured 2026-09-25** (`gh api
+  repos/gene-png/080426SHIELD/branches/main/protection`): `enforce_admins` is
+  **true**, so required checks bind admins as well, and a pull-request review
+  block is present (0 approvals required). The bullets marked "Before 2026-09-25"
+  below were measured before that and are kept as the record; the first two no
+  longer hold, and the third is now doubtful (#596, derived from the API, not
+  tested by a push).
+- (Before 2026-09-25) Required checks bound **a non-admin merging via a pull
+  request**. This repo had no such person.
+- (Before 2026-09-25) `enforce_admins` was **false**: both developers are
+  admins and bypassed every check above.
+- (Before 2026-09-25) **A pull request was not required** to push to `main`, and
   `.github/workflows/audit-gate.yml` triggers on `pull_request` only. A commit
   pushed straight to `main` therefore produces no "Adversarial audit recorded"
   check run **at all** — there is nothing to require. This is the largest
   remaining gap, and it is what makes the two sentences above false rather than
   merely optimistic.
 
-So: the gate is a guardrail on the PR path, not a wall around `main`.
+So, before 2026-09-25: the gate was a guardrail on the PR path, not a wall
+around `main`. Whether it is now a wall depends on whether a direct push is
+refused, which #596 derives from the API and nobody has tested.
 
 **Also open, and listed rather than left implied:**
 
@@ -1770,8 +1779,9 @@ or Web check.
   requiring recorded audit evidence on any code PR. Built after the gate was
   silently skipped three times running; its own audit found eight defects in it. <!-- counted: historical -->
   **Registered as a required status check** on `main` (2026-08-20, verified
-  2026-08-21), which binds a non-admin merging via a PR and nothing else — see
-  the branch-protection section above for what that does and does not cover.
+  2026-08-21), which then bound a non-admin merging via a PR and nothing else,
+  and since `enforce_admins` was turned on (true on 2026-09-25) binds admins
+  too — see the branch-protection section above for what that does and does not cover.
   D-054 carries a dated correction pointing here, following the same in-entry
   convention D-045 and D-051 already use.
 

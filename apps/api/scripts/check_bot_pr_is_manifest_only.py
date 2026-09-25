@@ -139,7 +139,10 @@ MANIFEST_GLOBS = (
 #: gate itself, so a PR authored as `dependabot[bot]` could have edited
 #: `audit-gate.yml` -- removing the very step this exemption lives in -- and
 #: passed the manifest-only check. Anyone with write access can push to a
-#: Dependabot branch, `enforce_admins` is false, and zero reviews are required.
+#: Dependabot branch, and zero reviews are required. (`enforce_admins` was
+#: false then and is true since 2026-09-25, #595. That does not close this
+#: hole: the attack goes through GREEN checks, because the skipped audit step
+#: is what would have been red, so there is nothing for an admin to bypass.)
 #:
 #: REMOVING THE GLOB WAS THE WRONG FIX because it re-breaks #465. So `.github/`
 #: is judged by CONTENT: every added or removed line in such a file must be a

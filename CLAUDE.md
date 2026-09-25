@@ -1597,8 +1597,9 @@ Rules of the road:
   **Who may decide a PR ships without it: the human dev at the keyboard, by
   name, in the PR body.** Never an agent, never by inference from silence, never
   the author when the author is an agent. That authorisation is prose and
-  nothing checks it — `enforce_admins` is false and both devs are admins, so
-  either can already merge past a red gate. **The checkable version is a GitHub
+  nothing checks it: the audit gate reads only that the lines exist. (Admins
+  could merge past a red gate until `enforce_admins` was turned on;
+  `true` on 2026-09-25, #595.) **The checkable version is a GitHub
   review approval** (`gh pr review --approve`) from the named human. A blocked
   PR waits, and its issue gets a comment saying it is blocked on tooling.
 
