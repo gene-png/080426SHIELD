@@ -32,11 +32,15 @@ The file shrank by roughly 770 bytes net. The trims:
 - the final section's rationale;
 - the stash-archive PowerShell explanation.
 
-Each trim keeps its instruction and moves only a record that D-079 or D-071 was
-confirmed, by search, to hold.
+Each trim was meant to keep its instruction and move only a record that D-079
+or D-071 held. **That certificate was false for the stash trim**, and the
+adversarial review caught it: the "no PowerShell equivalent, deliberately"
+sentence is in no record, and dropping the "run in PowerShell 5.1 on
+2026-09-08" date left a dateless negative claim. Both are restored.
 
-**This matters for #559.** Main plus #559's +867 bytes would exceed 150,000 on
-their own. With this change the pair fits, with roughly 500 bytes of headroom.
+**This matters for #559.** The pair must fit under the size gate together. Run
+`check_claude_md_size.py` on the merged pair; do not trust a figure written
+here.
 
 **Two trims were refused, because the cited record does not hold the text:**
 - the subagent-citation arithmetic, "D-079 carries the arithmetic" (D-079 has
@@ -44,3 +48,10 @@ their own. With this change the pair fits, with roughly 500 bytes of headroom.
 - the LEAVE-table percentages, cited to D-058.
 
 The file's own trim list now says to confirm the cited record before cutting.
+
+**After review, the false pointers themselves are removed**, not only left
+untrimmed. Five named text their record did not hold: those two, plus three
+more into D-079 (the correction-paragraph list, the numbers-in-prose instances,
+and the verification-sentence rule). Leaving them while the trim list called
+them false was a self-contradiction. D-079's other pointers were checked and
+hold. The pointer beside the merge-rule measurement table is #559's to fix.

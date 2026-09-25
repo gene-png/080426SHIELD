@@ -24,7 +24,7 @@ fraction of this file.
 | --- | --- |
 | Picking up after a break | `context/<your-name>.md`, then `DELIVERY_PLAN.md`'s MVP completion path |
 | Deciding whether an agent may merge | **The merge rule**, immediately below the core principles. Do not grow it. |
-| Writing or changing code | Core principles, then Real commands, then the gotcha bullets for the subsystem you are touching |
+| Writing or changing code | Core principles, then Real commands, then the gotcha bullets for the subsystem you are touching, and the three-value CHECK (it has no subsystem) |
 | Writing a test | Core principle 3, and the bullets on tests that cannot fail (#72, D-051) |
 | Touching the redactor or any AI path | Core principle 1, the redaction bullets, and D-058 |
 | Adding or changing a gate | The silent-success bullet, and the fail-closed bullet |
@@ -727,8 +727,9 @@ recorded with a real exit code and a real date, and was the minority outcome
   coverage percentage had no "unverified" (#554).
 - **Gate the release, not the click.** A judgement a record needs (an owner, a
   date, a reason) is a readiness finding that blocks RELEASE, never a field forced
-  at the click, where it becomes "TBD" that reads as finished.
-  `unconfirmed_citations` at a count above zero is the model (D-089).
+  at the click, where it becomes "TBD" that reads as finished. No release gate
+  exists yet: release checks kind and finalization only, and citations are
+  disclosed (`pending_review`), not gated. Building one is new work (D-089).
 - **A guard that cannot read its input must FAIL CLOSED, and the tell is a
   positive-sounding message on an empty read.** `check_audit_evidence.py`
   shipped with `is_code_change([])` returning False, so an empty changed-file
@@ -820,7 +821,7 @@ recorded with a real exit code and a real date, and was the minority outcome
   verified something, that is the sentence to go back and run.** Not because you
   are careless — in the recorded instances the author had run the commands and
   read the output — but because the phrase closes the question for every later
-  reader, and it closed it around a property nobody had tested (D-079).
+  reader, and it closed it around a property nobody had tested.
 
 - **Before reporting a sweep complete, name the SHAPE you searched for and one
   place it could hide that shares no vocabulary with the original.** Keyword
@@ -965,7 +966,7 @@ recorded with a real exit code and a real date, and was the minority outcome
   where the cases came from. Measured on 104 LEAVE rows: tables written before
   their pattern pinned nothing **3.8%** of the time; tables written alongside or
   after their rule, **42.1%** — same corpus, same author, same week, the only
-  variable being whether the table existed before the code did (D-058).
+  variable being whether the table existed before the code did.
 
   **The step**: any LEAVE table written or extended after its rule exists gets
   `leave_row_oracle.py` run before the PR, and rows that pin nothing are
@@ -1119,8 +1120,8 @@ recorded with a real exit code and a real date, and was the minority outcome
   stale with the number, while still reading as a guarantee. A bare stale count
   invites a check; a stale count under "read live from GitHub, not carried
   forward" ends it. It has happened repeatedly in one week, and most instances
-  are in the files documenting the rule — **D-079** carries the list, kept THERE
-  because a list here acquires a tally that goes stale in turn.
+  are in the files documenting the rule. No record lists them yet, and a list
+  HERE would acquire a tally that goes stale in turn.
 
   The countermeasure is not more care, because in most instances the author was
   actively applying the rule. It is: **when you write a sentence certifying a
@@ -2052,7 +2053,7 @@ Rules of the road:
   random-draw model. **Sample the citations you have NOT executed**; three from
   that stratum would have been certain rather than 55%. **The wrong ones do not
   look wrong** — one was a bare closing paren, another a real line of code that
-  reads plausibly in context. D-079 carries the arithmetic.
+  reads plausibly in context.
 
 - **A plan entry that carries only a LOCATION is a derived value with a second
   place to be wrong. Name the MECHANISM instead, or as well.** "`clients.py:741`"
@@ -2079,8 +2080,8 @@ Rules of the road:
 
 - **The rules for numbers in prose, and a gate that enforces the first two on
   the shared documents.** Every miss behind them is one pattern: a value written
-  from memory instead of derived. **D-079** carries the instances, several of
-  which are inside the paragraphs correcting earlier instances.
+  from memory instead of derived. Several instances were inside the paragraphs
+  correcting earlier ones; no record lists them yet.
 
   1. **Don't write the count.** If a number describes a list in the same
      document, delete it and let the list be the count. "The blockers:" cannot
@@ -2169,8 +2170,10 @@ Rules of the road:
       git tag "archive/stash-${sha:0:8}-<what-it-holds>" "$sha"
       git push origin "archive/stash-${sha:0:8}-<what-it-holds>"
 
-  **Git Bash only:** in PowerShell 5.1 `${sha:0:8}` silently expands to
-  nothing, so every archive collides on one name (D-071).
+  **Git Bash only. Run in PowerShell 5.1 on 2026-09-08,** `${sha:0:8}` expands
+  to nothing, with no error, so every archive collides on one name. No
+  PowerShell equivalent is offered, deliberately: a marker covering the FAILURE
+  does not cover a REMEDY (D-071).
 
   This repo's archives carry a branch AND a `-tag`-suffixed tag per stash
   because the bare name was taken. **But if EVERY archive collides on one name,
@@ -2315,12 +2318,12 @@ it, so moving it loses no rule:
    address-corpus stories already moved, to D-087, on 2026-09-24.)
 2. **The worked examples under `Rules of the road`** — the sweep shape
    statement and the subagent-citation arithmetic. **Confirm the cited record
-   holds the text before cutting:** on 2026-09-24 D-079 did not hold that
-   arithmetic, nor D-058 the LEAVE-table percentages.
+   holds the text before cutting:** on 2026-09-24 five pointers into D-079 and
+   D-058 named text neither record held, and were removed.
 3. **The per-instance lists** inside the numbers-in-prose, correction-paragraph
    and twin-sweep rules. Each is a list that grows, which is the defect those
-   rules describe; they belong in D-079 and D-074, where a tally is expected to
-   move.
+   rules describe; they belong in a D-record, where a tally is expected to
+   move, and that record must hold them BEFORE the list here is cut.
 
 Do NOT take the merge rule, the core principles, "verify by running", or the
 gate suite. Those stay at any length, and the size ratchet above says so.

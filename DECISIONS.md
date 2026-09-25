@@ -5755,8 +5755,12 @@ are one shrug, not two hundred decisions. **It is kept for `not_applicable`**,
 because a scoping fact ("we run no macOS") scales.
 
 **The principle: gate the release, not the click.** Owner and date are required
-before RELEASE, as a readiness finding exactly like `unconfirmed_citations` at a
-count above zero. They are not required at the click: a consultant triaging
+before RELEASE, as a readiness finding. **No such gate exists today, so this is
+new work, not an extension:** `release_deliverable` checks only the kind,
+`finalized_at` and `released_at`, and `unconfirmed_citations` is disclosed as
+`pending_review`, never gated. (An earlier draft of this record called the
+citations "the model" for a release gate. That was false, and review caught
+it.) They are not required at the click: a consultant triaging
 hundreds of gaps cannot type a name per row, and forcing it produces "TBD" and
 "client", junk that reads as finished. The recommendation pass is scoped the
 same way. It runs over `keep` gaps and reports what it excluded and why, so one
@@ -5765,4 +5769,5 @@ un-dispositioned gaps before an assessment ships.
 
 **Precondition before any client-facing text:** verify the FedRAMP Moderate
 risk-acceptance vocabulary (artifact names, control references) against the
-FedRAMP and NIST sources, not against this record.
+FedRAMP and NIST sources, not against this record. "Moderate" is #557's
+wording; the platform targets Moderate and High, so check the High baseline too.
