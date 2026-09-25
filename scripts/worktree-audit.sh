@@ -56,11 +56,19 @@
 # reads the main ref as it is locally: fetch first, or "SAME" means "same as a
 # stale main".
 set -euo pipefail
+# git gives these precedence over `-C`. Inherited from a hook (hooks export
+# GIT_DIR), they would point every `-C <tree>` below at ONE repository, and
+# --self-test would `add -A` and `commit` its scratch files into it.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
 
 LIMIT=150000
 # Absolute, because --self-test re-invokes this script from another directory.
 SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 MAIN="${SHIELD_MAIN_REF:-origin/main}"
+# $MAIN resolved ONCE, by report or check. classify reads this, never the ref:
+# a fetch landing mid-run must not move main between two trees, or between
+# --check's comparison of the two repositories and its classification.
+MAIN_SHA=""
 
 usage() {
   echo "usage: $0 [--check <path> | --self-test]" >&2
@@ -115,10 +123,10 @@ last_line() { # stdin -> its last non-empty line, CR stripped
 classify() {
   local dir="$1" main_blob head_blob base base_blob state behind dirty bytes last want have
   git -C "$dir" rev-parse --verify -q HEAD >/dev/null 2>&1 || return 2
-  main_blob="$(blob "$dir" "$MAIN")" || return 2
+  main_blob="$(blob "$dir" "$MAIN_SHA")" || return 2
   [ -n "$main_blob" ] || return 2
   head_blob="$(blob "$dir" HEAD)" || return 2
-  base="$(git -C "$dir" merge-base HEAD "$MAIN" 2>/dev/null)" || return 2
+  base="$(git -C "$dir" merge-base HEAD "$MAIN_SHA" 2>/dev/null)" || return 2
   base_blob="$(blob "$dir" "$base")" || return 2
   if [ -z "$head_blob" ]; then
     state=MISSING
@@ -131,7 +139,7 @@ classify() {
   else
     state=EDITED+STALE
   fi
-  behind="$(git -C "$dir" rev-list --count "HEAD..$MAIN")" || return 2
+  behind="$(git -C "$dir" rev-list --count "HEAD..$MAIN_SHA")" || return 2
   # --no-optional-locks: `status` would otherwise refresh the index, i.e. WRITE
   # into a worktree that may belong to another session. This reads only.
   dirty="$(git --no-optional-locks -C "$dir" status --porcelain | wc -l | tr -d ' ')" || return 2
@@ -166,11 +174,11 @@ report_one() { # <dir> <branch> -> one line; returns 3 if gone, 2 if it could no
 
 report() {
   local path="" branch="" line row got read_ok=0 gone=0 could_not=0 stale=0
-  git rev-parse --verify -q "$MAIN" >/dev/null || {
+  MAIN_SHA="$(git rev-parse --verify -q "$MAIN^{commit}")" || {
     echo "worktree-audit: could not look -- no ref '$MAIN'. Fetch first." >&2
     return 2
   }
-  echo "worktree-audit: each worktree's CLAUDE.md against $MAIN ($(git rev-parse --short=12 "$MAIN"))"
+  echo "worktree-audit: each worktree's CLAUDE.md against $MAIN (${MAIN_SHA:0:12})"
   # `git worktree list --porcelain`: a block per tree, `worktree <path>` first.
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
@@ -199,11 +207,11 @@ report() {
 
 check() {
   local out state mine theirs
-  mine="$(git rev-parse --verify -q "$MAIN" 2>/dev/null)" || {
+  mine="$(git rev-parse --verify -q "$MAIN^{commit}" 2>/dev/null)" || {
     echo "worktree-audit: could not look -- no ref '$MAIN' in the repository this was run from." >&2
     return 2
   }
-  theirs="$(git -C "$TARGET" rev-parse --verify -q "$MAIN" 2>/dev/null)" || {
+  theirs="$(git -C "$TARGET" rev-parse --verify -q "$MAIN^{commit}" 2>/dev/null)" || {
     echo "worktree-audit: could not look -- '$TARGET' is not a git tree, or has no ref '$MAIN'." >&2
     return 2
   }
@@ -212,6 +220,7 @@ check() {
     echo "  It is a separate clone comparing against its own $MAIN. Fetch both, or run this from the clone." >&2
     return 2
   fi
+  MAIN_SHA="$mine"
   out="$(classify "$TARGET")" || {
     echo "worktree-audit: could not look -- cannot read '$TARGET''s CLAUDE.md or its history." >&2
     return 2
@@ -307,8 +316,34 @@ self_test() {
       echo "ok   [report] counts read, gone and unreadable trees apart, and exits 2 over the unreadable one" ;;
     *) echo "FAIL [report]: exit $rc; output: $out"; fail=1 ;;
   esac
+  # A hook context exports GIT_DIR (and GIT_INDEX_FILE, before a commit), not
+  # GIT_WORK_TREE -- so with `-C` the work tree is the scratch dir and its files
+  # would be committed INTO the repo GIT_DIR names. Point both at a SENTINEL repo
+  # under $tmp, run a nested self-test, and require the sentinel untouched: its
+  # HEAD, its commit count, its index bytes and its status. The nested run skips
+  # this case (no recursion). Never pointed at a real repository.
+  if [ -z "${WORKTREE_AUDIT_NESTED:-}" ]; then
+    local s="$tmp/sentinel" before after nested=0
+    mkdir "$s"
+    git -C "$s" init -q -b main
+    git -C "$s" config user.email t@example.invalid
+    git -C "$s" config user.name t
+    printf 'sentinel\n' > "$s/file"
+    git -C "$s" add -A && git -C "$s" commit -q -m sentinel
+    before="$(git -C "$s" rev-parse HEAD) $(git -C "$s" rev-list --count HEAD) $(cksum < "$s/.git/index") [$(git -C "$s" status --porcelain)]"
+    WORKTREE_AUDIT_NESTED=1 GIT_DIR="$s/.git" GIT_INDEX_FILE="$s/.git/index" \
+      "$SELF" --self-test > "$tmp/nested.out" 2>&1 || nested=$?
+    after="$(git -C "$s" rev-parse HEAD) $(git -C "$s" rev-list --count HEAD) $(cksum < "$s/.git/index") [$(git -C "$s" status --porcelain)]"
+    if [ "$nested" -eq 0 ] && [ "$before" = "$after" ]; then
+      echo "ok   [inherited GIT_DIR and GIT_INDEX_FILE] the nested self-test passed and the sentinel repo is untouched"
+    else
+      echo "FAIL [inherited GIT_DIR and GIT_INDEX_FILE]: nested exit $nested; sentinel before: $before; after: $after"
+      tail -5 "$tmp/nested.out"
+      fail=1
+    fi
+  fi
   [ "$fail" -eq 0 ] || return 1
-  echo "worktree-audit: self-test ok -- SAME, STALE, EDITED, EDITED+STALE, an unreadable tree, a non-git path and a clone with another main each observed."
+  echo "worktree-audit: self-test ok -- SAME, STALE, EDITED, EDITED+STALE, an unreadable tree, a non-git path, a clone with another main and inherited git overrides each observed."
 }
 
 case "$MODE" in

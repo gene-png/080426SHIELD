@@ -45,6 +45,15 @@ runs with `--no-optional-locks`, so it cannot write another session's index.
 
   A tree whose `CLAUDE.md` history cannot be read is 2. It is never `MISSING`
   or `EDITED+STALE`: "absent" and "unreadable" are separate branches.
+- **Main is resolved once.** Report and `--check` resolve the main ref to a
+  commit once, and every tree is classified against that SHA. A fetch landing
+  mid-run cannot move main between two trees.
+- **Inherited git overrides are cleared.** The script unsets `GIT_DIR`,
+  `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR` and the object-directory
+  overrides. git gives them precedence over `-C`, and a hook exports
+  `GIT_DIR`. From a hook, the self-test would otherwise have committed its
+  scratch files into the repository `GIT_DIR` names, and every `-C <tree>`
+  would have read that one repository.
 - **`--self-test`** builds throwaway repositories and requires each exit code
   and output for these cases:
   - each state;
@@ -59,6 +68,13 @@ runs with `--no-optional-locks`, so it cannot write another session's index.
   errors away. Reverting `blob()` to that folding turns the merge-base case red
   as a confident `EDITED+STALE`, exit 1. Removing the main-ref comparison turns
   the clone case red as `SAME`.
+
+  A last case runs a nested self-test with `GIT_DIR` and `GIT_INDEX_FILE`
+  pointed at a sentinel scratch repository, then requires the sentinel's HEAD,
+  commit count, index bytes and status to be unchanged. Reverting the `unset`
+  in a scratch copy turned it red: the sentinel gained a commit. Never pointed
+  at a real repository. Classifying against the resolved SHA is not pinned by
+  a test, because the race needs a fetch to land mid-run.
 
 ## Measured
 
@@ -75,7 +91,11 @@ exited 0 and read 332 worktrees: 0 gone and 0 unreadable.
 | `SAME` | 32 | 37 |
 | `EDITED` | 16 | 18 |
 
-So 277 would give an agent rules main no longer has. At `c875d62`, 132 trees
+So 277 would give an agent rules main no longer has.
+
+A third run, with the `GIT_DIR` fix, went against `514e79c`. It exited 0 and
+read 334 worktrees, with 0 gone and 0 unreadable. The stale count was still
+277: `SAME` rose to 39, and the other states were unchanged. At `c875d62`, 132 trees
 read `last-line=differs-from-main`.
 
 ## Limits
