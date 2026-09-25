@@ -357,6 +357,7 @@ def test_the_clean_line_counts_the_files_it_compared(tmp_path, capsys) -> None:
 
 
 ONE_JOB = "the pytest step and the gate step must sit in ONE job"
+GATE_RUN = "the gate step's run must be exactly `python -m scripts.check_ci_selection`"
 NOT_ADJACENT = "the gate step must come IMMEDIATELY before the pytest step"
 ENV_DIFFERS = "step env differs between the gate step and the pytest step"
 WD_DIFFERS = "working-directory differs between the gate step and the pytest step"
@@ -391,6 +392,11 @@ def pin_violations(ci: dict) -> list[str]:
         return [f"{ONE_JOB}: {[(f[0], len(f[2]), len(f[3])) for f in found]}"]
     _, steps, (i,), (j,) = found[0]
     out = []
+    # EXACT, as the pytest step's is: a second line in the gate step's run
+    # (writing PYTEST_ADDOPTS to $GITHUB_ENV, say) reaches pytest and not the
+    # gate, and a containment match allowed it (review of ec113e1).
+    if str(steps[j].get("run", "")).strip() != "python -m scripts.check_ci_selection":
+        out.append(GATE_RUN)
     if i != j + 1:
         out.append(f"{NOT_ADJACENT}: gate at step {j}, pytest at step {i}")
     if steps[i].get("env") != steps[j].get("env"):
@@ -448,6 +454,19 @@ def test_any_step_between_the_two_is_refused(between: dict) -> None:
     # without saying so, so ANY step between them is refused.
     out = pin_violations(_workflow(GATE_STEP, between, PYTEST_STEP))
     assert out == [f"{NOT_ADJACENT}: gate at step 0, pytest at step 2"], out
+
+
+def test_a_second_line_in_the_gate_step_is_refused() -> None:
+    two_lines = {
+        **GATE_STEP,
+        "run": "\n".join(
+            [
+                "python -m scripts.check_ci_selection",
+                'echo "PYTEST_ADDOPTS=--deselect x" >> "$GITHUB_ENV"',
+            ]
+        ),
+    }
+    assert pin_violations(_workflow(two_lines, PYTEST_STEP)) == [GATE_RUN]
 
 
 def test_the_gate_after_pytest_is_refused() -> None:
@@ -546,3 +565,34 @@ def test_norecursedirs_is_honoured_by_the_disk_scan(tmp_path, capsys) -> None:
     code, out = _run(root, _baseline(tmp_path, {}), capsys)
     assert code == 0, out
     assert "1 of 1 test files on disk collected" in out, out
+
+
+def _symlinked_dir(tmp_path: Path, files: dict[str, str]) -> Path:
+    """A project whose `tests/unit/linked` is a symlink to a directory outside
+    it holding `files`. pytest descends a symlinked directory, so the scan
+    must too, or a file there is invisible to it."""
+    (tmp_path / "proj").mkdir()
+    root = _project(tmp_path / "proj", {M: MARKED})
+    target = tmp_path / "elsewhere"
+    target.mkdir()
+    for name, body in files.items():
+        (target / name).write_text(textwrap.dedent(body), encoding="utf-8")
+    try:
+        (root / "tests" / "unit" / "linked").symlink_to(target, target_is_directory=True)
+    except OSError as exc:  # Windows without the symlink privilege
+        pytest.skip(f"cannot create a directory symlink here: {exc}")
+    return root
+
+
+def test_a_symlinked_directory_is_scanned_as_pytest_walks_it(tmp_path, capsys) -> None:
+    root = _symlinked_dir(tmp_path, {"test_linked.py": MARKED})
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
+    assert code == 0, out
+    assert "2 of 2 test files on disk collected" in out, out
+
+
+def test_a_self_removing_file_behind_a_symlink_is_a_finding(tmp_path, capsys) -> None:
+    root = _symlinked_dir(tmp_path, {"test_gone.py": SKIPPED_MODULE})
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
+    assert code == 1, out
+    assert "tests/unit/linked/test_gone.py: never collected" in out, out

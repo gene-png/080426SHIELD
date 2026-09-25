@@ -33,7 +33,9 @@ limits.
 - **The clean line** now also says `N of N test files on disk collected`.
 - **#544 is a pin, not a read, and the pin is a derivation.** A test
   requires the gate step to be the step IMMEDIATELY before CI's
-  `pytest -m unit` step, in the same job, with the same step `env`,
+  `pytest -m unit` step, in the same job, with its `run` exactly
+  `python -m scripts.check_ci_selection` (a second line could write
+  `$GITHUB_ENV`; review of `ec113e1`) and the same step `env`,
   `working-directory` and `shell` (a login shell can source a profile). So every job, workflow and earlier-step environment
   reaches both, and no step can change one without the other. The
   `check_e2e_env_gates` step, which sat between them, moved above the gate in
@@ -81,12 +83,20 @@ test files on disk collected`.
   - a `GITHUB_ENV` writer inserted into the real `ci.yml` between the two
     steps, then restored.
 
-  After the second review, 4 of 4 more went red:
+  After the second review, 5 of 5 more went red, in two runs (four, then the
+  shell pin on its own):
   - the round-1 root-relative matcher, caught by `tests/unit/*_spec.py`;
   - `norecursedirs` ignored;
   - adjacency not required;
   - a `uses:` step inserted into the real `ci.yml` between the two, then
-    restored.
+    restored;
+  - the shell pin dropped.
+
+  After the third review, 2 of 2 more went red:
+  - the gate step's `run` no longer pinned exactly, caught by a two-line
+    `run` whose second line writes `$GITHUB_ENV`;
+  - `followlinks=False`, caught by a symlinked test directory, both in its
+    passing state and with a self-removing file in it.
 
 ## Limits
 
@@ -96,3 +106,9 @@ test files on disk collected`.
   and is still invisible.
 - The environment pin sees what the workflow file shows. A variable a tool
   sets for itself when invoked is not seen.
+- The file scan calls `_pytest.pathlib.fnmatch_ex`, a private pytest API, and
+  mirrors pytest's walk: it follows symlinked directories and prunes
+  `norecursedirs`. Both behaviours were read from pytest 9.1.1, and
+  `pyproject.toml` allows `pytest>=8.3`. A pytest release that changes either
+  would make the scan drift with nothing to say so. A missing `fnmatch_ex` is
+  exit 2.

@@ -83,6 +83,13 @@ the same step `env`, `working-directory` and `shell`, so every job, workflow and
 earlier-step environment reaches both and no step can change one without the
 other. What it cannot see is a difference the workflow file does not show,
 such as a variable a tool sets for itself when invoked.
+
+The file scan calls `_pytest.pathlib.fnmatch_ex`, a PRIVATE pytest API, and
+mirrors pytest's directory walk (following symlinked directories, pruning
+`norecursedirs`). Both were read from pytest 9.1.1, and `pyproject.toml`
+allows any `pytest>=8.3`. If a pytest release stops matching `python_files`
+or `norecursedirs` with `fnmatch_ex`, or walks differently, this scan drifts
+from pytest's with nothing to say so; a missing `fnmatch_ex` is exit 2.
 """
 
 from __future__ import annotations
@@ -216,7 +223,11 @@ def files_named_by_python_files(root: Path, config: dict[str, list[str]]) -> set
     except ImportError as exc:  # pragma: no cover - pytest is what this gate runs
         raise CouldNotLook(f"cannot import pytest's own matcher: {exc}") from exc
     found = set()
-    for dirpath, dirnames, filenames in os.walk(root.resolve() / "tests" / "unit"):
+    # followlinks: pytest descends a symlinked directory (`visit` recurses on
+    # `DirEntry.is_dir()`, which follows links; read in pytest 9.1.1).
+    for dirpath, dirnames, filenames in os.walk(
+        root.resolve() / "tests" / "unit", followlinks=True
+    ):
         here = Path(dirpath)
         dirnames[:] = [
             d
