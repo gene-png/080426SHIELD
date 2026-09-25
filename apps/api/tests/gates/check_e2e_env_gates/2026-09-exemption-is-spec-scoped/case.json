@@ -1,0 +1,10 @@
+{
+ "incident": "ADVERSARIAL. Review of 3bc0975: an exemption keyed on the variable name alone covered every future spec reading it. E2E_API_URL's reason was written about one spec's configuration default; a NEW spec gating on it for real passed at exit 0, visible only as an 'exempted:' log line. Exemptions now name their specs, and an unlisted spec reading the variable is a finding.",
+ "expect": 1,
+ "adversarial": true,
+ "argv": [
+  "--root",
+  "{dir}"
+ ],
+ "stdout_contains": "E2E_PERF: read by e2e/new.spec.ts"
+}

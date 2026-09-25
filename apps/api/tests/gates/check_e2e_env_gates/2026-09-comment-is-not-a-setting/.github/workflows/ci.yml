@@ -1,0 +1,5 @@
+jobs:
+  e2e:
+    steps:
+      # E2E_PERF=1 opts the perf spec in
+      - run: npx playwright test
