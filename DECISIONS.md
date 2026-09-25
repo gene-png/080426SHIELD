@@ -5731,3 +5731,57 @@ red under five seeds.
 
 - both mutations also turn the invoke-level test red;
 - removing the gate's new signature turns its 4 detection tests red.
+
+## D-095 — Condition 5 does not trip on a diff that changes no executable line, and a gate computes it
+
+**2026-09-24 · governance/merge rule** · #530, #559
+
+**Decision.** The owner's rule: a diff that changes no EXECUTABLE line in a
+condition-5 path does not trip condition 5. Comments, docstrings and landing
+entries cannot alter behaviour. #530 is the instance: its whole
+`docker-compose.yml` diff was comments, and it still came back. Unlike the
+status-based narrowing measured and rejected earlier, this one is mechanical,
+so `apps/api/scripts/check_condition5.py` computes it rather than an agent
+attesting it. Its exit 2 reads as tripped.
+
+**What it judges.**
+
+- **The list** is the indented block under `### Condition 5: the paths`, read
+  by the gate. It is read at the merge base AND the head, because CLAUDE.md is
+  not itself a listed path. A PR that changes the list trips, and so does one
+  whose base has no readable list. A split or interrupted list exits 2.
+- **The derived set** is every `.py` / `.sh` a workflow `run:` names. That is
+  the "does any WORKFLOW execute it" test, which was previously a grep for a
+  human. On 2026-09-24 it added three scripts the list does not name,
+  `scripts/red-on-revert.sh` among them.
+- **Residual:** a script reached from compose, a sourced file or another
+  script is not derived. It stays with the human.
+
+**Per-type rules** are in the gate's docstring. The review of the first
+version (`a9b4a77`) found five ways equality hid a real change, and each is
+now pinned by a named test that went red on revert:
+
+- YAML compared as a loaded object (`on` to `yes`, `1` to `1.0`);
+- JSON `True == 1`;
+- directives compared without their line;
+- renames hiding the listed path they moved away from;
+- a list read only from the PR's own checkout.
+
+**Measured, and re-derived with the final classifier.** Scored on the 15 most
+recent PR merges at each recorded window's ref: `fdfde7d^1` for 2026-08-26, and
+`897eeae` for 2026-09-21. The old-rule column reproduces the recorded 4/11 and
+2/13 exactly. With the exception:
+
+- **4/11** in both windows;
+- newly cleared: `b516891` (compose comments only) and `7c2802c` (an
+  `ai/engine.py` docstring only), both read by eye.
+
+Re-run on 2026-09-24 against the classifier as merged by #559, using TODAY's
+list, a superset of both days' lists, which can only trip more: 4/11 in both
+windows, the same SHAs cleared.
+
+**Reporting, not requiring.** It runs as its own job in `audit-gate.yml`,
+"Condition 5 report". That job is green whenever it could look, including when
+condition 5 trips, and red only on could-not-look. It is not a required check:
+making it one would change condition 1's count, and that is a separate
+decision.

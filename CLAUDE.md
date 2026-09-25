@@ -152,8 +152,9 @@ happened.
 
 **Any red, or any PR tripping 4, 5 or 6, comes back to the human.**
 
-**Conditions 1 and 4 are mechanical; 5 is computed over its listed paths by
-`check_condition5.py`, but a live prompt outside them needs a diff read. Conditions 2, 3 and 6 are self-attested
+**Conditions 1 and 4 are mechanical; 5 is computed by `check_condition5.py`
+over the list and every script a workflow runs, but a live prompt outside them,
+or a script run from compose or another script, needs a human read. Conditions 2, 3 and 6 are self-attested
 by the agent that wants to merge** — three checkable conditions and three
 honest ones, not "a file-path check plus two facts". Condition 6 is a
 judgement call an agent can talk itself out of; when it is arguable, it has
@@ -259,7 +260,7 @@ tests. Condition 5's path list applied to the fifteen most recent PR merges on
 | 2026-08-26 | 4 | 11 | 4 / 11 |
 | 2026-09-21 | 2 | 13 | 4 / 11 |
 
-<!-- counted: condition 5's path list applied to `git log --first-parent -40 --format='%H|%s' origin/main | grep -E '\(#[0-9]+\)$' | head -15`, at 897eeae, 2026-09-21 -->
+<!-- counted: condition 5's path list applied to `git log --first-parent -40 --format='%H|%s' <ref> | grep -E '\(#[0-9]+\)$' | head -15`, ref fdfde7d^1 and 897eeae; last column by check_condition5.py, 2026-09-24 (D-095) -->
 
 Each is a claim about a fixed window, so it does not rot the way a live count
 does — and each is true only of condition 5 as it stood that day. **Re-derive
@@ -1301,11 +1302,7 @@ recorded with a real exit code and a real date, and was the minority outcome
   - `_redacted_form`'s docstring claiming it used "the SAME redactor the egress
     path uses" while calling one rule out of ten. The docstring even argued
     correctly that a second copy would drift, directly above the second copy.
-  - `redact.py` — "Every separator in the module is now built from [`_HSPACE`]",
-    itself written as a correction to an earlier note that HAD gone stale.
-    `_RE_CONTACT_HINT` uses bare `\s` twice, and `check_separator_classes.py`
-    cannot see it: that gate flags hand-ENUMERATED classes, not `\s`. Wrong on
-    arrival rather than stale. Tracked as **#158**.
+  - `redact.py`'s separator note, wrong on arrival rather than stale (#158).
 
   Every one was found by reading the CODE and comparing, never by reading the
   prose — which is the only method that works, because the prose is accurate.
@@ -2346,7 +2343,7 @@ order. Each is a RECORD whose instruction is already stated in one line above
 it, so moving it loses no rule:
 
 1. **The `## Environment gotchas` redaction-subsystem narratives** — the
-   `_HSPACE` subtraction and the LEAVE-table oracle percentages. The rules are
+   LEAVE-table oracle percentages. The rules are
    one sentence each; the stories belong under D-058. (The over-match and
    address-corpus stories already moved, to D-087, on 2026-09-24.)
 2. **The worked examples under `Rules of the road`** — the sweep shape

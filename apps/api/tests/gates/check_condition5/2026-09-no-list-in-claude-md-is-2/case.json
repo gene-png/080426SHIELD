@@ -2,7 +2,7 @@
  "incident": "The first draft derived the path list from the prose bullets, which name paths they EXCLUDE (apps/web/**, alembic/). The list is now the indented block under the heading; a section with no list is not an empty rule, it is a list that moved.",
  "expect": 2,
  "adversarial": false,
- "stdout_contains": "fewer than",
+ "stdout_contains": "no indented path list",
  "argv": [
   "--old-root",
   "{dir}/old",

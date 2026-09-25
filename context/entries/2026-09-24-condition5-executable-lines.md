@@ -61,17 +61,43 @@ eye: comments only, and a docstring only.
 
 - **Fixtures:** 10 cases, including adversarial ones (a `# nosec` edit, a
   heredoc `#` line, a fixture comment, a TypeScript comment, an empty diff).
-  `check_gate_fixtures` passes: 72 cases across 12 gates.
 - **Red-on-revert:** removing the directive check, the heredoc rule or the
   fixtures-are-data rule turns its named unit test red.
-- **The list and the prose agree:** a unit test pins that every listed path is
-  named in the bullets.
+- **The list and the prose agree in BOTH directions**: every listed path is
+  named in the bullets, and every path the bullets name is listed or is a
+  recorded exclusion.
+
+## After the adversarial review of `a9b4a77`
+
+It found ten things, and all were real. What changed:
+- **The list is read at the merge base AND the head**, from git. CLAUDE.md is
+  not a listed path, so reading only the PR's checkout let one diff delete an
+  entry and edit its file. A changed list trips. A base with no readable list
+  (today's main) also trips, rather than turning this PR red.
+- **The list must be one unbroken run.** A marker inside it used to end the
+  read silently. Now an interruption or a split exits 2.
+- **`--no-renames`**, so a moved file shows its old, listed path.
+- **The workflow-derived set** (every `.py` / `.sh` a `run:` names) is judged
+  too. It adds `scripts/red-on-revert.sh` and two others the list does not
+  name. Compose-invoked scripts are still not derived, and the output says so.
+- **YAML is compared as a node tree** and **JSON with numbers as text**.
+  Python equality let `on` become `yes`, `1` become `1.0`, and `1` become
+  `true`.
+- **Directives** gain `ruff:`, `isort:`, `pyright:` and the encoding cookie,
+  and each is compared with its line.
+- **The report is its own job**, not a step of the condition-4 job.
+- **D-095** records the rule, the refs (`fdfde7d^1`, `897eeae`) and the
+  re-run. The new classifier over both windows, with today's list: 4/11 and
+  4/11, the same SHAs cleared.
+
+Eight new red-on-revert checks, one per fix, each went red on its named test.
+A first harness misread them as green: it grepped for a summary line this
+pytest config does not print. Every run exited 1 and named its test FAILED.
 
 ## Limits
 
-- It does not re-derive the "does any workflow execute it" set. That stays
-  self-attested, as the withdrawn derivation in
-  `check_merge_rule_conditions.py` explains.
+- Scripts reached from compose, sourced files or other scripts are not
+  derived. The human's derive-the-set check covers them.
 - A live prompt outside the listed paths still needs a diff read.
 - TypeScript and JavaScript are always unclassifiable until there is a lexer.
-- CLAUDE.md is left with 23 bytes of headroom under its size gate.
+- CLAUDE.md headroom: run `check_claude_md_size.py`; do not trust a figure here.

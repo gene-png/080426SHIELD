@@ -287,17 +287,36 @@ jobs:
         run: |
           python scripts/check_merge_rule_conditions.py             --changed-files /tmp/changed.txt --body /tmp/body.md
 
-      - name: Condition 5, computed (a verdict, not a failure)
-        # Prints which condition-5 paths the PR changes EXECUTABLY. Tripping is a
-        # routing fact (the PR comes back to the human), so `--report` exits 0
-        # either way and fails only when it could not look (exit 2). No pipe into
-        # `tee`: a `run:` step here is `bash -e` without pipefail, so a pipe
-        # would report tee's status and lose the 2 (#213).
+  condition-5-report:
+    # ITS OWN JOB, not a step of the condition-4 job above. As a step there, a
+    # could-not-look (exit 2) showed red under "A migration is declared in the
+    # PR body", and a failed condition-4 step skipped this report entirely: the
+    # separate-job decision of 2026-09-22, reversed by accident. NOT a required
+    # check -- adding one would change condition 1's count (D-095).
+    #
+    # GREEN DOES NOT MEAN CLEAR. `--report` exits 0 whether or not condition 5
+    # trips; read the verdict in the step summary. Red means it could not look.
+    name: Condition 5 report (green is not clear; read the summary)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The gate reads CLAUDE.md and the workflows at the merge base AND the
+          # head, so it needs history and `origin/<base>`.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Condition 5, computed
+        # No pipe into `tee`: a `run:` step here is `bash -e` without pipefail,
+        # so a pipe would report tee's status and lose the 2 (#213).
         working-directory: apps/api
         run: |
           python -m pip install --quiet "pyyaml>=6.0"
           rc=0
-          python scripts/check_condition5.py --report --claude-md ../CLAUDE.md --repo .. --range "origin/${{ github.base_ref }}..HEAD" > /tmp/condition5.txt || rc=$?
+          python scripts/check_condition5.py --report --repo .. --range "origin/${{ github.base_ref }}..HEAD" > /tmp/condition5.txt || rc=$?
           cat /tmp/condition5.txt
           cat /tmp/condition5.txt >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
