@@ -1,0 +1,9 @@
+{
+ "incident": "Control: the gate variable is set by the workflow step, so the check must pass.",
+ "expect": 0,
+ "adversarial": false,
+ "argv": [
+  "--root",
+  "{dir}"
+ ]
+}

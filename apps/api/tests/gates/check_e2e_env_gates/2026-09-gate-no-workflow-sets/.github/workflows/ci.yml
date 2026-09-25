@@ -1,0 +1,4 @@
+jobs:
+  e2e:
+    steps:
+      - run: npx playwright test

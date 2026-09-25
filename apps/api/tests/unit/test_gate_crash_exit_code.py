@@ -88,6 +88,13 @@ GATES = [
     ("check_merge_rule_conditions", "sys.argv"),
     # The issue-labels gate (the filing rule). Shipped with the handler.
     ("check_issue_labels", "sys.argv"),
+    # #540's three non-execution gates. Shipped with the handler and WITHOUT
+    # entries here, and `test_universe_equals_the_other_gate_enumeration` went
+    # red in CI on both heads of the PR -- the fourth time a new gate has
+    # arrived without its entry. `sys.argv`: each `main(argv)` takes the list.
+    ("check_ci_selection", "sys.argv"),
+    ("check_e2e_env_gates", "sys.argv"),
+    ("check_e2e_spec_listing", "sys.argv"),
     # #213's shell-status gate. Added WITH its entry, because the two
     # enumerations diverging is what `test_universe_equals_the_other_gate_
     # enumeration` catches -- and it did, on #545.

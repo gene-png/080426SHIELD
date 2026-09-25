@@ -49,6 +49,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.3",
+    # YAML parsing for the #540 gates (workflows are parsed, never grepped).
+    "pyyaml>=6.0",
     "pytest-asyncio>=0.24",
     "pytest-cov>=5.0",
     # Lint/format pinned to known-good ranges: CI installs fresh, and a new
