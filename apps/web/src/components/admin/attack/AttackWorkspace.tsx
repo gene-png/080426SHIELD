@@ -590,31 +590,50 @@ export function AttackWorkspace({
             description="Click any cell to set its coverage status, cite the tooling that provides it, and record your rationale. This is the judgement the client is paying for — the AI draft is a starting point, not an answer. Lock a row to protect it from future AI runs."
             done={assessment.status !== "draft"}
           >
-            <div className="flex flex-col gap-4">
-              <AttackTechniquePanel
-                technique={selectedTechnique}
-                coverage={selectedCoverage}
-                coverageDefinitions={catalog.coverage_definitions}
-                readOnly={readOnly}
-                onPatch={(patch) => {
-                  if (!selectedCoverage) return;
-                  return onPatch(selectedCoverage.id, patch);
-                }}
-                onConfirmCitations={() => {
-                  if (!selectedCoverage) return;
-                  return onConfirmCitations(selectedCoverage.id);
-                }}
-              />
-              <AttackMatrix
-                catalog={catalog}
-                coverageByCode={coverageByCode}
-                heatmapByTactic={heatmapByTactic}
-                onSelectTechnique={(code) => setSelectedCode(code)}
-                selectedCode={selectedCode}
-                showSubTechniques={showSubs}
-                onToggleSubTechniques={setShowSubs}
-              />
-            </div>
+            {assessment.catalog_current === false ? (
+              // #556: the rows are keyed by technique ID, and an ID can mean a
+              // different technique in the current catalog (T1558 and T1649
+              // swapped names in the list this replaced). Drawing them into the
+              // current matrix would relabel answers by ID (D-091), and codes the
+              // catalog no longer has would silently vanish from the grid.
+              <p
+                role="status"
+                data-testid="attack-stale-catalog"
+                className="rounded-md border border-status-warning-fg/40 bg-surface-sunken p-3 text-sm text-status-warning-fg"
+              >
+                {`This assessment was scored against ${
+                  assessment.catalog_version
+                    ? `ATT&CK v${assessment.catalog_version}`
+                    : "an ATT&CK catalog that was never recorded"
+                }, not the current one. Its ${assessment.coverage.length} rows are not shown against the current technique names, because a technique ID can name a different technique in the current catalog.`}
+              </p>
+            ) : (
+              <div className="flex flex-col gap-4">
+                <AttackTechniquePanel
+                  technique={selectedTechnique}
+                  coverage={selectedCoverage}
+                  coverageDefinitions={catalog.coverage_definitions}
+                  readOnly={readOnly}
+                  onPatch={(patch) => {
+                    if (!selectedCoverage) return;
+                    return onPatch(selectedCoverage.id, patch);
+                  }}
+                  onConfirmCitations={() => {
+                    if (!selectedCoverage) return;
+                    return onConfirmCitations(selectedCoverage.id);
+                  }}
+                />
+                <AttackMatrix
+                  catalog={catalog}
+                  coverageByCode={coverageByCode}
+                  heatmapByTactic={heatmapByTactic}
+                  onSelectTechnique={(code) => setSelectedCode(code)}
+                  selectedCode={selectedCode}
+                  showSubTechniques={showSubs}
+                  onToggleSubTechniques={setShowSubs}
+                />
+              </div>
+            )}
           </WorkflowStep>
 
           <WorkflowStep

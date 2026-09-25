@@ -59,3 +59,20 @@ migration plan is on #556, with the name-not-ID rule.
 - Existing coverage rows in any database. The plan says discard and rescore;
   no data migration runs here.
 - The status vocabulary (#554).
+
+## Review round 2 (fixed at the head after `0cb6368`)
+
+- The client dashboard page renders the typed 409 under "Dashboard withheld"
+  instead of reaching Next's unhandled error page. The client sentence
+  promises no rescore (#558, D-076).
+- The Risk Register gate carries the stale input's sentence in its own field
+  and banner, not in the "until these are approved" list.
+- An already-released stale ATT&CK document stays listed for the client, with
+  its summary replaced by the withholding sentence and its files withheld from
+  the list and the download. My call, recorded on #556.
+- The workspace does not draw a stale assessment's rows into the current
+  matrix. An ID can name a different technique in the current catalog.
+- The release pre-guard steps aside for another kind's deliverable, and its
+  untraceable-parent branch has its own test.
+- `test_discard_draft.py` hand-built an assessment with no `catalog_version`,
+  a state `create_assessment` cannot produce. It now carries the stamp.

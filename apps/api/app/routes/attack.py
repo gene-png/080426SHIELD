@@ -41,7 +41,7 @@ from app.attack.catalog import (
 from app.attack.catalog import (
     all_codes as attack_all_codes,
 )
-from app.attack.catalog_version import require_current_catalog
+from app.attack.catalog_version import attack_parent, require_current_catalog
 from app.attack.citations import (
     _MAX_REJECTED_EXAMPLES,
     Candidate,
@@ -2767,8 +2767,9 @@ def _refuse_release_of_a_stale_deliverable(
 
     Only a FIRST release is guarded. Re-releasing an already-released deliverable
     is `release_deliverable`'s idempotent repair path and publishes nothing new.
-    A deliverable this tenant does not own falls through to `release_deliverable`,
-    which 404s it -- so this never reveals another tenant's deliverable. A NULL
+    A deliverable this tenant does not own, or of another service kind, falls
+    through to `release_deliverable`, which 404s it -- so this never reveals
+    another tenant's deliverable or answers for another kind's. A NULL
     `parent_version` (finalized before 0041) cannot be traced to the assessment it
     was built from, so it is refused as unknown rather than guessed, the rule
     `_release_parent` already applies.
@@ -2781,14 +2782,11 @@ def _refuse_release_of_a_stale_deliverable(
     svc = db.get(Service, deliv.service_id)
     if svc is None or svc.client_id != client_id:
         return
-    parent = None
-    if deliv.parent_version is not None:
-        parent = db.execute(
-            select(AttackAssessment).where(
-                AttackAssessment.service_id == deliv.service_id,
-                AttackAssessment.version == deliv.parent_version,
-            )
-        ).scalar_one_or_none()
+    # Another kind's deliverable is `release_deliverable`'s 404 (`kinds`), never
+    # this guard's 409: it has no ATT&CK assessment to trace.
+    if svc.kind != ServiceKind.ATTACK_COVERAGE:
+        return
+    parent = attack_parent(db, deliv)
     if parent is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

@@ -335,6 +335,10 @@ export function RiskRegisterDashboard(): JSX.Element {
   // on it fails as a timeout rather than as an assertion.
   const blocking = gate?.synthesizable_missing ?? [];
   const blockedFromGenerating = Boolean(gate?.unlocked) && blocking.length > 0;
+  // #556: blocks too, with its own sentence and remedy -- see the type.
+  const catalogMismatch = gate?.unlocked
+    ? (gate.attack_catalog_mismatch ?? null)
+    : null;
   // Inputs that existed, were not approved, did not BLOCK (the unlock rule was
   // satisfied without them) and therefore contributed nothing. The `??` guards
   // `register` being null before anything is generated -- not an absent field,
@@ -414,6 +418,16 @@ export function RiskRegisterDashboard(): JSX.Element {
         >
           A new register cannot be generated until these are approved:{" "}
           {blocking.join("; ")}. Anything already generated below is unaffected.
+        </p>
+      ) : null}
+
+      {catalogMismatch !== null ? (
+        <p
+          className="text-sm font-medium text-status-warning-fg"
+          data-testid="risk-register-attack-catalog-mismatch"
+        >
+          A new register cannot be generated from the ATT&amp;CK mapping.{" "}
+          {catalogMismatch} Anything already generated below is unaffected.
         </p>
       ) : null}
 

@@ -21,6 +21,7 @@ from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.attack.catalog_version import is_stale_attack_deliverable
 from app.audit import audit
 from app.db.session import get_db
 from app.dependencies import current_client, current_user
@@ -70,17 +71,21 @@ def _in_released_deliverable(db: Session, artifact_id: uuid.UUID) -> bool:
     client.id), so a match here means "this is a released deliverable file of
     the caller's own tenant" — the only deliverable artifact a client may read.
     """
-    match = db.execute(
-        select(Deliverable.id)
-        .where(
-            Deliverable.released_at.is_not(None),
-            (Deliverable.pdf_artifact_id == artifact_id)
-            | (Deliverable.xlsx_artifact_id == artifact_id)
-            | (Deliverable.docx_artifact_id == artifact_id),
+    matches = (
+        db.execute(
+            select(Deliverable).where(
+                Deliverable.released_at.is_not(None),
+                (Deliverable.pdf_artifact_id == artifact_id)
+                | (Deliverable.xlsx_artifact_id == artifact_id)
+                | (Deliverable.docx_artifact_id == artifact_id),
+            )
         )
-        .limit(1)
-    ).first()
-    return match is not None
+        .scalars()
+        .all()
+    )
+    # #556: a stale ATT&CK report is withheld from the client list, so its files
+    # are withheld here too -- or a remembered link would still serve them.
+    return any(not is_stale_attack_deliverable(db, d) for d in matches)
 
 
 @router.post(

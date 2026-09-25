@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from app.ai.engine import get_job, run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
-from app.attack.catalog_version import require_current_catalog
+from app.attack.catalog_version import catalog_mismatch_message, require_current_catalog
 from app.audit import audit
 from app.csf.gap import resolve_target_tier
 from app.db.session import get_db
@@ -241,7 +241,14 @@ def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
     # What BLOCKS is `synthesizable_missing` below, which mirrors unlock exactly.
     # What is merely listed here is disclosed on the register instead.
     not_finalized: list[str] = []
-    finalized_attack = _finalized_for_synthesis(db, AttackAssessment, client_id) is not None
+    attack = _finalized_for_synthesis(db, AttackAssessment, client_id)
+    finalized_attack = attack is not None
+    # #556: synthesis refuses an ATT&CK input scored against another catalog
+    # (`require_current_catalog`). The gate asks the SAME predicate and carries
+    # the SAME sentence, or it offers a Generate whose only outcome is a 409. A
+    # separate field, not `synthesizable_missing`: that list is rendered as
+    # "cannot be generated until these are approved", and this input already is.
+    attack_catalog_mismatch = catalog_mismatch_message(db, attack) if attack is not None else None
     finalized_csf = _finalized_for_synthesis(db, CsfAssessment, client_id) is not None
     finalized_zt = _finalized_for_synthesis(db, ZtAssessment, client_id) is not None
     for label, present, finalized in (
@@ -269,6 +276,7 @@ def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
         missing=missing,
         not_finalized=not_finalized,
         synthesizable_missing=synthesizable_missing,
+        attack_catalog_mismatch=attack_catalog_mismatch,
     )
 
 

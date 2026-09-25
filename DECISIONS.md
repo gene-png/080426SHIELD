@@ -5821,12 +5821,14 @@ v19.2 itself: collection "Enterprise ATT&CK" 19.2, source sha256 `dc1639caa5501d
 `app/attack/catalog_version.py` refuses with a typed 409 `attack_catalog_mismatch`:
 
 - in `routes/attack.py`: coverage PATCH, confirm-citations, the AI request builder, the heatmap, approve, finalize and a first release;
-- in `routes/clients.py`: the client dashboard, in client wording;
-- in `routes/risk.py`: risk synthesis, which emits findings by technique ID and would otherwise relabel answers by ID.
+- in `routes/clients.py`: the client dashboard, in client wording, which the dashboard page renders under "Dashboard withheld" instead of an unhandled error;
+- in `routes/risk.py`: risk synthesis, which emits findings by technique ID and would otherwise relabel answers by ID. The Risk Register gate carries the refusal's own sentence in a field of its own, `attack_catalog_mismatch`, which the Risk Register page renders as its own banner. It is not an entry in `synthesizable_missing`: that banner reads "until these are approved", and this input already is.
 
 The client value-summary card reports the ATT&CK kind **unresolved** for a stale assessment, the answer it already gives for an unresolvable service.
 
-**Deliberately unguarded:** the assessment GET, which reports `catalog_current` so the workspace can say why numbers are refused, and the discard summary's row count, which is true for any catalog.
+**A document already released over a stale assessment is withheld, not exempt.** My call, overturnable, recorded on #556. `is_stale_attack_deliverable` is one predicate for both client paths to it. The client deliverable list keeps the row, because the home page asserts that list's membership. The row's `summary`, which carried the finalize-time "Coverage: X%" over a denominator that is not ATT&CK, is replaced by the dashboard's own withholding sentence, and its file IDs are withheld. The file download refuses the same files, so a remembered link does not serve them either. Stakes, measured 2026-09-24: 0 real client ATT&CK assessments, so no client loses a document it holds today. The client sentence promises no rescore, because nothing rescores an approved assessment yet (#558, D-076).
+
+**Deliberately unguarded:** the assessment GET, which reports `catalog_current` so the workspace can say why numbers are refused, and the discard summary's row count, which is true for any catalog. The workspace does not draw a stale assessment's rows into the current matrix; step 2 says why instead, because an ID can name a different technique in the current catalog.
 
 Three states, handled at every guarded site: current, a different recorded version, unrecorded. Red-on-revert: deleting each guard call, one at a time, turns a named route-level test red. The workspace shows the refusal's own message instead of "reload to try again", keyed on the reason's value (#317). The consultant message names "Discard draft" and "Start assessment" only when discarding would leave no assessment. An approved or released assessment has no control that starts a new version (#558), so its message states that and names no action.
 

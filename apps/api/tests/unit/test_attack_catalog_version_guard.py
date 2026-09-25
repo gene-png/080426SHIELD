@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.attack.catalog import SOURCE_VERSION
 from app.models.attack_assessment import AttackAssessment
+from app.models.deliverable import Deliverable
 from app.storage.local import LocalFilesystemStorage
 
 pytestmark = pytest.mark.unit
@@ -191,10 +192,30 @@ def test_the_client_dashboard_refuses_a_stale_release_in_client_words(env) -> No
     client_bearer = client["tokens"]["access_token"]
     assert c.get(url, headers=_auth(client_bearer)).status_code == 200
 
+    listing = f"/clients/{client_id}/deliverables"
+    before = c.get(listing, headers=_auth(client_bearer)).json()["items"]
+    pdf = before[0]["pdf_artifact_id"]
+    assert pdf is not None
+    download = f"/artifacts/{pdf}/download"
+    assert c.get(download, headers=_auth(client_bearer)).status_code == 200
+
     _set_version(Sess, a["id"], None)
     msg = _refused(c.get(url, headers=_auth(client_bearer)))
-    assert "withheld until it is rescored" in msg
+    assert "so its figures are withheld" in msg
+    # Names no internal control and promises no rescore: none exists yet (#558).
     assert "Discard" not in msg and "assessment" not in msg.lower()
+    assert "rescore" not in msg.lower()
+
+    # The released document is withheld the same way, never left stating the
+    # figures the dashboard refuses: still LISTED, with the reason as its summary.
+    (row,) = c.get(listing, headers=_auth(client_bearer)).json()["items"]
+    assert row["summary"] == msg
+    assert (row["pdf_artifact_id"], row["xlsx_artifact_id"], row["docx_artifact_id"]) == (
+        None,
+        None,
+        None,
+    )
+    assert c.get(download, headers=_auth(client_bearer)).status_code == 404
 
 
 def test_approve_refuses_a_stale_draft(env) -> None:
@@ -219,7 +240,54 @@ def test_release_refuses_a_deliverable_whose_assessment_is_stale(env) -> None:
     deliv = c.post(f"/attack/services/{svc}/deliverables/finalize", headers=_auth(bearer))
     assert deliv.status_code in (200, 201), deliv.text
     _set_version(Sess, a["id"], None)
-    _refused(c.post(f"/attack/deliverables/{deliv.json()['id']}/release", headers=_auth(bearer)))
+    msg = _refused(
+        c.post(f"/attack/deliverables/{deliv.json()['id']}/release", headers=_auth(bearer))
+    )
+    # The stale-assessment branch, not the untraceable one: both share the reason.
+    assert "was scored against an ATT&CK catalog that was never recorded" in msg
+    assert "cannot be traced" not in msg
+
+
+def test_release_refuses_a_deliverable_that_cannot_be_traced_to_its_assessment(env) -> None:
+    """A NULL `parent_version` (finalized before 0041) names no assessment, so the
+    catalog it was scored against is unknown: refused as unknown, never guessed,
+    and never an AttributeError on a missing parent."""
+    c, Sess = env
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc, a = _service_and_assessment(c, bearer)
+    assert (
+        c.post(f"/attack/assessments/{a['id']}/approve", headers=_auth(bearer)).status_code == 200
+    )
+    deliv = c.post(f"/attack/services/{svc}/deliverables/finalize", headers=_auth(bearer))
+    assert deliv.status_code in (200, 201), deliv.text
+    with Sess() as s:
+        s.execute(
+            update(Deliverable)
+            .where(Deliverable.id == uuid.UUID(deliv.json()["id"]))
+            .values(parent_version=None)
+        )
+        s.commit()
+    msg = _refused(
+        c.post(f"/attack/deliverables/{deliv.json()['id']}/release", headers=_auth(bearer))
+    )
+    assert "cannot be traced to the assessment it was built from" in msg
+
+
+def test_another_kinds_deliverable_on_the_attack_release_route_is_a_404(env) -> None:
+    """The kind check belongs to `release_deliverable` (404). The catalog guard
+    runs first, so it must step aside for a deliverable with no ATT&CK parent
+    rather than answer 409 "cannot be traced" for it."""
+    c, Sess = env
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    csf = c.post("/csf/services", headers=_auth(bearer), json={"kind": "nist_csf", "title": "CSF"})
+    assert csf.status_code == 201, csf.text
+    with Sess() as s:
+        d = Deliverable(service_id=uuid.UUID(csf.json()["id"]), title="CSF report", version=1)
+        s.add(d)
+        s.commit()
+        deliverable_id = d.id
+    r = c.post(f"/attack/deliverables/{deliverable_id}/release", headers=_auth(bearer))
+    assert r.status_code == 404, r.text
 
 
 def test_a_stale_draft_on_top_of_an_approved_version_names_no_start_control(env) -> None:

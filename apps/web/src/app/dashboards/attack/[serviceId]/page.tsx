@@ -4,7 +4,10 @@ import { redirect } from "next/navigation";
 
 import { AttackDashboard } from "@/components/dashboards/attack/AttackDashboard";
 import { ApiError, apiFetch } from "@/lib/api";
-import { dashboardLoadReason } from "@/lib/describe-save-error";
+import {
+  dashboardLoadReason,
+  serverReasonCode,
+} from "@/lib/describe-save-error";
 import { resolveDashboardClientId } from "@/lib/dashboards/resolveClient";
 import { auth } from "@/lib/auth/options";
 import { SkipToContent } from "@/components/site/SkipToContent";
@@ -35,6 +38,10 @@ export default async function AttackDashboardPage({
 
   let data: AttackDashboardData | null = null;
   let notReleased = false;
+  // #556: released, but scored against an ATT&CK catalog other than the
+  // current one, so the API withholds its figures (typed 409). Rendered with
+  // the server's sentence; it used to fall to `throw err` and Next's error page.
+  let withheld = false;
   // The server's typed explanation, where it sent one (#244).
   let reason: string | null = null;
   if (clientId) {
@@ -63,6 +70,13 @@ export default async function AttackDashboardPage({
         // exceptional one. The decision lives in one place so the five
         // dashboards cannot drift.
         reason = dashboardLoadReason(err);
+      } else if (
+        err instanceof ApiError &&
+        err.status === 409 &&
+        serverReasonCode(err) === "attack_catalog_mismatch"
+      ) {
+        withheld = true;
+        reason = dashboardLoadReason(err);
       } else {
         throw err;
       }
@@ -79,13 +93,15 @@ export default async function AttackDashboardPage({
         className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-6 py-16 focus:outline-2 focus:outline-offset-4 focus:outline-brand-500"
       >
         <h1 className="text-2xl font-semibold text-ink-primary">
-          Dashboard not available yet
+          {withheld ? "Dashboard withheld" : "Dashboard not available yet"}
         </h1>
         <p className="text-sm text-ink-secondary">
           {reason ??
-            (notReleased
-              ? "This ATT&CK coverage report hasn't been released to your organization yet. It will appear here once your SHIELD analyst releases it."
-              : "We couldn't load this dashboard.")}
+            (withheld
+              ? "This ATT&CK coverage report's figures are withheld."
+              : notReleased
+                ? "This ATT&CK coverage report hasn't been released to your organization yet. It will appear here once your SHIELD analyst releases it."
+                : "We couldn't load this dashboard.")}
         </p>
         <Link
           href="/results"

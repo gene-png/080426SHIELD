@@ -2563,3 +2563,35 @@ def test_synthesis_refuses_an_attack_assessment_scored_against_another_catalog(a
     assert r.status_code == 409, r.text
     body = r.json().get("error", r.json())
     assert body.get("reason") == "attack_catalog_mismatch", r.json()
+
+
+@pytest.mark.unit
+def test_the_gate_does_not_offer_generate_over_a_stale_attack_input(app_client) -> None:
+    """#556, the twin of the synthesis refusal: the gate asks the same predicate,
+    so it reports the stale ATT&CK input as blocking, with the refusal's own
+    sentence, instead of offering a Generate whose only outcome is a 409."""
+    from sqlalchemy import update
+
+    from app.models.attack_assessment import AttackAssessment
+
+    c, _ = app_client
+    bearer, cid = _admin(c)
+    _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+    before = c.get(f"/risk/clients/{cid}/gate", headers=bh).json()
+    assert (before["synthesizable_missing"], before["attack_catalog_mismatch"]) == ([], None)
+    db = _session()
+    db.execute(update(AttackAssessment).values(catalog_version=None))
+    db.commit()
+    db.close()
+
+    g = c.get(f"/risk/clients/{cid}/gate", headers=bh).json()
+    # Its own field: it is already approved, so "approve these" is the wrong list.
+    assert g["synthesizable_missing"] == []
+    assert "scored against an ATT&CK catalog that was never recorded" in (
+        g["attack_catalog_mismatch"]
+    )
+    # The same sentence the synthesis refusal gives, so the two cannot drift.
+    r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["message"] == g["attack_catalog_mismatch"]

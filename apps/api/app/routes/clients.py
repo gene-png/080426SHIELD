@@ -23,8 +23,12 @@ from app.attack.analytics import compute as attack_compute
 from app.attack.catalog import all_codes as attack_all_codes
 from app.attack.catalog import tactic_by_id as attack_tactic_by_id
 from app.attack.catalog import technique_by_id as attack_technique_by_id
+from app.attack.catalog_version import (
+    CLIENT_WITHHELD_MESSAGE,
+    is_stale_attack_deliverable,
+    require_current_catalog_for_client,
+)
 from app.attack.catalog_version import is_current as attack_catalog_is_current
-from app.attack.catalog_version import require_current_catalog_for_client
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.csf.gap import MAX_TIER as CSF_MAX_TIER
 from app.csf.gap import analyze as csf_analyze_gaps
@@ -159,27 +163,50 @@ def list_client_deliverables(
         count=len(rows),
     )
 
-    items = [
-        ClientDeliverableResponse(
+    # #556 (D-091): an ATT&CK report released over a non-current catalog stays
+    # LISTED -- the home page asserts this list's membership, see above -- with
+    # its figures and files withheld and the reason in the summary it already
+    # renders, the same refusal its dashboard gives.
+    items = [_client_deliverable(db, deliv, svc) for deliv, svc in rows]
+    return ClientDeliverableListResponse(items=items)
+
+
+def _client_deliverable(db: Session, deliv: Deliverable, svc: Service) -> ClientDeliverableResponse:
+    if is_stale_attack_deliverable(db, deliv):
+        return ClientDeliverableResponse(
             id=deliv.id,
             service_id=deliv.service_id,
             service_kind=svc.kind,
             service_title=svc.title,
             title=deliv.title,
-            summary=deliv.summary,
+            summary=CLIENT_WITHHELD_MESSAGE,
             version=deliv.version,
             released_at=deliv.released_at,
             superseded=deliv.superseded_by is not None,
-            pdf_artifact_id=deliv.pdf_artifact_id,
-            xlsx_artifact_id=deliv.xlsx_artifact_id,
-            docx_artifact_id=deliv.docx_artifact_id,
-            pdf_filename=_artifact_title(db, deliv.pdf_artifact_id),
-            xlsx_filename=_artifact_title(db, deliv.xlsx_artifact_id),
-            docx_filename=_artifact_title(db, deliv.docx_artifact_id),
+            pdf_artifact_id=None,
+            xlsx_artifact_id=None,
+            docx_artifact_id=None,
+            pdf_filename=None,
+            xlsx_filename=None,
+            docx_filename=None,
         )
-        for deliv, svc in rows
-    ]
-    return ClientDeliverableListResponse(items=items)
+    return ClientDeliverableResponse(
+        id=deliv.id,
+        service_id=deliv.service_id,
+        service_kind=svc.kind,
+        service_title=svc.title,
+        title=deliv.title,
+        summary=deliv.summary,
+        version=deliv.version,
+        released_at=deliv.released_at,
+        superseded=deliv.superseded_by is not None,
+        pdf_artifact_id=deliv.pdf_artifact_id,
+        xlsx_artifact_id=deliv.xlsx_artifact_id,
+        docx_artifact_id=deliv.docx_artifact_id,
+        pdf_filename=_artifact_title(db, deliv.pdf_artifact_id),
+        xlsx_filename=_artifact_title(db, deliv.xlsx_artifact_id),
+        docx_filename=_artifact_title(db, deliv.docx_artifact_id),
+    )
 
 
 # ---------------------------------------------------------------------------

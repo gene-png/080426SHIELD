@@ -32,7 +32,10 @@ vi.mock("./AttackDeliverableCard", () => ({
   AttackDeliverableCard: () => null,
 }));
 vi.mock("./AttackHeatmapCard", () => ({ AttackHeatmapCard: () => null }));
-vi.mock("./AttackMatrix", () => ({ AttackMatrix: () => null }));
+// A marker rather than null, so a test can tell whether step 2 drew it (#556).
+vi.mock("./AttackMatrix", () => ({
+  AttackMatrix: () => <div data-testid="attack-matrix" />,
+}));
 vi.mock("./AttackTechniquePanel", () => ({ AttackTechniquePanel: () => null }));
 vi.mock("@/components/messages/MessageThread", () => ({
   MessageThread: () => null,
@@ -174,6 +177,50 @@ describe("AttackWorkspace reqSeq stale-fetch guard", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /approve/i })).toBeDisabled();
+  });
+
+  it("does not draw a stale assessment's rows into the current matrix (#556)", async () => {
+    fetchCatalog.mockResolvedValue(CATALOG);
+    fetchLatestAssessment.mockResolvedValue({
+      ...draft(),
+      catalog_version: "15.1",
+      catalog_current: false,
+    });
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+
+    render(
+      <AttackWorkspace
+        serviceId="svc-stale-matrix"
+        serviceTitle="Atlas ATT&CK"
+      />,
+    );
+
+    expect(await screen.findByTestId("attack-stale-catalog")).toHaveTextContent(
+      "This assessment was scored against ATT&CK v15.1, not the current one.",
+    );
+    expect(screen.queryByTestId("attack-matrix")).not.toBeInTheDocument();
+  });
+
+  it("draws the matrix for a current assessment", async () => {
+    fetchCatalog.mockResolvedValue(CATALOG);
+    fetchLatestAssessment.mockResolvedValue({
+      ...draft(),
+      catalog_version: "19.2",
+      catalog_current: true,
+    });
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+
+    render(
+      <AttackWorkspace
+        serviceId="svc-current-matrix"
+        serviceTitle="Atlas ATT&CK"
+      />,
+    );
+
+    expect(await screen.findByTestId("attack-matrix")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("attack-stale-catalog"),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps the generic sentence for any OTHER heatmap failure", async () => {
