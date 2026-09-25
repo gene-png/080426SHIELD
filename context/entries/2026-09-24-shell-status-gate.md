@@ -21,7 +21,8 @@ The owner asked for this to be gated, not written up again.
   - **R2:** `|| <anything but exit/return/false/$?>`;
   - **R3:** `&& ...` followed by more statements.
 
-  Conditions (`if` / `while` / `until` / `!`) are exempt. It sees through `sh -c`
+  Conditions (`if` / `while` / `until` / `!`) were exempt (at round 1;
+  superseded for `if` in round 5, below). It sees through `sh -c`
   / `bash -c` and `docker compose exec`. It reads every workflow `run:`, the
   pre-commit hooks, and CLAUDE.md's code blocks, and a workflow step with
   `shell: bash` counts as pipefail on.
@@ -171,7 +172,10 @@ coordinator's direction: stop refining and use an explicit whitelist.
   `{ echo/printf...; exit N; }` with one exit, last, at top level, and no
   if/then/&&/||/nested group/$( inside; or `var=$?` whose NEXT statement is
   exactly `exit $var`, `return $var`, `[ "$var" -ne 0 ] && exit "$var"` or
-  `[ "$var" -eq 0 ] || exit "$var"`. Everything else is a finding. The
+  `[ "$var" -eq 0 ] || exit "$var"`. Any other right side of `||` is a
+  finding. (Round 4 called this a whitelist and said "everything else is a
+  finding"; that overclaimed, because it is a whitelist only for the shapes
+  the gate recognizes. Round 5, below, restates it as a floor.) The
   "reaches" and "decides" machinery is deleted.
 - **Two real repo scripts failed it, and the SCRIPTS were rewritten**, not the
   rule. audit-gate's D-NUMBERS step now runs the gate as its only command,
@@ -186,3 +190,40 @@ coordinator's direction: stop refining and use an explicit whitelist.
 - Red on revert: seven mutations, one per whitelist rule, each red. Two rules
   (echo-only, forbidden tokens) overlapped on the reviewer's cases, so each got
   a case only it catches.
+
+## After round 5 of the review: a floor, not a whitelist
+
+At the coordinator's direction the gate stops claiming to be a whitelist. What
+is true: it checks the shapes it recognizes, it is strict about those, and
+everything it does not recognize is listed as a limit rather than judged.
+
+- **The first `||` after the gate is the rescue.** When the gate fails, `&&`
+  short-circuits to the first `||`, so the element after THAT one is what runs,
+  and it must be the statement's last element. `gate || exit 0 || exit 1`
+  exits 0, and is now a finding.
+- **A gate as an `if` condition is checked.** Only the plain `if gate` /
+  `if ! gate` shape is modelled. The branch that runs on failure must end in a
+  literal failing `exit N` / `return N`, or `exit $?` in the else-branch of
+  `if gate` only: in the then-branch of `if ! gate`, `$?` is the negation's
+  status, 0. No such branch, an `elif` chain, or a compound condition
+  (`if pytest || true`) is a finding. The repo's own scripts pass unchanged.
+- **A capture across `else` / `fi` / `done` / `;;` is refused.** The flat
+  statement list read `pytest || rc=$?` then `exit "$rc"` as adjacent across a
+  `fi`, where `rc` can be unset.
+- **Limits, stated rather than modelled**, in the docstring and in the clean
+  banner, so every green run prints them: unquoted `$(gate)` in `echo` /
+  `export` / `local`, a backgrounded gate and `wait`, heredoc bodies fed to a
+  shell, `trap ... EXIT`, and `while` / `until` conditions (#586). Missing
+  inputs are asymmetric, `package.json` scripts are not scanned, and a `pwsh` /
+  `python` step is read as shell (#587, which also carries the missing
+  CLAUDE.md gate-suite line and D-record).
+- A test encoded the old spec (`if` conditions exempt); that was said before it
+  was changed, and it is replaced by
+  `test_an_if_condition_no_longer_consumes_the_status_for_free`.
+- Red on revert: five mutations, each red on its named test (any `||` may
+  rescue, the if-condition check removed, a compound condition accepted, `$?`
+  accepted after a negation, a capture across `fi` accepted). The compound one
+  first stayed green, because its only case had no else-branch; a
+  discriminating case (`if pytest || true; then :; else exit 1; fi`) was added.
+- Self-scan: 66 workflow steps, 2 hook entries, 13 `.sh` files, 1 CLAUDE.md
+  block; none of R1-R4.

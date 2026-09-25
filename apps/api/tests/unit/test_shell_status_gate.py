@@ -93,12 +93,13 @@ def test_r3_is_rescued_by_a_later_or_exit() -> None:
     assert _rules("pytest && echo ok || exit 1\ngit push") == []
 
 
-def test_conditions_consume_the_status_on_purpose() -> None:
-    assert _rules("if pytest -m unit; then echo ok; fi\ngit push") == []
-    # The case the exemption actually decides: a gate in the MIDDLE of a
-    # condition. (A gate first in it carries `if` as its first word and is
-    # never read as a gate at all, so it cannot exercise the exemption.)
-    assert _rules("if echo a && pytest && echo b; then :; fi\ngit push") == []
+def test_an_if_condition_no_longer_consumes_the_status_for_free() -> None:
+    # Round 5 of the review reversed the old exemption for `if`: the branch
+    # that runs when the gate fails must end in a whitelisted exit. No failure
+    # branch, or a gate inside a compound condition, is a finding.
+    assert _rules("if pytest -m unit; then echo ok; fi\ngit push") == ["R2 swallow"]
+    assert _rules("if echo a && pytest && echo b; then :; fi\ngit push") == ["R2 swallow"]
+    # Loop conditions are NOT modelled; that is a stated limit, not a pass.
     assert _rules("while echo a && pytest || false; do :; done\ngit push") == []
 
 
@@ -368,3 +369,52 @@ def test_printing_the_status_is_not_keeping_it() -> None:
     assert [f.split(": ", 1)[1].split(" --")[0] for f in found] == ["R4 no errexit"]
     kept = gate.analyse("set +e\npython scripts/check_x.py\nrc=$?\nexit $rc", "t", **wf)
     assert kept == []
+
+
+# --- round 5: the first || after the gate, and if-condition failure branches -----------
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "pytest || exit 0 || exit 1",  # the first || runs exit 0
+        "pytest || echo skipped || exit 1",  # echo succeeds, so exit 1 never runs
+        "pytest && echo ok || true || exit 1",  # && short-circuits to `|| true`
+    ],
+)
+def test_only_the_first_or_after_the_gate_can_rescue(script: str) -> None:
+    assert _rules(script + "\necho after") == ["R2 swallow"]
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "if ! pytest; then echo failed; fi",  # the failure branch does not exit
+        "if pytest; then echo ok; else echo failed; fi",  # nor does this one
+        "if ! pytest; then exit $?; fi",  # $? here is the negation's status: 0
+        "if pytest; then echo ok; elif true; then :; else exit 1; fi",  # elif: unmodelled
+        # A compound condition that is always true: the else never runs.
+        "if pytest || true; then :; else exit 1; fi",
+    ],
+)
+def test_an_if_whose_failure_branch_does_not_exit_is_a_finding(script: str) -> None:
+    assert _rules(script + "\ngit push") == ["R2 swallow"]
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "if ! pytest; then echo failed; exit 1; fi",
+        "if pytest; then echo ok; else echo failed; exit 3; fi",
+        "if pytest; then :; else exit $?; fi",  # $? is the gate's in the else-branch
+        "if ! pytest; then\n  echo failed\n  exit 1\nfi",
+    ],
+)
+def test_an_if_whose_failure_branch_exits_is_kept(script: str) -> None:
+    assert _rules(script + "\ngit push") == []
+
+
+def test_a_capture_across_fi_is_not_a_rescue() -> None:
+    # The flat token list read `pytest || rc=$?` then `exit "$rc"` as adjacent
+    # across the `fi`; when the branch is not taken, rc is unset.
+    assert _rules('if [ -n "$X" ]; then pytest || rc=$?; fi\nexit "$rc"') == ["R2 swallow"]

@@ -32,9 +32,12 @@ and `docker compose exec|run [opts] SERVICE` are looked through.
   R1 pipe       the gate is not the LAST command of a pipeline, and pipefail is
                 not on (`set -o pipefail`, `set -euo pipefail`, or a workflow
                 step whose `shell:` is `bash`). `set +o pipefail` turns it off.
-  R2 swallow    the gate is followed by `||`, and the right side is not on a
-                deliberately NARROW whitelist (four review rounds each found a
-                hole in a more permissive model):
+  R2 swallow    the gate is followed by `||`, and what runs when it fails is
+                not on a deliberately NARROW whitelist (four review rounds each
+                found a hole in a more permissive model). What runs is the
+                element after the FIRST `||` following the gate (`&&` in
+                between short-circuits to it), and it must be the statement's
+                last element: `gate || exit 0 || exit 1` exits 0. Allowed:
                   - exactly `exit N` / `return N`, N a literal, N % 256 != 0;
                   - exactly `exit $?` / `return $?`;
                   - `false`, only while errexit is on;
@@ -44,7 +47,7 @@ and `docker compose exec|run [opts] SERVICE` are looked through.
                   - `var=$?` whose NEXT statement is exactly `exit $var`,
                     `return $var`, `[ "$var" -ne 0 ] && exit "$var"` or
                     `[ "$var" -eq 0 ] || exit "$var"`.
-                Everything else is a finding. A false positive costs rewriting
+                Any other right side is a finding. A false positive costs rewriting
                 a script into one of these shapes; a false negative costs the
                 next #143. A statement `! gate` is R2 as well: `!` inverts the
                 status and `set -e` ignores it.
@@ -65,8 +68,15 @@ does not exit when a brace group fails because of a command that failed while
 `-e` was ignored, so `{ pytest && echo ok; }` then `git push` pushes. A
 `( ... )` subshell's failure does exit, so its body's end is terminal.
 
-`if` / `elif` / `while` / `until` conditions are exempt: they consume the
-status on purpose.
+A gate as an `if` condition (round 5): only the plain `if gate` / `if ! gate`
+shape is modelled. The branch that runs when the gate FAILS (the else-branch
+of `if gate`, the then-branch of `if ! gate`) must end in a literal failing
+`exit N` / `return N`, or `exit $?` in the else-branch of `if gate` only (in
+the then-branch of `if ! gate`, `$?` is the negation's status, 0). No such
+branch, an `elif` chain, or a gate inside a compound condition (`&&`, `||`,
+a pipe) is an R2 finding. `while` / `until` conditions are NOT modelled.
+A `var=$?` capture counts only when nothing but `;` or a newline separates it
+from the gate: read across `else`, `fi`, `done` or `;;` it is refused.
 
 WHERE IT LOOKS. Every `run:` in `.github/workflows/*.yml` (under `bash -e`,
 which is what GitHub runs); every `entry:` in `.pre-commit-config.yaml`; every
@@ -82,7 +92,16 @@ not checked; `"$( ... )"` inside double quotes is read as one word, so a gate
 there is unseen; `then`, `do`, `fi`, `done` and `else` split a statement
 wherever they appear as words, not only in keyword position; `docker run IMAGE cmd` is
 not looked through; a wrapper not named above hides the gate; `set -e` inside
-a function or subshell is not scoped. So this is a floor, not a census.
+a function or subshell is not scoped; an unquoted `$(gate)` inside `echo`,
+`export` or `local` (the builtin's 0 replaces the gate's status); a
+backgrounded gate (`gate &`, and a bare `wait` returns 0); heredoc bodies fed
+to a shell (`bash <<EOF`), which are not scanned; `trap ... EXIT`, which can
+rewrite the final status; and `while` / `until` conditions (#586). Missing
+inputs are also asymmetric: no workflows directory is could-not-look, while a
+missing `.pre-commit-config.yaml` or an empty `.sh` set is silently nothing,
+`package.json` scripts are not scanned, and a `pwsh` / `python` step is read as
+if it were a POSIX shell script (#587).
+So this is a floor, not a census.
 `mutation_sweep.py` is deliberately NOT in the gate set: its workflow is
 report-only by design (#224).
 
@@ -324,8 +343,11 @@ def statements(script: str) -> list[list[str]]:
     return [s for s, _ in statements_with_ends(script)]
 
 
-def statements_with_ends(script: str) -> list[tuple[list[str], str | None]]:
-    """The script as a flat list of (statement, the last separator after it).
+def statements_with_ends(script: str) -> list[tuple[list[str], list[str]]]:
+    """The script as a flat list of (statement, EVERY separator after it).
+
+    Every one, not the last: in `x; fi; fi` the trailing `;` would otherwise
+    overwrite the `fi`s, and an if's branches could not be found.
 
     A `( ... )`, `{ ...; }` or `$( ... )` group becomes ONE token carrying its
     body, so the rules see `(cd x && gate) && git push` as a gate-bearing
@@ -340,7 +362,7 @@ def statements_with_ends(script: str) -> list[tuple[list[str], str | None]]:
     except ValueError as exc:
         raise CouldNotLook(f"cannot tokenize: {exc}") from exc
     out: list[list[str]] = []
-    ends: list[str | None] = []
+    ends: list[list[str]] = []
     cur: list[str] = []
     stack: list[tuple[str, list[str]]] = []
     for tok in toks:
@@ -360,9 +382,9 @@ def statements_with_ends(script: str) -> list[tuple[list[str], str | None]]:
         if tok == ")" or tok in _SEPARATORS:  # `)` alone: a `case` pattern's close
             if cur:
                 out.append(cur)
-                ends.append(None)
+                ends.append([])
             if out:
-                ends[-1] = tok
+                ends[-1].append(tok)
             cur = []
         else:
             cur.append(tok)
@@ -370,7 +392,7 @@ def statements_with_ends(script: str) -> list[tuple[list[str], str | None]]:
         raise CouldNotLook(f"unbalanced `{stack[-1][0]}`: cannot read the script")
     if cur:
         out.append(cur)
-        ends.append(None)
+        ends.append([])
     return list(zip(out, ends, strict=True))
 
 
@@ -495,6 +517,48 @@ def _capture_is_whitelisted(var: str, nxt: list[str]) -> bool:
     )
 
 
+def _failure_branch(pairs: list, idx: int, negated: bool):
+    """The statements that run when the gate in the `if` at pairs[idx] FAILS.
+
+    `if ! gate; then ...` fails into the then-branch; `if gate; then ...; else
+    ...; fi` into the else-branch, which is None when there is none. Returns
+    "unmodelled" for an `elif` chain or an `if` with no closing `fi`.
+    """
+    then: list = []
+    els = None
+    cur = then
+    depth = 0
+    for s, seps in pairs[idx + 1 :]:
+        if s and s[0] == "if":
+            depth += 1
+        if s and s[0] == "elif" and depth == 0:
+            return "unmodelled"
+        cur.append(s)
+        for sep in seps:
+            if sep == "fi":
+                if depth == 0:
+                    return then if negated else els
+                depth -= 1
+            elif sep == "else" and depth == 0:
+                els = []
+                cur = els
+    return "unmodelled"
+
+
+def _if_failure_kept(pairs: list, idx: int, negated: bool) -> bool:
+    """Does the failure branch END in a whitelisted exit?
+
+    `exit $?` counts only in the else-branch of `if gate`: in the then-branch
+    of `if ! gate`, `$?` is the NEGATION's status, which is 0 when the gate
+    failed (measured, and recorded in audit-gate.yml).
+    """
+    branch = _failure_branch(pairs, idx, negated)
+    if not isinstance(branch, list) or not branch:
+        return False
+    last = branch[-1]
+    return _literal_failure(last) or (not negated and _is_status_exit(last))
+
+
 def _rescue(element: list[list[str]], nxt: list[str], errexit: bool) -> bool:
     """Is the right side of `||` -- EXACTLY one command -- a whitelisted rescue?"""
     if len(element) != 1:
@@ -532,7 +596,7 @@ def analyse(
         nxt = stmts[idx + 1][0] if idx + 1 < len(stmts) else None
         terminal = (
             (idx == len(stmts) - 1 and tail_terminal)
-            or pairs[idx][1] in ("else", "fi", ";;", "done")
+            or any(sep in ("else", "fi", ";;", "done") for sep in pairs[idx][1])
             or nxt in ("elif", "esac")
         )
         flags = _set_flags(stmt)
@@ -542,18 +606,47 @@ def analyse(
         body_stmt = stmt[1:] if negated else stmt
         elems = _elements(body_stmt)
         conditional = stmt[0] in _CONDITIONAL
+        if stmt[0] == "if":
+            # A gate used as an `if` condition: its failure branch must end in a
+            # whitelisted exit, or the failure is swallowed. Only the plain
+            # `if [!] gate` shape is modelled; a gate inside a compound condition
+            # (&&, ||, a pipe) is a finding, by the same whitelist rule.
+            cond = stmt[1:]
+            cond_negated = bool(cond) and cond[0] == "!"
+            if cond_negated:
+                cond = cond[1:]
+            cond_elems = _elements(cond)
+            if any(is_gate(c) for pipe, _ in cond_elems for c in pipe):
+                simple = len(cond_elems) == 1 and len(cond_elems[0][0]) == 1
+                if not simple or not _if_failure_kept(pairs, idx, cond_negated):
+                    shape = (
+                        "if ! gate; then ...; exit N; fi"
+                        if cond_negated
+                        else "if gate; then ...; else ...; exit N; fi"
+                    )
+                    findings.append(
+                        f"{where}: R2 swallow -- `{' '.join(stmt)[:70]}`: the branch that runs when the "
+                        f"gate fails does not end in a whitelisted exit (write `{shape}`)"
+                    )
         last_stmt = terminal
         nxt_stmt = stmts[idx + 1] if idx + 1 < len(stmts) else []
         # The next statement propagates the status, in a WHITELISTED shape only:
         # `exit $?` / `return $?`, or `var=$?` followed by a whitelisted
         # propagation of `$var`. A printed or merely tested `$?` is not kept.
         after = stmts[idx + 2] if idx + 2 < len(stmts) else []
-        captured = bool(nxt_stmt) and (
-            _is_status_exit(nxt_stmt)
-            or (
-                len(nxt_stmt) == 1
-                and bool(_ASSIGN_STATUS.match(nxt_stmt[0]))
-                and _capture_is_whitelisted(_ASSIGN_STATUS.match(nxt_stmt[0]).group(1), after)
+        # The flat token list reads `gate` then `fi` then `rc=$?` as adjacent; a
+        # capture counts only when nothing but `;` / a newline separates them.
+        seps_plain = all(sep == ";" for sep in pairs[idx][1])
+        captured = (
+            seps_plain
+            and bool(nxt_stmt)
+            and (
+                _is_status_exit(nxt_stmt)
+                or (
+                    len(nxt_stmt) == 1
+                    and bool(_ASSIGN_STATUS.match(nxt_stmt[0]))
+                    and _capture_is_whitelisted(_ASSIGN_STATUS.match(nxt_stmt[0]).group(1), after)
+                )
             )
         )
         ops = [op for _, op in elems]
@@ -590,17 +683,21 @@ def analyse(
                     f"{where}: R2 swallow -- `! {gate_txt}` inverts the gate's status, and set -e ignores it"
                 )
                 continue
-            rescued = any(
-                ops[k] == "||"
-                and k + 1 == len(elems) - 1  # EXACTLY one statement on the right
-                and _rescue(elems[k + 1][0], nxt_stmt, errexit)
-                for k in range(e_i, len(elems) - 1)
+            # When the gate fails, `&&` short-circuits to the FIRST `||` after it,
+            # and what follows that `||` is what runs. So the rescue must be the
+            # element after the first `||`, be the last element (exactly one
+            # statement), and be whitelisted. `gate || exit 0 || exit 1` exits 0.
+            first_or = next((k for k in range(e_i, len(elems) - 1) if ops[k] == "||"), None)
+            rescued = (
+                first_or is not None
+                and first_or + 1 == len(elems) - 1
+                and _rescue(elems[first_or + 1][0], nxt_stmt if seps_plain else [], errexit)
             )
-            if op == "||" and not rescued:
+            if first_or is not None and not rescued:
                 findings.append(
                     f"{where}: R2 swallow -- `{gate_txt} || ...` turns the gate's failure into success"
                 )
-            elif op == "&&" and not last_stmt and not rescued and not captured:
+            elif op == "&&" and first_or is None and not last_stmt and not captured:
                 findings.append(
                     f"{where}: R3 mid-list -- `{gate_txt} && ...` is followed by more statements; "
                     "under set -e its failure does not stop them"
@@ -815,8 +912,11 @@ def main(argv: list[str]) -> int:
         return 1
     print(
         f"check-shell-status: none of R1-R4 found in {scope}. A line-level heuristic, "
-        "not a shell parser: functions, sourced files, command variables, loops and "
-        "unlisted wrappers are not modelled (see its docstring)."
+        "not a shell parser, so a floor, not a census. NOT modelled: functions, sourced "
+        "files, command variables, loop bodies and while/until conditions, unlisted "
+        "wrappers, unquoted $(gate) in echo/export/local, backgrounded gates, heredoc "
+        "bodies, trap EXIT (#586); package.json scripts are not scanned, and pwsh/python "
+        "steps are read as shell (#587). See its docstring."
     )
     return 0
 
