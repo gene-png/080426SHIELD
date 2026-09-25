@@ -497,7 +497,7 @@ def patch_coverage(
             status_code=status.HTTP_409_CONFLICT,
             detail="This assessment is locked.",
         )
-    require_current_catalog(a)  # #556
+    require_current_catalog(db, a)  # #556
     if "status" in data:
         new_status = data["status"]
         if new_status is None:
@@ -1321,7 +1321,7 @@ def build_attack_ai_request(db: Session, svc: Service, client: Client) -> Attack
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="This assessment is locked."
         )
-    require_current_catalog(a)  # #556: never draft over rows keyed to another catalog
+    require_current_catalog(db, a)  # #556: never draft over rows keyed to another catalog
 
     # ONE query, projected two ways, so the hard allow-list and the egress
     # payload cannot disagree about what the client owns.
@@ -1529,7 +1529,7 @@ def confirm_coverage_citations(
             status_code=status.HTTP_409_CONFLICT,
             detail="This assessment is locked.",
         )
-    require_current_catalog(a)  # #556
+    require_current_catalog(db, a)  # #556
     outstanding = [e for e in (row.unconfirmed_citations or []) if e.get("cleared_at") is None]
     if not outstanding:
         # Refused rather than returned as a cheerful no-op. A 200 here would write
@@ -1981,6 +1981,9 @@ def approve_assessment(
             status_code=status.HTTP_409_CONFLICT,
             detail="Assessment already released.",
         )
+    # #556: approving a stale draft would remove the discard remedy and make it
+    # the finalize/synthesis input.
+    require_current_catalog(db, a)
     a.status = AttackAssessmentStatus.APPROVED
     a.approved_at = utcnow()
     a.approved_by = user.id
@@ -2100,7 +2103,7 @@ def heatmap(
         )
     # #556: `valid` below used to be the whole defence, and it DROPS unknown codes
     # silently. A stale assessment is refused before any number is computed.
-    require_current_catalog(a)
+    require_current_catalog(db, a)
     valid = attack_all_codes()
     rows = (
         db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
@@ -2592,7 +2595,7 @@ def finalize_attack_deliverable(
             status_code=status.HTTP_409_CONFLICT,
             detail="Assessment must be approved before finalizing the deliverable.",
         )
-    require_current_catalog(assessment)  # #556: never render a stale denominator
+    require_current_catalog(db, assessment)  # #556: never render a stale denominator
     valid = attack_all_codes()
     coverage = (
         db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == assessment.id))
@@ -2757,6 +2760,50 @@ def latest_attack_deliverable(
     return _serialize_deliverable(db, deliv)
 
 
+def _refuse_release_of_a_stale_deliverable(
+    db: Session, deliverable_id: uuid.UUID, client_id: uuid.UUID
+) -> None:
+    """#556: a document finalized over a non-current catalog is not released.
+
+    Only a FIRST release is guarded. Re-releasing an already-released deliverable
+    is `release_deliverable`'s idempotent repair path and publishes nothing new.
+    A deliverable this tenant does not own falls through to `release_deliverable`,
+    which 404s it -- so this never reveals another tenant's deliverable. A NULL
+    `parent_version` (finalized before 0041) cannot be traced to the assessment it
+    was built from, so it is refused as unknown rather than guessed, the rule
+    `_release_parent` already applies.
+    """
+    deliv = db.get(Deliverable, deliverable_id)
+    if deliv is None or deliv.released_at is not None:
+        return
+    # Deliverables carry no client_id; tenancy is through the service, exactly as
+    # `require_deliverable_in_tenant` checks it.
+    svc = db.get(Service, deliv.service_id)
+    if svc is None or svc.client_id != client_id:
+        return
+    parent = None
+    if deliv.parent_version is not None:
+        parent = db.execute(
+            select(AttackAssessment).where(
+                AttackAssessment.service_id == deliv.service_id,
+                AttackAssessment.version == deliv.parent_version,
+            )
+        ).scalar_one_or_none()
+    if parent is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "attack_catalog_mismatch",
+                "message": (
+                    "This deliverable cannot be traced to the assessment it was built "
+                    "from, so the ATT&CK catalog it was scored against is unknown and it "
+                    "is not released."
+                ),
+            },
+        )
+    require_current_catalog(db, parent)
+
+
 @router.post(
     "/deliverables/{deliverable_id}/release",
     response_model=DeliverableResponse,
@@ -2768,6 +2815,7 @@ def release_attack_deliverable(
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],
 ) -> DeliverableResponse:
+    _refuse_release_of_a_stale_deliverable(db, deliverable_id, client.id)
     deliv = release_deliverable(
         db,
         deliverable_id=deliverable_id,

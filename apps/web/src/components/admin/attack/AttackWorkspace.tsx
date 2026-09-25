@@ -623,9 +623,15 @@ export function AttackWorkspace({
             description="Locks the coverage matrix so the deliverable is generated from a fixed set of scores. Approving does not release anything to the client — that is the last step."
             done={assessment.status !== "draft"}
             blockedReason={
-              scoredCount === 0
-                ? "Nothing has been scored yet. Run the AI draft or score techniques by hand in step 2 first."
-                : null
+              // #556: the API refuses to approve an assessment scored against
+              // another ATT&CK catalog; say so here instead of offering a button
+              // whose only outcome is that refusal. `=== false` on purpose: an
+              // older API that omits the field must not read as stale.
+              assessment.catalog_current === false
+                ? "This assessment was scored against a different ATT&CK catalog than the current one, so it cannot be approved."
+                : scoredCount === 0
+                  ? "Nothing has been scored yet. Run the AI draft or score techniques by hand in step 2 first."
+                  : null
             }
           >
             <button
@@ -634,7 +640,8 @@ export function AttackWorkspace({
               disabled={
                 busy !== null ||
                 assessment.status !== "draft" ||
-                scoredCount === 0
+                scoredCount === 0 ||
+                assessment.catalog_current === false
               }
               className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
             >

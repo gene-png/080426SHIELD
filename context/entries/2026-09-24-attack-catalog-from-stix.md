@@ -16,7 +16,7 @@ computed over that denominator. #556 is tier-1.
   refuses a file whose collection version is not the one requested (checked:
   an 18.1 file offered as 19.2 exits 2). It writes:
   - `app/attack/_catalog_data.py`, recording the version, URL and sha256;
-  - a verbatim, type-selected subset of MITRE's objects, at
+  - a type-selected subset of MITRE's objects (value-equal, not byte-equal), at
     `app/attack/stix/enterprise-attack-19.2.subset.json.gz` (1.4 MB).
 - **`app/attack/catalog.py`** is now a loader over the generated data. The
   public API is unchanged, plus `SOURCE` and `SOURCE_VERSION`.
@@ -37,11 +37,14 @@ over a mixed, undisclosed set.
 
 - **Migration 0052** adds `attack_assessments.catalog_version`. It is stamped at
   creation and NULL for every existing row.
-- **Six routes refuse** a stale assessment with a typed 409
-  `attack_catalog_mismatch`: PATCH, citation confirm, Run-AI, heatmap, finalize,
-  and the client dashboard. The client dashboard uses client wording.
+- **Every reader that computes, changes or publishes coverage refuses** a stale
+  assessment with a typed 409 `attack_catalog_mismatch`: PATCH,
+  confirm-citations, Run-AI, heatmap, approve, finalize, first release, the client
+  dashboard (client wording) and risk synthesis. The value-summary card reports
+  the kind unresolved. The assessment GET and the discard count stay unguarded
+  on purpose, because neither computes a coverage number.
 - **The workspace** shows the refusal's own message.
-- **Red-on-revert:** removing each of the six calls turns a named test red.
+- **Red-on-revert:** removing each guard call turns a named test red.
 - **Gap:** an approved or released assessment has no rescore control (#558).
 
 ## The path, and what it rests on

@@ -14,9 +14,10 @@ version you asked for, and writes two files:
 
   * `app/attack/stix/enterprise-attack-<version>.subset.json.gz`: MITRE's own
     objects of four types (attack-pattern, x-mitre-tactic, x-mitre-matrix,
-    x-mitre-collection), each byte-for-byte as published and only SELECTED by
-    type, so any one can be checked against upstream by its STIX id. The tests
-    parse this with their own code, never with this script's.
+    x-mitre-collection), SELECTED by type and otherwise unaltered in VALUE. They
+    are re-serialized with sorted keys, so the bytes are not MITRE's; any object
+    can still be compared with upstream by its STIX id. The tests parse this with
+    their own code, never with this script's.
   * `app/attack/_catalog_data.py`: the tactics in matrix order and every
     active technique (revoked and deprecated excluded), with the source URL,
     version and the full file's sha256.

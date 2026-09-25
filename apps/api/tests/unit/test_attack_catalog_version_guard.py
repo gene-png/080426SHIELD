@@ -168,7 +168,7 @@ def test_finalize_refuses_a_stale_approved_assessment_and_names_no_discard(env) 
     _set_version(Sess, a["id"], None)
     msg = _refused(c.post(f"/attack/services/{svc}/deliverables/finalize", headers=_auth(bearer)))
     # No control starts a new version after approval (#558), so none is named.
-    assert "Discard" not in msg and "rescored in a new assessment version" in msg
+    assert "Discard" not in msg and "cannot be rescored from the workspace yet" in msg
 
 
 def test_the_client_dashboard_refuses_a_stale_release_in_client_words(env) -> None:
@@ -195,3 +195,46 @@ def test_the_client_dashboard_refuses_a_stale_release_in_client_words(env) -> No
     msg = _refused(c.get(url, headers=_auth(client_bearer)))
     assert "withheld until it is rescored" in msg
     assert "Discard" not in msg and "assessment" not in msg.lower()
+
+
+def test_approve_refuses_a_stale_draft(env) -> None:
+    """Approving would remove the discard remedy and make the stale draft the
+    finalize and synthesis input."""
+    c, Sess = env
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    _, a = _service_and_assessment(c, bearer)
+    _set_version(Sess, a["id"], None)
+    _refused(c.post(f"/attack/assessments/{a['id']}/approve", headers=_auth(bearer)))
+
+
+def test_release_refuses_a_deliverable_whose_assessment_is_stale(env) -> None:
+    """A document finalized before 0052 must not reach the client as a PDF on a
+    denominator that is not ATT&CK while the dashboard refuses the same numbers."""
+    c, Sess = env
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc, a = _service_and_assessment(c, bearer)
+    assert (
+        c.post(f"/attack/assessments/{a['id']}/approve", headers=_auth(bearer)).status_code == 200
+    )
+    deliv = c.post(f"/attack/services/{svc}/deliverables/finalize", headers=_auth(bearer))
+    assert deliv.status_code in (200, 201), deliv.text
+    _set_version(Sess, a["id"], None)
+    _refused(c.post(f"/attack/deliverables/{deliv.json()['id']}/release", headers=_auth(bearer)))
+
+
+def test_a_stale_draft_on_top_of_an_approved_version_names_no_start_control(env) -> None:
+    """Discarding it returns to the approved version, where "Start assessment" does
+    not render (#558). So the message must not tell the consultant to start one
+    (D-076: name only controls that exist)."""
+    c, Sess = env
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc, v1 = _service_and_assessment(c, bearer)
+    assert (
+        c.post(f"/attack/assessments/{v1['id']}/approve", headers=_auth(bearer)).status_code == 200
+    )
+    v2 = c.post(f"/attack/services/{svc}/assessments", headers=_auth(bearer))
+    assert v2.status_code == 201, v2.text
+    _set_version(Sess, v2.json()["id"], None)
+    msg = _refused(c.get(f"/attack/services/{svc}/heatmap", headers=_auth(bearer)))
+    assert "start a new assessment" not in msg
+    assert "cannot be rescored from the workspace yet" in msg

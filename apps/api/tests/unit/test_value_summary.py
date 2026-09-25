@@ -237,7 +237,10 @@ def _make_released_zt(db, client_id, opened_by, *, gap_codes, released=True) -> 
         db.flush()
 
 
-def _make_released_attack(db, client_id, opened_by, *, gap_codes) -> None:
+def _make_released_attack(
+    db, client_id, opened_by, *, gap_codes, catalog_version: str | None = "current"
+) -> None:
+    from app.attack.catalog import SOURCE_VERSION
     from app.models.attack_assessment import (
         AttackAssessment,
         AttackAssessmentStatus,
@@ -251,6 +254,9 @@ def _make_released_attack(db, client_id, opened_by, *, gap_codes) -> None:
         client_id=client_id,
         version=1,
         status=AttackAssessmentStatus.APPROVED,
+        # #556: a real assessment records the catalog it was scored against. The
+        # fixture predates that column; `None` is the pre-0052 (stale) state.
+        catalog_version=SOURCE_VERSION if catalog_version == "current" else catalog_version,
     )
     db.add(a)
     db.flush()
@@ -1089,3 +1095,34 @@ def test_the_null_invariant_holds_across_every_state_this_file_produces(app_clie
     assert body["csf_gap_count"] == 5 and body["csf_targets_defaulted"] == 1
     assert body["zt_gap_count"] is None and body["zt_targets_defaulted"] is None
     assert body["zt_services"] == 0
+
+
+@pytest.mark.unit
+def test_value_summary_withholds_attack_scored_against_another_catalog(app_client) -> None:
+    """#556: a stale ATT&CK assessment's unknown codes would vanish inside
+    `attack_compute`, so the card reports the kind UNRESOLVED instead of a count
+    over a mixed set -- the same answer the client dashboard gives by refusing."""
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer_client = client["tokens"]["access_token"]
+    cid = client["user"]["client_id"]
+    db = _session(c)
+    _make_released_attack(
+        db,
+        _uuid.UUID(cid),
+        _uuid.UUID(admin["user"]["id"]),
+        gap_codes=_attack_codes(3),
+        catalog_version=None,
+    )
+    db.commit()
+    db.close()
+
+    r = c.get(
+        f"/clients/{cid}/value-summary",
+        headers={"Authorization": f"Bearer {bearer_client}"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["attack_uncovered_count"] is None
+    assert body["attack_uncovered_unresolved"] is True

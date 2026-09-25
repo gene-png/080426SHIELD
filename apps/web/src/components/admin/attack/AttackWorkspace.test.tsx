@@ -152,6 +152,30 @@ describe("AttackWorkspace reqSeq stale-fetch guard", () => {
     expect(screen.queryByText(/reload to try again/)).not.toBeInTheDocument();
   });
 
+  it("does not offer Approve on an assessment scored against another catalog (#556)", async () => {
+    fetchCatalog.mockResolvedValue(CATALOG);
+    fetchLatestAssessment.mockResolvedValue({
+      ...draft(),
+      catalog_version: null,
+      catalog_current: false,
+    });
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+
+    render(
+      <AttackWorkspace
+        serviceId="svc-stale-approve"
+        serviceTitle="Atlas ATT&CK"
+      />,
+    );
+
+    expect(
+      await screen.findByText(
+        /scored against a different ATT&CK catalog than the current one/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /approve/i })).toBeDisabled();
+  });
+
   it("keeps the generic sentence for any OTHER heatmap failure", async () => {
     fetchCatalog.mockResolvedValue(CATALOG);
     fetchLatestAssessment.mockResolvedValue(draft());

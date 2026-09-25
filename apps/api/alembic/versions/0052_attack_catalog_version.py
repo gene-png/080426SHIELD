@@ -24,10 +24,10 @@ support. Missing data defaults to unconfirmed, never to confirmed (CLAUDE.md).
 
 Measured 2026-09-24: 0 real client ATT&CK assessments in any environment this
 repo defines. The dev database holds 4, all test data: the seeded demo, an
-e2e-minted client, and the synthetic client of #555. They are rescored by
-creating a new version or resetting the stack. That rests on one condition
-nobody here can check: no real engagement ran on a stack this session could
-not see.
+e2e-minted client, and the synthetic client of #555. On the dev stack they are
+rescored by resetting it: the workspace has no control that starts a new version
+after approval (#558). That rests on one condition nobody here can check: no
+real engagement ran on a stack this session could not see.
 
 SQLite-safe via `batch_alter_table` (core principle 6); additive and nullable,
 so older code reading a newer database is unaffected.

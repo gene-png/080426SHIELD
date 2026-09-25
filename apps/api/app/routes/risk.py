@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from app.ai.engine import get_job, run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
+from app.attack.catalog_version import require_current_catalog
 from app.audit import audit
 from app.csf.gap import resolve_target_tier
 from app.db.session import get_db
@@ -469,6 +470,10 @@ def _gather_findings(
 
     attack = _finalized_for_synthesis(db, AttackAssessment, client_id)
     if attack is not None:
+        # #556: rows keyed to another catalog would reach the register by ID --
+        # "ATT&CK T1649.001" is not a technique, and a T1558 row was answered
+        # against the swapped name. Refused, never relabelled by ID (D-091).
+        require_current_catalog(db, attack)
         rows = (
             db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == attack.id))
             .scalars()

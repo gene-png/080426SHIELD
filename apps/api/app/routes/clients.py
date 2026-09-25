@@ -23,6 +23,7 @@ from app.attack.analytics import compute as attack_compute
 from app.attack.catalog import all_codes as attack_all_codes
 from app.attack.catalog import tactic_by_id as attack_tactic_by_id
 from app.attack.catalog import technique_by_id as attack_technique_by_id
+from app.attack.catalog_version import is_current as attack_catalog_is_current
 from app.attack.catalog_version import require_current_catalog_for_client
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.csf.gap import MAX_TIER as CSF_MAX_TIER
@@ -861,6 +862,11 @@ def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> _KindT
         # helpers above this one DO freeze, and a reader sweeping for the twin
         # would otherwise read this as the site that was missed.
         a = res.row
+        if not attack_catalog_is_current(a):
+            # #556: an assessment scored against another catalog would have its
+            # unknown codes silently dropped by `attack_compute` below. Same
+            # answer as an unresolvable service: the whole kind is unresolved.
+            return _KindTotal(None, True)
         rows = (
             db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
             .scalars()

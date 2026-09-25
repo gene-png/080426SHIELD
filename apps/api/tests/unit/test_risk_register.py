@@ -2536,3 +2536,30 @@ def test_every_batched_risk_synthesize_call_carries_the_requests_correlation_id(
     engine.dispose()
     assert len(ids) > 1, ids  # more than one batch, or the workers are untested
     assert set(ids) == {"corr-risk-batches"}, ids
+
+
+@pytest.mark.unit
+def test_synthesis_refuses_an_attack_assessment_scored_against_another_catalog(app_client) -> None:
+    """#556: synthesis emits `ATT&CK <code>: <status>` per gap/partial row, BY ID.
+    A stale assessment holds codes the catalog no longer has (T1649.001 is not a
+    technique) and a T1558 row answered against the swapped name, so reading it
+    would relabel answers by ID. It is refused through the endpoint, typed."""
+    from sqlalchemy import update
+
+    from app.models.attack_assessment import AttackAssessment
+
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+    db = _session()
+    db.execute(update(AttackAssessment).values(catalog_version=None))
+    db.commit()
+    db.close()
+
+    r = c.post(
+        f"/risk/clients/{cid}/register/generate", headers={"Authorization": f"Bearer {bearer}"}
+    )
+    assert r.status_code == 409, r.text
+    body = r.json().get("error", r.json())
+    assert body.get("reason") == "attack_catalog_mismatch", r.json()
