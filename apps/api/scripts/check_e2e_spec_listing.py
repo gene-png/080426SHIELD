@@ -1,4 +1,4 @@
-"""Every Playwright spec on disk must be one CI's E2E run actually includes (#540).
+"""Every script-suffixed file under e2e/ must be in CI's E2E run or declared (#540, #579).
 
 WHY THIS EXISTS. The owner's design for #540's Playwright half: compare the
 specs on disk against the specs the CI project runs. `testIgnore`, `testMatch`,
