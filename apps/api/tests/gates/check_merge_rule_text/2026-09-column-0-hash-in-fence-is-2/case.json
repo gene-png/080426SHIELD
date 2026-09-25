@@ -1,0 +1,12 @@
+{
+ "incident": "ADVERSARIAL. Review of 2ae1650: a column-0 `## ` line inside a code fence reads as a heading to a line regex, so it would end the section. The gate does not parse fences; it refuses the shape instead.",
+ "expect": 2,
+ "adversarial": true,
+ "stdout_contains": "interrupted by `## not a heading",
+ "argv": [
+  "--old",
+  "{dir}/old/CLAUDE.md",
+  "--new",
+  "{dir}/new/CLAUDE.md"
+ ]
+}

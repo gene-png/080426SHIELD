@@ -13,14 +13,14 @@ governance files, the change is made VISIBLE instead.
 ## What changed
 
 - **`check_merge_rule_text.py`** compares the `## The merge rule` section of
-  CLAUDE.md (heading to the next `## `, which includes the condition-5 path
-  list) at the PR's merge base and at its head. Exit 0: byte-identical. 1:
+  CLAUDE.md (heading to `## Real commands`, which includes the condition-5
+  path list) at the PR's merge base and at its head. Exit 0: byte-identical. 1:
   changed, with the changed lines named. 2: could not look (the section
   missing at either end, including a renamed heading; git cannot read a ref;
   CLAUDE.md missing; a bad argument). No label, no escape.
 - **Its own job in `audit-gate.yml`**, "Merge rule text", with
   `fetch-depth: 0`. NOT a required check: that is the owner's setting.
-- Four fixtures (0, 1, 2, and a whitespace-only edit as the adversarial 1),
+- Fixtures for 0, 1 and 2 (a whitespace-only edit is the adversarial 1),
   range-mode unit tests against real repositories, and a
   `test_gate_crash_exit_code.GATES` entry.
 
@@ -42,7 +42,8 @@ editing its own workflow step can neuter it until CODEOWNERS covers
 
 ## After the first review (`6fcc02f`)
 
-- **The boundary is pinned at both ends of the range.** There must be exactly
+- **The start was pinned, at the base and at the head** (the end was not;
+  see the second review below). There must be exactly
   one `## The merge rule` heading, and `### Condition 5: the paths` must lie
   inside its section; otherwise exit 2. Without that, a decoy copy above the
   real section was what got read, and a `## ` heading inserted above the path
@@ -55,3 +56,24 @@ editing its own workflow step can neuter it until CODEOWNERS covers
   repo's `eol=lf`) and checks the CR is printed as a visible `\r`.
 - The job's `actions/checkout` and `setup-python` match the sibling jobs (`@v7`).
 - The condition-1 count angle is on #584, not filed twice.
+
+## After the second review (`2ae1650`)
+
+- **What is pinned, stated exactly** (the first review's "pinned at both
+  ends" overclaimed: only the start was). Checked separately in the base's
+  CLAUDE.md and in the head's, each failure exit 2:
+  - the start: exactly one `## The merge rule` heading;
+  - the end: exactly one `## Real commands` heading, and it is the first `## `
+    line after the start. Before this, a `## ` line anywhere below the
+    subsection heading (inside the list, lower down, or at column 0 in a code
+    fence) ended the section early and the text after it compared green;
+  - the subsection: `### Condition 5: the paths` lies inside the section.
+- **Range mode's byte fidelity is tested**: a CRLF-only commit in a tmp repo
+  with no `.gitattributes` and `core.autocrlf` off exits 1.
+- Fixtures added for a heading directly under the subsection, a column-0
+  `## ` in a fence, and a decoy below the real section. The earlier
+  heading-above fixture now fires on the terminator check, and its needle says
+  so.
+- Red on revert, six mutations, each red on its named tests or fixtures: the
+  start count, the subsection check, the terminator identity, the terminator
+  count, a universal-newline file read, and `_git` with `text=True`.

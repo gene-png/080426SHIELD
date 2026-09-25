@@ -82,6 +82,23 @@ def test_range_an_unreadable_base_is_could_not_look(tmp_path, capsys) -> None:
     assert "could not look" in out and "no-such-ref" in out, out
 
 
+def test_range_a_heading_inside_the_section_is_could_not_look(tmp_path, capsys) -> None:
+    r = _repo(
+        tmp_path,
+        RULE.replace("### Condition 5: the paths\n\n", "### Condition 5: the paths\n\n## X\n\n"),
+    )
+    rc, out = _run(r, capsys)
+    assert rc == 2, out
+    assert "interrupted by `## X`" in out and "the head" in out, out
+
+
+def test_a_second_terminator_heading_is_could_not_look() -> None:
+    # Which `## Real commands` ends the section would be ambiguous.
+    doubled = RULE + chr(10) + "## Real commands" + chr(10)
+    with pytest.raises(gate.CouldNotLook, match="2 `## Real commands` headings"):
+        gate.section(doubled, "t")
+
+
 def test_the_section_ends_at_the_next_level_two_heading() -> None:
     body = gate.section(RULE, "t")
     assert body.startswith("## The merge rule") and "### Condition 5" in body, body
@@ -100,6 +117,29 @@ def test_the_section_ends_at_the_next_level_two_heading() -> None:
 def test_a_bad_argument_is_could_not_look(argv: list[str], capsys) -> None:
     rc = gate.main(argv)
     assert rc == 2, capsys.readouterr().out
+
+
+def test_range_a_line_ending_change_is_a_change(tmp_path, capsys) -> None:
+    # The mode CI runs. The tmp repo has no .gitattributes, so the CR is
+    # committed as-is; `git show` output must reach the compare untranslated.
+    crlf = RULE.replace("listed below.**" + chr(10), "listed below.**" + chr(13) + chr(10))
+    assert crlf != RULE
+    r = _repo(tmp_path, RULE)
+    (r / "CLAUDE.md").write_bytes(crlf.encode("utf-8"))
+
+    def git(*a: str) -> bytes:
+        cmd = ["git", "-C", str(r), *a]
+        return subprocess.run(cmd, check=True, capture_output=True).stdout  # noqa: S603,S607
+
+    # A global core.autocrlf would strip the CR on add, leaving nothing to commit.
+    git("config", "core.autocrlf", "false")
+    git("add", "-A")
+    git("commit", "-q", "-m", "crlf")
+    shown = git("show", "pr:CLAUDE.md")
+    assert chr(13).encode() in shown, "the CR did not reach the commit; the test proves nothing"
+    rc, out = _run(r, capsys)
+    assert rc == 1, out
+    assert chr(92) + "r" in out, out
 
 
 def test_a_line_ending_change_is_a_change(tmp_path, capsys) -> None:

@@ -11,23 +11,27 @@ it before anything merges on it. There is no label and no escape of any kind:
 a change to the rule is always red.
 
 WHAT IT COMPARES. The BYTES of CLAUDE.md's `## The merge rule` section -- from
-that heading to the next `## ` heading, which includes `### Condition 5: the
-paths` and its list -- at the PR's merge base and at its head. Any difference,
-including whitespace and line endings, is a change.
+that heading to the `## Real commands` heading, which includes `### Condition
+5: the paths` and its list -- at the PR's merge base and at its head. Any
+difference, including whitespace and line endings, is a change.
 
-THE BOUNDARY IS PINNED, at both ends of the range. There must be EXACTLY ONE
-`## The merge rule` heading, and `### Condition 5: the paths` must lie inside
-its section. Otherwise the gate cannot say which text is the rule: a decoy
-copy inserted above the real section would be read instead of it, and a `## `
-heading inserted above the path list would end the section early, so that
-later path-list edits compared green (review of 6fcc02f). Either is exit 2.
+WHAT IS PINNED, checked separately in the base's CLAUDE.md and in the head's,
+so the gate knows which text is the rule:
+  * the start: EXACTLY ONE `## The merge rule` heading (a decoy copy would
+    otherwise be read instead of the real section);
+  * the end: EXACTLY ONE `## Real commands` heading, and it must be the FIRST
+    `## ` line after the start. Any other `## ` line in between -- above the
+    path list, inside it, lower down, or at column 0 inside a code fence --
+    would end the section early, so the text after it would compare green
+    (reviews of 6fcc02f and 2ae1650);
+  * the subsection: `### Condition 5: the paths` lies inside the section.
+Any of the three failing, at the base or the head, is exit 2.
 
 EXIT CODES (the gates' 0/1/2 convention), and a green means one thing only:
 0 the section is byte-identical at base and head; 1 it CHANGED, and the
-changed lines are printed; 2 could not look -- the section is missing, doubled,
-or no longer contains `### Condition 5: the paths`, at the base or the head (a
-renamed heading is could-not-look, so it is red too); git cannot read the base
-or the head; CLAUDE.md is missing; or a bad argument.
+changed lines are printed; 2 could not look -- a pin above fails (a renamed
+heading is could-not-look, so it is red too); git cannot read the base or the
+head; CLAUDE.md is missing; or a bad argument.
 
 LIMITS, stated so a green is not read as more than it is:
   * It enforces VISIBILITY, not a signature. A red check can still be merged
@@ -55,7 +59,8 @@ import sys
 from pathlib import Path
 
 _START = re.compile(r"^## The merge rule\b.*$", re.M)
-_NEXT = re.compile(r"^## ", re.M)
+_NEXT = re.compile(r"^## .*$", re.M)
+_END = re.compile(r"^## Real commands\b.*$", re.M)
 _CONDITION_5 = re.compile(r"^### Condition 5: the paths\b", re.M)
 
 
@@ -64,7 +69,7 @@ class CouldNotLook(Exception):
 
 
 def section(text: str, where: str) -> str:
-    """The `## The merge rule` section, heading included, up to the next `## `."""
+    """The `## The merge rule` section, heading included, up to `## Real commands`."""
     starts = list(_START.finditer(text))
     if not starts:
         raise CouldNotLook(f"no `## The merge rule` section in CLAUDE.md at {where}")
@@ -73,10 +78,22 @@ def section(text: str, where: str) -> str:
             f"{len(starts)} `## The merge rule` headings in CLAUDE.md at {where}: which one "
             "is the rule is unknown, and a decoy could be read instead of it"
         )
+    ends = list(_END.finditer(text))
+    if len(ends) != 1:
+        raise CouldNotLook(
+            f"{len(ends)} `## Real commands` headings in CLAUDE.md at {where}: the heading "
+            "that ends the merge rule's section must occur exactly once"
+        )
     m = starts[0]
     rest = text[m.end() :]
     nxt = _NEXT.search(rest)
-    body = text[m.start() : m.end() + (nxt.start() if nxt else len(rest))]
+    if nxt is None or m.end() + nxt.start() != ends[0].start():
+        found = f"`{nxt.group(0)}`" if nxt else "the end of the file"
+        raise CouldNotLook(
+            f"the merge rule's section at {where} is interrupted by {found} before "
+            "`## Real commands`: the text after it would not be compared"
+        )
+    body = text[m.start() : m.end() + nxt.start()]
     if not _CONDITION_5.search(body):
         raise CouldNotLook(
             f"`### Condition 5: the paths` is not inside the merge rule's section at {where}: "
