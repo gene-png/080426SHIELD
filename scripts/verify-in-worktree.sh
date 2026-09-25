@@ -346,12 +346,19 @@ vitest() {
 # gate produces a red no CI run can reproduce, and the natural repair is to
 # "fix" untouched files -- here two `window.location.assign` call sites CI
 # accepts. That is a harness steering an author into changes nobody asked for.
+#
+# `--format unix` used to follow `eslint .` here. ESLint 9 removed that
+# formatter from core, so every run exited 2 ("The unix formatter is no longer
+# part of core ESLint") and then printed the line below claiming the same
+# invocation as the gate. The web-lint half of worktree verification checked
+# nothing. The message is now built from the command that ran, so the two
+# cannot disagree again.
 eslint() {
-  local out status
-  out="$(run_in_container "cd apps/web && ./node_modules/.bin/eslint . --format unix" 2>&1)" && status=0 || status=$?
+  local out status cmd="./node_modules/.bin/eslint ."
+  out="$(run_in_container "cd apps/web && $cmd" 2>&1)" && status=0 || status=$?
   printf '%s
 ' "$out"
-  echo "verify-in-worktree: eslint -- ran \`eslint .\` from apps/web, the same invocation \`pnpm -F web lint\` uses"
+  echo "verify-in-worktree: eslint -- ran \`$cmd\` from apps/web (\`pnpm -F web lint\` runs \`eslint .\`), exit $status"
   return "$status"
 }
 
