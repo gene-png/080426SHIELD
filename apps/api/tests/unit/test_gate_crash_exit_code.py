@@ -7,7 +7,7 @@ red X, and a log that reads like a verdict. Gene confirmed the shape by running
 a patched copy of `check_plan_totals.py` -- exit 1, traceback on stderr.
 
 The expected value comes from the CONVENTION rather than from the scripts: 2 is
-what all eight already return for an anticipated failure to read their input.
+what every gate in GATES returns for an anticipated failure to read its input.
 Nothing here reads a constant out of the module under test.
 
 Each gate is exercised twice. Once with its real `__main__` block, asserting 2;

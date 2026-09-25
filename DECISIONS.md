@@ -5873,17 +5873,25 @@ wording; the platform targets Moderate and High, so check the High baseline too.
 
 **2026-09-25 · governance/gates** · #553
 
-**Decision (recorded, not new).** Every gate in this repo exits:
+**Decision (recorded, not new).** The convention every gate is held to:
 
 - **0** when it looked and found nothing to report;
 - **1** when it found a real violation, and names it;
 - **2** when it could not look: missing or unreadable input, a parse failure,
   an unknown or malformed argument, or a crash.
 
+This states the CONVENTION, not a census of every gate. The parts that are
+mechanically enforced, and the known gaps, are stated below; any other claim
+about a particular gate is checked by reading that gate.
+
 **The crash half is enforced for the gates in `test_gate_crash_exit_code.GATES`**:
 each carries a handler that converts an uncaught exception to 2 and prints "A
 crash is not a clean report and not a violation". `check_gate_fixtures.py` is
 not in that list (it excludes itself) and its handler prints a different line.
+
+**Known gap, arguments.** `check_mount_matches_database.py` takes no arguments
+(`main()` never reads `sys.argv`), so an unknown flag is ignored rather than
+refused with 2. Filed as #597.
 
 **A requirement, not yet met everywhere: a clean result says what it read**, so
 a green run shows its scope and "I looked at nothing" cannot pass for "nothing
@@ -5900,8 +5908,8 @@ could-not-look response (#550).
 
 **Why a record now.** The convention is written in CLAUDE.md's fail-closed
 bullet, but no D-record decided it, and the gates cited it as D-051. D-051 is
-the #72 two-tier sweep; it does not state the convention. A correct constraint cited to a record that lacks it is worse than
-an unexplained one: a reader told to verify opens D-051, does not find the
+the #72 two-tier sweep; it does not state the convention. A correct
+constraint cited to a record that lacks it is worse than an unexplained one: a reader told to verify opens D-051, does not find the
 rule, and may discard it.
 
 **The repointing.** Citations that mean the exit convention now cite D-090:

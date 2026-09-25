@@ -25,8 +25,8 @@ would open D-051, not find the rule, and could discard a rule that is right.
 
 `git grep -c "D-051" -- ':!DECISIONS.md'`: 47 files and 79 lines on `main` at
 `2028f38`; 17 files and 25 lines on this branch before its first commit
-(the landing entry and D-090 add hits of their own). The re-run at the
-round-1 head is below.
+(this landing entry adds hits of its own; D-090 is in DECISIONS.md, which the
+command excludes). A later re-run is below.
 
 ## Condition 5
 
@@ -55,9 +55,9 @@ fixture incident text and the wording of printed messages.
 - The DEFERRED example subject is a placeholder (`D-NNN -- supersedes
   D-MMM`), not a real-looking number.
 
-**The sweep, re-run at this round's head**, 2026-09-25:
-`git grep -c "D-051" -- ':!DECISIONS.md'` gives 16 files and 28 lines. Every
-hit was read and classified:
+**The sweep, re-run at `4c8e4d3`**, 2026-09-25:
+`git grep -c "D-051" -- ':!DECISIONS.md'` gave 16 files and 28 lines, not
+counting this paragraph's own hits. Every hit was read and classified:
 
 - **D-051's own subject** (tests that cannot fail, #72; a rule that depends on
   remembering needs a mechanism; D-051's in-entry correction style):
