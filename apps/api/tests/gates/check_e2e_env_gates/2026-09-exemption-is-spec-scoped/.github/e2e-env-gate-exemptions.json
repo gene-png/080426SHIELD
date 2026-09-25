@@ -1,0 +1,8 @@
+{
+  "E2E_PERF": {
+    "specs": [
+      "e2e/configured.spec.ts"
+    ],
+    "reason": "configuration in that spec only"
+  }
+}

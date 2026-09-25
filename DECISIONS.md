@@ -5786,3 +5786,85 @@ red under five seeds.
 
 - both mutations also turn the invoke-level test red;
 - removing the gate's new signature turns its 4 detection tests red.
+
+## D-092 — The ATT&CK status vocabulary: six statuses, a reason per status, coverage over assessed rows only
+
+**Date:** 2026-09-24 · **Issues:** #554, #557 · **Decided by:** the owner (the vocabulary); this slice implements storage and arithmetic
+
+**The defect.** In a released assessment, 405 of 633 techniques were Partial, with no reason and no action (#554). The same status also carried three unlike claims:
+
+- "partly defended";
+- "we did not verify";
+- "the client cannot reach this".
+
+The missing value always failed in the direction that flatters the client.
+
+**Decision 1 — six statuses.** `covered`, `partial`, `gap` and `not_applicable`, plus:
+
+- **`outside_control_surface`**: the technique applies and the client's control surface does not reach it. It stays in the catalogue total, outside the assessed denominator. The owner's decision gives it its own line in the deliverable; **not yet built**.
+- **`unable_to_determine`**: nobody verified it. It is outside the assessed denominator and never counted as partial or gap. The owner's decision makes it a release blocker; **not yet built**.
+
+The T1588 finding decided `outside_control_surface`: the parent was N/A while its own sub-techniques were Partial on identical reasoning.
+
+**Decision 2 — a reason per status, valid only for that status.**
+
+- **Partial**, seven codes: `missing_control_category`, `reach_limited`, `detection_weak`, `prevention_limited`, `evasive_variant_uncovered`, `recovery_absent`, `periodic_not_continuous`.
+- **N/A**: `platform_absent` only.
+- **`outside_control_surface`**, three sub-cases: `adversary_preparation`, `external_reconnaissance`, `third_party_compromise`. The 10 former-Partial `adversary_side` rows fall into the first two. **My call, overturnable.**
+- **The others**: none. `unable_to_determine` carries a narrative instead.
+
+**The sentence written into the vocabulary** (`app/attack/coverage.py`): missing_control_category is legitimate for Partial (something defends it, a category is missing) and forbidden for N/A (nothing defends it -- that is a gap). The test: is anything defending it at all?
+
+**Decision 3 — coverage over assessed rows only.** `coverage_pct` = (covered + 0.5 × partial) / (covered + partial + gap). `outside_control_surface` and `unable_to_determine` are counted separately in the heatmap API response, overall and per tactic. No screen, export or deliverable renders them yet. They are in `scored_count`, so the catalogue total on screen does not shrink as rows move out of the denominator.
+
+**Decision 4 — at the click, refuse only impossible pairings.** A reason given for a status it does not belong to is a typed 422 `invalid_reason_code`, for example `missing_control_category` given as an N/A reason. A status change drops a reason that no longer fits. A MISSING reason is not refused at the click: "gate the release, not the click" (#557). That release gate is a later slice, because the AI path produces no reason codes until the prompt slice lands, and gating first would block every current flow.
+
+**Decision 5 — neither new status is writable yet. My call, overturnable, recorded on #554.** Round 1 of this slice's review found that the write side opened before the read side existed. The client dashboard rendered an unknown status as N/A. The exporters and the finalize summary dropped both counts while `scored` included them, so a PDF could read 100% over hundreds of unverified rows. The admin badges were blank. So `coverage.WRITABLE` is the four statuses every surface renders:
+
+- the PATCH refuses the new two with a typed 422 `status_not_yet_reportable`;
+- the AI write-back accepts only those four, which are also the four the prompt offers;
+- the AI write-back drops a reason the new status does not take, as the PATCH does.
+
+The slice that teaches every surface, and the release gate, to report the new two widens `WRITABLE`, so every intermediate `main` stays honest. The alternative was to widen this slice to cover every surface; it was declined to keep slices reviewable. `risk/link_scope.py` treats any non-NULL status as a consultant's judgement, and `unable_to_determine` is not one. That is unreachable while nothing writes it, and is recorded on #554 for the slice that widens `WRITABLE`.
+
+**What the gate must be (recorded, not built here).** No release gate on `unconfirmed_citations` exists (#557 comment, 2026-09-24), so "the same mechanism" has to be built. It will be one readiness check consulted at approve, finalize and release, returning a typed refusal that names each blocking count, with `unconfirmed_citations` able to become an input. The data-quality exception the owner referred to is defined nowhere in the repo. Its design, where an admin records a reason and acknowledges the unverified count and the deliverable discloses it, is **my call, overturnable**, and ships only together with that disclosure.
+
+## D-089 — ATT&CK gap dispositions, and the principle that decided them: gate the release, not the click
+
+**Date:** 2026-09-24 · **Decided by:** the owner · **Issue:** #557 (post-mvp)
+
+**Three dispositions for a gap: `not_applicable`, `accepted`, `keep`. There is
+no "close".** `accepted` must not share `not_applicable`, and the reason is
+arithmetic: `not_applicable` leaves the addressable denominator, so an accepted
+risk filed there would shrink the denominator and raise the client's coverage
+percentage. In the owner's example, 597 addressable becomes 547, and 50 real
+gaps leave the arithmetic. The two are different claims with different
+evidence: an asset inventory settles `not_applicable`, and an owner, a basis, a
+date and a re-review trigger settle `accepted`.
+
+**Kentro is the assessor, not the authorizing official.** The client accepts the
+risk, and SHIELD records that they did. The owner field is the client's
+decision-maker, supplied by the client; no agent may populate it (#220's
+constraint).
+
+**Bulk apply is blocked for `accepted`**, because two hundred bulk acceptances
+are one shrug, not two hundred decisions. **It is kept for `not_applicable`**,
+because a scoping fact ("we run no macOS") scales.
+
+**The principle: gate the release, not the click.** Owner and date are required
+before RELEASE, as a readiness finding. **No such gate exists today, so this is
+new work, not an extension:** `release_deliverable` checks only the kind,
+`finalized_at` and `released_at`, and `unconfirmed_citations` is disclosed as
+`pending_review`, never gated. (An earlier draft of this record called the
+citations "the model" for a release gate. That was false, and review caught
+it.) They are not required at the click: a consultant triaging
+hundreds of gaps cannot type a name per row, and forcing it produces "TBD" and
+"client", junk that reads as finished. The recommendation pass is scoped the
+same way. It runs over `keep` gaps and reports what it excluded and why, so one
+un-triaged row cannot stall it, and the hard requirement is at release: zero
+un-dispositioned gaps before an assessment ships.
+
+**Precondition before any client-facing text:** verify the FedRAMP Moderate
+risk-acceptance vocabulary (artifact names, control references) against the
+FedRAMP and NIST sources, not against this record. "Moderate" is #557's
+wording; the platform targets Moderate and High, so check the High baseline too.

@@ -346,6 +346,11 @@ jobs:
           # a real throwaway worktree, because a test of the refusal alone stays
           # green with the derivation reverted.
           bash tests/gates/verify_in_worktree_mounts.sh
+          # The web arms print a bound ONLY on positive evidence a tool ran:
+          # a stub `docker` drives 125/127/no-marker/verdict-shaped failures, a
+          # positive control, and a TERM mid-self-test (143, no probe left).
+          # The first fix keyed on one cause and let "0 error(s)" print over 127.
+          bash tests/gates/verify_in_worktree_status.sh
           # A self-test nobody runs is furniture. `red-on-revert.sh` is the
           # harness that keeps `git checkout --` out of the restore path, and
           # it shipped with a restore check that compared a file to itself --
@@ -513,6 +518,20 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
           exit 1
 
+      # #540: a test that exists but never runs. A test CI does not select, or
+      # a spec gated on a variable no workflow sets, reads as covered and never
+      # executes -- worse than a vacuous test, which at least reports. Both
+      # gates allow the known backlog only with reasons (#500; #483's two until
+      # #560 moved them to e2e/manual/) and
+      # ratchet: a baselined test that now runs or no longer exists, and an
+      # exemption for a variable now set or no longer read, are findings.
+      - name: every unit test is one CI runs (#540)
+        working-directory: apps/api
+        run: python -m scripts.check_ci_selection
+
+      - name: every e2e env gate is set or exempted (#540)
+        run: python apps/api/scripts/check_e2e_env_gates.py
+
       - name: pytest -m unit
         working-directory: apps/api
         run: pytest -m unit tests/unit
@@ -671,6 +690,20 @@ jobs:
       - name: Install Playwright chromium
         working-directory: e2e
         run: npx playwright install --with-deps chromium
+
+      # #540: every spec on disk must be in CI's run. `--list` applies the
+      # config's selection (testIgnore / testMatch / grep / projects) exactly as
+      # the run step below does, with the same cwd and no arguments -- pinned by
+      # test_e2e_spec_listing_gate.py -- and needs no browser or stack.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: every spec on disk is one CI runs (#540)
+        working-directory: e2e
+        run: |
+          npx playwright test --list > "$RUNNER_TEMP/playwright-list.txt"
+          python ../apps/api/scripts/check_e2e_spec_listing.py --list-file "$RUNNER_TEMP/playwright-list.txt" --root ..
 
       # GitHub Actions sets CI=true, so playwright.config.ts applies retries: 1.
       - name: Run Playwright suite
