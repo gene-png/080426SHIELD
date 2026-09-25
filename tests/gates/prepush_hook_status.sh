@@ -86,7 +86,11 @@ src, dest = sys.argv[1], sys.argv[2]
 
 def _crash(kind, value, tb):
     # An UNEXPECTED exception would otherwise exit 1, which the caller reads as
-    # a registration violation and then runs the states. A crash is a 2.
+    # a registration violation and then runs the states. A crash is a 2. An
+    # interrupt is NOT a crash: it propagates, as in every other gate.
+    if issubclass(kind, KeyboardInterrupt):
+        sys.__excepthook__(kind, value, tb)
+        return
     sys.stderr.write("EXTRACT FAILED: crashed: %s: %s\n" % (kind.__name__, value))
     sys.stderr.flush()
     os._exit(2)

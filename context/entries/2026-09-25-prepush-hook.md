@@ -132,9 +132,12 @@ Stub-measured, running the hook's own entry:
   and a self-test mutation flipping the redirects turns it red.
 - **Could-not-look is 2.** A config that cannot be read or parsed, is empty,
   whose entry does not split as shell words, or has no such hook, exits 2
-  before any state runs; so does an unexpected crash of the extractor, and a
-  self-test mutation that does not land. Each input was run once by editing
-  the config and restoring it.
+  before any state runs. Each of those inputs was run once by editing the
+  config and restoring it. Two more branches exit 2 but were NOT run, because
+  no config edit reaches them: an unexpected crash of the extractor (a
+  Ctrl-C propagates rather than being relabelled 2), and a self-test mutation
+  that does not land (all four land). None of these branches is pinned by a
+  committed test.
 - #563's gate over this tree finds nothing in the new script; its two
   findings are in `main`'s workflow steps that #563 itself rewrites.
 
