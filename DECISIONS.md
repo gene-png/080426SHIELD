@@ -5842,8 +5842,21 @@ still came back to the owner. Every other condition-5 path trips exactly as
 before. `apps/api/scripts/compose_unchanged.py BASE..HEAD` decides: 0 no
 compose file changed in content, 1 at least one did (an added or deleted file
 counts), 2 could not look, which reads as tripped. It also runs on every PR as
-the job "condition-5 compose gate read its inputs", which is not required: green
-means it could read its inputs, and the verdict is in its summary.
+the job "compose content changed", which is not required and reports its
+verdict: green is unchanged, red is changed (1) or could not read (2), and the
+job summary names which of the three it was. Could-not-read never shows green.
+
+**Why red on a change (the owner's decision (b), 2026-09-25).** A change is
+rare. Of the last 80 merges on `main` (at `ef94f4f`), three touched a compose
+file: two changed its content (`59484a9`, `f36d7a5`) and one was comments only
+(`adc2217`). So red-when-changed fires about twice in eighty, the same
+rare-and-red design as the merge-rule text gate (#582). The owner's own figure
+was four touching, two comments-only; the re-derivation below found three and
+one, and this record uses the re-derived figure:
+
+    git log --first-parent --format=%h -80 origin/main
+    # for each: git diff --name-only <c>^ <c> | grep -E '^docker-compose[^/]*\.ya?ml$'
+    #           python apps/api/scripts/compose_unchanged.py --repo . <c>^..<c>
 
 **Why the node tree, not the loaded object.** PyYAML reads YAML 1.1, and
 Python's `==` is loose, so `on` to `yes` (both True) and `1` to `1.0` compare

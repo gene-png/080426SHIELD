@@ -104,13 +104,17 @@ DEFERRED: dict[str, str] = {
         "Both states are covered by `tests/unit/test_compose_unchanged.py`, which "
         "builds a real throwaway repository per case: 0 for a comments-only compose "
         "diff, 1 for content changes Python equality would hide, 2 for an "
-        "unparseable file and for bad arguments, and the --report form. "
+        "unparseable file and for bad arguments, each naming its state on the first "
+        "line, and the CI job passing 1 and 2 through as red "
+        "(test_the_ci_job_is_red_on_a_change_and_on_could_not_read). "
         "Red-on-revert, 2026-09-25, each red on its named test: loaded-object "
         "equality (test_a_content_change_trips), a deleted file not counted "
         "(test_a_deleted_compose_file_trips), scalar tags ignored "
         "(test_a_content_change_trips), scalar style ignored "
         "(test_a_quote_flip_is_content_even_where_the_1_1_tag_agrees), and a "
-        "three-dot range accepted (test_a_three_dot_range_is_refused_by_name)."
+        "three-dot range accepted (test_a_three_dot_range_is_refused_by_name), a "
+        "change exiting 0 (test_a_content_change_trips), and the job swallowing "
+        "the status (test_the_ci_job_is_red_on_a_change_and_on_could_not_read)."
     ),
     # -- SHELL GATES (#318) -------------------------------------------------
     # They cannot be fixtured by this harness: `run_case` invokes

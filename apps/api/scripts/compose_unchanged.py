@@ -18,20 +18,20 @@ quote flip counts as content. Comments, blank lines and indentation leave the
 tree equal. Compose's own `!reset` / `!override` tags are kept, so changing
 one is a change.
 
-EXIT CODES (the gates' 0/1/2 convention): 0 every changed compose file parses
-to the same node tree, or none changed; 1 at least one changed in content, so
-condition 5 trips (an added or deleted compose file counts as changed); 2
-could not look -- git failed, a file does not parse, or a bad argument.
+EXIT CODES (the gates' 0/1/2 convention), three states, and CI's job
+"compose content changed" shows them in two colours: 0 UNCHANGED, every
+changed compose file parses to the same node tree, or none changed (green);
+1 CHANGED, at least one changed in content, and an added or deleted compose
+file counts (red); 2 COULD NOT READ, git failed, a file does not parse, or a
+bad argument (red). Could-not-read never folds into green. The first line of
+output names the state, and the job copies it to its summary.
 
-`--report` is the CI form (audit-gate.yml's "condition-5 compose gate read its
-inputs" job):
-it prints the verdict on every PR and exits 0 whether or not a compose file
-changed, because a compose content change is a ROUTING fact (condition 5 comes
-back to the human), not a defect. It still exits 2 when it could not look, so
-the job goes red only then. A green report job therefore means "it looked",
-never "condition 5 is clear".
+A change is red on purpose, and rare: of the last 80 merges on `main`
+(measured 2026-09-25 at ef94f4f, D-095), two changed compose content. Red
+means a human reads the compose diff, the same design as
+`check_merge_rule_text.py`. The job is not a required check.
 
-USAGE: python compose_unchanged.py [--report] [--repo DIR] BASE..HEAD
+USAGE: python compose_unchanged.py [--repo DIR] BASE..HEAD
 """
 
 from __future__ import annotations
@@ -123,39 +123,30 @@ def main(argv: list[str]) -> int:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     args = list(argv[1:])
     repo = Path(".")
-    report = False
     try:
-        if args[:1] == ["--report"]:
-            report = True
-            args = args[1:]
         if args[:1] == ["--repo"] and len(args) >= 2:
             repo = Path(args[1])
             args = args[2:]
         if len(args) != 1:
             raise CouldNotLook(
-                f"usage: compose_unchanged.py [--report] [--repo DIR] BASE..HEAD; got {argv[1:]}"
+                f"usage: compose_unchanged.py [--repo DIR] BASE..HEAD; got {argv[1:]}"
             )
         changed, form_only = judge(repo, args[0])
     except CouldNotLook as exc:
-        print(f"compose-unchanged: could not look -- {exc}")
-        print("  Read as TRIPPED: condition 5 comes back to the human.")
+        print(f"compose content: COULD NOT READ -- {exc}")
+        print("  Read as changed: a human reads the compose diff.")
         return 2
+    if changed:
+        print(f"compose content: CHANGED in {len(changed)} file(s)")
+        for name in changed:
+            print(f"  content: {name}")
+    else:
+        print(f"compose content: UNCHANGED ({len(form_only)} file(s) changed in form only)")
     for name in form_only:
         print(f"  form only (comments, layout): {name}")
     if changed:
-        print(
-            f"compose-unchanged: {len(changed)} compose file(s) changed in CONTENT -- condition 5 trips:"
-        )
-        for name in changed:
-            print(f"  {name}")
-        if report:
-            print("  (--report: a verdict, not a failure -- the PR comes back to the human.)")
-            return 0
         return 1
-    print(
-        f"compose-unchanged: no compose file changed in content ({len(form_only)} changed in form "
-        "only). This says nothing about any OTHER condition-5 path."
-    )
+    print("  This says nothing about any path other than the compose files.")
     return 0
 
 

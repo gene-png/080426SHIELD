@@ -287,16 +287,14 @@ jobs:
         run: |
           python scripts/check_merge_rule_conditions.py             --changed-files /tmp/changed.txt --body /tmp/body.md
 
-  compose-exception-report:
+  compose-content-changed:
     # D-095: a docker-compose diff whose parsed YAML is unchanged does not trip
-    # merge-rule condition 5. This job's PROPOSITION is "the compose check could
-    # read its inputs", and that is what green means. The verdict (did a compose
-    # file change in content?) is in the step summary, not the colour: `--report`
-    # exits 0 for either verdict and 2 only when it could not look. Nothing whose
-    # COLOUR could be read as a condition-5 verdict may show green, which is why
-    # the name states the job's proposition. It judges compose files ONLY. NOT a
-    # required check.
-    name: condition-5 compose gate read its inputs
+    # merge-rule condition 5. The job reports its VERDICT: green is UNCHANGED;
+    # red is CHANGED (exit 1) or COULD NOT READ (exit 2), and the step summary
+    # says which. Could-not-read never shows green. A change is rare (D-095
+    # measures it) and red on purpose: a human reads the compose diff. It
+    # judges compose files ONLY. NOT a required check.
+    name: compose content changed
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -314,7 +312,7 @@ jobs:
         run: |
           python -m pip install --quiet "pyyaml>=6.0"
           rc=0
-          python apps/api/scripts/compose_unchanged.py --report --repo . "origin/${{ github.base_ref }}..HEAD" > /tmp/compose.txt || rc=$?
+          python apps/api/scripts/compose_unchanged.py --repo . "origin/${{ github.base_ref }}..HEAD" > /tmp/compose.txt || rc=$?
           cat /tmp/compose.txt
           cat /tmp/compose.txt >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"

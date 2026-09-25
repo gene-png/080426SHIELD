@@ -88,7 +88,8 @@ def test_a_content_change_trips(tmp_path, capsys, old: str, new: str) -> None:
         _repo(tmp_path, {"docker-compose.yml": BASE}, {"docker-compose.yml": head}), capsys
     )
     assert rc == 1, out
-    assert "changed in CONTENT" in out and "docker-compose.yml" in out, out
+    assert out.startswith("compose content: CHANGED in 1 file(s)"), out
+    assert "content: docker-compose.yml" in out, out
 
 
 def test_a_compose_merge_tag_is_content(tmp_path, capsys) -> None:
@@ -113,7 +114,8 @@ def test_a_range_with_no_compose_change_says_it_judged_nothing_else(tmp_path, ca
         capsys,
     )
     assert rc == 0, out
-    assert "says nothing about any OTHER condition-5 path" in out, out
+    assert out.startswith("compose content: UNCHANGED"), out
+    assert "says nothing about any path other than the compose files" in out, out
 
 
 def test_an_unparseable_compose_file_is_could_not_look(tmp_path, capsys) -> None:
@@ -139,23 +141,30 @@ def test_a_three_dot_range_is_refused_by_name(capsys) -> None:
     assert rc == 2 and "the range must be BASE..HEAD" in out, out
 
 
-def test_report_mode_exits_0_on_a_content_change_and_says_so(tmp_path, capsys) -> None:
-    # CI's form: a compose content change is a routing fact, not a failure.
-    r = _repo(
-        tmp_path,
-        {"docker-compose.yml": BASE},
-        {"docker-compose.yml": BASE.replace("api:1", "api:2")},
-    )
-    rc = tool.main(["x", "--report", "--repo", str(r), "main..pr"])
-    out = capsys.readouterr().out
-    assert rc == 0, out
-    assert "changed in CONTENT" in out and "a verdict, not a failure" in out, out
-
-
-def test_report_mode_still_exits_2_when_it_could_not_look(tmp_path, capsys) -> None:
+def test_could_not_read_is_2_and_says_so_first(tmp_path, capsys) -> None:
     r = _repo(tmp_path, {"docker-compose.yml": BASE}, {"docker-compose.yml": "services: [\n"})
-    rc = tool.main(["x", "--report", "--repo", str(r), "main..pr"])
-    assert rc == 2, capsys.readouterr().out
+    rc, out = _run(r, capsys)
+    assert rc == 2, out
+    assert out.startswith("compose content: COULD NOT READ"), out
+
+
+def _compose_job() -> str:
+    wf = pathlib.Path(__file__).resolve().parents[4] / ".github" / "workflows" / "audit-gate.yml"
+    if not wf.is_file():
+        pytest.skip(f"no workflow at {wf} (the api image mounts apps/api only)")
+    text = wf.read_text(encoding="utf-8")
+    start = text.index("  compose-content-changed:\n")
+    end = text.index("\n  # ", start)  # the next job's leading comment
+    return text[start:end]
+
+
+def test_the_ci_job_is_red_on_a_change_and_on_could_not_read() -> None:
+    # The job's colour is the verdict: the tool's own 1 and 2 must reach the
+    # job, so no flag may turn a change into a 0, and the status is passed on.
+    job = _compose_job()
+    assert "name: compose content changed\n" in job, job
+    assert "compose_unchanged.py --repo ." in job and "--report" not in job, job
+    assert 'exit "$rc"' in job, job
 
 
 @pytest.mark.parametrize(
