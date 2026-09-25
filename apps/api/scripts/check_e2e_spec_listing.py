@@ -24,7 +24,7 @@ And it describes the E2E job's main run, not the Demo job's
 spec renamed out of that pattern -- #560's own mechanism -- leaves CI with this
 gate and the env-gate check both green (#579).
 
-EXIT CODES (D-051): 0 every spec on disk is listed; 1 at least one is not; 2
+EXIT CODES (D-090): 0 every spec on disk is listed; 1 at least one is not; 2
 could not look -- the list file is missing, names no spec, or has no
 `Total:` line; no specs on disk; or an unknown argument.
 """
@@ -119,5 +119,5 @@ if __name__ == "__main__":
     except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
         nl = chr(10)
         sys.stderr.write(f"check-e2e-spec-listing: CRASHED: {type(exc).__name__}: {exc}{nl}")
-        sys.stderr.write(f"A crash is not a clean report and not a violation (D-051).{nl}")
+        sys.stderr.write(f"A crash is not a clean report and not a violation (D-090).{nl}")
         raise SystemExit(2) from exc

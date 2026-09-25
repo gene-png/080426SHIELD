@@ -286,9 +286,12 @@ class AdminDeliverableRow(BaseModel):
     service_title: str
     title: str
     version: int
-    #: generated | released | superseded
+    #: generated | released | withheld | superseded. `withheld` is a released
+    #: ATT&CK report scored against another catalog (#556), which the client
+    #: list shows with its figures and files withheld.
     status: str
-    #: True ONLY for a released, non-superseded row — what the client can see.
+    #: True ONLY for a released, non-superseded, non-withheld row — what the
+    #: client can see.
     client_visible: bool
     finalized_at: datetime | None
     released_at: datetime | None

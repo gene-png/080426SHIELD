@@ -1,0 +1,12 @@
+{
+ "incident": "ADVERSARIAL. #459: context injection drops a whole-line HTML comment, so the v1 marker `<!-- CLAUDE-MD-CANARY: v1 -->` was absent from every injected copy and step 0a halted every agent on a whole file. A comment-wrapped or older marker is exit 2 naming that cause.",
+ "expect": 2,
+ "adversarial": true,
+ "argv": [
+  "--require-canary",
+  "--limit",
+  "1000",
+  "{dir}/CLAUDE.md"
+ ],
+ "stdout_contains": "canary is not the bare marker line"
+}

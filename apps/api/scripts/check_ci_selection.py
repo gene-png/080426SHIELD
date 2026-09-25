@@ -49,7 +49,7 @@ either is exactly what it must not inherit. `-o addopts=` alone does not
 reach the variable: pytest prepends it to the arguments before the ini is
 read (review of 701f032).
 
-EXIT CODES (D-051): 0 every collected test is selected or baselined; 1 at
+EXIT CODES (D-090): 0 every collected test is selected or baselined; 1 at
 least one finding; 2 could not look -- the collector failed (including a
 configured option this cannot honour, e.g. `--lf` with the cache disabled),
 the probe reported nothing, the unselected collection is empty, the baseline
@@ -228,5 +228,5 @@ if __name__ == "__main__":
     except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
         nl = chr(10)
         sys.stderr.write(f"check-ci-selection: CRASHED: {type(exc).__name__}: {exc}{nl}")
-        sys.stderr.write(f"A crash is not a clean report and not a violation (D-051).{nl}")
+        sys.stderr.write(f"A crash is not a clean report and not a violation (D-090).{nl}")
         raise SystemExit(2) from exc

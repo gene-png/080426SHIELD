@@ -17,6 +17,7 @@ analytics endpoint in place of scoring/gap.
 from __future__ import annotations
 
 import contextvars
+import re
 import uuid
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -34,12 +35,15 @@ from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
 from app.attack.analytics import compute as compute_heatmap
 from app.attack.catalog import (
+    SOURCE_VERSION,
     TACTICS,
     TECHNIQUES,
 )
 from app.attack.catalog import (
     all_codes as attack_all_codes,
 )
+from app.attack.catalog_version import attack_parent, require_current_catalog
+from app.attack.catalog_version import is_current as attack_catalog_is_current
 from app.attack.citations import (
     _MAX_REJECTED_EXAMPLES,
     Candidate,
@@ -163,6 +167,10 @@ def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentR
         approved_at=a.approved_at,
         approved_by=a.approved_by,
         documents_stale=a.documents_stale,
+        catalog_version=a.catalog_version,
+        # The ONE definition of current (`catalog_version.is_current`), never a
+        # second inline comparison that could disagree with the guards.
+        catalog_current=attack_catalog_is_current(a),
         coverage=_serialize_coverage(rows),
     )
 
@@ -385,6 +393,8 @@ def create_assessment(
         client_id=client.id,
         version=version,
         status=AttackAssessmentStatus.DRAFT,
+        # #556: the catalog the pre-seeded rows below come from.
+        catalog_version=SOURCE_VERSION,
     )
     db.add(assessment)
     db.flush()
@@ -497,6 +507,7 @@ def patch_coverage(
             status_code=status.HTTP_409_CONFLICT,
             detail="This assessment is locked.",
         )
+    require_current_catalog(db, a)  # #556
     # #554: a reason code is valid only for the status it belongs to. Judged
     # against the status the row will HAVE after this patch, and refused typed
     # rather than stored: a missing reason is a release question, an impossible
@@ -1318,6 +1329,18 @@ def _client_tool_names(db: Session, client_id: uuid.UUID) -> list[str]:
     return [c.name for c in _client_capabilities(db, client_id)]
 
 
+_CODE_SHAPE = re.compile(r"^[a-z_]{1,64}$")
+
+
+def _audit_safe_code(value: object) -> str:
+    """A rejected reason as the audit row may hold it: the value only when it is
+    code-shaped, a marker otherwise. Model text stays out of audit rows, as it
+    does in CSF and ZT."""
+    if isinstance(value, str) and _CODE_SHAPE.match(value):
+        return value
+    return "<not a code>"
+
+
 # Pinned to what the prompt offers and every surface renders (#554), not to the
 # whole enum: a status the reports cannot show must not arrive through the AI.
 _VALID_STATUSES = {s.value for s in WRITABLE}
@@ -1369,6 +1392,7 @@ def build_attack_ai_request(db: Session, svc: Service, client: Client) -> Attack
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="This assessment is locked."
         )
+    require_current_catalog(db, a)  # #556: never draft over rows keyed to another catalog
 
     # ONE query, projected two ways, so the hard allow-list and the egress
     # payload cannot disagree about what the client owns.
@@ -1576,6 +1600,7 @@ def confirm_coverage_citations(
             status_code=status.HTTP_409_CONFLICT,
             detail="This assessment is locked.",
         )
+    require_current_catalog(db, a)  # #556
     outstanding = [e for e in (row.unconfirmed_citations or []) if e.get("cleared_at") is None]
     if not outstanding:
         # Refused rather than returned as a cheerful no-op. A 200 here would write
@@ -1802,6 +1827,20 @@ def run_ai(
         return out.tools
 
     reason_codes_dropped: list[dict[str, str]] = []
+    # #554 slice 2: a suggestion whose reason does not belong to its status (N/A
+    # with `missing_control_category`, the pairing the vocabulary exists to
+    # forbid) is REFUSED WHOLE, as the PATCH refuses the whole request with a
+    # typed 422: the row keeps its status, reason, tools and rationale, and the
+    # rejected status and reason are recorded here. Applying the status while
+    # dropping the reason would move the row out of the gap list on the model's
+    # word -- the direction that flatters the client.
+    reason_codes_rejected: list[dict[str, str]] = []
+    # A status the run may not write -- anything outside `_VALID_STATUSES`, which
+    # since #569 includes the product's own two new statuses -- refuses the
+    # suggestion WHOLE too. It used to skip the status and still write the tools
+    # and rationale, so a row could carry a rationale arguing for a status it
+    # does not have, with no trace. Recorded here, code-shaped values only.
+    statuses_rejected: list[dict[str, str]] = []
     for sugg in (result.data or {}).get("techniques", []):
         if not isinstance(sugg, dict):
             continue
@@ -1809,16 +1848,41 @@ def run_ai(
         if row is None or row.locked:
             continue
         st = sugg.get("status")
-        if isinstance(st, str) and st in _VALID_STATUSES:
-            row.status = st
-            # #554: the same rule as the PATCH. A reason a consultant gave for the
-            # old status is dropped when the AI moves the row to one it does not
-            # describe -- never left as an N/A carrying `missing_control_category`.
-            if not is_valid_reason(row.status, row.reason_code):
-                reason_codes_dropped.append(
-                    {"technique_code": row.technique_code, "reason_code": row.reason_code}
-                )
-                row.reason_code = None
+        offered = sugg.get("reason_code")
+        if not (isinstance(st, str) and st in _VALID_STATUSES):
+            # No status, or one the run may not write: refused WHOLE. A
+            # rationale without a status argues for nothing, and tools cited
+            # for no status attach to no claim (#590 round 3, the coordinator's
+            # call, overturnable).
+            statuses_rejected.append(
+                {
+                    "technique_code": row.technique_code,
+                    "status": "<none>" if st is None else _audit_safe_code(st),
+                }
+            )
+            continue
+        if offered is not None and not (isinstance(offered, str) and is_valid_reason(st, offered)):
+            reason_codes_rejected.append(
+                {
+                    "technique_code": row.technique_code,
+                    "status": st,
+                    "reason_code": _audit_safe_code(offered),
+                }
+            )
+            continue
+        # Here `st` is a writable status and any offered reason fits it: every
+        # other case was refused whole above.
+        row.status = st
+        if offered is not None:
+            row.reason_code = offered
+        # #554: the same rule as the PATCH. A reason a consultant gave for the
+        # old status is dropped when the AI moves the row to one it does not
+        # describe -- never left as an N/A carrying `missing_control_category`.
+        if not is_valid_reason(row.status, row.reason_code):
+            reason_codes_dropped.append(
+                {"technique_code": row.technique_code, "reason_code": row.reason_code}
+            )
+            row.reason_code = None
         # #101 / #102: record what happened to this row's citations, per FIELD.
         #
         # `row_flags` starts EMPTY, not None. An empty list is a positive claim --
@@ -1991,6 +2055,8 @@ def run_ai(
             "unresolved_fields": unresolved_fields_seen,
             # #554: which consultant reasons the AI's new statuses displaced.
             "reason_codes_dropped": reason_codes_dropped,
+            "reason_codes_rejected": reason_codes_rejected,
+            "statuses_rejected": statuses_rejected,
         },
     )
     db.commit()
@@ -2039,6 +2105,9 @@ def approve_assessment(
             status_code=status.HTTP_409_CONFLICT,
             detail="Assessment already released.",
         )
+    # #556: approving a stale draft would remove the discard remedy and make it
+    # the finalize/synthesis input.
+    require_current_catalog(db, a)
     a.status = AttackAssessmentStatus.APPROVED
     a.approved_at = utcnow()
     a.approved_by = user.id
@@ -2156,6 +2225,9 @@ def heatmap(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No assessment yet.",
         )
+    # #556: `valid` below used to be the whole defence, and it DROPS unknown codes
+    # silently. A stale assessment is refused before any number is computed.
+    require_current_catalog(db, a)
     valid = attack_all_codes()
     rows = (
         db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
@@ -2651,6 +2723,7 @@ def finalize_attack_deliverable(
             status_code=status.HTTP_409_CONFLICT,
             detail="Assessment must be approved before finalizing the deliverable.",
         )
+    require_current_catalog(db, assessment)  # #556: never render a stale denominator
     valid = attack_all_codes()
     coverage = (
         db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == assessment.id))
@@ -2815,6 +2888,48 @@ def latest_attack_deliverable(
     return _serialize_deliverable(db, deliv)
 
 
+def _refuse_release_of_a_stale_deliverable(
+    db: Session, deliverable_id: uuid.UUID, client_id: uuid.UUID
+) -> None:
+    """#556: a document finalized over a non-current catalog is not released.
+
+    Only a FIRST release is guarded. Re-releasing an already-released deliverable
+    is `release_deliverable`'s idempotent repair path and publishes nothing new.
+    A deliverable this tenant does not own, or of another service kind, falls
+    through to `release_deliverable`, which 404s it -- so this never reveals
+    another tenant's deliverable or answers for another kind's. A NULL
+    `parent_version` (finalized before 0041) cannot be traced to the assessment it
+    was built from, so it is refused as unknown rather than guessed, the rule
+    `_release_parent` already applies.
+    """
+    deliv = db.get(Deliverable, deliverable_id)
+    if deliv is None or deliv.released_at is not None:
+        return
+    # Deliverables carry no client_id; tenancy is through the service, exactly as
+    # `require_deliverable_in_tenant` checks it.
+    svc = db.get(Service, deliv.service_id)
+    if svc is None or svc.client_id != client_id:
+        return
+    # Another kind's deliverable is `release_deliverable`'s 404 (`kinds`), never
+    # this guard's 409: it has no ATT&CK assessment to trace.
+    if svc.kind != ServiceKind.ATTACK_COVERAGE:
+        return
+    parent = attack_parent(db, deliv)
+    if parent is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "attack_catalog_mismatch",
+                "message": (
+                    "This deliverable cannot be traced to the assessment it was built "
+                    "from, so the ATT&CK catalog it was scored against is unknown and it "
+                    "is not released."
+                ),
+            },
+        )
+    require_current_catalog(db, parent)
+
+
 @router.post(
     "/deliverables/{deliverable_id}/release",
     response_model=DeliverableResponse,
@@ -2826,6 +2941,7 @@ def release_attack_deliverable(
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],
 ) -> DeliverableResponse:
+    _refuse_release_of_a_stale_deliverable(db, deliverable_id, client.id)
     deliv = release_deliverable(
         db,
         deliverable_id=deliverable_id,
