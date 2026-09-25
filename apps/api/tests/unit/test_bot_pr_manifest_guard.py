@@ -276,8 +276,9 @@ def test_a_bot_PR_REWRITING_THIS_WORKFLOW_fails(tmp_path: pathlib.Path) -> None:
 
     `.github/workflows/*.yml` was on the PATH allow-list, so a PR authored as
     the bot could have deleted the audit step itself and passed manifest-only.
-    In the file class that controls every other gate, with `enforce_admins`
-    false and zero required reviews.
+    In the file class that controls every other gate, with zero required
+    reviews (and, when found, `enforce_admins` false; it is true since
+    2026-09-25, which does not close the hole: the checks are green).
     """
     result = _run(
         tmp_path,
