@@ -402,6 +402,12 @@ export function AttackWorkspace({
   const selectedCoverage = selectedCode
     ? (coverageByCode[selectedCode] ?? null)
     : null;
+  // #554 (D-094): derived from the catalog, the same parent/child structure
+  // the API computes over, never a second list.
+  const selectedSubTechniqueCount = selectedCode
+    ? (catalog?.techniques.filter((t) => t.parent_id === selectedCode).length ??
+      0)
+    : 0;
 
   return (
     <div className="flex flex-col gap-6">
@@ -585,6 +591,7 @@ export function AttackWorkspace({
             <div className="flex flex-col gap-4">
               <AttackTechniquePanel
                 technique={selectedTechnique}
+                subTechniqueCount={selectedSubTechniqueCount}
                 coverage={selectedCoverage}
                 coverageDefinitions={catalog.coverage_definitions}
                 readOnly={readOnly}

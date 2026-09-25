@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.models.audit_entry import AuditEntry
+from tests._attack_rows import first_standalone
 
 
 @pytest.fixture()
@@ -451,7 +452,7 @@ def test_attack_version_trap_and_child_mutation_after_discard(app_client) -> Non
     assert a2r.status_code == 201
     a2 = a2r.json()
     assert a2["version"] == 2
-    coverage_id = a2["coverage"][0]["id"]
+    coverage_id = first_standalone(a2["coverage"])["id"]
 
     d = c.post(f"/attack/assessments/{a2['id']}/discard", headers=_hdr(bearer))
     assert d.status_code == 200, d.text

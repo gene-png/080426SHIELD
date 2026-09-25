@@ -254,3 +254,35 @@ describe("AttackTechniquePanel — a pending row with NO stored entries", () => 
     expect(screen.queryByTestId("attack-citation-queue")).toBeNull();
   });
 });
+
+describe("AttackTechniquePanel — a computed parent (#554, D-094)", () => {
+  function render_(subTechniqueCount: number) {
+    render(
+      <AttackTechniquePanel
+        technique={TECHNIQUE}
+        coverage={row({ status: "partial" })}
+        coverageDefinitions={[]}
+        subTechniqueCount={subTechniqueCount}
+        onPatch={vi.fn()}
+      />,
+    );
+  }
+
+  it("does not offer a status on a parent with sub-techniques, and says why", () => {
+    render_(3);
+    for (const radio of screen.getAllByRole("radio")) {
+      expect(radio).toBeDisabled();
+    }
+    expect(screen.getByTestId("computed-parent-status").textContent).toBe(
+      "Computed from its 3 sub-techniques. Score those instead; this status follows them.",
+    );
+  });
+
+  it("offers a status on a technique with no sub-techniques", () => {
+    render_(0);
+    for (const radio of screen.getAllByRole("radio")) {
+      expect(radio).not.toBeDisabled();
+    }
+    expect(screen.queryByTestId("computed-parent-status")).toBeNull();
+  });
+});

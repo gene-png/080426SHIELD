@@ -34,6 +34,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.attack import coverage as cov
 from app.attack.analytics import compute
 from app.attack.catalog import TECHNIQUES
+from tests._attack_rows import first_standalone
 
 pytestmark = pytest.mark.unit
 
@@ -167,7 +168,9 @@ def api(tmp_path) -> Iterator[tuple[TestClient, str, dict, str, sessionmaker]]:
             json={"kind": "attack_coverage", "title": "ATT&CK Coverage"},
         ).json()["id"]
         a = c.post(f"/attack/services/{svc}/assessments", headers=auth).json()
-        yield c, a["coverage"][0]["id"], auth, svc, Sess
+        # A standalone technique: the first row, T1001, is a computed parent
+        # since D-094, and the PATCH refuses its status.
+        yield c, first_standalone(a["coverage"])["id"], auth, svc, Sess
 
 
 def _patch(c: TestClient, row: str, auth: dict, body: dict):

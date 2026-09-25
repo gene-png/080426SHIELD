@@ -27,6 +27,7 @@ from app.risk.exporters import render_docx, render_pdf
 # `max(batch_sizes) <= _RISK_BATCH_SIZE` is the invariant itself. Hardcoding a
 # literal here would silently stop exercising batching if the constant changed.
 from app.routes.risk import _RISK_BATCH_SIZE
+from tests._attack_rows import first_standalone, standalone_rows
 
 
 @pytest.fixture()
@@ -107,9 +108,10 @@ def _seed_attack_and_zt(c: TestClient, bearer: str, cid: str) -> tuple[str, str]
         json={"kind": "attack_coverage", "title": "ATT&CK"},
     )
     a = c.post(f"/attack/services/{asvc.json()['id']}/assessments", headers=h)
-    cov = a.json()["coverage"][0]
+    cov = first_standalone(a.json()["coverage"])
     technique = cov["technique_code"]
-    c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "gap"})
+    r = c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "gap"})
+    assert r.status_code == 200, r.text
 
     zsvc = c.post("/zt/services", headers=h, json={"kind": "zero_trust_cisa", "title": "ZT"})
     za = c.post(f"/zt/services/{zsvc.json()['id']}/assessments", headers=h)
@@ -599,10 +601,10 @@ def _seed_many_gaps(c: TestClient, bearer: str, cid: str, count: int) -> tuple[l
         json={"kind": "attack_coverage", "title": "ATT&CK"},
     )
     a = c.post(f"/attack/services/{asvc.json()['id']}/assessments", headers=h)
-    rows = a.json()["coverage"][:count]
-    assert len(rows) == count, f"assessment supplied only {len(rows)} techniques"
+    rows = standalone_rows(a.json()["coverage"], count)
     for cov in rows:
-        c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "gap"})
+        r = c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "gap"})
+        assert r.status_code == 200, r.text
 
     zsvc = c.post("/zt/services", headers=h, json={"kind": "zero_trust_cisa", "title": "ZT"})
     za = c.post(f"/zt/services/{zsvc.json()['id']}/assessments", headers=h)
@@ -775,8 +777,9 @@ def _seed_drafts_only(c: TestClient, bearer: str, cid: str) -> None:
         json={"kind": "attack_coverage", "title": "ATT&CK"},
     )
     a = c.post(f"/attack/services/{asvc.json()['id']}/assessments", headers=h)
-    cov = a.json()["coverage"][0]
-    c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "gap"})
+    cov = first_standalone(a.json()["coverage"])
+    r = c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "gap"})
+    assert r.status_code == 200, r.text
     zsvc = c.post("/zt/services", headers=h, json={"kind": "zero_trust_cisa", "title": "ZT"})
     za = c.post(f"/zt/services/{zsvc.json()['id']}/assessments", headers=h)
     c.patch(

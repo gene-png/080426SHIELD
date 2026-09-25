@@ -36,6 +36,7 @@ from app.attack.analytics import compute as compute_heatmap
 from app.attack.catalog import (
     TACTICS,
     TECHNIQUES,
+    technique_by_id,
 )
 from app.attack.catalog import (
     all_codes as attack_all_codes,
@@ -59,6 +60,7 @@ from app.attack.exporters import coverage_pct_text
 from app.attack.exporters import render_docx as render_attack_docx
 from app.attack.exporters import render_pdf as render_attack_pdf
 from app.attack.exporters import render_xlsx as render_attack_xlsx
+from app.attack.parents import PARENT_CHILDREN, is_computed_parent, recompute_parents
 from app.attack.pending import CLAIMS_SUPPORT as _STATUS_CLAIMS_SUPPORT
 from app.attack.pending import NO_CITATION as _NO_CITATION
 from app.attack.pending import TOOL_FIELDS as _TOOL_FIELDS
@@ -501,6 +503,20 @@ def patch_coverage(
     # against the status the row will HAVE after this patch, and refused typed
     # rather than stored: a missing reason is a release question, an impossible
     # pairing (a missing control given as an N/A reason) is refused at the click.
+    # #554 (D-094): a parent WITH sub-techniques has its status computed from
+    # them, so neither its status nor its reason is anyone's to set. Refused
+    # typed, like every other write the vocabulary forbids.
+    if is_computed_parent(row.technique_code) and ({"status", "reason_code"} & set(data)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "parent_status_computed",
+                "message": (
+                    f"{row.technique_code}'s status is computed from its sub-techniques. "
+                    "Score the sub-techniques instead."
+                ),
+            },
+        )
     # #554: the two new statuses are not writable until every reporting surface
     # renders them (`coverage.WRITABLE`); refused typed, never stored.
     if data.get("status") is not None and CoverageStatus(data["status"]) not in WRITABLE:
@@ -589,6 +605,25 @@ def patch_coverage(
         )
     row.answered_by = user.id
     row.answered_at = utcnow()
+    # #554 (D-094): a sub-technique's change recomputes its parent in the same
+    # transaction, so the parent can never be read out of step with its children.
+    recomputed: list[str] = []
+    technique = technique_by_id(row.technique_code)
+    parent_code = technique.parent_id if technique is not None else None
+    if parent_code is not None and ({"status", "reason_code"} & set(data)):
+        family = {parent_code, *PARENT_CHILDREN.get(parent_code, ())}
+        family_rows = {
+            r.technique_code: r
+            for r in db.execute(
+                select(AttackCoverage).where(
+                    AttackCoverage.assessment_id == row.assessment_id,
+                    AttackCoverage.technique_code.in_(family),
+                )
+            )
+            .scalars()
+            .all()
+        }
+        recomputed = recompute_parents(family_rows, [parent_code])
     audit(
         db,
         action="attack.coverage.updated",
@@ -598,6 +633,8 @@ def patch_coverage(
         details={
             "technique_code": row.technique_code,
             "fields": sorted(data.keys()),
+            # #554 (D-094): the parent this change recomputed, when it changed.
+            "parents_recomputed": recomputed,
             # Recorded because this is the one path that CLEARS a review queue,
             # and "why does this technique count now" has to be answerable later
             # from the audit trail rather than from the row's current state.
@@ -1802,11 +1839,18 @@ def run_ai(
         return out.tools
 
     reason_codes_dropped: list[dict[str, str]] = []
+    # #554 (D-094): a parent WITH sub-techniques is computed, never the model's
+    # to score. Its suggestion is refused WHOLE -- a rationale arguing for a
+    # status the parent will not have is noise on the row -- and named here.
+    parent_suggestions_refused: list[str] = []
     for sugg in (result.data or {}).get("techniques", []):
         if not isinstance(sugg, dict):
             continue
         row = rows.get(sugg.get("technique_code"))
         if row is None or row.locked:
+            continue
+        if is_computed_parent(row.technique_code):
+            parent_suggestions_refused.append(row.technique_code)
             continue
         st = sugg.get("status")
         if isinstance(st, str) and st in _VALID_STATUSES:
@@ -1922,6 +1966,9 @@ def run_ai(
         row.answered_by = user.id
         row.answered_at = utcnow()
 
+    # #554 (D-094): every parent recomputed from the children this run wrote,
+    # before the snapshot, so the run's own diff shows what the rule changed.
+    parents_recomputed = recompute_parents(rows)
     db.flush()
     after = _snap()
     diffs = diff_keyed_rows(before, after, _DIFF_FIELDS, locked_keys=locked_keys)
@@ -1991,6 +2038,8 @@ def run_ai(
             "unresolved_fields": unresolved_fields_seen,
             # #554: which consultant reasons the AI's new statuses displaced.
             "reason_codes_dropped": reason_codes_dropped,
+            "parent_suggestions_refused": parent_suggestions_refused,
+            "parents_recomputed": parents_recomputed,
         },
     )
     db.commit()
@@ -2039,6 +2088,17 @@ def approve_assessment(
             status_code=status.HTTP_409_CONFLICT,
             detail="Assessment already released.",
         )
+    # #554 (D-094): approval freezes the numbers, so every parent is recomputed
+    # from its children first. A draft scored before parents were computed
+    # would otherwise freeze parent statuses nobody's rule produced.
+    parents_recomputed = recompute_parents(
+        {
+            r.technique_code: r
+            for r in db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
+            .scalars()
+            .all()
+        }
+    )
     a.status = AttackAssessmentStatus.APPROVED
     a.approved_at = utcnow()
     a.approved_by = user.id
@@ -2048,7 +2108,7 @@ def approve_assessment(
         target_type="attack_assessment",
         target_id=a.id,
         actor_user_id=user.id,
-        details={"version": a.version},
+        details={"version": a.version, "parents_recomputed": parents_recomputed},
     )
     db.commit()
     db.refresh(a)

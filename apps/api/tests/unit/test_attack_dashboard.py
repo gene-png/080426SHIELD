@@ -21,6 +21,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.storage.local import LocalFilesystemStorage
+from tests._attack_rows import standalone_rows
 
 
 @pytest.fixture()
@@ -94,12 +95,13 @@ def _seed_finalize_release(c: TestClient, bearer: str, *, release: bool) -> str:
         f"/attack/services/{svc_id}/assessments",
         headers={"Authorization": f"Bearer {bearer}"},
     ).json()
-    for cov in assessment["coverage"][:5]:
-        c.patch(
+    for cov in standalone_rows(assessment["coverage"], 5):
+        r = c.patch(
             f"/attack/coverage/{cov['id']}",
             headers={"Authorization": f"Bearer {bearer}"},
             json={"status": "covered"},
         )
+        assert r.status_code == 200, r.text
     c.post(
         f"/attack/assessments/{assessment['id']}/approve",
         headers={"Authorization": f"Bearer {bearer}"},
@@ -303,7 +305,7 @@ def _cut_and_approve_next_version(c: TestClient, bearer: str, svc_id: str, *, co
     nxt = c.post(f"/attack/services/{svc_id}/assessments", headers=h)
     assert nxt.status_code == 201, nxt.text
     nxt = nxt.json()
-    for cov in nxt["coverage"][:covered]:
+    for cov in standalone_rows(nxt["coverage"], covered) if covered else []:
         r = c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "covered"})
         assert r.status_code == 200, r.text
     r = c.post(f"/attack/assessments/{nxt['id']}/approve", headers=h)

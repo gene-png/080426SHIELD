@@ -108,6 +108,9 @@ export interface AttackTechniquePanelProps {
   technique: CatalogTechnique | null;
   coverage: AttackCoverageRow | null;
   coverageDefinitions: CatalogCoverageDefinition[];
+  /** #554 (D-094): how many sub-techniques this technique has. Above zero, its
+   *  status is COMPUTED from them, and the API refuses to set it directly. */
+  subTechniqueCount?: number;
   readOnly?: boolean;
   onPatch: (patch: AttackCoveragePatch) => void | Promise<void>;
   /**
@@ -123,6 +126,7 @@ export function AttackTechniquePanel({
   technique,
   coverage,
   coverageDefinitions,
+  subTechniqueCount = 0,
   readOnly = false,
   onPatch,
   onConfirmCitations,
@@ -177,6 +181,16 @@ export function AttackTechniquePanel({
         </CardDescription>
       </CardHeader>
       <CardBody className="flex flex-col gap-4">
+        {subTechniqueCount > 0 ? (
+          <p
+            className="text-xs text-ink-secondary"
+            data-testid="computed-parent-status"
+          >
+            {`Computed from its ${subTechniqueCount} sub-technique${
+              subTechniqueCount === 1 ? "" : "s"
+            }. Score those instead; this status follows them.`}
+          </p>
+        ) : null}
         <div
           role="radiogroup"
           aria-label="Coverage status"
@@ -191,7 +205,9 @@ export function AttackTechniquePanel({
                 type="button"
                 role="radio"
                 aria-checked={active}
-                disabled={readOnly}
+                // A computed parent's status is not anyone's to set; the API
+                // refuses it (`parent_status_computed`).
+                disabled={readOnly || subTechniqueCount > 0}
                 title={def?.description ?? s}
                 onClick={() => void onPatch({ status: active ? null : s })}
                 className={[
@@ -199,7 +215,9 @@ export function AttackTechniquePanel({
                   active
                     ? "border-brand-500 bg-brand-500 text-ink-on-accent"
                     : "border-border bg-surface-card text-ink-secondary hover:bg-surface-sunken",
-                  readOnly ? "cursor-not-allowed opacity-50" : "",
+                  readOnly || subTechniqueCount > 0
+                    ? "cursor-not-allowed opacity-50"
+                    : "",
                 ].join(" ")}
               >
                 {def?.short_label ?? s}

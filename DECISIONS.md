@@ -5868,3 +5868,42 @@ un-dispositioned gaps before an assessment ships.
 risk-acceptance vocabulary (artifact names, control references) against the
 FedRAMP and NIST sources, not against this record. "Moderate" is #557's
 wording; the platform targets Moderate and High, so check the High baseline too.
+
+## D-094 — An ATT&CK parent with sub-techniques has its status computed from them
+
+**Date:** 2026-09-25 · **Issues:** #554 · **Decided by:** the owner (that parents are computed); the rule itself is **my call, overturnable**
+
+**The owner's decision** (#554): "`parent_rollup` -- computed. A parent's status is arithmetic over its children. AI suggests, code computes. Forbidden as a reason." The arithmetic was not specified.
+
+**Decision 1 — which parents.** Only a parent that HAS sub-techniques, taken from the catalog (`parents.PARENT_CHILDREN`). A parent with none is scored directly, as before.
+
+**Decision 2 — the rule** (`parents.computed_parent_status`), in precedence order:
+
+1. Any child unscored → the parent is unscored. Unknown is never rounded up.
+2. Any child `unable_to_determine` → the parent is too.
+3. Set aside `not_applicable` and `outside_control_surface` children. Of the rest: all covered → covered; all gap → gap; anything else → partial.
+4. Nothing left → `outside_control_surface` if any child is outside the surface, else `not_applicable`.
+
+Reasons are computed, never invented:
+
+- an N/A parent takes `platform_absent`;
+- an outside parent takes its children's sub-case when they all share one;
+- every other parent takes none.
+
+A computed Partial has no single missing part to name; its children carry their reasons. **So the release-readiness gate must read a computed parent's children, not demand a Partial reason of the parent.** Recorded on #554 for c3.
+
+The truth table was written BEFORE the function, and one row was corrected after the first run, stated at the site. It had expected no reason for N/A mixed with outside; the outside children name one sub-case, and the N/A child is set aside, as it is everywhere else in the rule.
+
+**Decision 3 — the write paths store the computed value, and refuse to be told otherwise.**
+
+- PATCH refuses a parent's status or reason with a typed 422, `parent_status_computed`. Notes stay editable.
+- A child's PATCH recomputes its parent in the same transaction.
+- The AI write-back refuses a parent's suggestion whole (`parent_suggestions_refused`), and recomputes every parent before the run's diff is taken.
+- Approve recomputes every parent before freezing the numbers, so a draft scored before this rule existed is corrected at the point it matters. Each is audited (`parents_recomputed`).
+- The demo seed recomputes through the same function.
+
+**Recomputed on WRITE, never on read.** Parents are recomputed when a child is PATCHed, when Run AI writes, and at approve, and never when an assessment is read. An APPROVED or RELEASED assessment is locked against all three, so **a delivered number never moves**. A hand-scored parent on a released assessment keeps its stored status until a new version is approved.
+
+**Existing tests moved, and none was weakened.** 20 ATT&CK tests scored "the first coverage row", which is T1001, a computed parent. Their assertions describe a scoreable row and still hold. So each setup now picks STANDALONE techniques (no sub-techniques, no parent) through one helper, `tests/_attack_rows.py`. The helper derives them from the catalog's parent links, not from `app.attack.parents`, and asserts it found enough. A sweep for the same shape in tests that still PASSED found more first-row setups that ignored the PATCH response and could now pass vacuously: acceptance, dashboard, discard, risk dashboard, risk register, and e2e `s5`, `s27` and `s30`. They use the helper, or the same derivation in e2e, and now assert every PATCH. The heatmap test went quietly from 10 to 8 because it never checked its PATCHes. `s5` selected T1003 and expected Run AI's rationale on T1001, both now parents. It derives its technique from the run instead, and proves the locked row untouched by the ABSENCE of the fixture's rationale rather than by a status the fixture might also produce.
+
+**Condition 6.** A parent's stored status now follows its children, so coverage figures over draft and newly approved assessments can move. This comes back to the owner.
