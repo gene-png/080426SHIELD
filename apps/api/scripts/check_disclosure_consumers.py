@@ -544,9 +544,12 @@ def ts_use_text(text: str) -> str:
       * `type X<T = Y> =` -- the head's `<[^=;]*>` cannot contain `=`, so the
         alias is not recognised at all;
       * THE LEXER-STATE CLASS: whenever the lexer believes it is inside a
-        string or a regex that it is not really in, it misses a comment
-        opener for the rest of that line -- and for a block comment, every
-        LATER line of the comment is then lexed as code. Known forms:
+        string or a regex that it is not really in, it misreads the text up
+        to where that phantom state ends (a phantom `'`/`"` at the next
+        matching quote or the newline, a phantom regex at its next `/`, a
+        phantom template possibly lines later). A comment opener in that span
+        is missed -- and for a block comment, every LATER line of the comment
+        is then lexed as code. Known forms:
           - JSX text with an apostrophe, `Don't {/* see` on one line and the
             field on the next: the phantom `'` eats the `/*`. Backticks in the
             comment's prose can then flip template parity, or cause exit 2;
@@ -556,7 +559,14 @@ def ts_use_text(text: str) -> str:
             is not a preceder, so the literal reads as division and its quote
             opens a phantom string -- or a multi-line template, if it holds a
             backtick.
-        All three err GREEN (a comment's field counted as a use);
+        Each errs GREEN (a comment's field counted as a use), and the class
+        can ALSO err RED: a phantom that closes on a real string's OPENING
+        quote (or a real template's backtick) leaves that literal's content
+        lexed as code, so a `//` inside it strips a real use --
+        `<p>Don't</p>{f('//x', data.excluded_inputs)}` strips to
+        `<p>Don't</p>{f('` (run at c54fb98). A red here is therefore not
+        proof of a missing render; see `TsParseError` on why an exemption is
+        the wrong way to clear one. None of these is live;
       * Python exporters are matched as before, comments and docstrings
         included.
     And a green means USED, not RENDERED: a use feeding nothing visible still

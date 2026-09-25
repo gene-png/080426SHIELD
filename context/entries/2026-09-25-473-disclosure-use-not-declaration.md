@@ -126,14 +126,26 @@ The full list is in `ts_use_text`'s docstring, and the open ones are #632.
   indexed-access type or `Pick<Data, "field">`, an `interface` whose generic
   holds a `{`, and a `type` alias whose generic has a default (`<T = Y>`).
 - **The lexer-state class.** Whenever the lexer believes it is inside a string
-  or a regex that it is not really in, it misses a comment opener for the rest
-  of that line. For a block comment, every LATER line of the comment is then
-  lexed as code. Three known forms, all erring green, none live:
+  or a regex that it is not really in, it misreads the text up to where that
+  phantom state ends: a phantom quote at the next matching quote or the
+  newline, a phantom regex at its next `/`, a phantom template possibly lines
+  later. A comment opener in that span is missed, and for a block comment
+  every LATER line of the comment is then lexed as code. Three known forms,
+  none live:
   - JSX text with an apostrophe, `Don't {/* see` with the field on the next
     line. Backticks in that comment's prose can also flip template parity, or
     cause exit 2.
   - `}` as a regex preceder, as in `<X a={b} /> {/* field */}`.
   - A keyword before a regex (`return /'/`, `typeof /x'/`), read as division.
+
+  Each errs green, and the class can ALSO err RED: a phantom that closes on a
+  real string's opening quote (or a real template's backtick) leaves that
+  literal's content lexed as code, so a `//` inside it strips a real use.
+  `<p>Don't</p>{f('//x', data.excluded_inputs)}` strips to `<p>Don't</p>{f('`
+  (run at `c54fb98`). So a red from this gate is not proof of a missing
+  render, and an `EXEMPT_FIELDS` entry is the wrong way to clear one. A later
+  version said "all erring green", which was the green half only (review of
+  `c54fb98`).
 
   An earlier version listed only "a `//` comment after a JSX apostrophe on the
   same line", which is one form of the class, not the class (review of
