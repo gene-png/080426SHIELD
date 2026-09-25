@@ -12,9 +12,10 @@ What this slice establishes:
     N/A reason, three sub-cases for outside_control_surface, none for the rest;
   * a pairing the vocabulary forbids is refused at the click (a typed 422), and
     a status change drops a reason that no longer fits.
-What it does NOT do yet: require a reason, or block release on
-`unable_to_determine`. Both are the release gate in a later slice, because the
-AI path does not produce reason codes until the prompt slice lands.
+What it does NOT do yet: let anyone WRITE the two new statuses. No reporting
+surface renders them, so they are refused at the PATCH (typed) and ignored from
+the AI until the slice that teaches every surface to show them. Requiring a
+reason, and blocking release on `unable_to_determine`, are that later slice too.
 """
 
 from __future__ import annotations
@@ -117,7 +118,7 @@ def test_an_unverified_row_is_never_counted_as_partial_or_gap() -> None:
 
 
 @pytest.fixture()
-def api(tmp_path) -> Iterator[tuple[TestClient, str, dict]]:
+def api(tmp_path) -> Iterator[tuple[TestClient, str, dict, str, sessionmaker]]:
     url = f"sqlite:///{tmp_path / 'shield-vocab.db'}"
     os.environ["DATABASE_URL"] = url
     api_root = Path(__file__).resolve().parents[2]
@@ -166,7 +167,7 @@ def api(tmp_path) -> Iterator[tuple[TestClient, str, dict]]:
             json={"kind": "attack_coverage", "title": "ATT&CK Coverage"},
         ).json()["id"]
         a = c.post(f"/attack/services/{svc}/assessments", headers=auth).json()
-        yield c, a["coverage"][0]["id"], auth
+        yield c, a["coverage"][0]["id"], auth, svc, Sess
 
 
 def _patch(c: TestClient, row: str, auth: dict, body: dict):
@@ -174,7 +175,7 @@ def _patch(c: TestClient, row: str, auth: dict, body: dict):
 
 
 def test_a_partial_with_a_decided_reason_is_stored(api) -> None:
-    c, row, auth = api
+    c, row, auth, _, _ = api
     r = _patch(c, row, auth, {"status": "partial", "reason_code": "reach_limited"})
     assert r.status_code == 200, r.text
     assert (r.json()["status"], r.json()["reason_code"]) == ("partial", "reach_limited")
@@ -188,12 +189,11 @@ def test_a_partial_with_a_decided_reason_is_stored(api) -> None:
         ("not_applicable", "missing_control_category"),
         ("covered", "reach_limited"),
         ("gap", "missing_control_category"),
-        ("outside_control_surface", "platform_absent"),
         ("partial", "not_a_code"),
     ],
 )
 def test_a_pairing_the_vocabulary_forbids_is_refused_typed(api, status, reason) -> None:
-    c, row, auth = api
+    c, row, auth, _, _ = api
     r = _patch(c, row, auth, {"status": status, "reason_code": reason})
     assert r.status_code == 422, r.text
     detail = r.json().get("error", r.json())
@@ -201,7 +201,7 @@ def test_a_pairing_the_vocabulary_forbids_is_refused_typed(api, status, reason) 
 
 
 def test_changing_status_drops_a_reason_that_no_longer_fits(api) -> None:
-    c, row, auth = api
+    c, row, auth, _, _ = api
     assert (
         _patch(c, row, auth, {"status": "partial", "reason_code": "detection_weak"}).status_code
         == 200
@@ -211,16 +211,53 @@ def test_changing_status_drops_a_reason_that_no_longer_fits(api) -> None:
     assert r.json()["reason_code"] is None
 
 
-def test_an_unverified_row_keeps_its_narrative(api) -> None:
-    c, row, auth = api
-    r = _patch(
-        c,
-        row,
-        auth,
-        {
-            "status": "unable_to_determine",
-            "narrative": "Agent coverage on the server estate unknown.",
-        },
-    )
+def test_a_narrative_is_stored(api) -> None:
+    c, row, auth, _, _ = api
+    r = _patch(c, row, auth, {"status": "gap", "narrative": "What could not be established."})
     assert r.status_code == 200, r.text
-    assert r.json()["narrative"] == "Agent coverage on the server estate unknown."
+    assert r.json()["narrative"] == "What could not be established."
+
+
+@pytest.mark.parametrize("status", ["unable_to_determine", "outside_control_surface"])
+def test_the_new_statuses_are_not_writable_until_a_surface_reports_them(api, status) -> None:
+    """No dashboard, exporter or badge renders them yet: stored, an unverified row
+    would reach the client as N/A and a PDF would read 100% over unverified rows."""
+    c, row, auth, _, _ = api
+    r = _patch(c, row, auth, {"status": status})
+    assert r.status_code == 422, r.text
+    detail = r.json().get("error", r.json())
+    assert detail.get("reason") == "status_not_yet_reportable", r.json()
+    assert status in detail["message"]
+
+
+def test_the_heatmap_endpoint_carries_both_counts(api) -> None:
+    """Through the route, not `compute()`: the counts are wired by the route, and
+    a test of the arithmetic alone stays green with the wiring deleted. Rows are
+    set in the database because no writer may produce these statuses yet."""
+    from sqlalchemy import update
+
+    from app.models.attack_assessment import AttackCoverage
+
+    c, _, auth, svc, Sess = api
+    with Sess() as s:
+        ids = (
+            s.execute(
+                AttackCoverage.__table__.select().with_only_columns(AttackCoverage.id).limit(3)
+            )
+            .scalars()
+            .all()
+        )
+        for rid, st in zip(
+            ids, ["unable_to_determine", "outside_control_surface", "gap"], strict=True
+        ):
+            s.execute(update(AttackCoverage).where(AttackCoverage.id == rid).values(status=st))
+        s.commit()
+    r = c.get(f"/attack/services/{svc}/heatmap", headers=auth)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert (body["unable_to_determine"], body["outside_control_surface"]) == (1, 1)
+    # The percentage is pinned by the `compute()` tests above; a covered row with
+    # no confirmed citation is withheld here as pending (#102), so it would not
+    # read back as the arithmetic alone predicts.
+    assert sum(t["unable_to_determine"] for t in body["by_tactic"]) >= 1
+    assert sum(t["outside_control_surface"] for t in body["by_tactic"]) >= 1

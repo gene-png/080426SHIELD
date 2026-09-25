@@ -279,8 +279,10 @@ class TacticHeatmapEntry(BaseModel):
     # not honest where it is read.
     pending_review: int = 0
     # #554: outside the assessed denominator, so stated beside the percentage.
-    outside_control_surface: int = 0
-    unable_to_determine: int = 0
+    # REQUIRED, no default: the model is built live by the heatmap route, so a
+    # default would turn missing wiring into a confident "0 unverified".
+    outside_control_surface: int
+    unable_to_determine: int
     coverage_pct: float
 
 
@@ -302,10 +304,12 @@ class AttackHeatmap(BaseModel):
     # This count must be rendered beside it. A bare 100% over a withheld row is
     # the false assurance the whole rule exists to prevent.
     pending_review: int = 0
-    # #554: rows outside the assessed denominator; every surface that shows
-    # `coverage_pct` must show these beside it.
-    outside_control_surface: int = 0
-    unable_to_determine: int = 0
+    # #554: rows outside the assessed denominator, REQUIRED for the reason
+    # above. No surface renders them yet, and none needs to while
+    # `coverage.WRITABLE` keeps both statuses unwritable; the slice that widens
+    # it must put them beside `coverage_pct` on every surface first.
+    outside_control_surface: int
+    unable_to_determine: int
     coverage_pct: float
     by_tactic: list[TacticHeatmapEntry]
 

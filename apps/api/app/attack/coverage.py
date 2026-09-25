@@ -11,8 +11,17 @@ do not:
     anyone does). It stays in the catalogue total and OUTSIDE the assessed
     denominator, with its own line in the deliverable.
   * `unable_to_determine`: nobody verified it. It is also OUTSIDE the assessed
-    denominator, never counted as partial or gap, and it blocks release. The
-    gate is a later slice, because the AI path produces no reason codes yet.
+    denominator and never counted as partial or gap. The owner's decision makes
+    it a release blocker; that gate is a later slice.
+
+NOT YET WRITABLE. The two new statuses are defined, stored and counted, and
+nothing may WRITE them yet: `WRITABLE` below is the four statuses every
+reporting surface already renders. The client dashboard, the exporters, the
+admin badges and the release gate do not yet know the new two, so a row stored
+with one would be mis-reported (an unverified row shown as N/A, a 100% PDF over
+unverified rows). The PATCH refuses them typed and the AI write-back ignores
+them, until the slice that teaches every surface to report them widens
+`WRITABLE`. My call, overturnable, recorded on #554.
 
 REASON CODES. A reason means something only for the status it belongs to:
   * Partial: seven codes, below.
@@ -39,6 +48,16 @@ class CoverageStatus(enum.StrEnum):
     OUTSIDE_CONTROL_SURFACE = "outside_control_surface"
     UNABLE_TO_DETERMINE = "unable_to_determine"
 
+
+#: What a consultant or the AI may write today. See "NOT YET WRITABLE" above.
+WRITABLE: frozenset[CoverageStatus] = frozenset(
+    {
+        CoverageStatus.COVERED,
+        CoverageStatus.PARTIAL,
+        CoverageStatus.GAP,
+        CoverageStatus.NOT_APPLICABLE,
+    }
+)
 
 #: The statuses whose rows form the assessed denominator of `coverage_pct`.
 ASSESSED: frozenset[CoverageStatus] = frozenset(
@@ -67,7 +86,7 @@ COVERAGE_DEFINITIONS: tuple[CoverageDefinition, ...] = (
         short_label="Partial",
         description=(
             "Something defends against this technique, and a named part of that "
-            "defence is missing. Always carries one of the seven Partial reason codes."
+            "defence is missing. Name which with one of the seven Partial reason codes."
         ),
     ),
     CoverageDefinition(
@@ -101,8 +120,8 @@ COVERAGE_DEFINITIONS: tuple[CoverageDefinition, ...] = (
         status=CoverageStatus.UNABLE_TO_DETERMINE,
         short_label="Not verified",
         description=(
-            "Nobody verified this technique. Requires a narrative saying what could "
-            "not be established. Not counted in coverage, and blocks release."
+            "Nobody verified this technique. Carries a narrative saying what could "
+            "not be established. Not counted in coverage."
         ),
     ),
 )

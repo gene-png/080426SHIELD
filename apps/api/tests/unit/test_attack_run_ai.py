@@ -664,3 +664,58 @@ def test_every_batched_mitre_map_call_carries_the_requests_correlation_id(app_cl
     # batch could in principle run on the request thread.
     assert len(ids) > 1, ids
     assert set(ids) == {"corr-mitre-batches"}, ids
+
+
+def _one_row_run(c, TestSession, provider, status: str) -> tuple[dict, str, str]:
+    """A service with one approved tool, an assessment, and a static AI answer
+    giving the first technique `status`. Returns headers, service id, row id."""
+    bearer, cid = _admin(c)
+    me = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()
+    _seed_tech_debt_tools(TestSession, cid, me["id"], ["Tool A"])
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    svc_id = c.post(
+        "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "ATT&CK"}
+    ).json()["id"]
+    row = c.post(f"/attack/services/{svc_id}/assessments", headers=h).json()["coverage"][0]
+    provider.register_static(
+        "mitre_map",
+        LLMResponse(
+            '{"techniques": [{"technique_code": "' + row["technique_code"] + '", '
+            '"status": "' + status + '", "detection_tools": [], "prevention_tools": [], '
+            '"response_tools": [], "rationale": "r"}]}'
+        ),
+    )
+    return h, svc_id, row["id"]
+
+
+@pytest.mark.unit
+def test_run_ai_drops_a_reason_the_new_status_does_not_take(app_client) -> None:
+    """#554: the PATCH drops a reason that no longer fits its status, and the AI
+    write-back must too, or a consultant's `missing_control_category` survives
+    under the AI's N/A -- the exact pairing the vocabulary forbids."""
+    c, TestSession, provider = app_client
+    h, svc_id, row_id = _one_row_run(c, TestSession, provider, "not_applicable")
+    r = c.patch(
+        f"/attack/coverage/{row_id}",
+        headers=h,
+        json={"status": "partial", "reason_code": "missing_control_category"},
+    )
+    assert r.status_code == 200, r.text
+
+    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    row = next(t for t in r.json()["coverage"] if t["id"] == row_id)
+    assert (row["status"], row["reason_code"]) == ("not_applicable", None)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("status", ["unable_to_determine", "outside_control_surface"])
+def test_run_ai_does_not_write_a_status_no_surface_reports(app_client, status) -> None:
+    """#554: the AI's allowed set is the four the prompt offers, not the whole
+    enum, so a model answer outside it leaves the row as it was."""
+    c, TestSession, provider = app_client
+    h, svc_id, row_id = _one_row_run(c, TestSession, provider, status)
+    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    row = next(t for t in r.json()["coverage"] if t["id"] == row_id)
+    assert row["status"] is None

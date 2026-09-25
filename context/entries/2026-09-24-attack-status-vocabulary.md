@@ -20,10 +20,15 @@ verified, and out of the client's reach.
   - `unable_to_determine` carries a narrative instead.
 - **Migration 0053** adds `attack_coverage.reason_code` and
   `attack_coverage.narrative`, both nullable.
-- **`coverage_pct` is over assessed rows only.** The two new counts ride on the
-  heatmap, overall and per tactic.
+- **`coverage_pct` is over assessed rows only.** The two new counts are in the
+  heatmap API response, overall and per tactic; no screen renders them yet.
 - **PATCH refuses an impossible pairing** with a typed 422 and drops a reason
-  that no longer fits a changed status.
+  that no longer fits a changed status. The AI write-back drops it too.
+- **Neither new status is writable yet (D-092 Decision 5, my call).** PATCH
+  refuses them with a typed 422 `status_not_yet_reportable`, and the AI accepts
+  only the four statuses every surface renders. The slice that teaches the
+  dashboards, exporters, badges and release gate to report them widens
+  `coverage.WRITABLE`.
 
 ## Not in this slice
 

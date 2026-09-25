@@ -16,8 +16,8 @@ they were.
 
 ## Chains from 0051, and that is a known merge-order point
 
-`0052` (`attack_assessments.catalog_version`) lives on the open #556 catalog PR,
-not on main. This migration was cut from main, so it chains from `0051`. Once
+`0052` (`attack_assessments.catalog_version`) lives on the open #556 catalog PR
+(#562), not on main. This migration was cut from main, so it chains from `0051`. Once
 either PR merges, the other's `down_revision` must be re-pointed to keep a
 single head. The owner tests every PR pair before merging; this note is there
 so the fix is not rediscovered as a red CI run.
