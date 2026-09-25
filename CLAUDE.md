@@ -312,9 +312,10 @@ double); and no `-w <dir>`.** `sh -lc "cd <dir> && ..."` is FINE and is the
 replacement for `-w` — its `&&` is inside a single quoted argument handed to the
 container's shell, which both host shells pass through untouched.
 
-**Exactly one command in this section needs rewriting for PowerShell:**
-`cd e2e && npx playwright test [file]`. Run it as two lines there. The others use
-the `sh -lc` shape, including the MANDATORY pre-commit lint, and work as written.
+**Known to need rewriting for PowerShell:** `cd e2e && npx playwright test
+[file]` (run it as two lines). The format check was run in Git Bash only.
+Lines not in the `sh -lc` shape (e.g. `export PATH`, the pytest and seed
+lines) are unmeasured there; the default below applies.
 
 **The rule, and it binds every command block in this file: a block that claims it
 runs anywhere carries the SHELLS it was actually run in and the DATE it was run.**
@@ -352,13 +353,18 @@ recorded with a real exit code and a real date, and was the minority outcome
 - e2e (host, not docker): `cd e2e && npx playwright test [file]` — base URL
   `http://localhost:3000`, chromium, serialized (shared seeded DB). Full suite
   ~17 min.
-- Format check (MANDATORY before every commit — CI enforces it, the Sprint 2
-  loop shipped unformatted files it only caught at CI): run host prettier at the
-  version `pnpm-lock.yaml` resolves (`3.9.6` today, from `package.json`'s
-  `^3.9.6`) so local and CI agree — CI runs `pnpm install --frozen-lockfile`
-  then `pnpm format:check`, so the LOCKFILE decides, not the range —
-  `npx -y prettier@3.9.6 --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"`
-  from the repo root. `--write` the same glob to fix, then re-check.
+- Format check (MANDATORY before every commit; CI enforces it). CI installs
+  `--frozen-lockfile`, so the LOCKFILE decides prettier's version. Read it with
+  the pre-commit hook's own reader, which takes the ROOT IMPORTER's entry
+  (never the alphabetical `packages:` list, whose first entry is the LOWEST,
+  #311) and refuses when it cannot read. From the repo root, **Git Bash only**:
+
+      v=$(scripts/prettier-hook.sh --print-version)
+      npx -y "prettier@${v:?}" --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
+
+  **Run 2026-09-24, both directions:** it read 3.9.8 and `--check` exited 0.
+  With no lockfile the hook refused, `${v:?}` exited 1, and `npx` never ran.
+  `--write` the same glob to fix, then re-check.
 - Python lint/format (in-container, CI-parity — MANDATORY before every commit
   that touches `apps/api`): `docker compose exec -T api sh -lc "cd /app && ruff
   check --no-cache . && black --check ."`. Compose bind-mounts the root
@@ -929,27 +935,15 @@ recorded with a real exit code and a real date, and was the minority outcome
   two things can meet" is a measurement, not a deduction.
 
 - **An over-match can be the ONLY thing covering a legitimate case. Before fixing
-  one, check what it was accidentally catching.** `suite_pat`'s `\bFl` ate the
-  `oor` in "Floor", and that bug was the sole reason `2nd Floor` got any
-  redaction at all — the pattern has no branch for a value PRECEDING its
-  keyword, so tightening `Fl` silently removed coverage nobody knew existed.
-  Nothing fails when this happens: no test knew the coverage was there, because
-  it was never intended. **The tell is that the "wrong" behaviour and the only
-  correct behaviour for some input are produced by the same line.** Cousin of
-  the twin-sweep rule — that one asks where else the defect is, this one asks
-  what else the defect is doing. Say which one a fix is: on #130 the honest
-  framing was "adds coverage that never existed and closes a live leak", not
-  "preserves coverage through a fix".
+  one, check what it was accidentally catching.** The tell: the "wrong"
+  behaviour and the only correct behaviour for some input come from the same
+  line. It is the twin-sweep rule's cousin: that one asks where else the defect
+  is, this one asks what else it is doing. Say which one a fix is: "adds
+  coverage that never existed" is not "preserves coverage". Instance: D-087.
 - **A redaction/validation corpus drawn from your own assumptions cannot falsify
-  them — and seed data is somebody's assumptions too.** #130 lived for months
-  under a green suite because every name-shaped string in `seed_demo.py` and
-  `fixtures.py` passes the address rule clean, so an address assertion built on
-  seed data passes forever. Then, fixing it, a hand-written corpus of "real
-  product names" certified a pattern carrying six leak regressions, because the
-  <!-- counted: historical -->
-  author writes addresses correctly spaced and the failing class was malformed
-  input (`PO Box99`, `Suite400`) arriving from OCR and exported spreadsheets.
-  <!-- counted: historical -->
+  them — and seed data is somebody's assumptions too.** A suite built on seed
+  data, or on a corpus the rule's author wrote, passes forever over the class
+  the author never writes; the #130 instances are in D-087.
 
   #72's shape pointed at test DATA rather than test code, with the same fix:
   **enumerate the CLASSES and require a row per class.** The classes a
@@ -2242,9 +2236,20 @@ Rules of the road:
   The tiers are a judgement about client-facing consequence, not effort:
   **tier-1** is live, unmitigated wrongness a client can reach — a number they
   never asked for, presented as one they did; **tier-2** is client-facing with a
-  mitigation shipped, or no wrong number delivered; **tier-3** is correctness no
-  client reads. Label to the SHIPPED state rather than the threat model, and say
+  mitigation shipped, or no wrong number delivered; **tier-3** is wrongness that
+  changes nothing about what the client ends up with. Label to the SHIPPED state rather than the threat model, and say
   on the issue which you did, so the call can be overturned instead of inherited.
+
+  **The test is CONSEQUENCE, not audience:** an internal screen is not tier-3 by
+  that fact. A consultant acting on a false screen is the last step of the
+  DELIVERY path, so its consequence reaches the client. #70 and #74 are tier-2 even though every CSF
+  and ATT&CK deliverable states its own coverage. A false "done" can still make
+  a consultant release work they would not have released, so do not re-derive
+  tier-3 from that measurement. The path is the delivery path, not any human. A
+  reviewer or developer misled by a false gate is not on it, and what the gate
+  lets through is tiered on its own merits (D-087). **A label's name is not its
+  test:** `mvp-blocking` means "on the board", not "blocks the MVP". The scale
+  has no term yet for compliance-record consequence (#528, D-087).
 
   Search before filing, knowing the search finds only what earlier filers
   labelled: #184 and #286 are the same defect, filed twice (D-086).
@@ -2316,9 +2321,9 @@ order. Each is a RECORD whose instruction is already stated in one line above
 it, so moving it loses no rule:
 
 1. **The `## Environment gotchas` redaction-subsystem narratives** — the
-   `_HSPACE` subtraction, the address-corpus classes, the over-match that was
-   the only coverage, the LEAVE-table oracle percentages. The rules are one
-   sentence each; the stories belong under D-058.
+   `_HSPACE` subtraction and the LEAVE-table oracle percentages. The rules are
+   one sentence each; the stories belong under D-058. (The over-match and
+   address-corpus stories already moved, to D-087, on 2026-09-24.)
 2. **The worked examples under `Rules of the road`** — the sweep shape
    statement, the subagent-citation arithmetic, the stash-archive PowerShell
    measurements. All have a live D-number or issue already holding them.

@@ -56,7 +56,8 @@ repos:
   # PRETTIER, AT THE VERSION THE LOCKFILE PINS (#168).
   #
   # This was `pre-commit/mirrors-prettier` at `rev: v3.1.0`, whose `prettier`
-  # hook id defaults to `--write`, while CI checks 3.9.6 — eight minors ahead.
+  # hook id defaults to `--write`, while CI checked 3.9.6 — eight minors ahead
+  # (versions here are as of 2026-08-30; the lockfile has since moved).
   # So the MANDATORY pre-commit step rewrote every commit into a state CI then
   # rejected. Measured 2026-08-30:
   #
