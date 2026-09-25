@@ -237,10 +237,13 @@ describe("targetNote — a discarded per-capability target reaches the screen (#
         unusable_target_codes: ["CISA.ID.01"],
       }),
     );
+    // ONE code, so "that row" (#452). This assertion used to say "those rows"
+    // over this one-element list: it pinned the defect, and was corrected with
+    // it rather than around it.
     expect(note).toBe(
       "Per-capability targets from your assessment A per-capability target was" +
         " recorded for CISA.ID.01 but could not be used, so the engagement" +
-        " target was applied to those rows instead.",
+        " target was applied to that row instead.",
     );
   });
 
@@ -266,6 +269,23 @@ describe("targetNote — a discarded per-capability target reaches the screen (#
         target_stage_source: "client",
         engagement_target_capability_count: 3,
         unusable_target_codes: ["CISA.ID.01", "CISA.DE.02"],
+      }),
+    );
+    expect(note.endsWith(fromTheDeliverable)).toBe(true);
+  });
+
+  it("says it exactly as the client's PDF says it -- one code", () => {
+    // The singular half of the parity pin (#452), transcribed from
+    // `test_one_discarded_target_is_one_row_not_those_rows` in the Python
+    // suite. One code reads "that row"; two read "those rows" (above).
+    const fromTheDeliverable =
+      " A per-capability target was recorded for CISA.ID.01 but could not be" +
+      " used, so the engagement target was applied to that row instead.";
+    const note = targetNote(
+      data({
+        target_stage_source: "client",
+        engagement_target_capability_count: 3,
+        unusable_target_codes: ["CISA.ID.01"],
       }),
     );
     expect(note.endsWith(fromTheDeliverable)).toBe(true);

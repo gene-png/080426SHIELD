@@ -314,6 +314,30 @@ def test_the_client_document_says_the_stored_target_was_not_used() -> None:
 
 
 @pytest.mark.unit
+def test_one_discarded_target_is_one_row_not_those_rows() -> None:
+    """#452: with ONE code the caption said "applied to those rows" over a
+    single capability. The plural test above pins two codes; this pins one.
+    The web note transcribes the same sentence (`zt.test.ts`, "says it exactly
+    as the client's PDF says it -- one code"), so the two must change together.
+    """
+    from app.zt.exporters import _gap_plan_caption
+
+    only = _first_code(CISA)
+    disclosed = _gap_plan_caption(
+        analyze_gaps(CISA, {only: 1}, target_stage=3, targets={only: 7})
+    )
+    expected = (
+        f" A per-capability target was recorded for {only} but could not be"
+        f" used, so the engagement target was applied to that row instead."
+    )
+    assert disclosed.endswith(expected), (
+        f"one discarded target must read as one row.\n"
+        f"  expected tail: {expected!r}\n"
+        f"  actual:        {disclosed!r}"
+    )
+
+
+@pytest.mark.unit
 def test_an_ordinary_engagement_carries_no_disclosure() -> None:
     """The positive control, and it is what keeps the disclosure meaningful.
 
