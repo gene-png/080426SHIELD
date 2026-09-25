@@ -24,7 +24,9 @@ would open D-051, not find the rule, and could discard a rule that is right.
 ## Measured
 
 `git grep -c "D-051" -- ':!DECISIONS.md'`: 47 files and 79 lines on `main` at
-`2028f38`; 17 files and 25 lines on this branch, each read and classified.
+`2028f38`; 17 files and 25 lines on this branch before its first commit
+(the landing entry and D-090 add hits of their own). The re-run at the
+round-1 head is below.
 
 ## Condition 5
 
@@ -32,3 +34,36 @@ This edits `apps/api/scripts/check_*.py`, `leave_row_oracle.py`,
 `tests/gates/**`, `apps/api/tests/**` and `.github/workflows/**`: it comes
 back to the owner. No behaviour changes; the edits are comments, docstrings,
 fixture incident text and the wording of printed messages.
+
+## After the first review (`e034c56`)
+
+- D-090 now separates what is enforced from what is required. The crash half
+  holds for the gates in `test_gate_crash_exit_code.GATES`
+  (`check_gate_fixtures.py` excludes itself and prints its own crash line).
+  "A clean result says what it read" is a requirement; the gates that do not
+  meet it yet (`check_audit_evidence.py`, `check_issue_references.py`) are
+  named and filed as #592.
+- `context/entries/2026-09-24-540-ci-selection-gate.md` cited the convention
+  as D-051; it cites D-090.
+- `check_audit_evidence.py`'s docstring said the gate does not block a merge,
+  false since D-054's correction; it now says what the setting does and points
+  at D-054. `DELIVERY_PLAN.md`'s #108 note is date-qualified to match.
+- The DEFERRED example subject is a placeholder (`D-NNN -- supersedes
+  D-MMM`), not a real-looking number.
+
+**The sweep, re-run at this round's head**, 2026-09-25:
+`git grep -c "D-051" -- ':!DECISIONS.md'` gives 16 files and 28 lines. Every
+hit was read and classified:
+
+- **D-051's own subject** (tests that cannot fail, #72; a rule that depends on
+  remembering needs a mechanism; D-051's in-entry correction style):
+  `CLAUDE.md`, `CONTEXT.md`, `DELIVERY_PLAN.md` (the W8a row, the W8b notes),
+  `check_plan_totals.py`, `check_recalled_counts.py`,
+  `scheduled-triggers.yml`, `fire_scheduled_triggers.py`, the
+  `check_test_integrity` fixture, two test files, and `context/gene.md`.
+- **History**, a sentence recording what was once cited: `audit-gate.yml`'s
+  correction note, `DELIVERY_PLAN.md`'s #108 note, and the separator gate's
+  comment, test docstring and fixture, each naming both records.
+- **This change's own record**: this entry.
+
+None cites D-051 for the exit convention.

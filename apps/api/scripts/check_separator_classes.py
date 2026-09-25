@@ -295,9 +295,9 @@ def main(argv: list[str]) -> int:
     if code == 2:
         # "I could not look" must not share a branch with "I found a violation",
         # and it must not share one with "nothing to complain about" either.
-        # This gate cited the exit convention (then as D-051; D-090 records it) while
-        # collapsing its own 2 into a 1 -- the exit
-        # code the docstring promises was unreachable through main().
+        # This gate cited the exit convention (then as D-051; D-090 records
+        # it) while collapsing its own 2 into a 1 -- the exit code the
+        # docstring promises was unreachable through main().
         print(f"check-separator-classes: cannot parse {target}")
         for finding in findings:
             print(f"  {finding}")

@@ -261,7 +261,7 @@ DEFERRED: dict[str, str] = {
         "exit-2 message is now pinned to the `git log` branch. The ADVERSARIAL "
         "case is still absent, and the reason is worth more than the gap: "
         "constructing one surfaced a LIVE defect in the gate -- a subject that "
-        "REFERENCES another decision (`D-090 -- supersedes D-072`) is flagged as "
+        "REFERENCES another decision (`D-NNN -- supersedes D-MMM`) is flagged as "
         "naming a decision it does not add, which is an ordinary commit message "
         "here and turns a PR red. Filed as #342, not fixed on this branch. "
         "One more branch was unpinned until this round: `if not added: continue`, "

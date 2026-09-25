@@ -5875,13 +5875,21 @@ wording; the platform targets Moderate and High, so check the High baseline too.
 
 **Decision (recorded, not new).** Every gate in this repo exits:
 
-- **0** when it looked and found nothing to report, and its output says what
-  it read;
+- **0** when it looked and found nothing to report;
 - **1** when it found a real violation, and names it;
 - **2** when it could not look: missing or unreadable input, a parse failure,
-  an unknown or malformed argument, or a crash. A crash handler converts an
-  uncaught exception to 2 and prints "A crash is not a clean report and not a
-  violation"; `test_gate_crash_exit_code.py` enforces that half.
+  an unknown or malformed argument, or a crash.
+
+**The crash half is enforced for the gates in `test_gate_crash_exit_code.GATES`**:
+each carries a handler that converts an uncaught exception to 2 and prints "A
+crash is not a clean report and not a violation". `check_gate_fixtures.py` is
+not in that list (it excludes itself) and its handler prints a different line.
+
+**A requirement, not yet met everywhere: a clean result says what it read**, so
+a green run shows its scope and "I looked at nothing" cannot pass for "nothing
+was wrong". `check_audit_evidence.py` ("adversarial audit recorded." /
+"documentation-only change, exempt.") and `check_issue_references.py` ("clean
+-- no closing references") do not name their inputs yet; filed as #592.
 
 "I could not look" never shares a branch with "nothing to complain about" or
 with "I found a violation". Before a new checker's first line, list every
@@ -5891,8 +5899,8 @@ silent-success bullet). The HTTP form of the same distinction is a typed
 could-not-look response (#550).
 
 **Why a record now.** The convention is written in CLAUDE.md's fail-closed
-bullet, but no D-record decided it, and the gates cited it as D-051. D-051 is the #72 two-tier sweep; it does not state the
-convention. A correct constraint cited to a record that lacks it is worse than
+bullet, but no D-record decided it, and the gates cited it as D-051. D-051 is
+the #72 two-tier sweep; it does not state the convention. A correct constraint cited to a record that lacks it is worse than
 an unexplained one: a reader told to verify opens D-051, does not find the
 rule, and may discard it.
 

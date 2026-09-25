@@ -1779,6 +1779,8 @@ or Web check.
   (`check_audit_evidence.py`, `audit-gate.yml`) still tells its reader it "only
   REPORTS", and points at D-051 instead of D-054. Both are now false and both
   are more authoritative than this file for anyone opening the gate — #108.
+  (2026-09-25: the docstring half is corrected by PR 591, which points it at
+  D-054; `audit-gate.yml` already carried its own correction.)
   Its `docs/` exemption is also a whole-subtree carve-out that exempts §14's own
   definition — #106. And a body wrapped in an HTML comment satisfies it while
   rendering blank — #107.

@@ -16,14 +16,14 @@ thing that already failed; visibility was not the binding constraint.
 reasons that still hold: it is non-deterministic and expensive per PR. This
 check is neither: it runs in under a second and has no model in the loop.
 
-**It does NOT block a merge on its own, and an earlier version of this docstring
-claimed it did.** A workflow job only reports a status. It becomes blocking only
-once "Adversarial audit recorded" is registered as a required status check in
-the branch protection rules for `main` — a GitHub setting, not a file in this
-repo, so nothing in the change that added this check could perform or verify it.
-Until that registration happens this is a visible red X and nothing more, which
-is weaker than "structural" and has to be said rather than assumed. Tracked in
-DECISIONS.md D-051.
+**What makes it blocking is a GitHub setting, not this file.** "Adversarial
+audit recorded" was registered as a required status check on `main` on
+2026-08-20 (D-054's correction). A required check binds a non-admin merging
+through a pull request; `enforce_admins` is false, so an admin can merge past a
+red one. An earlier version of this docstring said it did not block at all,
+which stopped being true that day (#108). Verify with
+`gh api repos/{owner}/{repo}/branches/main/protection` rather than trusting
+this paragraph.
 
 ## What it can and cannot prove
 
