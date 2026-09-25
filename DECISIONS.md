@@ -5738,7 +5738,8 @@ red under five seeds.
 
 **Decision.** The owner's rule: a diff that changes no EXECUTABLE line in a
 condition-5 path does not trip condition 5. Comments, docstrings and landing
-entries cannot alter behaviour. #530 is the instance: its whole
+entries almost never alter behaviour; the exceptions (tool directives, and a
+gate that reads comments as wiring) are counted or named. #530 is the instance: its whole
 `docker-compose.yml` diff was comments, and it still came back. Unlike the
 status-based narrowing measured and rejected earlier, this one is mechanical,
 so `apps/api/scripts/check_condition5.py` computes it rather than an agent
@@ -5750,12 +5751,21 @@ attesting it. Its exit 2 reads as tripped.
   by the gate. It is read at the merge base AND the head, because CLAUDE.md is
   not itself a listed path. A PR that changes the list trips, and so does one
   whose base has no readable list. A split or interrupted list exits 2.
-- **The derived set** is every `.py` / `.sh` a workflow `run:` names. That is
-  the "does any WORKFLOW execute it" test, which was previously a grep for a
-  human. On 2026-09-24 it added three scripts the list does not name,
-  `scripts/red-on-revert.sh` among them.
-- **Residual:** a script reached from compose, a sourced file or another
-  script is not derived. It stays with the human.
+- **The derived set** is every `.py` / `.sh` a workflow `run:` or a compose
+  command, entrypoint or healthcheck names (compose paths are mapped through
+  the bind mounts), plus the gate configuration those tools read
+  (`package.json` files, the prettier, eslint, vitest and tsconfig files,
+  `pyproject.toml`). On 2026-09-24 it added twelve files the list does not
+  name, `scripts/red-on-revert.sh` and `scripts/web-install-if-stale.sh`
+  among them.
+- **The base's copy judges.** CI runs `check_condition5.py` as it is at the
+  merge base, never the PR's own copy, so a PR cannot rewrite the gate that
+  judges it. With no copy at the base, the PR trips.
+- **Residual, covered by no other check:** a script reached from a sourced
+  file or another script, a path spelled through a `$VAR`, and lockfile
+  changes. CLAUDE.md's derive-the-set grep reads workflows only, which this
+  already derives, so it is no fallback for these. Filed as #572, with the
+  merge-rule conditions themselves, which the list does not protect.
 
 **Per-type rules** are in the gate's docstring. The review of the first
 version (`a9b4a77`) found five ways equality hid a real change, and each is
@@ -5767,18 +5777,22 @@ now pinned by a named test that went red on revert:
 - renames hiding the listed path they moved away from;
 - a list read only from the PR's own checkout.
 
-**Measured, and re-derived with the final classifier.** Scored on the 15 most
-recent PR merges at each recorded window's ref: `fdfde7d^1` for 2026-08-26, and
-`897eeae` for 2026-09-21. The old-rule column reproduces the recorded 4/11 and
-2/13 exactly. With the exception:
+**Measured.** Scored on the 15 most recent PR merges at each recorded window's
+ref: `fdfde7d^1` for 2026-08-26, and `897eeae` for 2026-09-21. The old-rule
+column reproduces the recorded 4/11 and 2/13 exactly.
 
-- **4/11** in both windows;
-- newly cleared: `b516891` (compose comments only) and `7c2802c` (an
-  `ai/engine.py` docstring only), both read by eye.
-
-Re-run on 2026-09-24 against the classifier as merged by #559, using TODAY's
-list, a superset of both days' lists, which can only trip more: 4/11 in both
-windows, the same SHAs cleared.
+- **The classifier alone**, with today's list (a superset, which can only trip
+  more), clears 4/11 in both windows. Newly cleared on 09-21: `b516891` (compose
+  comments only) and `7c2802c` (an `ai/engine.py` docstring only), both read by
+  eye.
+- **The shipped gate is stricter than the classifier**, because a PR that
+  changes the list itself trips. `b516891` ADDED compose to the list, so under
+  the gate 2026-09-21 is **3/12**, and 2026-08-26 stays **4/11** (none of its
+  four cleared PRs changed the list). These two are READ FROM THE DIFFS, not
+  executed: the gate cannot run on commits that predate its machine-read list.
+  The classifier figures were executed, and re-run on #559's round-two head. The first version of this record gave
+  4/11 for both: it measured the classifier, not the gate, and the re-review of
+  `8cb5248` caught it.
 
 **Reporting, not requiring.** It runs as its own job in `audit-gate.yml`,
 "Condition 5 report". That job is green whenever it could look, including when

@@ -6,8 +6,10 @@ where a green suite proves least. #530 is the instance that motivated narrowing
 it: its entire `docker-compose.yml` diff was comments -- nothing that runs
 changed -- and it still came back. The owner's rule (2026-09-24): **a diff that
 changes no EXECUTABLE line in a condition-5 path does not trip condition 5.**
-Comments, docstrings and landing entries cannot alter behaviour. That makes the
-exception mechanical, unlike the status-based narrowing measured and rejected
+Comments, docstrings and landing entries almost never alter behaviour, and the
+ones that do -- tool directives, and a gate that reads a comment as wiring
+(`check_gate_fixtures.invocation_text`) -- are exactly what the per-type rules
+below either count or name as a residual. That makes the exception mechanical, unlike the status-based narrowing measured and rejected
 earlier, so it is computed here rather than attested (D-095).
 
 THE PATHS IT JUDGES. Two sources, and in `--range` mode (the CI form) both:
@@ -17,15 +19,23 @@ THE PATHS IT JUDGES. Two sources, and in `--range` mode (the CI form) both:
     PR's own checkout alone, because CLAUDE.md is not a listed path, so a PR
     could delete an entry and edit that file in one diff. The union is judged,
     and a PR that changes the list at all trips.
-  * every `.py` / `.sh` file a workflow's `run:` names that exists in the tree
-    (dotted `-m` modules resolved, `working-directory` applied): the "does any
-    WORKFLOW execute it" set, derived rather than listed.
+  * the DERIVED set: every tracked `.py` / `.sh` a workflow `run:` names
+    (dotted `-m` modules resolved, `working-directory` applied, `/app/...` and
+    bare container paths tried under `apps/api/`); every one a compose
+    `command` / `entrypoint` / healthcheck names, mapped through the service's
+    bind mounts (`sh /app/web-install-if-stale.sh` is
+    `scripts/web-install-if-stale.sh`); and the GATE CONFIGURATION the tools
+    those workflows run read -- `package.json`, `apps/web/package.json`, the
+    prettier, eslint, vitest and tsconfig files when a workflow runs
+    pnpm/npm/npx/node, and `pyproject.toml` / pytest config when one runs
+    pytest/ruff/black/bandit.
 
-RESIDUAL, stated because the verdict is only as wide as its sources: a script
-reached from `docker-compose.yml` (`sh /app/web-install-if-stale.sh`), from a
-sourced file, or from another script is NOT derived. The human's derive-the-set
-check in CLAUDE.md still covers those. In `--old-root` mode no workflows are
-read, and the output says so.
+RESIDUAL, stated because the verdict is only as wide as its sources and NO
+other check covers it -- CLAUDE.md's derive-the-set grep reads workflows
+only, which this already derives: a script reached from a sourced file or
+another script; a path spelled through a `$VAR`; and dependency changes
+(lockfiles) that change a tool's version. In `--old-root` mode nothing is
+derived, and the output says so.
 
 WHAT COUNTS AS AN EXECUTABLE CHANGE, per file type. Every rule leans toward
 "executable" when unsure, because a false "not tripped" merges unattended and a
@@ -84,7 +94,7 @@ MIN_PATHS = 10
 _SECTION = re.compile(r"^### Condition 5: the paths\s*$", re.M)
 _NEXT_HEADING = re.compile(r"^#{2,3} ", re.M)
 _DIRECTIVE = re.compile(
-    r"#\s*(noqa|nosec|type:|pragma|fmt:|test-integrity:|pylint:|mypy:|ruff:|isort:|pyright:)"
+    r"#\s*(noqa|nosec|type:|pragma|fmt:|test-integrity:|pylint:|mypy:|ruff:|isort:|pyright:|separator-class:)"
     r"|coding[:=]",
     re.I,
 )
@@ -182,25 +192,46 @@ def is_listed(path: str, patterns: list[str]) -> bool:
 # --- the workflow-derived set --------------------------------------------------------
 
 
-def _script_candidates(token: str, wd: str) -> list[str]:
+_NODE_TOOLS = re.compile(r"\b(pnpm|npm|npx|node)\b")
+_PY_TOOLS = re.compile(r"\b(pytest|ruff|black|bandit|pip-audit)\b")
+_NODE_CONFIG = re.compile(
+    r"^(package\.json|apps/web/package\.json|\.prettierrc[^/]*|\.prettierignore"
+    r"|apps/web/(eslint|vitest)\.config\.[^/]+|apps/web/tsconfig[^/]*\.json)$"
+)
+_PY_CONFIG = re.compile(
+    r"^(pyproject\.toml|apps/api/pyproject\.toml|apps/api/pytest\.ini|apps/api/setup\.cfg)$"
+)
+
+
+def _script_candidates(token: str, wd: str, *, module: bool = False) -> list[str]:
+    """Repo paths a token may name. A dotted name counts only after `-m` (module=True):
+    compose's `uvicorn app.main:app` names product code, not a gate."""
     tok = token[2:] if token.startswith("./") else token
-    if _DOTTED.match(tok) and not tok.endswith((".py", ".sh")):
+    if module and _DOTTED.match(tok) and not tok.endswith((".py", ".sh")):
         tok = tok.replace(".", "/") + ".py"
     if not tok.endswith((".py", ".sh")):
         return []
-    out = [posixpath.normpath(tok)]
+    out = []
     if wd:
-        out.insert(0, posixpath.normpath(posixpath.join(wd, tok)))
+        out.append(posixpath.normpath(posixpath.join(wd, tok)))
+    if tok.startswith("/app/"):
+        # The api container mounts apps/api at /app.
+        out.append(posixpath.normpath("apps/api/" + tok[len("/app/") :]))
+    elif not tok.startswith("/"):
+        out.append(posixpath.normpath(tok))
+        # `docker compose exec api python scripts/x.py` runs inside /app.
+        out.append(posixpath.normpath("apps/api/" + tok))
     return out
 
 
 def scripts_from_workflows(workflows: dict[str, str], tracked: set[str]) -> set[str]:
-    """Every tracked `.py` / `.sh` a workflow `run:` names, resolved against its working directory."""
+    """Every tracked `.py` / `.sh` a workflow `run:` names, plus the gate configuration it reads."""
     try:
         import yaml
     except ImportError as exc:
         raise CouldNotLook("PyYAML is not installed, so the workflows cannot be read") from exc
     found: set[str] = set()
+    runs: list[str] = []
     for name, src in workflows.items():
         try:
             doc = yaml.safe_load(src)
@@ -215,9 +246,85 @@ def scripts_from_workflows(workflows: dict[str, str], tracked: set[str]) -> set[
                 run = step.get("run") if isinstance(step, dict) else None
                 if not isinstance(run, str):
                     continue
+                runs.append(run)
                 wd = step.get("working-directory") or job_wd
-                for token in _TOKEN.findall(run):
-                    for cand in _script_candidates(token, wd):
+                tokens = _TOKEN.findall(run)
+                for k, token in enumerate(tokens):
+                    module = k > 0 and tokens[k - 1] == "-m"
+                    for cand in _script_candidates(token, wd, module=module):
+                        if cand in tracked:
+                            found.add(cand)
+                            break
+    text = "\n".join(runs)
+    if _NODE_TOOLS.search(text):
+        found |= {f for f in tracked if _NODE_CONFIG.match(f)}
+    if _PY_TOOLS.search(text):
+        found |= {f for f in tracked if _PY_CONFIG.match(f)}
+    return found
+
+
+def _compose_mounts(service: dict) -> list[tuple[str, str]]:
+    """(container target, repo-relative host source) for each bind mount from the repo."""
+    out = []
+    for vol in service.get("volumes") or []:
+        if isinstance(vol, str):
+            parts = vol.split(":")
+            src, dst = (parts[0], parts[1]) if len(parts) >= 2 else ("", "")
+        elif isinstance(vol, dict) and vol.get("type") == "bind":
+            src, dst = str(vol.get("source", "")), str(vol.get("target", ""))
+        else:
+            continue
+        if src.startswith(".") and dst.startswith("/"):
+            out.append((dst.rstrip("/"), posixpath.normpath(src)))
+    return sorted(out, key=lambda m: -len(m[0]))
+
+
+def scripts_from_compose(composes: dict[str, str], tracked: set[str]) -> set[str]:
+    """Every tracked `.py` / `.sh` a compose command, entrypoint or healthcheck runs.
+
+    #530's neighbour: `sh /app/web-install-if-stale.sh` is `scripts/...` on the
+    host only through a bind mount, so the path is mapped through the mounts.
+    """
+    import yaml
+
+    class ComposeLoader(yaml.SafeLoader):
+        """Compose's own merge tags (`!reset`, `!override`) read as plain data."""
+
+    def _plain(loader, suffix, node):
+        if isinstance(node, yaml.MappingNode):
+            return loader.construct_mapping(node)
+        if isinstance(node, yaml.SequenceNode):
+            return loader.construct_sequence(node)
+        return loader.construct_scalar(node)
+
+    ComposeLoader.add_multi_constructor("!", _plain)
+    found: set[str] = set()
+    for name, src in composes.items():
+        try:
+            loader = ComposeLoader  # a SafeLoader subclass: only plain-data tags are added
+            loaded = yaml.load(src, Loader=loader)  # noqa: S506  # nosec B506
+            doc = loaded or {}
+        except yaml.YAMLError as exc:
+            raise CouldNotLook(f"{name} does not parse as YAML: {exc}") from exc
+        for service in (doc.get("services") or {}).values():
+            if not isinstance(service, dict):
+                continue
+            mounts = _compose_mounts(service)
+            words = []
+            for key in ("command", "entrypoint"):
+                val = service.get(key)
+                words += val if isinstance(val, list) else [val] if isinstance(val, str) else []
+            test = (service.get("healthcheck") or {}).get("test")
+            words += test if isinstance(test, list) else [test] if isinstance(test, str) else []
+            for token in _TOKEN.findall(" ".join(str(w) for w in words)):
+                for dst, host in mounts:
+                    if token == dst or token.startswith(dst + "/"):
+                        cand = posixpath.normpath(host + token[len(dst) :])
+                        if cand in tracked and cand.endswith((".py", ".sh")):
+                            found.add(cand)
+                        break
+                else:
+                    for cand in _script_candidates(token, ""):
                         if cand in tracked:
                             found.add(cand)
                             break
@@ -434,6 +541,12 @@ class Range:
             if not wfs:
                 raise CouldNotLook(f"no workflows at {ref}: the derived set would be empty")
             found |= scripts_from_workflows(wfs, tracked)
+            composes = {
+                p: self.show(ref, p)
+                for p in tracked
+                if "/" not in p and p.startswith("docker-compose") and p.endswith((".yml", ".yaml"))
+            }
+            found |= scripts_from_compose(composes, tracked)
         return found
 
 
@@ -517,7 +630,9 @@ def _judge(opts: dict, tmp: Path) -> tuple[list[str], list[str], list[str], str]
             source = f"{len(patterns)} listed pattern(s), base and head"
         derived = sorted(rng.workflow_scripts())
         patterns = patterns + derived
-        source += f", plus {len(derived)} script(s) a workflow runs"
+        source += (
+            f", plus {len(derived)} derived (scripts workflows and compose run, and gate config)"
+        )
         tripping, cleared = evaluate(patterns, rng.names, rng.old_root, rng.new_root, report=report)
         return pre + tripping, cleared, rng.names, source
     missing = [f for f in ("--old-root", "--new-root", "--changed-files") if f not in opts]
@@ -580,8 +695,8 @@ def main(argv: list[str]) -> int:
     how = "every change in one was non-executable" if cleared else "none was touched"
     print(f"check-condition5: condition 5 not tripped -- {len(names)} changed file(s); {how}.")
     print(
-        "  Not derived: scripts run from docker-compose, sourced files or other scripts. "
-        "Those stay with the human (CLAUDE.md, 'Derive the set')."
+        "  Not derived, and covered by NO other check: scripts reached from sourced files "
+        "or other scripts, paths spelled through a $VAR, and lockfile changes."
     )
     return 0
 

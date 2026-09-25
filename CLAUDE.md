@@ -154,7 +154,7 @@ happened.
 
 **Conditions 1 and 4 are mechanical; 5 is computed by `check_condition5.py`
 over the list and every script a workflow runs, but a live prompt outside them,
-or a script run from compose or another script, needs a human read. Conditions 2, 3 and 6 are self-attested
+or a script reached from another script or a `$VAR`, needs a human read. Conditions 2, 3 and 6 are self-attested
 by the agent that wants to merge** — three checkable conditions and three
 honest ones, not "a file-path check plus two facts". Condition 6 is a
 judgement call an agent can talk itself out of; when it is arguable, it has
@@ -258,7 +258,7 @@ tests. Condition 5's path list applied to the fifteen most recent PR merges on
 | measured | cleared | came back | with the exception |
 | --- | --- | --- | --- |
 | 2026-08-26 | 4 | 11 | 4 / 11 |
-| 2026-09-21 | 2 | 13 | 4 / 11 |
+| 2026-09-21 | 2 | 13 | 3 / 12 |
 
 <!-- counted: condition 5's path list applied to `git log --first-parent -40 --format='%H|%s' <ref> | grep -E '\(#[0-9]+\)$' | head -15`, ref fdfde7d^1 and 897eeae; last column by check_condition5.py, 2026-09-24 (D-095) -->
 

@@ -396,3 +396,87 @@ def test_range_a_base_with_no_readable_list_trips_rather_than_exits_2(tmp_path, 
     rc, out = _run(r, capsys)
     assert rc == 1, out
     assert "no readable list at the base" in out, out
+
+
+# --- review of 8cb5248 --------------------------------------------------------------------
+
+
+def test_compose_scripts_are_mapped_through_bind_mounts() -> None:
+    compose = (
+        "services:\n"
+        "  web:\n"
+        "    volumes:\n"
+        "      - ./scripts/web-install-if-stale.sh:/app/web-install-if-stale.sh:ro\n"
+        "      - ./apps/web:/app/apps/web\n"
+        "    command:\n"
+        "      - sh\n"
+        "      - -c\n"
+        "      - sh /app/web-install-if-stale.sh && node server.js\n"
+        "  api:\n"
+        "    volumes: !reset []\n"
+        "    command: uvicorn app.main:app\n"
+    )
+    tracked = {"scripts/web-install-if-stale.sh", "apps/api/app/main.py"}
+    # The script reached only through a mount is found; `app.main` (not after
+    # `-m`) is product code and is not; compose's own `!reset` tag reads.
+    assert gate.scripts_from_compose({"docker-compose.yml": compose}, tracked) == {
+        "scripts/web-install-if-stale.sh"
+    }
+
+
+def test_gate_configuration_is_derived_when_its_tool_runs() -> None:
+    wf = "jobs:\n  j:\n    steps:\n      - run: pnpm format:check\n      - run: ruff check .\n"
+    tracked = {"package.json", "apps/web/package.json", "pyproject.toml", "README.md"}
+    assert gate.scripts_from_workflows({"ci.yml": wf}, tracked) == {
+        "package.json",
+        "apps/web/package.json",
+        "pyproject.toml",
+    }
+
+
+def test_a_dotted_name_is_a_module_only_after_dash_m() -> None:
+    wf = "jobs:\n  j:\n    steps:\n      - run: echo app.main; python -m scripts.check_x\n"
+    tracked = {"app/main.py", "scripts/check_x.py"}
+    assert gate.scripts_from_workflows({"ci.yml": wf}, tracked) == {"scripts/check_x.py"}
+
+
+def test_separator_class_marker_is_a_directive() -> None:
+    old = "X = r'[ \\t]'\n"
+    assert gate.classify("a.py", old, "X = r'[ \\t]'  # separator-class: reason\n") is True
+
+
+def test_ci_runs_the_base_copy_of_the_gate_not_the_prs() -> None:
+    import yaml
+
+    if _WORKFLOWS is None:
+        pytest.skip("no .github/workflows above this file (the api container mounts apps/api)")
+    doc = yaml.safe_load((_WORKFLOWS / "audit-gate.yml").read_text(encoding="utf-8"))
+    runs = [s.get("run", "") for s in doc["jobs"]["condition-5-report"]["steps"]]
+    step = next(r for r in runs if "check_condition5" in r)
+    assert 'git show "origin/${{ github.base_ref }}:apps/api/scripts/check_condition5.py"' in step
+    assert "python /tmp/check_condition5_base.py" in step
+    assert (
+        "python scripts/check_condition5.py" not in step
+    ), "the PR's own copy must not judge the PR"
+
+
+def test_the_base_copy_trips_a_pr_whose_own_copy_says_clear(tmp_path, capsys) -> None:
+    real = (pathlib.Path(gate.__file__)).read_text(encoding="utf-8")
+    listed = _LIST.replace("p11/**", "apps/api/scripts/check_*.py")
+    r = _repo(
+        tmp_path,
+        _base({"CLAUDE.md": _md(listed), "apps/api/scripts/check_condition5.py": real}),
+    )
+    rigged = real.replace(
+        "    return ast.dump(_strip_docstrings(t_old)) != ast.dump(_strip_docstrings(t_new))",
+        "    return False",
+    )
+    assert rigged != real
+    _commit(r, {"apps/api/scripts/check_condition5.py": rigged})
+    cmd = ["git", "-C", str(r), "show", "main:apps/api/scripts/check_condition5.py"]
+    proc = subprocess.run(cmd, check=True, capture_output=True, text=True)  # noqa: S603,S607
+    base_copy = proc.stdout
+    assert base_copy == real
+    # The base's copy -- the one CI runs -- judges the rigged change executable.
+    rc, out = _run(r, capsys)
+    assert rc == 1 and "apps/api/scripts/check_condition5.py" in out, out

@@ -310,13 +310,21 @@ jobs:
           python-version: "3.12"
 
       - name: Condition 5, computed
+        # THE BASE'S COPY of the gate judges the PR, never the PR's own copy:
+        # this runs on the PR's merge ref, so `scripts/check_condition5.py` would
+        # let a PR flip one comparison and certify itself. With no copy at the
+        # base (the PR introducing the gate), condition 5 is tripped.
         # No pipe into `tee`: a `run:` step here is `bash -e` without pipefail,
         # so a pipe would report tee's status and lose the 2 (#213).
         working-directory: apps/api
         run: |
           python -m pip install --quiet "pyyaml>=6.0"
           rc=0
-          python scripts/check_condition5.py --report --repo .. --range "origin/${{ github.base_ref }}..HEAD" > /tmp/condition5.txt || rc=$?
+          if git show "origin/${{ github.base_ref }}:apps/api/scripts/check_condition5.py" > /tmp/check_condition5_base.py; then
+            python /tmp/check_condition5_base.py --report --repo .. --range "origin/${{ github.base_ref }}..HEAD" > /tmp/condition5.txt || rc=$?
+          else
+            echo "check-condition5: the base has no check_condition5.py, so this PR introduces the gate. Condition 5 TRIPPED: it comes back to the human." > /tmp/condition5.txt
+          fi
           cat /tmp/condition5.txt
           cat /tmp/condition5.txt >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"

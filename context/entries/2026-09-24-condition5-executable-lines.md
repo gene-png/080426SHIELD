@@ -1,17 +1,22 @@
 # 2026-09-24: condition 5 ignores a diff that changes nothing that runs
 
-Branch `track1/cond5-executable-lines`, base `f17cc5a`.
+Branch `track1/cond5-executable-lines`, merge base `20f747f`.
 
 ## Why
 
 #530's whole `docker-compose.yml` diff was comments, and it still came back to
 the owner under condition 5. The owner's rule: a diff that changes no
 EXECUTABLE line in a condition-5 path does not trip condition 5. Comments,
-docstrings and landing entries cannot alter behaviour, so the exception is
-mechanical and can be computed. The status-based narrowing measured earlier
+docstrings and landing entries almost never alter behaviour, and the exceptions
+(tool directives, a gate that reads comments as wiring) are counted or named,
+so the exception is mechanical and can be computed. The status-based narrowing measured earlier
 could not be.
 
 ## What changed
+
+This section describes the FIRST version. The review sections below supersede
+it wherever they differ: YAML and JSON are no longer compared as parsed
+objects, and the report is no longer a step of the merge-rule job.
 
 - **`check_condition5.py`**, a new gate.
   - **The path list** is the indented list under `### Condition 5: the paths`
@@ -86,9 +91,10 @@ It found ten things, and all were real. What changed:
 - **Directives** gain `ruff:`, `isort:`, `pyright:` and the encoding cookie,
   and each is compared with its line.
 - **The report is its own job**, not a step of the condition-4 job.
-- **D-095** records the rule, the refs (`fdfde7d^1`, `897eeae`) and the
-  re-run. The new classifier over both windows, with today's list: 4/11 and
-  4/11, the same SHAs cleared.
+- **D-095** records the rule and the refs (`fdfde7d^1`, `897eeae`). The
+  classifier clears 4/11 in both windows. The shipped gate, which also trips a
+  list change, gives **4/11 and 3/12**: `b516891` added compose to the list.
+  The first version said 4/11 for both (corrected after re-review).
 
 Eight new red-on-revert checks, one per fix, each went red on its named test.
 A first harness misread them as green: it grepped for a summary line this
@@ -96,8 +102,31 @@ pytest config does not print. Every run exited 1 and named its test FAILED.
 
 ## Limits
 
-- Scripts reached from compose, sourced files or other scripts are not
-  derived. The human's derive-the-set check covers them.
+- Scripts reached from sourced files or other scripts, `$VAR` paths and
+  lockfile changes are not derived, and no other check covers them (#572).
 - A live prompt outside the listed paths still needs a diff read.
 - TypeScript and JavaScript are always unclassifiable until there is a lexer.
 - CLAUDE.md headroom: run `check_claude_md_size.py`; do not trust a figure here.
+
+## After the re-review of `8cb5248`
+
+- **The base's copy of the gate judges the PR in CI**, never the PR's own
+  copy, which ran on the merge ref and could certify itself. With no copy at
+  the base, the PR trips. A test rigs a head copy to answer "not tripped", and
+  the base copy still trips it.
+- **Compose is derived** by mapping command, entrypoint and healthcheck paths
+  through the bind mounts, so `sh /app/web-install-if-stale.sh` is
+  `scripts/web-install-if-stale.sh`. Compose's `!reset` tag reads as data. A
+  dotted name counts as a module only after `-m`: `uvicorn app.main:app` is
+  product code.
+- **Gate configuration is derived**: the `package.json` files and the
+  prettier, eslint, vitest and tsconfig files when a workflow runs a node tool,
+  and `pyproject.toml` when one runs pytest, ruff, black or bandit. Twelve
+  unlisted files in all.
+- `# separator-class:` is a directive.
+- **The windows under the SHIPPED gate: 4/11 and 3/12**, not 4/11 twice.
+  `b516891` changed the list, which the gate trips. D-095 and the table are
+  corrected.
+- Filed as #572: the residuals no other check covers, the whitespace blind spot
+  in `shell_changed`, and the merge rule's own conditions, which the list does
+  not protect.
