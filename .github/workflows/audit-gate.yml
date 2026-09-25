@@ -301,14 +301,14 @@ jobs:
     name: Merge rule text (red means it changed; a human must read it)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The gate reads CLAUDE.md at the merge base, so it needs history and
           # `origin/<base>`. A shallow clone makes that read fail, which the
           # gate reports as could-not-look (exit 2) -- red, never green.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 

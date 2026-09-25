@@ -100,3 +100,18 @@ def test_the_section_ends_at_the_next_level_two_heading() -> None:
 def test_a_bad_argument_is_could_not_look(argv: list[str], capsys) -> None:
     rc = gate.main(argv)
     assert rc == 2, capsys.readouterr().out
+
+
+def test_a_line_ending_change_is_a_change(tmp_path, capsys) -> None:
+    # Bytes, not universal-newline text: a CRLF edit must not compare equal.
+    old = tmp_path / "old.md"
+    new = tmp_path / "new.md"
+    old.write_bytes(RULE.encode("utf-8"))
+    crlf = RULE.replace("listed below.**" + chr(10), "listed below.**" + chr(13) + chr(10))
+    assert crlf != RULE
+    new.write_bytes(crlf.encode("utf-8"))
+    rc = gate.main(["x", "--old", str(old), "--new", str(new)])
+    out = capsys.readouterr().out
+    assert rc == 1, out
+    # The CR is shown as a visible `\r`, not printed raw.
+    assert chr(92) + "r" in out, out

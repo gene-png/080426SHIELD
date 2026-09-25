@@ -39,3 +39,19 @@ It enforces visibility, not a signature. It does not see a semantic change
 outside the section (a cited D-record, an agent file, a gate's code). A PR
 editing its own workflow step can neuter it until CODEOWNERS covers
 `.github/workflows/` and the bot account exists (#572).
+
+## After the first review (`6fcc02f`)
+
+- **The boundary is pinned at both ends of the range.** There must be exactly
+  one `## The merge rule` heading, and `### Condition 5: the paths` must lie
+  inside its section; otherwise exit 2. Without that, a decoy copy above the
+  real section was what got read, and a `## ` heading inserted above the path
+  list ended the section early, so that later path-list edits compared green.
+  Fixtures for the extra heading, the decoy and a missing subsection, each red
+  on revert.
+- **Bytes are compared.** `git show` output is decoded but not
+  newline-translated, and file mode reads bytes, so a CRLF edit is a change.
+  A test writes one at runtime (a CRLF fixture would be normalized by the
+  repo's `eol=lf`) and checks the CR is printed as a visible `\r`.
+- The job's `actions/checkout` and `setup-python` match the sibling jobs (`@v7`).
+- The condition-1 count angle is on #584, not filed twice.

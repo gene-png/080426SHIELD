@@ -10,16 +10,24 @@ makes every change to the rule's text VISIBLE as a red check, so a human reads
 it before anything merges on it. There is no label and no escape of any kind:
 a change to the rule is always red.
 
-WHAT IT COMPARES. The text of CLAUDE.md's `## The merge rule` section -- from
+WHAT IT COMPARES. The BYTES of CLAUDE.md's `## The merge rule` section -- from
 that heading to the next `## ` heading, which includes `### Condition 5: the
-paths` and its list -- at the PR's merge base and at its head. Any difference
-in any line, including whitespace, is a change.
+paths` and its list -- at the PR's merge base and at its head. Any difference,
+including whitespace and line endings, is a change.
+
+THE BOUNDARY IS PINNED, at both ends of the range. There must be EXACTLY ONE
+`## The merge rule` heading, and `### Condition 5: the paths` must lie inside
+its section. Otherwise the gate cannot say which text is the rule: a decoy
+copy inserted above the real section would be read instead of it, and a `## `
+heading inserted above the path list would end the section early, so that
+later path-list edits compared green (review of 6fcc02f). Either is exit 2.
 
 EXIT CODES (the gates' 0/1/2 convention), and a green means one thing only:
 0 the section is byte-identical at base and head; 1 it CHANGED, and the
-changed lines are printed; 2 could not look -- the section is missing at the
-base or the head (a renamed heading is could-not-look, so it is red too), git
-cannot read the base or the head, CLAUDE.md is missing, or a bad argument.
+changed lines are printed; 2 could not look -- the section is missing, doubled,
+or no longer contains `### Condition 5: the paths`, at the base or the head (a
+renamed heading is could-not-look, so it is red too); git cannot read the base
+or the head; CLAUDE.md is missing; or a bad argument.
 
 LIMITS, stated so a green is not read as more than it is:
   * It enforces VISIBILITY, not a signature. A red check can still be merged
@@ -48,6 +56,7 @@ from pathlib import Path
 
 _START = re.compile(r"^## The merge rule\b.*$", re.M)
 _NEXT = re.compile(r"^## ", re.M)
+_CONDITION_5 = re.compile(r"^### Condition 5: the paths\b", re.M)
 
 
 class CouldNotLook(Exception):
@@ -56,30 +65,43 @@ class CouldNotLook(Exception):
 
 def section(text: str, where: str) -> str:
     """The `## The merge rule` section, heading included, up to the next `## `."""
-    m = _START.search(text)
-    if not m:
+    starts = list(_START.finditer(text))
+    if not starts:
         raise CouldNotLook(f"no `## The merge rule` section in CLAUDE.md at {where}")
+    if len(starts) > 1:
+        raise CouldNotLook(
+            f"{len(starts)} `## The merge rule` headings in CLAUDE.md at {where}: which one "
+            "is the rule is unknown, and a decoy could be read instead of it"
+        )
+    m = starts[0]
     rest = text[m.end() :]
     nxt = _NEXT.search(rest)
-    return text[m.start() : m.end() + (nxt.start() if nxt else len(rest))]
+    body = text[m.start() : m.end() + (nxt.start() if nxt else len(rest))]
+    if not _CONDITION_5.search(body):
+        raise CouldNotLook(
+            f"`### Condition 5: the paths` is not inside the merge rule's section at {where}: "
+            "the section ends early or the subsection moved, so the path list is not compared"
+        )
+    return body
 
 
 def _git(repo: Path, *args: str) -> str:
+    """git's stdout DECODED BUT UNTRANSLATED: a CRLF stays a CRLF, so it compares."""
     try:
         proc = subprocess.run(  # noqa: S603  # nosec B603 - fixed argv
             ["git", "-C", str(repo), *args],  # noqa: S607
             capture_output=True,
-            text=True,
-            encoding="utf-8",
             check=False,
         )
     except FileNotFoundError as exc:
         raise CouldNotLook("`git` is not installed here") from exc
+    err = proc.stderr.decode("utf-8", errors="replace").strip()
     if proc.returncode != 0:
-        raise CouldNotLook(
-            f"`git {' '.join(args)}` exited {proc.returncode}: {proc.stderr.strip()}"
-        )
-    return proc.stdout
+        raise CouldNotLook(f"`git {' '.join(args)}` exited {proc.returncode}: {err}")
+    try:
+        return proc.stdout.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise CouldNotLook(f"`git {' '.join(args)}` output is not UTF-8") from exc
 
 
 def from_range(repo: Path, rng: str) -> tuple[str, str]:
@@ -98,8 +120,10 @@ def from_files(old: Path, new: Path) -> tuple[str, str]:
     texts = []
     for p in (old, new):
         try:
-            texts.append(p.read_text(encoding="utf-8"))
-        except OSError as exc:
+            # read_bytes, not read_text: universal newlines would make a CRLF
+            # edit compare equal to the LF original.
+            texts.append(p.read_bytes().decode("utf-8"))
+        except (OSError, UnicodeDecodeError) as exc:
             raise CouldNotLook(f"cannot read {p}: {exc}") from exc
     return section(texts[0], str(old)), section(texts[1], str(new))
 
@@ -140,10 +164,18 @@ def main(argv: list[str]) -> int:
         return 0
     diff = list(
         difflib.unified_diff(
-            old.splitlines(), new.splitlines(), "merge base", "head", n=0, lineterm=""
+            old.splitlines(keepends=True),
+            new.splitlines(keepends=True),
+            "merge base",
+            "head",
+            n=0,
         )
     )
-    changed = [ln for ln in diff if ln[:1] in "+-" and not ln.startswith(("+++", "---"))]
+    changed = [
+        ln.rstrip("\n").replace("\r", "\\r")  # show a CR, which is otherwise invisible
+        for ln in diff
+        if ln[:1] in "+-" and not ln.startswith(("+++", "---"))
+    ]
     print(
         f"check-merge-rule-text: this PR CHANGES the merge rule ({len(changed)} line(s)). "
         "A human must read it before anything merges on it (#572):"
