@@ -131,7 +131,7 @@ def test_a_file_that_is_not_utf8_fails_closed_with_2(
 def test_an_empty_tree_fails_closed_with_2(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Input that supports neither reading is not a pass (D-051)."""
+    """Input that supports neither reading is not a pass (D-090)."""
     code = _run(tmp_path)
     out = capsys.readouterr().out
     assert code == 2, out

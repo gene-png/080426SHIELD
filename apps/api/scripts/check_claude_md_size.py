@@ -70,7 +70,7 @@ gate goes green while rules are still being cut. The way to close that is to
 MEASURE the next reader that truncates and lower the constant, not to guess a
 percentage now.
 
-## Fail-closed, per D-051
+## Fail-closed, per D-090
 
 Exit 2 is "I could not look": a target that does not exist, is a directory, or
 cannot be decoded; an unknown option. Exit 1 is "I looked and it is too big".
@@ -122,7 +122,7 @@ condition 5, and NEITHER CAN TELL WHICH ONE IT IS: nothing in either agent's
 output distinguishes "this PR is clear" from "I could not see the clause that
 would have caught it".
 
-That is D-051's distinction -- "I checked and it passes" versus "I could not
+That is D-090's distinction -- "I checked and it passes" versus "I could not
 look" -- missing from the governance layer itself. Keeping this file under the
 limit fixes today's instance and not the mechanism: it goes over budget again
 eventually, or a reader arrives with a limit below 150,000, and it recurs
@@ -130,7 +130,9 @@ silently.
 
 `CLAUDE.md` therefore ends with a canary marker and an instruction to stop if
 you cannot read it. `--require-canary` asserts the marker is the **last
-non-empty line**.
+non-empty line**, and that it is the bare text line: context injection drops a
+whole-line HTML comment, which is why v1 (`<!-- ... -->`) never reached an
+injected copy (#459), so a wrapped or older marker is exit 2 with that cause.
 
 **BE PRECISE ABOUT WHAT THAT PROVES, BECAUSE IT IS NOT TRUNCATION DETECTION.**
 This gate reads the file from DISK, where truncation never happens, so it
@@ -144,9 +146,10 @@ the reader now has a POSITIVE signal that its copy is whole.
 
 It is a FLAG rather than always-on because this gate is reusable for any
 governance file, and the fixture files are themselves named `CLAUDE.md` without
-carrying canaries. `ci.yml` passes it for the real file. All THREE refusal
-branches exit 2 -- an empty file, a missing marker and a mispositioned one are
-could-not-looks, not findings about size. (An earlier version of this sentence
+carrying canaries. `ci.yml` passes it for the real file. All FOUR refusal
+branches exit 2 -- an empty file, a final line carrying a wrapped or older
+marker (#459), a missing marker and a mispositioned one are could-not-looks,
+not findings about size. (An earlier version of this sentence
 said "both" and named two, omitting the empty case, which was the one no
 sentence mentioned.)
 
@@ -187,7 +190,12 @@ SOFT_LIMIT_BYTES = 135_000
 
 #: The marker that must be the LAST non-empty line of a canary-bearing file.
 #: A reader that cannot see it has been truncated and is told to stop.
-CANARY = "<!-- CLAUDE-MD-CANARY: v1 -->"
+#:
+#: PLAIN TEXT, not an HTML comment (#459). Context injection drops a comment
+#: that stands on its own line, so v1 (`<!-- CLAUDE-MD-CANARY: v1 -->`) was
+#: absent from every injected copy, and every agent obeying step 0a stopped on
+#: a whole file. The marker is only useful on the path readers actually take.
+CANARY = "CLAUDE-MD-CANARY: v2"
 
 #: The budget `CLAUDE.md` sets for itself, reported but NOT enforced. Enforcing
 #: it today would put the repo permanently red, which teaches everyone to route
@@ -347,6 +355,16 @@ def main(argv: list[str]) -> int:
                 print(f"check-claude-md-size: {target} is empty, so it carries no canary.")
                 return 2
             stripped = [ln.strip() for ln in tail]
+            # Decided from the LAST line only: CLAUDE.md names the marker in its
+            # own top-of-file notice, so "any line mentions it" would read a
+            # deleted final marker as a wrapped one (review of cba5455).
+            if stripped[-1] != CANARY and "CLAUDE-MD-CANARY" in stripped[-1]:
+                print(f"check-claude-md-size: {target}'s canary is not the bare marker line.")
+                print(f"  expected the last non-empty line to be exactly: {CANARY}")
+                print("  A marker wrapped in an HTML comment, or an older version, is dropped")
+                print("  by context injection or is not the one readers are told to look for")
+                print("  (#459).")
+                return 2
             if CANARY not in stripped:
                 print(f"check-claude-md-size: {target} has NO canary marker.")
                 print(f"  expected the last non-empty line to be: {CANARY}")
@@ -438,5 +456,5 @@ if __name__ == "__main__":
     except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
         nl = chr(10)
         sys.stderr.write(f"check-claude-md-size: CRASHED: {type(exc).__name__}: {exc}{nl}")
-        sys.stderr.write(f"A crash is not a clean report and not a violation (D-051).{nl}")
+        sys.stderr.write(f"A crash is not a clean report and not a violation (D-090).{nl}")
         raise SystemExit(2) from exc
