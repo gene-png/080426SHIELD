@@ -175,8 +175,11 @@ class AttackAssessmentResponse(BaseModel):
     # #556: the ATT&CK catalog this assessment was scored against (None =
     # unrecorded) and whether it is the current one. When False, every route
     # that computes or changes coverage refuses with `attack_catalog_mismatch`.
-    catalog_version: str | None = None
-    catalog_current: bool = True
+    # REQUIRED, no defaults: a response built without deciding them fails
+    # loudly, rather than reading as current -- missing data defaults to
+    # unconfirmed, never to confirmed.
+    catalog_version: str | None
+    catalog_current: bool
     coverage: list[AttackCoverageResponse]
 
 

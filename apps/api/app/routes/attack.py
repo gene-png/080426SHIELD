@@ -42,6 +42,7 @@ from app.attack.catalog import (
     all_codes as attack_all_codes,
 )
 from app.attack.catalog_version import attack_parent, require_current_catalog
+from app.attack.catalog_version import is_current as attack_catalog_is_current
 from app.attack.citations import (
     _MAX_REJECTED_EXAMPLES,
     Candidate,
@@ -166,7 +167,9 @@ def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentR
         approved_by=a.approved_by,
         documents_stale=a.documents_stale,
         catalog_version=a.catalog_version,
-        catalog_current=a.catalog_version == SOURCE_VERSION,
+        # The ONE definition of current (`catalog_version.is_current`), never a
+        # second inline comparison that could disagree with the guards.
+        catalog_current=attack_catalog_is_current(a),
         coverage=_serialize_coverage(rows),
     )
 

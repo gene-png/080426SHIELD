@@ -1747,11 +1747,13 @@ def test_export_allows_the_seeded_shape_a_finalized_register_with_no_inputs_key(
 ) -> None:
     """THE SEEDED REGISTER'S OWN SHAPE, and the one no other test generates.
 
-    `seed_demo.py` writes `provenance={"excluded": []}` -- a dict, with no
-    `inputs` key, deliberately, because it does not go through
-    `_provenance_snapshot`. Every OTHER register in the system is either NULL
-    (pre-0047) or carries a full snapshot, so this third shape exists exactly
-    once and only on the demo path.
+    `seed_demo.py` wrote `provenance={"excluded": []}` -- a dict, with no
+    `inputs` key -- until #556 (2026-09-25) made it go through
+    `_provenance_snapshot`. Every register seeded before that still carries it,
+    so the shape outlives the writer: every OTHER register is either NULL
+    (pre-0047) or carries a full snapshot. Since #556 the CLIENT dashboard
+    withholds this shape (it names no ATT&CK input); this test is about the
+    ADMIN re-export path, which is a different question.
 
     That is why it needs its own test rather than being caught in passing: an
     input that exists in exactly one place, written by a script no spec drives,

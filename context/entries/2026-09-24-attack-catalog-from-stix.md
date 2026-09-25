@@ -106,3 +106,19 @@ Round 3's findings, fixed:
 - The test-output file `apps/api/.r2_run.txt`, committed by mistake at
   4970f4c, is removed.
 
+## Review round 4 (fixed after `ab29586`)
+
+- **`is_stale_risk_register` failed open** for a provenance dict with no
+  `inputs`, the seed's own shape. A register now reaches the client only when
+  its provenance lists at least one ATT&CK input and every one is current.
+  Anything else is stale. That is pinned by one table-driven test through the
+  client risk-dashboard endpoint, covering every shape a writer produces or
+  corrupts.
+- **The seed writes its provenance through `_provenance_snapshot`**, so the
+  demo register names its real inputs and stays readable. This was checked by
+  seeding a fresh SQLite.
+- **`catalog_current` is required**, computed by `is_current`, and the web
+  reads anything but `true` as not current.
+- Filed #588: the client Assessments page labels a withheld report "Report
+  released".
+

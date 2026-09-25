@@ -150,27 +150,41 @@ def is_stale_attack_deliverable(db: Session, deliv: Deliverable) -> bool:
 
 
 def is_stale_risk_register(db: Session, provenance: dict | None) -> bool:
-    """A Risk Register built from an ATT&CK assessment that is not current.
+    """A Risk Register NOT provably built from current-catalog ATT&CK input.
 
-    Decided from the register's own `provenance` (#240), which records the
-    assessment each input WAS at generate. A register with no provenance
-    (pre-0047) names no input, and every register generated before 0052 was
-    built from an unrecorded catalog anyway, so missing data defaults to stale.
-    An ATT&CK input whose assessment no longer exists is stale for the same
-    reason. A register generated since cannot be stale: synthesis refuses a
-    stale ATT&CK input (`routes/risk.py`).
+    Readable ONLY when `provenance["inputs"]` is a list holding at least one
+    ATT&CK input and EVERY ATT&CK input names an assessment that exists and is
+    current. Everything else is stale, because missing data defaults to
+    unconfirmed:
+
+      * None -- a pre-0047 register, which records no inputs;
+      * a dict with no `inputs` list -- `seed_demo.py` writes `{"excluded": []}`,
+        the "reassuring bucket" `routes/risk.py` warns about: it looks like a
+        clean record and names nothing it was built from;
+      * no ATT&CK input -- generating requires one (`_gate`), so a register
+        without it records nothing to vouch for;
+      * an ATT&CK input with a bad id, a missing assessment, or a stale one.
+
+    `_provenance_snapshot` writes at most one input per kind, so one ATT&CK input
+    is the only shape the writer produces; every one is checked anyway, so a
+    second can never be vouched for by the first.
     """
-    if provenance is None:
+    if not isinstance(provenance, dict):
         return True
-    for entry in provenance.get("inputs") or []:
-        if entry.get("kind") != "attack":
-            continue
+    inputs = provenance.get("inputs")
+    if not isinstance(inputs, list):
+        return True
+    attack_inputs = [e for e in inputs if isinstance(e, dict) and e.get("kind") == "attack"]
+    if not attack_inputs:
+        return True
+    for entry in attack_inputs:
         try:
             assessment_id = uuid.UUID(str(entry.get("assessment_id")))
         except ValueError:
             return True
         a = db.get(AttackAssessment, assessment_id)
-        return a is None or not is_current(a)
+        if a is None or not is_current(a):
+            return True
     return False
 
 

@@ -84,6 +84,8 @@ function draft(): AttackAssessment {
     version: 1,
     coverage: [],
     documents_stale: false,
+    catalog_version: "19.2",
+    catalog_current: true,
   } as unknown as AttackAssessment;
 }
 
@@ -180,6 +182,25 @@ describe("AttackWorkspace reqSeq stale-fetch guard", () => {
     expect(screen.getByRole("button", { name: /approve/i })).toBeDisabled();
     // Run AI's only outcome would be the API's 409, so it is not offered.
     expect(screen.getByRole("button", { name: "Run AI" })).toBeDisabled();
+  });
+
+  it("reads an ABSENT catalog_current as not current (#556, fail closed)", async () => {
+    // Missing data defaults to unconfirmed: a response without the field must
+    // not be offered Run AI, whose only outcome for a stale assessment is 409.
+    const { catalog_current: _omit, ...withoutField } = draft();
+    fetchCatalog.mockResolvedValue(CATALOG);
+    fetchLatestAssessment.mockResolvedValue(
+      withoutField as unknown as AttackAssessment,
+    );
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+
+    render(
+      <AttackWorkspace serviceId="svc-absent" serviceTitle="Atlas ATT&CK" />,
+    );
+
+    expect(
+      await screen.findByRole("button", { name: "Run AI" }),
+    ).toBeDisabled();
   });
 
   it("offers Run AI on a current draft", async () => {
