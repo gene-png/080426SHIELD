@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Run prettier at the version the LOCKFILE pins, on the files pre-commit staged.
 #
+# Versions quoted below are as of 2026-08-30, when this was written; the
+# lockfile has since moved. `--print-version` reads the current one.
+#
 # ## What this replaces
 #
 # `pre-commit/mirrors-prettier` at `rev: v3.1.0`, whose `prettier` hook id

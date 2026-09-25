@@ -28,16 +28,23 @@ Both track branches were cut before the agent layer existed, so until that layer
 is merged to `main` and your branch is rebased onto it, the `CLAUDE.md` and
 `.claude/agents/` you check out are stale — missing numbers rules 4 and 5, the
 agent-definition re-read rule, the `.claude/settings.json` ownership rows, and
-carrying `prettier@3.9.5` where CI resolves `3.9.6`. This file would not exist
+carrying `prettier@3.9.5` where CI then resolved `3.9.6` (2026-08-30). This file would not exist
 there at all. Run this first:
 
 ```bash
 test -f .claude/agents/attack-dev.md ||
-  echo "HALT: no attack-dev.md here. You are on a branch cut BEFORE the"\n       " agent layer. Not a rebase failure -- there was nothing to rebase onto"
+  echo "HALT: no attack-dev.md here. You are on a branch cut BEFORE the agent layer. Not a rebase failure -- there was nothing to rebase onto"
 grep -q "EVERY agent definition carries this line" CLAUDE.md ||
   echo "HALT: CLAUDE.md lacks the agent-definition rule. Same cause as above"
-grep -q "prettier@3.9.6" CLAUDE.md ||
-  echo "HALT: CLAUDE.md pins the WRONG prettier. Running it reformats against"\n       " a version CI does not use. Same cause as above"
+# Only when the layer IS present: on a pre-layer branch the two lines above
+# already name the cause, and this one would contradict them.
+# An `if`, not an `&&` chain: a false chain as the block's last command
+# makes the HEALTHY state exit 1 (measured). The block is read by its output.
+if test -f .claude/agents/attack-dev.md &&
+  grep -q "EVERY agent definition carries this line" CLAUDE.md &&
+  ! grep -q "prettier-hook.sh --print-version" CLAUDE.md; then
+  echo "HALT: CLAUDE.md predates D-087 (the lockfile-read format step), so its format command pins a version CI does not use. The agent layer IS here; the branch is behind main, and rebasing onto main is the remedy (Gene's call)."
+fi
 ```
 
 If it says HALT: **stop and report.** Do not proceed against the injected copy,
@@ -251,8 +258,9 @@ A green recorded before a reformat says nothing about the tree after it.
 
 ```bash
 export PATH="$PATH:/c/Program Files/Docker/Docker/resources/bin"
-npx -y prettier@3.9.6 --write "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
-npx -y prettier@3.9.6 --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
+v=$(scripts/prettier-hook.sh --print-version)
+npx -y "prettier@${v:?}" --write "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
+npx -y "prettier@${v:?}" --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
 
 docker compose exec -T api sh -lc "cd /app && ruff check --no-cache . && black --check ."
 docker compose exec -T api sh -lc "cd /app && python -m scripts.check_test_integrity tests"
