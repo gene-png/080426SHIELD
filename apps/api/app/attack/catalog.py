@@ -4,12 +4,20 @@ Per D-007: encode the full Enterprise matrix rather than a curated
 subset. The catalog is reference data; only the engagement's coverage
 status per technique lands in `attack_coverage` rows.
 
-Counts (ATT&CK Enterprise v15 baseline):
-  14 tactics
-  196 parent techniques
-  411 sub-techniques
-  ----
-  607 total catalog entries
+Counts are whatever the tables below hold; this header does not keep them
+current. It said "196 parent techniques / 411 sub-techniques / 607 total", and
+all three were wrong. A dated measurement, 2026-09-23: 14 tactics, 193 parents, 440
+sub-techniques, 633 techniques in `TECHNIQUES`. `_RAW_TECHNIQUES` holds 636
+rows, because three parents appear under more than one tactic and
+`_dedupe_and_merge` folds them together. Re-derive rather than trust that, in the api container:
+
+    from app.attack.catalog import TACTICS, TECHNIQUES as T
+    print(len(TACTICS), sum(not t.is_sub_technique for t in T),
+          sum(t.is_sub_technique for t in T), len(T))
+
+WHICH ATT&CK RELEASE these tables encode is not recorded. The header's "v15
+baseline" was a claim with nothing in the repo to check it against, so it is
+gone rather than repeated.
 
 Records are intentionally terse - just (id, name, tactics, parent).
 Long-form descriptions live with MITRE; this module exists to drive

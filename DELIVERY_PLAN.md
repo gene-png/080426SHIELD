@@ -1037,8 +1037,10 @@ on, both in files #188/#189 already open, so batch-by-file applies:
 
 **Outside the total, with stated reasons (7):**
 
-- **#183** — `attack/catalog.py`'s docstring states the catalog size three ways
-  and all three are wrong. Documentation; nothing computes from it. Measured
+- **#183** — **FIXED on `fix/catalog-counts-idle-timeout` (2026-09-23):** the
+  header no longer writes the counts and gives the snippet that measures them.
+  Recorded below as it was found. `attack/catalog.py`'s docstring states the
+  catalog size three ways and all three are wrong. Documentation; nothing computes from it. Measured
   2026-09-05: the docstring says 196 parents / 411 subs / 607 total; the module
   exports **193 / 440 / 633** <!-- counted: python -c "from app.attack import catalog as c; ..." in the api container, 2026-09-05 -->,
   with 14 tactics the one right figure. It is **internally consistent**
