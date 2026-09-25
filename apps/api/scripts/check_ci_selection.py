@@ -82,7 +82,10 @@ this step must be the step IMMEDIATELY before pytest, in the same job, with
 the same step `env`, `working-directory` and `shell`, so every job, workflow and
 earlier-step environment reaches both and no step can change one without the
 other. What it cannot see is a difference the workflow file does not show,
-such as a variable a tool sets for itself when invoked.
+such as a variable a tool sets for itself when invoked. Its `${{ }}` refusal
+scans the two STEPS' own `env`, `working-directory` and `shell`; job- and
+workflow-level `env` and `defaults.run` reach both as TEXT, but whether they
+also evaluate to the same VALUE for both is not checked (#630).
 
 The file scan calls `_pytest.pathlib.fnmatch_ex`, a PRIVATE pytest API, and
 mirrors pytest's directory walk (following symlinked directories, pruning

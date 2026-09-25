@@ -113,6 +113,13 @@ test files on disk collected`.
   on the two steps. The real `ci.yml` python job has no expressions in those
   fields and stays clean.
 
+  That 1 of 1 dropped the whole check, which could not show that each KEY was
+  pinned. Review of `00eec79` found `shell` scanned with no case. The test is
+  now parametrized over all three keys, each with identical `${{ ... }}` text
+  on both steps and an exact assertion. After the fifth review, 3 of 3 went
+  red: dropping each key from the scan in turn turned its own case red and no
+  other, and each revert was checked to have landed.
+
 ## Limits
 
 - The check is per FILE. A module that removes only some of its tests at
@@ -121,6 +128,9 @@ test files on disk collected`.
   and is still invisible.
 - The environment pin sees what the workflow file shows. A variable a tool
   sets for itself when invoked is not seen.
+- The `${{ }}` refusal scans the two steps' own keys. Job- and workflow-level
+  `env` and `defaults.run` reach both as TEXT. Whether they evaluate to the
+  same VALUE for both is not checked (#630).
 - The file scan calls `_pytest.pathlib.fnmatch_ex`, a private pytest API, and
   mirrors pytest's walk: it follows symlinked directories and prunes
   `norecursedirs`. Both behaviours were read from pytest 9.1.1, and

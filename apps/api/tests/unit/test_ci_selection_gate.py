@@ -500,26 +500,31 @@ def test_a_different_shell_is_refused() -> None:
     assert pin_violations(_workflow(GATE_STEP, login)) == [SHELL_DIFFERS]
 
 
-def test_the_same_expression_on_both_steps_is_refused() -> None:
-    # Identical TEXT, so every equality check passes -- but GitHub evaluates it
-    # per step: '' while the gate runs, a --deselect once it has succeeded.
-    expr = "${{ steps.gate.outcome == 'success' && '--deselect tests/unit/x.py' || '' }}"
-    gate_step = {**GATE_STEP, "id": "gate", "env": {"PYTEST_ADDOPTS": expr}}
-    pytest_step = {**PYTEST_STEP, "env": {"PYTEST_ADDOPTS": expr}}
+_PER_STEP = "${{ steps.gate.outcome == 'success' && '--deselect tests/unit/x.py' || '' }}"
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        # '' while the gate runs, a --deselect once it has succeeded.
+        ("env", {"PYTEST_ADDOPTS": _PER_STEP}),
+        # `github.action` is a per-step value.
+        ("working-directory", "apps/${{ github.action }}"),
+        # A login shell whose profile could differ per evaluation.
+        ("shell", "bash -l ${{ github.action }} {0}"),
+    ],
+    ids=["env", "working-directory", "shell"],
+)
+def test_the_same_expression_on_both_steps_is_refused(key: str, value) -> None:
+    # IDENTICAL text on both steps, so every equality check passes -- but
+    # GitHub evaluates `${{ }}` once per step. One case per key the refusal
+    # scans, so dropping any key from it turns its own case red (review of
+    # 00eec79: `shell` was scanned and had no case).
+    gate_step = {**GATE_STEP, "id": "gate", key: value}
+    pytest_step = {**PYTEST_STEP, key: value}
     assert pin_violations(_workflow(gate_step, pytest_step)) == [
-        f"{EXPRESSION}: gate step, env",
-        f"{EXPRESSION}: pytest step, env",
-    ]
-
-
-def test_an_expression_in_the_working_directory_is_refused() -> None:
-    wd = "apps/${{ github.action }}"
-    out = pin_violations(
-        _workflow({**GATE_STEP, "working-directory": wd}, {**PYTEST_STEP, "working-directory": wd})
-    )
-    assert out == [
-        f"{EXPRESSION}: gate step, working-directory",
-        f"{EXPRESSION}: pytest step, working-directory",
+        f"{EXPRESSION}: gate step, {key}",
+        f"{EXPRESSION}: pytest step, {key}",
     ]
 
 
