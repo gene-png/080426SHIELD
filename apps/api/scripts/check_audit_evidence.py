@@ -16,14 +16,16 @@ thing that already failed; visibility was not the binding constraint.
 reasons that still hold: it is non-deterministic and expensive per PR. This
 check is neither: it runs in under a second and has no model in the loop.
 
-**It does NOT block a merge on its own, and an earlier version of this docstring
-claimed it did.** A workflow job only reports a status. It becomes blocking only
-once "Adversarial audit recorded" is registered as a required status check in
-the branch protection rules for `main` — a GitHub setting, not a file in this
-repo, so nothing in the change that added this check could perform or verify it.
-Until that registration happens this is a visible red X and nothing more, which
-is weaker than "structural" and has to be said rather than assumed. Tracked in
-DECISIONS.md D-051.
+**What makes it blocking is a GitHub setting, not this file.** "Adversarial
+audit recorded" was registered as a required status check on `main` on
+2026-08-20 (D-054's correction). On 2026-09-25,
+`gh api repos/gene-png/080426SHIELD/branches/main/protection --jq
+.enforce_admins.enabled` returned `true`: required checks bind admins too, so
+nobody merges past a red one without first changing the protection setting.
+Earlier it was `false`, and admins could. An earlier version of this docstring
+said the gate did not block at all, which stopped being true on 2026-08-20
+(#108). The setting can change again, so re-run that command rather than
+trusting this paragraph.
 
 ## What it can and cannot prove
 
@@ -217,5 +219,5 @@ if __name__ == "__main__":
     except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
         nl = chr(10)
         sys.stderr.write(f"audit gate: CRASHED: {type(exc).__name__}: {exc}{nl}")
-        sys.stderr.write(f"A crash is not a clean report and not a violation (D-051).{nl}")
+        sys.stderr.write(f"A crash is not a clean report and not a violation (D-090).{nl}")
         raise SystemExit(2) from exc

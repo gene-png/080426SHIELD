@@ -399,7 +399,7 @@ cd "$REPO" || {
   exit 2
 }
 # `git ls-files` returning NOTHING is not a clean sweep -- it is a sweep that
-# could not look, which D-051 says must never share a branch with a pass.
+# could not look, which D-090 says must never share a branch with a pass.
 # Checked BEFORE the loop, so an empty list cannot reach the report path.
 sh_list="$(mktemp)"
 git ls-files '*.sh' > "$sh_list" || {

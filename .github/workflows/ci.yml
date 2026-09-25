@@ -205,7 +205,7 @@ jobs:
           # step.
           set -euo pipefail
           CFG=apps/web/next.config.mjs
-          # "I could not look" is exit 2 and never exit 1 (D-051). A missing or
+          # "I could not look" is exit 2 and never exit 1 (D-090). A missing or
           # unevaluable config must not read as "the line was removed".
           if [ ! -r "$CFG" ]; then
             echo "cannot read $CFG -- refusing to guess whether the route is mounted" >&2
@@ -215,7 +215,7 @@ jobs:
           # Without it a missing or broken node aborts at this line and the
           # step exits 1 with no message -- reported as "the line was removed"
           # when the truth is "I could not look", which is the exact inversion
-          # D-051 exists to prevent.
+          # D-090 exists to prevent.
           node_rc=0
           val=$(node --input-type=module -e "
             const m = await import('./apps/web/next.config.mjs');

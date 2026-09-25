@@ -740,7 +740,7 @@ recorded with a real exit code and a real date, and was the minority outcome
   **A checker's "nothing to complain about" branch and its "I could not look"
   branch must not be the same branch.** Every gate in this repo returns a
   distinct non-zero (2) for unreadable input, separate from the 1 it returns for
-  a real violation.
+  a real violation (D-090).
 
   **Recorded because this is the one case where writing it down demonstrably
   worked.** `check_issue_references.py` was written months later by someone who
