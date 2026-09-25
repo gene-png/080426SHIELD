@@ -186,10 +186,13 @@ win() { printf '%s' "$1" | sed -e 's#^/\([a-z]\)/#\U\1:/#'; }
 
 # Positional arguments after the script reach it as $1, $2... inside the
 # container, so a value is handed over without being spliced into shell source.
+# DOCKER_ENV carries extra `-e NAME=value` options for one arm (eslint's debug
+# channel); it is empty for every other call.
+DOCKER_ENV=()
 run_in_container() {
   local script="$1"
   shift
-  docker run --rm \
+  docker run --rm ${DOCKER_ENV[@]+"${DOCKER_ENV[@]}"} \
     -v "$(win "$WORKTREE")/apps/web:/app/apps/web" \
     -v "$(win "$WORKTREE")/packages:/app/packages" \
     -v "$(win "$PRIMARY_TREE")/packages/design-system/node_modules:/app/packages/design-system/node_modules:ro" \
@@ -311,8 +314,23 @@ require_ran() {
 # green covered. Derived from the tree rather than from the tool's own report,
 # on purpose -- asking the tool how much it looked at cannot detect the tool
 # not looking.
+#
+# The pattern is vitest.config.ts's `include`, `src/**/*.test.{ts,tsx}`. It
+# counted `*.spec.ts(x)` too until #577, which vitest never includes; the two
+# agreed only because no spec file existed. A copied pattern can drift, so the
+# vitest arm also cross-checks this count against the total vitest itself
+# prints -- `Test Files ... (N)` -- and refuses when they disagree.
 count_test_files() {
-  find "$WORKTREE/apps/web/src"     \( -name '*.test.ts' -o -name '*.test.tsx'        -o -name '*.spec.ts' -o -name '*.spec.tsx' \)     -type f 2>/dev/null | wc -l | tr -d '[:space:]'
+  find "$WORKTREE/apps/web/src" \( -name '*.test.ts' -o -name '*.test.tsx' \) -type f 2>/dev/null | wc -l | tr -d '[:space:]'
+}
+
+# The total from vitest's `Test Files` summary: the `(N)` at the end, which
+# counts every file it tried, collection failures included. Captured from
+# vitest 3.2.7 on 2026-09-25: ` Test Files  2 failed | 1 passed (3)` for one
+# passing, one failing and one uncollected file. Empty when there is no such
+# line.
+vitest_total() {
+  sed -nE 's/^ *Test Files .*\(([0-9]+)\) *$/\1/p' | tail -1
 }
 
 # A vitest COLLECTION failure prints as `FAIL  path [ path ]` -- the file named
@@ -373,8 +391,22 @@ vitest() {
 ' "$out"
   if ! require_ran vitest test "$out" "$status" 'Test Files' 0 1; then return 2; fi
 
-  local found ran uncollected
+  # EXIT 0 NEEDS THE SUMMARY TOO (#577). require_ran asks for verdict-shaped
+  # output only on a non-zero status; for vitest, an include that matches
+  # nothing under `passWithNoTests` exits 0 having judged nothing, and the
+  # bound below would then be counted from disk alone.
+  local found ran uncollected total
+  total="$(printf '%s\n' "$out" | vitest_total)"
+  if [ -z "$total" ]; then
+    echo "verify-in-worktree: vitest -- COULD NOT LOOK: exit $status with no 'Test Files ... (N)' summary, so vitest is not known to have run any file. No bound is printed." >&2
+    return 2
+  fi
   found="$(count_test_files)"
+  if [ "$total" -ne "$found" ]; then
+    echo "verify-in-worktree: vitest -- COULD NOT LOOK: vitest reports ${total} test file(s); ${found} on disk match its include (src/**/*.test.{ts,tsx})." >&2
+    echo "verify-in-worktree: the two disagree, so the denominator is unknown: vitest.config.ts's include has moved from this script's copy, or files were added mid-run." >&2
+    return 2
+  fi
   uncollected="$(printf '%s
 ' "$out" | count_uncollected)"
   ran=$((found - uncollected))
@@ -443,14 +475,36 @@ vitest() {
 #
 # ESLint's own exit 2 is a configuration or crash error, not a finding, and it
 # is reported as could-not-look.
+#
+# THE BOUND IS ESLINT'S OWN FILE COUNT (#566). `eslint .` prints no count, and
+# restating its ignore rules here to count files on disk would be a second
+# copy of the config. So the arm sets `DEBUG=eslint:eslint`, an environment
+# variable that changes no flag and no verdict, and reads the line ESLint
+# prints before linting: `eslint:eslint 399 file(s) found in 4865 ms`
+# (measured 2026-09-25, ESLint v9.39.5, 399 files; a find over the same tree
+# minus node_modules and .next also gave 399). No such line, or a count of 0,
+# is could-not-look: a lint over nothing, or a debug format that has changed.
+# The debug lines are dropped from what is printed; the count is reported.
+ESLINT_DEBUG_PREFIX='eslint:eslint'
 eslint() {
-  local out status
+  local out status files
+  DOCKER_ENV=(-e "DEBUG=$ESLINT_DEBUG_PREFIX")
   out="$(run_web_script lint 2>&1)" && status=0 || status=$?
-  printf '%s\n' "$out"
+  DOCKER_ENV=()
+  printf '%s\n' "$out" | grep -vF " $ESLINT_DEBUG_PREFIX " || true
   # ESLint's exit 2 is a configuration or crash error, not a verdict, so only
   # 0 and 1 count as having looked.
   if ! require_ran eslint lint "$out" "$status" '[0-9]+:[0-9]+[[:space:]]+(error|warning)|[0-9]+ problems?' 0 1; then return 2; fi
-  echo "verify-in-worktree: eslint -- ran apps/web's \`lint\` script (what \`pnpm -F web lint\` runs), exit $status"
+  files="$(printf '%s\n' "$out" | sed -nE "s/.* $ESLINT_DEBUG_PREFIX ([0-9]+) file\(s\) found.*/\1/p" | head -1)"
+  if [ -z "$files" ]; then
+    echo "verify-in-worktree: eslint -- COULD NOT LOOK: no '$ESLINT_DEBUG_PREFIX N file(s) found' line, so how many files were linted is unknown (has ESLint's debug output changed?). Exit $status is not reported as a verdict." >&2
+    return 2
+  fi
+  if [ "$files" -eq 0 ]; then
+    echo "verify-in-worktree: eslint -- COULD NOT LOOK: ESLint found 0 files to lint, so exit $status judged nothing." >&2
+    return 2
+  fi
+  echo "verify-in-worktree: eslint -- linted ${files} file(s) (ESLint's own count) with apps/web's \`lint\` script (what \`pnpm -F web lint\` runs), exit $status"
   return "$status"
 }
 
@@ -543,6 +597,34 @@ self_test() {
   echo "self-test: PASS"
 }
 
+# `--all` RUNS EVERY ARM AND SAYS WHAT EACH GAVE (#566). It ran `tsc; vitest;
+# eslint` under `set -e`, so a red tsc or vitest ended the script before the
+# later arms printed a header, and nothing said they had not run. That is part
+# of why #450's dead lint arm stayed invisible: it ran only when everything
+# before it was green.
+#
+# Each arm runs as a CHILD PROCESS of this script, not as `tsc || st=$?`:
+# bash ignores `set -e` inside a function called from an `||` list, so every
+# unguarded failure inside the arm would be silently stepped over. The child
+# has `set -euo pipefail` in force, as a direct run does.
+#
+# The exit is the WORST status, 2 outranking 1: could-not-look must not be
+# hidden behind a later arm's findings. A status other than 0, 1 or 2 counts
+# as 2.
+run_all() {
+  local arm st worst=0 summary=""
+  for arm in tsc vitest eslint; do
+    echo "== $arm =="
+    st=0
+    "${BASH:-bash}" "$0" "$arm" || st=$?
+    case "$st" in 0 | 1 | 2) ;; *) st=2 ;; esac
+    summary="$summary $arm $st,"
+    if [ "$st" -eq 2 ] || { [ "$st" -eq 1 ] && [ "$worst" -eq 0 ]; }; then worst="$st"; fi
+  done
+  echo "verify-in-worktree: --all --${summary%,} (all three ran; exit ${worst}, the worst, 2 outranking 1)"
+  return "$worst"
+}
+
 self_test_bound() {
   # BOTH STATES, against fixed input, so neither branch is assumed.
   local clean broken n
@@ -599,9 +681,7 @@ case "${1:---all}" in
   tsc)         tsc ;;
   vitest)      vitest ;;
   eslint)      eslint ;;
-  --all)       echo "== tsc ==";    tsc
-               echo "== vitest =="; vitest
-               echo "== eslint =="; eslint ;;
+  --all)       run_all ;;
   # UNREACHABLE while this list and `is_known_mode` agree -- the mode is
   # validated at the top of the file, before any work. Kept as fail-closed
   # cover for the case where they drift, and it says which check is the
