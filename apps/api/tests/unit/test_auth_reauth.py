@@ -318,6 +318,122 @@ def test_a_token_two_generations_old_is_rejected_even_within_the_window(
 
 
 # -----------------------------------------------------------------------------
+# (b2) A TRUE race: two refreshes that both read the same active jti (#505)
+#
+# The tests above run one request after another, so each sees the other's
+# commit. A real race does not: both requests load the user BEFORE either
+# rotates, both pass the "presented == active" check, and the second write
+# overwrites the first -- the winner's new jti is then neither active nor
+# previous, and its next refresh reads as `refresh_reused`. SQLite serialises
+# writes, so this can only be forced deterministically: the route's first
+# `utcnow()` after loading the user is the ceiling check, which runs before
+# rotation, and a one-shot hook there commits the concurrent WINNER's rotation
+# through a separate session. The hook records what it saw, so a test cannot
+# pass because the interleaving silently did not happen.
+# -----------------------------------------------------------------------------
+
+
+def _race_the_rotation(app_client: TestClient, monkeypatch, presented_refresh: str) -> dict:
+    """Arrange for a concurrent winner to rotate `presented_refresh`'s jti while
+    the request under test is between its user load and its rotation."""
+    import uuid
+
+    from app.db.session import get_db
+    from app.models._common import utcnow as real_utcnow
+    from app.models.user import User
+    from app.routes import auth as auth_mod
+    from app.security.jwt import verify_token
+
+    presented = str(verify_token(presented_refresh, expected_type="refresh").jti)
+    seen: dict = {"fired": False, "winner_jti": str(uuid.uuid4())}
+
+    def hook():
+        if not seen["fired"]:
+            seen["fired"] = True
+            db = next(app_client.app.dependency_overrides[get_db]())
+            try:
+                user = db.query(User).filter(User.email == "first@example.com").one()
+                seen["active_before_winner"] = user.active_refresh_jti
+                user.previous_refresh_jti = user.active_refresh_jti
+                user.active_refresh_jti = seen["winner_jti"]
+                user.refresh_rotated_at = real_utcnow()
+                db.commit()
+            finally:
+                db.close()
+        return real_utcnow()
+
+    monkeypatch.setattr(auth_mod, "utcnow", hook)
+    seen["presented"] = presented
+    return seen
+
+
+def _stored_jtis(app_client: TestClient) -> tuple[str, str]:
+    from app.db.session import get_db
+    from app.models.user import User
+
+    db = next(app_client.app.dependency_overrides[get_db]())
+    try:
+        user = db.query(User).filter(User.email == "first@example.com").one()
+        return user.active_refresh_jti, user.previous_refresh_jti
+    finally:
+        db.close()
+
+
+@pytest.mark.unit
+def test_a_refresh_that_loses_the_race_serves_the_winners_identity(
+    app_client: TestClient, monkeypatch
+) -> None:
+    """The losing request must not rotate over the winner. It re-reads the
+    winner's state, finds its own jti is now the IMMEDIATELY previous one, and
+    is served the winner's identity through the grace path -- a benign
+    two-tab race is not read as a stolen token."""
+    body = _register(app_client)
+    original = body["tokens"]["refresh_token"]
+    seen = _race_the_rotation(app_client, monkeypatch, original)
+
+    loser = app_client.post("/auth/refresh", json={"refresh_token": original})
+
+    assert seen["fired"] and seen["active_before_winner"] == seen["presented"], seen
+    assert loser.status_code == 200, loser.text
+    from app.security.jwt import verify_token
+
+    served = str(verify_token(loser.json()["refresh_token"], expected_type="refresh").jti)
+    assert served == seen["winner_jti"], "the loser must converge on the winner's jti"
+    assert _stored_jtis(app_client) == (seen["winner_jti"], seen["presented"]), (
+        "the winner's rotation was overwritten -- its jti is now neither active nor "
+        "previous, so its next refresh reads as refresh_reused (#505)"
+    )
+
+
+@pytest.mark.unit
+def test_with_no_grace_the_race_loser_gets_a_typed_401_not_a_rotation(
+    app_client: TestClient, monkeypatch
+) -> None:
+    """Strict single-use (`jwt_refresh_grace_seconds = 0`): the loser presented
+    a jti that is no longer active, which is exactly a replay under that
+    setting -- a TYPED 401 `refresh_reused`, deliberately, and never a 500. The
+    winner's state is untouched either way."""
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("JWT_REFRESH_GRACE_SECONDS", "0")
+    get_settings.cache_clear()
+    try:
+        body = _register(app_client)
+        original = body["tokens"]["refresh_token"]
+        seen = _race_the_rotation(app_client, monkeypatch, original)
+
+        loser = app_client.post("/auth/refresh", json={"refresh_token": original})
+
+        assert seen["fired"] and seen["active_before_winner"] == seen["presented"], seen
+        assert loser.status_code == 401, loser.text
+        assert loser.json()["error"]["reason"] == "refresh_reused"
+        assert _stored_jtis(app_client) == (seen["winner_jti"], seen["presented"])
+    finally:
+        get_settings.cache_clear()
+
+
+# -----------------------------------------------------------------------------
 # (c) Dead feature flags fail loudly at startup
 # -----------------------------------------------------------------------------
 
