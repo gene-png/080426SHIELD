@@ -1728,21 +1728,25 @@ So, before 2026-09-25: the gate was a guardrail on the PR path, not a wall
 around `main`. Whether it is now a wall depends on whether a direct push is
 refused, which #596 derives from the API and nobody has tested.
 
-**Also open, and listed rather than left implied:**
+**Also open, and listed rather than left implied** — re-measured 2026-09-25T15:04Z
+with `gh api repos/gene-png/080426SHIELD/branches/main/protection` and
+`gh api repos/gene-png/080426SHIELD/rulesets` (0 rulesets):
 
-- `required_conversation_resolution` is **not set** — the most relevant omission
-  here, given §14 is about audit findings not being silently dropped: an
-  unresolved review thread does not block a merge.
-- `strict` is **false**, so a branch need not be up to date with `main` before
-  merging — two PRs that are individually green can still break `main` together.
-- Even once a PR is required, `required_approving_review_count`,
-  `require_last_push_approval` and `dismiss_stale_reviews` are all unset, so a
-  solo author still self-merges and a post-approval push is unreviewed.
-  "Require a PR" is roughly half the fix, not the whole of it.
-- `required_signatures` is **not set**. Defensible for now; not invisible for a
-  product targeting FedRAMP Moderate/High.
-- **Tags are not protected at all**, and protection covers `main` only — a
-  release tag can be moved.
+- `required_conversation_resolution` is **not set** (`enabled: false`) — the
+  most relevant omission here, given §14 is about audit findings not being
+  silently dropped: an unresolved review thread does not block a merge.
+- `strict` is **true**: a branch must be up to date with `main` before merging.
+  (Before 2026-09-25 it was false, and two individually green PRs could break
+  `main` together.) It does not catch two OPEN PRs that conflict with each
+  other; that still needs the pairwise merge check.
+- A pull-request review block is present with `required_approving_review_count`
+  **0**, and `require_last_push_approval` and `dismiss_stale_reviews` are
+  **false**, so a solo author still self-merges and a post-approval push is
+  unreviewed. "Require a PR" is roughly half the fix, not the whole of it.
+- `required_signatures` is **not set** (`enabled: false`). Defensible for now;
+  not invisible for a product targeting FedRAMP Moderate/High.
+- **Tags are not protected**: there are no rulesets, and classic protection
+  covers `main` only, so a release tag can be moved.
 - `restrictions` (who may push) is org-repo-only, so on a personal repo it is
   **unavailable** rather than unset. "We cannot" and "we chose not to" are
   different facts and this is the first.
