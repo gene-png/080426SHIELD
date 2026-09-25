@@ -105,7 +105,12 @@ DEFERRED: dict[str, str] = {
         "builds a real throwaway repository per case: 0 for a comments-only compose "
         "diff, 1 for content changes Python equality would hide, 2 for an "
         "unparseable file and for bad arguments, and the --report form. "
-        "Red-on-revert, 2026-09-25: four mutations, each red on a named test."
+        "Red-on-revert, 2026-09-25, each red on its named test: loaded-object "
+        "equality (test_a_content_change_trips), a deleted file not counted "
+        "(test_a_deleted_compose_file_trips), scalar tags ignored "
+        "(test_a_content_change_trips), scalar style ignored "
+        "(test_a_quote_flip_is_content_even_where_the_1_1_tag_agrees), and a "
+        "three-dot range accepted (test_a_three_dot_range_is_refused_by_name)."
     ),
     # -- SHELL GATES (#318) -------------------------------------------------
     # They cannot be fixtured by this harness: `run_case` invokes

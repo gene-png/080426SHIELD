@@ -289,12 +289,13 @@ jobs:
 
   compose-exception-report:
     # D-095: a docker-compose diff whose parsed YAML is unchanged does not trip
-    # merge-rule condition 5. This prints that verdict on every PR. GREEN DOES
-    # NOT MEAN CLEAR: `--report` exits 0 whether or not a compose file changed
-    # in content, because that is a routing fact, not a defect; it goes red only
-    # when it could not look (exit 2). It judges compose files ONLY -- every
-    # other condition-5 path is read as before. NOT a required check.
-    name: Compose exception report (green is not clear; read the summary)
+    # merge-rule condition 5. This job's PROPOSITION is "the compose check could
+    # read its inputs", and that is what green means. The verdict (did a compose
+    # file change in content?) is in the step summary, not the colour: `--report`
+    # exits 0 for either verdict and 2 only when it could not look. Nothing named
+    # for condition 5 may show green, because that reads as "condition 5 is
+    # clear". It judges compose files ONLY. NOT a required check.
+    name: condition-5 compose gate read its inputs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -306,7 +307,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Compose exception, computed
+      - name: Read the compose files at the merge base and the head
         # No pipe into `tee`: a `run:` step here is `bash -e` without pipefail,
         # so a pipe would report tee's status and lose the 2 (#213).
         run: |

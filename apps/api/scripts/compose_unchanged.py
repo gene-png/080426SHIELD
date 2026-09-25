@@ -11,9 +11,12 @@ HOW. Each changed `docker-compose*.yml` / `.yaml` at the repo root is composed
 at the merge base and at the head, and its NODE tree -- tag and scalar text,
 in order -- is compared. Not the loaded object: PyYAML is YAML 1.1 and Python's
 `==` is loose, so `on` -> `yes` and `1` -> `1.0` would compare equal while
-compose, a YAML 1.2 reader, sees a different value. Comments, blank lines and
-quoting style that does not change a tag leave the tree equal. Compose's own
-`!reset` / `!override` tags are kept as tags, so changing one is a change.
+compose, a YAML 1.2 reader, sees a different value. The node key also records
+whether a scalar is PLAIN or QUOTED, because PyYAML's YAML 1.1 tags cannot see
+every difference compose's 1.2 reading makes (`"0o17"` versus `0o17`): any
+quote flip counts as content. Comments, blank lines and indentation leave the
+tree equal. Compose's own `!reset` / `!override` tags are kept, so changing
+one is a change.
 
 EXIT CODES (the gates' 0/1/2 convention): 0 every changed compose file parses
 to the same node tree, or none changed; 1 at least one changed in content, so
@@ -68,7 +71,10 @@ def node_tree(src: str, name: str):
 
     def key(n):
         if isinstance(n, yaml.ScalarNode):
-            return ("s", n.tag, n.value)
+            # The STYLE too, plain versus quoted: PyYAML composes `"0o17"` and
+            # `0o17` (and `"1e3"` and `1e3`) to the same YAML 1.1 tag and value,
+            # while compose, a YAML 1.2 reader, takes the plain forms as numbers.
+            return ("s", n.tag, n.value, n.style is None)
         if isinstance(n, yaml.SequenceNode):
             return ("q", n.tag, tuple(key(c) for c in n.value))
         if isinstance(n, yaml.MappingNode):
@@ -134,7 +140,7 @@ def main(argv: list[str]) -> int:
         print("  Read as TRIPPED: condition 5 comes back to the human.")
         return 2
     for name in form_only:
-        print(f"  form only (comments, layout, quoting): {name}")
+        print(f"  form only (comments, layout): {name}")
     if changed:
         print(
             f"compose-unchanged: {len(changed)} compose file(s) changed in CONTENT -- condition 5 trips:"

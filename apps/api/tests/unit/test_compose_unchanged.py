@@ -67,7 +67,7 @@ def test_a_comments_only_compose_diff_is_unchanged(tmp_path, capsys) -> None:
         _repo(tmp_path, {"docker-compose.yml": BASE}, {"docker-compose.yml": head}), capsys
     )
     assert rc == 0, out
-    assert "form only (comments, layout, quoting): docker-compose.yml" in out, out
+    assert "form only (comments, layout): docker-compose.yml" in out, out
 
 
 @pytest.mark.parametrize(
@@ -78,6 +78,7 @@ def test_a_comments_only_compose_diff_is_unchanged(tmp_path, capsys) -> None:
         ("N: 1\n", "N: 1.0\n"),  # equal numbers in Python
         ("N: 1\n", 'N: "1"\n'),  # a string where there was an int
         ("FLAG: on", 'FLAG: "on"'),  # same text, a different TAG: bool becomes str
+        ("FLAG: on", "FLAG: !!str on"),  # same text AND style; only the tag differs
     ],
 )
 def test_a_content_change_trips(tmp_path, capsys, old: str, new: str) -> None:
@@ -155,3 +156,32 @@ def test_report_mode_still_exits_2_when_it_could_not_look(tmp_path, capsys) -> N
     r = _repo(tmp_path, {"docker-compose.yml": BASE}, {"docker-compose.yml": "services: [\n"})
     rc = tool.main(["x", "--report", "--repo", str(r), "main..pr"])
     assert rc == 2, capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ('MODE: "0o17"\n', "MODE: 0o17\n"),  # a string to compose's YAML 1.2 octal
+        ('SIZE: "1e3"\n', "SIZE: 1e3\n"),  # a string to compose's YAML 1.2 float
+    ],
+)
+def test_a_quote_flip_is_content_even_where_the_1_1_tag_agrees(tmp_path, capsys, old, new) -> None:
+    # PyYAML (YAML 1.1) composes both sides to the same tag and value; compose
+    # reads the plain forms as numbers. Only the scalar's style tells them apart.
+    base = "services:\n  api:\n    environment:\n      " + old
+    head = "services:\n  api:\n    environment:\n      " + new
+    rc, out = _run(
+        _repo(tmp_path, {"docker-compose.yml": base}, {"docker-compose.yml": head}), capsys
+    )
+    assert rc == 1, out
+
+
+def test_a_deleted_compose_file_trips(tmp_path, capsys) -> None:
+    r = _repo(
+        tmp_path,
+        {"docker-compose.demo.yml": BASE, "README.md": "r\n"},
+        {"docker-compose.demo.yml": None},
+    )
+    rc, out = _run(r, capsys)
+    assert rc == 1, out
+    assert "docker-compose.demo.yml (added or deleted)" in out, out

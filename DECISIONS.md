@@ -5841,14 +5841,16 @@ still came back to the owner. Every other condition-5 path trips exactly as
 before. `apps/api/scripts/compose_unchanged.py BASE..HEAD` decides: 0 no
 compose file changed in content, 1 at least one did (an added or deleted file
 counts), 2 could not look, which reads as tripped. It also runs on every PR as
-the "Compose exception report" job, which is not required and is green whenever
-it could look.
+the job "condition-5 compose gate read its inputs", which is not required: green
+means it could read its inputs, and the verdict is in its summary.
 
 **Why the node tree, not the loaded object.** PyYAML reads YAML 1.1, and
 Python's `==` is loose, so `on` to `yes` (both True) and `1` to `1.0` compare
 equal while compose, a YAML 1.2 reader, sees a different value. Comparing the
-composed nodes (tag and scalar text) keeps those as changes, and keeps a
-compose `!reset` tag as content.
+composed nodes (the YAML 1.1 tag, scalar text, and whether a scalar is plain
+or quoted) keeps those as changes, and keeps a compose `!reset` tag as content.
+Any quote flip counts: PyYAML gives `"0o17"` and `0o17` the same 1.1 tag and
+value, while compose reads the plain form as a number.
 
 **Why this and not the general rule.** A general executable-line exception
 (#559) was built, reviewed for five rounds with a blocking finding in each,
@@ -5856,8 +5858,8 @@ and closed unmerged by the owner. Measured on the same windows, it gained one
 PR in thirty over the old rule, and so does this.
 
 **Measured**, on the 15 most recent PR merges at each recorded window's ref,
-with `compose_unchanged.py` run on every PR in the window that touches a
-compose file:
+with `python apps/api/scripts/compose_unchanged.py --repo . <sha>^1..<sha>`
+run on every PR in the window that touches a compose file:
 
 - **2026-08-26** (`fdfde7d^1`): no PR touches a compose file, so the rule
   changes nothing. **4/11**, the old rule's figure.

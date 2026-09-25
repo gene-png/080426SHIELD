@@ -229,7 +229,7 @@ tests. Condition 5's path list applied to the fifteen most recent PR merges on
 | 2026-08-26 | 4 | 11 | 4 / 11 |
 | 2026-09-21 | 2 | 13 | 3 / 12 |
 
-<!-- counted: condition 5's path list applied to `git log --first-parent -40 --format='%H|%s' origin/main | grep -E '\(#[0-9]+\)$' | head -15`, at 897eeae, 2026-09-21; last column: compose_unchanged.py per PR, 2026-09-25 (D-095) -->
+<!-- counted: condition 5's path list applied to `git log --first-parent -40 --format='%H|%s' origin/main | grep -E '\(#[0-9]+\)$' | head -15`, at 897eeae, 2026-09-21; last column: `compose_unchanged.py --repo . <sha>^1..<sha>` per PR, 2026-09-25 (D-095) -->
 
 Each is a claim about a fixed window, so it does not rot the way a live count
 does — and each is true only of condition 5 as it stood that day. **Re-derive
