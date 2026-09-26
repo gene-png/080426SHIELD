@@ -24,6 +24,7 @@ from app.ai.engine import get_job, run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.attack.catalog_version import catalog_mismatch_message, require_current_catalog
+from app.attack.parents import is_computed_parent
 from app.audit import audit
 from app.csf.gap import resolve_target_tier
 from app.db.session import get_db
@@ -510,6 +511,15 @@ def _gather_findings(
         valid_techniques = set(attack_scope.codes)
         link_scopes["attack"] = attack_scope
         for r in rows:
+            # #620 round 3 (D-094, condition 6; the coordinator's call, pending
+            # Gene): a computed parent's status is arithmetic over its
+            # sub-techniques, so a finding for it counts the same technique a
+            # second time beside theirs -- and a recompute would add or remove
+            # findings with no change in the evidence. Findings come through
+            # the sub-techniques only, as the client triad counts them. Still
+            # CITABLE as a link: `scope_for` above is unchanged.
+            if is_computed_parent(r.technique_code):
+                continue
             if r.status in ("gap", "partial"):
                 findings.append(
                     {
