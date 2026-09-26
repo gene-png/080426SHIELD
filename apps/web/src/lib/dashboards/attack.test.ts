@@ -172,6 +172,27 @@ describe("attack dashboard transforms", () => {
     expect(dpr.detect).toEqual({ n: 2, pct: 100 });
   });
 
+  it("(b) moves the triad and leaves the KPI row alone (#620)", () => {
+    // D-094 says the KPI row and coverage_pct do not move under (b). Pinned
+    // here: the same data, the parent flagged and unflagged. The triad must
+    // differ -- or this test proves nothing -- and kpis() must not.
+    const parent = tech({ code: "T1001" });
+    const kids = [
+      tech({ code: "T1001.001", detection_tools: ["Tool A"] }),
+      tech({ code: "T1001.002", detection_tools: ["Tool A"] }),
+    ];
+    const flagged = {
+      ...DATA,
+      techniques: [{ ...parent, computed_parent: true }, ...kids],
+    };
+    const unflagged = { ...DATA, techniques: [parent, ...kids] };
+    expect(dprCoverage(flagged.techniques)).not.toEqual(
+      dprCoverage(unflagged.techniques),
+    );
+    expect(kpis(flagged)).toEqual(kpis(unflagged));
+    expect(kpis(flagged)).toEqual(kpis(DATA));
+  });
+
   it("blindSpots: only gap techniques", () => {
     const b = blindSpots(DATA.techniques);
     expect(b.map((t) => t.code)).toEqual(["T1610"]);
