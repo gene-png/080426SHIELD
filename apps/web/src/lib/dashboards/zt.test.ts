@@ -238,10 +238,29 @@ describe("targetNote — a discarded per-capability target reaches the screen (#
       }),
     );
     expect(note).toBe(
+      // One code, so ONE row (#452): this expected string said "those rows"
+      // and pinned the grammar defect the issue is about.
       "Per-capability targets from your assessment A per-capability target was" +
         " recorded for CISA.ID.01 but could not be used, so the engagement" +
-        " target was applied to those rows instead.",
+        " target was applied to that row instead.",
     );
+  });
+
+  it("says it exactly as the client's PDF says it, for ONE row (#452)", () => {
+    // The singular twin of the parity pin below, TRANSCRIBED FROM THE PYTHON
+    // (`_gap_plan_caption`, one code) for the same reason: two independent
+    // origins, so a one-sided change goes red here.
+    const fromTheDeliverable =
+      " A per-capability target was recorded for CISA.ID.01 but could not be" +
+      " used, so the engagement target was applied to that row instead.";
+    const note = targetNote(
+      data({
+        target_stage_source: "client",
+        engagement_target_capability_count: 3,
+        unusable_target_codes: ["CISA.ID.01"],
+      }),
+    );
+    expect(note.endsWith(fromTheDeliverable)).toBe(true);
   });
 
   it("says it exactly as the client's PDF says it", () => {
