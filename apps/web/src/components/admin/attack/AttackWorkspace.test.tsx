@@ -10,6 +10,8 @@ import type {
   AttackHeatmap,
 } from "@/lib/attack/types";
 
+import type * as React from "react";
+
 import { AttackWorkspace } from "./AttackWorkspace";
 
 // Deterministic + offline: the ATT&CK client lib is fully mocked and every
@@ -103,6 +105,15 @@ vi.mock("@/components/messages/MessageThread", () => ({
 }));
 vi.mock("@/components/admin/StaleDocsNudge", () => ({
   StaleDocsNudge: () => null,
+}));
+// A pass-through: it renders the real Run AI button and calls onProceed on
+// click, so the guard's own AI-status fetch stays out of these tests (its
+// behaviour is covered in RunAiGuard's tests).
+vi.mock("@/components/admin/RunAiGuard", () => ({
+  RunAiGuard: (props: {
+    onProceed: () => void;
+    children: (p: { onClick: () => void }) => React.ReactNode;
+  }) => props.children({ onClick: props.onProceed }),
 }));
 vi.mock("@/components/admin/AiPreviewButton", () => ({
   AiPreviewButton: () => null,
@@ -603,5 +614,97 @@ describe("AttackWorkspace, computed parents after round 2 (#620)", () => {
       expect(fetchLatestAssessment).toHaveBeenCalledTimes(3),
     );
     expect(screen.getByTestId("panel-notes")).toHaveTextContent("B");
+  });
+});
+
+describe("AttackWorkspace, the parent re-read after round 3 (#620)", () => {
+  type Row = {
+    id: string;
+    technique_code: string;
+    status: string | null;
+    pending_review: boolean;
+    notes: string | null;
+  };
+  const child: Row = {
+    id: "c-child",
+    technique_code: "T1001.001",
+    status: "covered",
+    pending_review: false,
+    notes: null,
+  };
+  const parent: Row = { ...child, id: "c-parent", technique_code: "T1001" };
+  function snapshot(rows: Row[]): AttackAssessment {
+    return { ...draft(), coverage: rows } as unknown as AttackAssessment;
+  }
+  type Patched = Awaited<ReturnType<typeof attackClient.patchCoverage>>;
+  const runAttackAi = vi.mocked(attackClient.runAttackAi);
+
+  it("says so when the re-read fails, and still refreshes the heatmap", async () => {
+    // Finding 2: a failed re-read was an unhandled rejection -- the parent
+    // stayed stale, nothing was said, and the heatmap was skipped although
+    // the write had landed.
+    fetchCatalog.mockResolvedValue(FAMILY_CATALOG);
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+    fetchLatestAssessment
+      .mockResolvedValueOnce(snapshot([parent, child]))
+      .mockRejectedValueOnce(new Error("network down"));
+    patchCoverage.mockResolvedValue({
+      ...child,
+      status: "gap",
+    } as unknown as Patched);
+    render(<AttackWorkspace serviceId="svc-r3a" serviceTitle="ATT&CK" />);
+    fireEvent.click(await screen.findByText("select sub-technique"));
+    const heatmapCalls = fetchHeatmap.mock.calls.length;
+    fireEvent.click(screen.getByText("set gap"));
+    expect(
+      await screen.findByText(
+        "Your change was saved, but the assessment could not be re-read, so a parent technique's status may be out of date. Reload to see it.",
+      ),
+    ).toBeInTheDocument();
+    await vi.waitFor(() =>
+      expect(fetchHeatmap.mock.calls.length).toBeGreaterThan(heatmapCalls),
+    );
+  });
+
+  it("does not let a re-read taken before Run AI finished overwrite the run", async () => {
+    // Finding 3: a child edit in flight, Run AI starts, the edit completes and
+    // its re-read reads the pre-run state; the run's own re-pull was then
+    // dropped as out of date. Run AI is now a write the guard counts.
+    fetchCatalog.mockResolvedValue(FAMILY_CATALOG);
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+    const preRun = snapshot([parent, child]);
+    const postRun = snapshot([
+      { ...parent, notes: "ran" },
+      { ...child, notes: "ran" },
+    ]);
+    fetchLatestAssessment.mockResolvedValue(preRun);
+    const edit = deferred<Patched>();
+    const run =
+      deferred<Awaited<ReturnType<typeof attackClient.runAttackAi>>>();
+    patchCoverage.mockReturnValueOnce(edit.promise);
+    runAttackAi.mockReturnValueOnce(run.promise);
+    render(<AttackWorkspace serviceId="svc-r3b" serviceTitle="ATT&CK" />);
+    fireEvent.click(await screen.findByText("select sub-technique"));
+    fireEvent.click(screen.getByText("set gap"));
+    fireEvent.click(screen.getByText("Run AI"));
+    await vi.waitFor(() => expect(runAttackAi).toHaveBeenCalledTimes(1));
+    // The edit lands while the run is out: its re-read must NOT happen yet.
+    await act(async () =>
+      edit.resolve({ ...child, status: "gap" } as unknown as Patched),
+    );
+    const readsBeforeRunEnds = fetchLatestAssessment.mock.calls.length;
+    fetchLatestAssessment.mockResolvedValue(postRun);
+    // The shape the workspace renders: the required fields of the response.
+    await act(async () =>
+      run.resolve({
+        tools_available: 1,
+        changed: [],
+        coverage: [],
+      } as unknown as Awaited<ReturnType<typeof attackClient.runAttackAi>>),
+    );
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("panel-notes")).toHaveTextContent("ran"),
+    );
+    expect(readsBeforeRunEnds).toBe(1);
   });
 });

@@ -267,7 +267,11 @@ export function AttackWorkspace({
     })();
   }, [initialLoad]);
 
-  async function onCreateAssessment(): Promise<void> {
+  function onCreateAssessment(): Promise<void> {
+    return trackWrite(() => onCreateAssessmentWrite());
+  }
+
+  async function onCreateAssessmentWrite(): Promise<void> {
     setBusy("create");
     assessmentSeq.current += 1;
     try {
@@ -289,13 +293,26 @@ export function AttackWorkspace({
     return parentId !== null;
   }
 
-  /** Re-read the assessment once no edit is in flight (finding 7). */
+  /** Re-read the assessment once no write is in flight (#620 round 2,
+   *  finding 7). NEVER throws: it runs after a write that already landed, so
+   *  a failed re-read is reported as that -- a saved change whose parent may
+   *  be stale -- and never as a failed save or an unhandled rejection. */
   async function refetchWhenQuiet(): Promise<void> {
     if (!refetchWanted.current || editsInFlight.current > 0) return;
     refetchWanted.current = false;
+    const attempt = beginRefresh("assessment");
     const started = editsStarted.current;
     const seq = ++assessmentSeq.current;
-    const a = await fetchLatestAssessment(serviceId);
+    let a: Awaited<ReturnType<typeof fetchLatestAssessment>>;
+    try {
+      a = await fetchLatestAssessment(serviceId);
+    } catch {
+      attempt.note(
+        "Your change was saved, but the assessment could not be re-read, so a parent technique's status may be out of date. Reload to see it.",
+      );
+      return;
+    }
+    attempt.clear();
     if (editsStarted.current !== started) {
       // An edit began while this was out, so `a` may predate it. Drop it; that
       // edit's own completion takes the re-read again.
@@ -304,6 +321,24 @@ export function AttackWorkspace({
       return;
     }
     if (seq === assessmentSeq.current) setAssessment(a);
+  }
+
+  /**
+   * #620 round 3, finding 3. Every action that writes and then re-pulls the
+   * assessment is counted here, not only panel edits: a parent re-read taken
+   * while Run AI, approve, discard or create is out reads the server before
+   * that action lands, and would overwrite its result (and its own re-pull
+   * would then be dropped as out of date). The re-read waits for all of them.
+   */
+  async function trackWrite(fn: () => Promise<void>): Promise<void> {
+    editsStarted.current += 1;
+    editsInFlight.current += 1;
+    try {
+      await fn();
+    } finally {
+      editsInFlight.current -= 1;
+    }
+    await refetchWhenQuiet();
   }
 
   async function onPatch(
@@ -402,7 +437,11 @@ export function AttackWorkspace({
     if (ok) await refreshHeatmap();
   }
 
-  async function onApprove(): Promise<void> {
+  function onApprove(): Promise<void> {
+    return trackWrite(() => onApproveWrite());
+  }
+
+  async function onApproveWrite(): Promise<void> {
     if (!assessment) return;
     setBusy("approve");
     assessmentSeq.current += 1;
@@ -416,7 +455,11 @@ export function AttackWorkspace({
     }
   }
 
-  async function onDiscard(): Promise<void> {
+  function onDiscard(): Promise<void> {
+    return trackWrite(() => onDiscardWrite());
+  }
+
+  async function onDiscardWrite(): Promise<void> {
     if (!assessment) return;
     setBusy("discard");
     const seq = ++assessmentSeq.current;
@@ -442,7 +485,11 @@ export function AttackWorkspace({
     }
   }
 
-  async function onRunAi(): Promise<void> {
+  function onRunAi(): Promise<void> {
+    return trackWrite(() => onRunAiWrite());
+  }
+
+  async function onRunAiWrite(): Promise<void> {
     setBusy("run");
     setRunResult(null);
     const seq = ++assessmentSeq.current;
