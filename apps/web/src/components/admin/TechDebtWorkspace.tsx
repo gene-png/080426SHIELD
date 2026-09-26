@@ -18,6 +18,7 @@ import { splitLines } from "@/lib/text";
 import { RedactionDisclosure } from "@/components/intake/RedactionDisclosure";
 import {
   addCapabilityComponents,
+  bulkSetDisposition,
   confirmExcludedRow,
   includeExcludedRow,
   approveCapabilityList,
@@ -31,6 +32,7 @@ import {
   TechDebtProxyError,
 } from "@/lib/tech_debt/client";
 import type {
+  CapabilityDisposition,
   CapabilityItem,
   ExcludedRow,
   CapabilityList,
@@ -321,6 +323,30 @@ Components carry no cost of their own — this licence keeps its full value.`,
     } finally {
       setExtracting(false);
     }
+  }
+
+  async function onBulkDisposition(
+    itemIds: string[],
+    disposition: CapabilityDisposition | null,
+  ): Promise<void> {
+    if (!list) return;
+    listSeq.current += 1;
+    let next: CapabilityList;
+    try {
+      next = await bulkSetDisposition(list.id, itemIds, disposition);
+    } catch (err) {
+      // Rethrown, not swallowed: the TABLE owns this refusal's display (beside
+      // the bulk bar, with the selection kept for a retry), and a rejection is
+      // how it learns nothing was applied. Logged here so the refusal is on
+      // record even if a future caller forgets to render it.
+      console.warn(
+        `[TechDebtWorkspace] bulk disposition refused: ${proxyMessage(err, "no message")}`,
+      );
+      throw err;
+    }
+    setList(next);
+    // Dispositions drive the consolidation plan; refresh it in the background.
+    void refreshOverlap();
   }
 
   function onItemUpdate(next: CapabilityItem): void {
@@ -726,6 +752,7 @@ Components carry no cost of their own — this licence keeps its full value.`,
             <EditableCapabilityTable
               items={list.items}
               onItemUpdate={onItemUpdate}
+              onBulkDisposition={readOnly ? undefined : onBulkDisposition}
               readOnly={readOnly}
               onSplitBundle={readOnly ? undefined : onSplitBundle}
             />
