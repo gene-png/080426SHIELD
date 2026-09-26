@@ -190,7 +190,7 @@ routes/zt.py:1747      "target_stage_source": "client"         <- ADJACENT LINE
 A DoD engagement whose client chose Stage 4 gets an audit row reading
 `target_stage: 3, target_stage_source: "client"` — the false value and the false
 attribution of it, side by side, in the record that exists to establish
-provenance, on a FedRAMP-target platform. The guard keys on whether a value was
+provenance. The guard keys on whether a value was
 **offered**, never whether it **survived**.
 
 **The fix starts at the UI, which offers the impossible choice.**

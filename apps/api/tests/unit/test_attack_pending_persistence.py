@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.models.capability import CapabilityItem, CapabilityList, CapabilityListStatus
 from app.models.service import Service, ServiceKind, ServiceStatus
+from tests._attack_rows import standalone_rows
 
 
 @pytest.fixture()
@@ -106,7 +107,10 @@ def _service(c: TestClient, h: dict) -> tuple[str, list[str]]:
         "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "Acme ATT&CK"}
     ).json()["id"]
     a = c.post(f"/attack/services/{svc_id}/assessments", headers=h)
-    return svc_id, [row["technique_code"] for row in a.json()["coverage"]]
+    # STANDALONE techniques (#554, D-094): the first coverage row is T1001, a
+    # computed parent, which neither the PATCH nor Run AI may score. Every test
+    # here needs a row a consultant or the model can score.
+    return svc_id, [row["technique_code"] for row in standalone_rows(a.json()["coverage"], 2)]
 
 
 def _row(payload: dict, code: str) -> dict:

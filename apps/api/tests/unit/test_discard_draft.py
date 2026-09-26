@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.models.audit_entry import AuditEntry
+from tests._attack_rows import first_standalone
 
 
 @pytest.fixture()
@@ -118,8 +119,14 @@ def _audit_count(TestSession: sessionmaker, action: str) -> int:
 # --- tech-debt -------------------------------------------------------------
 
 
-def _td_extract(c: TestClient, bearer: str, provider: FixtureProvider) -> tuple[str, str, str]:
+def _td_extract(
+    c: TestClient, bearer: str, provider: FixtureProvider, *, decided: bool = False
+) -> tuple[str, str, str]:
     """Open a tech-debt service, upload a CSV, extract a v1 draft list.
+
+    `decided` gives every extracted row a `keep` disposition through the real
+    PATCH, for a caller that goes on to approve: approval refuses undecided rows
+    (#639). The default leaves them as extraction produces them.
 
     Returns (service_id, list_id, artifact_id).
     """
@@ -141,6 +148,14 @@ def _td_extract(c: TestClient, bearer: str, provider: FixtureProvider) -> tuple[
         json={"artifact_id": artifact_id},
     )
     assert er.status_code == 201, er.text
+    if decided:
+        for item in er.json()["items"]:
+            r = c.patch(
+                f"/tech-debt/capability-items/{item['id']}",
+                headers=_hdr(bearer),
+                json={"disposition": "keep"},
+            )
+            assert r.status_code == 200, r.text
     return svc_id, er.json()["id"], artifact_id
 
 
@@ -230,7 +245,7 @@ def test_techdebt_rediscard_idempotent_no_second_audit(app_client) -> None:
 def test_techdebt_discard_approved_409(app_client) -> None:
     c, _TS, provider = app_client
     bearer = _admin(c)
-    _svc, list_id, _art = _td_extract(c, bearer, provider)
+    _svc, list_id, _art = _td_extract(c, bearer, provider, decided=True)
     _td_approve(c, bearer, list_id)
 
     r = c.post(f"/tech-debt/capability-lists/{list_id}/discard", headers=_hdr(bearer))
@@ -265,7 +280,7 @@ def test_techdebt_version_trap_discard_non_v1_then_mint(app_client) -> None:
     """v1 approved -> v2 draft -> discard v2 -> next extract mints v3, no IntegrityError."""
     c, _TS, provider = app_client
     bearer = _admin(c)
-    svc_id, list_v1, artifact_id = _td_extract(c, bearer, provider)
+    svc_id, list_v1, artifact_id = _td_extract(c, bearer, provider, decided=True)
     _td_approve(c, bearer, list_v1)
 
     # Mint v2 draft.
@@ -296,7 +311,7 @@ def test_techdebt_version_trap_discard_non_v1_then_mint(app_client) -> None:
 def test_techdebt_latest_after_discard_returns_prior_approved(app_client) -> None:
     c, _TS, provider = app_client
     bearer = _admin(c)
-    svc_id, list_v1, artifact_id = _td_extract(c, bearer, provider)
+    svc_id, list_v1, artifact_id = _td_extract(c, bearer, provider, decided=True)
     _td_approve(c, bearer, list_v1)
     r2 = c.post(
         f"/tech-debt/services/{svc_id}/capability-lists/extract",
@@ -451,7 +466,7 @@ def test_attack_version_trap_and_child_mutation_after_discard(app_client) -> Non
     assert a2r.status_code == 201
     a2 = a2r.json()
     assert a2["version"] == 2
-    coverage_id = a2["coverage"][0]["id"]
+    coverage_id = first_standalone(a2["coverage"])["id"]
 
     d = c.post(f"/attack/assessments/{a2['id']}/discard", headers=_hdr(bearer))
     assert d.status_code == 200, d.text
@@ -629,7 +644,8 @@ def test_zt_version_trap(app_client) -> None:
     c, _TS, _p = app_client
     bearer = _admin(c)
     svc_id, a1 = _zt_assessment(c, bearer)
-    c.post(f"/zt/assessments/{a1['id']}/approve", headers=_hdr(bearer))
+    zap = c.post(f"/zt/assessments/{a1['id']}/approve", headers=_hdr(bearer))
+    assert zap.status_code == 200, zap.text
     a2 = c.post(f"/zt/services/{svc_id}/assessments", headers=_hdr(bearer)).json()
     assert a2["version"] == 2
     c.post(f"/zt/assessments/{a2['id']}/discard", headers=_hdr(bearer))
@@ -665,7 +681,7 @@ def test_risk_gate_and_findings_skip_discarded(app_client) -> None:
     admin_id = _uuid.UUID(reg["user"]["id"])
     client_id = _uuid.UUID(c.headers["X-Client-Id"])
 
-    from app.attack.catalog import SOURCE_VERSION
+    from app.attack.catalog import SOURCE_VERSION, TECHNIQUES
     from app.models.attack_assessment import (
         AttackAssessment,
         AttackAssessmentStatus,
@@ -674,6 +690,11 @@ def test_risk_gate_and_findings_skip_discarded(app_client) -> None:
     from app.models.csf_assessment import CsfAssessment, CsfAssessmentStatus
     from app.models.service import ServiceKind
     from app.routes.risk import _gate, _gather_findings
+
+    # A STANDALONE technique (#620): a computed parent's findings come through
+    # its sub-techniques under D-094, so a parent here would make the count
+    # depend on the rule set rather than on the discard this test is about.
+    code = first_standalone([{"technique_code": t.id} for t in TECHNIQUES])["technique_code"]
 
     with TestSession() as db:
         # Attack v1 APPROVED with a gap; v2 DISCARDED without.
@@ -688,6 +709,9 @@ def test_risk_gate_and_findings_skip_discarded(app_client) -> None:
             # As `create_assessment` stamps it (#556); a NULL here is the
             # stale state, which synthesis now refuses.
             catalog_version=SOURCE_VERSION,
+            # What approve writes (#620, migration 0054). An APPROVED row with
+            # NULL is a state the application cannot produce.
+            parent_rules=2,
         )
         a2 = AttackAssessment(
             service_id=attack_svc.id,
@@ -704,7 +728,7 @@ def test_risk_gate_and_findings_skip_discarded(app_client) -> None:
             AttackCoverage(
                 assessment_id=a1.id,
                 client_id=client_id,
-                technique_code="T1003",
+                technique_code=code,
                 status="gap",
             )
         )
@@ -712,7 +736,7 @@ def test_risk_gate_and_findings_skip_discarded(app_client) -> None:
             AttackCoverage(
                 assessment_id=a2.id,
                 client_id=client_id,
-                technique_code="T1003",
+                technique_code=code,
                 status="covered",
             )
         )
@@ -738,7 +762,7 @@ def test_risk_gate_and_findings_skip_discarded(app_client) -> None:
         attack_findings = [f for f in findings if f["kind"] == "attack"]
         # The gap comes from v1; v2's "covered" must never be read.
         assert len(attack_findings) == 1
-        assert attack_findings[0]["source_id"] == "T1003"
+        assert attack_findings[0]["source_id"] == code
         assert "gap" in attack_findings[0]["label"]
 
 

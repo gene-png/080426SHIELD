@@ -224,8 +224,9 @@ export function AttackCitationAccounting({
           {(result.unresolved_fields ?? []).length > 0
             ? ` (${(result.unresolved_fields ?? []).join(", ")})`
             : ""}
-          . They stay held out of the coverage score. Re-run so the model
-          answers those fields, or set their tools yourself.
+          {/* #683: the rest of the sentence agrees with the counts above it --
+              "1 technique was" followed by "They ... their tools". */}
+          {`. ${result.rows_left_unresolved === 1 ? "It stays" : "They stay"} held out of the coverage score. Re-run so the model answers ${(result.unresolved_fields ?? []).length === 1 ? "that field" : "those fields"}, or set ${result.rows_left_unresolved === 1 ? "its" : "their"} tools yourself.`}
         </p>
       ) : null}
 

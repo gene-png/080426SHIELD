@@ -6,6 +6,8 @@ XLSX sheets:
                      (unconfirmed citations marked) and notes (all 600+ rows)
   - Gaps:            techniques flagged as Gap, ordered by technique code
   - Unscored:        techniques with no usable status, listed by code
+  Every catalogue technique code on the last three sheets links to its page on
+  attack.mitre.org (#647).
 
 PDF:
   Executive page with overall coverage % + per-tactic table, then the
@@ -20,10 +22,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from app.attack.analytics import CoverageRollup, TacticCoverage
-from app.attack.catalog import TACTICS, TECHNIQUES, technique_by_id
+from app.attack.catalog import TACTICS, TECHNIQUES, all_codes, technique_by_id, technique_url
 from app.attack.coverage import CoverageStatus, coverage_label
+from app.attack.parents import is_computed_parent
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.pending import uncleared_tools
+from app.attack.rules import parents_computed
 from app.client_naming import org_display_name
 from app.models.attack_assessment import AttackAssessment, AttackCoverage
 
@@ -38,6 +42,10 @@ class AttackDeliverableContext:
     assessment: AttackAssessment
     coverage: list[AttackCoverage]
     rollup: CoverageRollup
+    #: #620 (D-094): whether this assessment renders under D-094's rules for
+    #: computed parents (`attack/rules.py`). Derived once, in `build_context`,
+    #: so both sheets read the same answer. Required: no default rule.
+    parents_computed: bool
     #: Technique codes whose status the rollup is WITHHOLDING (#102).
     #:
     #: Derived once, here, and read by both the summary and the per-technique
@@ -56,6 +64,7 @@ def build_context(
     rollup: CoverageRollup,
 ) -> AttackDeliverableContext:
     rows = list(coverage)
+    rule = parents_computed(assessment)
     return AttackDeliverableContext(
         client_legal_name=org_display_name(client_legal_name),
         service_title=service_title,
@@ -65,7 +74,8 @@ def build_context(
         # The SAME function the caller used to build `rollup`, over the same
         # rows, so the sheet and the summary cannot disagree about which
         # techniques are withheld.
-        pending_codes=attack_pending_codes(rows),
+        pending_codes=attack_pending_codes(rows, parents_computed=rule),
+        parents_computed=rule,
     )
 
 
@@ -156,6 +166,24 @@ def _safe_text_row(ws, values: list) -> None:
     for cell in ws[ws.max_row]:
         if isinstance(cell.value, str) and cell.value.startswith("="):
             cell.data_type = "s"
+
+
+_CATALOGUE_CODES = all_codes()
+
+
+def _link_technique(ws, code: str) -> None:
+    """Link the code in column A of the row just appended to MITRE's page (#647).
+
+    Only a catalogue code is linked: a stored code the catalogue does not carry
+    is printed unlinked rather than pointed at a URL nobody checked exists.
+    The DOCX and PDF gap tables are left unlinked on purpose -- #647 asked for
+    the workbook, and those two carry at most fifty codes that the XLSX Gaps
+    sheet repeats with links."""
+    if code not in _CATALOGUE_CODES:
+        return
+    cell = ws.cell(row=ws.max_row, column=1)
+    cell.hyperlink = technique_url(code)
+    cell.style = "Hyperlink"
 
 
 def _is_unscored(cov: AttackCoverage | None) -> bool:
@@ -305,6 +333,11 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
         cov = cov_by_code.get(tech.id)
         tactic_str = ", ".join(_tactic_name(t) for t in tech.tactics)
         unconfirmed = uncleared_tools(cov.unconfirmed_citations) if cov else frozenset()
+        # #620 round 2 (D-094): a computed parent's evidence is its children's. Its
+        # own stored rationale and tools are what the model once wrote, and may
+        # contradict the computed status, so the deliverable does not print them.
+        # Derived here; the stored row is left alone.
+        own = None if ctx.parents_computed and is_computed_parent(tech.id) else cov
         _safe_text_row(
             ws2,
             [
@@ -314,13 +347,14 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
                 "sub" if tech.is_sub_technique else "parent",
                 _status_or_unscored(cov.status if cov else None),
                 "Yes" if tech.id in ctx.pending_codes else "",
-                (cov.rationale if cov else None) or "",
-                _tools(cov.detection_tools if cov else None, unconfirmed),
-                _tools(cov.prevention_tools if cov else None, unconfirmed),
-                _tools(cov.response_tools if cov else None, unconfirmed),
+                (own.rationale if own else None) or "",
+                _tools(own.detection_tools if own else None, unconfirmed),
+                _tools(own.prevention_tools if own else None, unconfirmed),
+                _tools(own.response_tools if own else None, unconfirmed),
                 (cov.notes if cov else None) or "",
             ],
         )
+        _link_technique(ws2, tech.id)
     widths2 = [14, 38, 28, 8, 12, 15, 60, 30, 30, 30, 40]
     for w, col in zip(widths2, range(1, len(widths2) + 1), strict=True):
         ws2.column_dimensions[get_column_letter(col)].width = w
@@ -343,9 +377,11 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
         except KeyError:
             tactic_str = ""
             name = cov.technique_code
-        _safe_text_row(
-            ws3, [cov.technique_code, name, tactic_str, cov.rationale or "", cov.notes or ""]
-        )
+        # The Coverage sheet's twin (#620 round 2): no parent's own rationale.
+        hide = ctx.parents_computed and is_computed_parent(cov.technique_code)
+        rationale = "" if hide else (cov.rationale or "")
+        _safe_text_row(ws3, [cov.technique_code, name, tactic_str, rationale, cov.notes or ""])
+        _link_technique(ws3, cov.technique_code)
     if not gap_rows:
         ws3.append(["—", "No gaps recorded", "", "", ""])
         ws3.cell(row=2, column=2).font = italic
@@ -366,6 +402,7 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
     unscored = [t for t in TECHNIQUES if _is_unscored(cov_by_code.get(t.id))]
     for tech in unscored:
         ws4.append([tech.id, tech.name, ", ".join(_tactic_name(t) for t in tech.tactics)])
+        _link_technique(ws4, tech.id)
     if not unscored:
         ws4.append(["—", "No unscored techniques", ""])
         ws4.cell(row=2, column=2).font = italic

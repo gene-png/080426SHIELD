@@ -12,11 +12,13 @@ from app.attack.catalog import TECHNIQUES
 from app.attack.coverage import CoverageStatus
 from app.attack.exporters import build_context, render_docx, render_pdf, render_xlsx
 from app.attack.pending import pending_codes as attack_pending_codes
+from app.attack.rules import parents_computed
 from app.models.attack_assessment import (
     AttackAssessment,
     AttackAssessmentStatus,
     AttackCoverage,
 )
+from tests._attack_rows import standalone_rows
 
 # Built with chr() rather than written as an escape. A tab typed as an
 # escape into this file arrived as a REAL control byte and broke the parse --
@@ -31,6 +33,7 @@ def _build_inputs(*, default_status: str | None = "covered"):
         service_id=uuid.uuid4(),
         version=1,
         status=AttackAssessmentStatus.APPROVED,
+        parent_rules=2,  # what approve writes (#620, migration 0054)
     )
     coverage: list[AttackCoverage] = []
     for t in TECHNIQUES:
@@ -427,6 +430,15 @@ def test_the_per_technique_sheet_marks_a_withheld_row() -> None:
 _RECON = "TA0043"
 
 
+#: STANDALONE techniques (#554, D-094). These tests each need a row that
+#: stands on its own evidence; `TECHNIQUES[0]` and `[4]` are computed parents,
+#: whose pending state derives from their children, which `_ctx_from` builds at
+#: `covered` with NULL citations -- so a parent there is always pending.
+_CODES = [
+    r["technique_code"] for r in standalone_rows([{"technique_code": t.id} for t in TECHNIQUES], 8)
+]
+
+
 def _ctx_from(rows: dict[str, dict], *, default_status: str | None = "covered"):
     """Every catalogue technique at `default_status`, with per-code overrides."""
     a, coverage, _ = _build_inputs(default_status=default_status)
@@ -435,8 +447,11 @@ def _ctx_from(rows: dict[str, dict], *, default_status: str | None = "covered"):
             setattr(cov, field, value)
     # Pending codes as production computes them, so a withheld row is withheld
     # here too (routes/attack.py builds the rollup the same way).
+    # The assessment's own rule, as production reads it (`a` is a draft, so
+    # the new rules) -- not a literal.
     rollup = compute_heatmap(
-        {c.technique_code: c.status for c in coverage}, attack_pending_codes(coverage)
+        {c.technique_code: c.status for c in coverage},
+        attack_pending_codes(coverage, parents_computed=parents_computed(a)),
     )
     ctx = build_context(
         client_legal_name="Atlas Defense Solutions",
@@ -463,7 +478,7 @@ def _xlsx(ctx):
 
 @pytest.mark.unit
 def test_the_coverage_sheet_carries_the_rationale_and_all_three_tool_lists() -> None:
-    code = TECHNIQUES[0].id
+    code = _CODES[0]
     ctx, _ = _ctx_from(
         {
             code: {
@@ -486,7 +501,7 @@ def test_the_coverage_sheet_carries_the_rationale_and_all_three_tool_lists() -> 
 
 @pytest.mark.unit
 def test_the_gaps_sheet_carries_the_rationale_for_each_gap() -> None:
-    code = TECHNIQUES[1].id
+    code = _CODES[1]
     ctx, _ = _ctx_from(
         {code: {"status": CoverageStatus.GAP.value, "rationale": "No tool observes this."}}
     )
@@ -500,7 +515,7 @@ def test_every_unscored_technique_is_listed_by_code_and_agrees_with_the_summary(
     # A null status and an unrecognised one are both unscored to the rollup
     # (`_validated`), so both must be listed -- the sheet may not use a
     # narrower predicate than the number it sits beside.
-    null_code, bogus_code = TECHNIQUES[2].id, TECHNIQUES[3].id
+    null_code, bogus_code = _CODES[2], _CODES[3]
     ctx, rollup = _ctx_from({null_code: {"status": None}, bogus_code: {"status": "bogus"}})
     listed = [r["Technique"] for r in _sheet_rows(_xlsx(ctx)["Unscored"])]
     assert sorted(listed) == sorted([null_code, bogus_code])
@@ -601,7 +616,7 @@ def test_an_inferred_tool_is_marked_unconfirmed_beside_a_confirmed_one() -> None
     """#102. A row with one confirmed tool is NOT pending review, so its
     inferred neighbour used to print exactly like a confirmed citation. The
     mark comes from `pending.uncleared_tools`: inferred and not cleared."""
-    code = TECHNIQUES[4].id
+    code = _CODES[4]
     ctx, _ = _ctx_from(
         {
             code: {
@@ -620,7 +635,7 @@ def test_an_inferred_tool_is_marked_unconfirmed_beside_a_confirmed_one() -> None
 
 @pytest.mark.unit
 def test_a_cleared_citation_is_not_marked() -> None:
-    code = TECHNIQUES[5].id
+    code = _CODES[5]
     ctx, _ = _ctx_from(
         {
             code: {
@@ -639,7 +654,7 @@ def test_a_cleared_citation_is_not_marked() -> None:
 def test_model_text_cannot_become_a_formula_or_break_the_workbook() -> None:
     """Rationale is model output and tool names come from a client upload.
     openpyxl stores a leading "=" as a formula and raises on control bytes."""
-    code, gap_code = TECHNIQUES[6].id, TECHNIQUES[7].id
+    code, gap_code = _CODES[6], _CODES[7]
     formula = '=HYPERLINK("http://example.test","click")'
     ctx, _ = _ctx_from(
         {
@@ -709,3 +724,32 @@ def test_the_client_entered_header_cells_are_safe_text() -> None:
     assert ws.cell(1, 2).value == "Atlas Defense"
     assert ws.cell(2, 2).value == '=HYPERLINK("http://example.test","click")'
     assert ws.cell(2, 2).data_type == "s"
+
+
+@pytest.mark.unit
+def test_a_computed_parent_delivers_no_rationale_or_tools_of_its_own() -> None:
+    """#620 round 2, finding 4. A recomputed parent keeps whatever rationale and
+    tools the model once wrote for it, and the workbook printed them beside a
+    computed status they may contradict. Its evidence is its sub-techniques'.
+    Stored data is left alone; only the deliverable stops emitting it. A child
+    in the same world keeps its own, so this is not a blanket blank."""
+    has_children = {t.parent_id for t in TECHNIQUES if t.parent_id is not None}
+    parent = sorted(has_children)[0]
+    child = next(t.id for t in TECHNIQUES if t.parent_id == parent)
+    stale = {
+        "status": "gap",
+        "rationale": "Stale model text.",
+        "detection_tools": ["Tool A"],
+        "prevention_tools": ["Tool A"],
+        "response_tools": ["Tool A"],
+    }
+    ctx, _ = _ctx_from({parent: stale, child: {**stale, "rationale": "Child text."}})
+    wb = _xlsx(ctx)
+    rows = {r["Technique"]: r for r in _sheet_rows(wb["Coverage"])}
+    for col in ("Rationale", "Detection tools", "Prevention tools", "Response tools"):
+        assert not rows[parent][col], (col, rows[parent][col])
+    assert rows[child]["Rationale"] == "Child text."
+    assert rows[child]["Detection tools"] == "Tool A"
+    gaps = {r["Technique"]: r for r in _sheet_rows(wb["Gaps"])}
+    assert not gaps[parent]["Rationale"]
+    assert gaps[child]["Rationale"] == "Child text."

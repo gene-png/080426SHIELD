@@ -1,0 +1,12908 @@
+{
+ "summary": "Coverage: 33.3%. 1 covered, 0 partial, 2 gaps, 0 pending review, 0 N/A across 3 scored techniques.",
+ "xlsx": {
+  "Coverage": [
+   [
+    "Technique",
+    "Name",
+    "Tactic(s)",
+    "Type",
+    "Status",
+    "Pending review",
+    "Rationale",
+    "Detection tools",
+    "Prevention tools",
+    "Response tools",
+    "Notes"
+   ],
+   [
+    "T1001",
+    "Data Obfuscation",
+    "Command and Control",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1001.001",
+    "Junk Data",
+    "Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1001.002",
+    "Steganography",
+    "Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1001.003",
+    "Protocol or Service Impersonation",
+    "Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1003",
+    "OS Credential Dumping",
+    "Credential Access",
+    "parent",
+    "Gap",
+    null,
+    "Parent gap text.",
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1003.001",
+    "LSASS Memory",
+    "Credential Access",
+    "sub",
+    "Gap",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1003.002",
+    "Security Account Manager",
+    "Credential Access",
+    "sub",
+    "Covered",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1003.003",
+    "NTDS",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1003.004",
+    "LSA Secrets",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1003.005",
+    "Cached Domain Credentials",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1003.006",
+    "DCSync",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1003.007",
+    "Proc Filesystem",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1003.008",
+    "/etc/passwd and /etc/shadow",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1005",
+    "Data from Local System",
+    "Collection",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1006",
+    "Direct Volume Access",
+    "Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1007",
+    "System Service Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1008",
+    "Fallback Channels",
+    "Command and Control",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1010",
+    "Application Window Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1011",
+    "Exfiltration Over Other Network Medium",
+    "Exfiltration",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1011.001",
+    "Exfiltration Over Bluetooth",
+    "Exfiltration",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1012",
+    "Query Registry",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1014",
+    "Rootkit",
+    "Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1016",
+    "System Network Configuration Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1016.001",
+    "Internet Connection Discovery",
+    "Discovery",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1016.002",
+    "Wi-Fi Discovery",
+    "Discovery",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1018",
+    "Remote System Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1020",
+    "Automated Exfiltration",
+    "Exfiltration",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1020.001",
+    "Traffic Duplication",
+    "Exfiltration",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1021",
+    "Remote Services",
+    "Lateral Movement",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1021.001",
+    "Remote Desktop Protocol",
+    "Lateral Movement",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1021.002",
+    "SMB/Windows Admin Shares",
+    "Lateral Movement",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1021.003",
+    "Distributed Component Object Model",
+    "Lateral Movement",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1021.004",
+    "SSH",
+    "Lateral Movement",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1021.005",
+    "VNC",
+    "Lateral Movement",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1021.006",
+    "Windows Remote Management",
+    "Lateral Movement",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1021.007",
+    "Cloud Services",
+    "Lateral Movement",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1021.008",
+    "Direct Cloud VM Connections",
+    "Lateral Movement",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1025",
+    "Data from Removable Media",
+    "Collection",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1027",
+    "Obfuscated Files or Information",
+    "Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1027.001",
+    "Binary Padding",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1027.002",
+    "Software Packing",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1027.003",
+    "Steganography",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1027.004",
+    "Compile After Delivery",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1027.005",
+    "Indicator Removal from Tools",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1027.006",
+    "HTML Smuggling",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1027.007",
+    "Dynamic API Resolution",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1027.008",
+    "Stripped Payloads",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1027.009",
+    "Embedded Payloads",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1027.010",
+    "Command Obfuscation",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1027.011",
+    "Fileless Storage",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1027.012",
+    "LNK Icon Smuggling",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1027.013",
+    "Encrypted/Encoded File",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1027.014",
+    "Polymorphic Code",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1027.015",
+    "Compression",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1027.016",
+    "Junk Code Insertion",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1027.017",
+    "SVG Smuggling",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1027.018",
+    "Invisible Unicode",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1029",
+    "Scheduled Transfer",
+    "Exfiltration",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1030",
+    "Data Transfer Size Limits",
+    "Exfiltration",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1033",
+    "System Owner/User Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1036",
+    "Masquerading",
+    "Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1036.001",
+    "Invalid Code Signature",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1036.002",
+    "Right-to-Left Override",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1036.003",
+    "Rename Legitimate Utilities",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1036.004",
+    "Masquerade Task or Service",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1036.005",
+    "Match Legitimate Resource Name or Location",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1036.006",
+    "Space after Filename",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1036.007",
+    "Double File Extension",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1036.008",
+    "Masquerade File Type",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1036.009",
+    "Break Process Trees",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1036.010",
+    "Masquerade Account Name",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1036.011",
+    "Overwrite Process Arguments",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1036.012",
+    "Browser Fingerprint",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1037",
+    "Boot or Logon Initialization Scripts",
+    "Persistence, Privilege Escalation",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1037.001",
+    "Logon Script (Windows)",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1037.002",
+    "Login Hook",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1037.003",
+    "Network Logon Script",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1037.004",
+    "RC Scripts",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1037.005",
+    "Startup Items",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1039",
+    "Data from Network Shared Drive",
+    "Collection",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1040",
+    "Network Sniffing",
+    "Credential Access, Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1041",
+    "Exfiltration Over C2 Channel",
+    "Exfiltration",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1046",
+    "Network Service Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1047",
+    "Windows Management Instrumentation",
+    "Execution",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1048",
+    "Exfiltration Over Alternative Protocol",
+    "Exfiltration",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1048.001",
+    "Exfiltration Over Symmetric Encrypted Non-C2 Protocol",
+    "Exfiltration",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1048.002",
+    "Exfiltration Over Asymmetric Encrypted Non-C2 Protocol",
+    "Exfiltration",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1048.003",
+    "Exfiltration Over Unencrypted Non-C2 Protocol",
+    "Exfiltration",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1049",
+    "System Network Connections Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1052",
+    "Exfiltration Over Physical Medium",
+    "Exfiltration",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1052.001",
+    "Exfiltration over USB",
+    "Exfiltration",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1053",
+    "Scheduled Task/Job",
+    "Execution, Persistence, Privilege Escalation",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1053.002",
+    "At",
+    "Execution, Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1053.003",
+    "Cron",
+    "Execution, Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1053.005",
+    "Scheduled Task",
+    "Execution, Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1053.006",
+    "Systemd Timers",
+    "Execution, Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1053.007",
+    "Container Orchestration Job",
+    "Execution, Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1055",
+    "Process Injection",
+    "Privilege Escalation, Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1055.001",
+    "Dynamic-link Library Injection",
+    "Privilege Escalation, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1055.002",
+    "Portable Executable Injection",
+    "Privilege Escalation, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1055.003",
+    "Thread Execution Hijacking",
+    "Privilege Escalation, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1055.004",
+    "Asynchronous Procedure Call",
+    "Privilege Escalation, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1055.005",
+    "Thread Local Storage",
+    "Privilege Escalation, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1055.008",
+    "Ptrace System Calls",
+    "Privilege Escalation, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1055.009",
+    "Proc Memory",
+    "Privilege Escalation, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1055.011",
+    "Extra Window Memory Injection",
+    "Privilege Escalation, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1055.012",
+    "Process Hollowing",
+    "Privilege Escalation, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1055.013",
+    "Process Doppelg\u00e4nging",
+    "Privilege Escalation, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1055.014",
+    "VDSO Hijacking",
+    "Privilege Escalation, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1055.015",
+    "ListPlanting",
+    "Privilege Escalation, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1056",
+    "Input Capture",
+    "Credential Access, Collection",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1056.001",
+    "Keylogging",
+    "Credential Access, Collection",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1056.002",
+    "GUI Input Capture",
+    "Credential Access, Collection",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1056.003",
+    "Web Portal Capture",
+    "Credential Access, Collection",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1056.004",
+    "Credential API Hooking",
+    "Credential Access, Collection",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1057",
+    "Process Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1059",
+    "Command and Scripting Interpreter",
+    "Execution",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1059.001",
+    "PowerShell",
+    "Execution",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1059.002",
+    "AppleScript",
+    "Execution",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1059.003",
+    "Windows Command Shell",
+    "Execution",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1059.004",
+    "Unix Shell",
+    "Execution",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1059.005",
+    "Visual Basic",
+    "Execution",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1059.006",
+    "Python",
+    "Execution",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1059.007",
+    "JavaScript",
+    "Execution",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1059.008",
+    "Network Device CLI",
+    "Execution",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1059.009",
+    "Cloud API",
+    "Execution",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1059.010",
+    "AutoHotKey & AutoIT",
+    "Execution",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1059.011",
+    "Lua",
+    "Execution",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1059.012",
+    "Hypervisor CLI",
+    "Execution",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1059.013",
+    "Container CLI/API",
+    "Execution",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1068",
+    "Exploitation for Privilege Escalation",
+    "Privilege Escalation",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1069",
+    "Permission Groups Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1069.001",
+    "Local Groups",
+    "Discovery",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1069.002",
+    "Domain Groups",
+    "Discovery",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1069.003",
+    "Cloud Groups",
+    "Discovery",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1070",
+    "Indicator Removal",
+    "Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1070.003",
+    "Clear Command History",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1070.004",
+    "File Deletion",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1070.005",
+    "Network Share Connection Removal",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1070.006",
+    "Timestomp",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1070.007",
+    "Clear Network Connection History and Configurations",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1070.008",
+    "Clear Mailbox Data",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1070.009",
+    "Clear Persistence",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1070.010",
+    "Relocate Malware",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1071",
+    "Application Layer Protocol",
+    "Command and Control",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1071.001",
+    "Web Protocols",
+    "Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1071.002",
+    "File Transfer Protocols",
+    "Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1071.003",
+    "Mail Protocols",
+    "Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1071.004",
+    "DNS",
+    "Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1071.005",
+    "Publish/Subscribe Protocols",
+    "Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1072",
+    "Software Deployment Tools",
+    "Execution, Lateral Movement",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1074",
+    "Data Staged",
+    "Collection",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1074.001",
+    "Local Data Staging",
+    "Collection",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1074.002",
+    "Remote Data Staging",
+    "Collection",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1078",
+    "Valid Accounts",
+    "Initial Access, Persistence, Privilege Escalation, Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1078.001",
+    "Default Accounts",
+    "Initial Access, Persistence, Privilege Escalation, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1078.002",
+    "Domain Accounts",
+    "Initial Access, Persistence, Privilege Escalation, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1078.003",
+    "Local Accounts",
+    "Initial Access, Persistence, Privilege Escalation, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1078.004",
+    "Cloud Accounts",
+    "Initial Access, Persistence, Privilege Escalation, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1080",
+    "Taint Shared Content",
+    "Lateral Movement",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1082",
+    "System Information Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1083",
+    "File and Directory Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1087",
+    "Account Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1087.001",
+    "Local Account",
+    "Discovery",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1087.002",
+    "Domain Account",
+    "Discovery",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1087.003",
+    "Email Account",
+    "Discovery",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1087.004",
+    "Cloud Account",
+    "Discovery",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1090",
+    "Proxy",
+    "Command and Control",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1090.001",
+    "Internal Proxy",
+    "Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1090.002",
+    "External Proxy",
+    "Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1090.003",
+    "Multi-hop Proxy",
+    "Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1090.004",
+    "Domain Fronting",
+    "Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1091",
+    "Replication Through Removable Media",
+    "Initial Access, Lateral Movement",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1092",
+    "Communication Through Removable Media",
+    "Command and Control",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1095",
+    "Non-Application Layer Protocol",
+    "Command and Control",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1098",
+    "Account Manipulation",
+    "Persistence, Privilege Escalation",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1098.001",
+    "Additional Cloud Credentials",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1098.002",
+    "Additional Email Delegate Permissions",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1098.003",
+    "Additional Cloud Roles",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1098.004",
+    "SSH Authorized Keys",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1098.005",
+    "Device Registration",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1098.006",
+    "Additional Container Cluster Roles",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1098.007",
+    "Additional Local or Domain Groups",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1102",
+    "Web Service",
+    "Command and Control",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1102.001",
+    "Dead Drop Resolver",
+    "Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1102.002",
+    "Bidirectional Communication",
+    "Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1102.003",
+    "One-Way Communication",
+    "Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1104",
+    "Multi-Stage Channels",
+    "Command and Control",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1105",
+    "Ingress Tool Transfer",
+    "Command and Control",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1106",
+    "Native API",
+    "Execution",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1110",
+    "Brute Force",
+    "Credential Access",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1110.001",
+    "Password Guessing",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1110.002",
+    "Password Cracking",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1110.003",
+    "Password Spraying",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1110.004",
+    "Credential Stuffing",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1111",
+    "Multi-Factor Authentication Interception",
+    "Credential Access",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1112",
+    "Modify Registry",
+    "Persistence, Defense Impairment",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1113",
+    "Screen Capture",
+    "Collection",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1114",
+    "Email Collection",
+    "Collection",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1114.001",
+    "Local Email Collection",
+    "Collection",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1114.002",
+    "Remote Email Collection",
+    "Collection",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1114.003",
+    "Email Forwarding Rule",
+    "Collection",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1115",
+    "Clipboard Data",
+    "Collection",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1119",
+    "Automated Collection",
+    "Collection",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1120",
+    "Peripheral Device Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1123",
+    "Audio Capture",
+    "Collection",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1124",
+    "System Time Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1125",
+    "Video Capture",
+    "Collection",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1127",
+    "Trusted Developer Utilities Proxy Execution",
+    "Execution, Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1127.001",
+    "MSBuild",
+    "Execution, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1127.002",
+    "ClickOnce",
+    "Execution, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1127.003",
+    "JamPlus",
+    "Execution, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1129",
+    "Shared Modules",
+    "Execution",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1132",
+    "Data Encoding",
+    "Command and Control",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1132.001",
+    "Standard Encoding",
+    "Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1132.002",
+    "Non-Standard Encoding",
+    "Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1133",
+    "External Remote Services",
+    "Initial Access, Persistence",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1134",
+    "Access Token Manipulation",
+    "Privilege Escalation, Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1134.001",
+    "Token Impersonation/Theft",
+    "Privilege Escalation, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1134.002",
+    "Create Process with Token",
+    "Privilege Escalation, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1134.003",
+    "Make and Impersonate Token",
+    "Privilege Escalation, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1134.004",
+    "Parent PID Spoofing",
+    "Privilege Escalation, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1134.005",
+    "SID-History Injection",
+    "Privilege Escalation, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1135",
+    "Network Share Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1136",
+    "Create Account",
+    "Persistence",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1136.001",
+    "Local Account",
+    "Persistence",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1136.002",
+    "Domain Account",
+    "Persistence",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1136.003",
+    "Cloud Account",
+    "Persistence",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1137",
+    "Office Application Startup",
+    "Persistence",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1137.001",
+    "Office Template Macros",
+    "Persistence",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1137.002",
+    "Office Test",
+    "Persistence",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1137.003",
+    "Outlook Forms",
+    "Persistence",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1137.004",
+    "Outlook Home Page",
+    "Persistence",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1137.005",
+    "Outlook Rules",
+    "Persistence",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1137.006",
+    "Add-ins",
+    "Persistence",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1140",
+    "Deobfuscate/Decode Files or Information",
+    "Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1176",
+    "Software Extensions",
+    "Persistence",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1176.001",
+    "Browser Extensions",
+    "Persistence",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1176.002",
+    "IDE Extensions",
+    "Persistence",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1185",
+    "Browser Session Hijacking",
+    "Collection",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1187",
+    "Forced Authentication",
+    "Credential Access",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1189",
+    "Drive-by Compromise",
+    "Initial Access",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1190",
+    "Exploit Public-Facing Application",
+    "Initial Access",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1195",
+    "Supply Chain Compromise",
+    "Initial Access",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1195.001",
+    "Compromise Software Dependencies and Development Tools",
+    "Initial Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1195.002",
+    "Compromise Software Supply Chain",
+    "Initial Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1195.003",
+    "Compromise Hardware Supply Chain",
+    "Initial Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1197",
+    "BITS Jobs",
+    "Execution, Persistence, Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1199",
+    "Trusted Relationship",
+    "Initial Access",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1200",
+    "Hardware Additions",
+    "Initial Access",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1201",
+    "Password Policy Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1202",
+    "Indirect Command Execution",
+    "Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1203",
+    "Exploitation for Client Execution",
+    "Execution",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1204",
+    "User Execution",
+    "Execution",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1204.001",
+    "Malicious Link",
+    "Execution",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1204.002",
+    "Malicious File",
+    "Execution",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1204.003",
+    "Malicious Image",
+    "Execution",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1204.004",
+    "Malicious Copy and Paste",
+    "Execution",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1204.005",
+    "Malicious Library",
+    "Execution",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1205",
+    "Traffic Signaling",
+    "Persistence, Stealth, Command and Control",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1205.001",
+    "Port Knocking",
+    "Persistence, Stealth, Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1205.002",
+    "Socket Filters",
+    "Persistence, Stealth, Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1207",
+    "Rogue Domain Controller",
+    "Defense Impairment",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1210",
+    "Exploitation of Remote Services",
+    "Lateral Movement",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1211",
+    "Exploitation for Stealth",
+    "Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1212",
+    "Exploitation for Credential Access",
+    "Credential Access",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1213",
+    "Data from Information Repositories",
+    "Collection",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1213.001",
+    "Confluence",
+    "Collection",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1213.002",
+    "Sharepoint",
+    "Collection",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1213.003",
+    "Code Repositories",
+    "Collection",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1213.004",
+    "Customer Relationship Management Software",
+    "Collection",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1213.005",
+    "Messaging Applications",
+    "Collection",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1213.006",
+    "Databases",
+    "Collection",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1216",
+    "System Script Proxy Execution",
+    "Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1216.001",
+    "PubPrn",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1216.002",
+    "SyncAppvPublishingServer",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1217",
+    "Browser Information Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1218",
+    "System Binary Proxy Execution",
+    "Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1218.001",
+    "Compiled HTML File",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1218.002",
+    "Control Panel",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1218.003",
+    "CMSTP",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1218.004",
+    "InstallUtil",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1218.005",
+    "Mshta",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1218.007",
+    "Msiexec",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1218.008",
+    "Odbcconf",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1218.009",
+    "Regsvcs/Regasm",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1218.010",
+    "Regsvr32",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1218.011",
+    "Rundll32",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1218.012",
+    "Verclsid",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1218.013",
+    "Mavinject",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1218.014",
+    "MMC",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1218.015",
+    "Electron Applications",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1219",
+    "Remote Access Tools",
+    "Command and Control",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1219.001",
+    "IDE Tunneling",
+    "Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1219.002",
+    "Remote Desktop Software",
+    "Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1219.003",
+    "Remote Access Hardware",
+    "Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1220",
+    "XSL Script Processing",
+    "Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1221",
+    "Template Injection",
+    "Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1222",
+    "File and Directory Permissions Modification",
+    "Defense Impairment",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1222.001",
+    "Windows Permissions",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1222.002",
+    "Linux and Mac Permissions",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1480",
+    "Execution Guardrails",
+    "Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1480.001",
+    "Environmental Keying",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1480.002",
+    "Mutual Exclusion",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1482",
+    "Domain Trust Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1484",
+    "Domain or Tenant Policy Modification",
+    "Privilege Escalation, Defense Impairment",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1484.001",
+    "Group Policy Modification",
+    "Privilege Escalation, Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1484.002",
+    "Trust Modification",
+    "Privilege Escalation, Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1485",
+    "Data Destruction",
+    "Impact",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1485.001",
+    "Lifecycle-Triggered Deletion",
+    "Impact",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1486",
+    "Data Encrypted for Impact",
+    "Impact",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1489",
+    "Service Stop",
+    "Impact",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1490",
+    "Inhibit System Recovery",
+    "Impact",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1491",
+    "Defacement",
+    "Impact",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1491.001",
+    "Internal Defacement",
+    "Impact",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1491.002",
+    "External Defacement",
+    "Impact",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1495",
+    "Firmware Corruption",
+    "Impact",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1496",
+    "Resource Hijacking",
+    "Impact",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1496.001",
+    "Compute Hijacking",
+    "Impact",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1496.002",
+    "Bandwidth Hijacking",
+    "Impact",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1496.003",
+    "SMS Pumping",
+    "Impact",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1496.004",
+    "Cloud Service Hijacking",
+    "Impact",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1497",
+    "Virtualization/Sandbox Evasion",
+    "Stealth, Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1497.001",
+    "System Checks",
+    "Stealth, Discovery",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1497.002",
+    "User Activity Based Checks",
+    "Stealth, Discovery",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1497.003",
+    "Time Based Checks",
+    "Stealth, Discovery",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1498",
+    "Network Denial of Service",
+    "Impact",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1498.001",
+    "Direct Network Flood",
+    "Impact",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1498.002",
+    "Reflection Amplification",
+    "Impact",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1499",
+    "Endpoint Denial of Service",
+    "Impact",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1499.001",
+    "OS Exhaustion Flood",
+    "Impact",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1499.002",
+    "Service Exhaustion Flood",
+    "Impact",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1499.003",
+    "Application Exhaustion Flood",
+    "Impact",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1499.004",
+    "Application or System Exploitation",
+    "Impact",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1505",
+    "Server Software Component",
+    "Persistence",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1505.001",
+    "SQL Stored Procedures",
+    "Persistence",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1505.002",
+    "Transport Agent",
+    "Persistence",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1505.003",
+    "Web Shell",
+    "Persistence",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1505.004",
+    "IIS Components",
+    "Persistence",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1505.005",
+    "Terminal Services DLL",
+    "Persistence",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1505.006",
+    "vSphere Installation Bundles",
+    "Persistence",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1518",
+    "Software Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1518.001",
+    "Security Software Discovery",
+    "Discovery",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1518.002",
+    "Backup Software Discovery",
+    "Discovery",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1525",
+    "Implant Internal Image",
+    "Persistence",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1526",
+    "Cloud Service Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1528",
+    "Steal Application Access Token",
+    "Credential Access",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1529",
+    "System Shutdown/Reboot",
+    "Impact",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1530",
+    "Data from Cloud Storage",
+    "Collection",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1531",
+    "Account Access Removal",
+    "Impact",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1534",
+    "Internal Spearphishing",
+    "Lateral Movement",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1535",
+    "Unused/Unsupported Cloud Regions",
+    "Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1537",
+    "Transfer Data to Cloud Account",
+    "Exfiltration",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1538",
+    "Cloud Service Dashboard",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1539",
+    "Steal Web Session Cookie",
+    "Credential Access",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1542",
+    "Pre-OS Boot",
+    "Persistence, Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1542.001",
+    "System Firmware",
+    "Persistence, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1542.002",
+    "Component Firmware",
+    "Persistence, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1542.003",
+    "Bootkit",
+    "Persistence, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1542.004",
+    "ROMMONkit",
+    "Persistence, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1542.005",
+    "TFTP Boot",
+    "Persistence, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1543",
+    "Create or Modify System Process",
+    "Persistence, Privilege Escalation",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1543.001",
+    "Launch Agent",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1543.002",
+    "Systemd Service",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1543.003",
+    "Windows Service",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1543.004",
+    "Launch Daemon",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1543.005",
+    "Container Service",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1546",
+    "Event Triggered Execution",
+    "Persistence, Privilege Escalation",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1546.001",
+    "Change Default File Association",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1546.002",
+    "Screensaver",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1546.003",
+    "Windows Management Instrumentation Event Subscription",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1546.004",
+    "Unix Shell Configuration Modification",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1546.005",
+    "Trap",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1546.006",
+    "LC_LOAD_DYLIB Addition",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1546.007",
+    "Netsh Helper DLL",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1546.008",
+    "Accessibility Features",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1546.009",
+    "AppCert DLLs",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1546.010",
+    "AppInit DLLs",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1546.011",
+    "Application Shimming",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1546.012",
+    "Image File Execution Options Injection",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1546.013",
+    "PowerShell Profile",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1546.014",
+    "Emond",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1546.015",
+    "Component Object Model Hijacking",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1546.016",
+    "Installer Packages",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1546.017",
+    "Udev Rules",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1546.018",
+    "Python Startup Hooks",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1547",
+    "Boot or Logon Autostart Execution",
+    "Persistence, Privilege Escalation",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1547.001",
+    "Registry Run Keys / Startup Folder",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1547.002",
+    "Authentication Package",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1547.003",
+    "Time Providers",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1547.004",
+    "Winlogon Helper DLL",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1547.005",
+    "Security Support Provider",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1547.006",
+    "Kernel Modules and Extensions",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1547.007",
+    "Re-opened Applications",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1547.008",
+    "LSASS Driver",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1547.009",
+    "Shortcut Modification",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1547.010",
+    "Port Monitors",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1547.012",
+    "Print Processors",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1547.013",
+    "XDG Autostart Entries",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1547.014",
+    "Active Setup",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1547.015",
+    "Login Items",
+    "Persistence, Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1548",
+    "Abuse Elevation Control Mechanism",
+    "Privilege Escalation",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1548.001",
+    "Setuid and Setgid",
+    "Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1548.002",
+    "Bypass User Account Control",
+    "Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1548.003",
+    "Sudo and Sudo Caching",
+    "Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1548.004",
+    "Elevated Execution with Prompt",
+    "Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1548.005",
+    "Temporary Elevated Cloud Access",
+    "Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1548.006",
+    "TCC Manipulation",
+    "Privilege Escalation",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1550",
+    "Use Alternate Authentication Material",
+    "Lateral Movement",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1550.001",
+    "Application Access Token",
+    "Lateral Movement",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1550.002",
+    "Pass the Hash",
+    "Lateral Movement",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1550.003",
+    "Pass the Ticket",
+    "Lateral Movement",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1550.004",
+    "Web Session Cookie",
+    "Lateral Movement",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1552",
+    "Unsecured Credentials",
+    "Credential Access",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1552.001",
+    "Credentials In Files",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1552.002",
+    "Credentials in Registry",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1552.003",
+    "Shell History",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1552.004",
+    "Private Keys",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1552.005",
+    "Cloud Instance Metadata API",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1552.006",
+    "Group Policy Preferences",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1552.007",
+    "Container API",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1552.008",
+    "Chat Messages",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1553",
+    "Subvert Trust Controls",
+    "Defense Impairment",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1553.001",
+    "Gatekeeper Bypass",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1553.002",
+    "Code Signing",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1553.003",
+    "SIP and Trust Provider Hijacking",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1553.004",
+    "Install Root Certificate",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1553.005",
+    "Mark-of-the-Web Bypass",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1553.006",
+    "Code Signing Policy Modification",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1554",
+    "Compromise Host Software Binary",
+    "Persistence",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1555",
+    "Credentials from Password Stores",
+    "Credential Access",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1555.001",
+    "Keychain",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1555.002",
+    "Securityd Memory",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1555.003",
+    "Credentials from Web Browsers",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1555.004",
+    "Windows Credential Manager",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1555.005",
+    "Password Managers",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1555.006",
+    "Cloud Secrets Management Stores",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1556",
+    "Modify Authentication Process",
+    "Persistence, Defense Impairment, Credential Access",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1556.001",
+    "Domain Controller Authentication",
+    "Persistence, Defense Impairment, Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1556.002",
+    "Password Filter DLL",
+    "Persistence, Defense Impairment, Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1556.003",
+    "Pluggable Authentication Modules",
+    "Persistence, Defense Impairment, Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1556.004",
+    "Network Device Authentication",
+    "Persistence, Defense Impairment, Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1556.005",
+    "Reversible Encryption",
+    "Persistence, Defense Impairment, Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1556.006",
+    "Multi-Factor Authentication",
+    "Persistence, Defense Impairment, Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1556.007",
+    "Hybrid Identity",
+    "Persistence, Defense Impairment, Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1556.008",
+    "Network Provider DLL",
+    "Persistence, Defense Impairment, Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1556.009",
+    "Conditional Access Policies",
+    "Persistence, Defense Impairment, Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1557",
+    "Adversary-in-the-Middle",
+    "Credential Access, Collection",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1557.001",
+    "Name Resolution Poisoning and SMB Relay",
+    "Credential Access, Collection",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1557.002",
+    "ARP Cache Poisoning",
+    "Credential Access, Collection",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1557.003",
+    "DHCP Spoofing",
+    "Credential Access, Collection",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1557.004",
+    "Evil Twin",
+    "Credential Access, Collection",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1558",
+    "Steal or Forge Kerberos Tickets",
+    "Credential Access",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1558.001",
+    "Golden Ticket",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1558.002",
+    "Silver Ticket",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1558.003",
+    "Kerberoasting",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1558.004",
+    "AS-REP Roasting",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1558.005",
+    "Ccache Files",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1559",
+    "Inter-Process Communication",
+    "Execution",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1559.001",
+    "Component Object Model",
+    "Execution",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1559.002",
+    "Dynamic Data Exchange",
+    "Execution",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1559.003",
+    "XPC Services",
+    "Execution",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1560",
+    "Archive Collected Data",
+    "Collection",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1560.001",
+    "Archive via Utility",
+    "Collection",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1560.002",
+    "Archive via Library",
+    "Collection",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1560.003",
+    "Archive via Custom Method",
+    "Collection",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1561",
+    "Disk Wipe",
+    "Impact",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1561.001",
+    "Disk Content Wipe",
+    "Impact",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1561.002",
+    "Disk Structure Wipe",
+    "Impact",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1563",
+    "Remote Service Session Hijacking",
+    "Lateral Movement",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1563.001",
+    "SSH Hijacking",
+    "Lateral Movement",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1563.002",
+    "RDP Hijacking",
+    "Lateral Movement",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1564",
+    "Hide Artifacts",
+    "Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1564.001",
+    "Hidden Files and Directories",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1564.002",
+    "Hidden Users",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1564.003",
+    "Hidden Window",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1564.004",
+    "NTFS File Attributes",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1564.005",
+    "Hidden File System",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1564.006",
+    "Run Virtual Instance",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1564.007",
+    "VBA Stomping",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1564.008",
+    "Email Hiding Rules",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1564.009",
+    "Resource Forking",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1564.010",
+    "Process Argument Spoofing",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1564.011",
+    "Ignore Process Interrupts",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1564.012",
+    "File/Path Exclusions",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1564.013",
+    "Bind Mounts",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1564.014",
+    "Extended Attributes",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1565",
+    "Data Manipulation",
+    "Impact",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1565.001",
+    "Stored Data Manipulation",
+    "Impact",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1565.002",
+    "Transmitted Data Manipulation",
+    "Impact",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1565.003",
+    "Runtime Data Manipulation",
+    "Impact",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1566",
+    "Phishing",
+    "Initial Access",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1566.001",
+    "Spearphishing Attachment",
+    "Initial Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1566.002",
+    "Spearphishing Link",
+    "Initial Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1566.003",
+    "Spearphishing via Service",
+    "Initial Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1566.004",
+    "Spearphishing Voice",
+    "Initial Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1567",
+    "Exfiltration Over Web Service",
+    "Exfiltration",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1567.001",
+    "Exfiltration to Code Repository",
+    "Exfiltration",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1567.002",
+    "Exfiltration to Cloud Storage",
+    "Exfiltration",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1567.003",
+    "Exfiltration to Text Storage Sites",
+    "Exfiltration",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1567.004",
+    "Exfiltration Over Webhook",
+    "Exfiltration",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1568",
+    "Dynamic Resolution",
+    "Command and Control",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1568.001",
+    "Fast Flux DNS",
+    "Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1568.002",
+    "Domain Generation Algorithms",
+    "Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1568.003",
+    "DNS Calculation",
+    "Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1569",
+    "System Services",
+    "Execution",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1569.001",
+    "Launchctl",
+    "Execution",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1569.002",
+    "Service Execution",
+    "Execution",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1569.003",
+    "Systemctl",
+    "Execution",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1570",
+    "Lateral Tool Transfer",
+    "Lateral Movement",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1571",
+    "Non-Standard Port",
+    "Command and Control",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1572",
+    "Protocol Tunneling",
+    "Command and Control",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1573",
+    "Encrypted Channel",
+    "Command and Control",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1573.001",
+    "Symmetric Cryptography",
+    "Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1573.002",
+    "Asymmetric Cryptography",
+    "Command and Control",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1574",
+    "Hijack Execution Flow",
+    "Execution, Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1574.001",
+    "DLL",
+    "Execution, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1574.004",
+    "Dylib Hijacking",
+    "Execution, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1574.005",
+    "Executable Installer File Permissions Weakness",
+    "Execution, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1574.006",
+    "Dynamic Linker Hijacking",
+    "Execution, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1574.007",
+    "Path Interception by PATH Environment Variable",
+    "Execution, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1574.008",
+    "Path Interception by Search Order Hijacking",
+    "Execution, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1574.009",
+    "Path Interception by Unquoted Path",
+    "Execution, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1574.010",
+    "Services File Permissions Weakness",
+    "Execution, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1574.011",
+    "Services Registry Permissions Weakness",
+    "Execution, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1574.012",
+    "COR_PROFILER",
+    "Execution, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1574.013",
+    "KernelCallbackTable",
+    "Execution, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1574.014",
+    "AppDomainManager",
+    "Execution, Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1578",
+    "Modify Cloud Compute Infrastructure",
+    "Defense Impairment",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1578.001",
+    "Create Snapshot",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1578.002",
+    "Create Cloud Instance",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1578.003",
+    "Delete Cloud Instance",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1578.004",
+    "Revert Cloud Instance",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1578.005",
+    "Modify Cloud Compute Configurations",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1580",
+    "Cloud Infrastructure Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1583",
+    "Acquire Infrastructure",
+    "Resource Development",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1583.001",
+    "Domains",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1583.002",
+    "DNS Server",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1583.003",
+    "Virtual Private Server",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1583.004",
+    "Server",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1583.005",
+    "Botnet",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1583.006",
+    "Web Services",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1583.007",
+    "Serverless",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1583.008",
+    "Malvertising",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1584",
+    "Compromise Infrastructure",
+    "Resource Development",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1584.001",
+    "Domains",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1584.002",
+    "DNS Server",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1584.003",
+    "Virtual Private Server",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1584.004",
+    "Server",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1584.005",
+    "Botnet",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1584.006",
+    "Web Services",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1584.007",
+    "Serverless",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1584.008",
+    "Network Devices",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1585",
+    "Establish Accounts",
+    "Resource Development",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1585.001",
+    "Social Media Accounts",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1585.002",
+    "Email Accounts",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1585.003",
+    "Cloud Accounts",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1586",
+    "Compromise Accounts",
+    "Resource Development",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1586.001",
+    "Social Media Accounts",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1586.002",
+    "Email Accounts",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1586.003",
+    "Cloud Accounts",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1587",
+    "Develop Capabilities",
+    "Resource Development",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1587.001",
+    "Malware",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1587.002",
+    "Code Signing Certificates",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1587.003",
+    "Digital Certificates",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1587.004",
+    "Exploits",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1588",
+    "Obtain Capabilities",
+    "Resource Development",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1588.001",
+    "Malware",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1588.002",
+    "Tool",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1588.003",
+    "Code Signing Certificates",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1588.004",
+    "Digital Certificates",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1588.005",
+    "Exploits",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1588.006",
+    "Vulnerabilities",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1588.007",
+    "Artificial Intelligence",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1589",
+    "Gather Victim Identity Information",
+    "Reconnaissance",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1589.001",
+    "Credentials",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1589.002",
+    "Email Addresses",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1589.003",
+    "Employee Names",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1590",
+    "Gather Victim Network Information",
+    "Reconnaissance",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1590.001",
+    "Domain Properties",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1590.002",
+    "DNS",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1590.003",
+    "Network Trust Dependencies",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1590.004",
+    "Network Topology",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1590.005",
+    "IP Addresses",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1590.006",
+    "Network Security Appliances",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1591",
+    "Gather Victim Org Information",
+    "Reconnaissance",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1591.001",
+    "Determine Physical Locations",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1591.002",
+    "Business Relationships",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1591.003",
+    "Identify Business Tempo",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1591.004",
+    "Identify Roles",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1592",
+    "Gather Victim Host Information",
+    "Reconnaissance",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1592.001",
+    "Hardware",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1592.002",
+    "Software",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1592.003",
+    "Firmware",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1592.004",
+    "Client Configurations",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1593",
+    "Search Open Websites/Domains",
+    "Reconnaissance",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1593.001",
+    "Social Media",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1593.002",
+    "Search Engines",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1593.003",
+    "Code Repositories",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1594",
+    "Search Victim-Owned Websites",
+    "Reconnaissance",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1595",
+    "Active Scanning",
+    "Reconnaissance",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1595.001",
+    "Scanning IP Blocks",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1595.002",
+    "Vulnerability Scanning",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1595.003",
+    "Wordlist Scanning",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1596",
+    "Search Open Technical Databases",
+    "Reconnaissance",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1596.001",
+    "DNS/Passive DNS",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1596.002",
+    "WHOIS",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1596.003",
+    "Digital Certificates",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1596.004",
+    "CDNs",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1596.005",
+    "Scan Databases",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1597",
+    "Search Closed Sources",
+    "Reconnaissance",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1597.001",
+    "Threat Intel Vendors",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1597.002",
+    "Purchase Technical Data",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1598",
+    "Phishing for Information",
+    "Reconnaissance",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1598.001",
+    "Spearphishing Service",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1598.002",
+    "Spearphishing Attachment",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1598.003",
+    "Spearphishing Link",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1598.004",
+    "Spearphishing Voice",
+    "Reconnaissance",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1599",
+    "Network Boundary Bridging",
+    "Defense Impairment",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1599.001",
+    "Network Address Translation Traversal",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1600",
+    "Weaken Encryption",
+    "Defense Impairment",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1600.001",
+    "Reduce Key Space",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1600.002",
+    "Disable Crypto Hardware",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1601",
+    "Modify System Image",
+    "Defense Impairment",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1601.001",
+    "Patch System Image",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1601.002",
+    "Downgrade System Image",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1602",
+    "Data from Configuration Repository",
+    "Collection",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1602.001",
+    "SNMP (MIB Dump)",
+    "Collection",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1602.002",
+    "Network Device Configuration Dump",
+    "Collection",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1606",
+    "Forge Web Credentials",
+    "Credential Access",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1606.001",
+    "Web Cookies",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1606.002",
+    "SAML Tokens",
+    "Credential Access",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1608",
+    "Stage Capabilities",
+    "Resource Development",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1608.001",
+    "Upload Malware",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1608.002",
+    "Upload Tool",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1608.003",
+    "Install Digital Certificate",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1608.004",
+    "Drive-by Target",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1608.005",
+    "Link Target",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1608.006",
+    "SEO Poisoning",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1609",
+    "Container Administration Command",
+    "Execution",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1610",
+    "Deploy Container",
+    "Execution",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1611",
+    "Escape to Host",
+    "Privilege Escalation",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1612",
+    "Build Image on Host",
+    "Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1613",
+    "Container and Resource Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1614",
+    "System Location Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1614.001",
+    "System Language Discovery",
+    "Discovery",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1615",
+    "Group Policy Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1619",
+    "Cloud Storage Object Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1620",
+    "Reflective Code Loading",
+    "Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1621",
+    "Multi-Factor Authentication Request Generation",
+    "Credential Access",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1622",
+    "Debugger Evasion",
+    "Stealth, Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1647",
+    "Plist File Modification",
+    "Defense Impairment",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1648",
+    "Serverless Execution",
+    "Execution",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1649",
+    "Steal or Forge Authentication Certificates",
+    "Credential Access",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1650",
+    "Acquire Access",
+    "Resource Development",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1651",
+    "Cloud Administration Command",
+    "Execution",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1652",
+    "Device Driver Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1653",
+    "Power Settings",
+    "Persistence",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1654",
+    "Log Enumeration",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1657",
+    "Financial Theft",
+    "Impact",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1659",
+    "Content Injection",
+    "Initial Access, Command and Control",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1665",
+    "Hide Infrastructure",
+    "Command and Control",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1666",
+    "Modify Cloud Resource Hierarchy",
+    "Defense Impairment",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1667",
+    "Email Bombing",
+    "Impact",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1668",
+    "Exclusive Control",
+    "Persistence",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1669",
+    "Wi-Fi Networks",
+    "Initial Access",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1671",
+    "Cloud Application Integration",
+    "Persistence",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1673",
+    "Virtual Machine Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1674",
+    "Input Injection",
+    "Execution",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1675",
+    "ESXi Administration Command",
+    "Execution",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1677",
+    "Poisoned Pipeline Execution",
+    "Execution",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1678",
+    "Delay Execution",
+    "Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1679",
+    "Selective Exclusion",
+    "Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1680",
+    "Local Storage Discovery",
+    "Discovery",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1681",
+    "Search Threat Vendor Data",
+    "Reconnaissance",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1682",
+    "Query Public AI Services",
+    "Reconnaissance",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1683",
+    "Generate Content",
+    "Resource Development",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1683.001",
+    "Written Content",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1683.002",
+    "Audio-Visual Content",
+    "Resource Development",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1684",
+    "Social Engineering",
+    "Stealth",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1684.001",
+    "Impersonation",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1684.002",
+    "Email Spoofing",
+    "Stealth",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1685",
+    "Disable or Modify Tools",
+    "Defense Impairment",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1685.001",
+    "Disable or Modify Windows Event Log",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1685.002",
+    "Disable or Modify Cloud Log",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1685.003",
+    "Modify or Spoof Tool UI",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1685.004",
+    "Disable or Modify Linux Audit System Log",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1685.005",
+    "Clear Windows Event Logs",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1685.006",
+    "Clear Linux or Mac System Logs",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1686",
+    "Disable or Modify System Firewall",
+    "Defense Impairment",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1686.001",
+    "Cloud Firewall",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1686.002",
+    "Network Device Firewall",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1686.003",
+    "Windows Host Firewall",
+    "Defense Impairment",
+    "sub",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1687",
+    "Exploitation for Defense Impairment",
+    "Defense Impairment",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1688",
+    "Safe Mode Boot",
+    "Defense Impairment",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1689",
+    "Downgrade Attack",
+    "Defense Impairment",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "T1690",
+    "Prevent Command History Logging",
+    "Defense Impairment",
+    "parent",
+    "Unscored",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ]
+  ],
+  "Gaps": [
+   [
+    "Technique",
+    "Name",
+    "Tactic(s)",
+    "Rationale",
+    "Notes"
+   ],
+   [
+    "T1003",
+    "OS Credential Dumping",
+    "Credential Access",
+    "Parent gap text.",
+    null
+   ],
+   [
+    "T1003.001",
+    "LSASS Memory",
+    "Credential Access",
+    null,
+    null
+   ]
+  ],
+  "Heatmap Summary": [
+   [
+    "Engagement",
+    "Golden Tenant",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "Service",
+    "Golden B",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "Assessment version",
+    1,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "Coverage %",
+    33.3,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "Scored / Total",
+    "3/697",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "Pending review",
+    0,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "Coverage % means",
+    "Coverage % = (Covered + 0.5 x Partial) / (Covered + Partial + Gap). N/A, Unscored and Pending review techniques are outside it; 'not measured' means no technique there has a Covered, Partial or Gap status, counting those pending review.",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "Tools marked (unconfirmed)",
+    "Inferred from a near-match to the client's tool list and not yet confirmed by a consultant.",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "Tactic",
+    "Name",
+    "Techniques",
+    "Sub-techniques",
+    "Covered",
+    "Partial",
+    "Gap",
+    "N/A",
+    "Unscored",
+    "Pending review",
+    "Coverage %"
+   ],
+   [
+    "TA0043",
+    "Reconnaissance",
+    12,
+    34,
+    0,
+    0,
+    0,
+    0,
+    46,
+    0,
+    "not measured"
+   ],
+   [
+    "TA0042",
+    "Resource Development",
+    9,
+    41,
+    0,
+    0,
+    0,
+    0,
+    50,
+    0,
+    "not measured"
+   ],
+   [
+    "TA0001",
+    "Initial Access",
+    11,
+    11,
+    0,
+    0,
+    0,
+    0,
+    22,
+    0,
+    "not measured"
+   ],
+   [
+    "TA0002",
+    "Execution",
+    20,
+    44,
+    0,
+    0,
+    0,
+    0,
+    64,
+    0,
+    "not measured"
+   ],
+   [
+    "TA0003",
+    "Persistence",
+    22,
+    91,
+    0,
+    0,
+    0,
+    0,
+    113,
+    0,
+    "not measured"
+   ],
+   [
+    "TA0004",
+    "Privilege Escalation",
+    13,
+    83,
+    0,
+    0,
+    0,
+    0,
+    96,
+    0,
+    "not measured"
+   ],
+   [
+    "TA0005",
+    "Stealth",
+    30,
+    118,
+    0,
+    0,
+    0,
+    0,
+    148,
+    0,
+    "not measured"
+   ],
+   [
+    "TA0112",
+    "Defense Impairment",
+    18,
+    38,
+    0,
+    0,
+    0,
+    0,
+    56,
+    0,
+    "not measured"
+   ],
+   [
+    "TA0006",
+    "Credential Access",
+    17,
+    50,
+    1,
+    0,
+    2,
+    0,
+    64,
+    0,
+    33.3
+   ],
+   [
+    "TA0007",
+    "Discovery",
+    34,
+    15,
+    0,
+    0,
+    0,
+    0,
+    49,
+    0,
+    "not measured"
+   ],
+   [
+    "TA0008",
+    "Lateral Movement",
+    9,
+    14,
+    0,
+    0,
+    0,
+    0,
+    23,
+    0,
+    "not measured"
+   ],
+   [
+    "TA0009",
+    "Collection",
+    17,
+    24,
+    0,
+    0,
+    0,
+    0,
+    41,
+    0,
+    "not measured"
+   ],
+   [
+    "TA0011",
+    "Command and Control",
+    18,
+    27,
+    0,
+    0,
+    0,
+    0,
+    45,
+    0,
+    "not measured"
+   ],
+   [
+    "TA0010",
+    "Exfiltration",
+    9,
+    10,
+    0,
+    0,
+    0,
+    0,
+    19,
+    0,
+    "not measured"
+   ],
+   [
+    "TA0040",
+    "Impact",
+    15,
+    18,
+    0,
+    0,
+    0,
+    0,
+    33,
+    0,
+    "not measured"
+   ]
+  ],
+  "Unscored": [
+   [
+    "Technique",
+    "Name",
+    "Tactic(s)"
+   ],
+   [
+    "T1001",
+    "Data Obfuscation",
+    "Command and Control"
+   ],
+   [
+    "T1001.001",
+    "Junk Data",
+    "Command and Control"
+   ],
+   [
+    "T1001.002",
+    "Steganography",
+    "Command and Control"
+   ],
+   [
+    "T1001.003",
+    "Protocol or Service Impersonation",
+    "Command and Control"
+   ],
+   [
+    "T1003.003",
+    "NTDS",
+    "Credential Access"
+   ],
+   [
+    "T1003.004",
+    "LSA Secrets",
+    "Credential Access"
+   ],
+   [
+    "T1003.005",
+    "Cached Domain Credentials",
+    "Credential Access"
+   ],
+   [
+    "T1003.006",
+    "DCSync",
+    "Credential Access"
+   ],
+   [
+    "T1003.007",
+    "Proc Filesystem",
+    "Credential Access"
+   ],
+   [
+    "T1003.008",
+    "/etc/passwd and /etc/shadow",
+    "Credential Access"
+   ],
+   [
+    "T1005",
+    "Data from Local System",
+    "Collection"
+   ],
+   [
+    "T1006",
+    "Direct Volume Access",
+    "Stealth"
+   ],
+   [
+    "T1007",
+    "System Service Discovery",
+    "Discovery"
+   ],
+   [
+    "T1008",
+    "Fallback Channels",
+    "Command and Control"
+   ],
+   [
+    "T1010",
+    "Application Window Discovery",
+    "Discovery"
+   ],
+   [
+    "T1011",
+    "Exfiltration Over Other Network Medium",
+    "Exfiltration"
+   ],
+   [
+    "T1011.001",
+    "Exfiltration Over Bluetooth",
+    "Exfiltration"
+   ],
+   [
+    "T1012",
+    "Query Registry",
+    "Discovery"
+   ],
+   [
+    "T1014",
+    "Rootkit",
+    "Stealth"
+   ],
+   [
+    "T1016",
+    "System Network Configuration Discovery",
+    "Discovery"
+   ],
+   [
+    "T1016.001",
+    "Internet Connection Discovery",
+    "Discovery"
+   ],
+   [
+    "T1016.002",
+    "Wi-Fi Discovery",
+    "Discovery"
+   ],
+   [
+    "T1018",
+    "Remote System Discovery",
+    "Discovery"
+   ],
+   [
+    "T1020",
+    "Automated Exfiltration",
+    "Exfiltration"
+   ],
+   [
+    "T1020.001",
+    "Traffic Duplication",
+    "Exfiltration"
+   ],
+   [
+    "T1021",
+    "Remote Services",
+    "Lateral Movement"
+   ],
+   [
+    "T1021.001",
+    "Remote Desktop Protocol",
+    "Lateral Movement"
+   ],
+   [
+    "T1021.002",
+    "SMB/Windows Admin Shares",
+    "Lateral Movement"
+   ],
+   [
+    "T1021.003",
+    "Distributed Component Object Model",
+    "Lateral Movement"
+   ],
+   [
+    "T1021.004",
+    "SSH",
+    "Lateral Movement"
+   ],
+   [
+    "T1021.005",
+    "VNC",
+    "Lateral Movement"
+   ],
+   [
+    "T1021.006",
+    "Windows Remote Management",
+    "Lateral Movement"
+   ],
+   [
+    "T1021.007",
+    "Cloud Services",
+    "Lateral Movement"
+   ],
+   [
+    "T1021.008",
+    "Direct Cloud VM Connections",
+    "Lateral Movement"
+   ],
+   [
+    "T1025",
+    "Data from Removable Media",
+    "Collection"
+   ],
+   [
+    "T1027",
+    "Obfuscated Files or Information",
+    "Stealth"
+   ],
+   [
+    "T1027.001",
+    "Binary Padding",
+    "Stealth"
+   ],
+   [
+    "T1027.002",
+    "Software Packing",
+    "Stealth"
+   ],
+   [
+    "T1027.003",
+    "Steganography",
+    "Stealth"
+   ],
+   [
+    "T1027.004",
+    "Compile After Delivery",
+    "Stealth"
+   ],
+   [
+    "T1027.005",
+    "Indicator Removal from Tools",
+    "Stealth"
+   ],
+   [
+    "T1027.006",
+    "HTML Smuggling",
+    "Stealth"
+   ],
+   [
+    "T1027.007",
+    "Dynamic API Resolution",
+    "Stealth"
+   ],
+   [
+    "T1027.008",
+    "Stripped Payloads",
+    "Stealth"
+   ],
+   [
+    "T1027.009",
+    "Embedded Payloads",
+    "Stealth"
+   ],
+   [
+    "T1027.010",
+    "Command Obfuscation",
+    "Stealth"
+   ],
+   [
+    "T1027.011",
+    "Fileless Storage",
+    "Stealth"
+   ],
+   [
+    "T1027.012",
+    "LNK Icon Smuggling",
+    "Stealth"
+   ],
+   [
+    "T1027.013",
+    "Encrypted/Encoded File",
+    "Stealth"
+   ],
+   [
+    "T1027.014",
+    "Polymorphic Code",
+    "Stealth"
+   ],
+   [
+    "T1027.015",
+    "Compression",
+    "Stealth"
+   ],
+   [
+    "T1027.016",
+    "Junk Code Insertion",
+    "Stealth"
+   ],
+   [
+    "T1027.017",
+    "SVG Smuggling",
+    "Stealth"
+   ],
+   [
+    "T1027.018",
+    "Invisible Unicode",
+    "Stealth"
+   ],
+   [
+    "T1029",
+    "Scheduled Transfer",
+    "Exfiltration"
+   ],
+   [
+    "T1030",
+    "Data Transfer Size Limits",
+    "Exfiltration"
+   ],
+   [
+    "T1033",
+    "System Owner/User Discovery",
+    "Discovery"
+   ],
+   [
+    "T1036",
+    "Masquerading",
+    "Stealth"
+   ],
+   [
+    "T1036.001",
+    "Invalid Code Signature",
+    "Stealth"
+   ],
+   [
+    "T1036.002",
+    "Right-to-Left Override",
+    "Stealth"
+   ],
+   [
+    "T1036.003",
+    "Rename Legitimate Utilities",
+    "Stealth"
+   ],
+   [
+    "T1036.004",
+    "Masquerade Task or Service",
+    "Stealth"
+   ],
+   [
+    "T1036.005",
+    "Match Legitimate Resource Name or Location",
+    "Stealth"
+   ],
+   [
+    "T1036.006",
+    "Space after Filename",
+    "Stealth"
+   ],
+   [
+    "T1036.007",
+    "Double File Extension",
+    "Stealth"
+   ],
+   [
+    "T1036.008",
+    "Masquerade File Type",
+    "Stealth"
+   ],
+   [
+    "T1036.009",
+    "Break Process Trees",
+    "Stealth"
+   ],
+   [
+    "T1036.010",
+    "Masquerade Account Name",
+    "Stealth"
+   ],
+   [
+    "T1036.011",
+    "Overwrite Process Arguments",
+    "Stealth"
+   ],
+   [
+    "T1036.012",
+    "Browser Fingerprint",
+    "Stealth"
+   ],
+   [
+    "T1037",
+    "Boot or Logon Initialization Scripts",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1037.001",
+    "Logon Script (Windows)",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1037.002",
+    "Login Hook",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1037.003",
+    "Network Logon Script",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1037.004",
+    "RC Scripts",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1037.005",
+    "Startup Items",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1039",
+    "Data from Network Shared Drive",
+    "Collection"
+   ],
+   [
+    "T1040",
+    "Network Sniffing",
+    "Credential Access, Discovery"
+   ],
+   [
+    "T1041",
+    "Exfiltration Over C2 Channel",
+    "Exfiltration"
+   ],
+   [
+    "T1046",
+    "Network Service Discovery",
+    "Discovery"
+   ],
+   [
+    "T1047",
+    "Windows Management Instrumentation",
+    "Execution"
+   ],
+   [
+    "T1048",
+    "Exfiltration Over Alternative Protocol",
+    "Exfiltration"
+   ],
+   [
+    "T1048.001",
+    "Exfiltration Over Symmetric Encrypted Non-C2 Protocol",
+    "Exfiltration"
+   ],
+   [
+    "T1048.002",
+    "Exfiltration Over Asymmetric Encrypted Non-C2 Protocol",
+    "Exfiltration"
+   ],
+   [
+    "T1048.003",
+    "Exfiltration Over Unencrypted Non-C2 Protocol",
+    "Exfiltration"
+   ],
+   [
+    "T1049",
+    "System Network Connections Discovery",
+    "Discovery"
+   ],
+   [
+    "T1052",
+    "Exfiltration Over Physical Medium",
+    "Exfiltration"
+   ],
+   [
+    "T1052.001",
+    "Exfiltration over USB",
+    "Exfiltration"
+   ],
+   [
+    "T1053",
+    "Scheduled Task/Job",
+    "Execution, Persistence, Privilege Escalation"
+   ],
+   [
+    "T1053.002",
+    "At",
+    "Execution, Persistence, Privilege Escalation"
+   ],
+   [
+    "T1053.003",
+    "Cron",
+    "Execution, Persistence, Privilege Escalation"
+   ],
+   [
+    "T1053.005",
+    "Scheduled Task",
+    "Execution, Persistence, Privilege Escalation"
+   ],
+   [
+    "T1053.006",
+    "Systemd Timers",
+    "Execution, Persistence, Privilege Escalation"
+   ],
+   [
+    "T1053.007",
+    "Container Orchestration Job",
+    "Execution, Persistence, Privilege Escalation"
+   ],
+   [
+    "T1055",
+    "Process Injection",
+    "Privilege Escalation, Stealth"
+   ],
+   [
+    "T1055.001",
+    "Dynamic-link Library Injection",
+    "Privilege Escalation, Stealth"
+   ],
+   [
+    "T1055.002",
+    "Portable Executable Injection",
+    "Privilege Escalation, Stealth"
+   ],
+   [
+    "T1055.003",
+    "Thread Execution Hijacking",
+    "Privilege Escalation, Stealth"
+   ],
+   [
+    "T1055.004",
+    "Asynchronous Procedure Call",
+    "Privilege Escalation, Stealth"
+   ],
+   [
+    "T1055.005",
+    "Thread Local Storage",
+    "Privilege Escalation, Stealth"
+   ],
+   [
+    "T1055.008",
+    "Ptrace System Calls",
+    "Privilege Escalation, Stealth"
+   ],
+   [
+    "T1055.009",
+    "Proc Memory",
+    "Privilege Escalation, Stealth"
+   ],
+   [
+    "T1055.011",
+    "Extra Window Memory Injection",
+    "Privilege Escalation, Stealth"
+   ],
+   [
+    "T1055.012",
+    "Process Hollowing",
+    "Privilege Escalation, Stealth"
+   ],
+   [
+    "T1055.013",
+    "Process Doppelg\u00e4nging",
+    "Privilege Escalation, Stealth"
+   ],
+   [
+    "T1055.014",
+    "VDSO Hijacking",
+    "Privilege Escalation, Stealth"
+   ],
+   [
+    "T1055.015",
+    "ListPlanting",
+    "Privilege Escalation, Stealth"
+   ],
+   [
+    "T1056",
+    "Input Capture",
+    "Credential Access, Collection"
+   ],
+   [
+    "T1056.001",
+    "Keylogging",
+    "Credential Access, Collection"
+   ],
+   [
+    "T1056.002",
+    "GUI Input Capture",
+    "Credential Access, Collection"
+   ],
+   [
+    "T1056.003",
+    "Web Portal Capture",
+    "Credential Access, Collection"
+   ],
+   [
+    "T1056.004",
+    "Credential API Hooking",
+    "Credential Access, Collection"
+   ],
+   [
+    "T1057",
+    "Process Discovery",
+    "Discovery"
+   ],
+   [
+    "T1059",
+    "Command and Scripting Interpreter",
+    "Execution"
+   ],
+   [
+    "T1059.001",
+    "PowerShell",
+    "Execution"
+   ],
+   [
+    "T1059.002",
+    "AppleScript",
+    "Execution"
+   ],
+   [
+    "T1059.003",
+    "Windows Command Shell",
+    "Execution"
+   ],
+   [
+    "T1059.004",
+    "Unix Shell",
+    "Execution"
+   ],
+   [
+    "T1059.005",
+    "Visual Basic",
+    "Execution"
+   ],
+   [
+    "T1059.006",
+    "Python",
+    "Execution"
+   ],
+   [
+    "T1059.007",
+    "JavaScript",
+    "Execution"
+   ],
+   [
+    "T1059.008",
+    "Network Device CLI",
+    "Execution"
+   ],
+   [
+    "T1059.009",
+    "Cloud API",
+    "Execution"
+   ],
+   [
+    "T1059.010",
+    "AutoHotKey & AutoIT",
+    "Execution"
+   ],
+   [
+    "T1059.011",
+    "Lua",
+    "Execution"
+   ],
+   [
+    "T1059.012",
+    "Hypervisor CLI",
+    "Execution"
+   ],
+   [
+    "T1059.013",
+    "Container CLI/API",
+    "Execution"
+   ],
+   [
+    "T1068",
+    "Exploitation for Privilege Escalation",
+    "Privilege Escalation"
+   ],
+   [
+    "T1069",
+    "Permission Groups Discovery",
+    "Discovery"
+   ],
+   [
+    "T1069.001",
+    "Local Groups",
+    "Discovery"
+   ],
+   [
+    "T1069.002",
+    "Domain Groups",
+    "Discovery"
+   ],
+   [
+    "T1069.003",
+    "Cloud Groups",
+    "Discovery"
+   ],
+   [
+    "T1070",
+    "Indicator Removal",
+    "Stealth"
+   ],
+   [
+    "T1070.003",
+    "Clear Command History",
+    "Stealth"
+   ],
+   [
+    "T1070.004",
+    "File Deletion",
+    "Stealth"
+   ],
+   [
+    "T1070.005",
+    "Network Share Connection Removal",
+    "Stealth"
+   ],
+   [
+    "T1070.006",
+    "Timestomp",
+    "Stealth"
+   ],
+   [
+    "T1070.007",
+    "Clear Network Connection History and Configurations",
+    "Stealth"
+   ],
+   [
+    "T1070.008",
+    "Clear Mailbox Data",
+    "Stealth"
+   ],
+   [
+    "T1070.009",
+    "Clear Persistence",
+    "Stealth"
+   ],
+   [
+    "T1070.010",
+    "Relocate Malware",
+    "Stealth"
+   ],
+   [
+    "T1071",
+    "Application Layer Protocol",
+    "Command and Control"
+   ],
+   [
+    "T1071.001",
+    "Web Protocols",
+    "Command and Control"
+   ],
+   [
+    "T1071.002",
+    "File Transfer Protocols",
+    "Command and Control"
+   ],
+   [
+    "T1071.003",
+    "Mail Protocols",
+    "Command and Control"
+   ],
+   [
+    "T1071.004",
+    "DNS",
+    "Command and Control"
+   ],
+   [
+    "T1071.005",
+    "Publish/Subscribe Protocols",
+    "Command and Control"
+   ],
+   [
+    "T1072",
+    "Software Deployment Tools",
+    "Execution, Lateral Movement"
+   ],
+   [
+    "T1074",
+    "Data Staged",
+    "Collection"
+   ],
+   [
+    "T1074.001",
+    "Local Data Staging",
+    "Collection"
+   ],
+   [
+    "T1074.002",
+    "Remote Data Staging",
+    "Collection"
+   ],
+   [
+    "T1078",
+    "Valid Accounts",
+    "Initial Access, Persistence, Privilege Escalation, Stealth"
+   ],
+   [
+    "T1078.001",
+    "Default Accounts",
+    "Initial Access, Persistence, Privilege Escalation, Stealth"
+   ],
+   [
+    "T1078.002",
+    "Domain Accounts",
+    "Initial Access, Persistence, Privilege Escalation, Stealth"
+   ],
+   [
+    "T1078.003",
+    "Local Accounts",
+    "Initial Access, Persistence, Privilege Escalation, Stealth"
+   ],
+   [
+    "T1078.004",
+    "Cloud Accounts",
+    "Initial Access, Persistence, Privilege Escalation, Stealth"
+   ],
+   [
+    "T1080",
+    "Taint Shared Content",
+    "Lateral Movement"
+   ],
+   [
+    "T1082",
+    "System Information Discovery",
+    "Discovery"
+   ],
+   [
+    "T1083",
+    "File and Directory Discovery",
+    "Discovery"
+   ],
+   [
+    "T1087",
+    "Account Discovery",
+    "Discovery"
+   ],
+   [
+    "T1087.001",
+    "Local Account",
+    "Discovery"
+   ],
+   [
+    "T1087.002",
+    "Domain Account",
+    "Discovery"
+   ],
+   [
+    "T1087.003",
+    "Email Account",
+    "Discovery"
+   ],
+   [
+    "T1087.004",
+    "Cloud Account",
+    "Discovery"
+   ],
+   [
+    "T1090",
+    "Proxy",
+    "Command and Control"
+   ],
+   [
+    "T1090.001",
+    "Internal Proxy",
+    "Command and Control"
+   ],
+   [
+    "T1090.002",
+    "External Proxy",
+    "Command and Control"
+   ],
+   [
+    "T1090.003",
+    "Multi-hop Proxy",
+    "Command and Control"
+   ],
+   [
+    "T1090.004",
+    "Domain Fronting",
+    "Command and Control"
+   ],
+   [
+    "T1091",
+    "Replication Through Removable Media",
+    "Initial Access, Lateral Movement"
+   ],
+   [
+    "T1092",
+    "Communication Through Removable Media",
+    "Command and Control"
+   ],
+   [
+    "T1095",
+    "Non-Application Layer Protocol",
+    "Command and Control"
+   ],
+   [
+    "T1098",
+    "Account Manipulation",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1098.001",
+    "Additional Cloud Credentials",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1098.002",
+    "Additional Email Delegate Permissions",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1098.003",
+    "Additional Cloud Roles",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1098.004",
+    "SSH Authorized Keys",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1098.005",
+    "Device Registration",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1098.006",
+    "Additional Container Cluster Roles",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1098.007",
+    "Additional Local or Domain Groups",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1102",
+    "Web Service",
+    "Command and Control"
+   ],
+   [
+    "T1102.001",
+    "Dead Drop Resolver",
+    "Command and Control"
+   ],
+   [
+    "T1102.002",
+    "Bidirectional Communication",
+    "Command and Control"
+   ],
+   [
+    "T1102.003",
+    "One-Way Communication",
+    "Command and Control"
+   ],
+   [
+    "T1104",
+    "Multi-Stage Channels",
+    "Command and Control"
+   ],
+   [
+    "T1105",
+    "Ingress Tool Transfer",
+    "Command and Control"
+   ],
+   [
+    "T1106",
+    "Native API",
+    "Execution"
+   ],
+   [
+    "T1110",
+    "Brute Force",
+    "Credential Access"
+   ],
+   [
+    "T1110.001",
+    "Password Guessing",
+    "Credential Access"
+   ],
+   [
+    "T1110.002",
+    "Password Cracking",
+    "Credential Access"
+   ],
+   [
+    "T1110.003",
+    "Password Spraying",
+    "Credential Access"
+   ],
+   [
+    "T1110.004",
+    "Credential Stuffing",
+    "Credential Access"
+   ],
+   [
+    "T1111",
+    "Multi-Factor Authentication Interception",
+    "Credential Access"
+   ],
+   [
+    "T1112",
+    "Modify Registry",
+    "Persistence, Defense Impairment"
+   ],
+   [
+    "T1113",
+    "Screen Capture",
+    "Collection"
+   ],
+   [
+    "T1114",
+    "Email Collection",
+    "Collection"
+   ],
+   [
+    "T1114.001",
+    "Local Email Collection",
+    "Collection"
+   ],
+   [
+    "T1114.002",
+    "Remote Email Collection",
+    "Collection"
+   ],
+   [
+    "T1114.003",
+    "Email Forwarding Rule",
+    "Collection"
+   ],
+   [
+    "T1115",
+    "Clipboard Data",
+    "Collection"
+   ],
+   [
+    "T1119",
+    "Automated Collection",
+    "Collection"
+   ],
+   [
+    "T1120",
+    "Peripheral Device Discovery",
+    "Discovery"
+   ],
+   [
+    "T1123",
+    "Audio Capture",
+    "Collection"
+   ],
+   [
+    "T1124",
+    "System Time Discovery",
+    "Discovery"
+   ],
+   [
+    "T1125",
+    "Video Capture",
+    "Collection"
+   ],
+   [
+    "T1127",
+    "Trusted Developer Utilities Proxy Execution",
+    "Execution, Stealth"
+   ],
+   [
+    "T1127.001",
+    "MSBuild",
+    "Execution, Stealth"
+   ],
+   [
+    "T1127.002",
+    "ClickOnce",
+    "Execution, Stealth"
+   ],
+   [
+    "T1127.003",
+    "JamPlus",
+    "Execution, Stealth"
+   ],
+   [
+    "T1129",
+    "Shared Modules",
+    "Execution"
+   ],
+   [
+    "T1132",
+    "Data Encoding",
+    "Command and Control"
+   ],
+   [
+    "T1132.001",
+    "Standard Encoding",
+    "Command and Control"
+   ],
+   [
+    "T1132.002",
+    "Non-Standard Encoding",
+    "Command and Control"
+   ],
+   [
+    "T1133",
+    "External Remote Services",
+    "Initial Access, Persistence"
+   ],
+   [
+    "T1134",
+    "Access Token Manipulation",
+    "Privilege Escalation, Stealth"
+   ],
+   [
+    "T1134.001",
+    "Token Impersonation/Theft",
+    "Privilege Escalation, Stealth"
+   ],
+   [
+    "T1134.002",
+    "Create Process with Token",
+    "Privilege Escalation, Stealth"
+   ],
+   [
+    "T1134.003",
+    "Make and Impersonate Token",
+    "Privilege Escalation, Stealth"
+   ],
+   [
+    "T1134.004",
+    "Parent PID Spoofing",
+    "Privilege Escalation, Stealth"
+   ],
+   [
+    "T1134.005",
+    "SID-History Injection",
+    "Privilege Escalation, Stealth"
+   ],
+   [
+    "T1135",
+    "Network Share Discovery",
+    "Discovery"
+   ],
+   [
+    "T1136",
+    "Create Account",
+    "Persistence"
+   ],
+   [
+    "T1136.001",
+    "Local Account",
+    "Persistence"
+   ],
+   [
+    "T1136.002",
+    "Domain Account",
+    "Persistence"
+   ],
+   [
+    "T1136.003",
+    "Cloud Account",
+    "Persistence"
+   ],
+   [
+    "T1137",
+    "Office Application Startup",
+    "Persistence"
+   ],
+   [
+    "T1137.001",
+    "Office Template Macros",
+    "Persistence"
+   ],
+   [
+    "T1137.002",
+    "Office Test",
+    "Persistence"
+   ],
+   [
+    "T1137.003",
+    "Outlook Forms",
+    "Persistence"
+   ],
+   [
+    "T1137.004",
+    "Outlook Home Page",
+    "Persistence"
+   ],
+   [
+    "T1137.005",
+    "Outlook Rules",
+    "Persistence"
+   ],
+   [
+    "T1137.006",
+    "Add-ins",
+    "Persistence"
+   ],
+   [
+    "T1140",
+    "Deobfuscate/Decode Files or Information",
+    "Stealth"
+   ],
+   [
+    "T1176",
+    "Software Extensions",
+    "Persistence"
+   ],
+   [
+    "T1176.001",
+    "Browser Extensions",
+    "Persistence"
+   ],
+   [
+    "T1176.002",
+    "IDE Extensions",
+    "Persistence"
+   ],
+   [
+    "T1185",
+    "Browser Session Hijacking",
+    "Collection"
+   ],
+   [
+    "T1187",
+    "Forced Authentication",
+    "Credential Access"
+   ],
+   [
+    "T1189",
+    "Drive-by Compromise",
+    "Initial Access"
+   ],
+   [
+    "T1190",
+    "Exploit Public-Facing Application",
+    "Initial Access"
+   ],
+   [
+    "T1195",
+    "Supply Chain Compromise",
+    "Initial Access"
+   ],
+   [
+    "T1195.001",
+    "Compromise Software Dependencies and Development Tools",
+    "Initial Access"
+   ],
+   [
+    "T1195.002",
+    "Compromise Software Supply Chain",
+    "Initial Access"
+   ],
+   [
+    "T1195.003",
+    "Compromise Hardware Supply Chain",
+    "Initial Access"
+   ],
+   [
+    "T1197",
+    "BITS Jobs",
+    "Execution, Persistence, Stealth"
+   ],
+   [
+    "T1199",
+    "Trusted Relationship",
+    "Initial Access"
+   ],
+   [
+    "T1200",
+    "Hardware Additions",
+    "Initial Access"
+   ],
+   [
+    "T1201",
+    "Password Policy Discovery",
+    "Discovery"
+   ],
+   [
+    "T1202",
+    "Indirect Command Execution",
+    "Stealth"
+   ],
+   [
+    "T1203",
+    "Exploitation for Client Execution",
+    "Execution"
+   ],
+   [
+    "T1204",
+    "User Execution",
+    "Execution"
+   ],
+   [
+    "T1204.001",
+    "Malicious Link",
+    "Execution"
+   ],
+   [
+    "T1204.002",
+    "Malicious File",
+    "Execution"
+   ],
+   [
+    "T1204.003",
+    "Malicious Image",
+    "Execution"
+   ],
+   [
+    "T1204.004",
+    "Malicious Copy and Paste",
+    "Execution"
+   ],
+   [
+    "T1204.005",
+    "Malicious Library",
+    "Execution"
+   ],
+   [
+    "T1205",
+    "Traffic Signaling",
+    "Persistence, Stealth, Command and Control"
+   ],
+   [
+    "T1205.001",
+    "Port Knocking",
+    "Persistence, Stealth, Command and Control"
+   ],
+   [
+    "T1205.002",
+    "Socket Filters",
+    "Persistence, Stealth, Command and Control"
+   ],
+   [
+    "T1207",
+    "Rogue Domain Controller",
+    "Defense Impairment"
+   ],
+   [
+    "T1210",
+    "Exploitation of Remote Services",
+    "Lateral Movement"
+   ],
+   [
+    "T1211",
+    "Exploitation for Stealth",
+    "Stealth"
+   ],
+   [
+    "T1212",
+    "Exploitation for Credential Access",
+    "Credential Access"
+   ],
+   [
+    "T1213",
+    "Data from Information Repositories",
+    "Collection"
+   ],
+   [
+    "T1213.001",
+    "Confluence",
+    "Collection"
+   ],
+   [
+    "T1213.002",
+    "Sharepoint",
+    "Collection"
+   ],
+   [
+    "T1213.003",
+    "Code Repositories",
+    "Collection"
+   ],
+   [
+    "T1213.004",
+    "Customer Relationship Management Software",
+    "Collection"
+   ],
+   [
+    "T1213.005",
+    "Messaging Applications",
+    "Collection"
+   ],
+   [
+    "T1213.006",
+    "Databases",
+    "Collection"
+   ],
+   [
+    "T1216",
+    "System Script Proxy Execution",
+    "Stealth"
+   ],
+   [
+    "T1216.001",
+    "PubPrn",
+    "Stealth"
+   ],
+   [
+    "T1216.002",
+    "SyncAppvPublishingServer",
+    "Stealth"
+   ],
+   [
+    "T1217",
+    "Browser Information Discovery",
+    "Discovery"
+   ],
+   [
+    "T1218",
+    "System Binary Proxy Execution",
+    "Stealth"
+   ],
+   [
+    "T1218.001",
+    "Compiled HTML File",
+    "Stealth"
+   ],
+   [
+    "T1218.002",
+    "Control Panel",
+    "Stealth"
+   ],
+   [
+    "T1218.003",
+    "CMSTP",
+    "Stealth"
+   ],
+   [
+    "T1218.004",
+    "InstallUtil",
+    "Stealth"
+   ],
+   [
+    "T1218.005",
+    "Mshta",
+    "Stealth"
+   ],
+   [
+    "T1218.007",
+    "Msiexec",
+    "Stealth"
+   ],
+   [
+    "T1218.008",
+    "Odbcconf",
+    "Stealth"
+   ],
+   [
+    "T1218.009",
+    "Regsvcs/Regasm",
+    "Stealth"
+   ],
+   [
+    "T1218.010",
+    "Regsvr32",
+    "Stealth"
+   ],
+   [
+    "T1218.011",
+    "Rundll32",
+    "Stealth"
+   ],
+   [
+    "T1218.012",
+    "Verclsid",
+    "Stealth"
+   ],
+   [
+    "T1218.013",
+    "Mavinject",
+    "Stealth"
+   ],
+   [
+    "T1218.014",
+    "MMC",
+    "Stealth"
+   ],
+   [
+    "T1218.015",
+    "Electron Applications",
+    "Stealth"
+   ],
+   [
+    "T1219",
+    "Remote Access Tools",
+    "Command and Control"
+   ],
+   [
+    "T1219.001",
+    "IDE Tunneling",
+    "Command and Control"
+   ],
+   [
+    "T1219.002",
+    "Remote Desktop Software",
+    "Command and Control"
+   ],
+   [
+    "T1219.003",
+    "Remote Access Hardware",
+    "Command and Control"
+   ],
+   [
+    "T1220",
+    "XSL Script Processing",
+    "Stealth"
+   ],
+   [
+    "T1221",
+    "Template Injection",
+    "Stealth"
+   ],
+   [
+    "T1222",
+    "File and Directory Permissions Modification",
+    "Defense Impairment"
+   ],
+   [
+    "T1222.001",
+    "Windows Permissions",
+    "Defense Impairment"
+   ],
+   [
+    "T1222.002",
+    "Linux and Mac Permissions",
+    "Defense Impairment"
+   ],
+   [
+    "T1480",
+    "Execution Guardrails",
+    "Stealth"
+   ],
+   [
+    "T1480.001",
+    "Environmental Keying",
+    "Stealth"
+   ],
+   [
+    "T1480.002",
+    "Mutual Exclusion",
+    "Stealth"
+   ],
+   [
+    "T1482",
+    "Domain Trust Discovery",
+    "Discovery"
+   ],
+   [
+    "T1484",
+    "Domain or Tenant Policy Modification",
+    "Privilege Escalation, Defense Impairment"
+   ],
+   [
+    "T1484.001",
+    "Group Policy Modification",
+    "Privilege Escalation, Defense Impairment"
+   ],
+   [
+    "T1484.002",
+    "Trust Modification",
+    "Privilege Escalation, Defense Impairment"
+   ],
+   [
+    "T1485",
+    "Data Destruction",
+    "Impact"
+   ],
+   [
+    "T1485.001",
+    "Lifecycle-Triggered Deletion",
+    "Impact"
+   ],
+   [
+    "T1486",
+    "Data Encrypted for Impact",
+    "Impact"
+   ],
+   [
+    "T1489",
+    "Service Stop",
+    "Impact"
+   ],
+   [
+    "T1490",
+    "Inhibit System Recovery",
+    "Impact"
+   ],
+   [
+    "T1491",
+    "Defacement",
+    "Impact"
+   ],
+   [
+    "T1491.001",
+    "Internal Defacement",
+    "Impact"
+   ],
+   [
+    "T1491.002",
+    "External Defacement",
+    "Impact"
+   ],
+   [
+    "T1495",
+    "Firmware Corruption",
+    "Impact"
+   ],
+   [
+    "T1496",
+    "Resource Hijacking",
+    "Impact"
+   ],
+   [
+    "T1496.001",
+    "Compute Hijacking",
+    "Impact"
+   ],
+   [
+    "T1496.002",
+    "Bandwidth Hijacking",
+    "Impact"
+   ],
+   [
+    "T1496.003",
+    "SMS Pumping",
+    "Impact"
+   ],
+   [
+    "T1496.004",
+    "Cloud Service Hijacking",
+    "Impact"
+   ],
+   [
+    "T1497",
+    "Virtualization/Sandbox Evasion",
+    "Stealth, Discovery"
+   ],
+   [
+    "T1497.001",
+    "System Checks",
+    "Stealth, Discovery"
+   ],
+   [
+    "T1497.002",
+    "User Activity Based Checks",
+    "Stealth, Discovery"
+   ],
+   [
+    "T1497.003",
+    "Time Based Checks",
+    "Stealth, Discovery"
+   ],
+   [
+    "T1498",
+    "Network Denial of Service",
+    "Impact"
+   ],
+   [
+    "T1498.001",
+    "Direct Network Flood",
+    "Impact"
+   ],
+   [
+    "T1498.002",
+    "Reflection Amplification",
+    "Impact"
+   ],
+   [
+    "T1499",
+    "Endpoint Denial of Service",
+    "Impact"
+   ],
+   [
+    "T1499.001",
+    "OS Exhaustion Flood",
+    "Impact"
+   ],
+   [
+    "T1499.002",
+    "Service Exhaustion Flood",
+    "Impact"
+   ],
+   [
+    "T1499.003",
+    "Application Exhaustion Flood",
+    "Impact"
+   ],
+   [
+    "T1499.004",
+    "Application or System Exploitation",
+    "Impact"
+   ],
+   [
+    "T1505",
+    "Server Software Component",
+    "Persistence"
+   ],
+   [
+    "T1505.001",
+    "SQL Stored Procedures",
+    "Persistence"
+   ],
+   [
+    "T1505.002",
+    "Transport Agent",
+    "Persistence"
+   ],
+   [
+    "T1505.003",
+    "Web Shell",
+    "Persistence"
+   ],
+   [
+    "T1505.004",
+    "IIS Components",
+    "Persistence"
+   ],
+   [
+    "T1505.005",
+    "Terminal Services DLL",
+    "Persistence"
+   ],
+   [
+    "T1505.006",
+    "vSphere Installation Bundles",
+    "Persistence"
+   ],
+   [
+    "T1518",
+    "Software Discovery",
+    "Discovery"
+   ],
+   [
+    "T1518.001",
+    "Security Software Discovery",
+    "Discovery"
+   ],
+   [
+    "T1518.002",
+    "Backup Software Discovery",
+    "Discovery"
+   ],
+   [
+    "T1525",
+    "Implant Internal Image",
+    "Persistence"
+   ],
+   [
+    "T1526",
+    "Cloud Service Discovery",
+    "Discovery"
+   ],
+   [
+    "T1528",
+    "Steal Application Access Token",
+    "Credential Access"
+   ],
+   [
+    "T1529",
+    "System Shutdown/Reboot",
+    "Impact"
+   ],
+   [
+    "T1530",
+    "Data from Cloud Storage",
+    "Collection"
+   ],
+   [
+    "T1531",
+    "Account Access Removal",
+    "Impact"
+   ],
+   [
+    "T1534",
+    "Internal Spearphishing",
+    "Lateral Movement"
+   ],
+   [
+    "T1535",
+    "Unused/Unsupported Cloud Regions",
+    "Stealth"
+   ],
+   [
+    "T1537",
+    "Transfer Data to Cloud Account",
+    "Exfiltration"
+   ],
+   [
+    "T1538",
+    "Cloud Service Dashboard",
+    "Discovery"
+   ],
+   [
+    "T1539",
+    "Steal Web Session Cookie",
+    "Credential Access"
+   ],
+   [
+    "T1542",
+    "Pre-OS Boot",
+    "Persistence, Stealth"
+   ],
+   [
+    "T1542.001",
+    "System Firmware",
+    "Persistence, Stealth"
+   ],
+   [
+    "T1542.002",
+    "Component Firmware",
+    "Persistence, Stealth"
+   ],
+   [
+    "T1542.003",
+    "Bootkit",
+    "Persistence, Stealth"
+   ],
+   [
+    "T1542.004",
+    "ROMMONkit",
+    "Persistence, Stealth"
+   ],
+   [
+    "T1542.005",
+    "TFTP Boot",
+    "Persistence, Stealth"
+   ],
+   [
+    "T1543",
+    "Create or Modify System Process",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1543.001",
+    "Launch Agent",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1543.002",
+    "Systemd Service",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1543.003",
+    "Windows Service",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1543.004",
+    "Launch Daemon",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1543.005",
+    "Container Service",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1546",
+    "Event Triggered Execution",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1546.001",
+    "Change Default File Association",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1546.002",
+    "Screensaver",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1546.003",
+    "Windows Management Instrumentation Event Subscription",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1546.004",
+    "Unix Shell Configuration Modification",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1546.005",
+    "Trap",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1546.006",
+    "LC_LOAD_DYLIB Addition",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1546.007",
+    "Netsh Helper DLL",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1546.008",
+    "Accessibility Features",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1546.009",
+    "AppCert DLLs",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1546.010",
+    "AppInit DLLs",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1546.011",
+    "Application Shimming",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1546.012",
+    "Image File Execution Options Injection",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1546.013",
+    "PowerShell Profile",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1546.014",
+    "Emond",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1546.015",
+    "Component Object Model Hijacking",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1546.016",
+    "Installer Packages",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1546.017",
+    "Udev Rules",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1546.018",
+    "Python Startup Hooks",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1547",
+    "Boot or Logon Autostart Execution",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1547.001",
+    "Registry Run Keys / Startup Folder",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1547.002",
+    "Authentication Package",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1547.003",
+    "Time Providers",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1547.004",
+    "Winlogon Helper DLL",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1547.005",
+    "Security Support Provider",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1547.006",
+    "Kernel Modules and Extensions",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1547.007",
+    "Re-opened Applications",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1547.008",
+    "LSASS Driver",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1547.009",
+    "Shortcut Modification",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1547.010",
+    "Port Monitors",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1547.012",
+    "Print Processors",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1547.013",
+    "XDG Autostart Entries",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1547.014",
+    "Active Setup",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1547.015",
+    "Login Items",
+    "Persistence, Privilege Escalation"
+   ],
+   [
+    "T1548",
+    "Abuse Elevation Control Mechanism",
+    "Privilege Escalation"
+   ],
+   [
+    "T1548.001",
+    "Setuid and Setgid",
+    "Privilege Escalation"
+   ],
+   [
+    "T1548.002",
+    "Bypass User Account Control",
+    "Privilege Escalation"
+   ],
+   [
+    "T1548.003",
+    "Sudo and Sudo Caching",
+    "Privilege Escalation"
+   ],
+   [
+    "T1548.004",
+    "Elevated Execution with Prompt",
+    "Privilege Escalation"
+   ],
+   [
+    "T1548.005",
+    "Temporary Elevated Cloud Access",
+    "Privilege Escalation"
+   ],
+   [
+    "T1548.006",
+    "TCC Manipulation",
+    "Privilege Escalation"
+   ],
+   [
+    "T1550",
+    "Use Alternate Authentication Material",
+    "Lateral Movement"
+   ],
+   [
+    "T1550.001",
+    "Application Access Token",
+    "Lateral Movement"
+   ],
+   [
+    "T1550.002",
+    "Pass the Hash",
+    "Lateral Movement"
+   ],
+   [
+    "T1550.003",
+    "Pass the Ticket",
+    "Lateral Movement"
+   ],
+   [
+    "T1550.004",
+    "Web Session Cookie",
+    "Lateral Movement"
+   ],
+   [
+    "T1552",
+    "Unsecured Credentials",
+    "Credential Access"
+   ],
+   [
+    "T1552.001",
+    "Credentials In Files",
+    "Credential Access"
+   ],
+   [
+    "T1552.002",
+    "Credentials in Registry",
+    "Credential Access"
+   ],
+   [
+    "T1552.003",
+    "Shell History",
+    "Credential Access"
+   ],
+   [
+    "T1552.004",
+    "Private Keys",
+    "Credential Access"
+   ],
+   [
+    "T1552.005",
+    "Cloud Instance Metadata API",
+    "Credential Access"
+   ],
+   [
+    "T1552.006",
+    "Group Policy Preferences",
+    "Credential Access"
+   ],
+   [
+    "T1552.007",
+    "Container API",
+    "Credential Access"
+   ],
+   [
+    "T1552.008",
+    "Chat Messages",
+    "Credential Access"
+   ],
+   [
+    "T1553",
+    "Subvert Trust Controls",
+    "Defense Impairment"
+   ],
+   [
+    "T1553.001",
+    "Gatekeeper Bypass",
+    "Defense Impairment"
+   ],
+   [
+    "T1553.002",
+    "Code Signing",
+    "Defense Impairment"
+   ],
+   [
+    "T1553.003",
+    "SIP and Trust Provider Hijacking",
+    "Defense Impairment"
+   ],
+   [
+    "T1553.004",
+    "Install Root Certificate",
+    "Defense Impairment"
+   ],
+   [
+    "T1553.005",
+    "Mark-of-the-Web Bypass",
+    "Defense Impairment"
+   ],
+   [
+    "T1553.006",
+    "Code Signing Policy Modification",
+    "Defense Impairment"
+   ],
+   [
+    "T1554",
+    "Compromise Host Software Binary",
+    "Persistence"
+   ],
+   [
+    "T1555",
+    "Credentials from Password Stores",
+    "Credential Access"
+   ],
+   [
+    "T1555.001",
+    "Keychain",
+    "Credential Access"
+   ],
+   [
+    "T1555.002",
+    "Securityd Memory",
+    "Credential Access"
+   ],
+   [
+    "T1555.003",
+    "Credentials from Web Browsers",
+    "Credential Access"
+   ],
+   [
+    "T1555.004",
+    "Windows Credential Manager",
+    "Credential Access"
+   ],
+   [
+    "T1555.005",
+    "Password Managers",
+    "Credential Access"
+   ],
+   [
+    "T1555.006",
+    "Cloud Secrets Management Stores",
+    "Credential Access"
+   ],
+   [
+    "T1556",
+    "Modify Authentication Process",
+    "Persistence, Defense Impairment, Credential Access"
+   ],
+   [
+    "T1556.001",
+    "Domain Controller Authentication",
+    "Persistence, Defense Impairment, Credential Access"
+   ],
+   [
+    "T1556.002",
+    "Password Filter DLL",
+    "Persistence, Defense Impairment, Credential Access"
+   ],
+   [
+    "T1556.003",
+    "Pluggable Authentication Modules",
+    "Persistence, Defense Impairment, Credential Access"
+   ],
+   [
+    "T1556.004",
+    "Network Device Authentication",
+    "Persistence, Defense Impairment, Credential Access"
+   ],
+   [
+    "T1556.005",
+    "Reversible Encryption",
+    "Persistence, Defense Impairment, Credential Access"
+   ],
+   [
+    "T1556.006",
+    "Multi-Factor Authentication",
+    "Persistence, Defense Impairment, Credential Access"
+   ],
+   [
+    "T1556.007",
+    "Hybrid Identity",
+    "Persistence, Defense Impairment, Credential Access"
+   ],
+   [
+    "T1556.008",
+    "Network Provider DLL",
+    "Persistence, Defense Impairment, Credential Access"
+   ],
+   [
+    "T1556.009",
+    "Conditional Access Policies",
+    "Persistence, Defense Impairment, Credential Access"
+   ],
+   [
+    "T1557",
+    "Adversary-in-the-Middle",
+    "Credential Access, Collection"
+   ],
+   [
+    "T1557.001",
+    "Name Resolution Poisoning and SMB Relay",
+    "Credential Access, Collection"
+   ],
+   [
+    "T1557.002",
+    "ARP Cache Poisoning",
+    "Credential Access, Collection"
+   ],
+   [
+    "T1557.003",
+    "DHCP Spoofing",
+    "Credential Access, Collection"
+   ],
+   [
+    "T1557.004",
+    "Evil Twin",
+    "Credential Access, Collection"
+   ],
+   [
+    "T1558",
+    "Steal or Forge Kerberos Tickets",
+    "Credential Access"
+   ],
+   [
+    "T1558.001",
+    "Golden Ticket",
+    "Credential Access"
+   ],
+   [
+    "T1558.002",
+    "Silver Ticket",
+    "Credential Access"
+   ],
+   [
+    "T1558.003",
+    "Kerberoasting",
+    "Credential Access"
+   ],
+   [
+    "T1558.004",
+    "AS-REP Roasting",
+    "Credential Access"
+   ],
+   [
+    "T1558.005",
+    "Ccache Files",
+    "Credential Access"
+   ],
+   [
+    "T1559",
+    "Inter-Process Communication",
+    "Execution"
+   ],
+   [
+    "T1559.001",
+    "Component Object Model",
+    "Execution"
+   ],
+   [
+    "T1559.002",
+    "Dynamic Data Exchange",
+    "Execution"
+   ],
+   [
+    "T1559.003",
+    "XPC Services",
+    "Execution"
+   ],
+   [
+    "T1560",
+    "Archive Collected Data",
+    "Collection"
+   ],
+   [
+    "T1560.001",
+    "Archive via Utility",
+    "Collection"
+   ],
+   [
+    "T1560.002",
+    "Archive via Library",
+    "Collection"
+   ],
+   [
+    "T1560.003",
+    "Archive via Custom Method",
+    "Collection"
+   ],
+   [
+    "T1561",
+    "Disk Wipe",
+    "Impact"
+   ],
+   [
+    "T1561.001",
+    "Disk Content Wipe",
+    "Impact"
+   ],
+   [
+    "T1561.002",
+    "Disk Structure Wipe",
+    "Impact"
+   ],
+   [
+    "T1563",
+    "Remote Service Session Hijacking",
+    "Lateral Movement"
+   ],
+   [
+    "T1563.001",
+    "SSH Hijacking",
+    "Lateral Movement"
+   ],
+   [
+    "T1563.002",
+    "RDP Hijacking",
+    "Lateral Movement"
+   ],
+   [
+    "T1564",
+    "Hide Artifacts",
+    "Stealth"
+   ],
+   [
+    "T1564.001",
+    "Hidden Files and Directories",
+    "Stealth"
+   ],
+   [
+    "T1564.002",
+    "Hidden Users",
+    "Stealth"
+   ],
+   [
+    "T1564.003",
+    "Hidden Window",
+    "Stealth"
+   ],
+   [
+    "T1564.004",
+    "NTFS File Attributes",
+    "Stealth"
+   ],
+   [
+    "T1564.005",
+    "Hidden File System",
+    "Stealth"
+   ],
+   [
+    "T1564.006",
+    "Run Virtual Instance",
+    "Stealth"
+   ],
+   [
+    "T1564.007",
+    "VBA Stomping",
+    "Stealth"
+   ],
+   [
+    "T1564.008",
+    "Email Hiding Rules",
+    "Stealth"
+   ],
+   [
+    "T1564.009",
+    "Resource Forking",
+    "Stealth"
+   ],
+   [
+    "T1564.010",
+    "Process Argument Spoofing",
+    "Stealth"
+   ],
+   [
+    "T1564.011",
+    "Ignore Process Interrupts",
+    "Stealth"
+   ],
+   [
+    "T1564.012",
+    "File/Path Exclusions",
+    "Stealth"
+   ],
+   [
+    "T1564.013",
+    "Bind Mounts",
+    "Stealth"
+   ],
+   [
+    "T1564.014",
+    "Extended Attributes",
+    "Stealth"
+   ],
+   [
+    "T1565",
+    "Data Manipulation",
+    "Impact"
+   ],
+   [
+    "T1565.001",
+    "Stored Data Manipulation",
+    "Impact"
+   ],
+   [
+    "T1565.002",
+    "Transmitted Data Manipulation",
+    "Impact"
+   ],
+   [
+    "T1565.003",
+    "Runtime Data Manipulation",
+    "Impact"
+   ],
+   [
+    "T1566",
+    "Phishing",
+    "Initial Access"
+   ],
+   [
+    "T1566.001",
+    "Spearphishing Attachment",
+    "Initial Access"
+   ],
+   [
+    "T1566.002",
+    "Spearphishing Link",
+    "Initial Access"
+   ],
+   [
+    "T1566.003",
+    "Spearphishing via Service",
+    "Initial Access"
+   ],
+   [
+    "T1566.004",
+    "Spearphishing Voice",
+    "Initial Access"
+   ],
+   [
+    "T1567",
+    "Exfiltration Over Web Service",
+    "Exfiltration"
+   ],
+   [
+    "T1567.001",
+    "Exfiltration to Code Repository",
+    "Exfiltration"
+   ],
+   [
+    "T1567.002",
+    "Exfiltration to Cloud Storage",
+    "Exfiltration"
+   ],
+   [
+    "T1567.003",
+    "Exfiltration to Text Storage Sites",
+    "Exfiltration"
+   ],
+   [
+    "T1567.004",
+    "Exfiltration Over Webhook",
+    "Exfiltration"
+   ],
+   [
+    "T1568",
+    "Dynamic Resolution",
+    "Command and Control"
+   ],
+   [
+    "T1568.001",
+    "Fast Flux DNS",
+    "Command and Control"
+   ],
+   [
+    "T1568.002",
+    "Domain Generation Algorithms",
+    "Command and Control"
+   ],
+   [
+    "T1568.003",
+    "DNS Calculation",
+    "Command and Control"
+   ],
+   [
+    "T1569",
+    "System Services",
+    "Execution"
+   ],
+   [
+    "T1569.001",
+    "Launchctl",
+    "Execution"
+   ],
+   [
+    "T1569.002",
+    "Service Execution",
+    "Execution"
+   ],
+   [
+    "T1569.003",
+    "Systemctl",
+    "Execution"
+   ],
+   [
+    "T1570",
+    "Lateral Tool Transfer",
+    "Lateral Movement"
+   ],
+   [
+    "T1571",
+    "Non-Standard Port",
+    "Command and Control"
+   ],
+   [
+    "T1572",
+    "Protocol Tunneling",
+    "Command and Control"
+   ],
+   [
+    "T1573",
+    "Encrypted Channel",
+    "Command and Control"
+   ],
+   [
+    "T1573.001",
+    "Symmetric Cryptography",
+    "Command and Control"
+   ],
+   [
+    "T1573.002",
+    "Asymmetric Cryptography",
+    "Command and Control"
+   ],
+   [
+    "T1574",
+    "Hijack Execution Flow",
+    "Execution, Stealth"
+   ],
+   [
+    "T1574.001",
+    "DLL",
+    "Execution, Stealth"
+   ],
+   [
+    "T1574.004",
+    "Dylib Hijacking",
+    "Execution, Stealth"
+   ],
+   [
+    "T1574.005",
+    "Executable Installer File Permissions Weakness",
+    "Execution, Stealth"
+   ],
+   [
+    "T1574.006",
+    "Dynamic Linker Hijacking",
+    "Execution, Stealth"
+   ],
+   [
+    "T1574.007",
+    "Path Interception by PATH Environment Variable",
+    "Execution, Stealth"
+   ],
+   [
+    "T1574.008",
+    "Path Interception by Search Order Hijacking",
+    "Execution, Stealth"
+   ],
+   [
+    "T1574.009",
+    "Path Interception by Unquoted Path",
+    "Execution, Stealth"
+   ],
+   [
+    "T1574.010",
+    "Services File Permissions Weakness",
+    "Execution, Stealth"
+   ],
+   [
+    "T1574.011",
+    "Services Registry Permissions Weakness",
+    "Execution, Stealth"
+   ],
+   [
+    "T1574.012",
+    "COR_PROFILER",
+    "Execution, Stealth"
+   ],
+   [
+    "T1574.013",
+    "KernelCallbackTable",
+    "Execution, Stealth"
+   ],
+   [
+    "T1574.014",
+    "AppDomainManager",
+    "Execution, Stealth"
+   ],
+   [
+    "T1578",
+    "Modify Cloud Compute Infrastructure",
+    "Defense Impairment"
+   ],
+   [
+    "T1578.001",
+    "Create Snapshot",
+    "Defense Impairment"
+   ],
+   [
+    "T1578.002",
+    "Create Cloud Instance",
+    "Defense Impairment"
+   ],
+   [
+    "T1578.003",
+    "Delete Cloud Instance",
+    "Defense Impairment"
+   ],
+   [
+    "T1578.004",
+    "Revert Cloud Instance",
+    "Defense Impairment"
+   ],
+   [
+    "T1578.005",
+    "Modify Cloud Compute Configurations",
+    "Defense Impairment"
+   ],
+   [
+    "T1580",
+    "Cloud Infrastructure Discovery",
+    "Discovery"
+   ],
+   [
+    "T1583",
+    "Acquire Infrastructure",
+    "Resource Development"
+   ],
+   [
+    "T1583.001",
+    "Domains",
+    "Resource Development"
+   ],
+   [
+    "T1583.002",
+    "DNS Server",
+    "Resource Development"
+   ],
+   [
+    "T1583.003",
+    "Virtual Private Server",
+    "Resource Development"
+   ],
+   [
+    "T1583.004",
+    "Server",
+    "Resource Development"
+   ],
+   [
+    "T1583.005",
+    "Botnet",
+    "Resource Development"
+   ],
+   [
+    "T1583.006",
+    "Web Services",
+    "Resource Development"
+   ],
+   [
+    "T1583.007",
+    "Serverless",
+    "Resource Development"
+   ],
+   [
+    "T1583.008",
+    "Malvertising",
+    "Resource Development"
+   ],
+   [
+    "T1584",
+    "Compromise Infrastructure",
+    "Resource Development"
+   ],
+   [
+    "T1584.001",
+    "Domains",
+    "Resource Development"
+   ],
+   [
+    "T1584.002",
+    "DNS Server",
+    "Resource Development"
+   ],
+   [
+    "T1584.003",
+    "Virtual Private Server",
+    "Resource Development"
+   ],
+   [
+    "T1584.004",
+    "Server",
+    "Resource Development"
+   ],
+   [
+    "T1584.005",
+    "Botnet",
+    "Resource Development"
+   ],
+   [
+    "T1584.006",
+    "Web Services",
+    "Resource Development"
+   ],
+   [
+    "T1584.007",
+    "Serverless",
+    "Resource Development"
+   ],
+   [
+    "T1584.008",
+    "Network Devices",
+    "Resource Development"
+   ],
+   [
+    "T1585",
+    "Establish Accounts",
+    "Resource Development"
+   ],
+   [
+    "T1585.001",
+    "Social Media Accounts",
+    "Resource Development"
+   ],
+   [
+    "T1585.002",
+    "Email Accounts",
+    "Resource Development"
+   ],
+   [
+    "T1585.003",
+    "Cloud Accounts",
+    "Resource Development"
+   ],
+   [
+    "T1586",
+    "Compromise Accounts",
+    "Resource Development"
+   ],
+   [
+    "T1586.001",
+    "Social Media Accounts",
+    "Resource Development"
+   ],
+   [
+    "T1586.002",
+    "Email Accounts",
+    "Resource Development"
+   ],
+   [
+    "T1586.003",
+    "Cloud Accounts",
+    "Resource Development"
+   ],
+   [
+    "T1587",
+    "Develop Capabilities",
+    "Resource Development"
+   ],
+   [
+    "T1587.001",
+    "Malware",
+    "Resource Development"
+   ],
+   [
+    "T1587.002",
+    "Code Signing Certificates",
+    "Resource Development"
+   ],
+   [
+    "T1587.003",
+    "Digital Certificates",
+    "Resource Development"
+   ],
+   [
+    "T1587.004",
+    "Exploits",
+    "Resource Development"
+   ],
+   [
+    "T1588",
+    "Obtain Capabilities",
+    "Resource Development"
+   ],
+   [
+    "T1588.001",
+    "Malware",
+    "Resource Development"
+   ],
+   [
+    "T1588.002",
+    "Tool",
+    "Resource Development"
+   ],
+   [
+    "T1588.003",
+    "Code Signing Certificates",
+    "Resource Development"
+   ],
+   [
+    "T1588.004",
+    "Digital Certificates",
+    "Resource Development"
+   ],
+   [
+    "T1588.005",
+    "Exploits",
+    "Resource Development"
+   ],
+   [
+    "T1588.006",
+    "Vulnerabilities",
+    "Resource Development"
+   ],
+   [
+    "T1588.007",
+    "Artificial Intelligence",
+    "Resource Development"
+   ],
+   [
+    "T1589",
+    "Gather Victim Identity Information",
+    "Reconnaissance"
+   ],
+   [
+    "T1589.001",
+    "Credentials",
+    "Reconnaissance"
+   ],
+   [
+    "T1589.002",
+    "Email Addresses",
+    "Reconnaissance"
+   ],
+   [
+    "T1589.003",
+    "Employee Names",
+    "Reconnaissance"
+   ],
+   [
+    "T1590",
+    "Gather Victim Network Information",
+    "Reconnaissance"
+   ],
+   [
+    "T1590.001",
+    "Domain Properties",
+    "Reconnaissance"
+   ],
+   [
+    "T1590.002",
+    "DNS",
+    "Reconnaissance"
+   ],
+   [
+    "T1590.003",
+    "Network Trust Dependencies",
+    "Reconnaissance"
+   ],
+   [
+    "T1590.004",
+    "Network Topology",
+    "Reconnaissance"
+   ],
+   [
+    "T1590.005",
+    "IP Addresses",
+    "Reconnaissance"
+   ],
+   [
+    "T1590.006",
+    "Network Security Appliances",
+    "Reconnaissance"
+   ],
+   [
+    "T1591",
+    "Gather Victim Org Information",
+    "Reconnaissance"
+   ],
+   [
+    "T1591.001",
+    "Determine Physical Locations",
+    "Reconnaissance"
+   ],
+   [
+    "T1591.002",
+    "Business Relationships",
+    "Reconnaissance"
+   ],
+   [
+    "T1591.003",
+    "Identify Business Tempo",
+    "Reconnaissance"
+   ],
+   [
+    "T1591.004",
+    "Identify Roles",
+    "Reconnaissance"
+   ],
+   [
+    "T1592",
+    "Gather Victim Host Information",
+    "Reconnaissance"
+   ],
+   [
+    "T1592.001",
+    "Hardware",
+    "Reconnaissance"
+   ],
+   [
+    "T1592.002",
+    "Software",
+    "Reconnaissance"
+   ],
+   [
+    "T1592.003",
+    "Firmware",
+    "Reconnaissance"
+   ],
+   [
+    "T1592.004",
+    "Client Configurations",
+    "Reconnaissance"
+   ],
+   [
+    "T1593",
+    "Search Open Websites/Domains",
+    "Reconnaissance"
+   ],
+   [
+    "T1593.001",
+    "Social Media",
+    "Reconnaissance"
+   ],
+   [
+    "T1593.002",
+    "Search Engines",
+    "Reconnaissance"
+   ],
+   [
+    "T1593.003",
+    "Code Repositories",
+    "Reconnaissance"
+   ],
+   [
+    "T1594",
+    "Search Victim-Owned Websites",
+    "Reconnaissance"
+   ],
+   [
+    "T1595",
+    "Active Scanning",
+    "Reconnaissance"
+   ],
+   [
+    "T1595.001",
+    "Scanning IP Blocks",
+    "Reconnaissance"
+   ],
+   [
+    "T1595.002",
+    "Vulnerability Scanning",
+    "Reconnaissance"
+   ],
+   [
+    "T1595.003",
+    "Wordlist Scanning",
+    "Reconnaissance"
+   ],
+   [
+    "T1596",
+    "Search Open Technical Databases",
+    "Reconnaissance"
+   ],
+   [
+    "T1596.001",
+    "DNS/Passive DNS",
+    "Reconnaissance"
+   ],
+   [
+    "T1596.002",
+    "WHOIS",
+    "Reconnaissance"
+   ],
+   [
+    "T1596.003",
+    "Digital Certificates",
+    "Reconnaissance"
+   ],
+   [
+    "T1596.004",
+    "CDNs",
+    "Reconnaissance"
+   ],
+   [
+    "T1596.005",
+    "Scan Databases",
+    "Reconnaissance"
+   ],
+   [
+    "T1597",
+    "Search Closed Sources",
+    "Reconnaissance"
+   ],
+   [
+    "T1597.001",
+    "Threat Intel Vendors",
+    "Reconnaissance"
+   ],
+   [
+    "T1597.002",
+    "Purchase Technical Data",
+    "Reconnaissance"
+   ],
+   [
+    "T1598",
+    "Phishing for Information",
+    "Reconnaissance"
+   ],
+   [
+    "T1598.001",
+    "Spearphishing Service",
+    "Reconnaissance"
+   ],
+   [
+    "T1598.002",
+    "Spearphishing Attachment",
+    "Reconnaissance"
+   ],
+   [
+    "T1598.003",
+    "Spearphishing Link",
+    "Reconnaissance"
+   ],
+   [
+    "T1598.004",
+    "Spearphishing Voice",
+    "Reconnaissance"
+   ],
+   [
+    "T1599",
+    "Network Boundary Bridging",
+    "Defense Impairment"
+   ],
+   [
+    "T1599.001",
+    "Network Address Translation Traversal",
+    "Defense Impairment"
+   ],
+   [
+    "T1600",
+    "Weaken Encryption",
+    "Defense Impairment"
+   ],
+   [
+    "T1600.001",
+    "Reduce Key Space",
+    "Defense Impairment"
+   ],
+   [
+    "T1600.002",
+    "Disable Crypto Hardware",
+    "Defense Impairment"
+   ],
+   [
+    "T1601",
+    "Modify System Image",
+    "Defense Impairment"
+   ],
+   [
+    "T1601.001",
+    "Patch System Image",
+    "Defense Impairment"
+   ],
+   [
+    "T1601.002",
+    "Downgrade System Image",
+    "Defense Impairment"
+   ],
+   [
+    "T1602",
+    "Data from Configuration Repository",
+    "Collection"
+   ],
+   [
+    "T1602.001",
+    "SNMP (MIB Dump)",
+    "Collection"
+   ],
+   [
+    "T1602.002",
+    "Network Device Configuration Dump",
+    "Collection"
+   ],
+   [
+    "T1606",
+    "Forge Web Credentials",
+    "Credential Access"
+   ],
+   [
+    "T1606.001",
+    "Web Cookies",
+    "Credential Access"
+   ],
+   [
+    "T1606.002",
+    "SAML Tokens",
+    "Credential Access"
+   ],
+   [
+    "T1608",
+    "Stage Capabilities",
+    "Resource Development"
+   ],
+   [
+    "T1608.001",
+    "Upload Malware",
+    "Resource Development"
+   ],
+   [
+    "T1608.002",
+    "Upload Tool",
+    "Resource Development"
+   ],
+   [
+    "T1608.003",
+    "Install Digital Certificate",
+    "Resource Development"
+   ],
+   [
+    "T1608.004",
+    "Drive-by Target",
+    "Resource Development"
+   ],
+   [
+    "T1608.005",
+    "Link Target",
+    "Resource Development"
+   ],
+   [
+    "T1608.006",
+    "SEO Poisoning",
+    "Resource Development"
+   ],
+   [
+    "T1609",
+    "Container Administration Command",
+    "Execution"
+   ],
+   [
+    "T1610",
+    "Deploy Container",
+    "Execution"
+   ],
+   [
+    "T1611",
+    "Escape to Host",
+    "Privilege Escalation"
+   ],
+   [
+    "T1612",
+    "Build Image on Host",
+    "Stealth"
+   ],
+   [
+    "T1613",
+    "Container and Resource Discovery",
+    "Discovery"
+   ],
+   [
+    "T1614",
+    "System Location Discovery",
+    "Discovery"
+   ],
+   [
+    "T1614.001",
+    "System Language Discovery",
+    "Discovery"
+   ],
+   [
+    "T1615",
+    "Group Policy Discovery",
+    "Discovery"
+   ],
+   [
+    "T1619",
+    "Cloud Storage Object Discovery",
+    "Discovery"
+   ],
+   [
+    "T1620",
+    "Reflective Code Loading",
+    "Stealth"
+   ],
+   [
+    "T1621",
+    "Multi-Factor Authentication Request Generation",
+    "Credential Access"
+   ],
+   [
+    "T1622",
+    "Debugger Evasion",
+    "Stealth, Discovery"
+   ],
+   [
+    "T1647",
+    "Plist File Modification",
+    "Defense Impairment"
+   ],
+   [
+    "T1648",
+    "Serverless Execution",
+    "Execution"
+   ],
+   [
+    "T1649",
+    "Steal or Forge Authentication Certificates",
+    "Credential Access"
+   ],
+   [
+    "T1650",
+    "Acquire Access",
+    "Resource Development"
+   ],
+   [
+    "T1651",
+    "Cloud Administration Command",
+    "Execution"
+   ],
+   [
+    "T1652",
+    "Device Driver Discovery",
+    "Discovery"
+   ],
+   [
+    "T1653",
+    "Power Settings",
+    "Persistence"
+   ],
+   [
+    "T1654",
+    "Log Enumeration",
+    "Discovery"
+   ],
+   [
+    "T1657",
+    "Financial Theft",
+    "Impact"
+   ],
+   [
+    "T1659",
+    "Content Injection",
+    "Initial Access, Command and Control"
+   ],
+   [
+    "T1665",
+    "Hide Infrastructure",
+    "Command and Control"
+   ],
+   [
+    "T1666",
+    "Modify Cloud Resource Hierarchy",
+    "Defense Impairment"
+   ],
+   [
+    "T1667",
+    "Email Bombing",
+    "Impact"
+   ],
+   [
+    "T1668",
+    "Exclusive Control",
+    "Persistence"
+   ],
+   [
+    "T1669",
+    "Wi-Fi Networks",
+    "Initial Access"
+   ],
+   [
+    "T1671",
+    "Cloud Application Integration",
+    "Persistence"
+   ],
+   [
+    "T1673",
+    "Virtual Machine Discovery",
+    "Discovery"
+   ],
+   [
+    "T1674",
+    "Input Injection",
+    "Execution"
+   ],
+   [
+    "T1675",
+    "ESXi Administration Command",
+    "Execution"
+   ],
+   [
+    "T1677",
+    "Poisoned Pipeline Execution",
+    "Execution"
+   ],
+   [
+    "T1678",
+    "Delay Execution",
+    "Stealth"
+   ],
+   [
+    "T1679",
+    "Selective Exclusion",
+    "Stealth"
+   ],
+   [
+    "T1680",
+    "Local Storage Discovery",
+    "Discovery"
+   ],
+   [
+    "T1681",
+    "Search Threat Vendor Data",
+    "Reconnaissance"
+   ],
+   [
+    "T1682",
+    "Query Public AI Services",
+    "Reconnaissance"
+   ],
+   [
+    "T1683",
+    "Generate Content",
+    "Resource Development"
+   ],
+   [
+    "T1683.001",
+    "Written Content",
+    "Resource Development"
+   ],
+   [
+    "T1683.002",
+    "Audio-Visual Content",
+    "Resource Development"
+   ],
+   [
+    "T1684",
+    "Social Engineering",
+    "Stealth"
+   ],
+   [
+    "T1684.001",
+    "Impersonation",
+    "Stealth"
+   ],
+   [
+    "T1684.002",
+    "Email Spoofing",
+    "Stealth"
+   ],
+   [
+    "T1685",
+    "Disable or Modify Tools",
+    "Defense Impairment"
+   ],
+   [
+    "T1685.001",
+    "Disable or Modify Windows Event Log",
+    "Defense Impairment"
+   ],
+   [
+    "T1685.002",
+    "Disable or Modify Cloud Log",
+    "Defense Impairment"
+   ],
+   [
+    "T1685.003",
+    "Modify or Spoof Tool UI",
+    "Defense Impairment"
+   ],
+   [
+    "T1685.004",
+    "Disable or Modify Linux Audit System Log",
+    "Defense Impairment"
+   ],
+   [
+    "T1685.005",
+    "Clear Windows Event Logs",
+    "Defense Impairment"
+   ],
+   [
+    "T1685.006",
+    "Clear Linux or Mac System Logs",
+    "Defense Impairment"
+   ],
+   [
+    "T1686",
+    "Disable or Modify System Firewall",
+    "Defense Impairment"
+   ],
+   [
+    "T1686.001",
+    "Cloud Firewall",
+    "Defense Impairment"
+   ],
+   [
+    "T1686.002",
+    "Network Device Firewall",
+    "Defense Impairment"
+   ],
+   [
+    "T1686.003",
+    "Windows Host Firewall",
+    "Defense Impairment"
+   ],
+   [
+    "T1687",
+    "Exploitation for Defense Impairment",
+    "Defense Impairment"
+   ],
+   [
+    "T1688",
+    "Safe Mode Boot",
+    "Defense Impairment"
+   ],
+   [
+    "T1689",
+    "Downgrade Attack",
+    "Defense Impairment"
+   ],
+   [
+    "T1690",
+    "Prevent Command History Logging",
+    "Defense Impairment"
+   ]
+  ]
+ }
+}

@@ -89,6 +89,20 @@ def all_codes() -> frozenset[str]:
     return frozenset(t.id for t in TECHNIQUES)
 
 
+def technique_url(code: str) -> str:
+    """MITRE's page for a catalogue technique (#647).
+
+    A sub-technique's dot becomes a slash -- `T1595.001` is
+    `https://attack.mitre.org/techniques/T1595/001` -- which is the form
+    MITRE's own STIX publishes as the `mitre-attack` external reference.
+    `test_attack_workbook_mitre_links.py` compares every catalogue id against
+    that reference. A code the catalogue does not carry raises KeyError rather
+    than yielding a link to a page nobody checked exists.
+    """
+    technique_by_id(code)
+    return "https://attack.mitre.org/techniques/" + code.replace(".", "/")
+
+
 __all__ = [
     "SOURCE",
     "SOURCE_VERSION",
@@ -101,5 +115,6 @@ __all__ = [
     "sub_techniques",
     "tactic_by_id",
     "technique_by_id",
+    "technique_url",
     "techniques_for_tactic",
 ]

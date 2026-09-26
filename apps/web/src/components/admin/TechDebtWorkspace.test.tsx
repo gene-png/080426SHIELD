@@ -255,3 +255,20 @@ describe("TechDebtWorkspace supplementary-fetch failures (#292)", () => {
     expect(note.textContent).toMatch(/overlap figures/i);
   });
 });
+
+describe("TechDebtWorkspace step 2 disposition help (#642)", () => {
+  it("renders the disposition explanation beside the step-2 table", async () => {
+    fetchLatestList.mockResolvedValue(draftList());
+    fetchOverlapAnalysis.mockResolvedValue(OVERLAP);
+    fetchConsolidationPlan.mockResolvedValue(PLAN);
+    fetchLatestDeliverable.mockResolvedValue(null);
+
+    render(<TechDebtWorkspace serviceId="svc-642" serviceTitle="TD" />);
+
+    // Positive state first: the table stand-in proves step 2 rendered.
+    await screen.findByRole("button", { name: "edit a row" });
+    expect(screen.getByTestId("disposition-help")).toHaveTextContent(
+      "What the dispositions mean",
+    );
+  });
+});

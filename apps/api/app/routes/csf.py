@@ -758,6 +758,20 @@ def submit_self_assessment(
     return _serialize_assessment(db, a)
 
 
+def _refuse_approving_discarded() -> HTTPException:
+    """#702: a discarded assessment is retired (D-031) and cannot be approved."""
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "reason": "assessment_discarded",
+            # No remedy named: "Start assessment" renders only when no live
+            # assessment exists, so an imperative here could point at a
+            # control that is not on screen.
+            "message": "This assessment was discarded and cannot be approved.",
+        },
+    )
+
+
 @router.post(
     "/assessments/{assessment_id}/approve",
     response_model=CsfAssessmentResponse,
@@ -777,9 +791,32 @@ def approve_assessment(
             status_code=status.HTTP_409_CONFLICT,
             detail="Assessment already released.",
         )
-    a.status = CsfAssessmentStatus.APPROVED
-    a.approved_at = utcnow()
-    a.approved_by = user.id
+    # #702: conditional on a status that may be approved. That one condition
+    # refuses a DISCARDED assessment, whether it was discarded before this
+    # request or commits after the row above was loaded; discard's own UPDATE
+    # is conditional on DRAFT, and this is the other half of that contract. The
+    # rowcount branch below says which status stopped it.
+    result = db.execute(
+        update(CsfAssessment)
+        .where(
+            CsfAssessment.id == a.id,
+            CsfAssessment.status.in_((CsfAssessmentStatus.DRAFT, CsfAssessmentStatus.SUBMITTED)),
+        )
+        .values(status=CsfAssessmentStatus.APPROVED, approved_at=utcnow(), approved_by=user.id)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        db.rollback()
+        db.refresh(a)
+        if a.status == CsfAssessmentStatus.DISCARDED:
+            raise _refuse_approving_discarded()
+        if a.status == CsfAssessmentStatus.APPROVED:
+            return _serialize_assessment(db, a)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Assessment already released.",
+        )
+    db.refresh(a)
     audit(
         db,
         action="csf.assessment.approved",

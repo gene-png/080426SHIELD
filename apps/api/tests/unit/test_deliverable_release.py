@@ -664,6 +664,55 @@ def test_re_releasing_repairs_a_parent_that_never_got_flipped(app_client, capsys
 
 
 @pytest.mark.unit
+def test_a_parent_released_concurrently_is_logged_not_overwritten(app_client, capsys) -> None:
+    """#657 round 4. The parent flip is a conditional UPDATE (WHERE status =
+    APPROVED), so for CSF, ZT and ATT&CK -- which pass no guard -- the one new
+    branch is a flip that misses because the status moved underneath it. The
+    only concurrent transition is APPROVED -> RELEASED (another release). Driven
+    here for CSF: a one-shot hook commits that transition from a separate
+    session immediately before the flip. The release itself must still land
+    exactly as main gives it (200, deliverable released, parent released), and
+    the miss must be reported rather than silent."""
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session as _Session
+
+    from app.models.csf_assessment import CsfAssessment, CsfAssessmentStatus
+
+    c = app_client
+    bearer = _register(c, "w4-concurrent@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    deliv = _finalized_csf_deliverable(c, bearer)
+    svc_id = deliv["service_id"]
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+
+    fired: list[bool] = []
+
+    def before_flip(state) -> None:
+        mapper = state.bind_mapper
+        if not fired and state.is_update and mapper is not None and mapper.class_ is CsfAssessment:
+            fired.append(True)
+            with sessionmaker(bind=engine, future=True)() as other:
+                row = other.query(CsfAssessment).filter_by(service_id=_uuid.UUID(svc_id)).one()
+                row.status = CsfAssessmentStatus.RELEASED
+                other.commit()
+
+    capsys.readouterr()
+    event.listen(_Session, "do_orm_execute", before_flip)
+    try:
+        r = c.post(f"/csf/deliverables/{deliv['id']}/release", headers=h)
+    finally:
+        event.remove(_Session, "do_orm_execute", before_flip)
+
+    assert fired, "the hook never ran -- the concurrent branch was not driven"
+    assert r.status_code == 200, r.text
+    assert r.json()["released_at"] is not None
+    assert _csf_parent_status(c, bearer, svc_id) == "released"
+    out = capsys.readouterr().out
+    assert "release_parent_changed_concurrently" in out, out
+    assert "deliverable.release_parent_released" not in out, "the missed flip was logged as a flip"
+
+
+@pytest.mark.unit
 def test_releasing_a_second_version_does_not_warn_about_the_parent(app_client, capsys) -> None:
     """Finalize accepts a RELEASED parent, so release-then-refinalize-then-release
     is a normal flow that lands on an already-RELEASED parent. It must not log the

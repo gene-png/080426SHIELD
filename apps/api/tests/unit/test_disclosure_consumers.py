@@ -762,3 +762,169 @@ def test_arm_2_needs_the_renderer_to_be_WIRED_not_merely_present(tmp_path, capsy
 
     assert main(["x", str(seed)]) == 1
     assert "nothing renders the audit `details` payload generically" in capsys.readouterr().out
+
+
+# --- #473: a type declaration is not a use ----------------------------------------------
+
+_INTERFACE_ONLY = """
+export interface ThingData {
+  onPick: (id: string) => void;
+  nested: { depth: number };
+  excluded_inputs: string[];
+}
+export function panel(data: ThingData): string {
+  return "nothing about the field";
+}
+"""
+
+
+def test_a_field_only_DECLARED_in_an_interface_is_a_violation(tmp_path, capsys) -> None:
+    """#473's shape. The interface names the subject and the field, and nothing
+    renders the field. The old predicate cleared it. The field comes AFTER an
+    arrow type and a nested object on purpose: a strip that counted the `>` of
+    `=>`, or stopped at the nested `}`, would end early and leave it visible."""
+    seed = _tree(tmp_path, schema=_SCHEMA, web=_INTERFACE_ONLY)
+    assert main(["x", str(seed)]) == 1
+    assert "thing.py::ThingResponse.excluded_inputs" in capsys.readouterr().out
+
+
+def test_a_field_declared_AND_used_in_the_same_file_passes(tmp_path) -> None:
+    web = _INTERFACE_ONLY + "export const n = (d: ThingData) => d.excluded_inputs.length;\n"
+    seed = _tree(tmp_path, schema=_SCHEMA, web=web)
+    assert main(["x", str(seed)]) == 0
+
+
+@pytest.mark.parametrize(
+    "web",
+    [
+        "type ThingData = {\n  excluded_inputs: string[];\n};\nexport const x = 1;\n",
+        "type ThingData =\n  { excluded_inputs: string[] } | null;\nexport const x = 1;\n",
+        "const t: Thing = d; // excluded_inputs is shown elsewhere\n",
+        "const t: Thing = d;\n/* excluded_inputs,\n   still not rendered */\n",
+    ],
+    ids=["type-alias", "type-alias-next-line", "line-comment", "block-comment"],
+)
+def test_a_type_alias_or_a_comment_is_not_a_use(tmp_path, capsys, web: str) -> None:
+    seed = _tree(tmp_path, schema=_SCHEMA, web=web)
+    assert main(["x", str(seed)]) == 1
+    assert "thing.py::ThingResponse.excluded_inputs" in capsys.readouterr().out
+
+
+def test_a_double_slash_inside_a_string_does_not_hide_the_use(tmp_path) -> None:
+    # The comment stripper is string-aware: `//` in a URL is not a comment, so
+    # the use after it on the same line still counts.
+    web = 'const t: Thing = d; const u = "https://x/y"; const n = t.excluded_inputs;\n'
+    seed = _tree(tmp_path, schema=_SCHEMA, web=web)
+    assert main(["x", str(seed)]) == 0
+
+
+def test_the_subject_may_live_only_in_the_type_name(tmp_path) -> None:
+    # The subject is matched against the WHOLE file: a reader that names its
+    # model only in the interface it declares still attributes, as long as the
+    # field is USED outside the declaration.
+    web = "interface ThingData { id: string }\nexport const f = (d: any) => d.excluded_inputs;\n"
+    seed = _tree(tmp_path, schema=_SCHEMA, web=web)
+    assert main(["x", str(seed)]) == 0
+
+
+# --- #631 round 1: what the stripper cannot parse is could-not-look ---------------------
+
+_USE = "const t: Thing = d;\nconst n = t.excluded_inputs.length;\n"
+
+
+@pytest.mark.parametrize(
+    ("web", "cause"),
+    [
+        ("/* a comment that never closes\n" + _USE, "a /* block comment never closes"),
+        ("const s = `a template that never closes\n" + _USE, "a template literal never closes"),
+        (
+            "interface ThingData {\n  excluded_inputs: string[];\n" + _USE,
+            "an interface body never closes",
+        ),
+        (
+            "type ThingData = { excluded_inputs: string[] }\n" + _USE.replace(";", ""),
+            "a type alias body never closes",
+        ),
+        ('type Quote = "unterminated;\n' + _USE, "string inside a type body never closes"),
+        # Open at the very END, no newline after: the EOF branch, not the
+        # newline one (review of the red-on-revert run: this was untested).
+        (_USE + 'type Quote = "unterminated', "string inside a type body never closes"),
+    ],
+    ids=["block-comment", "template", "interface", "type-alias", "string-in-type", "string-at-eof"],
+)
+def test_what_the_stripper_cannot_parse_is_could_not_look(
+    tmp_path, capsys, web: str, cause: str
+) -> None:
+    # Each state used to fall through to a VERDICT: EOF taken as the end, so a
+    # render after it was stripped (a red no exemption could clear) or a
+    # comment stayed in (a green). Now it is exit 2, naming the file and cause.
+    seed = _tree(tmp_path, schema=_SCHEMA, web=web)
+    assert main(["x", str(seed)]) == 2
+    err = capsys.readouterr().err
+    assert "LatestPanel.tsx: could not parse" in err and cause in err, err
+
+
+def test_a_brace_in_a_string_type_does_not_swallow_the_render(tmp_path) -> None:
+    # `type Brace = "{";` opened a body that never closed, and the strip ate
+    # the render below it. Strings are skipped inside type bodies.
+    seed = _tree(tmp_path, schema=_SCHEMA, web='type Brace = "{";\n' + _USE)
+    assert main(["x", str(seed)]) == 0
+
+
+def test_a_regex_with_a_quote_does_not_stop_comment_stripping(tmp_path, capsys) -> None:
+    # `/["']/` read as code opened a phantom string, so the comment after it on
+    # the same line survived and cleared the field -- #473's own case, green.
+    web = "const t: Thing = d;\nconst r = /[\"']/; // excluded_inputs is shown elsewhere\n"
+    seed = _tree(tmp_path, schema=_SCHEMA, web=web)
+    assert main(["x", str(seed)]) == 1
+    assert "thing.py::ThingResponse.excluded_inputs" in capsys.readouterr().out
+
+
+def test_an_apostrophe_in_jsx_text_is_not_a_parse_failure(tmp_path) -> None:
+    # A KEEP-test, and what it pins is narrow: a `'` in JSX text is NOT an
+    # unterminated string, so the gate neither exits 2 nor drops the use on
+    # the next line. It goes red if a quote open at a newline were made a
+    # TsParseError (the obvious stricter design). It does NOT pin the newline
+    # reset itself -- an open quote still copies its content, so this passes
+    # without the reset; the reset is pinned by the comment test below.
+    web = "const t: Thing = d;\nconst p = <p>Don't</p>;\nconst n = t.excluded_inputs;\n"
+    seed = _tree(tmp_path, schema=_SCHEMA, web=web)
+    assert main(["x", str(seed)]) == 0
+
+
+def test_a_comment_after_a_jsx_apostrophe_line_is_still_stripped(tmp_path, capsys) -> None:
+    # The other half of the reset: without it the phantom `'` runs to EOF and
+    # every later comment is kept, so a field named only in one clears.
+    web = "const t: Thing = d;\nconst p = <p>Don't</p>;\n// excluded_inputs is shown elsewhere\n"
+    seed = _tree(tmp_path, schema=_SCHEMA, web=web)
+    assert main(["x", str(seed)]) == 1
+    assert "thing.py::ThingResponse.excluded_inputs" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "web",
+    [
+        "export function Panel({ excluded_inputs }: ThingProps) {\n"
+        "  return excluded_inputs.length;\n}\n",
+        "const t: Thing = d;\nconst s = `${t.excluded_inputs.length} dropped`;\n",
+    ],
+    ids=["destructured-prop", "template-use"],
+)
+def test_real_uses_are_KEPT(tmp_path, web: str) -> None:
+    # What must survive the strip, not only what must go: a destructured prop
+    # and a use inside a template literal are uses.
+    seed = _tree(tmp_path, schema=_SCHEMA, web=web)
+    assert main(["x", str(seed)]) == 0
+
+
+def test_a_commented_out_audit_renderer_is_not_a_renderer(tmp_path, capsys) -> None:
+    # Arm 2's twin of #473: the regexes read the RAW file, so a commented-out
+    # cell satisfied them. They now read `ts_use_text`.
+    seed = _tree(tmp_path, schema=_SCHEMA, web=_USE)
+    viewer = tmp_path / "apps" / "web" / "src" / "components" / "admin" / "AuditViewer.tsx"
+    viewer.write_text(
+        "const pairs = Object.entries(details);\n// cell: (e) => renderDetails(e.details),\n",
+        encoding="utf-8",
+    )
+    assert main(["x", str(seed)]) == 1
+    assert "nothing renders the audit `details` payload generically" in capsys.readouterr().out

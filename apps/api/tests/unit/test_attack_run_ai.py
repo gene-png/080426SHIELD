@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.models.capability import CapabilityItem, CapabilityList, CapabilityListStatus
 from app.models.service import Service, ServiceKind, ServiceStatus
+from tests._attack_rows import first_standalone
 
 
 @pytest.fixture()
@@ -122,7 +123,7 @@ def test_run_ai_applies_validated_dpr_and_reports_changes(app_client) -> None:
     )
     svc_id = svc.json()["id"]
     a = c.post(f"/attack/services/{svc_id}/assessments", headers=h)
-    code = a.json()["coverage"][0]["technique_code"]
+    code = first_standalone(a.json()["coverage"])["technique_code"]
 
     # The AI suggests covered + D/P/R, citing one real tool and one not in the list.
     provider.register_static(
@@ -235,7 +236,7 @@ def test_run_ai_skips_locked_rows(app_client) -> None:
     svc = c.post("/attack/services", headers=h, json={"kind": "attack_coverage", "title": "Acme"})
     svc_id = svc.json()["id"]
     a = c.post(f"/attack/services/{svc_id}/assessments", headers=h)
-    cov = a.json()["coverage"][0]
+    cov = first_standalone(a.json()["coverage"])
     code, cov_id = cov["technique_code"], cov["id"]
 
     # Lock the row.
@@ -266,7 +267,7 @@ def test_run_ai_marks_documents_stale(app_client) -> None:
     svc = c.post("/attack/services", headers=h, json={"kind": "attack_coverage", "title": "Acme"})
     svc_id = svc.json()["id"]
     a = c.post(f"/attack/services/{svc_id}/assessments", headers=h)
-    code = a.json()["coverage"][0]["technique_code"]
+    code = first_standalone(a.json()["coverage"])["technique_code"]
     assert a.json()["documents_stale"] is False
 
     provider.register_static(
@@ -355,9 +356,9 @@ def _run_with_citations(c, TestSession, tools: list[str], cited: list[str]) -> d
     svc_id = c.post(
         "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "A"}
     ).json()["id"]
-    code = c.post(f"/attack/services/{svc_id}/assessments", headers=h).json()["coverage"][0][
-        "technique_code"
-    ]
+    code = first_standalone(
+        c.post(f"/attack/services/{svc_id}/assessments", headers=h).json()["coverage"]
+    )["technique_code"]
     import json as _json
 
     provider = c.app.dependency_overrides  # noqa: F841 - provider set by fixture
@@ -501,9 +502,9 @@ def test_a_wrong_shaped_tool_list_is_counted_not_silently_dropped(app_client) ->
     svc_id = c.post(
         "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "A"}
     ).json()["id"]
-    code = c.post(f"/attack/services/{svc_id}/assessments", headers=h).json()["coverage"][0][
-        "technique_code"
-    ]
+    code = first_standalone(
+        c.post(f"/attack/services/{svc_id}/assessments", headers=h).json()["coverage"]
+    )["technique_code"]
     provider.register_static(
         "mitre_map",
         LLMResponse(
@@ -593,9 +594,9 @@ def test_the_same_tool_spelled_two_ways_across_lists_is_not_made_ambiguous(app_c
     svc_id = c.post(
         "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "A"}
     ).json()["id"]
-    code = c.post(f"/attack/services/{svc_id}/assessments", headers=h).json()["coverage"][0][
-        "technique_code"
-    ]
+    code = first_standalone(
+        c.post(f"/attack/services/{svc_id}/assessments", headers=h).json()["coverage"]
+    )["technique_code"]
     import json as _json
 
     provider.register_static(
@@ -676,7 +677,9 @@ def _one_row_run(c, TestSession, provider, status: str) -> tuple[dict, str, str]
     svc_id = c.post(
         "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "ATT&CK"}
     ).json()["id"]
-    row = c.post(f"/attack/services/{svc_id}/assessments", headers=h).json()["coverage"][0]
+    row = first_standalone(
+        c.post(f"/attack/services/{svc_id}/assessments", headers=h).json()["coverage"]
+    )
     provider.register_static(
         "mitre_map",
         LLMResponse(
@@ -909,3 +912,120 @@ def test_run_ai_refuses_a_suggestion_without_a_writable_status_whole(
     assert {k: row[k] for k in kept} == kept
     rejected = _run_audit(TestSession)["statuses_rejected"]
     assert rejected and all(e == {"technique_code": code, "status": recorded} for e in rejected)
+
+
+@pytest.mark.unit
+def test_run_ai_refuses_a_computed_parents_suggestion_and_computes_it(app_client) -> None:
+    """#554 (D-094): the model's status for a parent WITH sub-techniques is
+    refused whole, and the parent is computed from the children it scored."""
+    import json
+
+    from app.attack.parents import PARENT_CHILDREN
+
+    c, TestSession, provider = app_client
+    parent, children = next((p, cs) for p, cs in sorted(PARENT_CHILDREN.items()) if cs)
+    h, svc_id, _ = _one_row_run(c, TestSession, provider, "covered")
+    suggestion = [
+        {
+            "technique_code": parent,
+            "status": "covered",
+            "detection_tools": ["Tool A"],
+            "prevention_tools": [],
+            "response_tools": [],
+            "rationale": "PARENT-RATIONALE-that-must-not-land",
+        }
+    ] + [
+        {
+            "technique_code": child,
+            "status": "gap",
+            "detection_tools": [],
+            "prevention_tools": [],
+            "response_tools": [],
+            "rationale": "r",
+        }
+        for child in children
+    ]
+    provider.register_static("mitre_map", LLMResponse(json.dumps({"techniques": suggestion})))
+    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    row = next(t for t in r.json()["coverage"] if t["technique_code"] == parent)
+    # Computed from its children -- all gap -- not the model's "covered".
+    assert row["status"] == "gap"
+    assert row["rationale"] != "PARENT-RATIONALE-that-must-not-land"
+    details = _run_audit(TestSession)
+    # Recorded in the same shape as #590's refusals, code-shaped values only.
+    assert {"technique_code": parent, "status": "covered"} in details["parent_suggestions_refused"]
+    assert parent in details["parents_recomputed"]
+
+
+@pytest.mark.unit
+def test_run_ai_shows_a_legacy_locked_parents_recompute_in_its_diff(app_client) -> None:
+    """#620 review, finding 2: `diff_keyed_rows` hides locked keys, so a parent
+    locked before D-094 would have been recomputed with the change invisible.
+    The recompute unlocks it, and the run's `changed` shows what moved."""
+    import json
+    import uuid as _uuid
+
+    from sqlalchemy import update
+
+    from app.attack.parents import PARENT_CHILDREN
+    from app.models.attack_assessment import AttackCoverage
+
+    c, TestSession, provider = app_client
+    parent, children = next((p, cs) for p, cs in sorted(PARENT_CHILDREN.items()) if cs)
+    h, svc_id, _ = _one_row_run(c, TestSession, provider, "covered")
+    rows = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json()["coverage"]
+    parent_id = next(r["id"] for r in rows if r["technique_code"] == parent)
+    with TestSession() as db:
+        db.execute(
+            update(AttackCoverage)
+            .where(AttackCoverage.id == _uuid.UUID(parent_id))
+            .values(locked=True, status="covered")
+        )
+        db.commit()
+    suggestion = [
+        {
+            "technique_code": child,
+            "status": "gap",
+            "detection_tools": [],
+            "prevention_tools": [],
+            "response_tools": [],
+            "rationale": "r",
+        }
+        for child in children
+    ]
+    provider.register_static("mitre_map", LLMResponse(json.dumps({"techniques": suggestion})))
+    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    row = next(t for t in r.json()["coverage"] if t["technique_code"] == parent)
+    assert (row["status"], row["locked"]) == ("gap", False)
+    assert {ch["field"] for ch in r.json()["changed"] if ch["technique_code"] == parent} >= {
+        "status"
+    }
+    assert parent in _run_audit(TestSession)["parents_unlocked"]
+
+
+@pytest.mark.unit
+def test_run_ai_never_sends_a_computed_parent_to_the_model(app_client) -> None:
+    """#620 round 2, finding 3. A computed parent's suggestion is refused whole
+    (D-094), so sending the parent spent tokens on an answer that was always
+    discarded. Asserted on what LEFT: every batch's payload, unioned."""
+    from app.attack.catalog import TECHNIQUES
+
+    c, TestSession, provider = app_client
+    h, svc_id, _ = _one_row_run(c, TestSession, provider, "covered")
+    sent: list[str] = []
+
+    def _spy(payload: dict) -> LLMResponse:
+        sent.extend(payload["technique_codes"])
+        return LLMResponse('{"techniques": []}')
+
+    provider.register("mitre_map", _spy)
+    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    # Derived from the catalog's parent links, not from `app.attack.parents`,
+    # so this does not read the predicate it is checking.
+    has_children = {t.parent_id for t in TECHNIQUES if t.parent_id is not None}
+    assert sent, "no batch reached the provider -- the spy saw nothing"
+    assert has_children.isdisjoint(sent), sorted(has_children & set(sent))[:5]
+    assert sorted(sent) == sorted(t.id for t in TECHNIQUES if t.id not in has_children)

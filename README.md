@@ -1,6 +1,6 @@
 # SHIELD by Kentro v2.0
 
-Enterprise cybersecurity assessment platform. Multi-tenant — one deployment serves many client organizations, every business row carries a `client_id` (DECISIONS.md D-015). FedRAMP Moderate/High target. Four assessment services plus a Risk Register (5x5, NIST 800-30) synthesized from them:
+Enterprise cybersecurity assessment platform. Multi-tenant — one deployment serves many client organizations, every business row carries a `client_id` (DECISIONS.md D-015). FedRAMP and ADA are not current targets (D-200). Four assessment services plus a Risk Register (5x5, NIST 800-30) synthesized from them:
 
 1. **Technical Debt Review** — capability inventory, overlap analysis, consolidation plan.
 2. **Zero Trust Assessment** — CISA ZTMM 2.0 and DoD ZTRA, scored per pillar with current/target maturity.

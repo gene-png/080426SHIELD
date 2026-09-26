@@ -6068,3 +6068,361 @@ run on every PR in the window that touches a compose file:
   form only (exit 0), and its other file, CLAUDE.md, is not a listed path, so
   it clears. **3/12**, against the old rule's 2/13. `7c2802c` (an
   `ai/engine.py` docstring) still comes back: the exception is compose only.
+
+## D-100 — The redaction-subsystem narratives, moved out of CLAUDE.md
+
+**Date:** 2026-09-26 · **Context:** `CLAUDE.md`'s size ratchet, item 1 of "Where the next 15,000 bytes come from" · **Carries:** the moved text belonging with D-058
+
+`CLAUDE.md` reached 149,686 bytes against its 150,000-byte gate. Its own plan
+names these narratives as the first cut: each is a RECORD whose instruction
+is already one sentence, so moving it loses no rule. Every bullet below is the
+text as it stood on `main` at `36c242e`, moved verbatim; `CLAUDE.md` keeps each
+rule's instruction and points here. Nothing in this record is a new decision.
+
+### A derived lookup key belongs in its own tier
+
+**A derived lookup key belongs in its OWN tier, below the authoritative one.**
+#33 finding 5 needed the resolver to recognise a tool under the placeholder the
+model was shown, so the redacted form was indexed as an alias — into the same
+`_by_norm` dict as real capability names. But a client's list can hold both
+spellings of one tool (the extractor redacts its own input, so
+`[CLIENT] SOC Platform` is the normal product of a later extraction), and the
+alias then collided with a real name: the only string the model can cite became
+`ambiguous`, and under the #102 withholding rule that pulled the technique out
+of the coverage denominator. Strictly worse than the defect being fixed. Real
+names are exact matches on what is stored; aliases are reversals of a
+transformation. Keep them in separate indexes and consult the authoritative one
+first, so an alias can only decide what the real key could not.
+
+### Enforce a parity claim by calling the other function
+
+**"Uses the same X as the Y path" is a claim to enforce by CALLING X, never by
+reimplementing it.** `_redacted_form` said in its docstring that it used "the
+SAME redactor the egress path uses" and then called `redact_org_name` — one
+rule out of the ten `redact_for_ai` runs in strict mode. The docstring even argued the point
+correctly ("a second copy would drift") while the code below it was the second
+copy. It was wrong immediately, not eventually: the address rule rewrote
+ordinary product names, so `Flowmon` egressed as a bare `[ADDRESS]` and had the
+exact disease the fix was for. (That over-match is fixed — #130 — so `Flowmon`
+now survives; the example is past tense and the lesson is not. A keyword
+followed by a number is still rewritten, so the case is still live.) When a
+function must agree with another function, import it and pass it the same
+inputs — including the MODE and any optional arguments, because a parity claim
+covers those too.
+
+### A table written first is an independent specification
+
+**A table written FIRST is an independent specification. A table written
+AFTERWARDS is a transcript of what the rule does.** Enumerating cases against
+a rule you have already written cannot falsify that rule, because the rule is
+where the cases came from. Measured on 104 LEAVE rows: tables written before
+their pattern pinned nothing **3.8%** of the time; tables written alongside or
+after their rule, **42.1%** — same corpus, same author, same week, the only
+variable being whether the table existed before the code did.
+
+**The step**: any LEAVE table written or extended after its rule exists gets
+`leave_row_oracle.py` run before the PR, and rows that pin nothing are
+rewritten or reclassified. Scoring a row needs judgement, so the tool reports
+and a human decides. What IS gated, behind `--check-registry`: a LEAVE table
+with no registered guards, and a table DECLARED not-LEAVE whose rows the
+redactor leaves untouched (#221). **Budget it** — any item fixing existing
+code lands its tables in the 42% regime by construction.
+
+**It is a floor, not a census**, and can only under-report: the guard list is
+hand-built, so `unrelated` is an UPPER BOUND. **Still ungated is whether the
+tool can RUN** (#299) — two mutation anchors had drifted out of `redact.py`
+and the oracle had been exiting 2 for an unknown length of time, because
+`--check-registry` returns before `build_mutations` is called.
+
+### The strongest recorded red-on-revert case
+
+**THE STRONGEST RECORDED CASE IS ONE WHERE EVERY OTHER SIGNAL AGREED,
+
+INCLUDING THE AUTHOR'S OWN EYES.** A `\b` written for a boundary reached the
+file as a literal BACKSPACE byte (U+0008) inside a raw string, so the
+alternation matched nothing. `grep` printed a correct-looking line, because a
+backspace renders as nothing. The tests passed. The same regex typed inline in
+a shell found the codes. **Only the mutation disagreed** — every other
+behavioural signal was reading the SOURCE while the defect was in the COMPILED
+value.
+
+**It is not the cheapest signal, and a draft of this said it was the only one
+— directly above its own counterexample.** `check_no_control_chars.py` reads
+`path.read_bytes()` and finds that byte in two seconds. **Run the gate first;
+reach for red-on-revert to prove the fix holds.** And that gate DID fire,
+correctly, on the first run, and was not read. **When a gate reports something
+you did not expect, read it before deciding what it is about.**
+
+### Replacing a character class is a subtraction to compute
+
+**Replacing a character class with an enumerated one is a subtraction you must
+COMPUTE, not guess.** `\s` matches 19 horizontal characters; narrowing it to
+"space, tab, non-breaking space" to stop a rule crossing newlines dropped
+SIXTEEN more — and in the redactor that is a LEAK, not a residual, because a
+street address separated by a narrow no-break space is exactly what PDF and
+Word extraction emit. The decision was framed as being about NEWLINES, so the
+replacement was written to solve newlines and nobody re-derived what else was
+in the class. **Write it as the subtraction and let the language define the
+set** (`[^\S\n\v\f\r\x1c\x1d\x1e\x85\u2028\u2029]`), then pin BOTH halves as
+parametrised sweeps whose parameters come from somewhere other than the thing
+under test. Note `[^\S\r\n]`, the idiom everyone reaches for, is also wrong —
+it still crosses `\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028 and U+2029.
+
+### Changing a parametrisation invalidates derived counts
+
+**Changing a parametrisation invalidates every count derived from it, and the
+count is usually in another file.** Narrower and more checkable than "re-check
+your numbers": the trigger is mechanical. PR #141 stated the address truth
+table had 153 cells. The fix for a review finding was to parametrise two
+sweeps per separator as well as per character, which multiplied the collected
+count several-fold. (The number that stood here was 327; it was 376 within the
+week and 410 after item 10, which is why it is no longer written down. Run the
+collector.) The stale 153 shipped to `main` in `CONTEXT.md` and `DECISIONS.md`
+and was found a PR later.
+
+What caught it was **re-counting**, not re-reading: the sentence still parsed,
+still looked deliberate, and was wrong by a factor of two. The number goes
+stale at the exact moment the change is most obviously substantive, which is
+when attention is on the code and not on the prose two files away. **After
+touching any `@pytest.mark.parametrize` argument, grep the repo for the old
+count before committing.**
+
+### A narrower rule stated where the reader checks
+
+**A comment or message stating a rule NARROWER than the reader will assume,
+positioned exactly where they would go to check, is worse than no comment.**
+It is true, so nothing flags it; it is where you look, so it ends the search;
+and it reads as a guarantee rather than as a scope. The instances, most in the
+redaction subsystem within two days:
+
+- `# noqa: S105 - dev placeholder, refused in prod via assert_safe_for_runtime`
+  beside the JWT signing secret. True. The guard covered one of three
+  environments, and this sentence is why nobody checked the other two (#142).
+- `"SHIELD_REDACTION_MODE=off is forbidden when ENVIRONMENT=production"` — the
+  runtime error the guard raises, naming a narrower rule than the one that
+  should exist, in the string a developer reads while debugging it.
+- `_redacted_form`'s docstring claiming it used "the SAME redactor the egress
+  path uses" while calling one rule out of ten. The docstring even argued
+  correctly that a second copy would drift, directly above the second copy.
+- `redact.py`'s separator note, wrong on arrival rather than stale (#158).
+
+Every one was found by reading the CODE and comparing, never by reading the
+prose — which is the only method that works, because the prose is accurate.
+The countermeasure is mechanical: when a comment states a condition, read the
+condition it describes and check the two agree in SCOPE, not just in truth.
+And when you fix such a guard, fix its message in the same commit — an error
+string is documentation a developer reads under pressure.
+
+### Replacing a validator gives you a free oracle
+
+**Replacing a validator gives you a free ORACLE for exactly one round: the
+thing you are replacing.**
+<!-- counted: "one round" is a duration in the claim itself, not a recalled figure -->
+
+Enumeration depends on imagining cases, and the cases you fail to imagine are
+precisely the ones that leak. Item 10 replaced a phone regex; its REDACT half
+was one grouping, so four formats the OLD rule caught — including
+`1-800-555-0199` and any number separated by a non-ASCII space — leaked
+silently. Nobody imagined them; the adversarial reviewer found them by reading.
+<!-- counted: historical -->
+
+The mechanical version costs nothing: **run the old rule and the new rule over
+the same corpus and diff their match sets.** Every input the old one caught
+and the new one does not is either an intended false-positive fix or a new
+leak, and you must classify each. It works for any validator, filter, guard or
+parser being replaced — and only for that one round, because after the old one
+<!-- counted: "one round" is a duration in the claim itself, not a recalled figure -->
+
+is deleted the oracle is gone. **Capture the diff while you still have both.**
+
+**A published standard is to a keyword list what the old rule is to a
+replacement pattern.** #139 asked which facility designators to add, and the
+honest answer to "which ones did I think of" is always "the ones I thought
+of". USPS Publication 28 Appendix C2 is the approved list, so the question
+became a lookup, and the table asserts every covered row redacts and every
+exclusion still does not — complete against a standard rather than against
+recall. It also gave the residual a better reason: `Level` is excluded because
+**it is not on Pub 28 C2 at all**, not because "patch level 3 is inseparable
+from a floor" — a phrasing that invites the next person to attempt the
+separation and fail identically.
+
+Enumeration finds what you thought of; the oracle finds what the previous
+author — or the standards body — thought of.
+
+### When testing one branch of a disjunction
+
+**When testing ONE branch of a disjunction, assert the other branches are
+absent.** Not the #72 shape — removing every detector would fail the test — but
+the same practical result: the test passes and proves nothing about the thing
+it is named for. `_RE_CONTACT_HINT` matches an email OR a `--` delimiter OR a
+phone-shaped run OR a ZIP line. The fixture written to prove the phone branch
+handled non-ASCII separators contained `Arlington VA 22209`, so it passed on
+the ZIP branch while the phone branch was ASCII-only and broken. The gate found
+the defect; the test named for it never could have.
+
+One line fixes it: the phone fixture asserts the ZIP hint does NOT fire on it.
+Every multi-signal guard has this shape, and the more signals it has the more
+reliably a test of any one of them passes for free.
+
+## D-101 — Two worked examples, moved out of CLAUDE.md
+
+**Date:** 2026-09-26 · **Context:** `CLAUDE.md`'s size ratchet, item 2 of "Where the next 15,000 bytes come from" · **Carries:** the moved text belonging with D-079
+
+The same trim as D-100, for the plan's second item. Each bullet below is the
+text as it stood on `main` at `36c242e`, moved verbatim; `CLAUDE.md` keeps each
+rule's instruction and points here. Nothing in this record is a new decision.
+
+### Spot-check a subagent's citations: the measurement
+
+**SPOT-CHECK a subagent's `file:line` citations before they enter a document,
+and record the check. A sample, not all of them — what you need is the
+report's CALIBRATION.** This replaces "be skeptical of subagent output", which
+is a disposition, and dispositions lose to convenience under time pressure.
+
+Measured 2026-08-30, a clean partition: of fourteen `file:line` citations that
+entered `DELIVERY_PLAN.md` from an Explore agent's report, **the eleven that
+were independently run were all correct and the three that were only read were
+all wrong.**
+
+**Sample a third, and round up** — at that hit rate, drawing 3 of 14 catches a
+bad citation only **55%** of the time.
+<!-- counted: python -c "from math import comb; print(1-comb(11,3)/comb(14,3))", 2026-08-30 -->
+
+An earlier draft asserted three checks "would have caught it", stating a 55%
+chance as a certainty, in the rule about not writing numbers you have not
+derived.
+
+**The sample CALIBRATES the report; it does not CLEAR the citations**, and the
+figures are conditional on this incident's error rate rather than a detection
+guarantee. Read the table as "how likely am I to learn this report is
+unreliable", never as "what fraction of bad citations do I catch".
+
+**And it assumes the bad citations are EXCHANGEABLE with the good ones, which
+here they demonstrably were not** — the three wrong were exactly the three
+nobody had executed, and drawing 11 with 0 bad has probability 1/364 under a
+random-draw model. **Sample the citations you have NOT executed**; three from
+that stratum would have been certain rather than 55%. **The wrong ones do not
+look wrong** — one was a bare closing paren, another a real line of code that
+reads plausibly in context.
+
+### Name the shape a sweep searched for: the worked examples
+
+**Before reporting a sweep complete, name the SHAPE you searched for and one
+place it could hide that shares no vocabulary with the original.** Keyword
+sweeps keep coming back clean over live defects because the second instance
+was written by someone using different words.
+
+**This binds PROSE sweeps identically, and prose is where it is skipped.** A
+commit correcting the three documents a finding named left two present-tense
+claims standing elsewhere, because the author never asked what ELSE asserted
+the same thing. Write the shape for prose the way you would for code — "any
+sentence stating what happens when X fails, in the present tense" — and grep
+the bare nouns rather than the phrasing you were shown.
+
+`risk.py` re-derived a gap comparison instead of calling `analyze_gaps` (#84),
+and reimplements the ATT&CK citation drop with no counter (#132), found only
+because the sweep asked "where else does a model's string get compared to a
+stored value and the misses discarded?" rather than "where else is
+`_validate_tools` called?". **If you cannot describe the defect without naming
+the function it was found in, you have not generalised it yet.**
+
+**A good shape statement**, from the `docs/security.md` honesty pass (#146):
+
+> A control stated in the present tense whose implementation is a deferral
+> comment, a client-supplied value, a header with no transport to enforce it,
+> or a function with no callers.
+
+It names four distinct failure modes rather than one; it names no file,
+function or symbol; each mode is checkable by reading the implementation
+rather than by knowing the history; and it found defects outside the table it
+would have been natural to check. **The test of a shape statement is whether
+it could have been written BEFORE seeing the defect that prompted it.**
+
+## D-200 — Scope: the MVP and a usable product; FedRAMP and ADA are not current targets; only defects block a merge
+
+**2026-09-26 · scope, governance** (Gene's decisions, relayed by the coordinator)
+
+**Scope.** FedRAMP and ADA/accessibility conformance are no longer targets for now. The work is the MVP and a usable product that can mature over time. Items justified only by FedRAMP or ADA move to `post-mvp`: #516 (idle timeout) and #220 (the PyJWT swap) have moved, and a sweep of the remaining `mvp-blocking` issues is recorded on the issues it moves. Real security defects stay in scope: #658 stays MVP. Nothing new starts that exists only for compliance.
+
+**Review blocking is narrowed.** Only code, test or security defects block a merge. Prose, docstring and wording findings are filed as follow-up issues and never block. After one fix round, any remaining non-defect finding is filed, not fixed in place. `.claude/agents/adversarial-reviewer.md` carries this as an override above its labels.
+
+**Why.** Gene wants focus on a usable MVP. Review rounds on wording (#625 went six rounds) were costing more than they returned.
+
+**Coordinator numbering.** Agent tracks hold ranges D-100–D-149 (track1) and D-150–D-199 (track2) per #649; coordinator records take D-200 upward.
+
+## D-094 — An ATT&CK parent with sub-techniques has its status computed from them
+
+**Date:** 2026-09-25 · **Issues:** #554 · **Decided by:** the owner (that parents are computed); the rule itself is **my call, overturnable**
+
+**The owner's decision** (#554): "`parent_rollup` -- computed. A parent's status is arithmetic over its children. AI suggests, code computes. Forbidden as a reason." The arithmetic was not specified.
+
+**Decision 1 — which parents.** Only a parent that HAS sub-techniques, taken from the catalog (`parents.PARENT_CHILDREN`). A parent with none is scored directly, as before.
+
+**Decision 2 — the rule** (`parents.computed_parent_status`), in precedence order:
+
+1. Any child unscored → the parent is unscored. Unknown is never rounded up.
+2. Any child `unable_to_determine` → the parent is too.
+3. Set aside `not_applicable` and `outside_control_surface` children. Of the rest: all covered → covered; all gap → gap; anything else → partial.
+4. Nothing left → `outside_control_surface` if any child is outside the surface, else `not_applicable`.
+
+Reasons are computed, never invented:
+
+- an N/A parent takes `platform_absent`;
+- an outside parent takes its children's sub-case when they all share one;
+- every other parent takes none.
+
+A computed Partial has no single missing part to name; its children carry their reasons. **So the release-readiness gate must read a computed parent's children, not demand a Partial reason of the parent.** Recorded on #554 for c3.
+
+The truth table was written BEFORE the function, and one row was corrected after the first run, stated at the site. It had expected no reason for N/A mixed with outside; the outside children name one sub-case, and the N/A child is set aside, as it is everywhere else in the rule.
+
+**Decision 3 — the write paths store the computed value, and refuse to be told otherwise.**
+
+- PATCH on a computed parent accepts only its notes. Everything else is refused with a typed 422, `parent_status_computed`: status, reason, lock, tools, rationale, narrative and evidence (the last four since #620 round 2). A lock is refused because a locked parent would stop following its children, which is the one thing this decision says a parent does. Its evidence is its sub-techniques', so its own would be a second claim beside the computed one. confirm-citations refuses a computed parent the same way.
+- A child's PATCH recomputes its parent in the same transaction.
+- The AI write-back refuses a parent's suggestion whole and recomputes every parent before the run's diff is taken. The refusal is recorded as `parent_suggestions_refused`, in D-093's shape (`{technique_code, status}`, code-shaped values only). The ORDER per suggestion is: a locked row is skipped; then a computed parent is refused, whatever it suggested; then a missing or disallowed status (D-093); then a mispaired reason (D-093); only then is anything applied. Each refusal lands in exactly one list.
+- Approve recomputes every parent before freezing the numbers, so a draft scored before this rule existed is corrected at the point it matters. Each is audited (`parents_recomputed`).
+- The demo seed recomputes through the same function.
+- A parent locked BEFORE this rule existed is unlocked when it is recomputed, on any of the three paths, and each is audited (`parents_unlocked`). Run AI recomputes before its diff is taken and removes every parent it unlocked from the run's locked set, so the diff shows the parent's recomputed status rather than hiding it as a locked row.
+
+**Recomputed on WRITE, never on read.** Parents are recomputed when a child is PATCHed, when Run AI writes, and at approve, and never when an assessment is read. An APPROVED or RELEASED assessment is locked against all three, so **a delivered parent's stored status never moves**. A hand-scored parent on a released assessment keeps its stored status until a new version is approved. **Pending review is different, and is derived on EVERY read** (corrected 2026-09-25; #620 round 2 found the earlier wording, "a delivered number never moves", false). A parent's pending state comes from its children's evidence, including on APPROVED and RELEASED assessments, with no version gate. So a report released before this rule can show a different `coverage_pct` after it, in either direction. Measured read-only the same day on the shared dev DB: 2 RELEASED assessments, 0 APPROVED, and 0 parents whose pending state differs between the old and new rule. That DB predates the current catalog, so it says nothing about a deployment. **Gated by Gene's condition, below**: an assessment approved before #620 keeps main's per-row pending rule.
+
+**Pending review is derived over the whole assessment.** A computed parent has no citations of its own, so #102's per-row rule would read every covered or partial parent as pending forever, with nothing able to clear it. A computed parent is pending if and only if it claims support (covered or partial) and at least one of its children is pending. The route computes this across the assessment's rows, so the heatmap's count, the dashboard and each row's flag agree.
+
+**Who sees an old parent, measured 2026-09-25.** Two populations are NOT recomputed by this change until something writes to them:
+
+- A DRAFT shows its old stored parents until the next child PATCH, Run AI or approve. Approve corrects it before anything is frozen.
+- An APPROVED assessment that was never released is never recomputed. It is locked against all three paths, and the next approve belongs to a new version.
+
+The shared dev database, read-only: DRAFT 2, RELEASED 2, APPROVED 0, at migration 0051, so 0052 and 0053 have not reached it. This measures one developer database, not any deployment. **Proposal for the owner:** no one-time recompute. DRAFTs self-correct at approve. The APPROVED-unreleased population is zero where it was measured. Recomputing an APPROVED assessment would move a number a consultant has signed off, which is the thing this decision says never happens. There is no path back from APPROVED to DRAFT. If a deployment is found with APPROVED-unreleased rows, the remedy is the existing one: cut a new version (`POST /services/{id}/assessments`, which mints an unscored DRAFT) and score it. The owner decides.
+
+**The owner's decision, 2026-09-25: no one-time recompute.** DRAFTs correct at their next write or at approve; APPROVED and RELEASED assessments keep the numbers a consultant signed off. An APPROVED-unreleased assessment found later is remedied by a new version, as above.
+
+**Existing tests moved, and none was weakened.** 20 ATT&CK tests scored "the first coverage row", which is T1001, a computed parent. Their assertions describe a scoreable row and still hold. So each setup now picks STANDALONE techniques (no sub-techniques, no parent) through one helper, `tests/_attack_rows.py`. The helper derives them from the catalog's parent links, not from `app.attack.parents`, and asserts it found enough. A sweep for the same shape in tests that still PASSED found more first-row setups that ignored the PATCH response and could now pass vacuously: acceptance, dashboard, discard, risk dashboard, risk register, and e2e `s5`, `s27` and `s30`. They use the helper, or the same derivation in e2e, and now assert every PATCH. The heatmap test went quietly from 10 to 8 because it never checked its PATCHes. `s5` selected T1003 and expected Run AI's rationale on T1001, both now parents. It derives its technique from the run instead, and proves the locked row untouched by the ABSENCE of the fixture's rationale rather than by a status the fixture might also produce. **The sweep missed a spelling.** It searched for first-row setups by the shapes it had already seen, and `test_attack_pending_persistence.py` picks its row as `codes[0]` through a local helper. That file's 13 tests went red on CI at 672738e and were not read before the head was sent for review. They now take standalone codes from the same helper. One exporter test picked `TECHNIQUES[4]`, which is T1003, a parent. It passed while a parent's pending state read its own citations, and failed once that state derived from its children. The exporter tests now index a standalone list. The remaining `TECHNIQUES[0]` uses are a catalog lookup and a pure rollup, where parenthood does not matter.
+
+**Condition 6.** A parent's stored status now follows its children, so coverage figures over draft and newly approved assessments can move. This comes back to the owner. **Gene's decision, 2026-09-25: option (b) and the Risk Register exclusion, on one condition.**
+
+- **What changes for an assessment approved under D-094.** Everything below is condition 6:
+  - A computed parent's own stored rationale and tools are not shown, in the workbook, the client dashboard or the admin panel. The stored data is untouched.
+  - Its client-dashboard row reads "From N sub-techniques", with no D/P/R legs.
+  - The Detect / Prevent / Respond triad and the blind-spot cards count each technique once, through its sub-techniques, and say so beside the figures.
+  - Risk Register synthesis takes findings through sub-techniques only. A parent is still citable as a link.
+  - Pending review is derived through children on every read.
+  - **The blind-spot section reconciles with the "Blind spots" KPI** (#620 round 5). The KPI keeps the rollup's count, as on `main`, over the same population as `coverage_pct`, so covered, partial and blind spots sum to 100%. Where the list shows fewer rows (gaps through sub-techniques), the section says how many parent techniques the KPI counts that are listed through their sub-techniques, and the two numbers reconcile on screen. A round-4 change that made the KPI count the list instead is **withdrawn**: it divided a parents-excluded count by a parents-included total. No KPI number changes for rule 2.
+  - The KPI row and `coverage_pct` do not move. That is established **by reading the code**: they come from the API rollup, never from the triad's population. The test is a ratchet, not a proof. It pins `kpis()` against reading the triad's population, and goes red if it does. Both fixtures share one rollup, and `coverage_pct` is not asserted (#665).
+- **The condition: a released assessment keeps rendering what was delivered.** The rules above apply only to assessments approved after #620 lands. Every client surface renders an assessment approved before #620 exactly as it was delivered, so a live dashboard never contradicts a delivered PDF or XLSX.
+- **The design, recorded before building** (the PR thread carries it too):
+  - `attack_assessments.parent_rules`, from migration 0054, additive. `1` means approved before #620, and `2` means approved under D-094; approve writes 2. **The migration itself backfills every APPROVED and RELEASED row to 1.**
+  - `attack/rules.py::parents_computed` is the only reader, and every surface asks it.
+  - `pending_codes` takes the rule as a REQUIRED argument, so no caller can default it.
+  - For rule 1, the client dashboard OMITS the new keys (`computed_parent`, `sub_technique_count`, `parents_computed`), so its JSON is byte-identical to main's.
+  - Stored deliverable files are rendered once, at finalize, and never regenerated. An assessment approved before and finalized after renders under the old rules.
+  - **0054's downgrade refuses** while any assessment has `parent_rules = 2` (#620 round 4). Dropping the column would lose which rule set each was approved under, and a re-upgrade would backfill them to 1, silently moving a rule-2 release onto the old rules.
+- **Gene's additions, 2026-09-25:**
+  1. **NULL (a draft) reads as the NEW rules.** Only an unknown non-NULL value fails, and it raises. Tested for NULL, 1, 2, and unknown values including `True`, since `True == 1` in Python; the reader compares the exact type.
+  2. **The old rules' output is recorded ONCE from `main`**, at d64956695a308d08135676d03e3753fcf4609d0f, by the committed `tests/golden/record_parent_rules_golden.py`. The test compares against those committed files and never regenerates them.
+     - It loads main's database dump and runs `alembic upgrade head`, so 0054's backfill is the path under test.
+     - No normalisation is needed: same database, same ids.
+     - The dashboard matches byte for byte, as do the finalize summary and every XLSX cell, and the register sends main's findings.
+     - The same world under rule 2 renders differently.
+  3. **Migrations land in number order:** #620 takes 0054, then #640 0055, then #658 0056, renumbered at landing (with `down_revision`) if the order changes. `test_alembic_single_head.py` reads Alembic's `ScriptDirectory` and fails unless there is one head and an unbroken chain from base. It was shown red on a forked chain. The chain order is not the number order: on `main` it runs 0051 → 0053 → 0052, so 0054 chains from 0052.
+- **Conditions 4 and 6** both apply: this is a migration, and it changes client-visible numbers.

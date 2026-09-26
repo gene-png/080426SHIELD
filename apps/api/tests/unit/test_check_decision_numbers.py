@@ -363,3 +363,64 @@ def test_the_unresolvable_range_names_WHICH_could_not_look(
         "the message must name WHICH read failed -- a bare exit 2 cannot "
         f"distinguish the range branch from the per-commit one. got: {err}"
     )
+
+
+# --- #524: the path is the repository's, not the working directory's ---------
+
+
+def _run_from(where: pathlib.Path, *extra: str) -> int:
+    import os
+
+    cwd = os.getcwd()
+    os.chdir(where)
+    try:
+        return main(["--base", "main", "--head", "HEAD", *extra])
+    finally:
+        os.chdir(cwd)
+
+
+@pytest.mark.unit
+@requires_git
+def test_a_mismatch_is_caught_from_a_subdirectory(tmp_path: pathlib.Path) -> None:
+    """#524. The pathspec was resolved against the CWD, so from `apps/api` --
+    where every other gate runs -- it matched nothing and reported "no commit
+    touches DECISIONS.md", exit 0, over a real mismatch."""
+    repo = _repo(tmp_path)
+    sub = repo / "apps" / "api"
+    sub.mkdir(parents=True)
+    _git_run(repo, "checkout", "-q", "-b", "f")
+    _commit(repo, "docs(decisions): D-072 -- a thing", "\n## D-078 -- a thing\n")
+    assert _run_from(sub) == 1
+
+
+@pytest.mark.unit
+@requires_git
+def test_a_consistent_commit_is_READ_from_a_subdirectory(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The passing half: exit 0 alone is what the defect also gave, so the
+    output must show the commit was read, not skipped."""
+    repo = _repo(tmp_path)
+    sub = repo / "apps" / "api"
+    sub.mkdir(parents=True)
+    _git_run(repo, "checkout", "-q", "-b", "f")
+    _commit(repo, "docs(decisions): D-090 -- a thing", "\n## D-090 -- a thing\n")
+    assert _run_from(sub) == 0
+    out = capsys.readouterr().out
+    assert "clean -- 1 commit(s) both naming and adding a decision" in out, out
+
+
+@pytest.mark.unit
+@requires_git
+def test_a_file_absent_at_head_is_could_not_look(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A `--file` that names nothing at the head can never be touched by a
+    commit, so "no commit touches it" would be true of every branch. That is
+    "I could not look", not a pass."""
+    repo = _repo(tmp_path)
+    _git_run(repo, "checkout", "-q", "-b", "f")
+    _commit(repo, "docs(decisions): D-072 -- a thing", "\n## D-078 -- a thing\n")
+    assert _run_from(repo, "--file", "DECISION.md") == 2
+    err = capsys.readouterr().err
+    assert "could not look" in err and "DECISION.md" in err, err

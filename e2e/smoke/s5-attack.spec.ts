@@ -35,6 +35,7 @@ interface RunAiBody {
     technique_code: string;
     status: string | null;
     detection_tools: string[] | null;
+    rationale: string | null;
     locked: boolean;
   }>;
 }
@@ -129,11 +130,23 @@ test("matrix + heatmap render, Run AI reports updated fields, and the panel show
   await expect(summary).toBeVisible({ timeout: 30000 });
   await expect(summary).toContainText(/Updated\s+\d+\s+field/);
 
-  // T1001 sorts first, so the fixture deterministically marks it covered and
-  // cites a detection tool validated against the client's Tech Debt list.
-  const t1001 = runBody.coverage.find((c) => c.technique_code === "T1001");
-  expect(t1001?.status).toBe("covered");
-  const expectedTool = t1001?.detection_tools?.[0];
+  // A STANDALONE technique (no sub-techniques, no parent) the fixture marked
+  // covered with a cited tool. Not "T1001": since #554 (D-094) a parent with
+  // sub-techniques is computed from them and the AI's suggestion for it is
+  // refused whole, so it carries no fixture rationale. Derived from this run's
+  // own rows, because batching decides which codes the fixture marks covered.
+  const codes = runBody.coverage.map((c) => c.technique_code);
+  const standalone = (code: string) =>
+    !code.includes(".") && !codes.some((other) => other.startsWith(`${code}.`));
+  const target = runBody.coverage.find(
+    (c) =>
+      standalone(c.technique_code) &&
+      c.status === "covered" &&
+      (c.detection_tools?.length ?? 0) > 0,
+  );
+  expect(target, "no standalone technique was marked covered").toBeTruthy();
+  const targetCode = target?.technique_code as string;
+  const expectedTool = target?.detection_tools?.[0];
   expect(expectedTool).toBeTruthy();
 
   // Assert the persisted result through a fresh load (race note above), then
@@ -142,7 +155,7 @@ test("matrix + heatmap render, Run AI reports updated fields, and the panel show
   // loaded next-dev server.
   await page.reload();
   await expect(page.getByText(/Draft v\d+/)).toBeVisible({ timeout: 60000 });
-  await selectTechnique(page, "T1001");
+  await selectTechnique(page, targetCode);
 
   await expect(page.getByText("Detection", { exact: true })).toBeVisible({
     timeout: 15000,
@@ -151,7 +164,7 @@ test("matrix + heatmap render, Run AI reports updated fields, and the panel show
   await expect(page.getByText("Response", { exact: true })).toBeVisible();
   await expect(page.getByText(expectedTool as string).first()).toBeVisible();
   await expect(
-    page.getByText(/Fixture-mode draft coverage assessment for T1001/),
+    page.getByText(`Fixture-mode draft coverage assessment for ${targetCode}.`),
   ).toBeVisible();
 });
 
@@ -163,7 +176,9 @@ test("a locked technique is untouched by Run AI and absent from the what-changed
   test.slow();
   await openFreshDraft(page);
 
-  const LOCK_CODE = "T1003";
+  // A STANDALONE technique: T1003 has sub-techniques, so since #554 (D-094)
+  // its status is computed and the status radios are disabled.
+  const LOCK_CODE = "T1190";
 
   // Select the technique, set a known status (Gap), and lock it BEFORE Run AI.
   await selectTechnique(page, LOCK_CODE);
@@ -199,12 +214,14 @@ test("a locked technique is untouched by Run AI and absent from the what-changed
   expect(
     runBody.changed.filter((c) => c.technique_code === LOCK_CODE),
   ).toHaveLength(0);
-  // ...and its row kept the manual "gap" status the AI would otherwise
-  // overwrite (the fixture's status cycle maps an unlocked T1003 to a
-  // different status, so this would provably have changed).
+  // ...and its row kept the manual "gap" status. The status alone cannot
+  // prove the AI was held off -- the fixture's cycle might map this code to
+  // "gap" too -- but the fixture writes its rationale on EVERY row it touches,
+  // so the absence of that rationale is the proof.
   const lockedRow = runBody.coverage.find(
     (c) => c.technique_code === LOCK_CODE,
   );
   expect(lockedRow?.locked).toBe(true);
   expect(lockedRow?.status).toBe("gap");
+  expect(lockedRow?.rationale ?? "").not.toContain("Fixture-mode draft");
 });

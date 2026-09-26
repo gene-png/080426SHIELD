@@ -50,6 +50,18 @@ And the paths that do not:
   * **`git` is unavailable, or the range cannot be resolved** -- exit 2. With
     no commits to read, every branch would look clean, and "I could not look"
     must not share an exit with "nothing to complain about".
+  * **`--file` names nothing at the head** -- exit 2. No commit can touch a
+    path that does not exist, so "no commit touches it" would be true of
+    every branch.
+
+## `--file` is relative to the REPOSITORY ROOT, not the working directory
+
+Every git call runs with `-C <toplevel>`. It used to run from the caller's
+directory, where a pathspec is relative to the CWD: from `apps/api`, where
+every other gate runs, `DECISIONS.md` matched nothing and the gate reported
+"no commit touches DECISIONS.md", exit 0, over a real mismatch (#524).
+`audit-gate.yml` runs it from the root, so that was latent -- held in place by
+a line in a different file that nothing checked.
 
 ## The range is TWO dots, deliberately
 
@@ -81,23 +93,24 @@ _HEADING = re.compile(r"^\+##\s*(D-\d+[a-z]*)\b", re.M)
 _SUBJECT_NUMBER = re.compile(r"\bD-\d+[a-z]*\b", re.I)
 
 
-def _git(*args: str) -> str:
+def _git(*args: str, top: str | None = None) -> str:
     # S603/S607: the argument list is built from this script's own constants and
     # the two refs its caller passes; nothing here is user input, and `git` is
     # resolved from PATH deliberately so the check works in the CI image and in
     # a developer shell without hardcoding either location. `shell=False` is the
     # default and is what makes the ref strings safe to pass through.
+    where = ["-C", top] if top else []
     return subprocess.run(  # noqa: S603
-        ["git", *args],  # noqa: S607 - PATH lookup, see above
+        ["git", *where, *args],  # noqa: S607 - PATH lookup, see above
         capture_output=True,
         text=True,
         check=True,
     ).stdout
 
 
-def added_decisions(sha: str, path: str) -> list[str]:
+def added_decisions(sha: str, path: str, top: str | None = None) -> list[str]:
     """The `## D-NNN` headings this commit ADDS to `path`."""
-    diff = _git("show", "--format=", "--unified=0", sha, "--", path)
+    diff = _git("show", "--format=", "--unified=0", sha, "--", path, top=top)
     return _HEADING.findall(diff)
 
 
@@ -115,12 +128,33 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Subjects must match the decisions added.")
     ap.add_argument("--base", default="origin/main")
     ap.add_argument("--head", default="HEAD")
-    ap.add_argument("--file", default="DECISIONS.md")
+    ap.add_argument("--file", default="DECISIONS.md", help="relative to the repository root")
     args = ap.parse_args(argv)
+
+    try:
+        top = _git("rev-parse", "--show-toplevel").strip()
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        print(
+            f"check-decision-numbers: could not look -- not inside a git repository, "
+            f"or git is unavailable ({type(exc).__name__}).",
+            file=sys.stderr,
+        )
+        return EXIT_COULD_NOT_LOOK
+    try:
+        _git("cat-file", "-e", f"{args.head}:{args.file}", top=top)
+    except subprocess.CalledProcessError:
+        print(
+            f"check-decision-numbers: could not look -- cannot read {args.file} at "
+            f"{args.head} under {top}: the path is absent there, or {args.head} does not "
+            f"resolve. `--file` is relative to the repository root; no commit can touch "
+            f"a path that is not there, so this is not reported as a pass.",
+            file=sys.stderr,
+        )
+        return EXIT_COULD_NOT_LOOK
 
     rng = f"{args.base}..{args.head}"  # TWO dots -- see the module docstring.
     try:
-        listed = _git("log", "--format=%H%x00%s", rng, "--", args.file)
+        listed = _git("log", "--format=%H%x00%s", rng, "--", args.file, top=top)
     except (subprocess.CalledProcessError, FileNotFoundError) as exc:
         print(
             f"check-decision-numbers: could not look -- `git log {rng}` failed "
@@ -132,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
 
     commits = [ln.split("\0", 1) for ln in listed.splitlines() if "\0" in ln]
     if not commits:
-        print(f"check-decision-numbers: no commit in {rng} touches {args.file}.")
+        print(f"check-decision-numbers: no commit in {rng} touches {args.file} (read under {top}).")
         return EXIT_OK
 
     problems: list[str] = []
@@ -141,7 +175,7 @@ def main(argv: list[str] | None = None) -> int:
         if not subject_decisions(subject):
             continue  # names no decision; nothing to be inconsistent with
         try:
-            added = added_decisions(sha, args.file)
+            added = added_decisions(sha, args.file, top)
         except subprocess.CalledProcessError:
             print(
                 f"check-decision-numbers: could not look -- `git show {sha[:8]}` " f"failed.",
@@ -184,7 +218,8 @@ def main(argv: list[str] | None = None) -> int:
 
     print(
         f"check-decision-numbers: clean -- {checked} commit(s) both naming and "
-        f"adding a decision, each consistent ({len(commits)} touched {args.file})."
+        f"adding a decision, each consistent ({len(commits)} touched {args.file}, "
+        f"read under {top})."
     )
     return EXIT_OK
 

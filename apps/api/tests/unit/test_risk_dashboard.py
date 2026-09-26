@@ -19,6 +19,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.storage.local import LocalFilesystemStorage
+from tests._attack_rows import first_standalone
 
 
 @pytest.fixture()
@@ -94,8 +95,9 @@ def _seed_attack_and_zt(c: TestClient, bearer: str, cid: str) -> None:
         "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "ATT&CK"}
     ).json()
     a = c.post(f"/attack/services/{asvc['id']}/assessments", headers=h).json()
-    cov = a["coverage"][0]
-    c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "gap"})
+    cov = first_standalone(a["coverage"])
+    r = c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "gap"})
+    assert r.status_code == 200, r.text
 
     zsvc = c.post("/zt/services", headers=h, json={"kind": "zero_trust_cisa", "title": "ZT"}).json()
     za = c.post(f"/zt/services/{zsvc['id']}/assessments", headers=h).json()

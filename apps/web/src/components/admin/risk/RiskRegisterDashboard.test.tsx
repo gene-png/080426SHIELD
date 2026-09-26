@@ -402,6 +402,41 @@ describe("RiskRegisterDashboard excluded-inputs disclosure", () => {
     );
   });
 
+  it("speaks of ONE assessment when one was excluded (#683)", async () => {
+    // It said "Those assessments exist ... approving them if they should be
+    // included" over a single excluded assessment.
+    generateRiskRegister.mockResolvedValue(
+      register({ excluded_inputs: ["the CSF assessment"] }),
+    );
+    await loaded();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Generate" }));
+    });
+    const text = (await screen.findByTestId(BANNER)).textContent ?? "";
+    expect(text).toContain(
+      "That assessment exists but is not approved, so nothing from it is in this register.",
+    );
+    expect(text).toContain("after approving it if it should be included.");
+    expect(text).not.toMatch(/Those|approving them|they should/);
+  });
+
+  it("speaks of the assessments when several were excluded (#683)", async () => {
+    generateRiskRegister.mockResolvedValue(
+      register({
+        excluded_inputs: ["the CSF assessment", "the Zero Trust assessment"],
+      }),
+    );
+    await loaded();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Generate" }));
+    });
+    const text = (await screen.findByTestId(BANNER)).textContent ?? "";
+    expect(text).toContain(
+      "Those assessments exist but are not approved, so nothing from them is in this register.",
+    );
+    expect(text).toContain("after approving them if they should be included.");
+  });
+
   it("renders no banner when nothing was excluded", async () => {
     // Negative control. Without it, a banner rendered unconditionally would
     // satisfy both tests above.
