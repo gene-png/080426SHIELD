@@ -314,6 +314,60 @@ def _serialize_list_with_items(db: Session, cap_list: CapabilityList) -> Capabil
     return resp
 
 
+def _draft_source_artifact_id(db: Session, cap_list: CapabilityList) -> uuid.UUID | None:
+    """The one document the draft's rows were extracted from, or None when
+    that cannot be established: no row carries a source (a human-included row
+    has none, and the column is ON DELETE SET NULL), or rows name more than one."""
+    sources = set(
+        db.execute(
+            select(CapabilityItem.source_artifact_id)
+            .where(CapabilityItem.capability_list_id == cap_list.id)
+            .where(CapabilityItem.source_artifact_id.is_not(None))
+            .distinct()
+        ).scalars()
+    )
+    return next(iter(sources)) if len(sources) == 1 else None
+
+
+def _refuse_draft_from_other_document(
+    db: Session, cap_list: CapabilityList, artifact_id: uuid.UUID
+) -> None:
+    """#644: an open draft answers only for the document it came from.
+
+    Fails closed: a draft whose source cannot be established is refused even
+    for the document that did produce it, because "same document" is then a
+    guess. "Discard draft" is DiscardDraftButton's label in step 2.
+    """
+    source = _draft_source_artifact_id(db, cap_list)
+    if source == artifact_id:
+        return
+    if source is None:
+        reason = "capability_draft_source_unknown"
+        message = (
+            f"Capability list draft v{cap_list.version} is open, and which document it was "
+            'extracted from can no longer be established. Use "Discard draft" in step 2, '
+            "then extract again."
+        )
+    else:
+        reason = "capability_draft_from_other_document"
+        message = (
+            f"Capability list draft v{cap_list.version} is open and was extracted from a "
+            'different document. To extract from this one, use "Discard draft" in step 2 '
+            "first. Discarding throws away edits made to that draft."
+        )
+    _log.info(
+        "techdebt_extract_refused_open_draft",
+        reason=reason,
+        list_id=str(cap_list.id),
+        requested_artifact_id=str(artifact_id),
+        draft_source_artifact_id=str(source) if source else None,
+    )
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={"reason": reason, "message": message},
+    )
+
+
 @router.post(
     "/services/{service_id}/capability-lists/extract",
     response_model=CapabilityListResponse,
@@ -348,11 +402,12 @@ def extract_capability_list(
     # already open, return it idempotently (HTTP 200) untouched — NO
     # re-extraction, NO clear-and-repopulate, so consultant edits/locks on the
     # open draft survive. A new version is only cut once the prior list has
-    # moved on (approved/released). A POST with a different artifact_id while a
-    # draft is open still returns that open draft (documented contract; an
-    # explicit replace/re-extract affordance is a future candidate).
+    # moved on (approved/released). A POST naming a DIFFERENT document while a
+    # draft is open is refused (#644): returning the open draft there handed
+    # the consultant a list built from another document, and read as success.
     existing = _latest_list_or_none(db, svc.id)
     if existing is not None and existing.status == CapabilityListStatus.DRAFT:
+        _refuse_draft_from_other_document(db, existing, artifact.id)
         _log.info(
             "techdebt_reused_open_draft",
             list_id=str(existing.id),

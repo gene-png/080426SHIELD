@@ -71,10 +71,16 @@ vi.mock("./DiscardDraftButton", () => ({ DiscardDraftButton: () => null }));
 vi.mock("./IntakeDocumentsPanel", () => ({
   IntakeDocumentsPanel: ({
     onExtract,
+    draftSourceId,
   }: {
     onExtract: (artifactId: string) => void;
+    draftSourceId?: string | null;
   }) => (
-    <button type="button" onClick={() => onExtract("artifact-1")}>
+    <button
+      type="button"
+      onClick={() => onExtract("artifact-1")}
+      data-draft-source={draftSourceId ?? ""}
+    >
       extract by hand
     </button>
   ),
@@ -197,5 +203,24 @@ describe("the deferred auto-extraction and a manual one", () => {
       });
     }
     expect(extractCapabilities).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("TechDebtWorkspace tells the documents panel which document the open draft came from (#644)", () => {
+  it("passes the open draft's single source document to the panel", async () => {
+    vi.mocked(techDebtClient.fetchLatestList).mockResolvedValue({
+      id: "list-1",
+      status: "draft",
+      version: 1,
+      items: [{ id: "item-1", name: "Wiz", source_artifact_id: "doc-a" }],
+      excluded_rows: [],
+    } as never);
+    render(<TechDebtWorkspace serviceId="svc-1" serviceTitle="Atlas TD" />);
+
+    // The list heading proves the draft loaded before the prop is read.
+    await screen.findByText("Capability list v1");
+    expect(
+      screen.getByRole("button", { name: "extract by hand" }),
+    ).toHaveAttribute("data-draft-source", "doc-a");
   });
 });

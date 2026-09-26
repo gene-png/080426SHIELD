@@ -38,6 +38,7 @@ import type {
   Deliverable,
   OverlapAnalysis,
 } from "@/lib/tech_debt/types";
+import { draftSourceArtifactId } from "@/lib/tech_debt/draftSource";
 
 import { ConsolidationPlanCard } from "./ConsolidationPlanCard";
 import { DeliverableCard } from "./DeliverableCard";
@@ -531,6 +532,7 @@ Components carry no cost of their own — this licence keeps its full value.`,
           onExtract={(id) => void runExtraction(id)}
           extracting={extracting}
           reloadKey={docsReloadKey}
+          draftSourceId={draftSourceArtifactId(list)}
         />
       </WorkflowStep>
 
