@@ -134,7 +134,9 @@ def verify_access_token(token: str) -> dict:
 
     RS256 only (HS256/none rejected — alg-confusion guard); ``iss`` pinned to
     ``keycloak_issuer``, ``aud`` to ``keycloak_audience``; ``exp``/``iat``/``sub``
-    required. Raises :class:`OidcError` (401/503) on any failure. Business claims
+    required, enforced through python-jose's ``require_<claim>`` options and
+    pinned by ``test_a_token_missing_a_required_claim_is_a_typed_401`` (#678).
+    Raises :class:`OidcError` (401/503) on any failure. Business claims
     (azp/email/…) are the route's job.
     """
     settings = get_settings()
@@ -164,13 +166,17 @@ def verify_access_token(token: str) -> dict:
             algorithms=["RS256"],
             audience=settings.keycloak_audience,
             issuer=settings.keycloak_issuer,
-            options={"require": ["exp", "iat", "sub"]},
+            # `require_<claim>` keys, NOT `{"require": [...]}`: python-jose 3.5
+            # reads only the former and silently ignores the latter (#678),
+            # which accepted a token with no `exp` (it never expired) and one
+            # with no `sub` (a KeyError 500 in the route).
+            options={"require_exp": True, "require_iat": True, "require_sub": True},
         )
     except JWTError as exc:
         raise OidcError(
             status_code=401,
             reason="oidc_token_invalid",
             message="The Keycloak token failed verification (signature, issuer, "
-            "audience, or expiry).",
+            "audience, expiry, or a missing exp/iat/sub claim).",
         ) from exc
     return claims

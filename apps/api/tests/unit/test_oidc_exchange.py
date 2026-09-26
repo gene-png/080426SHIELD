@@ -294,6 +294,25 @@ def test_wrong_issuer_rejected(app_client, monkeypatch) -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("claim", ["sub", "exp", "iat"])
+def test_a_token_missing_a_required_claim_is_a_typed_401(app_client, monkeypatch, claim) -> None:
+    """#678. The verifier passed `options={"require": [...]}`, which python-jose
+    3.5 IGNORES -- it reads only `require_<claim>` keys. A Keycloak-signed token
+    with no `sub` was accepted, then `claims['sub']` raised KeyError: an untyped
+    500. Through the route, so the wiring is what is tested, not the helper."""
+    c, TestSession = app_client
+    from app.security import oidc
+
+    monkeypatch.setattr(oidc, "_fetch_jwks", lambda: _JWKS)
+    _seed_user(TestSession, email="consultant@example.com", role=UserRole.ADMIN)
+
+    token = _sign(_drop(_base_claims(), claim))
+    r = _exchange(c, token)
+    assert r.status_code == 401, r.text
+    assert _reason(r) == "oidc_token_invalid"
+
+
+@pytest.mark.unit
 def test_wrong_audience_rejected(app_client, monkeypatch) -> None:
     c, TestSession = app_client
     from app.security import oidc
