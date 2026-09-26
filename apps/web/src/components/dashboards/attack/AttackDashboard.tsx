@@ -343,12 +343,17 @@ export function AttackDashboard({
         title="Detect · Prevent · Respond posture"
         desc="A technique is fully covered only when all three legs are present."
       >
-        <p
-          data-testid="attack-triad-population"
-          style={{ margin: "0 0 12px", fontSize: 12, color: C.muted }}
-        >
-          {triadPopulationText(dpr)}
-        </p>
+        {/* #620: only under D-094's rules. An assessment approved before #620
+            renders exactly as it was delivered, and this sentence was not in
+            it (Gene's condition, D-094). */}
+        {data.parents_computed === true ? (
+          <p
+            data-testid="attack-triad-population"
+            style={{ margin: "0 0 12px", fontSize: 12, color: C.muted }}
+          >
+            {triadPopulationText(dpr)}
+          </p>
+        ) : null}
         <div
           style={{
             display: "grid",
@@ -386,7 +391,13 @@ export function AttackDashboard({
         <Section
           title="What you're blind to today"
           pill={`${blind.length} uncovered`}
-          desc="Techniques with no meaningful detection, prevention, or response. A technique with sub-techniques is listed through them."
+          desc={
+            "Techniques with no meaningful detection, prevention, or response." +
+            // #620: only under D-094's rules (Gene's condition, D-094).
+            (data.parents_computed === true
+              ? " A technique with sub-techniques is listed through them."
+              : "")
+          }
         >
           <div
             style={{

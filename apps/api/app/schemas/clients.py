@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_serializer
 
 from app.models.service import ServiceKind
 
@@ -83,6 +83,11 @@ class AttackTacticCoverage(BaseModel):
     coverage_pct: float
 
 
+def _without_none(data: dict[str, Any], keys: frozenset[str]) -> dict[str, Any]:
+    """`data` without those of `keys` whose value is None (#620, D-094)."""
+    return {k: v for k, v in data.items() if not (k in keys and v is None)}
+
+
 class AttackDashboardTechnique(BaseModel):
     """One evaluated technique row for the client coverage matrix. Only techniques
     with a non-null coverage status are serialized (the 'evaluated' set)."""
@@ -104,11 +109,23 @@ class AttackDashboardTechnique(BaseModel):
     # Detect / Prevent / Respond triad leaves it out, so each technique is
     # counted once, through its sub-techniques. REQUIRED: a missing flag would
     # read as "not a parent" and put it back in the triad.
-    computed_parent: bool
+    computed_parent: bool | None = None
     #: How many sub-techniques it is computed from (0 when it is not a computed
     #: parent), so the client row can say so (#620 round 3). Set in the same
     #: statement as `computed_parent`, from the same catalog links.
-    sub_technique_count: int
+    sub_technique_count: int | None = None
+    #: Both keys above are OMITTED, not null, for an assessment approved before
+    #: #620 (Gene's condition, D-094): its dashboard must be byte-identical to
+    #: what was delivered, and main never sent them. ONLY these two are dropped;
+    #: every other null (a missing rationale) is still sent as null.
+    _omit_when_none: ClassVar[frozenset[str]] = frozenset(
+        {"computed_parent", "sub_technique_count"}
+    )
+
+    @model_serializer(mode="wrap")
+    def _drop_unset_rule_keys(self, handler: Any) -> dict[str, Any]:
+        return _without_none(handler(self), self._omit_when_none)
+
     detection_tools: list[str]
     prevention_tools: list[str]
     response_tools: list[str]
@@ -147,8 +164,17 @@ class AttackDashboardResponse(BaseModel):
     # the default keeps every existing consumer working.
     released: bool = True
     deliverable_version: int
+    #: True for an assessment approved under D-094's rules for computed parents
+    #: (#620). OMITTED for one approved before #620, whose dashboard must be
+    #: byte-identical to what was delivered (Gene's condition, D-094). The web
+    #: shows the triad's population sentence only when this is true.
+    parents_computed: bool | None = None
     rollup: AttackDashboardRollup
     techniques: list[AttackDashboardTechnique]
+
+    @model_serializer(mode="wrap")
+    def _drop_unset_rule_key(self, handler: Any) -> dict[str, Any]:
+        return _without_none(handler(self), frozenset({"parents_computed"}))
 
 
 class ZtPillarDashboard(BaseModel):

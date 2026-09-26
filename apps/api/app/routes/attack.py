@@ -72,6 +72,7 @@ from app.attack.pending import TOOL_FIELDS as _TOOL_FIELDS
 from app.attack.pending import confirm_all as confirm_attack_citations
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.pending import row_tools as attack_row_tools
+from app.attack.rules import NEW_RULES, parents_computed
 from app.audit import audit
 from app.config import get_settings
 from app.db.session import get_db
@@ -137,7 +138,9 @@ _log = get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _serialize_coverage(rows: Iterable[AttackCoverage]) -> list[AttackCoverageResponse]:
+def _serialize_coverage(
+    rows: Iterable[AttackCoverage], *, parents_computed: bool
+) -> list[AttackCoverageResponse]:
     """Every coverage row on the wire goes through here.
 
     This used to name each field by hand, and `patch_coverage` did the same
@@ -156,7 +159,7 @@ def _serialize_coverage(rows: Iterable[AttackCoverage]) -> list[AttackCoverageRe
     # parent's claim rests on its children's evidence (#554, D-094). Set on each
     # row as a plain attribute for `model_validate` to read; the schema field is
     # required, so a site that skips this fails loudly rather than guessing.
-    pending = attack_pending_codes(rows)
+    pending = attack_pending_codes(rows, parents_computed=parents_computed)
     for r in rows:
         r.pending_review = r.technique_code in pending
     return [
@@ -172,7 +175,9 @@ def _serialize_one(db: Session, row: AttackCoverage) -> AttackCoverageResponse:
         .scalars()
         .all()
     )
-    return next(c for c in _serialize_coverage(siblings) if c.id == row.id)
+    a = db.get(AttackAssessment, row.assessment_id)
+    rule = parents_computed(a)
+    return next(c for c in _serialize_coverage(siblings, parents_computed=rule) if c.id == row.id)
 
 
 def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentResponse:
@@ -193,7 +198,7 @@ def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentR
         # The ONE definition of current (`catalog_version.is_current`), never a
         # second inline comparison that could disagree with the guards.
         catalog_current=attack_catalog_is_current(a),
-        coverage=_serialize_coverage(rows),
+        coverage=_serialize_coverage(rows, parents_computed=parents_computed(a)),
     )
 
 
@@ -2137,7 +2142,7 @@ def run_ai(
     # database does not contain -- W1's accounting log claimed `applied=N` above
     # this same re-read and reported values applied for transactions that then
     # rolled back.
-    pending = attack_pending_codes(rows.values())
+    pending = attack_pending_codes(rows.values(), parents_computed=parents_computed(a))
     _log.info(
         "attack.run_ai.citations_resolved",
         service_id=str(svc.id),
@@ -2180,7 +2185,7 @@ def run_ai(
     )
     db.commit()
 
-    coverage = _serialize_coverage(rows.values())
+    coverage = _serialize_coverage(rows.values(), parents_computed=parents_computed(a))
     return AttackRunAiResponse(
         tools_available=len(tools),
         changed=changes,
@@ -2238,6 +2243,9 @@ def approve_assessment(
     a.status = AttackAssessmentStatus.APPROVED
     a.approved_at = utcnow()
     a.approved_by = user.id
+    # #620 (migration 0054, D-094): this assessment was approved under D-094's
+    # rules for computed parents, and every client surface renders it so.
+    a.parent_rules = NEW_RULES
     audit(
         db,
         action="attack.assessment.approved",
@@ -2368,7 +2376,9 @@ def heatmap(
     coverage_map: dict[str, str | None] = {
         r.technique_code: r.status for r in rows if r.technique_code in valid
     }
-    rollup = compute_heatmap(coverage_map, attack_pending_codes(rows))
+    rollup = compute_heatmap(
+        coverage_map, attack_pending_codes(rows, parents_computed=parents_computed(a))
+    )
     return AttackHeatmap(
         assessment_id=a.id,
         version=a.version,
@@ -2868,7 +2878,9 @@ def finalize_attack_deliverable(
     # the client, so a deliverable computed off an un-withheld rollup would be
     # the one place the whole rule does not apply -- which is the only place it
     # has to.
-    rollup = compute_heatmap(coverage_map, attack_pending_codes(coverage))
+    rollup = compute_heatmap(
+        coverage_map, attack_pending_codes(coverage, parents_computed=parents_computed(assessment))
+    )
 
     client_name = client.legal_name  # NULL when nobody has named the org (D-080)
 

@@ -12,6 +12,7 @@ from app.attack.catalog import TECHNIQUES
 from app.attack.coverage import CoverageStatus
 from app.attack.exporters import build_context, render_docx, render_pdf, render_xlsx
 from app.attack.pending import pending_codes as attack_pending_codes
+from app.attack.rules import parents_computed
 from app.models.attack_assessment import (
     AttackAssessment,
     AttackAssessmentStatus,
@@ -445,8 +446,11 @@ def _ctx_from(rows: dict[str, dict], *, default_status: str | None = "covered"):
             setattr(cov, field, value)
     # Pending codes as production computes them, so a withheld row is withheld
     # here too (routes/attack.py builds the rollup the same way).
+    # The assessment's own rule, as production reads it (`a` is a draft, so
+    # the new rules) -- not a literal.
     rollup = compute_heatmap(
-        {c.technique_code: c.status for c in coverage}, attack_pending_codes(coverage)
+        {c.technique_code: c.status for c in coverage},
+        attack_pending_codes(coverage, parents_computed=parents_computed(a)),
     )
     ctx = build_context(
         client_legal_name="Atlas Defense Solutions",

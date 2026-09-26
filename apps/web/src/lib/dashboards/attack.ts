@@ -37,12 +37,13 @@ export interface DashTechnique {
    * sub-techniques. The API sends no tools or rationale for it, and the
    * Detect / Prevent / Respond triad leaves it out, so each technique is
    * counted once, through its sub-techniques. Required: set by the API from
-   * the catalog's parent links.
+   * the catalog's parent links. ABSENT for an assessment approved before #620
+   * (Gene's condition, D-094), which renders exactly as it was delivered.
    */
-  computed_parent: boolean;
+  computed_parent?: boolean;
   /** How many sub-techniques it is computed from; 0 when it is not a computed
    *  parent. Set by the API with `computed_parent`, from the same links. */
-  sub_technique_count: number;
+  sub_technique_count?: number;
   detection_tools: string[];
   prevention_tools: string[];
   response_tools: string[];
@@ -67,6 +68,9 @@ export interface DashRollup {
 }
 
 export interface AttackDashboardData {
+  /** True for an assessment approved under D-094's rules for computed parents
+   *  (#620). Absent for one approved before, which renders as delivered. */
+  parents_computed?: boolean;
   service_id: string;
   service_title: string;
   released_at: string;

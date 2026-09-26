@@ -52,8 +52,12 @@ const KIDS = [
 ];
 const PENDING = tech({ code: "T1002", pending_review: true });
 
-function data(techniques: DashTechnique[]): AttackDashboardData {
+function data(
+  techniques: DashTechnique[],
+  parentsComputed = true,
+): AttackDashboardData {
   return {
+    ...(parentsComputed ? { parents_computed: true } : {}),
     service_id: "s1",
     service_title: "ATT&CK Coverage",
     released_at: "2026-09-01T12:00:00Z",
@@ -107,6 +111,27 @@ describe("AttackDashboard, a computed parent (#620 round 3)", () => {
     expect(within(section).getByText("1 uncovered")).toBeInTheDocument();
     expect(within(section).queryByText("Parent technique")).toBeNull();
     expect(section.textContent).toContain(
+      "A technique with sub-techniques is listed through them.",
+    );
+  });
+
+  it("renders an assessment approved before #620 exactly as delivered", () => {
+    // Gene's condition (D-094): the API omits the new keys for it, so every
+    // row renders the old way -- legs and own tools -- and neither new
+    // sentence appears.
+    const legacy = [
+      { ...PARENT, computed_parent: undefined, sub_technique_count: undefined },
+      ...KIDS.map((k) => ({
+        ...k,
+        computed_parent: undefined,
+        sub_technique_count: undefined,
+      })),
+    ];
+    render(<AttackDashboard data={data(legacy, false)} />);
+    expect(within(row("T1001")).getByText("D")).toBeInTheDocument();
+    expect(screen.queryByText(/From \d+ sub-techniques/)).toBeNull();
+    expect(screen.queryByTestId("attack-triad-population")).toBeNull();
+    expect(document.body.textContent).not.toContain(
       "A technique with sub-techniques is listed through them.",
     );
   });

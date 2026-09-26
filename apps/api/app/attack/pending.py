@@ -232,7 +232,7 @@ def row_tools(row: object) -> list[str]:
     return out
 
 
-def pending_codes(rows: Iterable[object]) -> frozenset[str]:
+def pending_codes(rows: Iterable[object], *, parents_computed: bool) -> frozenset[str]:
     """The technique codes `analytics.compute` must withhold, from stored rows.
 
     ONE derivation for every surface: the rollups AND each row's `pending_review`
@@ -245,8 +245,20 @@ def pending_codes(rows: Iterable[object]) -> frozenset[str]:
     its children is pending. Its own stored citations are never consulted -- a
     new parent's are NULL, which on its own would hold it out of coverage
     forever, with no control to clear it (D-094 refuses the parent PATCH).
+
+    `parents_computed` is the assessment's rule set (`attack/rules.py`), and it
+    is REQUIRED so no caller defaults it: False is the rule every row was judged
+    by before #620 -- each row on its own citations, a parent included -- and
+    is what an assessment approved before #620 keeps rendering (Gene's
+    condition, D-094).
     """
     rows = list(rows)
+    if not parents_computed:
+        return frozenset(
+            row.technique_code
+            for row in rows
+            if is_pending_review(row.status, row.unconfirmed_citations, row_tools(row))
+        )
     leaf = {
         row.technique_code
         for row in rows
