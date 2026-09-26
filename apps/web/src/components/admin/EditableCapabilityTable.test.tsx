@@ -35,11 +35,46 @@ const ITEM: CapabilityItem = {
 };
 
 describe("EditableCapabilityTable layout (#643)", () => {
-  it("lays the table out at a fixed layout with a stated minimum width", () => {
+  it("sizes EVERY column, and holds the table to their sum", () => {
+    // #685 round 1: `table-fixed` hands whatever the sized columns leave to the
+    // unsized ones. The first fix sized four of nine, and Name got ~5.6rem.
     render(<EditableCapabilityTable items={[ITEM]} onItemUpdate={() => {}} />);
     const table = screen.getByRole("table");
     expect(table).toHaveClass("table-fixed");
-    expect(table).toHaveClass("min-w-[60rem]");
+    const widths = screen
+      .getAllByRole("columnheader")
+      .map((th) => th.style.width);
+    expect(widths).toHaveLength(9);
+    for (const w of widths) expect(w).toMatch(/^[0-9.]+rem$/);
+    const sum = widths.reduce((acc, w) => acc + parseFloat(w), 0);
+    expect(table.style.minWidth).toBe(`${sum}rem`);
+  });
+
+  it("gives Name the widest column", () => {
+    render(<EditableCapabilityTable items={[ITEM]} onItemUpdate={() => {}} />);
+    const byLabel = Object.fromEntries(
+      screen
+        .getAllByRole("columnheader")
+        .map((th) => [th.textContent, parseFloat(th.style.width)]),
+    );
+    const widest = Math.max(...Object.values(byLabel));
+    expect(byLabel["Name"]).toBe(widest);
+  });
+
+  it("titles each free-text input with its value, so a long one can be read", () => {
+    render(<EditableCapabilityTable items={[ITEM]} onItemUpdate={() => {}} />);
+    for (const [label, value] of [
+      ["Name", "Tool"],
+      ["Vendor", "Vendor"],
+      ["Category", "Category"],
+      ["Function", "Function"],
+      ["Notes", "n"],
+    ]) {
+      expect(screen.getByRole("textbox", { name: label })).toHaveAttribute(
+        "title",
+        value,
+      );
+    }
   });
 
   it("sizes every editable control to its cell rather than its intrinsic width", () => {

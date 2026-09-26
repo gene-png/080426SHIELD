@@ -29,9 +29,36 @@ export interface EditableCapabilityTableProps {
 type SaveStateById = Record<string, "idle" | "saving" | "saved" | "error">;
 
 // #643: an input or select with no width keeps its intrinsic ~20-character
-// width, and seven of them overflowed the admin content column at any normal
-// screen width. Sized to the cell instead, the fixed-layout table below decides
-// the widths and scrolls only under its stated minimum.
+// width, so seven of them overflowed the content column. Sized to the cell
+// instead, and every column has an explicit width below.
+//
+// EVERY column is sized, because `table-fixed` splits whatever the sized ones
+// leave among the rest: the first fix sized four columns in a 60rem minimum and
+// left five text columns about 5.6rem each -- Name, the column step 2 exists to
+// review, showed five characters (#685 round 1). Nine editable columns do not
+// fit legibly in the ~62rem content column at 1280px, so the table keeps a
+// minimum equal to their sum and scrolls sideways below it: a moderate scroll
+// with a readable Name, over no scroll and an unreadable one. Name and Vendor
+// get the room. The e2e spec `s44-techdebt-table-width` measures Name at 1280px
+// and 1440px against a 24-character string in the input's own font.
+const COLUMNS: ReadonlyArray<{
+  label: string;
+  rem: number;
+  numeric?: boolean;
+}> = [
+  { label: "Confidence", rem: 7.5 },
+  { label: "Disposition", rem: 8.5 },
+  { label: "Name", rem: 16 },
+  { label: "Vendor", rem: 12 },
+  { label: "Category", rem: 9 },
+  { label: "Function", rem: 9 },
+  { label: "Annual cost (USD)", rem: 7.5, numeric: true },
+  { label: "Licenses", rem: 5.5, numeric: true },
+  { label: "Notes", rem: 12 },
+];
+/** The sum of the columns, so no column is ever given the leftover. */
+const TABLE_MIN_REM = COLUMNS.reduce((sum, col) => sum + col.rem, 0);
+
 const cellInputClasses = cn(inputClasses, "w-full min-w-0");
 const cellSelectClasses = cn(selectClasses, "w-full min-w-0");
 
@@ -117,48 +144,24 @@ export function EditableCapabilityTable({
 
   return (
     <div className="overflow-x-auto rounded-lg border border-border-subtle">
-      <table className="w-full min-w-[60rem] table-fixed border-separate border-spacing-0 text-sm">
+      <table
+        className="w-full table-fixed border-separate border-spacing-0 text-sm"
+        style={{ minWidth: `${TABLE_MIN_REM}rem` }}
+      >
         <thead className="sticky top-0 z-base bg-surface-sunken text-xs uppercase tracking-wider text-ink-secondary">
           <tr>
-            <th
-              className="border-b border-border-subtle px-3 py-2 text-left font-semibold"
-              style={{ width: "8.5rem" }}
-            >
-              Confidence
-            </th>
-            <th
-              className="border-b border-border-subtle px-3 py-2 text-left font-semibold"
-              style={{ width: "9rem" }}
-            >
-              Disposition
-            </th>
-            <th className="border-b border-border-subtle px-3 py-2 text-left font-semibold">
-              Name
-            </th>
-            <th className="border-b border-border-subtle px-3 py-2 text-left font-semibold">
-              Vendor
-            </th>
-            <th className="border-b border-border-subtle px-3 py-2 text-left font-semibold">
-              Category
-            </th>
-            <th className="border-b border-border-subtle px-3 py-2 text-left font-semibold">
-              Function
-            </th>
-            <th
-              className="border-b border-border-subtle px-3 py-2 text-right font-semibold"
-              style={{ width: "8.5rem" }}
-            >
-              Annual cost (USD)
-            </th>
-            <th
-              className="border-b border-border-subtle px-3 py-2 text-right font-semibold"
-              style={{ width: "6rem" }}
-            >
-              Licenses
-            </th>
-            <th className="border-b border-border-subtle px-3 py-2 text-left font-semibold">
-              Notes
-            </th>
+            {COLUMNS.map((col) => (
+              <th
+                key={col.label}
+                className={cn(
+                  "border-b border-border-subtle px-3 py-2 font-semibold",
+                  col.numeric ? "text-right" : "text-left",
+                )}
+                style={{ width: `${col.rem}rem` }}
+              >
+                {col.label}
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody className="bg-surface-card">
@@ -257,6 +260,7 @@ export function EditableCapabilityTable({
                     <input
                       type="text"
                       defaultValue={item.name}
+                      title={item.name}
                       readOnly={readOnly}
                       onBlur={(e) => {
                         const v = e.target.value;
@@ -272,6 +276,7 @@ export function EditableCapabilityTable({
                     <input
                       type="text"
                       defaultValue={item.vendor ?? ""}
+                      title={item.vendor ?? ""}
                       readOnly={readOnly}
                       onBlur={(e) => {
                         const v = e.target.value || undefined;
@@ -287,6 +292,7 @@ export function EditableCapabilityTable({
                     <input
                       type="text"
                       defaultValue={item.category ?? ""}
+                      title={item.category ?? ""}
                       readOnly={readOnly}
                       onBlur={(e) => {
                         const v = e.target.value || undefined;
@@ -302,6 +308,7 @@ export function EditableCapabilityTable({
                     <input
                       type="text"
                       defaultValue={item.function ?? ""}
+                      title={item.function ?? ""}
                       readOnly={readOnly}
                       onBlur={(e) => {
                         const v = e.target.value || undefined;
@@ -347,6 +354,7 @@ export function EditableCapabilityTable({
                     <input
                       type="text"
                       defaultValue={item.notes ?? ""}
+                      title={item.notes ?? ""}
                       readOnly={readOnly}
                       onBlur={(e) => {
                         const v = e.target.value || undefined;
