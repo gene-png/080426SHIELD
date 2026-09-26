@@ -63,9 +63,22 @@ WRITABLE: frozenset[CoverageStatus] = frozenset(
 )
 
 #: The statuses whose rows form the assessed denominator of `coverage_pct`.
+#: READ, not restated: `analytics.compute` and the client dashboard's
+#: `total_evaluated` (`routes/clients.py`) sum over this set, and
+#: `test_attack_assessed_is_the_one_definition.py` fails on a hand-written
+#: covered + partial + gap anywhere under `app/`. The web keeps its own copy,
+#: `ASSESSED` in `apps/web/src/lib/dashboards/attack.ts` (the Detect / Prevent /
+#: Respond denominator) -- change both.
 ASSESSED: frozenset[CoverageStatus] = frozenset(
     {CoverageStatus.COVERED, CoverageStatus.PARTIAL, CoverageStatus.GAP}
 )
+
+#: Stored statuses that are NOT a consultant's judgement: nobody verified the
+#: technique (#554). ONE definition of "scored" for both client documents: the
+#: ATT&CK deliverable's `scored_count` (`analytics.compute`) and the Risk
+#: Register's citable scope (`risk/link_scope.py`) both exclude these, and
+#: `test_scored_means_the_same_rows_in_both_documents` pins the two as equal.
+UNJUDGED: frozenset[CoverageStatus] = frozenset({CoverageStatus.UNABLE_TO_DETERMINE})
 
 
 @dataclass(frozen=True)

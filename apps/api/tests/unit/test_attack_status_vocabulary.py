@@ -101,9 +101,13 @@ def test_coverage_is_computed_over_assessed_techniques_only() -> None:
     # Assessed = covered + partial + gap = 3; (1 + 0.5) / 3.
     assert rollup.coverage_pct == 50.0
     assert (rollup.unable_to_determine, rollup.outside_control_surface) == (1, 1)
-    # Every assigned status counts as scored, or the catalogue total would shrink
-    # on screen as rows move out of the denominator.
-    assert rollup.scored_count == 6
+    # Every JUDGEMENT counts as scored; an unverified row does not (#621 round 2,
+    # reversing D-092 Decision 3's rule so "scored" means the same rows here as
+    # in the Risk Register). The catalogue total on screen still must not shrink
+    # as rows move out of "scored" -- it holds because the "Y" of "X/Y" is
+    # `catalogue_count`, every technique tallied, not scored + unscored.
+    assert rollup.scored_count == 5
+    assert rollup.catalogue_count == len(TECHNIQUES)
 
 
 def test_an_unverified_row_is_never_counted_as_partial_or_gap() -> None:

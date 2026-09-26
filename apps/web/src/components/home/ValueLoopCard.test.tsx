@@ -72,6 +72,16 @@ function ztChosen(count: number): Partial<ValueSummary> {
 }
 
 describe("ValueLoopCard", () => {
+  it("never prints NaN when the not-verified count is absent (#621 round 2)", () => {
+    const { attack_not_verified_count: _omitted, ...rest } = summary({
+      attack_uncovered_count: 2,
+      has_any_data: true,
+    });
+    render(<ValueLoopCard summary={rest as ValueSummary} />);
+    expect(screen.getByText("2 techniques uncovered")).toBeInTheDocument();
+    expect(screen.queryByText(/NaN/)).toBeNull();
+  });
+
   it("states the not-verified count beside the uncovered count, even at zero (#554)", () => {
     // #621 review finding 3: an assessment nobody verified has no gap rows, so
     // the uncovered count alone read "0 techniques uncovered".

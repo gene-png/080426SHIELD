@@ -191,6 +191,9 @@ export interface AttackHeatmap {
   total_sub_techniques: number;
   scored_count: number;
   unscored_count: number;
+  /** The "Y" of "X/Y scored": every technique tallied. Not scored + unscored,
+   *  which leaves out Not verified rows since #621 round 2. */
+  catalogue_count: number;
   covered: number;
   partial: number;
   gap: number;

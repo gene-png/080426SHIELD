@@ -151,7 +151,9 @@ function buildMetrics(summary: ValueSummary): Metric[] {
             // #554: beside it, even at zero. `gap` counts only what was judged
             // and found missing, so an unverified assessment would otherwise
             // read "0 techniques uncovered" -- a false assurance.
-            (summary.attack_not_verified_count === null
+            // `== null`, not `=== null`: an API that predates the field sends
+            // nothing, and `undefined` must not print "NaN not verified".
+            (summary.attack_not_verified_count == null
               ? ""
               : `, ${COUNT.format(summary.attack_not_verified_count)} not verified`),
       hint: "Adversary techniques with no defensive coverage yet. Not verified techniques were not checked, so they are counted as neither.",

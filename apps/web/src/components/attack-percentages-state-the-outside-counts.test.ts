@@ -19,7 +19,10 @@ import { describe, expect, it } from "vitest";
  * A new surface matching either shape turns this red until it states the
  * counts, which is the point.
  *
- * What this cannot see: a figure computed under another name, a file that
+ * What it walks: every `.tsx` under `src`, components AND pages, tests
+ * excluded. What this cannot see: a figure computed in a `.ts` file (it is
+ * rendered in a `.tsx` that the scan does reach), a figure computed under
+ * another name, a file that
  * receives ATT&CK data only through props typed elsewhere, and a SECOND figure
  * in a file that already states the counts once -- it asks whether a file
  * mentions them at all. That each figure has them beside it is each surface's
@@ -28,7 +31,8 @@ import { describe, expect, it } from "vitest";
  * written a test for yet.
  */
 
-const ROOT = join(process.cwd(), "src", "components");
+// ALL of `src`: pages under `src/app/**` are surfaces too (#621 round 2).
+const ROOT = join(process.cwd(), "src");
 
 function walk(dir: string): string[] {
   const out: string[] = [];

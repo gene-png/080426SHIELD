@@ -57,3 +57,16 @@ surface could yet show them. This slice teaches the surfaces first.
   call is pending): the disclosure names "techniques marked Not verified"
   beside unscored rows, as the ATT&CK deliverable does. Citability is
   unchanged.
+
+## Round 2 (review of d50a930)
+
+- **"Scored" means the same rows in both client documents.** `coverage.UNJUDGED`
+  is shared by the deliverable's `scored_count` and the Risk Register's citable
+  scope. This reverses D-092 Decision 3's rule. The "X/Y" total is now
+  `catalogue_count`, so it does not shrink.
+- **`coverage.ASSESSED` is read, not restated**, and an AST guard fails on a
+  hand-written covered + partial + gap under `app/`.
+- **The web guard walks all of `src`**, pages included.
+- **Gene's decision (2026-09-25):** N/A leaves the Detect / Prevent / Respond
+  denominator, so it matches the KPI row. Condition 6.
+- Filed: #634 (empty-state twins) and #635 (PDF header overflow).

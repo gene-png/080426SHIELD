@@ -57,6 +57,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
+from app.attack.coverage import UNJUDGED as ATTACK_UNJUDGED
 from app.models.attack_assessment import AttackCoverage
 from app.models.csf_assessment import CsfAnswer
 from app.models.zt_assessment import ZtAnswer
@@ -115,7 +116,9 @@ class LinkScope:
 #: than inferred from the vocabulary: "is this a judgement" is this module's
 #: question, and a status added later is scored until someone decides here.
 _UNJUDGED: dict[type, frozenset[str]] = {
-    AttackCoverage: frozenset({"unable_to_determine"}),
+    # IMPORTED, not restated: the ATT&CK deliverable's "scored" must mean the
+    # same rows as this scope (#621 round 2), so both read `coverage.UNJUDGED`.
+    AttackCoverage: frozenset(s.value for s in ATTACK_UNJUDGED),
 }
 
 

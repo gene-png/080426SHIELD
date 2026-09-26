@@ -178,13 +178,15 @@ describe("attack dashboard transforms", () => {
     expect(dpr.detect.pct).toBe(100);
   });
 
-  it("dprCoverage: N/A stays in the denominator, as it was before #554", () => {
-    // Deliberately unchanged: moving it would shift a number on already
-    // released dashboards, which is the owner's call. Pinned so that a change
-    // to it is a decision rather than a side effect.
+  it("dprCoverage: N/A leaves the denominator, as the KPI row's does", () => {
+    // Gene's decision, 2026-09-25 (D-092): the triad matches the KPI row, which
+    // divides by covered + partial + gap. The N/A row CHANGES the answer -- it
+    // was 1 of 2, 50%; it is 1 of 1, 100% -- so this cannot pass either way.
     const assessed = tech({ code: "T1", detection_tools: ["Tool A"] });
     const na = tech({ code: "T2", status: "not_applicable" });
-    expect(dprCoverage([assessed, na]).total).toBe(2);
+    const dpr = dprCoverage([assessed, na]);
+    expect(dpr.total).toBe(1);
+    expect(dpr.detect).toEqual({ n: 1, pct: 100 });
   });
 
   it("blindSpots: only gap techniques", () => {

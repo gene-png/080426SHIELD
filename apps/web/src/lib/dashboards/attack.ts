@@ -138,21 +138,25 @@ export interface DprCoverage {
  * being made, not a claim of absence. Scoring it as a zero would understate the
  * posture rather than decline to state it.
  *
- * The two #554 statuses are out of BOTH sides for the same reason: nobody
- * verified the technique, or the client's controls do not reach it, so it is
- * not in the assessed population the owner's decision computes coverage over.
- * Their counts are rendered beside the triad instead. N/A is left where it was
- * (in the denominator) deliberately: moving it would change a number already
- * shown on released dashboards, which is the owner's call, not this slice's.
+ * Only ASSESSED rows (covered, partial, gap) are in the triad, as in the KPI
+ * row and `coverage_pct`. The two #554 statuses are outside it -- nobody
+ * verified the technique, or the client's controls do not reach it -- and
+ * their counts are rendered beside the triad instead. N/A is outside it too:
+ * Gene's decision, 2026-09-25 (D-092), so the triad and the KPI row divide by
+ * the same population.
+ *
+ * A COPY of `coverage.ASSESSED` in `apps/api/app/attack/coverage.py`, which
+ * points here -- change both.
  */
-const OUTSIDE_ASSESSED: ReadonlySet<CoverageStatus> = new Set([
-  "outside_control_surface",
-  "unable_to_determine",
+const ASSESSED: ReadonlySet<CoverageStatus> = new Set([
+  "covered",
+  "partial",
+  "gap",
 ]);
 
 export function dprCoverage(techniques: DashTechnique[]): DprCoverage {
   const claimable = techniques.filter(
-    (t) => !t.pending_review && !OUTSIDE_ASSESSED.has(t.status),
+    (t) => !t.pending_review && ASSESSED.has(t.status),
   );
   const total = claimable.length;
   const detect = claimable.filter((t) => t.detection_tools.length > 0).length;

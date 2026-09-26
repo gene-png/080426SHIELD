@@ -55,8 +55,7 @@ export function AttackHeatmapCard({
                 Coverage {heatmap.coverage_pct}%
               </StatusPill>
               <span className="text-xs text-ink-tertiary">
-                {heatmap.scored_count}/
-                {heatmap.scored_count + heatmap.unscored_count} scored
+                {heatmap.scored_count}/{heatmap.catalogue_count} scored
               </span>
               {/*
                 #102. Rendered BESIDE the percentage and never instead of it.

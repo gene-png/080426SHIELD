@@ -13,6 +13,7 @@ function heatmap(over: Partial<AttackHeatmap> = {}): AttackHeatmap {
     total_sub_techniques: 440,
     scored_count: 10,
     unscored_count: 623,
+    catalogue_count: 633,
     covered: 4,
     partial: 2,
     gap: 4,
@@ -92,6 +93,24 @@ describe("AttackHeatmapCard", () => {
     expect(text).toMatch(/\(covered \+ partial \+ gap\)/);
     expect(text).toMatch(
       /N\/A, Outside control surface, Not verified, unscored and pending\s+review techniques are outside it/,
+    );
+  });
+
+  it("takes the scored total from catalogue_count, so it never shrinks (#621)", () => {
+    // Seven rows moved to Not verified leave "scored": scored + unscored is
+    // 626, the catalogue is still 633. The total on screen must stay 633.
+    const { container } = render(
+      <AttackHeatmapCard
+        heatmap={heatmap({
+          scored_count: 3,
+          unscored_count: 623,
+          unable_to_determine: 7,
+          catalogue_count: 633,
+        })}
+      />,
+    );
+    expect((container.textContent ?? "").replace(/\s+/g, "")).toContain(
+      "3/633scored",
     );
   });
 });

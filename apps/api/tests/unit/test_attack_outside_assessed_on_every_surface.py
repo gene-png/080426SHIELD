@@ -114,6 +114,23 @@ def test_the_pdf_states_both_counts_beside_the_percentage() -> None:
     assert SENTENCE in _pdf_text(render_pdf(_ctx(NOT_VERIFIED, OUTSIDE)))
 
 
+def test_the_scored_total_does_not_shrink_as_rows_move_to_not_verified() -> None:
+    """#621 round 2, finding 1. An unverified row is not "scored", but the
+    catalogue total beside it must not shrink: every document states X of the
+    WHOLE catalogue. Before, Y was scored + unscored, which would drop by
+    NOT_VERIFIED the moment "scored" stopped counting them."""
+    from openpyxl import load_workbook
+
+    ctx = _ctx(NOT_VERIFIED, OUTSIDE)
+    scored = len(TECHNIQUES) - NOT_VERIFIED  # literal arithmetic, not the rollup
+    expected = f"{scored}/{len(TECHNIQUES)}"
+    ws = load_workbook(io.BytesIO(render_xlsx(ctx)))["Heatmap Summary"]
+    labels = {r[0].value: r[1].value for r in ws.iter_rows(max_row=14)}
+    assert labels["Scored / Total"] == expected
+    assert f"Scored: {expected}" in _docx_text(render_docx(ctx))
+    assert f"Scored: {expected}" in _pdf_text(render_pdf(ctx))
+
+
 def test_the_count_is_never_dropped_at_zero() -> None:
     """Zero is shown, so "none" and "not shown" cannot look alike."""
     ctx = _ctx(0, 0)

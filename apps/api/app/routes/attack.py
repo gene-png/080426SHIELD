@@ -2245,6 +2245,7 @@ def heatmap(
         total_sub_techniques=rollup.total_sub_techniques,
         scored_count=rollup.scored_count,
         unscored_count=rollup.unscored_count,
+        catalogue_count=rollup.catalogue_count,
         covered=rollup.covered,
         partial=rollup.partial,
         gap=rollup.gap,

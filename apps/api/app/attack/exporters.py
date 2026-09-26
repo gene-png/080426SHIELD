@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 from app.attack.analytics import CoverageRollup, TacticCoverage
 from app.attack.catalog import TACTICS, TECHNIQUES, technique_by_id
-from app.attack.coverage import CoverageStatus, coverage_label
+from app.attack.coverage import ASSESSED, CoverageStatus, coverage_label
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.pending import uncleared_tools
 from app.client_naming import org_display_name
@@ -82,6 +82,8 @@ def _status_or_unscored(value: str | None) -> str:
 #: gave a bare `Coverage %` with no definition, and the formula is not the one a
 #: reader would guess: partial counts half, and N/A, unscored and withheld
 #: techniques sit outside the denominator (see `attack/analytics.py`).
+#: COPIED to the admin heatmap card, `apps/web/src/components/admin/attack/AttackHeatmapCard.tsx`
+#: (its CardDescription) -- change both.
 COVERAGE_PCT_DEFINITION = (
     "Coverage % = (Covered + 0.5 x Partial) / (Covered + Partial + Gap). "
     "N/A, Outside control surface, Not verified, Unscored and Pending review "
@@ -117,7 +119,7 @@ def _measured(t: CoverageRollup | TacticCoverage) -> bool:
     covered + partial + gap == 0, but it was assessed: it reads 0.0% beside its
     pending count, as the #102 note in `render_xlsx` intends -- not "never
     assessed", which is what "not measured" says."""
-    return t.covered + t.partial + t.gap + t.pending_review > 0
+    return sum(getattr(t, s.value) for s in ASSESSED) + t.pending_review > 0
 
 
 def _pct_value(t: CoverageRollup | TacticCoverage) -> float | str:
@@ -138,6 +140,8 @@ def coverage_pct_text(rollup: CoverageRollup) -> str:
 
 
 def outside_assessed_text(rollup: CoverageRollup) -> str:
+    # COPIED to the web as `outsideAssessedText`, `apps/web/src/lib/attack/outsideAssessed.ts`
+    # -- change both.
     """The two counts outside the assessed denominator, as every surface states
     them BESIDE the percentage (#554, the owner's decision): "Not verified" is
     never dropped, even at zero, so a reader can tell "none" from "not shown"."""
@@ -221,7 +225,7 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
     ws.append(
         [
             "Scored / Total",
-            f"{ctx.rollup.scored_count}/{ctx.rollup.scored_count + ctx.rollup.unscored_count}",
+            f"{ctx.rollup.scored_count}/{ctx.rollup.catalogue_count}",
         ]
     )
     # #102. Beside the percentage, never instead of it and never omitted: the
@@ -421,8 +425,7 @@ def render_docx(ctx: AttackDeliverableContext) -> bytes:
         [
             "Overall coverage: " + coverage_pct_text(ctx.rollup),
             COVERAGE_PCT_DEFINITION,
-            f"Scored: {ctx.rollup.scored_count}/"
-            f"{ctx.rollup.scored_count + ctx.rollup.unscored_count}",
+            f"Scored: {ctx.rollup.scored_count}/{ctx.rollup.catalogue_count}",
             f"Covered {ctx.rollup.covered}, Partial {ctx.rollup.partial}, "
             f"Gap {ctx.rollup.gap}, N/A {ctx.rollup.not_applicable}, "
             f"Pending review {ctx.rollup.pending_review}, " + outside_assessed_text(ctx.rollup),
@@ -563,8 +566,7 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
     story.append(
         Paragraph(
             f"Overall coverage: <b>{coverage_pct_text(ctx.rollup)}</b> · "
-            f"Scored: <b>{ctx.rollup.scored_count}/"
-            f"{ctx.rollup.scored_count + ctx.rollup.unscored_count}</b> · "
+            f"Scored: <b>{ctx.rollup.scored_count}/{ctx.rollup.catalogue_count}</b> · "
             f"Covered <b>{ctx.rollup.covered}</b>, "
             f"Partial <b>{ctx.rollup.partial}</b>, "
             f"Gap <b>{ctx.rollup.gap}</b>, "

@@ -31,6 +31,7 @@ from app.attack.catalog_version import (
     require_current_catalog_for_client,
 )
 from app.attack.catalog_version import is_current as attack_catalog_is_current
+from app.attack.coverage import ASSESSED
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.csf.gap import MAX_TIER as CSF_MAX_TIER
 from app.csf.gap import analyze as csf_analyze_gaps
@@ -1271,7 +1272,7 @@ def attack_dashboard(
         released=is_released,
         deliverable_version=deliv.version,
         rollup=AttackDashboardRollup(
-            total_evaluated=rollup.covered + rollup.partial + rollup.gap,
+            total_evaluated=sum(getattr(rollup, s.value) for s in ASSESSED),
             covered=rollup.covered,
             partial=rollup.partial,
             gap=rollup.gap,
