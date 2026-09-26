@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel, model_serializer
+from pydantic import BaseModel, model_serializer, model_validator
 
 from app.models.service import ServiceKind
 
@@ -206,6 +206,26 @@ class AttackDashboardResponse(BaseModel):
     @model_serializer(mode="wrap")
     def _drop_unset_rule_key(self, handler: Any) -> dict[str, Any]:
         return _without_none(handler(self), frozenset({"parents_computed"}))
+
+    @model_validator(mode="after")
+    def _counts_travel_with_the_rule(self) -> AttackDashboardResponse:
+        """#621 option (a): the two counts are present EXACTLY when
+        `parents_computed` is. They are omitted from the JSON under rule 1, so
+        without this a rule-2 response built with a None would drop them as
+        silently as a rule-1 one -- the "0 not verified" misreading the
+        required fields exist to prevent. Wrong wiring raises here, at build."""
+        new_rules = self.parents_computed is True
+        rows = [self.rollup, *self.rollup.by_tactic]
+        for row in rows:
+            for key in sorted(_OUTSIDE_COUNT_KEYS):
+                if (getattr(row, key) is not None) != new_rules:
+                    raise ValueError(
+                        f"ATT&CK dashboard: {key} is "
+                        f"{'missing' if new_rules else 'present'} on a "
+                        f"{'rule-2' if new_rules else 'rule-1'} response; the counts are "
+                        "sent exactly when parents_computed is (#621 option (a))."
+                    )
+        return self
 
 
 class ZtPillarDashboard(BaseModel):

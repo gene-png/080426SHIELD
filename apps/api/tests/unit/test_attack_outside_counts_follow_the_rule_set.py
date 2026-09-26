@@ -145,8 +145,16 @@ def test_under_rule_1_the_docx_is_what_main_delivered() -> None:
     assert docx_text(render_docx(world(1))) == _golden("docx.json")
 
 
+def _words(pages: list[str]) -> list[str]:
+    return [" ".join(page.split()) for page in pages]
+
+
 def test_under_rule_1_the_pdf_is_what_main_delivered() -> None:
-    assert pdf_text(render_pdf(world(1))) == _golden("pdf.json")
+    # Compared word for word, not byte for byte: pypdf's layout whitespace
+    # differs between the container the golden was recorded in and the CI
+    # runner (" Tactic" vs "Tactic" on CI, first run of 1b81c60), with the
+    # words identical. The words are what the client reads.
+    assert _words(pdf_text(render_pdf(world(1)))) == _words(_golden("pdf.json"))
 
 
 def test_under_rule_1_the_xlsx_is_what_main_delivered() -> None:
@@ -262,3 +270,77 @@ def test_the_summary_dashboard_and_value_card_follow_the_rule(env, rule) -> None
         assert "outside_control_surface" not in rollup
         assert not any("unable_to_determine" in t for t in rollup["by_tactic"])
         assert card.json()["attack_not_verified_count"] is None
+
+
+# --- a rule-2 response missing the counts still fails loudly -------------------
+
+
+def _response(*, parents_computed: bool | None, counts: int | None, omit: bool = False):
+    from datetime import UTC, datetime
+
+    from app.schemas.clients import (
+        AttackDashboardResponse,
+        AttackDashboardRollup,
+        AttackTacticCoverage,
+    )
+
+    extra = {} if omit else {"outside_control_surface": counts, "unable_to_determine": counts}
+    tactic = AttackTacticCoverage(
+        tactic_id="TA0001",
+        tactic_name="Initial Access",
+        covered=1,
+        partial=0,
+        gap=0,
+        not_applicable=0,
+        unscored=0,
+        coverage_pct=100.0,
+        **extra,
+    )
+    return AttackDashboardResponse(
+        service_id=uuid.UUID(int=1),
+        service_title="ATT&CK Coverage",
+        released_at=datetime(2026, 9, 1, tzinfo=UTC),
+        deliverable_version=1,
+        parents_computed=parents_computed,
+        rollup=AttackDashboardRollup(
+            total_evaluated=1,
+            covered=1,
+            partial=0,
+            gap=0,
+            not_applicable=0,
+            coverage_pct=100.0,
+            by_tactic=[tactic],
+            **extra,
+        ),
+        techniques=[],
+    )
+
+
+def test_a_response_built_without_the_count_fields_is_refused() -> None:
+    # REQUIRED fields, no default: forgetting to wire them fails at build.
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="unable_to_determine"):
+        _response(parents_computed=True, counts=None, omit=True)
+
+
+def test_a_rule_2_response_with_the_counts_missing_is_refused() -> None:
+    # Omitting under rule 1 must not become a way for rule 2 to drop them.
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="missing on a rule-2 response"):
+        _response(parents_computed=True, counts=None)
+
+
+def test_a_rule_1_response_carrying_the_counts_is_refused() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="present on a rule-1 response"):
+        _response(parents_computed=None, counts=0)
+
+
+def test_both_well_formed_responses_build() -> None:
+    new = _response(parents_computed=True, counts=0).model_dump(mode="json")
+    old = _response(parents_computed=None, counts=None).model_dump(mode="json")
+    assert new["rollup"]["unable_to_determine"] == 0
+    assert "unable_to_determine" not in old["rollup"]
