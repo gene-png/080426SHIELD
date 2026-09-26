@@ -677,7 +677,13 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
                  "no work exists", which is how work gets missed. */
               <EmptyState
                 title="No requests match these filters"
-                description={`Filtering by ${activeFilterLabels(filters).join(" · ")} hides all ${state.service_requests.length} requests. Clear the filters to see them.`}
+                description={`Filtering by ${activeFilterLabels(filters).join(" · ")} ${
+                  // #683: in number with the count -- "hides all 1 requests"
+                  // read one request as several.
+                  state.service_requests.length === 1
+                    ? "hides the 1 request. Clear the filters to see it."
+                    : `hides all ${state.service_requests.length} requests. Clear the filters to see them.`
+                }`}
               />
             ) : null}
             <ul className="mt-3 flex flex-col gap-3">
