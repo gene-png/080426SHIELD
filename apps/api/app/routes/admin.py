@@ -66,6 +66,7 @@ from app.schemas.admin import (
 )
 from app.schemas.intake import ClientProfileResponse
 from app.security.email_domains import domain_of, is_generic_provider, is_reserved_domain
+from app.security.sessions import end_user_sessions
 
 logger = logging.getLogger(__name__)
 
@@ -544,6 +545,12 @@ def archive_client(
         logger.info("admin.client_archive.noop client_id=%s", cid)
         return None
     client.archived_at = datetime.now(UTC)
+    # Gene's decision, 2026-09-26 (#652, D-103): archiving a client ends every
+    # session its users hold, access and refresh alike, as a password reset
+    # does. Signing in again afterwards is NOT refused here.
+    users = db.execute(select(User).where(User.client_id == client.id)).scalars().all()
+    for user in users:
+        end_user_sessions(user, at=client.archived_at)
     audit(
         db,
         action="client.archived",
@@ -553,7 +560,12 @@ def archive_client(
         details={"legal_name": client.legal_name},
     )
     db.commit()
-    logger.info("admin.client_archived client_id=%s by=%s", cid, admin.id)
+    logger.info(
+        "admin.client_archived client_id=%s by=%s sessions_ended_for=%d",
+        cid,
+        admin.id,
+        len(users),
+    )
     return None
 
 
@@ -620,15 +632,11 @@ def patch_user(
 
     target.is_active = body.is_active
     if not body.is_active:
-        # Kill the live session too: without this the user keeps a valid
-        # refresh token until it expires, so "deactivated" would be a lie for
-        # anyone already signed in. ALL THREE rotation fields are cleared
-        # (#636). `_grace_or_reuse` also refuses when no session is active, so
-        # at the refresh endpoint either one alone refuses. An access token
-        # already issued is refused by `current_user`'s is_active check.
-        target.active_refresh_jti = None
-        target.previous_refresh_jti = None
-        target.refresh_rotated_at = None
+        # End every session the way a password reset does (#652, D-103).
+        # `current_user`'s is_active check already refuses an access token while
+        # the account stays inactive; the cutoff keeps it refused after a
+        # reactivation, and the refresh family ends either way.
+        end_user_sessions(target, at=datetime.now(UTC))
     audit(
         db,
         action="user.deactivated" if not body.is_active else "user.reactivated",

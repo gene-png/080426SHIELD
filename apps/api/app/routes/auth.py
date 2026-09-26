@@ -74,6 +74,7 @@ from app.security.password import (
     verify_password,
 )
 from app.security.rate_limit import RateLimiter, get_rate_limiter
+from app.security.sessions import end_user_sessions
 from app.security.totp import (
     decrypt_secret,
     encrypt_secret,
@@ -1251,10 +1252,10 @@ def reset_password(
         ) from exc
 
     user.password_hash = new_hash
-    # #658: access tokens issued before this second are refused from now on.
-    # Whole seconds, because a token's `iat` is whole seconds: a login in this
-    # same second has iat == cutoff and is accepted (the owner's rule).
-    user.credentials_changed_at = utcnow().replace(microsecond=0)
+    # Every refresh family ends, and every access token issued before this
+    # second is refused (#636, #658). One helper for every session-ending site
+    # (#652); a login in this same second is accepted (the owner's rule).
+    end_user_sessions(user, at=utcnow())
     token.used_at = utcnow()
     # Invalidate any other outstanding reset tokens for this user (a completed
     # reset should void every earlier request).
@@ -1266,17 +1267,7 @@ def reset_password(
         )
     ).scalars():
         other.used_at = utcnow()
-    # End every refresh family and clear the lockout. Access tokens already
-    # issued are refused by the cutoff set above (#658). ALL THREE rotation fields
-    # are cleared, not only the active jti. `_grace_or_reuse` separately refuses
-    # when no session is active, which is the load-bearing guard: at the
-    # refresh endpoint either one alone refuses a post-reset `previous`. Under a
-    # concurrent refresh, this ORM write may leave `previous` set, because the
-    # flush skips a column whose loaded value was already None, and in that
-    # case only the guard refuses.
-    user.active_refresh_jti = None
-    user.previous_refresh_jti = None
-    user.refresh_rotated_at = None
+    # Clear the lockout, so the user can sign in immediately.
     user.failed_login_count = 0
     user.last_failed_login_at = None
     user.locked_until_at = None
