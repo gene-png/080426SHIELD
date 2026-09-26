@@ -192,7 +192,11 @@ export function blindSpotReconciliation(
   const listed = blindSpots(data.techniques).length;
   const parents = data.rollup.gap - listed;
   if (parents <= 0) return null;
-  return `The Blind spots figure above counts ${data.rollup.gap}: the ${listed} listed here, and ${parents} parent technique${parents === 1 ? "" : "s"} whose gap is listed through ${parents === 1 ? "its" : "their"} sub-techniques.`;
+  const tail =
+    parents === 1
+      ? "1 parent technique whose gap is listed through its sub-techniques"
+      : `${parents} parent techniques whose gaps are listed through their sub-techniques`;
+  return `The Blind spots figure above counts ${data.rollup.gap}: the ${listed} listed here, and ${tail}.`;
 }
 
 /** The sentence beside the triad naming what its percentages leave out. */

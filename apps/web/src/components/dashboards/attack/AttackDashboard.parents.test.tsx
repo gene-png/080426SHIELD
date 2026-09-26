@@ -155,6 +155,76 @@ describe("AttackDashboard, a computed parent (#620 round 3)", () => {
     );
   });
 
+  it("says nothing when the KPI and the list already agree", () => {
+    // #620 round 6. A producible rule-2 world with no gap PARENT: a partial
+    // parent over one gap child and one covered child. The rollup counts 1 gap
+    // and the list shows 1, so no reconciliation -- never "and 0 parent
+    // techniques".
+    const parent = tech({
+      code: "T1001",
+      status: "partial",
+      computed_parent: true,
+      sub_technique_count: 2,
+    });
+    const kids = [
+      tech({ code: "T1001.001", status: "gap" }),
+      tech({
+        code: "T1001.002",
+        status: "covered",
+        detection_tools: ["Tool A"],
+      }),
+    ];
+    const d = data([parent, ...kids]);
+    d.rollup = {
+      ...d.rollup,
+      total_evaluated: 3,
+      covered: 1,
+      partial: 1,
+      gap: 1,
+    };
+    render(<AttackDashboard data={d} />);
+    const section = screen
+      .getByText("What you're blind to today")
+      .closest("section") as HTMLElement;
+    expect(within(section).getByText("1 uncovered")).toBeInTheDocument();
+    expect(screen.queryByTestId("attack-blind-reconcile")).toBeNull();
+  });
+
+  it("reconciles in the plural when several parents are counted", () => {
+    // Two gap parents (each over gap children): the rollup counts 5 gaps,
+    // the list shows the 3 children.
+    const p1 = tech({
+      code: "T1001",
+      status: "gap",
+      computed_parent: true,
+      sub_technique_count: 2,
+    });
+    const p2 = tech({
+      code: "T1003",
+      status: "gap",
+      computed_parent: true,
+      sub_technique_count: 1,
+    });
+    const kids = [
+      tech({ code: "T1001.001", status: "gap" }),
+      tech({ code: "T1001.002", status: "gap" }),
+      tech({ code: "T1003.001", status: "gap" }),
+    ];
+    const d = data([p1, p2, ...kids]);
+    d.rollup = {
+      ...d.rollup,
+      total_evaluated: 5,
+      covered: 0,
+      partial: 0,
+      gap: 5,
+      coverage_pct: 0,
+    };
+    render(<AttackDashboard data={d} />);
+    expect(screen.getByTestId("attack-blind-reconcile")).toHaveTextContent(
+      "The Blind spots figure above counts 5: the 3 listed here, and 2 parent techniques whose gaps are listed through their sub-techniques.",
+    );
+  });
+
   it("renders an assessment approved before #620 exactly as delivered", () => {
     // Gene's condition (D-094): the API omits the new keys for it, so every
     // row renders the old way -- legs and own tools -- and neither new
