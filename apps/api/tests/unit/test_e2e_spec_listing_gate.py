@@ -269,9 +269,12 @@ def _share(*specs: str) -> str:
             False,
         ),
         (
+            # A PURE gap: every shard list distinct and non-empty, one test in none.
+            # The first draft repeated "a" in shard 4 -- a duplicate too -- so it
+            # stayed red with gap reporting removed (found by red-on-revert).
             "a test in no shard",
-            _share("a", "b", "c", "d"),
-            {1: _share("a"), 2: _share("b"), 3: _share("c"), 4: _share("a")},
+            _share("a", "b", "c", "d", "e"),
+            {1: _share("a"), 2: _share("b"), 3: _share("c"), 4: _share("d")},
             False,
         ),
     ],
