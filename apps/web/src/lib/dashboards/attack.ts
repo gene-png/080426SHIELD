@@ -98,6 +98,15 @@ function pctOf(n: number, total: number): number {
 /** Four headline KPI cards: evaluated total + covered/partial/blind-spot mix. */
 export function kpis(data: AttackDashboardData): DashboardKpis {
   const evaluated = data.rollup.total_evaluated;
+  // #620 round 4: under D-094's rules the KPI counts the SAME rows the
+  // blind-spot section lists -- `blindSpots()`, gaps through sub-techniques --
+  // so the page cannot say "2" above "1 uncovered". An assessment approved
+  // before #620 keeps the rollup's count, exactly as it was delivered (Gene's
+  // condition, D-094).
+  const blind =
+    data.parents_computed === true
+      ? blindSpots(data.techniques).length
+      : data.rollup.gap;
   return {
     evaluated,
     covered: {
@@ -108,7 +117,7 @@ export function kpis(data: AttackDashboardData): DashboardKpis {
       n: data.rollup.partial,
       pct: pctOf(data.rollup.partial, evaluated),
     },
-    blindSpots: { n: data.rollup.gap, pct: pctOf(data.rollup.gap, evaluated) },
+    blindSpots: { n: blind, pct: pctOf(blind, evaluated) },
   };
 }
 

@@ -115,6 +115,19 @@ describe("AttackDashboard, a computed parent (#620 round 3)", () => {
     );
   });
 
+  it("the Blind spots KPI and the blind-spot section count the same rows", () => {
+    // #620 round 4: the KPI counted the rollup's gaps, parent included (2);
+    // the section lists gaps through sub-techniques (1). One page, two
+    // answers. Both now come from blindSpots().
+    render(<AttackDashboard data={data([PARENT, ...KIDS])} />);
+    const kpi = screen.getByText("Blind spots").parentElement as HTMLElement;
+    expect(kpi.textContent).toMatch(/^Blind spots1 · /);
+    const section = screen
+      .getByText("What you're blind to today")
+      .closest("section") as HTMLElement;
+    expect(within(section).getByText("1 uncovered")).toBeInTheDocument();
+  });
+
   it("renders an assessment approved before #620 exactly as delivered", () => {
     // Gene's condition (D-094): the API omits the new keys for it, so every
     // row renders the old way -- legs and own tools -- and neither new
