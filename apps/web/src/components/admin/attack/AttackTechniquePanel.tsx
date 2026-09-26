@@ -229,6 +229,11 @@ export function AttackTechniquePanel({
   // skipped by migration 0045, and 409s on confirm-citations.
   const pendingWithoutRecord =
     (coverage?.pending_review ?? false) && citations.length === 0;
+  // #620 round 2 (D-094): a computed parent's evidence is its sub-techniques'.
+  // Its own stored tools, rationale and citations are what the model once
+  // wrote, the API refuses to confirm or edit them, and the score does not
+  // rest on them -- so none of them is shown or offered here.
+  const computedParent = subTechniqueCount > 0;
 
   return (
     <Card>
@@ -326,12 +331,32 @@ export function AttackTechniquePanel({
           />
         </label>
 
-        <div className="grid grid-cols-1 gap-3 border-t border-border-subtle pt-3 sm:grid-cols-3">
-          <ToolRow label="Detection" tools={coverage?.detection_tools} />
-          <ToolRow label="Prevention" tools={coverage?.prevention_tools} />
-          <ToolRow label="Response" tools={coverage?.response_tools} />
-        </div>
-        {citations.length > 0 || pendingWithoutRecord ? (
+        {computedParent ? (
+          <p className="border-t border-border-subtle pt-3 text-sm text-ink-secondary">
+            Tools and rationale are recorded on its sub-techniques, which this
+            technique&rsquo;s coverage is computed from.
+          </p>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 border-t border-border-subtle pt-3 sm:grid-cols-3">
+            <ToolRow label="Detection" tools={coverage?.detection_tools} />
+            <ToolRow label="Prevention" tools={coverage?.prevention_tools} />
+            <ToolRow label="Response" tools={coverage?.response_tools} />
+          </div>
+        )}
+        {computedParent && (coverage?.pending_review ?? false) ? (
+          <div
+            className="flex flex-col gap-2 rounded-md border border-dashed border-border p-3"
+            data-testid="attack-citation-queue"
+          >
+            <span className="text-xs font-medium uppercase tracking-wide text-ink-tertiary">
+              Citation review
+            </span>
+            <p className="text-sm text-ink-secondary">
+              {`This technique is held out of the coverage score because at least one of its ${subTechniqueCount} sub-techniques is pending review. Review the sub-techniques' evidence; this technique follows them.`}
+            </p>
+          </div>
+        ) : null}
+        {!computedParent && (citations.length > 0 || pendingWithoutRecord) ? (
           <div
             className="flex flex-col gap-2 rounded-md border border-dashed border-border p-3"
             data-testid="attack-citation-queue"
@@ -397,7 +422,7 @@ export function AttackTechniquePanel({
           </div>
         ) : null}
 
-        {coverage?.rationale ? (
+        {!computedParent && coverage?.rationale ? (
           <p className="text-sm text-ink-secondary">
             <span className="font-medium text-ink-primary">Rationale: </span>
             {coverage.rationale}
