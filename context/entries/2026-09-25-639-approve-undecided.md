@@ -36,9 +36,15 @@ loop, so the plan and the refusal cannot disagree.
   separate session. The test asserts the hook fired. It goes RED with the
   `no_undecided_rows` condition removed from the WHERE — see the PR body for the
   run.
-- **Existing tests changed, and why.** Four tests approved a list whose rows
-  were never decided, which is exactly the state #639 makes unapprovable. Their
-  setup now decides the rows; no assertion was loosened. `_approve_list`
-  ignored the approve response, so a refused approval would have left the
-  following tests running on a draft list they believed approved. It now
-  asserts 200.
+- **Existing tests changed, and why.** Tests that approved a list whose rows
+  were never decided, exactly the state #639 makes unapprovable: five in
+  `test_tech_debt_routes.py`, fourteen in
+  `test_capability_list_approved_membership.py`, three in
+  `test_discard_draft.py`. Their setup now decides the rows, through an
+  explicit `decided=` parameter where a helper builds them, so callers that
+  want undecided rows still get them. No assertion was loosened; the verdicts
+  are the coordinator's and are recorded in the PR body. Every approve in those
+  files now asserts 200 with the body. A refused approve used to be ignored,
+  and one test,
+  `test_a_discarded_list_is_still_excluded_even_with_a_snapshot`, passed that
+  way without ever approving anything (#72 shape).
