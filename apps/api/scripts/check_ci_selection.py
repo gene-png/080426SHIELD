@@ -75,17 +75,18 @@ removes the file from BOTH collections, so it shrinks the denominator rather
 than producing a finding -- and that is now caught by the file check above,
 at the granularity of a FILE: a module that removes only some of its tests at
 collection time is not seen. A conftest hook that deselects individual items
-applies to BOTH collections, so it is invisible too. Environment on CI's
-pytest step is pinned equal to this step's by `pin_violations` in
-`test_ci_selection_gate.py` (#544), not read here. The pin is a derivation:
-this step must be the step IMMEDIATELY before pytest, in the same job, with
-the same step `env`, `working-directory` and `shell`, so every job, workflow and
-earlier-step environment reaches both and no step can change one without the
-other. What it cannot see is a difference the workflow file does not show,
-such as a variable a tool sets for itself when invoked. Its `${{ }}` refusal
-scans the two STEPS' own `env`, `working-directory` and `shell`; job- and
-workflow-level `env` and `defaults.run` reach both as TEXT, but whether they
-also evaluate to the same VALUE for both is not checked (#630).
+applies to BOTH collections, so it is invisible too. CI runs this selection in
+SHARDS (`scripts/pytest_shard.py`), and the shard plugin narrows each run by
+ENVIRONMENT (`PYTEST_SHARD`) -- exactly what this gate cannot see. What closes
+that is the Python aggregate job: each shard records the node ids it RAN, and
+`scripts/shard_partition.py verify` fails unless their union is this
+selection (collected by this module's own `_collect`), each test once. So any
+environment that narrowed a shard -- a step `env`, a job `env`, an expression,
+anything the workflow file does not show -- appears as a test that ran
+nowhere. `test_ci_selection_gate.py` pins the shard step's argv to
+`python -m pytest -p scripts.pytest_shard` + CI_SELECTOR and its env to the
+two shard keys. This replaced #544's pin of this step to the step
+IMMEDIATELY before pytest, which cannot hold across jobs.
 
 The file scan calls `_pytest.pathlib.fnmatch_ex`, a PRIVATE pytest API, and
 mirrors pytest's directory walk (following symlinked directories, pruning

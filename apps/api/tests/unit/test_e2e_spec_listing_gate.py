@@ -116,21 +116,172 @@ def test_list_file_is_required_and_unknown_flags_refused(capsys) -> None:
     assert gate.main(["gate", "--lst", "x"]) == 2
 
 
-def test_the_listing_step_lists_exactly_what_the_e2e_run_step_runs() -> None:
-    # The listing is only evidence about CI's run if it uses the same cwd and
-    # arguments. Parse ci.yml: the e2e job's main run is `npx playwright test`
-    # with no arguments, and the listing step lists with no others either.
+def _e2e_jobs() -> dict:
     wf = find_workflows_dir(pathlib.Path(__file__).resolve())
     if wf is None:
         pytest.skip("no .github/workflows above this file (the api container mounts apps/api)")
-    job = yaml.safe_load((wf / "ci.yml").read_text(encoding="utf-8"))["jobs"]["e2e"]
-    runs = [(s.get("working-directory"), str(s.get("run") or "").strip()) for s in job["steps"]]
-    assert ("e2e", "npx playwright test") in runs, runs
+    return yaml.safe_load((wf / "ci.yml").read_text(encoding="utf-8"))["jobs"]
+
+
+def _runs(job: dict) -> list[tuple[object, str]]:
+    return [(s.get("working-directory"), str(s.get("run") or "").strip()) for s in job["steps"]]
+
+
+def _shard_count(jobs: dict) -> int:
+    shards = jobs["e2e-shard"]["strategy"]["matrix"]["shard"]
+    assert shards == list(range(1, len(shards) + 1)), shards
+    return len(shards)
+
+
+# The listing is only evidence about CI's run if it lists what the run runs.
+# Since the CI-speed PR the suite runs in shards (coordinator's verdict), so the
+# evidence is: (a) the #540 check lists the WHOLE suite, with no arguments;
+# (b) each shard leg runs exactly its `--shard=k/N` and lists exactly that share;
+# (c) the aggregate requires the shard lists to partition the full list.
+# (d) and (e) pin that the aggregate cannot pass on nothing, and that every list
+# comes from the same tree. This replaces a pin on ONE job running
+# `npx playwright test` with no arguments.
+
+
+def test_a_the_540_listing_lists_the_whole_suite() -> None:
+    runs = _runs(_e2e_jobs()["e2e-session"])
     listing = [r for r in runs if "playwright test --list" in r[1]]
     assert len(listing) == 1, listing
     wd, script = listing[0]
     assert wd == "e2e", listing
-    assert script.splitlines()[0].startswith("npx playwright test --list >"), script
+    assert (
+        script.splitlines()[0] == 'npx playwright test --list > "$RUNNER_TEMP/playwright-list.txt"'
+    )
+
+
+def test_b_each_shard_runs_and_lists_exactly_its_share() -> None:
+    jobs = _e2e_jobs()
+    n = _shard_count(jobs)
+    runs = _runs(jobs["e2e-shard"])
+    playwright = [r for r in runs if "playwright test" in r[1] and "install" not in r[1]]
+    assert playwright == [
+        (
+            "e2e",
+            f'npx playwright test --list --shard=${{{{ matrix.shard }}}}/{n} > "$RUNNER_TEMP/e2e-shard-${{{{ matrix.shard }}}}.txt"',
+        ),
+        ("e2e", f"npx playwright test --shard=${{{{ matrix.shard }}}}/{n}"),
+    ], playwright
+
+
+def test_c_the_aggregate_requires_the_shard_lists_to_partition_the_full_list() -> None:
+    jobs = _e2e_jobs()
+    n = _shard_count(jobs)
+    agg = jobs["e2e"]
+    assert agg["name"] == "E2E (Playwright smoke suite)"
+    assert agg.get("if") == "always()"
+    assert set(agg["needs"]) == {"e2e-shard", "e2e-session"}
+    verify = [r for _, r in _runs(agg) if "scripts.shard_partition verify" in r]
+    assert len(verify) == 1, verify
+    assert f"--of {n}" in verify[0] and "ids-playwright-list.txt" in verify[0], verify
+
+
+def test_e_every_list_comes_from_the_same_tree() -> None:
+    """The union means something only if every list was taken from one commit:
+    no checkout in any E2E job overrides what it checks out."""
+    jobs = _e2e_jobs()
+    for name in ("e2e-shard", "e2e-session", "e2e"):
+        checkouts = [
+            s for s in jobs[name]["steps"] if str(s.get("uses", "")).startswith("actions/checkout@")
+        ]
+        assert len(checkouts) == 1, (name, checkouts)
+        assert "with" not in checkouts[0] or not set(checkouts[0]["with"]) & {
+            "ref",
+            "repository",
+        }, (
+            name,
+            checkouts[0],
+        )
+
+
+def _run_aggregate_block(tmp_path: Path, full: str | None, shards: dict[int, str | None]) -> int:
+    """Execute the aggregate's own verification block, against these lists."""
+    import os
+    import shutil
+    import subprocess
+
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("no bash here")
+    jobs = _e2e_jobs()
+    block = [
+        s for s in jobs["e2e"]["steps"] if "scripts.shard_partition verify" in str(s.get("run", ""))
+    ]
+    assert len(block) == 1
+    temp = tmp_path / "runner"
+    (temp / "e2e").mkdir(parents=True)
+    if full is not None:
+        (temp / "e2e" / "playwright-list.txt").write_text(full, encoding="utf-8")
+    for k, text in shards.items():
+        if text is not None:
+            (temp / "e2e" / f"e2e-shard-{k}.txt").write_text(text, encoding="utf-8")
+    workspace = find_workflows_dir(pathlib.Path(__file__).resolve()).parent.parent
+    env = {**os.environ, "RUNNER_TEMP": str(temp), "GITHUB_WORKSPACE": str(workspace)}
+    proc = subprocess.run(  # noqa: S603 - the workflow's own block, fixture inputs
+        [bash, "--noprofile", "--norc", "-e", "-c", block[0]["run"]],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return proc.returncode
+
+
+def _share(*specs: str) -> str:
+    return _listing(*specs)
+
+
+@pytest.mark.parametrize(
+    ("label", "full", "shards", "passes"),
+    [
+        (
+            "a true partition",
+            _share("a", "b", "c", "d"),
+            {1: _share("a"), 2: _share("b"), 3: _share("c"), 4: _share("d")},
+            True,
+        ),
+        (
+            "a missing full list",
+            None,
+            {1: _share("a"), 2: _share("b"), 3: _share("c"), 4: _share("d")},
+            False,
+        ),
+        (
+            "an empty full list",
+            "Listing tests:\nTotal: 0 tests in 0 files\n",
+            {1: _share(), 2: _share(), 3: _share(), 4: _share()},
+            False,
+        ),
+        (
+            "a missing shard list",
+            _share("a", "b", "c", "d"),
+            {1: _share("a"), 2: _share("b"), 3: _share("c", "d"), 4: None},
+            False,
+        ),
+        (
+            "a test in two shards",
+            _share("a", "b", "c"),
+            {1: _share("a"), 2: _share("a", "b"), 3: _share("c"), 4: _share("c")},
+            False,
+        ),
+        (
+            "a test in no shard",
+            _share("a", "b", "c", "d"),
+            {1: _share("a"), 2: _share("b"), 3: _share("c"), 4: _share("a")},
+            False,
+        ),
+    ],
+    ids=["partition", "missing-full", "empty-full", "missing-shard", "duplicate", "gap"],
+)
+def test_d_the_aggregate_cannot_pass_on_nothing(tmp_path, label, full, shards, passes) -> None:
+    """(d): a missing or empty list is a FAILURE, never an empty set matching an
+    empty set -- the silent-green shape. Run through the aggregate's own block."""
+    rc = _run_aggregate_block(tmp_path, full, shards)
+    assert (rc == 0) == passes, (label, rc)
 
 
 def test_a_truncated_listing_with_specs_but_no_total_is_could_not_look(tmp_path, capsys) -> None:

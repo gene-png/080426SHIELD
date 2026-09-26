@@ -133,8 +133,9 @@ happened.
 
 **An agent merges on green WITHOUT checking back, when all six hold.**
 
-1. **All seven CI checks green.** Five jobs in `ci.yml` — python, web,
-   secret-scan, e2e, demo — plus two in `audit-gate.yml`. `mutation-sweep.yml`
+1. **All seven CI checks green.** Five required jobs in `ci.yml` (python and
+   e2e aggregate shards) — python, web, secret-scan, e2e, demo — plus two in
+   `audit-gate.yml`. `mutation-sweep.yml`
    is schedule-only and excluded. **Re-derive this count if a job is added**;
    it is a hardcoded number in prose, which this file has a rule about.
 2. **The adversarial reviewer ran against the FINAL state of the branch**, and
