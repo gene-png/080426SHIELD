@@ -721,7 +721,8 @@ def refresh(
     # the first, leaving the winner's new jti neither active nor previous, so
     # its next refresh read as `refresh_reused`. The UPDATE below only matches
     # while `active_refresh_jti` is STILL the presented one, so exactly one
-    # caller rotates -- under Postgres READ COMMITTED (the configured default)
+    # caller rotates -- under Postgres READ COMMITTED (the server's default, not
+    # pinned by the app)
     # and on SQLite -- and a row lock is not needed (SQLite ignores FOR UPDATE,
     # so a lock could not be pinned by the unit suite; this can). Under
     # REPEATABLE READ or SERIALIZABLE the loser would instead get a
@@ -1212,9 +1213,11 @@ def reset_password(
 ) -> EmailActionResponse:
     """Consume a password-reset token and set the new password.
 
-    Single-use token; on success we also rotate out the current refresh token
-    (``active_refresh_jti`` cleared) so any live session must re-authenticate,
-    and clear any lockout so the user can immediately sign in.
+    Single-use token. On success, every refresh token for the user stops
+    working: all three rotation fields are cleared (#636). An ACCESS token
+    already issued is NOT revoked. It stays valid until its own TTL expires,
+    which is the half of #636 still open. Any lockout is also cleared, so the
+    user can sign in immediately.
     """
     limiter.enforce_auth(request, "reset-password")
 
@@ -1259,11 +1262,14 @@ def reset_password(
         )
     ).scalars():
         other.used_at = utcnow()
-    # Force re-auth on all sessions + clear lockout. ALL THREE rotation fields,
-    # not only the active jti (#636): the grace path honours `previous` inside
-    # the window, so a surviving `previous` could still mint a session after
-    # the reset meant to end every one. `_grace_or_reuse` also refuses when no
-    # session is active; this is the other half, so neither alone carries it.
+    # End every refresh family and clear the lockout. Access tokens already
+    # issued live until their TTL (#636's open half). ALL THREE rotation fields
+    # are cleared, not only the active jti. `_grace_or_reuse` separately refuses
+    # when no session is active, which is the load-bearing guard: at the
+    # refresh endpoint either one alone refuses a post-reset `previous`. Under a
+    # concurrent refresh, this ORM write may leave `previous` set, because the
+    # flush skips a column whose loaded value was already None, and in that
+    # case only the guard refuses.
     user.active_refresh_jti = None
     user.previous_refresh_jti = None
     user.refresh_rotated_at = None

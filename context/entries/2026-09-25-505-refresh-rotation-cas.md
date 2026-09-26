@@ -22,7 +22,8 @@ another.
 
 The rotation is a single `UPDATE ... WHERE id = ? AND active_refresh_jti =
 <presented>`, and the route requires `rowcount == 1`. Only one caller can match,
-under Postgres READ COMMITTED (the configured default) and on SQLite. Under
+under Postgres READ COMMITTED (the server's default, not pinned by the app)
+and on SQLite. Under
 REPEATABLE READ or SERIALIZABLE the loser would instead get a
 `SerializationFailure`, an untyped 500 (#637). An earlier version of this entry
 said "under any isolation level", which was too strong (review of `ef7762a`).

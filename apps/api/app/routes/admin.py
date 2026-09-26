@@ -622,9 +622,10 @@ def patch_user(
     if not body.is_active:
         # Kill the live session too: without this the user keeps a valid
         # refresh token until it expires, so "deactivated" would be a lie for
-        # anyone already signed in. ALL THREE rotation fields (#636): a
-        # surviving `previous` inside the grace window could mint a session
-        # once the account is reactivated.
+        # anyone already signed in. ALL THREE rotation fields are cleared
+        # (#636). `_grace_or_reuse` also refuses when no session is active, so
+        # at the refresh endpoint either one alone refuses. An access token
+        # already issued is refused by `current_user`'s is_active check.
         target.active_refresh_jti = None
         target.previous_refresh_jti = None
         target.refresh_rotated_at = None
