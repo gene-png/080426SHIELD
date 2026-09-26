@@ -59,6 +59,7 @@ from app.models.user import User, UserRole
 from app.routes.artifacts import _storage_dep
 from app.schemas.tech_debt import (
     CapabilityComponentsRequest,
+    CapabilityDispositionBulkSet,
     CapabilityItemPatch,
     CapabilityItemResponse,
     CapabilityListResponse,
@@ -915,6 +916,94 @@ def patch_capability_item(
     db.commit()
     db.refresh(item)
     return CapabilityItemResponse.model_validate(item, from_attributes=True)
+
+
+@router.post(
+    "/capability-lists/{list_id}/items/disposition",
+    response_model=CapabilityListResponse,
+    summary="Set one disposition on many capability items (admin, #641)",
+)
+def bulk_set_disposition(
+    list_id: uuid.UUID,
+    body: CapabilityDispositionBulkSet,
+    user: Annotated[User, _admin_required],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> CapabilityListResponse:
+    """Classify the selected rows at once: the bulk twin of the single-row PATCH.
+
+    All or nothing. A selection naming a row outside this list is refused
+    before anything is written, because a partial write would leave the
+    consultant unable to tell which rows took the decision.
+
+    Same effect per row as `patch_capability_item` with only `disposition`
+    set: the value is written and `confidence_pct` is cleared, since the row
+    is now a human decision rather than an AI guess.
+    """
+    cap_list = _editable_list_or_404(db, list_id, client)
+    wanted = set(body.item_ids)
+    if not wanted:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "no_items_selected",
+                "message": "Select at least one row to classify.",
+            },
+        )
+    items = (
+        db.execute(
+            select(CapabilityItem)
+            .where(CapabilityItem.capability_list_id == cap_list.id)
+            .where(CapabilityItem.id.in_(wanted))
+        )
+        .scalars()
+        .all()
+    )
+    missing = len(wanted) - len(items)
+    if missing:
+        _log.warning(
+            "tech_debt.bulk_disposition_refused",
+            capability_list_id=str(cap_list.id),
+            selected=len(wanted),
+            not_in_list=missing,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "capability_items_not_in_list",
+                "message": (
+                    f"{missing} of the {len(wanted)} selected rows are not in this "
+                    "capability list. Nothing was changed. Reload the list and "
+                    "select again."
+                ),
+            },
+        )
+    for item in items:
+        item.disposition = body.disposition
+        item.confidence_pct = None
+    item_ids = sorted(str(i.id) for i in items)
+    audit(
+        db,
+        action="capability_items.disposition_set",
+        target_type="capability_list",
+        target_id=cap_list.id,
+        actor_user_id=user.id,
+        details={
+            "capability_list_id": str(cap_list.id),
+            "disposition": body.disposition.value if body.disposition else None,
+            "item_count": len(item_ids),
+            "item_ids": item_ids,
+        },
+    )
+    db.commit()
+    _log.info(
+        "tech_debt.bulk_disposition_set",
+        capability_list_id=str(cap_list.id),
+        disposition=body.disposition.value if body.disposition else None,
+        item_count=len(item_ids),
+    )
+    db.refresh(cap_list)
+    return _serialize_list_with_items(db, cap_list)
 
 
 def build_approved_membership(db: Session, capability_list_id: uuid.UUID) -> list[dict]:

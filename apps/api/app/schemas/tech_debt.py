@@ -183,6 +183,18 @@ class CapabilityItemPatch(BaseModel):
     locked: bool | None = None
 
 
+class CapabilityDispositionBulkSet(BaseModel):
+    """Set one disposition on many rows of one list (#641).
+
+    `disposition` has NO default: a body that omits it is a 422, never a
+    request to return every selected row to undecided. `None` is accepted
+    when sent, because the single-row select offers "Undecided" too.
+    """
+
+    item_ids: list[uuid.UUID] = Field(max_length=5000)
+    disposition: CapabilityDisposition | None
+
+
 class ConsolidationPlanSummary(BaseModel):
     capability_list_id: uuid.UUID
     capability_list_version: int

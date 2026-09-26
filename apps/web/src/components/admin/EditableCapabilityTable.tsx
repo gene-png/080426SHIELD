@@ -3,7 +3,7 @@ import * as React from "react";
 
 import { cn, StatusPill } from "@shield/design-system";
 
-import { patchCapabilityItem } from "@/lib/tech_debt/client";
+import { patchCapabilityItem, proxyMessage } from "@/lib/tech_debt/client";
 import type {
   CapabilityDisposition,
   CapabilityItem,
@@ -11,6 +11,8 @@ import type {
 } from "@/lib/tech_debt/types";
 
 import { inputClasses, selectClasses } from "../intake/Field";
+
+import { useRowSelection } from "./useRowSelection";
 
 import type { JSX } from "react";
 
@@ -24,6 +26,15 @@ export interface EditableCapabilityTableProps {
   onSplitBundle?: (item: CapabilityItem) => void;
   /** When true (released list), inputs render read-only. */
   readOnly?: boolean;
+  /**
+   * Set one disposition on many rows at once (#641). When given on an editable
+   * list, the table offers row checkboxes and a bulk bar. Rejects with the
+   * server's refusal; nothing is applied in that case.
+   */
+  onBulkDisposition?: (
+    itemIds: string[],
+    disposition: CapabilityDisposition | null,
+  ) => Promise<void>;
 }
 
 type SaveStateById = Record<string, "idle" | "saving" | "saved" | "error">;
@@ -56,8 +67,17 @@ const COLUMNS: ReadonlyArray<{
   { label: "Licenses", rem: 5.5, numeric: true },
   { label: "Notes", rem: 12 },
 ];
-/** The sum of the columns, so no column is ever given the leftover. */
-const TABLE_MIN_REM = COLUMNS.reduce((sum, col) => sum + col.rem, 0);
+/** Row checkboxes (#641), shown only when a bulk action is available. */
+const SELECT_COLUMN = { label: "Select", rem: 2.75 };
+
+const DISPOSITION_LABEL: Record<CapabilityDisposition, string> = {
+  keep: "Keep",
+  consolidate: "Consolidate",
+  cut: "Cut",
+};
+
+/** The bulk bar's "Undecided" choice; sent to the API as null. */
+const UNDECIDED = "undecided";
 
 const cellInputClasses = cn(inputClasses, "w-full min-w-0");
 const cellSelectClasses = cn(selectClasses, "w-full min-w-0");
@@ -87,8 +107,17 @@ export function EditableCapabilityTable({
   onItemUpdate,
   onSplitBundle,
   readOnly = false,
+  onBulkDisposition,
 }: EditableCapabilityTableProps): JSX.Element {
   const [saveState, setSaveState] = React.useState<SaveStateById>({});
+  const selectable = Boolean(onBulkDisposition) && !readOnly;
+  const columns: ReadonlyArray<{
+    label: string;
+    rem: number;
+    numeric?: boolean;
+  }> = selectable ? [SELECT_COLUMN, ...COLUMNS] : COLUMNS;
+  // The sum of the columns, so no column is ever given the leftover.
+  const tableMinRem = columns.reduce((sum, col) => sum + col.rem, 0);
 
   // Each bundle is immediately followed by the components named inside it, so
   // the relationship is readable without a tree widget (UX finding 5).
@@ -104,6 +133,46 @@ export function EditableCapabilityTable({
       .filter((it) => !it.parent_item_id)
       .flatMap((parent) => [parent, ...(children.get(parent.id) ?? [])]);
   }, [items]);
+  const orderedIds = React.useMemo(() => ordered.map((i) => i.id), [ordered]);
+  const selection = useRowSelection(orderedIds);
+  const [bulkChoice, setBulkChoice] = React.useState("");
+  const [bulkBusy, setBulkBusy] = React.useState(false);
+  const [bulkResult, setBulkResult] = React.useState<{
+    kind: "done" | "error";
+    text: string;
+  } | null>(null);
+
+  async function applyBulk(): Promise<void> {
+    if (!onBulkDisposition || bulkChoice === "") return;
+    const ids = selection.selected;
+    const disposition =
+      bulkChoice === UNDECIDED ? null : (bulkChoice as CapabilityDisposition);
+    const label = disposition ? DISPOSITION_LABEL[disposition] : "Undecided";
+    setBulkBusy(true);
+    setBulkResult(null);
+    try {
+      await onBulkDisposition(ids, disposition);
+      console.debug(
+        `[EditableCapabilityTable] bulk disposition ${label} applied to ${ids.length} rows`,
+      );
+      selection.clear();
+      setBulkResult({
+        kind: "done",
+        text: `Set ${ids.length} ${ids.length === 1 ? "row" : "rows"} to ${label}.`,
+      });
+    } catch (err) {
+      // The selection is kept, so the consultant can retry without re-ticking.
+      setBulkResult({
+        kind: "error",
+        text: proxyMessage(
+          err,
+          "Couldn't apply the disposition. Nothing was changed.",
+        ),
+      });
+    } finally {
+      setBulkBusy(false);
+    }
+  }
 
   async function save(
     item: CapabilityItem,
@@ -142,33 +211,48 @@ export function EditableCapabilityTable({
     return `AI ${pct}%`;
   }
 
-  return (
+  const table = (
     <div className="overflow-x-auto rounded-lg border border-border-subtle">
       <table
         className="w-full table-fixed border-separate border-spacing-0 text-sm"
-        style={{ minWidth: `${TABLE_MIN_REM}rem` }}
+        style={{ minWidth: `${tableMinRem}rem` }}
       >
         <thead className="sticky top-0 z-base bg-surface-sunken text-xs uppercase tracking-wider text-ink-secondary">
           <tr>
-            {COLUMNS.map((col) => (
-              <th
-                key={col.label}
-                className={cn(
-                  "border-b border-border-subtle px-3 py-2 font-semibold",
-                  col.numeric ? "text-right" : "text-left",
-                )}
-                style={{ width: `${col.rem}rem` }}
-              >
-                {col.label}
-              </th>
-            ))}
+            {columns.map((col) =>
+              col === SELECT_COLUMN ? (
+                <th
+                  key={col.label}
+                  className="border-b border-border-subtle px-3 py-2 text-left"
+                  style={{ width: `${col.rem}rem` }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selection.allSelected}
+                    onChange={selection.toggleAll}
+                    aria-label="Select every row"
+                  />
+                </th>
+              ) : (
+                <th
+                  key={col.label}
+                  className={cn(
+                    "border-b border-border-subtle px-3 py-2 font-semibold",
+                    col.numeric ? "text-right" : "text-left",
+                  )}
+                  style={{ width: `${col.rem}rem` }}
+                >
+                  {col.label}
+                </th>
+              ),
+            )}
           </tr>
         </thead>
         <tbody className="bg-surface-card">
           {items.length === 0 ? (
             <tr>
               <td
-                colSpan={9}
+                colSpan={columns.length}
                 className="px-3 py-12 text-center text-sm text-ink-tertiary"
               >
                 No items in this capability list. Run a new extraction.
@@ -189,6 +273,16 @@ export function EditableCapabilityTable({
                     isComponent && "bg-surface-sunken/40",
                   )}
                 >
+                  {selectable ? (
+                    <td className="border-b border-border-subtle px-3 py-2 align-top">
+                      <input
+                        type="checkbox"
+                        checked={selection.isSelected(item.id)}
+                        onChange={() => selection.toggle(item.id)}
+                        aria-label={`Select ${item.name}`}
+                      />
+                    </td>
+                  ) : null}
                   <td className="border-b border-border-subtle px-3 py-2 align-top">
                     <div className="flex flex-col gap-1">
                       <StatusPill
@@ -228,6 +322,9 @@ export function EditableCapabilityTable({
                   <td className="border-b border-border-subtle px-3 py-2 align-top">
                     <div className="flex flex-col gap-1">
                       <select
+                        // Keyed on the value: the select is uncontrolled, and a
+                        // bulk write (#641) arrives as new props it would ignore.
+                        key={item.disposition ?? ""}
                         defaultValue={item.disposition ?? ""}
                         disabled={readOnly}
                         onChange={(e) => {
@@ -372,6 +469,61 @@ export function EditableCapabilityTable({
           )}
         </tbody>
       </table>
+    </div>
+  );
+
+  if (!selectable) return table;
+  const count = selection.selected.length;
+  return (
+    <div className="flex flex-col gap-2">
+      <div
+        className="flex flex-wrap items-center gap-2 rounded-md border border-border-subtle bg-surface-sunken px-3 py-2 text-sm"
+        aria-label="Classify selected rows"
+        role="group"
+      >
+        <span className="font-medium text-ink-primary">{count} selected</span>
+        <select
+          value={bulkChoice}
+          onChange={(e) => setBulkChoice(e.target.value)}
+          className={selectClasses}
+          aria-label="Disposition for selected rows"
+        >
+          <option value="">Choose a disposition…</option>
+          <option value="keep">Keep</option>
+          <option value="consolidate">Consolidate</option>
+          <option value="cut">Cut</option>
+          <option value={UNDECIDED}>Undecided</option>
+        </select>
+        <button
+          type="button"
+          onClick={() => void applyBulk()}
+          disabled={count === 0 || bulkChoice === "" || bulkBusy}
+          className="rounded-md bg-brand-600 px-3 py-1.5 font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {bulkBusy
+            ? "Applying…"
+            : `Apply to ${count} ${count === 1 ? "row" : "rows"}`}
+        </button>
+        {count > 0 ? (
+          <button
+            type="button"
+            onClick={selection.clear}
+            className="text-ink-tertiary underline hover:text-ink-secondary"
+          >
+            Clear selection
+          </button>
+        ) : null}
+        {bulkResult?.kind === "done" ? (
+          <span role="status" className="text-status-success-fg">
+            {bulkResult.text}
+          </span>
+        ) : bulkResult?.kind === "error" ? (
+          <span role="alert" className="text-status-danger-fg">
+            {bulkResult.text}
+          </span>
+        ) : null}
+      </div>
+      {table}
     </div>
   );
 }
