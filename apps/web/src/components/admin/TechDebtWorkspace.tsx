@@ -43,6 +43,7 @@ import { ConsolidationPlanCard } from "./ConsolidationPlanCard";
 import { DeliverableCard } from "./DeliverableCard";
 import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { DiscardDraftButton } from "./DiscardDraftButton";
+import { DispositionHelp } from "./DispositionHelp";
 import { EditableCapabilityTable } from "./EditableCapabilityTable";
 import { IntakeDocumentsPanel } from "./IntakeDocumentsPanel";
 import { OverlapDashboard } from "./OverlapDashboard";
@@ -721,6 +722,7 @@ Components carry no cost of their own — this licence keeps its full value.`,
                 )}
               </div>
             ) : null}
+            <DispositionHelp />
             <EditableCapabilityTable
               items={list.items}
               onItemUpdate={onItemUpdate}
