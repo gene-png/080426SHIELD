@@ -15,10 +15,9 @@ made.
 ## Chain order: written after 0052, numbered 0056
 
 Migrations land in number order (owner decision, 2026-09-25): #620 lands 0054,
-#640 lands 0055, and this one 0056. Neither of those is on `main` yet, so this
-revision chains from `main`'s head, 0052, to keep a single head here. At landing,
-`down_revision` becomes whichever revision is then the head; if this lands before
-0054 or 0055, the owner's rule is to renumber at landing, `down_revision` included.
+#640 lands 0055, and this one 0056. #620 is on `main`; 0055 is not, so this
+revision chains from `main`'s head, 0054, to keep a single head here. If 0055
+lands first, `down_revision` becomes 0055 at landing.
 
 SQLite-safe via `batch_alter_table` (core principle 6); additive and nullable,
 so older code reading a newer database is unaffected.
@@ -32,7 +31,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0056"
-down_revision: str | Sequence[str] | None = "0052"
+down_revision: str | Sequence[str] | None = "0054"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
