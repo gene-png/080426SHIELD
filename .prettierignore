@@ -47,3 +47,8 @@ context/
 # LOAD-BEARING ON THE HARNESS RUNNING, like the ruff/black/test-integrity
 # exclusions: if the "gates can fail" step goes away, this goes with it.
 apps/api/tests/gates/
+
+# #620 golden output: the bytes main rendered, compared byte for byte by
+# test_attack_parent_rules_golden.py. Reformatting them would make the test
+# compare against prettier's output instead of main's (it did, once).
+apps/api/tests/golden/parent_rules_old/*.json

@@ -79,6 +79,17 @@ function errorReason(err: unknown): string | null {
   return payload?.error?.reason ?? null;
 }
 
+/** The patch fields that feed a computed parent's derived state (#620 round 2):
+ *  its status and reason, and -- through the children's pending review -- the
+ *  tool lists. Notes and narrative feed nothing derived. */
+const PARENT_INPUTS: readonly (keyof AttackCoveragePatch)[] = [
+  "status",
+  "reason_code",
+  "detection_tools",
+  "prevention_tools",
+  "response_tools",
+];
+
 export function AttackWorkspace({
   serviceId,
   serviceTitle,
@@ -134,6 +145,15 @@ export function AttackWorkspace({
   // Every mutation bumps the sequence before it writes, so any in-flight load
   // is discarded on arrival.
   const assessmentSeq = React.useRef(0);
+  // #620 round 2, finding 7. A parent is recomputed on the server by a child's
+  // write, so after one the workspace re-reads the assessment. That re-read is
+  // only true if no OTHER edit is mid-flight: one that started before it reads
+  // the server before that edit lands, and would put the edit's old value back
+  // on screen. So the re-read waits until no edit is in flight, and is taken
+  // again if an edit started while it was out.
+  const editsInFlight = React.useRef(0);
+  const editsStarted = React.useRef(0);
+  const refetchWanted = React.useRef(false);
 
   const coverageByCode = React.useMemo(() => {
     const out: Record<string, AttackCoverageRow> = {};
@@ -247,7 +267,11 @@ export function AttackWorkspace({
     })();
   }, [initialLoad]);
 
-  async function onCreateAssessment(): Promise<void> {
+  function onCreateAssessment(): Promise<void> {
+    return trackWrite(() => onCreateAssessmentWrite());
+  }
+
+  async function onCreateAssessmentWrite(): Promise<void> {
     setBusy("create");
     assessmentSeq.current += 1;
     try {
@@ -261,10 +285,68 @@ export function AttackWorkspace({
     }
   }
 
+  /** Whether `code` has a parent whose status is computed from it (D-094).
+   *  From the catalog's parent links, the same structure the API computes
+   *  over -- not from the code's spelling. */
+  function hasComputedParent(code: string): boolean {
+    const parentId = techniqueByCode[code]?.parent_id ?? null;
+    return parentId !== null;
+  }
+
+  /** Re-read the assessment once no write is in flight (#620 round 2,
+   *  finding 7). NEVER throws: it runs after a write that already landed, so
+   *  a failed re-read is reported as that -- a saved change whose parent may
+   *  be stale -- and never as a failed save or an unhandled rejection. */
+  async function refetchWhenQuiet(): Promise<void> {
+    if (!refetchWanted.current || editsInFlight.current > 0) return;
+    refetchWanted.current = false;
+    const attempt = beginRefresh("assessment");
+    const started = editsStarted.current;
+    const seq = ++assessmentSeq.current;
+    let a: Awaited<ReturnType<typeof fetchLatestAssessment>>;
+    try {
+      a = await fetchLatestAssessment(serviceId);
+    } catch {
+      attempt.note(
+        "Your change was saved, but the assessment could not be re-read, so a parent technique's status may be out of date. Reload to see it.",
+      );
+      return;
+    }
+    attempt.clear();
+    if (editsStarted.current !== started) {
+      // An edit began while this was out, so `a` may predate it. Drop it; that
+      // edit's own completion takes the re-read again.
+      refetchWanted.current = true;
+      await refetchWhenQuiet();
+      return;
+    }
+    if (seq === assessmentSeq.current) setAssessment(a);
+  }
+
+  /**
+   * #620 round 3, finding 3. Every action that writes and then re-pulls the
+   * assessment is counted here, not only panel edits: a parent re-read taken
+   * while Run AI, approve, discard or create is out reads the server before
+   * that action lands, and would overwrite its result (and its own re-pull
+   * would then be dropped as out of date). The re-read waits for all of them.
+   */
+  async function trackWrite(fn: () => Promise<void>): Promise<void> {
+    editsStarted.current += 1;
+    editsInFlight.current += 1;
+    try {
+      await fn();
+    } finally {
+      editsInFlight.current -= 1;
+    }
+    await refetchWhenQuiet();
+  }
+
   async function onPatch(
     coverageId: string,
     patch: AttackCoveragePatch,
   ): Promise<void> {
+    editsStarted.current += 1;
+    editsInFlight.current += 1;
     // Optimistic. The bump invalidates any in-flight load so its late arrival
     // cannot clobber this edit.
     assessmentSeq.current += 1;
@@ -277,6 +359,7 @@ export function AttackWorkspace({
         ),
       };
     });
+    let ok = false;
     try {
       const next = await patchCoverage(coverageId, patch);
       setAssessment((curr) => {
@@ -286,14 +369,31 @@ export function AttackWorkspace({
           coverage: curr.coverage.map((c) => (c.id === coverageId ? next : c)),
         };
       });
-      await refreshHeatmap();
+      // #554 (D-094): a sub-technique's write recomputes its PARENT on the
+      // server, and the PATCH returns only the child. Every field that feeds
+      // the parent's derived state triggers a re-read: status and reason (its
+      // status), and the tool lists (its children's pending review, and so its
+      // own).
+      if (
+        hasComputedParent(next.technique_code) &&
+        PARENT_INPUTS.some((k) => k in patch)
+      ) {
+        refetchWanted.current = true;
+      }
+      ok = true;
     } catch (err) {
       setLoadError(describeError(err));
       // Roll back by re-fetching, guarded so a newer patch still wins.
       const seq = ++assessmentSeq.current;
       const a = await fetchLatestAssessment(serviceId);
       if (seq === assessmentSeq.current) setAssessment(a);
+    } finally {
+      editsInFlight.current -= 1;
     }
+    // On BOTH paths: if this was the last edit in flight, a re-read another
+    // edit asked for would otherwise never run. A no-op when none is wanted.
+    await refetchWhenQuiet();
+    if (ok) await refreshHeatmap();
   }
 
   /**
@@ -307,7 +407,10 @@ export function AttackWorkspace({
    * The round trip is one request on a deliberate click.
    */
   async function onConfirmCitations(coverageId: string): Promise<void> {
+    editsStarted.current += 1;
+    editsInFlight.current += 1;
     assessmentSeq.current += 1;
+    let ok = false;
     try {
       const next = await confirmCoverageCitations(coverageId);
       setAssessment((curr) =>
@@ -320,14 +423,25 @@ export function AttackWorkspace({
             }
           : curr,
       );
-      // The whole point is that the score changes at this moment and not before.
-      await refreshHeatmap();
+      // #620 round 2, finding 6: confirming a child's evidence can clear its
+      // parent's pending state, which lives only on the server.
+      if (hasComputedParent(next.technique_code)) refetchWanted.current = true;
+      ok = true;
     } catch (err) {
       setLoadError(describeError(err));
+    } finally {
+      editsInFlight.current -= 1;
     }
+    await refetchWhenQuiet(); // on both paths, as in `onPatch`
+    // The whole point is that the score changes at this moment and not before.
+    if (ok) await refreshHeatmap();
   }
 
-  async function onApprove(): Promise<void> {
+  function onApprove(): Promise<void> {
+    return trackWrite(() => onApproveWrite());
+  }
+
+  async function onApproveWrite(): Promise<void> {
     if (!assessment) return;
     setBusy("approve");
     assessmentSeq.current += 1;
@@ -341,7 +455,11 @@ export function AttackWorkspace({
     }
   }
 
-  async function onDiscard(): Promise<void> {
+  function onDiscard(): Promise<void> {
+    return trackWrite(() => onDiscardWrite());
+  }
+
+  async function onDiscardWrite(): Promise<void> {
     if (!assessment) return;
     setBusy("discard");
     const seq = ++assessmentSeq.current;
@@ -367,7 +485,11 @@ export function AttackWorkspace({
     }
   }
 
-  async function onRunAi(): Promise<void> {
+  function onRunAi(): Promise<void> {
+    return trackWrite(() => onRunAiWrite());
+  }
+
+  async function onRunAiWrite(): Promise<void> {
     setBusy("run");
     setRunResult(null);
     const seq = ++assessmentSeq.current;
@@ -410,6 +532,12 @@ export function AttackWorkspace({
   const selectedCoverage = selectedCode
     ? (coverageByCode[selectedCode] ?? null)
     : null;
+  // #554 (D-094): derived from the catalog, the same parent/child structure
+  // the API computes over, never a second list.
+  const selectedSubTechniqueCount = selectedCode
+    ? (catalog?.techniques.filter((t) => t.parent_id === selectedCode).length ??
+      0)
+    : 0;
 
   return (
     <div className="flex flex-col gap-6">
@@ -621,6 +749,7 @@ export function AttackWorkspace({
               <div className="flex flex-col gap-4">
                 <AttackTechniquePanel
                   technique={selectedTechnique}
+                  subTechniqueCount={selectedSubTechniqueCount}
                   coverage={selectedCoverage}
                   coverageDefinitions={catalog.coverage_definitions}
                   reasonCodes={catalog.reason_codes}
