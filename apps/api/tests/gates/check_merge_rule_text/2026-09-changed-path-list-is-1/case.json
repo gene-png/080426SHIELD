@@ -1,0 +1,12 @@
+{
+ "incident": "#572: a PR can narrow the condition-5 path list and, under the narrowed rule, clear itself. Any change to the section is red, naming the changed lines, so a human reads it.",
+ "expect": 1,
+ "adversarial": false,
+ "stdout_contains": "CHANGES the merge rule",
+ "argv": [
+  "--old",
+  "{dir}/old/CLAUDE.md",
+  "--new",
+  "{dir}/new/CLAUDE.md"
+ ]
+}

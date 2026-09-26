@@ -1,0 +1,3 @@
+Listing tests:
+  [chromium] › b.spec.ts:1:1 › b
+Total: 1 test in 1 file

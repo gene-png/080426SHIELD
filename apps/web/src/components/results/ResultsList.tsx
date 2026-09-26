@@ -31,6 +31,9 @@ export interface ClientDeliverable {
   version: number;
   released_at: string | null;
   superseded: boolean;
+  /** #556: released, and withheld (another ATT&CK catalog). `summary` says why
+   *  and every file ID is null. Never "Final", never "ready". */
+  withheld: boolean;
   pdf_artifact_id: string | null;
   xlsx_artifact_id: string | null;
   docx_artifact_id: string | null;
@@ -143,7 +146,9 @@ export function ResultsList({
       key: "status",
       header: "Status",
       cell: (d) =>
-        d.superseded ? (
+        d.withheld ? (
+          <StatusPill tone="warning">Withheld</StatusPill>
+        ) : d.superseded ? (
           <StatusPill tone="warning">Superseded</StatusPill>
         ) : (
           <StatusPill tone="success">Final</StatusPill>

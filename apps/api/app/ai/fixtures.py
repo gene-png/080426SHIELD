@@ -131,6 +131,13 @@ def _capability_names(value: object) -> list[str]:
 
 
 _MITRE_STATUS_CYCLE = ("covered", "partial", "gap", "covered", "not_applicable")
+#: #554: the reason each fixture status carries, copied from what the mitre_map
+#: PROMPT offers (CLAUDE.md: author fixtures from the prompt, never from the
+#: parser). A Partial cycles through three of the prompt's seven codes; N/A takes
+#: the only one it may. `test_attack_ai_reason_codes.py` pins that every one
+#: appears in the prompt text.
+_MITRE_PARTIAL_REASONS = ("reach_limited", "detection_weak", "missing_control_category")
+_MITRE_NA_REASON = "platform_absent"
 
 
 def _fixture_mitre_map(payload: dict[str, Any]) -> LLMResponse:
@@ -147,10 +154,16 @@ def _fixture_mitre_map(payload: dict[str, Any]) -> LLMResponse:
             detection = [tools[i % len(tools)]]
             if status == "covered" and len(tools) > 1:
                 response = [tools[(i + 1) % len(tools)]]
+        reason = (
+            _MITRE_PARTIAL_REASONS[(i // len(_MITRE_STATUS_CYCLE)) % len(_MITRE_PARTIAL_REASONS)]
+            if status == "partial"
+            else _MITRE_NA_REASON if status == "not_applicable" else None
+        )
         techniques.append(
             {
                 "technique_code": code,
                 "status": status,
+                "reason_code": reason,
                 "detection_tools": detection,
                 "prevention_tools": [],
                 "response_tools": response,

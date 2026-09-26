@@ -25,10 +25,22 @@ export interface CatalogCoverageDefinition {
   description: string;
 }
 
+/** #554: one reason code and the ONE status it may accompany. Served by the
+ *  catalog from the API's vocabulary; the web keeps no list of its own. */
+export interface CatalogReasonCode {
+  code: string;
+  /** A plain string, not `CoverageStatus`: the API also serves the codes for
+   *  statuses no writer may set yet (`outside_control_surface`, D-092
+   *  Decision 5). The panel only ever matches it against a row's status. */
+  status: string;
+  definition: string;
+}
+
 export interface AttackCatalog {
   tactics: CatalogTactic[];
   techniques: CatalogTechnique[];
   coverage_definitions: CatalogCoverageDefinition[];
+  reason_codes: CatalogReasonCode[];
   total_techniques: number;
   total_sub_techniques: number;
 }
@@ -38,6 +50,10 @@ export interface AttackCoverageRow {
   assessment_id: string;
   technique_code: string;
   status: CoverageStatus | null;
+  /** #554: why this status was chosen; null = none given. */
+  reason_code: string | null;
+  /** #554: what could not be established (an unverified row). */
+  narrative: string | null;
   notes: string | null;
   evidence_artifact_id: string | null;
   locked?: boolean;
@@ -86,11 +102,19 @@ export interface AttackAssessment {
   approved_at: string | null;
   approved_by: string | null;
   documents_stale?: boolean;
+  /** #556: the ATT&CK catalog version this assessment was scored against (null = unrecorded). */
+  catalog_version: string | null;
+  /** #556: false = every coverage computation for it is refused
+   *  (`attack_catalog_mismatch`). Read with `!== true`: an absent value is
+   *  NOT current, because missing data defaults to unconfirmed. */
+  catalog_current: boolean;
   coverage: AttackCoverageRow[];
 }
 
 export interface AttackCoveragePatch {
   status?: CoverageStatus | null;
+  reason_code?: string | null;
+  narrative?: string | null;
   notes?: string;
   evidence_artifact_id?: string | null;
   locked?: boolean;
