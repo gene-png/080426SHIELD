@@ -218,13 +218,16 @@ def test_narrowing_the_denominator_can_raise_the_ratio_and_that_is_stated() -> N
 
 @pytest.mark.unit
 def test_a_pending_technique_is_still_a_SCORED_technique() -> None:
-    """`scored_count + unscored_count` must stay equal to the catalogue total.
+    """A pending row stays in `scored_count`.
 
-    Not a cosmetic invariant: `AttackHeatmapCard.tsx` renders
-    `{scored_count}/{scored_count + unscored_count} scored`, so it builds its
-    DENOMINATOR out of the two. Dropping pending rows from `scored_count` would
-    shrink 633 to 633-minus-pending and the card would report a total technique
-    count that changes with how much evidence was doubted.
+    Since #621 the catalogue total is `catalogue_count`, and
+    `scored_count + unscored_count + unable_to_determine == catalogue_count`:
+    a Not verified row is deliberately NOT scored (D-092 Decision 3, reversed
+    by #621 round 2). `AttackHeatmapCard.tsx` renders
+    `{scored_count}/{catalogue_count} scored`, so the denominator no longer
+    depends on how rows are split. Dropping pending rows from `scored_count`
+    would still be wrong: the card would report fewer scored techniques as
+    more evidence was doubted, although each pending row has a status.
 
     A pending row is scored -- a status exists, it is simply not being claimed
     yet. `pending_review` is the number that says so; `scored_count` is not, and

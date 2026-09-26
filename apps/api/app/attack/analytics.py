@@ -11,7 +11,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from app.attack.catalog import TACTICS, TECHNIQUES, parent_techniques
-from app.attack.coverage import CoverageStatus
+from app.attack.coverage import ASSESSED, UNJUDGED, CoverageStatus
 
 
 @dataclass(frozen=True)
@@ -44,6 +44,9 @@ class CoverageRollup:
     total_sub_techniques: int
     scored_count: int
     unscored_count: int
+    #: Every technique the rollup tallied: the "Y" of "Scored: X/Y". Derived from
+    #: the tally, so it cannot disagree with the rows (#621 round 2).
+    catalogue_count: int
     covered: int
     partial: int
     gap: int
@@ -135,11 +138,7 @@ def compute(
         sub_codes = [t.id for t in TECHNIQUES if t.is_sub_technique and ta.id in t.tactics]
         all_codes = parent_codes + sub_codes
         counts = _tally(all_codes, coverage_map, pending)
-        addressable = (
-            counts[CoverageStatus.COVERED.value]
-            + counts[CoverageStatus.PARTIAL.value]
-            + counts[CoverageStatus.GAP.value]
-        )
+        addressable = sum(counts[s.value] for s in ASSESSED)
         weighted = counts[CoverageStatus.COVERED.value] + 0.5 * counts[CoverageStatus.PARTIAL.value]
         by_tactic.append(
             TacticCoverage(
@@ -161,22 +160,28 @@ def compute(
 
     # Overall (uses every catalog entry exactly once).
     overall_counts = _tally([t.id for t in TECHNIQUES], coverage_map, pending)
-    addressable_total = (
-        overall_counts[CoverageStatus.COVERED.value]
-        + overall_counts[CoverageStatus.PARTIAL.value]
-        + overall_counts[CoverageStatus.GAP.value]
-    )
+    addressable_total = sum(overall_counts[s.value] for s in ASSESSED)
     weighted_total = (
         overall_counts[CoverageStatus.COVERED.value]
         + 0.5 * overall_counts[CoverageStatus.PARTIAL.value]
     )
     # A withheld claim is still an ASSIGNED status, so it counts as scored.
-    # `AttackHeatmapCard` renders `{scored_count}/{scored_count + unscored_count}`
-    # -- leaving pending out would shrink the catalogue total on screen every
-    # time more evidence was doubted.
+    #
+    # An UNJUDGED status (`unable_to_determine`) does not: nobody verified the
+    # technique, and "scored" must mean the same rows in the ATT&CK deliverable
+    # as in the Risk Register's citable scope (`risk/link_scope.py` reads the
+    # same `UNJUDGED`). This REVERSES D-092 Decision 3's rule, which counted it
+    # as scored (#621 round 2, finding 1).
+    #
+    # The total on screen still must not shrink as rows move out of "scored" --
+    # that was the reason for the old rule. It holds because every "X/Y"
+    # renderer now takes Y from `catalogue_count`, the size of the tally
+    # itself, rather than from scored + unscored.
     scored_count = (
-        sum(overall_counts[s.value] for s in _STATUS_BUCKETS) + overall_counts["pending_review"]
+        sum(overall_counts[s.value] for s in _STATUS_BUCKETS if s not in UNJUDGED)
+        + overall_counts["pending_review"]
     )
+    catalogue_count = sum(overall_counts.values())
 
     parents = parent_techniques()
     sub_total = len(TECHNIQUES) - len(parents)
@@ -185,6 +190,7 @@ def compute(
         total_sub_techniques=sub_total,
         scored_count=scored_count,
         unscored_count=overall_counts["unscored"],
+        catalogue_count=catalogue_count,
         covered=overall_counts[CoverageStatus.COVERED.value],
         partial=overall_counts[CoverageStatus.PARTIAL.value],
         gap=overall_counts[CoverageStatus.GAP.value],
