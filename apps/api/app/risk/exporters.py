@@ -194,9 +194,13 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
         sheet.append([])
         sheet.append(
             [
+                # #554: "Not verified" is the ATT&CK deliverable's word for
+                # these rows. Two client documents naming the same rows two
+                # ways would read as two different populations.
                 "Technique and control links are drawn only from rows an "
-                "assessment has scored, so unscored rows cannot appear in the "
-                "Linked Techniques or Linked Controls columns."
+                "assessment has scored, so unscored rows and techniques marked "
+                "Not verified cannot appear in the Linked Techniques or Linked "
+                "Controls columns."
             ]
         )
 
@@ -255,9 +259,10 @@ def _link_scope_lines(ctx: RiskExportContext) -> list[str]:
     return [
         "Scored coverage available to link — " + ", ".join(parts),
         (
+            # #554: the same word the ATT&CK deliverable uses; see the XLSX.
             "Technique and control links are drawn only from rows an assessment "
-            "has scored, so unscored rows cannot appear in the two Linked "
-            "columns."
+            "has scored, so unscored rows and techniques marked Not verified "
+            "cannot appear in the two Linked columns."
         ),
     ]
 

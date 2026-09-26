@@ -7,6 +7,7 @@ import type {
   CatalogTechnique,
   TacticHeatmapEntry,
 } from "@/lib/attack/types";
+import { outsideAssessedText } from "@/lib/attack/outsideAssessed";
 
 import { StatusBadge } from "./StatusBadge";
 
@@ -111,9 +112,21 @@ export function AttackMatrix({
                       {col.parents.length} techniques
                     </div>
                     {hm ? (
-                      <div className="text-[10px] text-ink-tertiary">
-                        cov {hm.coverage_pct}%
-                      </div>
+                      <>
+                        <div className="text-[10px] text-ink-tertiary">
+                          cov {hm.coverage_pct}%
+                        </div>
+                        {/* #554: beside the per-tactic percentage, even at
+                            zero -- "cov 100%" over one covered row and twenty
+                            unverified ones is otherwise indistinguishable
+                            from a fully assessed tactic. */}
+                        <div
+                          className="text-[10px] text-ink-tertiary"
+                          data-testid={`attack-matrix-outside-${col.tactic_id}`}
+                        >
+                          {outsideAssessedText(hm)}
+                        </div>
+                      </>
                     ) : null}
                   </th>
                 );

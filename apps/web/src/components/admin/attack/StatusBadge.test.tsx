@@ -1,12 +1,36 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
+import type { CoverageStatus } from "@/lib/attack/types";
+
 import { StatusBadge } from "./StatusBadge";
 
 describe("StatusBadge", () => {
   it("names the four ordinary states", () => {
     render(<StatusBadge status="covered" />);
     expect(screen.getByText("Covered")).toBeInTheDocument();
+  });
+
+  it("names the two statuses #554 added, each as itself", () => {
+    // Not borrowed from N/A: an unverified technique is not "not applicable".
+    const { unmount } = render(<StatusBadge status="unable_to_determine" />);
+    expect(screen.getByText("Not verified")).toBeInTheDocument();
+    unmount();
+    render(<StatusBadge status="outside_control_surface" />);
+    expect(screen.getByText("Outside control surface")).toBeInTheDocument();
+  });
+
+  it("renders a status it does not know as unknown, and does not throw", () => {
+    // #621 review: the pending branch called `.toLowerCase()` on the label
+    // lookup, so an unknown status threw and took the matrix down with it.
+    const bogus = "bogus" as unknown as CoverageStatus;
+    const { unmount } = render(<StatusBadge status={bogus} />);
+    expect(screen.getByText("Unknown status")).toBeInTheDocument();
+    unmount();
+    render(<StatusBadge status={bogus} pendingReview />);
+    expect(screen.getByText(/Pending review/)).toHaveTextContent(
+      "Pending review (unknown status)",
+    );
   });
 
   it("says pending review, and does NOT say Covered on its own", () => {

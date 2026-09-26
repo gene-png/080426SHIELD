@@ -1,4 +1,5 @@
 "use client";
+import { outsideAssessedText } from "@/lib/attack/outsideAssessed";
 import {
   Card,
   CardBody,
@@ -34,11 +35,12 @@ export function AttackHeatmapCard({
       <CardHeader>
         <CardTitle>Coverage rollup</CardTitle>
         <CardDescription>
-          Coverage % = (covered + 0.5 × partial) / addressable × 100, where
-          addressable excludes N/A rows and rows pending review — a technique
-          whose supporting citation is unconfirmed withholds its claim rather
-          than scoring as covered or as a gap. Per-tactic counts feed the matrix
-          below.
+          Coverage % = (covered + 0.5 × partial) / (covered + partial + gap) ×
+          100. N/A, Outside control surface, Not verified, unscored and pending
+          review techniques are outside it — a technique whose supporting
+          citation is unconfirmed withholds its claim rather than scoring as
+          covered or as a gap. Not verified and Outside control surface are
+          counted beside it. Per-tactic counts feed the matrix below.
         </CardDescription>
       </CardHeader>
       <CardBody className="flex flex-col gap-4">
@@ -53,8 +55,7 @@ export function AttackHeatmapCard({
                 Coverage {heatmap.coverage_pct}%
               </StatusPill>
               <span className="text-xs text-ink-tertiary">
-                {heatmap.scored_count}/
-                {heatmap.scored_count + heatmap.unscored_count} scored
+                {heatmap.scored_count}/{heatmap.catalogue_count} scored
               </span>
               {/*
                 #102. Rendered BESIDE the percentage and never instead of it.
@@ -66,6 +67,13 @@ export function AttackHeatmapCard({
                 the line, which is how the number stops being read on the run
                 where it is not zero.
               */}
+              {/* #554: beside the percentage, ALWAYS -- never dropped at zero. */}
+              <span
+                className="text-xs text-ink-secondary"
+                data-testid="attack-heatmap-outside-assessed"
+              >
+                {outsideAssessedText(heatmap)}
+              </span>
               {(heatmap.pending_review ?? 0) > 0 ? (
                 <StatusPill tone="warning" withDot>
                   <span data-testid="attack-heatmap-pending">
@@ -94,6 +102,16 @@ export function AttackHeatmapCard({
                 label="N/A"
                 value={heatmap.not_applicable.toString()}
                 hint="Out of scope for this environment."
+              />
+              <NumberCard
+                label="Not verified"
+                value={heatmap.unable_to_determine.toString()}
+                hint="Nobody verified these. Outside the coverage score, and never counted as partial or gap."
+              />
+              <NumberCard
+                label="Outside control surface"
+                value={heatmap.outside_control_surface.toString()}
+                hint="The technique applies, and the client's control surface does not reach it. Outside the coverage score."
               />
               <NumberCard
                 label="Pending review"

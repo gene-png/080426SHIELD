@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 from app.attack.analytics import CoverageRollup, TacticCoverage
 from app.attack.catalog import TACTICS, TECHNIQUES, technique_by_id
-from app.attack.coverage import CoverageStatus, coverage_label
+from app.attack.coverage import ASSESSED, CoverageStatus, coverage_label
 from app.attack.parents import is_computed_parent
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.pending import uncleared_tools
@@ -90,9 +90,13 @@ def _status_or_unscored(value: str | None) -> str:
 #: gave a bare `Coverage %` with no definition, and the formula is not the one a
 #: reader would guess: partial counts half, and N/A, unscored and withheld
 #: techniques sit outside the denominator (see `attack/analytics.py`).
+#: COPIED to the admin heatmap card, `apps/web/src/components/admin/attack/AttackHeatmapCard.tsx`
+#: (its CardDescription) -- change both.
 COVERAGE_PCT_DEFINITION = (
     "Coverage % = (Covered + 0.5 x Partial) / (Covered + Partial + Gap). "
-    "N/A, Unscored and Pending review techniques are outside it; "
+    "N/A, Outside control surface, Not verified, Unscored and Pending review "
+    "techniques are outside it; Not verified and Outside control surface are "
+    "counted beside it; "
     "'not measured' means no technique there has a Covered, Partial or Gap "
     "status, counting those pending review."
 )
@@ -123,7 +127,7 @@ def _measured(t: CoverageRollup | TacticCoverage) -> bool:
     covered + partial + gap == 0, but it was assessed: it reads 0.0% beside its
     pending count, as the #102 note in `render_xlsx` intends -- not "never
     assessed", which is what "not measured" says."""
-    return t.covered + t.partial + t.gap + t.pending_review > 0
+    return sum(getattr(t, s.value) for s in ASSESSED) + t.pending_review > 0
 
 
 def _pct_value(t: CoverageRollup | TacticCoverage) -> float | str:
@@ -141,6 +145,18 @@ def coverage_pct_text(rollup: CoverageRollup) -> str:
     the renderers AND the stored `Deliverable.summary` line, so the results list
     cannot say 0.0% beside a PDF that says "not measured"."""
     return _pct_text(rollup)
+
+
+def outside_assessed_text(rollup: CoverageRollup) -> str:
+    # COPIED to the web as `outsideAssessedText`, `apps/web/src/lib/attack/outsideAssessed.ts`
+    # -- change both.
+    """The two counts outside the assessed denominator, as every surface states
+    them BESIDE the percentage (#554, the owner's decision): "Not verified" is
+    never dropped, even at zero, so a reader can tell "none" from "not shown"."""
+    return (
+        f"Not verified {rollup.unable_to_determine}, "
+        f"Outside control surface {rollup.outside_control_surface}"
+    )
 
 
 def _tools(value: list | None, unconfirmed: frozenset[str]) -> str:
@@ -217,7 +233,7 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
     ws.append(
         [
             "Scored / Total",
-            f"{ctx.rollup.scored_count}/{ctx.rollup.scored_count + ctx.rollup.unscored_count}",
+            f"{ctx.rollup.scored_count}/{ctx.rollup.catalogue_count}",
         ]
     )
     # #102. Beside the percentage, never instead of it and never omitted: the
@@ -226,6 +242,9 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
     # withheld renders 0.0% here, which without this line is indistinguishable
     # from a client who owns no controls at all.
     ws.append(["Pending review", ctx.rollup.pending_review])
+    # #554: outside the assessed denominator, and beside it, never omitted.
+    ws.append(["Not verified", ctx.rollup.unable_to_determine])
+    ws.append(["Outside control surface", ctx.rollup.outside_control_surface])
     ws.append(["Coverage % means", COVERAGE_PCT_DEFINITION])
     ws.append(
         [
@@ -234,7 +253,7 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
             "confirmed by a consultant.",
         ]
     )
-    for row in ws.iter_rows(min_row=1, max_row=8, min_col=1, max_col=1):
+    for row in ws.iter_rows(min_row=1, max_row=10, min_col=1, max_col=1):
         for cell in row:
             cell.font = bold
     ws.append([])
@@ -247,6 +266,8 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
         "Partial",
         "Gap",
         "N/A",
+        "Outside control surface",
+        "Not verified",
         "Unscored",
         "Pending review",
         "Coverage %",
@@ -267,12 +288,14 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
                 tc.partial,
                 tc.gap,
                 tc.not_applicable,
+                tc.outside_control_surface,
+                tc.unable_to_determine,
                 tc.unscored,
                 tc.pending_review,
                 _pct_value(tc),
             ]
         )
-    widths = [10, 28, 12, 14, 10, 10, 8, 8, 12, 15, 14]
+    widths = [10, 28, 12, 14, 10, 10, 8, 8, 22, 13, 12, 15, 14]
     for w, col in zip(widths, range(1, len(widths) + 1), strict=True):
         ws.column_dimensions[get_column_letter(col)].width = w
 
@@ -416,11 +439,10 @@ def render_docx(ctx: AttackDeliverableContext) -> bytes:
         [
             "Overall coverage: " + coverage_pct_text(ctx.rollup),
             COVERAGE_PCT_DEFINITION,
-            f"Scored: {ctx.rollup.scored_count}/"
-            f"{ctx.rollup.scored_count + ctx.rollup.unscored_count}",
+            f"Scored: {ctx.rollup.scored_count}/{ctx.rollup.catalogue_count}",
             f"Covered {ctx.rollup.covered}, Partial {ctx.rollup.partial}, "
             f"Gap {ctx.rollup.gap}, N/A {ctx.rollup.not_applicable}, "
-            f"Pending review {ctx.rollup.pending_review}",
+            f"Pending review {ctx.rollup.pending_review}, " + outside_assessed_text(ctx.rollup),
         ],
     )
 
@@ -431,7 +453,18 @@ def render_docx(ctx: AttackDeliverableContext) -> bytes:
         # Withholding a row narrows `addressable`, so a per-tactic percentage can
         # read 100% over two withheld claims -- the count is what stops the
         # number being a lie, and XLSX carried it while these two did not.
-        ["Tactic", "Name", "Covered", "Partial", "Gap", "N/A", "Pending review", "Coverage %"],
+        [
+            "Tactic",
+            "Name",
+            "Covered",
+            "Partial",
+            "Gap",
+            "N/A",
+            "Outside",
+            "Not verified",
+            "Pending review",
+            "Coverage %",
+        ],
         [
             [
                 tc.tactic_id,
@@ -440,6 +473,8 @@ def render_docx(ctx: AttackDeliverableContext) -> bytes:
                 tc.partial,
                 tc.gap,
                 tc.not_applicable,
+                tc.outside_control_surface,
+                tc.unable_to_determine,
                 tc.pending_review,
                 _pct_text(tc),
             ]
@@ -545,13 +580,15 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
     story.append(
         Paragraph(
             f"Overall coverage: <b>{coverage_pct_text(ctx.rollup)}</b> · "
-            f"Scored: <b>{ctx.rollup.scored_count}/"
-            f"{ctx.rollup.scored_count + ctx.rollup.unscored_count}</b> · "
+            f"Scored: <b>{ctx.rollup.scored_count}/{ctx.rollup.catalogue_count}</b> · "
             f"Covered <b>{ctx.rollup.covered}</b>, "
             f"Partial <b>{ctx.rollup.partial}</b>, "
             f"Gap <b>{ctx.rollup.gap}</b>, "
             f"N/A <b>{ctx.rollup.not_applicable}</b>, "
-            f"Pending review <b>{ctx.rollup.pending_review}</b>",
+            f"Pending review <b>{ctx.rollup.pending_review}</b>, "
+            # #554: the shared sentence, not a copy of it, so the PDF cannot
+            # drift from the DOCX, XLSX and stored summary. It carries no bold.
+            f"{outside_assessed_text(ctx.rollup)}",
             body,
         )
     )
@@ -560,7 +597,18 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
     story.append(Paragraph("Per-tactic rollup", h2))
     tactic_table_data: list[list] = [
         # See the DOCX table above: the count travels with the percentage.
-        ["Tactic", "Name", "Covered", "Partial", "Gap", "N/A", "Pending review", "Coverage %"]
+        [
+            "Tactic",
+            "Name",
+            "Covered",
+            "Partial",
+            "Gap",
+            "N/A",
+            "Outside",
+            "Not verified",
+            "Pending review",
+            "Coverage %",
+        ]
     ]
     for tc in ctx.rollup.by_tactic:
         tactic_table_data.append(
@@ -571,22 +619,27 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
                 tc.partial,
                 tc.gap,
                 tc.not_applicable,
+                tc.outside_control_surface,
+                tc.unable_to_determine,
                 tc.pending_review,
                 _pct_text(tc),
             ]
         )
-    # Eight columns since #102 added `Pending review`. A width list shorter than
-    # the header list silently drops the last column's sizing in reportlab, so
-    # this has to move with the table above it.
+    # Ten columns since #554 added `Outside` and `Not verified` (eight since #102
+    # added `Pending review`). A width list shorter than the header list silently
+    # drops the last column's sizing in reportlab, so this has to move with the
+    # table above it. The name column gave up the room.
     tactic_col_widths = [
-        0.8 * inch,
-        1.7 * inch,
-        0.65 * inch,
-        0.65 * inch,
-        0.55 * inch,
+        0.7 * inch,
+        1.25 * inch,
+        0.6 * inch,
+        0.6 * inch,
         0.5 * inch,
-        0.95 * inch,
-        0.85 * inch,
+        0.45 * inch,
+        0.6 * inch,
+        0.7 * inch,
+        0.8 * inch,
+        0.75 * inch,
     ]
     tactic_table = Table(
         tactic_table_data,

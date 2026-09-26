@@ -61,7 +61,7 @@ from app.attack.coverage import (
     reason_codes_for,
 )
 from app.attack.exporters import build_context as build_attack_context
-from app.attack.exporters import coverage_pct_text
+from app.attack.exporters import coverage_pct_text, outside_assessed_text
 from app.attack.exporters import render_docx as render_attack_docx
 from app.attack.exporters import render_pdf as render_attack_pdf
 from app.attack.exporters import render_xlsx as render_attack_xlsx
@@ -2386,6 +2386,7 @@ def heatmap(
         total_sub_techniques=rollup.total_sub_techniques,
         scored_count=rollup.scored_count,
         unscored_count=rollup.unscored_count,
+        catalogue_count=rollup.catalogue_count,
         covered=rollup.covered,
         partial=rollup.partial,
         gap=rollup.gap,
@@ -2960,7 +2961,10 @@ def finalize_attack_deliverable(
         # indistinguishable from a client who owns no controls at all.
         f"{rollup.covered} covered, {rollup.partial} partial, {rollup.gap} gaps, "
         f"{rollup.pending_review} pending review, "
-        f"{rollup.not_applicable} N/A across {rollup.scored_count} scored techniques."
+        f"{rollup.not_applicable} N/A across {rollup.scored_count} scored techniques. "
+        # #554: the two counts outside the assessed denominator, in the same
+        # sentence every renderer prints, never dropped even at zero.
+        f"{outside_assessed_text(rollup)}."
     )
 
     deliv = Deliverable(

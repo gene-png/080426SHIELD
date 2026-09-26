@@ -80,6 +80,11 @@ class AttackTacticCoverage(BaseModel):
     # unconfirmed is withheld from `coverage_pct` -- which narrows its
     # denominator, so this count has to be rendered beside it and never dropped.
     pending_review: int = 0
+    # #554: outside the assessed denominator, and REQUIRED -- no default, so a
+    # response built without them fails loudly instead of reading "0 not
+    # verified". Every surface that shows `coverage_pct` shows these beside it.
+    outside_control_surface: int
+    unable_to_determine: int
     coverage_pct: float
 
 
@@ -95,7 +100,9 @@ class AttackDashboardTechnique(BaseModel):
     code: str
     name: str
     tactic_name: str
-    status: str  # CoverageStatus value: covered | partial | gap | not_applicable
+    status: str  # a CoverageStatus value: covered | partial | gap | not_applicable
+    # | outside_control_surface | unable_to_determine (#554). Typed `str`, so the
+    # web chip's "Unknown status" fallback is reachable only through bad data.
     # #102. The rollup beside this array withholds unbacked claims; without this
     # flag the matrix listed those same techniques as `covered`, naming the
     # unconfirmed tool under Detection. One page, two answers.
@@ -144,6 +151,11 @@ class AttackDashboardRollup(BaseModel):
     # exactly when the released PDF does, so a rollup computed without
     # withholding hands the same client two numbers for one assessment.
     pending_review: int = 0
+    # #554: outside the assessed denominator, and REQUIRED -- no default, so a
+    # response built without them fails loudly instead of reading "0 not
+    # verified". Every surface that shows `coverage_pct` shows these beside it.
+    outside_control_surface: int
+    unable_to_determine: int
     coverage_pct: float
     by_tactic: list[AttackTacticCoverage]
 
@@ -626,6 +638,10 @@ class ValueSummaryResponse(BaseModel):
     #: be matched to its release (#114). A different cause, so a different
     #: sentence on the card. Only ever True alongside `attack_uncovered_unresolved`.
     attack_uncovered_withheld: bool
+    #: #554 / #621 review: techniques nobody verified, rendered beside the
+    #: uncovered count so "0 uncovered" cannot read as "nothing is missing" over
+    #: an unverified assessment. None exactly when `attack_uncovered_count` is.
+    attack_not_verified_count: int | None
     csf_gap_count: int | None
     csf_gap_unresolved: bool
     csf_services: int

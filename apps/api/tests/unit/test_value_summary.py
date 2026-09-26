@@ -238,7 +238,13 @@ def _make_released_zt(db, client_id, opened_by, *, gap_codes, released=True) -> 
 
 
 def _make_released_attack(
-    db, client_id, opened_by, *, gap_codes, catalog_version: str | None = "current"
+    db,
+    client_id,
+    opened_by,
+    *,
+    gap_codes,
+    catalog_version: str | None = "current",
+    unverified_codes: tuple[str, ...] = (),
 ) -> None:
     from app.attack.catalog import SOURCE_VERSION
     from app.models.attack_assessment import (
@@ -268,6 +274,15 @@ def _make_released_attack(
                 client_id=client_id,
                 technique_code=code,
                 status="gap",
+            )
+        )
+    for code in unverified_codes:
+        db.add(
+            AttackCoverage(
+                assessment_id=a.id,
+                client_id=client_id,
+                technique_code=code,
+                status="unable_to_determine",
             )
         )
     _release(db, svc.id, opened_by)
@@ -389,6 +404,7 @@ def test_value_summary_full_data(app_client) -> None:
     assert body["zt_gap_count"] == 4
     assert body["attack_uncovered_count"] == 3
     assert body["attack_uncovered_withheld"] is False  # #556: a current assessment
+    assert body["attack_not_verified_count"] == 0  # #554: stated, even at zero
     assert body["tech_debt_savings_usd"] == 3000.0
     assert body["tech_debt_savings_cost_known"] is True
     assert body["has_any_data"] is True
@@ -1132,3 +1148,34 @@ def test_value_summary_withholds_attack_scored_against_another_catalog(app_clien
     # sentence claiming the report is "still available under Results"
     # (review round 3, A).
     assert body["attack_uncovered_withheld"] is True
+
+
+@pytest.mark.unit
+def test_value_summary_states_not_verified_beside_uncovered(app_client) -> None:
+    """#554, #621 review finding 3. An assessment whose rows nobody verified has
+    no `gap` rows, so the uncovered count alone reads "0 techniques uncovered" --
+    a false assurance on the client's home page. The not-verified count travels
+    with it."""
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    cid = client["user"]["client_id"]
+    codes = _attack_codes(5)
+
+    db = _session(c)
+    _make_released_attack(
+        db,
+        _uuid.UUID(cid),
+        _uuid.UUID(admin["user"]["id"]),
+        gap_codes=codes[:1],
+        unverified_codes=tuple(codes[1:]),
+    )
+    db.commit()
+    db.close()
+
+    body = c.get(
+        f"/clients/{cid}/value-summary",
+        headers={"Authorization": f"Bearer {client['tokens']['access_token']}"},
+    ).json()
+    assert body["attack_uncovered_count"] == 1
+    assert body["attack_not_verified_count"] == 4

@@ -7,7 +7,15 @@
  * are unit-testable in isolation.
  */
 
-export type CoverageStatus = "covered" | "partial" | "gap" | "not_applicable";
+/** Every status the API can store (#554). The two new ones are not WRITABLE
+ *  yet, but every surface must be able to render them first. */
+export type CoverageStatus =
+  | "covered"
+  | "partial"
+  | "gap"
+  | "not_applicable"
+  | "outside_control_surface"
+  | "unable_to_determine";
 
 export interface DashTactic {
   tactic_id: string;
@@ -19,6 +27,9 @@ export interface DashTactic {
   unscored: number;
   /** #102: status assigned, supporting citation unconfirmed, withheld from the %. */
   pending_review?: number;
+  /** #554: outside the assessed denominator; always beside the percentage. */
+  outside_control_surface: number;
+  unable_to_determine: number;
   coverage_pct: number;
 }
 
@@ -63,6 +74,9 @@ export interface DashRollup {
    * beside it — the same rule the released PDF follows.
    */
   pending_review?: number;
+  /** #554: outside the assessed denominator; always beside the percentage. */
+  outside_control_surface: number;
+  unable_to_determine: number;
   coverage_pct: number;
   by_tactic: DashTactic[];
 }
@@ -141,16 +155,34 @@ export interface DprCoverage {
  * Out of BOTH sides, like `unscored` and for the same reason: it is a claim not
  * being made, not a claim of absence. Scoring it as a zero would understate the
  * posture rather than decline to state it.
+ *
+ * Only ASSESSED rows (covered, partial, gap) are in the triad, as in the KPI
+ * row and `coverage_pct`. The two #554 statuses are outside it -- nobody
+ * verified the technique, or the client's controls do not reach it -- and
+ * their counts are rendered beside the triad instead. N/A is outside it too:
+ * Gene's decision, 2026-09-25 (D-092), so the triad and the KPI row divide by
+ * the same population.
+ *
+ * A COPY of `coverage.ASSESSED` in `apps/api/app/attack/coverage.py`, which
+ * points here -- change both.
  */
+const ASSESSED: ReadonlySet<CoverageStatus> = new Set([
+  "covered",
+  "partial",
+  "gap",
+]);
+
 export function dprCoverage(techniques: DashTechnique[]): DprCoverage {
-  // A computed parent is out too (#620 round 2, option (b), pending Gene's
-  // confirmation): it carries no tools of its own, so counting it would add a
-  // zero-leg row per parent beside the children it is computed from.
+  // BOTH exclusions (#620 and #621, resolved together): the population is
+  // assessed rows only (covered, partial, gap -- #621, Gene's N/A decision),
+  // minus rows pending review, minus computed parents, which carry no tools of
+  // their own and are counted through their sub-techniques (#620, option (b)).
   const claimable = techniques.filter(
-    (t) => !t.pending_review && !t.computed_parent,
+    (t) => !t.pending_review && !t.computed_parent && ASSESSED.has(t.status),
   );
   // Each excluded row is counted once, under the first reason that excludes
-  // it: a parent is out as a parent whether or not it is also pending.
+  // it: a parent is out as a parent whether or not it is also pending. Rows
+  // outside ASSESSED are stated beside the triad by #621's sentence instead.
   const parents = techniques.filter((t) => t.computed_parent).length;
   const pending = techniques.filter(
     (t) => !t.computed_parent && t.pending_review,

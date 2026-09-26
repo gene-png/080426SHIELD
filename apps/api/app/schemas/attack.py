@@ -300,6 +300,9 @@ class AttackHeatmap(BaseModel):
     total_sub_techniques: int
     scored_count: int
     unscored_count: int
+    #: The "Y" of "X/Y scored": every technique tallied. Not scored + unscored,
+    #: which excludes Not verified rows since #621 round 2.
+    catalogue_count: int
     covered: int
     partial: int
     gap: int

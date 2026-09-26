@@ -72,6 +72,8 @@ function attackData(releasedAt: string): AttackDashboardData {
       partial: 0,
       gap: 0,
       not_applicable: 0,
+      outside_control_surface: 0,
+      unable_to_determine: 0,
       coverage_pct: 0,
       by_tactic: [],
     },
