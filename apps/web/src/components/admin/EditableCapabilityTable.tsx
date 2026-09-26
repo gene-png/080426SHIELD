@@ -28,6 +28,13 @@ export interface EditableCapabilityTableProps {
 
 type SaveStateById = Record<string, "idle" | "saving" | "saved" | "error">;
 
+// #643: an input or select with no width keeps its intrinsic ~20-character
+// width, and seven of them overflowed the admin content column at any normal
+// screen width. Sized to the cell instead, the fixed-layout table below decides
+// the widths and scrolls only under its stated minimum.
+const cellInputClasses = cn(inputClasses, "w-full min-w-0");
+const cellSelectClasses = cn(selectClasses, "w-full min-w-0");
+
 function fmtCurrency(value: number | null): string {
   if (value === null) return "";
   return value.toLocaleString();
@@ -110,7 +117,7 @@ export function EditableCapabilityTable({
 
   return (
     <div className="overflow-x-auto rounded-lg border border-border-subtle">
-      <table className="min-w-full border-separate border-spacing-0 text-sm">
+      <table className="w-full min-w-[60rem] table-fixed border-separate border-spacing-0 text-sm">
         <thead className="sticky top-0 z-base bg-surface-sunken text-xs uppercase tracking-wider text-ink-secondary">
           <tr>
             <th
@@ -137,10 +144,16 @@ export function EditableCapabilityTable({
             <th className="border-b border-border-subtle px-3 py-2 text-left font-semibold">
               Function
             </th>
-            <th className="border-b border-border-subtle px-3 py-2 text-right font-semibold">
+            <th
+              className="border-b border-border-subtle px-3 py-2 text-right font-semibold"
+              style={{ width: "8.5rem" }}
+            >
               Annual cost (USD)
             </th>
-            <th className="border-b border-border-subtle px-3 py-2 text-right font-semibold">
+            <th
+              className="border-b border-border-subtle px-3 py-2 text-right font-semibold"
+              style={{ width: "6rem" }}
+            >
               Licenses
             </th>
             <th className="border-b border-border-subtle px-3 py-2 text-left font-semibold">
@@ -221,7 +234,7 @@ export function EditableCapabilityTable({
                             void save(item, { disposition: v });
                           }
                         }}
-                        className={selectClasses}
+                        className={cellSelectClasses}
                         aria-label="Disposition"
                       >
                         <option value="">Undecided…</option>
@@ -251,7 +264,7 @@ export function EditableCapabilityTable({
                           void save(item, { name: v });
                         }
                       }}
-                      className={inputClasses}
+                      className={cellInputClasses}
                       aria-label="Name"
                     />
                   </td>
@@ -266,7 +279,7 @@ export function EditableCapabilityTable({
                           void save(item, { vendor: v });
                         }
                       }}
-                      className={inputClasses}
+                      className={cellInputClasses}
                       aria-label="Vendor"
                     />
                   </td>
@@ -281,7 +294,7 @@ export function EditableCapabilityTable({
                           void save(item, { category: v });
                         }
                       }}
-                      className={inputClasses}
+                      className={cellInputClasses}
                       aria-label="Category"
                     />
                   </td>
@@ -296,7 +309,7 @@ export function EditableCapabilityTable({
                           void save(item, { function: v });
                         }
                       }}
-                      className={inputClasses}
+                      className={cellInputClasses}
                       aria-label="Function"
                     />
                   </td>
@@ -311,7 +324,7 @@ export function EditableCapabilityTable({
                           void save(item, { annual_cost_usd: next });
                         }
                       }}
-                      className={cn(inputClasses, "text-right")}
+                      className={cn(cellInputClasses, "text-right")}
                       aria-label="Annual cost USD"
                     />
                   </td>
@@ -326,7 +339,7 @@ export function EditableCapabilityTable({
                           void save(item, { license_count: next });
                         }
                       }}
-                      className={cn(inputClasses, "text-right")}
+                      className={cn(cellInputClasses, "text-right")}
                       aria-label="License count"
                     />
                   </td>
@@ -341,7 +354,7 @@ export function EditableCapabilityTable({
                           void save(item, { notes: v });
                         }
                       }}
-                      className={inputClasses}
+                      className={cellInputClasses}
                       aria-label="Notes"
                     />
                   </td>
