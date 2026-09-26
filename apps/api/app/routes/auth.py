@@ -1279,7 +1279,11 @@ def reset_password(
         actor_user_id=user.id,
     )
     db.commit()
-    log.info("auth.password_reset_completed", user_id=str(user.id))
+    log.info(
+        "auth.password_reset_completed",
+        user_id=str(user.id),
+        sessions_ended_cutoff=user.credentials_changed_at.isoformat(),
+    )
     return EmailActionResponse(
         message="Your password has been reset. You can now sign in with your new password."
     )

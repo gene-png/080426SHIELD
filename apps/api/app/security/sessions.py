@@ -22,24 +22,18 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from app.logging import get_logger
 from app.models.user import User
-
-log = get_logger(__name__)
 
 
 def end_user_sessions(user: User, *, at: datetime) -> None:
     """Refuse every refresh and access token `user` holds from before `at`.
 
     Changes the row only; the caller commits, in the same transaction as the
-    change that made the sessions end.
+    change that made the sessions end. It logs NOTHING: a success record belongs
+    below the commit that makes it true (#726), so each caller logs after its
+    own commit.
     """
     user.active_refresh_jti = None
     user.previous_refresh_jti = None
     user.refresh_rotated_at = None
     user.credentials_changed_at = at.replace(microsecond=0)
-    log.info(
-        "sessions.ended",
-        user_id=str(user.id),
-        cutoff=user.credentials_changed_at.isoformat(),
-    )

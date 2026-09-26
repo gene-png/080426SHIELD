@@ -228,3 +228,114 @@ def test_a_deactivation_still_clears_every_rotation_field(
     )
     assert r.status_code == 200, r.text
     assert _rotation_state("victim@atlas.example") == (None, None, None)
+
+
+# --- review round 1 (#726) ------------------------------------------------------
+
+#: Cause-neutral: the same refusal follows a password reset, a deactivation and
+#: a client archive, so it may not name any one of them. "Your password was
+#: changed" told an archived client's users their account had been tampered with.
+_CUTOFF_MESSAGE = "This session has ended. Sign in again."
+
+
+@pytest.mark.unit
+def test_the_cutoff_refusal_names_no_cause_after_an_archive_or_a_deactivation(
+    app_client: TestClient, minted_in_the_past
+) -> None:
+    admin = _register(app_client, "admin@kentro.example")["tokens"]["access_token"]
+    archived = _register(app_client, "first@atlas.example")["tokens"]["access_token"]
+    victim = _register(app_client, "victim@other-tenant.example")
+    _archive(app_client, admin, "first@atlas.example")
+    uid = victim["user"]["id"]
+    for active in (False, True):
+        r = app_client.patch(
+            f"/admin/users/{uid}", headers=_auth(admin), json={"is_active": active}
+        )
+        assert r.status_code == 200, r.text
+
+    for token in (archived, victim["tokens"]["access_token"]):
+        r = _me(app_client, token)
+        assert r.status_code == 401, r.text
+        error = r.json()["error"]
+        assert (error["reason"], error["message"]) == (_CUTOFF_REASON, _CUTOFF_MESSAGE)
+
+
+@pytest.mark.unit
+def test_archiving_a_client_ends_an_inactive_users_sessions_too(
+    app_client: TestClient, minted_in_the_past
+) -> None:
+    """D-103 covers EVERY user of the client. An inactive user whose sessions
+    were never ended (made inactive before #652, when deactivation did not set
+    a cutoff) must be cleared by the archive and stay refused if reactivated.
+    An `is_active` filter on the archive's user query would keep every other
+    test here green."""
+    from sqlalchemy import update
+
+    from app.models.user import User
+
+    admin = _register(app_client, "admin@kentro.example")["tokens"]["access_token"]
+    _register(app_client, "first@atlas.example")
+    dormant = _register(app_client, "dormant@atlas.example")
+    old_access = dormant["tokens"]["access_token"]
+    rotated = app_client.post(
+        "/auth/refresh", json={"refresh_token": dormant["tokens"]["refresh_token"]}
+    )
+    assert rotated.status_code == 200, rotated.text
+    eng = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=eng, future=True)() as s:
+        s.execute(update(User).where(User.email == "dormant@atlas.example").values(is_active=False))
+        s.commit()
+    assert _user_row("dormant@atlas.example").credentials_changed_at is None, "setup"
+
+    _archive(app_client, admin, "first@atlas.example")
+
+    assert _user_row("dormant@atlas.example").credentials_changed_at is not None
+    assert _rotation_state("dormant@atlas.example") == (None, None, None)
+    r = app_client.patch(
+        f"/admin/users/{dormant['user']['id']}", headers=_auth(admin), json={"is_active": True}
+    )
+    assert r.status_code == 200, r.text
+    r = _me(app_client, old_access)
+    assert r.status_code == 401, r.text
+    assert r.json()["error"]["reason"] == _CUTOFF_REASON
+
+
+@pytest.mark.unit
+def test_a_failed_archive_commit_records_no_ended_sessions(
+    app_client: TestClient, minted_in_the_past, monkeypatch
+) -> None:
+    """A success record belongs below the commit that makes it true. The helper
+    logged "sessions.ended" before its caller committed, so a rolled-back
+    archive left a log saying sessions had ended."""
+    from sqlalchemy.orm import Session as OrmSession
+
+    import app.routes.admin as admin_routes
+    import app.security.sessions as sessions
+
+    admin = _register(app_client, "admin@kentro.example")["tokens"]["access_token"]
+    _register(app_client, "first@atlas.example")
+    cid = _user_row("first@atlas.example").client_id
+    events: list[str] = []
+    from types import SimpleNamespace
+
+    # `raising=False`: the helper has no logger now. If one is added back and
+    # logs before the caller's commit, it lands in `events` and this goes red.
+    monkeypatch.setattr(
+        sessions,
+        "log",
+        SimpleNamespace(info=lambda event, **kw: events.append(event)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        admin_routes.logger, "info", lambda msg, *a, **kw: events.append(msg.split()[0])
+    )
+
+    def refuse(self) -> None:
+        raise RuntimeError("commit refused (test)")
+
+    monkeypatch.setattr(OrmSession, "commit", refuse)
+    with pytest.raises(RuntimeError, match="commit refused"):
+        app_client.delete(f"/admin/clients/{cid}", headers=_auth(admin))
+
+    assert "sessions.ended" not in events
+    assert "admin.client_archived" not in events

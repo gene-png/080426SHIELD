@@ -648,10 +648,11 @@ def patch_user(
     db.commit()
     db.refresh(target)
     logger.info(
-        "admin.user_%s user_id=%s by=%s",
+        "admin.user_%s user_id=%s by=%s sessions_ended=%s",
         "deactivated" if not body.is_active else "reactivated",
         user_id,
         admin.id,
+        not body.is_active,
     )
     return AdminUserRow.model_validate(target, from_attributes=True)
 

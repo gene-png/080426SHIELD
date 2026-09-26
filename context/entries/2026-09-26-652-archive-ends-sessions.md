@@ -2,7 +2,8 @@
 
 Branch `track1/archive-ends-sessions`, stacked on `track1/access-token-cutoff`
 (#670) at `b95a8a03`, because it needs that PR's `credentials_changed_at`
-column. It lands after #670.
+column. It was written to land after #670; #670 merged to main as `a0ea301`
+on 2026-09-26, and this branch has main merged in since.
 
 ## What was wrong
 
