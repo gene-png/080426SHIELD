@@ -62,7 +62,9 @@ def exchange(
         )
 
     # 1) Verify the token's signature + registered claims (iss/aud/exp/iat/sub,
-    #    RS256-only). A JWKS outage surfaces as a typed 503 here.
+    #    RS256-only). A token missing exp, iat, sub or aud is a typed 401 here, so
+    #    `claims['sub']` below cannot KeyError (#678). A JWKS outage surfaces
+    #    as a typed 503 here.
     try:
         claims = verify_access_token(body.keycloak_access_token)
     except OidcError as exc:
