@@ -76,7 +76,7 @@ def _release_parent(
     svc: Service,
     action: str,
     guard: ParentGuard | None = None,
-) -> None:
+) -> bool:
     """Flip the parent this deliverable was built from to RELEASED (W4).
 
     No API route assigned RELEASED before this; the only writer in the repo was
@@ -107,6 +107,11 @@ def _release_parent(
     release and the repair re-release alike. Only Tech Debt passes a guard; CSF,
     ZT and ATT&CK pass none, and for them the only difference is that a status
     changed concurrently is logged instead of overwritten.
+
+    Returns True only when it flipped the parent. The flip is a bulk UPDATE, so
+    it leaves nothing dirty in the session, and a caller that commits only when
+    the session is dirty would silently drop it -- the repair path did exactly
+    that until it read this value.
     """
     parent = _PARENTS.get(svc.kind)
     if parent is None:  # pragma: no cover - every kind is mapped above
@@ -120,7 +125,7 @@ def _release_parent(
             service_kind=svc.kind.value,
             detail="finalized before migration 0041; parent status left unchanged",
         )
-        return
+        return False
 
     row = (
         db.execute(
@@ -140,7 +145,7 @@ def _release_parent(
             service_kind=svc.kind.value,
             parent_version=deliv.parent_version,
         )
-        return
+        return False
     if row.status == parent.status_enum.RELEASED:
         # Already there, and this is a NORMAL path: finalize accepts a RELEASED
         # parent in all four services, so re-finalizing after a release and then
@@ -155,7 +160,7 @@ def _release_parent(
             service_kind=svc.kind.value,
             parent_version=deliv.parent_version,
         )
-        return
+        return False
     if row.status != parent.status_enum.APPROVED:
         _log.warning(
             "deliverable.release_parent_not_approved",
@@ -165,7 +170,7 @@ def _release_parent(
             parent_version=deliv.parent_version,
             parent_status=row.status.value,
         )
-        return
+        return False
 
     conditions = [parent.model.id == row.id, parent.model.status == parent.status_enum.APPROVED]
     if guard is not None:
@@ -188,7 +193,7 @@ def _release_parent(
             parent_version=deliv.parent_version,
             parent_status=row.status.value,
         )
-        return
+        return False
     _log.info(
         "deliverable.release_parent_released",
         deliverable_id=str(deliv.id),
@@ -196,6 +201,7 @@ def _release_parent(
         service_kind=svc.kind.value,
         parent_version=deliv.parent_version,
     )
+    return True
 
 
 # Human-readable service names for the client-facing release notification.
@@ -262,8 +268,8 @@ def release_deliverable(
         # consultant a delivered report still needs releasing. Without this, the
         # only fix was direct SQL: the release is idempotent, so re-releasing
         # changed nothing, forever. Re-releasing now repairs it.
-        _release_parent(db, deliv=deliv, svc=svc, action=action, guard=parent_guard)
-        if db.is_modified(deliv) or db.dirty:
+        repaired = _release_parent(db, deliv=deliv, svc=svc, action=action, guard=parent_guard)
+        if repaired or db.is_modified(deliv) or db.dirty:
             db.commit()
         return deliv
 
