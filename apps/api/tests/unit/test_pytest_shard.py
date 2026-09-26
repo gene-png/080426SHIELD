@@ -23,6 +23,7 @@ import pytest
 
 # The DOTTED form, deliberately: see test_leave_row_oracle_anchors.py.
 import scripts.pytest_shard as shard
+import scripts.shard_partition as partition
 
 pytestmark = pytest.mark.unit
 
@@ -34,15 +35,15 @@ _API = Path(__file__).resolve().parents[2]
 
 @pytest.mark.parametrize(("spec", "expected"), [("1/4", (1, 4)), ("4/4", (4, 4)), ("1/1", (1, 1))])
 def test_a_shard_spec_parses(spec: str, expected: tuple[int, int]) -> None:
-    assert shard.parse_spec(spec) == expected
+    assert partition.parse_spec(spec) == expected
 
 
 @pytest.mark.parametrize(
     "spec", ["", "0/4", "5/4", "1/0", "a/4", "1/", "/4", "1-4", " 1/4", "1/4 ", "01/4"]
 )
 def test_a_bad_shard_spec_is_refused(spec: str) -> None:
-    with pytest.raises(shard.ShardSpecError):
-        shard.parse_spec(spec)
+    with pytest.raises(partition.ShardSpecError):
+        partition.parse_spec(spec)
 
 
 # --- the assignment --------------------------------------------------------------
@@ -55,7 +56,7 @@ def _ids(per_file: dict[str, int]) -> list[str]:
 @pytest.mark.parametrize("n", [1, 2, 3, 4, 7])
 def test_every_test_is_assigned_exactly_one_shard_in_range(n: int) -> None:
     ids = _ids({"tests/unit/test_a.py": 11, "tests/unit/test_b.py": 1, "tests/unit/test_c.py": 6})
-    assigned = shard.assign(ids, n)
+    assigned = partition.assign(ids, n)
     assert sorted(assigned) == sorted(ids)
     assert set(assigned.values()) <= set(range(1, n + 1))
 
@@ -64,19 +65,19 @@ def test_one_large_file_is_spread_evenly_across_shards() -> None:
     """The measured case: one file held most of the selection, so dealing by
     FILE cannot balance. Its tests are dealt round-robin instead."""
     ids = _ids({"tests/unit/test_big.py": 10})
-    counts = Counter(shard.assign(ids, 4).values())
+    counts = Counter(partition.assign(ids, 4).values())
     assert sorted(counts.values()) == [2, 2, 3, 3], counts
 
 
 def test_single_test_files_do_not_all_land_on_shard_one() -> None:
     ids = _ids({f"tests/unit/test_{c}.py": 1 for c in "abcdefgh"})
-    counts = Counter(shard.assign(ids, 4).values())
+    counts = Counter(partition.assign(ids, 4).values())
     assert sorted(counts.values()) == [2, 2, 2, 2], counts
 
 
 def test_the_assignment_does_not_depend_on_input_order() -> None:
     ids = _ids({"tests/unit/test_a.py": 5, "tests/unit/test_b.py": 3})
-    assert shard.assign(ids, 3) == shard.assign(list(reversed(ids)), 3)
+    assert partition.assign(ids, 3) == partition.assign(list(reversed(ids)), 3)
 
 
 # --- the plugin, end to end with real pytest --------------------------------------
@@ -189,11 +190,11 @@ FULL = ["t.py::a", "t.py::b", "t.py::c", "u.py::d"]
 
 
 def _verify(tmp_path: Path, shards: list[list[str]], full: list[str] = FULL, of: int | None = None):
-    argv = ["pytest_shard", "verify", "--full", str(_write(tmp_path / "full.txt", full))]
+    argv = ["shard_partition", "verify", "--full", str(_write(tmp_path / "full.txt", full))]
     if of is not None:
         argv += ["--of", str(of)]
     argv += ["--ran"] + [str(_write(tmp_path / f"ran-{i}.txt", s)) for i, s in enumerate(shards, 1)]
-    return shard.main(argv)
+    return partition.main(argv)
 
 
 def test_a_true_partition_verifies(tmp_path: Path, capsys) -> None:
@@ -227,13 +228,13 @@ def test_an_empty_or_missing_input_is_could_not_look(tmp_path: Path, which: str)
     elif which == "empty-shard":
         assert _verify(tmp_path, [FULL, []], of=2) == 2
     else:
-        argv = ["pytest_shard", "verify", "--full", str(_write(tmp_path / "f.txt", FULL)),
+        argv = ["shard_partition", "verify", "--full", str(_write(tmp_path / "f.txt", FULL)),
                 "--of", "1", "--ran", str(tmp_path / "nope.txt")]  # fmt: skip
-        assert shard.main(argv) == 2
+        assert partition.main(argv) == 2
 
 
 @pytest.mark.parametrize(
-    "argv", [["pytest_shard"], ["pytest_shard", "bogus"], ["pytest_shard", "verify"]]
+    "argv", [["shard_partition"], ["shard_partition", "bogus"], ["shard_partition", "verify"]]
 )
 def test_a_bad_invocation_is_could_not_look(argv: list[str]) -> None:
-    assert shard.main(argv) == 2
+    assert partition.main(argv) == 2
