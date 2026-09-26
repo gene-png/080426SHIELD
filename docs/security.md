@@ -21,9 +21,14 @@
 > This document previously stated TLS, KMS-encrypted storage, signed CI
 > artifacts, a server-side MIME sniff, an HIBP top-100k password check, a
 > payload hash on the audit row, and a 15-minute access token. None of those
-> existed. A security document that claims controls the code does not have is
-> worse than one that claims nothing: it is the artifact an assessor or a client
-> reads, and every wrong row in it is a finding waiting to be raised against us.
+> existed as stated: the token lifetime is 15 minutes only where
+> `JWT_ACCESS_TTL_SECONDS=900` is set (compose, and a `.env` copied from
+> `.env.example`), and 60 by default (see "15-minute access tokens" below);
+> KMS encryption is wired in `storage/s3.py` but no deployment configures a
+> key; the rest did not exist at all. A security document that claims controls the code does
+> not have is worse than one that claims nothing: it is the artifact an assessor
+> or a client reads, and every wrong row in it is a finding waiting to be raised
+> against us.
 
 ## Threat model (v1)
 

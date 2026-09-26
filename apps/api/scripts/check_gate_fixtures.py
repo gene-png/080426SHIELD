@@ -98,6 +98,31 @@ from pathlib import Path
 # mapping nor the fixture tree FAILS the run: silence must not be how coverage
 # quietly shrinks.
 DEFERRED: dict[str, str] = {
+    "compose_unchanged.py": (
+        "Reads a git RANGE -- the merge base and the head -- and a fixture here is "
+        "a static directory, not a repository, so no case can give it a range. "
+        "All three states are covered by `tests/unit/test_compose_unchanged.py`, which "
+        "builds a real throwaway repository per case: 0 for a comments-only compose "
+        "diff, 1 for content changes Python equality would hide, 2 for an "
+        "unparseable file and for bad arguments, each naming its state on the first "
+        "line. The CI job is EXECUTED: its run block, parsed from audit-gate.yml, runs "
+        "under bash -e against a stub tool exiting 0, 1 and 2, and must exit 0, "
+        "non-zero, non-zero with each state named in the summary "
+        "(test_the_ci_job_is_red_on_a_change_and_on_could_not_read); the parsed job "
+        "and step carry no continue-on-error or if: "
+        "(test_the_ci_job_cannot_be_made_green_by_configuration). "
+        "Red-on-revert, 2026-09-25, each red on its named test: loaded-object "
+        "equality (test_a_content_change_trips), a deleted file not counted "
+        "(test_a_deleted_compose_file_trips), scalar tags ignored "
+        "(test_a_content_change_trips), scalar style ignored "
+        "(test_a_quote_flip_is_content_even_where_the_1_1_tag_agrees), and a "
+        "three-dot range accepted (test_a_three_dot_range_is_refused_by_name), a "
+        "change exiting 0 (test_a_content_change_trips); in the run block, `|| rc=$?` "
+        'as `|| true`, `exit "$rc"` as `exit 0`, `exit "$rc"` commented out, and '
+        "`2>&1` dropped (test_the_ci_job_is_red_on_a_change_and_on_could_not_read); "
+        "and continue-on-error or if: false on the job or the step "
+        "(test_the_ci_job_cannot_be_made_green_by_configuration)."
+    ),
     # -- SHELL GATES (#318) -------------------------------------------------
     # They cannot be fixtured by this harness: `run_case` invokes
     # `[sys.executable] + argv`, and these are bash. Their both-states evidence
