@@ -15,6 +15,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.attack.catalog import TACTICS, TECHNIQUES
+from tests._attack_rows import first_standalone, standalone_rows
 
 
 @pytest.fixture()
@@ -229,7 +230,7 @@ def test_patch_coverage_records_status(app_client) -> None:
     bearer = admin["tokens"]["access_token"]
     svc_id = _open_service(c, bearer)
     a = _new_assessment(c, bearer, svc_id)
-    cov = a["coverage"][0]
+    cov = first_standalone(a["coverage"])
     r = c.patch(
         f"/attack/coverage/{cov['id']}",
         headers={"Authorization": f"Bearer {bearer}"},
@@ -361,12 +362,17 @@ def test_heatmap_reflects_coverage_after_patches(app_client) -> None:
     svc_id = _open_service(c, bearer)
     a = _new_assessment(c, bearer, svc_id)
     # Cover the first 10 techniques.
-    for cov in a["coverage"][:10]:
-        c.patch(
+    # Ten STANDALONE techniques: none is a computed parent (refused), and none
+    # completes a family (which would recompute a parent and add an eleventh
+    # covered row). Every PATCH is asserted -- this test once went quietly from
+    # 10 to 8 because it never checked them (D-094).
+    for cov in standalone_rows(a["coverage"], 10):
+        r = c.patch(
             f"/attack/coverage/{cov['id']}",
             headers={"Authorization": f"Bearer {bearer}"},
             json={"status": "covered"},
         )
+        assert r.status_code == 200, r.text
     r = c.get(
         f"/attack/services/{svc_id}/heatmap",
         headers={"Authorization": f"Bearer {bearer}"},

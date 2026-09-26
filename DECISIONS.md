@@ -6349,3 +6349,80 @@ it could have been written BEFORE seeing the defect that prompted it.**
 **Why.** Gene wants focus on a usable MVP. Review rounds on wording (#625 went six rounds) were costing more than they returned.
 
 **Coordinator numbering.** Agent tracks hold ranges D-100–D-149 (track1) and D-150–D-199 (track2) per #649; coordinator records take D-200 upward.
+
+## D-094 — An ATT&CK parent with sub-techniques has its status computed from them
+
+**Date:** 2026-09-25 · **Issues:** #554 · **Decided by:** the owner (that parents are computed); the rule itself is **my call, overturnable**
+
+**The owner's decision** (#554): "`parent_rollup` -- computed. A parent's status is arithmetic over its children. AI suggests, code computes. Forbidden as a reason." The arithmetic was not specified.
+
+**Decision 1 — which parents.** Only a parent that HAS sub-techniques, taken from the catalog (`parents.PARENT_CHILDREN`). A parent with none is scored directly, as before.
+
+**Decision 2 — the rule** (`parents.computed_parent_status`), in precedence order:
+
+1. Any child unscored → the parent is unscored. Unknown is never rounded up.
+2. Any child `unable_to_determine` → the parent is too.
+3. Set aside `not_applicable` and `outside_control_surface` children. Of the rest: all covered → covered; all gap → gap; anything else → partial.
+4. Nothing left → `outside_control_surface` if any child is outside the surface, else `not_applicable`.
+
+Reasons are computed, never invented:
+
+- an N/A parent takes `platform_absent`;
+- an outside parent takes its children's sub-case when they all share one;
+- every other parent takes none.
+
+A computed Partial has no single missing part to name; its children carry their reasons. **So the release-readiness gate must read a computed parent's children, not demand a Partial reason of the parent.** Recorded on #554 for c3.
+
+The truth table was written BEFORE the function, and one row was corrected after the first run, stated at the site. It had expected no reason for N/A mixed with outside; the outside children name one sub-case, and the N/A child is set aside, as it is everywhere else in the rule.
+
+**Decision 3 — the write paths store the computed value, and refuse to be told otherwise.**
+
+- PATCH on a computed parent accepts only its notes. Everything else is refused with a typed 422, `parent_status_computed`: status, reason, lock, tools, rationale, narrative and evidence (the last four since #620 round 2). A lock is refused because a locked parent would stop following its children, which is the one thing this decision says a parent does. Its evidence is its sub-techniques', so its own would be a second claim beside the computed one. confirm-citations refuses a computed parent the same way.
+- A child's PATCH recomputes its parent in the same transaction.
+- The AI write-back refuses a parent's suggestion whole and recomputes every parent before the run's diff is taken. The refusal is recorded as `parent_suggestions_refused`, in D-093's shape (`{technique_code, status}`, code-shaped values only). The ORDER per suggestion is: a locked row is skipped; then a computed parent is refused, whatever it suggested; then a missing or disallowed status (D-093); then a mispaired reason (D-093); only then is anything applied. Each refusal lands in exactly one list.
+- Approve recomputes every parent before freezing the numbers, so a draft scored before this rule existed is corrected at the point it matters. Each is audited (`parents_recomputed`).
+- The demo seed recomputes through the same function.
+- A parent locked BEFORE this rule existed is unlocked when it is recomputed, on any of the three paths, and each is audited (`parents_unlocked`). Run AI recomputes before its diff is taken and removes every parent it unlocked from the run's locked set, so the diff shows the parent's recomputed status rather than hiding it as a locked row.
+
+**Recomputed on WRITE, never on read.** Parents are recomputed when a child is PATCHed, when Run AI writes, and at approve, and never when an assessment is read. An APPROVED or RELEASED assessment is locked against all three, so **a delivered parent's stored status never moves**. A hand-scored parent on a released assessment keeps its stored status until a new version is approved. **Pending review is different, and is derived on EVERY read** (corrected 2026-09-25; #620 round 2 found the earlier wording, "a delivered number never moves", false). A parent's pending state comes from its children's evidence, including on APPROVED and RELEASED assessments, with no version gate. So a report released before this rule can show a different `coverage_pct` after it, in either direction. Measured read-only the same day on the shared dev DB: 2 RELEASED assessments, 0 APPROVED, and 0 parents whose pending state differs between the old and new rule. That DB predates the current catalog, so it says nothing about a deployment. **Gated by Gene's condition, below**: an assessment approved before #620 keeps main's per-row pending rule.
+
+**Pending review is derived over the whole assessment.** A computed parent has no citations of its own, so #102's per-row rule would read every covered or partial parent as pending forever, with nothing able to clear it. A computed parent is pending if and only if it claims support (covered or partial) and at least one of its children is pending. The route computes this across the assessment's rows, so the heatmap's count, the dashboard and each row's flag agree.
+
+**Who sees an old parent, measured 2026-09-25.** Two populations are NOT recomputed by this change until something writes to them:
+
+- A DRAFT shows its old stored parents until the next child PATCH, Run AI or approve. Approve corrects it before anything is frozen.
+- An APPROVED assessment that was never released is never recomputed. It is locked against all three paths, and the next approve belongs to a new version.
+
+The shared dev database, read-only: DRAFT 2, RELEASED 2, APPROVED 0, at migration 0051, so 0052 and 0053 have not reached it. This measures one developer database, not any deployment. **Proposal for the owner:** no one-time recompute. DRAFTs self-correct at approve. The APPROVED-unreleased population is zero where it was measured. Recomputing an APPROVED assessment would move a number a consultant has signed off, which is the thing this decision says never happens. There is no path back from APPROVED to DRAFT. If a deployment is found with APPROVED-unreleased rows, the remedy is the existing one: cut a new version (`POST /services/{id}/assessments`, which mints an unscored DRAFT) and score it. The owner decides.
+
+**The owner's decision, 2026-09-25: no one-time recompute.** DRAFTs correct at their next write or at approve; APPROVED and RELEASED assessments keep the numbers a consultant signed off. An APPROVED-unreleased assessment found later is remedied by a new version, as above.
+
+**Existing tests moved, and none was weakened.** 20 ATT&CK tests scored "the first coverage row", which is T1001, a computed parent. Their assertions describe a scoreable row and still hold. So each setup now picks STANDALONE techniques (no sub-techniques, no parent) through one helper, `tests/_attack_rows.py`. The helper derives them from the catalog's parent links, not from `app.attack.parents`, and asserts it found enough. A sweep for the same shape in tests that still PASSED found more first-row setups that ignored the PATCH response and could now pass vacuously: acceptance, dashboard, discard, risk dashboard, risk register, and e2e `s5`, `s27` and `s30`. They use the helper, or the same derivation in e2e, and now assert every PATCH. The heatmap test went quietly from 10 to 8 because it never checked its PATCHes. `s5` selected T1003 and expected Run AI's rationale on T1001, both now parents. It derives its technique from the run instead, and proves the locked row untouched by the ABSENCE of the fixture's rationale rather than by a status the fixture might also produce. **The sweep missed a spelling.** It searched for first-row setups by the shapes it had already seen, and `test_attack_pending_persistence.py` picks its row as `codes[0]` through a local helper. That file's 13 tests went red on CI at 672738e and were not read before the head was sent for review. They now take standalone codes from the same helper. One exporter test picked `TECHNIQUES[4]`, which is T1003, a parent. It passed while a parent's pending state read its own citations, and failed once that state derived from its children. The exporter tests now index a standalone list. The remaining `TECHNIQUES[0]` uses are a catalog lookup and a pure rollup, where parenthood does not matter.
+
+**Condition 6.** A parent's stored status now follows its children, so coverage figures over draft and newly approved assessments can move. This comes back to the owner. **Gene's decision, 2026-09-25: option (b) and the Risk Register exclusion, on one condition.**
+
+- **What changes for an assessment approved under D-094.** Everything below is condition 6:
+  - A computed parent's own stored rationale and tools are not shown, in the workbook, the client dashboard or the admin panel. The stored data is untouched.
+  - Its client-dashboard row reads "From N sub-techniques", with no D/P/R legs.
+  - The Detect / Prevent / Respond triad and the blind-spot cards count each technique once, through its sub-techniques, and say so beside the figures.
+  - Risk Register synthesis takes findings through sub-techniques only. A parent is still citable as a link.
+  - Pending review is derived through children on every read.
+  - **The blind-spot section reconciles with the "Blind spots" KPI** (#620 round 5). The KPI keeps the rollup's count, as on `main`, over the same population as `coverage_pct`, so covered, partial and blind spots sum to 100%. Where the list shows fewer rows (gaps through sub-techniques), the section says how many parent techniques the KPI counts that are listed through their sub-techniques, and the two numbers reconcile on screen. A round-4 change that made the KPI count the list instead is **withdrawn**: it divided a parents-excluded count by a parents-included total. No KPI number changes for rule 2.
+  - The KPI row and `coverage_pct` do not move. That is established **by reading the code**: they come from the API rollup, never from the triad's population. The test is a ratchet, not a proof. It pins `kpis()` against reading the triad's population, and goes red if it does. Both fixtures share one rollup, and `coverage_pct` is not asserted (#665).
+- **The condition: a released assessment keeps rendering what was delivered.** The rules above apply only to assessments approved after #620 lands. Every client surface renders an assessment approved before #620 exactly as it was delivered, so a live dashboard never contradicts a delivered PDF or XLSX.
+- **The design, recorded before building** (the PR thread carries it too):
+  - `attack_assessments.parent_rules`, from migration 0054, additive. `1` means approved before #620, and `2` means approved under D-094; approve writes 2. **The migration itself backfills every APPROVED and RELEASED row to 1.**
+  - `attack/rules.py::parents_computed` is the only reader, and every surface asks it.
+  - `pending_codes` takes the rule as a REQUIRED argument, so no caller can default it.
+  - For rule 1, the client dashboard OMITS the new keys (`computed_parent`, `sub_technique_count`, `parents_computed`), so its JSON is byte-identical to main's.
+  - Stored deliverable files are rendered once, at finalize, and never regenerated. An assessment approved before and finalized after renders under the old rules.
+  - **0054's downgrade refuses** while any assessment has `parent_rules = 2` (#620 round 4). Dropping the column would lose which rule set each was approved under, and a re-upgrade would backfill them to 1, silently moving a rule-2 release onto the old rules.
+- **Gene's additions, 2026-09-25:**
+  1. **NULL (a draft) reads as the NEW rules.** Only an unknown non-NULL value fails, and it raises. Tested for NULL, 1, 2, and unknown values including `True`, since `True == 1` in Python; the reader compares the exact type.
+  2. **The old rules' output is recorded ONCE from `main`**, at d64956695a308d08135676d03e3753fcf4609d0f, by the committed `tests/golden/record_parent_rules_golden.py`. The test compares against those committed files and never regenerates them.
+     - It loads main's database dump and runs `alembic upgrade head`, so 0054's backfill is the path under test.
+     - No normalisation is needed: same database, same ids.
+     - The dashboard matches byte for byte, as do the finalize summary and every XLSX cell, and the register sends main's findings.
+     - The same world under rule 2 renders differently.
+  3. **Migrations land in number order:** #620 takes 0054, then #640 0055, then #658 0056, renumbered at landing (with `down_revision`) if the order changes. `test_alembic_single_head.py` reads Alembic's `ScriptDirectory` and fails unless there is one head and an unbroken chain from base. It was shown red on a forked chain. The chain order is not the number order: on `main` it runs 0051 → 0053 → 0052, so 0054 chains from 0052.
+- **Conditions 4 and 6** both apply: this is a migration, and it changes client-visible numbers.

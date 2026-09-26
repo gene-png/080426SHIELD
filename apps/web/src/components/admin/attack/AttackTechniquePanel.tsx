@@ -175,6 +175,9 @@ export interface AttackTechniquePanelProps {
   technique: CatalogTechnique | null;
   coverage: AttackCoverageRow | null;
   coverageDefinitions: CatalogCoverageDefinition[];
+  /** #554 (D-094): how many sub-techniques this technique has. Above zero, its
+   *  status is COMPUTED from them, and the API refuses to set it directly. */
+  subTechniqueCount?: number;
   /** #554: every reason code and its status, from the catalog. */
   reasonCodes?: CatalogReasonCode[];
   readOnly?: boolean;
@@ -192,6 +195,7 @@ export function AttackTechniquePanel({
   technique,
   coverage,
   coverageDefinitions,
+  subTechniqueCount = 0,
   reasonCodes = [],
   readOnly = false,
   onPatch,
@@ -225,6 +229,11 @@ export function AttackTechniquePanel({
   // skipped by migration 0045, and 409s on confirm-citations.
   const pendingWithoutRecord =
     (coverage?.pending_review ?? false) && citations.length === 0;
+  // #620 round 2 (D-094): a computed parent's evidence is its sub-techniques'.
+  // Its own stored tools, rationale and citations are what the model once
+  // wrote, the API refuses to confirm or edit them, and the score does not
+  // rest on them -- so none of them is shown or offered here.
+  const computedParent = subTechniqueCount > 0;
 
   return (
     <Card>
@@ -247,6 +256,16 @@ export function AttackTechniquePanel({
         </CardDescription>
       </CardHeader>
       <CardBody className="flex flex-col gap-4">
+        {subTechniqueCount > 0 ? (
+          <p
+            className="text-xs text-ink-secondary"
+            data-testid="computed-parent-status"
+          >
+            {`Computed from its ${subTechniqueCount} sub-technique${
+              subTechniqueCount === 1 ? "" : "s"
+            }. Score those instead; this status follows them.`}
+          </p>
+        ) : null}
         <div
           role="radiogroup"
           aria-label="Coverage status"
@@ -261,7 +280,9 @@ export function AttackTechniquePanel({
                 type="button"
                 role="radio"
                 aria-checked={active}
-                disabled={readOnly}
+                // A computed parent's status is not anyone's to set; the API
+                // refuses it (`parent_status_computed`).
+                disabled={readOnly || subTechniqueCount > 0}
                 title={def?.description ?? s}
                 onClick={() => void onPatch({ status: active ? null : s })}
                 className={[
@@ -269,7 +290,9 @@ export function AttackTechniquePanel({
                   active
                     ? "border-brand-500 bg-brand-500 text-ink-on-accent"
                     : "border-border bg-surface-card text-ink-secondary hover:bg-surface-sunken",
-                  readOnly ? "cursor-not-allowed opacity-50" : "",
+                  readOnly || subTechniqueCount > 0
+                    ? "cursor-not-allowed opacity-50"
+                    : "",
                 ].join(" ")}
               >
                 {def?.short_label ?? s}
@@ -282,7 +305,9 @@ export function AttackTechniquePanel({
           techniqueId={technique.id}
           coverage={coverage}
           reasonCodes={reasonCodes}
-          readOnly={readOnly}
+          // A computed parent's reason is computed with its status, and the
+          // API refuses to set it (D-094). Shown, not offered.
+          readOnly={readOnly || subTechniqueCount > 0}
           onPatch={onPatch}
         />
 
@@ -306,12 +331,32 @@ export function AttackTechniquePanel({
           />
         </label>
 
-        <div className="grid grid-cols-1 gap-3 border-t border-border-subtle pt-3 sm:grid-cols-3">
-          <ToolRow label="Detection" tools={coverage?.detection_tools} />
-          <ToolRow label="Prevention" tools={coverage?.prevention_tools} />
-          <ToolRow label="Response" tools={coverage?.response_tools} />
-        </div>
-        {citations.length > 0 || pendingWithoutRecord ? (
+        {computedParent ? (
+          <p className="border-t border-border-subtle pt-3 text-sm text-ink-secondary">
+            Tools and rationale are recorded on its sub-techniques, which this
+            technique&rsquo;s coverage is computed from.
+          </p>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 border-t border-border-subtle pt-3 sm:grid-cols-3">
+            <ToolRow label="Detection" tools={coverage?.detection_tools} />
+            <ToolRow label="Prevention" tools={coverage?.prevention_tools} />
+            <ToolRow label="Response" tools={coverage?.response_tools} />
+          </div>
+        )}
+        {computedParent && (coverage?.pending_review ?? false) ? (
+          <div
+            className="flex flex-col gap-2 rounded-md border border-dashed border-border p-3"
+            data-testid="attack-citation-queue"
+          >
+            <span className="text-xs font-medium uppercase tracking-wide text-ink-tertiary">
+              Citation review
+            </span>
+            <p className="text-sm text-ink-secondary">
+              {`This technique is held out of the coverage score because at least one of its ${subTechniqueCount} sub-techniques is pending review. Review the sub-techniques' evidence; this technique follows them.`}
+            </p>
+          </div>
+        ) : null}
+        {!computedParent && (citations.length > 0 || pendingWithoutRecord) ? (
           <div
             className="flex flex-col gap-2 rounded-md border border-dashed border-border p-3"
             data-testid="attack-citation-queue"
@@ -377,7 +422,7 @@ export function AttackTechniquePanel({
           </div>
         ) : null}
 
-        {coverage?.rationale ? (
+        {!computedParent && coverage?.rationale ? (
           <p className="text-sm text-ink-secondary">
             <span className="font-medium text-ink-primary">Rationale: </span>
             {coverage.rationale}
@@ -388,7 +433,9 @@ export function AttackTechniquePanel({
           <input
             type="checkbox"
             checked={coverage?.locked ?? false}
-            disabled={readOnly || !coverage}
+            // A locked parent would stop following its children, so the API
+            // refuses the lock on a computed parent (D-094, #620 round 1).
+            disabled={readOnly || !coverage || subTechniqueCount > 0}
             onChange={(e) => void onPatch({ locked: e.currentTarget.checked })}
           />
           <span className="text-ink-secondary">

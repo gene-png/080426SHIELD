@@ -314,6 +314,8 @@ def test_extract_versions_across_approved_boundary(app_client) -> None:
     )
     assert r1.status_code == 201, r1.text
     assert r1.json()["version"] == 1
+    # #639: approval refuses undecided rows, so decide the one row first.
+    _decide(c, bearer, [i["id"] for i in r1.json()["items"]])
 
     # Move the v1 draft on by approving it: the guard no longer applies.
     ar = c.post(
@@ -603,7 +605,8 @@ def test_approve_capability_list_writes_status_and_actor(app_client) -> None:
     c, _, provider = app_client
     admin = _register(c, "admin@example.com")
     bearer = admin["tokens"]["access_token"]
-    svc_id, _item_id = _create_list_with_item(c, bearer, provider)
+    svc_id, item_id = _create_list_with_item(c, bearer, provider)
+    _decide(c, bearer, [item_id])  # #639: approval refuses undecided rows
     latest = c.get(
         f"/tech-debt/services/{svc_id}/capability-lists/latest",
         headers={"Authorization": f"Bearer {bearer}"},
@@ -619,6 +622,490 @@ def test_approve_capability_list_writes_status_and_actor(app_client) -> None:
     assert body["status"] == "approved"
     assert body["approved_at"] is not None
     assert body["approved_by"] == admin["user"]["id"]
+
+
+def _latest_list(c: TestClient, bearer: str, svc_id: str) -> dict:
+    r = c.get(
+        f"/tech-debt/services/{svc_id}/capability-lists/latest",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _decide(c: TestClient, bearer: str, item_ids: list[str], disposition: str = "keep") -> None:
+    for item_id in item_ids:
+        r = c.patch(
+            f"/tech-debt/capability-items/{item_id}",
+            headers={"Authorization": f"Bearer {bearer}"},
+            json={"disposition": disposition},
+        )
+        assert r.status_code == 200, r.text
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(("undecided", "noun"), [(1, "1 row is"), (2, "2 rows are")])
+def test_approve_refuses_while_rows_are_undecided_naming_the_count(
+    app_client, undecided: int, noun: str
+) -> None:
+    """#639: approving with step-2 rows still undecided (disposition None, the
+    model's own "undecided") built a deliverable from an unfinished review.
+    The refusal is typed (D-016), names the count, points back to step 2, and
+    changes nothing."""
+    c, _, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids[undecided:])
+    list_id = _latest_list(c, bearer, svc_id)["id"]
+
+    r = c.post(
+        f"/tech-debt/capability-lists/{list_id}/approve",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+
+    assert r.status_code == 409, r.text
+    error = r.json()["error"]
+    assert error["reason"] == "capability_list_undecided_rows", error
+    assert noun in error["message"], error["message"]
+    assert "Review and correct the extracted list" in error["message"], error["message"]
+    after = _latest_list(c, bearer, svc_id)
+    assert after["status"] == "draft" and after["approved_at"] is None, after
+
+
+@pytest.mark.unit
+def test_a_row_undecided_between_the_check_and_the_write_is_still_refused(
+    app_client, monkeypatch
+) -> None:
+    """The guard is the UPDATE's WHERE, not the read before it. Every row is
+    decided when the route counts, and a concurrent edit sets one back to
+    undecided before the write -- forced deterministically: the route calls
+    `build_approved_membership` between the two, and a one-shot hook there
+    commits the edit through a separate session. Without the condition in the
+    WHERE, the list is approved over an undecided row."""
+    import app.routes.tech_debt as td
+    from app.models.capability import CapabilityItem
+
+    c, sessions, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)
+    list_id = _latest_list(c, bearer, svc_id)["id"]
+
+    real = td.build_approved_membership
+    fired: list[bool] = []
+
+    def racing_edit(db, capability_list_id):
+        if not fired:
+            fired.append(True)
+            other = sessions()
+            try:
+                item = other.get(CapabilityItem, _uuid.UUID(item_ids[0]))
+                item.disposition = None
+                other.commit()
+            finally:
+                other.close()
+        return real(db, capability_list_id)
+
+    monkeypatch.setattr(td, "build_approved_membership", racing_edit)
+    r = c.post(
+        f"/tech-debt/capability-lists/{list_id}/approve",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+
+    assert fired, "the hook never ran -- the race was not exercised"
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "capability_list_undecided_rows"
+    assert "1 row is" in r.json()["error"]["message"]
+    assert _latest_list(c, bearer, svc_id)["status"] == "draft"
+
+
+@pytest.mark.unit
+def test_a_lost_approve_race_with_nothing_undecided_says_the_list_changed(
+    app_client, monkeypatch
+) -> None:
+    """#657 round 1, F2. The UPDATE can miss while the list is still a draft
+    with nothing undecided by the time the route recounts: a concurrent edit
+    made a row undecided before the write and decided it again after. The
+    route used to fall through to the RELEASED refusal and tell the consultant
+    the list "has been released and is locked", which it had not.
+
+    The edit before the write is real: a separate session commits it. The UNDO
+    cannot be: SQLite holds the route's write lock from its UPDATE until commit,
+    so a second writer gets "database is locked" (measured). Under Postgres READ
+    COMMITTED the undo commits and the recount reads zero, so the recount is
+    modelled as returning that zero -- the state this test is about, which
+    SQLite cannot produce. The pre-check before it is the real count."""
+    import app.routes.tech_debt as td
+    from app.models.capability import CapabilityItem
+
+    c, sessions, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)
+    list_id = _latest_list(c, bearer, svc_id)["id"]
+
+    real_build, real_count = td.build_approved_membership, td.undecided_row_count
+    events: list[str] = []
+
+    def edit_before_write(db, capability_list_id):
+        if "edit" not in events:
+            events.append("edit")
+            other = sessions()
+            try:
+                other.get(CapabilityItem, _uuid.UUID(item_ids[0])).disposition = None
+                other.commit()
+            finally:
+                other.close()
+        return real_build(db, capability_list_id)
+
+    def undone_by_the_recount(db, list_id_):
+        if "edit" in events and "undo" not in events:
+            events.append("undo")
+            return 0  # what a READ COMMITTED recount reads after the racer's undo
+        return real_count(db, list_id_)
+
+    monkeypatch.setattr(td, "build_approved_membership", edit_before_write)
+    monkeypatch.setattr(td, "undecided_row_count", undone_by_the_recount)
+    r = c.post(
+        f"/tech-debt/capability-lists/{list_id}/approve",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+
+    assert events == ["edit", "undo"], f"the race was not exercised as designed: {events}"
+    assert r.status_code == 409, r.text
+    error = r.json()["error"]
+    assert error["reason"] == "capability_list_changed_during_approval", error
+    assert "released" not in error["message"].lower(), error["message"]
+    assert "approve again" in error["message"].lower(), error["message"]
+    assert _latest_list(c, bearer, svc_id)["status"] == "draft"
+
+
+@pytest.mark.unit
+def test_finalize_refuses_an_approved_list_a_row_was_made_undecided_on(app_client) -> None:
+    """#657 round 1, F1. An APPROVED list stays editable until release, and
+    the step-2 table can send a row back to undecided through the real PATCH.
+    Finalize checked only the status, so the deliverable could still be built
+    from an unfinished review. It re-checks, with the approve refusal's reason
+    and a remedy that names what the consultant can do at step 4: approve is
+    already done and its button disabled, so the message must not send them
+    there."""
+    c, _, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)
+    _approve_list(c, bearer, svc_id)
+    r = c.patch(f"/tech-debt/capability-items/{item_ids[0]}", headers=h, json={"disposition": None})
+    assert r.status_code == 200, r.text
+
+    r = c.post(f"/tech-debt/services/{svc_id}/deliverables/finalize", headers=h)
+
+    assert r.status_code == 409, r.text
+    error = r.json()["error"]
+    assert error["reason"] == "capability_list_undecided_rows", error
+    assert "1 row is" in error["message"], error["message"]
+    assert "Review and correct the extracted list" in error["message"], error["message"]
+    assert "generate the deliverable again" in error["message"], error["message"]
+    assert "approve again" not in error["message"], error["message"]
+
+
+def _finalize(c: TestClient, h: dict, svc_id: str):
+    return c.post(f"/tech-debt/services/{svc_id}/deliverables/finalize", headers=h)
+
+
+@pytest.mark.unit
+def test_release_refuses_while_a_row_is_undecided(app_client) -> None:
+    """#657 round 2 (a). Release freezes the list, and a frozen list with an
+    undecided row could never be repaired: every re-finalize would be refused
+    with a remedy -- edit step 2 -- that a released list refuses. So release
+    refuses first, naming step 2, which is still editable."""
+    c, _, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)
+    _approve_list(c, bearer, svc_id)
+    fin = _finalize(c, h, svc_id)
+    assert fin.status_code == 201, fin.text
+    r = c.patch(f"/tech-debt/capability-items/{item_ids[0]}", headers=h, json={"disposition": None})
+    assert r.status_code == 200, r.text
+
+    r = c.post(f"/tech-debt/deliverables/{fin.json()['id']}/release", headers=h)
+
+    assert r.status_code == 409, r.text
+    error = r.json()["error"]
+    assert error["reason"] == "capability_list_undecided_rows", error
+    assert "Review and correct the extracted list" in error["message"], error["message"]
+    assert _latest_list(c, bearer, svc_id)["status"] == "approved", "the list was frozen anyway"
+    # NO HALF-RELEASE (#657 round 4): the deliverable is not released either --
+    # not on the admin's record, and not in the list the client can see.
+    latest = c.get(f"/tech-debt/services/{svc_id}/deliverables/latest", headers=h)
+    assert latest.status_code == 200, latest.text
+    assert latest.json()["released_at"] is None, "the deliverable was released without its list"
+    client = _register(c, "client@example.com")
+    listed = c.get(
+        f"/clients/{client['user']['client_id']}/deliverables",
+        headers={"Authorization": f"Bearer {client['tokens']['access_token']}"},
+    )
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["items"] == [], "the client can see a deliverable the release refused"
+
+
+@pytest.mark.unit
+def test_a_legacy_released_list_with_an_undecided_row_still_refinalizes(app_client) -> None:
+    """#657 round 2 (b). Finalize accepts RELEASED so re-finalizing never locks a
+    service. The undecided check is for APPROVED lists only.
+
+    LEGACY STATE, BUILT BY DIRECT SQL: release now refuses undecided rows, so no
+    route can produce a RELEASED list holding one. Lists released before #639
+    can, and they must keep re-finalizing exactly as they do on main."""
+    from app.models.capability import CapabilityItem
+
+    c, sessions, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)
+    _approve_list(c, bearer, svc_id)
+    fin = _finalize(c, h, svc_id)
+    assert fin.status_code == 201, fin.text
+    rel = c.post(f"/tech-debt/deliverables/{fin.json()['id']}/release", headers=h)
+    assert rel.status_code == 200, rel.text
+    assert _latest_list(c, bearer, svc_id)["status"] == "released"
+    with sessions() as db:
+        db.get(CapabilityItem, _uuid.UUID(item_ids[0])).disposition = None
+        db.commit()
+
+    again = _finalize(c, h, svc_id)
+
+    assert again.status_code == 201, again.text
+
+
+@pytest.mark.unit
+def test_a_row_made_undecided_as_the_rows_load_is_refused_not_rendered(app_client) -> None:
+    """#657 round 2, the check-to-render window. A count and the select that
+    feeds the render were two statements; a PATCH committed between them sent
+    an undecided row into a deliverable the count had passed. Forced through the
+    route: a one-shot session hook commits the edit, from a separate session,
+    immediately before the CapabilityItem rows are loaded -- after any separate
+    count. The rows the render uses must be the rows the refusal judged."""
+    from sqlalchemy import event
+
+    from app.models.capability import CapabilityItem
+
+    c, sessions, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)
+    _approve_list(c, bearer, svc_id)
+
+    fired: list[bool] = []
+
+    def before_rows_load(state) -> None:
+        if fired or not state.is_select:
+            return
+        described = state.statement.column_descriptions
+        if not (len(described) == 1 and described[0].get("entity") is CapabilityItem):
+            return
+        fired.append(True)
+        other = sessions()
+        try:
+            other.get(CapabilityItem, _uuid.UUID(item_ids[0])).disposition = None
+            other.commit()
+        finally:
+            other.close()
+
+    event.listen(sessions, "do_orm_execute", before_rows_load)
+    try:
+        r = _finalize(c, h, svc_id)
+    finally:
+        event.remove(sessions, "do_orm_execute", before_rows_load)
+
+    assert fired, "the hook never ran -- the window was not exercised"
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "capability_list_undecided_rows", r.text
+
+
+@pytest.mark.unit
+def test_a_normal_first_release_still_releases(app_client) -> None:
+    """The passing half of round 3: every row decided, the guarded flip matches."""
+    c, _, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)
+    _approve_list(c, bearer, svc_id)
+    fin = _finalize(c, h, svc_id)
+    assert fin.status_code == 201, fin.text
+
+    r = c.post(f"/tech-debt/deliverables/{fin.json()['id']}/release", headers=h)
+
+    assert r.status_code == 200, r.text
+    assert _latest_list(c, bearer, svc_id)["status"] == "released"
+
+
+@pytest.mark.unit
+def test_a_repair_rerelease_over_an_undecided_row_is_refused(app_client) -> None:
+    """#657 round 3, finding 1. Re-releasing an already-released deliverable is
+    the REPAIR path: it flips a parent that never got flipped. Round 2's
+    pre-check returned early for a released deliverable, so the repair path
+    flipped an APPROVED list holding an undecided row unchecked.
+
+    LEGACY STATE, BUILT BY DIRECT SQL: a released deliverable whose list is
+    still APPROVED is what migration 0041's backfill left behind; no route
+    produces it now."""
+    from app.models.capability import CapabilityList as _CL
+    from app.models.capability import CapabilityListStatus
+
+    c, sessions, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)
+    _approve_list(c, bearer, svc_id)
+    fin = _finalize(c, h, svc_id)
+    assert fin.status_code == 201, fin.text
+    rel = c.post(f"/tech-debt/deliverables/{fin.json()['id']}/release", headers=h)
+    assert rel.status_code == 200, rel.text
+    list_id = _latest_list(c, bearer, svc_id)["id"]
+    with sessions() as db:
+        db.get(_CL, _uuid.UUID(list_id)).status = CapabilityListStatus.APPROVED
+        db.commit()
+    r = c.patch(f"/tech-debt/capability-items/{item_ids[0]}", headers=h, json={"disposition": None})
+    assert r.status_code == 200, r.text
+
+    again = c.post(f"/tech-debt/deliverables/{fin.json()['id']}/release", headers=h)
+
+    assert again.status_code == 409, again.text
+    assert again.json()["error"]["reason"] == "capability_list_undecided_rows", again.text
+    assert _latest_list(c, bearer, svc_id)["status"] == "approved", "the repair froze it anyway"
+
+
+@pytest.mark.unit
+def test_a_row_made_undecided_as_the_list_is_released_is_refused(app_client) -> None:
+    """#657 round 3, finding 2: a check that runs before the flip cannot see a
+    PATCH that commits between them. Forced through the route: a one-shot hook
+    commits the edit from a separate session immediately before the flip --
+    before the guarded UPDATE if the flip is one, or before the flush that
+    writes an ORM-assigned status. Either way the flip itself must refuse."""
+    from sqlalchemy import event
+
+    from app.models.capability import CapabilityItem
+    from app.models.capability import CapabilityList as _CL
+
+    c, sessions, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)
+    _approve_list(c, bearer, svc_id)
+    fin = _finalize(c, h, svc_id)
+    assert fin.status_code == 201, fin.text
+
+    fired: list[str] = []
+
+    def undecide() -> None:
+        other = sessions()
+        try:
+            other.get(CapabilityItem, _uuid.UUID(item_ids[0])).disposition = None
+            other.commit()
+        finally:
+            other.close()
+
+    def before_guarded_update(state) -> None:
+        mapper = state.bind_mapper
+        if not fired and state.is_update and mapper is not None and mapper.class_ is _CL:
+            fired.append("update")
+            undecide()
+
+    def before_orm_flush(session, _ctx, _instances) -> None:
+        if not fired and any(isinstance(o, _CL) for o in session.dirty):
+            fired.append("flush")
+            undecide()
+
+    event.listen(sessions, "do_orm_execute", before_guarded_update)
+    event.listen(sessions, "before_flush", before_orm_flush)
+    try:
+        r = c.post(f"/tech-debt/deliverables/{fin.json()['id']}/release", headers=h)
+    finally:
+        event.remove(sessions, "do_orm_execute", before_guarded_update)
+        event.remove(sessions, "before_flush", before_orm_flush)
+
+    assert fired, "the hook never ran -- the window was not exercised"
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "capability_list_undecided_rows", r.text
+    assert _latest_list(c, bearer, svc_id)["status"] == "approved"
+
+
+@pytest.mark.unit
+def test_a_release_miss_whose_recount_finds_nothing_undecided_says_the_list_changed(
+    app_client, monkeypatch
+) -> None:
+    """#657 round 4, approve's F2 for release. The guarded flip misses because a
+    row is undecided at that instant, and by the recount it has been re-decided.
+    "0 rows are still undecided" would be false; the refusal says the list moved.
+
+    The edit before the flip is real. The re-decide cannot be: the route holds
+    SQLite's write lock from its UPDATE, so the recount is modelled as returning
+    the 0 a Postgres READ COMMITTED read would see after the racer's commit."""
+    from sqlalchemy import event
+
+    import app.routes.tech_debt as td
+    from app.models.capability import CapabilityItem
+    from app.models.capability import CapabilityList as _CL
+
+    c, sessions, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)
+    _approve_list(c, bearer, svc_id)
+    fin = _finalize(c, h, svc_id)
+    assert fin.status_code == 201, fin.text
+
+    fired: list[str] = []
+
+    def before_guarded_update(state) -> None:
+        mapper = state.bind_mapper
+        if not fired and state.is_update and mapper is not None and mapper.class_ is _CL:
+            fired.append("edit")
+            other = sessions()
+            try:
+                other.get(CapabilityItem, _uuid.UUID(item_ids[0])).disposition = None
+                other.commit()
+            finally:
+                other.close()
+
+    monkeypatch.setattr(td, "undecided_row_count", lambda db, list_id: 0)
+    event.listen(sessions, "do_orm_execute", before_guarded_update)
+    try:
+        r = c.post(f"/tech-debt/deliverables/{fin.json()['id']}/release", headers=h)
+    finally:
+        event.remove(sessions, "do_orm_execute", before_guarded_update)
+
+    assert fired == ["edit"], "the flip was not raced as designed"
+    assert r.status_code == 409, r.text
+    error = r.json()["error"]
+    assert error["reason"] == "capability_list_changed_during_release", error
+    assert "0 rows" not in error["message"], error["message"]
+
+
+@pytest.mark.unit
+def test_approve_succeeds_once_every_row_is_decided(app_client) -> None:
+    """The passing half: zero undecided rows approve."""
+    c, _, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)
+    list_id = _latest_list(c, bearer, svc_id)["id"]
+
+    r = c.post(
+        f"/tech-debt/capability-lists/{list_id}/approve",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "approved"
 
 
 @pytest.mark.unit
@@ -753,10 +1240,13 @@ def _approve_list(c: TestClient, bearer: str, svc_id: str) -> str:
         headers={"Authorization": f"Bearer {bearer}"},
     )
     list_id = latest.json()["id"]
-    c.post(
+    r = c.post(
         f"/tech-debt/capability-lists/{list_id}/approve",
         headers={"Authorization": f"Bearer {bearer}"},
     )
+    # A refused approval here used to be ignored, and every test after it ran
+    # against a draft list it believed approved.
+    assert r.status_code == 200, r.text
     return list_id
 
 
@@ -822,7 +1312,8 @@ def test_latest_returns_newest_finalized_version(app_client) -> None:
     c, _, provider = app_client
     admin = _register(c, "admin@example.com")
     bearer = admin["tokens"]["access_token"]
-    svc_id, _ = _seed_three_item_list(c, bearer, provider)
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)  # #639: approval refuses undecided rows
     _approve_list(c, bearer, svc_id)
     c.post(
         f"/tech-debt/services/{svc_id}/deliverables/finalize",
@@ -848,7 +1339,8 @@ def test_client_cannot_reach_latest_deliverable(app_client) -> None:
     c, _, provider = app_client
     admin = _register(c, "admin@example.com")
     bearer = admin["tokens"]["access_token"]
-    svc_id, _ = _seed_three_item_list(c, bearer, provider)
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)  # #639: approval refuses undecided rows
     _approve_list(c, bearer, svc_id)
     c.post(
         f"/tech-debt/services/{svc_id}/deliverables/finalize",
@@ -1264,7 +1756,8 @@ def test_a_released_refusal_carries_a_typed_reason_like_its_twin(app_client) -> 
     admin = _register(c, "released-refusal@example.com")
     bearer = admin["tokens"]["access_token"]
     h = {"Authorization": f"Bearer {bearer}"}
-    svc_id, _item_id = _create_list_with_item(c, bearer, provider)
+    svc_id, item_id = _create_list_with_item(c, bearer, provider)
+    _decide(c, bearer, [item_id])  # #639: approval refuses undecided rows
     list_id = c.get(f"/tech-debt/services/{svc_id}/capability-lists/latest", headers=h).json()["id"]
 
     assert c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h).status_code == 200

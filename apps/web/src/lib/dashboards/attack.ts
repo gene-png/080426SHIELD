@@ -43,6 +43,18 @@ export interface DashTechnique {
    * the rollup withholds it. Carried beside `status`, never over it.
    */
   pending_review?: boolean;
+  /**
+   * #620 round 2 (D-094): a parent whose status is computed from its
+   * sub-techniques. The API sends no tools or rationale for it, and the
+   * Detect / Prevent / Respond triad leaves it out, so each technique is
+   * counted once, through its sub-techniques. Required: set by the API from
+   * the catalog's parent links. ABSENT for an assessment approved before #620
+   * (Gene's condition, D-094), which renders exactly as it was delivered.
+   */
+  computed_parent?: boolean;
+  /** How many sub-techniques it is computed from; 0 when it is not a computed
+   *  parent. Set by the API with `computed_parent`, from the same links. */
+  sub_technique_count?: number;
   detection_tools: string[];
   prevention_tools: string[];
   response_tools: string[];
@@ -70,6 +82,9 @@ export interface DashRollup {
 }
 
 export interface AttackDashboardData {
+  /** True for an assessment approved under D-094's rules for computed parents
+   *  (#620). Absent for one approved before, which renders as delivered. */
+  parents_computed?: boolean;
   service_id: string;
   service_title: string;
   released_at: string;
@@ -107,6 +122,10 @@ export function kpis(data: AttackDashboardData): DashboardKpis {
       n: data.rollup.partial,
       pct: pctOf(data.rollup.partial, evaluated),
     },
+    // The rollup's count, as on main, for every rule set (#620 round 5): every
+    // KPI describes the same population as `coverage_pct`, so the three sum to
+    // 100%. Where the blind-spot LIST differs (rule 2 lists gaps through
+    // sub-techniques), `blindSpotReconciliation` says so at the list.
     blindSpots: { n: data.rollup.gap, pct: pctOf(data.rollup.gap, evaluated) },
   };
 }
@@ -121,6 +140,9 @@ export interface DprCoverage {
   prevent: DprLeg;
   respond: DprLeg;
   total: number;
+  /** Rows the population left out, from the SAME filter, so the page can say
+   *  what the percentages are over (#620 round 3). */
+  excluded: { parents: number; pending: number };
 }
 
 /**
@@ -155,15 +177,25 @@ const ASSESSED: ReadonlySet<CoverageStatus> = new Set([
 ]);
 
 export function dprCoverage(techniques: DashTechnique[]): DprCoverage {
+  // A computed parent is out too (#620 round 2, option (b), pending Gene's
+  // confirmation): it carries no tools of its own, so counting it would add a
+  // zero-leg row per parent beside the children it is computed from.
   const claimable = techniques.filter(
-    (t) => !t.pending_review && ASSESSED.has(t.status),
+    (t) => !t.pending_review && !t.computed_parent && ASSESSED.has(t.status),
   );
+  // Each excluded row is counted once, under the first reason that excludes
+  // it: a parent is out as a parent whether or not it is also pending.
+  const parents = techniques.filter((t) => t.computed_parent).length;
+  const pending = techniques.filter(
+    (t) => !t.computed_parent && t.pending_review,
+  ).length;
   const total = claimable.length;
   const detect = claimable.filter((t) => t.detection_tools.length > 0).length;
   const prevent = claimable.filter((t) => t.prevention_tools.length > 0).length;
   const respond = claimable.filter((t) => t.response_tools.length > 0).length;
   return {
     total,
+    excluded: { parents, pending },
     detect: { n: detect, pct: pctOf(detect, total) },
     prevent: { n: prevent, pct: pctOf(prevent, total) },
     respond: { n: respond, pct: pctOf(respond, total) },
@@ -172,7 +204,44 @@ export function dprCoverage(techniques: DashTechnique[]): DprCoverage {
 
 /** Uncovered techniques (the "what you're blind to today" cards). */
 export function blindSpots(techniques: DashTechnique[]): DashTechnique[] {
-  return techniques.filter((t) => t.status === "gap");
+  // Through sub-techniques, like the triad (#620 round 3): a parent with
+  // sub-techniques has no tools of its own, and its gap is its children's.
+  return techniques.filter((t) => t.status === "gap" && !t.computed_parent);
+}
+
+/**
+ * #620 round 5: the sentence that reconciles the Blind spots KPI (the rollup's
+ * gaps, parents included) with the list (gaps through sub-techniques), or null
+ * when they agree. Only under D-094's rules, where the list excludes parents;
+ * the difference is exactly the gap parents, since a gap is never withheld.
+ */
+export function blindSpotReconciliation(
+  data: AttackDashboardData,
+): string | null {
+  if (data.parents_computed !== true) return null;
+  const listed = blindSpots(data.techniques).length;
+  const parents = data.rollup.gap - listed;
+  if (parents <= 0) return null;
+  const tail =
+    parents === 1
+      ? "1 parent technique whose gap is listed through its sub-techniques"
+      : `${parents} parent techniques whose gaps are listed through their sub-techniques`;
+  return `The Blind spots figure above counts ${data.rollup.gap}: the ${listed} listed here, and ${tail}.`;
+}
+
+/** The sentence beside the triad naming what its percentages leave out. */
+export function triadPopulationText(d: DprCoverage): string {
+  const out: string[] = [];
+  if (d.excluded.parents > 0) {
+    out.push(
+      `${d.excluded.parents} parent technique${d.excluded.parents === 1 ? "" : "s"}, counted through ${d.excluded.parents === 1 ? "its" : "their"} sub-techniques`,
+    );
+  }
+  if (d.excluded.pending > 0) out.push(`${d.excluded.pending} pending review`);
+  const base = `Over ${d.total} technique${d.total === 1 ? "" : "s"}.`;
+  return out.length === 0
+    ? base
+    : `${base} Not counted here: ${out.join(", and ")}.`;
 }
 
 export interface TacticBar {

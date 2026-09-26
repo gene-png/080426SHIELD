@@ -6,11 +6,13 @@ import * as React from "react";
 
 import { DashShell } from "@/components/dashboards/shared";
 import {
+  blindSpotReconciliation,
   blindSpots,
   dprCoverage,
   filterTechniques,
   kpis,
   tacticOptions,
+  triadPopulationText,
   type AttackDashboardData,
   type DashTechnique,
   type DprLeg,
@@ -251,6 +253,8 @@ export function AttackDashboard({
   const k = kpis(data);
   const dpr = dprCoverage(data.techniques);
   const blind = blindSpots(data.techniques);
+  // #620 round 5: reconciles the KPI (rollup) with the list below it.
+  const reconcile = blindSpotReconciliation(data);
   const tactics = React.useMemo(
     () => tacticOptions(data.techniques),
     [data.techniques],
@@ -370,6 +374,17 @@ export function AttackDashboard({
           outsideAssessedText(data.rollup)
         }
       >
+        {/* #620: only under D-094's rules. An assessment approved before #620
+            renders exactly as it was delivered, and this sentence was not in
+            it (Gene's condition, D-094). */}
+        {data.parents_computed === true ? (
+          <p
+            data-testid="attack-triad-population"
+            style={{ margin: "0 0 12px", fontSize: 12, color: C.muted }}
+          >
+            {triadPopulationText(dpr)}
+          </p>
+        ) : null}
         <div
           style={{
             display: "grid",
@@ -407,8 +422,22 @@ export function AttackDashboard({
         <Section
           title="What you're blind to today"
           pill={`${blind.length} uncovered`}
-          desc="Techniques with no meaningful detection, prevention, or response."
+          desc={
+            "Techniques with no meaningful detection, prevention, or response." +
+            // #620: only under D-094's rules (Gene's condition, D-094).
+            (data.parents_computed === true
+              ? " A technique with sub-techniques is listed through them."
+              : "")
+          }
         >
+          {reconcile ? (
+            <p
+              data-testid="attack-blind-reconcile"
+              style={{ margin: "0 0 12px", fontSize: 12, color: C.muted }}
+            >
+              {reconcile}
+            </p>
+          ) : null}
           <div
             style={{
               display: "grid",
@@ -708,6 +737,23 @@ function toolCell(tools: string[]): string {
 }
 
 function MatrixRow({ t }: { t: DashTechnique }): JSX.Element {
+  // #620 round 3: a computed parent has no tools of its own (D-094). Drawing
+  // its legs would show a covered parent as having none of the three.
+  if (t.computed_parent) {
+    return (
+      <tr>
+        <td style={cell({ mono: true })}>{t.code}</td>
+        <td style={cell({ weight: 600 })}>{t.name}</td>
+        <td style={cell()}>{t.tactic_name}</td>
+        <td style={cell()}>
+          <Chip status={t.status} pendingReview={t.pending_review} />
+        </td>
+        <td style={cell({ muted: true })} colSpan={4}>
+          {`From ${t.sub_technique_count} sub-techniques`}
+        </td>
+      </tr>
+    );
+  }
   return (
     <tr>
       <td style={cell({ mono: true })}>{t.code}</td>
