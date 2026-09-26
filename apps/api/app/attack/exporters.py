@@ -22,8 +22,10 @@ from typing import TYPE_CHECKING
 from app.attack.analytics import CoverageRollup, TacticCoverage
 from app.attack.catalog import TACTICS, TECHNIQUES, technique_by_id
 from app.attack.coverage import CoverageStatus, coverage_label
+from app.attack.parents import is_computed_parent
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.pending import uncleared_tools
+from app.attack.rules import parents_computed
 from app.client_naming import org_display_name
 from app.models.attack_assessment import AttackAssessment, AttackCoverage
 
@@ -38,6 +40,10 @@ class AttackDeliverableContext:
     assessment: AttackAssessment
     coverage: list[AttackCoverage]
     rollup: CoverageRollup
+    #: #620 (D-094): whether this assessment renders under D-094's rules for
+    #: computed parents (`attack/rules.py`). Derived once, in `build_context`,
+    #: so both sheets read the same answer. Required: no default rule.
+    parents_computed: bool
     #: Technique codes whose status the rollup is WITHHOLDING (#102).
     #:
     #: Derived once, here, and read by both the summary and the per-technique
@@ -56,6 +62,7 @@ def build_context(
     rollup: CoverageRollup,
 ) -> AttackDeliverableContext:
     rows = list(coverage)
+    rule = parents_computed(assessment)
     return AttackDeliverableContext(
         client_legal_name=org_display_name(client_legal_name),
         service_title=service_title,
@@ -65,7 +72,8 @@ def build_context(
         # The SAME function the caller used to build `rollup`, over the same
         # rows, so the sheet and the summary cannot disagree about which
         # techniques are withheld.
-        pending_codes=attack_pending_codes(rows),
+        pending_codes=attack_pending_codes(rows, parents_computed=rule),
+        parents_computed=rule,
     )
 
 
@@ -305,6 +313,11 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
         cov = cov_by_code.get(tech.id)
         tactic_str = ", ".join(_tactic_name(t) for t in tech.tactics)
         unconfirmed = uncleared_tools(cov.unconfirmed_citations) if cov else frozenset()
+        # #620 round 2 (D-094): a computed parent's evidence is its children's. Its
+        # own stored rationale and tools are what the model once wrote, and may
+        # contradict the computed status, so the deliverable does not print them.
+        # Derived here; the stored row is left alone.
+        own = None if ctx.parents_computed and is_computed_parent(tech.id) else cov
         _safe_text_row(
             ws2,
             [
@@ -314,10 +327,10 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
                 "sub" if tech.is_sub_technique else "parent",
                 _status_or_unscored(cov.status if cov else None),
                 "Yes" if tech.id in ctx.pending_codes else "",
-                (cov.rationale if cov else None) or "",
-                _tools(cov.detection_tools if cov else None, unconfirmed),
-                _tools(cov.prevention_tools if cov else None, unconfirmed),
-                _tools(cov.response_tools if cov else None, unconfirmed),
+                (own.rationale if own else None) or "",
+                _tools(own.detection_tools if own else None, unconfirmed),
+                _tools(own.prevention_tools if own else None, unconfirmed),
+                _tools(own.response_tools if own else None, unconfirmed),
                 (cov.notes if cov else None) or "",
             ],
         )
@@ -343,9 +356,10 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
         except KeyError:
             tactic_str = ""
             name = cov.technique_code
-        _safe_text_row(
-            ws3, [cov.technique_code, name, tactic_str, cov.rationale or "", cov.notes or ""]
-        )
+        # The Coverage sheet's twin (#620 round 2): no parent's own rationale.
+        hide = ctx.parents_computed and is_computed_parent(cov.technique_code)
+        rationale = "" if hide else (cov.rationale or "")
+        _safe_text_row(ws3, [cov.technique_code, name, tactic_str, rationale, cov.notes or ""])
     if not gap_rows:
         ws3.append(["—", "No gaps recorded", "", "", ""])
         ws3.cell(row=2, column=2).font = italic
