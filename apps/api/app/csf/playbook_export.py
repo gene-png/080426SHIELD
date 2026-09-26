@@ -384,7 +384,7 @@ def _overridden(r: Any) -> bool:
 def _methodology(rows: Sequence[Any]) -> list[str]:
     """METHODOLOGY plus the number of overridden priorities, stated even at
     zero so "none" and "not stated" cannot look alike."""
-    n = sum(1 for r in rows if r.gap and _overridden(r))
+    n = sum(1 for r in rows if _overridden(r))
     return [*METHODOLOGY, f"Priorities set by consultant override in this playbook: {n}."]
 
 
@@ -464,7 +464,8 @@ def _next_steps(rows: Sequence[Any]) -> list[str]:
         # "Core-metric, high-impact, multi-system" is what makes a COMPUTED P1
         # (`playbook.gap_priority`). A P1 the consultant set is none of those
         # necessarily, so it is counted apart rather than described (#707).
-        raised = sum(1 for r in rows if r.gap and r.priority == "P1" and _overridden(r))
+        # Only a gap has a priority, so `priority == "P1"` already selects gaps.
+        raised = sum(1 for r in rows if r.priority == "P1" and _overridden(r))
         if raised == 0:
             steps.append(
                 f"Remediate the {pc['P1']} Priority 1 gap(s) first — these are "
