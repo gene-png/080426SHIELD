@@ -31,6 +31,7 @@ from app.attack.catalog_version import (
     require_current_catalog_for_client,
 )
 from app.attack.catalog_version import is_current as attack_catalog_is_current
+from app.attack.parents import is_computed_parent as attack_is_computed_parent
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.csf.gap import MAX_TIER as CSF_MAX_TIER
 from app.csf.gap import analyze as csf_analyze_gaps
@@ -1229,6 +1230,9 @@ def attack_dashboard(
             continue
         tech = attack_technique_by_id(r.technique_code)
         tactic_name = attack_tactic_by_id(tech.tactics[0]).name if tech.tactics else ""
+        # #620 round 2 (D-094): a computed parent's evidence is its children's;
+        # its own stored tools and rationale are not delivered.
+        parent = attack_is_computed_parent(r.technique_code)
         techniques.append(
             AttackDashboardTechnique(
                 code=tech.id,
@@ -1236,10 +1240,11 @@ def attack_dashboard(
                 tactic_name=tactic_name,
                 status=r.status,
                 pending_review=r.technique_code in withheld,
-                detection_tools=list(r.detection_tools or []),
-                prevention_tools=list(r.prevention_tools or []),
-                response_tools=list(r.response_tools or []),
-                rationale=r.rationale,
+                computed_parent=parent,
+                detection_tools=[] if parent else list(r.detection_tools or []),
+                prevention_tools=[] if parent else list(r.prevention_tools or []),
+                response_tools=[] if parent else list(r.response_tools or []),
+                rationale=None if parent else r.rationale,
             )
         )
     techniques.sort(key=lambda t: t.code)

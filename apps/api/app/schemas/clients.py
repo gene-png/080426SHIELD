@@ -99,6 +99,12 @@ class AttackDashboardTechnique(BaseModel):
     # technique back into whichever status it says, so the status is what the
     # claim is withheld FROM, not something pending replaces.
     pending_review: bool = False
+    # #620 round 2 (D-094): a parent whose status is computed from its
+    # sub-techniques. It carries no tools or rationale of its own, and the
+    # Detect / Prevent / Respond triad leaves it out, so each technique is
+    # counted once, through its sub-techniques. REQUIRED: a missing flag would
+    # read as "not a parent" and put it back in the triad.
+    computed_parent: bool
     detection_tools: list[str]
     prevention_tools: list[str]
     response_tools: list[str]

@@ -25,6 +25,7 @@ vi.mock("@/lib/attack/client", () => ({
   createAssessment: vi.fn(),
   approveAssessment: vi.fn(),
   patchCoverage: vi.fn(),
+  confirmCoverageCitations: vi.fn(),
   runAttackAi: vi.fn(),
 }));
 
@@ -44,6 +45,9 @@ vi.mock("./AttackMatrix", () => ({
       >
         select sub-technique
       </button>
+      <button type="button" onClick={() => props.onSelectTechnique("T1001")}>
+        select parent
+      </button>
     </div>
   ),
 }));
@@ -51,10 +55,17 @@ vi.mock("./AttackMatrix", () => ({
 // codes it was HANDED (#603 round 5, the workspace's wiring) and a control that
 // patches a status (#620, the refetch after a sub-technique's write). Two
 // `vi.mock` calls for one module do not compose -- the last one wins.
+//
+// It also RENDERS what the workspace derives for it (#620 round 2): the
+// sub-technique count that disables a computed parent's controls, and the
+// row's notes, so a test can see a stale refetch revert an edit.
 vi.mock("./AttackTechniquePanel", () => ({
   AttackTechniquePanel: (props: {
     reasonCodes?: { code: string }[];
-    onPatch: (patch: { status: string }) => void;
+    subTechniqueCount?: number;
+    coverage?: { notes?: string | null } | null;
+    onPatch: (patch: Record<string, unknown>) => void;
+    onConfirmCitations?: () => void;
   }) => (
     <div>
       <div data-testid="panel-reason-codes">
@@ -62,11 +73,27 @@ vi.mock("./AttackTechniquePanel", () => ({
           (props.reasonCodes ?? null) && props.reasonCodes?.map((r) => r.code),
         )}
       </div>
+      <div data-testid="panel-subcount">
+        {String(props.subTechniqueCount ?? "absent")}
+      </div>
+      <div data-testid="panel-notes">{props.coverage?.notes ?? ""}</div>
       <button
         type="button"
         onClick={() => void props.onPatch({ status: "gap" })}
       >
         set gap
+      </button>
+      <button
+        type="button"
+        onClick={() => void props.onPatch({ detection_tools: ["Tool A"] })}
+      >
+        set tools
+      </button>
+      <button type="button" onClick={() => void props.onPatch({ notes: "B" })}>
+        set notes
+      </button>
+      <button type="button" onClick={() => void props.onConfirmCitations?.()}>
+        confirm
       </button>
     </div>
   ),
@@ -92,6 +119,9 @@ const fetchHeatmap = vi.mocked(attackClient.fetchHeatmap);
 const fetchLatestAssessment = vi.mocked(attackClient.fetchLatestAssessment);
 const createAssessment = vi.mocked(attackClient.createAssessment);
 const patchCoverage = vi.mocked(attackClient.patchCoverage);
+const confirmCoverageCitations = vi.mocked(
+  attackClient.confirmCoverageCitations,
+);
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -111,6 +141,35 @@ const CATALOG = {
   coverage_definitions: [],
 } as unknown as AttackCatalog;
 const HEATMAP = { by_tactic: [] } as unknown as AttackHeatmap;
+// A real family, so the workspace can DERIVE from the catalog which rows have a
+// computed parent (#620 round 2) rather than guess from the code's spelling.
+const FAMILY_CATALOG = {
+  techniques: [
+    {
+      id: "T1001",
+      name: "P",
+      tactics: [],
+      parent_id: null,
+      is_sub_technique: false,
+    },
+    {
+      id: "T1001.001",
+      name: "C1",
+      tactics: [],
+      parent_id: "T1001",
+      is_sub_technique: true,
+    },
+    {
+      id: "T1001.002",
+      name: "C2",
+      tactics: [],
+      parent_id: "T1001",
+      is_sub_technique: true,
+    },
+  ],
+  coverage_definitions: [],
+  reason_codes: [],
+} as unknown as AttackCatalog;
 
 function draft(): AttackAssessment {
   return {
@@ -374,6 +433,8 @@ describe("AttackWorkspace, a computed parent after a child's edit (#554, D-094)"
       pending_review: false,
     };
     const before = { ...draft(), coverage: [parentOld, child] };
+    // #620 round 2: the family catalog, since the workspace now reads the
+    // parent link from the catalog. The assertion below is unchanged.
     const after = {
       ...draft(),
       coverage: [
@@ -381,7 +442,7 @@ describe("AttackWorkspace, a computed parent after a child's edit (#554, D-094)"
         { ...child, status: "gap" },
       ],
     };
-    fetchCatalog.mockResolvedValue(CATALOG);
+    fetchCatalog.mockResolvedValue(FAMILY_CATALOG);
     fetchHeatmap.mockResolvedValue(HEATMAP);
     fetchLatestAssessment
       .mockResolvedValueOnce(before as unknown as AttackAssessment)
@@ -401,5 +462,146 @@ describe("AttackWorkspace, a computed parent after a child's edit (#554, D-094)"
     await vi.waitFor(() =>
       expect(fetchLatestAssessment).toHaveBeenCalledTimes(2),
     );
+  });
+});
+
+describe("AttackWorkspace, computed parents after round 2 (#620)", () => {
+  type Row = {
+    id: string;
+    technique_code: string;
+    status: string | null;
+    pending_review: boolean;
+    notes: string | null;
+  };
+  const child: Row = {
+    id: "c-child",
+    technique_code: "T1001.001",
+    status: "covered",
+    pending_review: false,
+    notes: null,
+  };
+  const parent: Row = { ...child, id: "c-parent", technique_code: "T1001" };
+  function snapshot(rows: Row[]): AttackAssessment {
+    return { ...draft(), coverage: rows } as unknown as AttackAssessment;
+  }
+  type Patched = Awaited<ReturnType<typeof attackClient.patchCoverage>>;
+
+  it("hands the panel the parent's sub-technique count from the catalog", async () => {
+    // Finding 5: the count is what disables a computed parent's controls.
+    // Replacing its derivation with 0 must turn this red.
+    fetchCatalog.mockResolvedValue(FAMILY_CATALOG);
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+    fetchLatestAssessment.mockResolvedValue(snapshot([parent, child]));
+    render(<AttackWorkspace serviceId="svc-5" serviceTitle="ATT&CK" />);
+    fireEvent.click(await screen.findByText("select parent"));
+    expect(await screen.findByTestId("panel-subcount")).toHaveTextContent("2");
+    fireEvent.click(screen.getByText("select sub-technique"));
+    expect(screen.getByTestId("panel-subcount")).toHaveTextContent("0");
+  });
+
+  it("refetches after confirming a sub-technique's evidence", async () => {
+    // Finding 6: confirming clears a child's pending state, which can clear
+    // its parent's. Replacing only the confirmed row left the parent stale.
+    fetchCatalog.mockResolvedValue(FAMILY_CATALOG);
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+    fetchLatestAssessment.mockResolvedValue(snapshot([parent, child]));
+    confirmCoverageCitations.mockResolvedValue(child as unknown as Patched);
+    render(<AttackWorkspace serviceId="svc-6" serviceTitle="ATT&CK" />);
+    fireEvent.click(await screen.findByText("select sub-technique"));
+    fireEvent.click(screen.getByText("confirm"));
+    await vi.waitFor(() =>
+      expect(fetchLatestAssessment).toHaveBeenCalledTimes(2),
+    );
+  });
+
+  it("refetches after a sub-technique's tools change, and not after its notes", async () => {
+    // Finding 6: tools feed the child's pending state, and so the parent's.
+    // Notes feed nothing derived, so they must not cost a reload.
+    fetchCatalog.mockResolvedValue(FAMILY_CATALOG);
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+    fetchLatestAssessment.mockResolvedValue(snapshot([parent, child]));
+    patchCoverage.mockResolvedValue(child as unknown as Patched);
+    render(<AttackWorkspace serviceId="svc-6b" serviceTitle="ATT&CK" />);
+    fireEvent.click(await screen.findByText("select sub-technique"));
+    fireEvent.click(screen.getByText("set notes"));
+    await vi.waitFor(() => expect(patchCoverage).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    expect(fetchLatestAssessment).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByText("set tools"));
+    await vi.waitFor(() =>
+      expect(fetchLatestAssessment).toHaveBeenCalledTimes(2),
+    );
+  });
+
+  it("does not refetch while another edit is still in flight", async () => {
+    // Finding 7: a refetch taken while edit B is pending reads the server
+    // before B lands, and would put B's old value back on screen.
+    fetchCatalog.mockResolvedValue(FAMILY_CATALOG);
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+    fetchLatestAssessment.mockResolvedValue(snapshot([parent, child]));
+    const a = deferred<Patched>();
+    const b = deferred<Patched>();
+    patchCoverage.mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise);
+    render(<AttackWorkspace serviceId="svc-7a" serviceTitle="ATT&CK" />);
+    fireEvent.click(await screen.findByText("select sub-technique"));
+    fireEvent.click(screen.getByText("set gap"));
+    fireEvent.click(screen.getByText("set notes"));
+    await act(async () =>
+      a.resolve({ ...child, status: "gap" } as unknown as Patched),
+    );
+    expect(fetchLatestAssessment).toHaveBeenCalledTimes(1);
+    fetchLatestAssessment.mockResolvedValue(
+      snapshot([
+        { ...parent, status: "gap" },
+        { ...child, status: "gap", notes: "B" },
+      ]),
+    );
+    await act(async () =>
+      b.resolve({ ...child, status: "gap", notes: "B" } as unknown as Patched),
+    );
+    await vi.waitFor(() =>
+      expect(fetchLatestAssessment).toHaveBeenCalledTimes(2),
+    );
+    expect(screen.getByTestId("panel-notes")).toHaveTextContent("B");
+  });
+
+  it("discards a refetch an edit overtook, and takes it again", async () => {
+    // Finding 7, the other ordering: B starts after the refetch left and
+    // finishes before it returns. The refetch read the server before B, so it
+    // must not be applied; a fresh one runs once B is done.
+    fetchCatalog.mockResolvedValue(FAMILY_CATALOG);
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+    fetchLatestAssessment.mockResolvedValueOnce(snapshot([parent, child]));
+    const stale = deferred<AttackAssessment>();
+    fetchLatestAssessment.mockReturnValueOnce(stale.promise);
+    fetchLatestAssessment.mockResolvedValue(
+      snapshot([
+        { ...parent, status: "gap" },
+        { ...child, status: "gap", notes: "B" },
+      ]),
+    );
+    patchCoverage
+      .mockResolvedValueOnce({ ...child, status: "gap" } as unknown as Patched)
+      .mockResolvedValueOnce({
+        ...child,
+        status: "gap",
+        notes: "B",
+      } as unknown as Patched);
+    render(<AttackWorkspace serviceId="svc-7b" serviceTitle="ATT&CK" />);
+    fireEvent.click(await screen.findByText("select sub-technique"));
+    fireEvent.click(screen.getByText("set gap"));
+    await vi.waitFor(() =>
+      expect(fetchLatestAssessment).toHaveBeenCalledTimes(2),
+    );
+    fireEvent.click(screen.getByText("set notes"));
+    await vi.waitFor(() => expect(patchCoverage).toHaveBeenCalledTimes(2));
+    await act(async () => {});
+    // The overtaken refetch now returns what the server held BEFORE B.
+    await act(async () => stale.resolve(snapshot([parent, child])));
+    expect(screen.getByTestId("panel-notes")).toHaveTextContent("B");
+    await vi.waitFor(() =>
+      expect(fetchLatestAssessment).toHaveBeenCalledTimes(3),
+    );
+    expect(screen.getByTestId("panel-notes")).toHaveTextContent("B");
   });
 });

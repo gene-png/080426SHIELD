@@ -79,6 +79,17 @@ function errorReason(err: unknown): string | null {
   return payload?.error?.reason ?? null;
 }
 
+/** The patch fields that feed a computed parent's derived state (#620 round 2):
+ *  its status and reason, and -- through the children's pending review -- the
+ *  tool lists. Notes and narrative feed nothing derived. */
+const PARENT_INPUTS: readonly (keyof AttackCoveragePatch)[] = [
+  "status",
+  "reason_code",
+  "detection_tools",
+  "prevention_tools",
+  "response_tools",
+];
+
 export function AttackWorkspace({
   serviceId,
   serviceTitle,
@@ -134,6 +145,15 @@ export function AttackWorkspace({
   // Every mutation bumps the sequence before it writes, so any in-flight load
   // is discarded on arrival.
   const assessmentSeq = React.useRef(0);
+  // #620 round 2, finding 7. A parent is recomputed on the server by a child's
+  // write, so after one the workspace re-reads the assessment. That re-read is
+  // only true if no OTHER edit is mid-flight: one that started before it reads
+  // the server before that edit lands, and would put the edit's old value back
+  // on screen. So the re-read waits until no edit is in flight, and is taken
+  // again if an edit started while it was out.
+  const editsInFlight = React.useRef(0);
+  const editsStarted = React.useRef(0);
+  const refetchWanted = React.useRef(false);
 
   const coverageByCode = React.useMemo(() => {
     const out: Record<string, AttackCoverageRow> = {};
@@ -261,10 +281,37 @@ export function AttackWorkspace({
     }
   }
 
+  /** Whether `code` has a parent whose status is computed from it (D-094).
+   *  From the catalog's parent links, the same structure the API computes
+   *  over -- not from the code's spelling. */
+  function hasComputedParent(code: string): boolean {
+    const parentId = techniqueByCode[code]?.parent_id ?? null;
+    return parentId !== null;
+  }
+
+  /** Re-read the assessment once no edit is in flight (finding 7). */
+  async function refetchWhenQuiet(): Promise<void> {
+    if (!refetchWanted.current || editsInFlight.current > 0) return;
+    refetchWanted.current = false;
+    const started = editsStarted.current;
+    const seq = ++assessmentSeq.current;
+    const a = await fetchLatestAssessment(serviceId);
+    if (editsStarted.current !== started) {
+      // An edit began while this was out, so `a` may predate it. Drop it; that
+      // edit's own completion takes the re-read again.
+      refetchWanted.current = true;
+      await refetchWhenQuiet();
+      return;
+    }
+    if (seq === assessmentSeq.current) setAssessment(a);
+  }
+
   async function onPatch(
     coverageId: string,
     patch: AttackCoveragePatch,
   ): Promise<void> {
+    editsStarted.current += 1;
+    editsInFlight.current += 1;
     // Optimistic. The bump invalidates any in-flight load so its late arrival
     // cannot clobber this edit.
     assessmentSeq.current += 1;
@@ -277,6 +324,7 @@ export function AttackWorkspace({
         ),
       };
     });
+    let ok = false;
     try {
       const next = await patchCoverage(coverageId, patch);
       setAssessment((curr) => {
@@ -286,26 +334,31 @@ export function AttackWorkspace({
           coverage: curr.coverage.map((c) => (c.id === coverageId ? next : c)),
         };
       });
-      // #554 (D-094): a sub-technique's status or reason recomputes its PARENT
-      // on the server, and the PATCH returns only the child. Refetch so the
-      // parent's row agrees with the heatmap refreshed below -- guarded like
-      // every load here, so a newer edit still wins.
+      // #554 (D-094): a sub-technique's write recomputes its PARENT on the
+      // server, and the PATCH returns only the child. Every field that feeds
+      // the parent's derived state triggers a re-read: status and reason (its
+      // status), and the tool lists (its children's pending review, and so its
+      // own).
       if (
-        next.technique_code.includes(".") &&
-        ("status" in patch || "reason_code" in patch)
+        hasComputedParent(next.technique_code) &&
+        PARENT_INPUTS.some((k) => k in patch)
       ) {
-        const seq = ++assessmentSeq.current;
-        const a = await fetchLatestAssessment(serviceId);
-        if (seq === assessmentSeq.current) setAssessment(a);
+        refetchWanted.current = true;
       }
-      await refreshHeatmap();
+      ok = true;
     } catch (err) {
       setLoadError(describeError(err));
       // Roll back by re-fetching, guarded so a newer patch still wins.
       const seq = ++assessmentSeq.current;
       const a = await fetchLatestAssessment(serviceId);
       if (seq === assessmentSeq.current) setAssessment(a);
+    } finally {
+      editsInFlight.current -= 1;
     }
+    // On BOTH paths: if this was the last edit in flight, a re-read another
+    // edit asked for would otherwise never run. A no-op when none is wanted.
+    await refetchWhenQuiet();
+    if (ok) await refreshHeatmap();
   }
 
   /**
@@ -319,7 +372,10 @@ export function AttackWorkspace({
    * The round trip is one request on a deliberate click.
    */
   async function onConfirmCitations(coverageId: string): Promise<void> {
+    editsStarted.current += 1;
+    editsInFlight.current += 1;
     assessmentSeq.current += 1;
+    let ok = false;
     try {
       const next = await confirmCoverageCitations(coverageId);
       setAssessment((curr) =>
@@ -332,11 +388,18 @@ export function AttackWorkspace({
             }
           : curr,
       );
-      // The whole point is that the score changes at this moment and not before.
-      await refreshHeatmap();
+      // #620 round 2, finding 6: confirming a child's evidence can clear its
+      // parent's pending state, which lives only on the server.
+      if (hasComputedParent(next.technique_code)) refetchWanted.current = true;
+      ok = true;
     } catch (err) {
       setLoadError(describeError(err));
+    } finally {
+      editsInFlight.current -= 1;
     }
+    await refetchWhenQuiet(); // on both paths, as in `onPatch`
+    // The whole point is that the score changes at this moment and not before.
+    if (ok) await refreshHeatmap();
   }
 
   async function onApprove(): Promise<void> {

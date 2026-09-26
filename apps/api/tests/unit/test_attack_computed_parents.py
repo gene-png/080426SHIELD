@@ -173,7 +173,21 @@ def _parent_now(c, auth, assessment_id: str, Sess) -> tuple[str | None, str | No
 
 
 @pytest.mark.parametrize(
-    "field", [{"status": "covered"}, {"reason_code": "reach_limited"}, {"locked": True}]
+    "field",
+    [
+        {"status": "covered"},
+        {"reason_code": "reach_limited"},
+        {"locked": True},
+        # #620 round 2, finding 4: a parent's evidence is its children's. Its
+        # own tools, rationale, narrative and evidence would be a second claim
+        # beside the computed one, and the deliverable printed them.
+        {"detection_tools": ["Tool A"]},
+        {"prevention_tools": ["Tool A"]},
+        {"response_tools": ["Tool A"]},
+        {"rationale": "r"},
+        {"narrative": "n"},
+        {"evidence_artifact_id": "00000000-0000-4000-8000-000000000001"},
+    ],
 )
 def test_a_computed_parents_status_and_reason_are_refused_typed(api, field) -> None:
     c, auth, by_code, _, _ = api
@@ -186,6 +200,38 @@ def test_a_computed_parents_status_and_reason_are_refused_typed(api, field) -> N
 def test_a_computed_parents_notes_are_still_editable(api) -> None:
     c, auth, by_code, _, _ = api
     assert _set(c, auth, by_code[PARENT]["id"], {"notes": "Context."}).status_code == 200
+
+
+def test_a_computed_parents_own_citations_cannot_be_confirmed(api) -> None:
+    """#620 round 2, finding 2. A legacy parent can carry uncleared citations
+    of its own, but its score rests on its children's evidence (D-094).
+    Confirming the parent's would write an audit row vouching for evidence the
+    score does not use, so it is refused typed, and nothing is written."""
+    from app.models.attack_assessment import AttackCoverage
+    from app.models.audit_entry import AuditEntry
+
+    c, auth, by_code, _, Sess = api
+    # The shape `resolve_citations` writes for a substring rescue (`reason` is
+    # required on read): a state the application can produce, not a stub.
+    entry = {
+        "tool": "Tool A",
+        "cited": "tool",
+        "reason": "substring",
+        "field": "detection_tools",
+        "cleared_at": None,
+    }
+    with Sess() as s:
+        row = s.get(AttackCoverage, uuid.UUID(by_code[PARENT]["id"]))
+        row.unconfirmed_citations = [entry]
+        s.commit()
+        audits_before = s.query(AuditEntry).count()
+    r = c.post(f"/attack/coverage/{by_code[PARENT]['id']}/confirm-citations", headers=auth)
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["reason"] == "parent_status_computed"
+    with Sess() as s:
+        row = s.get(AttackCoverage, uuid.UUID(by_code[PARENT]["id"]))
+        assert row.unconfirmed_citations == [entry], "the refusal must not clear anything"
+        assert s.query(AuditEntry).count() == audits_before
 
 
 def test_a_child_write_recomputes_its_parent(api) -> None:

@@ -1003,3 +1003,29 @@ def test_run_ai_shows_a_legacy_locked_parents_recompute_in_its_diff(app_client) 
         "status"
     }
     assert parent in _run_audit(TestSession)["parents_unlocked"]
+
+
+@pytest.mark.unit
+def test_run_ai_never_sends_a_computed_parent_to_the_model(app_client) -> None:
+    """#620 round 2, finding 3. A computed parent's suggestion is refused whole
+    (D-094), so sending the parent spent tokens on an answer that was always
+    discarded. Asserted on what LEFT: every batch's payload, unioned."""
+    from app.attack.catalog import TECHNIQUES
+
+    c, TestSession, provider = app_client
+    h, svc_id, _ = _one_row_run(c, TestSession, provider, "covered")
+    sent: list[str] = []
+
+    def _spy(payload: dict) -> LLMResponse:
+        sent.extend(payload["technique_codes"])
+        return LLMResponse('{"techniques": []}')
+
+    provider.register("mitre_map", _spy)
+    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    # Derived from the catalog's parent links, not from `app.attack.parents`,
+    # so this does not read the predicate it is checking.
+    has_children = {t.parent_id for t in TECHNIQUES if t.parent_id is not None}
+    assert sent, "no batch reached the provider -- the spy saw nothing"
+    assert has_children.isdisjoint(sent), sorted(has_children & set(sent))[:5]
+    assert sorted(sent) == sorted(t.id for t in TECHNIQUES if t.id not in has_children)

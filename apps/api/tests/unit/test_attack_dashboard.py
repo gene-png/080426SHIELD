@@ -351,3 +351,67 @@ def test_dashboard_numbers_come_from_the_version_the_header_claims(app_client) -
     assert (
         len([t for t in body["techniques"] if t["status"] == "covered"]) == 5
     ), "the technique matrix came from a different version than the header claims"
+
+
+@pytest.mark.unit
+def test_a_computed_parent_shows_the_client_no_tools_or_rationale_of_its_own(app_client) -> None:
+    """#620 round 2, finding 4. A parent keeps the rationale and tools the model
+    once wrote, and the client dashboard delivered them beside a computed status
+    they may contradict. The parent is flagged `computed_parent` (derived from
+    the catalog), carries no tools or rationale of its own, and the stored data
+    is untouched. Its child in the same assessment keeps its own."""
+    import uuid as _uuid
+
+    from sqlalchemy import create_engine as _ce
+    from sqlalchemy.orm import sessionmaker as _sm
+
+    from app.attack.catalog import TECHNIQUES
+    from app.models.attack_assessment import AttackCoverage
+
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer = admin["tokens"]["access_token"]
+    auth = {"Authorization": f"Bearer {bearer}"}
+    svc_id = c.post(
+        "/attack/services", headers=auth, json={"kind": "attack_coverage", "title": "ATT&CK"}
+    ).json()["id"]
+    assessment = c.post(f"/attack/services/{svc_id}/assessments", headers=auth).json()
+    by_code = {r["technique_code"]: r for r in assessment["coverage"]}
+    has_children = {t.parent_id for t in TECHNIQUES if t.parent_id is not None}
+    parent = sorted(has_children)[0]
+    children = [t.id for t in TECHNIQUES if t.parent_id == parent]
+    for child in children:
+        r = c.patch(
+            f"/attack/coverage/{by_code[child]['id']}",
+            headers=auth,
+            json={"status": "covered", "detection_tools": ["Tool A"], "rationale": "Child."},
+        )
+        assert r.status_code == 200, r.text
+    # A legacy parent: stale model text and tools stored on the row itself.
+    with _sm(bind=_ce(os.environ["DATABASE_URL"], future=True))() as s:
+        row = s.get(AttackCoverage, _uuid.UUID(by_code[parent]["id"]))
+        row.rationale = "Stale model text."
+        row.detection_tools = ["Tool B"]
+        s.commit()
+    c.post(f"/attack/assessments/{assessment['id']}/approve", headers=auth)
+    deliv = c.post(f"/attack/services/{svc_id}/deliverables/finalize", headers=auth).json()["id"]
+    assert c.post(f"/attack/deliverables/{deliv}/release", headers=auth).status_code == 200
+
+    cid = client["user"]["client_id"]
+    c.headers["X-Client-Id"] = cid
+    body = c.get(
+        f"/clients/{cid}/attack/{svc_id}/dashboard",
+        headers={"Authorization": f"Bearer {client['tokens']['access_token']}"},
+    ).json()
+    techs = {t["code"]: t for t in body["techniques"]}
+    p = techs[parent]
+    assert p["computed_parent"] is True
+    assert (p["detection_tools"], p["prevention_tools"], p["response_tools"]) == ([], [], [])
+    assert p["rationale"] is None
+    ch = techs[children[0]]
+    assert ch["computed_parent"] is False
+    assert (ch["detection_tools"], ch["rationale"]) == (["Tool A"], "Child.")
+    with _sm(bind=_ce(os.environ["DATABASE_URL"], future=True))() as s:
+        stored = s.get(AttackCoverage, _uuid.UUID(by_code[parent]["id"]))
+        assert (stored.rationale, stored.detection_tools) == ("Stale model text.", ["Tool B"])

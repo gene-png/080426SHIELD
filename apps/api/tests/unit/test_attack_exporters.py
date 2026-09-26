@@ -719,3 +719,32 @@ def test_the_client_entered_header_cells_are_safe_text() -> None:
     assert ws.cell(1, 2).value == "Atlas Defense"
     assert ws.cell(2, 2).value == '=HYPERLINK("http://example.test","click")'
     assert ws.cell(2, 2).data_type == "s"
+
+
+@pytest.mark.unit
+def test_a_computed_parent_delivers_no_rationale_or_tools_of_its_own() -> None:
+    """#620 round 2, finding 4. A recomputed parent keeps whatever rationale and
+    tools the model once wrote for it, and the workbook printed them beside a
+    computed status they may contradict. Its evidence is its sub-techniques'.
+    Stored data is left alone; only the deliverable stops emitting it. A child
+    in the same world keeps its own, so this is not a blanket blank."""
+    has_children = {t.parent_id for t in TECHNIQUES if t.parent_id is not None}
+    parent = sorted(has_children)[0]
+    child = next(t.id for t in TECHNIQUES if t.parent_id == parent)
+    stale = {
+        "status": "gap",
+        "rationale": "Stale model text.",
+        "detection_tools": ["Tool A"],
+        "prevention_tools": ["Tool A"],
+        "response_tools": ["Tool A"],
+    }
+    ctx, _ = _ctx_from({parent: stale, child: {**stale, "rationale": "Child text."}})
+    wb = _xlsx(ctx)
+    rows = {r["Technique"]: r for r in _sheet_rows(wb["Coverage"])}
+    for col in ("Rationale", "Detection tools", "Prevention tools", "Response tools"):
+        assert not rows[parent][col], (col, rows[parent][col])
+    assert rows[child]["Rationale"] == "Child text."
+    assert rows[child]["Detection tools"] == "Tool A"
+    gaps = {r["Technique"]: r for r in _sheet_rows(wb["Gaps"])}
+    assert not gaps[parent]["Rationale"]
+    assert gaps[child]["Rationale"] == "Child text."

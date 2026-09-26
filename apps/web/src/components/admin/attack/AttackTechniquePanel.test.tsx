@@ -445,3 +445,99 @@ describe("AttackTechniquePanel — reason code (#554)", () => {
     expect(onPatch).toHaveBeenCalledWith({ reason_code: null });
   });
 });
+
+describe("AttackTechniquePanel — a computed parent's evidence (#620 round 2)", () => {
+  const ownCitation = {
+    tool: "Tool A",
+    cited: "tool",
+    reason: "substring",
+    field: "detection_tools",
+    cleared_at: null,
+  };
+  function parentPanel(over: Partial<AttackCoverageRow>, count = 3) {
+    const onConfirm = vi.fn();
+    render(
+      <AttackTechniquePanel
+        technique={TECHNIQUE}
+        coverage={row(over)}
+        coverageDefinitions={[]}
+        subTechniqueCount={count}
+        onPatch={vi.fn()}
+        onConfirmCitations={onConfirm}
+      />,
+    );
+    return onConfirm;
+  }
+
+  it("names the real remedy when a parent is pending through a child", () => {
+    // D-076: its status and tools are not the user's to set, and it has no
+    // evidence of its own -- so neither of those may be offered as the fix.
+    parentPanel({ pending_review: true, unconfirmed_citations: null });
+    const queue = screen.getByTestId("attack-citation-queue");
+    expect(queue.textContent).toContain(
+      "at least one of its 3 sub-techniques is pending review",
+    );
+    expect(queue.textContent).toContain("Review the sub-techniques");
+    expect(queue.textContent).not.toMatch(/set the status or\s+the tools/);
+  });
+
+  it("never offers to confirm a parent's own legacy citations", () => {
+    // The API refuses it (parent_status_computed); the score does not rest on
+    // them. Own citations present and uncleared, and still no button.
+    parentPanel({
+      pending_review: true,
+      unconfirmed_citations: [
+        ownCitation,
+      ] as AttackCoverageRow["unconfirmed_citations"],
+    });
+    expect(
+      screen.queryByRole("button", { name: "Confirm this evidence" }),
+    ).toBeNull();
+  });
+
+  it("shows no citation review at all for a parent that is not pending", () => {
+    parentPanel({
+      pending_review: false,
+      unconfirmed_citations: [
+        ownCitation,
+      ] as AttackCoverageRow["unconfirmed_citations"],
+    });
+    expect(screen.queryByTestId("attack-citation-queue")).toBeNull();
+  });
+
+  it("does not show a parent's own stored tools or rationale", () => {
+    // What the model once wrote for the parent may contradict its computed
+    // status; its evidence is its sub-techniques'.
+    parentPanel({
+      rationale: "Stale model text.",
+      detection_tools: ["Tool B"],
+    });
+    expect(screen.queryByText(/Stale model text\./)).toBeNull();
+    expect(screen.queryByText(/Tool B/)).toBeNull();
+    expect(
+      screen.getByText(
+        /Tools and rationale are recorded on its sub-techniques/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("still shows a standalone technique's own tools, rationale and confirm", () => {
+    // The other half: the rule is about computed parents only.
+    parentPanel(
+      {
+        rationale: "Own text.",
+        detection_tools: ["Tool B"],
+        pending_review: true,
+        unconfirmed_citations: [
+          ownCitation,
+        ] as AttackCoverageRow["unconfirmed_citations"],
+      },
+      0,
+    );
+    expect(screen.getByText(/Own text\./)).toBeInTheDocument();
+    expect(screen.getAllByText(/Tool B/).length).toBeGreaterThan(0);
+    expect(
+      screen.getByRole("button", { name: "Confirm this evidence" }),
+    ).toBeInTheDocument();
+  });
+});

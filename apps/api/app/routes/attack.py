@@ -537,16 +537,20 @@ def patch_coverage(
     require_current_catalog(db, a)  # #556
     # #554 (D-094): a parent WITH sub-techniques has its status computed from
     # them, so neither its status nor its reason is anyone's to set -- and a
-    # lock, which protects an answer, has no answer of its own to protect.
-    # Refused typed, like every other write the vocabulary forbids.
-    if is_computed_parent(row.technique_code) and ({"status", "reason_code", "locked"} & set(data)):
+    # lock, which protects an answer, has no answer of its own to protect. Its
+    # EVIDENCE is its children's too (#620 round 2): its own tools, rationale,
+    # narrative or evidence would be a second claim beside the computed one.
+    # Only notes remain editable. Refused typed, like every other write the
+    # vocabulary forbids.
+    if is_computed_parent(row.technique_code) and (set(data) - {"notes"}):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={
                 "reason": "parent_status_computed",
                 "message": (
-                    f"{row.technique_code}'s status is computed from its sub-techniques, so "
-                    "it cannot be set or locked. Score or lock the sub-techniques instead."
+                    f"{row.technique_code}'s status and evidence are computed from its "
+                    "sub-techniques, so only its notes can be edited. Score, cite or lock "
+                    "the sub-techniques instead."
                 ),
             },
         )
@@ -650,8 +654,9 @@ def patch_coverage(
     # transaction, so the parent can never be read out of step with its children.
     recomputed: list[str] = []
     parents_unlocked: list[str] = []
-    technique = technique_by_id(row.technique_code)
-    parent_code = technique.parent_id if technique is not None else None
+    # `technique_by_id` raises on an unknown code, and `require_current_catalog`
+    # above has already refused a row keyed to another catalog.
+    parent_code = technique_by_id(row.technique_code).parent_id
     if parent_code is not None and ({"status", "reason_code"} & set(data)):
         family = {parent_code, *PARENT_CHILDREN.get(parent_code, ())}
         family_rows = {
@@ -1490,7 +1495,10 @@ def build_attack_ai_request(db: Session, svc: Service, client: Client) -> Attack
                 # prevent/detect/respond finding; sending the name alone made the
                 # model re-derive D/P/R from a string.
                 "capability_list": _capability_payload(capability_inputs),
-                "technique_codes": sorted(rows),
+                # #620 round 2: a computed parent's suggestion is refused whole
+                # (D-094), so it is never sent -- tokens spent on an answer that
+                # is always discarded.
+                "technique_codes": sorted(c for c in rows if not is_computed_parent(c)),
             },
             client_org_name=client_org,
         ),
@@ -1670,6 +1678,21 @@ def confirm_coverage_citations(
             detail="This assessment is locked.",
         )
     require_current_catalog(db, a)  # #556
+    # #620 round 2 (D-094): a computed parent's score rests on its children's
+    # evidence, never its own. Confirming a legacy parent's own citations would
+    # put a reviewer's name on evidence the score does not use. Its pending state
+    # clears when its sub-techniques' evidence is confirmed.
+    if is_computed_parent(row.technique_code):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "parent_status_computed",
+                "message": (
+                    f"{row.technique_code}'s coverage is computed from its sub-techniques, "
+                    "so its evidence is theirs. Confirm the sub-techniques' evidence instead."
+                ),
+            },
+        )
     outstanding = [e for e in (row.unconfirmed_citations or []) if e.get("cleared_at") is None]
     if not outstanding:
         # Refused rather than returned as a cheerful no-op. A 200 here would write
