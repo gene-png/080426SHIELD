@@ -5,6 +5,7 @@ import * as React from "react";
 
 import { DashShell } from "@/components/dashboards/shared";
 import {
+  blindSpotReconciliation,
   blindSpots,
   dprCoverage,
   filterTechniques,
@@ -232,6 +233,8 @@ export function AttackDashboard({
   const k = kpis(data);
   const dpr = dprCoverage(data.techniques);
   const blind = blindSpots(data.techniques);
+  // #620 round 5: reconciles the KPI (rollup) with the list below it.
+  const reconcile = blindSpotReconciliation(data);
   const tactics = React.useMemo(
     () => tacticOptions(data.techniques),
     [data.techniques],
@@ -399,6 +402,14 @@ export function AttackDashboard({
               : "")
           }
         >
+          {reconcile ? (
+            <p
+              data-testid="attack-blind-reconcile"
+              style={{ margin: "0 0 12px", fontSize: 12, color: C.muted }}
+            >
+              {reconcile}
+            </p>
+          ) : null}
           <div
             style={{
               display: "grid",

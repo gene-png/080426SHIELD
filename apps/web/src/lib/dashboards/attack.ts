@@ -98,15 +98,6 @@ function pctOf(n: number, total: number): number {
 /** Four headline KPI cards: evaluated total + covered/partial/blind-spot mix. */
 export function kpis(data: AttackDashboardData): DashboardKpis {
   const evaluated = data.rollup.total_evaluated;
-  // #620 round 4: under D-094's rules the KPI counts the SAME rows the
-  // blind-spot section lists -- `blindSpots()`, gaps through sub-techniques --
-  // so the page cannot say "2" above "1 uncovered". An assessment approved
-  // before #620 keeps the rollup's count, exactly as it was delivered (Gene's
-  // condition, D-094).
-  const blind =
-    data.parents_computed === true
-      ? blindSpots(data.techniques).length
-      : data.rollup.gap;
   return {
     evaluated,
     covered: {
@@ -117,7 +108,11 @@ export function kpis(data: AttackDashboardData): DashboardKpis {
       n: data.rollup.partial,
       pct: pctOf(data.rollup.partial, evaluated),
     },
-    blindSpots: { n: blind, pct: pctOf(blind, evaluated) },
+    // The rollup's count, as on main, for every rule set (#620 round 5): every
+    // KPI describes the same population as `coverage_pct`, so the three sum to
+    // 100%. Where the blind-spot LIST differs (rule 2 lists gaps through
+    // sub-techniques), `blindSpotReconciliation` says so at the list.
+    blindSpots: { n: data.rollup.gap, pct: pctOf(data.rollup.gap, evaluated) },
   };
 }
 
@@ -182,6 +177,22 @@ export function blindSpots(techniques: DashTechnique[]): DashTechnique[] {
   // Through sub-techniques, like the triad (#620 round 3): a parent with
   // sub-techniques has no tools of its own, and its gap is its children's.
   return techniques.filter((t) => t.status === "gap" && !t.computed_parent);
+}
+
+/**
+ * #620 round 5: the sentence that reconciles the Blind spots KPI (the rollup's
+ * gaps, parents included) with the list (gaps through sub-techniques), or null
+ * when they agree. Only under D-094's rules, where the list excludes parents;
+ * the difference is exactly the gap parents, since a gap is never withheld.
+ */
+export function blindSpotReconciliation(
+  data: AttackDashboardData,
+): string | null {
+  if (data.parents_computed !== true) return null;
+  const listed = blindSpots(data.techniques).length;
+  const parents = data.rollup.gap - listed;
+  if (parents <= 0) return null;
+  return `The Blind spots figure above counts ${data.rollup.gap}: the ${listed} listed here, and ${parents} parent technique${parents === 1 ? "" : "s"} whose gap is listed through ${parents === 1 ? "its" : "their"} sub-techniques.`;
 }
 
 /** The sentence beside the triad naming what its percentages leave out. */

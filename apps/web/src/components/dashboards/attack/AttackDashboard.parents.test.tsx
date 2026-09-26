@@ -115,17 +115,44 @@ describe("AttackDashboard, a computed parent (#620 round 3)", () => {
     );
   });
 
-  it("the Blind spots KPI and the blind-spot section count the same rows", () => {
-    // #620 round 4: the KPI counted the rollup's gaps, parent included (2);
-    // the section lists gaps through sub-techniques (1). One page, two
-    // answers. Both now come from blindSpots().
-    render(<AttackDashboard data={data([PARENT, ...KIDS])} />);
+  it("reconciles the Blind spots KPI with the blind-spot list on screen", () => {
+    // #620 round 5. The KPI stays the rollup's (main's) count, over the same
+    // population as coverage_pct, so covered + partial + blind spots sum to
+    // 100%. The list is gaps through sub-techniques, so for rule 2 the section
+    // says what the difference is. A world the app produces: a gap parent is
+    // computed from children that are all gaps, and the rollup counts all 3.
+    const parent = tech({
+      code: "T1001",
+      name: "Parent technique",
+      status: "gap",
+      computed_parent: true,
+      sub_technique_count: 2,
+    });
+    const kids = [
+      tech({ code: "T1001.001", status: "gap" }),
+      tech({ code: "T1001.002", status: "gap" }),
+    ];
+    const d = data([parent, ...kids]);
+    d.rollup = {
+      ...d.rollup,
+      total_evaluated: 3,
+      covered: 0,
+      partial: 0,
+      gap: 3,
+      coverage_pct: 0,
+    };
+    render(<AttackDashboard data={d} />);
     const kpi = screen.getByText("Blind spots").parentElement as HTMLElement;
-    expect(kpi.textContent).toMatch(/^Blind spots1 · /);
+    expect(kpi.textContent).toMatch(/^Blind spots3 · 100%/);
     const section = screen
       .getByText("What you're blind to today")
       .closest("section") as HTMLElement;
-    expect(within(section).getByText("1 uncovered")).toBeInTheDocument();
+    expect(within(section).getByText("2 uncovered")).toBeInTheDocument();
+    expect(
+      within(section).getByTestId("attack-blind-reconcile"),
+    ).toHaveTextContent(
+      "The Blind spots figure above counts 3: the 2 listed here, and 1 parent technique whose gap is listed through its sub-techniques.",
+    );
   });
 
   it("renders an assessment approved before #620 exactly as delivered", () => {
