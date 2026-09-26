@@ -1,0 +1,12 @@
+{
+ "incident": "ADVERSARIAL. #579: a spec renamed out of the suite's pattern (a.specs.ts) is not collected, so it is not listed; the gate scanned only *.spec.ts and stayed green over it. Every script file under e2e/ must be listed or declared.",
+ "expect": 1,
+ "adversarial": true,
+ "argv": [
+  "--root",
+  "{dir}",
+  "--list-file",
+  "{dir}/list.txt"
+ ],
+ "stdout_contains": "e2e/a.specs.ts: not in"
+}

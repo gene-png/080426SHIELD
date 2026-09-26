@@ -117,19 +117,19 @@ CODE_PREFIXES = (".claude/",)
 CODE_PATHS = ("CLAUDE.md", ".github/pull_request_template.md")
 
 
-def is_code_change(paths: list[str]) -> bool:
-    for raw in paths:
-        path = raw.strip()
-        if not path:
-            continue
-        if path in CODE_PATHS or path.startswith(CODE_PREFIXES):
-            return True
-        if path.startswith(DOC_PREFIXES):
-            continue
-        if path.endswith(DOC_SUFFIXES):
-            continue
+def _is_code(path: str) -> bool:
+    if path in CODE_PATHS or path.startswith(CODE_PREFIXES):
         return True
-    return False
+    return not (path.startswith(DOC_PREFIXES) or path.endswith(DOC_SUFFIXES))
+
+
+def code_paths(paths: list[str]) -> list[str]:
+    """The changed paths that count as code, in order."""
+    return [p.strip() for p in paths if p.strip() and _is_code(p.strip())]
+
+
+def is_code_change(paths: list[str]) -> bool:
+    return bool(code_paths(paths))
 
 
 def missing_evidence(body: str) -> list[str]:
@@ -166,14 +166,25 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    if not is_code_change(paths):
-        print("audit gate: documentation-only change, exempt.")
+    # A clean line says what it read (D-090, #592): how many paths, how many of
+    # them code, and which parts of the body it found.
+    read = [p for p in paths if p.strip()]
+    code = code_paths(paths)
+    if not code:
+        print(
+            f"audit gate: documentation-only change, exempt "
+            f"({len(read)} changed path(s) read, none of them code)."
+        )
         return 0
 
     body = Path(args.body).read_text(encoding="utf-8")
     problems = missing_evidence(body)
     if not problems:
-        print("audit gate: adversarial audit recorded.")
+        print(
+            f"audit gate: adversarial audit recorded ({len(read)} changed path(s) read, "
+            f"{len(code)} of them code; the body has an `Adversarial audit` heading, "
+            f"a `Findings:` line and a `Disposition:` line)."
+        )
         return 0
 
     print(
