@@ -60,7 +60,7 @@ GATES = [
     # over, which is why `discover_gates` derives from the file and this list
     # exists to catch what that derivation cannot see.
     ("check_decision_numbers", ""),
-    ("check_mount_matches_database", ""),
+    ("check_mount_matches_database", "sys.argv"),
     # The #336 consumer gate. It shipped with the handler (so `discover_gates`
     # sees it) and WITHOUT an entry here, so the two enumerations diverged and
     # `test_universe_equals_the_other_gate_enumeration` went red -- which is
@@ -98,6 +98,9 @@ GATES = [
     ("check_ci_selection", "sys.argv"),
     ("check_e2e_env_gates", "sys.argv"),
     ("check_e2e_spec_listing", "sys.argv"),
+    # D-095's compose exception. Added WITH its entry here. `sys.argv` because
+    # `main(argv)` takes the argument list.
+    ("compose_unchanged", "sys.argv"),
 ]
 
 MARKER = 'if __name__ == "__main__":'

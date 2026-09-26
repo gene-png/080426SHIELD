@@ -53,6 +53,7 @@ from app.attack.citations import (
 )
 from app.attack.coverage import (
     COVERAGE_DEFINITIONS,
+    REASON_CODES,
     WRITABLE,
     CoverageStatus,
     is_valid_reason,
@@ -105,6 +106,7 @@ from app.schemas.attack import (
     AttackServiceCreateRequest,
     AttackServiceResponse,
     CatalogCoverageDefinition,
+    CatalogReasonCode,
     CatalogResponse,
     CatalogTactic,
     CatalogTechnique,
@@ -341,12 +343,17 @@ def get_catalog(
         )
         for d in COVERAGE_DEFINITIONS
     ]
+    reasons = [
+        CatalogReasonCode(code=r.code, status=r.status, definition=r.definition)
+        for r in REASON_CODES
+    ]
     parents = sum(1 for t in TECHNIQUES if not t.is_sub_technique)
     subs = len(TECHNIQUES) - parents
     return CatalogResponse(
         tactics=tactic_rows,
         techniques=technique_rows,
         coverage_definitions=defs,
+        reason_codes=reasons,
         total_techniques=parents,
         total_sub_techniques=subs,
     )
@@ -560,7 +567,11 @@ def patch_coverage(
     if "reason_code" in data:
         row.reason_code = data["reason_code"]
     if "narrative" in data:
-        row.narrative = data["narrative"]
+        # A blank narrative is NONE, never "": the release gate will ask whether
+        # an unverified row carries one, and whitespace must not answer yes.
+        # Normalised here because the web is not the only writer.
+        raw = data["narrative"]
+        row.narrative = raw if raw is not None and raw.strip() else None
     if "notes" in data:
         row.notes = data["notes"]
     if "evidence_artifact_id" in data:
