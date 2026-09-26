@@ -6126,6 +6126,7 @@ The shared dev database, read-only: DRAFT 2, RELEASED 2, APPROVED 0, at migratio
   - The Detect / Prevent / Respond triad and the blind-spot cards count each technique once, through its sub-techniques, and say so beside the figures.
   - Risk Register synthesis takes findings through sub-techniques only. A parent is still citable as a link.
   - Pending review is derived through children on every read.
+  - The "Blind spots" KPI counts the rows the blind-spot section lists, through sub-techniques, from the one function `blindSpots()` (#620 round 4, the coordinator's call pending Gene). Before this fix, a page could read "Blind spots 2" above "1 uncovered".
   - The KPI row and `coverage_pct` do not move. That is established **by reading the code**: they come from the API rollup, never from the triad's population. The test is a ratchet, not a proof. It pins `kpis()` against reading the triad's population, and goes red if it does. Both fixtures share one rollup, and `coverage_pct` is not asserted (#665).
 - **The condition: a released assessment keeps rendering what was delivered.** The rules above apply only to assessments approved after #620 lands. Every client surface renders an assessment approved before #620 exactly as it was delivered, so a live dashboard never contradicts a delivered PDF or XLSX.
 - **The design, recorded before building** (the PR thread carries it too):
@@ -6134,6 +6135,7 @@ The shared dev database, read-only: DRAFT 2, RELEASED 2, APPROVED 0, at migratio
   - `pending_codes` takes the rule as a REQUIRED argument, so no caller can default it.
   - For rule 1, the client dashboard OMITS the new keys (`computed_parent`, `sub_technique_count`, `parents_computed`), so its JSON is byte-identical to main's.
   - Stored deliverable files are rendered once, at finalize, and never regenerated. An assessment approved before and finalized after renders under the old rules.
+  - **0054's downgrade refuses** while any assessment has `parent_rules = 2` (#620 round 4). Dropping the column would lose which rule set each was approved under, and a re-upgrade would backfill them to 1, silently moving a rule-2 release onto the old rules.
 - **Gene's additions, 2026-09-25:**
   1. **NULL (a draft) reads as the NEW rules.** Only an unknown non-NULL value fails, and it raises. Tested for NULL, 1, 2, and unknown values including `True`, since `True == 1` in Python; the reader compares the exact type.
   2. **The old rules' output is recorded ONCE from `main`**, at d64956695a308d08135676d03e3753fcf4609d0f, by the committed `tests/golden/record_parent_rules_golden.py`. The test compares against those committed files and never regenerates them.

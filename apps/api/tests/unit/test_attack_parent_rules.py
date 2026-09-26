@@ -82,3 +82,52 @@ def test_the_migration_backfills_approved_and_released_to_the_old_rules(tmp_path
     with engine.connect() as db:
         got = dict(db.execute(text("SELECT status, parent_rules FROM attack_assessments")).all())
     assert got == {"DRAFT": None, "APPROVED": 1, "RELEASED": 1, "DISCARDED": None}
+
+
+def _db_at_0054_with(tmp_path, rules: int | None) -> tuple[Config, object]:
+    url = f"sqlite:///{tmp_path / 'shield-0054-down.db'}"
+    os.environ["DATABASE_URL"] = url
+    cfg = _cfg(url)
+    command.upgrade(cfg, "0054")
+    engine = create_engine(url, future=True)
+    with engine.begin() as db:
+        client = str(uuid.uuid4())
+        db.execute(
+            text(
+                "INSERT INTO client (id, legal_name, created_at, updated_at) "
+                "VALUES (:id, 'T', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            ),
+            {"id": client},
+        )
+        db.execute(
+            text(
+                "INSERT INTO attack_assessments "
+                "(id, service_id, client_id, version, status, documents_stale, parent_rules, "
+                "created_at, updated_at) VALUES "
+                "(:id, :svc, :client, 1, 'RELEASED', 0, :rules, "
+                "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            ),
+            {"id": str(uuid.uuid4()), "svc": str(uuid.uuid4()), "client": client, "rules": rules},
+        )
+    return cfg, engine
+
+
+@pytest.mark.unit
+def test_downgrading_0054_refuses_while_an_assessment_was_approved_under_d094(tmp_path) -> None:
+    """#620 round 4. A downgrade drops the column; the re-upgrade backfills every
+    APPROVED and RELEASED row to 1 -- so a rule-2 release would silently render
+    under the old rules afterwards. Refused, loudly, and nothing is dropped."""
+    cfg, engine = _db_at_0054_with(tmp_path, 2)
+    with pytest.raises(Exception, match="parent_rules = 2"):
+        command.downgrade(cfg, "0052")
+    with engine.connect() as db:
+        assert db.execute(text("SELECT parent_rules FROM attack_assessments")).scalar_one() == 2
+
+
+@pytest.mark.unit
+def test_downgrading_0054_succeeds_when_nothing_was_approved_under_d094(tmp_path) -> None:
+    cfg, engine = _db_at_0054_with(tmp_path, 1)
+    command.downgrade(cfg, "0052")
+    with engine.connect() as db:
+        cols = [r[1] for r in db.execute(text("PRAGMA table_info(attack_assessments)"))]
+    assert "parent_rules" not in cols

@@ -58,5 +58,20 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # REFUSED while any assessment was approved under D-094 (#620 round 4). The
+    # column cannot be dropped without losing which rule set each one was
+    # approved under, and re-running `upgrade` would then backfill every
+    # APPROVED and RELEASED row to 1 -- silently moving a rule-2 release onto
+    # the old rules. A downgrade that loses that fact is not a downgrade.
+    bind = op.get_bind()
+    count = bind.execute(
+        sa.text("SELECT COUNT(*) FROM attack_assessments WHERE parent_rules = 2")
+    ).scalar_one()
+    if count:
+        raise RuntimeError(
+            f"Refusing to downgrade 0054: {count} ATT&CK assessment(s) have "
+            "parent_rules = 2 (approved under D-094). Dropping the column would lose "
+            "that, and re-upgrading would backfill them to the old rules (1)."
+        )
     with op.batch_alter_table("attack_assessments") as batch:
         batch.drop_column("parent_rules")
