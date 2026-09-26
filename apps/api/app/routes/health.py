@@ -19,16 +19,18 @@ can simulate a down dependency by monkeypatching it.
 from __future__ import annotations
 
 import httpx
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app import __version__
 from app.config import Settings, get_settings
 from app.db.session import get_db
+from app.dependencies import current_user
 from app.logging import get_logger
-from app.security.jwt import TokenError, verify_token
+from app.models.user import UserRole
 
 log = get_logger("app.routes.health")
 
@@ -161,20 +163,40 @@ def _probe_llm(settings: Settings) -> DependencyStatus:
     return DependencyStatus(status="ok" if ready else "down", required=False, detail=detail)
 
 
-def _caller_is_authenticated(request: Request) -> bool:
-    """True when the request carries a structurally valid, unexpired access
-    token. Token-signature only (no DB load) so /ready stays cheap — the gated
-    payload is diagnostic operator detail, not user data. Anonymous callers get
-    the reduced matrix; authenticated callers get full detail."""
-    auth = request.headers.get("Authorization")
-    if not auth or not auth.lower().startswith("bearer "):
+def _caller_may_see_detail(request: Request, db: Session) -> bool:
+    """True when `current_user` would accept this request's token AND the user
+    is an admin. Everyone else gets the reduced matrix.
+
+    #697 round 1: the web proxy shows /ready only to `role === "admin"`
+    (`app/api/proxy/health/ready/route.ts`), but this checked authentication
+    alone, so a client-role tenant user calling the API directly read internal
+    hostnames and LLM configuration. The API now requires the same role the
+    proxy does.
+
+    #671: this used to check the token's signature and expiry only, so a
+    deactivated user's token -- or one for a user who does not exist -- still
+    unlocked the full matrix. It now CALLS `current_user` rather than copying
+    it, so every check that function makes applies here too, including any
+    added later (#658's credentials cutoff, from #670, reaches /ready with no
+    change to this file).
+
+    Only a 401 means "not authenticated"; any other status is re-raised. A
+    database error while loading the user makes the caller unverifiable, which
+    FAILS CLOSED to the redacted matrix and is logged: /ready is a probe, and
+    must answer while the database it is reporting on is down.
+    """
+    if not request.headers.get("Authorization"):
         return False
-    token = auth.split(" ", 1)[1].strip()
     try:
-        verify_token(token, expected_type="access")
-    except TokenError:
+        user = current_user(request, db)
+    except HTTPException as exc:
+        if exc.status_code != status.HTTP_401_UNAUTHORIZED:
+            raise
         return False
-    return True
+    except SQLAlchemyError as exc:
+        log.warning("ready.caller_unverifiable", error=type(exc).__name__)
+        return False
+    return user.role == UserRole.ADMIN
 
 
 def _redacted(check: DependencyStatus) -> DependencyStatus:
@@ -209,8 +231,10 @@ def ready(
     else:
         log.warning("ready.degraded", offenders=offenders)
 
-    # Withhold internal detail from anonymous callers (offenders + statuses stay).
-    if not _caller_is_authenticated(request):
+    # Withhold internal detail from everyone but an active admin: anonymous
+    # callers, unverifiable tokens and client-role users alike (offenders and
+    # statuses stay).
+    if not _caller_may_see_detail(request, db):
         checks = {name: _redacted(c) for name, c in checks.items()}
 
     return ReadyResponse(
