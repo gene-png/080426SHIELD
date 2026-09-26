@@ -721,9 +721,11 @@ def refresh(
     # the first, leaving the winner's new jti neither active nor previous, so
     # its next refresh read as `refresh_reused`. The UPDATE below only matches
     # while `active_refresh_jti` is STILL the presented one, so exactly one
-    # caller rotates -- under any isolation level, Postgres or SQLite -- and a
-    # row lock is not needed (SQLite ignores FOR UPDATE, so a lock could not be
-    # pinned by the unit suite; this can).
+    # caller rotates -- under Postgres READ COMMITTED (the configured default)
+    # and on SQLite -- and a row lock is not needed (SQLite ignores FOR UPDATE,
+    # so a lock could not be pinned by the unit suite; this can). Under
+    # REPEATABLE READ or SERIALIZABLE the loser would instead get a
+    # SerializationFailure, an untyped 500; #637 tracks that.
     new_jti = uuid.uuid4()
     swapped = db.execute(
         update(User)
@@ -757,10 +759,25 @@ def refresh(
 
 
 def _grace_or_reuse(db: Session, user: User, payload, settings) -> TokenPairResponse:
-    """The decision for a presented jti that is not the active one: the
-    immediately previous jti inside the grace window is served the CURRENT
-    identity (no rotation); anything else is a typed 401 `refresh_reused`."""
+    """The decision for a presented jti that is not the active one.
+
+    With NO active session -- a password reset or a deactivation cleared it --
+    the answer is a typed 401 `refresh_reused`, whatever `previous` holds
+    (#636). Otherwise the immediately previous jti inside the grace window is
+    served the CURRENT identity, with no rotation; anything else is the same
+    typed 401. This function never rotates: before #636, active None reached
+    `_issue_pair(keep_jti=None)`, a FULL rotation, and the previous token
+    minted a new session after the control meant to end them all."""
     presented = str(payload.jti)
+    if user.active_refresh_jti is None:
+        log.warning("auth.refresh_no_active_session", user_id=str(user.id), presented_jti=presented)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "reason": "refresh_reused",
+                "message": "This session has been superseded. Please sign in again.",
+            },
+        )
     grace = settings.jwt_refresh_grace_seconds
     # _as_aware: SQLite hands back naive datetimes for a timezone=True
     # column, so a bare subtraction raises TypeError under the test suite
@@ -792,11 +809,13 @@ def _grace_or_reuse(db: Session, user: User, payload, settings) -> TokenPairResp
         presented_jti=presented,
         active_jti=user.active_refresh_jti,
     )
-    # active_refresh_jti is a str column; the token needs a real UUID.
+    # active_refresh_jti is a str column; the token needs a real UUID. It is
+    # never None here (refused above), so `keep_jti` is always set and this
+    # path cannot rotate.
     tokens = _issue_pair(
         user,
         auth_time=payload.auth_time,
-        keep_jti=uuid.UUID(user.active_refresh_jti) if user.active_refresh_jti else None,
+        keep_jti=uuid.UUID(user.active_refresh_jti),
     )
     db.commit()
     return tokens
@@ -1240,8 +1259,14 @@ def reset_password(
         )
     ).scalars():
         other.used_at = utcnow()
-    # Force re-auth on all sessions + clear lockout.
+    # Force re-auth on all sessions + clear lockout. ALL THREE rotation fields,
+    # not only the active jti (#636): the grace path honours `previous` inside
+    # the window, so a surviving `previous` could still mint a session after
+    # the reset meant to end every one. `_grace_or_reuse` also refuses when no
+    # session is active; this is the other half, so neither alone carries it.
     user.active_refresh_jti = None
+    user.previous_refresh_jti = None
+    user.refresh_rotated_at = None
     user.failed_login_count = 0
     user.last_failed_login_at = None
     user.locked_until_at = None

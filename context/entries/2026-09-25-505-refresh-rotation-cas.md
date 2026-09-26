@@ -22,7 +22,11 @@ another.
 
 The rotation is a single `UPDATE ... WHERE id = ? AND active_refresh_jti =
 <presented>`, and the route requires `rowcount == 1`. Only one caller can match,
-under any isolation level. A row lock (`with_for_update`) was not used:
+under Postgres READ COMMITTED (the configured default) and on SQLite. Under
+REPEATABLE READ or SERIALIZABLE the loser would instead get a
+`SerializationFailure`, an untyped 500 (#637). An earlier version of this entry
+said "under any isolation level", which was too strong (review of `ef7762a`).
+A row lock (`with_for_update`) was not used:
 SQLite ignores `FOR UPDATE`, so the unit suite could not pin it. The swap it
 can.
 
@@ -59,11 +63,53 @@ does this.
   - the swap's `active_refresh_jti == presented` condition dropped;
   - a lost swap ignored.
 
+## Round 1 (review of `ef7762a`): a reset left the grace path open (#636)
+
+The swap held. The review found a PRE-EXISTING hole in the same function,
+filed as #636 (tier-1, the coordinator's call, owner-confirmed). A password
+reset and an admin deactivation cleared only `active_refresh_jti`. The grace
+path honours `previous_refresh_jti` inside the window, and with active None it
+issued through `_issue_pair(keep_jti=None)`, which is a full rotation. So the
+previous token minted a new session after the control meant to end them all.
+
+This PR fixes the REFRESH half only, as scoped by the coordinator, with no
+migration:
+- **(a)** Every site that clears `active_refresh_jti` also clears
+  `previous_refresh_jti` and `refresh_rotated_at`: the password reset
+  (`routes/auth.py`) and deactivation (`routes/admin.py`). The sites were found
+  by grepping the symptom, `active_refresh_jti = None`, which gave two.
+- **(b)** `_grace_or_reuse` refuses with a typed 401 `refresh_reused` when no
+  session is active, so the grace path never rotates.
+
+The ACCESS-token half is not here. It needs a stored per-user cutoff checked
+against `iat`, which is a migration, and it stays on #636.
+
+(a) and (b) are redundant at the refresh endpoint. While active is None, (b)
+refuses; active only becomes non-None again through a login, whose rotation
+overwrites `previous`. So each is pinned on its own:
+- (a) by driving the reset and deactivation endpoints and asserting the three
+  stored fields are cleared;
+- (b) at the refresh endpoint, on a stored state with active None and a live
+  previous inside the window;
+- plus an end-to-end test: reset, then present the previous token.
+
+All four were RED on the unfixed code. The end-to-end case got a 200 and a
+fresh token pair after the reset.
+
+Red-on-revert, each case turning exactly its intended tests red:
+- the reset site reverted turns only the reset field test red;
+- the deactivation site reverted turns only the deactivation test red;
+- (b) reverted turns only the grace refusal test red;
+- (a) and (b) both reverted turns the end-to-end test red too.
+
+Known twins, not fixed here: MFA recovery codes and the email and reset
+tokens are read-check-write, #505's shape (#638, tier-2).
+
 ## Limits
 
 - The race is forced on SQLite through a hook. No Postgres-backed concurrent
-  test was added. The swap's correctness does not depend on the isolation
-  level, which is why it was chosen over a lock.
+  test was added. The swap holds under READ COMMITTED, the configured
+  default; the higher isolation levels are #637.
 - The hook anchors on `utcnow()` being called between the user load and the
   rotation (the ceiling check). The tests assert the hook fired, so if that
   call moves they fail rather than pass vacuously.

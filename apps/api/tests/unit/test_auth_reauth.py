@@ -434,6 +434,142 @@ def test_with_no_grace_the_race_loser_gets_a_typed_401_not_a_rotation(
 
 
 # -----------------------------------------------------------------------------
+# (b3) Ending every session means ending the grace path too (#636)
+#
+# A reset and a deactivation cleared only `active_refresh_jti`. The grace path
+# honours `previous_refresh_jti` inside the window, and with active None it
+# issued through `_issue_pair(keep_jti=None)` -- a FULL rotation -- so the
+# previous token minted a new session after the control meant to end them all.
+#
+# Two fixes, and they are REDUNDANT at the refresh endpoint: while active is
+# None the grace refusal (b) blocks, and active only becomes non-None again
+# through a login, whose rotation overwrites `previous`. So one end-to-end test
+# cannot tell them apart. Each is pinned on its own: (a) by driving reset and
+# deactivation through their endpoints and asserting the three stored fields
+# are cleared; (b) at the refresh endpoint, on a stored state with active None
+# and a live previous inside the window.
+# -----------------------------------------------------------------------------
+
+_PASSWORD = "correct horse battery staple!"
+
+
+def _rotation_state(app_client: TestClient, email: str) -> tuple:
+    from app.db.session import get_db
+    from app.models.user import User
+
+    db = next(app_client.app.dependency_overrides[get_db]())
+    try:
+        u = db.query(User).filter(User.email == email).one()
+        return u.active_refresh_jti, u.previous_refresh_jti, u.refresh_rotated_at
+    finally:
+        db.close()
+
+
+def _reset_password(app_client: TestClient, monkeypatch, email: str) -> None:
+    sent: list[str] = []
+    monkeypatch.setattr(
+        "app.routes.auth.send_password_reset_email",
+        lambda *, to, token: sent.append(token),
+    )
+    app_client.post("/auth/forgot-password", json={"email": email})
+    assert sent, "the reset email was not sent -- nothing to reset with"
+    r = app_client.post(
+        "/auth/reset-password", json={"token": sent[-1], "password": "another horse battery 9!"}
+    )
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.unit
+def test_a_password_reset_ends_the_grace_path_too(app_client: TestClient, monkeypatch) -> None:
+    """End to end (#636): rotate once so the original token is the live
+    `previous`, reset the password, and present that previous token inside the
+    window. It must be a typed 401, not a new session."""
+    body = _register(app_client)
+    original = body["tokens"]["refresh_token"]
+    assert (
+        app_client.post("/auth/refresh", json={"refresh_token": original}).status_code == 200
+    ), "setup: the first rotation must succeed so `original` becomes the previous jti"
+
+    _reset_password(app_client, monkeypatch, "first@example.com")
+
+    after = app_client.post("/auth/refresh", json={"refresh_token": original})
+    assert after.status_code == 401, after.text
+    assert after.json()["error"]["reason"] == "refresh_reused"
+
+
+@pytest.mark.unit
+def test_a_password_reset_clears_every_rotation_field(app_client: TestClient, monkeypatch) -> None:
+    """Fix (a) on its own, through the reset endpoint: the previous jti and the
+    rotation time go with the active one."""
+    body = _register(app_client)
+    app_client.post("/auth/refresh", json={"refresh_token": body["tokens"]["refresh_token"]})
+    assert _rotation_state(app_client, "first@example.com")[1] is not None, "setup: no previous"
+
+    _reset_password(app_client, monkeypatch, "first@example.com")
+
+    assert _rotation_state(app_client, "first@example.com") == (None, None, None)
+
+
+@pytest.mark.unit
+def test_a_deactivation_clears_every_rotation_field(app_client: TestClient) -> None:
+    """Fix (a) on its own, through the admin endpoint. `refresh()` refuses an
+    inactive user outright, so the leftover `previous` mattered only after a
+    reactivation -- it is cleared at deactivation regardless."""
+    admin = app_client.post(
+        "/auth/register",
+        json={"email": "admin@kentro.example", "password": _PASSWORD, "display_name": "Admin"},
+    )
+    assert admin.status_code == 201, admin.text
+    bearer = admin.json()["tokens"]["access_token"]
+    victim = app_client.post(
+        "/auth/register",
+        json={"email": "victim@atlas.example", "password": _PASSWORD, "display_name": "Victim"},
+    )
+    assert victim.status_code == 201, victim.text
+    app_client.post(
+        "/auth/refresh", json={"refresh_token": victim.json()["tokens"]["refresh_token"]}
+    )
+    assert _rotation_state(app_client, "victim@atlas.example")[1] is not None, "setup: no previous"
+
+    r = app_client.patch(
+        f"/admin/users/{victim.json()['user']['id']}",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"is_active": False},
+    )
+    assert r.status_code == 200, r.text
+    assert _rotation_state(app_client, "victim@atlas.example") == (None, None, None)
+
+
+@pytest.mark.unit
+def test_the_grace_path_refuses_when_no_session_is_active(app_client: TestClient) -> None:
+    """Fix (b) on its own, at the refresh endpoint: a stored state with active
+    None and a live previous inside the window -- what every reset left before
+    #636 -- is a typed 401. The grace path must never rotate."""
+    from app.db.session import get_db
+    from app.models._common import utcnow
+    from app.models.user import User
+    from app.security.jwt import verify_token
+
+    body = _register(app_client)
+    original = body["tokens"]["refresh_token"]
+    presented = str(verify_token(original, expected_type="refresh").jti)
+    db = next(app_client.app.dependency_overrides[get_db]())
+    try:
+        u = db.query(User).filter(User.email == "first@example.com").one()
+        u.active_refresh_jti = None
+        u.previous_refresh_jti = presented
+        u.refresh_rotated_at = utcnow()
+        db.commit()
+    finally:
+        db.close()
+
+    r = app_client.post("/auth/refresh", json={"refresh_token": original})
+    assert r.status_code == 401, r.text
+    assert r.json()["error"]["reason"] == "refresh_reused"
+    assert _rotation_state(app_client, "first@example.com")[0] is None, "a session was minted"
+
+
+# -----------------------------------------------------------------------------
 # (c) Dead feature flags fail loudly at startup
 # -----------------------------------------------------------------------------
 
