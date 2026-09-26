@@ -36,6 +36,12 @@ export interface IntakeDocumentsPanelProps {
   extracting: boolean;
   /** Bumping this re-fetches the list (e.g. after a workspace upload). */
   reloadKey?: number;
+  /**
+   * #644: the document the open draft was extracted from. While a draft is
+   * open the API refuses extraction from any other document, so the panel
+   * says which one it is and what clears the way.
+   */
+  draftSourceId?: string | null;
 }
 
 /**
@@ -49,6 +55,7 @@ export function IntakeDocumentsPanel({
   onExtract,
   extracting,
   reloadKey = 0,
+  draftSourceId = null,
 }: IntakeDocumentsPanelProps): JSX.Element {
   const [docs, setDocs] = React.useState<ArtifactSummary[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -75,6 +82,9 @@ export function IntakeDocumentsPanel({
     };
   }, [reloadKey]);
 
+  const draftSource =
+    docs?.find((a) => a.id === draftSourceId && draftSourceId !== null) ?? null;
+
   return (
     <Card>
       <CardHeader>
@@ -98,53 +108,68 @@ export function IntakeDocumentsPanel({
             description="The client didn't upload any files. Upload an inventory above instead."
           />
         ) : (
-          <ul className="flex flex-col gap-1.5">
-            {docs.map((a) => (
-              <li
-                key={a.id}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border-subtle bg-surface-card px-3 py-2 text-sm"
+          <div className="flex flex-col gap-2">
+            {draftSource ? (
+              <p
+                className="text-sm text-ink-secondary"
+                data-testid="draft-source-hint"
               >
-                <div className="flex min-w-0 flex-col">
-                  <span
-                    className="truncate font-medium text-ink-primary"
-                    title={a.title}
-                  >
-                    {a.title}
-                  </span>
-                  <span className="text-xs text-ink-tertiary">
-                    {(a.size_bytes / 1024).toFixed(1)} KB ·{" "}
-                    {new Date(a.uploaded_at).toLocaleDateString()}
-                  </span>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <a
-                    href={`/api/proxy/artifacts/${a.id}/download`}
-                    className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-ink-primary hover:bg-surface-sunken"
-                  >
-                    Download
-                  </a>
-                  {isInventory(a) ? (
-                    /* Issue 2: extraction is an AI job — warn before canned
+                The open draft was extracted from {draftSource.title}. To
+                extract from another document, use &quot;Discard draft&quot; in
+                step 2 first.
+              </p>
+            ) : null}
+            <ul className="flex flex-col gap-1.5">
+              {docs.map((a) => (
+                <li
+                  key={a.id}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border-subtle bg-surface-card px-3 py-2 text-sm"
+                >
+                  <div className="flex min-w-0 flex-col">
+                    <span
+                      className="truncate font-medium text-ink-primary"
+                      title={a.title}
+                    >
+                      {a.title}
+                    </span>
+                    <span className="text-xs text-ink-tertiary">
+                      {(a.size_bytes / 1024).toFixed(1)} KB ·{" "}
+                      {new Date(a.uploaded_at).toLocaleDateString()}
+                    </span>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {a.id === draftSourceId ? (
+                      <StatusPill tone="info">Current draft</StatusPill>
+                    ) : null}
+                    <a
+                      href={`/api/proxy/artifacts/${a.id}/download`}
+                      className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-ink-primary hover:bg-surface-sunken"
+                    >
+                      Download
+                    </a>
+                    {isInventory(a) ? (
+                      /* Issue 2: extraction is an AI job — warn before canned
                        output when no key is loaded. */
-                    <RunAiGuard onProceed={() => onExtract(a.id)}>
-                      {({ onClick }) => (
-                        <button
-                          type="button"
-                          onClick={onClick}
-                          disabled={extracting}
-                          className="rounded-md bg-brand-500 px-3 py-1.5 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {extracting ? "Extracting…" : "Extract from this"}
-                        </button>
-                      )}
-                    </RunAiGuard>
-                  ) : (
-                    <StatusPill tone="neutral">Not an inventory</StatusPill>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
+                      <RunAiGuard onProceed={() => onExtract(a.id)}>
+                        {({ onClick }) => (
+                          <button
+                            type="button"
+                            onClick={onClick}
+                            disabled={extracting}
+                            className="rounded-md bg-brand-500 px-3 py-1.5 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {extracting ? "Extracting…" : "Extract from this"}
+                          </button>
+                        )}
+                      </RunAiGuard>
+                    ) : (
+                      <StatusPill tone="neutral">Not an inventory</StatusPill>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </CardBody>
     </Card>
