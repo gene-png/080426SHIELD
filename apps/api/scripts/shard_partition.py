@@ -86,7 +86,7 @@ def _collect_full(out: Path) -> int:
     from scripts.check_ci_selection import CI_SELECTOR, CouldNotLook, _collect
 
     try:
-        ids = _collect(Path.cwd(), CI_SELECTOR, clear_addopts=False)
+        ids, _file_config = _collect(Path.cwd(), CI_SELECTOR, clear_addopts=False)
     except CouldNotLook as exc:
         print(f"shard_partition collect: could not look -- {exc}")
         return 2

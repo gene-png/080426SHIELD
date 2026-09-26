@@ -238,3 +238,47 @@ def test_an_empty_or_missing_input_is_could_not_look(tmp_path: Path, which: str)
 )
 def test_a_bad_invocation_is_could_not_look(argv: list[str]) -> None:
     assert partition.main(argv) == 2
+
+
+# --- collect, end to end ------------------------------------------------------------
+
+
+def test_collect_writes_the_selected_node_ids_from_a_real_pytest_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first CI run crashed here: `collect` treated `_collect`'s
+    `(ids, file_config)` tuple as the id set and died sorting it. No test ran
+    `collect` against real pytest, so this drives it over a real tree. The
+    expected ids come from the files written below, not from the collector."""
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\nmarkers =\n    unit: unit tests\n", encoding="utf-8"
+    )
+    unit = tmp_path / "tests" / "unit"
+    unit.mkdir(parents=True)
+    (unit / "test_x.py").write_text(
+        textwrap.dedent("""
+            import pytest
+
+            @pytest.mark.unit
+            def test_one():
+                pass
+
+            @pytest.mark.unit
+            def test_two():
+                pass
+
+            def test_not_unit():
+                pass
+            """),
+        encoding="utf-8",
+    )
+    out = tmp_path / "selection.txt"
+    monkeypatch.chdir(tmp_path)
+
+    rc = partition.main(["shard_partition", "collect", "--out", str(out)])
+
+    assert rc == 0
+    assert out.read_text(encoding="utf-8").splitlines() == [
+        "tests/unit/test_x.py::test_one",
+        "tests/unit/test_x.py::test_two",
+    ]
