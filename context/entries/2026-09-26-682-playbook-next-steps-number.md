@@ -17,3 +17,9 @@ Branch `track2/csf-playbook-number`, from `main` at `50395ab`.
   `routes/csf.py` and `routes/zt.py` hedge a count but carry no fixed plural
   pronoun. Several existing tests pin that exact text, so it is left alone.
 - **Condition 6:** client-visible copy in a deliverable.
+- **Round 1 of #692 found the same shape in the same file:**
+  `_overview_sentences`, which all four renderers call, said "1 subcategories
+  fall short of their target maturity" and "covers 1 in-scope NIST CSF 2.0
+  subcategories". Both now agree with their counts ("subcategory falls short
+  of its target"). The priority breakdown ("1 Priority 1 (critical), 0
+  Priority 2, …") reads as labels at any count, so it stays. Filed: #696.

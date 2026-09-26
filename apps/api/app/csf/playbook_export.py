@@ -423,11 +423,20 @@ def _overview_sentences(rows: Sequence[Any]) -> list[str]:
     gaps = sum(1 for r in rows if r.gap)
     pc = _priority_counts(rows)
     fns = _function_summary(rows)
+    # In number with the counts (#682, #692 round 1): "1 subcategories fall
+    # short of their target" sat directly above the next steps in all four
+    # renderers. The priority breakdown reads as labels at any count.
+    short = (
+        "subcategory falls short of its target maturity"
+        if gaps == 1
+        else "subcategories fall short of their target maturity"
+    )
     lines = [
-        f"This assessment covers {total} in-scope NIST CSF 2.0 subcategories. "
+        f"This assessment covers {total} in-scope NIST CSF 2.0 "
+        f"{'subcategory' if total == 1 else 'subcategories'}. "
         f"Enterprise maturity, rolled up across the impact tiers in use, "
         f"averages Level {overall} of 5.",
-        f"{gaps} subcategories fall short of their target maturity — "
+        f"{gaps} {short} — "
         f"{pc['P1']} Priority 1 (critical), {pc['P2']} Priority 2, and "
         f"{pc['P3']} Priority 3.",
     ]
