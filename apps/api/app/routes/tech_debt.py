@@ -963,11 +963,17 @@ def undecided_row_count(db: Session, list_id: uuid.UUID) -> int:
     )
 
 
-def _refuse_undecided(count: int) -> HTTPException:
-    """#639: approval of a list whose review is unfinished. Typed (D-016), the
-    count named, and the remedy pointing at step 2 by the title the workspace
-    shows. `proxyMessage` renders `error.message` as is, so this sentence is
-    what the consultant reads."""
+def _refuse_undecided(count: int, *, then: str = "approve again") -> HTTPException:
+    """#639: a list whose review is unfinished. Typed (D-016), the count named,
+    and the remedy pointing at step 2 by the title the workspace shows.
+    `proxyMessage` and `DeliverableCard` render `error.message` as is, so this
+    sentence is what the consultant reads.
+
+    `then` is the action that follows the fix, and it differs by caller: after a
+    refused APPROVE it is approving again; after a refused FINALIZE the list is
+    already approved and its Approve button is disabled, so it is generating the
+    deliverable again. A remedy naming a control that is not there is the defect
+    CLAUDE.md records under user-facing strings."""
     rows = "1 row is" if count == 1 else f"{count} rows are"
     return HTTPException(
         status_code=status.HTTP_409_CONFLICT,
@@ -975,8 +981,25 @@ def _refuse_undecided(count: int) -> HTTPException:
             "reason": "capability_list_undecided_rows",
             "message": (
                 f"{rows} still undecided. Give every row a keep, consolidate or cut "
-                "decision in step 2, Review and correct the extracted list, then "
-                "approve again."
+                f"decision in step 2, Review and correct the extracted list, then {then}."
+            ),
+        },
+    )
+
+
+def _refuse_changed_during_approval() -> HTTPException:
+    """#657 round 1, F2: the approve UPDATE matched nothing, yet the list is
+    still DRAFT or APPROVED and nothing is undecided now. A concurrent edit made
+    a row undecided before the write and decided it again before the recount.
+    Nothing was approved, and the honest thing to say is that the list moved;
+    the RELEASED refusal this used to fall through to said it was locked."""
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "reason": "capability_list_changed_during_approval",
+            "message": (
+                "The list changed while it was being approved, so nothing was approved. "
+                "Reload the page and approve again."
             ),
         },
     )
@@ -1130,14 +1153,15 @@ def approve_capability_list(
         .execution_options(synchronize_session=False)
     )
     if result.rowcount != 1:
-        # Either the status moved or a row became undecided; say which.
+        # Nothing was approved. Say why: the status moved, a row is undecided,
+        # or -- still approvable and nothing undecided now -- the list changed
+        # under the write and changed back (#657 round 1, F2).
         db.refresh(cap_list)
-        undecided = undecided_row_count(db, cap_list.id)
-        if undecided and cap_list.status in (
-            CapabilityListStatus.DRAFT,
-            CapabilityListStatus.APPROVED,
-        ):
-            raise _refuse_undecided(undecided)
+        if cap_list.status in (CapabilityListStatus.DRAFT, CapabilityListStatus.APPROVED):
+            undecided = undecided_row_count(db, cap_list.id)
+            if undecided:
+                raise _refuse_undecided(undecided)
+            raise _refuse_changed_during_approval()
         raise _refuse_approval(cap_list.status)
     db.refresh(cap_list)
     # W3: record WHAT was approved, not merely that approval happened.
@@ -1499,6 +1523,16 @@ def finalize_deliverable(
                 "message": "Capability list must be approved before finalizing the deliverable.",
             },
         )
+    # #657 round 1, F1. An APPROVED list stays editable until release, and the
+    # step-2 table can send a row back to undecided, so "approved" does not mean
+    # "decided" by the time the deliverable is built. The same count the approve
+    # guard uses, re-read here. It also closes the Postgres write skew where a
+    # PATCH commits between the approve UPDATE and its commit. Refusing EDITS to
+    # an approved list is not this guard's job: #640's revision counter owns the
+    # "edited since approval" rule.
+    undecided = undecided_row_count(db, cap_list.id)
+    if undecided:
+        raise _refuse_undecided(undecided, then="generate the deliverable again")
     items = (
         db.execute(select(CapabilityItem).where(CapabilityItem.capability_list_id == cap_list.id))
         .scalars()

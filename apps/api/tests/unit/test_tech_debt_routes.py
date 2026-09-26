@@ -720,6 +720,96 @@ def test_a_row_undecided_between_the_check_and_the_write_is_still_refused(
 
 
 @pytest.mark.unit
+def test_a_lost_approve_race_with_nothing_undecided_says_the_list_changed(
+    app_client, monkeypatch
+) -> None:
+    """#657 round 1, F2. The UPDATE can miss while the list is still a draft
+    with nothing undecided by the time the route recounts: a concurrent edit
+    made a row undecided before the write and decided it again after. The
+    route used to fall through to the RELEASED refusal and tell the consultant
+    the list "has been released and is locked", which it had not.
+
+    The edit before the write is real: a separate session commits it. The UNDO
+    cannot be: SQLite holds the route's write lock from its UPDATE until commit,
+    so a second writer gets "database is locked" (measured). Under Postgres READ
+    COMMITTED the undo commits and the recount reads zero, so the recount is
+    modelled as returning that zero -- the state this test is about, which
+    SQLite cannot produce. The pre-check before it is the real count."""
+    import app.routes.tech_debt as td
+    from app.models.capability import CapabilityItem
+
+    c, sessions, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)
+    list_id = _latest_list(c, bearer, svc_id)["id"]
+
+    real_build, real_count = td.build_approved_membership, td.undecided_row_count
+    events: list[str] = []
+
+    def edit_before_write(db, capability_list_id):
+        if "edit" not in events:
+            events.append("edit")
+            other = sessions()
+            try:
+                other.get(CapabilityItem, _uuid.UUID(item_ids[0])).disposition = None
+                other.commit()
+            finally:
+                other.close()
+        return real_build(db, capability_list_id)
+
+    def undone_by_the_recount(db, list_id_):
+        if "edit" in events and "undo" not in events:
+            events.append("undo")
+            return 0  # what a READ COMMITTED recount reads after the racer's undo
+        return real_count(db, list_id_)
+
+    monkeypatch.setattr(td, "build_approved_membership", edit_before_write)
+    monkeypatch.setattr(td, "undecided_row_count", undone_by_the_recount)
+    r = c.post(
+        f"/tech-debt/capability-lists/{list_id}/approve",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+
+    assert events == ["edit", "undo"], f"the race was not exercised as designed: {events}"
+    assert r.status_code == 409, r.text
+    error = r.json()["error"]
+    assert error["reason"] == "capability_list_changed_during_approval", error
+    assert "released" not in error["message"].lower(), error["message"]
+    assert "approve again" in error["message"].lower(), error["message"]
+    assert _latest_list(c, bearer, svc_id)["status"] == "draft"
+
+
+@pytest.mark.unit
+def test_finalize_refuses_an_approved_list_a_row_was_made_undecided_on(app_client) -> None:
+    """#657 round 1, F1. An APPROVED list stays editable until release, and
+    the step-2 table can send a row back to undecided through the real PATCH.
+    Finalize checked only the status, so the deliverable could still be built
+    from an unfinished review. It re-checks, with the approve refusal's reason
+    and a remedy that names what the consultant can do at step 4: approve is
+    already done and its button disabled, so the message must not send them
+    there."""
+    c, _, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)
+    _approve_list(c, bearer, svc_id)
+    r = c.patch(f"/tech-debt/capability-items/{item_ids[0]}", headers=h, json={"disposition": None})
+    assert r.status_code == 200, r.text
+
+    r = c.post(f"/tech-debt/services/{svc_id}/deliverables/finalize", headers=h)
+
+    assert r.status_code == 409, r.text
+    error = r.json()["error"]
+    assert error["reason"] == "capability_list_undecided_rows", error
+    assert "1 row is" in error["message"], error["message"]
+    assert "Review and correct the extracted list" in error["message"], error["message"]
+    assert "generate the deliverable again" in error["message"], error["message"]
+    assert "approve again" not in error["message"], error["message"]
+
+
+@pytest.mark.unit
 def test_approve_succeeds_once_every_row_is_decided(app_client) -> None:
     """The passing half: zero undecided rows approve."""
     c, _, provider = app_client
