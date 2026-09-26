@@ -1,8 +1,9 @@
 """The migration chain has exactly ONE head and no gaps (Gene's addition 3 to
 the #620 design, 2026-09-25).
 
-Several open PRs carry migrations (#620 takes 0054, then #640 0055, then #658
-0056), and each is cut from `main`. Whichever lands second must re-point its
+Several open PRs carry migrations (#620 took 0054; #658 takes 0055 and #640
+0056, renumbered 2026-09-26 when the landing order changed), and each is cut
+from `main`. Whichever lands second must re-point its
 `down_revision`; if it does not, the chain forks, `alembic upgrade head` refuses
 to choose, and every containerised gate that runs migrations fails -- or, worse,
 a fixture that upgrades to one named head silently skips the other branch.

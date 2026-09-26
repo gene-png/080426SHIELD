@@ -14,6 +14,7 @@ need the role take `require_role` instead (Phase 1 stage 7).
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
@@ -56,7 +57,35 @@ def current_user(
             detail="User is no longer active.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    if _predates_credentials_change(payload.iat, user.credentials_changed_at):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "reason": "credentials_changed",
+                "message": "Your password was changed since this session began. Sign in again.",
+            },
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     return user
+
+
+def _predates_credentials_change(iat: datetime | None, cutoff: datetime | None) -> bool:
+    """#658: refuse an access token issued before the password last changed.
+
+    The owner's rule: accept iff `iat >= cutoff`, both in whole seconds, so the
+    session a user starts in the reset's own second is accepted -- and so is a
+    token minted earlier in that same second, the rule's stated residual. It
+    reads the row `current_user` already loaded, so it costs no query. A token
+    with no `iat` cannot be judged against a cutoff and is refused; `verify_token`
+    requires the claim, so that branch is unreachable today.
+    """
+    if cutoff is None:
+        return False
+    if iat is None:
+        return True
+    if cutoff.tzinfo is None:  # SQLite returns naive datetimes; the column is UTC
+        cutoff = cutoff.replace(tzinfo=UTC)
+    return iat < cutoff
 
 
 def require_role(*allowed: UserRoleT) -> Callable[[User], User]:
