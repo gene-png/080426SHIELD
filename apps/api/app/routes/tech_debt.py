@@ -46,7 +46,7 @@ from sqlalchemy.orm import Session
 from app.ai.llm import LLMClient
 from app.audit import audit
 from app.db.session import get_db
-from app.deliverable_release import release_deliverable
+from app.deliverable_release import ParentGuard, release_deliverable
 from app.dependencies import current_client, current_user, require_role
 from app.logging import get_logger
 from app.models._common import utcnow
@@ -1033,6 +1033,67 @@ def build_approved_membership(db: Session, capability_list_id: uuid.UUID) -> lis
     ]
 
 
+#: A row still UNDECIDED at step 2: no consolidation-plan verdict. The model's
+#: own definition (`CapabilityItem.disposition`: "None = undecided") and the one
+#: the step-2 table shows ("Undecided..."); every row counts, bundle
+#: components included, because every row has the select.
+_UNDECIDED = CapabilityItem.disposition.is_(None)
+
+
+def undecided_row_count(db: Session, list_id: uuid.UUID) -> int:
+    """How many rows of `list_id` are still undecided. ONE definition, read by
+    the approve guard and the consolidation-plan summary alike."""
+    return int(
+        db.execute(
+            select(func.count())
+            .select_from(CapabilityItem)
+            .where(CapabilityItem.capability_list_id == list_id, _UNDECIDED)
+        ).scalar_one()
+    )
+
+
+def _refuse_undecided(count: int, *, then: str = "approve again") -> HTTPException:
+    """#639: a list whose review is unfinished. Typed (D-016), the count named,
+    and the remedy pointing at step 2 by the title the workspace shows.
+    `proxyMessage` and `DeliverableCard` render `error.message` as is, so this
+    sentence is what the consultant reads.
+
+    `then` is the action that follows the fix, and it differs by caller: after a
+    refused APPROVE it is approving again; after a refused FINALIZE the list is
+    already approved and its Approve button is disabled, so it is generating the
+    deliverable again. A remedy naming a control that is not there is the defect
+    CLAUDE.md records under user-facing strings."""
+    rows = "1 row is" if count == 1 else f"{count} rows are"
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "reason": "capability_list_undecided_rows",
+            "message": (
+                f"{rows} still undecided. Give every row a keep, consolidate or cut "
+                f"decision in step 2, Review and correct the extracted list, then {then}."
+            ),
+        },
+    )
+
+
+def _refuse_changed_during_approval() -> HTTPException:
+    """#657 round 1, F2: the approve UPDATE matched nothing, yet the list is
+    still DRAFT or APPROVED and nothing is undecided now. A concurrent edit made
+    a row undecided before the write and decided it again before the recount.
+    Nothing was approved, and the honest thing to say is that the list moved;
+    the RELEASED refusal this used to fall through to said it was locked."""
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "reason": "capability_list_changed_during_approval",
+            "message": (
+                "The list changed while it was being approved, so nothing was approved. "
+                "Reload the page and approve again."
+            ),
+        },
+    )
+
+
 def _refuse_approval(current: CapabilityListStatus) -> HTTPException:
     """The refusal for a list whose status forbids approval.
 
@@ -1150,13 +1211,27 @@ def approve_capability_list(
     # two the guards above refuse, and the `rowcount != 1` branch re-reads the
     # row and raises the same typed errors, so a racing transition is refused
     # with the message the sequential case would have produced.
+    #
+    # #639: EVERY ROW DECIDED. The read below refuses with the count; the same
+    # condition is in the UPDATE's WHERE, so a row set back to undecided between
+    # this read and the write cannot slip through -- the same D-031 contract,
+    # for the same reason.
+    undecided = undecided_row_count(db, cap_list.id)
+    if undecided:
+        raise _refuse_undecided(undecided)
     membership = build_approved_membership(db, cap_list.id)
     previous = cap_list.approved_membership
+    no_undecided_rows = ~(
+        select(CapabilityItem.id)
+        .where(CapabilityItem.capability_list_id == cap_list.id, _UNDECIDED)
+        .exists()
+    )
     result = db.execute(
         update(CapabilityList)
         .where(
             CapabilityList.id == cap_list.id,
             CapabilityList.status.in_((CapabilityListStatus.DRAFT, CapabilityListStatus.APPROVED)),
+            no_undecided_rows,
         )
         .values(
             status=CapabilityListStatus.APPROVED,
@@ -1167,7 +1242,15 @@ def approve_capability_list(
         .execution_options(synchronize_session=False)
     )
     if result.rowcount != 1:
+        # Nothing was approved. Say why: the status moved, a row is undecided,
+        # or -- still approvable and nothing undecided now -- the list changed
+        # under the write and changed back (#657 round 1, F2).
         db.refresh(cap_list)
+        if cap_list.status in (CapabilityListStatus.DRAFT, CapabilityListStatus.APPROVED):
+            undecided = undecided_row_count(db, cap_list.id)
+            if undecided:
+                raise _refuse_undecided(undecided)
+            raise _refuse_changed_during_approval()
         raise _refuse_approval(cap_list.status)
     db.refresh(cap_list)
     # W3: record WHAT was approved, not merely that approval happened.
@@ -1377,12 +1460,13 @@ def consolidation_plan_summary(
     keep = 0
     consolidate = 0
     cut = 0
-    undecided = 0
+    # The approve guard's own count (#639), so the plan and the refusal cannot
+    # disagree about how many rows are undecided.
+    undecided = undecided_row_count(db, cap_list.id)
     cut_savings = 0.0
     savings_cost_known = True
     for it in items:
         if it.disposition is None:
-            undecided += 1
             continue
         if it.disposition == CapabilityDisposition.KEEP:
             keep += 1
@@ -1533,6 +1617,32 @@ def finalize_deliverable(
         .scalars()
         .all()
     )
+    # #657 round 1, F1: an APPROVED list stays editable until release, and the
+    # step-2 table can send a row back to undecided, so "approved" does not mean
+    # "decided" by the time the deliverable is built. Refusing EDITS to an
+    # approved list is not this guard's job: #640's revision counter owns the
+    # "edited since approval" rule.
+    #
+    # COUNTED FROM THE ROWS JUST LOADED, not by a second query (round 2): a count
+    # and a select are two statements, and under READ COMMITTED a PATCH between
+    # them would send an undecided row into the render the count had passed. The
+    # predicate is `_UNDECIDED`'s (`disposition IS NULL`), applied to the rows.
+    #
+    # APPROVED ONLY (round 2). A RELEASED list is frozen, and re-finalizing it
+    # never locks a service -- that is why finalize accepts RELEASED at all.
+    # The release flip itself refuses a list holding undecided rows (round 3:
+    # the guard is in the flip's WHERE, the one writer of RELEASED, on the first
+    # release and the repair re-release alike), so the flip does not freeze one:
+    # a row's disposition is judged by the same statement that writes RELEASED.
+    # Not proven under Postgres READ COMMITTED against a PATCH that commits
+    # concurrently with the flip -- that write skew is #675, pre-existing.
+    # A legacy RELEASED list that holds one (released before #639) keeps
+    # re-finalizing exactly as it does on main, rather than being locked behind
+    # a remedy -- "edit step 2" -- that a released list refuses.
+    if cap_list.status == CapabilityListStatus.APPROVED:
+        undecided = sum(1 for it in items if it.disposition is None)
+        if undecided:
+            raise _refuse_undecided(undecided, then="generate the deliverable again")
 
     client_name = client.legal_name  # NULL when nobody has named the org (D-080)
 
@@ -1697,5 +1807,50 @@ def release_tech_debt_deliverable(
         user=user,
         kinds=(ServiceKind.TECH_DEBT,),
         action="tech_debt.deliverable.released",
+        parent_guard=_NO_UNDECIDED_ROWS,
     )
     return _serialize_deliverable(db, deliv)
+
+
+#: #657 round 3. Release freezes the list, so it must not freeze an unfinished
+#: review: without this, approve -> finalize -> send a row back to undecided ->
+#: release produced a RELEASED list no step could repair. The condition joins
+#: the parent flip's own WHERE in `deliverable_release._release_parent`, the ONE
+#: writer of a released list, so it holds on the first release AND on the
+#: repair re-release of an already-released deliverable, and the check and the
+#: write are one statement. (A PATCH committing concurrently with the flip under
+#: Postgres READ COMMITTED is #675's write skew, pre-existing and not closed
+#: here.) The remedy names step 2, which is editable while the list is APPROVED
+#: -- the only state the flip moves.
+def _refuse_changed_during_release() -> HTTPException:
+    """#657 round 4, approve's F2 for release: the guarded flip missed, yet the
+    recount finds nothing undecided -- a row was re-decided between the flip and
+    the count. Nothing was released; saying "0 rows are still undecided" would
+    be false, so it says the list moved."""
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "reason": "capability_list_changed_during_release",
+            "message": (
+                "The list changed while the deliverable was being released, so nothing "
+                "was released. Reload the page and release again."
+            ),
+        },
+    )
+
+
+def _refuse_release_over_undecided(db: Session, list_id: uuid.UUID) -> HTTPException:
+    undecided = undecided_row_count(db, list_id)
+    if not undecided:
+        return _refuse_changed_during_release()
+    return _refuse_undecided(undecided, then="generate the deliverable again before releasing")
+
+
+_NO_UNDECIDED_ROWS = ParentGuard(
+    condition=lambda list_id: ~(
+        select(CapabilityItem.id)
+        .where(CapabilityItem.capability_list_id == list_id, _UNDECIDED)
+        .exists()
+    ),
+    refusal=_refuse_release_over_undecided,
+)
