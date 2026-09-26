@@ -251,7 +251,10 @@ export function AttackDashboard({
   data: AttackDashboardData;
 }): JSX.Element {
   const k = kpis(data);
-  const dpr = dprCoverage(data.techniques);
+  const newRules = data.parents_computed === true;
+  const dpr = dprCoverage(data.techniques, newRules);
+  // #554, option (a): null for an assessment approved before #620.
+  const outside = outsideAssessedText(data.rollup);
   const blind = blindSpots(data.techniques);
   // #620 round 5: reconciles the KPI (rollup) with the list below it.
   const reconcile = blindSpotReconciliation(data);
@@ -306,7 +309,11 @@ export function AttackDashboard({
           value={String(k.evaluated)}
           // #554: the KPI percentages divide by covered + partial + gap, so
           // the two counts outside that denominator sit beside them.
-          sub={`Coverage assessed this engagement. ${outsideAssessedText(data.rollup)}`}
+          sub={
+            outside === null
+              ? "Coverage assessed this engagement"
+              : `Coverage assessed this engagement. ${outside}`
+          }
         />
         <KpiCard
           label="Fully covered"
@@ -353,10 +360,10 @@ export function AttackDashboard({
               ? `Weighted coverage across evaluated techniques: ${data.rollup.coverage_pct}%. ` +
                 `${data.rollup.pending_review} technique${data.rollup.pending_review === 1 ? " is" : "s are"} ` +
                 `held out of this figure pending evidence review, so it is a percentage of what can be ` +
-                `claimed today — not of the whole catalogue. `
-              : `Weighted coverage across evaluated techniques: ${data.rollup.coverage_pct}%. `) +
+                `claimed today — not of the whole catalogue.`
+              : `Weighted coverage across evaluated techniques: ${data.rollup.coverage_pct}%.`) +
             // #554: beside the percentage on every surface, even at zero.
-            outsideAssessedText(data.rollup)
+            (outside === null ? "" : ` ${outside}`)
           }
         >
           <div style={{ position: "relative", height: 340 }}>
@@ -369,9 +376,9 @@ export function AttackDashboard({
       <Section
         title="Detect · Prevent · Respond posture"
         desc={
-          "A technique is fully covered only when all three legs are present. " +
+          "A technique is fully covered only when all three legs are present." +
           // #554: beside the three percentages, which exclude both.
-          outsideAssessedText(data.rollup)
+          (outside === null ? "" : ` ${outside}`)
         }
       >
         {/* #620: only under D-094's rules. An assessment approved before #620
@@ -556,10 +563,14 @@ export function AttackDashboard({
             <option value="partial">Partial</option>
             <option value="gap">Uncovered</option>
             <option value="not_applicable">N/A</option>
-            <option value="outside_control_surface">
-              Outside control surface
-            </option>
-            <option value="unable_to_determine">Not verified</option>
+            {newRules ? (
+              <>
+                <option value="outside_control_surface">
+                  Outside control surface
+                </option>
+                <option value="unable_to_determine">Not verified</option>
+              </>
+            ) : null}
           </select>
         </div>
         <div

@@ -27,9 +27,10 @@ export interface DashTactic {
   unscored: number;
   /** #102: status assigned, supporting citation unconfirmed, withheld from the %. */
   pending_review?: number;
-  /** #554: outside the assessed denominator; always beside the percentage. */
-  outside_control_surface: number;
-  unable_to_determine: number;
+  /** #554: outside the assessed denominator; always beside the percentage.
+   *  Absent for an assessment approved before #620 (option (a)). */
+  outside_control_surface?: number;
+  unable_to_determine?: number;
   coverage_pct: number;
 }
 
@@ -74,9 +75,10 @@ export interface DashRollup {
    * beside it — the same rule the released PDF follows.
    */
   pending_review?: number;
-  /** #554: outside the assessed denominator; always beside the percentage. */
-  outside_control_surface: number;
-  unable_to_determine: number;
+  /** #554: outside the assessed denominator; always beside the percentage.
+   *  Absent for an assessment approved before #620 (option (a)). */
+  outside_control_surface?: number;
+  unable_to_determine?: number;
   coverage_pct: number;
   by_tactic: DashTactic[];
 }
@@ -176,12 +178,21 @@ const ASSESSED: ReadonlySet<CoverageStatus> = new Set([
   "gap",
 ]);
 
-export function dprCoverage(techniques: DashTechnique[]): DprCoverage {
+export function dprCoverage(
+  techniques: DashTechnique[],
+  /** `data.parents_computed === true`: the assessment is under #620's rules.
+   *  #621's ASSESSED-only population applies there alone (option (a)); one
+   *  approved before #620 keeps the triad it was delivered with. */
+  newRules = false,
+): DprCoverage {
   // A computed parent is out too (#620 round 2, option (b), pending Gene's
   // confirmation): it carries no tools of its own, so counting it would add a
   // zero-leg row per parent beside the children it is computed from.
   const claimable = techniques.filter(
-    (t) => !t.pending_review && !t.computed_parent && ASSESSED.has(t.status),
+    (t) =>
+      !t.pending_review &&
+      !t.computed_parent &&
+      (!newRules || ASSESSED.has(t.status)),
   );
   // Each excluded row is counted once, under the first reason that excludes
   // it: a parent is out as a parent whether or not it is also pending.

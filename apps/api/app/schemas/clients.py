@@ -83,9 +83,21 @@ class AttackTacticCoverage(BaseModel):
     # #554: outside the assessed denominator, and REQUIRED -- no default, so a
     # response built without them fails loudly instead of reading "0 not
     # verified". Every surface that shows `coverage_pct` shows these beside it.
-    outside_control_surface: int
-    unable_to_determine: int
+    # None, and then OMITTED from the JSON, exactly when the assessment renders
+    # under the rules from before #620 (option (a)): its dashboard stays what
+    # was delivered, byte for byte (#620's golden test).
+    outside_control_surface: int | None
+    unable_to_determine: int | None
     coverage_pct: float
+
+    @model_serializer(mode="wrap")
+    def _drop_counts_not_shown(self, handler: Any) -> dict[str, Any]:
+        return _without_none(handler(self), _OUTSIDE_COUNT_KEYS)
+
+
+#: #621's two counts, omitted where the assessment renders under the rules from
+#: before #620 (option (a)).
+_OUTSIDE_COUNT_KEYS = frozenset({"outside_control_surface", "unable_to_determine"})
 
 
 def _without_none(data: dict[str, Any], keys: frozenset[str]) -> dict[str, Any]:
@@ -154,10 +166,17 @@ class AttackDashboardRollup(BaseModel):
     # #554: outside the assessed denominator, and REQUIRED -- no default, so a
     # response built without them fails loudly instead of reading "0 not
     # verified". Every surface that shows `coverage_pct` shows these beside it.
-    outside_control_surface: int
-    unable_to_determine: int
+    # None, and then OMITTED from the JSON, exactly when the assessment renders
+    # under the rules from before #620 (option (a)): its dashboard stays what
+    # was delivered, byte for byte (#620's golden test).
+    outside_control_surface: int | None
+    unable_to_determine: int | None
     coverage_pct: float
     by_tactic: list[AttackTacticCoverage]
+
+    @model_serializer(mode="wrap")
+    def _drop_counts_not_shown(self, handler: Any) -> dict[str, Any]:
+        return _without_none(handler(self), _OUTSIDE_COUNT_KEYS)
 
 
 class AttackDashboardResponse(BaseModel):
@@ -640,7 +659,8 @@ class ValueSummaryResponse(BaseModel):
     attack_uncovered_withheld: bool
     #: #554 / #621 review: techniques nobody verified, rendered beside the
     #: uncovered count so "0 uncovered" cannot read as "nothing is missing" over
-    #: an unverified assessment. None exactly when `attack_uncovered_count` is.
+    #: an unverified assessment. None when `attack_uncovered_count` is, and when
+    #: no released assessment behind it renders under #620's rules (option (a)).
     attack_not_verified_count: int | None
     csf_gap_count: int | None
     csf_gap_unresolved: bool

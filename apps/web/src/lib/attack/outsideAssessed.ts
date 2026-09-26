@@ -9,8 +9,15 @@
  * never look alike.
  */
 export function outsideAssessedText(r: {
-  unable_to_determine: number;
-  outside_control_surface: number;
-}): string {
+  unable_to_determine?: number | null;
+  outside_control_surface?: number | null;
+}): string | null {
+  // Option (a), 2026-09-26: the API sends the counts only for an assessment
+  // under #620's rules (`attack/rules.py`). One approved before #620 renders
+  // what was delivered, so absent counts mean "not stated here" -- null, never
+  // a confident "Not verified 0".
+  if (r.unable_to_determine == null || r.outside_control_surface == null) {
+    return null;
+  }
   return `Not verified ${r.unable_to_determine}, Outside control surface ${r.outside_control_surface}.`;
 }

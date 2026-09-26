@@ -120,12 +120,16 @@ export function AttackMatrix({
                             zero -- "cov 100%" over one covered row and twenty
                             unverified ones is otherwise indistinguishable
                             from a fully assessed tactic. */}
-                        <div
-                          className="text-[10px] text-ink-tertiary"
-                          data-testid={`attack-matrix-outside-${col.tactic_id}`}
-                        >
-                          {outsideAssessedText(hm)}
-                        </div>
+                        {/* Option (a): not for an assessment approved
+                            before #620, whose counts arrive null. */}
+                        {outsideAssessedText(hm) === null ? null : (
+                          <div
+                            className="text-[10px] text-ink-tertiary"
+                            data-testid={`attack-matrix-outside-${col.tactic_id}`}
+                          >
+                            {outsideAssessedText(hm)}
+                          </div>
+                        )}
                       </>
                     ) : null}
                   </th>

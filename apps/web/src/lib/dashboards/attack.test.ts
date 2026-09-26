@@ -175,7 +175,8 @@ describe("attack dashboard transforms", () => {
     const assessed = tech({ code: "T1", detection_tools: ["Tool A"] });
     const unverified = tech({ code: "T2", status: "unable_to_determine" });
     const outside = tech({ code: "T3", status: "outside_control_surface" });
-    const dpr = dprCoverage([assessed, unverified, outside]);
+    // Under #620's rules only (option (a)); rule 1 keeps its delivered triad.
+    const dpr = dprCoverage([assessed, unverified, outside], true);
     expect(dpr.total).toBe(1);
     expect(dpr.detect.pct).toBe(100);
   });
@@ -186,7 +187,8 @@ describe("attack dashboard transforms", () => {
     // was 1 of 2, 50%; it is 1 of 1, 100% -- so this cannot pass either way.
     const assessed = tech({ code: "T1", detection_tools: ["Tool A"] });
     const na = tech({ code: "T2", status: "not_applicable" });
-    const dpr = dprCoverage([assessed, na]);
+    // Under #620's rules only (option (a)); rule 1 keeps its delivered triad.
+    const dpr = dprCoverage([assessed, na], true);
     expect(dpr.total).toBe(1);
     expect(dpr.detect).toEqual({ n: 1, pct: 100 });
   });

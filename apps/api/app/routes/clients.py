@@ -883,11 +883,15 @@ def _attack_uncovered_total(
 
     The third value exists because "0 techniques uncovered" over an assessment
     whose rows nobody verified is a false assurance: `gap` counts only what was
-    judged and found missing. It is None exactly when the total is."""
+    judged and found missing. It is None when the total is, and also when no
+    released assessment behind it renders under #620's rules (option (a)): the
+    card then reads as it did before #621. Summed over the services under the
+    new rules only; a rule-1 assessment cannot hold an unverified row, since
+    nothing may write one."""
     if not service_ids:
         return _KindTotal(None, False), False, None
     total = 0
-    not_verified = 0
+    not_verified: int | None = None
     for sid in service_ids:
         # #114: the released deliverable's parent, not the latest APPROVED row.
         # See `_csf_gap_total` above for why the `found` flag went with it.
@@ -934,7 +938,8 @@ def _attack_uncovered_total(
         # misses every other caller sitting beside it.
         rollup = attack_compute(coverage_map)
         total += rollup.gap
-        not_verified += rollup.unable_to_determine
+        if attack_parents_computed(a):
+            not_verified = (not_verified or 0) + rollup.unable_to_determine
     return _KindTotal(total, False), False, not_verified
 
 
@@ -1294,8 +1299,9 @@ def attack_dashboard(
             gap=rollup.gap,
             not_applicable=rollup.not_applicable,
             pending_review=rollup.pending_review,
-            outside_control_surface=rollup.outside_control_surface,
-            unable_to_determine=rollup.unable_to_determine,
+            # Option (a): only under #620's rules; None is omitted from the JSON.
+            outside_control_surface=rollup.outside_control_surface if rule else None,
+            unable_to_determine=rollup.unable_to_determine if rule else None,
             coverage_pct=rollup.coverage_pct,
             by_tactic=[
                 AttackTacticCoverage(
@@ -1307,8 +1313,8 @@ def attack_dashboard(
                     not_applicable=tc.not_applicable,
                     unscored=tc.unscored,
                     pending_review=tc.pending_review,
-                    outside_control_surface=tc.outside_control_surface,
-                    unable_to_determine=tc.unable_to_determine,
+                    outside_control_surface=tc.outside_control_surface if rule else None,
+                    unable_to_determine=tc.unable_to_determine if rule else None,
                     coverage_pct=tc.coverage_pct,
                 )
                 for tc in rollup.by_tactic

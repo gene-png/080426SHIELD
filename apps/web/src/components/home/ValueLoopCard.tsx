@@ -156,7 +156,12 @@ function buildMetrics(summary: ValueSummary): Metric[] {
             (summary.attack_not_verified_count == null
               ? ""
               : `, ${COUNT.format(summary.attack_not_verified_count)} not verified`),
-      hint: "Adversary techniques with no defensive coverage yet. Not verified techniques were not checked, so they are counted as neither.",
+      // Option (a): the count and its sentence only where the API states it,
+      // which is for assessments under #620's rules.
+      hint:
+        summary.attack_not_verified_count == null
+          ? "Adversary techniques with no defensive coverage yet."
+          : "Adversary techniques with no defensive coverage yet. Not verified techniques were not checked, so they are counted as neither.",
       unresolved: summary.attack_uncovered_unresolved,
       unresolvedReason: summary.attack_uncovered_withheld
         ? "Your MITRE ATT&CK coverage report was produced against an earlier version of the ATT&CK framework than the current one, so its figures are withheld."
