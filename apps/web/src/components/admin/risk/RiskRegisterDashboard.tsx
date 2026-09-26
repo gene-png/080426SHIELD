@@ -393,10 +393,12 @@ export function RiskRegisterDashboard(): JSX.Element {
           className="text-sm font-medium text-status-warning-fg"
           data-testid="risk-register-excluded-inputs"
         >
-          Generated without {excludedInputs.join("; ")}. Those assessments exist
-          but are not approved, so nothing from them is in this register. The
-          exported documents do not say so — re-generate after approving them if
-          they should be included.
+          {/* #683: in number with the list -- "Those assessments ... them ...
+              they" read one excluded assessment as several. */}
+          Generated without {excludedInputs.join("; ")}.{" "}
+          {excludedInputs.length === 1
+            ? "That assessment exists but is not approved, so nothing from it is in this register. The exported documents do not say so — re-generate after approving it if it should be included."
+            : "Those assessments exist but are not approved, so nothing from them is in this register. The exported documents do not say so — re-generate after approving them if they should be included."}
         </p>
       ) : null}
 
