@@ -29,10 +29,20 @@ test("client views the finalized Risk Register dashboard", async ({
       headers: H,
     })
   ).json();
-  await request.patch(`${API_BASE}/attack/coverage/${aAssess.coverage[0].id}`, {
-    headers: H,
-    data: { status: "gap" },
-  });
+  // A STANDALONE technique: the first row, T1001, has sub-techniques, and
+  // since #554 (D-094) its status is computed and a PATCH to it is refused.
+  const rows = aAssess.coverage as { id: string; technique_code: string }[];
+  const standalone = rows.find(
+    (c) =>
+      !c.technique_code.includes(".") &&
+      !rows.some((o) => o.technique_code.startsWith(`${c.technique_code}.`)),
+  );
+  expect(standalone, "no standalone ATT&CK technique").toBeTruthy();
+  const gapRes = await request.patch(
+    `${API_BASE}/attack/coverage/${standalone?.id}`,
+    { headers: H, data: { status: "gap" } },
+  );
+  expect(gapRes.ok(), await gapRes.text()).toBe(true);
 
   const zsvc = await (
     await request.post(`${API_BASE}/zt/services`, {
