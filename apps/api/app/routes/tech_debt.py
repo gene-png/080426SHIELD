@@ -90,6 +90,7 @@ from app.tech_debt.parsers import SUPPORTED_MIME, UnsupportedInventoryFormat
 from app.tech_debt.security_scope import security_scope_filter
 from app.tenant import (
     require_artifact_in_tenant,
+    require_deliverable_in_tenant,
     require_service_in_tenant,
 )
 
@@ -1757,6 +1758,11 @@ def finalize_deliverable(
         # parent and where that parent is already required to be APPROVED.
         # Release reads it to flip exactly this row (migration 0041).
         parent_version=cap_list.version,
+        # #640: the revision these rows are at. For an APPROVED list it was
+        # re-read after the items and equals `approved_revision` (checked
+        # above); release refuses this deliverable once the list is approved
+        # at any other revision.
+        capability_list_revision=cap_list.revision,
         pdf_artifact_id=pdf_artifact.id,
         xlsx_artifact_id=xlsx_artifact.id,
         docx_artifact_id=docx_artifact.id,
@@ -1834,9 +1840,33 @@ def release_tech_debt_deliverable(
         user=user,
         kinds=(ServiceKind.TECH_DEBT,),
         action="tech_debt.deliverable.released",
-        parent_guard=_LIST_STILL_RELEASABLE,
+        parent_guard=_releasable_with(_recorded_list_revision(db, deliverable_id, client.id)),
     )
     return _serialize_deliverable(db, deliv)
+
+
+def _recorded_list_revision(
+    db: Session, deliverable_id: uuid.UUID, client_id: uuid.UUID
+) -> int | None:
+    """The list revision this deliverable was rendered from, or None when it
+    recorded none (finalized before 0056). Read through the tenant check, so a
+    foreign id raises the same 404 `release_deliverable` would."""
+    return require_deliverable_in_tenant(db, deliverable_id, client_id).capability_list_revision
+
+
+def _releasable_with(rendered_revision: int | None) -> ParentGuard:
+    """#640: `_LIST_STILL_RELEASABLE`, plus the deliverable being released was
+    rendered at the revision the list is approved at. In the flip's own WHERE,
+    so a re-approval landing between this read and the flip still refuses.
+    `approved_revision == NULL` is never true, so a deliverable that recorded no
+    revision is refused rather than trusted."""
+    return ParentGuard(
+        condition=lambda list_id: and_(
+            _LIST_STILL_RELEASABLE.condition(list_id),
+            CapabilityList.approved_revision == rendered_revision,
+        ),
+        refusal=_refuse_release_over_undecided,
+    )
 
 
 #: #657 round 3. Release freezes the list, so it must not freeze an unfinished
@@ -1879,7 +1909,29 @@ def _refuse_release_over_undecided(db: Session, list_id: uuid.UUID) -> HTTPExcep
             return _refuse_edited_since_approval(
                 then="generate the deliverable again before releasing"
             )
+        # The list is approved and current, so what failed is the deliverable
+        # being released: it was rendered at another revision, or recorded none.
+        return _refuse_deliverable_predates_approval()
     return _refuse_changed_during_release()
+
+
+def _refuse_deliverable_predates_approval() -> HTTPException:
+    """#640: this deliverable was not rendered from the rows as last approved.
+    Typed (D-016). The remedy names the step-4 button `DeliverableCard` shows
+    once a deliverable exists ("Re-finalize"); finalize accepts an APPROVED
+    list, so it works in exactly the state this refusal is raised in."""
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "reason": "deliverable_predates_approval",
+            "message": (
+                "This deliverable was generated before the capability list was last "
+                "approved, so it may not show the approved rows. Generate the deliverable "
+                "again with Re-finalize in step 4, Generate and release the deliverable, "
+                "then release the new version."
+            ),
+        },
+    )
 
 
 _LIST_STILL_RELEASABLE = ParentGuard(

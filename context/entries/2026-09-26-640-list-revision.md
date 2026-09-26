@@ -15,6 +15,10 @@ Branch `track1/techdebt-edit-revision`, from `main` at `b5f5448`. Migration
   queue is editable until release. Step 3's description no longer says
   approval "locks" the inventory, which was never true.
 - A lock-only PATCH is not an edit.
+- A deliverable records the list revision it was rendered from
+  (`deliverables.capability_list_revision`, also in 0056). Release refuses one
+  that does not match the list's `approved_revision`, including a NULL from
+  before 0056: typed 409 `deliverable_predates_approval`, naming Re-finalize.
 - The progress bar is a twin left alone, with a note at the site.
 
 Tests: `test_capability_list_revision.py` drives the routes. Its set of edit

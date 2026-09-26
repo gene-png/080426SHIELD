@@ -361,6 +361,82 @@ def test_release_refuses_a_list_edited_after_its_deliverable_was_built(app_clien
     assert _latest(w)["status"] == "approved"
 
 
+_PREDATES = "deliverable_predates_approval"
+
+
+def _release(w: World, deliverable_id: str):
+    return w.c.post(f"/tech-debt/deliverables/{deliverable_id}/release", headers=w.h)
+
+
+def _deliverable_released(w: World, deliverable_id: str) -> bool:
+    from app.models.deliverable import Deliverable
+
+    with w.sessions() as s:
+        return s.get(Deliverable, uuid.UUID(deliverable_id)).released_at is not None
+
+
+@pytest.mark.unit
+def test_release_refuses_a_deliverable_built_before_the_list_was_approved_again(
+    app_client,
+) -> None:
+    """Edit, approve again, then release the deliverable generated BEFORE the
+    edit. The approval is current, so the list-level guard passes, but the
+    document was rendered from rows that are no longer the approved ones."""
+    w = _world(app_client)
+    _decide_all(w)
+    assert _approve(w).status_code == 200
+    old = _finalize(w)
+    assert old.status_code == 201, old.text
+    EDIT_DRIVERS[("PATCH", "/tech-debt/capability-items/{item_id}")](w)
+    assert _approve(w).status_code == 200
+    assert _latest(w)["approval_current"] is True, "setup: the list must be re-approved"
+
+    r = _release(w, old.json()["id"])
+
+    assert r.status_code == 409, r.text
+    error = r.json()["error"]
+    assert error["reason"] == _PREDATES, error
+    assert "generate the deliverable again" in error["message"].lower(), error["message"]
+    assert _latest(w)["status"] == "approved"
+    assert not _deliverable_released(w, old.json()["id"])
+
+
+@pytest.mark.unit
+def test_a_deliverable_generated_after_the_new_approval_releases(app_client) -> None:
+    """The remedy the refusal names works: generate again, release that one."""
+    w = _world(app_client)
+    _decide_all(w)
+    assert _approve(w).status_code == 200
+    old = _finalize(w)
+    assert old.status_code == 201, old.text
+    EDIT_DRIVERS[("PATCH", "/tech-debt/capability-items/{item_id}")](w)
+    assert _approve(w).status_code == 200
+    assert _release(w, old.json()["id"]).status_code == 409, "setup: the old one is refused"
+
+    new = _finalize(w)
+    assert new.status_code == 201, new.text
+    r = _release(w, new.json()["id"])
+
+    assert r.status_code == 200, r.text
+    assert _latest(w)["status"] == "released"
+    assert _deliverable_released(w, new.json()["id"])
+
+
+@pytest.mark.unit
+def test_an_unedited_approval_releases_its_deliverable(app_client) -> None:
+    """The control: approve, generate, release, with no edit anywhere."""
+    w = _world(app_client)
+    _decide_all(w)
+    assert _approve(w).status_code == 200
+    fin = _finalize(w)
+    assert fin.status_code == 201, fin.text
+
+    r = _release(w, fin.json()["id"])
+
+    assert r.status_code == 200, r.text
+    assert _latest(w)["status"] == "released"
+
+
 @pytest.mark.unit
 def test_an_edit_landing_during_approval_refuses_it(app_client, monkeypatch) -> None:
     """The approve UPDATE matches only at the revision it read. An edit that
@@ -442,3 +518,41 @@ def test_the_backfill_reads_an_approved_list_as_current_and_a_draft_as_not(
     assert revisions == {0}
     assert by_id[w.list_id] == 0
     assert by_id[draft] is None
+
+
+@pytest.mark.unit
+def test_a_deliverable_from_before_0056_is_refused_at_release(app_client) -> None:
+    """A deliverable finalized before migration 0056 records no revision, and
+    before #640 an approved list could already be edited, so nothing says its
+    rows are the approved ones. Missing data defaults to UNCONFIRMED: release
+    refuses it and names the remedy. Built through the API, then 0056 is rewound
+    and replayed, which is the writer that leaves the column NULL."""
+    w = _world(app_client)
+    _decide_all(w)
+    assert _approve(w).status_code == 200
+    fin = _finalize(w)
+    assert fin.status_code == 201, fin.text
+
+    url = os.environ["DATABASE_URL"]
+    cfg = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
+    cfg.set_main_option("script_location", str(Path(__file__).resolve().parents[2] / "alembic"))
+    cfg.set_main_option("sqlalchemy.url", url)
+    command.downgrade(cfg, "0055")
+    command.upgrade(cfg, "0056")
+    engine = create_engine(url)
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text("SELECT id, capability_list_revision FROM deliverables"))
+            recorded = {str(uuid.UUID(str(k))): v for k, v in rows.all()}
+    finally:
+        engine.dispose()
+    assert list(recorded) == [fin.json()["id"]], recorded
+    recorded = recorded[fin.json()["id"]]
+    assert recorded is None, "setup: the replayed migration must leave the column NULL"
+    assert _latest(w)["approval_current"] is True, "setup: the backfill reads the list as current"
+
+    r = _release(w, fin.json()["id"])
+
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == _PREDATES, r.text
+    assert not _deliverable_released(w, fin.json()["id"])
