@@ -12,7 +12,8 @@ do not:
     denominator, with its own line in the deliverable.
   * `unable_to_determine`: nobody verified it. It is also OUTSIDE the assessed
     denominator and never counted as partial or gap. The owner's decision makes
-    it a release blocker; that gate is a later slice.
+    it a release blocker: `attack/release_readiness.py` refuses approve and
+    release while any row holds it (#622).
 
 NOT YET WRITABLE. The two new statuses are defined, stored and counted, and
 nothing may WRITE them yet: `WRITABLE` below is the four statuses every
@@ -22,7 +23,8 @@ what the widening slice must change first:
   * the three exporters and the finalize summary, which drop both counts while
     `scored` includes them (a 100% PDF over unverified rows);
   * the admin status badges and heatmap card;
-  * the release gate, which does not exist yet;
+  * the release gate (#622), which now refuses approve and release over a
+    Not verified row;
   * `risk/link_scope.py`, which treats any non-NULL status as a consultant's
     judgement ("scored when it is not NULL"), so `unable_to_determine` would
     become a citable risk link.
