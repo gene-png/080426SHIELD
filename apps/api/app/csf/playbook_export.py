@@ -371,7 +371,7 @@ METHODOLOGY = [
     "AI assists by drafting the dimension scores; all totals, levels, the "
     "evidence cap, the roll-up and gaps are computed deterministically in "
     "code. Each gap's priority is computed in code too, and a consultant may "
-    "override it; where one did, this playbook uses the override (#707).",
+    "override it; where one did, this playbook uses the override.",
 ]
 
 
@@ -500,19 +500,23 @@ def _next_steps(rows: Sequence[Any]) -> list[str]:
                 else "these are Core-metric, high-impact, multi-system weaknesses"
             )
             steps.append(f"Remediate the {pc['P1']} Priority 1 {_gaps(pc['P1'])} first — {what}.")
+        elif others == 0:
+            # Every P1 is an override: "on 1 of them" was wrong in number, and
+            # "on 3 of them" read as a subset (#707 round 2).
+            who = "It was" if raised == 1 else "Both were" if raised == 2 else f"All {raised} were"
+            steps.append(
+                f"Remediate the {pc['P1']} Priority 1 {_gaps(pc['P1'])} first. {who} set to "
+                "Priority 1 by consultant override."
+            )
         else:
             rest = (
-                ""
-                if others == 0
-                else (
-                    " The other is a Core-metric, high-impact, multi-system weakness."
-                    if others == 1
-                    else " The others are Core-metric, high-impact, multi-system weaknesses."
-                )
+                "the other is a Core-metric, high-impact, multi-system weakness"
+                if others == 1
+                else f"the other {others} are Core-metric, high-impact, multi-system weaknesses"
             )
             steps.append(
                 f"Remediate the {pc['P1']} Priority 1 {_gaps(pc['P1'])} first. Consultant "
-                f"override set Priority 1 on {raised} of them.{rest}"
+                f"override set Priority 1 on {raised} of them; {rest}."
             )
     if pc["P2"]:
         steps.append(

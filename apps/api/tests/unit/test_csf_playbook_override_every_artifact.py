@@ -248,7 +248,7 @@ def test_a_p1_set_by_override_is_not_described_as_a_computed_p1(app_client) -> N
         text = _flat_text(kind, files[kind])
         assert (
             "Remediate the 1 Priority 1 gap first. "
-            "Consultant override set Priority 1 on 1 of them." in text
+            "It was set to Priority 1 by consultant override." in text
         ), kind
         assert "Core-metric, high-impact, multi-system" not in text, kind
 
@@ -336,3 +336,83 @@ def test_an_override_on_a_non_gap_never_reads_as_a_prioritised_gap_in_the_overvi
         text = _flat_text(kind, files[kind])
         assert sentence in text, kind
         assert "0 subcategories fall short" not in text, kind
+
+
+# --- #707 round 2 -----------------------------------------------------------------
+
+#: The P1 next-step sentence for every mix of computed (c) and overridden (r)
+#: Priority 1 gaps, written from the rule BEFORE the code (CLAUDE.md: do the
+#: matrix first). The rule: a computed P1 is described as Core-metric,
+#: high-impact, multi-system; an overridden one is not described, only counted;
+#: every sentence agrees in number with its count (#692). No P1, no sentence.
+_CORE_1 = "a Core-metric, high-impact, multi-system weakness"
+_CORE_N = "Core-metric, high-impact, multi-system weaknesses"
+P1_SENTENCE: dict[tuple[int, int], str | None] = {
+    (0, 0): None,
+    (1, 0): f"Remediate the 1 Priority 1 gap first — this is {_CORE_1}.",
+    (2, 0): f"Remediate the 2 Priority 1 gaps first — these are {_CORE_N}.",
+    (
+        0,
+        1,
+    ): "Remediate the 1 Priority 1 gap first. It was set to Priority 1 by consultant override.",
+    (
+        0,
+        2,
+    ): "Remediate the 2 Priority 1 gaps first. Both were set to Priority 1 by consultant override.",
+    (
+        0,
+        3,
+    ): "Remediate the 3 Priority 1 gaps first. All 3 were set to Priority 1 by consultant override.",
+    (1, 1): (
+        "Remediate the 2 Priority 1 gaps first. Consultant override set Priority 1 on 1 of "
+        f"them; the other is {_CORE_1}."
+    ),
+    (2, 1): (
+        "Remediate the 3 Priority 1 gaps first. Consultant override set Priority 1 on 1 of "
+        f"them; the other 2 are {_CORE_N}."
+    ),
+    (1, 2): (
+        "Remediate the 3 Priority 1 gaps first. Consultant override set Priority 1 on 2 of "
+        f"them; the other is {_CORE_1}."
+    ),
+    (2, 2): (
+        "Remediate the 4 Priority 1 gaps first. Consultant override set Priority 1 on 2 of "
+        f"them; the other 2 are {_CORE_N}."
+    ),
+}
+
+
+@pytest.mark.parametrize(("computed", "overridden"), sorted(P1_SENTENCE))
+def test_the_p1_next_step_for_every_mix_of_computed_and_overridden(computed, overridden) -> None:
+    from types import SimpleNamespace
+
+    from app.csf.playbook_export import _next_steps
+
+    rows = [
+        SimpleNamespace(priority="P1", gap=True, priority_overridden=False) for _ in range(computed)
+    ] + [
+        SimpleNamespace(priority="P1", gap=True, priority_overridden=True)
+        for _ in range(overridden)
+    ]
+    p1 = [s for s in _next_steps(rows) if "Priority 1" in s]
+    expected = P1_SENTENCE[(computed, overridden)]
+    assert p1 == ([] if expected is None else [expected])
+
+
+#: An internal reference is "#" followed by two or more digits. The full
+#: playbook legitimately prints roll-up rule numbers as "#1".."#6", which are
+#: client content; no issue number this repo will cite is a single digit.
+_INTERNAL_REF = re.compile(r"#\d{2,}")
+
+
+def test_no_internal_reference_reaches_a_client_document(app_client) -> None:
+    # "(#707)" rode on METHODOLOGY into every full PDF and DOCX.
+    c, h = app_client
+    svc, code = _one_gap(c, h, _non_core_code())
+    _override(c, h, svc, code, "P1")
+
+    files = _export(c, h, svc)
+
+    for kind in KINDS - {"xlsx"}:
+        found = _INTERNAL_REF.findall(_flat_text(kind, files[kind]))
+        assert found == [], (kind, found)
