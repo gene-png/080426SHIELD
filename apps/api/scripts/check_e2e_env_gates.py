@@ -45,11 +45,17 @@ LIMITS, stated so a clean run is not read as more than it is:
   * A variable that is CONFIGURATION with a default, not a gate
     (E2E_API_URL), is reported unless exempted, because this cannot tell a
     gate from a setting. Exempt it for the specs that use it that way.
-  * Only `*.spec.ts` is scanned. A spec renamed out of that pattern -- #560's
-    own mechanism -- leaves CI with every gate green (#579).
+  * It scans the files Playwright's DEFAULT testMatch collects
+    (`*.spec|test.[cm][jt]s[x]`), and refuses (exit 2) unless it finds exactly
+    one `e2e/playwright.config.*` and that config never mentions `testMatch`.
+    A spec renamed out of that pattern is not scanned here;
+    `check_e2e_spec_listing.py` reports it while some suffix in its name is
+    still a script extension. A rename that drops every script suffix
+    (`a.spec.ts~`, `a.spec.txt`, `a.spec`) is seen by neither gate (#605).
 
 EXIT CODES (D-090): 0 every gate variable is set or exempted; 1 a finding; 2
-could not look -- no `e2e/` or no spec files under it, no workflows, a
+could not look -- no `e2e/` or no spec files under it, no Playwright config
+or more than one, a config that mentions `testMatch`, no workflows, a
 workflow that does not parse, an unreadable or malformed exemptions file, or
 an unknown argument.
 """
@@ -70,6 +76,19 @@ _SKIP = re.compile(r"\b(?:test(?:\s*\.\s*describe)?|testInfo)\s*\.\s*(?:skip|fix
 _ASSIGN = re.compile(r"^(?:export\s+)?([A-Z0-9_]+)=(\S*)")
 _DISABLING = {"", "0", "false"}
 EXEMPTIONS = Path(".github/e2e-env-gate-exemptions.json")
+#: Playwright's DEFAULT testMatch, `**/*.@(spec|test).?(c|m)[jt]s?(x)`. The
+#: config sets none; if it ever does, this is no longer the suite, so that is a
+#: could-not-look rather than a guess (#579).
+_SUITE_FILE = re.compile(r"\.(?:spec|test)\.[cm]?[jt]sx?$")
+#: The names Playwright resolves a default config from, in `e2e/` where the CI
+#: run is started. `playwright.manual.config.ts` is not one of them.
+_CONFIG_NAMES = tuple(
+    f"playwright.config.{ext}" for ext in ("ts", "js", "mts", "mjs", "cts", "cjs")
+)
+# Any mention, not only `testMatch:`: shorthand (`{ testMatch, ... }`) and a
+# quoted key both set it. A comment mentioning it trips this too, which fails
+# closed (review of 81871d4).
+_TEST_MATCH = re.compile(r"\btestMatch\b")
 
 
 class CouldNotLook(Exception):
@@ -91,9 +110,28 @@ def gate_variables(root: Path) -> dict[str, list[str]]:
     e2e = root / "e2e"
     if not e2e.is_dir():
         raise CouldNotLook(f"{e2e} does not exist -- wrong directory?")
-    specs = [p for p in e2e.rglob("*.spec.ts") if "node_modules" not in p.parts]
+    # The config must be FOUND, exactly one, before "it sets no testMatch" can
+    # be said: an absent config shared a branch with a config that sets none
+    # (review of 18d24d5).
+    configs = [e2e / n for n in _CONFIG_NAMES if (e2e / n).is_file()]
+    if len(configs) != 1:
+        raise CouldNotLook(
+            f"expected exactly one Playwright config ({', '.join(_CONFIG_NAMES)}) in {e2e}, "
+            f"found {len(configs)}; without it this gate cannot say which files are the suite"
+        )
+    config = configs[0]
+    if _TEST_MATCH.search(config.read_text(encoding="utf-8")):
+        raise CouldNotLook(
+            f"{config} sets `testMatch`; this gate scans Playwright's DEFAULT pattern "
+            "and cannot say which files are the suite"
+        )
+    specs = [
+        p
+        for p in e2e.rglob("*")
+        if p.is_file() and _SUITE_FILE.search(p.name) and "node_modules" not in p.parts
+    ]
     if not specs:
-        raise CouldNotLook(f"no *.spec.ts under {e2e}; an empty scan is not a clean one")
+        raise CouldNotLook(f"no spec files under {e2e}; an empty scan is not a clean one")
     found: dict[str, list[str]] = {}
     for spec in sorted(specs):
         text = spec.read_text(encoding="utf-8")
