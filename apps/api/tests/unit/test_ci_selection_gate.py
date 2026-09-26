@@ -271,3 +271,366 @@ def test_a_broken_conftest_is_could_not_look(tmp_path, capsys) -> None:
     root = _project(tmp_path, {M: MARKED, "tests/unit/conftest.py": "raise RuntimeError('x')\n"})
     code, out = _run(root, _baseline(tmp_path, {}), capsys)
     assert code == 2, out
+
+
+# --- #543: a file that removes itself at collection is a finding, not a smaller denominator --
+
+SKIPPED_MODULE = """
+    import pytest
+    pytest.skip("not here", allow_module_level=True)
+    pytestmark = pytest.mark.unit
+    def test_x(): pass
+"""
+S = "tests/unit/test_skipped.py"
+
+
+def test_a_file_that_skips_at_module_level_is_a_finding(tmp_path, capsys) -> None:
+    # It is absent from BOTH collections, so the node-id comparison could never
+    # see it: "CI selects 2 of 2" read clean over a file CI never runs (#543).
+    root = _project(tmp_path, {M: MARKED, S: SKIPPED_MODULE})
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
+    assert code == 1, out
+    assert f"{S}: never collected" in out, out
+
+
+def test_a_file_removed_by_collect_ignore_is_a_finding(tmp_path, capsys) -> None:
+    root = _project(
+        tmp_path,
+        {
+            M: MARKED,
+            "tests/unit/test_ignored.py": MARKED,
+            "tests/unit/conftest.py": 'collect_ignore = ["test_ignored.py"]\n',
+        },
+    )
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
+    assert code == 1, out
+    assert "tests/unit/test_ignored.py: never collected" in out, out
+
+
+def test_an_uncollected_file_can_be_baselined_with_a_reason(tmp_path, capsys) -> None:
+    root = _project(tmp_path, {M: MARKED, S: SKIPPED_MODULE})
+    base = _baseline(tmp_path, {S: {"reason": "#999: needs a service", "uncollected_file": True}})
+    code, out = _run(root, base, capsys)
+    assert code == 0, out
+    assert S in out and "#999: needs a service" in out, out
+
+
+def test_a_baselined_uncollected_file_that_now_collects_is_a_finding(tmp_path, capsys) -> None:
+    root = _project(tmp_path, {M: MARKED, S: MARKED})
+    base = _baseline(tmp_path, {S: {"reason": "#999", "uncollected_file": True}})
+    code, out = _run(root, base, capsys)
+    assert code == 1, out
+    assert f"{S}: baselined as never collected, but now collected" in out, out
+
+
+def test_a_baselined_uncollected_file_that_is_gone_is_a_finding(tmp_path, capsys) -> None:
+    root = _project(tmp_path, {M: MARKED})
+    base = _baseline(tmp_path, {S: {"reason": "#999", "uncollected_file": True}})
+    code, out = _run(root, base, capsys)
+    assert code == 1, out
+    assert f"{S}: baselined as never collected, but no longer exists" in out, out
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {S: {"reason": " ", "uncollected_file": True}},
+        {S: {"reason": "r", "uncollected_file": "yes"}},
+        {S: {"reason": "r", "uncollected_file": True, "tests": [f"{S}::test_x"]}},
+    ],
+    ids=["blank-reason", "not-true", "both-shapes"],
+)
+def test_a_malformed_uncollected_entry_is_refused(tmp_path, capsys, entry: dict) -> None:
+    root = _project(tmp_path, {M: MARKED, S: SKIPPED_MODULE})
+    code, out = _run(root, _baseline(tmp_path, entry), capsys)
+    assert code == 2, out
+
+
+def test_the_clean_line_counts_the_files_it_compared(tmp_path, capsys) -> None:
+    root = _project(tmp_path, {M: MARKED, "tests/unit/sub/test_n.py": MARKED})
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
+    assert code == 0, out
+    assert "2 of 2 test files on disk collected" in out, out
+
+
+# --- #544: the gate's step must see CI's pytest step's environment -----------------
+
+
+ONE_JOB = "the pytest step and the gate step must sit in ONE job"
+GATE_RUN = "the gate step's run must be exactly `python -m scripts.check_ci_selection`"
+NOT_ADJACENT = "the gate step must come IMMEDIATELY before the pytest step"
+ENV_DIFFERS = "step env differs between the gate step and the pytest step"
+WD_DIFFERS = "working-directory differs between the gate step and the pytest step"
+SHELL_DIFFERS = "shell differs between the gate step and the pytest step"
+EXPRESSION = "an expression (`${{ }}`) in a step's env, working-directory or shell"
+
+
+def pin_violations(ci: dict) -> list[str]:
+    """Why CI's `pytest -m unit` step could see an environment the gate step
+    does not (#544). Empty means the two are pinned together.
+
+    A DERIVATION, not a list of ways to change an environment: the gate step
+    must be the step IMMEDIATELY before pytest, in the same job, with the same
+    step `env`, `working-directory` and `shell`. Job and workflow `env`, and everything
+    any earlier step exported, then reach both. Matching step text for
+    `GITHUB_ENV` missed `uses:` actions that export, scripts that write the
+    file, and `${{ steps.X.outputs }}` in an env (review of 0cf0420); with no
+    step between the two, no such route exists.
+    """
+    pytest_run = f"pytest {' '.join(gate.CI_SELECTOR)}"
+    found = []
+    for name, job in ci["jobs"].items():
+        steps = job.get("steps", [])
+        pyt = [i for i, st in enumerate(steps) if str(st.get("run", "")).strip() == pytest_run]
+        chk = [
+            i
+            for i, st in enumerate(steps)
+            if "scripts.check_ci_selection" in str(st.get("run", ""))
+        ]
+        if pyt or chk:
+            found.append((name, steps, pyt, chk))
+    if len(found) != 1 or len(found[0][2]) != 1 or len(found[0][3]) != 1:
+        return [f"{ONE_JOB}: {[(f[0], len(f[2]), len(f[3])) for f in found]}"]
+    _, steps, (i,), (j,) = found[0]
+    out = []
+    # EXACT, as the pytest step's is: a second line in the gate step's run
+    # (writing PYTEST_ADDOPTS to $GITHUB_ENV, say) reaches pytest and not the
+    # gate, and a containment match allowed it (review of ec113e1).
+    if str(steps[j].get("run", "")).strip() != "python -m scripts.check_ci_selection":
+        out.append(GATE_RUN)
+    if i != j + 1:
+        out.append(f"{NOT_ADJACENT}: gate at step {j}, pytest at step {i}")
+    if steps[i].get("env") != steps[j].get("env"):
+        out.append(ENV_DIFFERS)
+    if steps[i].get("working-directory") != steps[j].get("working-directory"):
+        out.append(WD_DIFFERS)
+    if steps[i].get("shell") != steps[j].get("shell"):
+        out.append(SHELL_DIFFERS)
+    # EQUAL TEXT IS NOT EQUAL VALUES once an expression is involved: GitHub
+    # evaluates `${{ }}` once per STEP, so the same text can yield '' while the
+    # gate runs and a `--deselect` afterwards (`steps.gate.outcome`, or
+    # `github.action`, which differs per step). The comparisons above are of
+    # text, so any expression in these fields is refused (review of 42c11a2).
+    for k, role in ((j, "gate"), (i, "pytest")):
+        for key in ("env", "working-directory", "shell"):
+            if "${{" in yaml.safe_dump(steps[k].get(key)):
+                out.append(f"{EXPRESSION}: {role} step, {key}")
+    return out
+
+
+def test_the_gate_step_runs_with_the_pytest_steps_environment() -> None:
+    # #544: CI_SELECTOR pins the `run:` line only. Anything that changes the
+    # pytest step's environment and not the gate's -- a step `env`, or any
+    # step between them -- would narrow CI and not the gate.
+    if _WORKFLOWS_DIR is None:
+        pytest.skip("no .github/workflows above this file (the api container mounts apps/api)")
+    ci = yaml.safe_load((_WORKFLOWS_DIR / "ci.yml").read_text(encoding="utf-8"))
+    assert pin_violations(ci) == []
+
+
+def _workflow(*steps: dict) -> dict:
+    return {"jobs": {"python": {"steps": list(steps)}}}
+
+
+GATE_STEP = {
+    "name": "gate",
+    "working-directory": "apps/api",
+    "run": "python -m scripts.check_ci_selection",
+}
+PYTEST_STEP = {
+    "name": "pytest",
+    "working-directory": "apps/api",
+    "run": "pytest -m unit tests/unit",
+}
+
+
+def test_the_pin_passes_two_adjacent_matching_steps() -> None:
+    # The passing half, so the refusals below are not one broken path.
+    other = {"name": "setup", "uses": "some/action@v1"}
+    assert pin_violations(_workflow(other, GATE_STEP, PYTEST_STEP)) == []
+
+
+@pytest.mark.parametrize(
+    "between",
+    [
+        {"name": "exports", "uses": "some/exporting-action@v1"},
+        {"name": "writes", "run": "scripts/set-env.sh"},
+        {"name": "harmless", "run": "echo hi"},
+    ],
+    ids=["an-action", "a-script", "anything"],
+)
+def test_any_step_between_the_two_is_refused(between: dict) -> None:
+    # Not only a visible GITHUB_ENV write: an action or a script can export
+    # without saying so, so ANY step between them is refused.
+    out = pin_violations(_workflow(GATE_STEP, between, PYTEST_STEP))
+    assert out == [f"{NOT_ADJACENT}: gate at step 0, pytest at step 2"], out
+
+
+def test_a_second_line_in_the_gate_step_is_refused() -> None:
+    two_lines = {
+        **GATE_STEP,
+        "run": "\n".join(
+            [
+                "python -m scripts.check_ci_selection",
+                'echo "PYTEST_ADDOPTS=--deselect x" >> "$GITHUB_ENV"',
+            ]
+        ),
+    }
+    assert pin_violations(_workflow(two_lines, PYTEST_STEP)) == [GATE_RUN]
+
+
+def test_the_gate_after_pytest_is_refused() -> None:
+    out = pin_violations(_workflow(PYTEST_STEP, GATE_STEP))
+    assert out == [f"{NOT_ADJACENT}: gate at step 1, pytest at step 0"], out
+
+
+def test_an_env_on_the_pytest_step_alone_is_refused() -> None:
+    narrowed = {**PYTEST_STEP, "env": {"PYTEST_ADDOPTS": "--deselect x"}}
+    assert pin_violations(_workflow(GATE_STEP, narrowed)) == [ENV_DIFFERS]
+
+
+def test_a_different_working_directory_is_refused() -> None:
+    moved = {**PYTEST_STEP, "working-directory": "."}
+    assert pin_violations(_workflow(GATE_STEP, moved)) == [WD_DIFFERS]
+
+
+def test_a_different_shell_is_refused() -> None:
+    # A login shell can source a profile that sets PYTEST_ADDOPTS.
+    login = {**PYTEST_STEP, "shell": "bash -l {0}"}
+    assert pin_violations(_workflow(GATE_STEP, login)) == [SHELL_DIFFERS]
+
+
+_PER_STEP = "${{ steps.gate.outcome == 'success' && '--deselect tests/unit/x.py' || '' }}"
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        # '' while the gate runs, a --deselect once it has succeeded.
+        ("env", {"PYTEST_ADDOPTS": _PER_STEP}),
+        # `github.action` is a per-step value.
+        ("working-directory", "apps/${{ github.action }}"),
+        # A login shell whose profile could differ per evaluation.
+        ("shell", "bash -l ${{ github.action }} {0}"),
+    ],
+    ids=["env", "working-directory", "shell"],
+)
+def test_the_same_expression_on_both_steps_is_refused(key: str, value) -> None:
+    # IDENTICAL text on both steps, so every equality check passes -- but
+    # GitHub evaluates `${{ }}` once per step. One case per key the refusal
+    # scans, so dropping any key from it turns its own case red (review of
+    # 00eec79: `shell` was scanned and had no case).
+    gate_step = {**GATE_STEP, "id": "gate", key: value}
+    pytest_step = {**PYTEST_STEP, key: value}
+    assert pin_violations(_workflow(gate_step, pytest_step)) == [
+        f"{EXPRESSION}: gate step, {key}",
+        f"{EXPRESSION}: pytest step, {key}",
+    ]
+
+
+def test_the_two_steps_in_different_jobs_are_refused() -> None:
+    ci = {"jobs": {"a": {"steps": [GATE_STEP]}, "b": {"steps": [PYTEST_STEP]}}}
+    out = pin_violations(ci)
+    assert len(out) == 1 and out[0].startswith(ONE_JOB), out
+
+
+def test_files_match_when_pytests_rootdir_is_below_the_root(tmp_path, capsys) -> None:
+    # A `tests/pytest.ini` makes node ids read `unit/test_m.py`, not
+    # `tests/unit/test_m.py`. An equality match would call every file
+    # "never collected" in that layout.
+    root = _project(tmp_path, {M: MARKED})
+    (root / "tests" / "pytest.ini").write_text(
+        "[pytest]\nmarkers =\n    unit: fast\n", encoding="utf-8"
+    )
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
+    assert code == 0, out
+    assert "1 of 1 test files on disk collected" in out, out
+
+
+SKIPPED_SUFFIX = "tests/unit/skipped_test.py"
+
+
+def test_a_self_removing_underscore_test_file_is_a_finding(tmp_path, capsys) -> None:
+    # pytest's default python_files is `test_*.py *_test.py`. A scan of only
+    # `test_*.py` left this file invisible and "N of N collected" true of a
+    # smaller N (review of 52b80c9).
+    root = _project(tmp_path, {M: MARKED, SKIPPED_SUFFIX: SKIPPED_MODULE})
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
+    assert code == 1, out
+    assert f"{SKIPPED_SUFFIX}: never collected" in out, out
+
+
+def test_the_file_patterns_are_pytests_own(tmp_path, capsys) -> None:
+    # A configured python_files is honoured: `check_*.py` becomes a test file,
+    # so a self-removing one is a finding, and `test_*.py` no longer is one.
+    root = _project(
+        tmp_path, {"tests/unit/check_m.py": MARKED, "tests/unit/check_s.py": SKIPPED_MODULE}
+    )
+    ini = root / "pytest.ini"
+    ini.write_text(
+        ini.read_text(encoding="utf-8") + "python_files = check_*.py\n", encoding="utf-8"
+    )
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
+    assert code == 1, out
+    assert "tests/unit/check_s.py: never collected" in out, out
+    assert "1 of 2 test files on disk collected" in out, out
+
+
+def test_a_python_files_pattern_with_a_separator_is_honoured(tmp_path, capsys) -> None:
+    # pytest matches a pattern holding a separator against the ABSOLUTE path
+    # (`fnmatch_ex`). A hand-written root-relative match missed it, so a
+    # self-removing spec was invisible (review of 0cf0420).
+    root = _project(
+        tmp_path,
+        {"tests/unit/m_spec.py": MARKED, "tests/unit/s_spec.py": SKIPPED_MODULE},
+    )
+    ini = root / "pytest.ini"
+    ini.write_text(
+        ini.read_text(encoding="utf-8") + "python_files = tests/unit/*_spec.py\n", encoding="utf-8"
+    )
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
+    assert code == 1, out
+    assert "tests/unit/s_spec.py: never collected" in out, out
+    assert "1 of 2 test files on disk collected" in out, out
+
+
+def test_norecursedirs_is_honoured_by_the_disk_scan(tmp_path, capsys) -> None:
+    # pytest does not descend `norecursedirs`, so a file there is not "a test
+    # file on disk that never collected" -- it is not a test file to pytest.
+    root = _project(tmp_path, {M: MARKED, "tests/unit/fixtures/test_data.py": MARKED})
+    ini = root / "pytest.ini"
+    ini.write_text(ini.read_text(encoding="utf-8") + "norecursedirs = fixtures\n", encoding="utf-8")
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
+    assert code == 0, out
+    assert "1 of 1 test files on disk collected" in out, out
+
+
+def _symlinked_dir(tmp_path: Path, files: dict[str, str]) -> Path:
+    """A project whose `tests/unit/linked` is a symlink to a directory outside
+    it holding `files`. pytest descends a symlinked directory, so the scan
+    must too, or a file there is invisible to it."""
+    (tmp_path / "proj").mkdir()
+    root = _project(tmp_path / "proj", {M: MARKED})
+    target = tmp_path / "elsewhere"
+    target.mkdir()
+    for name, body in files.items():
+        (target / name).write_text(textwrap.dedent(body), encoding="utf-8")
+    try:
+        (root / "tests" / "unit" / "linked").symlink_to(target, target_is_directory=True)
+    except OSError as exc:  # Windows without the symlink privilege
+        pytest.skip(f"cannot create a directory symlink here: {exc}")
+    return root
+
+
+def test_a_symlinked_directory_is_scanned_as_pytest_walks_it(tmp_path, capsys) -> None:
+    root = _symlinked_dir(tmp_path, {"test_linked.py": MARKED})
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
+    assert code == 0, out
+    assert "2 of 2 test files on disk collected" in out, out
+
+
+def test_a_self_removing_file_behind_a_symlink_is_a_finding(tmp_path, capsys) -> None:
+    root = _symlinked_dir(tmp_path, {"test_gone.py": SKIPPED_MODULE})
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
+    assert code == 1, out
+    assert "tests/unit/linked/test_gone.py: never collected" in out, out

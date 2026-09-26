@@ -373,6 +373,39 @@ describe("AttackCitationAccounting", () => {
     );
   });
 
+  it("keeps the rest of the sentence singular for one row and one field (#683)", () => {
+    // The count said "1 technique was", and the sentence then went on "They
+    // stay held out ... answers those fields ... set their tools".
+    render(
+      <AttackCitationAccounting
+        result={result({
+          rows_left_unresolved: 1,
+          unresolved_fields: ["response_tools"],
+        })}
+      />,
+    );
+    const text = screen.getByTestId("attack-rows-left-unresolved").textContent;
+    expect(text).toContain("It stays held out of the coverage score.");
+    expect(text).toContain("answers that field, or set its tools yourself.");
+    expect(text).not.toMatch(/\bThey\b|those fields|their tools/);
+  });
+
+  it("stays plural for several rows and fields (#683)", () => {
+    render(
+      <AttackCitationAccounting
+        result={result({
+          rows_left_unresolved: 3,
+          unresolved_fields: ["detection_tools", "response_tools"],
+        })}
+      />,
+    );
+    const text = screen.getByTestId("attack-rows-left-unresolved").textContent;
+    expect(text).toContain("They stay held out of the coverage score.");
+    expect(text).toContain(
+      "answers those fields, or set their tools yourself.",
+    );
+  });
+
   it("stays silent when the run wrote every row", () => {
     // The passing state. Without it the banner is only ever observed firing,
     // and a component that rendered it unconditionally would pass the two
