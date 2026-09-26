@@ -169,14 +169,14 @@ def test_the_guard_reads_the_FLAGS_TABLE_and_not_a_literal(monkeypatch, capsys) 
     not, the guard is reading a literal and the table is decoration.
 
     Safe to run: every assertion lands on the exit-2 path, which returns before
-    `leave_rows()` and therefore before the default path that REWRITES
-    `redact.py` on disk -- the hazard the test above documents.
+    `leave_rows()` and therefore before the default path. That path REWROTE
+    `redact.py` on disk until #161; it now compiles variants in memory.
     """
     import scripts.leave_row_oracle as oracle
 
     # Every registered flag has a handler. A key with none is precisely the
     # accepted-but-undispatched state: the argument gets past the guard and
-    # then falls through to the full oracle, which writes `redact.py`.
+    # then falls through to the full oracle (which wrote `redact.py` until #161).
     assert oracle._FLAGS, "the dispatch table is empty"
     for flag, handler in oracle._FLAGS.items():
         assert callable(handler), f"{flag} is registered with no handler"
@@ -203,10 +203,10 @@ def test_both_real_arguments_are_accepted(argv, monkeypatch) -> None:
     """THE PASSING HALF. A guard observed only firing is not observed.
 
     RENAMED from "both real modes reach the work", which was wider than what
-    this establishes. The two modes diverge at the dispatch, which is AFTER
-    `leave_rows()` -- so the stub raises before the branch is evaluated and
-    the two parametrizations execute byte-identical code. Two names over one
-    path. What it proves is ACCEPTANCE; routing is the next test's job.
+    this establishes. The two modes now reach `leave_rows()` by different
+    routes (check_registry_and_labels on one side, the default path on the
+    other), so the stub proves each argument is ACCEPTED and reaches the
+    work; routing is the next test's job.
 
     Proves the argument is RECOGNISED without letting either mode run: the
     first thing `main` does after the dispatch is call `leave_rows()`, so
@@ -216,9 +216,9 @@ def test_both_real_arguments_are_accepted(argv, monkeypatch) -> None:
     THE STUB IS NOT A CONVENIENCE. A first draft called `main` for real and
     turned three tests in `test_leave_row_oracle_labels.py` red -- measured,
     and only when the two files ran TOGETHER, which is why running this file
-    alone looked clean. The report path does
-    `REDACT.write_text(original, ...)`: it REWRITES `redact.py` on disk, and
-    the labels tests read what it wrote. A test that rewrites a source file
+    alone looked clean. The report path then did
+    `REDACT.write_text(original, ...)`: it REWROTE `redact.py` on disk (until
+    #161), and the labels tests read what it wrote. A test that rewrites a source file
     mid-suite is the escaped-listener shape `test_a_row_dropped_between_add_
     and_flush_is_recorded` guards against in the risk suite, arriving from the
     other direction.
