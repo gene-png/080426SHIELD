@@ -6,6 +6,8 @@ XLSX sheets:
                      (unconfirmed citations marked) and notes (all 600+ rows)
   - Gaps:            techniques flagged as Gap, ordered by technique code
   - Unscored:        techniques with no usable status, listed by code
+  Every catalogue technique code on the last three sheets links to its page on
+  attack.mitre.org (#647).
 
 PDF:
   Executive page with overall coverage % + per-tactic table, then the
@@ -20,7 +22,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from app.attack.analytics import CoverageRollup, TacticCoverage
-from app.attack.catalog import TACTICS, TECHNIQUES, technique_by_id
+from app.attack.catalog import TACTICS, TECHNIQUES, all_codes, technique_by_id, technique_url
 from app.attack.coverage import ASSESSED, CoverageStatus, coverage_label
 from app.attack.parents import is_computed_parent
 from app.attack.pending import pending_codes as attack_pending_codes
@@ -216,6 +218,24 @@ def _safe_text_row(ws, values: list) -> None:
             cell.data_type = "s"
 
 
+_CATALOGUE_CODES = all_codes()
+
+
+def _link_technique(ws, code: str) -> None:
+    """Link the code in column A of the row just appended to MITRE's page (#647).
+
+    Only a catalogue code is linked: a stored code the catalogue does not carry
+    is printed unlinked rather than pointed at a URL nobody checked exists.
+    The DOCX and PDF gap tables are left unlinked on purpose -- #647 asked for
+    the workbook, and those two carry at most fifty codes that the XLSX Gaps
+    sheet repeats with links."""
+    if code not in _CATALOGUE_CODES:
+        return
+    cell = ws.cell(row=ws.max_row, column=1)
+    cell.hyperlink = technique_url(code)
+    cell.style = "Hyperlink"
+
+
 def _is_unscored(cov: AttackCoverage | None) -> bool:
     """The rollup's predicate (`analytics._validated`): no row, no status, or a
     status that is not a CoverageStatus. The Unscored sheet may not use a
@@ -391,6 +411,7 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
                 (cov.notes if cov else None) or "",
             ],
         )
+        _link_technique(ws2, tech.id)
     widths2 = [14, 38, 28, 8, 12, 15, 60, 30, 30, 30, 40]
     for w, col in zip(widths2, range(1, len(widths2) + 1), strict=True):
         ws2.column_dimensions[get_column_letter(col)].width = w
@@ -417,6 +438,7 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
         hide = ctx.parents_computed and is_computed_parent(cov.technique_code)
         rationale = "" if hide else (cov.rationale or "")
         _safe_text_row(ws3, [cov.technique_code, name, tactic_str, rationale, cov.notes or ""])
+        _link_technique(ws3, cov.technique_code)
     if not gap_rows:
         ws3.append(["—", "No gaps recorded", "", "", ""])
         ws3.cell(row=2, column=2).font = italic
@@ -437,6 +459,7 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
     unscored = [t for t in TECHNIQUES if _is_unscored(cov_by_code.get(t.id))]
     for tech in unscored:
         ws4.append([tech.id, tech.name, ", ".join(_tactic_name(t) for t in tech.tactics)])
+        _link_technique(ws4, tech.id)
     if not unscored:
         ws4.append(["—", "No unscored techniques", ""])
         ws4.cell(row=2, column=2).font = italic
