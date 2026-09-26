@@ -443,18 +443,30 @@ def _overview_sentences(rows: Sequence[Any]) -> list[str]:
     return lines
 
 
+def _gaps(n: int) -> str:
+    return "gap" if n == 1 else "gaps"
+
+
 def _next_steps(rows: Sequence[Any]) -> list[str]:
     pc = _priority_counts(rows)
     steps: list[str] = []
+    # Each sentence agrees in number with its count (#682): "the 1 Priority 1
+    # gap(s) first — these are ... weaknesses" read one gap as several.
     if pc["P1"]:
-        steps.append(
-            f"Remediate the {pc['P1']} Priority 1 gap(s) first — these are "
-            f"Core-metric, high-impact, multi-system weaknesses."
+        what = (
+            "this is a Core-metric, high-impact, multi-system weakness"
+            if pc["P1"] == 1
+            else "these are Core-metric, high-impact, multi-system weaknesses"
         )
+        steps.append(f"Remediate the {pc['P1']} Priority 1 {_gaps(pc['P1'])} first — {what}.")
     if pc["P2"]:
-        steps.append(f"Schedule the {pc['P2']} Priority 2 gap(s) into the next planning cycle.")
+        steps.append(
+            f"Schedule the {pc['P2']} Priority 2 {_gaps(pc['P2'])} into the next planning cycle."
+        )
     if pc["P3"]:
-        steps.append(f"Track the {pc['P3']} Priority 3 gap(s) for continuous improvement.")
+        steps.append(
+            f"Track the {pc['P3']} Priority 3 {_gaps(pc['P3'])} for continuous improvement."
+        )
     if not steps:
         steps.append(
             "No gaps were identified — maintain current controls and re-assess on the next cycle."
