@@ -11,7 +11,7 @@ compose and `.env.example`, 3600 s as the code default.
 
 ## What changed
 
-- **`users.credentials_changed_at`**, migration **0056**, nullable, no backfill
+- **`users.credentials_changed_at`**, migration **0055**, nullable, no backfill
   (NULL means no cutoff; backfilling "now" would sign everyone out at deploy).
 - **`reset_password` sets it to the reset's whole second.** That is the only
   credential change today. Swept by the symptom (`password_hash` writes, any
@@ -30,7 +30,7 @@ compose and `.env.example`, 3600 s as the code default.
 
 ## Migration order
 
-0056 per the owner's order (#620 lands 0054, #640 0055). Neither is on `main`,
-so this revision chains from `main`'s head, 0052, for a single head on this
-branch. At landing, `down_revision` becomes the head at that time, or the
-revision is renumbered if it lands before 0054 or 0055 (the owner's rule).
+0055, chaining from 0054 (#620), which is on `main`. It was first numbered
+0056 behind #640's 0055; it now lands before #640, so under the owner's rule
+(number order, renumbered at landing) it was renumbered 0055 on 2026-09-26 and
+#640 takes 0056.

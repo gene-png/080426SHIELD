@@ -12,12 +12,12 @@ existed, so no token is refused by it. That is the true state of every existing
 row. Backfilling "now" would sign every user out at deploy, for a change nobody
 made.
 
-## Chain order: written after 0052, numbered 0056
+## Chain order: numbered 0055, chains from 0054
 
-Migrations land in number order (owner decision, 2026-09-25): #620 lands 0054,
-#640 lands 0055, and this one 0056. #620 is on `main`; 0055 is not, so this
-revision chains from `main`'s head, 0054, to keep a single head here. If 0055
-lands first, `down_revision` becomes 0055 at landing.
+Migrations land in number order and are renumbered at landing if the order
+changes (owner decision, 2026-09-25). #620's 0054 is on `main`. This one was
+first numbered 0056 behind #640's 0055, and was renumbered 0055 on 2026-09-26
+because it now lands before #640, which takes 0056.
 
 SQLite-safe via `batch_alter_table` (core principle 6); additive and nullable,
 so older code reading a newer database is unaffected.
@@ -30,7 +30,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0056"
+revision: str = "0055"
 down_revision: str | Sequence[str] | None = "0054"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
