@@ -10,6 +10,7 @@ import {
   filterTechniques,
   kpis,
   tacticOptions,
+  triadPopulationText,
   type AttackDashboardData,
   type DashTechnique,
   type DprLeg,
@@ -342,6 +343,12 @@ export function AttackDashboard({
         title="Detect · Prevent · Respond posture"
         desc="A technique is fully covered only when all three legs are present."
       >
+        <p
+          data-testid="attack-triad-population"
+          style={{ margin: "0 0 12px", fontSize: 12, color: C.muted }}
+        >
+          {triadPopulationText(dpr)}
+        </p>
         <div
           style={{
             display: "grid",
@@ -379,7 +386,7 @@ export function AttackDashboard({
         <Section
           title="What you're blind to today"
           pill={`${blind.length} uncovered`}
-          desc="Techniques with no meaningful detection, prevention, or response."
+          desc="Techniques with no meaningful detection, prevention, or response. A technique with sub-techniques is listed through them."
         >
           <div
             style={{
@@ -676,6 +683,23 @@ function toolCell(tools: string[]): string {
 }
 
 function MatrixRow({ t }: { t: DashTechnique }): JSX.Element {
+  // #620 round 3: a computed parent has no tools of its own (D-094). Drawing
+  // its legs would show a covered parent as having none of the three.
+  if (t.computed_parent) {
+    return (
+      <tr>
+        <td style={cell({ mono: true })}>{t.code}</td>
+        <td style={cell({ weight: 600 })}>{t.name}</td>
+        <td style={cell()}>{t.tactic_name}</td>
+        <td style={cell()}>
+          <Chip status={t.status} pendingReview={t.pending_review} />
+        </td>
+        <td style={cell({ muted: true })} colSpan={4}>
+          {`From ${t.sub_technique_count} sub-techniques`}
+        </td>
+      </tr>
+    );
+  }
   return (
     <tr>
       <td style={cell({ mono: true })}>{t.code}</td>

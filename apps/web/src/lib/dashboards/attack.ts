@@ -40,6 +40,9 @@ export interface DashTechnique {
    * the catalog's parent links.
    */
   computed_parent: boolean;
+  /** How many sub-techniques it is computed from; 0 when it is not a computed
+   *  parent. Set by the API with `computed_parent`, from the same links. */
+  sub_technique_count: number;
   detection_tools: string[];
   prevention_tools: string[];
   response_tools: string[];
@@ -115,6 +118,9 @@ export interface DprCoverage {
   prevent: DprLeg;
   respond: DprLeg;
   total: number;
+  /** Rows the population left out, from the SAME filter, so the page can say
+   *  what the percentages are over (#620 round 3). */
+  excluded: { parents: number; pending: number };
 }
 
 /**
@@ -139,12 +145,19 @@ export function dprCoverage(techniques: DashTechnique[]): DprCoverage {
   const claimable = techniques.filter(
     (t) => !t.pending_review && !t.computed_parent,
   );
+  // Each excluded row is counted once, under the first reason that excludes
+  // it: a parent is out as a parent whether or not it is also pending.
+  const parents = techniques.filter((t) => t.computed_parent).length;
+  const pending = techniques.filter(
+    (t) => !t.computed_parent && t.pending_review,
+  ).length;
   const total = claimable.length;
   const detect = claimable.filter((t) => t.detection_tools.length > 0).length;
   const prevent = claimable.filter((t) => t.prevention_tools.length > 0).length;
   const respond = claimable.filter((t) => t.response_tools.length > 0).length;
   return {
     total,
+    excluded: { parents, pending },
     detect: { n: detect, pct: pctOf(detect, total) },
     prevent: { n: prevent, pct: pctOf(prevent, total) },
     respond: { n: respond, pct: pctOf(respond, total) },
@@ -153,7 +166,24 @@ export function dprCoverage(techniques: DashTechnique[]): DprCoverage {
 
 /** Uncovered techniques (the "what you're blind to today" cards). */
 export function blindSpots(techniques: DashTechnique[]): DashTechnique[] {
-  return techniques.filter((t) => t.status === "gap");
+  // Through sub-techniques, like the triad (#620 round 3): a parent with
+  // sub-techniques has no tools of its own, and its gap is its children's.
+  return techniques.filter((t) => t.status === "gap" && !t.computed_parent);
+}
+
+/** The sentence beside the triad naming what its percentages leave out. */
+export function triadPopulationText(d: DprCoverage): string {
+  const out: string[] = [];
+  if (d.excluded.parents > 0) {
+    out.push(
+      `${d.excluded.parents} parent technique${d.excluded.parents === 1 ? "" : "s"}, counted through ${d.excluded.parents === 1 ? "its" : "their"} sub-techniques`,
+    );
+  }
+  if (d.excluded.pending > 0) out.push(`${d.excluded.pending} pending review`);
+  const base = `Over ${d.total} technique${d.total === 1 ? "" : "s"}.`;
+  return out.length === 0
+    ? base
+    : `${base} Not counted here: ${out.join(", and ")}.`;
 }
 
 export interface TacticBar {

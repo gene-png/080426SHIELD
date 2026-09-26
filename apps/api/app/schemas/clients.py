@@ -105,6 +105,10 @@ class AttackDashboardTechnique(BaseModel):
     # counted once, through its sub-techniques. REQUIRED: a missing flag would
     # read as "not a parent" and put it back in the triad.
     computed_parent: bool
+    #: How many sub-techniques it is computed from (0 when it is not a computed
+    #: parent), so the client row can say so (#620 round 3). Set in the same
+    #: statement as `computed_parent`, from the same catalog links.
+    sub_technique_count: int
     detection_tools: list[str]
     prevention_tools: list[str]
     response_tools: list[str]

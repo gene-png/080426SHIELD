@@ -23,6 +23,7 @@ function tech(partial: Partial<DashTechnique>): DashTechnique {
     response_tools: [],
     rationale: null,
     computed_parent: false,
+    sub_technique_count: 0,
     ...partial,
   };
 }

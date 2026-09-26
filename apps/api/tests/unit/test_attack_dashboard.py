@@ -407,10 +407,13 @@ def test_a_computed_parent_shows_the_client_no_tools_or_rationale_of_its_own(app
     techs = {t["code"]: t for t in body["techniques"]}
     p = techs[parent]
     assert p["computed_parent"] is True
+    # The count the row states ("from N sub-techniques"), from the catalog.
+    assert p["sub_technique_count"] == len(children)
     assert (p["detection_tools"], p["prevention_tools"], p["response_tools"]) == ([], [], [])
     assert p["rationale"] is None
     ch = techs[children[0]]
     assert ch["computed_parent"] is False
+    assert ch["sub_technique_count"] == 0
     assert (ch["detection_tools"], ch["rationale"]) == (["Tool A"], "Child.")
     with _sm(bind=_ce(os.environ["DATABASE_URL"], future=True))() as s:
         stored = s.get(AttackCoverage, _uuid.UUID(by_code[parent]["id"]))
