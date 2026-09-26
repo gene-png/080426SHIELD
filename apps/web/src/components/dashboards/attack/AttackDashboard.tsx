@@ -255,6 +255,16 @@ export function AttackDashboard({
   const dpr = dprCoverage(data.techniques, newRules);
   // #554, option (a): null for an assessment approved before #620.
   const outside = outsideAssessedText(data.rollup);
+  // "Rule 1, not sent" and "rule 2, missing" must not look alike. The API sends
+  // the counts exactly when it sends parents_computed and refuses to build a
+  // response otherwise, so a payload breaking that is a contract violation:
+  // it fails loudly here rather than rendering a rule-2 page without its
+  // not-verified count.
+  if (newRules && outside === null) {
+    throw new Error(
+      "ATT&CK dashboard: parents_computed is set but the Not verified / Outside control surface counts are missing (#621).",
+    );
+  }
   const blind = blindSpots(data.techniques);
   // #620 round 5: reconciles the KPI (rollup) with the list below it.
   const reconcile = blindSpotReconciliation(data);

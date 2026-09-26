@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { outsideAssessedText } from "@/lib/attack/outsideAssessed";
 import type { AttackHeatmap, TacticHeatmapEntry } from "@/lib/attack/types";
@@ -102,6 +102,29 @@ describe("the client dashboard follows the rule set", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByRole("option", { name: "Outside control surface" }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("a rule-2 payload missing the counts", () => {
+  it("fails loudly instead of rendering like rule 1", () => {
+    const d = dashboard(true);
+    delete d.rollup.unable_to_determine;
+    delete d.rollup.outside_control_surface;
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(() => render(<AttackDashboard data={d} />)).toThrow(
+        /parents_computed is set but the Not verified/,
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("while rule-1 data without them renders", () => {
+    render(<AttackDashboard data={dashboard(false)} />);
+    expect(
+      screen.getByText("Coverage assessed this engagement"),
     ).toBeInTheDocument();
   });
 });
