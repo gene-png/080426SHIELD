@@ -46,7 +46,7 @@ from sqlalchemy.orm import Session
 from app.ai.llm import LLMClient
 from app.audit import audit
 from app.db.session import get_db
-from app.deliverable_release import release_deliverable
+from app.deliverable_release import ParentGuard, release_deliverable
 from app.dependencies import current_client, current_user, require_role
 from app.logging import get_logger
 from app.models._common import utcnow
@@ -1541,8 +1541,10 @@ def finalize_deliverable(
     #
     # APPROVED ONLY (round 2). A RELEASED list is frozen, and re-finalizing it
     # never locks a service -- that is why finalize accepts RELEASED at all.
-    # Release now refuses undecided rows, so no new RELEASED list can hold one;
-    # a legacy RELEASED list that does (released before #639) keeps
+    # The release flip itself refuses a list holding undecided rows (round 3:
+    # the guard is in the flip's WHERE, the one writer of RELEASED, on the first
+    # release and the repair re-release alike), so no release can produce one
+    # now. A legacy RELEASED list that holds one (released before #639) keeps
     # re-finalizing exactly as it does on main, rather than being locked behind
     # a remedy -- "edit step 2" -- that a released list refuses.
     if cap_list.status == CapabilityListStatus.APPROVED:
@@ -1706,7 +1708,6 @@ def release_tech_debt_deliverable(
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],
 ) -> DeliverableResponse:
-    _refuse_release_over_undecided_rows(db, deliverable_id, client.id)
     deliv = release_deliverable(
         db,
         deliverable_id=deliverable_id,
@@ -1714,42 +1715,26 @@ def release_tech_debt_deliverable(
         user=user,
         kinds=(ServiceKind.TECH_DEBT,),
         action="tech_debt.deliverable.released",
+        parent_guard=_NO_UNDECIDED_ROWS,
     )
     return _serialize_deliverable(db, deliv)
 
 
-def _refuse_release_over_undecided_rows(
-    db: Session, deliverable_id: uuid.UUID, client_id: uuid.UUID
-) -> None:
-    """#657 round 2: release freezes the list, so it must not freeze an
-    unfinished review. Without this, approve -> finalize -> send a row back to
-    undecided -> release produced a RELEASED list that no step could repair.
-
-    Checks the list this deliverable was BUILT from (the version finalize
-    stamped, which is how release finds the parent it flips), and only while
-    that list is APPROVED: release flips only an APPROVED parent, and
-    re-releasing an already-released deliverable stays the no-op it is. The
-    remedy names step 2, which is editable while the list is APPROVED. Tenant,
-    kind and not-finalized refusals are left to `release_deliverable`; a
-    deliverable this cannot place is left to it too, never refused here."""
-    deliv = db.get(Deliverable, deliverable_id)
-    if deliv is None or deliv.released_at is not None or deliv.parent_version is None:
-        return
-    svc = db.get(Service, deliv.service_id)
-    if svc is None or svc.client_id != client_id or svc.kind != ServiceKind.TECH_DEBT:
-        return
-    parent = (
-        db.execute(
-            select(CapabilityList).where(
-                CapabilityList.service_id == svc.id,
-                CapabilityList.version == deliv.parent_version,
-            )
-        )
-        .scalars()
-        .first()
-    )
-    if parent is None or parent.status != CapabilityListStatus.APPROVED:
-        return
-    undecided = undecided_row_count(db, parent.id)
-    if undecided:
-        raise _refuse_undecided(undecided, then="generate the deliverable again before releasing")
+#: #657 round 3. Release freezes the list, so it must not freeze an unfinished
+#: review: without this, approve -> finalize -> send a row back to undecided ->
+#: release produced a RELEASED list no step could repair. The condition joins
+#: the parent flip's own WHERE in `deliverable_release._release_parent`, the ONE
+#: writer of a released list, so it holds on the first release AND on the
+#: repair re-release of an already-released deliverable, and no PATCH can land
+#: between a check and the flip. The remedy names step 2, which is editable
+#: while the list is APPROVED -- the only state the flip moves.
+_NO_UNDECIDED_ROWS = ParentGuard(
+    condition=lambda list_id: ~(
+        select(CapabilityItem.id)
+        .where(CapabilityItem.capability_list_id == list_id, _UNDECIDED)
+        .exists()
+    ),
+    refusal=lambda db, list_id: _refuse_undecided(
+        undecided_row_count(db, list_id), then="generate the deliverable again before releasing"
+    ),
+)

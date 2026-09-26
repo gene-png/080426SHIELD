@@ -10,10 +10,11 @@ removed D-005/D-006 reviewer gate (D-023).
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, select, update
 from sqlalchemy.orm import Session
 
 from app.audit import audit
@@ -41,6 +42,21 @@ class _Parent:
     status_enum: type
 
 
+@dataclass(frozen=True)
+class ParentGuard:
+    """A condition the parent must still meet at the instant it is flipped (#657).
+
+    `condition(parent_id)` joins the flip's WHERE, so it is judged by the same
+    statement that writes RELEASED -- no read-then-write window. If the flip
+    misses while the parent is still APPROVED, the guard is why, and
+    `refusal(db, parent_id)` is raised: the release is REFUSED, not logged,
+    because the caller has not committed and nothing it wrote survives.
+    """
+
+    condition: Callable[[uuid.UUID], ColumnElement[bool]]
+    refusal: Callable[[Session, uuid.UUID], HTTPException]
+
+
 # Which parent record each service kind releases. There was no such map before
 # W4 — `release_deliverable` knew only a `kinds` tuple and an audit-action
 # string, which is why nothing outside the seed script ever assigned RELEASED.
@@ -53,7 +69,14 @@ _PARENTS: dict[ServiceKind, _Parent] = {
 }
 
 
-def _release_parent(db: Session, *, deliv: Deliverable, svc: Service, action: str) -> None:
+def _release_parent(
+    db: Session,
+    *,
+    deliv: Deliverable,
+    svc: Service,
+    action: str,
+    guard: ParentGuard | None = None,
+) -> None:
     """Flip the parent this deliverable was built from to RELEASED (W4).
 
     No API route assigned RELEASED before this; the only writer in the repo was
@@ -75,6 +98,15 @@ def _release_parent(db: Session, *, deliv: Deliverable, svc: Service, action: st
       column exists to prevent, so it does not guess.
     * the parent is not APPROVED — flipping a DRAFT would skip APPROVED entirely
       and lock work in progress; anything else is already terminal.
+
+    THE FLIP IS A CONDITIONAL UPDATE (#657 round 3), `status = APPROVED` plus the
+    caller's `guard` if any, with a rowcount check -- the approve route's shape.
+    It was an unconditional ORM assignment after a read, so anything the caller
+    had checked could change before it landed. It is the ONE writer of a
+    released parent, so a guard here covers every path through it: the first
+    release and the repair re-release alike. Only Tech Debt passes a guard; CSF,
+    ZT and ATT&CK pass none, and for them the only difference is that a status
+    changed concurrently is logged instead of overwritten.
     """
     parent = _PARENTS.get(svc.kind)
     if parent is None:  # pragma: no cover - every kind is mapped above
@@ -135,7 +167,28 @@ def _release_parent(db: Session, *, deliv: Deliverable, svc: Service, action: st
         )
         return
 
-    row.status = parent.status_enum.RELEASED
+    conditions = [parent.model.id == row.id, parent.model.status == parent.status_enum.APPROVED]
+    if guard is not None:
+        conditions.append(guard.condition(row.id))
+    flipped = db.execute(
+        update(parent.model)
+        .where(*conditions)
+        .values(status=parent.status_enum.RELEASED)
+        .execution_options(synchronize_session=False)
+    ).rowcount
+    db.refresh(row)
+    if flipped != 1:
+        if guard is not None and row.status == parent.status_enum.APPROVED:
+            raise guard.refusal(db, row.id)
+        _log.warning(
+            "deliverable.release_parent_changed_concurrently",
+            deliverable_id=str(deliv.id),
+            action=action,
+            service_kind=svc.kind.value,
+            parent_version=deliv.parent_version,
+            parent_status=row.status.value,
+        )
+        return
     _log.info(
         "deliverable.release_parent_released",
         deliverable_id=str(deliv.id),
@@ -163,6 +216,7 @@ def release_deliverable(
     user: User,
     kinds: tuple[ServiceKind, ...],
     action: str,
+    parent_guard: ParentGuard | None = None,
 ) -> Deliverable:
     """Release a finalized deliverable to the client.
 
@@ -208,7 +262,7 @@ def release_deliverable(
         # consultant a delivered report still needs releasing. Without this, the
         # only fix was direct SQL: the release is idempotent, so re-releasing
         # changed nothing, forever. Re-releasing now repairs it.
-        _release_parent(db, deliv=deliv, svc=svc, action=action)
+        _release_parent(db, deliv=deliv, svc=svc, action=action, guard=parent_guard)
         if db.is_modified(deliv) or db.dirty:
             db.commit()
         return deliv
@@ -220,7 +274,7 @@ def release_deliverable(
     # released and its parent reading RELEASED are one fact; committing one
     # without the other is what produced the stage bar claiming a released
     # service still had releasing left to do.
-    _release_parent(db, deliv=deliv, svc=svc, action=action)
+    _release_parent(db, deliv=deliv, svc=svc, action=action, guard=parent_guard)
     audit(
         db,
         action=action,

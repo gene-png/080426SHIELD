@@ -916,6 +916,117 @@ def test_a_row_made_undecided_as_the_rows_load_is_refused_not_rendered(app_clien
 
 
 @pytest.mark.unit
+def test_a_normal_first_release_still_releases(app_client) -> None:
+    """The passing half of round 3: every row decided, the guarded flip matches."""
+    c, _, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)
+    _approve_list(c, bearer, svc_id)
+    fin = _finalize(c, h, svc_id)
+    assert fin.status_code == 201, fin.text
+
+    r = c.post(f"/tech-debt/deliverables/{fin.json()['id']}/release", headers=h)
+
+    assert r.status_code == 200, r.text
+    assert _latest_list(c, bearer, svc_id)["status"] == "released"
+
+
+@pytest.mark.unit
+def test_a_repair_rerelease_over_an_undecided_row_is_refused(app_client) -> None:
+    """#657 round 3, finding 1. Re-releasing an already-released deliverable is
+    the REPAIR path: it flips a parent that never got flipped. Round 2's
+    pre-check returned early for a released deliverable, so the repair path
+    flipped an APPROVED list holding an undecided row unchecked.
+
+    LEGACY STATE, BUILT BY DIRECT SQL: a released deliverable whose list is
+    still APPROVED is what migration 0041's backfill left behind; no route
+    produces it now."""
+    from app.models.capability import CapabilityList as _CL
+    from app.models.capability import CapabilityListStatus
+
+    c, sessions, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)
+    _approve_list(c, bearer, svc_id)
+    fin = _finalize(c, h, svc_id)
+    assert fin.status_code == 201, fin.text
+    rel = c.post(f"/tech-debt/deliverables/{fin.json()['id']}/release", headers=h)
+    assert rel.status_code == 200, rel.text
+    list_id = _latest_list(c, bearer, svc_id)["id"]
+    with sessions() as db:
+        db.get(_CL, _uuid.UUID(list_id)).status = CapabilityListStatus.APPROVED
+        db.commit()
+    r = c.patch(f"/tech-debt/capability-items/{item_ids[0]}", headers=h, json={"disposition": None})
+    assert r.status_code == 200, r.text
+
+    again = c.post(f"/tech-debt/deliverables/{fin.json()['id']}/release", headers=h)
+
+    assert again.status_code == 409, again.text
+    assert again.json()["error"]["reason"] == "capability_list_undecided_rows", again.text
+    assert _latest_list(c, bearer, svc_id)["status"] == "approved", "the repair froze it anyway"
+
+
+@pytest.mark.unit
+def test_a_row_made_undecided_as_the_list_is_released_is_refused(app_client) -> None:
+    """#657 round 3, finding 2: a check that runs before the flip cannot see a
+    PATCH that commits between them. Forced through the route: a one-shot hook
+    commits the edit from a separate session immediately before the flip --
+    before the guarded UPDATE if the flip is one, or before the flush that
+    writes an ORM-assigned status. Either way the flip itself must refuse."""
+    from sqlalchemy import event
+
+    from app.models.capability import CapabilityItem
+    from app.models.capability import CapabilityList as _CL
+
+    c, sessions, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)
+    _approve_list(c, bearer, svc_id)
+    fin = _finalize(c, h, svc_id)
+    assert fin.status_code == 201, fin.text
+
+    fired: list[str] = []
+
+    def undecide() -> None:
+        other = sessions()
+        try:
+            other.get(CapabilityItem, _uuid.UUID(item_ids[0])).disposition = None
+            other.commit()
+        finally:
+            other.close()
+
+    def before_guarded_update(state) -> None:
+        mapper = state.bind_mapper
+        if not fired and state.is_update and mapper is not None and mapper.class_ is _CL:
+            fired.append("update")
+            undecide()
+
+    def before_orm_flush(session, _ctx, _instances) -> None:
+        if not fired and any(isinstance(o, _CL) for o in session.dirty):
+            fired.append("flush")
+            undecide()
+
+    event.listen(sessions, "do_orm_execute", before_guarded_update)
+    event.listen(sessions, "before_flush", before_orm_flush)
+    try:
+        r = c.post(f"/tech-debt/deliverables/{fin.json()['id']}/release", headers=h)
+    finally:
+        event.remove(sessions, "do_orm_execute", before_guarded_update)
+        event.remove(sessions, "before_flush", before_orm_flush)
+
+    assert fired, "the hook never ran -- the window was not exercised"
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "capability_list_undecided_rows", r.text
+    assert _latest_list(c, bearer, svc_id)["status"] == "approved"
+
+
+@pytest.mark.unit
 def test_approve_succeeds_once_every_row_is_decided(app_client) -> None:
     """The passing half: zero undecided rows approve."""
     c, _, provider = app_client
