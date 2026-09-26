@@ -83,8 +83,9 @@ jobs:
       # Dependabot PR has a body Dependabot wrote, and nobody can edit it into
       # compliance without taking over authorship of the PR -- so the gate is
       # RED BY CONSTRUCTION for that entire class, and the only ways to clear it
-      # are to merge past a red required check or to close the PR and redo the
-      # bump by hand. Both are worse than the exemption: the first teaches that
+      # are to merge past a red required check (since 2026-09-25, with
+      # enforce_admins on, that first means switching the setting off) or to
+      # close the PR and redo the bump by hand. Both are worse than the exemption: the first teaches that
       # a red gate is negotiable, and the second is how security bumps sit
       # unmerged.
       #
@@ -109,6 +110,11 @@ jobs:
       #     gh api repos/{owner}/{repo}/branches/main/protection
       #       required_pull_request_reviews.required_approving_review_count -> 0
       #       enforce_admins                                                -> false
+      #
+      # RE-MEASURED 2026-09-25: the review count is still 0, and
+      # enforce_admins is now TRUE (#595). That changes nothing below: the
+      # skip does not make anything red, it removes a check, so it works the
+      # same whoever merges.
       #
       # Nothing enforces a review. So this step's skip removes the ONLY enforced
       # check on these PRs and leaves a convention in its place. That is
@@ -319,6 +325,38 @@ jobs:
         working-directory: apps/api
         run: |
           python scripts/check_merge_rule_conditions.py             --changed-files /tmp/changed.txt --body /tmp/body.md
+
+  compose-content-changed:
+    # D-095: a docker-compose diff whose parsed YAML is unchanged does not trip
+    # merge-rule condition 5. The job reports its VERDICT: green is UNCHANGED;
+    # red is CHANGED (exit 1) or COULD NOT READ (exit 2), and the step summary
+    # says which. Could-not-read never shows green. A change is rare (D-095
+    # measures it) and red on purpose: a human reads the compose diff. It
+    # judges compose files ONLY. NOT a required check.
+    name: compose content changed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The tool reads the merge base and the head, so it needs history.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Read the compose files at the merge base and the head
+        # No pipe into `tee`: a `run:` step here is `bash -e` without pipefail,
+        # so a pipe would report tee's status and lose the 2 (#213). `2>&1`, so a
+        # crash, whose only output is on stderr, still names its state in the
+        # summary. test_compose_unchanged.py EXECUTES this block against a stub.
+        run: |
+          python -m pip install --quiet "pyyaml>=6.0"
+          rc=0
+          python apps/api/scripts/compose_unchanged.py --repo . "origin/${{ github.base_ref }}..HEAD" > /tmp/compose.txt 2>&1 || rc=$?
+          cat /tmp/compose.txt
+          cat /tmp/compose.txt >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
 
   # A SEPARATE job, so it reports as its own check rather than folding a
   # different failure into "Adversarial audit recorded". It shares this

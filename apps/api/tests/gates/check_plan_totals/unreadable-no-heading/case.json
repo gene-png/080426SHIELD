@@ -1,5 +1,5 @@
 {
- "incident": "D-051: a guard that cannot read its input must fail closed, and the tell is a positive-sounding message on an empty read. check_audit_evidence printed 'documentation-only change, exempt' and exited 0 from input supporting neither reading.",
+ "incident": "D-090: a guard that cannot read its input must fail closed, and the tell is a positive-sounding message on an empty read. check_audit_evidence printed 'documentation-only change, exempt' and exited 0 from input supporting neither reading.",
  "expect": 2,
  "adversarial": true,
  "argv": [
