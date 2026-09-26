@@ -294,12 +294,17 @@ def test_wrong_issuer_rejected(app_client, monkeypatch) -> None:
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("claim", ["sub", "exp", "iat"])
+@pytest.mark.parametrize("claim", ["sub", "exp", "iat", "aud"])
 def test_a_token_missing_a_required_claim_is_a_typed_401(app_client, monkeypatch, claim) -> None:
     """#678. The verifier passed `options={"require": [...]}`, which python-jose
     3.5 IGNORES -- it reads only `require_<claim>` keys. A Keycloak-signed token
     with no `sub` was accepted, then `claims['sub']` raised KeyError: an untyped
-    500. Through the route, so the wiring is what is tested, not the helper."""
+    500. Through the route, so the wiring is what is tested, not the helper.
+
+    `aud` too (round 1): jose's audience check returns early when the claim is
+    ABSENT, so a token with no audience was accepted while the docstring says
+    aud is verified. The shipped realm sets it; the check must not depend on
+    that."""
     c, TestSession = app_client
     from app.security import oidc
 

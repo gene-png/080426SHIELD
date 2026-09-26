@@ -16,3 +16,8 @@ Branch `track2/oidc-require-claims`, from `main` at `c39e6c8`.
   again with the old option put back.
 - **The twin.** `security/jwt.py` has the same inert form. Open PR #670
   already fixes it, so this PR leaves that file alone.
+- **Round 1 added `require_aud`.** jose's audience check returns early when
+  `aud` is absent, so a token with no audience was accepted. The shipped realm
+  sets `aud`, so this was unreachable today, but the fix has the same shape.
+  The test covers `aud` too. Filed: #688 (a present-but-null `exp` or `iat`,
+  an unpinned jose, and the `jwt.py` twin until #670 lands).

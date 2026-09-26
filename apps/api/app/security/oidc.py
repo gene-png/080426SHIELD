@@ -134,7 +134,8 @@ def verify_access_token(token: str) -> dict:
 
     RS256 only (HS256/none rejected — alg-confusion guard); ``iss`` pinned to
     ``keycloak_issuer``, ``aud`` to ``keycloak_audience``; ``exp``/``iat``/``sub``
-    required, enforced through python-jose's ``require_<claim>`` options and
+    required, and ``aud`` must be present as well as match, enforced through
+    python-jose's ``require_<claim>`` options and
     pinned by ``test_a_token_missing_a_required_claim_is_a_typed_401`` (#678).
     Raises :class:`OidcError` (401/503) on any failure. Business claims
     (azp/email/…) are the route's job.
@@ -169,14 +170,21 @@ def verify_access_token(token: str) -> dict:
             # `require_<claim>` keys, NOT `{"require": [...]}`: python-jose 3.5
             # reads only the former and silently ignores the latter (#678),
             # which accepted a token with no `exp` (it never expired) and one
-            # with no `sub` (a KeyError 500 in the route).
-            options={"require_exp": True, "require_iat": True, "require_sub": True},
+            # with no `sub` (a KeyError 500 in the route). `require_aud` because
+            # jose's audience check returns early when `aud` is ABSENT, so the
+            # pinned audience alone does not refuse a token that has none.
+            options={
+                "require_exp": True,
+                "require_iat": True,
+                "require_sub": True,
+                "require_aud": True,
+            },
         )
     except JWTError as exc:
         raise OidcError(
             status_code=401,
             reason="oidc_token_invalid",
             message="The Keycloak token failed verification (signature, issuer, "
-            "audience, expiry, or a missing exp/iat/sub claim).",
+            "audience, expiry, or a missing exp/iat/sub/aud claim).",
         ) from exc
     return claims
