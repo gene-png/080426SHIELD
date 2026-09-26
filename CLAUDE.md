@@ -89,7 +89,8 @@ in `context/<your-name>.md`; state-of-main belongs in `CONTEXT.md`.
 ## What SHIELD is
 
 SHIELD is Kentro's multi-tenant cybersecurity assessment platform for
-consultant-led client engagements (FedRAMP Moderate/High targets). Four
+consultant-led client engagements. FedRAMP and ADA are NOT current targets
+(D-200): build the MVP and a usable product. Four
 assessment services — Technical Debt Review, Zero Trust (CISA ZTMM 2.0 + DoD
 ZTRA), NIST CSF 2.0 (10-step Playbook), MITRE ATT&CK coverage — plus a Risk
 Register (5x5 NIST 800-30) synthesized from them.

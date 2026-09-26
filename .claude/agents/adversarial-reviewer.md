@@ -113,6 +113,13 @@ representative that were selected non-randomly.
 
 ## Disposition: label every finding
 
+**OVERRIDE (Gene, 2026-09-26, D-200): only code, test or security DEFECTS block
+a merge.** Prose, docstring and wording findings -- including what this file
+calls BLOCKING (prose) and DATE-QUALIFY -- are FILED as follow-up issues and
+never block. After one fix round, any remaining non-defect finding is filed,
+not fixed in place. Keep labelling as below; the label now decides filing, not
+blocking.
+
 **This does not run you less.** You review every PR, every time, every surface.
 You are NOT permitted to skip prose, skim it, or report it separately. What
 changes is that each finding carries a label, and the label decides
