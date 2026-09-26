@@ -791,11 +791,11 @@ def approve_assessment(
             status_code=status.HTTP_409_CONFLICT,
             detail="Assessment already released.",
         )
-    if a.status == CsfAssessmentStatus.DISCARDED:
-        raise _refuse_approving_discarded()
-    # #702: conditional on a status that may be approved, so a discard that
-    # commits after the row above was loaded is not overwritten. Discard's own
-    # UPDATE is conditional on DRAFT; this is the other half of that contract.
+    # #702: conditional on a status that may be approved. That one condition
+    # refuses a DISCARDED assessment, whether it was discarded before this
+    # request or commits after the row above was loaded; discard's own UPDATE
+    # is conditional on DRAFT, and this is the other half of that contract. The
+    # rowcount branch below says which status stopped it.
     result = db.execute(
         update(CsfAssessment)
         .where(
