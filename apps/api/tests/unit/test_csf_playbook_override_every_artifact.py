@@ -311,3 +311,28 @@ def test_the_gap_action_put_on_a_non_gap_row_reports_no_effective_priority(app_c
     body = res.json()
     assert body["priority_override"] == "P1"
     assert body["effective_priority"] is None
+
+
+def test_an_override_on_a_non_gap_never_reads_as_a_prioritised_gap_in_the_overview(
+    app_client,
+) -> None:
+    # F3 (b), from #692's review. `_overview_sentences` words its count on
+    # `r.gap` and prints priority counts beside it, so a non-gap row that kept
+    # its override would read "1 subcategory falls short ... 2 Priority 1" over
+    # a single gap. The literal is the whole sentence, #692's wording.
+    c, h = app_client
+    svc, code = _one_gap(c, h)
+    default = _default_priority(c, h, svc, code)
+    _override(c, h, svc, SUBCATEGORIES[1].code, "P1")
+
+    files = _export(c, h, svc)
+
+    p1, p2, p3 = (int(default == p) for p in ("P1", "P2", "P3"))
+    sentence = (
+        "1 subcategory falls short of its target maturity — "
+        f"{p1} Priority 1 (critical), {p2} Priority 2, and {p3} Priority 3."
+    )
+    for kind in KINDS - {"xlsx"}:
+        text = _flat_text(kind, files[kind])
+        assert sentence in text, kind
+        assert "0 subcategories fall short" not in text, kind
