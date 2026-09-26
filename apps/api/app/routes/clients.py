@@ -31,7 +31,10 @@ from app.attack.catalog_version import (
     require_current_catalog_for_client,
 )
 from app.attack.catalog_version import is_current as attack_catalog_is_current
+from app.attack.parents import PARENT_CHILDREN as ATTACK_PARENT_CHILDREN
+from app.attack.parents import is_computed_parent as attack_is_computed_parent
 from app.attack.pending import pending_codes as attack_pending_codes
+from app.attack.rules import parents_computed as attack_parents_computed
 from app.csf.gap import MAX_TIER as CSF_MAX_TIER
 from app.csf.gap import analyze as csf_analyze_gaps
 from app.csf.gap import resolve_target_tier as csf_resolve_target_tier
@@ -1219,16 +1222,24 @@ def attack_dashboard(
     # route reads `covered`, `partial` and `coverage_pct`, so it is exactly the
     # case `_attack_uncovered_total`'s comment names above -- and it is the one
     # a CLIENT reads, gated to appear when the released PDF does.
-    rollup = attack_compute(coverage_map, attack_pending_codes(rows))
+    # #620 (D-094, Gene's condition): an assessment approved before #620
+    # renders exactly as it was delivered -- the old pending rule, each parent's
+    # own tools and rationale, and none of the new keys below.
+    rule = attack_parents_computed(assessment)
+    # ONE set, read by the rollup and by every row's flag.
+    withheld = attack_pending_codes(rows, parents_computed=rule)
+    rollup = attack_compute(coverage_map, withheld)
 
     techniques: list[AttackDashboardTechnique] = []
-    # The SAME set the rollup above was built from, not a second derivation.
-    withheld = attack_pending_codes(rows)
     for r in rows:
         if r.status is None or r.technique_code not in valid:
             continue
         tech = attack_technique_by_id(r.technique_code)
         tactic_name = attack_tactic_by_id(tech.tactics[0]).name if tech.tactics else ""
+        # #620 round 2 (D-094): a computed parent's evidence is its children's;
+        # its own stored tools and rationale are not delivered.
+        parent = rule and attack_is_computed_parent(r.technique_code)
+        sub_count = len(ATTACK_PARENT_CHILDREN.get(r.technique_code, ()))
         techniques.append(
             AttackDashboardTechnique(
                 code=tech.id,
@@ -1236,10 +1247,14 @@ def attack_dashboard(
                 tactic_name=tactic_name,
                 status=r.status,
                 pending_review=r.technique_code in withheld,
-                detection_tools=list(r.detection_tools or []),
-                prevention_tools=list(r.prevention_tools or []),
-                response_tools=list(r.response_tools or []),
-                rationale=r.rationale,
+                # None under the old rules: the keys are then OMITTED (see the
+                # schema), so the response is byte-identical to what main sent.
+                computed_parent=parent if rule else None,
+                sub_technique_count=sub_count if rule else None,
+                detection_tools=[] if parent else list(r.detection_tools or []),
+                prevention_tools=[] if parent else list(r.prevention_tools or []),
+                response_tools=[] if parent else list(r.response_tools or []),
+                rationale=None if parent else r.rationale,
             )
         )
     techniques.sort(key=lambda t: t.code)
@@ -1259,6 +1274,7 @@ def attack_dashboard(
         released_at=_dashboard_stamp(deliv, is_released),
         released=is_released,
         deliverable_version=deliv.version,
+        parents_computed=True if rule else None,
         rollup=AttackDashboardRollup(
             total_evaluated=rollup.covered + rollup.partial + rollup.gap,
             covered=rollup.covered,

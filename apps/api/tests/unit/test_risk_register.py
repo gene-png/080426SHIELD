@@ -27,6 +27,7 @@ from app.risk.exporters import render_docx, render_pdf
 # `max(batch_sizes) <= _RISK_BATCH_SIZE` is the invariant itself. Hardcoding a
 # literal here would silently stop exercising batching if the constant changed.
 from app.routes.risk import _RISK_BATCH_SIZE
+from tests._attack_rows import first_standalone, standalone_rows
 
 
 @pytest.fixture()
@@ -107,9 +108,10 @@ def _seed_attack_and_zt(c: TestClient, bearer: str, cid: str) -> tuple[str, str]
         json={"kind": "attack_coverage", "title": "ATT&CK"},
     )
     a = c.post(f"/attack/services/{asvc.json()['id']}/assessments", headers=h)
-    cov = a.json()["coverage"][0]
+    cov = first_standalone(a.json()["coverage"])
     technique = cov["technique_code"]
-    c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "gap"})
+    r = c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "gap"})
+    assert r.status_code == 200, r.text
 
     zsvc = c.post("/zt/services", headers=h, json={"kind": "zero_trust_cisa", "title": "ZT"})
     za = c.post(f"/zt/services/{zsvc.json()['id']}/assessments", headers=h)
@@ -599,10 +601,10 @@ def _seed_many_gaps(c: TestClient, bearer: str, cid: str, count: int) -> tuple[l
         json={"kind": "attack_coverage", "title": "ATT&CK"},
     )
     a = c.post(f"/attack/services/{asvc.json()['id']}/assessments", headers=h)
-    rows = a.json()["coverage"][:count]
-    assert len(rows) == count, f"assessment supplied only {len(rows)} techniques"
+    rows = standalone_rows(a.json()["coverage"], count)
     for cov in rows:
-        c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "gap"})
+        r = c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "gap"})
+        assert r.status_code == 200, r.text
 
     zsvc = c.post("/zt/services", headers=h, json={"kind": "zero_trust_cisa", "title": "ZT"})
     za = c.post(f"/zt/services/{zsvc.json()['id']}/assessments", headers=h)
@@ -775,8 +777,9 @@ def _seed_drafts_only(c: TestClient, bearer: str, cid: str) -> None:
         json={"kind": "attack_coverage", "title": "ATT&CK"},
     )
     a = c.post(f"/attack/services/{asvc.json()['id']}/assessments", headers=h)
-    cov = a.json()["coverage"][0]
-    c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "gap"})
+    cov = first_standalone(a.json()["coverage"])
+    r = c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "gap"})
+    assert r.status_code == 200, r.text
     zsvc = c.post("/zt/services", headers=h, json={"kind": "zero_trust_cisa", "title": "ZT"})
     za = c.post(f"/zt/services/{zsvc.json()['id']}/assessments", headers=h)
     c.patch(
@@ -2599,3 +2602,54 @@ def test_the_gate_reports_a_stale_attack_input_with_the_refusals_sentence(app_cl
     r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
     assert r.status_code == 409, r.text
     assert r.json()["error"]["message"] == g["attack_catalog_mismatch"]
+
+
+@pytest.mark.unit
+def test_a_computed_parent_is_never_a_register_finding_of_its_own(app_client) -> None:
+    """#620 round 3, finding 4 (the coordinator's call, pending Gene; D-094,
+    condition 6). A parent's status is computed from its sub-techniques, so a
+    finding for it counts the same technique a second time beside its
+    children's, and a recompute added or removed findings with no change in
+    the evidence. Synthesis takes findings through the sub-techniques only.
+    Asserted on the findings that LEAVE, through generate."""
+    from app.attack.catalog import TECHNIQUES
+
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    asvc = c.post(
+        "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "ATT&CK"}
+    ).json()["id"]
+    a = c.post(f"/attack/services/{asvc}/assessments", headers=h).json()
+    by_code = {r["technique_code"]: r for r in a["coverage"]}
+    # From the catalog's parent links, not from app.attack.parents.
+    parent = sorted({t.parent_id for t in TECHNIQUES if t.parent_id})[0]
+    children = [t.id for t in TECHNIQUES if t.parent_id == parent]
+    for child in children:
+        r = c.patch(f"/attack/coverage/{by_code[child]['id']}", headers=h, json={"status": "gap"})
+        assert r.status_code == 200, r.text
+    assert c.post(f"/attack/assessments/{a['id']}/approve", headers=h).status_code == 200
+    # The register also needs a CSF or ZT assessment; one, approved, as in
+    # `_seed_attack_and_zt`. Its finding is filtered out below by kind.
+    zsvc = c.post("/zt/services", headers=h, json={"kind": "zero_trust_cisa", "title": "ZT"})
+    za = c.post(f"/zt/services/{zsvc.json()['id']}/assessments", headers=h)
+    zans = za.json()["answers"][0]
+    c.patch(f"/zt/answers/{zans['id']}", headers=h, json={"maturity_stage": 1})
+    assert c.post(f"/zt/assessments/{za.json()['id']}/approve", headers=h).status_code == 200
+
+    sent: list[str] = []
+
+    def fixture(payload: dict) -> LLMResponse:
+        sent.extend(
+            f["source_id"] for f in payload.get("findings", []) if f.get("kind") == "attack"
+        )
+        return _entry_per_finding(payload)
+
+    provider.register("risk_synthesize", fixture)
+    r = c.post(
+        f"/risk/clients/{cid}/register/generate",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    assert r.status_code == 201, r.text
+    # The parent is a gap too (all children are), and still not a finding.
+    assert sorted(sent) == sorted(children)
