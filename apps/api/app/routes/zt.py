@@ -1306,6 +1306,20 @@ def submit_self_assessment(
     return _serialize_assessment(db, a)
 
 
+def _refuse_approving_discarded() -> HTTPException:
+    """#702: a discarded assessment is retired (D-031) and cannot be approved."""
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "reason": "assessment_discarded",
+            # No remedy named: "Start assessment" renders only when no live
+            # assessment exists, so an imperative here could point at a
+            # control that is not on screen.
+            "message": "This assessment was discarded and cannot be approved.",
+        },
+    )
+
+
 @router.post(
     "/assessments/{assessment_id}/approve",
     response_model=ZtAssessmentResponse,
@@ -1325,9 +1339,32 @@ def approve_assessment(
             status_code=status.HTTP_409_CONFLICT,
             detail="Assessment already released.",
         )
-    a.status = ZtAssessmentStatus.APPROVED
-    a.approved_at = utcnow()
-    a.approved_by = user.id
+    if a.status == ZtAssessmentStatus.DISCARDED:
+        raise _refuse_approving_discarded()
+    # #702: conditional on a status that may be approved, so a discard that
+    # commits after the row above was loaded is not overwritten. Discard's own
+    # UPDATE is conditional on DRAFT; this is the other half of that contract.
+    result = db.execute(
+        update(ZtAssessment)
+        .where(
+            ZtAssessment.id == a.id,
+            ZtAssessment.status.in_((ZtAssessmentStatus.DRAFT, ZtAssessmentStatus.SUBMITTED)),
+        )
+        .values(status=ZtAssessmentStatus.APPROVED, approved_at=utcnow(), approved_by=user.id)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        db.rollback()
+        db.refresh(a)
+        if a.status == ZtAssessmentStatus.DISCARDED:
+            raise _refuse_approving_discarded()
+        if a.status == ZtAssessmentStatus.APPROVED:
+            return _serialize_assessment(db, a)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Assessment already released.",
+        )
+    db.refresh(a)
     audit(
         db,
         action="zt.assessment.approved",
