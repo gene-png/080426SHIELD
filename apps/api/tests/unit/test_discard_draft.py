@@ -629,7 +629,8 @@ def test_zt_version_trap(app_client) -> None:
     c, _TS, _p = app_client
     bearer = _admin(c)
     svc_id, a1 = _zt_assessment(c, bearer)
-    c.post(f"/zt/assessments/{a1['id']}/approve", headers=_hdr(bearer))
+    zap = c.post(f"/zt/assessments/{a1['id']}/approve", headers=_hdr(bearer))
+    assert zap.status_code == 200, zap.text
     a2 = c.post(f"/zt/services/{svc_id}/assessments", headers=_hdr(bearer)).json()
     assert a2["version"] == 2
     c.post(f"/zt/assessments/{a2['id']}/discard", headers=_hdr(bearer))

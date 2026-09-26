@@ -230,7 +230,8 @@ def test_renaming_an_item_after_approval_does_not_rewrite_the_allow_list(app_cli
     c = app_client
     h = _admin(c)
     list_id, item_ids = _list_with_items(c, h, ["Splunk", "CrowdStrike"])
-    c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+    _r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+    assert _r.status_code == 200, _r.text
 
     r = c.patch(f"/tech-debt/capability-items/{item_ids[0]}", headers=h, json={"name": "Renamed"})
     assert r.status_code == 200, r.text
@@ -253,7 +254,8 @@ def test_confirming_a_tool_non_security_after_approval_keeps_it_citable(app_clie
     c = app_client
     h = _admin(c)
     list_id, item_ids = _list_with_items(c, h, ["Splunk", "CrowdStrike"])
-    c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+    _r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+    assert _r.status_code == 200, _r.text
 
     eng = create_engine(os.environ["DATABASE_URL"], future=True)
     with sessionmaker(bind=eng, future=True)() as s:
@@ -272,7 +274,8 @@ def test_adding_an_item_after_approval_does_not_add_it_to_the_allow_list(app_cli
     c = app_client
     h = _admin(c)
     list_id, _ = _list_with_items(c, h, ["Splunk"])
-    c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+    _r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+    assert _r.status_code == 200, _r.text
 
     eng = create_engine(os.environ["DATABASE_URL"], future=True)
     with sessionmaker(bind=eng, future=True)() as s:
@@ -292,11 +295,13 @@ def test_re_approving_refreshes_the_snapshot(app_client) -> None:
     c = app_client
     h = _admin(c)
     list_id, item_ids = _list_with_items(c, h, ["Splunk"])
-    c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+    _r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+    assert _r.status_code == 200, _r.text
     c.patch(f"/tech-debt/capability-items/{item_ids[0]}", headers=h, json={"name": "Splunk ES"})
     assert _allow_list(c) == ["Splunk"]
 
-    c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+    _r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+    assert _r.status_code == 200, _r.text
     assert _allow_list(c) == ["Splunk ES"]
 
 
@@ -344,7 +349,8 @@ def test_a_discarded_list_is_still_excluded_even_with_a_snapshot(app_client) -> 
     c = app_client
     h = _admin(c)
     list_id, _ = _list_with_items(c, h, ["Splunk"])
-    c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+    _r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+    assert _r.status_code == 200, _r.text
 
     eng = create_engine(os.environ["DATABASE_URL"], future=True)
     with sessionmaker(bind=eng, future=True)() as s:
@@ -377,7 +383,8 @@ def test_the_snapshot_excludes_rows_already_out_of_security_scope(app_client) ->
         )
         s.commit()
 
-    c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+    _r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+    assert _r.status_code == 200, _r.text
     assert [e["name"] for e in _membership(list_id)] == ["Splunk"]
     assert _allow_list(c) == ["Splunk"]
 
@@ -420,6 +427,7 @@ def test_overturning_a_wrong_non_security_call_is_reported_as_stale(app_client) 
         s.commit()
 
     r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+    assert r.status_code == 200, r.text
     assert r.json()["approved_membership_stale"] is False
     assert _allow_list(c) == ["Splunk"]
 
@@ -446,6 +454,7 @@ def test_a_list_whose_scope_has_not_moved_is_not_reported_stale(app_client) -> N
     h = _admin(c)
     list_id, _ = _list_with_items(c, h, ["Splunk", "CrowdStrike"])
     r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+    assert r.status_code == 200, r.text
     assert r.json()["approved_membership_stale"] is False
 
 
@@ -490,7 +499,8 @@ def test_an_empty_snapshot_is_not_the_same_as_no_snapshot(app_client) -> None:
         )
         s.commit()
 
-    c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+    _r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+    assert _r.status_code == 200, _r.text
     with sessionmaker(bind=eng, future=True)() as s:
         assert s.get(CapabilityList, uuid.UUID(list_id)).approved_membership == []
 
@@ -540,9 +550,8 @@ def test_a_draft_list_cannot_donate_a_vendor_to_an_approved_snapshot(app_client)
     c = app_client
     h = _admin(c)
     approved_id, _ = _list_with_items(c, h, ["Umbrella"])
-    assert (
-        c.post(f"/tech-debt/capability-lists/{approved_id}/approve", headers=h).status_code == 200
-    )
+    _r = c.post(f"/tech-debt/capability-lists/{approved_id}/approve", headers=h)
+    assert _r.status_code == 200, _r.text
     _list_with_items(c, h, ["Umbrella"], vendors=["Cisco"])  # DRAFT, freely editable
 
     assert [(x.name, x.vendor) for x in _candidates(c)] == [
@@ -581,9 +590,8 @@ def test_a_donated_vendor_does_not_switch_off_another_tools_incomplete_vendor_fl
     approved_id, _ = _list_with_items(
         c, h, ["Umbrella", "CrowdStrike Falcon"], vendors=[None, "CrowdStrike"]
     )
-    assert (
-        c.post(f"/tech-debt/capability-lists/{approved_id}/approve", headers=h).status_code == 200
-    )
+    _r = c.post(f"/tech-debt/capability-lists/{approved_id}/approve", headers=h)
+    assert _r.status_code == 200, _r.text
     _list_with_items(c, h, ["Umbrella"], vendors=["Cisco"])
 
     cited = CitationResolver(_as_candidates(_candidates(c))).resolve("CrowdStrike")
@@ -608,9 +616,8 @@ def test_the_approved_snapshots_spelling_wins_over_a_drafts(app_client) -> None:
     c = app_client
     h = _admin(c)
     approved_id, _ = _list_with_items(c, h, ["Splunk Enterprise"])
-    assert (
-        c.post(f"/tech-debt/capability-lists/{approved_id}/approve", headers=h).status_code == 200
-    )
+    _r = c.post(f"/tech-debt/capability-lists/{approved_id}/approve", headers=h)
+    assert _r.status_code == 200, _r.text
     _list_with_items(c, h, ["SPLUNK ENTERPRISE"])  # DRAFT, all-caps extraction
 
     assert [x.name for x in _candidates(c)] == [
@@ -632,9 +639,8 @@ def test_one_approved_snapshot_may_still_complete_anothers_vendor(app_client) ->
     first, _ = _list_with_items(c, h, ["Umbrella"])
     second, _ = _list_with_items(c, h, ["Umbrella"], vendors=["Cisco"])
     for list_id in (first, second):
-        assert (
-            c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h).status_code == 200
-        )
+        _r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+        assert _r.status_code == 200, _r.text
 
     assert [(x.name, x.vendor) for x in _candidates(c)] == [
         ("Umbrella", "Cisco")
@@ -739,9 +745,8 @@ def test_two_identical_rows_resolve_by_item_id_and_not_by_query_order(app_client
         category="from the list inserted second",
     )
     for list_id in (first, second):
-        assert (
-            c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h).status_code == 200
-        )
+        _r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+        assert _r.status_code == 200, _r.text
 
     assert [(x.name, x.category) for x in _candidates(c)] == [
         ("Umbrella", "from the list inserted second")
