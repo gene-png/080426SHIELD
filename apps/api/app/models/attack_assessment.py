@@ -79,6 +79,10 @@ class AttackAssessment(UUIDPKMixin, TimestampMixin, Base):
     # migration 0052). NULL = created before it was recorded, which is treated
     # as NOT current: see app/attack/catalog_version.py.
     catalog_version: Mapped[str | None] = mapped_column(String(16))
+    # #620 (migration 0054, D-094): which rule set this assessment was approved
+    # under. 1 = before #620, 2 = D-094; NULL = a draft. Read ONLY through
+    # `app/attack/rules.py::parents_computed`, which raises on anything else.
+    parent_rules: Mapped[int | None] = mapped_column(Integer)
 
 
 class AttackCoverage(UUIDPKMixin, TimestampMixin, Base):

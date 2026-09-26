@@ -258,6 +258,88 @@ describe("AttackTechniquePanel — a pending row with NO stored entries", () => 
   });
 });
 
+describe("AttackTechniquePanel — a computed parent (#554, D-094)", () => {
+  function render_(subTechniqueCount: number) {
+    render(
+      <AttackTechniquePanel
+        technique={TECHNIQUE}
+        coverage={row({ status: "partial" })}
+        coverageDefinitions={[]}
+        subTechniqueCount={subTechniqueCount}
+        onPatch={vi.fn()}
+      />,
+    );
+  }
+
+  it("does not offer a status on a parent with sub-techniques, and says why", () => {
+    render_(3);
+    for (const radio of screen.getAllByRole("radio")) {
+      expect(radio).toBeDisabled();
+    }
+    expect(screen.getByTestId("computed-parent-status").textContent).toBe(
+      "Computed from its 3 sub-techniques. Score those instead; this status follows them.",
+    );
+  });
+
+  it("offers a status on a technique with no sub-techniques", () => {
+    render_(0);
+    for (const radio of screen.getAllByRole("radio")) {
+      expect(radio).not.toBeDisabled();
+    }
+    expect(screen.queryByTestId("computed-parent-status")).toBeNull();
+  });
+
+  // The API refuses a computed parent's reason and lock as well as its status
+  // (D-094, #620 round 1). A control that is live but always refused is a
+  // promise the product cannot keep. The computed reason is still SHOWN.
+  it("does not offer a reason or a lock on a parent with sub-techniques", () => {
+    render(
+      <AttackTechniquePanel
+        technique={TECHNIQUE}
+        coverage={row({ status: "partial", reason_code: "reach_limited" })}
+        coverageDefinitions={[]}
+        reasonCodes={[
+          { code: "reach_limited", status: "partial", definition: "d" },
+        ]}
+        subTechniqueCount={2}
+        onPatch={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Reason for T1003" }),
+    ).toBeDisabled();
+    expect(screen.getByTestId("reason-definition")).toHaveTextContent("d");
+    expect(
+      screen.getByRole("checkbox", {
+        name: "Lock this technique against AI reruns",
+      }),
+    ).toBeDisabled();
+  });
+
+  it("offers both on a technique with no sub-techniques", () => {
+    render(
+      <AttackTechniquePanel
+        technique={TECHNIQUE}
+        coverage={row({ status: "partial" })}
+        coverageDefinitions={[]}
+        reasonCodes={[
+          { code: "reach_limited", status: "partial", definition: "d" },
+        ]}
+        subTechniqueCount={0}
+        onPatch={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Reason for T1003" }),
+    ).not.toBeDisabled();
+    expect(
+      screen.getByRole("checkbox", {
+        name: "Lock this technique against AI reruns",
+      }),
+    ).not.toBeDisabled();
+  });
+});
+
 // What the catalog serves, abridged: two Partial codes, the N/A code, and one
 // for a status no writer may set yet -- the panel must filter by the ROW's
 // status, never offer the whole list.
@@ -361,5 +443,101 @@ describe("AttackTechniquePanel — reason code (#554)", () => {
       },
     );
     expect(onPatch).toHaveBeenCalledWith({ reason_code: null });
+  });
+});
+
+describe("AttackTechniquePanel — a computed parent's evidence (#620 round 2)", () => {
+  const ownCitation = {
+    tool: "Tool A",
+    cited: "tool",
+    reason: "substring",
+    field: "detection_tools",
+    cleared_at: null,
+  };
+  function parentPanel(over: Partial<AttackCoverageRow>, count = 3) {
+    const onConfirm = vi.fn();
+    render(
+      <AttackTechniquePanel
+        technique={TECHNIQUE}
+        coverage={row(over)}
+        coverageDefinitions={[]}
+        subTechniqueCount={count}
+        onPatch={vi.fn()}
+        onConfirmCitations={onConfirm}
+      />,
+    );
+    return onConfirm;
+  }
+
+  it("names the real remedy when a parent is pending through a child", () => {
+    // D-076: its status and tools are not the user's to set, and it has no
+    // evidence of its own -- so neither of those may be offered as the fix.
+    parentPanel({ pending_review: true, unconfirmed_citations: null });
+    const queue = screen.getByTestId("attack-citation-queue");
+    expect(queue.textContent).toContain(
+      "at least one of its 3 sub-techniques is pending review",
+    );
+    expect(queue.textContent).toContain("Review the sub-techniques");
+    expect(queue.textContent).not.toMatch(/set the status or\s+the tools/);
+  });
+
+  it("never offers to confirm a parent's own legacy citations", () => {
+    // The API refuses it (parent_status_computed); the score does not rest on
+    // them. Own citations present and uncleared, and still no button.
+    parentPanel({
+      pending_review: true,
+      unconfirmed_citations: [
+        ownCitation,
+      ] as AttackCoverageRow["unconfirmed_citations"],
+    });
+    expect(
+      screen.queryByRole("button", { name: "Confirm this evidence" }),
+    ).toBeNull();
+  });
+
+  it("shows no citation review at all for a parent that is not pending", () => {
+    parentPanel({
+      pending_review: false,
+      unconfirmed_citations: [
+        ownCitation,
+      ] as AttackCoverageRow["unconfirmed_citations"],
+    });
+    expect(screen.queryByTestId("attack-citation-queue")).toBeNull();
+  });
+
+  it("does not show a parent's own stored tools or rationale", () => {
+    // What the model once wrote for the parent may contradict its computed
+    // status; its evidence is its sub-techniques'.
+    parentPanel({
+      rationale: "Stale model text.",
+      detection_tools: ["Tool B"],
+    });
+    expect(screen.queryByText(/Stale model text\./)).toBeNull();
+    expect(screen.queryByText(/Tool B/)).toBeNull();
+    expect(
+      screen.getByText(
+        /Tools and rationale are recorded on its sub-techniques/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("still shows a standalone technique's own tools, rationale and confirm", () => {
+    // The other half: the rule is about computed parents only.
+    parentPanel(
+      {
+        rationale: "Own text.",
+        detection_tools: ["Tool B"],
+        pending_review: true,
+        unconfirmed_citations: [
+          ownCitation,
+        ] as AttackCoverageRow["unconfirmed_citations"],
+      },
+      0,
+    );
+    expect(screen.getByText(/Own text\./)).toBeInTheDocument();
+    expect(screen.getAllByText(/Tool B/).length).toBeGreaterThan(0);
+    expect(
+      screen.getByRole("button", { name: "Confirm this evidence" }),
+    ).toBeInTheDocument();
   });
 });
