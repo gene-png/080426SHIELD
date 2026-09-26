@@ -837,6 +837,18 @@ def test_release_refuses_while_a_row_is_undecided(app_client) -> None:
     assert error["reason"] == "capability_list_undecided_rows", error
     assert "Review and correct the extracted list" in error["message"], error["message"]
     assert _latest_list(c, bearer, svc_id)["status"] == "approved", "the list was frozen anyway"
+    # NO HALF-RELEASE (#657 round 4): the deliverable is not released either --
+    # not on the admin's record, and not in the list the client can see.
+    latest = c.get(f"/tech-debt/services/{svc_id}/deliverables/latest", headers=h)
+    assert latest.status_code == 200, latest.text
+    assert latest.json()["released_at"] is None, "the deliverable was released without its list"
+    client = _register(c, "client@example.com")
+    listed = c.get(
+        f"/clients/{client['user']['client_id']}/deliverables",
+        headers={"Authorization": f"Bearer {client['tokens']['access_token']}"},
+    )
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["items"] == [], "the client can see a deliverable the release refused"
 
 
 @pytest.mark.unit
@@ -1024,6 +1036,59 @@ def test_a_row_made_undecided_as_the_list_is_released_is_refused(app_client) -> 
     assert r.status_code == 409, r.text
     assert r.json()["error"]["reason"] == "capability_list_undecided_rows", r.text
     assert _latest_list(c, bearer, svc_id)["status"] == "approved"
+
+
+@pytest.mark.unit
+def test_a_release_miss_whose_recount_finds_nothing_undecided_says_the_list_changed(
+    app_client, monkeypatch
+) -> None:
+    """#657 round 4, approve's F2 for release. The guarded flip misses because a
+    row is undecided at that instant, and by the recount it has been re-decided.
+    "0 rows are still undecided" would be false; the refusal says the list moved.
+
+    The edit before the flip is real. The re-decide cannot be: the route holds
+    SQLite's write lock from its UPDATE, so the recount is modelled as returning
+    the 0 a Postgres READ COMMITTED read would see after the racer's commit."""
+    from sqlalchemy import event
+
+    import app.routes.tech_debt as td
+    from app.models.capability import CapabilityItem
+    from app.models.capability import CapabilityList as _CL
+
+    c, sessions, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)
+    _approve_list(c, bearer, svc_id)
+    fin = _finalize(c, h, svc_id)
+    assert fin.status_code == 201, fin.text
+
+    fired: list[str] = []
+
+    def before_guarded_update(state) -> None:
+        mapper = state.bind_mapper
+        if not fired and state.is_update and mapper is not None and mapper.class_ is _CL:
+            fired.append("edit")
+            other = sessions()
+            try:
+                other.get(CapabilityItem, _uuid.UUID(item_ids[0])).disposition = None
+                other.commit()
+            finally:
+                other.close()
+
+    monkeypatch.setattr(td, "undecided_row_count", lambda db, list_id: 0)
+    event.listen(sessions, "do_orm_execute", before_guarded_update)
+    try:
+        r = c.post(f"/tech-debt/deliverables/{fin.json()['id']}/release", headers=h)
+    finally:
+        event.remove(sessions, "do_orm_execute", before_guarded_update)
+
+    assert fired == ["edit"], "the flip was not raced as designed"
+    assert r.status_code == 409, r.text
+    error = r.json()["error"]
+    assert error["reason"] == "capability_list_changed_during_release", error
+    assert "0 rows" not in error["message"], error["message"]
 
 
 @pytest.mark.unit

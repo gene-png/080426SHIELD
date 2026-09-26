@@ -1543,8 +1543,11 @@ def finalize_deliverable(
     # never locks a service -- that is why finalize accepts RELEASED at all.
     # The release flip itself refuses a list holding undecided rows (round 3:
     # the guard is in the flip's WHERE, the one writer of RELEASED, on the first
-    # release and the repair re-release alike), so no release can produce one
-    # now. A legacy RELEASED list that holds one (released before #639) keeps
+    # release and the repair re-release alike), so the flip does not freeze one:
+    # a row's disposition is judged by the same statement that writes RELEASED.
+    # Not proven under Postgres READ COMMITTED against a PATCH that commits
+    # concurrently with the flip -- that write skew is #675, pre-existing.
+    # A legacy RELEASED list that holds one (released before #639) keeps
     # re-finalizing exactly as it does on main, rather than being locked behind
     # a remedy -- "edit step 2" -- that a released list refuses.
     if cap_list.status == CapabilityListStatus.APPROVED:
@@ -1725,16 +1728,40 @@ def release_tech_debt_deliverable(
 #: release produced a RELEASED list no step could repair. The condition joins
 #: the parent flip's own WHERE in `deliverable_release._release_parent`, the ONE
 #: writer of a released list, so it holds on the first release AND on the
-#: repair re-release of an already-released deliverable, and no PATCH can land
-#: between a check and the flip. The remedy names step 2, which is editable
-#: while the list is APPROVED -- the only state the flip moves.
+#: repair re-release of an already-released deliverable, and the check and the
+#: write are one statement. (A PATCH committing concurrently with the flip under
+#: Postgres READ COMMITTED is #675's write skew, pre-existing and not closed
+#: here.) The remedy names step 2, which is editable while the list is APPROVED
+#: -- the only state the flip moves.
+def _refuse_changed_during_release() -> HTTPException:
+    """#657 round 4, approve's F2 for release: the guarded flip missed, yet the
+    recount finds nothing undecided -- a row was re-decided between the flip and
+    the count. Nothing was released; saying "0 rows are still undecided" would
+    be false, so it says the list moved."""
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "reason": "capability_list_changed_during_release",
+            "message": (
+                "The list changed while the deliverable was being released, so nothing "
+                "was released. Reload the page and release again."
+            ),
+        },
+    )
+
+
+def _refuse_release_over_undecided(db: Session, list_id: uuid.UUID) -> HTTPException:
+    undecided = undecided_row_count(db, list_id)
+    if not undecided:
+        return _refuse_changed_during_release()
+    return _refuse_undecided(undecided, then="generate the deliverable again before releasing")
+
+
 _NO_UNDECIDED_ROWS = ParentGuard(
     condition=lambda list_id: ~(
         select(CapabilityItem.id)
         .where(CapabilityItem.capability_list_id == list_id, _UNDECIDED)
         .exists()
     ),
-    refusal=lambda db, list_id: _refuse_undecided(
-        undecided_row_count(db, list_id), then="generate the deliverable again before releasing"
-    ),
+    refusal=_refuse_release_over_undecided,
 )
