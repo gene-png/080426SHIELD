@@ -6337,3 +6337,15 @@ function or symbol; each mode is checkable by reading the implementation
 rather than by knowing the history; and it found defects outside the table it
 would have been natural to check. **The test of a shape statement is whether
 it could have been written BEFORE seeing the defect that prompted it.**
+
+## D-200 — Scope: the MVP and a usable product; FedRAMP and ADA are not current targets; only defects block a merge
+
+**2026-09-26 · scope, governance** (Gene's decisions, relayed by the coordinator)
+
+**Scope.** FedRAMP and ADA/accessibility conformance are no longer targets for now. The work is the MVP and a usable product that can mature over time. Items justified only by FedRAMP or ADA move to `post-mvp`: #516 (idle timeout) and #220 (the PyJWT swap) have moved, and a sweep of the remaining `mvp-blocking` issues is recorded on the issues it moves. Real security defects stay in scope: #658 stays MVP. Nothing new starts that exists only for compliance.
+
+**Review blocking is narrowed.** Only code, test or security defects block a merge. Prose, docstring and wording findings are filed as follow-up issues and never block. After one fix round, any remaining non-defect finding is filed, not fixed in place. `.claude/agents/adversarial-reviewer.md` carries this as an override above its labels.
+
+**Why.** Gene wants focus on a usable MVP. Review rounds on wording (#625 went six rounds) were costing more than they returned.
+
+**Coordinator numbering.** Agent tracks hold ranges D-100–D-149 (track1) and D-150–D-199 (track2) per #649; coordinator records take D-200 upward.
