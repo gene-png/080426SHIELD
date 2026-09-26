@@ -83,6 +83,9 @@ def test_the_result_step_is_present_and_cannot_be_skipped_or_ignored(name: str) 
     step, _ = _result_step(_aggregate(name))
     assert "if" not in step, f"a step-level `if` can skip the result step: {step['if']!r}"
     assert not step.get("continue-on-error"), "`continue-on-error` would ignore its failure"
+    # No `shell:` means GitHub's default on ubuntu, `bash -e {0}`, which is
+    # exactly how the test below executes it.
+    assert "shell" not in step, f"the step runs under {step['shell']!r}, not the tested bash -e"
     assert str(step.get("run") or "").strip(), "the result step runs nothing"
 
 
@@ -91,8 +94,10 @@ def test_the_result_step_passes_only_when_every_dependency_succeeded(name: str) 
     bash = shutil.which("bash")
     if bash is None:
         pytest.skip("no bash here")
-    step, env_for = _result_step(_aggregate(name))
+    job = _aggregate(name)
+    step, env_for = _result_step(job)
     deps = sorted(env_for)
+    assert deps == sorted(_needs(job)), f"not every dependency is read: {deps}"
 
     outcomes = {}
     for combo in itertools.product(RESULTS, repeat=len(deps)):
@@ -106,7 +111,9 @@ def test_the_result_step_passes_only_when_every_dependency_succeeded(name: str) 
         )
         outcomes[combo] = proc.returncode
 
-    assert len(outcomes) == len(RESULTS) ** len(deps)
+    # Vacuity guard: every combination ran. Both aggregates wait on two jobs
+    # today, so this is 16 each; it follows the needs count if that changes.
+    assert len(outcomes) == len(RESULTS) ** len(deps), len(outcomes)
     wrong = {
         repr(dict(zip(deps, combo, strict=True))): rc
         for combo, rc in outcomes.items()
