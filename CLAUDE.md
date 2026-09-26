@@ -133,11 +133,17 @@ happened.
 
 **An agent merges on green WITHOUT checking back, when all six hold.**
 
-1. **All seven CI checks green.** Five required jobs in `ci.yml` (python and
-   e2e aggregate shards) — python, web, secret-scan, e2e, demo — plus two in
-   `audit-gate.yml`. `mutation-sweep.yml`
-   is schedule-only and excluded. **Re-derive this count if a job is added**;
-   it is a hardcoded number in prose, which this file has a rule about.
+1. **Every required check green, by the name branch protection requires.**
+   From `ci.yml`: `Python (ruff + black + pytest + bandit)`,
+   `Web (prettier + eslint + typecheck + build)`, `Secret scan (gitleaks)`,
+   `E2E (Playwright smoke suite)` and `Demo (hosted-demo reset + journey spec)`.
+   From `audit-gate.yml`: `Adversarial audit recorded` and
+   `No accidental issue closes`. The Python and E2E names are aggregate jobs
+   that fail unless every shard succeeded; the shard jobs themselves are not
+   required. `mutation-sweep.yml` is schedule-only and excluded. **Re-derive
+   this list when a required check is added**, from branch protection
+   (`gh api repos/gene-png/080426SHIELD/branches/main/protection/required_status_checks`),
+   not from this paragraph.
 2. **The adversarial reviewer ran against the FINAL state of the branch**, and
    whatever it found is fixed or filed, recorded with `Findings:` /
    `Disposition:` / `Scope:`. "Clean" means clean on the LAST run, not the
@@ -1356,9 +1362,10 @@ because it is long. Load-bearing rules stay at any length:
 - **"AI suggests, code computes"** and **FAIL LOUDLY** — core principles 1 and 2.
 - **The gate suite** and the reasons each gate exists.
 - **The merge rule.** Keeping it ACCURATE is mandatory and is not "growth":
-  condition 1 says to re-derive its check count when a job is added, and D-059
-  says to re-derive its measurement whenever condition 5 changes. Never leave a
-  known gap in it because a budget said not to grow. What to resist is growth
+  condition 1 says to re-derive its required-check list when a required check
+  is added, and D-059 says to re-derive its measurement whenever condition 5
+  changes. Never leave a known gap in it because a budget said not to grow.
+  What to resist is growth
   in KIND — another condition, another worked example. If it becomes
   unholdable, restructure the presentation rather than freeze a rule whose own
   conditions mandate re-derivation.

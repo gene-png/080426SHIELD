@@ -81,6 +81,56 @@ def test_all_marked_is_clean_and_says_what_it_counted(tmp_path, capsys) -> None:
     assert "CI selects 2 of 2" in out, out
 
 
+# --- the certified set, written for the shard aggregate (#680 round 1) ----------
+#
+# The aggregate checks the shards against the file this gate writes, so the set
+# it certified and the set the shards are checked against are one object. A
+# separate collector step, run later, could be narrowed by anything between the
+# two (a `$GITHUB_ENV` write) while the gate had certified the wider set.
+
+
+def _fresh(path: Path) -> Path:
+    """A project root BESIDE the output file, so the selection is not written
+    into the tree the gate collects."""
+    path.mkdir()
+    return path
+
+
+def _run_writing(root: Path, base: Path, out: Path, capsys) -> tuple[int, str]:
+    code = gate.main(
+        ["gate", "--root", str(root), "--baseline", str(base), "--selected-out", str(out)]
+    )
+    return code, capsys.readouterr().out
+
+
+def test_a_clean_verdict_writes_exactly_the_certified_set(tmp_path, capsys) -> None:
+    root = _project(_fresh(tmp_path / "p"), {"tests/unit/test_m.py": MARKED})
+    out = tmp_path / "selection.txt"
+    code, text = _run_writing(root, _baseline(tmp_path, {}), out, capsys)
+    assert code == 0, text
+    # From MARKED's own source: two marked tests, nothing else.
+    assert out.read_text(encoding="utf-8").splitlines() == [
+        "tests/unit/test_m.py::test_a",
+        "tests/unit/test_m.py::test_b",
+    ]
+
+
+def test_a_finding_writes_no_selection(tmp_path, capsys) -> None:
+    root = _project(_fresh(tmp_path / "p"), {"tests/unit/test_m.py": MARKED, U: UNMARKED})
+    out = tmp_path / "selection.txt"
+    code, text = _run_writing(root, _baseline(tmp_path, {}), out, capsys)
+    assert code == 1, text
+    assert not out.exists(), "a selection was written for a set the gate refused"
+
+
+def test_could_not_look_writes_no_selection(tmp_path, capsys) -> None:
+    root = _project(_fresh(tmp_path / "p"), {"tests/unit/test_m.py": MARKED})
+    out = tmp_path / "selection.txt"
+    code, text = _run_writing(root, tmp_path / "missing.json", out, capsys)
+    assert code == 2, text
+    assert not out.exists(), "a selection was written although the gate could not look"
+
+
 def _entry(*names: str) -> dict:
     return {U: {"reason": "#500: unmarked", "tests": [f"{U}::{n}" for n in names]}}
 
@@ -373,6 +423,18 @@ def test_the_clean_line_counts_the_files_it_compared(tmp_path, capsys) -> None:
 #   EXPRESSION                 -> the union check (it measures what ran, so an
 #                                 expression's value cannot hide behind its text)
 #   GATE_RUN                   -> kept: the gate step's run is still exact
+#
+# #680 round 1 found the hole in that table: the union check compares the shards
+# against a FULL list, and that list came from a separate collector step that
+# nothing pinned. A `$GITHUB_ENV` write between the gate and that step, plus the
+# same variable on the shard job, narrows BOTH sides identically, and verify
+# passes with tests unrun. The gate now writes the set it certified
+# (`--selected-out`), and these pins close every route to a symmetric narrowing:
+#   SELECTION_UPLOAD  the upload of that file is the step IMMEDIATELY after the
+#                     gate, so nothing can run between certifying and shipping it
+#   AGG_FULL          the aggregate verifies against exactly that file
+#   WORKFLOW_ENV      no workflow-level `env`, which would reach both sides
+#   SHARD_JOB_ENV     no job-level `env` on the shard job
 
 SHARD_RUN = f"python -m pytest -p scripts.pytest_shard {' '.join(gate.CI_SELECTOR)}"
 SHARD_ENV_KEYS = {"PYTEST_SHARD", "PYTEST_SHARD_RECORD"}
@@ -383,7 +445,16 @@ PYTEST_RUN = f"the pytest step's run must be exactly `{SHARD_RUN}`"
 SHARD_ENV_ONLY = "the pytest step's env must carry exactly PYTEST_SHARD and PYTEST_SHARD_RECORD"
 SHARD_MATRIX = "the pytest step's job must be a matrix over shard: [1..N]"
 SHARD_SPEC = "PYTEST_SHARD must be `${{ matrix.shard }}/N` with N the matrix length"
-GATE_RUN = "the gate step's run must be exactly `python -m scripts.check_ci_selection`"
+SELECTION_FILE = "pytest-selection.txt"
+GATE_CMD = f'python -m scripts.check_ci_selection --selected-out "$RUNNER_TEMP/{SELECTION_FILE}"'
+GATE_RUN = f"the gate step's run must be exactly `{GATE_CMD}`"
+SELECTION_UPLOAD = (
+    "the step IMMEDIATELY after the gate must upload its certified set "
+    f"(`pytest-selection`, `${{{{ runner.temp }}}}/{SELECTION_FILE}`)"
+)
+AGG_FULL = f'the aggregate must verify against `--full "$RUNNER_TEMP/pytest/{SELECTION_FILE}"`'
+WORKFLOW_ENV = "the workflow must have no top-level `env` (it would reach the gate and the shards)"
+SHARD_JOB_ENV = "the shard job must have no job-level `env`"
 AGGREGATE = f"the job named `{REQUIRED_PYTHON}` must aggregate the shards"
 AGG_ALWAYS = "the aggregate must run `if: always()`"
 AGG_VERIFY = "the aggregate must verify the partition with `--of N`"
@@ -428,14 +499,30 @@ def shard_pin_violations(ci: dict) -> list[str]:
         out.append(f"{SHARD_MATRIX}: got {shards!r}")
     if env.get("PYTEST_SHARD") != f"${{{{ matrix.shard }}}}/{n}":
         out.append(f"{SHARD_SPEC}: got {env.get('PYTEST_SHARD')!r}")
-    gates = [
-        name
+    if ci.get("env"):
+        out.append(f"{WORKFLOW_ENV}: got {sorted(ci['env'])}")
+    if job.get("env"):
+        out.append(f"{SHARD_JOB_ENV}: got {sorted(job['env'])}")
+    gate_sites = [
+        (name, i)
         for name, j in ci["jobs"].items()
-        for st in j.get("steps", [])
-        if str(st.get("run", "")).strip() == "python -m scripts.check_ci_selection"
+        for i, st in enumerate(j.get("steps", []))
+        if str(st.get("run", "")).strip() == GATE_CMD
     ]
-    if len(gates) != 1:
+    gates = [name for name, _ in gate_sites]
+    if len(gate_sites) != 1:
         out.append(f"{GATE_RUN}: found in {gates}")
+    else:
+        gate_job, i = gate_sites[0]
+        steps = ci["jobs"][gate_job].get("steps", [])
+        nxt = steps[i + 1] if i + 1 < len(steps) else {}
+        with_ = nxt.get("with") or {}
+        if not (
+            str(nxt.get("uses", "")).startswith("actions/upload-artifact@")
+            and with_.get("name") == "pytest-selection"
+            and with_.get("path") == f"${{{{ runner.temp }}}}/{SELECTION_FILE}"
+        ):
+            out.append(f"{SELECTION_UPLOAD}: got {nxt!r}")
     aggs = [(name, j) for name, j in ci["jobs"].items() if j.get("name") == REQUIRED_PYTHON]
     if len(aggs) != 1:
         return out + [f"{AGGREGATE}: found {[a[0] for a in aggs]}"]
@@ -453,6 +540,8 @@ def shard_pin_violations(ci: dict) -> list[str]:
     ]
     if len(verify) != 1 or f"--of {n}" not in verify[0]:
         out.append(AGG_VERIFY)
+    elif f'--full "$RUNNER_TEMP/pytest/{SELECTION_FILE}"' not in verify[0]:
+        out.append(AGG_FULL)
     return out
 
 
@@ -477,16 +566,37 @@ def _shard_workflow(**overrides) -> dict:
     step.update(overrides.pop("step", {}))
     shard_job = {"strategy": {"matrix": {"shard": [1, 2, 3]}}, "steps": [step]}
     shard_job.update(overrides.pop("shard_job", {}))
-    checks = {"steps": [{"run": "python -m scripts.check_ci_selection"}]}
+    checks = {
+        "steps": [
+            {"run": GATE_CMD},
+            {
+                "uses": "actions/upload-artifact@v7",
+                "with": {
+                    "name": "pytest-selection",
+                    "path": f"${{{{ runner.temp }}}}/{SELECTION_FILE}",
+                },
+            },
+        ]
+    }
+    checks.update(overrides.pop("checks", {}))
     agg = {
         "name": REQUIRED_PYTHON,
         "needs": ["checks", "shard"],
         "if": "always()",
-        "steps": [{"run": "python -m scripts.shard_partition verify --full f --of 3 --ran r"}],
+        "steps": [
+            {
+                "run": "python -m scripts.shard_partition verify "
+                f'--full "$RUNNER_TEMP/pytest/{SELECTION_FILE}" --of 3 --ran r'
+            }
+        ],
     }
     agg.update(overrides.pop("agg", {}))
+    workflow_env = overrides.pop("workflow_env", None)
     assert not overrides, overrides
-    return {"jobs": {"checks": checks, "shard": shard_job, "python": agg}}
+    ci = {"jobs": {"checks": checks, "shard": shard_job, "python": agg}}
+    if workflow_env is not None:
+        ci["env"] = workflow_env
+    return ci
 
 
 def test_the_shard_pin_passes_a_correct_workflow() -> None:
@@ -668,3 +778,105 @@ def test_a_self_removing_file_behind_a_symlink_is_a_finding(tmp_path, capsys) ->
     code, out = _run(root, _baseline(tmp_path, {}), capsys)
     assert code == 1, out
     assert "tests/unit/linked/test_gone.py: never collected" in out, out
+
+
+_UPLOAD = {
+    "uses": "actions/upload-artifact@v7",
+    "with": {"name": "pytest-selection", "path": "${{ runner.temp }}/pytest-selection.txt"},
+}
+_NARROW = {"PYTEST_ADDOPTS": "--deselect tests/unit/test_x.py"}
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        (
+            {
+                "checks": {
+                    "steps": [
+                        {"run": GATE_CMD},
+                        {"run": 'echo "PYTEST_ADDOPTS=--deselect x" >> "$GITHUB_ENV"'},
+                        _UPLOAD,
+                    ]
+                }
+            },
+            [SELECTION_UPLOAD],
+        ),
+        (
+            {
+                "checks": {
+                    "steps": [
+                        {"run": GATE_CMD},
+                        {"run": 'python -m scripts.shard_partition collect --out "$RUNNER_TEMP/x"'},
+                        _UPLOAD,
+                    ]
+                }
+            },
+            [SELECTION_UPLOAD],
+        ),
+        (
+            {
+                "checks": {
+                    "steps": [
+                        {"run": GATE_CMD},
+                        {**_UPLOAD, "with": {"name": "pytest-selection", "path": "other.txt"}},
+                    ]
+                }
+            },
+            [SELECTION_UPLOAD],
+        ),
+        (
+            {"checks": {"steps": [{"run": "python -m scripts.check_ci_selection"}, _UPLOAD]}},
+            [GATE_RUN],
+        ),
+        ({"shard_job": {"env": _NARROW}}, [SHARD_JOB_ENV]),
+        ({"workflow_env": _NARROW}, [WORKFLOW_ENV]),
+        (
+            {
+                "agg": {
+                    "steps": [
+                        {
+                            "run": "python -m scripts.shard_partition verify "
+                            '--full "$RUNNER_TEMP/pytest/other.txt" --of 3 --ran r'
+                        }
+                    ]
+                }
+            },
+            [AGG_FULL],
+        ),
+        # The reviewer's scenario on 4c4e594: an env write between certifying
+        # and shipping the set, and the same variable on the shard job.
+        (
+            {
+                "checks": {
+                    "steps": [
+                        {"run": GATE_CMD},
+                        {"run": 'echo "PYTEST_ADDOPTS=--deselect x" >> "$GITHUB_ENV"'},
+                        _UPLOAD,
+                    ]
+                },
+                "shard_job": {"env": _NARROW},
+            },
+            [SELECTION_UPLOAD, SHARD_JOB_ENV],
+        ),
+    ],
+    ids=[
+        "env-write-between-gate-and-upload",
+        "separate-collector-reinstated",
+        "upload-of-another-file",
+        "gate-writes-no-selection",
+        "shard-job-env",
+        "workflow-env",
+        "verify-against-another-file",
+        "symmetric-narrowing-reviewer-scenario",
+    ],
+)
+def test_each_route_to_a_symmetric_narrowing_is_refused(
+    overrides: dict, expected: list[str]
+) -> None:
+    """#680 round 1. Each case narrows the gate's certified set and the shards'
+    run the same way, or ships a set other than the certified one. The union
+    check alone cannot see either, so the pin must."""
+    violations = shard_pin_violations(_shard_workflow(**overrides))
+    for want in expected:
+        assert any(v.startswith(want) for v in violations), (want, violations)

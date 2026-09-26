@@ -66,7 +66,8 @@ EXIT CODES (D-090): 0 every collected test is selected or baselined; 1 at
 least one finding; 2 could not look -- the collector failed (including a
 configured option this cannot honour, e.g. `--lf` with the cache disabled),
 the probe reported nothing, the unselected collection is empty, the baseline
-is missing or malformed, or an argument is unknown. An empty or unreadable collection is NEVER clean.
+is missing or malformed, or an argument is unknown. `--selected-out` writes
+nothing on 1 or 2. An empty or unreadable collection is NEVER clean.
 
 LIMITS. Only `tests/unit`; `tests/live` is opt-in by design. A test that is
 selected but SKIPS at runtime is not seen here (a runtime skip is not a
@@ -79,14 +80,21 @@ applies to BOTH collections, so it is invisible too. CI runs this selection in
 SHARDS (`scripts/pytest_shard.py`), and the shard plugin narrows each run by
 ENVIRONMENT (`PYTEST_SHARD`) -- exactly what this gate cannot see. What closes
 that is the Python aggregate job: each shard records the node ids it RAN, and
-`scripts/shard_partition.py verify` fails unless their union is this
-selection (collected by this module's own `_collect`), each test once. So any
-environment that narrowed a shard -- a step `env`, a job `env`, an expression,
-anything the workflow file does not show -- appears as a test that ran
-nowhere. `test_ci_selection_gate.py` pins the shard step's argv to
-`python -m pytest -p scripts.pytest_shard` + CI_SELECTOR and its env to the
-two shard keys. This replaced #544's pin of this step to the step
-IMMEDIATELY before pytest, which cannot hold across jobs.
+`scripts/shard_partition.py verify` fails unless their union is exactly the
+set THIS RUN CERTIFIED, each test once. `--selected-out FILE` writes that set,
+and only on a clean verdict, so the file the aggregate compares against is
+the gate's own output rather than a second collection a later step could
+narrow. An environment that narrows only the shards appears as a test that
+ran nowhere; one that narrows only this gate appears as a test that ran but
+was not selected. What the union CANNOT see is an environment reaching BOTH
+identically, because both sides then shrink together. So
+`test_ci_selection_gate.py` pins every route that could do that: no
+workflow-level `env`, no job-level `env` on the shard job, the shard step's
+env to exactly the two shard keys, its argv to `python -m pytest -p
+scripts.pytest_shard` + CI_SELECTOR, this step's exact `run`, and the
+selection upload IMMEDIATELY after this step. This replaced #544's pin of
+this step to the step IMMEDIATELY before pytest, which cannot hold across
+jobs.
 
 The file scan calls `_pytest.pathlib.fnmatch_ex`, a PRIVATE pytest API, and
 mirrors pytest's directory walk (following symlinked directories, pruning
@@ -314,8 +322,9 @@ def evaluate(
     return findings, allowed
 
 
-def _parse(argv: list[str]) -> tuple[Path, Path]:
+def _parse(argv: list[str]) -> tuple[Path, Path, Path | None]:
     root, baseline = Path("."), Path("../../.github/ci-selection-baseline.json")
+    selected_out: Path | None = None
     args = list(argv[1:])
     while args:
         flag = args.pop(0)
@@ -323,15 +332,17 @@ def _parse(argv: list[str]) -> tuple[Path, Path]:
             root = Path(args.pop(0))
         elif flag == "--baseline" and args:
             baseline = Path(args.pop(0))
+        elif flag == "--selected-out" and args:
+            selected_out = Path(args.pop(0))
         else:
             raise CouldNotLook(f"unknown or incomplete argument: {flag!r}")
-    return root, baseline
+    return root, baseline, selected_out
 
 
 def main(argv: list[str]) -> int:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     try:
-        root, baseline_path = _parse(argv)
+        root, baseline_path, selected_out = _parse(argv)
         if not (root / "tests" / "unit").is_dir():
             raise CouldNotLook(f"{root / 'tests' / 'unit'} does not exist -- wrong directory?")
         baseline = _load_baseline(baseline_path)
@@ -362,6 +373,12 @@ def main(argv: list[str]) -> int:
             print(f"  {line}")
         return 1
     print(f"check-ci-selection: clean -- {summary}.")
+    if selected_out is not None:
+        # Written ONLY on a clean verdict, so the file exists only for a set
+        # this run certified. The shard aggregate checks the shards against
+        # THIS file: the certified set and the checked set are one object.
+        selected_out.write_text("".join(f"{t}\n" for t in sorted(selected)), encoding="utf-8")
+        print(f"check-ci-selection: wrote the {len(selected)} certified node ids to {selected_out}")
     return 0
 
 

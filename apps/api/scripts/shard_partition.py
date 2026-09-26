@@ -82,31 +82,13 @@ def verify(full: list[str], records: list[list[str]]) -> list[str]:
     return findings
 
 
-def _collect_full(out: Path) -> int:
-    from scripts.check_ci_selection import CI_SELECTOR, CouldNotLook, _collect
-
-    try:
-        ids, _file_config = _collect(Path.cwd(), CI_SELECTOR, clear_addopts=False)
-    except CouldNotLook as exc:
-        print(f"shard_partition collect: could not look -- {exc}")
-        return 2
-    if not ids:
-        print("shard_partition collect: could not look -- the selection is empty")
-        return 2
-    out.write_text("".join(f"{nodeid}\n" for nodeid in sorted(ids)), encoding="utf-8")
-    print(f"shard_partition collect: {len(ids)} selected tests written to {out}")
-    return 0
-
-
 def _parse(argv: list[str]) -> tuple[str, dict[str, list[str]]]:
-    if len(argv) < 2 or argv[1] not in ("collect", "verify"):
-        raise _CouldNotLook(
-            "usage: shard_partition collect --out FILE | verify --full FILE --of N --ran FILE..."
-        )
+    if len(argv) < 2 or argv[1] != "verify":
+        raise _CouldNotLook("usage: shard_partition verify --full FILE --of N --ran FILE...")
     opts: dict[str, list[str]] = defaultdict(list)
     current = None
     for arg in argv[2:]:
-        if arg in ("--out", "--full", "--of", "--ran"):
+        if arg in ("--full", "--of", "--ran"):
             current = arg
         elif current is None:
             raise _CouldNotLook(f"unexpected argument {arg!r}")
@@ -118,11 +100,7 @@ def _parse(argv: list[str]) -> tuple[str, dict[str, list[str]]]:
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv if argv is None else argv
     try:
-        command, opts = _parse(argv)
-        if command == "collect":
-            if len(opts["--out"]) != 1:
-                raise _CouldNotLook("collect needs exactly one --out")
-            return _collect_full(Path(opts["--out"][0]))
+        _command, opts = _parse(argv)
         if len(opts["--full"]) != 1 or not opts["--ran"]:
             raise _CouldNotLook("verify needs one --full and at least one --ran")
         full = _read_ids(Path(opts["--full"][0]), "the full selection")

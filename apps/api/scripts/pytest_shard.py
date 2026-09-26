@@ -29,10 +29,10 @@ everything, and never a green run of nothing.
 
 AS A COMMAND, for the aggregate jobs, in the pytest-free `scripts/shard_partition.py`:
 
-    python -m scripts.shard_partition collect --out FULL
-        writes CI's full selection, from `check_ci_selection`'s own collector
     python -m scripts.shard_partition verify --full FULL --of N --ran R1 ... RN
-        every selected test ran in exactly one shard, and nothing else ran
+        every selected test ran in exactly one shard, and nothing else ran.
+        FULL is the set `check_ci_selection --selected-out` wrote on a clean
+        verdict -- the certified set itself, not a second collection.
 
 Exit codes (D-090): 0 a partition; 1 a gap, a duplicate, or a test outside the
 selection, each named; 2 could not look -- an argument missing or unknown, a

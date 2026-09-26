@@ -289,7 +289,7 @@ jobs:
           #   python - <<'PY'
           #   import yaml
           #   d = yaml.safe_load(open(".github/workflows/ci.yml"))
-          #   s = [x for x in d["jobs"]["python"]["steps"]
+          #   s = [x for x in d["jobs"]["python-checks"]["steps"]
           #        if x.get("name") == "image optimizer stays unmounted"]
           #   open("gate-step.sh", "w", newline="\n").write(s[0]["run"])
           #   PY
@@ -532,20 +532,18 @@ jobs:
       - name: every e2e env gate is set or exempted (#540)
         run: python apps/api/scripts/check_e2e_env_gates.py
 
-      # IMMEDIATELY before pytest, and that position is load-bearing: any step
-      # between the two could change pytest's environment and not this one's,
-      # narrowing CI while the gate certifies the wider set (#544). Pinned by
-      # `pin_violations` in test_ci_selection_gate.py.
+      # The gate WRITES the set it certified, and only on a clean verdict. The
+      # step after it uploads exactly that file, and the `python` aggregate
+      # checks the shards against it, so the certified set and the checked set
+      # are one object. pytest no longer runs in this job, so #544's pin to the
+      # step IMMEDIATELY before pytest is gone. What replaces it, in
+      # `shard_pin_violations` (test_ci_selection_gate.py): this `run` is exact;
+      # the upload is the IMMEDIATELY following step, so nothing can narrow the
+      # environment between certifying and shipping; and neither the workflow
+      # nor the shard job carries an `env` that could narrow both sides alike.
       - name: every unit test is one CI runs (#540)
         working-directory: apps/api
-        run: python -m scripts.check_ci_selection
-
-      # The FULL unit selection, from check_ci_selection's own collector,
-      # for the aggregate's partition check: the shards must run exactly
-      # this set between them, each test once.
-      - name: The unit selection, for the shard partition check
-        working-directory: apps/api
-        run: python -m scripts.shard_partition collect --out "$RUNNER_TEMP/pytest-selection.txt"
+        run: python -m scripts.check_ci_selection --selected-out "$RUNNER_TEMP/pytest-selection.txt"
 
       - name: Upload the unit selection
         uses: actions/upload-artifact@v7
