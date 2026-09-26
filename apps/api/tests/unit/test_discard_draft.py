@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.models.audit_entry import AuditEntry
+from tests._attack_rows import first_standalone
 
 
 @pytest.fixture()
@@ -465,7 +466,7 @@ def test_attack_version_trap_and_child_mutation_after_discard(app_client) -> Non
     assert a2r.status_code == 201
     a2 = a2r.json()
     assert a2["version"] == 2
-    coverage_id = a2["coverage"][0]["id"]
+    coverage_id = first_standalone(a2["coverage"])["id"]
 
     d = c.post(f"/attack/assessments/{a2['id']}/discard", headers=_hdr(bearer))
     assert d.status_code == 200, d.text
@@ -680,7 +681,7 @@ def test_risk_gate_and_findings_skip_discarded(app_client) -> None:
     admin_id = _uuid.UUID(reg["user"]["id"])
     client_id = _uuid.UUID(c.headers["X-Client-Id"])
 
-    from app.attack.catalog import SOURCE_VERSION
+    from app.attack.catalog import SOURCE_VERSION, TECHNIQUES
     from app.models.attack_assessment import (
         AttackAssessment,
         AttackAssessmentStatus,
@@ -689,6 +690,11 @@ def test_risk_gate_and_findings_skip_discarded(app_client) -> None:
     from app.models.csf_assessment import CsfAssessment, CsfAssessmentStatus
     from app.models.service import ServiceKind
     from app.routes.risk import _gate, _gather_findings
+
+    # A STANDALONE technique (#620): a computed parent's findings come through
+    # its sub-techniques under D-094, so a parent here would make the count
+    # depend on the rule set rather than on the discard this test is about.
+    code = first_standalone([{"technique_code": t.id} for t in TECHNIQUES])["technique_code"]
 
     with TestSession() as db:
         # Attack v1 APPROVED with a gap; v2 DISCARDED without.
@@ -703,6 +709,9 @@ def test_risk_gate_and_findings_skip_discarded(app_client) -> None:
             # As `create_assessment` stamps it (#556); a NULL here is the
             # stale state, which synthesis now refuses.
             catalog_version=SOURCE_VERSION,
+            # What approve writes (#620, migration 0054). An APPROVED row with
+            # NULL is a state the application cannot produce.
+            parent_rules=2,
         )
         a2 = AttackAssessment(
             service_id=attack_svc.id,
@@ -719,7 +728,7 @@ def test_risk_gate_and_findings_skip_discarded(app_client) -> None:
             AttackCoverage(
                 assessment_id=a1.id,
                 client_id=client_id,
-                technique_code="T1003",
+                technique_code=code,
                 status="gap",
             )
         )
@@ -727,7 +736,7 @@ def test_risk_gate_and_findings_skip_discarded(app_client) -> None:
             AttackCoverage(
                 assessment_id=a2.id,
                 client_id=client_id,
-                technique_code="T1003",
+                technique_code=code,
                 status="covered",
             )
         )
@@ -753,7 +762,7 @@ def test_risk_gate_and_findings_skip_discarded(app_client) -> None:
         attack_findings = [f for f in findings if f["kind"] == "attack"]
         # The gap comes from v1; v2's "covered" must never be read.
         assert len(attack_findings) == 1
-        assert attack_findings[0]["source_id"] == "T1003"
+        assert attack_findings[0]["source_id"] == code
         assert "gap" in attack_findings[0]["label"]
 
 
