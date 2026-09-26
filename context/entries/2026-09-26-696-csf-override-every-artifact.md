@@ -15,7 +15,15 @@ Branch `track2/csf-priority-override`, from `main` at `e851e59`.
   too. A row that is not a gap gets no priority, whatever override is stored
   against it. The upsert route accepts any catalogue code, so such a row can
   exist.
-- `csf/playbook_export.py` is untouched, so this merges beside #692.
+- **Review round 1:** the copy around the counts stays true for an override.
+  The exec next steps count a P1 that a consultant set apart from the computed
+  ones. Those are the only ones described as "Core-metric, high-impact,
+  multi-system". The full playbook's methodology says a consultant may
+  override a priority, and states how many were overridden, at zero too. The
+  rows carry `priority_overridden`, which is set by the export route and never
+  serialized.
+- `csf/playbook_export.py` is edited in `_next_steps`, which #692 also edits.
+  See the PR body for the pairwise result.
 
 ## Left as it is
 

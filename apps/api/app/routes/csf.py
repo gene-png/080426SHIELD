@@ -1412,10 +1412,16 @@ def _with_effective_priority(
     same value. The engine's own rows, and the Enterprise Profile endpoint that
     serves them, are left computed: that is the default the gap-action editor
     shows beside the override."""
-    out = [
-        r.model_copy(update={"priority": _effective_priority(r, actions.get(r.subcategory_code))})
-        for r in rows
-    ]
+    out = []
+    for r in rows:
+        effective = _effective_priority(r, actions.get(r.subcategory_code))
+        # Marked so the copy that describes a computed priority is not applied
+        # to one the consultant set (#707 round 1).
+        out.append(
+            r.model_copy(
+                update={"priority": effective, "priority_overridden": effective != r.priority}
+            )
+        )
     _log.info(
         "csf.playbook.effective_priority overridden=%d",
         sum(1 for a, b in zip(rows, out, strict=True) if a.priority != b.priority),

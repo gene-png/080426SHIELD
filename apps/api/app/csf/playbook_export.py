@@ -369,9 +369,23 @@ METHODOLOGY = [
     "subcategory using a weighted-floor rule set so that weak high-impact "
     "systems are not masked by stronger low-impact ones.",
     "AI assists by drafting the dimension scores; all totals, levels, the "
-    "evidence cap, the roll-up, gaps, and priorities are computed "
-    "deterministically in code.",
+    "evidence cap, the roll-up and gaps are computed deterministically in "
+    "code. Each gap's priority is computed in code too, and a consultant may "
+    "override it; where one did, this playbook uses the override (#707).",
 ]
+
+
+def _overridden(r: Any) -> bool:
+    """Whether `r.priority` is a consultant's override rather than the computed
+    priority. Set by the export route; a row built without it is computed."""
+    return bool(getattr(r, "priority_overridden", False))
+
+
+def _methodology(rows: Sequence[Any]) -> list[str]:
+    """METHODOLOGY plus the number of overridden priorities, stated even at
+    zero so "none" and "not stated" cannot look alike."""
+    n = sum(1 for r in rows if r.gap and _overridden(r))
+    return [*METHODOLOGY, f"Priorities set by consultant override in this playbook: {n}."]
 
 
 def _fn_code(raw: Any) -> str:
@@ -447,10 +461,25 @@ def _next_steps(rows: Sequence[Any]) -> list[str]:
     pc = _priority_counts(rows)
     steps: list[str] = []
     if pc["P1"]:
-        steps.append(
-            f"Remediate the {pc['P1']} Priority 1 gap(s) first — these are "
-            f"Core-metric, high-impact, multi-system weaknesses."
-        )
+        # "Core-metric, high-impact, multi-system" is what makes a COMPUTED P1
+        # (`playbook.gap_priority`). A P1 the consultant set is none of those
+        # necessarily, so it is counted apart rather than described (#707).
+        raised = sum(1 for r in rows if r.gap and r.priority == "P1" and _overridden(r))
+        if raised == 0:
+            steps.append(
+                f"Remediate the {pc['P1']} Priority 1 gap(s) first — these are "
+                f"Core-metric, high-impact, multi-system weaknesses."
+            )
+        else:
+            rest = (
+                ""
+                if raised == pc["P1"]
+                else " The others are Core-metric, high-impact, multi-system weaknesses."
+            )
+            steps.append(
+                f"Remediate the {pc['P1']} Priority 1 gap(s) first. Consultant override "
+                f"set Priority 1 on {raised} of them.{rest}"
+            )
     if pc["P2"]:
         steps.append(f"Schedule the {pc['P2']} Priority 2 gap(s) into the next planning cycle.")
     if pc["P3"]:
@@ -744,7 +773,7 @@ def render_full_pdf(
         story.append(Paragraph(line, styles["body"]))
 
     story.append(Paragraph("2. Methodology", styles["h2"]))
-    for line in METHODOLOGY:
+    for line in _methodology(enterprise_rows):
         story.append(Paragraph(line, styles["body"]))
 
     story.append(Paragraph("3. Maturity scorecard", styles["h2"]))
@@ -987,7 +1016,7 @@ def render_full_docx(
     add_paragraphs(doc, _overview_sentences(enterprise_rows))
 
     add_heading(doc, "2. Methodology")
-    add_paragraphs(doc, METHODOLOGY)
+    add_paragraphs(doc, _methodology(enterprise_rows))
 
     add_heading(doc, "3. Maturity scorecard")
     _docx_scorecard(doc, enterprise_rows)
