@@ -1865,8 +1865,27 @@ def _releasable_with(rendered_revision: int | None) -> ParentGuard:
             _LIST_STILL_RELEASABLE.condition(list_id),
             CapabilityList.approved_revision == rendered_revision,
         ),
-        refusal=_refuse_release_over_undecided,
+        refusal=lambda db, list_id: _refuse_release_miss(db, list_id, rendered_revision),
     )
+
+
+def _refuse_release_miss(
+    db: Session, list_id: uuid.UUID, rendered_revision: int | None
+) -> HTTPException:
+    """Why `_releasable_with`'s flip missed, judged on what is TRUE now rather
+    than inferred from which checks passed: the list-level causes first, then
+    the deliverable's own revision, and only when all of those hold, a list that
+    moved under the flip."""
+    cap_list = db.get(CapabilityList, list_id)
+    if cap_list is not None:
+        db.refresh(cap_list, attribute_names=["revision", "approved_revision"])
+        if (
+            undecided_row_count(db, list_id) == 0
+            and cap_list.approval_current
+            and cap_list.approved_revision != rendered_revision
+        ):
+            return _refuse_deliverable_predates_approval()
+    return _refuse_release_over_undecided(db, list_id)
 
 
 #: #657 round 3. Release freezes the list, so it must not freeze an unfinished
@@ -1909,9 +1928,6 @@ def _refuse_release_over_undecided(db: Session, list_id: uuid.UUID) -> HTTPExcep
             return _refuse_edited_since_approval(
                 then="generate the deliverable again before releasing"
             )
-        # The list is approved and current, so what failed is the deliverable
-        # being released: it was rendered at another revision, or recorded none.
-        return _refuse_deliverable_predates_approval()
     return _refuse_changed_during_release()
 
 
