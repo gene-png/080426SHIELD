@@ -944,6 +944,44 @@ def build_approved_membership(db: Session, capability_list_id: uuid.UUID) -> lis
     ]
 
 
+#: A row still UNDECIDED at step 2: no consolidation-plan verdict. The model's
+#: own definition (`CapabilityItem.disposition`: "None = undecided") and the one
+#: the step-2 table shows ("Undecided..."); every row counts, bundle
+#: components included, because every row has the select.
+_UNDECIDED = CapabilityItem.disposition.is_(None)
+
+
+def undecided_row_count(db: Session, list_id: uuid.UUID) -> int:
+    """How many rows of `list_id` are still undecided. ONE definition, read by
+    the approve guard and the consolidation-plan summary alike."""
+    return int(
+        db.execute(
+            select(func.count())
+            .select_from(CapabilityItem)
+            .where(CapabilityItem.capability_list_id == list_id, _UNDECIDED)
+        ).scalar_one()
+    )
+
+
+def _refuse_undecided(count: int) -> HTTPException:
+    """#639: approval of a list whose review is unfinished. Typed (D-016), the
+    count named, and the remedy pointing at step 2 by the title the workspace
+    shows. `proxyMessage` renders `error.message` as is, so this sentence is
+    what the consultant reads."""
+    rows = "1 row is" if count == 1 else f"{count} rows are"
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "reason": "capability_list_undecided_rows",
+            "message": (
+                f"{rows} still undecided. Give every row a keep, consolidate or cut "
+                "decision in step 2, Review and correct the extracted list, then "
+                "approve again."
+            ),
+        },
+    )
+
+
 def _refuse_approval(current: CapabilityListStatus) -> HTTPException:
     """The refusal for a list whose status forbids approval.
 
@@ -1061,13 +1099,27 @@ def approve_capability_list(
     # two the guards above refuse, and the `rowcount != 1` branch re-reads the
     # row and raises the same typed errors, so a racing transition is refused
     # with the message the sequential case would have produced.
+    #
+    # #639: EVERY ROW DECIDED. The read below refuses with the count; the same
+    # condition is in the UPDATE's WHERE, so a row set back to undecided between
+    # this read and the write cannot slip through -- the same D-031 contract,
+    # for the same reason.
+    undecided = undecided_row_count(db, cap_list.id)
+    if undecided:
+        raise _refuse_undecided(undecided)
     membership = build_approved_membership(db, cap_list.id)
     previous = cap_list.approved_membership
+    no_undecided_rows = ~(
+        select(CapabilityItem.id)
+        .where(CapabilityItem.capability_list_id == cap_list.id, _UNDECIDED)
+        .exists()
+    )
     result = db.execute(
         update(CapabilityList)
         .where(
             CapabilityList.id == cap_list.id,
             CapabilityList.status.in_((CapabilityListStatus.DRAFT, CapabilityListStatus.APPROVED)),
+            no_undecided_rows,
         )
         .values(
             status=CapabilityListStatus.APPROVED,
@@ -1078,7 +1130,14 @@ def approve_capability_list(
         .execution_options(synchronize_session=False)
     )
     if result.rowcount != 1:
+        # Either the status moved or a row became undecided; say which.
         db.refresh(cap_list)
+        undecided = undecided_row_count(db, cap_list.id)
+        if undecided and cap_list.status in (
+            CapabilityListStatus.DRAFT,
+            CapabilityListStatus.APPROVED,
+        ):
+            raise _refuse_undecided(undecided)
         raise _refuse_approval(cap_list.status)
     db.refresh(cap_list)
     # W3: record WHAT was approved, not merely that approval happened.
@@ -1288,12 +1347,13 @@ def consolidation_plan_summary(
     keep = 0
     consolidate = 0
     cut = 0
-    undecided = 0
+    # The approve guard's own count (#639), so the plan and the refusal cannot
+    # disagree about how many rows are undecided.
+    undecided = undecided_row_count(db, cap_list.id)
     cut_savings = 0.0
     savings_cost_known = True
     for it in items:
         if it.disposition is None:
-            undecided += 1
             continue
         if it.disposition == CapabilityDisposition.KEEP:
             keep += 1
