@@ -134,6 +134,7 @@ def _scored_total(ctx: AttackDeliverableContext) -> str:
     one), so the two agree there -- `tests/golden/outside_counts_rule1/` pins it."""
     return f"{ctx.rollup.scored_count}/{ctx.rollup.catalogue_count}"
 
+
 #: Rendered where nothing is Covered, Partial, Gap or pending review (`_measured`).
 #: Where Covered + Partial + Gap is zero, `_pct` in
 #: `attack/analytics.py` returns 0.0 there, which is the same figure a tactic
