@@ -189,6 +189,44 @@ def test_finalize_requires_approved_assessment(app_client) -> None:
 
 
 @pytest.mark.unit
+def test_the_deliverable_stamps_whether_its_ai_came_from_fixtures(app_client) -> None:
+    """#646, through finalize. The seeded assessment was scored by hand, so v1
+    says no AI call is recorded; once a fixture call is on record for this
+    service, the re-finalized v2 says its suggestions were offline test data,
+    in every file."""
+    from tests._ai_mode import (
+        FIXTURE_LINE,
+        NO_AI_LINE,
+        docx_text,
+        pdf_text,
+        seed_completed_call,
+        xlsx_ai_sheet,
+    )
+
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    h = {"Authorization": f"Bearer {admin['tokens']['access_token']}"}
+    svc_id, _v1 = _seed_and_finalize(c, admin["tokens"]["access_token"], "zero_trust_cisa")
+
+    def _latest_file(key: str) -> bytes:
+        latest = c.get(f"/zt/services/{svc_id}/deliverables/latest", headers=h)
+        assert latest.status_code == 200, latest.text
+        r = c.get(f"/artifacts/{latest.json()[key]}/download", headers=h)
+        assert r.status_code == 200, r.text
+        return r.content
+
+    assert NO_AI_LINE in pdf_text(_latest_file("pdf_artifact_id"))
+
+    seed_completed_call(requested_by=admin["user"]["id"], service_id=svc_id)
+    fin = c.post(f"/zt/services/{svc_id}/deliverables/finalize", headers=h)
+    assert fin.status_code == 201, fin.text
+
+    assert FIXTURE_LINE in pdf_text(_latest_file("pdf_artifact_id"))
+    assert FIXTURE_LINE in docx_text(_latest_file("docx_artifact_id"))
+    assert xlsx_ai_sheet(_latest_file("xlsx_artifact_id"))[0][:2] == ["AI source", "fixture"]
+
+
+@pytest.mark.unit
 def test_latest_returns_newest_version(app_client) -> None:
     c = app_client
     admin = _register(c, "admin@example.com")

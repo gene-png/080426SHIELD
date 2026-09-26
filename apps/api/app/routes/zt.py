@@ -34,6 +34,7 @@ from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
 from app.ai.provenance import SOURCE_AI, SOURCE_CLIENT, protected_keys
+from app.ai_mode_stamp import ai_mode_for_service
 from app.audit import audit
 from app.db.session import get_db
 from app.deliverable_release import release_deliverable
@@ -1843,6 +1844,7 @@ def finalize_zt_deliverable(
         answers=answers,
         score=score,
         gap=gap,
+        ai_mode=ai_mode_for_service(db, svc.id),
     )
     pdf_bytes = render_zt_pdf(ctx)
     xlsx_bytes = render_zt_xlsx(ctx)

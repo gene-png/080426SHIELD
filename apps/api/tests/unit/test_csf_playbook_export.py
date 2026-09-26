@@ -189,6 +189,51 @@ def test_playbook_export_produces_downloadable_xlsx(app_client) -> None:
 
 
 @pytest.mark.unit
+def test_all_five_playbook_files_say_when_the_ai_came_from_fixtures(app_client) -> None:
+    """#646. The Playbook's Run-AI (`csf_score`) drafts the dimension scores these
+    files present, so each of the five says when that came from fixtures."""
+    from tests._ai_mode import (
+        FIXTURE_LINE,
+        docx_text,
+        pdf_text,
+        seed_completed_call,
+        xlsx_ai_sheet,
+    )
+
+    c, cid = app_client
+    r = c.post(
+        "/auth/register",
+        json={
+            "email": "admin@example.com",
+            "password": "correct horse battery staple!",
+            "display_name": "A",
+        },
+    )
+    h = {"Authorization": f"Bearer {r.json()['tokens']['access_token']}"}
+    svc_id = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "CSF"}).json()[
+        "id"
+    ]
+    c.post(f"/csf/services/{svc_id}/assessments", headers=h)
+    c.post(f"/csf/services/{svc_id}/profiles/seed", headers=h, json={"tiers": ["high"]})
+    seed_completed_call(requested_by=r.json()["user"]["id"], service_id=svc_id, purpose="csf_score")
+
+    ex = c.post(f"/csf/services/{svc_id}/playbook/export", headers=h)
+    assert ex.status_code == 200, ex.text
+    arts = {a["kind"]: a for a in ex.json()["artifacts"]}
+    assert set(arts) == {"xlsx", "exec_pdf", "exec_docx", "full_pdf", "full_docx"}
+    dh = {**h, "X-Client-Id": cid}
+    for kind, art in arts.items():
+        dl = c.get(f"/artifacts/{art['artifact_id']}/download", headers=dh)
+        assert dl.status_code == 200, f"{kind}: {dl.status_code}"
+        if kind == "xlsx":
+            assert xlsx_ai_sheet(dl.content)[0][:2] == ["AI source", "fixture"], kind
+        elif kind.endswith("pdf"):
+            assert FIXTURE_LINE in pdf_text(dl.content), kind
+        else:
+            assert FIXTURE_LINE in docx_text(dl.content), kind
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("stored", [None, "   "])
 def test_a_blank_legal_name_prints_the_fallback_on_all_five_playbook_artifacts(
     app_client, stored

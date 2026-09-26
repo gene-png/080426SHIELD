@@ -1280,6 +1280,34 @@ def test_finalize_deliverable_renders_pdf_and_xlsx(app_client) -> None:
 
 
 @pytest.mark.unit
+def test_the_deliverable_says_its_ai_suggestions_came_from_fixtures(app_client) -> None:
+    """#646. This suite's extraction runs on the fixture provider, so the list
+    behind the deliverable IS fixture output, and every file must say so."""
+    from tests._ai_mode import FIXTURE_LINE, docx_text, pdf_text, xlsx_ai_sheet
+
+    c, _, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)
+    _approve_list(c, bearer, svc_id)
+    fin = c.post(f"/tech-debt/services/{svc_id}/deliverables/finalize", headers=h)
+    assert fin.status_code == 201, fin.text
+    body = fin.json()
+
+    def _bytes(key: str) -> bytes:
+        r = c.get(f"/artifacts/{body[key]}/download", headers=h)
+        assert r.status_code == 200, r.text
+        return r.content
+
+    assert FIXTURE_LINE in pdf_text(_bytes("pdf_artifact_id"))
+    assert FIXTURE_LINE in docx_text(_bytes("docx_artifact_id"))
+    sheet = xlsx_ai_sheet(_bytes("xlsx_artifact_id"))
+    assert sheet[0][:2] == ["AI source", "fixture"]
+    assert str(sheet[1][0]).startswith("OFFLINE TEST DATA")
+
+
+@pytest.mark.unit
 def test_finalize_requires_approved_list(app_client) -> None:
     """#298, the same-file twin.
 

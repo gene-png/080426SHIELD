@@ -34,6 +34,7 @@ from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
 from app.ai.provenance import SOURCE_CONSULTANT, protected_keys
+from app.ai_mode_stamp import ai_mode_for_service
 from app.audit import audit
 from app.client_naming import org_display_name
 from app.csf import playbook_export as csf_playbook_export
@@ -2227,6 +2228,8 @@ def export_playbook(
             working=not _approved,
         )
 
+    # #646: one lookup for all five files, so they cannot disagree.
+    playbook_ai_mode = ai_mode_for_service(db, svc.id)
     specs = [
         (
             "xlsx",
@@ -2240,6 +2243,7 @@ def export_playbook(
                 tier_profiles=tier_profiles,
                 gap_actions=gap_actions,
                 approved=_approved,
+                ai_mode=playbook_ai_mode,
             ),
         ),
         (
@@ -2253,6 +2257,7 @@ def export_playbook(
                 enterprise_rows=enterprise_rows,
                 generated_on=on,
                 approved=_approved,
+                ai_mode=playbook_ai_mode,
             ),
         ),
         (
@@ -2266,6 +2271,7 @@ def export_playbook(
                 enterprise_rows=enterprise_rows,
                 generated_on=on,
                 approved=_approved,
+                ai_mode=playbook_ai_mode,
             ),
         ),
         (
@@ -2279,6 +2285,7 @@ def export_playbook(
                 enterprise_rows=enterprise_rows,
                 generated_on=on,
                 approved=_approved,
+                ai_mode=playbook_ai_mode,
             ),
         ),
         (
@@ -2292,6 +2299,7 @@ def export_playbook(
                 enterprise_rows=enterprise_rows,
                 generated_on=on,
                 approved=_approved,
+                ai_mode=playbook_ai_mode,
             ),
         ),
     ]
@@ -2483,6 +2491,7 @@ def finalize_csf_deliverable(
         answers=answers,
         score=score,
         gap=gap,
+        ai_mode=ai_mode_for_service(db, svc.id),
     )
     pdf_bytes = render_csf_pdf(ctx)
     xlsx_bytes = render_csf_xlsx(ctx)

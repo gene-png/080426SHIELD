@@ -23,6 +23,13 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from app.ai_mode_stamp import (
+    UNKNOWN_AI_MODE,
+    AiModeStamp,
+    add_docx_paragraph,
+    add_xlsx_sheet,
+    pdf_paragraph,
+)
 from app.csf.catalog import FUNCTIONS, SUBCATEGORIES, FunctionCode, Subcategory
 from app.csf.gap import GapAnalysis
 from app.csf.maturity import tier_label
@@ -44,6 +51,10 @@ class CsfDeliverableContext:
     answers: list[CsfAnswer]
     score: ScoreResult
     gap: GapAnalysis
+    # #646: whether the AI suggestions behind this document came from a live
+    # model or offline fixtures. Defaulted to "not recorded", never to live:
+    # a context built without a lookup must not read as a clean one.
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE
 
 
 def build_context(
@@ -54,8 +65,10 @@ def build_context(
     answers: Iterable[CsfAnswer],
     score: ScoreResult,
     gap: GapAnalysis,
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
 ) -> CsfDeliverableContext:
     return CsfDeliverableContext(
+        ai_mode=ai_mode,
         client_legal_name=org_display_name(client_legal_name),
         service_title=service_title,
         assessment=assessment,
@@ -258,6 +271,7 @@ def render_xlsx(ctx: CsfDeliverableContext) -> bytes:
     for w, col in zip([14, 10, 10, 32, 14, 14, 12, 12, 50], range(1, 10), strict=True):
         ws3.column_dimensions[get_column_letter(col)].width = w
 
+    add_xlsx_sheet(wb, ctx.ai_mode)
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()
@@ -281,6 +295,7 @@ def render_docx(ctx: CsfDeliverableContext) -> bytes:
 
     doc = new_document(f"{ctx.service_title} — {ctx.client_legal_name}")
     add_title(doc, ctx.service_title, ctx.client_legal_name)
+    add_docx_paragraph(doc, ctx.ai_mode)
 
     add_heading(doc, "Maturity summary")
     add_paragraphs(
@@ -365,6 +380,7 @@ def render_pdf(ctx: CsfDeliverableContext) -> bytes:
     story: list = []
     story.append(Paragraph(ctx.service_title, h1))
     story.append(Paragraph(ctx.client_legal_name, body))
+    story.append(pdf_paragraph(ctx.ai_mode, body))
     story.append(Spacer(1, 0.2 * inch))
 
     story.append(Paragraph("Maturity summary", h2))

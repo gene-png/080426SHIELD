@@ -139,6 +139,38 @@ def test_finalize_renders_pdf_and_xlsx(app_client) -> None:
 
 
 @pytest.mark.unit
+def test_the_deliverable_says_when_its_ai_came_from_fixtures(app_client) -> None:
+    """#646, through finalize: a fixture call on record for this service puts
+    the offline-test-data line in every file."""
+    from tests._ai_mode import (
+        FIXTURE_LINE,
+        docx_text,
+        pdf_text,
+        seed_completed_call,
+        xlsx_ai_sheet,
+    )
+
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    h = {"Authorization": f"Bearer {admin['tokens']['access_token']}"}
+    svc_id, _ = _seed_approved(c, admin["tokens"]["access_token"])
+    seed_completed_call(requested_by=admin["user"]["id"], service_id=svc_id, purpose="csf_score")
+
+    r = c.post(f"/csf/services/{svc_id}/deliverables/finalize", headers=h)
+    assert r.status_code == 201, r.text
+    body = r.json()
+
+    def _bytes(key: str) -> bytes:
+        dl = c.get(f"/artifacts/{body[key]}/download", headers=h)
+        assert dl.status_code == 200, dl.text
+        return dl.content
+
+    assert FIXTURE_LINE in pdf_text(_bytes("pdf_artifact_id"))
+    assert FIXTURE_LINE in docx_text(_bytes("docx_artifact_id"))
+    assert xlsx_ai_sheet(_bytes("xlsx_artifact_id"))[0][:2] == ["AI source", "fixture"]
+
+
+@pytest.mark.unit
 def test_finalize_requires_approved_assessment(app_client) -> None:
     c = app_client
     admin = _register(c, "admin@example.com")

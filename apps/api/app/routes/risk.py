@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from app.ai.engine import get_job, run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
+from app.ai_mode_stamp import ai_mode_for_risk_register
 from app.attack.catalog_version import catalog_mismatch_message, require_current_catalog
 from app.attack.parents import is_computed_parent
 from app.attack.rules import parents_computed
@@ -1566,6 +1567,7 @@ def export(
         version=reg.version,
         entries=entries,
         link_scope=[(r.service, r.scored, r.total) for r in _scope_rows],
+        ai_mode=ai_mode_for_risk_register(db, client.id),
     )
     today = utcnow().date()
 

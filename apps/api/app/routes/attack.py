@@ -33,6 +33,7 @@ from app.ai.engine import get_job, run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
+from app.ai_mode_stamp import ai_mode_for_service
 from app.attack.analytics import compute as compute_heatmap
 from app.attack.catalog import (
     SOURCE_VERSION,
@@ -2916,6 +2917,7 @@ def finalize_attack_deliverable(
         assessment=assessment,
         coverage=coverage,
         rollup=rollup,
+        ai_mode=ai_mode_for_service(db, svc.id),
     )
     pdf_bytes = render_attack_pdf(ctx)
     xlsx_bytes = render_attack_xlsx(ctx)

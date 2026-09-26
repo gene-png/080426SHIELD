@@ -44,6 +44,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.ai.llm import LLMClient
+from app.ai_mode_stamp import ai_mode_for_service
 from app.audit import audit
 from app.db.session import get_db
 from app.deliverable_release import ParentGuard, release_deliverable
@@ -1590,6 +1591,7 @@ def finalize_deliverable(
         service_title=svc.title,
         cap_list=cap_list,
         items=items,
+        ai_mode=ai_mode_for_service(db, svc.id),
     )
     pdf_bytes = render_pdf(ctx)
     xlsx_bytes = render_xlsx(ctx)

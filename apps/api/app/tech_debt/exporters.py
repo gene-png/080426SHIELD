@@ -19,6 +19,13 @@ import io
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from app.ai_mode_stamp import (
+    UNKNOWN_AI_MODE,
+    AiModeStamp,
+    add_docx_paragraph,
+    add_xlsx_sheet,
+    pdf_paragraph,
+)
 from app.client_naming import org_display_name
 from app.models.capability import CapabilityDisposition, CapabilityItem, CapabilityList
 
@@ -59,6 +66,10 @@ class DeliverableContext:
     # without this field is one whose items were never checked, and the
     # pre-existing behaviour for those is the unqualified label.
     spend_cost_known: bool = True
+    # #646: whether the AI suggestions behind this document came from a live
+    # model or offline fixtures. Defaulted to "not recorded", never to live:
+    # a context built without a lookup must not read as a clean one.
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE
 
 
 def reconciliation_line(ctx: DeliverableContext) -> str | None:
@@ -178,6 +189,7 @@ def build_context(
     service_title: str,
     cap_list: CapabilityList,
     items: Iterable[CapabilityItem],
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
 ) -> DeliverableContext:
     items_list = list(items)
     total_cost = 0.0
@@ -233,6 +245,7 @@ def build_context(
     # the superseded sentence first.
     excluded_count = max(received - included, 0) if received is not None else 0
     return DeliverableContext(
+        ai_mode=ai_mode,
         source_rows_total=received,
         excluded_count=excluded_count,
         included_count=included,
@@ -329,6 +342,7 @@ def render_xlsx(ctx: DeliverableContext) -> bytes:
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
+    add_xlsx_sheet(wb, ctx.ai_mode)
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()
@@ -371,6 +385,7 @@ def render_pdf(ctx: DeliverableContext) -> bytes:
     story: list = []
     story.append(Paragraph(ctx.service_title, h1))
     story.append(Paragraph(ctx.client_legal_name, body))
+    story.append(pdf_paragraph(ctx.ai_mode, body))
     story.append(Spacer(1, 0.2 * inch))
 
     story.append(Paragraph("Summary", h2))
@@ -463,6 +478,7 @@ def render_docx(ctx: DeliverableContext) -> bytes:
 
     doc = new_document(f"{ctx.service_title} — {ctx.client_legal_name}")
     add_title(doc, ctx.service_title, ctx.client_legal_name)
+    add_docx_paragraph(doc, ctx.ai_mode)
 
     savings = (
         f"${ctx.estimated_savings:,.0f}"

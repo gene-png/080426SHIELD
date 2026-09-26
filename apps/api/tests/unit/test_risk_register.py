@@ -502,6 +502,40 @@ def test_export_renders_and_stores_three_files(app_client) -> None:
     assert docx.status_code == 200 and docx.content[:2] == b"PK"
 
 
+@pytest.mark.unit
+def test_the_export_says_its_risks_were_drafted_from_fixtures(app_client) -> None:
+    """#646. This suite's `risk_synthesize` runs on the fixture provider, so the
+    register it exports is fixture output, and all three files say so."""
+    from tests._ai_mode import FIXTURE_LINE, docx_text, pdf_text, xlsx_ai_sheet
+
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+    provider.register_static(
+        "risk_synthesize",
+        LLMResponse(
+            '{"entries": [{"title": "Risk one", "axis": "detection",'
+            ' "likelihood": "high", "impact": "catastrophic",'
+            ' "recommended_action": "remediate"}]}'
+        ),
+    )
+    assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 200
+    r = c.post(f"/risk/clients/{cid}/register/export", headers=bh)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    dh = {**bh, "X-Client-Id": cid}
+
+    def _bytes(key: str) -> bytes:
+        dl = c.get(f"/artifacts/{body[key]}/download", headers=dh)
+        assert dl.status_code == 200, dl.text
+        return dl.content
+
+    assert FIXTURE_LINE in pdf_text(_bytes("pdf_artifact_id"))
+    assert FIXTURE_LINE in docx_text(_bytes("docx_artifact_id"))
+    assert xlsx_ai_sheet(_bytes("xlsx_artifact_id"))[0][:2] == ["AI source", "fixture"]
+
+
 # ---------------------------------------------------------------------------
 # Exporter content (pure renderers — no DB). The XLSX is already content-tested
 # via the download in test_export_renders_and_stores_three_files; here we prove

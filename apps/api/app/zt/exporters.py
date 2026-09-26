@@ -13,6 +13,13 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from app.ai_mode_stamp import (
+    UNKNOWN_AI_MODE,
+    AiModeStamp,
+    add_docx_paragraph,
+    add_xlsx_sheet,
+    pdf_paragraph,
+)
 from app.client_naming import org_display_name
 from app.models.zt_assessment import ZtAnswer, ZtAssessment
 from app.zt.catalog import capabilities, pillars
@@ -32,6 +39,10 @@ class ZtDeliverableContext:
     answers: list[ZtAnswer]
     score: ScoreResult
     gap: GapAnalysis
+    # #646: whether the AI suggestions behind this document came from a live
+    # model or offline fixtures. Defaulted to "not recorded", never to live:
+    # a context built without a lookup must not read as a clean one.
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE
 
 
 def _gap_plan_caption(gap: GapAnalysis) -> str:
@@ -115,8 +126,10 @@ def build_context(
     answers: Iterable[ZtAnswer],
     score: ScoreResult,
     gap: GapAnalysis,
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
 ) -> ZtDeliverableContext:
     return ZtDeliverableContext(
+        ai_mode=ai_mode,
         client_legal_name=org_display_name(client_legal_name),
         service_title=service_title,
         framework=framework,
@@ -270,6 +283,7 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
     for w, col in zip([18, 10, 36, 14, 14, 12, 12, 50], range(1, 9), strict=True):
         ws3.column_dimensions[get_column_letter(col)].width = w
 
+    add_xlsx_sheet(wb, ctx.ai_mode)
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()
@@ -297,6 +311,7 @@ def render_docx(ctx: ZtDeliverableContext) -> bytes:
         ctx.service_title,
         f"{ctx.client_legal_name} · {_framework_label(ctx.framework)}",
     )
+    add_docx_paragraph(doc, ctx.ai_mode)
 
     add_heading(doc, "Maturity summary")
     add_paragraphs(
@@ -381,6 +396,7 @@ def render_pdf(ctx: ZtDeliverableContext) -> bytes:
     story: list = []
     story.append(Paragraph(ctx.service_title, h1))
     story.append(Paragraph(f"{ctx.client_legal_name} · {_framework_label(ctx.framework)}", body))
+    story.append(pdf_paragraph(ctx.ai_mode, body))
     story.append(Spacer(1, 0.2 * inch))
 
     story.append(Paragraph("Maturity summary", h2))

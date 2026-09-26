@@ -13,6 +13,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from app.ai_mode_stamp import (
+    UNKNOWN_AI_MODE,
+    AiModeStamp,
+    add_docx_paragraph,
+    add_xlsx_sheet,
+    pdf_paragraph,
+)
 from app.client_naming import org_display_name
 from app.risk.engine import (
     IMPACT_ORDER,
@@ -61,6 +68,10 @@ class RiskExportContext:
     #: a concrete false claim about a client's assessments, where silence is
     #: merely an absence. `CLAUDE.md`: missing data defaults to UNCONFIRMED.
     link_scope: tuple[tuple[str, int, int], ...] = ()
+    # #646: whether the AI suggestions behind this document came from a live
+    # model or offline fixtures. Defaulted to "not recorded", never to live:
+    # a context built without a lookup must not read as a clean one.
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE
 
 
 def _enum_list(values, enum_cls):
@@ -81,8 +92,10 @@ def build_context(
     version: int,
     entries: Sequence[Any],
     link_scope: Sequence[tuple[str, int, int]] = (),
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
 ) -> RiskExportContext:
     return RiskExportContext(
+        ai_mode=ai_mode,
         client_legal_name=org_display_name(client_legal_name),
         version=version,
         entries=list(entries),
@@ -200,6 +213,7 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
             ]
         )
 
+    add_xlsx_sheet(wb, ctx.ai_mode)
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()
@@ -353,6 +367,7 @@ def render_pdf(ctx: RiskExportContext) -> bytes:
     story: list = [
         Paragraph(f"Risk Register (v{ctx.version})", h1),
         Paragraph(ctx.client_legal_name, body),
+        pdf_paragraph(ctx.ai_mode, body),
         Spacer(1, 0.2 * inch),
         Paragraph("Summary", h2),
     ]
@@ -423,6 +438,7 @@ def render_docx(ctx: RiskExportContext) -> bytes:
 
     doc = new_document(f"Risk Register — {ctx.client_legal_name}")
     add_title(doc, f"Risk Register (v{ctx.version})", ctx.client_legal_name)
+    add_docx_paragraph(doc, ctx.ai_mode)
 
     add_heading(doc, "Summary")
     add_paragraphs(doc, _summary_lines(ctx))

@@ -19,6 +19,13 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from app.ai_mode_stamp import (
+    UNKNOWN_AI_MODE,
+    AiModeStamp,
+    add_docx_paragraph,
+    add_xlsx_sheet,
+    pdf_paragraph,
+)
 from app.attack.analytics import CoverageRollup, TacticCoverage
 from app.attack.catalog import TACTICS, TECHNIQUES, technique_by_id
 from app.attack.coverage import CoverageStatus, coverage_label
@@ -51,6 +58,10 @@ class AttackDeliverableContext:
     #: mark individual rows would otherwise re-derive the set — a second source
     #: of truth for the same fact, which is the drift D-052 rejected.
     pending_codes: frozenset[str] = frozenset()
+    # #646: whether the AI suggestions behind this document came from a live
+    # model or offline fixtures. Defaulted to "not recorded", never to live:
+    # a context built without a lookup must not read as a clean one.
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE
 
 
 def build_context(
@@ -60,10 +71,12 @@ def build_context(
     assessment: AttackAssessment,
     coverage: Iterable[AttackCoverage],
     rollup: CoverageRollup,
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
 ) -> AttackDeliverableContext:
     rows = list(coverage)
     rule = parents_computed(assessment)
     return AttackDeliverableContext(
+        ai_mode=ai_mode,
         client_legal_name=org_display_name(client_legal_name),
         service_title=service_title,
         assessment=assessment,
@@ -386,6 +399,7 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
     for w, col in zip([14, 38, 28], range(1, 4), strict=True):
         ws4.column_dimensions[get_column_letter(col)].width = w
 
+    add_xlsx_sheet(wb, ctx.ai_mode)
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()
@@ -409,6 +423,7 @@ def render_docx(ctx: AttackDeliverableContext) -> bytes:
 
     doc = new_document(f"{ctx.service_title} — {ctx.client_legal_name}")
     add_title(doc, ctx.service_title, ctx.client_legal_name)
+    add_docx_paragraph(doc, ctx.ai_mode)
 
     add_heading(doc, "Coverage summary")
     add_paragraphs(
@@ -539,6 +554,7 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
     story: list = []
     story.append(Paragraph(ctx.service_title, h1))
     story.append(Paragraph(ctx.client_legal_name, body))
+    story.append(pdf_paragraph(ctx.ai_mode, body))
     story.append(Spacer(1, 0.2 * inch))
 
     story.append(Paragraph("Coverage summary", h2))
