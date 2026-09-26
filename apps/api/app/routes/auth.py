@@ -26,7 +26,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -129,9 +129,12 @@ def _issue_pair(
         auth_time=auth_time,
         jti=keep_jti,
     )
-    # `keep_jti` is the grace path: the caller lost a rotation race, so it gets a
-    # token carrying the CURRENT identity rather than a new one. Rotating again
-    # here would simply knock the race winner out instead, which is the bug.
+    # `keep_jti` issues a token carrying that jti WITHOUT recording a rotation,
+    # for two callers. The grace path: the caller lost a rotation race, so it
+    # gets the CURRENT identity rather than a new one -- rotating again here
+    # would simply knock the race winner out instead, which is the bug. And
+    # `refresh()`'s compare-and-swap, which has already recorded the rotation
+    # atomically (#505) and only needs the token for the jti it stored.
     if keep_jti is None:
         user.previous_refresh_jti = user.active_refresh_jti
         user.refresh_rotated_at = utcnow()
@@ -708,48 +711,113 @@ def refresh(
     # only, time-boxed, and a genuine replay — older token, or the same token
     # after the window — is still rejected exactly as before. Set the grace to 0
     # to restore strict single-use.
-    if user.active_refresh_jti != str(payload.jti):
-        grace = settings.jwt_refresh_grace_seconds
-        # _as_aware: SQLite hands back naive datetimes for a timezone=True
-        # column, so a bare subtraction raises TypeError under the test suite
-        # while working fine on Postgres.
-        rotated_at = _as_aware(user.refresh_rotated_at)
-        within_grace = (
-            grace > 0
-            and user.previous_refresh_jti == str(payload.jti)
-            and rotated_at is not None
-            and (utcnow() - rotated_at).total_seconds() <= grace
+    presented = str(payload.jti)
+    if user.active_refresh_jti != presented:
+        return _grace_or_reuse(db, user, payload, settings)
+
+    # THE ROTATION IS A COMPARE-AND-SWAP (#505). The check above read `user`
+    # BEFORE this write, so two refreshes presenting the same active jti at the
+    # same moment both passed it; a plain write then let the second overwrite
+    # the first, leaving the winner's new jti neither active nor previous, so
+    # its next refresh read as `refresh_reused`. The UPDATE below only matches
+    # while `active_refresh_jti` is STILL the presented one, so exactly one
+    # caller rotates -- under Postgres READ COMMITTED (the server's default, not
+    # pinned by the app)
+    # and on SQLite -- and a row lock is not needed (SQLite ignores FOR UPDATE,
+    # so a lock could not be pinned by the unit suite; this can). Under
+    # REPEATABLE READ or SERIALIZABLE the loser would instead get a
+    # SerializationFailure, an untyped 500; #637 tracks that.
+    new_jti = uuid.uuid4()
+    swapped = db.execute(
+        update(User)
+        .where(User.id == user.id, User.active_refresh_jti == presented)
+        .values(
+            previous_refresh_jti=presented,
+            active_refresh_jti=str(new_jti),
+            refresh_rotated_at=utcnow(),
         )
-        if not within_grace:
-            log.warning(
-                "auth.refresh_reused",
-                user_id=str(user.id),
-                presented_jti=str(payload.jti),
-                active_jti=user.active_refresh_jti,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={
-                    "reason": "refresh_reused",
-                    "message": "This session has been superseded. Please sign in again.",
-                },
-            )
-        log.info(
-            "auth.refresh_grace_served",
+        .execution_options(synchronize_session=False)
+    ).rowcount
+    if swapped != 1:
+        # LOST THE RACE. Nothing was written. Re-read the winner's state and
+        # decide exactly as for any non-active jti: the winner set `previous`
+        # to our jti a moment ago, so with a grace window this caller is served
+        # the winner's identity (200) -- a benign two-tab race is NOT read as a
+        # stolen token. With the grace at 0 (strict single-use) it is a typed
+        # 401 `refresh_reused`, deliberately: under that setting a non-active
+        # jti is a replay, whoever wrote the active one. Never a 500.
+        db.rollback()
+        db.refresh(user)
+        log.info("auth.refresh_race_lost", user_id=str(user.id), presented_jti=presented)
+        return _grace_or_reuse(db, user, payload, settings)
+
+    db.commit()
+    db.refresh(user)
+    # The pair carries the jti the swap stored; `keep_jti` issues it without a
+    # second rotation (the swap already recorded previous/active/rotated_at).
+    tokens = _issue_pair(user, auth_time=payload.auth_time, keep_jti=new_jti)
+    return tokens
+
+
+def _grace_or_reuse(db: Session, user: User, payload, settings) -> TokenPairResponse:
+    """The decision for a presented jti that is not the active one.
+
+    With NO active session -- a password reset or a deactivation cleared it --
+    the answer is a typed 401 `refresh_reused`, whatever `previous` holds
+    (#636). Otherwise the immediately previous jti inside the grace window is
+    served the CURRENT identity, with no rotation; anything else is the same
+    typed 401. This function never rotates: before #636, active None reached
+    `_issue_pair(keep_jti=None)`, a FULL rotation, and the previous token
+    minted a new session after the control meant to end them all."""
+    presented = str(payload.jti)
+    if user.active_refresh_jti is None:
+        log.warning("auth.refresh_no_active_session", user_id=str(user.id), presented_jti=presented)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "reason": "refresh_reused",
+                "message": "This session has been superseded. Please sign in again.",
+            },
+        )
+    grace = settings.jwt_refresh_grace_seconds
+    # _as_aware: SQLite hands back naive datetimes for a timezone=True
+    # column, so a bare subtraction raises TypeError under the test suite
+    # while working fine on Postgres.
+    rotated_at = _as_aware(user.refresh_rotated_at)
+    within_grace = (
+        grace > 0
+        and user.previous_refresh_jti == presented
+        and rotated_at is not None
+        and (utcnow() - rotated_at).total_seconds() <= grace
+    )
+    if not within_grace:
+        log.warning(
+            "auth.refresh_reused",
             user_id=str(user.id),
-            presented_jti=str(payload.jti),
+            presented_jti=presented,
             active_jti=user.active_refresh_jti,
         )
-        # active_refresh_jti is a str column; the token needs a real UUID.
-        tokens = _issue_pair(
-            user,
-            auth_time=payload.auth_time,
-            keep_jti=uuid.UUID(user.active_refresh_jti) if user.active_refresh_jti else None,
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "reason": "refresh_reused",
+                "message": "This session has been superseded. Please sign in again.",
+            },
         )
-        db.commit()
-        return tokens
-
-    tokens = _issue_pair(user, auth_time=payload.auth_time)
+    log.info(
+        "auth.refresh_grace_served",
+        user_id=str(user.id),
+        presented_jti=presented,
+        active_jti=user.active_refresh_jti,
+    )
+    # active_refresh_jti is a str column; the token needs a real UUID. It is
+    # never None here (refused above), so `keep_jti` is always set and this
+    # path cannot rotate.
+    tokens = _issue_pair(
+        user,
+        auth_time=payload.auth_time,
+        keep_jti=uuid.UUID(user.active_refresh_jti),
+    )
     db.commit()
     return tokens
 
@@ -1145,9 +1213,11 @@ def reset_password(
 ) -> EmailActionResponse:
     """Consume a password-reset token and set the new password.
 
-    Single-use token; on success we also rotate out the current refresh token
-    (``active_refresh_jti`` cleared) so any live session must re-authenticate,
-    and clear any lockout so the user can immediately sign in.
+    Single-use token. On success, every refresh token for the user stops
+    working: all three rotation fields are cleared (#636). An ACCESS token
+    already issued is NOT revoked. It stays valid until its own TTL expires,
+    which is the half of #636 still open. Any lockout is also cleared, so the
+    user can sign in immediately.
     """
     limiter.enforce_auth(request, "reset-password")
 
@@ -1192,8 +1262,17 @@ def reset_password(
         )
     ).scalars():
         other.used_at = utcnow()
-    # Force re-auth on all sessions + clear lockout.
+    # End every refresh family and clear the lockout. Access tokens already
+    # issued live until their TTL (#636's open half). ALL THREE rotation fields
+    # are cleared, not only the active jti. `_grace_or_reuse` separately refuses
+    # when no session is active, which is the load-bearing guard: at the
+    # refresh endpoint either one alone refuses a post-reset `previous`. Under a
+    # concurrent refresh, this ORM write may leave `previous` set, because the
+    # flush skips a column whose loaded value was already None, and in that
+    # case only the guard refuses.
     user.active_refresh_jti = None
+    user.previous_refresh_jti = None
+    user.refresh_rotated_at = None
     user.failed_login_count = 0
     user.last_failed_login_at = None
     user.locked_until_at = None
