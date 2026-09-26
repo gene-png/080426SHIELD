@@ -392,6 +392,14 @@ Components carry no cost of their own — this licence keeps its full value.`,
       (i) => i.confidence_pct !== null && i.confidence_pct < 70,
     ).length ?? 0;
   const readOnly = list?.status === "released";
+  // #640. The approval holds while the list is RELEASED, or APPROVED with no
+  // step-2 edit since (`approval_current`). An APPROVED list edited afterwards
+  // is stale: step 3 shows not-done and offers "Approve again".
+  const approvalHolds =
+    list?.status === "released" ||
+    (list?.status === "approved" && list.approval_current);
+  const approvalStale = list?.status === "approved" && !list.approval_current;
+  const approvable = list?.status === "draft" || list?.status === "approved";
 
   const itemCount = list?.items.length ?? 0;
   const discardSummary = `${itemCount} capability item${
@@ -438,17 +446,17 @@ Components carry no cost of their own — this licence keeps its full value.`,
                 // `released` is approved-or-better, so it reads "success" like
                 // its siblings do. Previously unreachable, so a released list
                 // showed a blue "info" pill saying "Released".
-                list.status === "approved" || list.status === "released"
-                  ? "success"
-                  : "info"
+                approvalHolds ? "success" : approvalStale ? "warning" : "info"
               }
               withDot
             >
               {list.status === "draft"
                 ? `Draft v${list.version}`
-                : list.status === "approved"
-                  ? `Approved v${list.version}`
-                  : `Released v${list.version}`}
+                : approvalStale
+                  ? `Edited since approval v${list.version}`
+                  : list.status === "approved"
+                    ? `Approved v${list.version}`
+                    : `Released v${list.version}`}
             </StatusPill>
           ) : (
             <StatusPill tone="neutral" withDot>
@@ -581,7 +589,7 @@ Components carry no cost of their own — this licence keeps its full value.`,
           number={2}
           title="Review and correct the extracted list"
           description="Check what the extraction produced against what the client actually runs: fix names and costs, split bundles into their components, and confirm or overturn the security classification on each row. That classification decides what the ATT&CK mapping is allowed to cite, so an error here becomes a fabricated gap there."
-          done={list.status === "approved" || list.status === "released"}
+          done={approvalHolds}
         >
           <section aria-labelledby="cap-list" className="flex flex-col gap-3">
             <header className="flex flex-wrap items-end justify-between gap-2">
@@ -617,7 +625,9 @@ Components carry no cost of their own — this licence keeps its full value.`,
             <SecurityClassificationQueue
               list={list}
               onUpdated={setList}
-              editable={list.status === "draft"}
+              // #640: classifications stay editable until release; an edit
+              // to an approved list sends step 3 back to not-done.
+              editable={list.status === "draft" || list.status === "approved"}
             />
 
             {/* UX finding 4: rows the extraction could not turn into a
@@ -748,22 +758,24 @@ Components carry no cost of their own — this licence keeps its full value.`,
           <WorkflowStep
             number={3}
             title="Approve the capability list"
-            description="Locks the inventory so the deliverable is generated from a fixed set of rows and costs. Approving does not send anything to the client — that is the last step."
-            done={list.status === "approved" || list.status === "released"}
+            description="Records that the inventory was reviewed, so the deliverable is generated from rows a consultant signed off. Any later edit in step 2 means approving again. Approving does not send anything to the client — that is the last step."
+            done={approvalHolds}
           >
             <button
               type="button"
               onClick={() => void onApprove()}
-              disabled={approving || list.status !== "draft"}
+              disabled={approving || !approvable || approvalHolds}
               className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {list.status === "approved"
-                ? "Approved"
-                : list.status === "released"
-                  ? "Released"
-                  : approving
-                    ? "Approving…"
-                    : "Approve list"}
+              {list.status === "released"
+                ? "Released"
+                : approving
+                  ? "Approving…"
+                  : approvalHolds
+                    ? "Approved"
+                    : approvalStale
+                      ? "Approve again"
+                      : "Approve list"}
             </button>
             {approveError ? (
               <p className="mt-2 text-sm text-status-danger-fg" role="alert">
@@ -779,7 +791,9 @@ Components carry no cost of their own — this licence keeps its full value.`,
             blockedReason={
               list.status === "draft"
                 ? "Approve the capability list in step 3 before generating a deliverable from it."
-                : null
+                : approvalStale
+                  ? "The list was edited after it was approved. Approve it again in step 3 before generating a deliverable from it."
+                  : null
             }
           >
             <DeliverableCard

@@ -40,7 +40,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.orm import Session
 
 from app.ai.llm import LLMClient
@@ -574,6 +574,7 @@ def include_excluded_row(
     cap_list.excluded_rows = [
         e for e in (cap_list.excluded_rows or []) if int(e.get("index", -1)) != row_index
     ]
+    _record_edit(db, cap_list.id)
     audit(
         db,
         action="capability_list.excluded_row_included",
@@ -617,6 +618,7 @@ def confirm_excluded_row(
         )
         for e in (cap_list.excluded_rows or [])
     ]
+    _record_edit(db, cap_list.id)
     audit(
         db,
         action="capability_list.excluded_row_confirmed",
@@ -628,6 +630,24 @@ def confirm_excluded_row(
     db.commit()
     db.refresh(cap_list)
     return _serialize_list_with_items(db, cap_list)
+
+
+def _record_edit(db: Session, list_id: uuid.UUID) -> None:
+    """#640: a step-2 edit moves the list's `revision`, so an approval can go stale.
+
+    Called by every route that edits a list's rows, in the same transaction as
+    that edit's audit row. The increment is SQL (`revision = revision + 1`), so
+    two concurrent edits both count, and it takes the list row's write lock,
+    which is what makes approve's compare-and-swap on `revision` see it.
+    `test_capability_list_revision.py` derives the edit routes from the router
+    and requires each one to call this, so a new edit route cannot skip it.
+    """
+    db.execute(
+        update(CapabilityList)
+        .where(CapabilityList.id == list_id)
+        .values(revision=CapabilityList.revision + 1)
+    )
+    _log.info("tech_debt.capability_list_edited", capability_list_id=str(list_id))
 
 
 def _editable_item_or_404(
@@ -681,6 +701,7 @@ def confirm_security_classification(
         )
 
     item.security_class_confirmed = True
+    _record_edit(db, item.capability_list_id)
     audit(
         db,
         action="capability_item.security_classification_confirmed",
@@ -718,6 +739,7 @@ def override_security_classification(
     item.security_related = True
     item.security_functions = [f.value for f in body.security_functions]
     item.security_class_confirmed = False
+    _record_edit(db, item.capability_list_id)
     audit(
         db,
         action="capability_item.security_classification_overridden",
@@ -822,6 +844,7 @@ def add_capability_components(
                 source_artifact_id=item.source_artifact_id,
             )
         )
+    _record_edit(db, item.capability_list_id)
     audit(
         db,
         action="capability_item.components_added",
@@ -900,6 +923,10 @@ def patch_capability_item(
         item.confidence_pct = None
     if locked_val is not None:
         item.locked = bool(locked_val)
+    if data:
+        # Lock/unlock alone is not an edit of the review: it changes what an AI
+        # rerun may touch, not what the list says.
+        _record_edit(db, item.capability_list_id)
 
     audit(
         db,
@@ -982,6 +1009,22 @@ def _refuse_undecided(count: int, *, then: str = "approve again") -> HTTPExcepti
             "message": (
                 f"{rows} still undecided. Give every row a keep, consolidate or cut "
                 f"decision in step 2, Review and correct the extracted list, then {then}."
+            ),
+        },
+    )
+
+
+def _refuse_edited_since_approval(*, then: str) -> HTTPException:
+    """#640: the list was edited after step 3 approved it. Typed (D-016), naming
+    step 3 by the title the workspace shows, whose Approve button is enabled
+    again for exactly this state."""
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "reason": "capability_list_edited_since_approval",
+            "message": (
+                "The capability list was edited after it was approved. Approve it "
+                f"again in step 3, Approve the capability list, then {then}."
             ),
         },
     )
@@ -1130,6 +1173,12 @@ def approve_capability_list(
     undecided = undecided_row_count(db, cap_list.id)
     if undecided:
         raise _refuse_undecided(undecided)
+    # #640: the revision this approval covers, read BEFORE the membership is
+    # built from the rows. The UPDATE below matches only while the list is
+    # still at it, so an edit landing between the read and the write refuses
+    # the approval instead of stamping the new rows with an approval that was
+    # computed from the old ones.
+    observed_revision = cap_list.revision
     membership = build_approved_membership(db, cap_list.id)
     previous = cap_list.approved_membership
     no_undecided_rows = ~(
@@ -1143,12 +1192,14 @@ def approve_capability_list(
             CapabilityList.id == cap_list.id,
             CapabilityList.status.in_((CapabilityListStatus.DRAFT, CapabilityListStatus.APPROVED)),
             no_undecided_rows,
+            CapabilityList.revision == observed_revision,
         )
         .values(
             status=CapabilityListStatus.APPROVED,
             approved_at=utcnow(),
             approved_by=user.id,
             approved_membership=membership,
+            approved_revision=observed_revision,
         )
         .execution_options(synchronize_session=False)
     )
@@ -1192,6 +1243,8 @@ def approve_capability_list(
             # earlier membership (D-049's lesson, applied here).
             "approved_membership_count": len(membership),
             "replaced_membership_count": len(previous) if previous is not None else None,
+            # #640: the revision this approval covers.
+            "approved_revision": observed_revision,
         },
     )
     db.commit()
@@ -1554,6 +1607,14 @@ def finalize_deliverable(
         undecided = sum(1 for it in items if it.disposition is None)
         if undecided:
             raise _refuse_undecided(undecided, then="generate the deliverable again")
+        # #640: step 3 must run again after any edit. Judged on a revision read
+        # AFTER `items` was loaded: if the list is still at its approved revision
+        # now, no edit had committed before the rows were read, so the render
+        # below is of approved rows. Reading it first would leave a window for
+        # an edit to land between the check and the load.
+        db.refresh(cap_list, attribute_names=["revision", "approved_revision"])
+        if not cap_list.approval_current:
+            raise _refuse_edited_since_approval(then="generate the deliverable again")
 
     client_name = client.legal_name  # NULL when nobody has named the org (D-080)
 
@@ -1718,7 +1779,7 @@ def release_tech_debt_deliverable(
         user=user,
         kinds=(ServiceKind.TECH_DEBT,),
         action="tech_debt.deliverable.released",
-        parent_guard=_NO_UNDECIDED_ROWS,
+        parent_guard=_LIST_STILL_RELEASABLE,
     )
     return _serialize_deliverable(db, deliv)
 
@@ -1751,17 +1812,31 @@ def _refuse_changed_during_release() -> HTTPException:
 
 
 def _refuse_release_over_undecided(db: Session, list_id: uuid.UUID) -> HTTPException:
+    """Why the guarded flip missed: an undecided row, an edit since approval
+    (#640), or -- neither true any more -- a list that moved under the flip."""
     undecided = undecided_row_count(db, list_id)
-    if not undecided:
-        return _refuse_changed_during_release()
-    return _refuse_undecided(undecided, then="generate the deliverable again before releasing")
+    if undecided:
+        return _refuse_undecided(undecided, then="generate the deliverable again before releasing")
+    cap_list = db.get(CapabilityList, list_id)
+    if cap_list is not None:
+        db.refresh(cap_list, attribute_names=["revision", "approved_revision"])
+        if not cap_list.approval_current:
+            return _refuse_edited_since_approval(
+                then="generate the deliverable again before releasing"
+            )
+    return _refuse_changed_during_release()
 
 
-_NO_UNDECIDED_ROWS = ParentGuard(
-    condition=lambda list_id: ~(
-        select(CapabilityItem.id)
-        .where(CapabilityItem.capability_list_id == list_id, _UNDECIDED)
-        .exists()
+_LIST_STILL_RELEASABLE = ParentGuard(
+    condition=lambda list_id: and_(
+        ~(
+            select(CapabilityItem.id)
+            .where(CapabilityItem.capability_list_id == list_id, _UNDECIDED)
+            .exists()
+        ),
+        # #640: release freezes the list, so it must not freeze one edited
+        # since step 3 approved it. In the flip's own WHERE, like the row check.
+        CapabilityList.approved_revision == CapabilityList.revision,
     ),
     refusal=_refuse_release_over_undecided,
 )

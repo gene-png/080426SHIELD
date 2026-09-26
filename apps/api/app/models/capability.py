@@ -115,6 +115,19 @@ class CapabilityList(UUIDPKMixin, TimestampMixin, Base):
     # membership invented for them.
     approved_membership: Mapped[list | None] = mapped_column(JSON)
 
+    # #640 (migration 0055). Every step-2 edit increments `revision` in SQL;
+    # approve's compare-and-swap copies it into `approved_revision`. The
+    # approval is current iff the two are equal, so an APPROVED list that was
+    # edited afterwards is refused at finalize and release until step 3 runs
+    # again. NULL `approved_revision` (a draft) never equals a revision.
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    approved_revision: Mapped[int | None] = mapped_column(Integer)
+
+    @property
+    def approval_current(self) -> bool:
+        """The approval covers the list as it stands now."""
+        return self.approved_revision is not None and self.approved_revision == self.revision
+
 
 class CapabilityItem(UUIDPKMixin, TimestampMixin, Base):
     __tablename__ = "capability_items"

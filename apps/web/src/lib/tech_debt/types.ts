@@ -70,6 +70,12 @@ export interface CapabilityList {
   status: CapabilityListStatus;
   items: CapabilityItem[];
   approved_at: string | null;
+  /**
+   * #640: the approval covers the list as it stands. False for a draft, and
+   * false again after any step-2 edit to an approved list until step 3
+   * approves it again; finalize and release refuse while it is false.
+   */
+  approval_current: boolean;
   approved_by: string | null;
   /** Rows in the source upload. Null on lists extracted before 0036. */
   source_rows_total?: number | null;
