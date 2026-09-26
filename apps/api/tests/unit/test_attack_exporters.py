@@ -33,6 +33,7 @@ def _build_inputs(*, default_status: str | None = "covered"):
         service_id=uuid.uuid4(),
         version=1,
         status=AttackAssessmentStatus.APPROVED,
+        parent_rules=2,  # what approve writes (#620, migration 0054)
     )
     coverage: list[AttackCoverage] = []
     for t in TECHNIQUES:
