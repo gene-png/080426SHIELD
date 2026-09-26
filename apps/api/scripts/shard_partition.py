@@ -151,4 +151,12 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        raise SystemExit(main(sys.argv))
+    except (SystemExit, KeyboardInterrupt):
+        raise
+    except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
+        nl = chr(10)
+        sys.stderr.write(f"shard-partition: CRASHED: {type(exc).__name__}: {exc}{nl}")
+        sys.stderr.write(f"A crash is not a partition and not a finding (D-090).{nl}")
+        raise SystemExit(2) from exc
