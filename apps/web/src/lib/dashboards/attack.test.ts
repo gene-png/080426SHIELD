@@ -39,6 +39,8 @@ const DATA: AttackDashboardData = {
     partial: 1,
     gap: 1,
     not_applicable: 0,
+    outside_control_surface: 0,
+    unable_to_determine: 0,
     coverage_pct: 62.5,
     by_tactic: [
       {
@@ -49,6 +51,8 @@ const DATA: AttackDashboardData = {
         gap: 1,
         not_applicable: 0,
         unscored: 3,
+        outside_control_surface: 0,
+        unable_to_determine: 0,
         coverage_pct: 50,
       },
       {
@@ -59,6 +63,8 @@ const DATA: AttackDashboardData = {
         gap: 0,
         not_applicable: 0,
         unscored: 5,
+        outside_control_surface: 0,
+        unable_to_determine: 0,
         coverage_pct: 100,
       },
       {
@@ -69,6 +75,8 @@ const DATA: AttackDashboardData = {
         gap: 0,
         not_applicable: 0,
         unscored: 9,
+        outside_control_surface: 0,
+        unable_to_determine: 0,
         coverage_pct: 0,
       },
     ],
@@ -158,6 +166,31 @@ describe("attack dashboard transforms", () => {
     expect(dpr.total).toBe(0);
     expect(dpr.detect.n).toBe(0);
     expect(dpr.detect.pct).toBe(0);
+  });
+
+  it("dprCoverage: the two #554 statuses leave both sides of the fraction", () => {
+    // #621 review, finding 2. Fifty verified covered rows beside fifty rows
+    // nobody verified must read "Detect 100%" with the fifty counted beside
+    // it, not "Detect 50%" over a population the owner excluded.
+    const assessed = tech({ code: "T1", detection_tools: ["Tool A"] });
+    const unverified = tech({ code: "T2", status: "unable_to_determine" });
+    const outside = tech({ code: "T3", status: "outside_control_surface" });
+    // Under #620's rules only (option (a)); rule 1 keeps its delivered triad.
+    const dpr = dprCoverage([assessed, unverified, outside], true);
+    expect(dpr.total).toBe(1);
+    expect(dpr.detect.pct).toBe(100);
+  });
+
+  it("dprCoverage: N/A leaves the denominator, as the KPI row's does", () => {
+    // Gene's decision, 2026-09-25 (D-092): the triad matches the KPI row, which
+    // divides by covered + partial + gap. The N/A row CHANGES the answer -- it
+    // was 1 of 2, 50%; it is 1 of 1, 100% -- so this cannot pass either way.
+    const assessed = tech({ code: "T1", detection_tools: ["Tool A"] });
+    const na = tech({ code: "T2", status: "not_applicable" });
+    // Under #620's rules only (option (a)); rule 1 keeps its delivered triad.
+    const dpr = dprCoverage([assessed, na], true);
+    expect(dpr.total).toBe(1);
+    expect(dpr.detect).toEqual({ n: 1, pct: 100 });
   });
 
   it("dprCoverage: a computed parent is counted through its sub-techniques only (#620)", () => {

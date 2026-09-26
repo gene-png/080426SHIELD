@@ -7,7 +7,15 @@
  * are unit-testable in isolation.
  */
 
-export type CoverageStatus = "covered" | "partial" | "gap" | "not_applicable";
+/** Every status the API can store (#554). The two new ones are not WRITABLE
+ *  yet, but every surface must be able to render them first. */
+export type CoverageStatus =
+  | "covered"
+  | "partial"
+  | "gap"
+  | "not_applicable"
+  | "outside_control_surface"
+  | "unable_to_determine";
 
 export interface DashTactic {
   tactic_id: string;
@@ -19,6 +27,10 @@ export interface DashTactic {
   unscored: number;
   /** #102: status assigned, supporting citation unconfirmed, withheld from the %. */
   pending_review?: number;
+  /** #554: outside the assessed denominator; always beside the percentage.
+   *  Absent for an assessment approved before #620 (option (a)). */
+  outside_control_surface?: number;
+  unable_to_determine?: number;
   coverage_pct: number;
 }
 
@@ -63,6 +75,10 @@ export interface DashRollup {
    * beside it — the same rule the released PDF follows.
    */
   pending_review?: number;
+  /** #554: outside the assessed denominator; always beside the percentage.
+   *  Absent for an assessment approved before #620 (option (a)). */
+  outside_control_surface?: number;
+  unable_to_determine?: number;
   coverage_pct: number;
   by_tactic: DashTactic[];
 }
@@ -128,7 +144,15 @@ export interface DprCoverage {
   total: number;
   /** Rows the population left out, from the SAME filter, so the page can say
    *  what the percentages are over (#620 round 3). */
-  excluded: { parents: number; pending: number };
+  excluded: {
+    parents: number;
+    pending: number;
+    /** #621 round 5: rows outside the ASSESSED population, by status. Only
+     *  under #620's rules, where the triad drops them; zero under rule 1. */
+    notApplicable: number;
+    notVerified: number;
+    outside: number;
+  };
 }
 
 /**
@@ -145,13 +169,38 @@ export interface DprCoverage {
  * Out of BOTH sides, like `unscored` and for the same reason: it is a claim not
  * being made, not a claim of absence. Scoring it as a zero would understate the
  * posture rather than decline to state it.
+ *
+ * Only ASSESSED rows (covered, partial, gap) are in the triad, as in the KPI
+ * row and `coverage_pct`. The two #554 statuses are outside it -- nobody
+ * verified the technique, or the client's controls do not reach it -- and
+ * their counts are rendered beside the triad instead. N/A is outside it too:
+ * Gene's decision, 2026-09-25 (D-092), so the triad and the KPI row divide by
+ * the same population.
+ *
+ * A COPY of `coverage.ASSESSED` in `apps/api/app/attack/coverage.py`, which
+ * points here -- change both.
  */
-export function dprCoverage(techniques: DashTechnique[]): DprCoverage {
+const ASSESSED: ReadonlySet<CoverageStatus> = new Set([
+  "covered",
+  "partial",
+  "gap",
+]);
+
+export function dprCoverage(
+  techniques: DashTechnique[],
+  /** `data.parents_computed === true`: the assessment is under #620's rules.
+   *  #621's ASSESSED-only population applies there alone (option (a)); one
+   *  approved before #620 keeps the triad it was delivered with. */
+  newRules = false,
+): DprCoverage {
   // A computed parent is out too (#620 round 2, option (b), pending Gene's
   // confirmation): it carries no tools of its own, so counting it would add a
   // zero-leg row per parent beside the children it is computed from.
   const claimable = techniques.filter(
-    (t) => !t.pending_review && !t.computed_parent,
+    (t) =>
+      !t.pending_review &&
+      !t.computed_parent &&
+      (!newRules || ASSESSED.has(t.status)),
   );
   // Each excluded row is counted once, under the first reason that excludes
   // it: a parent is out as a parent whether or not it is also pending.
@@ -159,13 +208,28 @@ export function dprCoverage(techniques: DashTechnique[]): DprCoverage {
   const pending = techniques.filter(
     (t) => !t.computed_parent && t.pending_review,
   ).length;
+  // Then the ASSESSED filter, per status, so the sentence can name what it
+  // dropped: without these an N/A row left the denominator in silence and
+  // raised every percentage (#621 round 5).
+  const notAssessed = (status: CoverageStatus): number =>
+    newRules
+      ? techniques.filter(
+          (t) => !t.computed_parent && !t.pending_review && t.status === status,
+        ).length
+      : 0;
   const total = claimable.length;
   const detect = claimable.filter((t) => t.detection_tools.length > 0).length;
   const prevent = claimable.filter((t) => t.prevention_tools.length > 0).length;
   const respond = claimable.filter((t) => t.response_tools.length > 0).length;
   return {
     total,
-    excluded: { parents, pending },
+    excluded: {
+      parents,
+      pending,
+      notApplicable: notAssessed("not_applicable"),
+      notVerified: notAssessed("unable_to_determine"),
+      outside: notAssessed("outside_control_surface"),
+    },
     detect: { n: detect, pct: pctOf(detect, total) },
     prevent: { n: prevent, pct: pctOf(prevent, total) },
     respond: { n: respond, pct: pctOf(respond, total) },
@@ -208,6 +272,11 @@ export function triadPopulationText(d: DprCoverage): string {
     );
   }
   if (d.excluded.pending > 0) out.push(`${d.excluded.pending} pending review`);
+  if (d.excluded.notApplicable > 0) out.push(`${d.excluded.notApplicable} N/A`);
+  if (d.excluded.notVerified > 0)
+    out.push(`${d.excluded.notVerified} Not verified`);
+  if (d.excluded.outside > 0)
+    out.push(`${d.excluded.outside} outside the control surface`);
   const base = `Over ${d.total} technique${d.total === 1 ? "" : "s"}.`;
   return out.length === 0
     ? base

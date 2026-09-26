@@ -1,6 +1,14 @@
 /** Wire types mirroring apps/api/app/schemas/attack.py. */
 
-export type CoverageStatus = "covered" | "partial" | "gap" | "not_applicable";
+/** Every status the API can store (#554). The two new ones are not WRITABLE
+ *  yet, but every surface must be able to render them first. */
+export type CoverageStatus =
+  | "covered"
+  | "partial"
+  | "gap"
+  | "not_applicable"
+  | "outside_control_surface"
+  | "unable_to_determine";
 export type AttackAssessmentStatus =
   "draft" | "approved" | "released" | "discarded";
 
@@ -188,6 +196,10 @@ export interface TacticHeatmapEntry {
   not_applicable: number;
   unscored: number;
   pending_review?: number;
+  /** #554: outside the assessed denominator; always beside the percentage.
+   *  Null for an assessment approved before #620 (option (a)). */
+  outside_control_surface: number | null;
+  unable_to_determine: number | null;
   coverage_pct: number;
 }
 
@@ -198,6 +210,9 @@ export interface AttackHeatmap {
   total_sub_techniques: number;
   scored_count: number;
   unscored_count: number;
+  /** The "Y" of "X/Y scored": every technique tallied. Not scored + unscored,
+   *  which leaves out Not verified rows since #621 round 2. */
+  catalogue_count: number;
   covered: number;
   partial: number;
   gap: number;
@@ -207,6 +222,10 @@ export interface AttackHeatmap {
   // CLAIMED, so withholding narrows its denominator -- this count must be
   // rendered beside it, never dropped.
   pending_review?: number;
+  /** #554: outside the assessed denominator; always beside the percentage.
+   *  Null for an assessment approved before #620 (option (a)). */
+  outside_control_surface: number | null;
+  unable_to_determine: number | null;
   coverage_pct: number;
   by_tactic: TacticHeatmapEntry[];
 }

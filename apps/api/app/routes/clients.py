@@ -31,6 +31,7 @@ from app.attack.catalog_version import (
     require_current_catalog_for_client,
 )
 from app.attack.catalog_version import is_current as attack_catalog_is_current
+from app.attack.coverage import ASSESSED
 from app.attack.parents import PARENT_CHILDREN as ATTACK_PARENT_CHILDREN
 from app.attack.parents import is_computed_parent as attack_is_computed_parent
 from app.attack.pending import pending_codes as attack_pending_codes
@@ -873,12 +874,24 @@ def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _TargetedKindTot
     return _TargetedKindTotal(total, False, len(service_ids), defaulted, unusable, live)
 
 
-def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> tuple[_KindTotal, bool]:
-    """The ATT&CK total, and whether it is unresolved because the report is
-    WITHHELD (#556) rather than unmatched (#114) -- two causes, two sentences."""
+def _attack_uncovered_total(
+    db: Session, service_ids: list[uuid.UUID]
+) -> tuple[_KindTotal, bool, int | None]:
+    """The ATT&CK total, whether it is unresolved because the report is
+    WITHHELD (#556) rather than unmatched (#114) -- two causes, two sentences --
+    and the NOT-VERIFIED count beside it (#554, #621 review).
+
+    The third value exists because "0 techniques uncovered" over an assessment
+    whose rows nobody verified is a false assurance: `gap` counts only what was
+    judged and found missing. It is None when the total is, and also when no
+    released assessment behind it renders under #620's rules (option (a)): the
+    card then reads as it did before #621. Summed over the services under the
+    new rules only; a rule-1 assessment cannot hold an unverified row, since
+    nothing may write one."""
     if not service_ids:
-        return _KindTotal(None, False), False
+        return _KindTotal(None, False), False, None
     total = 0
+    not_verified: int | None = None
     for sid in service_ids:
         # #114: the released deliverable's parent, not the latest APPROVED row.
         # See `_csf_gap_total` above for why the `found` flag went with it.
@@ -892,7 +905,7 @@ def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> tuple[
             # One unresolvable service makes the whole KIND unresolved. Summing
             # the rest would publish a floor as a figure — option 1 in
             # `_released_parent`, rejected there for this reason.
-            return _KindTotal(None, True), False
+            return _KindTotal(None, True), False, None
         # No `deliverable` here: an ATT&CK service has no engagement target of
         # #209's shape, so there is nothing to freeze. Stated because the two
         # helpers above this one DO freeze, and a reader sweeping for the twin
@@ -903,7 +916,7 @@ def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> tuple[
             # unknown codes silently dropped by `attack_compute` below. Same
             # answer as an unresolvable service: the whole kind is unresolved,
             # and the card is told the cause.
-            return _KindTotal(None, True), True
+            return _KindTotal(None, True), True, None
         rows = (
             db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
             .scalars()
@@ -923,8 +936,11 @@ def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> tuple[
         # function and read as though it covered the file. Checking the callers
         # of what you just changed finds every copy that went through it and
         # misses every other caller sitting beside it.
-        total += attack_compute(coverage_map).gap
-    return _KindTotal(total, False), False
+        rollup = attack_compute(coverage_map)
+        total += rollup.gap
+        if attack_parents_computed(a):
+            not_verified = (not_verified or 0) + rollup.unable_to_determine
+    return _KindTotal(total, False), False, not_verified
 
 
 def _tech_debt_savings(db: Session, service_ids: list[uuid.UUID]) -> _TechDebtTotal:
@@ -989,7 +1005,7 @@ def value_summary(
         ServiceKind.ZERO_TRUST_DOD, []
     )
     zt = _zt_gap_total(db, zt_ids)
-    attack, attack_withheld = _attack_uncovered_total(
+    attack, attack_withheld, attack_not_verified = _attack_uncovered_total(
         db, by_kind.get(ServiceKind.ATTACK_COVERAGE, [])
     )
     csf = _csf_gap_total(db, by_kind.get(ServiceKind.NIST_CSF, []))
@@ -1032,6 +1048,7 @@ def value_summary(
         attack_uncovered_count=attack.value,
         attack_uncovered_unresolved=attack.unresolved,
         attack_uncovered_withheld=attack_withheld,
+        attack_not_verified_count=attack_not_verified,
         csf_gap_count=csf.value,
         csf_gap_unresolved=csf.unresolved,
         csf_services=csf.services,
@@ -1276,12 +1293,15 @@ def attack_dashboard(
         deliverable_version=deliv.version,
         parents_computed=True if rule else None,
         rollup=AttackDashboardRollup(
-            total_evaluated=rollup.covered + rollup.partial + rollup.gap,
+            total_evaluated=sum(getattr(rollup, s.value) for s in ASSESSED),
             covered=rollup.covered,
             partial=rollup.partial,
             gap=rollup.gap,
             not_applicable=rollup.not_applicable,
             pending_review=rollup.pending_review,
+            # Option (a): only under #620's rules; None is omitted from the JSON.
+            outside_control_surface=rollup.outside_control_surface if rule else None,
+            unable_to_determine=rollup.unable_to_determine if rule else None,
             coverage_pct=rollup.coverage_pct,
             by_tactic=[
                 AttackTacticCoverage(
@@ -1293,6 +1313,8 @@ def attack_dashboard(
                     not_applicable=tc.not_applicable,
                     unscored=tc.unscored,
                     pending_review=tc.pending_review,
+                    outside_control_surface=tc.outside_control_surface if rule else None,
+                    unable_to_determine=tc.unable_to_determine if rule else None,
                     coverage_pct=tc.coverage_pct,
                 )
                 for tc in rollup.by_tactic
