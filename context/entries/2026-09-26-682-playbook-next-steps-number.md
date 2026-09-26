@@ -23,3 +23,9 @@ Branch `track2/csf-playbook-number`, from `main` at `50395ab`.
   subcategories". Both now agree with their counts ("subcategory falls short
   of its target"). The priority breakdown ("1 Priority 1 (critical), 0
   Priority 2, …") reads as labels at any count, so it stays. Filed: #696.
+- **Round 2 found one more, in both full deliverables:** the per-function line
+  "1 subcategories · … · 1 gap(s)." It is now built once, by
+  `_function_detail`, which both `render_full_pdf` and `render_full_docx` call.
+  A surface test through both renderers catches a renderer that goes back to
+  an inline copy. An overview fixture with three subcategories and one gap
+  now tells the two counts apart.

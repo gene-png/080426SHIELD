@@ -456,6 +456,16 @@ def _gaps(n: int) -> str:
     return "gap" if n == 1 else "gaps"
 
 
+def _function_detail(frows: Sequence[Any]) -> str:
+    """The per-function line of the full PDF and DOCX, built ONCE for both
+    (#692 round 2): '1 subcategories … 1 gap(s)' read one as several."""
+    n = len(frows)
+    avg = round(sum(r.enterprise_level for r in frows) / n)
+    fgaps = sum(1 for r in frows if r.gap)
+    what = "subcategory" if n == 1 else "subcategories"
+    return f"{n} {what} · average Level {avg} · {fgaps} {_gaps(fgaps)}."
+
+
 def _next_steps(rows: Sequence[Any]) -> list[str]:
     pc = _priority_counts(rows)
     steps: list[str] = []
@@ -782,12 +792,10 @@ def render_full_pdf(
     for code in ordered:
         frows = sorted(by_fn[code], key=lambda r: r.subcategory_code)
         name = FUNCTION_NAMES.get(code, code)
-        avg = round(sum(r.enterprise_level for r in frows) / len(frows))
-        fgaps = sum(1 for r in frows if r.gap)
         story.append(Paragraph(f"{name} ({code})", styles["h2"]))
         story.append(
             Paragraph(
-                f"{len(frows)} subcategories · average Level {avg} · {fgaps} gap(s).",
+                _function_detail(frows),
                 styles["body"],
             )
         )
@@ -1024,10 +1032,8 @@ def render_full_docx(
     for code in ordered:
         frows = sorted(by_fn[code], key=lambda r: r.subcategory_code)
         name = FUNCTION_NAMES.get(code, code)
-        avg = round(sum(r.enterprise_level for r in frows) / len(frows))
-        fgaps = sum(1 for r in frows if r.gap)
         add_heading(doc, f"{name} ({code})", level=2)
-        add_paragraphs(doc, [f"{len(frows)} subcategories · average Level {avg} · {fgaps} gap(s)."])
+        add_paragraphs(doc, [_function_detail(frows)])
         table = add_table(
             doc,
             ["Subcategory", "Outcome", "Maturity", "Target", "Gap", "Priority"],
