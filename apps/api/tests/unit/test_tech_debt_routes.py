@@ -1385,3 +1385,42 @@ def test_a_released_refusal_carries_a_typed_reason_like_its_twin(app_client) -> 
     error = r.json()["error"]
     assert error["reason"] == "capability_list_released", r.text
     assert error["message"] == "This capability list has been released and is locked."
+
+
+@pytest.mark.unit
+def test_same_document_reextract_still_reuses_a_draft_with_a_manually_included_row(
+    app_client,
+) -> None:
+    """#691 round 1. A row included by hand from the exclusion queue carries NO
+    source document. The draft's source is still the one document its extracted
+    rows name, so re-extracting from that same document must still return the
+    draft (200), not refuse it as unknown."""
+    c, _TestSession, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc_id, list_id = _list_with_exclusions(c, bearer, provider)
+    latest = c.get(
+        f"/tech-debt/services/{svc_id}/capability-lists/latest",
+        headers={"Authorization": f"Bearer {bearer}"},
+    ).json()
+    source = {i["source_artifact_id"] for i in latest["items"]}
+    assert len(source) == 1, source
+    (artifact_id,) = source
+
+    ri = c.post(
+        f"/tech-debt/capability-lists/{list_id}/excluded-rows/1/include",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"name": "Claroty xDome", "category": "OT Security", "annual_cost_usd": 133000},
+    )
+    assert ri.status_code == 201, ri.text
+    # Not vacuous: the included row really does carry no source.
+    added = next(i for i in ri.json()["items"] if i["name"] == "Claroty xDome")
+    assert added["source_artifact_id"] is None
+
+    r = c.post(
+        f"/tech-debt/services/{svc_id}/capability-lists/extract",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"artifact_id": artifact_id},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["id"] == list_id
