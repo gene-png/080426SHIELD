@@ -72,11 +72,12 @@ from app.attack.pending import TOOL_FIELDS as _TOOL_FIELDS
 from app.attack.pending import confirm_all as confirm_attack_citations
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.pending import row_tools as attack_row_tools
+from app.attack import release_readiness
 from app.attack.rules import NEW_RULES, parents_computed
 from app.audit import audit
 from app.config import get_settings
 from app.db.session import get_db
-from app.deliverable_release import release_deliverable
+from app.deliverable_release import ParentGuard, release_deliverable
 from app.dependencies import current_client, current_user, require_role
 from app.logging import get_logger
 from app.models._common import utcnow
@@ -2240,6 +2241,13 @@ def approve_assessment(
             .all()
         }
     )
+    # #622: the release gate's predicate, applied while the draft can still be
+    # fixed. An approved assessment is locked and a new version starts every
+    # row unscored, so a refusal first met at release would have no remedy.
+    # Checked AFTER the recompute, so a parent's computed status is judged.
+    blocking = release_readiness.blocking_rows(db, a)
+    if blocking:
+        raise release_readiness.refuse_approve(blocking)
     a.status = AttackAssessmentStatus.APPROVED
     a.approved_at = utcnow()
     a.approved_by = user.id
@@ -3092,5 +3100,11 @@ def release_attack_deliverable(
         user=user,
         kinds=(ServiceKind.ATTACK_COVERAGE,),
         action="attack.deliverable.released",
+        # #622: joins the parent flip's own WHERE, so the check and the write
+        # are one statement and cover the repair re-release too.
+        parent_guard=ParentGuard(
+            condition=release_readiness.blocking_condition(db),
+            refusal=release_readiness.refuse_release,
+        ),
     )
     return _serialize_deliverable(db, deliv)
