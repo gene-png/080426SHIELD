@@ -145,10 +145,23 @@ function buildMetrics(summary: ValueSummary): Metric[] {
       value:
         summary.attack_uncovered_count === null
           ? null
-          : summary.attack_uncovered_count === 1
-            ? "1 technique uncovered"
-            : `${COUNT.format(summary.attack_uncovered_count)} techniques uncovered`,
-      hint: "Adversary techniques with no defensive coverage yet.",
+          : (summary.attack_uncovered_count === 1
+              ? "1 technique uncovered"
+              : `${COUNT.format(summary.attack_uncovered_count)} techniques uncovered`) +
+            // #554: beside it, even at zero. `gap` counts only what was judged
+            // and found missing, so an unverified assessment would otherwise
+            // read "0 techniques uncovered" -- a false assurance.
+            // `== null`, not `=== null`: an API that predates the field sends
+            // nothing, and `undefined` must not print "NaN not verified".
+            (summary.attack_not_verified_count == null
+              ? ""
+              : `, ${COUNT.format(summary.attack_not_verified_count)} not verified`),
+      // Option (a): the count and its sentence only where the API states it,
+      // which is for assessments under #620's rules.
+      hint:
+        summary.attack_not_verified_count == null
+          ? "Adversary techniques with no defensive coverage yet."
+          : "Adversary techniques with no defensive coverage yet. Not verified techniques were not checked, so they are counted as neither.",
       unresolved: summary.attack_uncovered_unresolved,
       unresolvedReason: summary.attack_uncovered_withheld
         ? "Your MITRE ATT&CK coverage report was produced against an earlier version of the ATT&CK framework than the current one, so its figures are withheld."

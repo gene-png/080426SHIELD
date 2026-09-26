@@ -1,5 +1,6 @@
 "use client";
 
+import { outsideAssessedText } from "@/lib/attack/outsideAssessed";
 import dynamic from "next/dynamic";
 import * as React from "react";
 
@@ -157,6 +158,25 @@ const STATUS_CHIP: Record<string, { bg: string; fg: string; label: string }> = {
   partial: { bg: "rgba(245,158,11,.18)", fg: "#fde68a", label: "Partial" },
   gap: { bg: "rgba(239,68,68,.18)", fg: "#fecaca", label: "Uncovered" },
   not_applicable: { bg: "rgba(152,162,196,.18)", fg: "#cbd5e1", label: "N/A" },
+  // #554. Each its own state. An unverified technique shown as N/A would tell
+  // the client "this does not apply to you" about something nobody checked.
+  outside_control_surface: {
+    bg: "rgba(148,163,184,.14)",
+    fg: "#e2e8f0",
+    label: "Outside control surface",
+  },
+  unable_to_determine: {
+    bg: "rgba(168,85,247,.18)",
+    fg: "#e9d5ff",
+    label: "Not verified",
+  },
+  // A status this page does not know. Never borrowed from another state: a
+  // fallback to N/A is how an unknown value would have read "not applicable".
+  unknown: {
+    bg: "rgba(152,162,196,.18)",
+    fg: "#cbd5e1",
+    label: "Unknown status",
+  },
   // #102. Its OWN state, and deliberately NOT the red of `gap`: a reader takes
   // the colour before the word, so reusing red would collapse "nothing was
   // found" into "something was found and is not confirmed" exactly where the
@@ -176,7 +196,7 @@ function Chip({
   status: string;
   pendingReview?: boolean;
 }): JSX.Element {
-  const base = STATUS_CHIP[status] ?? STATUS_CHIP.not_applicable;
+  const base = STATUS_CHIP[status] ?? STATUS_CHIP.unknown;
   const s = pendingReview
     ? {
         ...STATUS_CHIP.pending_review,
@@ -231,7 +251,20 @@ export function AttackDashboard({
   data: AttackDashboardData;
 }): JSX.Element {
   const k = kpis(data);
-  const dpr = dprCoverage(data.techniques);
+  const newRules = data.parents_computed === true;
+  const dpr = dprCoverage(data.techniques, newRules);
+  // #554, option (a): null for an assessment approved before #620.
+  const outside = outsideAssessedText(data.rollup);
+  // "Rule 1, not sent" and "rule 2, missing" must not look alike. The API sends
+  // the counts exactly when it sends parents_computed and refuses to build a
+  // response otherwise, so a payload breaking that is a contract violation:
+  // it fails loudly here rather than rendering a rule-2 page without its
+  // not-verified count.
+  if (newRules && outside === null) {
+    throw new Error(
+      "ATT&CK dashboard: parents_computed is set but the Not verified / Outside control surface counts are missing (#621).",
+    );
+  }
   const blind = blindSpots(data.techniques);
   // #620 round 5: reconciles the KPI (rollup) with the list below it.
   const reconcile = blindSpotReconciliation(data);
@@ -284,7 +317,13 @@ export function AttackDashboard({
         <KpiCard
           label="Techniques evaluated"
           value={String(k.evaluated)}
-          sub="Coverage assessed this engagement"
+          // #554: the KPI percentages divide by covered + partial + gap, so
+          // the two counts outside that denominator sit beside them.
+          sub={
+            outside === null
+              ? "Coverage assessed this engagement"
+              : `Coverage assessed this engagement. ${outside}`
+          }
         />
         <KpiCard
           label="Fully covered"
@@ -327,12 +366,14 @@ export function AttackDashboard({
         <Section
           title="Overall coverage mix"
           desc={
-            (data.rollup.pending_review ?? 0) > 0
+            ((data.rollup.pending_review ?? 0) > 0
               ? `Weighted coverage across evaluated techniques: ${data.rollup.coverage_pct}%. ` +
                 `${data.rollup.pending_review} technique${data.rollup.pending_review === 1 ? " is" : "s are"} ` +
                 `held out of this figure pending evidence review, so it is a percentage of what can be ` +
                 `claimed today — not of the whole catalogue.`
-              : `Weighted coverage across evaluated techniques: ${data.rollup.coverage_pct}%.`
+              : `Weighted coverage across evaluated techniques: ${data.rollup.coverage_pct}%.`) +
+            // #554: beside the percentage on every surface, even at zero.
+            (outside === null ? "" : ` ${outside}`)
           }
         >
           <div style={{ position: "relative", height: 340 }}>
@@ -344,7 +385,11 @@ export function AttackDashboard({
       {/* DPR triad */}
       <Section
         title="Detect · Prevent · Respond posture"
-        desc="A technique is fully covered only when all three legs are present."
+        desc={
+          "A technique is fully covered only when all three legs are present." +
+          // #554: beside the three percentages, which exclude both.
+          (outside === null ? "" : ` ${outside}`)
+        }
       >
         {/* #620: only under D-094's rules. An assessment approved before #620
             renders exactly as it was delivered, and this sentence was not in
@@ -528,6 +573,14 @@ export function AttackDashboard({
             <option value="partial">Partial</option>
             <option value="gap">Uncovered</option>
             <option value="not_applicable">N/A</option>
+            {newRules ? (
+              <>
+                <option value="outside_control_surface">
+                  Outside control surface
+                </option>
+                <option value="unable_to_determine">Not verified</option>
+              </>
+            ) : null}
           </select>
         </div>
         <div

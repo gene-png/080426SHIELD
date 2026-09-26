@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel, model_serializer
+from pydantic import BaseModel, model_serializer, model_validator
 
 from app.models.service import ServiceKind
 
@@ -80,7 +80,24 @@ class AttackTacticCoverage(BaseModel):
     # unconfirmed is withheld from `coverage_pct` -- which narrows its
     # denominator, so this count has to be rendered beside it and never dropped.
     pending_review: int = 0
+    # #554: outside the assessed denominator, and REQUIRED -- no default, so a
+    # response built without them fails loudly instead of reading "0 not
+    # verified". Every surface that shows `coverage_pct` shows these beside it.
+    # None, and then OMITTED from the JSON, exactly when the assessment renders
+    # under the rules from before #620 (option (a)): its dashboard stays what
+    # was delivered, byte for byte (#620's golden test).
+    outside_control_surface: int | None
+    unable_to_determine: int | None
     coverage_pct: float
+
+    @model_serializer(mode="wrap")
+    def _drop_counts_not_shown(self, handler: Any) -> dict[str, Any]:
+        return _without_none(handler(self), _OUTSIDE_COUNT_KEYS)
+
+
+#: #621's two counts, omitted where the assessment renders under the rules from
+#: before #620 (option (a)).
+_OUTSIDE_COUNT_KEYS = frozenset({"outside_control_surface", "unable_to_determine"})
 
 
 def _without_none(data: dict[str, Any], keys: frozenset[str]) -> dict[str, Any]:
@@ -95,7 +112,9 @@ class AttackDashboardTechnique(BaseModel):
     code: str
     name: str
     tactic_name: str
-    status: str  # CoverageStatus value: covered | partial | gap | not_applicable
+    status: str  # a CoverageStatus value: covered | partial | gap | not_applicable
+    # | outside_control_surface | unable_to_determine (#554). Typed `str`, so the
+    # web chip's "Unknown status" fallback is reachable only through bad data.
     # #102. The rollup beside this array withholds unbacked claims; without this
     # flag the matrix listed those same techniques as `covered`, naming the
     # unconfirmed tool under Detection. One page, two answers.
@@ -144,8 +163,20 @@ class AttackDashboardRollup(BaseModel):
     # exactly when the released PDF does, so a rollup computed without
     # withholding hands the same client two numbers for one assessment.
     pending_review: int = 0
+    # #554: outside the assessed denominator, and REQUIRED -- no default, so a
+    # response built without them fails loudly instead of reading "0 not
+    # verified". Every surface that shows `coverage_pct` shows these beside it.
+    # None, and then OMITTED from the JSON, exactly when the assessment renders
+    # under the rules from before #620 (option (a)): its dashboard stays what
+    # was delivered, byte for byte (#620's golden test).
+    outside_control_surface: int | None
+    unable_to_determine: int | None
     coverage_pct: float
     by_tactic: list[AttackTacticCoverage]
+
+    @model_serializer(mode="wrap")
+    def _drop_counts_not_shown(self, handler: Any) -> dict[str, Any]:
+        return _without_none(handler(self), _OUTSIDE_COUNT_KEYS)
 
 
 class AttackDashboardResponse(BaseModel):
@@ -175,6 +206,26 @@ class AttackDashboardResponse(BaseModel):
     @model_serializer(mode="wrap")
     def _drop_unset_rule_key(self, handler: Any) -> dict[str, Any]:
         return _without_none(handler(self), frozenset({"parents_computed"}))
+
+    @model_validator(mode="after")
+    def _counts_travel_with_the_rule(self) -> AttackDashboardResponse:
+        """#621 option (a): the two counts are present EXACTLY when
+        `parents_computed` is. They are omitted from the JSON under rule 1, so
+        without this a rule-2 response built with a None would drop them as
+        silently as a rule-1 one -- the "0 not verified" misreading the
+        required fields exist to prevent. Wrong wiring raises here, at build."""
+        new_rules = self.parents_computed is True
+        rows = [self.rollup, *self.rollup.by_tactic]
+        for row in rows:
+            for key in sorted(_OUTSIDE_COUNT_KEYS):
+                if (getattr(row, key) is not None) != new_rules:
+                    raise ValueError(
+                        f"ATT&CK dashboard: {key} is "
+                        f"{'missing' if new_rules else 'present'} on a "
+                        f"{'rule-2' if new_rules else 'rule-1'} response; the counts are "
+                        "sent exactly when parents_computed is (#621 option (a))."
+                    )
+        return self
 
 
 class ZtPillarDashboard(BaseModel):
@@ -626,6 +677,11 @@ class ValueSummaryResponse(BaseModel):
     #: be matched to its release (#114). A different cause, so a different
     #: sentence on the card. Only ever True alongside `attack_uncovered_unresolved`.
     attack_uncovered_withheld: bool
+    #: #554 / #621 review: techniques nobody verified, rendered beside the
+    #: uncovered count so "0 uncovered" cannot read as "nothing is missing" over
+    #: an unverified assessment. None when `attack_uncovered_count` is, and when
+    #: no released assessment behind it renders under #620's rules (option (a)).
+    attack_not_verified_count: int | None
     csf_gap_count: int | None
     csf_gap_unresolved: bool
     csf_services: int
