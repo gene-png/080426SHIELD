@@ -1,10 +1,11 @@
 import "@testing-library/jest-dom/vitest";
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { IntakeQueue } from "./IntakeQueue";
 
+import type { AdminServiceRequestRow } from "@/lib/admin/types";
 import type { ClientProfileResponse } from "@/lib/intake/types";
 
 /**
@@ -179,5 +180,63 @@ describe("IntakeQueue — does the page deny data it is holding?", () => {
         level: 1,
       }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("IntakeQueue — the filtered-empty sentence agrees in number (#683)", () => {
+  function request(id: string): AdminServiceRequestRow {
+    return {
+      id,
+      service_type: "nist_csf",
+      requested_at: new Date().toISOString(),
+      requested_by: {
+        id: "u1",
+        email: "a@example.com",
+        display_name: "A",
+        role: "client",
+      } as AdminServiceRequestRow["requested_by"],
+      notes: null,
+      deadline: null,
+      csf_target_tier: null,
+      csf_profile: null,
+      zt_target_stage: null,
+      fulfilled_service_id: null,
+      declined_at: null,
+      declined_reason: null,
+    } as AdminServiceRequestRow;
+  }
+
+  async function filteredToNothing(n: number): Promise<string> {
+    mockFetch.mockResolvedValue({
+      client: client({ legal_name: "Org" }),
+      intake_completed_at: null,
+      service_requests: Array.from({ length: n }, (_, i) => request(`r${i}`)),
+      artifacts: [],
+      total_users: 1,
+    } as unknown as Awaited<ReturnType<typeof fetchIntakeQueue>>);
+    render(<IntakeQueue clientId="00000000-0000-4000-8000-000000000001" />);
+    const service = await screen.findByLabelText("Service");
+    // Every request is NIST CSF, so filtering to any other service hides all.
+    const other = Array.from((service as HTMLSelectElement).options).find(
+      (o) => o.value !== "all" && o.value !== "nist_csf",
+    );
+    if (!other) throw new Error("no other service option to filter by");
+    fireEvent.change(service, { target: { value: other.value } });
+    const empty = await screen.findByText(/^Filtering by /);
+    return empty.textContent ?? "";
+  }
+
+  it("says the 1 request, and it, when one is hidden", async () => {
+    const text = await filteredToNothing(1);
+    expect(text).toMatch(
+      /hides the 1 request\. Clear the filters to see it\.$/,
+    );
+  });
+
+  it("says all N requests, and them, when several are hidden", async () => {
+    const text = await filteredToNothing(3);
+    expect(text).toMatch(
+      /hides all 3 requests\. Clear the filters to see them\.$/,
+    );
   });
 });
