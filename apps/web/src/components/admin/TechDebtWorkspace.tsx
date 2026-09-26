@@ -38,6 +38,7 @@ import type {
   Deliverable,
   OverlapAnalysis,
 } from "@/lib/tech_debt/types";
+import { draftSourceArtifactId } from "@/lib/tech_debt/draftSource";
 
 import { ConsolidationPlanCard } from "./ConsolidationPlanCard";
 import { DeliverableCard } from "./DeliverableCard";
@@ -373,6 +374,10 @@ Components carry no cost of their own — this licence keeps its full value.`,
     listSeq.current += 1;
     try {
       await discardCapabilityList(list.id);
+      // The extract refusal (#644) names "Discard draft" as its remedy. Once
+      // that has succeeded, a red alert still saying a draft is open would
+      // contradict the screen (#691 round 1).
+      setExtractError(null);
       // Refetch latest (also bumps the seq): now 404 → empty upload state, or
       // the prior approved version where one exists. Extract is live again.
       await refresh();
@@ -532,6 +537,7 @@ Components carry no cost of their own — this licence keeps its full value.`,
           onExtract={(id) => void runExtraction(id)}
           extracting={extracting}
           reloadKey={docsReloadKey}
+          draftSourceId={draftSourceArtifactId(list)}
         />
       </WorkflowStep>
 

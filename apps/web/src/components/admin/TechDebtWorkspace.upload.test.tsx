@@ -66,15 +66,29 @@ vi.mock("./ConsolidationPlanCard", () => ({
   ConsolidationPlanCard: () => null,
 }));
 vi.mock("./DeliverableCard", () => ({ DeliverableCard: () => null }));
-vi.mock("./DiscardDraftButton", () => ({ DiscardDraftButton: () => null }));
+// A button standing in for the confirm dialog, so a test can take the remedy
+// the extract refusal names ("Discard draft"). No other test queries it.
+vi.mock("./DiscardDraftButton", () => ({
+  DiscardDraftButton: ({ onConfirm }: { onConfirm: () => void }) => (
+    <button type="button" onClick={() => onConfirm()}>
+      discard stand-in
+    </button>
+  ),
+}));
 // Stands in for the guarded "Extract from this" button: a manual extraction.
 vi.mock("./IntakeDocumentsPanel", () => ({
   IntakeDocumentsPanel: ({
     onExtract,
+    draftSourceId,
   }: {
     onExtract: (artifactId: string) => void;
+    draftSourceId?: string | null;
   }) => (
-    <button type="button" onClick={() => onExtract("artifact-1")}>
+    <button
+      type="button"
+      onClick={() => onExtract("artifact-1")}
+      data-draft-source={draftSourceId ?? ""}
+    >
       extract by hand
     </button>
   ),
@@ -197,5 +211,61 @@ describe("the deferred auto-extraction and a manual one", () => {
       });
     }
     expect(extractCapabilities).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("TechDebtWorkspace tells the documents panel which document the open draft came from (#644)", () => {
+  it("passes the open draft's single source document to the panel", async () => {
+    vi.mocked(techDebtClient.fetchLatestList).mockResolvedValue({
+      id: "list-1",
+      status: "draft",
+      version: 1,
+      items: [{ id: "item-1", name: "Wiz", source_artifact_id: "doc-a" }],
+      excluded_rows: [],
+    } as never);
+    render(<TechDebtWorkspace serviceId="svc-1" serviceTitle="Atlas TD" />);
+
+    // The list heading proves the draft loaded before the prop is read.
+    await screen.findByText("Capability list v1");
+    expect(
+      screen.getByRole("button", { name: "extract by hand" }),
+    ).toHaveAttribute("data-draft-source", "doc-a");
+  });
+});
+
+describe("TechDebtWorkspace clears the extract refusal once the draft is discarded (#691 round 1)", () => {
+  it("drops the red alert after 'Discard draft' succeeds", async () => {
+    // The 409's own remedy is "Discard draft". Followed, the alert must not
+    // stay on screen still saying a draft is open.
+    const refusal =
+      'Capability list draft v1 is open and was extracted from a different document. To extract from this one, use "Discard draft" in step 2 first.';
+    vi.mocked(techDebtClient.fetchLatestList)
+      .mockResolvedValueOnce({
+        id: "list-1",
+        status: "draft",
+        version: 1,
+        items: [{ id: "item-1", name: "Wiz", source_artifact_id: "doc-a" }],
+        excluded_rows: [],
+      } as never)
+      .mockResolvedValue(null as never);
+    extractCapabilities.mockRejectedValue(new Error(refusal));
+    vi.mocked(techDebtClient.discardCapabilityList).mockResolvedValue(
+      {} as never,
+    );
+
+    render(<TechDebtWorkspace serviceId="svc-1" serviceTitle="Atlas TD" />);
+    await screen.findByText("Capability list v1");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "extract by hand" }));
+    });
+    // Positive state first: the refusal really is on screen.
+    expect(await screen.findByRole("alert")).toHaveTextContent(refusal);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "discard stand-in" }));
+    });
+
+    expect(techDebtClient.discardCapabilityList).toHaveBeenCalledWith("list-1");
+    expect(screen.queryByText(refusal)).toBeNull();
   });
 });
