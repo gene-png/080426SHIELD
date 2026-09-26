@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-<!-- CLAUDE-MD-CANARY: v1 -->
+CLAUDE-MD-CANARY: v2
 
 ## Added later
 

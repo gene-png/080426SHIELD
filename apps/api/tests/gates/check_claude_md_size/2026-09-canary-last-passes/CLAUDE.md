@@ -2,4 +2,4 @@
 
 Rules here.
 
-<!-- CLAUDE-MD-CANARY: v1 -->
+CLAUDE-MD-CANARY: v2

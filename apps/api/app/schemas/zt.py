@@ -166,7 +166,9 @@ class ZtSelfAssessmentAnswerPatch(BaseModel):
     It is no longer a trade: `app/exceptions.py::_handle_validation_error`
     synthesises `reason` / `reasons` from Pydantic's own error types, so the
     refusal set stays derived AND the envelope is typed. A client reads
-    `schema_extra_forbidden` rather than matching on message text.
+    `schema_unapplied_fields` rather than matching on message text: the
+    `mode="before"` validator below runs ahead of `extra="forbid"`, so Pydantic's
+    own `schema_extra_forbidden` is not what this route returns (#318).
     """
 
     model_config = ConfigDict(extra="forbid")

@@ -89,7 +89,7 @@ So the validation now has both halves, and the second is the one that matters:
     otherwise take the same path as a human author and report clean over a bot
     PR nobody checked.
 
-Exit codes follow D-051: 0 clean, 1 a real violation, 2 could not look.
+Exit codes follow D-090: 0 clean, 1 a real violation, 2 could not look.
 """
 
 from __future__ import annotations
@@ -721,5 +721,5 @@ if __name__ == "__main__":
     except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
         nl = chr(10)
         sys.stderr.write(f"check-bot-pr-manifest-only: CRASHED: {type(exc).__name__}: {exc}{nl}")
-        sys.stderr.write(f"A crash is not a clean report and not a violation (D-051).{nl}")
+        sys.stderr.write(f"A crash is not a clean report and not a violation (D-090).{nl}")
         raise SystemExit(EXIT_COULD_NOT_LOOK) from exc

@@ -15,14 +15,23 @@ name: Scheduled triggers
 # instead of waiting to be rediscovered.
 #
 # NOT a gate. It cannot block anything and it cannot fail a merge — it only
-# raises its hand. A non-blocking mechanism that runs beats a blocking one that
-# gets turned off (the mutation sweep's own reasoning).
+# raises its hand, and since #531 a failed run raises it on an issue. A
+# non-blocking mechanism that runs beats a blocking one that gets turned off
+# (the mutation sweep's own reasoning).
 
 on:
   schedule:
     # 07:00 UTC Mondays. After the mutation sweep, and on a day someone reads.
     - cron: "0 7 * * 1"
   workflow_dispatch:
+    inputs:
+      exercise_failure_report:
+        description: >-
+          Also run the failure report once, live, to prove it can open the
+          tracking issue. It refuses while a tracking issue is already open, so
+          it only ever opens its own; close that one afterwards.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -43,5 +52,39 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          TRIGGER_LOG: ${{ runner.temp }}/triggers.log
         working-directory: apps/api
         run: python -m scripts.fire_scheduled_triggers
+
+      # A red scheduled run is on no one's path: this one failed every week for
+      # a month and nobody looked (#531). So a failure files, or comments on, an
+      # issue carrying the board labels, which IS on someone's path.
+      #
+      # IF THIS STEP ITSELF FAILS, the run is red and reported to nobody -- the
+      # state before #531. Its `gh` calls were first written with no live run
+      # behind them (2026-09-25); dispatch with `exercise_failure_report` to run
+      # it once for real.
+      - name: Put a failed run in front of a person
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        working-directory: apps/api
+        run: python -m scripts.fire_scheduled_triggers --report-failure "${{ runner.temp }}/triggers.log"
+
+      # Dispatch-only, and only when the run itself succeeded (a failed run
+      # already reports through the step above). `--exercise-report` exits 2
+      # while a tracking issue is open, naming it, rather than commenting
+      # "EXERCISE ... close this issue" on a real failure record. The issue it
+      # opens carries the failure title; the log it quotes says EXERCISE.
+      - name: Exercise the failure report live (dispatch only)
+        if: success() && inputs.exercise_failure_report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        working-directory: apps/api
+        run: |
+          echo "EXERCISE, not a failure: dispatched with exercise_failure_report to prove the failure report works live. This issue was opened by the exercise alone; close it." > "${{ runner.temp }}/exercise.log"
+          python -m scripts.fire_scheduled_triggers --exercise-report "${{ runner.temp }}/exercise.log"
