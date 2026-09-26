@@ -6,7 +6,7 @@ explicitly. Sprint docs: `SPRINT_<n>.md`._
 
 ## Where we are
 
-**Current as of 2026-08-19.** The MVP path is tracked in the section below, which
+**Superseded 2026-09-26: the MVP was redefined; read the dated block at the top of "MVP completion path" first.** _Current as of 2026-08-19:_ The MVP path is tracked in the section below, which
 is maintained rather than archival. Sprint sections further down are historical
 and are left as written.
 
@@ -48,14 +48,16 @@ decision, recorded on #736 (the comment dated 2026-09-26 21:36Z). **Done means:*
 - (a) no open `tier-1`;
 - (b) no open `client-reaching` `tier-2`;
 - (c) Gene's live-test list done (2026-09-22/23, the issues whose bodies cite
-  "Gene's live test");
+  "Gene's live test": `gh issue list --state all --search '"Gene''s live test" in:body'`);
 - (d) item 8's export/publish split, now filed as **#737**.
 
-The non-client-reaching `tier-2` issues are NOT part of the MVP. Eight security
+The non-client-reaching `tier-2` issues are NOT part of the MVP. Security
 issues among them are **held for Gene's explicit answer** and stay on the board
-until he gives it: #392, #546, #551, #555, #638, #672, #713, #714. <!-- counted: the eight are listed by number on the same line -->
+until he gives it: #392, #546, #551, #555, #638, #672, #713, #714.
 
-**Where the list lives.** The board is the list:
+**Where the list lives.** The board is the list, **except the held security
+issues above, which are on the board but NOT in the MVP and are not to be
+started until Gene answers**:
 `gh issue list --label mvp-blocking --state open`. It was relabelled to match on
 2026-09-26, and every open `mvp-blocking` issue outside the definition moved to
 `post-mvp` with its tier kept. The exact numbers moved, and the before/after
@@ -170,7 +172,7 @@ lands, change its status here in the same PR that lands it — the same rule
 `CONTEXT.md` follows. A status line that is wrong is worse than none, because
 this is the document someone reads to decide what to work on._
 
-**MVP means:** all five services usable for real client engagements, producing
+**Superseded 2026-09-26 by the dated block at the top of this section; kept as the record.** **MVP means:** all five services usable for real client engagements, producing
 correct documents, with the AI layer working end to end. Not the seeded demo —
 fixture mode already demos all five.
 
@@ -182,7 +184,7 @@ definition is here, where the plan defines its scope, so the next triage answers
 itself instead of arriving as a question.
 
 <!-- counted: "exactly one item" states a cardinality rule, not a tally -->
-**Every `mvp-blocking` issue belongs to exactly one item below, or is recorded
+**Superseded 2026-09-26: the board is the list and board issues are NOT mapped into the table below (see the top of this section). The rule as it stood:** **Every `mvp-blocking` issue belongs to exactly one item below, or is recorded
 as deliberately unowned with a reason.** An unowned blocker is invisible: the
 plan's total silently stops covering the plan's own definition of done, which is
 what happened between 2026-08-26 and 2026-08-30.
@@ -268,7 +270,7 @@ the sizing, and both were left open rather than guessed:
    re-derived.** `check_plan_totals.py` ties the estimate table to the _Total
    remaining_ heading, so moving a row moves the total; this pass sets STATUS
    from measurement and changes no number. The reasoning is under that heading.
-2. **Open `mvp-blocking` issues own no item**, against this section's own
+2. **(Superseded 2026-09-26: board issues are no longer mapped into the table; do not run this step. Kept as the record.)** **Open `mvp-blocking` issues own no item**, against this section's own
    rule that every one belongs to exactly one item or is recorded as
    <!-- counted: "exactly one item" states a cardinality rule, not a tally -->
    deliberately unowned with a reason. Run
