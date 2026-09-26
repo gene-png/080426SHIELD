@@ -6426,3 +6426,13 @@ The shared dev database, read-only: DRAFT 2, RELEASED 2, APPROVED 0, at migratio
      - The same world under rule 2 renders differently.
   3. **Migrations land in number order:** #620 takes 0054, then #640 0055, then #658 0056, renumbered at landing (with `down_revision`) if the order changes. `test_alembic_single_head.py` reads Alembic's `ScriptDirectory` and fails unless there is one head and an unbroken chain from base. It was shown red on a forked chain. The chain order is not the number order: on `main` it runs 0051 → 0053 → 0052, so 0054 chains from 0052.
 - **Conditions 4 and 6** both apply: this is a migration, and it changes client-visible numbers.
+
+## D-103 — Archiving a client ends every session its users hold
+
+**2026-09-26 · auth** (Gene's decision, relayed by the coordinator; #652)
+
+**Decision.** Archiving a client ends ALL of its users' sessions, access and refresh alike, the same way a password reset does. Every user whose `client_id` is the archived client has all three refresh-rotation fields cleared, and `credentials_changed_at` is stamped to the archive's second. `current_user` refuses any access token issued before that second (#658). Kentro admins (`client_id` NULL) and other tenants' users are untouched. A repeat archive is the existing no-op and does not move the cutoff.
+
+**One helper.** `app/security/sessions.py::end_user_sessions` is now the only place a session is ended. It is called by the password reset, by deactivation in `PATCH /admin/users/{id}`, and by `DELETE /admin/clients/{cid}`. Deactivation now also stamps the cutoff. Before, it relied on the `is_active` check alone, so a reactivated user's pre-deactivation access tokens worked again until their TTL.
+
+**Not decided here.** Signing in AFTER the archive is not refused: nothing on the login path reads `Client.archived_at`, which is #652's other half. A password reset still ends sessions without blocking a later sign-in, and this decision matches that and goes no further.
