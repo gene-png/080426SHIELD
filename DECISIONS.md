@@ -3286,6 +3286,201 @@ having anyway: nothing else in the suite would notice if a future widening made 
 placeholder re-match, and the ATT&CK resolver's alias tier depends on the
 transformation being stable under a second pass.
 
+## D-058a — The redaction-subsystem narratives, moved out of CLAUDE.md
+
+**Date:** 2026-09-26 · **Context:** `CLAUDE.md`'s size ratchet, item 1 of "Where the next 15,000 bytes come from" · **Amends:** D-058
+
+`CLAUDE.md` reached 149,686 bytes against its 150,000-byte gate. Its own plan
+names these narratives as the first cut: each is a RECORD whose instruction
+is already one sentence, so moving it loses no rule. Every bullet below is the
+text as it stood on `main` at `36c242e`, moved verbatim; `CLAUDE.md` keeps each
+rule's instruction and points here. Nothing in this record is a new decision.
+
+### A derived lookup key belongs in its own tier
+
+**A derived lookup key belongs in its OWN tier, below the authoritative one.**
+#33 finding 5 needed the resolver to recognise a tool under the placeholder the
+model was shown, so the redacted form was indexed as an alias — into the same
+`_by_norm` dict as real capability names. But a client's list can hold both
+spellings of one tool (the extractor redacts its own input, so
+`[CLIENT] SOC Platform` is the normal product of a later extraction), and the
+alias then collided with a real name: the only string the model can cite became
+`ambiguous`, and under the #102 withholding rule that pulled the technique out
+of the coverage denominator. Strictly worse than the defect being fixed. Real
+names are exact matches on what is stored; aliases are reversals of a
+transformation. Keep them in separate indexes and consult the authoritative one
+first, so an alias can only decide what the real key could not.
+
+### Enforce a parity claim by calling the other function
+
+**"Uses the same X as the Y path" is a claim to enforce by CALLING X, never by
+reimplementing it.** `_redacted_form` said in its docstring that it used "the
+SAME redactor the egress path uses" and then called `redact_org_name` — one
+rule out of the ten `redact_for_ai` runs in strict mode. The docstring even argued the point
+correctly ("a second copy would drift") while the code below it was the second
+copy. It was wrong immediately, not eventually: the address rule rewrote
+ordinary product names, so `Flowmon` egressed as a bare `[ADDRESS]` and had the
+exact disease the fix was for. (That over-match is fixed — #130 — so `Flowmon`
+now survives; the example is past tense and the lesson is not. A keyword
+followed by a number is still rewritten, so the case is still live.) When a
+function must agree with another function, import it and pass it the same
+inputs — including the MODE and any optional arguments, because a parity claim
+covers those too.
+
+### A table written first is an independent specification
+
+**A table written FIRST is an independent specification. A table written
+AFTERWARDS is a transcript of what the rule does.** Enumerating cases against
+a rule you have already written cannot falsify that rule, because the rule is
+where the cases came from. Measured on 104 LEAVE rows: tables written before
+their pattern pinned nothing **3.8%** of the time; tables written alongside or
+after their rule, **42.1%** — same corpus, same author, same week, the only
+variable being whether the table existed before the code did.
+
+**The step**: any LEAVE table written or extended after its rule exists gets
+`leave_row_oracle.py` run before the PR, and rows that pin nothing are
+rewritten or reclassified. Scoring a row needs judgement, so the tool reports
+and a human decides. What IS gated, behind `--check-registry`: a LEAVE table
+with no registered guards, and a table DECLARED not-LEAVE whose rows the
+redactor leaves untouched (#221). **Budget it** — any item fixing existing
+code lands its tables in the 42% regime by construction.
+
+**It is a floor, not a census**, and can only under-report: the guard list is
+hand-built, so `unrelated` is an UPPER BOUND. **Still ungated is whether the
+tool can RUN** (#299) — two mutation anchors had drifted out of `redact.py`
+and the oracle had been exiting 2 for an unknown length of time, because
+`--check-registry` returns before `build_mutations` is called.
+
+### The strongest recorded red-on-revert case
+
+**THE STRONGEST RECORDED CASE IS ONE WHERE EVERY OTHER SIGNAL AGREED,
+
+INCLUDING THE AUTHOR'S OWN EYES.** A `\b` written for a boundary reached the
+file as a literal BACKSPACE byte (U+0008) inside a raw string, so the
+alternation matched nothing. `grep` printed a correct-looking line, because a
+backspace renders as nothing. The tests passed. The same regex typed inline in
+a shell found the codes. **Only the mutation disagreed** — every other
+behavioural signal was reading the SOURCE while the defect was in the COMPILED
+value.
+
+**It is not the cheapest signal, and a draft of this said it was the only one
+— directly above its own counterexample.** `check_no_control_chars.py` reads
+`path.read_bytes()` and finds that byte in two seconds. **Run the gate first;
+reach for red-on-revert to prove the fix holds.** And that gate DID fire,
+correctly, on the first run, and was not read. **When a gate reports something
+you did not expect, read it before deciding what it is about.**
+
+### Replacing a character class is a subtraction to compute
+
+**Replacing a character class with an enumerated one is a subtraction you must
+COMPUTE, not guess.** `\s` matches 19 horizontal characters; narrowing it to
+"space, tab, non-breaking space" to stop a rule crossing newlines dropped
+SIXTEEN more — and in the redactor that is a LEAK, not a residual, because a
+street address separated by a narrow no-break space is exactly what PDF and
+Word extraction emit. The decision was framed as being about NEWLINES, so the
+replacement was written to solve newlines and nobody re-derived what else was
+in the class. **Write it as the subtraction and let the language define the
+set** (`[^\S\n\v\f\r\x1c\x1d\x1e\x85\u2028\u2029]`), then pin BOTH halves as
+parametrised sweeps whose parameters come from somewhere other than the thing
+under test. Note `[^\S\r\n]`, the idiom everyone reaches for, is also wrong —
+it still crosses `\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028 and U+2029.
+
+### Changing a parametrisation invalidates derived counts
+
+**Changing a parametrisation invalidates every count derived from it, and the
+count is usually in another file.** Narrower and more checkable than "re-check
+your numbers": the trigger is mechanical. PR #141 stated the address truth
+table had 153 cells. The fix for a review finding was to parametrise two
+sweeps per separator as well as per character, which multiplied the collected
+count several-fold. (The number that stood here was 327; it was 376 within the
+week and 410 after item 10, which is why it is no longer written down. Run the
+collector.) The stale 153 shipped to `main` in `CONTEXT.md` and `DECISIONS.md`
+and was found a PR later.
+
+What caught it was **re-counting**, not re-reading: the sentence still parsed,
+still looked deliberate, and was wrong by a factor of two. The number goes
+stale at the exact moment the change is most obviously substantive, which is
+when attention is on the code and not on the prose two files away. **After
+touching any `@pytest.mark.parametrize` argument, grep the repo for the old
+count before committing.**
+
+### A narrower rule stated where the reader checks
+
+**A comment or message stating a rule NARROWER than the reader will assume,
+positioned exactly where they would go to check, is worse than no comment.**
+It is true, so nothing flags it; it is where you look, so it ends the search;
+and it reads as a guarantee rather than as a scope. The instances, most in the
+redaction subsystem within two days:
+
+- `# noqa: S105 - dev placeholder, refused in prod via assert_safe_for_runtime`
+  beside the JWT signing secret. True. The guard covered one of three
+  environments, and this sentence is why nobody checked the other two (#142).
+- `"SHIELD_REDACTION_MODE=off is forbidden when ENVIRONMENT=production"` — the
+  runtime error the guard raises, naming a narrower rule than the one that
+  should exist, in the string a developer reads while debugging it.
+- `_redacted_form`'s docstring claiming it used "the SAME redactor the egress
+  path uses" while calling one rule out of ten. The docstring even argued
+  correctly that a second copy would drift, directly above the second copy.
+- `redact.py`'s separator note, wrong on arrival rather than stale (#158).
+
+Every one was found by reading the CODE and comparing, never by reading the
+prose — which is the only method that works, because the prose is accurate.
+The countermeasure is mechanical: when a comment states a condition, read the
+condition it describes and check the two agree in SCOPE, not just in truth.
+And when you fix such a guard, fix its message in the same commit — an error
+string is documentation a developer reads under pressure.
+
+### Replacing a validator gives you a free oracle
+
+**Replacing a validator gives you a free ORACLE for exactly one round: the
+thing you are replacing.**
+<!-- counted: "one round" is a duration in the claim itself, not a recalled figure -->
+
+Enumeration depends on imagining cases, and the cases you fail to imagine are
+precisely the ones that leak. Item 10 replaced a phone regex; its REDACT half
+was one grouping, so four formats the OLD rule caught — including
+`1-800-555-0199` and any number separated by a non-ASCII space — leaked
+silently. Nobody imagined them; the adversarial reviewer found them by reading.
+<!-- counted: historical -->
+
+The mechanical version costs nothing: **run the old rule and the new rule over
+the same corpus and diff their match sets.** Every input the old one caught
+and the new one does not is either an intended false-positive fix or a new
+leak, and you must classify each. It works for any validator, filter, guard or
+parser being replaced — and only for that one round, because after the old one
+<!-- counted: "one round" is a duration in the claim itself, not a recalled figure -->
+
+is deleted the oracle is gone. **Capture the diff while you still have both.**
+
+**A published standard is to a keyword list what the old rule is to a
+replacement pattern.** #139 asked which facility designators to add, and the
+honest answer to "which ones did I think of" is always "the ones I thought
+of". USPS Publication 28 Appendix C2 is the approved list, so the question
+became a lookup, and the table asserts every covered row redacts and every
+exclusion still does not — complete against a standard rather than against
+recall. It also gave the residual a better reason: `Level` is excluded because
+**it is not on Pub 28 C2 at all**, not because "patch level 3 is inseparable
+from a floor" — a phrasing that invites the next person to attempt the
+separation and fail identically.
+
+Enumeration finds what you thought of; the oracle finds what the previous
+author — or the standards body — thought of.
+
+### When testing one branch of a disjunction
+
+**When testing ONE branch of a disjunction, assert the other branches are
+absent.** Not the #72 shape — removing every detector would fail the test — but
+the same practical result: the test passes and proves nothing about the thing
+it is named for. `_RE_CONTACT_HINT` matches an email OR a `--` delimiter OR a
+phone-shaped run OR a ZIP line. The fixture written to prove the phone branch
+handled non-ASCII separators contained `Arlington VA 22209`, so it passed on
+the ZIP branch while the phone branch was ASCII-only and broken. The gate found
+the defect; the test named for it never could have.
+
+One line fixes it: the phone fixture asserts the ZIP hint does NOT fire on it.
+Every multi-signal guard has this shape, and the more signals it has the more
+reliably a test of any one of them passes for free.
+
 ## D-059 — The unattended-merge rule stands, and its framing sentence states what it measured
 
 **Date:** 2026-08-26 · **Context:** the merge rule in `CLAUDE.md` · **Supersedes:** the framing half of the 2026-08-26 rule as first written
@@ -4914,6 +5109,80 @@ mattered most.
   carried the full 210,958 bytes, so the cut is not universal — which makes it
   worse, not better: the rule set an agent operates under varies by which agent
   it is, and nothing in any output says which one you got.
+
+## D-079a — Two worked examples, moved out of CLAUDE.md
+
+**Date:** 2026-09-26 · **Context:** `CLAUDE.md`'s size ratchet, item 2 of "Where the next 15,000 bytes come from" · **Amends:** D-079
+
+The same trim as D-058a, for the plan's second item. Each bullet below is the
+text as it stood on `main` at `36c242e`, moved verbatim; `CLAUDE.md` keeps each
+rule's instruction and points here. Nothing in this record is a new decision.
+
+### Spot-check a subagent's citations: the measurement
+
+**SPOT-CHECK a subagent's `file:line` citations before they enter a document,
+and record the check. A sample, not all of them — what you need is the
+report's CALIBRATION.** This replaces "be skeptical of subagent output", which
+is a disposition, and dispositions lose to convenience under time pressure.
+
+Measured 2026-08-30, a clean partition: of fourteen `file:line` citations that
+entered `DELIVERY_PLAN.md` from an Explore agent's report, **the eleven that
+were independently run were all correct and the three that were only read were
+all wrong.**
+
+**Sample a third, and round up** — at that hit rate, drawing 3 of 14 catches a
+bad citation only **55%** of the time.
+<!-- counted: python -c "from math import comb; print(1-comb(11,3)/comb(14,3))", 2026-08-30 -->
+
+An earlier draft asserted three checks "would have caught it", stating a 55%
+chance as a certainty, in the rule about not writing numbers you have not
+derived.
+
+**The sample CALIBRATES the report; it does not CLEAR the citations**, and the
+figures are conditional on this incident's error rate rather than a detection
+guarantee. Read the table as "how likely am I to learn this report is
+unreliable", never as "what fraction of bad citations do I catch".
+
+**And it assumes the bad citations are EXCHANGEABLE with the good ones, which
+here they demonstrably were not** — the three wrong were exactly the three
+nobody had executed, and drawing 11 with 0 bad has probability 1/364 under a
+random-draw model. **Sample the citations you have NOT executed**; three from
+that stratum would have been certain rather than 55%. **The wrong ones do not
+look wrong** — one was a bare closing paren, another a real line of code that
+reads plausibly in context.
+
+### Name the shape a sweep searched for: the worked examples
+
+**Before reporting a sweep complete, name the SHAPE you searched for and one
+place it could hide that shares no vocabulary with the original.** Keyword
+sweeps keep coming back clean over live defects because the second instance
+was written by someone using different words.
+
+**This binds PROSE sweeps identically, and prose is where it is skipped.** A
+commit correcting the three documents a finding named left two present-tense
+claims standing elsewhere, because the author never asked what ELSE asserted
+the same thing. Write the shape for prose the way you would for code — "any
+sentence stating what happens when X fails, in the present tense" — and grep
+the bare nouns rather than the phrasing you were shown.
+
+`risk.py` re-derived a gap comparison instead of calling `analyze_gaps` (#84),
+and reimplements the ATT&CK citation drop with no counter (#132), found only
+because the sweep asked "where else does a model's string get compared to a
+stored value and the misses discarded?" rather than "where else is
+`_validate_tools` called?". **If you cannot describe the defect without naming
+the function it was found in, you have not generalised it yet.**
+
+**A good shape statement**, from the `docs/security.md` honesty pass (#146):
+
+> A control stated in the present tense whose implementation is a deferral
+> comment, a client-supplied value, a header with no transport to enforce it,
+> or a function with no callers.
+
+It names four distinct failure modes rather than one; it names no file,
+function or symbol; each mode is checkable by reading the implementation
+rather than by knowing the history; and it found defects outside the table it
+would have been natural to check. **The test of a shape statement is whether
+it could have been written BEFORE seeing the defect that prompted it.**
 
 ## D-080 — "Unnamed" is a NULL, not a magic string: `Client.legal_name` becomes nullable
 
