@@ -801,3 +801,69 @@ def test_a_login_rehash_is_not_a_credentials_change(app_client: TestClient, monk
     assert r.status_code == 200, r.text
     assert _stored_cutoff() is None
     assert _me(app_client, body["tokens"]["access_token"]).status_code == 200
+
+
+# -----------------------------------------------------------------------------
+# #670 round 1, finding 2: a token missing a claim the payload is built from
+# must be REFUSED, never a 500. `iat` (#658's cutoff reads it), `role`, and a
+# non-numeric `auth_time` were each parsed outside the try that turns malformed
+# claims into TokenError. python-jose also ignores PyJWT's
+# `options={"require": [...]}`; its own keys are `require_<claim>`.
+# -----------------------------------------------------------------------------
+
+
+def _signed(**overrides) -> str:
+    """A validly SIGNED access token whose claims can be removed or broken."""
+    import uuid as _uuid_mod
+
+    from jose import jwt as _jose
+
+    from app.config import get_settings
+    from app.security.jwt import ALGORITHM, ISSUER
+
+    s = get_settings()
+    now = int(datetime.now(UTC).timestamp())
+    claims = {
+        "iss": ISSUER,
+        "aud": s.keycloak_audience,
+        "sub": str(_uuid_mod.uuid4()),
+        "role": "admin",
+        "typ": "access",
+        "jti": str(_uuid_mod.uuid4()),
+        "iat": now,
+        "nbf": now,
+        "exp": now + 300,
+        "auth_time": now,
+    }
+    for key, value in overrides.items():
+        if value is _DROP:
+            claims.pop(key)
+        else:
+            claims[key] = value
+    return _jose.encode(claims, s.jwt_signing_secret, algorithm=ALGORITHM)
+
+
+_DROP = object()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "overrides",
+    [{"iat": _DROP}, {"role": _DROP}, {"auth_time": "not-a-number"}, {"sub": _DROP}],
+    ids=["no-iat", "no-role", "bad-auth_time", "no-sub"],
+)
+def test_a_token_with_a_missing_or_malformed_claim_is_refused_not_a_500(overrides) -> None:
+    from app.security.jwt import TokenError, verify_token
+
+    with pytest.raises(TokenError):
+        verify_token(_signed(**overrides), expected_type="access")
+
+
+@pytest.mark.unit
+def test_an_access_token_without_iat_is_a_401_not_a_500(app_client: TestClient) -> None:
+    """Through the route: `current_user` turns TokenError into its existing 401.
+    It stays that refusal, rather than gaining a new `reason`, deliberately: a
+    new key on the shared invalid-token envelope is the change CLAUDE.md warns a
+    consumer branching on its presence breaks."""
+    r = app_client.get("/auth/me", headers={"Authorization": f"Bearer {_signed(iat=_DROP)}"})
+    assert r.status_code == 401, r.text

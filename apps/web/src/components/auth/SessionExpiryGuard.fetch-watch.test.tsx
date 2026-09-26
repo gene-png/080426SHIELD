@@ -111,14 +111,25 @@ describe("SessionExpiryGuard watching fetch for credentials_changed", () => {
       JSON.stringify({ detail: "x" }),
     ],
   ])("does nothing for %s", async (_label, url, status, body) => {
-    render(<SessionExpiryGuard />);
-    respondWith(status, body);
+    // "Does nothing" includes not failing somewhere the caller cannot see: the
+    // watch reads the clone in a detached promise, so a throw there surfaces
+    // only as an unhandled rejection, never as this test's own failure.
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      render(<SessionExpiryGuard />);
+      respondWith(status, body);
 
-    const response = await window.fetch(url);
+      const response = await window.fetch(url);
 
-    expect(response.status).toBe(status);
-    await settle();
-    expect(signOutMock).not.toHaveBeenCalled();
+      expect(response.status).toBe(status);
+      await settle();
+      expect(signOutMock).not.toHaveBeenCalled();
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 
   it("returns the original response, still readable by the caller", async () => {

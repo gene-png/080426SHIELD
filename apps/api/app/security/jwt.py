@@ -146,7 +146,17 @@ def verify_token(token: str, *, expected_type: TokenType | None = None) -> Token
             algorithms=[ALGORITHM],
             audience=settings.keycloak_audience,
             issuer=ISSUER,
-            options={"require": ["exp", "iat", "sub", "typ", "jti", "role"]},
+            # python-jose's own keys. The PyJWT spelling this used to pass,
+            # `{"require": [...]}`, is ignored by jose, so a token missing `iat`
+            # decoded cleanly and died later on a KeyError -- an untyped 500
+            # (#670). `typ` and `role` are not registered claims jose can
+            # require; they are checked below, inside the same refusal.
+            options={
+                "require_exp": True,
+                "require_iat": True,
+                "require_sub": True,
+                "require_jti": True,
+            },
         )
     except JWTError as exc:
         raise TokenError(f"Token verification failed: {exc}") from exc
@@ -157,23 +167,24 @@ def verify_token(token: str, *, expected_type: TokenType | None = None) -> Token
     if typ not in _VALID_TOKEN_TYPES:
         raise TokenError(f"Unknown token type: {typ!r}")
 
+    # EVERY claim the payload is built from is parsed inside this one refusal.
+    # `iat`, `role` and `auth_time` used to be read after it, so a signed token
+    # missing one, or carrying a non-numeric time, was a 500 rather than a 401
+    # (#670) -- the same shape three times, fixed as one.
     try:
-        sub = uuid.UUID(claims["sub"])
-        jti = uuid.UUID(claims["jti"])
-    except (KeyError, ValueError) as exc:
+        raw_auth_time = claims.get("auth_time")
+        return TokenPayload(
+            sub=uuid.UUID(claims["sub"]),
+            role=str(claims["role"]),
+            typ=typ,  # type: ignore[arg-type]
+            jti=uuid.UUID(claims["jti"]),
+            exp=datetime.fromtimestamp(int(claims["exp"]), UTC),
+            auth_time=(
+                datetime.fromtimestamp(int(raw_auth_time), UTC)
+                if raw_auth_time is not None
+                else None
+            ),
+            iat=datetime.fromtimestamp(int(claims["iat"]), UTC),
+        )
+    except (KeyError, ValueError, TypeError, OverflowError, OSError) as exc:
         raise TokenError(f"Malformed token claims: {exc}") from exc
-
-    raw_auth_time = claims.get("auth_time")
-    auth_time = (
-        datetime.fromtimestamp(int(raw_auth_time), UTC) if raw_auth_time is not None else None
-    )
-
-    return TokenPayload(
-        sub=sub,
-        role=str(claims["role"]),
-        typ=typ,  # type: ignore[arg-type]
-        jti=jti,
-        exp=datetime.fromtimestamp(int(claims["exp"]), UTC),
-        auth_time=auth_time,
-        iat=datetime.fromtimestamp(int(claims["iat"]), UTC),
-    )
