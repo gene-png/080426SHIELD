@@ -691,15 +691,16 @@ jobs:
         working-directory: e2e
         run: npx playwright install --with-deps chromium
 
-      # #540: every spec on disk must be in CI's run. `--list` applies the
-      # config's selection (testIgnore / testMatch / grep / projects) exactly as
+      # #540/#579: every script-suffixed file under e2e/ must be in CI's run or
+      # declared non-suite (a rename dropping every script suffix is unseen,
+      # #605). `--list` applies the config's selection (testIgnore / testMatch / grep / projects) exactly as
       # the run step below does, with the same cwd and no arguments -- pinned by
       # test_e2e_spec_listing_gate.py -- and needs no browser or stack.
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
-      - name: every spec on disk is one CI runs (#540)
+      - name: every script-suffixed file under e2e/ is listed or declared (#540, #579)
         working-directory: e2e
         run: |
           npx playwright test --list > "$RUNNER_TEMP/playwright-list.txt"
