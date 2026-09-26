@@ -9,7 +9,7 @@ techniques only, and the not-verified count sits BESIDE the percentage on
 every surface, never dropped. D-092 made `outside_control_surface` and
 `unable_to_determine` storable but not writable (Decision 5), because no
 surface could yet show them. This slice teaches the surfaces first.
-`coverage.WRITABLE` is unchanged, so nothing new becomes storable.
+`coverage.WRITABLE` is unchanged, so nothing new becomes writable (both statuses were already storable under D-092).
 
 ## What changed
 
