@@ -809,6 +809,112 @@ def test_finalize_refuses_an_approved_list_a_row_was_made_undecided_on(app_clien
     assert "approve again" not in error["message"], error["message"]
 
 
+def _finalize(c: TestClient, h: dict, svc_id: str):
+    return c.post(f"/tech-debt/services/{svc_id}/deliverables/finalize", headers=h)
+
+
+@pytest.mark.unit
+def test_release_refuses_while_a_row_is_undecided(app_client) -> None:
+    """#657 round 2 (a). Release freezes the list, and a frozen list with an
+    undecided row could never be repaired: every re-finalize would be refused
+    with a remedy -- edit step 2 -- that a released list refuses. So release
+    refuses first, naming step 2, which is still editable."""
+    c, _, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)
+    _approve_list(c, bearer, svc_id)
+    fin = _finalize(c, h, svc_id)
+    assert fin.status_code == 201, fin.text
+    r = c.patch(f"/tech-debt/capability-items/{item_ids[0]}", headers=h, json={"disposition": None})
+    assert r.status_code == 200, r.text
+
+    r = c.post(f"/tech-debt/deliverables/{fin.json()['id']}/release", headers=h)
+
+    assert r.status_code == 409, r.text
+    error = r.json()["error"]
+    assert error["reason"] == "capability_list_undecided_rows", error
+    assert "Review and correct the extracted list" in error["message"], error["message"]
+    assert _latest_list(c, bearer, svc_id)["status"] == "approved", "the list was frozen anyway"
+
+
+@pytest.mark.unit
+def test_a_legacy_released_list_with_an_undecided_row_still_refinalizes(app_client) -> None:
+    """#657 round 2 (b). Finalize accepts RELEASED so re-finalizing never locks a
+    service. The undecided check is for APPROVED lists only.
+
+    LEGACY STATE, BUILT BY DIRECT SQL: release now refuses undecided rows, so no
+    route can produce a RELEASED list holding one. Lists released before #639
+    can, and they must keep re-finalizing exactly as they do on main."""
+    from app.models.capability import CapabilityItem
+
+    c, sessions, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)
+    _approve_list(c, bearer, svc_id)
+    fin = _finalize(c, h, svc_id)
+    assert fin.status_code == 201, fin.text
+    rel = c.post(f"/tech-debt/deliverables/{fin.json()['id']}/release", headers=h)
+    assert rel.status_code == 200, rel.text
+    assert _latest_list(c, bearer, svc_id)["status"] == "released"
+    with sessions() as db:
+        db.get(CapabilityItem, _uuid.UUID(item_ids[0])).disposition = None
+        db.commit()
+
+    again = _finalize(c, h, svc_id)
+
+    assert again.status_code == 201, again.text
+
+
+@pytest.mark.unit
+def test_a_row_made_undecided_as_the_rows_load_is_refused_not_rendered(app_client) -> None:
+    """#657 round 2, the check-to-render window. A count and the select that
+    feeds the render were two statements; a PATCH committed between them sent
+    an undecided row into a deliverable the count had passed. Forced through the
+    route: a one-shot session hook commits the edit, from a separate session,
+    immediately before the CapabilityItem rows are loaded -- after any separate
+    count. The rows the render uses must be the rows the refusal judged."""
+    from sqlalchemy import event
+
+    from app.models.capability import CapabilityItem
+
+    c, sessions, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)
+    _approve_list(c, bearer, svc_id)
+
+    fired: list[bool] = []
+
+    def before_rows_load(state) -> None:
+        if fired or not state.is_select:
+            return
+        described = state.statement.column_descriptions
+        if not (len(described) == 1 and described[0].get("entity") is CapabilityItem):
+            return
+        fired.append(True)
+        other = sessions()
+        try:
+            other.get(CapabilityItem, _uuid.UUID(item_ids[0])).disposition = None
+            other.commit()
+        finally:
+            other.close()
+
+    event.listen(sessions, "do_orm_execute", before_rows_load)
+    try:
+        r = _finalize(c, h, svc_id)
+    finally:
+        event.remove(sessions, "do_orm_execute", before_rows_load)
+
+    assert fired, "the hook never ran -- the window was not exercised"
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "capability_list_undecided_rows", r.text
+
+
 @pytest.mark.unit
 def test_approve_succeeds_once_every_row_is_decided(app_client) -> None:
     """The passing half: zero undecided rows approve."""

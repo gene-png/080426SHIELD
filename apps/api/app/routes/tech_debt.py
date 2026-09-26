@@ -1523,21 +1523,32 @@ def finalize_deliverable(
                 "message": "Capability list must be approved before finalizing the deliverable.",
             },
         )
-    # #657 round 1, F1. An APPROVED list stays editable until release, and the
-    # step-2 table can send a row back to undecided, so "approved" does not mean
-    # "decided" by the time the deliverable is built. The same count the approve
-    # guard uses, re-read here. It also closes the Postgres write skew where a
-    # PATCH commits between the approve UPDATE and its commit. Refusing EDITS to
-    # an approved list is not this guard's job: #640's revision counter owns the
-    # "edited since approval" rule.
-    undecided = undecided_row_count(db, cap_list.id)
-    if undecided:
-        raise _refuse_undecided(undecided, then="generate the deliverable again")
     items = (
         db.execute(select(CapabilityItem).where(CapabilityItem.capability_list_id == cap_list.id))
         .scalars()
         .all()
     )
+    # #657 round 1, F1: an APPROVED list stays editable until release, and the
+    # step-2 table can send a row back to undecided, so "approved" does not mean
+    # "decided" by the time the deliverable is built. Refusing EDITS to an
+    # approved list is not this guard's job: #640's revision counter owns the
+    # "edited since approval" rule.
+    #
+    # COUNTED FROM THE ROWS JUST LOADED, not by a second query (round 2): a count
+    # and a select are two statements, and under READ COMMITTED a PATCH between
+    # them would send an undecided row into the render the count had passed. The
+    # predicate is `_UNDECIDED`'s (`disposition IS NULL`), applied to the rows.
+    #
+    # APPROVED ONLY (round 2). A RELEASED list is frozen, and re-finalizing it
+    # never locks a service -- that is why finalize accepts RELEASED at all.
+    # Release now refuses undecided rows, so no new RELEASED list can hold one;
+    # a legacy RELEASED list that does (released before #639) keeps
+    # re-finalizing exactly as it does on main, rather than being locked behind
+    # a remedy -- "edit step 2" -- that a released list refuses.
+    if cap_list.status == CapabilityListStatus.APPROVED:
+        undecided = sum(1 for it in items if it.disposition is None)
+        if undecided:
+            raise _refuse_undecided(undecided, then="generate the deliverable again")
 
     client_name = client.legal_name  # NULL when nobody has named the org (D-080)
 
@@ -1695,6 +1706,7 @@ def release_tech_debt_deliverable(
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],
 ) -> DeliverableResponse:
+    _refuse_release_over_undecided_rows(db, deliverable_id, client.id)
     deliv = release_deliverable(
         db,
         deliverable_id=deliverable_id,
@@ -1704,3 +1716,40 @@ def release_tech_debt_deliverable(
         action="tech_debt.deliverable.released",
     )
     return _serialize_deliverable(db, deliv)
+
+
+def _refuse_release_over_undecided_rows(
+    db: Session, deliverable_id: uuid.UUID, client_id: uuid.UUID
+) -> None:
+    """#657 round 2: release freezes the list, so it must not freeze an
+    unfinished review. Without this, approve -> finalize -> send a row back to
+    undecided -> release produced a RELEASED list that no step could repair.
+
+    Checks the list this deliverable was BUILT from (the version finalize
+    stamped, which is how release finds the parent it flips), and only while
+    that list is APPROVED: release flips only an APPROVED parent, and
+    re-releasing an already-released deliverable stays the no-op it is. The
+    remedy names step 2, which is editable while the list is APPROVED. Tenant,
+    kind and not-finalized refusals are left to `release_deliverable`; a
+    deliverable this cannot place is left to it too, never refused here."""
+    deliv = db.get(Deliverable, deliverable_id)
+    if deliv is None or deliv.released_at is not None or deliv.parent_version is None:
+        return
+    svc = db.get(Service, deliv.service_id)
+    if svc is None or svc.client_id != client_id or svc.kind != ServiceKind.TECH_DEBT:
+        return
+    parent = (
+        db.execute(
+            select(CapabilityList).where(
+                CapabilityList.service_id == svc.id,
+                CapabilityList.version == deliv.parent_version,
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if parent is None or parent.status != CapabilityListStatus.APPROVED:
+        return
+    undecided = undecided_row_count(db, parent.id)
+    if undecided:
+        raise _refuse_undecided(undecided, then="generate the deliverable again before releasing")
