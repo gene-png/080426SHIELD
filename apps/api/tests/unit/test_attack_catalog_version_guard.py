@@ -31,6 +31,7 @@ from app.attack.catalog import SOURCE_VERSION
 from app.models.attack_assessment import AttackAssessment
 from app.models.deliverable import Deliverable
 from app.storage.local import LocalFilesystemStorage
+from tests._attack_rows import first_standalone
 
 pytestmark = pytest.mark.unit
 
@@ -143,7 +144,10 @@ def test_an_unrecorded_catalog_refuses_heatmap_patch_and_run_ai(env) -> None:
     # A DRAFT names the two controls that exist for it, and only those.
     assert "Discard the draft and start a new assessment" in heat
 
-    row = a["coverage"][0]["id"]
+    # A STANDALONE row, so the refusal is the catalog guard's on its own merits,
+    # not something that holds only because it runs before the computed-parent
+    # check (D-094).
+    row = first_standalone(a["coverage"])["id"]
     _refused(c.patch(f"/attack/coverage/{row}", headers=_auth(bearer), json={"status": "covered"}))
     _refused(c.post(f"/attack/services/{svc}/run-ai", headers=_auth(bearer)))
     # Checked BEFORE the route's own `nothing_to_confirm`, so the reason says which.
