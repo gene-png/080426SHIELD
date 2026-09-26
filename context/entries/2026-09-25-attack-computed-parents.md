@@ -47,3 +47,18 @@ Branch `track2/attack-computed-parents`, from `main` at `2028f38`.
   APPROVED-never-released assessments are never recomputed. The shared dev DB
   had 0 of them on 2026-09-25. **The owner decided (2026-09-25): no one-time
   recompute.**
+
+## Rounds 2 and 3, and Gene's condition (2026-09-25)
+
+- **A computed parent's evidence is its sub-techniques'.** Its own tools,
+  rationale and citations are not shown, edited, confirmed or sent to the
+  model. The client triad, blind spots and Risk Register findings count each
+  technique once, through its sub-techniques.
+- **Gene's condition:** an assessment approved before #620 renders exactly as
+  delivered. Migration 0054 adds `parent_rules` and backfills APPROVED and
+  RELEASED rows to 1. One reader, `attack/rules.py`. It is pinned against
+  output recorded once from `main`.
+- **A single-head Alembic test.** Migrations land in number order: #620,
+  #640, #658.
+- Filed: #653 (Run AI's locked-parent skip) and #665 (the KPI test is a
+  ratchet).
