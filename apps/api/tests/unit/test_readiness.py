@@ -56,6 +56,91 @@ def ready_client(monkeypatch) -> Iterator[TestClient]:
         yield c
 
 
+@pytest.fixture()
+def ready_users(tmp_path, monkeypatch) -> Iterator[tuple[TestClient, sessionmaker]]:
+    """Like `ready_client`, but over a MIGRATED database, so a token can belong
+    to a real user row (#671: /ready now loads the user, as `current_user` does)."""
+    import os
+    from pathlib import Path
+
+    from alembic import command
+    from alembic.config import Config
+
+    import app.routes.health as health_mod
+    from app.db.session import get_db
+    from app.main import create_app
+
+    url = f"sqlite:///{tmp_path / 'ready.db'}"
+    monkeypatch.setitem(os.environ, "DATABASE_URL", url)
+    api_root = Path(__file__).resolve().parents[2]
+    cfg = Config(str(api_root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(api_root / "alembic"))
+    cfg.set_main_option("sqlalchemy.url", url)
+    command.upgrade(cfg, "head")
+    engine = create_engine(url, future=True)
+    TestSession = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+
+    def override_get_db() -> Iterator[Session]:
+        db = TestSession()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app = create_app()
+    app.dependency_overrides[get_db] = override_get_db
+    monkeypatch.setattr(health_mod, "_probe_redis", _redis_down_with_internal_detail)
+    monkeypatch.setattr(
+        health_mod,
+        "_probe_minio",
+        lambda settings: health_mod.DependencyStatus(
+            status="ok", required=True, detail="bucket reachable"
+        ),
+    )
+    with TestClient(app) as c:
+        yield c, TestSession
+
+
+# The operator detail an anonymous caller must never see. Every #671 test reads
+# it back: present means full detail, absent means the redacted matrix.
+_INTERNAL = "secret-internal-host"
+
+
+def _redis_down_with_internal_detail(settings):  # noqa: ANN001, ANN202
+    import app.routes.health as health_mod
+
+    return health_mod.DependencyStatus(
+        status="down",
+        required=True,
+        detail=f"ConnectionError: refused to redis://{_INTERNAL}:6379",
+    )
+
+
+def _user_token(TestSession, *, active: bool) -> str:
+    """A real user row, and an access token for it."""
+    from app.models.user import User, UserRole
+    from app.security.jwt import issue_token
+
+    with TestSession() as db:
+        user = User(
+            email=f"ready-{'on' if active else 'off'}@example.com",
+            password_hash="not-a-real-hash",
+            role=UserRole.ADMIN,
+            is_active=active,
+        )
+        db.add(user)
+        db.commit()
+        uid = user.id
+    token, _ = issue_token(subject=uid, role="admin", typ="access")
+    return token
+
+
+def _redis_detail(c: TestClient, token: str) -> str:
+    r = c.get("/ready", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200, r.text
+    return r.json()["checks"]["redis"]["detail"]
+
+
 @pytest.mark.unit
 def test_health_liveness_does_not_touch_dependencies(ready_client: TestClient) -> None:
     # Liveness must stay cheap: no checks matrix, always ok.
@@ -185,28 +270,61 @@ def test_ready_redacts_detail_for_anonymous_callers(ready_client: TestClient, mo
 
 
 @pytest.mark.unit
-def test_ready_full_detail_for_authenticated_caller(ready_client: TestClient, monkeypatch) -> None:
+def test_ready_full_detail_for_authenticated_caller(ready_users) -> None:
     # An authenticated caller (valid access token) DOES get the full operator
-    # detail — the reduction only applies to anonymous callers.
+    # detail -- the reduction only applies to anonymous callers.
+    #
+    # #671: this test used to mint a token for `uuid.uuid4()` against a database
+    # with no user table, and assert full detail -- the exact state #671 names
+    # as the defect (a token for a user who does not exist unlocked the matrix).
+    # Its SETUP now registers a real, active user; the assertions are unchanged.
+    # The coordinator's verdict, overturnable.
+    c, TestSession = ready_users
+    detail = _redis_detail(c, _user_token(TestSession, active=True))
+
+    assert "ConnectionError" in detail
+    assert _INTERNAL in detail
+
+
+@pytest.mark.unit
+def test_ready_redacts_for_a_token_whose_user_does_not_exist(ready_users) -> None:
     import uuid
 
+    from app.security.jwt import issue_token
+
+    c, _ = ready_users
+    token, _ = issue_token(subject=uuid.uuid4(), role="admin", typ="access")
+    assert _INTERNAL not in _redis_detail(c, token)
+
+
+@pytest.mark.unit
+def test_ready_redacts_for_a_deactivated_users_token(ready_users) -> None:
+    """#671's case: the token is structurally valid and unexpired, and its user
+    has been deactivated. `current_user` refuses it; /ready used to accept it."""
+    c, TestSession = ready_users
+    assert _INTERNAL not in _redis_detail(c, _user_token(TestSession, active=False))
+
+
+@pytest.mark.unit
+def test_ready_answers_redacted_when_the_user_load_fails(ready_client, monkeypatch) -> None:
+    """/ready is a probe: it must answer when the database cannot load the user.
+    `ready_client`'s database has NO tables, so the user lookup raises, while the
+    db probe's `SELECT 1` still works. Unable to confirm the user, it fails
+    closed (redacted) and logs why, rather than turning the probe into a 500."""
     import app.routes.health as health_mod
     from app.security.jwt import issue_token
 
-    monkeypatch.setattr(
-        health_mod,
-        "_probe_redis",
-        lambda settings: health_mod.DependencyStatus(
-            status="down",
-            required=True,
-            detail="ConnectionError: refused to redis://secret-internal-host:6379",
-        ),
-    )
-    token, _payload = issue_token(subject=uuid.uuid4(), role="admin", typ="access")
-    body = ready_client.get("/ready", headers={"Authorization": f"Bearer {token}"}).json()
+    monkeypatch.setattr(health_mod, "_probe_redis", _redis_down_with_internal_detail)
+    warnings: list[tuple[str, dict]] = []
+    monkeypatch.setattr(health_mod.log, "warning", lambda event, **kw: warnings.append((event, kw)))
+    import uuid
 
-    assert "ConnectionError" in body["checks"]["redis"]["detail"]
-    assert "secret-internal-host" in body["checks"]["redis"]["detail"]
+    token, _ = issue_token(subject=uuid.uuid4(), role="admin", typ="access")
+    r = ready_client.get("/ready", headers={"Authorization": f"Bearer {token}"})
+
+    assert r.status_code == 200, r.text
+    assert _INTERNAL not in r.json()["checks"]["redis"]["detail"]
+    assert [e for e, _ in warnings if e == "ready.caller_unverifiable"], warnings
 
 
 @pytest.mark.unit
