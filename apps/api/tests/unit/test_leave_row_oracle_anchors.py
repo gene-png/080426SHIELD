@@ -108,8 +108,9 @@ def test_an_ambiguous_anchor_cannot_measure(monkeypatch, capsys) -> None:
 def test_check_anchors_writes_nothing(monkeypatch) -> None:
     """It must not touch `redact.py`.
 
-    The oracle's measuring path WRITES mutated copies of that file and restores
-    it afterwards. A crash mid-run has left a mutated redactor on disk before.
+    Until #161 the oracle's measuring path WROTE mutated copies of that file and
+    restored it afterwards, and a crash mid-run once left a mutated redactor on
+    disk. It now compiles variants in memory.
     This mode reads only, and that is asserted rather than assumed, because
     "it only reads" is exactly the kind of claim that stops being true when
     someone adds a convenience.
@@ -144,7 +145,7 @@ def test_the_flag_table_is_the_dispatch_AND_the_allow_list() -> None:
     Asserting the VALUES are callable is the half that matters: a key with no
     working handler is precisely the state the other branch's allow-list would
     have created -- a flag accepted and then not dispatched, falling through to
-    the full oracle, which WRITES `redact.py`.
+    the full oracle (which wrote `redact.py` until #161).
     """
     assert set(oracle._FLAGS) == {"--check-registry", "--check-anchors"}
     for flag, handler in oracle._FLAGS.items():

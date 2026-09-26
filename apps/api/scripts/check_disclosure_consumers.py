@@ -74,6 +74,11 @@ Every one is exit 2, never 0:
     with, where a path that does not exist prints "clean" and exits 0.
   * ZERO disclosure fields discovered, which means the predicate broke rather
     than that the tree is clean.
+  * a web reader the TypeScript stripper cannot parse -- a block comment,
+    template literal or declaration body that never closes, or a string in a
+    type body that never closes (`TsParseError`, reported by `reader_text`
+    naming the file). Guessing an end would decide a verdict from text the
+    gate did not understand.
 
 Exit 1 is a real violation. Exit 2 is "I could not look". They never share a
 branch.
@@ -82,6 +87,7 @@ branch.
 from __future__ import annotations
 
 import ast
+import functools
 import re
 import sys
 from pathlib import Path
@@ -117,22 +123,20 @@ DISCLOSURE_PREFIXES = (
 #: is removed from `lib/dashboards/zt.ts` -- so the count is evidence rather
 #: than a number that went up.
 #:
-#: **NOT red when the RENDER is deleted, and an earlier version of this note
-#: claimed it was.** Measured 2026-09-23: replacing
-#: `renderedAgainstNote(data.target_frozen_at)` with `""` in `zt.ts` AND
-#: deleting the `.concat(...)` in `CsfDashboard.tsx` leaves the gate at
-#: **29 of 29, exit 0**. The red came from removing the field NAME, which is a
-#: different mutation.
+#: **Red when the RENDER is deleted -- since #473, and not before.** Measured
+#: 2026-09-23, before #473: replacing `renderedAgainstNote(data.target_frozen_at)`
+#: in `zt.ts` AND deleting the `.concat(...)` in `CsfDashboard.tsx` left the
+#: gate at 29 of 29, exit 0, because a TypeScript interface mirroring the API
+#: response satisfied "field name and subject in one file" with nothing
+#: rendering. `readers_for` now matches a TypeScript reader's FIELD against
+#: `ts_use_text` -- comments and `interface`/`type` bodies removed -- so the
+#: same deletion is red, naming both fields (measured 2026-09-25 on the real
+#: tree; `main`'s gate stayed green over the same deletion).
 #:
-#: THE RESIDUAL THAT EXPOSES, and it is PRE-EXISTING and applies to every field
-#: this gate checks: `readers_for` asks only whether the field name and the
-#: model's subject both appear in a file's text. **A TypeScript interface
-#: mirroring the API response satisfies that with nothing rendering.** So a
-#: green here means "the name reaches a file that also mentions this
-#: dashboard", NOT "a person can see it". Every `lib/dashboards/*.ts` declares
-#: its response shape, so every field is pre-cleared by its own type
-#: definition. The gate is a floor against a field nobody typed at all; the
-#: render still has to be read by a human. Filed.
+#: What a green means now: the field is USED -- read in code outside a type
+#: declaration -- in a file naming the model. Not that it is RENDERED: a use
+#: that feeds nothing visible still clears it. The render is still for a human
+#: to read.
 DISCLOSURE_SUBSTRINGS = ("withheld", "provenance", "frozen", "computed_live")
 
 #: Fields this gate does not currently require a reader for, each with its
@@ -348,9 +352,18 @@ def reader_text(repo: Path) -> tuple[list[tuple[str, str]], list[str]]:
         if any(m in path.name for m in TEST_FILE_MARKERS):
             continue
         try:
-            readers.append((str(path), path.read_text(encoding="utf-8")))
+            text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
             problems.append(f"{path}: unreadable ({type(exc).__name__})")
+            continue
+        # Parsed HERE, once, so a file the stripper cannot read is a problem
+        # (exit 2, naming it) before any verdict is formed from it.
+        try:
+            ts_use_text(text)
+        except TsParseError as exc:
+            problems.append(f"{path}: could not parse -- {exc}")
+            continue
+        readers.append((str(path), text))
     for path in sorted((repo / "apps" / "api" / "app").rglob("*.py")):
         if "exporters" in path.name or path.name == "docx_export.py":
             try:
@@ -358,6 +371,218 @@ def reader_text(repo: Path) -> tuple[list[tuple[str, str]], list[str]]:
             except (OSError, UnicodeDecodeError) as exc:
                 problems.append(f"{path}: unreadable ({type(exc).__name__})")
     return readers, problems
+
+
+#: The start of a TypeScript type declaration whose BODY is a type, not a use:
+#: `interface X {`, `interface X<T> extends Y {`, or `type X = ...`. Only the
+#: head is matched here; the body is found by bracket balancing below.
+_TS_INTERFACE_HEAD = re.compile(r"\binterface\s+\w+[^{;]*\{")
+_TS_TYPE_HEAD = re.compile(r"\btype\s+\w+\s*(?:<[^=;]*>)?\s*=")
+
+
+class TsParseError(ValueError):
+    """The TypeScript stripper could not find where something ENDS -- a block
+    comment, a template literal or a declaration body never closes. That is
+    "I could not look" (exit 2, D-090): guessing an end would silently strip
+    real uses or leave comments in (a green over #473's own case).
+
+    The red direction is worse than it looks, because it CAN be cleared -- the
+    wrong way. The gate's own remedy for a red is an `EXEMPT_FIELDS` entry, and
+    `expired_field_exemptions` reads the file through this same stripper. So an
+    exemption written for a field that is really rendered would never be seen
+    to expire, and would stand as a false "deliberately no consumer" record."""
+
+
+#: A `/` after one of these (or at the start) begins a REGEX literal, not a
+#: division. The usual lexer heuristic; `<` and `>` are left out because JSX
+#: closing tags (`</div>`) put `<` before `/`.
+_REGEX_PRECEDERS = set("(,=:[!&|?{};+-*%~^")
+
+
+def _skip_regex(text: str, i: int) -> int:
+    """Index past a regex literal starting at `text[i] == "/"`, or -1 if the
+    line ends first (then it was a division after all). `[...]` classes may
+    hold an unescaped `/`."""
+    j, in_class = i + 1, False
+    while j < len(text) and text[j] != "\n":
+        c = text[j]
+        if c == "\\":
+            j += 2
+            continue
+        if c == "[":
+            in_class = True
+        elif c == "]":
+            in_class = False
+        elif c == "/" and not in_class:
+            return j + 1
+        j += 1
+    return -1
+
+
+def _strip_ts_comments(text: str) -> str:
+    """`text` with `//` and `/* */` comments blanked, string- and regex-aware.
+
+    A comment naming a field is not a render, and #473's first option was
+    "defeated by a field mentioned in a comment". Strings, template literals
+    and regex literals are skipped so a `//` or quote inside them is not taken
+    for a comment or a string; newlines are kept so nothing else shifts.
+
+    A `'` or `"` string cannot cross a newline in TypeScript, so a quote still
+    open at a newline was never a string -- JSX text such as `Don't` -- and
+    the state resets there rather than swallowing the file. An unclosed block
+    comment or template literal at EOF raises `TsParseError`."""
+    out: list[str] = []
+    i, n = 0, len(text)
+    quote = ""
+    while i < n:
+        c = text[i]
+        if quote:
+            if c == "\n" and quote in "'\"":
+                quote = ""  # never a string; see the docstring
+                out.append(c)
+                i += 1
+                continue
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if c == quote:
+                quote = ""
+            i += 1
+            continue
+        if c in "'\"`":
+            quote = c
+            out.append(c)
+            i += 1
+            continue
+        if text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j == -1 else j
+            continue
+        if text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            if j == -1:
+                raise TsParseError("a /* block comment never closes")
+            out.append("".join("\n" if ch == "\n" else " " for ch in text[i : j + 2]))
+            i = j + 2
+            continue
+        if c == "/":
+            prev = "".join(out).rstrip()[-1:]
+            if prev == "" or prev in _REGEX_PRECEDERS:
+                j = _skip_regex(text, i)
+                if j != -1:
+                    out.append(text[i:j])
+                    i = j
+                    continue
+        out.append(c)
+        i += 1
+    if quote == "`":
+        raise TsParseError("a template literal never closes")
+    return "".join(out)
+
+
+def _balanced_end(text: str, start: int, *, stop_at_semicolon: bool) -> int:
+    """Index just past a declaration body starting at `start`.
+
+    Counts `{}`, `()` and `[]` only -- NOT `<>`, because the `>` of an arrow
+    type (`() => void`) would unbalance it. String literals are SKIPPED, so a
+    `type Brace = "{";` does not open a body that never closes. An `interface`
+    body ends at the brace closing its first `{`. A `type` alias ends at its
+    first `;` at depth 0 (prettier writes one after every alias), so a body
+    that starts on the next line is still inside it. A body that never ends
+    raises `TsParseError`: guessing EOF would strip every use after it."""
+    depth = 0
+    i = start
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c in "'\"`":
+            j = i + 1
+            while j < n and text[j] != c:
+                if text[j] == "\\":
+                    j += 1
+                elif text[j] == "\n" and c != "`":
+                    raise TsParseError(f"a {c} string inside a type body never closes")
+                j += 1
+            if j >= n:
+                raise TsParseError(f"a {c} string inside a type body never closes")
+            i = j + 1
+            continue
+        if c in "{([":
+            depth += 1
+        elif c in "})]":
+            depth -= 1
+            if depth == 0 and c == "}" and not stop_at_semicolon:
+                return i + 1
+        elif c == ";" and depth == 0 and stop_at_semicolon:
+            return i + 1
+        i += 1
+    kind = "a type alias" if stop_at_semicolon else "an interface"
+    raise TsParseError(f"{kind} body never closes")
+
+
+@functools.lru_cache(maxsize=4096)
+def ts_use_text(text: str) -> str:
+    """The parts of a TypeScript file that can USE a field (#473).
+
+    Comments and the bodies of `interface` and `type` declarations are
+    removed. Every `lib/dashboards/*.ts` declares its response shape, so with
+    the declaration counted, every field was pre-cleared by its own type and
+    deleting the RENDER left the gate green (measured on #209's branch:
+    29 of 29, exit 0, with both renders of `target_frozen_at` removed).
+
+    Raises `TsParseError` when something never closes; `reader_text` turns
+    that into exit 2 naming the file.
+
+    LIMITS -- forms that still count as a use, none live on the tree when
+    written (2026-09-25), tracked in #632:
+      * an inline object-type annotation, e.g. `}: { field: T }` on props;
+      * an indexed-access type (`Data["field"]`) or `Pick<Data, "field">`;
+      * `interface X<T extends { a: 1 }> {` -- the head pattern stops at the
+        generic's `{`, so the interface body is not the one stripped;
+      * `type X<T = Y> =` -- the head's `<[^=;]*>` cannot contain `=`, so the
+        alias is not recognised at all;
+      * THE LEXER-STATE CLASS: whenever the lexer believes it is inside a
+        string or a regex that it is not really in, it misreads the text up
+        to where that phantom state ends (a phantom `'`/`"` at the next
+        matching quote or the newline, a phantom regex at its next `/`, a
+        phantom template possibly lines later). A comment opener in that span
+        is missed -- and for a block comment, every LATER line of the comment
+        is then lexed as code. Known forms:
+          - JSX text with an apostrophe, `Don't {/* see` on one line and the
+            field on the next: the phantom `'` eats the `/*`. Backticks in the
+            comment's prose can then flip template parity, or cause exit 2;
+          - `}` is a regex preceder, so in `<X a={b} /> {/* field */}` the
+            `/> {/` is read as a regex and the comment survives;
+          - a keyword before a regex (`return /'/`, `typeof /x'/`): a keyword
+            is not a preceder, so the literal reads as division and its quote
+            opens a phantom string -- or a multi-line template, if it holds a
+            backtick.
+        Each errs GREEN (a comment's field counted as a use), and the class
+        can ALSO err RED: a phantom that closes on a real string's OPENING
+        quote (or a real template's backtick) leaves that literal's content
+        lexed as code, so a `//` inside it strips a real use --
+        `<p>Don't</p>{f('//x', data.excluded_inputs)}` strips to
+        `<p>Don't</p>{f('` (run at c54fb98). A red here is therefore not
+        proof of a missing render; see `TsParseError` on why an exemption is
+        the wrong way to clear one. None of these is live;
+      * Python exporters are matched as before, comments and docstrings
+        included.
+    And a green means USED, not RENDERED: a use feeding nothing visible still
+    clears the field."""
+    text = _strip_ts_comments(text)
+    for head in (_TS_INTERFACE_HEAD, _TS_TYPE_HEAD):
+        while True:
+            m = head.search(text)
+            if not m:
+                break
+            if head is _TS_INTERFACE_HEAD:
+                end = _balanced_end(text, m.end() - 1, stop_at_semicolon=False)
+            else:
+                end = _balanced_end(text, m.end(), stop_at_semicolon=True)
+            text = text[: m.start()] + " " + text[end:]
+    return text
 
 
 def model_subject(model: str) -> str:
@@ -371,14 +596,24 @@ def model_subject(model: str) -> str:
 
 
 def readers_for(field: str, subject: str, readers: list[tuple[str, str]]) -> list[tuple[str, str]]:
-    """Readers that mention the field AND name the model's subject, same file.
+    """Readers that USE the field AND name the model's subject, same file.
 
     Both conditions in ONE file is the whole of the attribution. A file that
     names the subject is handling that model; a field name inside it is that
     model's field.
+
+    In a TypeScript reader the FIELD must appear outside comments and outside
+    `interface`/`type` bodies (`ts_use_text`, #473): a declaration mirrors the
+    response and renders nothing. The SUBJECT is still looked for in the whole
+    file, because the type name is usually where a file names its model.
     """
     pattern = re.compile(rf"(?<!\w){re.escape(field)}(?!\w)")
-    return [(p, b) for p, b in readers if pattern.search(b) and subject in b]
+    out = []
+    for p, b in readers:
+        use = ts_use_text(b) if p.endswith((".ts", ".tsx")) else b
+        if pattern.search(use) and subject in b:
+            out.append((p, b))
+    return out
 
 
 def unconsumed(
@@ -555,7 +790,11 @@ def audit_payload_has_a_generic_reader(repo: Path) -> bool:
     viewer = repo / "apps" / "web" / "src" / "components" / "admin" / "AuditViewer.tsx"
     if not viewer.is_file():
         return False
-    text = viewer.read_text(encoding="utf-8")
+    # Comments stripped first (#473's twin, arm 2): a commented-out
+    # `// cell: (e) => renderDetails(e.details),` satisfied the regexes below.
+    # `reader_text` has already parsed this file -- it sits under
+    # `apps/web/src` -- so a TsParseError here cannot be the first report.
+    text = ts_use_text(viewer.read_text(encoding="utf-8"))
     iterates = bool(re.search(r"Object\.(entries|keys)\s*\(\s*details", text))
     wired = bool(re.search(r"cell:[^\n]*\bdetails\b", text))
     return iterates and wired
