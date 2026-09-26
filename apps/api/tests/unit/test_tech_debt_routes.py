@@ -314,6 +314,8 @@ def test_extract_versions_across_approved_boundary(app_client) -> None:
     )
     assert r1.status_code == 201, r1.text
     assert r1.json()["version"] == 1
+    # #639: approval refuses undecided rows, so decide the one row first.
+    _decide(c, bearer, [i["id"] for i in r1.json()["items"]])
 
     # Move the v1 draft on by approving it: the guard no longer applies.
     ar = c.post(
@@ -603,7 +605,8 @@ def test_approve_capability_list_writes_status_and_actor(app_client) -> None:
     c, _, provider = app_client
     admin = _register(c, "admin@example.com")
     bearer = admin["tokens"]["access_token"]
-    svc_id, _item_id = _create_list_with_item(c, bearer, provider)
+    svc_id, item_id = _create_list_with_item(c, bearer, provider)
+    _decide(c, bearer, [item_id])  # #639: approval refuses undecided rows
     latest = c.get(
         f"/tech-debt/services/{svc_id}/capability-lists/latest",
         headers={"Authorization": f"Bearer {bearer}"},
@@ -667,6 +670,53 @@ def test_approve_refuses_while_rows_are_undecided_naming_the_count(
     assert "Review and correct the extracted list" in error["message"], error["message"]
     after = _latest_list(c, bearer, svc_id)
     assert after["status"] == "draft" and after["approved_at"] is None, after
+
+
+@pytest.mark.unit
+def test_a_row_undecided_between_the_check_and_the_write_is_still_refused(
+    app_client, monkeypatch
+) -> None:
+    """The guard is the UPDATE's WHERE, not the read before it. Every row is
+    decided when the route counts, and a concurrent edit sets one back to
+    undecided before the write -- forced deterministically: the route calls
+    `build_approved_membership` between the two, and a one-shot hook there
+    commits the edit through a separate session. Without the condition in the
+    WHERE, the list is approved over an undecided row."""
+    import app.routes.tech_debt as td
+    from app.models.capability import CapabilityItem
+
+    c, sessions, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)
+    list_id = _latest_list(c, bearer, svc_id)["id"]
+
+    real = td.build_approved_membership
+    fired: list[bool] = []
+
+    def racing_edit(db, capability_list_id):
+        if not fired:
+            fired.append(True)
+            other = sessions()
+            try:
+                item = other.get(CapabilityItem, _uuid.UUID(item_ids[0]))
+                item.disposition = None
+                other.commit()
+            finally:
+                other.close()
+        return real(db, capability_list_id)
+
+    monkeypatch.setattr(td, "build_approved_membership", racing_edit)
+    r = c.post(
+        f"/tech-debt/capability-lists/{list_id}/approve",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+
+    assert fired, "the hook never ran -- the race was not exercised"
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "capability_list_undecided_rows"
+    assert "1 row is" in r.json()["error"]["message"]
+    assert _latest_list(c, bearer, svc_id)["status"] == "draft"
 
 
 @pytest.mark.unit
@@ -818,10 +868,13 @@ def _approve_list(c: TestClient, bearer: str, svc_id: str) -> str:
         headers={"Authorization": f"Bearer {bearer}"},
     )
     list_id = latest.json()["id"]
-    c.post(
+    r = c.post(
         f"/tech-debt/capability-lists/{list_id}/approve",
         headers={"Authorization": f"Bearer {bearer}"},
     )
+    # A refused approval here used to be ignored, and every test after it ran
+    # against a draft list it believed approved.
+    assert r.status_code == 200, r.text
     return list_id
 
 
@@ -887,7 +940,8 @@ def test_latest_returns_newest_finalized_version(app_client) -> None:
     c, _, provider = app_client
     admin = _register(c, "admin@example.com")
     bearer = admin["tokens"]["access_token"]
-    svc_id, _ = _seed_three_item_list(c, bearer, provider)
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)  # #639: approval refuses undecided rows
     _approve_list(c, bearer, svc_id)
     c.post(
         f"/tech-debt/services/{svc_id}/deliverables/finalize",
@@ -913,7 +967,8 @@ def test_client_cannot_reach_latest_deliverable(app_client) -> None:
     c, _, provider = app_client
     admin = _register(c, "admin@example.com")
     bearer = admin["tokens"]["access_token"]
-    svc_id, _ = _seed_three_item_list(c, bearer, provider)
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)  # #639: approval refuses undecided rows
     _approve_list(c, bearer, svc_id)
     c.post(
         f"/tech-debt/services/{svc_id}/deliverables/finalize",
@@ -1329,7 +1384,8 @@ def test_a_released_refusal_carries_a_typed_reason_like_its_twin(app_client) -> 
     admin = _register(c, "released-refusal@example.com")
     bearer = admin["tokens"]["access_token"]
     h = {"Authorization": f"Bearer {bearer}"}
-    svc_id, _item_id = _create_list_with_item(c, bearer, provider)
+    svc_id, item_id = _create_list_with_item(c, bearer, provider)
+    _decide(c, bearer, [item_id])  # #639: approval refuses undecided rows
     list_id = c.get(f"/tech-debt/services/{svc_id}/capability-lists/latest", headers=h).json()["id"]
 
     assert c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h).status_code == 200
