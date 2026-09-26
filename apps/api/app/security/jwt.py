@@ -57,6 +57,10 @@ class TokenPayload:
     # against the original login, not the last refresh. Optional so tokens
     # minted before this claim existed still parse (C0).
     auth_time: datetime | None = None
+    # When this token was issued, whole seconds (#658). `verify_token` requires
+    # the claim, so a verified payload always carries it; the default exists only
+    # because the field follows one with a default.
+    iat: datetime | None = None
 
 
 def _ttl_for(typ: TokenType) -> timedelta:
@@ -117,7 +121,13 @@ def issue_token(
 
     token = jwt.encode(claims, settings.jwt_signing_secret, algorithm=ALGORITHM)
     payload = TokenPayload(
-        sub=subject, role=role, typ=typ, jti=jti, exp=exp, auth_time=effective_auth_time
+        sub=subject,
+        role=role,
+        typ=typ,
+        jti=jti,
+        exp=exp,
+        auth_time=effective_auth_time,
+        iat=datetime.fromtimestamp(claims["iat"], UTC),
     )
     return token, payload
 
@@ -165,4 +175,5 @@ def verify_token(token: str, *, expected_type: TokenType | None = None) -> Token
         jti=jti,
         exp=datetime.fromtimestamp(int(claims["exp"]), UTC),
         auth_time=auth_time,
+        iat=datetime.fromtimestamp(int(claims["iat"]), UTC),
     )
