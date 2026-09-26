@@ -257,6 +257,7 @@ def _make_released_attack(
         # #556: a real assessment records the catalog it was scored against. The
         # fixture predates that column; `None` is the pre-0052 (stale) state.
         catalog_version=SOURCE_VERSION if catalog_version == "current" else catalog_version,
+        parent_rules=2,  # what approve writes (#620, migration 0054)
     )
     db.add(a)
     db.flush()

@@ -51,9 +51,12 @@ from app.attack.exporters import (  # noqa: E402
 from app.attack.exporters import (  # noqa: E402
     render_xlsx as render_attack_xlsx,
 )
+from app.attack.parents import recompute_parents  # noqa: E402
 from app.attack.pending import CLAIMS_SUPPORT  # noqa: E402
 from app.attack.pending import pending_codes as attack_pending_codes  # noqa: E402
 from app.attack.pending import row_tools as attack_row_tools  # noqa: E402
+from app.attack.rules import NEW_RULES as ATTACK_NEW_RULES  # noqa: E402
+from app.attack.rules import parents_computed as attack_parents_computed  # noqa: E402
 from app.audit import audit  # noqa: E402
 from app.csf.catalog import SUBCATEGORIES as CSF_SUBS  # noqa: E402
 from app.csf.exporters import build_context as build_csf_context  # noqa: E402
@@ -930,6 +933,9 @@ def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client)
         approved_by=admin.id,
         # #556: rows below are seeded from this catalog, so record which one.
         catalog_version=ATTACK_SOURCE_VERSION,
+        # #620 (D-094): the rows below are recomputed under D-094's rules, so
+        # the demo renders under them -- as approve would have recorded.
+        parent_rules=ATTACK_NEW_RULES,
     )
     db.add(assessment)
     db.flush()
@@ -969,6 +975,14 @@ def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client)
             )
         )
     db.add_all(coverage_rows)
+    # #554 (D-094): a parent with sub-techniques is computed from them, never
+    # assigned. The positional statuses above cover parents too, so they are
+    # recomputed through the SAME function the write paths use; each parent the
+    # rule changed gets the seed's tools for its new status, so the unbacked-
+    # claim guard below still holds for it.
+    for code in recompute_parents({r.technique_code: r for r in coverage_rows}).changed:
+        parent = next(r for r in coverage_rows if r.technique_code == code)
+        parent.detection_tools, parent.response_tools = _attack_tools_for(parent.status)
     db.flush()
 
     coverage_map = {r.technique_code: r.status for r in coverage_rows}
@@ -991,7 +1005,9 @@ def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client)
             "report a coverage number its own data does not support -- give the status a "
             "tool or drop the status."
         )
-    pending = attack_pending_codes(coverage_rows)
+    pending = attack_pending_codes(
+        coverage_rows, parents_computed=attack_parents_computed(assessment)
+    )
     assert not pending, f"seeded rows the scoring rule would withhold: {sorted(pending)[:3]}"
     rollup = compute_attack(coverage_map, pending)
 

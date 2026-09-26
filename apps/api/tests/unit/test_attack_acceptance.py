@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.attack.catalog import TECHNIQUES
 from app.storage.local import LocalFilesystemStorage
+from tests._attack_rows import standalone_rows
 
 
 @pytest.fixture()
@@ -100,12 +101,13 @@ def _seed_and_finalize(c: TestClient, bearer: str) -> tuple[str, str]:
     )
     assessment = a.json()
     # Pick 5 rows and set them covered. Cheap proxy for "real assessor work".
-    for cov in assessment["coverage"][:5]:
-        c.patch(
+    for cov in standalone_rows(assessment["coverage"], 5):
+        r = c.patch(
             f"/attack/coverage/{cov['id']}",
             headers={"Authorization": f"Bearer {bearer}"},
             json={"status": "covered"},
         )
+        assert r.status_code == 200, r.text
     c.post(
         f"/attack/assessments/{assessment['id']}/approve",
         headers={"Authorization": f"Bearer {bearer}"},
@@ -253,7 +255,7 @@ def test_the_stored_summary_says_what_the_deliverable_says(app_client) -> None:
         "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "A"}
     ).json()["id"]
     assessment = c.post(f"/attack/services/{svc_id}/assessments", headers=h).json()
-    for cov in assessment["coverage"][:3]:
+    for cov in standalone_rows(assessment["coverage"], 3):
         r = c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "not_applicable"})
         assert r.status_code == 200, r.text
     c.post(f"/attack/assessments/{assessment['id']}/approve", headers=h)
@@ -291,7 +293,7 @@ def test_the_stored_summary_carries_the_withheld_count(app_client) -> None:
         "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "A"}
     ).json()["id"]
     assessment = c.post(f"/attack/services/{svc_id}/assessments", headers=h).json()
-    ids = [_uuid.UUID(cov["id"]) for cov in assessment["coverage"][:3]]
+    ids = [_uuid.UUID(cov["id"]) for cov in standalone_rows(assessment["coverage"], 3)]
 
     engine = create_engine(os.environ["DATABASE_URL"], future=True)
     with Session(engine) as db:
