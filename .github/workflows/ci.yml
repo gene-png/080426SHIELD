@@ -14,8 +14,12 @@ permissions:
   contents: read
 
 jobs:
-  python:
-    name: Python (ruff + black + pytest + bandit)
+  python-checks:
+    # Every lint and gate step of the required Python check, minus pytest,
+    # which runs in `pytest-shard` below. NOT itself required: the job
+    # named "Python (ruff + black + pytest + bandit)" is the aggregate,
+    # which needs this job and every shard.
+    name: Python lint and gates
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -536,9 +540,20 @@ jobs:
         working-directory: apps/api
         run: python -m scripts.check_ci_selection
 
-      - name: pytest -m unit
+      # The FULL unit selection, from check_ci_selection's own collector,
+      # for the aggregate's partition check: the shards must run exactly
+      # this set between them, each test once.
+      - name: The unit selection, for the shard partition check
         working-directory: apps/api
-        run: pytest -m unit tests/unit
+        run: python -m scripts.shard_partition collect --out "$RUNNER_TEMP/pytest-selection.txt"
+
+      - name: Upload the unit selection
+        uses: actions/upload-artifact@v7
+        with:
+          name: pytest-selection
+          path: ${{ runner.temp }}/pytest-selection.txt
+          retention-days: 7
+          if-no-files-found: error
 
       - name: bandit
         run: bandit -q -c pyproject.toml -r apps/api/app
@@ -549,6 +564,95 @@ jobs:
         working-directory: apps/api
         continue-on-error: true
         run: pip-audit
+
+  pytest-shard:
+    # `pytest -m unit tests/unit` was about 22 of the Python job's 24 minutes.
+    # Split 4 ways by `scripts/pytest_shard.py`: after `-m unit` deselects, each
+    # file's tests are dealt round-robin across the shards, derived from
+    # collection alone. Each shard records the node ids it ran; the aggregate
+    # checks their union is the full selection, each test exactly once.
+    name: Python unit tests (shard ${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install API + dev tools
+        working-directory: apps/api
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      # The ONE pytest step over tests/unit. Its argv is pinned EQUAL to
+      # `python -m pytest -p scripts.pytest_shard` + check_ci_selection's
+      # CI_SELECTOR, and its env may carry only these two keys, by
+      # test_ci_selection_gate.py. The plugin narrows by environment, which that
+      # gate cannot see; the aggregate's union check is what closes it.
+      - name: pytest -m unit (shard)
+        working-directory: apps/api
+        env:
+          PYTEST_SHARD: ${{ matrix.shard }}/4
+          PYTEST_SHARD_RECORD: ${{ runner.temp }}/pytest-shard-${{ matrix.shard }}.txt
+        run: python -m pytest -p scripts.pytest_shard -m unit tests/unit
+
+      - name: Upload what this shard ran
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pytest-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/pytest-shard-${{ matrix.shard }}.txt
+          retention-days: 7
+          if-no-files-found: ignore
+
+  python:
+    # THE REQUIRED CHECK, by its exact name: branch protection lists it, and it
+    # must not change. `if: always()` so it RUNS when a dependency failed or was
+    # skipped -- a skipped required job reports success. It then fails unless
+    # every dependency succeeded, and unless the shards partitioned the
+    # selection.
+    name: Python (ruff + black + pytest + bandit)
+    needs: [python-checks, pytest-shard]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every Python job succeeded
+        env:
+          CHECKS: ${{ needs.python-checks.result }}
+          SHARDS: ${{ needs.pytest-shard.result }}
+        run: |
+          echo "python-checks: $CHECKS; pytest shards: $SHARDS"
+          if [ "$CHECKS" != "success" ] || [ "$SHARDS" != "success" ]; then
+            echo "::error::a Python job did not succeed (failed, cancelled or skipped), so this required check is red"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: pytest-*
+          path: ${{ runner.temp }}/pytest
+          merge-multiple: true
+
+      - name: The shards ran every selected test exactly once
+        working-directory: apps/api
+        run: >-
+          python -m scripts.shard_partition verify
+          --full "$RUNNER_TEMP/pytest/pytest-selection.txt"
+          --of 4
+          --ran "$RUNNER_TEMP"/pytest/pytest-shard-*.txt
 
   web:
     name: Web (prettier + eslint + typecheck + build)
@@ -627,8 +731,12 @@ jobs:
   # SHIELD_EMAIL_DELIVERY_ENABLED=true (Sprint 7 T3), so `docker compose up -d`
   # brings up MailHog and the s21 email-verify/reset spec RUNS here (no longer
   # self-skips). The runner has Docker + Compose v2.
-  e2e:
-    name: E2E (Playwright smoke suite)
+  e2e-shard:
+    # The Playwright suite, split 4 ways with Playwright's own `--shard`,
+    # each leg on its own runner with its own composed stack and a fresh seed.
+    # Each leg uploads the list of tests its shard selects; the aggregate `e2e`
+    # below checks their union is the full list, each test exactly once.
+    name: E2E (Playwright shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     # 30 was not enough once the suite reached 73 tests: the 2026-08-05 run on
     # PR #5 was terminated at 30m18s with Playwright still going (no assertion
@@ -638,7 +746,107 @@ jobs:
     # will keep growing. Sharding is the real fix and needs per-shard database
     # isolation; until then this ceiling has to clear a full serial run with
     # headroom for a slow runner.
-    timeout-minutes: 55
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      # Bring up postgres/redis/minio/keycloak/mailhog/api/web from the repo
+      # compose file. NEXTAUTH_SECRET mirrors the web job's ci-only value so we
+      # don't ship the literal dev placeholder; every other var uses the
+      # compose-file default, all of which are ci-safe.
+      - name: Compose up
+        env:
+          NEXTAUTH_SECRET: ci-only-not-a-real-secret-1234567890
+        run: docker compose up -d
+
+      # The api container only serves after `alembic upgrade head`; Keycloak
+      # cold start is the slow gate. Poll with a generous budget and FAIL LOUDLY
+      # (dump logs, non-zero exit) if the stack never becomes healthy.
+      - name: Wait for API health
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8000/health >/dev/null; then
+              echo "api healthy after ${i} attempt(s)"; exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::api did not become healthy within budget"
+          docker compose logs api keycloak
+          exit 1
+
+      - name: Seed demo tenant
+        run: docker compose exec -T api python scripts/seed_demo.py
+
+      # web's first boot installs pnpm deps into the container before next dev
+      # starts listening. Poll on :3000 with the same fail-loud contract.
+      - name: Wait for web
+        run: |
+          for i in $(seq 1 72); do
+            if curl -sf http://localhost:3000 >/dev/null; then
+              echo "web up after ${i} attempt(s)"; exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::web did not come up within budget"
+          docker compose logs web
+          exit 1
+
+      - name: Install e2e deps
+        working-directory: e2e
+        run: npm ci
+
+      - name: Install Playwright chromium
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+
+      # #540/#579: every script-suffixed file under e2e/ must be in CI's run or
+      # declared non-suite (a rename dropping every script suffix is unseen,
+      # #605). `--list` applies the config's selection (testIgnore / testMatch / grep / projects) exactly as
+      # the run step below does, with the same cwd and no arguments -- pinned by
+      # test_e2e_spec_listing_gate.py -- and needs no browser or stack.
+      - name: List this shard's tests
+        working-directory: e2e
+        run: npx playwright test --list --shard=${{ matrix.shard }}/4 > "$RUNNER_TEMP/e2e-shard-${{ matrix.shard }}.txt"
+
+      - name: Upload this shard's test list
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-list-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/e2e-shard-${{ matrix.shard }}.txt
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Run Playwright suite (shard)
+        working-directory: e2e
+        run: npx playwright test --shard=${{ matrix.shard }}/4
+
+      - name: Upload Playwright report and traces
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-shard-${{ matrix.shard }}
+          path: |
+            e2e/playwright-report/
+            e2e/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  e2e-session:
+    # The #487 pair needs the stack recreated with a 60-second access token,
+    # so it runs on its own runner rather than after one shard. The #540
+    # spec-listing check runs here too, and this job uploads the FULL test
+    # list the aggregate checks the shards against.
+    name: E2E session expiry (#487)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 
@@ -711,9 +919,13 @@ jobs:
           python ../apps/api/scripts/check_e2e_spec_listing.py --list-file "$RUNNER_TEMP/playwright-list.txt" --root ..
 
       # GitHub Actions sets CI=true, so playwright.config.ts applies retries: 1.
-      - name: Run Playwright suite
-        working-directory: e2e
-        run: npx playwright test
+      - name: Upload the full test list
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-list-full
+          path: ${{ runner.temp }}/playwright-list.txt
+          retention-days: 7
+          if-no-files-found: error
 
       # #487: a user working on one page was signed out once the access token
       # expired, because a server-side `auth()` rotated the refresh token and
@@ -753,13 +965,58 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-report
+          name: playwright-report-487
           path: |
             e2e/playwright-report/
-            e2e/test-results/
             e2e/test-results-487/
           retention-days: 7
           if-no-files-found: ignore
+
+  e2e:
+    # THE REQUIRED CHECK, by its exact name. `if: always()` so it runs when a
+    # leg failed or was skipped (a skipped required job reports success); it
+    # fails unless every leg succeeded and the shard lists partition the suite.
+    name: E2E (Playwright smoke suite)
+    needs: [e2e-shard, e2e-session]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every E2E job succeeded
+        env:
+          SHARDS: ${{ needs.e2e-shard.result }}
+          SESSION: ${{ needs.e2e-session.result }}
+        run: |
+          echo "e2e shards: $SHARDS; e2e session: $SESSION"
+          if [ "$SHARDS" != "success" ] || [ "$SESSION" != "success" ]; then
+            echo "::error::an E2E job did not succeed (failed, cancelled or skipped), so this required check is red"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: e2e-list-*
+          path: ${{ runner.temp }}/e2e
+          merge-multiple: true
+
+      # A Playwright `--list` test line carries " › "; the header and the
+      # "Total:" line do not. grep's exit 1 (no line matched) is allowed through
+      # so an empty list reaches the verifier, which calls it could-not-look.
+      - name: The shards listed every test exactly once
+        working-directory: apps/api
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/e2e"
+          for f in playwright-list.txt e2e-shard-*.txt; do
+            grep ' › ' "$f" > "ids-$f" || [ "$?" -eq 1 ]
+          done
+          cd "$GITHUB_WORKSPACE/apps/api"
+          python -m scripts.shard_partition verify --full "$RUNNER_TEMP/e2e/ids-playwright-list.txt" --of 4 --ran "$RUNNER_TEMP"/e2e/ids-e2e-shard-*.txt
 
   # Hosted-demo bring-up job (Sprint 9 T9). Runs the one-command reset in its
   # own isolated runner so its `docker compose down -v` cannot touch the e2e
