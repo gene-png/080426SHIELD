@@ -5,6 +5,14 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # The merge queue: every required context must report on the queue's group
+  # commit or the queue waits forever. No job below carries a job-level `if:`,
+  # because a skipped required job reports SUCCESS -- a silent green on the one
+  # event the queue decides on. tests/unit/test_merge_group_triggers.py pins
+  # both. On merge_group `github.ref` is the unique gh-readonly-queue ref, so the
+  # concurrency group below never cancels one queue entry for another.
+  merge_group:
+    types: [checks_requested]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -611,9 +619,44 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      # Every event except merge_group. The two conditions are exact complements
+      # (pinned by test_merge_group_triggers.py), so exactly one scanner runs.
       - uses: gitleaks/gitleaks-action@v3
+        if: github.event_name != 'merge_group'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # WHY THIS STEP EXISTS: gitleaks-action@v3 refuses merge_group -- its
+      # src/index.js lists supportedEvents = push, pull_request,
+      # workflow_dispatch, schedule, and exits 1 "The [merge_group] event is not
+      # yet supported" otherwise, which would turn this required check red on
+      # every queue entry. So on merge_group only, run the SAME gitleaks version
+      # the action defaults to (8.24.3, index.js `GITLEAKS_VERSION ||`), verified
+      # against the release's own checksums file before it executes, over the
+      # commits the queue added. REMOVE THIS STEP, the `if:` on the action above,
+      # and scripts/gitleaks-merge-group.sh when the action supports merge_group:
+      # re-read supportedEvents in index.js at the tag pinned above.
+      #
+      # The sha256 is from gitleaks_8.24.3_checksums.txt on the v8.24.3 release,
+      # fetched 2026-09-26 with `gh release download`, and matched a local
+      # sha256sum of the tarball. A mismatch fails `sha256sum -c` and the step,
+      # before the binary runs. The script refuses a range with no commits
+      # (exit 2): a merge-shaped queue group would otherwise scan nothing, pass.
+      - name: gitleaks on the merge-queue group (pinned CLI, checksum-verified)
+        if: github.event_name == 'merge_group'
+        env:
+          GITLEAKS_VERSION: "8.24.3"
+          GITLEAKS_SHA256: "9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c"
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        run: |
+          set -euo pipefail
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${tarball}"
+          curl -fsSL -o "/tmp/${tarball}" "$url"
+          echo "${GITLEAKS_SHA256}  /tmp/${tarball}" | sha256sum -c -
+          mkdir -p /tmp/gitleaks
+          tar -xzf "/tmp/${tarball}" -C /tmp/gitleaks gitleaks
+          bash scripts/gitleaks-merge-group.sh /tmp/gitleaks/gitleaks "$BASE_SHA" "$HEAD_SHA"
 
   # Host-run Playwright smoke suite against the full composed stack. This
   # reproduces the canonical fresh-stack bring-up documented in e2e/README.md
