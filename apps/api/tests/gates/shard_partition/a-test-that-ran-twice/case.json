@@ -1,0 +1,16 @@
+{
+ "incident": "ADVERSARIAL: a duplicate is not a gap -- the union still equals the selection, so a union-only check passes it. Two shards both running a test means the assignment is not a partition (a double-counted run hides a lost one elsewhere once the counts are compared). It must be red on its own.",
+ "expect": 1,
+ "adversarial": true,
+ "argv": [
+  "verify",
+  "--full",
+  "{dir}/full.txt",
+  "--of",
+  "2",
+  "--ran",
+  "{dir}/ran-1.txt",
+  "{dir}/ran-2.txt"
+ ],
+ "stdout_contains": "ran in 2 shards: tests/unit/test_a.py::test_2"
+}
