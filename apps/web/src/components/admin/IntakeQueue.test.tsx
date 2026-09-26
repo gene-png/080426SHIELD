@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { IntakeQueue } from "./IntakeQueue";
 
 import type { AdminServiceRequestRow } from "@/lib/admin/types";
+import type { useServiceStages as useServiceStagesType } from "@/lib/stages/client";
 import type { ClientProfileResponse } from "@/lib/intake/types";
 
 /**
@@ -29,8 +30,18 @@ vi.mock("@/lib/admin/client", async (importOriginal) => ({
   fetchIntakeQueue: vi.fn(),
   fulfillServiceRequest: vi.fn(),
 }));
+// `stages: null` is what the real hook returns for a request with no published
+// service -- every fixture here (`fulfilled_service_id: null`). It returned
+// `stages: []`, a shape the hook cannot produce: IntakeQueue reads
+// `serviceStages.stages`, so the first test to render a request row crashed
+// (#683). It also returned a `reload` the hook does not have; the `satisfies`
+// below caught that. Typed against the hook's own return so neither can drift again.
 vi.mock("@/lib/stages/client", () => ({
-  useServiceStages: () => ({ phase: "ready", stages: [], reload: vi.fn() }),
+  useServiceStages: () =>
+    ({
+      phase: "ready",
+      stages: null,
+    }) satisfies ReturnType<typeof useServiceStagesType>,
 }));
 
 const { fetchIntakeQueue } = await import("@/lib/admin/client");
