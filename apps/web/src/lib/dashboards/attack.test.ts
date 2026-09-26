@@ -22,6 +22,7 @@ function tech(partial: Partial<DashTechnique>): DashTechnique {
     prevention_tools: [],
     response_tools: [],
     rationale: null,
+    computed_parent: false,
     ...partial,
   };
 }
@@ -156,6 +157,19 @@ describe("attack dashboard transforms", () => {
     expect(dpr.total).toBe(0);
     expect(dpr.detect.n).toBe(0);
     expect(dpr.detect.pct).toBe(0);
+  });
+
+  it("dprCoverage: a computed parent is counted through its sub-techniques only (#620)", () => {
+    // Option (b), the coordinator's call pending Gene: a parent carries no tools
+    // of its own (D-094), so counting it would add a zero-leg row per parent.
+    // Here the parent CHANGES the answer: with it, Detect is 2 of 3 = 67%;
+    // counted once, through its children, it is 2 of 2 = 100%.
+    const parent = tech({ code: "T1001", computed_parent: true });
+    const c1 = tech({ code: "T1001.001", detection_tools: ["Tool A"] });
+    const c2 = tech({ code: "T1001.002", detection_tools: ["Tool A"] });
+    const dpr = dprCoverage([parent, c1, c2]);
+    expect(dpr.total).toBe(2);
+    expect(dpr.detect).toEqual({ n: 2, pct: 100 });
   });
 
   it("blindSpots: only gap techniques", () => {

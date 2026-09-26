@@ -32,6 +32,14 @@ export interface DashTechnique {
    * the rollup withholds it. Carried beside `status`, never over it.
    */
   pending_review?: boolean;
+  /**
+   * #620 round 2 (D-094): a parent whose status is computed from its
+   * sub-techniques. The API sends no tools or rationale for it, and the
+   * Detect / Prevent / Respond triad leaves it out, so each technique is
+   * counted once, through its sub-techniques. Required: set by the API from
+   * the catalog's parent links.
+   */
+  computed_parent: boolean;
   detection_tools: string[];
   prevention_tools: string[];
   response_tools: string[];
@@ -125,7 +133,12 @@ export interface DprCoverage {
  * posture rather than decline to state it.
  */
 export function dprCoverage(techniques: DashTechnique[]): DprCoverage {
-  const claimable = techniques.filter((t) => !t.pending_review);
+  // A computed parent is out too (#620 round 2, option (b), pending Gene's
+  // confirmation): it carries no tools of its own, so counting it would add a
+  // zero-leg row per parent beside the children it is computed from.
+  const claimable = techniques.filter(
+    (t) => !t.pending_review && !t.computed_parent,
+  );
   const total = claimable.length;
   const detect = claimable.filter((t) => t.detection_tools.length > 0).length;
   const prevent = claimable.filter((t) => t.prevention_tools.length > 0).length;

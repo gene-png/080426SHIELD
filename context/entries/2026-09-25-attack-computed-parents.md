@@ -5,8 +5,8 @@ Branch `track2/attack-computed-parents`, from `main` at `2028f38`.
 ## What changed
 
 - **`app/attack/parents.py`**: the rule (`computed_parent_status`), the set of
-  parents it applies to (`PARENT_CHILDREN`, from the catalog: 95 of 193
-  parents have sub-techniques), and `recompute_parents` for the write paths.
+  parents it applies to (`PARENT_CHILDREN`, from the catalog's parent links; count them with
+  `python -c "from app.attack.parents import PARENT_CHILDREN; print(len(PARENT_CHILDREN))"`), and `recompute_parents` for the write paths.
 - **PATCH** refuses a computed parent's status or reason (typed 422
   `parent_status_computed`) and recomputes a child's parent in the same
   transaction.
