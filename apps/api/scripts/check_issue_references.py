@@ -173,7 +173,26 @@ def main(argv: list[str] | None = None) -> int:
         print("Refusing to report clean on input it could not read.", file=sys.stderr)
         return 2
 
+    # A PR has at least one commit, so an EMPTY commits file means the collect
+    # step failed, not that there was nothing to scan. Before this it printed
+    # clean over zero lines.
+    if not commits.strip():
+        print(
+            "issue-close guard: the commits file is empty -- a pull request has at "
+            "least one commit, so the collection failed.",
+            file=sys.stderr,
+        )
+        print("Refusing to report clean on input it could not read.", file=sys.stderr)
+        return 2
+
     approved = approved_numbers(body)
+    # What a clean line says it read (D-090, #592). The commits file is every
+    # commit message concatenated, so it is measured in lines, not commits.
+    scanned = (
+        f"read the title ({len(title.strip())} chars), the description "
+        f"({len(body.strip())} chars) and {len(commits.splitlines())} line(s) of "
+        f"commit messages"
+    )
     hits: list[tuple[str, int, str]] = []
     for where, text in (("title", title), ("description", body), ("commit message", commits)):
         for m in _CLOSING.finditer(text):
@@ -256,12 +275,13 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 "issue-close guard: clean "
                 f"({len(approved)} declared close{'s' if len(approved) != 1 else ''}: "
-                f"{', '.join(str(n) for n in sorted(approved))}){verified}."
+                f"{', '.join(str(n) for n in sorted(approved))}){verified}; {scanned}."
             )
         else:
             print(
                 "issue-close guard: clean — no closing references"
-                + (" (verified against GitHub)." if args.linked is not None else ".")
+                + (" (verified against GitHub)" if args.linked is not None else "")
+                + f"; {scanned}."
             )
         return 0
 
@@ -324,5 +344,5 @@ if __name__ == "__main__":
     except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
         nl = chr(10)
         sys.stderr.write(f"issue-close guard: CRASHED: {type(exc).__name__}: {exc}{nl}")
-        sys.stderr.write(f"A crash is not a clean report and not a violation (D-051).{nl}")
+        sys.stderr.write(f"A crash is not a clean report and not a violation (D-090).{nl}")
         raise SystemExit(2) from exc

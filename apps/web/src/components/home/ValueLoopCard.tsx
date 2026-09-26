@@ -49,6 +49,11 @@ interface Metric {
   /** The figure could not be resolved for a report the client HAS. Renders the
    *  third state instead of "Pending" — see `ValueSummary`. */
   unresolved: boolean;
+  /** Why it is unresolved, when the cause is not the #114 one: the client's own
+   *  sentence for it. Replaces the "can't match this figure" copy, which says
+   *  the report is "still available under Results" -- false for a report whose
+   *  figures and files are withheld (#556). */
+  unresolvedReason?: string | null;
   /** The assumed-target disclosure, or null when every summand used the
    *  client's own choice (#207). Separate from `hint` because it is a FACT
    *  about the figure rather than a description of it, and because it must
@@ -145,6 +150,9 @@ function buildMetrics(summary: ValueSummary): Metric[] {
             : `${COUNT.format(summary.attack_uncovered_count)} techniques uncovered`,
       hint: "Adversary techniques with no defensive coverage yet.",
       unresolved: summary.attack_uncovered_unresolved,
+      unresolvedReason: summary.attack_uncovered_withheld
+        ? "Your MITRE ATT&CK coverage report was produced against an earlier version of the ATT&CK framework than the current one, so its figures are withheld."
+        : null,
     },
     {
       label: "NIST CSF 2.0",
@@ -228,9 +236,11 @@ export function ValueLoopCard({
                 )}
               </dd>
               <p className="mt-1 text-xs text-ink-tertiary">
-                {m.unresolved
-                  ? `We can't match this figure to your ${m.kindNoun}, so we're not showing a number — including for any of them that are fine. They are still available under Results. Your analyst will need to look into it.`
-                  : m.hint}
+                {m.unresolved && m.unresolvedReason
+                  ? m.unresolvedReason
+                  : m.unresolved
+                    ? `We can't match this figure to your ${m.kindNoun}, so we're not showing a number — including for any of them that are fine. They are still available under Results. Your analyst will need to look into it.`
+                    : m.hint}
               </p>
               {/* Only beside a figure. In the unresolved branch there is no
                   number for this to qualify, and `targetNotes` returns null

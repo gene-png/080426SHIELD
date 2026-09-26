@@ -66,25 +66,27 @@ def _seed_assessment(engine, *, status: str) -> str:
     )
 
     with Session(engine) as db:
-        a = AttackAssessment(
-            service_id=uuid.uuid4(),
-            client_id=uuid.uuid4(),
-            version=1,
-            status=AttackAssessmentStatus(status),
+        # Through the models' TABLES, naming only the columns revision 0044 had.
+        # The ORM would also INSERT every column the models have TODAY -- 0052's
+        # `catalog_version`, 0053's `reason_code` and `narrative` -- into a
+        # database migrated only to 0044, and fail. A Core insert against each
+        # table keeps this helper's point: stored values still come from the
+        # models' own column types (the enum NAME included), not a hand-typed guess.
+        assessment_id, client_id, coverage_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        db.execute(
+            insert(AttackAssessment.__table__).values(
+                id=assessment_id,
+                service_id=uuid.uuid4(),
+                client_id=client_id,
+                version=1,
+                status=AttackAssessmentStatus(status),
+            )
         )
-        db.add(a)
-        db.flush()
-        # Through the model's TABLE, naming only the columns revision 0044 had.
-        # The ORM would also INSERT every column the model has TODAY -- 0053's
-        # `reason_code` and `narrative` among them -- into a database migrated
-        # only to 0044, and fail. A Core insert against the table keeps this
-        # helper's point: stored values still come from the model's own types.
-        coverage_id = uuid.uuid4()
         db.execute(
             insert(AttackCoverage.__table__).values(
                 id=coverage_id,
-                assessment_id=a.id,
-                client_id=a.client_id,
+                assessment_id=assessment_id,
+                client_id=client_id,
                 technique_code="T1003",
                 status="covered",
             )

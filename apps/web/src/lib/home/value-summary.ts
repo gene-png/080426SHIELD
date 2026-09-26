@@ -44,6 +44,9 @@ export interface ValueSummary {
   zt_targets_computed_live: number | null;
   attack_uncovered_count: number | null;
   attack_uncovered_unresolved: boolean;
+  /** #556: unresolved BECAUSE the released ATT&CK report is withheld (another
+   *  catalog), not because the figure cannot be matched (#114). */
+  attack_uncovered_withheld: boolean;
   csf_gap_count: number | null;
   csf_gap_unresolved: boolean;
   csf_services: number;

@@ -2,7 +2,10 @@
 
 /** Wire types for GET /admin/deliverables (apps/api/app/schemas/admin.py). */
 
-export type DeliverableStatus = "generated" | "released" | "superseded";
+/** `withheld`: a released ATT&CK report scored against another catalog (#556).
+ *  Released, and NOT visible to the client. */
+export type DeliverableStatus =
+  "generated" | "released" | "withheld" | "superseded";
 
 export interface AdminDeliverableRow {
   id: string;

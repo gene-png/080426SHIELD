@@ -8,7 +8,7 @@ tools: Bash, Read, Grep, Glob, Edit, Write, Agent
 
 ## Step 0a — is your `CLAUDE.md` COMPLETE?
 
-**`CLAUDE.md` must end with the line `<!-- CLAUDE-MD-CANARY: v1 -->`. If the
+**`CLAUDE.md` must end with the line `CLAUDE-MD-CANARY: v2` (plain text; the older `<!-- ... v1 -->` form is dropped by context injection, #459). If the
 copy you received does not, IT IS TRUNCATED. Say so, name the last heading you
 did receive, and do not apply the merge rule or any condition test until
 someone confirms which clauses are missing.**

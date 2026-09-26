@@ -111,12 +111,37 @@ def test_catalog_returns_full_matrix(app_client) -> None:
     )
     assert r.status_code == 200
     body = r.json()
-    assert len(body["tactics"]) == 14
+    # The route mirrors the catalog; the catalog is pinned to MITRE's STIX in
+    # test_attack_catalog_matches_stix.py (#556), so the count is not repeated here.
+    assert len(body["tactics"]) == len(TACTICS)
     assert len(body["techniques"]) >= 600
     assert body["total_techniques"] >= 150
     assert body["total_sub_techniques"] >= 350
     # Six since the #554 vocabulary (2026-09-24): the spec changed, not the rigour.
     assert len(body["coverage_definitions"]) == 6
+    # #554: the codes the workspace may offer, per status -- the owner's decision
+    # typed as literals, never read from `coverage.REASON_CODES`.
+    by_status: dict[str, set[str]] = {}
+    for r in body["reason_codes"]:
+        by_status.setdefault(r["status"], set()).add(r["code"])
+        assert r["definition"].strip(), r
+    assert by_status == {
+        "partial": {
+            "missing_control_category",
+            "reach_limited",
+            "detection_weak",
+            "prevention_limited",
+            "evasive_variant_uncovered",
+            "recovery_absent",
+            "periodic_not_continuous",
+        },
+        "not_applicable": {"platform_absent"},
+        "outside_control_surface": {
+            "adversary_preparation",
+            "external_reconnaissance",
+            "third_party_compromise",
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -304,7 +329,7 @@ def test_heatmap_includes_every_tactic(app_client) -> None:
     )
     assert r.status_code == 200
     body = r.json()
-    assert len(body["by_tactic"]) == 14
+    assert len(body["by_tactic"]) == len(TACTICS)
     # All-unscored heatmap.
     assert body["scored_count"] == 0
     assert body["unscored_count"] == len(TECHNIQUES)
@@ -448,5 +473,10 @@ def test_unknown_assessment_404(app_client) -> None:
 
 @pytest.mark.unit
 def test_total_tactics_equals_catalog() -> None:
-    """Lock the route output against catalog drift."""
-    assert len(TACTICS) == 14
+    """Lock the route output against catalog drift: MITRE's v19.2 matrix has 15
+    tactics (Defense Evasion became Stealth and Defense Impairment). The count is
+    derived from the STIX subset in test_attack_catalog_matches_stix.py; this
+    pins the release the catalog claims to its known shape (#556)."""
+    from app.attack.catalog import SOURCE_VERSION
+
+    assert (SOURCE_VERSION, len(TACTICS)) == ("19.2", 15)
