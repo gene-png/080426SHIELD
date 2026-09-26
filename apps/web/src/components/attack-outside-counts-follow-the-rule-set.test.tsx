@@ -7,6 +7,7 @@ import { outsideAssessedText } from "@/lib/attack/outsideAssessed";
 import type { AttackHeatmap, TacticHeatmapEntry } from "@/lib/attack/types";
 import {
   dprCoverage,
+  triadPopulationText,
   type AttackDashboardData,
   type DashTechnique,
 } from "@/lib/dashboards/attack";
@@ -317,5 +318,48 @@ describe("the home value card follows the rule set", () => {
     expect(
       screen.getByText(/Not verified techniques were not checked/),
     ).toBeInTheDocument();
+  });
+});
+
+describe("the triad names every row its population leaves out (#621 round 5)", () => {
+  const family = (computed: boolean): DashTechnique[] => [
+    {
+      ...technique("T1001", "covered", false),
+      ...(computed ? { computed_parent: true } : {}),
+    },
+    technique("T1001.001", "covered"),
+    technique("T1001.002", "covered"),
+    technique("T2", "not_applicable", false),
+  ];
+
+  it("under the new rules says an N/A row is not counted, beside a computed parent", () => {
+    expect(triadPopulationText(dprCoverage(family(true), true))).toBe(
+      "Over 2 techniques. Not counted here: 1 parent technique, counted through its sub-techniques, and 1 N/A.",
+    );
+  });
+
+  it("names Not verified and outside rows too, in the plural", () => {
+    const rows = [
+      technique("T1", "covered"),
+      technique("T2", "unable_to_determine", false),
+      technique("T3", "unable_to_determine", false),
+      technique("T4", "outside_control_surface", false),
+    ];
+    expect(triadPopulationText(dprCoverage(rows, true))).toBe(
+      "Over 1 technique. Not counted here: 2 Not verified, and 1 outside the control surface.",
+    );
+  });
+
+  it("renders on a rule-2 dashboard", () => {
+    render(<AttackDashboard data={dashboard(true)} />);
+    expect(
+      screen.getByText("Over 1 technique. Not counted here: 1 N/A."),
+    ).toBeInTheDocument();
+  });
+
+  it("under rule 1 is unchanged: N/A stays in the population and is not named", () => {
+    expect(triadPopulationText(dprCoverage(family(false)))).toBe(
+      "Over 4 techniques.",
+    );
   });
 });

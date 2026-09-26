@@ -144,7 +144,15 @@ export interface DprCoverage {
   total: number;
   /** Rows the population left out, from the SAME filter, so the page can say
    *  what the percentages are over (#620 round 3). */
-  excluded: { parents: number; pending: number };
+  excluded: {
+    parents: number;
+    pending: number;
+    /** #621 round 5: rows outside the ASSESSED population, by status. Only
+     *  under #620's rules, where the triad drops them; zero under rule 1. */
+    notApplicable: number;
+    notVerified: number;
+    outside: number;
+  };
 }
 
 /**
@@ -200,13 +208,28 @@ export function dprCoverage(
   const pending = techniques.filter(
     (t) => !t.computed_parent && t.pending_review,
   ).length;
+  // Then the ASSESSED filter, per status, so the sentence can name what it
+  // dropped: without these an N/A row left the denominator in silence and
+  // raised every percentage (#621 round 5).
+  const notAssessed = (status: CoverageStatus): number =>
+    newRules
+      ? techniques.filter(
+          (t) => !t.computed_parent && !t.pending_review && t.status === status,
+        ).length
+      : 0;
   const total = claimable.length;
   const detect = claimable.filter((t) => t.detection_tools.length > 0).length;
   const prevent = claimable.filter((t) => t.prevention_tools.length > 0).length;
   const respond = claimable.filter((t) => t.response_tools.length > 0).length;
   return {
     total,
-    excluded: { parents, pending },
+    excluded: {
+      parents,
+      pending,
+      notApplicable: notAssessed("not_applicable"),
+      notVerified: notAssessed("unable_to_determine"),
+      outside: notAssessed("outside_control_surface"),
+    },
     detect: { n: detect, pct: pctOf(detect, total) },
     prevent: { n: prevent, pct: pctOf(prevent, total) },
     respond: { n: respond, pct: pctOf(respond, total) },
@@ -249,6 +272,11 @@ export function triadPopulationText(d: DprCoverage): string {
     );
   }
   if (d.excluded.pending > 0) out.push(`${d.excluded.pending} pending review`);
+  if (d.excluded.notApplicable > 0) out.push(`${d.excluded.notApplicable} N/A`);
+  if (d.excluded.notVerified > 0)
+    out.push(`${d.excluded.notVerified} Not verified`);
+  if (d.excluded.outside > 0)
+    out.push(`${d.excluded.outside} outside the control surface`);
   const base = `Over ${d.total} technique${d.total === 1 ? "" : "s"}.`;
   return out.length === 0
     ? base
