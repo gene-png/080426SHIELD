@@ -1,0 +1,16 @@
+{
+ "incident": "A shard whose record never arrived (it crashed before collection, or its upload was skipped) must be could-not-look, never read as a shard that ran nothing -- an empty set matching nothing is the silent-green shape.",
+ "expect": 2,
+ "adversarial": false,
+ "argv": [
+  "verify",
+  "--full",
+  "{dir}/full.txt",
+  "--of",
+  "2",
+  "--ran",
+  "{dir}/ran-1.txt",
+  "{dir}/ran-2.txt"
+ ],
+ "stdout_contains": "cannot read shard record"
+}
