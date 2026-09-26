@@ -40,6 +40,8 @@ _QUEUE_REF = re.compile(r"(?:refs/heads/)?gh-readonly-queue/main/pr-([1-9][0-9]*
 
 _OUTPUTS = ("title", "body", "author", "files", "commits", "linked", "diff")
 
+DEPENDABOT = "dependabot[bot]"
+
 
 class UnreadableRef(ValueError):
     """The merge group's head ref is not a queue ref for `main`."""
@@ -93,11 +95,13 @@ def fetch(repo: str, number: int, wanted: set[str]) -> dict[str, str]:
         files = _pages(
             _gh("api", "--paginate", "--slurp", f"repos/{repo}/pulls/{number}/files?per_page=100")
         )
+        _require_all("changed files", len(files), pr["changed_files"])
         texts["files"] = "".join(f"{f['filename']}\n" for f in files)
     if "commits" in wanted:
         commits = _pages(
             _gh("api", "--paginate", "--slurp", f"repos/{repo}/pulls/{number}/commits?per_page=100")
         )
+        _require_all("commits", len(commits), pr["commits"])
         texts["commits"] = "\n\n".join(c["commit"]["message"] for c in commits) + "\n"
     if "linked" in wanted:
         texts["linked"] = _gh(
@@ -112,10 +116,31 @@ def fetch(repo: str, number: int, wanted: set[str]) -> dict[str, str]:
             ".closingIssuesReferences[].number",
         )
     if "diff" in wanted:
-        texts["diff"] = _gh(
-            "api", "-H", "Accept: application/vnd.github.diff", f"repos/{repo}/pulls/{number}"
-        )
+        # Only the Dependabot manifest guard reads the diff, and it runs only for
+        # Dependabot. GitHub refuses the diff media type for very large PRs, so
+        # fetching it for everyone would turn a big human PR red in the queue for
+        # an input nothing reads (#659 round 1). Anyone else gets a line that is
+        # not a diff, so a future reader that parses it fails rather than judging
+        # an empty change.
+        if pr["user"]["login"] == DEPENDABOT:
+            texts["diff"] = _gh(
+                "api", "-H", "Accept: application/vnd.github.diff", f"repos/{repo}/pulls/{number}"
+            )
+        else:
+            texts["diff"] = f"# diff not fetched: the PR author is not {DEPENDABOT}\n"
     return texts
+
+
+def _require_all(what: str, got: int, expected: object) -> None:
+    """GitHub's list endpoints cap silently: `pulls/N/commits` at 250 and
+    `pulls/N/files` at 3000. A body check fed a truncated list judges part of
+    the PR as if it were all of it, so a count that does not match the PR's own
+    is could-not-look, never a partial answer (#659 round 1)."""
+    if not isinstance(expected, int) or got != expected:
+        raise ValueError(
+            f"fetched {got} {what} but the PR reports {expected!r} -- GitHub truncated "
+            "the list or the PR changed during the fetch, so nothing is judged"
+        )
 
 
 def _parse(argv: list[str]) -> tuple[str, str, dict[str, Path]]:

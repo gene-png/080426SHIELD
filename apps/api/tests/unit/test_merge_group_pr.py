@@ -33,6 +33,10 @@ _PR = {
     "body": "## Adversarial audit\nFindings: none found\nDisposition: nothing to act on\n",
     "user": {"login": "someone"},
     "base": {"ref": "main"},
+    # What the fake list endpoints return below: 2 files, 2 commits. The
+    # resolver refuses a fetched list whose length differs (#659 round 1).
+    "changed_files": 2,
+    "commits": 2,
 }
 
 
@@ -138,7 +142,11 @@ def test_a_valid_ref_writes_that_prs_current_body(tmp_path: Path, monkeypatch) -
     assert outs["files"].read_text(encoding="utf-8") == "apps/api/app/x.py\nREADME.md\n"
     assert outs["commits"].read_text(encoding="utf-8") == "first\n\nbody\n\nsecond\n"
     assert outs["linked"].read_text(encoding="utf-8") == "17\n"
-    assert outs["diff"].read_text(encoding="utf-8") == "diff --git a/x b/x\n"
+    assert outs["diff"].read_text(encoding="utf-8").startswith("# diff not fetched"), (
+        "the diff is fetched only for Dependabot (#659 round 1); someone else gets a "
+        "line that is not a diff"
+    )
+    assert not any("vnd.github.diff" in " ".join(a) for a in calls), calls
     fetched = {a[-1] for a in calls if a[0] == "api"}
     assert f"repos/{_REPO}/pulls/42" in fetched, calls
 
@@ -202,7 +210,8 @@ def test_a_failed_fetch_exits_2_and_leaves_no_body(
     """Any one fetch failing leaves NO output at all -- including a body file an
     earlier step or an earlier run wrote, which a later check step would
     otherwise read as the current body."""
-    gh, _ = _fake_gh(_PR, fail_on=fail_on)
+    pr = {**_PR, "user": {"login": "dependabot[bot]"}} if "diff" in fail_on else _PR
+    gh, _ = _fake_gh(pr, fail_on=fail_on)
     monkeypatch.setattr(resolver, "_gh", gh)
     argv, outs = _argv(tmp_path, f"refs/heads/gh-readonly-queue/main/pr-42-{_SHA}")
     for path in outs.values():
@@ -264,3 +273,30 @@ def test_incomplete_or_unknown_arguments_exit_2(monkeypatch, argv: list[str]) ->
     monkeypatch.setattr(resolver, "_gh", gh)
     assert resolver.main(argv) == 2
     assert calls == []
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(("key", "reported"), [("changed_files", 3000), ("commits", 251)])
+def test_a_truncated_list_is_could_not_look(
+    tmp_path: Path, monkeypatch, key: str, reported: int
+) -> None:
+    """GitHub caps `pulls/N/files` at 3000 and `pulls/N/commits` at 250, silently.
+    A fetched list shorter than the PR says it is must never be judged as the whole
+    PR: exit 2, and nothing written."""
+    gh, _ = _fake_gh({**_PR, key: reported})
+    monkeypatch.setattr(resolver, "_gh", gh)
+    argv, outs = _argv(tmp_path, f"refs/heads/gh-readonly-queue/main/pr-42-{_SHA}")
+
+    assert resolver.main(argv) == 2
+    assert not any(p.exists() for p in outs.values())
+
+
+@pytest.mark.unit
+def test_the_diff_is_fetched_for_dependabot(tmp_path: Path, monkeypatch) -> None:
+    gh, calls = _fake_gh({**_PR, "user": {"login": "dependabot[bot]"}})
+    monkeypatch.setattr(resolver, "_gh", gh)
+    argv, outs = _argv(tmp_path, f"refs/heads/gh-readonly-queue/main/pr-42-{_SHA}")
+
+    assert resolver.main(argv) == 0
+    assert outs["diff"].read_text(encoding="utf-8") == "diff --git a/x b/x\n"
+    assert any("vnd.github.diff" in " ".join(a) for a in calls), calls

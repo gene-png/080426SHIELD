@@ -42,6 +42,11 @@ on:
   # required job carries a job-level `if:`: a skipped required job reports
   # SUCCESS (tests/unit/test_merge_group_triggers.py). The three jobs that
   # are NOT required run on pull_request only; they already ran on the PR.
+  #
+  # PRECONDITION FOR ENABLING THE QUEUE (#659 round 1): the queue setting
+  # "Only merge non-failing pull requests" must be ON. With it off, a PR can
+  # merge on a LATER group's passing run, and that run fetched the later PR's
+  # body, never this one's -- so this PR's current body is never checked.
   merge_group:
     types: [checks_requested]
 
