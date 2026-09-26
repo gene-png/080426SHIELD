@@ -20,13 +20,14 @@ misread, and nothing depends on clocks.
 or RELEASED, so they read as current: nothing on record says they were edited
 after approval, and the counter did not exist to say so. That is a statement
 about what was recorded, not a claim that no edit happened; the audit log is
-where a pre-0055 edit would show. DRAFT and DISCARDED lists stay NULL, which
+where a pre-0056 edit would show. DRAFT and DISCARDED lists stay NULL, which
 never equals a revision.
 
 ## Chain order
 
-Migrations land in number order (owner decision, 2026-09-25): #620 landed 0054,
-this is 0055, and #658's 0056 re-chains onto it at landing.
+Migrations land in number order and are renumbered at landing if the order
+changes (owner decision, 2026-09-25). This was first numbered 0055; #658 landed
+first as 0055, so this is 0056 and chains from it.
 
 SQLite-safe via `batch_alter_table` (core principle 6).
 """
@@ -38,8 +39,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0055"
-down_revision: str | Sequence[str] | None = "0054"
+revision: str = "0056"
+down_revision: str | Sequence[str] | None = "0055"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

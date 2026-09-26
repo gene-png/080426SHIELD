@@ -115,7 +115,7 @@ class CapabilityList(UUIDPKMixin, TimestampMixin, Base):
     # membership invented for them.
     approved_membership: Mapped[list | None] = mapped_column(JSON)
 
-    # #640 (migration 0055). Every step-2 edit increments `revision` in SQL;
+    # #640 (migration 0056). Every step-2 edit increments `revision` in SQL;
     # approve's compare-and-swap copies it into `approved_revision`. The
     # approval is current iff the two are equal, so an APPROVED list that was
     # edited afterwards is refused at finalize and release until step 3 runs

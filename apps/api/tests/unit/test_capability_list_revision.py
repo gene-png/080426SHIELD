@@ -399,7 +399,7 @@ def test_an_edit_landing_during_approval_refuses_it(app_client, monkeypatch) -> 
 
 
 # ---------------------------------------------------------------------------
-# Migration 0055's backfill, against lists the product built
+# Migration 0056's backfill, against lists the product built
 # ---------------------------------------------------------------------------
 
 
@@ -407,7 +407,7 @@ def test_an_edit_landing_during_approval_refuses_it(app_client, monkeypatch) -> 
 def test_the_backfill_reads_an_approved_list_as_current_and_a_draft_as_not(
     app_client,
 ) -> None:
-    """Built through the API, then 0055 is rewound and replayed, so the backfill
+    """Built through the API, then 0056 is rewound and replayed, so the backfill
     reads rows the approve route wrote, not rows written to suit it."""
     w = _world(app_client)
     _decide_all(w)
@@ -426,8 +426,8 @@ def test_the_backfill_reads_an_approved_list_as_current_and_a_draft_as_not(
     cfg = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
     cfg.set_main_option("script_location", str(Path(__file__).resolve().parents[2] / "alembic"))
     cfg.set_main_option("sqlalchemy.url", url)
-    command.downgrade(cfg, "0054")
-    command.upgrade(cfg, "0055")
+    command.downgrade(cfg, "0055")
+    command.upgrade(cfg, "0056")
 
     engine = create_engine(url)
     try:

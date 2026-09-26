@@ -1,8 +1,9 @@
 # 2026-09-26: an approved Tech Debt list edited afterwards must be approved again (#640, D-102)
 
 Branch `track1/techdebt-edit-revision`, from `main` at `b5f5448`. Migration
-0055 (`capability_lists.revision`, `approved_revision`), per the owner's rule
-and the coordinator's design on #640.
+0056 (`capability_lists.revision`, `approved_revision`), chaining from #658's
+0055, per the owner's rule and the coordinator's design on #640. Stacked on
+`track1/access-token-cutoff` (#670), which carries 0055.
 
 - Every step-2 edit route increments `revision` (`_record_edit`). Approve's
   compare-and-swap records the revision it read, and refuses when an edit lands
@@ -18,6 +19,6 @@ and the coordinator's design on #640.
 
 Tests: `test_capability_list_revision.py` drives the routes. Its set of edit
 routes is derived from the router. Each guard was reverted on its own,
-and each turned a named test red. The backfill test rewinds 0055 over lists
+and each turned a named test red. The backfill test rewinds 0056 over lists
 the API built. The web tests cover the stale, current and released states. No
 existing test was edited.
