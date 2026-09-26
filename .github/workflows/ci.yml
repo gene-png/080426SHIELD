@@ -538,12 +538,16 @@ jobs:
       # #560 moved them to e2e/manual/) and
       # ratchet: a baselined test that now runs or no longer exists, and an
       # exemption for a variable now set or no longer read, are findings.
+      - name: every e2e env gate is set or exempted (#540)
+        run: python apps/api/scripts/check_e2e_env_gates.py
+
+      # IMMEDIATELY before pytest, and that position is load-bearing: any step
+      # between the two could change pytest's environment and not this one's,
+      # narrowing CI while the gate certifies the wider set (#544). Pinned by
+      # `pin_violations` in test_ci_selection_gate.py.
       - name: every unit test is one CI runs (#540)
         working-directory: apps/api
         run: python -m scripts.check_ci_selection
-
-      - name: every e2e env gate is set or exempted (#540)
-        run: python apps/api/scripts/check_e2e_env_gates.py
 
       - name: pytest -m unit
         working-directory: apps/api

@@ -19,6 +19,19 @@ an old one with no finding: mark one, add another, the count stays the same
 (review of e8424dd). Each unselected test is named, so one cannot stand in for
 another.
 
+A FILE THAT NEVER COLLECTS IS A FINDING TOO (#543). A module-level
+`pytest.skip(..., allow_module_level=True)`, or a conftest `collect_ignore` /
+`pytest_ignore_collect`, removes a file from BOTH collections, so the node-id
+comparison cannot see it and "CI selects N of N" reads clean with a smaller N.
+So every file on disk under `tests/unit` that pytest's `python_files`
+names must contribute at least one node id to the unselected collection,
+unless its baseline entry is `{"reason": ..., "uncollected_file": true}`. The
+patterns are PYTEST'S OWN ANSWER -- the probe plugin writes
+`config.getini("python_files")` and `norecursedirs` -- and they are matched
+with pytest's own `fnmatch_ex`, not a copy of it: a hard-coded `test_*.py`
+missed the default's second half, `*_test.py`, and a hand-written matcher
+missed a pattern holding a path separator.
+
 THE BASELINE RATCHETS. A baselined node id that is now selected, or no longer
 exists, is a finding too: delete it from the baseline, so the backlog is
 visible and only ever goes down.
@@ -59,9 +72,27 @@ LIMITS. Only `tests/unit`; `tests/live` is opt-in by design. A test that is
 selected but SKIPS at runtime is not seen here (a runtime skip is not a
 selection question). A module-level `pytest.skip(..., allow_module_level=True)`
 removes the file from BOTH collections, so it shrinks the denominator rather
-than producing a finding. A conftest hook that deselects applies to BOTH
-collections, so it is invisible too. `PYTEST_ADDOPTS` or other environment
-set on CI's pytest step but not on this one is not seen.
+than producing a finding -- and that is now caught by the file check above,
+at the granularity of a FILE: a module that removes only some of its tests at
+collection time is not seen. A conftest hook that deselects individual items
+applies to BOTH collections, so it is invisible too. Environment on CI's
+pytest step is pinned equal to this step's by `pin_violations` in
+`test_ci_selection_gate.py` (#544), not read here. The pin is a derivation:
+this step must be the step IMMEDIATELY before pytest, in the same job, with
+the same step `env`, `working-directory` and `shell`, so every job, workflow and
+earlier-step environment reaches both and no step can change one without the
+other. What it cannot see is a difference the workflow file does not show,
+such as a variable a tool sets for itself when invoked. Its `${{ }}` refusal
+scans the two STEPS' own `env`, `working-directory` and `shell`; job- and
+workflow-level `env` and `defaults.run` reach both as TEXT, but whether they
+also evaluate to the same VALUE for both is not checked (#630).
+
+The file scan calls `_pytest.pathlib.fnmatch_ex`, a PRIVATE pytest API, and
+mirrors pytest's directory walk (following symlinked directories, pruning
+`norecursedirs`). Both were read from pytest 9.1.1, and `pyproject.toml`
+allows any `pytest>=8.3`. If a pytest release stops matching `python_files`
+or `norecursedirs` with `fnmatch_ex`, or walks differently, this scan drifts
+from pytest's with nothing to say so; a missing `fnmatch_ex` is exit 2.
 """
 
 from __future__ import annotations
@@ -79,12 +110,21 @@ _ALL = ("tests/unit",)
 _PROBE_NAME = "_ci_selection_probe"
 _PROBE_OUT = "CHECK_CI_SELECTION_OUT"
 _PROBE_SOURCE = f"""\
+import json
 import os
 
 
 def pytest_collection_finish(session):
     with open(os.environ["{_PROBE_OUT}"], "w", encoding="utf-8") as fh:
         fh.write("\\n".join(item.nodeid for item in session.items))
+    with open(os.environ["{_PROBE_OUT}"] + ".config", "w", encoding="utf-8") as fh:
+        json.dump(
+            {{
+                "python_files": list(session.config.getini("python_files")),
+                "norecursedirs": list(session.config.getini("norecursedirs")),
+            }},
+            fh,
+        )
 """
 
 
@@ -92,8 +132,11 @@ class CouldNotLook(Exception):
     """The gate could not establish the answer. Maps to exit 2, never 0 or 1."""
 
 
-def _collect(root: Path, args: tuple[str, ...], *, clear_addopts: bool) -> set[str]:
-    """Node ids pytest collects for `args`, as reported by the probe plugin."""
+def _collect(
+    root: Path, args: tuple[str, ...], *, clear_addopts: bool
+) -> tuple[set[str], dict[str, list[str]]]:
+    """(node ids, {python_files, norecursedirs}) for `args`, as the probe
+    plugin reports them: pytest's own answer, not a reading of its config."""
     with tempfile.TemporaryDirectory() as tmp:
         probe_dir = Path(tmp)
         (probe_dir / f"{_PROBE_NAME}.py").write_text(_PROBE_SOURCE, encoding="utf-8")
@@ -123,7 +166,14 @@ def _collect(root: Path, args: tuple[str, ...], *, clear_addopts: bool) -> set[s
                 f"the probe plugin wrote nothing for `{' '.join(args)}` -- it did not load, "
                 "so there is no answer to read"
             )
-        return {line for line in out.read_text(encoding="utf-8").splitlines() if line}
+        ids = {line for line in out.read_text(encoding="utf-8").splitlines() if line}
+        config_file = Path(str(out) + ".config")
+        if not config_file.is_file():
+            raise CouldNotLook("the probe plugin wrote no file config -- it did not finish")
+        config = json.loads(config_file.read_text(encoding="utf-8"))
+        if not config.get("python_files"):
+            raise CouldNotLook("pytest reported an EMPTY `python_files`, so no file is a test file")
+        return ids, config
 
 
 def _load_baseline(path: Path) -> dict[str, dict]:
@@ -134,6 +184,17 @@ def _load_baseline(path: Path) -> dict[str, dict]:
     if not isinstance(data, dict):
         raise CouldNotLook(f"baseline {path} must be a JSON object")
     for name, entry in data.items():
+        if isinstance(entry, dict) and "uncollected_file" in entry:
+            if (
+                entry.get("uncollected_file") is not True
+                or "tests" in entry
+                or not str(entry.get("reason", "")).strip()
+            ):
+                raise CouldNotLook(
+                    f"baseline entry {name!r}: an uncollected-file entry is exactly "
+                    '{"reason": <non-empty>, "uncollected_file": true}, with no `tests`'
+                )
+            continue
         tests = entry.get("tests") if isinstance(entry, dict) else None
         if (
             not isinstance(entry, dict)
@@ -149,11 +210,87 @@ def _load_baseline(path: Path) -> dict[str, dict]:
     return data
 
 
+def files_named_by_python_files(root: Path, config: dict[str, list[str]]) -> set[str]:
+    """Root-relative `.py` files under `tests/unit` that pytest would collect
+    as test modules, decided by PYTEST'S OWN MATCHER.
+
+    `_pytest.pathlib.fnmatch_ex` is the function pytest applies to
+    `python_files` and to `norecursedirs`; calling it is not a
+    reimplementation, it is the same code in the same interpreter. A pattern
+    with a separator is matched against the ABSOLUTE path, so
+    `tests/unit/*_spec.py` works as it does in pytest -- a hand-written match
+    against the root-relative path missed it (review of 0cf0420). Directories
+    matching `norecursedirs` are not descended, as pytest does not."""
+    try:
+        from _pytest.pathlib import fnmatch_ex
+    except ImportError as exc:  # pragma: no cover - pytest is what this gate runs
+        raise CouldNotLook(f"cannot import pytest's own matcher: {exc}") from exc
+    found = set()
+    # followlinks: pytest descends a symlinked directory. Its collection walks
+    # in `Dir.collect` (_pytest/main.py) and `Package.collect`
+    # (_pytest/python.py), each `scandir()` then `direntry.is_dir()`, which
+    # follows links -- read in pytest 9.1.1. (`_pytest.pathlib.visit` is not
+    # on that path; an earlier version of this comment cited it.)
+    for dirpath, dirnames, filenames in os.walk(
+        root.resolve() / "tests" / "unit", followlinks=True
+    ):
+        here = Path(dirpath)
+        dirnames[:] = [
+            d
+            for d in dirnames
+            if not any(fnmatch_ex(pat, here / d) for pat in config["norecursedirs"])
+        ]
+        for name in filenames:
+            path = here / name
+            if name.endswith(".py") and any(
+                fnmatch_ex(pat, path) for pat in config["python_files"]
+            ):
+                found.add(path.relative_to(root.resolve()).as_posix())
+    return found
+
+
+def _collected_files(everything: set[str], on_disk: set[str]) -> set[str]:
+    """The on-disk files (root-relative) that contributed a node id.
+
+    Node ids are relative to pytest's rootdir, which can be BELOW the root
+    (a `tests/pytest.ini` makes ids read `unit/test_m.py`), so a disk path
+    matches a node file that equals it or is a `/`-bounded suffix of it."""
+    node_files = {n.split("::", 1)[0] for n in everything}
+    return {d for d in on_disk if any(d == f or d.endswith("/" + f) for f in node_files)}
+
+
+def uncollected_findings(
+    on_disk: set[str], collected: set[str], baseline: dict[str, dict]
+) -> tuple[list[str], list[str]]:
+    """(findings, allowed) for whole files the collection never reached."""
+    expected = {f: e for f, e in baseline.items() if e.get("uncollected_file") is True}
+    findings = [
+        f"{f}: never collected -- it contributes no test to `pytest tests/unit`, so CI "
+        "never runs it (a module-level skip, or a conftest collect_ignore?). Fix it, or "
+        'baseline it as {"reason": ..., "uncollected_file": true}.'
+        for f in sorted(on_disk - collected - set(expected))
+    ]
+    for f in sorted(expected):
+        if f not in on_disk:
+            findings.append(
+                f"{f}: baselined as never collected, but no longer exists -- delete the entry."
+            )
+        elif f in collected:
+            findings.append(
+                f"{f}: baselined as never collected, but now collected -- delete the entry."
+            )
+    allowed = [
+        f"{f}: never collected, baselined: {e['reason']}" for f, e in sorted(expected.items())
+    ]
+    return findings, allowed
+
+
 def evaluate(
     everything: set[str], selected: set[str], baseline: dict[str, dict]
 ) -> tuple[list[str], list[str]]:
     """(findings, allowed) -- allowed lines are printed on every run."""
     unselected = everything - selected
+    baseline = {f: e for f, e in baseline.items() if "tests" in e}
     baselined = {t: f for f, e in baseline.items() for t in e["tests"]}
     findings: list[str] = []
     new = sorted(unselected - set(baselined))
@@ -197,20 +334,27 @@ def main(argv: list[str]) -> int:
         if not (root / "tests" / "unit").is_dir():
             raise CouldNotLook(f"{root / 'tests' / 'unit'} does not exist -- wrong directory?")
         baseline = _load_baseline(baseline_path)
-        everything = _collect(root, _ALL, clear_addopts=True)
-        selected = _collect(root, CI_SELECTOR, clear_addopts=False)
+        everything, file_config = _collect(root, _ALL, clear_addopts=True)
+        selected, _ = _collect(root, CI_SELECTOR, clear_addopts=False)
         if not everything:
             raise CouldNotLook(
                 "collected ZERO tests with no selector. An empty collection is not a " "clean one."
             )
+        on_disk = files_named_by_python_files(root, file_config)
     except CouldNotLook as exc:
         print(f"check-ci-selection: could not look -- {exc}")
         return 2
 
     findings, allowed = evaluate(everything, selected, baseline)
-    for line in allowed:
+    collected = _collected_files(everything, on_disk)
+    file_findings, file_allowed = uncollected_findings(on_disk, collected, baseline)
+    findings += file_findings
+    for line in allowed + file_allowed:
         print(f"  baselined: {line}")
-    summary = f"CI selects {len(selected & everything)} of {len(everything)} collected tests"
+    summary = (
+        f"CI selects {len(selected & everything)} of {len(everything)} collected tests; "
+        f"{len(collected)} of {len(on_disk)} test files on disk collected"
+    )
     if findings:
         print(f"check-ci-selection: {len(findings)} finding(s); {summary}:")
         for line in findings:
