@@ -33,6 +33,7 @@ from app.ai.engine import get_job, run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
+from app.attack import release_readiness
 from app.attack.analytics import compute as compute_heatmap
 from app.attack.catalog import (
     SOURCE_VERSION,
@@ -72,7 +73,6 @@ from app.attack.pending import TOOL_FIELDS as _TOOL_FIELDS
 from app.attack.pending import confirm_all as confirm_attack_citations
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.pending import row_tools as attack_row_tools
-from app.attack import release_readiness
 from app.attack.rules import NEW_RULES, parents_computed
 from app.audit import audit
 from app.config import get_settings

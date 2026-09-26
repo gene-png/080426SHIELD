@@ -7,8 +7,10 @@ thing it defends is weaker than the endpoint that reaches it).
 
 `unable_to_determine` has no writer yet (`coverage.WRITABLE`), and an approved
 assessment is locked, so the states the release guard exists for are written
-straight to the database between finalize and release: the guard is the
-backstop for whatever reaches an approved row by any path.
+straight to the database between finalize and release. They are REACHABLE: an
+assessment approved before this gate existed can hold them (approve checked
+nothing), and the guard is the backstop for whatever reaches an approved row
+by any path.
 """
 
 from __future__ import annotations
@@ -41,7 +43,9 @@ def _detail(r) -> dict:
 
 def _set(Sess, row_id: str, **values) -> None:
     with Sess() as s:
-        s.execute(update(AttackCoverage).where(AttackCoverage.id == uuid.UUID(row_id)).values(**values))
+        s.execute(
+            update(AttackCoverage).where(AttackCoverage.id == uuid.UUID(row_id)).values(**values)
+        )
         s.commit()
 
 
@@ -60,7 +64,9 @@ def _scored(c, bearer, a: dict, n: int = 2) -> list[dict]:
     real, approvable assessment."""
     rows = standalone_rows(a["coverage"], n)
     for row in rows:
-        r = c.patch(f"/attack/coverage/{row['id']}", headers=_auth(bearer), json={"status": "covered"})
+        r = c.patch(
+            f"/attack/coverage/{row['id']}", headers=_auth(bearer), json={"status": "covered"}
+        )
         assert r.status_code == 200, r.text
     return rows
 
@@ -96,7 +102,9 @@ def test_a_not_verified_row_refuses_the_release_and_names_it(env) -> None:  # no
     assert latest.json()["status"] == "approved", latest.text
 
 
-def test_a_partial_with_no_reason_refuses_the_release_under_the_new_rules(env) -> None:  # noqa: F811
+def test_a_partial_with_no_reason_refuses_the_release_under_the_new_rules(
+    env,  # noqa: F811
+) -> None:
     c, Sess = env
     bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
     svc, a = _service_and_assessment(c, bearer)
@@ -218,7 +226,9 @@ def test_approve_refuses_a_partial_with_no_reason_and_names_the_control(env) -> 
         json={"status": "partial", "reason_code": reason_codes_for("partial")[0]},
     )
     assert r.status_code == 200, r.text
-    assert c.post(f"/attack/assessments/{a['id']}/approve", headers=_auth(bearer)).status_code == 200
+    assert (
+        c.post(f"/attack/assessments/{a['id']}/approve", headers=_auth(bearer)).status_code == 200
+    )
 
 
 def test_approve_refuses_not_verified_with_no_imperative(env) -> None:  # noqa: F811
@@ -235,3 +245,27 @@ def test_approve_refuses_not_verified_with_no_imperative(env) -> None:  # noqa: 
         "This assessment cannot be approved: 1 technique is Not verified "
         f"({rows[0]['technique_code']})."
     )
+
+
+def test_approve_passes_a_computed_parent_whose_children_carry_reasons(env) -> None:  # noqa: F811
+    # Through approve itself: the recompute makes the parent a Partial with no
+    # reason of its own, and that must not refuse the approval (D-094).
+    from app.attack.parents import PARENT_CHILDREN
+
+    c, Sess = env
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc, a = _service_and_assessment(c, bearer)
+    parent, children = next(iter(PARENT_CHILDREN.items()))
+    by_code = {r["technique_code"]: r["id"] for r in a["coverage"]}
+    for child in children:
+        r = c.patch(
+            f"/attack/coverage/{by_code[child]}",
+            headers=_auth(bearer),
+            json={"status": "partial", "reason_code": reason_codes_for("partial")[0]},
+        )
+        assert r.status_code == 200, r.text
+
+    r = c.post(f"/attack/assessments/{a['id']}/approve", headers=_auth(bearer))
+    assert r.status_code == 200, r.text
+    parent_row = next(x for x in r.json()["coverage"] if x["technique_code"] == parent)
+    assert (parent_row["status"], parent_row["reason_code"]) == ("partial", None)

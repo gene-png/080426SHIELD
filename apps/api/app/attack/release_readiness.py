@@ -184,7 +184,11 @@ def refuse_release(db: Session, assessment_id: uuid.UUID) -> HTTPException:
         status_code=status.HTTP_409_CONFLICT,
         detail={
             "reason": "attack_not_release_ready",
-            "message": f"Nothing was released: {_what(found)}.",
+            "message": (
+                f"Nothing was released: {_what(found)}. An approved assessment cannot be "
+                "edited, so this one cannot be released; a new assessment version starts "
+                "every technique unscored."
+            ),
             "not_verified": list(found.not_verified),
             "partial_without_reason": list(found.partial_without_reason),
         },
