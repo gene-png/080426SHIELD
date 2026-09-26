@@ -190,13 +190,45 @@ def _compose_step() -> tuple[dict, dict]:
     return job, steps[0]
 
 
+#: The ONE job-level condition allowed, compared by string equality. It exists
+#: because audit-gate.yml gained a merge_group trigger, where `github.base_ref`
+#: is unset and this job could not read a range. It is allowed because the job
+#: is NOT a required check and has already run on the PR head, so skipping it on
+#: the queue entry gates no merge. As an allowlist it skips every trigger but
+#: pull_request, which excludes only merge_group while those are the workflow's
+#: only two triggers -- pinned by the test below it. Allowed by the
+#: coordinator's verdict on the merge_group PR; every other `if:`, and
+#: continue-on-error, is still refused.
+_ALLOWED_JOB_CONDITION = "github.event_name == 'pull_request'"
+
+
 def test_the_ci_job_cannot_be_made_green_by_configuration() -> None:
     job, step = _compose_step()
     assert job["name"] == "compose content changed", job["name"]
     for where, node in (("job", job), ("step", step)):
         assert "continue-on-error" not in node, f"{where} carries continue-on-error"
-        assert "if" not in node, f"{where} carries an if:"
+    assert (
+        job.get("if", _ALLOWED_JOB_CONDITION) == _ALLOWED_JOB_CONDITION
+    ), f"the job carries `if: {job['if']}`; only `{_ALLOWED_JOB_CONDITION}` is allowed"
+    assert "if" not in step, "the step carries an if:"
     assert "shell" not in step, "the test runs the block under GitHub's default bash -e"
+
+
+def test_the_one_allowed_condition_excludes_only_merge_group() -> None:
+    """`event_name == 'pull_request'` skips the job on EVERY other trigger. That
+    is safe only while the workflow's other trigger is exactly merge_group; a
+    `push` added later would be skipped silently too."""
+    import yaml
+
+    _compose_step()  # the same skip-in-the-container, red-on-a-checkout contract
+    wf_dir = find_workflows_dir(pathlib.Path(__file__).resolve())
+    assert wf_dir is not None
+    workflow = yaml.safe_load((wf_dir / "audit-gate.yml").read_text(encoding="utf-8"))
+    triggers = workflow.get("on", workflow.get(True))  # PyYAML reads `on` as True
+    assert sorted(triggers) == ["merge_group", "pull_request"], (
+        f"audit-gate.yml's triggers are {sorted(triggers)}; the compose job's "
+        f"`{_ALLOWED_JOB_CONDITION}` would skip every one but pull_request"
+    )
 
 
 def _run_block(tmp_path: pathlib.Path, stub_rc: int) -> tuple[int, str]:

@@ -2071,8 +2071,8 @@ Rules of the road:
      cross-reference is a judgement about where a reader should go, and "a
      pointer to something that no longer exists" is on the reviewer's BLOCKING
      (prose) list. Fixing one direct to `main` pushes an unreviewed judgement
-     call, and `audit-gate.yml` triggers on `pull_request` only, so nothing
-     would see it.
+     call, and `audit-gate.yml` never runs on a push (its triggers are
+     `pull_request` and `merge_group`), so nothing would see it.
 
   **The boundary is the only test:** a prose fix that changes what someone would
   do is not typo-class. Those are PRs. **Read the BLOCKING (prose) list in the
