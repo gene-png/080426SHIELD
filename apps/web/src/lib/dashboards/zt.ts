@@ -139,7 +139,8 @@ export function targetNote(data: ZtDashboardData): string {
   // earlier draft of this function that swallowed `client_out_of_range`.
   const discarded =
     data.unusable_target_codes.length > 0
-      ? ` A per-capability target was recorded for ${data.unusable_target_codes.join(", ")} but could not be used, so the engagement target was applied to those rows instead.`
+      ? // One code is one row (#452), as `_gap_plan_caption` says it.
+        ` A per-capability target was recorded for ${data.unusable_target_codes.join(", ")} but could not be used, so the engagement target was applied to ${data.unusable_target_codes.length === 1 ? "that row" : "those rows"} instead.`
       : "";
 
   // The engagement target decided nothing here: every capability carried its
