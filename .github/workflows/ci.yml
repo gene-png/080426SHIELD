@@ -373,6 +373,11 @@ jobs:
           # states, and `--self-test` puts #143's shape back and requires red.
           bash tests/gates/prepush_hook_status.sh
           bash tests/gates/prepush_hook_status.sh --self-test
+          # #659: on merge_group, `scripts/gitleaks-merge-group.sh` IS the
+          # required secret scan. Its zero-commit guard stops a merge-shaped
+          # group scanning nothing and passing; this proves the guard fires,
+          # that a squash-shaped group scans its range, and each exit code.
+          bash tests/gates/gitleaks_merge_group.sh
 
       - name: gates can fail
         run: python apps/api/scripts/check_gate_fixtures.py

@@ -146,6 +146,15 @@ DEFERRED: dict[str, str] = {
     # thing it guards -- and what this file now enforces for them is the half
     # that was actually missing: that a workflow INVOKES them. Both shipped
     # with neither, and ran nowhere for weeks.
+    "gitleaks_merge_group.sh": (
+        "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
+        "It builds a throwaway repository and runs `scripts/gitleaks-merge-group.sh` "
+        "against a stub gitleaks in five states: a squash-shaped group exits 0 "
+        "having run the scanner over exactly base..head; a merge-shaped group "
+        "exits 2 without running it (the zero-commit guard); a leak exits 1; an "
+        "unknown sha and a missing argument exit 2. Red-on-revert, 2026-09-26: "
+        "the zero-commit guard removed turns the merge-shaped case red."
+    ),
     "prepush_hook_status.sh": (
         "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
         "It EXTRACTS the api-unit-tests hook's `bash -c` body from "
