@@ -30,6 +30,7 @@ from app.config import Settings, get_settings
 from app.db.session import get_db
 from app.dependencies import current_user
 from app.logging import get_logger
+from app.models.user import UserRole
 
 log = get_logger("app.routes.health")
 
@@ -162,9 +163,15 @@ def _probe_llm(settings: Settings) -> DependencyStatus:
     return DependencyStatus(status="ok" if ready else "down", required=False, detail=detail)
 
 
-def _caller_is_authenticated(request: Request, db: Session) -> bool:
-    """True when `current_user` would accept this request's token. Anonymous
-    callers get the reduced matrix; authenticated callers get full detail.
+def _caller_may_see_detail(request: Request, db: Session) -> bool:
+    """True when `current_user` would accept this request's token AND the user
+    is an admin. Everyone else gets the reduced matrix.
+
+    #697 round 1: the web proxy shows /ready only to `role === "admin"`
+    (`app/api/proxy/health/ready/route.ts`), but this checked authentication
+    alone, so a client-role tenant user calling the API directly read internal
+    hostnames and LLM configuration. The API now requires the same role the
+    proxy does.
 
     #671: this used to check the token's signature and expiry only, so a
     deactivated user's token -- or one for a user who does not exist -- still
@@ -181,7 +188,7 @@ def _caller_is_authenticated(request: Request, db: Session) -> bool:
     if not request.headers.get("Authorization"):
         return False
     try:
-        current_user(request, db)
+        user = current_user(request, db)
     except HTTPException as exc:
         if exc.status_code != status.HTTP_401_UNAUTHORIZED:
             raise
@@ -189,7 +196,7 @@ def _caller_is_authenticated(request: Request, db: Session) -> bool:
     except SQLAlchemyError as exc:
         log.warning("ready.caller_unverifiable", error=type(exc).__name__)
         return False
-    return True
+    return user.role == UserRole.ADMIN
 
 
 def _redacted(check: DependencyStatus) -> DependencyStatus:
@@ -224,8 +231,10 @@ def ready(
     else:
         log.warning("ready.degraded", offenders=offenders)
 
-    # Withhold internal detail from anonymous callers (offenders + statuses stay).
-    if not _caller_is_authenticated(request, db):
+    # Withhold internal detail from everyone but an active admin: anonymous
+    # callers, unverifiable tokens and client-role users alike (offenders and
+    # statuses stay).
+    if not _caller_may_see_detail(request, db):
         checks = {name: _redacted(c) for name, c in checks.items()}
 
     return ReadyResponse(

@@ -116,22 +116,22 @@ def _redis_down_with_internal_detail(settings):  # noqa: ANN001, ANN202
     )
 
 
-def _user_token(TestSession, *, active: bool) -> str:
+def _user_token(TestSession, *, active: bool, role: str = "admin") -> str:
     """A real user row, and an access token for it."""
     from app.models.user import User, UserRole
     from app.security.jwt import issue_token
 
     with TestSession() as db:
         user = User(
-            email=f"ready-{'on' if active else 'off'}@example.com",
+            email=f"ready-{role}-{'on' if active else 'off'}@example.com",
             password_hash="not-a-real-hash",
-            role=UserRole.ADMIN,
+            role=UserRole(role),
             is_active=active,
         )
         db.add(user)
         db.commit()
         uid = user.id
-    token, _ = issue_token(subject=uid, role="admin", typ="access")
+    token, _ = issue_token(subject=uid, role=role, typ="access")
     return token
 
 
@@ -410,3 +410,37 @@ def test_ready_stays_true_when_keycloak_down_with_flag_on(
     assert body["status"] == "ok"
     assert body["checks"]["keycloak"]["status"] == "down"
     assert "keycloak" not in body["offenders"]
+
+
+@pytest.mark.unit
+def test_ready_redacts_for_an_active_client_role_user(ready_users) -> None:
+    """#697 round 1. The web proxy shows /ready only to `role === "admin"`, but
+    the API gave full operator detail to ANY active user, so a client-role
+    tenant user calling the API directly with their own bearer token read
+    internal hostnames and LLM configuration. Full detail now needs the admin
+    role at the API too."""
+    c, TestSession = ready_users
+    token = _user_token(TestSession, active=True, role="client")
+    assert _INTERNAL not in _redis_detail(c, token)
+
+
+@pytest.mark.unit
+def test_ready_re_raises_a_non_401_refusal_from_current_user(ready_users, monkeypatch) -> None:
+    """Only a 401 means "not authenticated, show the redacted matrix". Any other
+    refusal is not a verdict about the caller's identity, so it is raised rather
+    than silently turned into the anonymous view (FAIL LOUDLY)."""
+    from fastapi import HTTPException
+
+    import app.routes.health as health_mod
+
+    c, TestSession = ready_users
+
+    def refuse(request, db):  # noqa: ANN001, ANN202
+        raise HTTPException(status_code=403, detail="refused for another reason")
+
+    monkeypatch.setattr(health_mod, "current_user", refuse)
+    r = c.get(
+        "/ready",
+        headers={"Authorization": f"Bearer {_user_token(TestSession, active=True)}"},
+    )
+    assert r.status_code == 403, r.text
