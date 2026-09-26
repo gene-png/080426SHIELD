@@ -32,7 +32,15 @@ test("client views a released MITRE ATT&CK coverage dashboard", async ({
       headers: H,
     })
   ).json();
-  const coverage = assess.coverage as { id: string }[];
+  // STANDALONE techniques only (no sub-techniques, no parent): since #554
+  // (D-094) a parent with sub-techniques is computed, and the API refuses to
+  // score it -- which this loop used to ignore.
+  const all = assess.coverage as { id: string; technique_code: string }[];
+  const coverage = all.filter(
+    (c) =>
+      !c.technique_code.includes(".") &&
+      !all.some((o) => o.technique_code.startsWith(`${c.technique_code}.`)),
+  );
 
   const pattern = [
     ...Array(6).fill("covered"),
@@ -52,10 +60,11 @@ test("client views a released MITRE ATT&CK coverage dashboard", async ({
     } else if (status === "gap") {
       body.rationale = "Container runtime detection gap — no coverage today.";
     }
-    await request.patch(`${API_BASE}/attack/coverage/${coverage[i].id}`, {
-      headers: H,
-      data: body,
-    });
+    const res = await request.patch(
+      `${API_BASE}/attack/coverage/${coverage[i].id}`,
+      { headers: H, data: body },
+    );
+    expect(res.ok(), await res.text()).toBe(true);
   }
 
   await request.post(`${API_BASE}/attack/assessments/${assess.id}/approve`, {
