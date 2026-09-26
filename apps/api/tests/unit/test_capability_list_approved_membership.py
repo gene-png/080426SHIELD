@@ -102,14 +102,20 @@ def _list_with_items(
     h: dict,
     names: list[str],
     vendors: list[str | None] | None = None,
+    *,
+    decided: bool = False,
 ) -> tuple[str, list[str]]:
     """A Tech Debt service + DRAFT capability list carrying `names`, all in security scope.
+
+    `decided` gives every row a `keep` disposition. Approval refuses a list with
+    undecided rows (#639), so a caller that goes on to approve passes it; the
+    default leaves rows undecided, which is what extraction produces.
 
     `vendors` is positional against `names` when given. It exists for #131: the
     vendor column is half of what the D-053 snapshot freezes, so a test about
     which list a vendor may come from cannot be written without it.
     """
-    from app.models.capability import CapabilityItem, CapabilityList
+    from app.models.capability import CapabilityDisposition, CapabilityItem, CapabilityList
     from app.models.service import Service, ServiceKind
 
     svc_id = c.post(
@@ -129,7 +135,11 @@ def _list_with_items(
         item_ids = []
         for n, v in zip(names, vendor_of, strict=True):
             it = CapabilityItem(
-                capability_list_id=cap_list.id, name=n, vendor=v, security_related=True
+                capability_list_id=cap_list.id,
+                name=n,
+                vendor=v,
+                security_related=True,
+                disposition=CapabilityDisposition.KEEP if decided else None,
             )
             s.add(it)
             s.flush()
@@ -204,7 +214,7 @@ def _allow_list(c: TestClient) -> list[str]:
 def test_approval_records_what_was_in_the_list(app_client) -> None:
     c = app_client
     h = _admin(c)
-    list_id, item_ids = _list_with_items(c, h, ["Splunk", "CrowdStrike"])
+    list_id, item_ids = _list_with_items(c, h, ["Splunk", "CrowdStrike"], decided=True)
     assert _membership(list_id) is None, "nothing is claimed before approval"
 
     r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
@@ -229,7 +239,7 @@ def test_renaming_an_item_after_approval_does_not_rewrite_the_allow_list(app_cli
     """
     c = app_client
     h = _admin(c)
-    list_id, item_ids = _list_with_items(c, h, ["Splunk", "CrowdStrike"])
+    list_id, item_ids = _list_with_items(c, h, ["Splunk", "CrowdStrike"], decided=True)
     _r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
     assert _r.status_code == 200, _r.text
 
@@ -253,7 +263,7 @@ def test_confirming_a_tool_non_security_after_approval_keeps_it_citable(app_clie
 
     c = app_client
     h = _admin(c)
-    list_id, item_ids = _list_with_items(c, h, ["Splunk", "CrowdStrike"])
+    list_id, item_ids = _list_with_items(c, h, ["Splunk", "CrowdStrike"], decided=True)
     _r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
     assert _r.status_code == 200, _r.text
 
@@ -273,7 +283,7 @@ def test_adding_an_item_after_approval_does_not_add_it_to_the_allow_list(app_cli
 
     c = app_client
     h = _admin(c)
-    list_id, _ = _list_with_items(c, h, ["Splunk"])
+    list_id, _ = _list_with_items(c, h, ["Splunk"], decided=True)
     _r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
     assert _r.status_code == 200, _r.text
 
@@ -294,7 +304,7 @@ def test_re_approving_refreshes_the_snapshot(app_client) -> None:
     what was missing is that the edit silently rewrote history."""
     c = app_client
     h = _admin(c)
-    list_id, item_ids = _list_with_items(c, h, ["Splunk"])
+    list_id, item_ids = _list_with_items(c, h, ["Splunk"], decided=True)
     _r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
     assert _r.status_code == 200, _r.text
     c.patch(f"/tech-debt/capability-items/{item_ids[0]}", headers=h, json={"name": "Splunk ES"})
@@ -348,7 +358,7 @@ def test_a_discarded_list_is_still_excluded_even_with_a_snapshot(app_client) -> 
 
     c = app_client
     h = _admin(c)
-    list_id, _ = _list_with_items(c, h, ["Splunk"])
+    list_id, _ = _list_with_items(c, h, ["Splunk"], decided=True)
     _r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
     assert _r.status_code == 200, _r.text
 
@@ -364,11 +374,11 @@ def test_a_discarded_list_is_still_excluded_even_with_a_snapshot(app_client) -> 
 def test_the_snapshot_excludes_rows_already_out_of_security_scope(app_client) -> None:
     """The snapshot records the ATT&CK subset, not the whole portfolio — Tech
     Debt covers payroll and CRM since 0038."""
-    from app.models.capability import CapabilityItem, CapabilityList
+    from app.models.capability import CapabilityDisposition, CapabilityItem, CapabilityList
 
     c = app_client
     h = _admin(c)
-    list_id, _ = _list_with_items(c, h, ["Splunk"])
+    list_id, _ = _list_with_items(c, h, ["Splunk"], decided=True)
 
     eng = create_engine(os.environ["DATABASE_URL"], future=True)
     with sessionmaker(bind=eng, future=True)() as s:
@@ -379,6 +389,7 @@ def test_the_snapshot_excludes_rows_already_out_of_security_scope(app_client) ->
                 name="Payroll",
                 security_related=False,
                 security_class_confirmed=True,
+                disposition=CapabilityDisposition.KEEP,  # #639
             )
         )
         s.commit()
@@ -407,11 +418,11 @@ def test_overturning_a_wrong_non_security_call_is_reported_as_stale(app_client) 
     technique it covers came back a gap. The list must SAY its approved
     membership is out of date.
     """
-    from app.models.capability import CapabilityItem, CapabilityList
+    from app.models.capability import CapabilityDisposition, CapabilityItem, CapabilityList
 
     c = app_client
     h = _admin(c)
-    list_id, _ = _list_with_items(c, h, ["Splunk"])
+    list_id, _ = _list_with_items(c, h, ["Splunk"], decided=True)
 
     eng = create_engine(os.environ["DATABASE_URL"], future=True)
     with sessionmaker(bind=eng, future=True)() as s:
@@ -422,6 +433,7 @@ def test_overturning_a_wrong_non_security_call_is_reported_as_stale(app_client) 
                 name="Zscaler Internet Access",
                 security_related=False,
                 security_class_confirmed=True,
+                disposition=CapabilityDisposition.KEEP,  # #639
             )
         )
         s.commit()
@@ -452,7 +464,7 @@ def test_a_list_whose_scope_has_not_moved_is_not_reported_stale(app_client) -> N
     """The signal has to mean something, or it gets tuned away (#31)."""
     c = app_client
     h = _admin(c)
-    list_id, _ = _list_with_items(c, h, ["Splunk", "CrowdStrike"])
+    list_id, _ = _list_with_items(c, h, ["Splunk", "CrowdStrike"], decided=True)
     r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
     assert r.status_code == 200, r.text
     assert r.json()["approved_membership_stale"] is False
@@ -480,7 +492,7 @@ def test_an_empty_snapshot_is_not_the_same_as_no_snapshot(app_client) -> None:
     the one case where #32's hole stayed open. Nothing pinned the distinction,
     and `is None` versus `not x` is exactly the edit a reviewer would suggest.
     """
-    from app.models.capability import CapabilityItem, CapabilityList
+    from app.models.capability import CapabilityDisposition, CapabilityItem, CapabilityList
 
     c = app_client
     h = _admin(c)
@@ -495,6 +507,7 @@ def test_an_empty_snapshot_is_not_the_same_as_no_snapshot(app_client) -> None:
                 name="Payroll",
                 security_related=False,
                 security_class_confirmed=True,
+                disposition=CapabilityDisposition.KEEP,  # #639
             )
         )
         s.commit()
@@ -549,7 +562,7 @@ def test_a_draft_list_cannot_donate_a_vendor_to_an_approved_snapshot(app_client)
 
     c = app_client
     h = _admin(c)
-    approved_id, _ = _list_with_items(c, h, ["Umbrella"])
+    approved_id, _ = _list_with_items(c, h, ["Umbrella"], decided=True)
     _r = c.post(f"/tech-debt/capability-lists/{approved_id}/approve", headers=h)
     assert _r.status_code == 200, _r.text
     _list_with_items(c, h, ["Umbrella"], vendors=["Cisco"])  # DRAFT, freely editable
@@ -588,7 +601,7 @@ def test_a_donated_vendor_does_not_switch_off_another_tools_incomplete_vendor_fl
     c = app_client
     h = _admin(c)
     approved_id, _ = _list_with_items(
-        c, h, ["Umbrella", "CrowdStrike Falcon"], vendors=[None, "CrowdStrike"]
+        c, h, ["Umbrella", "CrowdStrike Falcon"], vendors=[None, "CrowdStrike"], decided=True
     )
     _r = c.post(f"/tech-debt/capability-lists/{approved_id}/approve", headers=h)
     assert _r.status_code == 200, _r.text
@@ -615,7 +628,7 @@ def test_the_approved_snapshots_spelling_wins_over_a_drafts(app_client) -> None:
     """
     c = app_client
     h = _admin(c)
-    approved_id, _ = _list_with_items(c, h, ["Splunk Enterprise"])
+    approved_id, _ = _list_with_items(c, h, ["Splunk Enterprise"], decided=True)
     _r = c.post(f"/tech-debt/capability-lists/{approved_id}/approve", headers=h)
     assert _r.status_code == 200, _r.text
     _list_with_items(c, h, ["SPLUNK ENTERPRISE"])  # DRAFT, all-caps extraction
@@ -636,8 +649,8 @@ def test_one_approved_snapshot_may_still_complete_anothers_vendor(app_client) ->
     """
     c = app_client
     h = _admin(c)
-    first, _ = _list_with_items(c, h, ["Umbrella"])
-    second, _ = _list_with_items(c, h, ["Umbrella"], vendors=["Cisco"])
+    first, _ = _list_with_items(c, h, ["Umbrella"], decided=True)
+    second, _ = _list_with_items(c, h, ["Umbrella"], vendors=["Cisco"], decided=True)
     for list_id in (first, second):
         _r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
         assert _r.status_code == 200, _r.text
@@ -666,14 +679,24 @@ def test_two_draft_lists_still_complete_each_others_vendors(app_client) -> None:
 
 
 def _list_with_fixed_item(
-    c: TestClient, h: dict, *, item_id: uuid.UUID, name: str, vendor: str, category: str
+    c: TestClient,
+    h: dict,
+    *,
+    item_id: uuid.UUID,
+    name: str,
+    vendor: str,
+    category: str,
+    decided: bool = False,
 ) -> str:
     """A Tech Debt service + DRAFT list holding ONE item with a chosen id.
 
     The id has to be chosen rather than generated: the tiebreak under test IS
     the id ordering, and a random UUID would decide the assertion.
+
+    `decided` gives the row a `keep` disposition, as `_list_with_items` does, for
+    a caller that goes on to approve (#639).
     """
-    from app.models.capability import CapabilityItem, CapabilityList
+    from app.models.capability import CapabilityDisposition, CapabilityItem, CapabilityList
     from app.models.service import Service
 
     svc_id = c.post(
@@ -694,6 +717,7 @@ def _list_with_fixed_item(
                 vendor=vendor,
                 category=category,
                 security_related=True,
+                disposition=CapabilityDisposition.KEEP if decided else None,
             )
         )
         s.commit()
@@ -735,6 +759,7 @@ def test_two_identical_rows_resolve_by_item_id_and_not_by_query_order(app_client
         name="Umbrella",
         vendor="Cisco",
         category="from the list inserted first",
+        decided=True,
     )
     second = _list_with_fixed_item(
         c,
@@ -743,6 +768,7 @@ def test_two_identical_rows_resolve_by_item_id_and_not_by_query_order(app_client
         name="Umbrella",
         vendor="Cisco",
         category="from the list inserted second",
+        decided=True,
     )
     for list_id in (first, second):
         _r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)

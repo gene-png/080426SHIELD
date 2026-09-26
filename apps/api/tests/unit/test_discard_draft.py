@@ -118,8 +118,14 @@ def _audit_count(TestSession: sessionmaker, action: str) -> int:
 # --- tech-debt -------------------------------------------------------------
 
 
-def _td_extract(c: TestClient, bearer: str, provider: FixtureProvider) -> tuple[str, str, str]:
+def _td_extract(
+    c: TestClient, bearer: str, provider: FixtureProvider, *, decided: bool = False
+) -> tuple[str, str, str]:
     """Open a tech-debt service, upload a CSV, extract a v1 draft list.
+
+    `decided` gives every extracted row a `keep` disposition through the real
+    PATCH, for a caller that goes on to approve: approval refuses undecided rows
+    (#639). The default leaves them as extraction produces them.
 
     Returns (service_id, list_id, artifact_id).
     """
@@ -141,6 +147,14 @@ def _td_extract(c: TestClient, bearer: str, provider: FixtureProvider) -> tuple[
         json={"artifact_id": artifact_id},
     )
     assert er.status_code == 201, er.text
+    if decided:
+        for item in er.json()["items"]:
+            r = c.patch(
+                f"/tech-debt/capability-items/{item['id']}",
+                headers=_hdr(bearer),
+                json={"disposition": "keep"},
+            )
+            assert r.status_code == 200, r.text
     return svc_id, er.json()["id"], artifact_id
 
 
@@ -230,7 +244,7 @@ def test_techdebt_rediscard_idempotent_no_second_audit(app_client) -> None:
 def test_techdebt_discard_approved_409(app_client) -> None:
     c, _TS, provider = app_client
     bearer = _admin(c)
-    _svc, list_id, _art = _td_extract(c, bearer, provider)
+    _svc, list_id, _art = _td_extract(c, bearer, provider, decided=True)
     _td_approve(c, bearer, list_id)
 
     r = c.post(f"/tech-debt/capability-lists/{list_id}/discard", headers=_hdr(bearer))
@@ -265,7 +279,7 @@ def test_techdebt_version_trap_discard_non_v1_then_mint(app_client) -> None:
     """v1 approved -> v2 draft -> discard v2 -> next extract mints v3, no IntegrityError."""
     c, _TS, provider = app_client
     bearer = _admin(c)
-    svc_id, list_v1, artifact_id = _td_extract(c, bearer, provider)
+    svc_id, list_v1, artifact_id = _td_extract(c, bearer, provider, decided=True)
     _td_approve(c, bearer, list_v1)
 
     # Mint v2 draft.
@@ -296,7 +310,7 @@ def test_techdebt_version_trap_discard_non_v1_then_mint(app_client) -> None:
 def test_techdebt_latest_after_discard_returns_prior_approved(app_client) -> None:
     c, _TS, provider = app_client
     bearer = _admin(c)
-    svc_id, list_v1, artifact_id = _td_extract(c, bearer, provider)
+    svc_id, list_v1, artifact_id = _td_extract(c, bearer, provider, decided=True)
     _td_approve(c, bearer, list_v1)
     r2 = c.post(
         f"/tech-debt/services/{svc_id}/capability-lists/extract",
