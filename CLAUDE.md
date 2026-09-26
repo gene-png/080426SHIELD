@@ -847,12 +847,12 @@ recorded with a real exit code and a real date, and was the minority outcome
   **If you cannot describe the defect without naming the function it was found
   in, you have not generalised it yet. The test of a shape statement is whether
   it could have been written BEFORE seeing the defect that prompted it.**
-  Worked examples (#84, #132, #146): D-079a.
+  Worked examples (#84, #132, #146): D-101.
 - **A derived lookup key belongs in its OWN tier, below the authoritative one.**
   Real names are exact matches on what is stored; aliases (a redacted form, say)
   are reversals of a transformation. Keep them in separate indexes and consult
   the authoritative one first, so an alias can only decide what the real key
-  could not. Instance: D-058a.
+  could not. Instance: D-100.
 - **A FIELD IS ADDITIVE ONLY IF NO CONSUMER BRANCHES ON ITS PRESENCE.** Adding
   a key to a shared envelope reads as the safest change there is, and the PR
   that does it says so: #307 added a typed `reason` to every schema 422 and
@@ -888,7 +888,7 @@ recorded with a real exit code and a real date, and was the minority outcome
 - **"Uses the same X as the Y path" is a claim to enforce by CALLING X, never by
   reimplementing it.** Import it and pass it the same inputs -- including the
   MODE and any optional arguments, because a parity claim covers those too.
-  Instance (`_redacted_form`): D-058a.
+  Instance (`_redacted_form`): D-100.
 
 - **A CORRECT CHANGE WHOSE STATED MOTIVATION DOES NOT SURVIVE CONTACT WITH THE
   CODE. The change stays; the justification gets rewritten.** The tell: a fix is
@@ -946,7 +946,7 @@ recorded with a real exit code and a real date, and was the minority outcome
   `--check-registry` gates a LEAVE table with no registered guards and a
   declared not-LEAVE table the redactor leaves untouched (#221). **Budget it**:
   fixing existing code puts its tables after the rule by construction. A floor,
-  not a census; whether the tool can RUN is ungated (#299). Measurements: D-058a.
+  not a census; whether the tool can RUN is ungated (#299). Measurements: D-100.
 - **Sweeping for a defect's twins, grep the SYMPTOM as well as the call sites.**
   Grepping for callers of the function you just fixed finds every copy that went
   through that function and misses every REIMPLEMENTATION of it. #84 escaped the
@@ -1024,10 +1024,10 @@ recorded with a real exit code and a real date, and was the minority outcome
 
   **Run `check_no_control_chars.py` first; reach for red-on-revert to prove the
   fix holds.** A backspace byte inside a regex read correctly to every signal
-  except the mutation (D-058a). **When a gate reports something you did not
+  except the mutation (D-100). **When a gate reports something you did not
   expect, read it before deciding what it is about.**
 - **Replacing a character class with an enumerated one is a subtraction you must
-  COMPUTE, not guess.** Instance (`_HSPACE`, a leak): D-058a. **Write it as the subtraction and let the language define the
+  COMPUTE, not guess.** Instance (`_HSPACE`, a leak): D-100. **Write it as the subtraction and let the language define the
   set** (`[^\S\n\v\f\r\x1c\x1d\x1e\x85\u2028\u2029]`), then pin BOTH halves as
   parametrised sweeps whose parameters come from somewhere other than the thing
   under test. Note `[^\S\r\n]`, the idiom everyone reaches for, is also wrong —
@@ -1051,7 +1051,7 @@ recorded with a real exit code and a real date, and was the minority outcome
 - **Changing a parametrisation invalidates every count derived from it, and the
   count is usually in another file.** Re-counting catches it; re-reading does
   not. **After touching any `@pytest.mark.parametrize` argument, grep the repo
-  for the old count before committing.** Instance: D-058a.
+  for the old count before committing.** Instance: D-100.
 - **A CORRECTION PARAGRAPH OUTLIVES THE NUMBER IT CORRECTED, and then certifies
   a wrong one.** The prose written to explain WHY a number is trustworthy goes
   stale with the number, while still reading as a guarantee. A bare stale count
@@ -1217,18 +1217,18 @@ recorded with a real exit code and a real date, and was the minority outcome
   It is true, so nothing flags it, and it ends the search. When a comment states
   a condition, read the condition it describes and check the two agree in
   SCOPE, not just in truth; when you fix such a guard, fix its message in the
-  same commit. Instances (#142, #158): D-058a.
+  same commit. Instances (#142, #158): D-100.
 - **Replacing a validator gives you a free ORACLE for exactly one round: the
   thing you are replacing.**
   <!-- counted: "one round" is a duration in the claim itself, not a recalled figure -->
   **Run the old rule and the new rule over the same corpus and diff their match
   sets**, and classify every input the old one caught that the new one does not.
   **Capture the diff while you still have both.** A published standard is to a
-  keyword list what the old rule is to a replacement pattern. Instances: D-058a.
+  keyword list what the old rule is to a replacement pattern. Instances: D-100.
 - **When testing ONE branch of a disjunction, assert the other branches are
   absent**, or the test passes on another branch and proves nothing about the
   one it is named for. Every multi-signal guard has this shape. Instance
-  (`_RE_CONTACT_HINT`): D-058a.
+  (`_RE_CONTACT_HINT`): D-100.
 - **Assert what must APPEAR before what must not.** `toHaveCount(0)` on a page
   still mid-fetch passes vacuously — the element it forbids simply has not
   rendered yet. Wait on the positive state first (`toBeVisible`), then assert the
@@ -1916,7 +1916,7 @@ Rules of the road:
   report's CALIBRATION.** Sample a third, round up, and **sample the citations
   you have NOT executed**: in the recorded case the wrong ones were exactly the
   ones nobody ran, and they did not look wrong. **The sample calibrates the
-  report; it does not clear the citations.** Measurement and arithmetic: D-079a.
+  report; it does not clear the citations.** Measurement and arithmetic: D-101.
 
 - **A plan entry that carries only a LOCATION is a derived value with a second
   place to be wrong. Name the MECHANISM instead, or as well.** "`clients.py:741`"
@@ -2177,8 +2177,10 @@ order. Each is a RECORD whose instruction is already stated in one line above
 it, so moving it loses no rule:
 
 Items 1 and 2 of the first version of this list were taken on 2026-09-26:
-the redaction-subsystem narratives went to D-058a and the worked examples to
-D-079a, each record holding the text before its pointer was written. What
+the redaction-subsystem narratives went to D-100 and the worked examples to
+D-101, each record holding the text before its pointer was written. Much of
+both, and most of item 3 below, had already been cut. **This list is nearly
+spent: the next trim needs a new plan, written before the alarm.** What
 remains:
 
 1. **The per-instance lists** inside the numbers-in-prose, correction-paragraph
