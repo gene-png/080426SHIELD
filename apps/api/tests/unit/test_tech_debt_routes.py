@@ -621,6 +621,71 @@ def test_approve_capability_list_writes_status_and_actor(app_client) -> None:
     assert body["approved_by"] == admin["user"]["id"]
 
 
+def _latest_list(c: TestClient, bearer: str, svc_id: str) -> dict:
+    r = c.get(
+        f"/tech-debt/services/{svc_id}/capability-lists/latest",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _decide(c: TestClient, bearer: str, item_ids: list[str], disposition: str = "keep") -> None:
+    for item_id in item_ids:
+        r = c.patch(
+            f"/tech-debt/capability-items/{item_id}",
+            headers={"Authorization": f"Bearer {bearer}"},
+            json={"disposition": disposition},
+        )
+        assert r.status_code == 200, r.text
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(("undecided", "noun"), [(1, "1 row is"), (2, "2 rows are")])
+def test_approve_refuses_while_rows_are_undecided_naming_the_count(
+    app_client, undecided: int, noun: str
+) -> None:
+    """#639: approving with step-2 rows still undecided (disposition None, the
+    model's own "undecided") built a deliverable from an unfinished review.
+    The refusal is typed (D-016), names the count, points back to step 2, and
+    changes nothing."""
+    c, _, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids[undecided:])
+    list_id = _latest_list(c, bearer, svc_id)["id"]
+
+    r = c.post(
+        f"/tech-debt/capability-lists/{list_id}/approve",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+
+    assert r.status_code == 409, r.text
+    error = r.json()["error"]
+    assert error["reason"] == "capability_list_undecided_rows", error
+    assert noun in error["message"], error["message"]
+    assert "Review and correct the extracted list" in error["message"], error["message"]
+    after = _latest_list(c, bearer, svc_id)
+    assert after["status"] == "draft" and after["approved_at"] is None, after
+
+
+@pytest.mark.unit
+def test_approve_succeeds_once_every_row_is_decided(app_client) -> None:
+    """The passing half: zero undecided rows approve."""
+    c, _, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    _decide(c, bearer, item_ids)
+    list_id = _latest_list(c, bearer, svc_id)["id"]
+
+    r = c.post(
+        f"/tech-debt/capability-lists/{list_id}/approve",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "approved"
+
+
 @pytest.mark.unit
 def test_approve_capability_list_404_for_unknown(app_client) -> None:
     c, _, _ = app_client
