@@ -36,7 +36,17 @@ vi.mock("./AttackHeatmapCard", () => ({ AttackHeatmapCard: () => null }));
 vi.mock("./AttackMatrix", () => ({
   AttackMatrix: () => <div data-testid="attack-matrix" />,
 }));
-vi.mock("./AttackTechniquePanel", () => ({ AttackTechniquePanel: () => null }));
+// Renders the reason codes it was HANDED, so a test can pin the workspace's
+// wiring (#603 round 5) without rendering the whole panel.
+vi.mock("./AttackTechniquePanel", () => ({
+  AttackTechniquePanel: (props: { reasonCodes?: { code: string }[] }) => (
+    <div data-testid="panel-reason-codes">
+      {JSON.stringify(
+        (props.reasonCodes ?? null) && props.reasonCodes?.map((r) => r.code),
+      )}
+    </div>
+  ),
+}));
 vi.mock("@/components/messages/MessageThread", () => ({
   MessageThread: () => null,
 }));
@@ -88,6 +98,28 @@ function draft(): AttackAssessment {
     catalog_current: true,
   } as unknown as AttackAssessment;
 }
+
+describe("AttackWorkspace hands the catalog's reason codes to the panel (#554)", () => {
+  it("passes catalog.reason_codes through, so the Reason select has codes to offer", async () => {
+    fetchCatalog.mockResolvedValue({
+      ...CATALOG,
+      reason_codes: [
+        { code: "reach_limited", status: "partial", definition: "d" },
+        { code: "platform_absent", status: "not_applicable", definition: "d" },
+      ],
+    } as unknown as AttackCatalog);
+    fetchLatestAssessment.mockResolvedValue(draft());
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+
+    render(
+      <AttackWorkspace serviceId="svc-reasons" serviceTitle="Atlas ATT&CK" />,
+    );
+
+    expect(await screen.findByTestId("panel-reason-codes")).toHaveTextContent(
+      JSON.stringify(["reach_limited", "platform_absent"]),
+    );
+  });
+});
 
 describe("AttackWorkspace reqSeq stale-fetch guard", () => {
   it("discards the slow mount assessment GET after a newer create", async () => {

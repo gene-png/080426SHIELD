@@ -25,13 +25,16 @@ every other gate.
   with a reason (`.github/ci-selection-baseline.json`). A test parses ci.yml
   and requires the selector to EQUAL CI's `run:` line.
 - **`check_e2e_env_gates.py`** (Python job). Every variable read by a spec that
-  skips must be set by a workflow, or exempted with a reason
-  (`.github/e2e-env-gate-exemptions.json`). The workflows are parsed as YAML: a
-  comment is not a setting, and empty, `"0"` and `"false"` are not enabling
-  values.
+  skips must be set by a workflow, or exempted with a reason AND the specs the
+  exemption covers (`.github/e2e-env-gate-exemptions.json`). An unlisted spec
+  reading an exempted variable is a finding, and so is a listed spec that no
+  longer reads it. The workflows are parsed as YAML: a comment is not a
+  setting, and empty, `"0"` and `"false"` are not enabling values.
 - **`check_e2e_spec_listing.py`** (E2E job, the owner's design). It compares
   the specs on disk with `npx playwright test --list`, run with the same cwd
-  and arguments as the real run step (pinned by a test).
+  and arguments as the real run step (pinned by a test). Since #579, EVERY
+  script file under `e2e/` must be in that listing or declared a non-suite
+  file, with a reason, in `.github/e2e-non-suite-files.json`.
 
 **Ratchets.** A baselined test that now runs or no longer exists is a finding,
 and so is an exemption for a variable now set or no longer read. So the
@@ -67,6 +70,10 @@ or listing, a malformed baseline, or a workflow that does not parse exits 2.
 - **(Review of 701f032.) `PYTEST_ADDOPTS` reached both collections**, because
   pytest prepends it before the ini is read and `-o addopts=` does not clear
   it. The unselected collection now runs without it.
+- **(Review of 3bc0975.) An exemption keyed on the variable alone covered every
+  future spec that reads it.** Exemptions now name their specs; a missing,
+  string, empty or non-string `specs` is could-not-look, and the string and
+  empty-list branches are pinned by tests since #580.
 
 ## This PR was red when it opened, for the reason the gate exists
 
@@ -119,3 +126,11 @@ the api image.
   a conftest hook that deselects.
 - The listing compares spec FILES; an unconditional `test.skip()` is listed and
   never runs, and neither Playwright gate reports it.
+- Until #579 both Playwright gates scanned only `*.spec.ts`, so a spec renamed
+  out of that pattern left CI with both green. Now the listing gate requires
+  every script file to be listed or declared, and the env-gate scan uses
+  Playwright's default testMatch (refusing a config that sets its own). A
+  declared DIRECTORY (`helpers/`) still hides an out-of-pattern name under it
+  (`helpers/s9.specs.ts`); a spec-named file there is listed and reported. And
+  a rename that drops every script suffix (`a.spec.ts~`, `a.spec.txt`,
+  `a.spec`) is seen by neither gate (#605).

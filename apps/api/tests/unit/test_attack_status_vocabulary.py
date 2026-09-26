@@ -261,3 +261,15 @@ def test_the_heatmap_endpoint_carries_both_counts(api) -> None:
     # read back as the arithmetic alone predicts.
     assert sum(t["unable_to_determine"] for t in body["by_tactic"]) >= 1
     assert sum(t["outside_control_surface"] for t in body["by_tactic"]) >= 1
+
+
+# A newline and a tab, built with chr() rather than written as escapes, so the
+# source holds no control byte for `check_no_control_chars.py` to flag.
+@pytest.mark.parametrize("blank", ["", "   ", chr(10) + chr(9)])
+def test_a_blank_narrative_is_stored_as_none(api, blank) -> None:
+    """The release gate will ask whether an unverified row carries a narrative;
+    a blank one must not answer yes (#603 review round 2)."""
+    c, row, auth, _, _ = api
+    r = _patch(c, row, auth, {"status": "gap", "narrative": blank})
+    assert r.status_code == 200, r.text
+    assert r.json()["narrative"] is None
