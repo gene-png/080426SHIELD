@@ -79,7 +79,7 @@ export function DiscardDraftButton({
               type="button"
               onClick={() => setOpen(false)}
               disabled={busy}
-              className="rounded-md border border-border-default px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-md border border-border px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-60"
             >
               Cancel
             </button>

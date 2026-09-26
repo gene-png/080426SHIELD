@@ -1,4 +1,4 @@
-{"incident": "D-051 fail-closed. check_audit_evidence printed \"documentation-only change, exempt\" and exited 0 on an empty changed-file list -- a green gate from input that supported neither reading. A target this gate cannot open is a could-not-look (2), never a pass. stdout_contains because a gate has several \"I could not look\" branches and the code alone cannot say which fired.",
+{"incident": "D-090 fail-closed. check_audit_evidence printed \"documentation-only change, exempt\" and exited 0 on an empty changed-file list -- a green gate from input that supported neither reading. A target this gate cannot open is a could-not-look (2), never a pass. stdout_contains because a gate has several \"I could not look\" branches and the code alone cannot say which fired.",
  "expect": 2, "adversarial": false,
  "stdout_contains": "target does not exist",
  "argv": ["{dir}/no-such-file.md"]}

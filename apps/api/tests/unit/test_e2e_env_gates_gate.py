@@ -36,6 +36,11 @@ def _repo(tmp_path: Path, specs: dict[str, str], workflow: str, exemptions: dict
     (tmp_path / ".github" / "e2e-env-gate-exemptions.json").write_text(
         json.dumps(exemptions), encoding="utf-8"
     )
+    # The gate requires exactly one Playwright config (review of 18d24d5).
+    (tmp_path / "e2e").mkdir(exist_ok=True)
+    (tmp_path / "e2e" / "playwright.config.ts").write_text(
+        "export default { testDir: '.' };" + chr(10), encoding="utf-8"
+    )
     return tmp_path
 
 
@@ -273,11 +278,84 @@ def test_a_listed_spec_that_no_longer_reads_the_variable_is_stale(tmp_path, caps
     assert "exemption is STALE for e2e/old.spec.ts" in out, out
 
 
-def test_an_exemption_with_no_specs_is_could_not_look(tmp_path, capsys) -> None:
-    root = _repo(
-        tmp_path, {"perf.spec.ts": GATED}, UNSET_WORKFLOW, {"E2E_PERF": {"reason": "#483"}}
-    )
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"reason": "#483"},
+        # #580: a STRING is not a list of specs -- iterated, it would be one
+        # spec per character -- and an EMPTY list scopes the exemption to
+        # nothing. Each must be could-not-look, not a finding or a pass.
+        {"reason": "#483", "specs": "e2e/perf.spec.ts"},
+        {"reason": "#483", "specs": []},
+        {"reason": "#483", "specs": [7]},
+    ],
+    ids=["missing", "a-string", "empty-list", "not-strings"],
+)
+def test_an_exemption_with_no_specs_list_is_could_not_look(tmp_path, capsys, entry) -> None:
+    root = _repo(tmp_path, {"perf.spec.ts": GATED}, UNSET_WORKFLOW, {"E2E_PERF": entry})
     code = gate.main(["gate", "--root", str(root)])
     out = capsys.readouterr().out
     assert code == 2, out
-    assert "needs a non-empty `specs` list" in out, out
+    assert "E2E_PERF needs a non-empty `specs` list" in out, out
+
+
+# --- #579: the suite is Playwright's default testMatch, not only `*.spec.ts` -------------
+
+
+@pytest.mark.parametrize("name", ["perf.spec.tsx", "perf.test.ts", "perf.spec.mjs"])
+def test_a_gate_in_any_default_pattern_spec_is_seen(tmp_path, capsys, name: str) -> None:
+    root = _repo(tmp_path, {name: GATED}, UNSET_WORKFLOW, {})
+    code, out = _run(root, capsys)
+    assert code == 1, out
+    assert "E2E_PERF" in out and name in out, out
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        "export default { testMatch: '**/*.e2e.ts' };",
+        "const testMatch = '**/*.e2e.ts';"
+        + chr(10)
+        + "export default defineConfig({ testMatch });",
+        'export default { "testMatch": "**/*.e2e.ts" };',
+    ],
+    ids=["key", "shorthand", "quoted-key"],
+)
+def test_a_config_that_sets_test_match_is_could_not_look(tmp_path, capsys, config: str) -> None:
+    root = _repo(tmp_path, {"perf.spec.ts": GATED}, UNSET_WORKFLOW, {})
+    (root / "e2e" / "playwright.config.ts").write_text(config + chr(10), encoding="utf-8")
+    code, out = _run(root, capsys)
+    assert code == 2, out
+    assert "sets `testMatch`" in out, out
+
+
+# --- review of 18d24d5: the config must be found before "no testMatch" --------------------
+
+
+def test_no_playwright_config_is_could_not_look(tmp_path, capsys) -> None:
+    root = _repo(tmp_path, {"perf.spec.ts": GATED}, SET_WORKFLOW, {})
+    (root / "e2e" / "playwright.config.ts").unlink()
+    code, out = _run(root, capsys)
+    assert code == 2, out
+    assert "expected exactly one Playwright config" in out and "found 0" in out, out
+
+
+def test_two_playwright_configs_is_could_not_look(tmp_path, capsys) -> None:
+    root = _repo(tmp_path, {"perf.spec.ts": GATED}, SET_WORKFLOW, {})
+    (root / "e2e" / "playwright.config.js").write_text(
+        "module.exports = {};" + chr(10), encoding="utf-8"
+    )
+    code, out = _run(root, capsys)
+    assert code == 2, out
+    assert "found 2" in out, out
+
+
+def test_an_mts_config_that_sets_test_match_is_could_not_look(tmp_path, capsys) -> None:
+    root = _repo(tmp_path, {"perf.spec.ts": GATED}, SET_WORKFLOW, {})
+    (root / "e2e" / "playwright.config.ts").unlink()
+    (root / "e2e" / "playwright.config.mts").write_text(
+        "export default { testMatch: '**/*.e2e.ts' };" + chr(10), encoding="utf-8"
+    )
+    code, out = _run(root, capsys)
+    assert code == 2, out
+    assert "playwright.config.mts sets `testMatch`" in out, out

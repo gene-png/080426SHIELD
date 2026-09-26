@@ -25,6 +25,7 @@ const CATALOG: AttackCatalog = {
     },
   ],
   coverage_definitions: [],
+  reason_codes: [],
   total_techniques: 1,
   total_sub_techniques: 0,
 };
