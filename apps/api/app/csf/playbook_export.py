@@ -437,11 +437,20 @@ def _overview_sentences(rows: Sequence[Any]) -> list[str]:
     gaps = sum(1 for r in rows if r.gap)
     pc = _priority_counts(rows)
     fns = _function_summary(rows)
+    # In number with the counts (#682, #692 round 1): "1 subcategories fall
+    # short of their target" sat directly above the next steps in all four
+    # renderers. The priority breakdown reads as labels at any count.
+    short = (
+        "subcategory falls short of its target maturity"
+        if gaps == 1
+        else "subcategories fall short of their target maturity"
+    )
     lines = [
-        f"This assessment covers {total} in-scope NIST CSF 2.0 subcategories. "
+        f"This assessment covers {total} in-scope NIST CSF 2.0 "
+        f"{'subcategory' if total == 1 else 'subcategories'}. "
         f"Enterprise maturity, rolled up across the impact tiers in use, "
         f"averages Level {overall} of 5.",
-        f"{gaps} subcategories fall short of their target maturity — "
+        f"{gaps} {short} — "
         f"{pc['P1']} Priority 1 (critical), {pc['P2']} Priority 2, and "
         f"{pc['P3']} Priority 3.",
     ]
@@ -457,34 +466,62 @@ def _overview_sentences(rows: Sequence[Any]) -> list[str]:
     return lines
 
 
+def _gaps(n: int) -> str:
+    return "gap" if n == 1 else "gaps"
+
+
+def _function_detail(frows: Sequence[Any]) -> str:
+    """The per-function line of the full PDF and DOCX, built ONCE for both
+    (#692 round 2): '1 subcategories … 1 gap(s)' read one as several."""
+    n = len(frows)
+    avg = round(sum(r.enterprise_level for r in frows) / n)
+    fgaps = sum(1 for r in frows if r.gap)
+    what = "subcategory" if n == 1 else "subcategories"
+    return f"{n} {what} · average Level {avg} · {fgaps} {_gaps(fgaps)}."
+
+
 def _next_steps(rows: Sequence[Any]) -> list[str]:
     pc = _priority_counts(rows)
     steps: list[str] = []
+    # Each sentence agrees in number with its count (#682): "the 1 Priority 1
+    # gap(s) first — these are ... weaknesses" read one gap as several.
     if pc["P1"]:
         # "Core-metric, high-impact, multi-system" is what makes a COMPUTED P1
         # (`playbook.gap_priority`). A P1 the consultant set is none of those
         # necessarily, so it is counted apart rather than described (#707).
+        # In number with the counts (#682, #692).
         # Only a gap has a priority, so `priority == "P1"` already selects gaps.
         raised = sum(1 for r in rows if r.priority == "P1" and _overridden(r))
+        others = pc["P1"] - raised
         if raised == 0:
-            steps.append(
-                f"Remediate the {pc['P1']} Priority 1 gap(s) first — these are "
-                f"Core-metric, high-impact, multi-system weaknesses."
+            what = (
+                "this is a Core-metric, high-impact, multi-system weakness"
+                if pc["P1"] == 1
+                else "these are Core-metric, high-impact, multi-system weaknesses"
             )
+            steps.append(f"Remediate the {pc['P1']} Priority 1 {_gaps(pc['P1'])} first — {what}.")
         else:
             rest = (
                 ""
-                if raised == pc["P1"]
-                else " The others are Core-metric, high-impact, multi-system weaknesses."
+                if others == 0
+                else (
+                    " The other is a Core-metric, high-impact, multi-system weakness."
+                    if others == 1
+                    else " The others are Core-metric, high-impact, multi-system weaknesses."
+                )
             )
             steps.append(
-                f"Remediate the {pc['P1']} Priority 1 gap(s) first. Consultant override "
-                f"set Priority 1 on {raised} of them.{rest}"
+                f"Remediate the {pc['P1']} Priority 1 {_gaps(pc['P1'])} first. Consultant "
+                f"override set Priority 1 on {raised} of them.{rest}"
             )
     if pc["P2"]:
-        steps.append(f"Schedule the {pc['P2']} Priority 2 gap(s) into the next planning cycle.")
+        steps.append(
+            f"Schedule the {pc['P2']} Priority 2 {_gaps(pc['P2'])} into the next planning cycle."
+        )
     if pc["P3"]:
-        steps.append(f"Track the {pc['P3']} Priority 3 gap(s) for continuous improvement.")
+        steps.append(
+            f"Track the {pc['P3']} Priority 3 {_gaps(pc['P3'])} for continuous improvement."
+        )
     if not steps:
         steps.append(
             "No gaps were identified — maintain current controls and re-assess on the next cycle."
@@ -791,12 +828,10 @@ def render_full_pdf(
     for code in ordered:
         frows = sorted(by_fn[code], key=lambda r: r.subcategory_code)
         name = FUNCTION_NAMES.get(code, code)
-        avg = round(sum(r.enterprise_level for r in frows) / len(frows))
-        fgaps = sum(1 for r in frows if r.gap)
         story.append(Paragraph(f"{name} ({code})", styles["h2"]))
         story.append(
             Paragraph(
-                f"{len(frows)} subcategories · average Level {avg} · {fgaps} gap(s).",
+                _function_detail(frows),
                 styles["body"],
             )
         )
@@ -1033,10 +1068,8 @@ def render_full_docx(
     for code in ordered:
         frows = sorted(by_fn[code], key=lambda r: r.subcategory_code)
         name = FUNCTION_NAMES.get(code, code)
-        avg = round(sum(r.enterprise_level for r in frows) / len(frows))
-        fgaps = sum(1 for r in frows if r.gap)
         add_heading(doc, f"{name} ({code})", level=2)
-        add_paragraphs(doc, [f"{len(frows)} subcategories · average Level {avg} · {fgaps} gap(s)."])
+        add_paragraphs(doc, [_function_detail(frows)])
         table = add_table(
             doc,
             ["Subcategory", "Outcome", "Maturity", "Target", "Gap", "Priority"],

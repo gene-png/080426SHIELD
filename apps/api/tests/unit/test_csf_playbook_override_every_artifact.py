@@ -247,7 +247,7 @@ def test_a_p1_set_by_override_is_not_described_as_a_computed_p1(app_client) -> N
     for kind in ("exec_pdf", "exec_docx"):
         text = _flat_text(kind, files[kind])
         assert (
-            "Remediate the 1 Priority 1 gap(s) first. "
+            "Remediate the 1 Priority 1 gap first. "
             "Consultant override set Priority 1 on 1 of them." in text
         ), kind
         assert "Core-metric, high-impact, multi-system" not in text, kind
@@ -264,8 +264,8 @@ def test_a_computed_p1_keeps_its_description(app_client) -> None:
 
     for kind in ("exec_pdf", "exec_docx"):
         assert (
-            "Remediate the 1 Priority 1 gap(s) first — these are Core-metric, "
-            "high-impact, multi-system weaknesses." in _flat_text(kind, files[kind])
+            "Remediate the 1 Priority 1 gap first — this is a Core-metric, "
+            "high-impact, multi-system weakness." in _flat_text(kind, files[kind])
         ), kind
 
 
