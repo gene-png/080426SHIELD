@@ -118,7 +118,7 @@ export function MfaEnrollment({
             In your authenticator app, add an account using this setup key, then
             enter the 6-digit code it shows.
           </p>
-          <div className="rounded-md border border-border bg-surface-muted px-3 py-2">
+          <div className="rounded-md border border-border bg-surface-sunken px-3 py-2">
             <span className="text-xs font-medium text-ink-tertiary">
               Setup key
             </span>

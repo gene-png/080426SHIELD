@@ -623,6 +623,7 @@ export function AttackWorkspace({
                   technique={selectedTechnique}
                   coverage={selectedCoverage}
                   coverageDefinitions={catalog.coverage_definitions}
+                  reasonCodes={catalog.reason_codes}
                   readOnly={readOnly}
                   onPatch={(patch) => {
                     if (!selectedCoverage) return;

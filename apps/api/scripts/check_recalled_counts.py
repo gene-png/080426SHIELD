@@ -43,7 +43,7 @@ PROCEEDS. The list is enumerated below and is therefore a FLOOR, not a census:
 a volatile noun nobody thought of is a miss. Extend it when one is found rather
 than widening to all plural nouns, which would bury the signal.
 
-## EXIT CODES, per this repo's fail-closed convention (D-051)
+## EXIT CODES, per this repo's fail-closed convention (D-090)
 
   0 - no unprovenanced recalled counts
   1 - at least one found
@@ -387,7 +387,7 @@ def main(argv: list[str], root: Path | None = None) -> int:
             nl = chr(10)
             sys.stderr.write(f"check-recalled-counts: MISSING target {rel}{nl}")
             sys.stderr.write(f"A document that could not be opened is not a clean document{nl}")
-            sys.stderr.write(f"(D-051), and this gate will not report a verdict over a set it{nl}")
+            sys.stderr.write(f"(D-090), and this gate will not report a verdict over a set it{nl}")
             sys.stderr.write(f"did not read.{nl}")
             return 2
         try:
@@ -401,7 +401,7 @@ def main(argv: list[str], root: Path | None = None) -> int:
 
     if not checked:
         print("check-recalled-counts: read NOTHING -- no targets to check.")
-        print("An unreadable doc set is not a clean doc set (D-051).")
+        print("An unreadable doc set is not a clean doc set (D-090).")
         return 2
 
     if "--porcelain" in flags:
@@ -477,5 +477,5 @@ if __name__ == "__main__":
     except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
         nl = chr(10)
         sys.stderr.write(f"check-recalled-counts: CRASHED: {type(exc).__name__}: {exc}{nl}")
-        sys.stderr.write(f"A crash is not a clean report and not a violation (D-051).{nl}")
+        sys.stderr.write(f"A crash is not a clean report and not a violation (D-090).{nl}")
         raise SystemExit(2) from exc

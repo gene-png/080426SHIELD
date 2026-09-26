@@ -182,7 +182,7 @@ function DownloadLink({
   return (
     <a
       href={`/api/proxy/artifacts/${id}/download`}
-      className="rounded-md border border-border-default px-3 py-1.5 text-sm font-medium text-ink-primary hover:bg-surface-muted"
+      className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-ink-primary hover:bg-surface-sunken"
     >
       {label}
       {filename ? (
@@ -478,7 +478,7 @@ export function RiskRegisterDashboard(): JSX.Element {
               type="button"
               onClick={onExport}
               disabled={busy !== null}
-              className="rounded-md border border-border-default px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-muted disabled:opacity-50"
+              className="rounded-md border border-border px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-sunken disabled:opacity-50"
             >
               {busy === "export" ? "Exporting…" : "Export XLSX / PDF / Word"}
             </button>

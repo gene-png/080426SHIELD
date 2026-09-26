@@ -1,0 +1,8 @@
+{
+  "helpers/": "Modules the specs import (auth, ids, the base URL, AI and mail helpers); not tests.",
+  "manual/": "Named manual procedures run only by playwright.manual.config.ts, on demand, never in CI (#483, #560).",
+  "globalSetup.ts": "The run's global setup, referenced by playwright.config.ts; not a test.",
+  "globalTeardown.ts": "The run's global teardown, referenced by playwright.config.ts; not a test.",
+  "playwright.config.ts": "The CI suite's config; not a test.",
+  "playwright.manual.config.ts": "The config for manual/; not a test."
+}
