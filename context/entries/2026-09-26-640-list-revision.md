@@ -19,10 +19,16 @@ Branch `track1/techdebt-edit-revision`, from `main` at `b5f5448`. Migration
   (`deliverables.capability_list_revision`, also in 0056). Release refuses one
   that does not match the list's `approved_revision`, including a NULL from
   before 0056: typed 409 `deliverable_predates_approval`, naming Re-finalize.
+  For a NULL the message says nothing confirms the rows, not that the
+  deliverable predates the approval.
+- #709's bulk-disposition route calls `_record_edit` and has a driver.
 - The progress bar is a twin left alone, with a note at the site.
 
 Tests: `test_capability_list_revision.py` drives the routes. Its set of edit
 routes is derived from the router. Each guard was reverted on its own,
 and each turned a named test red. The backfill test rewinds 0056 over lists
-the API built. The web tests cover the stale, current and released states. No
-existing test was edited.
+the API built. The web tests cover the stale, current and released states.
+One existing test was edited, on the coordinator's verdict (overturnable):
+`test_migration_0051_backfill.py`'s `_freeze` selects the two columns it
+reads rather than the whole `Deliverable`, which at revision 0051 has no
+`capability_list_revision` column. Its assertions are unchanged.

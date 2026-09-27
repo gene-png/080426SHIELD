@@ -1065,6 +1065,7 @@ def bulk_set_disposition(
         item.disposition = body.disposition
         item.confidence_pct = None
     item_ids = sorted(str(i.id) for i in items)
+    _record_edit(db, cap_list.id)
     audit(
         db,
         action="capability_items.disposition_set",
@@ -1973,7 +1974,7 @@ def _refuse_release_miss(
             and cap_list.approval_current
             and cap_list.approved_revision != rendered_revision
         ):
-            return _refuse_deliverable_predates_approval()
+            return _refuse_deliverable_predates_approval(rendered_revision)
     return _refuse_release_over_undecided(db, list_id)
 
 
@@ -2020,20 +2021,33 @@ def _refuse_release_over_undecided(db: Session, list_id: uuid.UUID) -> HTTPExcep
     return _refuse_changed_during_release()
 
 
-def _refuse_deliverable_predates_approval() -> HTTPException:
+def _refuse_deliverable_predates_approval(rendered_revision: int | None) -> HTTPException:
     """#640: this deliverable was not rendered from the rows as last approved.
     Typed (D-016). The remedy names the step-4 button `DeliverableCard` shows
     once a deliverable exists ("Re-finalize"); finalize accepts an APPROVED
-    list, so it works in exactly the state this refusal is raised in."""
+    list, so it works in exactly the state this refusal is raised in.
+
+    A deliverable finalized before migration 0056 recorded no revision, so
+    nothing says WHEN it was rendered relative to the approval: finalize needed
+    an approved list, so "generated before the list was last approved" is
+    probably false for it. Its message says only what is known."""
+    if rendered_revision is None:
+        why = (
+            "This deliverable was generated before deliverables recorded which approval "
+            "they were built from, so nothing confirms it shows the approved rows."
+        )
+    else:
+        why = (
+            "This deliverable was generated before the capability list was last "
+            "approved, so it may not show the approved rows."
+        )
     return HTTPException(
         status_code=status.HTTP_409_CONFLICT,
         detail={
             "reason": "deliverable_predates_approval",
             "message": (
-                "This deliverable was generated before the capability list was last "
-                "approved, so it may not show the approved rows. Generate the deliverable "
-                "again with Re-finalize in step 4, Generate and release the deliverable, "
-                "then release the new version."
+                f"{why} Generate the deliverable again with Re-finalize in step 4, "
+                "Generate and release the deliverable, then release the new version."
             ),
         },
     )

@@ -239,6 +239,14 @@ EDIT_DRIVERS: dict[tuple[str, str], Callable[[World], Any]] = {
             f"/tech-debt/capability-items/{w.security_id}", headers=w.h, json={"notes": "renewal"}
         )
     ),
+    # #641's bulk twin of the single-row disposition PATCH.
+    ("POST", "/tech-debt/capability-lists/{list_id}/items/disposition"): (
+        lambda w: w.c.post(
+            f"/tech-debt/capability-lists/{w.list_id}/items/disposition",
+            headers=w.h,
+            json={"item_ids": [w.security_id, w.other_id], "disposition": "cut"},
+        )
+    ),
 }
 
 # Mutating routes on an existing list that are NOT step-2 edits, each for a
@@ -556,3 +564,64 @@ def test_a_deliverable_from_before_0056_is_refused_at_release(app_client) -> Non
     assert r.status_code == 409, r.text
     assert r.json()["error"]["reason"] == _PREDATES, r.text
     assert not _deliverable_released(w, fin.json()["id"])
+
+
+_WHEN_UNKNOWN = "nothing confirms it shows the approved rows"
+_WHEN_EDITED = "generated before the capability list was last approved"
+
+
+def _replay_0056() -> None:
+    """Rewind and replay 0056: the writer that leaves every existing
+    deliverable's `capability_list_revision` NULL."""
+    api_root = Path(__file__).resolve().parents[2]
+    cfg = Config(str(api_root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(api_root / "alembic"))
+    cfg.set_main_option("sqlalchemy.url", os.environ["DATABASE_URL"])
+    command.downgrade(cfg, "0055")
+    command.upgrade(cfg, "0056")
+
+
+@pytest.mark.unit
+def test_a_deliverable_from_before_0056_is_not_told_it_predates_the_approval(
+    app_client,
+) -> None:
+    """Finalize needed an approved list, so a deliverable that recorded no
+    revision was probably generated AFTER the approval. The refusal says only
+    what is known: nothing confirms its rows are the approved ones."""
+    w = _world(app_client)
+    _decide_all(w)
+    assert _approve(w).status_code == 200
+    fin = _finalize(w)
+    assert fin.status_code == 201, fin.text
+    _replay_0056()
+    assert _latest(w)["approval_current"] is True, "setup: the backfill reads the list as current"
+
+    r = _release(w, fin.json()["id"])
+
+    assert r.status_code == 409, r.text
+    error = r.json()["error"]
+    assert error["reason"] == _PREDATES, error
+    assert _WHEN_UNKNOWN in error["message"], error["message"]
+    assert _WHEN_EDITED not in error["message"], error["message"]
+    assert "Re-finalize in step 4" in error["message"], error["message"]
+
+
+@pytest.mark.unit
+def test_a_deliverable_built_before_a_re_approval_is_told_so(app_client) -> None:
+    """The other half of the message branch: a deliverable that DID record a
+    revision, older than the approval, is told it predates the approval."""
+    w = _world(app_client)
+    _decide_all(w)
+    assert _approve(w).status_code == 200
+    old = _finalize(w)
+    assert old.status_code == 201, old.text
+    EDIT_DRIVERS[("PATCH", "/tech-debt/capability-items/{item_id}")](w)
+    assert _approve(w).status_code == 200
+
+    r = _release(w, old.json()["id"])
+
+    assert r.status_code == 409, r.text
+    error = r.json()["error"]
+    assert error["reason"] == _PREDATES, error
+    assert _WHEN_EDITED in error["message"], error["message"]
+    assert _WHEN_UNKNOWN not in error["message"], error["message"]
