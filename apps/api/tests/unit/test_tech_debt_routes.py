@@ -17,12 +17,12 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.models.audit_entry import AuditEntry
-from app.models.capability import CapabilityList
+from app.models.capability import CapabilityItem, CapabilityList
 from app.models.llm_call import LLMCall
 from app.models.service import Service
 from app.storage.local import LocalFilesystemStorage
@@ -393,19 +393,15 @@ def test_extract_reuses_open_draft_no_reextract(app_client) -> None:
         assert extracted == 1
 
 
-@pytest.mark.unit
-def test_extract_with_different_artifact_still_reuses_open_draft(app_client) -> None:
-    """A POST with a DIFFERENT artifact_id while a draft is open still returns
-    the existing draft untouched (documented contract; an explicit
-    replace/re-extract affordance is out of scope)."""
-    c, _, provider = app_client
-    admin = _register(c, "admin@example.com")
-    bearer = admin["tokens"]["access_token"]
-    provider.register(
-        "extract.capabilities",
-        lambda _p: LLMResponse('{"items": [{"name": "Wiz"}]}'),
-    )
+def _open_draft_from(c, bearer: str, provider, calls: dict) -> tuple[str, str, str, dict]:
+    """Service with a v1 draft extracted from document A, plus an uploaded
+    document B. Returns (service_id, artifact_a, artifact_b, draft)."""
 
+    def fake(_p) -> LLMResponse:
+        calls["n"] += 1
+        return LLMResponse('{"items": [{"name": "Wiz"}]}')
+
+    provider.register("extract.capabilities", fake)
     sr = c.post(
         "/tech-debt/services",
         headers={"Authorization": f"Bearer {bearer}"},
@@ -414,24 +410,110 @@ def test_extract_with_different_artifact_still_reuses_open_draft(app_client) -> 
     svc_id = sr.json()["id"]
     artifact_a = _upload_csv(c, bearer, "a.csv", b"A\n1\n")
     artifact_b = _upload_csv(c, bearer, "b.csv", b"B\n2\n")
-
     r1 = c.post(
         f"/tech-debt/services/{svc_id}/capability-lists/extract",
         headers={"Authorization": f"Bearer {bearer}"},
         json={"artifact_id": artifact_a},
     )
     assert r1.status_code == 201, r1.text
-    first = r1.json()
+    return svc_id, artifact_a, artifact_b, r1.json()
 
-    # Different artifact, draft still open -> same draft returned, 200.
+
+@pytest.mark.unit
+def test_extract_with_different_artifact_while_a_draft_is_open_is_refused(app_client) -> None:
+    """#644. This test used to pin a 200 returning the OPEN draft for a
+    different document: the consultant picked document B and silently got the
+    list built from A, which read as success. Rewritten, as the coordinator's
+    call: a different document is refused with a typed 409 naming the control
+    that clears the way, the LLM is not called, and the draft is untouched."""
+    c, TestSession, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    calls = {"n": 0}
+    svc_id, _a, artifact_b, draft = _open_draft_from(c, bearer, provider, calls)
+
     r2 = c.post(
         f"/tech-debt/services/{svc_id}/capability-lists/extract",
         headers={"Authorization": f"Bearer {bearer}"},
         json={"artifact_id": artifact_b},
     )
-    assert r2.status_code == 200, r2.text
-    assert r2.json()["id"] == first["id"]
-    assert r2.json()["version"] == 1
+
+    assert r2.status_code == 409, r2.text
+    detail = r2.json()["error"]
+    assert detail["reason"] == "capability_draft_from_other_document"
+    # The button's own label, exactly as DiscardDraftButton renders it.
+    assert '"Discard draft"' in detail["message"]
+    assert "draft v1" in detail["message"]
+    assert calls["n"] == 1
+    latest = c.get(
+        f"/tech-debt/services/{svc_id}/capability-lists/latest",
+        headers={"Authorization": f"Bearer {bearer}"},
+    ).json()
+    assert latest["id"] == draft["id"]
+    assert latest["version"] == 1
+    assert latest["status"] == "draft"
+    assert [i["id"] for i in latest["items"]] == [i["id"] for i in draft["items"]]
+    with TestSession() as db:
+        assert db.execute(select(func.count()).select_from(LLMCall)).scalar_one() == 1
+
+
+@pytest.mark.unit
+def test_extract_refuses_when_the_open_drafts_source_cannot_be_established(
+    app_client,
+) -> None:
+    """#644, fail closed. The draft's source document is read from its rows'
+    `source_artifact_id`. With none left (a human-included row carries none,
+    and the column is ON DELETE SET NULL), the route cannot tell whether the
+    request names the same document, so it refuses rather than guess -- even
+    for the document that did produce it."""
+    c, TestSession, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    calls = {"n": 0}
+    svc_id, artifact_a, _b, draft = _open_draft_from(c, bearer, provider, calls)
+    with TestSession() as db:
+        db.execute(
+            update(CapabilityItem)
+            .where(CapabilityItem.capability_list_id == _uuid.UUID(draft["id"]))
+            .values(source_artifact_id=None)
+        )
+        db.commit()
+
+    r2 = c.post(
+        f"/tech-debt/services/{svc_id}/capability-lists/extract",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"artifact_id": artifact_a},
+    )
+
+    assert r2.status_code == 409, r2.text
+    detail = r2.json()["error"]
+    assert detail["reason"] == "capability_draft_source_unknown"
+    assert '"Discard draft"' in detail["message"]
+    assert calls["n"] == 1
+
+
+@pytest.mark.unit
+def test_extract_from_another_document_works_after_discarding_the_draft(app_client) -> None:
+    """#644: the refusal's remedy is real. Discard the draft, and extraction
+    from document B runs and cuts a new version."""
+    c, _TestSession, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    calls = {"n": 0}
+    svc_id, _a, artifact_b, draft = _open_draft_from(c, bearer, provider, calls)
+
+    rd = c.post(
+        f"/tech-debt/capability-lists/{draft['id']}/discard",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    assert rd.status_code == 200, rd.text
+    r2 = c.post(
+        f"/tech-debt/services/{svc_id}/capability-lists/extract",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"artifact_id": artifact_b},
+    )
+
+    assert r2.status_code == 201, r2.text
+    assert r2.json()["id"] != draft["id"]
+    assert calls["n"] == 2
+    assert {i["source_artifact_id"] for i in r2.json()["items"]} == {artifact_b}
 
 
 @pytest.mark.unit
@@ -1234,6 +1316,231 @@ def test_consolidation_plan_summary_rejects_client_role(app_client) -> None:
     assert r.status_code == 403
 
 
+# ---------------------------------------------------------------------------
+# Bulk disposition (#641): select many rows, classify once. Every test drives
+# the endpoint, and the counts are read back through the consolidation plan,
+# the surface the step-3 panel shows.
+# ---------------------------------------------------------------------------
+
+
+def _list_id(c: TestClient, bearer: str, svc_id: str) -> str:
+    r = c.get(
+        f"/tech-debt/services/{svc_id}/capability-lists/latest",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
+def _bulk(c: TestClient, bearer: str, list_id: str, body: dict):
+    return c.post(
+        f"/tech-debt/capability-lists/{list_id}/items/disposition",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json=body,
+    )
+
+
+def _plan(c: TestClient, bearer: str, svc_id: str) -> dict:
+    r = c.get(
+        f"/tech-debt/services/{svc_id}/consolidation-plan",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+@pytest.mark.unit
+def test_bulk_disposition_sets_only_the_selected_rows(app_client) -> None:
+    c, _, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    list_id = _list_id(c, bearer, svc_id)
+
+    r = _bulk(c, bearer, list_id, {"item_ids": item_ids[:2], "disposition": "cut"})
+    assert r.status_code == 200, r.text
+    rows = {i["id"]: i for i in r.json()["items"]}
+    assert [rows[i]["disposition"] for i in item_ids] == ["cut", "cut", None]
+
+    plan = _plan(c, bearer, svc_id)
+    assert (plan["cut_count"], plan["undecided_count"]) == (2, 1)
+    # Wiz ($350k) and Lacework ($120k) were the two cut.
+    assert plan["estimated_annual_savings"] == 470000.0
+
+
+@pytest.mark.unit
+def test_bulk_disposition_marks_the_rows_human_decided(app_client) -> None:
+    """Like the single-row edit, a classified row is no longer an AI guess."""
+    c, _, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc_id, item_id = _create_list_with_item(c, bearer, provider)
+    list_id = _list_id(c, bearer, svc_id)
+    before = c.get(
+        f"/tech-debt/services/{svc_id}/capability-lists/latest",
+        headers={"Authorization": f"Bearer {bearer}"},
+    ).json()["items"][0]
+    assert before["confidence_pct"] == 75, "precondition: the row starts as an AI guess"
+
+    r = _bulk(c, bearer, list_id, {"item_ids": [item_id], "disposition": "keep"})
+    assert r.status_code == 200, r.text
+    assert r.json()["items"][0]["confidence_pct"] is None
+
+
+@pytest.mark.unit
+def test_bulk_disposition_can_return_rows_to_undecided(app_client) -> None:
+    c, _, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    list_id = _list_id(c, bearer, svc_id)
+    first = _bulk(c, bearer, list_id, {"item_ids": item_ids, "disposition": "keep"})
+    assert first.status_code == 200, first.text
+
+    r = _bulk(c, bearer, list_id, {"item_ids": item_ids[1:], "disposition": None})
+    assert r.status_code == 200, r.text
+    plan = _plan(c, bearer, svc_id)
+    assert (plan["keep_count"], plan["undecided_count"]) == (1, 2)
+
+
+@pytest.mark.unit
+def test_bulk_disposition_writes_one_audit_row_naming_every_item(app_client) -> None:
+    c, TestSession, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    list_id = _list_id(c, bearer, svc_id)
+
+    r = _bulk(c, bearer, list_id, {"item_ids": item_ids, "disposition": "keep"})
+    assert r.status_code == 200, r.text
+
+    with TestSession() as s:
+        rows = (
+            s.execute(
+                select(AuditEntry).where(AuditEntry.action == "capability_items.disposition_set")
+            )
+            .scalars()
+            .all()
+        )
+    assert len(rows) == 1
+    details = rows[0].details
+    assert details["disposition"] == "keep"
+    assert details["item_count"] == 3
+    assert sorted(details["item_ids"]) == sorted(item_ids)
+    assert details["capability_list_id"] == list_id
+
+
+@pytest.mark.unit
+def test_bulk_disposition_refuses_an_item_from_another_list_and_changes_nothing(
+    app_client,
+) -> None:
+    c, _, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    list_id = _list_id(c, bearer, svc_id)
+    _other_svc, other_item = _create_list_with_item(c, bearer, provider)
+
+    r = _bulk(c, bearer, list_id, {"item_ids": [item_ids[0], other_item], "disposition": "cut"})
+    assert r.status_code == 422, r.text
+    detail = r.json()["error"]
+    assert detail["reason"] == "capability_items_not_in_list"
+    assert "1 of the 2 selected rows" in detail["message"]
+    # All or nothing: the row that WAS in the list is untouched.
+    assert _plan(c, bearer, svc_id)["undecided_count"] == 3
+
+
+@pytest.mark.unit
+def test_bulk_disposition_refuses_an_empty_selection(app_client) -> None:
+    c, _, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc_id, _ = _seed_three_item_list(c, bearer, provider)
+    list_id = _list_id(c, bearer, svc_id)
+
+    r = _bulk(c, bearer, list_id, {"item_ids": [], "disposition": "keep"})
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["reason"] == "no_items_selected"
+
+
+@pytest.mark.unit
+def test_bulk_disposition_requires_the_disposition_key(app_client) -> None:
+    """Omitting the key must not read as "set to undecided"."""
+    c, _, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    list_id = _list_id(c, bearer, svc_id)
+    first = _bulk(c, bearer, list_id, {"item_ids": item_ids, "disposition": "keep"})
+    assert first.status_code == 200, first.text
+
+    r = _bulk(c, bearer, list_id, {"item_ids": item_ids})
+    assert r.status_code == 422, r.text
+    assert _plan(c, bearer, svc_id)["keep_count"] == 3
+
+
+@pytest.mark.unit
+def test_bulk_disposition_refuses_a_discarded_list(app_client) -> None:
+    c, _, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    list_id = _list_id(c, bearer, svc_id)
+    d = c.post(
+        f"/tech-debt/capability-lists/{list_id}/discard",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    assert d.status_code == 200, d.text
+
+    r = _bulk(c, bearer, list_id, {"item_ids": item_ids, "disposition": "cut"})
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "capability_list_discarded"
+
+
+@pytest.mark.unit
+def test_bulk_disposition_is_admin_only(app_client) -> None:
+    c, _, provider = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer = admin["tokens"]["access_token"]
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    list_id = _list_id(c, bearer, svc_id)
+    c.headers["X-Client-Id"] = client["user"]["client_id"]
+
+    r = _bulk(
+        c, client["tokens"]["access_token"], list_id, {"item_ids": item_ids, "disposition": "cut"}
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.unit
+def test_bulk_disposition_does_not_reach_another_tenants_list(app_client) -> None:
+    c, TestSession, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc_id, item_ids = _seed_three_item_list(c, bearer, provider)
+    list_id = _list_id(c, bearer, svc_id)
+
+    from app.models.client import Client as _Client
+
+    with TestSession() as s:
+        other = _Client(legal_name="Other Tenant")
+        s.add(other)
+        s.commit()
+        other_id = str(other.id)
+    c.headers["X-Client-Id"] = other_id
+
+    r = _bulk(c, bearer, list_id, {"item_ids": item_ids, "disposition": "cut"})
+    assert r.status_code == 404, r.text
+    c.headers["X-Client-Id"] = _svc_tenant(TestSession, svc_id)
+    assert _plan(c, bearer, svc_id)["undecided_count"] == 3
+
+
+def _svc_tenant(session_factory: sessionmaker, svc_id: str) -> str:
+    with session_factory() as s:
+        return str(s.get(Service, _uuid.UUID(svc_id)).client_id)
+
+
+@pytest.mark.unit
+def test_bulk_disposition_404_for_unknown_list(app_client) -> None:
+    c, _, _ = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    body = {"item_ids": [str(_uuid.uuid4())], "disposition": "cut"}
+    r = _bulk(c, bearer, str(_uuid.uuid4()), body)
+    assert r.status_code == 404
+
+
 def _approve_list(c: TestClient, bearer: str, svc_id: str) -> str:
     latest = c.get(
         f"/tech-debt/services/{svc_id}/capability-lists/latest",
@@ -1796,3 +2103,42 @@ def test_a_released_refusal_carries_a_typed_reason_like_its_twin(app_client) -> 
     error = r.json()["error"]
     assert error["reason"] == "capability_list_released", r.text
     assert error["message"] == "This capability list has been released and is locked."
+
+
+@pytest.mark.unit
+def test_same_document_reextract_still_reuses_a_draft_with_a_manually_included_row(
+    app_client,
+) -> None:
+    """#691 round 1. A row included by hand from the exclusion queue carries NO
+    source document. The draft's source is still the one document its extracted
+    rows name, so re-extracting from that same document must still return the
+    draft (200), not refuse it as unknown."""
+    c, _TestSession, provider = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc_id, list_id = _list_with_exclusions(c, bearer, provider)
+    latest = c.get(
+        f"/tech-debt/services/{svc_id}/capability-lists/latest",
+        headers={"Authorization": f"Bearer {bearer}"},
+    ).json()
+    source = {i["source_artifact_id"] for i in latest["items"]}
+    assert len(source) == 1, source
+    (artifact_id,) = source
+
+    ri = c.post(
+        f"/tech-debt/capability-lists/{list_id}/excluded-rows/1/include",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"name": "Claroty xDome", "category": "OT Security", "annual_cost_usd": 133000},
+    )
+    assert ri.status_code == 201, ri.text
+    # Not vacuous: the included row really does carry no source.
+    added = next(i for i in ri.json()["items"] if i["name"] == "Claroty xDome")
+    assert added["source_artifact_id"] is None
+
+    r = c.post(
+        f"/tech-debt/services/{svc_id}/capability-lists/extract",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"artifact_id": artifact_id},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["id"] == list_id

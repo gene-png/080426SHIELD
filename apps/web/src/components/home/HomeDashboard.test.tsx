@@ -492,6 +492,7 @@ describe("HomeDashboard — a failed panel is not an empty one (#236)", () => {
           attack_uncovered_count: null,
           attack_uncovered_unresolved: false,
           attack_uncovered_withheld: false,
+          attack_not_verified_count: null,
           csf_gap_count: null,
           csf_gap_unresolved: false,
           csf_services: 0,
