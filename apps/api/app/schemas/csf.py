@@ -347,6 +347,10 @@ class EnterpriseSubcategory(BaseModel):
     target_level: int | None
     gap: bool
     priority: str | None
+    #: Set by the playbook export only (#707): `priority` is a consultant's
+    #: override that differs from the computed one. Never serialized, so the
+    #: Enterprise Profile endpoint's JSON is unchanged.
+    priority_overridden: bool = Field(default=False, exclude=True)
 
 
 class EnterpriseProfileResponse(BaseModel):

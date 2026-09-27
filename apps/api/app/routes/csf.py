@@ -1384,8 +1384,49 @@ def _gap_action_response(
         resources=action.resources if action else None,
         success_criteria=action.success_criteria if action else None,
         poam_ref=action.poam_ref if action else None,
-        effective_priority=override or ent.priority,
+        effective_priority=_effective_priority(ent, action),
     )
+
+
+def _effective_priority(ent: EnterpriseSubcategory, action: CsfGapAction | None) -> str | None:
+    """A gap's priority as every surface states it: the stored override where
+    one is set, else the code-computed roll-up priority. A row that is not a
+    gap has no priority, whatever override is stored against it -- the upsert
+    route accepts any catalogue code, gap or not."""
+    if not ent.gap:
+        return ent.priority
+    override = action.priority_override if action else None
+    return override or ent.priority
+
+
+def _with_effective_priority(
+    rows: list[EnterpriseSubcategory], actions: dict[str, CsfGapAction]
+) -> list[EnterpriseSubcategory]:
+    """The Enterprise rows with each gap's priority replaced by its effective
+    one, derived ONCE for all five playbook artifacts (#696).
+
+    The XLSX Action Plan printed the override while the exec and full PDF/DOCX
+    were never handed it, so one export counted, listed and ranked a gap at two
+    priorities. Handing every renderer these rows makes `_priority_counts`,
+    `_gap_rows` (which picks the exec top 12) and every priority column read the
+    same value. The engine's own rows, and the Enterprise Profile endpoint that
+    serves them, are left computed: that is the default the gap-action editor
+    shows beside the override."""
+    out = []
+    for r in rows:
+        effective = _effective_priority(r, actions.get(r.subcategory_code))
+        # Marked so the copy that describes a computed priority is not applied
+        # to one the consultant set (#707 round 1).
+        out.append(
+            r.model_copy(
+                update={"priority": effective, "priority_overridden": effective != r.priority}
+            )
+        )
+    _log.info(
+        "csf.playbook.effective_priority overridden=%d",
+        sum(1 for a, b in zip(rows, out, strict=True) if a.priority != b.priority),
+    )
+    return out
 
 
 def _load_gap_actions(db: Session, assessment_id: uuid.UUID) -> dict[str, CsfGapAction]:
@@ -2169,8 +2210,9 @@ def export_playbook(
             status_code=status.HTTP_409_CONFLICT,
             detail="Seed the Working Profile before exporting.",
         )
-    enterprise_rows, _ = _enterprise_subcategories(db, a)
+    computed_rows, _ = _enterprise_subcategories(db, a)
     gap_actions = _load_gap_actions(db, a.id)
+    enterprise_rows = _with_effective_priority(computed_rows, gap_actions)
     tier_profiles: dict[str, list] = {}
     for tier in ("high", "moderate", "low"):
         trows = sorted(
