@@ -61,7 +61,11 @@ from app.attack.coverage import (
     reason_codes_for,
 )
 from app.attack.exporters import build_context as build_attack_context
-from app.attack.exporters import coverage_pct_text
+from app.attack.exporters import (
+    coverage_pct_text,
+    outside_assessed_text,
+    states_outside_counts,
+)
 from app.attack.exporters import render_docx as render_attack_docx
 from app.attack.exporters import render_pdf as render_attack_pdf
 from app.attack.exporters import render_xlsx as render_attack_xlsx
@@ -2376,9 +2380,13 @@ def heatmap(
     coverage_map: dict[str, str | None] = {
         r.technique_code: r.status for r in rows if r.technique_code in valid
     }
-    rollup = compute_heatmap(
-        coverage_map, attack_pending_codes(rows, parents_computed=parents_computed(a))
-    )
+    rule = parents_computed(a)
+    rollup = compute_heatmap(coverage_map, attack_pending_codes(rows, parents_computed=rule))
+
+    def outside(n: int) -> int | None:
+        # Option (a): the two counts only where #620's rule set applies.
+        return n if rule else None
+
     return AttackHeatmap(
         assessment_id=a.id,
         version=a.version,
@@ -2386,13 +2394,14 @@ def heatmap(
         total_sub_techniques=rollup.total_sub_techniques,
         scored_count=rollup.scored_count,
         unscored_count=rollup.unscored_count,
+        catalogue_count=rollup.catalogue_count,
         covered=rollup.covered,
         partial=rollup.partial,
         gap=rollup.gap,
         not_applicable=rollup.not_applicable,
         pending_review=rollup.pending_review,
-        outside_control_surface=rollup.outside_control_surface,
-        unable_to_determine=rollup.unable_to_determine,
+        outside_control_surface=outside(rollup.outside_control_surface),
+        unable_to_determine=outside(rollup.unable_to_determine),
         coverage_pct=rollup.coverage_pct,
         by_tactic=[
             TacticHeatmapEntry(
@@ -2406,8 +2415,8 @@ def heatmap(
                 not_applicable=tc.not_applicable,
                 unscored=tc.unscored,
                 pending_review=tc.pending_review,
-                outside_control_surface=tc.outside_control_surface,
-                unable_to_determine=tc.unable_to_determine,
+                outside_control_surface=outside(tc.outside_control_surface),
+                unable_to_determine=outside(tc.unable_to_determine),
                 coverage_pct=tc.coverage_pct,
             )
             for tc in rollup.by_tactic
@@ -2961,6 +2970,10 @@ def finalize_attack_deliverable(
         f"{rollup.covered} covered, {rollup.partial} partial, {rollup.gap} gaps, "
         f"{rollup.pending_review} pending review, "
         f"{rollup.not_applicable} N/A across {rollup.scored_count} scored techniques."
+        # #554: the two counts outside the assessed denominator, in the same
+        # sentence every renderer prints, never dropped even at zero -- where the
+        # renderers print it, which is under #620's rules only (option (a)).
+        + (f" {outside_assessed_text(rollup)}." if states_outside_counts(ctx) else "")
     )
 
     deliv = Deliverable(

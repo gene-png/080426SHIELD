@@ -68,6 +68,13 @@ function data(
       partial: 0,
       gap: 2,
       not_applicable: 0,
+      // #621 option (a): the API sends these exactly when it sends
+      // parents_computed, and refuses to build a response otherwise, so a
+      // rule-2 fixture without them was a state the system cannot produce.
+      // No tactic rows here, so there is nothing per tactic to add.
+      ...(parentsComputed
+        ? { outside_control_surface: 0, unable_to_determine: 0 }
+        : {}),
       coverage_pct: 50,
       by_tactic: [],
     },
