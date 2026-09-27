@@ -62,7 +62,11 @@ def current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
                 "reason": "credentials_changed",
-                "message": "Your password was changed since this session began. Sign in again.",
+                # Cause-neutral (#726): a password reset, a deactivation and a
+                # client archive all set the cutoff, so naming one would be false
+                # for the other two -- and "your password was changed" reads as
+                # account compromise to an archived client's users.
+                "message": "This session has ended. Sign in again.",
             },
             headers={"WWW-Authenticate": "Bearer"},
         )
@@ -70,7 +74,8 @@ def current_user(
 
 
 def _predates_credentials_change(iat: datetime | None, cutoff: datetime | None) -> bool:
-    """#658: refuse an access token issued before the password last changed.
+    """#658, #652: refuse an access token issued before the user's sessions last ended
+    -- by a password reset, a deactivation or a client archive (`end_user_sessions`).
 
     The owner's rule: accept iff `iat >= cutoff`, both in whole seconds, so the
     session a user starts in the reset's own second is accepted -- and so is a

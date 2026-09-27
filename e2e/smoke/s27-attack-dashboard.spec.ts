@@ -57,6 +57,10 @@ test("client views a released MITRE ATT&CK coverage dashboard", async ({
         response_tools: ["Cortex XSOAR"],
         rationale: "Full detect/prevent/respond triad in place.",
       });
+    } else if (status === "partial") {
+      // #622: approve refuses a Partial with no reason, so a consultant now
+      // picks one. A real Partial code from `coverage.REASON_CODES`.
+      body.reason_code = "missing_control_category";
     } else if (status === "gap") {
       body.rationale = "Container runtime detection gap — no coverage today.";
     }
@@ -67,9 +71,11 @@ test("client views a released MITRE ATT&CK coverage dashboard", async ({
     expect(res.ok(), await res.text()).toBe(true);
   }
 
-  await request.post(`${API_BASE}/attack/assessments/${assess.id}/approve`, {
-    headers: H,
-  });
+  const approved = await request.post(
+    `${API_BASE}/attack/assessments/${assess.id}/approve`,
+    { headers: H },
+  );
+  expect(approved.ok(), await approved.text()).toBe(true);
   const fin = await (
     await request.post(
       `${API_BASE}/attack/services/${serviceId}/deliverables/finalize`,
