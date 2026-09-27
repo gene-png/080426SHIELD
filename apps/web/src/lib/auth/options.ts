@@ -136,8 +136,14 @@ async function refreshAccessToken(token: JWT): Promise<JWT> {
     };
   } catch (err) {
     const reason = err instanceof ApiError ? reasonOf(err.payload) : undefined;
+    // `client_archived` (#727): the refresh was refused for good, so the
+    // session ends through the same sign-out; signing in again then shows the
+    // archived copy. As a generic error the guard would not act on it, and
+    // every proxy call would fail with no way out.
     const isReauth =
-      reason === "reauth_required" || reason === "refresh_reused";
+      reason === "reauth_required" ||
+      reason === "refresh_reused" ||
+      reason === "client_archived";
     return {
       ...token,
       error: isReauth ? REAUTH_REQUIRED_ERROR : "RefreshAccessTokenError",

@@ -57,6 +57,11 @@ export function SignInForm(): JSX.Element {
           "This account has been deactivated. Contact your SHIELD administrator if you think this is a mistake, or email support@kentro.local for help.",
         email_not_verified:
           "Please verify your email address before signing in. Check your inbox for the confirmation link.",
+        // #727, D-104: password login and the MFA step both refuse a user of
+        // an archived client. No remedy named: nothing in the product
+        // un-archives a client, and a client user reaches no such control.
+        client_archived:
+          "Your organization's SHIELD account has been archived, so it is no longer available.",
       };
       if (result?.code && REFUSALS[result.code]) {
         setError(REFUSALS[result.code]);
