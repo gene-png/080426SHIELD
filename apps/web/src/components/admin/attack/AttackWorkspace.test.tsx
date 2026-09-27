@@ -708,3 +708,66 @@ describe("AttackWorkspace, the parent re-read after round 3 (#620)", () => {
     expect(readsBeforeRunEnds).toBe(1);
   });
 });
+
+describe("AttackWorkspace, a refused approve (#622 round 1)", () => {
+  const REFUSAL =
+    "This assessment cannot be approved: 1 Partial technique has no reason (T1595). Choose a reason for each Partial technique in its panel, then approve again.";
+
+  function refused(): Error {
+    const payload = {
+      error: { reason: "attack_not_release_ready", message: REFUSAL },
+    };
+    // The module mock above makes the class a bare Error subclass that ignores
+    // its arguments, so the fields the workspace reads are set explicitly.
+    return Object.assign(new attackClient.AttackProxyError(409, payload), {
+      status: 409,
+      payload,
+    });
+  }
+
+  function scoredDraft(): AttackAssessment {
+    return {
+      ...draft(),
+      coverage: [{ id: "c1", technique_code: "T1595", status: "partial" }],
+    } as unknown as AttackAssessment;
+  }
+
+  it("says the approve was refused, not that the assessment failed to load", async () => {
+    fetchCatalog.mockResolvedValue(CATALOG);
+    fetchLatestAssessment.mockResolvedValue(scoredDraft());
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+    vi.mocked(attackClient.approveAssessment).mockRejectedValueOnce(refused());
+
+    render(
+      <AttackWorkspace serviceId="svc-refused-1" serviceTitle="Atlas ATT&CK" />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
+
+    expect(await screen.findByText(REFUSAL)).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load the assessment")).toBeNull();
+  });
+
+  it("clears the refusal once a later approve succeeds", async () => {
+    fetchCatalog.mockResolvedValue(CATALOG);
+    fetchLatestAssessment.mockResolvedValue(scoredDraft());
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+    vi.mocked(attackClient.approveAssessment)
+      .mockRejectedValueOnce(refused())
+      .mockResolvedValueOnce({
+        ...scoredDraft(),
+        status: "approved",
+      } as AttackAssessment);
+
+    render(
+      <AttackWorkspace serviceId="svc-refused-2" serviceTitle="Atlas ATT&CK" />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
+    expect(await screen.findByText(REFUSAL)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(
+      await screen.findByRole("button", { name: "Approved" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(REFUSAL)).toBeNull();
+  });
+});

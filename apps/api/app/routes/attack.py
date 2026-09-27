@@ -33,6 +33,7 @@ from app.ai.engine import get_job, run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
+from app.attack import release_readiness
 from app.attack.analytics import compute as compute_heatmap
 from app.attack.catalog import (
     SOURCE_VERSION,
@@ -61,7 +62,11 @@ from app.attack.coverage import (
     reason_codes_for,
 )
 from app.attack.exporters import build_context as build_attack_context
-from app.attack.exporters import coverage_pct_text
+from app.attack.exporters import (
+    coverage_pct_text,
+    outside_assessed_text,
+    states_outside_counts,
+)
 from app.attack.exporters import render_docx as render_attack_docx
 from app.attack.exporters import render_pdf as render_attack_pdf
 from app.attack.exporters import render_xlsx as render_attack_xlsx
@@ -76,7 +81,7 @@ from app.attack.rules import NEW_RULES, parents_computed
 from app.audit import audit
 from app.config import get_settings
 from app.db.session import get_db
-from app.deliverable_release import release_deliverable
+from app.deliverable_release import ParentGuard, release_deliverable
 from app.dependencies import current_client, current_user, require_role
 from app.logging import get_logger
 from app.models._common import utcnow
@@ -2240,6 +2245,13 @@ def approve_assessment(
             .all()
         }
     )
+    # #622: the release gate's predicate, applied while the draft can still be
+    # fixed. An approved assessment is locked and a new version starts every
+    # row unscored, so a refusal first met at release would have no remedy.
+    # Checked AFTER the recompute, so a parent's computed status is judged.
+    blocking = release_readiness.blocking_rows(db, a)
+    if blocking:
+        raise release_readiness.refuse_approve(blocking)
     a.status = AttackAssessmentStatus.APPROVED
     a.approved_at = utcnow()
     a.approved_by = user.id
@@ -2376,9 +2388,13 @@ def heatmap(
     coverage_map: dict[str, str | None] = {
         r.technique_code: r.status for r in rows if r.technique_code in valid
     }
-    rollup = compute_heatmap(
-        coverage_map, attack_pending_codes(rows, parents_computed=parents_computed(a))
-    )
+    rule = parents_computed(a)
+    rollup = compute_heatmap(coverage_map, attack_pending_codes(rows, parents_computed=rule))
+
+    def outside(n: int) -> int | None:
+        # Option (a): the two counts only where #620's rule set applies.
+        return n if rule else None
+
     return AttackHeatmap(
         assessment_id=a.id,
         version=a.version,
@@ -2386,13 +2402,14 @@ def heatmap(
         total_sub_techniques=rollup.total_sub_techniques,
         scored_count=rollup.scored_count,
         unscored_count=rollup.unscored_count,
+        catalogue_count=rollup.catalogue_count,
         covered=rollup.covered,
         partial=rollup.partial,
         gap=rollup.gap,
         not_applicable=rollup.not_applicable,
         pending_review=rollup.pending_review,
-        outside_control_surface=rollup.outside_control_surface,
-        unable_to_determine=rollup.unable_to_determine,
+        outside_control_surface=outside(rollup.outside_control_surface),
+        unable_to_determine=outside(rollup.unable_to_determine),
         coverage_pct=rollup.coverage_pct,
         by_tactic=[
             TacticHeatmapEntry(
@@ -2406,8 +2423,8 @@ def heatmap(
                 not_applicable=tc.not_applicable,
                 unscored=tc.unscored,
                 pending_review=tc.pending_review,
-                outside_control_surface=tc.outside_control_surface,
-                unable_to_determine=tc.unable_to_determine,
+                outside_control_surface=outside(tc.outside_control_surface),
+                unable_to_determine=outside(tc.unable_to_determine),
                 coverage_pct=tc.coverage_pct,
             )
             for tc in rollup.by_tactic
@@ -2961,6 +2978,10 @@ def finalize_attack_deliverable(
         f"{rollup.covered} covered, {rollup.partial} partial, {rollup.gap} gaps, "
         f"{rollup.pending_review} pending review, "
         f"{rollup.not_applicable} N/A across {rollup.scored_count} scored techniques."
+        # #554: the two counts outside the assessed denominator, in the same
+        # sentence every renderer prints, never dropped even at zero -- where the
+        # renderers print it, which is under #620's rules only (option (a)).
+        + (f" {outside_assessed_text(rollup)}." if states_outside_counts(ctx) else "")
     )
 
     deliv = Deliverable(
@@ -3092,5 +3113,11 @@ def release_attack_deliverable(
         user=user,
         kinds=(ServiceKind.ATTACK_COVERAGE,),
         action="attack.deliverable.released",
+        # #622: joins the parent flip's own WHERE, so the check and the write
+        # are one statement and cover the repair re-release too.
+        parent_guard=ParentGuard(
+            condition=release_readiness.blocking_condition(db),
+            refusal=release_readiness.refuse_release,
+        ),
     )
     return _serialize_deliverable(db, deliv)

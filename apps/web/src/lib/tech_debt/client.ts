@@ -1,6 +1,7 @@
 "use client";
 
 import type {
+  CapabilityDisposition,
   CapabilityItem,
   CapabilityItemPatch,
   CapabilityList,
@@ -122,6 +123,24 @@ export async function patchCapabilityItem(
     {
       method: "PATCH",
       body: patch,
+    },
+  );
+}
+
+/**
+ * Set one disposition on many rows of one list (#641). All or nothing: the API
+ * refuses the whole selection if any row is not in the list.
+ */
+export async function bulkSetDisposition(
+  listId: string,
+  itemIds: string[],
+  disposition: CapabilityDisposition | null,
+): Promise<CapabilityList> {
+  return jsonRequest<CapabilityList>(
+    `/api/proxy/tech-debt/capability-lists/${listId}/items/disposition`,
+    {
+      method: "POST",
+      body: { item_ids: itemIds, disposition },
     },
   );
 }

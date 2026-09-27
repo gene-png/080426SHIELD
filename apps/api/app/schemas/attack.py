@@ -288,8 +288,10 @@ class TacticHeatmapEntry(BaseModel):
     # #554: outside the assessed denominator, so stated beside the percentage.
     # REQUIRED, no default: the model is built live by the heatmap route, so a
     # default would turn missing wiring into a confident "0 unverified".
-    outside_control_surface: int
-    unable_to_determine: int
+    # None exactly when the assessment renders under the rules from before #620
+    # (option (a), `attack/rules.py`): the counts are not shown there.
+    outside_control_surface: int | None
+    unable_to_determine: int | None
     coverage_pct: float
 
 
@@ -300,6 +302,9 @@ class AttackHeatmap(BaseModel):
     total_sub_techniques: int
     scored_count: int
     unscored_count: int
+    #: The "Y" of "X/Y scored": every technique tallied. Not scored + unscored,
+    #: which excludes Not verified rows since #621 round 2.
+    catalogue_count: int
     covered: int
     partial: int
     gap: int
@@ -315,8 +320,10 @@ class AttackHeatmap(BaseModel):
     # above. No surface renders them yet, and none needs to while
     # `coverage.WRITABLE` keeps both statuses unwritable; the slice that widens
     # it must put them beside `coverage_pct` on every surface first.
-    outside_control_surface: int
-    unable_to_determine: int
+    # None exactly when the assessment renders under the rules from before #620
+    # (option (a), `attack/rules.py`): the counts are not shown there.
+    outside_control_surface: int | None
+    unable_to_determine: int | None
     coverage_pct: float
     by_tactic: list[TacticHeatmapEntry]
 
