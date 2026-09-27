@@ -652,3 +652,218 @@ def test_the_reauth_refusal_does_not_name_a_period(app_client: TestClient) -> No
         assert word not in lowered, (word, message)
     assert not any(ch.isdigit() for ch in message), message
     assert "sign in again" in message.lower(), message
+
+
+# -----------------------------------------------------------------------------
+# #658: an ACCESS token issued before a password reset is refused.
+#
+# The owner's rule, 2026-09-25: store `credentials_changed_at` truncated to
+# whole seconds, and accept a token iff its `iat` >= that cutoff. `iat` is whole
+# seconds too, so a login in the reset's own second is accepted -- which also
+# accepts a token minted EARLIER in that same second. That sub-second residual
+# is the rule's, stated here and pinned below rather than discovered later.
+#
+# Time is pinned through the two clocks involved: `app.security.jwt._now` sets
+# a token's `iat`, and `app.routes.auth.utcnow` sets the reset's cutoff.
+# -----------------------------------------------------------------------------
+
+_CUTOFF_REASON = "credentials_changed"
+
+
+def _second(offset_s: float = 0.0) -> datetime:
+    """A whole second half a minute AGO, plus `offset_s`. In the past because a
+    token's `nbf` equals its `iat`, and a future `nbf` makes the token invalid
+    before any cutoff is consulted -- the first draft of these tests pinned a
+    future second and every "refused" was that, not the rule. Recent enough
+    that every token TTL and reset-link expiry still holds."""
+    base = datetime.now(UTC).replace(microsecond=0) - timedelta(seconds=30)
+    return base + timedelta(seconds=offset_s)
+
+
+def _me(app_client: TestClient, access: str):
+    return app_client.get("/auth/me", headers={"Authorization": f"Bearer {access}"})
+
+
+def _login(app_client: TestClient, email: str = "first@example.com") -> str:
+    r = app_client.post(
+        "/auth/login", json={"email": email, "password": "another horse battery 9!"}
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["access_token"]
+
+
+def _stored_cutoff(email: str = "first@example.com") -> datetime | None:
+    from app.models.user import User
+
+    eng = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=eng, future=True)() as s:
+        user = s.query(User).filter_by(email=email).one()
+        return user.credentials_changed_at
+
+
+@pytest.mark.unit
+def test_an_access_token_from_before_a_reset_is_refused(
+    app_client: TestClient, monkeypatch
+) -> None:
+    """The open half of #636: the token outlived the reset until its own TTL."""
+    s = _second()
+    monkeypatch.setattr("app.security.jwt._now", lambda: s - timedelta(seconds=5))
+    old_access = _register(app_client)["tokens"]["access_token"]
+    assert _me(app_client, old_access).status_code == 200, "setup: the token must work first"
+
+    monkeypatch.setattr("app.routes.auth.utcnow", lambda: s + timedelta(microseconds=250_000))
+    _reset_password(app_client, monkeypatch, "first@example.com")
+
+    r = _me(app_client, old_access)
+    assert r.status_code == 401, r.text
+    assert r.json()["error"]["reason"] == _CUTOFF_REASON, r.text
+    assert "sign in again" in r.json()["error"]["message"].lower(), r.text
+
+
+@pytest.mark.unit
+def test_a_login_in_the_same_second_as_the_reset_is_accepted(
+    app_client: TestClient, monkeypatch
+) -> None:
+    """The owner's required case: the session a user starts right after a reset
+    must not be refused by the reset it follows."""
+    s = _second()
+    monkeypatch.setattr("app.security.jwt._now", lambda: s - timedelta(seconds=5))
+    _register(app_client)
+
+    monkeypatch.setattr("app.routes.auth.utcnow", lambda: s + timedelta(microseconds=800_000))
+    _reset_password(app_client, monkeypatch, "first@example.com")
+    monkeypatch.setattr("app.security.jwt._now", lambda: s + timedelta(microseconds=900_000))
+    new_access = _login(app_client)
+
+    r = _me(app_client, new_access)
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.unit
+def test_a_token_from_the_second_before_the_reset_is_refused(
+    app_client: TestClient, monkeypatch
+) -> None:
+    """The boundary from below: one whole second earlier than the cutoff."""
+    s = _second()
+    monkeypatch.setattr("app.security.jwt._now", lambda: s - timedelta(microseconds=1))
+    old_access = _register(app_client)["tokens"]["access_token"]
+
+    monkeypatch.setattr("app.routes.auth.utcnow", lambda: s)
+    _reset_password(app_client, monkeypatch, "first@example.com")
+
+    r = _me(app_client, old_access)
+    assert r.status_code == 401, r.text
+    assert r.json()["error"]["reason"] == _CUTOFF_REASON, r.text
+
+
+@pytest.mark.unit
+def test_a_token_from_earlier_in_the_resets_own_second_is_accepted(
+    app_client: TestClient, monkeypatch
+) -> None:
+    """THE RULE'S STATED RESIDUAL, pinned so it is a decision and not a surprise:
+    `iat >= cutoff` in whole seconds accepts a token minted up to one second
+    before the reset. Refusing it would refuse the same-second login above."""
+    s = _second()
+    monkeypatch.setattr("app.security.jwt._now", lambda: s + timedelta(microseconds=100_000))
+    earlier = _register(app_client)["tokens"]["access_token"]
+
+    monkeypatch.setattr("app.routes.auth.utcnow", lambda: s + timedelta(microseconds=900_000))
+    _reset_password(app_client, monkeypatch, "first@example.com")
+
+    assert _me(app_client, earlier).status_code == 200
+
+
+@pytest.mark.unit
+def test_the_reset_stores_its_cutoff_in_whole_seconds(app_client: TestClient, monkeypatch) -> None:
+    s = _second()
+    _register(app_client)
+    assert _stored_cutoff() is None, "a new account has no cutoff"
+
+    monkeypatch.setattr("app.routes.auth.utcnow", lambda: s + timedelta(microseconds=654_321))
+    _reset_password(app_client, monkeypatch, "first@example.com")
+
+    stored = _stored_cutoff()
+    assert stored is not None
+    assert stored.replace(tzinfo=UTC) == s, stored
+
+
+@pytest.mark.unit
+def test_a_login_rehash_is_not_a_credentials_change(app_client: TestClient, monkeypatch) -> None:
+    """Login rewrites the hash when its parameters are upgraded. The password is
+    the same, so a cutoff there would sign the user out of every other session
+    on a routine rehash."""
+    body = _register(app_client)
+    monkeypatch.setattr("app.routes.auth.verify_password", lambda *_a, **_k: (True, True))
+    r = app_client.post(
+        "/auth/login",
+        json={"email": "first@example.com", "password": "correct horse battery staple!"},
+    )
+    assert r.status_code == 200, r.text
+    assert _stored_cutoff() is None
+    assert _me(app_client, body["tokens"]["access_token"]).status_code == 200
+
+
+# -----------------------------------------------------------------------------
+# #670 round 1, finding 2: a token missing a claim the payload is built from
+# must be REFUSED, never a 500. `iat` (#658's cutoff reads it), `role`, and a
+# non-numeric `auth_time` were each parsed outside the try that turns malformed
+# claims into TokenError. python-jose also ignores PyJWT's
+# `options={"require": [...]}`; its own keys are `require_<claim>`.
+# -----------------------------------------------------------------------------
+
+
+def _signed(**overrides) -> str:
+    """A validly SIGNED access token whose claims can be removed or broken."""
+    import uuid as _uuid_mod
+
+    from jose import jwt as _jose
+
+    from app.config import get_settings
+    from app.security.jwt import ALGORITHM, ISSUER
+
+    s = get_settings()
+    now = int(datetime.now(UTC).timestamp())
+    claims = {
+        "iss": ISSUER,
+        "aud": s.keycloak_audience,
+        "sub": str(_uuid_mod.uuid4()),
+        "role": "admin",
+        "typ": "access",
+        "jti": str(_uuid_mod.uuid4()),
+        "iat": now,
+        "nbf": now,
+        "exp": now + 300,
+        "auth_time": now,
+    }
+    for key, value in overrides.items():
+        if value is _DROP:
+            claims.pop(key)
+        else:
+            claims[key] = value
+    return _jose.encode(claims, s.jwt_signing_secret, algorithm=ALGORITHM)
+
+
+_DROP = object()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "overrides",
+    [{"iat": _DROP}, {"role": _DROP}, {"auth_time": "not-a-number"}, {"sub": _DROP}],
+    ids=["no-iat", "no-role", "bad-auth_time", "no-sub"],
+)
+def test_a_token_with_a_missing_or_malformed_claim_is_refused_not_a_500(overrides) -> None:
+    from app.security.jwt import TokenError, verify_token
+
+    with pytest.raises(TokenError):
+        verify_token(_signed(**overrides), expected_type="access")
+
+
+@pytest.mark.unit
+def test_an_access_token_without_iat_is_a_401_not_a_500(app_client: TestClient) -> None:
+    """Through the route: `current_user` turns TokenError into its existing 401.
+    It stays that refusal, rather than gaining a new `reason`, deliberately: a
+    new key on the shared invalid-token envelope is the change CLAUDE.md warns a
+    consumer branching on its presence breaks."""
+    r = app_client.get("/auth/me", headers={"Authorization": f"Bearer {_signed(iat=_DROP)}"})
+    assert r.status_code == 401, r.text

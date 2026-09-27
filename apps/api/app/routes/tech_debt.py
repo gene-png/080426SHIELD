@@ -59,6 +59,7 @@ from app.models.user import User, UserRole
 from app.routes.artifacts import _storage_dep
 from app.schemas.tech_debt import (
     CapabilityComponentsRequest,
+    CapabilityDispositionBulkSet,
     CapabilityItemPatch,
     CapabilityItemResponse,
     CapabilityListResponse,
@@ -314,6 +315,60 @@ def _serialize_list_with_items(db: Session, cap_list: CapabilityList) -> Capabil
     return resp
 
 
+def _draft_source_artifact_id(db: Session, cap_list: CapabilityList) -> uuid.UUID | None:
+    """The one document the draft's rows were extracted from, or None when
+    that cannot be established: no row carries a source (a human-included row
+    has none, and the column is ON DELETE SET NULL), or rows name more than one."""
+    sources = set(
+        db.execute(
+            select(CapabilityItem.source_artifact_id)
+            .where(CapabilityItem.capability_list_id == cap_list.id)
+            .where(CapabilityItem.source_artifact_id.is_not(None))
+            .distinct()
+        ).scalars()
+    )
+    return next(iter(sources)) if len(sources) == 1 else None
+
+
+def _refuse_draft_from_other_document(
+    db: Session, cap_list: CapabilityList, artifact_id: uuid.UUID
+) -> None:
+    """#644: an open draft answers only for the document it came from.
+
+    Fails closed: a draft whose source cannot be established is refused even
+    for the document that did produce it, because "same document" is then a
+    guess. "Discard draft" is DiscardDraftButton's label in step 2.
+    """
+    source = _draft_source_artifact_id(db, cap_list)
+    if source == artifact_id:
+        return
+    if source is None:
+        reason = "capability_draft_source_unknown"
+        message = (
+            f"Capability list draft v{cap_list.version} is open, and which document it was "
+            'extracted from can no longer be established. Use "Discard draft" in step 2, '
+            "then extract again."
+        )
+    else:
+        reason = "capability_draft_from_other_document"
+        message = (
+            f"Capability list draft v{cap_list.version} is open and was extracted from a "
+            'different document. To extract from this one, use "Discard draft" in step 2 '
+            "first. Discarding throws away edits made to that draft."
+        )
+    _log.info(
+        "techdebt_extract_refused_open_draft",
+        reason=reason,
+        list_id=str(cap_list.id),
+        requested_artifact_id=str(artifact_id),
+        draft_source_artifact_id=str(source) if source else None,
+    )
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={"reason": reason, "message": message},
+    )
+
+
 @router.post(
     "/services/{service_id}/capability-lists/extract",
     response_model=CapabilityListResponse,
@@ -348,11 +403,12 @@ def extract_capability_list(
     # already open, return it idempotently (HTTP 200) untouched — NO
     # re-extraction, NO clear-and-repopulate, so consultant edits/locks on the
     # open draft survive. A new version is only cut once the prior list has
-    # moved on (approved/released). A POST with a different artifact_id while a
-    # draft is open still returns that open draft (documented contract; an
-    # explicit replace/re-extract affordance is a future candidate).
+    # moved on (approved/released). A POST naming a DIFFERENT document while a
+    # draft is open is refused (#644): returning the open draft there handed
+    # the consultant a list built from another document, and read as success.
     existing = _latest_list_or_none(db, svc.id)
     if existing is not None and existing.status == CapabilityListStatus.DRAFT:
+        _refuse_draft_from_other_document(db, existing, artifact.id)
         _log.info(
             "techdebt_reused_open_draft",
             list_id=str(existing.id),
@@ -915,6 +971,94 @@ def patch_capability_item(
     db.commit()
     db.refresh(item)
     return CapabilityItemResponse.model_validate(item, from_attributes=True)
+
+
+@router.post(
+    "/capability-lists/{list_id}/items/disposition",
+    response_model=CapabilityListResponse,
+    summary="Set one disposition on many capability items (admin, #641)",
+)
+def bulk_set_disposition(
+    list_id: uuid.UUID,
+    body: CapabilityDispositionBulkSet,
+    user: Annotated[User, _admin_required],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> CapabilityListResponse:
+    """Classify the selected rows at once: the bulk twin of the single-row PATCH.
+
+    All or nothing. A selection naming a row outside this list is refused
+    before anything is written, because a partial write would leave the
+    consultant unable to tell which rows took the decision.
+
+    Same effect per row as `patch_capability_item` with only `disposition`
+    set: the value is written and `confidence_pct` is cleared, since the row
+    is now a human decision rather than an AI guess.
+    """
+    cap_list = _editable_list_or_404(db, list_id, client)
+    wanted = set(body.item_ids)
+    if not wanted:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "no_items_selected",
+                "message": "Select at least one row to classify.",
+            },
+        )
+    items = (
+        db.execute(
+            select(CapabilityItem)
+            .where(CapabilityItem.capability_list_id == cap_list.id)
+            .where(CapabilityItem.id.in_(wanted))
+        )
+        .scalars()
+        .all()
+    )
+    missing = len(wanted) - len(items)
+    if missing:
+        _log.warning(
+            "tech_debt.bulk_disposition_refused",
+            capability_list_id=str(cap_list.id),
+            selected=len(wanted),
+            not_in_list=missing,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "capability_items_not_in_list",
+                "message": (
+                    f"{missing} of the {len(wanted)} selected rows are not in this "
+                    "capability list. Nothing was changed. Reload the list and "
+                    "select again."
+                ),
+            },
+        )
+    for item in items:
+        item.disposition = body.disposition
+        item.confidence_pct = None
+    item_ids = sorted(str(i.id) for i in items)
+    audit(
+        db,
+        action="capability_items.disposition_set",
+        target_type="capability_list",
+        target_id=cap_list.id,
+        actor_user_id=user.id,
+        details={
+            "capability_list_id": str(cap_list.id),
+            "disposition": body.disposition.value if body.disposition else None,
+            "item_count": len(item_ids),
+            "item_ids": item_ids,
+        },
+    )
+    db.commit()
+    _log.info(
+        "tech_debt.bulk_disposition_set",
+        capability_list_id=str(cap_list.id),
+        disposition=body.disposition.value if body.disposition else None,
+        item_count=len(item_ids),
+    )
+    db.refresh(cap_list)
+    return _serialize_list_with_items(db, cap_list)
 
 
 def build_approved_membership(db: Session, capability_list_id: uuid.UUID) -> list[dict]:

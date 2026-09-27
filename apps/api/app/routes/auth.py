@@ -1214,10 +1214,10 @@ def reset_password(
     """Consume a password-reset token and set the new password.
 
     Single-use token. On success, every refresh token for the user stops
-    working: all three rotation fields are cleared (#636). An ACCESS token
-    already issued is NOT revoked. It stays valid until its own TTL expires,
-    which is the half of #636 still open. Any lockout is also cleared, so the
-    user can sign in immediately.
+    working: all three rotation fields are cleared (#636). Every ACCESS token
+    issued before this second is refused too: `credentials_changed_at` is the
+    cutoff `current_user` checks (#658). Any lockout is also cleared, so the user
+    can sign in immediately, and a login in this same second is accepted.
     """
     limiter.enforce_auth(request, "reset-password")
 
@@ -1251,6 +1251,10 @@ def reset_password(
         ) from exc
 
     user.password_hash = new_hash
+    # #658: access tokens issued before this second are refused from now on.
+    # Whole seconds, because a token's `iat` is whole seconds: a login in this
+    # same second has iat == cutoff and is accepted (the owner's rule).
+    user.credentials_changed_at = utcnow().replace(microsecond=0)
     token.used_at = utcnow()
     # Invalidate any other outstanding reset tokens for this user (a completed
     # reset should void every earlier request).
@@ -1263,7 +1267,7 @@ def reset_password(
     ).scalars():
         other.used_at = utcnow()
     # End every refresh family and clear the lockout. Access tokens already
-    # issued live until their TTL (#636's open half). ALL THREE rotation fields
+    # issued are refused by the cutoff set above (#658). ALL THREE rotation fields
     # are cleared, not only the active jti. `_grace_or_reuse` separately refuses
     # when no session is active, which is the load-bearing guard: at the
     # refresh endpoint either one alone refuses a post-reset `previous`. Under a

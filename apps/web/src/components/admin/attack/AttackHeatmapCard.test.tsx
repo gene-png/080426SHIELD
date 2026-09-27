@@ -13,10 +13,13 @@ function heatmap(over: Partial<AttackHeatmap> = {}): AttackHeatmap {
     total_sub_techniques: 440,
     scored_count: 10,
     unscored_count: 623,
+    catalogue_count: 633,
     covered: 4,
     partial: 2,
     gap: 4,
     not_applicable: 0,
+    outside_control_surface: 0,
+    unable_to_determine: 0,
     coverage_pct: 50,
     by_tactic: [],
     ...over,
@@ -57,5 +60,57 @@ describe("AttackHeatmapCard", () => {
     render(<AttackHeatmapCard heatmap={heatmap()} />);
     expect(screen.queryByTestId("attack-heatmap-pending")).toBeNull();
     expect(screen.getByText(/Coverage 50%/)).toBeInTheDocument();
+  });
+
+  it("states the not-verified count beside the percentage, even at zero (#554)", () => {
+    const { unmount } = render(
+      <AttackHeatmapCard
+        heatmap={heatmap({
+          unable_to_determine: 7,
+          outside_control_surface: 3,
+        })}
+      />,
+    );
+    expect(
+      screen.getByTestId("attack-heatmap-outside-assessed"),
+    ).toHaveTextContent("Not verified 7, Outside control surface 3.");
+    unmount();
+    // Unlike pending review, never hidden at zero.
+    render(<AttackHeatmapCard heatmap={heatmap()} />);
+    expect(
+      screen.getByTestId("attack-heatmap-outside-assessed"),
+    ).toHaveTextContent("Not verified 0, Outside control surface 0.");
+  });
+
+  it("defines the percentage with the same denominator the exports state (#621)", () => {
+    // The exporters' COVERAGE_PCT_DEFINITION: (Covered + 0.5 x Partial) /
+    // (Covered + Partial + Gap), with Not verified and Outside control surface
+    // outside it. The card said "addressable excludes N/A and pending", which
+    // left the two new statuses in -- a consultant reading it would state the
+    // formula wrong to a client.
+    const { container } = render(<AttackHeatmapCard heatmap={heatmap()} />);
+    const text = container.textContent ?? "";
+    expect(text).toMatch(/\(covered \+ partial \+ gap\)/);
+    expect(text).toMatch(
+      /N\/A, Outside control surface, Not verified, unscored and pending\s+review techniques are outside it/,
+    );
+  });
+
+  it("takes the scored total from catalogue_count, so it never shrinks (#621)", () => {
+    // Seven rows moved to Not verified leave "scored": scored + unscored is
+    // 626, the catalogue is still 633. The total on screen must stay 633.
+    const { container } = render(
+      <AttackHeatmapCard
+        heatmap={heatmap({
+          scored_count: 3,
+          unscored_count: 623,
+          unable_to_determine: 7,
+          catalogue_count: 633,
+        })}
+      />,
+    );
+    expect((container.textContent ?? "").replace(/\s+/g, "")).toContain(
+      "3/633scored",
+    );
   });
 });
