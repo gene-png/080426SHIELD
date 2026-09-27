@@ -51,13 +51,12 @@ decision, recorded on #736 (the comment dated 2026-09-26 21:36Z). **Done means:*
   "Gene's live test": `gh issue list --state all --search '"Gene''s live test" in:body'`);
 - (d) item 8's export/publish split, now filed as **#737**.
 
-The non-client-reaching `tier-2` issues are NOT part of the MVP. Security
-issues among them are **held for Gene's explicit answer** and stay on the board
-until he gives it: #392, #546, #551, #555, #638, #672, #713, #714.
+The non-client-reaching `tier-2` issues are NOT part of the MVP. The security
+issues among them (#392, #546, #551, #555, #638, #672, #713, #714) were held
+for Gene's answer on 2026-09-26 and **deferred to post-MVP by Gene 2026-09-27**
+(relabelled `post-mvp`, recorded on #736).
 
-**Where the list lives.** The board is the list, **except the held security
-issues above, which are on the board but NOT in the MVP and are not to be
-started until Gene answers**:
+**Where the list lives.** The board is the list:
 `gh issue list --label mvp-blocking --state open`. It was relabelled to match on
 2026-09-26, and every open `mvp-blocking` issue outside the definition moved to
 `post-mvp` with its tier kept. The exact numbers moved, and the before/after
