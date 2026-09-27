@@ -216,39 +216,69 @@ def test_the_admin_heatmap_carries_the_counts_for_a_draft_and_not_under_rule_1(
     assert {t["outside_control_surface"] for t in old["by_tactic"]} == {None}
 
 
-def _release(c, bearer: str, svc: str, a: dict) -> str:
-    assert (
-        c.post(f"/attack/assessments/{a['id']}/approve", headers=_auth(bearer)).status_code == 200
-    )
-    fin = c.post(f"/attack/services/{svc}/deliverables/finalize", headers=_auth(bearer))
-    assert fin.status_code in (200, 201), fin.text
-    rel = c.post(f"/attack/deliverables/{fin.json()['id']}/release", headers=_auth(bearer))
-    assert rel.status_code == 200, rel.text
-    return fin.json()["summary"]
-
-
 @pytest.mark.parametrize("rule", [2, 1], ids=["rule-2", "rule-1"])
 def test_the_summary_dashboard_and_value_card_follow_the_rule(env, rule) -> None:  # noqa: F811
+    """A RATCHET for the backstop case, not a live path (#732 item 3).
+
+    No writer for `unable_to_determine` exists today (`coverage.WRITABLE` is
+    unwidened), and since #622 approve and release refuse over one, under
+    both rule sets. So the draft is approved clean, the Not verified row is
+    written straight to the database afterwards, the release is asserted
+    REFUSED by its literal sentence, and the release is completed outside the
+    routes: the state an assessment approved before the gate existed could
+    hold. Only the ORDER the state is built in changed; the summary,
+    dashboard and value-card assertions are as #621 wrote them.
+    """
+    from app.models._common import utcnow
+    from app.models.deliverable import Deliverable
+
     c, Sess = env
     admin = _register(c, "admin@example.com")
     client = _register(c, "client@example.com")
     bearer = admin["tokens"]["access_token"]
-    svc, a = _unverified_world(c, Sess, bearer)
+    svc, a = _service_and_assessment(c, bearer)
+    (row,) = standalone_rows(a["coverage"], 1)
+
+    def status_of_row(value: str) -> None:
+        with Sess() as s:
+            s.execute(
+                update(AttackCoverage)
+                .where(AttackCoverage.id == uuid.UUID(row["id"]))
+                .values(status=value, unconfirmed_citations=[])
+            )
+            s.commit()
+
+    status_of_row("covered")
+    assert (
+        c.post(f"/attack/assessments/{a['id']}/approve", headers=_auth(bearer)).status_code == 200
+    )
     if rule == 1:
         # Approve writes 2; a rule-1 assessment is one approved before #620,
         # which the migration marked 1. Set it between approve and finalize.
-        assert (
-            c.post(f"/attack/assessments/{a['id']}/approve", headers=_auth(bearer)).status_code
-            == 200
-        )
         _set_rule(Sess, a["id"], 1)
-        fin = c.post(f"/attack/services/{svc}/deliverables/finalize", headers=_auth(bearer))
-        assert fin.status_code in (200, 201), fin.text
-        rel = c.post(f"/attack/deliverables/{fin.json()['id']}/release", headers=_auth(bearer))
-        assert rel.status_code == 200, rel.text
-        summary = fin.json()["summary"]
-    else:
-        summary = _release(c, bearer, svc, a)
+    status_of_row("unable_to_determine")
+    fin = c.post(f"/attack/services/{svc}/deliverables/finalize", headers=_auth(bearer))
+    assert fin.status_code in (200, 201), fin.text
+    summary = fin.json()["summary"]
+    rel = c.post(f"/attack/deliverables/{fin.json()['id']}/release", headers=_auth(bearer))
+    assert rel.status_code == 409, rel.text
+    assert rel.json()["error"]["message"] == (
+        f"Nothing was released: 1 technique is Not verified ({row['technique_code']}). "
+        "An approved assessment cannot be edited, so this one cannot be released; a new "
+        "assessment version starts every technique unscored."
+    )
+    with Sess() as s:
+        s.execute(
+            update(Deliverable)
+            .where(Deliverable.id == uuid.UUID(fin.json()["id"]))
+            .values(released_at=utcnow())
+        )
+        s.execute(
+            update(AttackAssessment)
+            .where(AttackAssessment.id == uuid.UUID(a["id"]))
+            .values(status=AttackAssessmentStatus.RELEASED)
+        )
+        s.commit()
 
     client_id = client["user"]["client_id"]
     c.headers["X-Client-Id"] = client_id
