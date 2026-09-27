@@ -115,9 +115,9 @@ function citationLine(c: UnconfirmedCitation): string {
  * `missing_control_category` -- cannot be picked here. The API refuses it
  * anyway (typed 422); this keeps the refusal unreachable from the screen.
  * "No reason given" stays selectable: requiring a reason is the release gate's
- * job (#557, "gate the release, not the click"), and that gate is c3 of #554,
- * NOT YET BUILT. The label promises nothing about it (D-076: name only what
- * exists).
+ * job (#557, "gate the release, not the click"). That gate exists since #622:
+ * approve and release refuse a Partial with no reason, under #620's rules, and
+ * the approve refusal names this select as the remedy.
  */
 function ReasonField({
   techniqueId,

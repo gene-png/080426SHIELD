@@ -141,7 +141,44 @@ def test_the_count_is_never_dropped_at_zero() -> None:
 # --- the stored summary, the admin heatmap and the client dashboard ----------
 
 
+REFUSAL_TAIL = (
+    "An approved assessment cannot be edited, so this one cannot be released; a new "
+    "assessment version starts every technique unscored."
+)
+
+
+def _released_outside_the_routes(Sess, deliverable_id: str, assessment_id: str) -> None:
+    """Mark a deliverable and its assessment released straight in the database:
+    the route refuses, by design (#622), to release over a Not verified row."""
+    from app.models._common import utcnow
+    from app.models.deliverable import Deliverable
+
+    with Sess() as s:
+        s.execute(
+            update(Deliverable)
+            .where(Deliverable.id == uuid.UUID(deliverable_id))
+            .values(released_at=utcnow())
+        )
+        s.execute(
+            update(AttackAssessment)
+            .where(AttackAssessment.id == uuid.UUID(assessment_id))
+            .values(status=AttackAssessmentStatus.RELEASED)
+        )
+        s.commit()
+
+
 def test_the_summary_heatmap_and_client_dashboard_carry_both_counts(env) -> None:  # noqa: F811
+    """A RATCHET for the backstop case, not a live path (#732 item 3).
+
+    No writer for `unable_to_determine` exists today (`coverage.WRITABLE` is
+    unwidened), and since #622 approve and release refuse over one. So the
+    rows are written straight to the database AFTER a clean approve, and the
+    release is completed outside the routes. That is the state an assessment
+    approved before the gate existed could hold, and these surfaces must still
+    count it. With #622 only the ORDER the state is built in changed, plus the
+    release: it is now asserted REFUSED, by its literal sentence, where #621
+    asserted 200. Every other assertion is as #621 wrote it.
+    """
     c, Sess = env
     admin = _register(c, "admin@example.com")
     client = _register(c, "client@example.com")
@@ -149,19 +186,24 @@ def test_the_summary_heatmap_and_client_dashboard_carry_both_counts(env) -> None
     svc, a = _service_and_assessment(c, bearer)
 
     rows = standalone_rows(a["coverage"], NOT_VERIFIED + OUTSIDE + 1)
-    with Sess() as s:
-        for i, row in enumerate(rows):
-            status = (
-                "unable_to_determine"
-                if i < NOT_VERIFIED
-                else "outside_control_surface" if i < NOT_VERIFIED + OUTSIDE else "covered"
-            )
-            s.execute(
-                update(AttackCoverage)
-                .where(AttackCoverage.id == uuid.UUID(row["id"]))
-                .values(status=status, unconfirmed_citations=[])
-            )
-        s.commit()
+
+    def write(statuses: list[str]) -> None:
+        with Sess() as s:
+            for row, status in zip(rows, statuses, strict=True):
+                s.execute(
+                    update(AttackCoverage)
+                    .where(AttackCoverage.id == uuid.UUID(row["id"]))
+                    .values(status=status, unconfirmed_citations=[])
+                )
+            s.commit()
+
+    write(["covered"] * len(rows))
+    assert (
+        c.post(f"/attack/assessments/{a['id']}/approve", headers=_auth(bearer)).status_code == 200
+    )
+    write(
+        ["unable_to_determine"] * NOT_VERIFIED + ["outside_control_surface"] * OUTSIDE + ["covered"]
+    )
 
     heat = c.get(f"/attack/services/{svc}/heatmap", headers=_auth(bearer)).json()
     assert (heat["unable_to_determine"], heat["outside_control_surface"]) == (
@@ -169,14 +211,17 @@ def test_the_summary_heatmap_and_client_dashboard_carry_both_counts(env) -> None
         OUTSIDE,
     )
 
-    assert (
-        c.post(f"/attack/assessments/{a['id']}/approve", headers=_auth(bearer)).status_code == 200
-    )
     fin = c.post(f"/attack/services/{svc}/deliverables/finalize", headers=_auth(bearer))
     assert fin.status_code in (200, 201), fin.text
     assert SENTENCE in fin.json()["summary"], fin.json()["summary"]
     rel = c.post(f"/attack/deliverables/{fin.json()['id']}/release", headers=_auth(bearer))
-    assert rel.status_code == 200, rel.text
+    assert rel.status_code == 409, rel.text
+    codes = ", ".join(sorted(r["technique_code"] for r in rows[:NOT_VERIFIED]))
+    assert rel.json()["error"]["message"] == (
+        f"Nothing was released: {NOT_VERIFIED} techniques are Not verified ({codes}). "
+        + REFUSAL_TAIL
+    )
+    _released_outside_the_routes(Sess, fin.json()["id"], a["id"])
 
     client_id = client["user"]["client_id"]
     c.headers["X-Client-Id"] = client_id
