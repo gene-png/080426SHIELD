@@ -83,11 +83,13 @@ class User(UUIDPKMixin, TimestampMixin, Base):
     previous_refresh_jti: Mapped[str | None] = mapped_column(String(36))
     refresh_rotated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    # #658. When the password last changed, truncated to whole seconds.
+    # #658, #652. When this user's sessions last ended, truncated to whole
+    # seconds: set by a password reset, a deactivation and a client archive,
+    # all through `security/sessions.end_user_sessions`.
     # `current_user` refuses an access token whose `iat` is earlier; a token from
     # the same second is accepted (the owner's rule, iat >= cutoff). NULL: no
-    # change recorded, so nothing is refused. Only a credential CHANGE sets it --
-    # not sign-up, and not login's rehash of the same password.
+    # end recorded, so nothing is refused. Sign-up and login's rehash of the same
+    # password do not set it.
     credentials_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # Keycloak subject (TOFU-bound) for the hybrid OIDC exchange (Sprint 9 T4,
