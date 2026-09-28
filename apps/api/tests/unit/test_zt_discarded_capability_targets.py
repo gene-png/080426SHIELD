@@ -327,3 +327,22 @@ def test_an_ordinary_engagement_carries_no_disclosure() -> None:
     clean = _gap_plan_caption(analyze_gaps(CISA, {code: 1}, target_stage=3, targets={code: 4}))
     assert "could not be used" not in clean, clean
     assert "Engagement target S3" in clean, "the existing caption must survive"
+
+
+@pytest.mark.unit
+def test_one_unusable_target_is_one_row_in_the_caption() -> None:
+    """#452. With one code the caption said "applied to those rows" -- one
+    capability, plural rows -- in the client's PDF and, word for word, on the
+    dashboard (`zt.test.ts` pins the web side against this same literal).
+    Equality on the appended clause, for the reasons the two-code test gives."""
+    from app.zt.exporters import _gap_plan_caption
+
+    code = _first_code(CISA)
+    disclosed = _gap_plan_caption(analyze_gaps(CISA, {code: 1}, target_stage=3, targets={code: 7}))
+    expected = (
+        f" A per-capability target was recorded for {code} but could not be used,"
+        f" so the engagement target was applied to that row instead."
+    )
+    head, sep, tail = disclosed.partition(" A per-capability target was recorded for")
+    assert sep, f"the disclosure clause is missing entirely: {disclosed!r}"
+    assert sep + tail == expected, f"expected tail {expected!r}, got {sep + tail!r}"

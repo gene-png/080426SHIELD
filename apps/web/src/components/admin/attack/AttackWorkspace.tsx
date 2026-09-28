@@ -109,6 +109,15 @@ export function AttackWorkspace({
     React.useState<AttackDeliverable | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   /**
+   * #622 round 1: what the LAST action (create, edit, confirm, approve,
+   * discard, run) failed or was refused with. Distinct from `loadError`, which
+   * says the workspace could not load: an approve refused for a reasonless
+   * Partial went into that card and nothing ever cleared it, so it stayed
+   * beside "Approved" after the consultant fixed the rows. Cleared when any
+   * action starts, so it always describes the action just taken.
+   */
+  const [actionError, setActionError] = React.useState<string | null>(null);
+  /**
    * SUPPLEMENTARY fetches that failed, keyed by source (#292). Distinct from
    * `loadError`: that one blocks and says the workspace could not load; these
    * are side panels that failed while the workspace itself is fine.
@@ -211,6 +220,8 @@ export function AttackWorkspace({
 
   const initialLoad = React.useCallback(async () => {
     const seq = ++assessmentSeq.current;
+    // A load that runs again says what THIS load found (#622 round 1 sweep).
+    setLoadError(null);
     // EVERY token this function will use is minted HERE, before any await.
     // See `useRefreshFailures`: mint below an await and the tokens are ordered
     // by RESOLUTION, so an initialLoad started FIRST whose earlier fetch is
@@ -272,6 +283,7 @@ export function AttackWorkspace({
   }
 
   async function onCreateAssessmentWrite(): Promise<void> {
+    setActionError(null);
     setBusy("create");
     assessmentSeq.current += 1;
     try {
@@ -279,7 +291,7 @@ export function AttackWorkspace({
       setAssessment(next);
       await refreshHeatmap();
     } catch (err) {
-      setLoadError(describeError(err));
+      setActionError(describeError(err));
     } finally {
       setBusy(null);
     }
@@ -345,6 +357,7 @@ export function AttackWorkspace({
     coverageId: string,
     patch: AttackCoveragePatch,
   ): Promise<void> {
+    setActionError(null);
     editsStarted.current += 1;
     editsInFlight.current += 1;
     // Optimistic. The bump invalidates any in-flight load so its late arrival
@@ -382,7 +395,7 @@ export function AttackWorkspace({
       }
       ok = true;
     } catch (err) {
-      setLoadError(describeError(err));
+      setActionError(describeError(err));
       // Roll back by re-fetching, guarded so a newer patch still wins.
       const seq = ++assessmentSeq.current;
       const a = await fetchLatestAssessment(serviceId);
@@ -407,6 +420,7 @@ export function AttackWorkspace({
    * The round trip is one request on a deliberate click.
    */
   async function onConfirmCitations(coverageId: string): Promise<void> {
+    setActionError(null);
     editsStarted.current += 1;
     editsInFlight.current += 1;
     assessmentSeq.current += 1;
@@ -428,7 +442,7 @@ export function AttackWorkspace({
       if (hasComputedParent(next.technique_code)) refetchWanted.current = true;
       ok = true;
     } catch (err) {
-      setLoadError(describeError(err));
+      setActionError(describeError(err));
     } finally {
       editsInFlight.current -= 1;
     }
@@ -443,13 +457,14 @@ export function AttackWorkspace({
 
   async function onApproveWrite(): Promise<void> {
     if (!assessment) return;
+    setActionError(null);
     setBusy("approve");
     assessmentSeq.current += 1;
     try {
       const next = await approveAssessment(assessment.id);
       setAssessment(next);
     } catch (err) {
-      setLoadError(describeError(err));
+      setActionError(describeError(err));
     } finally {
       setBusy(null);
     }
@@ -461,6 +476,7 @@ export function AttackWorkspace({
 
   async function onDiscardWrite(): Promise<void> {
     if (!assessment) return;
+    setActionError(null);
     setBusy("discard");
     const seq = ++assessmentSeq.current;
     try {
@@ -479,7 +495,7 @@ export function AttackWorkspace({
         }
       }
     } catch (err) {
-      setLoadError(describeError(err));
+      setActionError(describeError(err));
     } finally {
       setBusy(null);
     }
@@ -490,6 +506,7 @@ export function AttackWorkspace({
   }
 
   async function onRunAiWrite(): Promise<void> {
+    setActionError(null);
     setBusy("run");
     setRunResult(null);
     const seq = ++assessmentSeq.current;
@@ -510,7 +527,7 @@ export function AttackWorkspace({
       if (errorReason(err) === "no_security_capabilities") {
         setRunBlocked(describeError(err));
       } else {
-        setLoadError(describeError(err));
+        setActionError(describeError(err));
       }
     } finally {
       setBusy(null);
@@ -616,6 +633,23 @@ export function AttackWorkspace({
             <p key={message}>{message}</p>
           ))}
         </div>
+      ) : null}
+
+      {actionError ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>That didn&apos;t go through</CardTitle>
+          </CardHeader>
+          <CardBody>
+            <p
+              className="text-sm text-status-danger-fg"
+              role="alert"
+              data-testid="attack-action-error"
+            >
+              {actionError}
+            </p>
+          </CardBody>
+        </Card>
       ) : null}
 
       {loadError ? (

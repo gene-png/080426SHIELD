@@ -338,6 +338,23 @@ def test_heatmap_includes_every_tactic(app_client) -> None:
 
 
 @pytest.mark.unit
+def test_the_scored_total_is_the_seeded_row_count(app_client) -> None:
+    """#621 round 2. The "Y" of "X/Y scored" is `catalogue_count`, and it must
+    be the number of rows an assessment is seeded with -- the same source, not
+    a second count that could drift from it."""
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    bearer = admin["tokens"]["access_token"]
+    svc_id = _open_service(c, bearer)
+    seeded = _new_assessment(c, bearer, svc_id)["coverage"]
+    body = c.get(
+        f"/attack/services/{svc_id}/heatmap",
+        headers={"Authorization": f"Bearer {bearer}"},
+    ).json()
+    assert body["catalogue_count"] == len(seeded)
+
+
+@pytest.mark.unit
 def test_heatmap_reflects_coverage_after_patches(app_client) -> None:
     c = app_client
     admin = _register(c, "admin@example.com")
