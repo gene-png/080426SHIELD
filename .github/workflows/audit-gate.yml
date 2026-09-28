@@ -33,6 +33,22 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, edited]
+  # The merge queue. On merge_group there is no `github.event.pull_request`,
+  # so the two REQUIRED jobs below ("Adversarial audit recorded", "No
+  # accidental issue closes") fetch the queued PR's CURRENT body through
+  # scripts/merge_group_pr.py rather than trusting the earlier pull_request
+  # run: a description edited after that run would otherwise merge unchecked.
+  # A ref that does not parse or a fetch that fails exits 2 -- red. Neither
+  # required job carries a job-level `if:`: a skipped required job reports
+  # SUCCESS (tests/unit/test_merge_group_triggers.py). The three jobs that
+  # are NOT required run on pull_request only; they already ran on the PR.
+  #
+  # PRECONDITION FOR ENABLING THE QUEUE (#659 round 1): the queue setting
+  # "Only merge non-failing pull requests" must be ON. With it off, a PR can
+  # merge on a LATER group's passing run, and that run fetched the later PR's
+  # body, never this one's -- so this PR's current body is never checked.
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read
@@ -59,6 +75,7 @@ jobs:
           python-version: "3.12"
 
       - name: Collect the changed paths
+        if: github.event_name == 'pull_request'
         run: |
           git diff --name-only "origin/${{ github.base_ref }}...HEAD" > /tmp/changed.txt
           echo "changed paths:"; cat /tmp/changed.txt
@@ -67,14 +84,51 @@ jobs:
       # CONTENT. A path match cannot tell a `uses:` ref bump from a rewrite of
       # this workflow, and the manifest guard below refuses to answer without it.
       - name: Collect the diff
+        if: github.event_name == 'pull_request'
         run: git diff "origin/${{ github.base_ref }}...HEAD" > /tmp/diff.txt
 
       - name: Read the PR body
+        if: github.event_name == 'pull_request'
         env:
           # Via env, not inline: a PR body is untrusted text, and interpolating
           # it into a shell line is a script-injection hole.
           PR_BODY: ${{ github.event.pull_request.body }}
         run: printf '%s' "$PR_BODY" > /tmp/body.md
+
+      # merge_group only: the same four inputs the three steps above collect on
+      # pull_request, fetched for the PR the queue ref names. See the `on:`
+      # block. Exit 2 -- red -- if the ref does not parse or any fetch fails, and
+      # no stale file survives for the check below to read.
+      - name: Read the queued PR (merge_group)
+        if: github.event_name == 'merge_group'
+        working-directory: apps/api
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.event.merge_group.head_ref }}
+          REPO: ${{ github.repository }}
+        run: >-
+          python -m scripts.merge_group_pr --head-ref "$HEAD_REF" --repo "$REPO"
+          --files-out /tmp/changed.txt --diff-out /tmp/diff.txt
+          --body-out /tmp/body.md --author-out /tmp/author.txt
+
+      # The PR AUTHOR, for the Dependabot exemption below, on both events.
+      # `github.event.pull_request.user.login` is EMPTY on merge_group, and an
+      # empty author reads as "not Dependabot" -- a bot PR in the queue would
+      # then be judged by the audit gate its body can never satisfy. An author
+      # this step cannot determine is exit 2, never a guess.
+      - name: Who opened the PR
+        id: author
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          if [ "$EVENT" = "merge_group" ]; then login=$(cat /tmp/author.txt); else login=$PR_AUTHOR; fi
+          if [ -z "$login" ]; then
+            echo "could not determine the PR author on $EVENT -- refusing to guess (exit 2)"
+            exit 2
+          fi
+          echo "PR author: $login"
+          echo "login=$login" >> "$GITHUB_OUTPUT"
 
       # DEPENDABOT IS EXEMPT FROM THIS STEP, and the exemption is HERE rather
       # than in the script on purpose.
@@ -224,13 +278,15 @@ jobs:
       #   #468  apps/web/package.json, package.json,
       #         packages/design-system/package.json, pnpm-lock.yaml
       - name: An audit-exempt bot PR must be manifest-only
-        if: github.event.pull_request.user.login == 'dependabot[bot]'
+        if: steps.author.outputs.login == 'dependabot[bot]'
         working-directory: apps/api
+        env:
+          AUTHOR: ${{ steps.author.outputs.login }}
         run: |
-          python scripts/check_bot_pr_is_manifest_only.py             --author '${{ github.event.pull_request.user.login }}'             --changed-files /tmp/changed.txt             --diff /tmp/diff.txt
+          python scripts/check_bot_pr_is_manifest_only.py             --author "$AUTHOR"             --changed-files /tmp/changed.txt             --diff /tmp/diff.txt
 
       - name: Require recorded audit evidence
-        if: github.event.pull_request.user.login != 'dependabot[bot]'
+        if: steps.author.outputs.login != 'dependabot[bot]'
         working-directory: apps/api
         run: python -m scripts.check_audit_evidence --changed-files /tmp/changed.txt --body /tmp/body.md
 
@@ -251,6 +307,9 @@ jobs:
     # a PR editing this step can neuter it, because the workflow runs from the
     # PR; that stays open until CODEOWNERS covers .github/workflows/ (#572).
     name: Merge rule text (red means it changed; a human must read it)
+    # pull_request only: NOT a required check, and it already ran on the
+    # PR head. It reads `github.base_ref`, which merge_group does not set.
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -295,6 +354,9 @@ jobs:
     # repo had made. Filed rather than patched: widening the surface is a
     # different design.
     name: A migration is declared in the PR body
+    # pull_request only: NOT a required check, and it already ran on the
+    # PR head. It reads `github.base_ref`, which merge_group does not set.
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -334,6 +396,9 @@ jobs:
     # measures it) and red on purpose: a human reads the compose diff. It
     # judges compose files ONLY. NOT a required check.
     name: compose content changed
+    # pull_request only: NOT a required check, and it already ran on the
+    # PR head. It reads `github.base_ref`, which merge_group does not set.
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -397,6 +462,7 @@ jobs:
           bash tests/gates/close_guard_linked_file.sh --self-test
 
       - name: Collect the title, description and every commit message
+        if: github.event_name == 'pull_request'
         env:
           # Via env, never inline. A PR title or body is untrusted text and
           # interpolating it into a shell line is a script-injection hole -- the
@@ -483,6 +549,23 @@ jobs:
             echo "reporting a verdict it never verified."
           fi
 
+      # merge_group only: the PR's CURRENT title, description, commit messages
+      # and GitHub's closing references, for the PR the queue ref names. See the
+      # `on:` block. Unlike the step above, a failed closing-references query
+      # fails THIS step (exit 2) rather than leaving the file absent; both are
+      # red, and neither is a verdict about the change.
+      - name: Read the queued PR (merge_group)
+        if: github.event_name == 'merge_group'
+        working-directory: apps/api
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.event.merge_group.head_ref }}
+          REPO: ${{ github.repository }}
+        run: >-
+          python -m scripts.merge_group_pr --head-ref "$HEAD_REF" --repo "$REPO"
+          --title-out /tmp/pr_title.txt --body-out /tmp/pr_body.txt
+          --commits-out /tmp/pr_commits.txt --linked-out /tmp/pr_linked.txt
+
       - name: The PR template must not satisfy the audit gate by itself
         # Its text goes into every PR body, so one character decides whether this
         # check means anything. The commented examples use "->" and not ":"
@@ -516,6 +599,11 @@ jobs:
       - name: >-
           D-NUMBERS: a subject must not name a decision the commit does not add
           (this step is NOT about issue closes -- see its failure output)
+        # pull_request only. It judges commit SUBJECTS, which cannot change
+        # without a push, and a push removes the PR from the merge queue -- so
+        # the pull_request run on the PR head is authoritative for it. It also
+        # reads `github.base_ref`, which merge_group does not set.
+        if: github.event_name == 'pull_request'
         # ## Why this step lives in a job called "No accidental issue closes"
         #
         # It does not belong to that name, and GitHub shows a reader the JOB
