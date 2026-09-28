@@ -101,6 +101,10 @@ GATES = [
     # D-095's compose exception. Added WITH its entry here. `sys.argv` because
     # `main(argv)` takes the argument list.
     ("compose_unchanged", "sys.argv"),
+    # The CI shard partition check. Both required aggregates ("Python ..." and
+    # "E2E ...") are red or green on its exit, so it carries the handler.
+    # Added WITH its entry here. `sys.argv` because `main(argv)` takes the list.
+    ("shard_partition", "sys.argv"),
 ]
 
 MARKER = 'if __name__ == "__main__":'

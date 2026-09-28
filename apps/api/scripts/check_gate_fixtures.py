@@ -674,6 +674,12 @@ NON_GATE_SCRIPTS: dict[str, str] = {
         "to give -- it either seeds or raises -- and `CLAUDE.md` records it "
         "exiting 0 while deliberately skipping, which is the opposite of a gate."
     ),
+    "pytest_shard.py": (
+        "A pytest PLUGIN (`-p scripts.pytest_shard`), not a script with a verdict: "
+        "it narrows the unit selection to one shard and records what the shard "
+        "runs. pytest's own exit status is the verdict, and whether the shards "
+        "partitioned the selection is judged by `shard_partition.py`, a gate."
+    ),
     "fire_scheduled_triggers.py": (
         "A scheduled job that performs work. Nothing about its exit status is a "
         "judgement on the tree."
