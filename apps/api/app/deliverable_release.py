@@ -104,9 +104,10 @@ def _release_parent(
     It was an unconditional ORM assignment after a read, so anything the caller
     had checked could change before it landed. It is the ONE writer of a
     released parent, so a guard here covers every path through it: the first
-    release and the repair re-release alike. Only Tech Debt passes a guard; CSF,
-    ZT and ATT&CK pass none, and for them the only difference is that a status
-    changed concurrently is logged instead of overwritten.
+    release and the repair re-release alike. Tech Debt passes a guard (#657), and
+    so does ATT&CK (#622, `attack/release_readiness.py`); CSF and ZT pass none,
+    and for them the only difference is that a status changed concurrently is
+    logged instead of overwritten.
 
     Returns True only when it flipped the parent. The flip is a bulk UPDATE, so
     it leaves nothing dirty in the session, and a caller that commits only when

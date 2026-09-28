@@ -12,14 +12,15 @@ do not:
     denominator, with its own line in the deliverable.
   * `unable_to_determine`: nobody verified it. It is also OUTSIDE the assessed
     denominator and never counted as partial or gap. The owner's decision makes
-    it a release blocker; that gate is a later slice.
+    it a release blocker: `attack/release_readiness.py` refuses approve and
+    release while any row holds it (#622).
 
 NOT YET WRITABLE. The two new statuses are defined, stored and counted, and
 nothing may WRITE them yet: `WRITABLE` below is still the original four. Every
 reporting surface renders them as of #621 (the client and admin dashboards, the
-exporters and finalize summary, the home value card, the risk link scope). What
-remains before the widening slice may add them to `WRITABLE`:
-  * the release-readiness gate (#622), which does not exist yet;
+exporters and finalize summary, the home value card, the risk link scope), and
+the release-readiness gate (#622) refuses approve and release over a Not
+verified row. What remains before the widening slice may add them to `WRITABLE`:
   * the owner's call on how the Risk Register treats an unverified technique
     (#621 keeps it uncitable and names it "Not verified"; not yet confirmed).
 The PATCH refuses them typed, and the AI write-back refuses a suggestion carrying
