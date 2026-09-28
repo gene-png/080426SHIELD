@@ -547,6 +547,9 @@ def test_a_deliverable_from_before_0056_is_refused_at_release(app_client) -> Non
     cfg.set_main_option("sqlalchemy.url", url)
     command.downgrade(cfg, "0055")
     command.upgrade(cfg, "0056")
+    # Back to head before anything reads through the ORM: the models track
+    # head, so a later migration's column would be missing at 0056.
+    command.upgrade(cfg, "head")
     engine = create_engine(url)
     try:
         with engine.connect() as conn:
@@ -579,6 +582,7 @@ def _replay_0056() -> None:
     cfg.set_main_option("sqlalchemy.url", os.environ["DATABASE_URL"])
     command.downgrade(cfg, "0055")
     command.upgrade(cfg, "0056")
+    command.upgrade(cfg, "head")
 
 
 @pytest.mark.unit
