@@ -93,10 +93,12 @@ def _gap_plan_caption(gap: GapAnalysis) -> str:
     # TypeScript one. Change this sentence and you must change both literals.
     if gap.unusable_target_codes:
         listed = ", ".join(gap.unusable_target_codes)
+        # One code is one row (#452): the house pattern of the "All N gap(s)"
+        # line below. The web copy (`targetNote`) makes the same choice.
+        rows = "that row" if len(gap.unusable_target_codes) == 1 else "those rows"
         target += (
             f" A per-capability target was recorded for {listed} but could not "
-            f"be used, so the engagement target was applied to those rows "
-            f"instead."
+            f"be used, so the engagement target was applied to {rows} instead."
         )
     if shown >= total:
         return f"All {total} gap{'' if total == 1 else 's'} listed. {target}"
