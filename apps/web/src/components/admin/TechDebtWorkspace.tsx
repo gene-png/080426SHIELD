@@ -353,6 +353,7 @@ Components carry no cost of their own — this licence keeps its full value.`,
   function onItemUpdate(next: CapabilityItem): void {
     // Optimistic per-row merge; the bump invalidates any in-flight mount load.
     listSeq.current += 1;
+    const wasApproved = list?.status === "approved";
     setList((curr) => {
       if (!curr) return curr;
       return {
@@ -362,6 +363,37 @@ Components carry no cost of their own — this licence keeps its full value.`,
     });
     // Inline edits change the overlap math; refresh in the background.
     void refreshOverlap();
+    // #640, advisor review of #730 (F2): the PATCH answers with one item and no
+    // approval state, so an edit to an APPROVED list would leave step 3 showing
+    // "Approved" and disabled while finalize refuses the stale approval. Only
+    // the server knows whether the edit made the approval stale (locking a row
+    // does not), so re-read the list rather than guessing here.
+    if (wasApproved) void reloadListAfterEdit();
+  }
+
+  async function reloadListAfterEdit(): Promise<void> {
+    // Minted before the await, like `refresh`: a later list-producing
+    // operation (another edit, approve) must win over this read.
+    const seq = ++listSeq.current;
+    const attempt = beginRefresh("approval-after-edit");
+    try {
+      const fresh = await fetchLatestList(serviceId);
+      if (seq === listSeq.current) {
+        setList(fresh);
+      } else {
+        console.debug(
+          `[TechDebtWorkspace] discarded stale post-edit list read (seq ${seq}, latest ${listSeq.current})`,
+        );
+      }
+      attempt.clear();
+    } catch (err) {
+      // Not swallowed: the page still shows the pre-edit approval state, so
+      // say it could not be confirmed. Non-blocking (the edit itself saved),
+      // and finalize refuses a stale approval on the server either way.
+      attempt.note(
+        `Your edit was saved, but the approval state could not be re-checked (${proxyMessage(err, "the list could not be reloaded")}). Reload the page before step 4.`,
+      );
+    }
   }
 
   async function onApprove(): Promise<void> {

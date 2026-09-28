@@ -431,6 +431,67 @@ def test_a_deliverable_generated_after_the_new_approval_releases(app_client) -> 
 
 
 @pytest.mark.unit
+def test_an_older_deliverable_is_refused_after_the_list_is_released(app_client) -> None:
+    """Advisor review of #730 at 1d012e4, F1. Once a newer deliverable is
+    released the list is RELEASED, and `_release_parent` returns before it
+    applies the caller's guard. The deliverable built BEFORE the edit must
+    still be refused, through the endpoint an admin can call directly."""
+    w = _world(app_client)
+    _decide_all(w)
+    assert _approve(w).status_code == 200
+    old = _finalize(w)
+    assert old.status_code == 201, old.text
+    EDIT_DRIVERS[("PATCH", "/tech-debt/capability-items/{item_id}")](w)
+    assert _approve(w).status_code == 200
+    new = _finalize(w)
+    assert new.status_code == 201, new.text
+    assert _release(w, new.json()["id"]).status_code == 200, "setup: the new one releases"
+    assert _latest(w)["status"] == "released", "setup: the list must be RELEASED"
+
+    r = _release(w, old.json()["id"])
+
+    assert r.status_code == 409, r.text
+    error = r.json()["error"]
+    assert error["reason"] == _PREDATES, error
+    assert "generated before the capability list was last approved" in error["message"], error
+    assert not _deliverable_released(w, old.json()["id"])
+
+
+@pytest.mark.unit
+def test_a_deliverable_with_no_parent_version_is_refused(app_client) -> None:
+    """Advisor review of #730 at 1d012e4, F1. A deliverable finalized before
+    migration 0041 recorded no `parent_version` (and, being older than 0056, no
+    list revision). `_release_parent` returns before any guard for it, so the
+    refusal has to come from the route. The legacy row is written by SQL
+    because no current writer produces one; the setup builds that world, and
+    the release endpoint is what is under test."""
+    from sqlalchemy import update as sa_update
+
+    from app.models.deliverable import Deliverable
+
+    w = _world(app_client)
+    _decide_all(w)
+    assert _approve(w).status_code == 200
+    fin = _finalize(w)
+    assert fin.status_code == 201, fin.text
+    with w.sessions() as s:
+        s.execute(
+            sa_update(Deliverable)
+            .where(Deliverable.id == uuid.UUID(fin.json()["id"]))
+            .values(parent_version=None, capability_list_revision=None)
+        )
+        s.commit()
+
+    r = _release(w, fin.json()["id"])
+
+    assert r.status_code == 409, r.text
+    error = r.json()["error"]
+    assert error["reason"] == _PREDATES, error
+    assert "nothing confirms it shows the approved rows" in error["message"], error
+    assert not _deliverable_released(w, fin.json()["id"])
+
+
+@pytest.mark.unit
 def test_an_unedited_approval_releases_its_deliverable(app_client) -> None:
     """The control: approve, generate, release, with no edit anywhere."""
     w = _world(app_client)

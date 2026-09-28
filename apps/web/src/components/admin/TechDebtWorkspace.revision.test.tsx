@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as techDebtClient from "@/lib/tech_debt/client";
@@ -50,7 +50,26 @@ vi.mock("./IntakeDocumentsPanel", () => ({ IntakeDocumentsPanel: () => null }));
 vi.mock("./OverlapDashboard", () => ({ OverlapDashboard: () => null }));
 vi.mock("./ProgressStages", () => ({ ProgressStages: () => null }));
 vi.mock("./EditableCapabilityTable", () => ({
-  EditableCapabilityTable: () => <p>table</p>,
+  // Drives the one callback the #730 F2 test needs: the table reports a saved
+  // row edit exactly as the real one does after patchCapabilityItem resolves.
+  EditableCapabilityTable: ({
+    onItemUpdate,
+  }: {
+    onItemUpdate: (next: {
+      id: string;
+      name: string;
+      disposition: string;
+    }) => void;
+  }) => (
+    <button
+      type="button"
+      onClick={() =>
+        onItemUpdate({ id: "item-1", name: "One, edited", disposition: "keep" })
+      }
+    >
+      save row edit
+    </button>
+  ),
 }));
 vi.mock("./SecurityClassificationQueue", () => ({
   SecurityClassificationQueue: ({ editable }: { editable: boolean }) => (
@@ -109,6 +128,22 @@ describe("TechDebtWorkspace after an edit to an approved list (#640)", () => {
     ).not.toBeInTheDocument();
     // Still editable: an edit is what makes the approval stale.
     expect(screen.getByText("queue editable")).toBeInTheDocument();
+  });
+
+  it("an inline row edit on an approved list re-enables Approve again (advisor review of #730, F2)", async () => {
+    // The PATCH response is one item and carries no approval state, so the
+    // workspace must re-read the list: the server is what knows the edit made
+    // the approval stale. Mount reads a current approval; the re-read after the
+    // edit reads the stale one.
+    mount(list("approved", true));
+    await screen.findByRole("button", { name: "Approved" });
+    fetchLatestList.mockResolvedValue(list("approved", false));
+
+    fireEvent.click(screen.getByRole("button", { name: "save row edit" }));
+
+    const button = await screen.findByRole("button", { name: "Approve again" });
+    expect(button).toBeEnabled();
+    expect(screen.getByText("Edited since approval v1")).toBeInTheDocument();
   });
 
   it("keeps a released list read-only", async () => {

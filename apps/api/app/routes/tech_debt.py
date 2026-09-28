@@ -1923,6 +1923,8 @@ def release_tech_debt_deliverable(
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],
 ) -> DeliverableResponse:
+    rendered_revision = _recorded_list_revision(db, deliverable_id, client.id)
+    _refuse_a_deliverable_the_flip_guard_cannot_reach(db, deliverable_id, client.id)
     deliv = release_deliverable(
         db,
         deliverable_id=deliverable_id,
@@ -1930,7 +1932,7 @@ def release_tech_debt_deliverable(
         user=user,
         kinds=(ServiceKind.TECH_DEBT,),
         action="tech_debt.deliverable.released",
-        parent_guard=_releasable_with(_recorded_list_revision(db, deliverable_id, client.id)),
+        parent_guard=_releasable_with(rendered_revision),
     )
     return _serialize_deliverable(db, deliv)
 
@@ -1944,12 +1946,72 @@ def _recorded_list_revision(
     return require_deliverable_in_tenant(db, deliverable_id, client_id).capability_list_revision
 
 
+def _refuse_a_deliverable_the_flip_guard_cannot_reach(
+    db: Session, deliverable_id: uuid.UUID, client_id: uuid.UUID
+) -> None:
+    """#640, advisor review of #730 (F1). `_releasable_with` runs inside
+    `deliverable_release._release_parent`, which returns BEFORE applying any
+    guard in two cases: the list is already RELEASED (a newer deliverable was
+    released first), and the deliverable recorded no `parent_version`
+    (finalized before 0041). Both would otherwise release a deliverable built
+    from rows that are not the approved ones. This check covers exactly those
+    two; the APPROVED case stays in the flip's own WHERE, where a re-approval
+    racing the release is still caught.
+
+    Scoped to a finalized, unreleased Tech Debt deliverable, so every other
+    refusal `release_deliverable` gives (wrong kind, not finalized) and its
+    idempotent re-release of an already-released deliverable are unchanged."""
+    deliv = require_deliverable_in_tenant(db, deliverable_id, client_id)
+    if deliv.finalized_at is None or deliv.released_at is not None:
+        return
+    svc = db.get(Service, deliv.service_id)
+    if svc is None or svc.kind != ServiceKind.TECH_DEBT:
+        return
+    rendered_revision = deliv.capability_list_revision
+    if deliv.parent_version is None:
+        # No parent to guard: nothing can confirm which rows it shows.
+        _log.info(
+            "tech_debt.release_refused_no_parent_version",
+            deliverable_id=str(deliv.id),
+        )
+        raise _refuse_deliverable_predates_approval(rendered_revision)
+    cap_list = (
+        db.execute(
+            select(CapabilityList).where(
+                CapabilityList.service_id == deliv.service_id,
+                CapabilityList.version == deliv.parent_version,
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if cap_list is None or cap_list.status != CapabilityListStatus.RELEASED:
+        return
+    if rendered_revision is None or cap_list.approved_revision != rendered_revision:
+        _log.info(
+            "tech_debt.release_refused_list_already_released",
+            deliverable_id=str(deliv.id),
+            rendered_revision=rendered_revision,
+            approved_revision=cap_list.approved_revision,
+        )
+        raise _refuse_deliverable_predates_approval(rendered_revision)
+
+
 def _releasable_with(rendered_revision: int | None) -> ParentGuard:
     """#640: `_LIST_STILL_RELEASABLE`, plus the deliverable being released was
     rendered at the revision the list is approved at. In the flip's own WHERE,
     so a re-approval landing between this read and the flip still refuses.
-    `approved_revision == NULL` is never true, so a deliverable that recorded no
-    revision is refused rather than trusted."""
+    With `rendered_revision` None this compiles to `approved_revision IS NULL`,
+    which is true for a draft; the refusal still holds because the flip's own
+    WHERE requires `status == APPROVED` and `_LIST_STILL_RELEASABLE` requires
+    `approved_revision == revision`, and an approved list always has a
+    non-NULL `approved_revision`. Do not drop either conjunct. The flip never
+    runs for a RELEASED list or a deliverable with no `parent_version`; those
+    are refused before it by `_refuse_a_deliverable_the_flip_guard_cannot_reach`.
+    Residual, not closed here: two releases of different deliverables of one
+    list racing each other, where the second's pre-check reads APPROVED and its
+    flip then misses because the first flipped the list; `_release_parent`
+    treats that miss as "changed concurrently" and proceeds."""
     return ParentGuard(
         condition=lambda list_id: and_(
             _LIST_STILL_RELEASABLE.condition(list_id),

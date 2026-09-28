@@ -32,3 +32,17 @@ One existing test was edited, on the coordinator's verdict (overturnable):
 `test_migration_0051_backfill.py`'s `_freeze` selects the two columns it
 reads rather than the whole `Deliverable`, which at revision 0051 has no
 `capability_list_revision` column. Its assertions are unchanged.
+
+Advisor review at `1d012e4` (2026-09-28) found two defects, fixed by the
+advisor on this branch:
+
+- F1: release of an older deliverable after a newer one had released the list,
+  and of a deliverable with no `parent_version`, skipped the flip's guard. The
+  release route now refuses both before releasing. Tests:
+  `test_an_older_deliverable_is_refused_after_the_list_is_released`,
+  `test_a_deliverable_with_no_parent_version_is_refused`; both go red with the
+  route check removed.
+- F2: an inline row edit left step 3 showing "Approved" until reload. The
+  workspace re-reads the list after an edit to an approved list. The web test
+  "an inline row edit on an approved list re-enables Approve again" goes red
+  with the re-read removed.
