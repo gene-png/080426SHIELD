@@ -6436,3 +6436,30 @@ The shared dev database, read-only: DRAFT 2, RELEASED 2, APPROVED 0, at migratio
 **One helper.** `app/security/sessions.py::end_user_sessions` is now the only place a session is ended. It is called by the password reset, by deactivation in `PATCH /admin/users/{id}`, and by `DELETE /admin/clients/{cid}`. Deactivation now also stamps the cutoff. Before, it relied on the `is_active` check alone, so a reactivated user's pre-deactivation access tokens worked again until their TTL.
 
 **Not decided here.** Signing in AFTER the archive is not refused: nothing on the login path reads `Client.archived_at`, which is #652's other half. A password reset still ends sessions without blocking a later sign-in, and this decision matches that and goes no further.
+
+## D-104 — A user of an archived client cannot sign in
+
+**2026-09-26 · auth** (Gene's decision, #736; relayed by the coordinator; #727)
+
+**Decision.** A user whose client is archived (`Client.archived_at IS NOT NULL`) is refused a session at every path that issues one, with a typed `client_archived` refusal, the way an inactive user is refused. D-103 ends the sessions an archive finds; this refuses the next one.
+
+**Where.** `app/security/archived_client.py` holds the check and the refusal. Its callers:
+
+- password login, after the password verify (the inactive gate's oracle reason) and before the MFA challenge;
+- the MFA verify step, before the code is checked, so a refused user feeds no lockout counter;
+- the OIDC exchange;
+- refresh, before rotation and before the grace path;
+- `current_client` for a client-role user, which covers an access token already issued;
+- registration, when the email's domain maps to the archived client.
+
+Every session-issuing path is a caller of `routes/auth._issue_pair`, and the list above was taken from those callers, not from the issue.
+
+**Status codes.** 403 everywhere except registration, which answers **409**: that refusal is about where the email's domain leads, the same class as `email_domain_unavailable` (409), and the sign-up form renders a typed 409's message but not a 403's.
+
+**Keyed on `client_id`, not role**, matching D-103: every user whose `client_id` is the archived client. A Kentro admin has no client and is never refused.
+
+**Not refused: a Kentro admin opening an archived client** through `X-Client-Id`. The admin is not a user of that client. Archiving keeps the client's data, and an admin still needs to read it.
+
+**Copy.** "Your organization's SHIELD account has been archived, so it is no longer available." It names no remedy (D-076), because nothing in the product un-archives a client. The web shows this copy on sign-in, and a refresh refused this way ends the session through the same sign-out as `refresh_reused`.
+
+**Reachability of the refresh and `current_client` guards.** Through `DELETE /admin/clients/{cid}`, D-103 has already ended every session, so neither guard is the one that refuses. They refuse two cases: a client archived before D-103 reached a deployment, whose users kept their refresh families and access tokens, and a token minted in the archive's own second (D-103's whole-second residual).

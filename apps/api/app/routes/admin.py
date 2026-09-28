@@ -547,7 +547,8 @@ def archive_client(
     client.archived_at = datetime.now(UTC)
     # Gene's decision, 2026-09-26 (#652, D-103): archiving a client ends every
     # session its users hold, access and refresh alike, as a password reset
-    # does. Signing in again afterwards is NOT refused here.
+    # does. Signing in again afterwards is refused elsewhere, at every
+    # session-issuing path (#727, D-104: `security/archived_client.py`).
     users = db.execute(select(User).where(User.client_id == client.id)).scalars().all()
     for user in users:
         end_user_sessions(user, at=client.archived_at)

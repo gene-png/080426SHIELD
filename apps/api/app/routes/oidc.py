@@ -29,6 +29,7 @@ from app.logging import get_logger
 from app.models.user import User
 from app.routes.auth import _issue_pair, _normalize_email, _register_successful_login
 from app.schemas.auth import OidcExchangeRequest, OidcExchangeResponse, UserResponse
+from app.security.archived_client import client_archived_error, user_client_is_archived
 from app.security.oidc import OidcError, verify_access_token
 from app.security.rate_limit import RateLimiter, get_rate_limiter
 
@@ -132,6 +133,10 @@ def exchange(
                 "message": "This account is deactivated.",
             },
         )
+    if user_client_is_archived(db, user):
+        # #727, D-104: the same refusal password login gives.
+        log.info("oidc.rejected_client_archived", user_id=str(user.id))
+        raise client_archived_error()
 
     # 6) TOFU sub binding: stamp on first exchange, reject a changed subject.
     sub = str(claims["sub"])

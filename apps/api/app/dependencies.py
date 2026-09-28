@@ -13,6 +13,7 @@ need the role take `require_role` instead (Phase 1 stage 7).
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime
 
@@ -22,7 +23,10 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.client import Client
 from app.models.user import User, UserRole
+from app.security.archived_client import client_archived_error, is_archived
 from app.security.jwt import TokenError, verify_token
+
+logger = logging.getLogger(__name__)
 
 
 def _bearer_token_from(request: Request) -> str:
@@ -131,6 +135,10 @@ def current_client(
     users (platform admin with client_id IS NULL) must send X-Client-Id
     to choose which client they're operating on. The header value must
     reference an existing client.
+
+    A client-role user whose client is archived gets the typed 403
+    `client_archived` (#727, D-104); an admin choosing an archived client does
+    not.
     """
     if user.role == UserRole.CLIENT:
         if user.client_id is None:
@@ -144,6 +152,13 @@ def current_client(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Your client account is no longer available.",
             )
+        if is_archived(client):
+            # #727, D-104: covers an access token issued before the archive
+            # whose session #726 did not end. Only the pinned path: a Kentro
+            # admin choosing an archived tenant by X-Client-Id is not a user of
+            # it, and keeps access to its retained data.
+            logger.info("deps.current_client_refused_archived user_id=%s", user.id)
+            raise client_archived_error()
         return client
 
     # Platform admin: client_id is typically NULL; they pick the

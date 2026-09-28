@@ -66,6 +66,7 @@ from app.schemas.auth import (
     VerifyEmailRequest,
     VerifyEmailResponse,
 )
+from app.security.archived_client import client_archived_error, is_archived, user_client_is_archived
 from app.security.email_domains import domain_of, is_generic_provider
 from app.security.jwt import TokenError, issue_token, verify_token
 from app.security.password import (
@@ -363,6 +364,11 @@ def _resolve_registration_tenant(
                     "message": "The organization for that domain is no longer available.",
                 },
             )
+        if is_archived(client):
+            # #727: joining would make the registrant a user of an archived
+            # client, and hand them a session. 409, as for the vanished org above.
+            log.info("auth.register_blocked_client_archived", client_id=str(client.id))
+            raise client_archived_error(status.HTTP_409_CONFLICT)
         return role, client, False, None
 
     # Unknown company domain: stand up a new org and map the domain. #254: the
@@ -598,6 +604,14 @@ def login(
             },
         )
 
+    # Archived-client gate (#727, D-104), after the password verify for the same
+    # oracle reason as the inactive gate above, and before the MFA challenge so
+    # no pending token is minted for a session that cannot finish.
+    if user_client_is_archived(db, user):
+        db.commit()
+        log.info("auth.login_blocked_client_archived", user_id=str(user.id))
+        raise client_archived_error()
+
     # Email verification gate (Sprint 6 T5, D-028). When the flag is on, a user
     # whose address is not yet verified cannot complete login (nor start the MFA
     # step). Do NOT reset the lockout counters here: login is not complete, and
@@ -673,6 +687,12 @@ def refresh(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User is no longer active.",
         )
+    # #727: before rotation and before the grace path, so neither can serve a
+    # user of an archived client. Reachable where the archive did not end the
+    # family: a client archived before #726 reached the deployment.
+    if user_client_is_archived(db, user):
+        log.info("auth.refresh_blocked_client_archived", user_id=str(user.id))
+        raise client_archived_error()
 
     # (a) Forced re-auth ceiling. Checked before rotation: once a session is
     # past the ceiling the user must sign in fresh regardless of rotation state.
@@ -1003,6 +1023,11 @@ def mfa_verify_login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired MFA challenge. Please sign in again.",
         )
+    # #727: a challenge begun before the archive does not finish after it.
+    # Before the code is checked, so a refused user feeds no lockout counter.
+    if user_client_is_archived(db, user):
+        log.info("auth.mfa_login_blocked_client_archived", user_id=str(user.id))
+        raise client_archived_error()
 
     # Throttle the second-factor guess rate per account (the pending token is
     # short-lived, but rate-limiting still blunts online code guessing).
