@@ -33,7 +33,7 @@ One existing test was edited, on the coordinator's verdict (overturnable):
 reads rather than the whole `Deliverable`, which at revision 0051 has no
 `capability_list_revision` column. Its assertions are unchanged.
 
-Advisor review at `1d012e4` (2026-09-28) found two defects, fixed by the
+Advisor review at `1d012e4` (2026-09-28) found these defects, fixed by the
 advisor on this branch:
 
 - F1: release of an older deliverable after a newer one had released the list,
@@ -46,3 +46,10 @@ advisor on this branch:
   workspace re-reads the list after an edit to an approved list. The web test
   "an inline row edit on an approved list re-enables Approve again" goes red
   with the re-read removed.
+- R2-1 (review of the fix at `7ef5585`): `seed_demo.py` wrote a RELEASED
+  list with no `approved_revision`, so Re-finalize then Release on the demo
+  was refused. The seed now records the approval;
+  `test_the_seeded_released_list_reads_as_a_current_approval` goes red
+  without it.
+- R2-2: the other list-producing handlers now bump `listSeq`, so a late read
+  cannot overwrite their result on screen. Display-only; no test.

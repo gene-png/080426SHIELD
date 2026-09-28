@@ -22,7 +22,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text, update
+from sqlalchemy import create_engine, select, text, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
@@ -690,3 +690,32 @@ def test_a_deliverable_built_before_a_re_approval_is_told_so(app_client) -> None
     assert error["reason"] == _PREDATES, error
     assert _WHEN_EDITED in error["message"], error["message"]
     assert _WHEN_UNKNOWN not in error["message"], error["message"]
+
+
+@pytest.mark.unit
+def test_the_seeded_released_list_reads_as_a_current_approval(tmp_path) -> None:
+    """Advisor review of #730 at 7ef5585, R2-1. `seed_demo.py` writes a RELEASED
+    capability list after every migration has run, so 0056's backfill never
+    reaches it. Without an `approved_revision` equal to its `revision`, Re-finalize
+    then Release on the seeded demo is refused as "generated before the list was
+    last approved", which is false. The seed's own writer is under test here."""
+    from scripts.seed_demo import _bootstrap_org, _seed_tech_debt
+
+    url = f"sqlite:///{tmp_path / 'seed.db'}"
+    api_root = Path(__file__).resolve().parents[2]
+    cfg = Config(str(api_root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(api_root / "alembic"))
+    cfg.set_main_option("sqlalchemy.url", url)
+    command.upgrade(cfg, "head")
+    engine = create_engine(url, future=True)
+    with sessionmaker(bind=engine, future=True)() as s:
+        admin, _client_user, org = _bootstrap_org(s)
+        svc = _seed_tech_debt(s, LocalFilesystemStorage(tmp_path / "storage"), admin, org)
+        s.commit()
+        cap_list = s.execute(
+            select(CapabilityList).where(CapabilityList.service_id == svc.id)
+        ).scalar_one()
+
+        assert cap_list.status.value == "released"
+        assert cap_list.approved_revision is not None, "the seed must record its approval"
+        assert cap_list.approval_current is True

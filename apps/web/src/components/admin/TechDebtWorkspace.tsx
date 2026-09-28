@@ -242,6 +242,9 @@ Name it:`,
     if (name === null || !name.trim()) return;
     const category = window.prompt("Category (optional):", "") ?? undefined;
     setSplitError(null);
+    // Every list-producing operation bumps `listSeq`, so an earlier read still
+    // in flight (mount, or the post-edit re-read) cannot overwrite this result.
+    listSeq.current += 1;
     try {
       setList(
         await includeExcludedRow(list.id, row.index, {
@@ -259,6 +262,7 @@ Name it:`,
   async function onConfirmRow(row: ExcludedRow): Promise<void> {
     if (!list) return;
     setSplitError(null);
+    listSeq.current += 1;
     try {
       setList(await confirmExcludedRow(list.id, row.index));
     } catch (err) {
@@ -283,6 +287,7 @@ Components carry no cost of their own — this licence keeps its full value.`,
     const names = splitLines(raw);
     if (names.length === 0) return;
     setSplitError(null);
+    listSeq.current += 1;
     try {
       const next = await addCapabilityComponents(
         item.id,
@@ -688,7 +693,10 @@ Components carry no cost of their own — this licence keeps its full value.`,
               cite. Nothing leaves that subset without a human agreeing. */}
             <SecurityClassificationQueue
               list={list}
-              onUpdated={setList}
+              onUpdated={(next) => {
+                listSeq.current += 1;
+                setList(next);
+              }}
               // #640: classifications stay editable until release; an edit
               // to an approved list sends step 3 back to not-done.
               editable={list.status === "draft" || list.status === "approved"}
