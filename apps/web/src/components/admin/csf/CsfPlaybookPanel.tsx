@@ -523,6 +523,11 @@ export function CsfPlaybookPanel({
 
   const seeded = (enterprise?.subcategories.length ?? 0) > 0;
   const gapCount = enterprise?.subcategories.filter((s) => s.gap).length ?? 0;
+  // #762: a row with no target is not a gap, and not "met" either. Counted
+  // beside the gaps so the line does not read as covering every row.
+  const untargetedCount =
+    enterprise?.subcategories.filter((s) => s.target_level === null).length ??
+    0;
 
   return (
     <div className="flex flex-col gap-6">
@@ -604,6 +609,9 @@ export function CsfPlaybookPanel({
                   {gapCount}
                 </span>{" "}
                 subcategor{gapCount === 1 ? "y" : "ies"} with a gap
+                {untargetedCount > 0
+                  ? ` · ${untargetedCount} with no target`
+                  : ""}
               </span>
             ) : null}
           </div>

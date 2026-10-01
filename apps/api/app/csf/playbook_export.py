@@ -220,7 +220,7 @@ def render_xlsx(
                 f"L{r.enterprise_level}",
                 f"#{r.rollup_rule}",
                 f"L{r.target_level}" if r.target_level else "",
-                "Yes" if r.gap else "",
+                _gap_cell(r),
                 r.priority or "",
             ]
         )
@@ -452,7 +452,10 @@ def _overview_sentences(rows: Sequence[Any]) -> list[str]:
         f"averages Level {overall} of 5.",
         f"{gaps} {short} — "
         f"{pc['P1']} Priority 1 (critical), {pc['P2']} Priority 2, and "
-        f"{pc['P3']} Priority 3.",
+        f"{pc['P3']} Priority 3."
+        # #762: the count above is of TARGETED rows; the rest are not short of
+        # anything, they were never measured against a target.
+        + (f" {_subcats(_untargeted(rows))}." if _untargeted(rows) else ""),
     ]
     if len(fns) >= 2:
         strongest = max(fns, key=lambda f: f["avg"])
@@ -470,6 +473,50 @@ def _gaps(n: int) -> str:
     return "gap" if n == 1 else "gaps"
 
 
+# #762: the third state. `routes/csf.py::_enterprise_subcategories` sets
+# `gap=False` for an in-scope row with NO target, and nothing sets a target
+# except the per-row Target select -- seeding and Run AI leave every row
+# untargeted. So "not a gap" was two states, "meets its target" and "has no
+# target", and every sentence below that counts gaps said only the first. The
+# rows reaching this module are in-scope only, so "untargeted" is exactly
+# `target_level is None`.
+
+#: The Gap cell of an untargeted row, in every table that has a Gap column.
+NO_TARGET = "No target"
+
+
+def _untargeted(rows: Sequence[Any]) -> int:
+    return sum(1 for r in rows if r.target_level is None)
+
+
+def _gap_cell(r: Any) -> str:
+    """A row's Gap cell: "Yes", "" (meets its target) or "No target"."""
+    if r.target_level is None:
+        return NO_TARGET
+    return "Yes" if r.gap else ""
+
+
+def _subcats(n: int) -> str:
+    return f"{n} in-scope subcategor{'y has' if n == 1 else 'ies have'} no target set"
+
+
+def _no_gaps_sentence(rows: Sequence[Any]) -> str:
+    """What a gap list with nothing in it says. The original sentence only when
+    every in-scope row has a target; otherwise "no gaps" is said of the rows
+    that have one, and the rest are named as not assessed."""
+    untargeted = _untargeted(rows)
+    if untargeted == 0:
+        return "No gaps — every in-scope subcategory meets its target."
+    targeted = len(rows) - untargeted
+    if targeted == 0:
+        return "No in-scope subcategory has a target set, so none is assessed for gaps."
+    return (
+        f"No gaps among the {targeted} subcategor{'y' if targeted == 1 else 'ies'} with a "
+        f"target. {_subcats(untargeted)}, so {'it is' if untargeted == 1 else 'they are'} "
+        "not assessed for gaps."
+    )
+
+
 def _function_detail(frows: Sequence[Any]) -> str:
     """The per-function line of the full PDF and DOCX, built ONCE for both
     (#692 round 2): '1 subcategories … 1 gap(s)' read one as several."""
@@ -483,6 +530,14 @@ def _function_detail(frows: Sequence[Any]) -> str:
 def _next_steps(rows: Sequence[Any]) -> list[str]:
     pc = _priority_counts(rows)
     steps: list[str] = []
+    # #762: a statement, not an instruction. The executive briefing's reader is
+    # the client, who has no Target control.
+    untargeted = _untargeted(rows)
+    if untargeted:
+        steps.append(
+            f"{_subcats(untargeted)}; this plan does not cover "
+            f"{'it' if untargeted == 1 else 'them'}."
+        )
     # Each sentence agrees in number with its count (#682): "the 1 Priority 1
     # gap(s) first — these are ... weaknesses" read one gap as several.
     if pc["P1"]:
@@ -526,6 +581,8 @@ def _next_steps(rows: Sequence[Any]) -> list[str]:
         steps.append(
             f"Track the {pc['P3']} Priority 3 {_gaps(pc['P3'])} for continuous improvement."
         )
+    # "Maintain current controls" only when every in-scope row was measured
+    # against a target and none fell short (#762).
     if not steps:
         steps.append(
             "No gaps were identified — maintain current controls and re-assess on the next cycle."
@@ -556,12 +613,20 @@ def _exec_gap_caption(rows: Sequence[Any]) -> str:
     shown = min(total, EXEC_GAP_LIMIT)
     if total == 0:
         return ""
+    # #762: the gaps counted here are of TARGETED rows only.
+    untargeted = _untargeted(rows)
+    tail = (
+        f" {_subcats(untargeted)} and {'is' if untargeted == 1 else 'are'} not "
+        "assessed for gaps."
+        if untargeted
+        else ""
+    )
     if shown >= total:
-        return f"All {total} gap{'' if total == 1 else 's'} listed."
+        return f"All {total} gap{'' if total == 1 else 's'} listed.{tail}"
     remaining = total - shown
     return (
         f"Showing the {shown} highest-priority of {total} gaps; "
-        f"{remaining} further gap{'' if remaining == 1 else 's'} not listed."
+        f"{remaining} further gap{'' if remaining == 1 else 's'} not listed.{tail}"
     )
 
 
@@ -678,14 +743,16 @@ def _scorecard(story: list[Any], styles: dict[str, Any], rows: Sequence[Any]) ->
     )
 
 
-def _gap_table(story: list[Any], styles: dict[str, Any], gaps: Sequence[Any]) -> None:
+def _gap_table(
+    story: list[Any], styles: dict[str, Any], gaps: Sequence[Any], rows: Sequence[Any]
+) -> None:
+    """`rows` are every in-scope row, so an empty `gaps` can say whether that
+    means "all met" or "nothing was measured" (#762)."""
     from reportlab.lib.units import inch
     from reportlab.platypus import Paragraph
 
     if not gaps:
-        story.append(
-            Paragraph("No gaps — every in-scope subcategory meets its target.", styles["body"])
-        )
+        story.append(Paragraph(_no_gaps_sentence(rows), styles["body"]))
         return
     body = [
         [
@@ -790,7 +857,7 @@ def render_exec_pdf(
     caption = _exec_gap_caption(enterprise_rows)
     if caption:
         story.append(Paragraph(caption, styles["body"]))
-    _gap_table(story, styles, _gap_rows(enterprise_rows, limit=EXEC_GAP_LIMIT))
+    _gap_table(story, styles, _gap_rows(enterprise_rows, limit=EXEC_GAP_LIMIT), enterprise_rows)
     story.append(Paragraph("Recommended next steps", styles["h2"]))
     for step in _next_steps(enterprise_rows):
         story.append(Paragraph(f"• {step}", styles["body"]))
@@ -874,7 +941,7 @@ def render_full_pdf(
                 Paragraph(escape(r.name), styles["cell"]),
                 f"L{r.enterprise_level}",
                 f"L{r.target_level}" if r.target_level else "—",
-                ("Yes" if r.gap else ""),
+                _gap_cell(r),
                 r.priority or "",
             ]
             for r in frows
@@ -891,7 +958,7 @@ def render_full_pdf(
 
     story.append(PageBreak())
     story.append(Paragraph("5. Prioritized roadmap", styles["h2"]))
-    _gap_table(story, styles, _gap_rows(enterprise_rows))
+    _gap_table(story, styles, _gap_rows(enterprise_rows), enterprise_rows)
 
     story.append(PageBreak())
     story.append(Paragraph("6. Appendix — all subcategories", styles["h2"]))
@@ -904,7 +971,7 @@ def render_full_pdf(
             r.tier_levels.get("low", "—"),
             f"L{r.enterprise_level}",
             f"#{r.rollup_rule}",
-            ("Yes" if r.gap else ""),
+            _gap_cell(r),
         ]
         for r in sorted(enterprise_rows, key=lambda r: r.subcategory_code)
     ]
@@ -1049,7 +1116,7 @@ def render_exec_docx(
         )
         _shade_col(table, 2, [g.enterprise_level for g in gaps])
     else:
-        add_paragraphs(doc, ["No gaps — every in-scope subcategory meets its target."])
+        add_paragraphs(doc, [_no_gaps_sentence(enterprise_rows)])
 
     add_heading(doc, "Recommended next steps")
     add_paragraphs(doc, [f"• {s}" for s in _next_steps(enterprise_rows)])
@@ -1115,7 +1182,7 @@ def render_full_docx(
                     r.name,
                     f"L{r.enterprise_level}",
                     f"L{r.target_level}" if r.target_level else "—",
-                    ("Yes" if r.gap else ""),
+                    _gap_cell(r),
                     r.priority or "",
                 ]
                 for r in frows
@@ -1143,7 +1210,7 @@ def render_full_docx(
         )
         _shade_col(table, 2, [g.enterprise_level for g in gaps])
     else:
-        add_paragraphs(doc, ["No gaps — every in-scope subcategory meets its target."])
+        add_paragraphs(doc, [_no_gaps_sentence(enterprise_rows)])
 
     add_page_break(doc)
     add_heading(doc, "6. Appendix — all subcategories")
@@ -1160,7 +1227,7 @@ def render_full_docx(
                 r.tier_levels.get("low", "—"),
                 f"L{r.enterprise_level}",
                 f"#{r.rollup_rule}",
-                ("Yes" if r.gap else ""),
+                _gap_cell(r),
             ]
             for r in ordered_rows
         ],
