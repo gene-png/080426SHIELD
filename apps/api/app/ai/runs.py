@@ -464,7 +464,24 @@ def _started(run: AiRun, *, joined: bool) -> AiRunStarted:
     )
 
 
-def _join_or_refuse(run: AiRun, serves: Serves) -> AiRunStarted:
+def _join_or_refuse(run: AiRun, serves: Serves, subject_id: uuid.UUID) -> AiRunStarted:
+    if run.subject_id != subject_id:
+        # The run in progress is working on something else -- another document
+        # for a Tech Debt extract. Handing back its id would tell this
+        # consultant their document is being read when it is not (#644's
+        # shape, one layer down).
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "ai_run_in_progress_other_input",
+                "message": (
+                    "An AI run is already in progress here on a different input. Wait for "
+                    f"it to finish, or until {_deadline_text(run)} at the latest, then "
+                    "run it again."
+                ),
+                "run_id": str(run.id),
+            },
+        )
     if serves_of(run) == serves:
         _log.info("ai_runs.joined", run_id=str(run.id), serves=serves)
         return _started(run, joined=True)
@@ -490,6 +507,7 @@ def start_run(
     service_id: uuid.UUID,
     client_id: uuid.UUID,
     purpose: str,
+    subject_id: uuid.UUID,
     requested_by: uuid.UUID,
     runner: Runner,
     work: Work,
@@ -522,7 +540,7 @@ def start_run(
 
     current = running_run(db, service_id=service_id, purpose=purpose)
     if current is not None:
-        return _join_or_refuse(current, serves)
+        return _join_or_refuse(current, serves, subject_id)
 
     _between_read_and_insert()
     started_at = utcnow()
@@ -531,6 +549,7 @@ def start_run(
         client_id=client_id,
         service_id=service_id,
         purpose=purpose,
+        subject_id=subject_id,
         status=AiRunStatus.RUNNING,
         mode=_mode_for(actual),
         boot_id=BOOT_ID,
@@ -554,7 +573,7 @@ def start_run(
                 AiRun.status == AiRunStatus.RUNNING,
             )
         ).scalar_one()
-        return _join_or_refuse(winner, serves)
+        return _join_or_refuse(winner, serves, subject_id)
     db.commit()
 
     ctx = RunContext(

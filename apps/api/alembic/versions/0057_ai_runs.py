@@ -10,7 +10,9 @@ belonged to.
 - `ai_runs`: one row per run. `status` follows the `llm_calls` convention
   (`native_enum=False`, no `values_callable`), so the stored value is the
   member NAME (`RUNNING`). `result` holds every disclosure the workspace renders
-  about the run, so it survives a reload (#271).
+  about the run, so it survives a reload (#271). `subject_id` is what the run
+  works on (the assessment, or the inventory document of a Tech Debt
+  extract): a second POST joins a run only when it names the same one.
 - `uq_ai_runs_one_running`: at most one RUNNING run per service and purpose. A
   PARTIAL unique index, declared for both dialects: CI runs SQLite only, so the
   Postgres clause is exercised by nothing in CI. Without `postgresql_where`
@@ -57,6 +59,7 @@ def upgrade() -> None:
         _uuid("client_id", nullable=False),
         _uuid("service_id", nullable=False),
         sa.Column("purpose", sa.String(64), nullable=False),
+        _uuid("subject_id", nullable=False),
         sa.Column("status", sa.String(16), nullable=False),
         sa.Column("mode", sa.String(16), nullable=False),
         sa.Column("boot_id", sa.String(36), nullable=False),

@@ -14,6 +14,7 @@ import {
 import { type ArtifactSummary, listArtifacts } from "@/lib/intake/artifacts";
 
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
+import type { AiServes } from "@/lib/aiRuns/types";
 
 import type { JSX } from "react";
 
@@ -31,8 +32,11 @@ function isInventory(a: ArtifactSummary): boolean {
 }
 
 export interface IntakeDocumentsPanelProps {
-  /** Run AI extraction directly on a client-uploaded inventory. */
-  onExtract: (artifactId: string) => void;
+  /**
+   * Run AI extraction directly on a client-uploaded inventory, with what the
+   * admin acknowledged the run would do (#504).
+   */
+  onExtract: (artifactId: string, serves: AiServes) => void;
   extracting: boolean;
   /** Bumping this re-fetches the list (e.g. after a workspace upload). */
   reloadKey?: number;
@@ -150,7 +154,9 @@ export function IntakeDocumentsPanel({
                     {isInventory(a) ? (
                       /* Issue 2: extraction is an AI job — warn before canned
                        output when no key is loaded. */
-                      <RunAiGuard onProceed={() => onExtract(a.id)}>
+                      <RunAiGuard
+                        onProceed={(serves) => onExtract(a.id, serves)}
+                      >
                         {({ onClick }) => (
                           <button
                             type="button"

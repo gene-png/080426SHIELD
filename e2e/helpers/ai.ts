@@ -1,4 +1,11 @@
-import type { Page, Request, Response } from "@playwright/test";
+import type {
+  APIRequestContext,
+  Page,
+  Request,
+  Response,
+} from "@playwright/test";
+
+import { API_BASE } from "./ids";
 
 /**
  * Acknowledge the offline Run-AI guard if it appears.
@@ -166,7 +173,7 @@ export async function extractAfterUpload(
   page: Page,
   extractDone: Promise<Response>,
   watch: UploadWatch,
-): Promise<Response> {
+): Promise<Record<string, unknown>> {
   const upload = await watch.upload;
   if (!upload.ok()) {
     throw new Error(`the upload itself failed: HTTP ${upload.status()}`);
@@ -208,5 +215,89 @@ export async function extractAfterUpload(
         `itself while this helper clicked "Extract from this"`,
     );
   }
-  return response;
+  return extractedList(page, response);
+}
+
+/**
+ * The capability list an extraction answer leads to (#645). The POST answers
+ * with a run to follow, or -- for an open draft from the same document -- the
+ * list itself. Follows the run to completion and reads the list it wrote.
+ */
+async function extractedList(
+  page: Page,
+  response: Response,
+): Promise<Record<string, unknown>> {
+  const body = (await response.json()) as Record<string, unknown>;
+  if (typeof body.run_id !== "string") return body;
+  const run = await waitForRun(page, body.run_id);
+  if (run.status !== "completed") {
+    throw new Error(
+      `extraction run ${run.id} ${run.status}: ${run.error_message}`,
+    );
+  }
+  const serviceId = /\/tech-debt\/services\/([^/]+)\//.exec(
+    response.url(),
+  )?.[1];
+  const latest = await page.request.get(
+    `/api/proxy/tech-debt/services/${serviceId}/capability-lists/latest`,
+  );
+  if (!latest.ok()) {
+    throw new Error(`reading the extracted list: ${latest.status()}`);
+  }
+  return (await latest.json()) as Record<string, unknown>;
+}
+
+/**
+ * Extract through the API, as a spec's setup does, and return the list (#645).
+ * Polls the run with the same headers, then reads the list it wrote.
+ */
+export async function apiExtract(
+  request: APIRequestContext,
+  headers: Record<string, string>,
+  serviceId: string,
+  artifactId: string,
+): Promise<ExtractedList> {
+  const res = await request.post(
+    `${API_BASE}/tech-debt/services/${serviceId}/capability-lists/extract`,
+    { headers, data: { artifact_id: artifactId, serves: "offline" } },
+  );
+  if (!res.ok()) {
+    throw new Error(`extract: ${res.status()} ${await res.text()}`);
+  }
+  const started = (await res.json()) as { run_id: string };
+  const deadline = Date.now() + RUN_TIMEOUT_MS;
+  for (;;) {
+    const poll = await request.get(`${API_BASE}/ai-runs/${started.run_id}`, {
+      headers,
+    });
+    if (!poll.ok()) {
+      throw new Error(`polling run ${started.run_id}: ${poll.status()}`);
+    }
+    const run = (await poll.json()) as PolledRun;
+    if (run.status === "failed") {
+      throw new Error(`extraction run ${run.id} failed: ${run.error_message}`);
+    }
+    if (run.status === "completed") break;
+    if (Date.now() > deadline) {
+      throw new Error(`run ${run.id} still running after ${RUN_TIMEOUT_MS}ms`);
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  const latest = await request.get(
+    `${API_BASE}/tech-debt/services/${serviceId}/capability-lists/latest`,
+    { headers },
+  );
+  if (!latest.ok()) {
+    throw new Error(`reading the extracted list: ${latest.status()}`);
+  }
+  return (await latest.json()) as ExtractedList;
+}
+
+/** The fields of a capability list the specs read. */
+export interface ExtractedList {
+  id: string;
+  version: number;
+  source_rows_total: number;
+  items: { id: string; name: string }[];
+  excluded_rows: { index: number; summary: string; confirmed: boolean }[];
 }

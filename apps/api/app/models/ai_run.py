@@ -63,6 +63,10 @@ class AiRun(UUIDPKMixin, TimestampMixin, Base):
         ForeignKey("services.id", ondelete="CASCADE"), nullable=False
     )
     purpose: Mapped[str] = mapped_column(String(64), nullable=False)
+    # What the run was asked to work on: the assessment for ATT&CK, CSF and ZT,
+    # the inventory document for a Tech Debt extract. A second POST joins a run
+    # only when it names the same one.
+    subject_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
     status: Mapped[AiRunStatus] = mapped_column(
         SAEnum(AiRunStatus, name="ai_run_status", native_enum=False, length=16),
         default=AiRunStatus.RUNNING,

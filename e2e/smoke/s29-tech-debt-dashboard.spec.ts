@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { CLIENT_EMAIL, CLIENT_PASSWORD, signIn } from "../helpers/auth";
 import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
+import { apiExtract } from "../helpers/ai";
 
 /**
  * D-035: after an admin releases a Tech Debt deliverable, the client can open the
@@ -39,12 +40,7 @@ test("client views a released software-portfolio dashboard", async ({
     })
   ).json();
 
-  const ext = await (
-    await request.post(
-      `${API_BASE}/tech-debt/services/${serviceId}/capability-lists/extract`,
-      { headers: H, data: { artifact_id: artifact.id } },
-    )
-  ).json();
+  const ext = await apiExtract(request, H, serviceId, artifact.id);
   const listId = ext.id as string;
   for (const item of ext.items as { id: string }[]) {
     await request.patch(`${API_BASE}/tech-debt/capability-items/${item.id}`, {

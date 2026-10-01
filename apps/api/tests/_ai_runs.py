@@ -95,3 +95,24 @@ def attack_run_ai(c: TestClient, svc_id: str, headers: dict, **kwargs: Any) -> d
     latest = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=headers)
     assert latest.status_code == 200, latest.text
     return {**result, "coverage": latest.json()["coverage"]}
+
+
+def tech_debt_extract(
+    c: TestClient, svc_id: str, headers: dict, artifact_id: str, **kwargs: Any
+) -> dict:
+    """A Tech Debt extraction, driven to completion: the capability list it
+    wrote, read the way the workspace reads it. The synchronous route answered
+    with that list; the run's result names it."""
+    r = c.post(
+        f"/tech-debt/services/{svc_id}/capability-lists/extract",
+        headers=headers,
+        json={"artifact_id": artifact_id, "serves": "offline", **kwargs},
+    )
+    assert r.status_code == 202, r.text
+    run = get_run(c, r.json()["run_id"], headers)
+    assert run["status"] == "completed", run
+    latest = c.get(f"/tech-debt/services/{svc_id}/capability-lists/latest", headers=headers)
+    assert latest.status_code == 200, latest.text
+    body = latest.json()
+    assert body["id"] == run["result"]["capability_list_id"], (body["id"], run["result"])
+    return body

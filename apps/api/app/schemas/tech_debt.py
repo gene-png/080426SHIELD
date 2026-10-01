@@ -37,6 +37,10 @@ class ServiceResponse(BaseModel):
 
 class ExtractRequest(BaseModel):
     artifact_id: uuid.UUID
+    # #645 / #504: the AI status the consultant acknowledged. `str | None` so a
+    # missing or unknown value is refused with the typed `serves_required`
+    # 422 (see `app/schemas/ai_runs.py::RunAiRequest`).
+    serves: str | None = None
 
 
 class CapabilityItemResponse(BaseModel):

@@ -290,6 +290,7 @@ def _competing_run(w: World, *, mode: LLMCallMode) -> AiRun:
         client_id=uuid.UUID(w.cid),
         service_id=uuid.UUID(w.svc_id),
         purpose="mitre_map",
+        subject_id=uuid.UUID(w.assessment_id),
         status=AiRunStatus.RUNNING,
         mode=mode,
         boot_id=BOOT_ID,

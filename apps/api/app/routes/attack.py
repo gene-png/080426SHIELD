@@ -1832,6 +1832,7 @@ def run_ai(
         service_id=svc.id,
         client_id=client.id,
         purpose=req.preview.job_name,
+        subject_id=req.assessment.id,
         requested_by=user.id,
         runner=runner,
         work=functools.partial(_attack_run_work, assessment_id=req.assessment.id),
