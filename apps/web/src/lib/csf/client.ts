@@ -1,6 +1,13 @@
 "use client";
 
 import type {
+  AiRun,
+  AiRunStarted,
+  AiRunSummary,
+  AiServes,
+} from "@/lib/aiRuns/types";
+
+import type {
   CsfAnswer,
   CsfAnswerPatch,
   CsfAssessment,
@@ -292,10 +299,31 @@ export async function fetchEnterpriseProfile(
   }
 }
 
-export async function runCsfAi(serviceId: string): Promise<CsfRunAiResponse> {
-  return jsonRequest<CsfRunAiResponse>(
+/**
+ * Start a Run-AI (#645): answers with the run to follow; its result arrives on
+ * the run. `serves` is what the consultant acknowledged (#504).
+ */
+export async function runCsfAi(
+  serviceId: string,
+  serves: AiServes,
+): Promise<AiRunStarted> {
+  return jsonRequest<AiRunStarted>(
     `/api/proxy/csf/services/${serviceId}/run-ai`,
-    { method: "POST" },
+    { method: "POST", body: { serves } },
+  );
+}
+
+export type CsfRun = AiRun<CsfRunAiResponse>;
+
+export async function fetchCsfRun(runId: string): Promise<CsfRun> {
+  return jsonRequest<CsfRun>(`/api/proxy/ai/runs/${runId}`);
+}
+
+export async function fetchCsfRunSummary(
+  serviceId: string,
+): Promise<AiRunSummary<CsfRunAiResponse>> {
+  return jsonRequest<AiRunSummary<CsfRunAiResponse>>(
+    `/api/proxy/ai/runs/services/${serviceId}`,
   );
 }
 

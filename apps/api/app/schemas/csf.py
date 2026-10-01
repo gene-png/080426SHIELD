@@ -388,6 +388,7 @@ class CsfDroppedSuggestion(BaseModel):
     | `superseded`   | a later entry in the same response overwrote this value  |
     | `locked`       | a human locked the row — a by-design skip, not a defect  |
     | `protected`    | an offline run declined to overwrite a hand-typed score  |
+    | `edited`       | a consultant edited the row after the run started (#645) |
 
     `locked` renders separately from the rest. Folding a by-design skip into one
     "N dropped" number rebuilds the alert-fatigue problem issue #31 rejected.
@@ -407,6 +408,7 @@ class CsfDroppedSuggestion(BaseModel):
         "superseded",
         "locked",
         "protected",
+        "edited",
     ]
     # "tier|subcategory_code" exactly as the model wrote it, or None when the
     # model omitted them. Never the literal "None|None" — that fabricates a row
@@ -427,7 +429,9 @@ class CsfDroppedSuggestion(BaseModel):
 
 
 class CsfRunAiResponse(BaseModel):
-    """Result of a csf_score Run-AI: what changed + the refreshed rows.
+    """What a csf_score Run-AI did: stored as `ai_runs.result` (#645), so it
+    survives a reload. The refreshed rows are not carried; the workspace
+    re-reads the profile.
 
     The counts are in units of ONE SUGGESTED VALUE — one field the model asked
     to set on one row — and satisfy, for every response that parsed:
@@ -440,7 +444,6 @@ class CsfRunAiResponse(BaseModel):
     """
 
     changed: list[CsfDimensionChange]
-    rows: list[CsfDimensionScoreResponse]
     suggestions_received: int = 0
     suggestions_applied: int = 0
     dropped: list[CsfDroppedSuggestion] = []

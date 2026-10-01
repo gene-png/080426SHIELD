@@ -40,6 +40,7 @@ from app.csf.catalog import SUBCATEGORIES
 # agrees with the parser by construction and cannot see prompt->parser drift —
 # instance 1 of #72, recorded in CLAUDE.md.
 from app.routes.csf import _DIM_FIELDS
+from tests._ai_runs import csf_run_ai
 
 # The exact keys routes/csf.py:run_ai depends on when parsing the response.
 _PARSER_TOP_LEVEL_KEY = "scores"
@@ -131,9 +132,8 @@ def test_prompt_schema_response_applies_changes(app_client) -> None:
     body = {_PARSER_TOP_LEVEL_KEY: [row], "executive_summary": "Contract check."}
     provider.register_static("csf_score", LLMResponse(json.dumps(body)))
 
-    r = c.post(f"/csf/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    changed = r.json()["changed"]
+    r = csf_run_ai(c, svc_id, h)
+    changed = r["changed"]
     assert len(changed) > 0, "a prompt-schema-compliant response was discarded"
     changed_fields = {ch["field"] for ch in changed if ch["subcategory_code"] == code}
     # Every non-zero dimension we sent should show up as an applied change.

@@ -19,6 +19,7 @@ Endpoint surface:
 
 from __future__ import annotations
 
+import functools
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -34,6 +35,16 @@ from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
 from app.ai.provenance import SOURCE_CONSULTANT, protected_keys
+from app.ai.runs import (
+    RunContext,
+    RunFailed,
+    Runner,
+    RunOutcome,
+    get_ai_run_runner,
+    refuse_while_running,
+    require_serves,
+    start_run,
+)
 from app.audit import audit
 from app.client_naming import org_display_name
 from app.csf import playbook_export as csf_playbook_export
@@ -84,6 +95,7 @@ from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.service_request import ServiceRequest
 from app.models.user import User, UserRole
 from app.routes.artifacts import _storage_dep
+from app.schemas.ai_runs import AiRunStarted, RunAiRequest
 from app.schemas.csf import (
     GAP_CHARACTERIZATIONS,
     GAP_PRIORITY_OVERRIDES,
@@ -472,6 +484,7 @@ def create_assessment(
     db: Annotated[Session, Depends(get_db)],
 ) -> CsfAssessmentResponse:
     svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.NIST_CSF)
+    refuse_while_running(db, svc.id)  # #645: the edit lock
     prior = _latest_assessment(db, svc.id)
     # Draft-exists guard (SPRINT_2 T7): this route used to mint a new version on
     # EVERY call, so a client hammering "start assessment" produced unbounded
@@ -784,6 +797,8 @@ def approve_assessment(
     db: Annotated[Session, Depends(get_db)],
 ) -> CsfAssessmentResponse:
     a = require_csf_assessment_in_tenant(db, assessment_id, client.id)
+    # #645: approving mid-run would approve rows about to change.
+    refuse_while_running(db, a.service_id)
     if a.status == CsfAssessmentStatus.APPROVED:
         return _serialize_assessment(db, a)
     if a.status == CsfAssessmentStatus.RELEASED:
@@ -1111,6 +1126,7 @@ def seed_profiles(
     db: Annotated[Session, Depends(get_db)],
 ) -> list[str]:
     svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.NIST_CSF)
+    refuse_while_running(db, svc.id)  # #645: the edit lock
     a = _latest_assessment(db, svc.id)
     if a is None:
         raise HTTPException(
@@ -1204,6 +1220,9 @@ def patch_dimension_score(
     row = db.get(CsfDimensionScore, score_id)
     if row is None or row.client_id != client.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Score row not found.")
+    owner = db.get(CsfAssessment, row.assessment_id)
+    if owner is not None:
+        refuse_while_running(db, owner.service_id)  # #645: the edit lock
     data = body.model_dump(exclude_unset=True)
     for f in (
         "governance",
@@ -1715,6 +1734,7 @@ def _apply_suggestions(
     data: dict,
     rows: dict[str, CsfDimensionScore],
     protected: frozenset[str] | set[str] = frozenset(),
+    edited: frozenset[str] | set[str] = frozenset(),
 ) -> tuple[int, int, list[CsfDroppedSuggestion]]:
     """Apply the csf_score suggestions, accounting for every one of them (W1).
 
@@ -1844,6 +1864,12 @@ def _apply_suggestions(
                 CsfDroppedSuggestion(reason="protected", key=key, values=recognized_values)
             )
             continue
+        if row_key in edited:
+            # #645: a consultant edited this row after the run started (an edit
+            # that checked the lock before the run existed). Kept, never
+            # overwritten, and itemized like the other by-design skips.
+            dropped.append(CsfDroppedSuggestion(reason="edited", key=key, values=recognized_values))
+            continue
 
         for field in fields:
             raw = sugg[field]
@@ -1953,6 +1979,12 @@ def build_csf_ai_request(db: Session, svc: Service, client: Client) -> CsfAiRequ
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Create an assessment first."
         )
+    return _csf_ai_request_for(db, a, client)
+
+
+def _csf_ai_request_for(db: Session, a: CsfAssessment, client: Client) -> CsfAiRequest:
+    """The request for ONE assessment, named by id: the background job (#645)
+    re-loads the assessment its POST validated, never "the latest"."""
     if a.status in (CsfAssessmentStatus.APPROVED, CsfAssessmentStatus.RELEASED):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="This assessment is locked."
@@ -2008,8 +2040,9 @@ def build_csf_ai_request(db: Session, svc: Service, client: Client) -> CsfAiRequ
 
 @router.post(
     "/services/{service_id}/run-ai",
-    response_model=CsfRunAiResponse,
-    summary="Run the csf_score AI job: suggest dimension scores + narrative (admin)",
+    response_model=AiRunStarted,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Start the csf_score AI job in the background; poll the run it returns (admin)",
 )
 def run_ai(
     service_id: uuid.UUID,
@@ -2017,21 +2050,56 @@ def run_ai(
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],
     llm: Annotated[LLMClient, Depends(_llm_dep)],
+    runner: Annotated[Runner, Depends(get_ai_run_runner)],
     _rl: Annotated[None, Depends(enforce_ai_rate_limit)],
-) -> CsfRunAiResponse:
+    body: RunAiRequest | None = None,
+) -> AiRunStarted:
     """The CSF full-Playbook 'Run AI'. Suggests the five dimension scores (0-2)
     + a 'what we found' narrative per (tier, subcategory). AI suggests; locked
     rows are untouched; code does the total/level/cap + Enterprise roll-up.
-    Returns a 'what changed' list.
+
+    #645: answers 202 with a run to poll. The refusals that need no AI (no
+    assessment, locked, not seeded) are made here, synchronously; the work is
+    `_csf_run_work`, in the background.
     """
+    serves = require_serves(body.serves if body else None)
     svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.NIST_CSF)
     req = build_csf_ai_request(db, svc, client)
-    a, rows, locked_keys = req.assessment, req.rows, req.locked_keys
+    return start_run(
+        db,
+        llm=llm,
+        serves=serves,
+        service_id=svc.id,
+        client_id=client.id,
+        purpose=req.preview.job_name,
+        subject_id=req.assessment.id,
+        requested_by=user.id,
+        runner=runner,
+        work=functools.partial(_csf_run_work, assessment_id=req.assessment.id),
+    )
+
+
+def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID) -> RunOutcome:
+    """The csf_score run, in the background job's own session (#645). Re-loads
+    by id; a refusal becomes the run's FAILED state with the same reason."""
+    db = session
+    a = db.get(CsfAssessment, assessment_id)
+    if a is None or a.status in (
+        CsfAssessmentStatus.DISCARDED,
+        CsfAssessmentStatus.APPROVED,
+        CsfAssessmentStatus.RELEASED,
+    ):
+        raise RunFailed(
+            "assessment_not_editable",
+            "This assessment was discarded or locked before the run started.",
+        )
+    req = _csf_ai_request_for(db, a, db.get(Client, ctx.client_id))
+    rows = req.rows
+    llm = ctx.llm
 
     def _snap() -> dict[str, dict]:
         return {k: {f: getattr(r, f) for f in _RUN_FIELDS} for k, r in rows.items()}
 
-    before = _snap()
     # A provider failure here must stay typed and leave an llm_calls row.
     with ai_call_boundary(db, llm, purpose=req.preview.job_name):
         result = run_job(
@@ -2039,12 +2107,20 @@ def run_ai(
             llm,
             req.preview.job_name,
             inputs=req.preview.inputs,
-            requested_by=user.id,
-            service_id=svc.id,
-            client_id=client.id,
+            requested_by=ctx.requested_by,
+            service_id=ctx.service_id,
+            client_id=ctx.client_id,
             client_org_name=req.preview.client_org_name,
             name_hints=req.preview.name_hints,
         )
+    # The provider call is over: keep its `llm_calls` row whatever happens to
+    # the apply. Then read the rows as they are NOW -- an edit that landed while
+    # the model answered must be seen -- and take the PRE-WRITE stamps:
+    # `onupdate=utcnow` stamps every row this job writes.
+    db.commit()
+    edited = frozenset(k for k, r in rows.items() if ctx.edited_since_start(r.updated_at))
+    locked_keys = frozenset(k for k, r in rows.items() if r.locked)
+    before = _snap()
     # `parse_json_object` guarantees a dict or raises (issue #41). The old
     # `else {}` here discarded a whole unwrapped response and reported zero
     # changes, which read as the model agreeing with everything.
@@ -2062,7 +2138,7 @@ def run_ai(
         ((k, r.answer_source, r.answer_source is not None) for k, r in rows.items()),
         is_fixture=llm.provider.name == "fixture",
     )
-    received, applied, dropped = _apply_suggestions(data, rows, protected)
+    received, applied, dropped = _apply_suggestions(data, rows, protected, edited)
 
     db.flush()
     after = _snap()
@@ -2095,7 +2171,7 @@ def run_ai(
         # trips this, which is still worth a "did this do anything?" signal.
         _log.warning(
             "csf_run_ai_no_changes",
-            service_id=str(svc.id),
+            service_id=str(ctx.service_id),
             assessment_id=str(a.id),
             suggestions=len(data.get("scores", [])),
             unlocked_rows=len(rows) - len(locked_keys),
@@ -2145,7 +2221,7 @@ def run_ai(
     # happened is precisely the confusion this accounting exists to remove.
     _log.info(
         "csf_run_ai_suggestions_accounted",
-        service_id=str(svc.id),
+        service_id=str(ctx.service_id),
         assessment_id=str(a.id),
         received=received,
         applied=applied,
@@ -2158,8 +2234,9 @@ def run_ai(
         action="csf.run_ai",
         target_type="csf_assessment",
         target_id=a.id,
-        actor_user_id=user.id,
+        actor_user_id=ctx.requested_by,
         details={
+            "run_id": str(ctx.run_id),
             "changed_rows": len(diffs),
             "suggestions_received": received,
             "suggestions_applied": applied,
@@ -2168,18 +2245,14 @@ def run_ai(
             "dropped_by_reason": dropped_by_reason,
         },
     )
-    db.commit()
-    out_rows = [
-        _score_response(r)
-        for r in sorted(rows.values(), key=lambda r: (r.tier, r.subcategory_code))
-    ]
-    return CsfRunAiResponse(
+    # No commit: the framework commits this apply with the run's completion.
+    payload = CsfRunAiResponse(
         changed=changes,
-        rows=out_rows,
         suggestions_received=received,
         suggestions_applied=applied,
         dropped=dropped,
     )
+    return RunOutcome(result=payload.model_dump(mode="json"), applied_count=applied)
 
 
 @router.post(
@@ -2197,6 +2270,7 @@ def export_playbook(
     """An Enterprise Profile sheet (weighted-floor roll-up) + one sheet per tier
     with the five dimension scores and computed total/level/cap."""
     svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.NIST_CSF)
+    refuse_while_running(db, svc.id)  # #645: the edit lock
     a = _latest_assessment(db, svc.id)
     if a is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No assessment yet.")
@@ -2447,6 +2521,7 @@ def finalize_csf_deliverable(
     storage: Annotated[StorageBackend, Depends(_storage_dep)],
 ) -> DeliverableResponse:
     svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.NIST_CSF)
+    refuse_while_running(db, svc.id)  # #645: the edit lock
     assessment = _latest_assessment(db, svc.id)
     if assessment is None:
         raise HTTPException(

@@ -248,6 +248,32 @@ async function extractedList(
 }
 
 /**
+ * Follow a run through the API with a spec's own headers (#645). Returns the
+ * run whatever it ended as; the caller asserts which.
+ */
+export async function apiWaitForRun<R = Record<string, unknown>>(
+  request: APIRequestContext,
+  headers: Record<string, string>,
+  runId: string,
+): Promise<PolledRun<R>> {
+  const deadline = Date.now() + RUN_TIMEOUT_MS;
+  for (;;) {
+    const poll = await request.get(`${API_BASE}/ai-runs/${runId}`, { headers });
+    if (!poll.ok()) {
+      throw new Error(
+        `polling run ${runId}: ${poll.status()} ${await poll.text()}`,
+      );
+    }
+    const run = (await poll.json()) as PolledRun<R>;
+    if (run.status !== "running") return run;
+    if (Date.now() > deadline) {
+      throw new Error(`run ${runId} still running after ${RUN_TIMEOUT_MS}ms`);
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+}
+
+/**
  * Extract through the API, as a spec's setup does, and return the list (#645).
  * Polls the run with the same headers, then reads the list it wrote.
  */
@@ -265,23 +291,11 @@ export async function apiExtract(
     throw new Error(`extract: ${res.status()} ${await res.text()}`);
   }
   const started = (await res.json()) as { run_id: string };
-  const deadline = Date.now() + RUN_TIMEOUT_MS;
-  for (;;) {
-    const poll = await request.get(`${API_BASE}/ai-runs/${started.run_id}`, {
-      headers,
-    });
-    if (!poll.ok()) {
-      throw new Error(`polling run ${started.run_id}: ${poll.status()}`);
-    }
-    const run = (await poll.json()) as PolledRun;
-    if (run.status === "failed") {
-      throw new Error(`extraction run ${run.id} failed: ${run.error_message}`);
-    }
-    if (run.status === "completed") break;
-    if (Date.now() > deadline) {
-      throw new Error(`run ${run.id} still running after ${RUN_TIMEOUT_MS}ms`);
-    }
-    await new Promise((r) => setTimeout(r, 500));
+  const run = await apiWaitForRun(request, headers, started.run_id);
+  if (run.status !== "completed") {
+    throw new Error(
+      `extraction run ${run.id} ${run.status}: ${run.error_message}`,
+    );
   }
   const latest = await request.get(
     `${API_BASE}/tech-debt/services/${serviceId}/capability-lists/latest`,

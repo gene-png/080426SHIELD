@@ -116,3 +116,18 @@ def tech_debt_extract(
     body = latest.json()
     assert body["id"] == run["result"]["capability_list_id"], (body["id"], run["result"])
     return body
+
+
+def csf_run_ai(c: TestClient, svc_id: str, headers: dict, **kwargs: Any) -> dict:
+    """A CSF Run-AI, driven to completion: the run's `result`, plus every
+    profile row as it stands afterwards, read the way the workspace reads them.
+    The synchronous response carried `rows`; the run does not."""
+    from app.csf.playbook import Tier
+
+    result = run_ai_and_wait(c, f"/csf/services/{svc_id}/run-ai", headers, **kwargs)
+    rows: list[dict] = []
+    for tier in sorted(t.value for t in Tier):
+        r = c.get(f"/csf/services/{svc_id}/profile/{tier}", headers=headers)
+        assert r.status_code == 200, r.text
+        rows.extend(r.json()["rows"])
+    return {**result, "rows": rows}

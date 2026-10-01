@@ -262,7 +262,8 @@ export interface CsfDroppedSuggestion {
     | "wrong_type"
     | "superseded"
     | "locked"
-    | "protected";
+    | "protected"
+    | "edited";
   /** "tier|subcategory_code" as the model wrote it; null if it wrote neither. */
   key: string | null;
   field: string | null;
@@ -271,9 +272,13 @@ export interface CsfDroppedSuggestion {
   value: unknown;
 }
 
+/**
+ * What a csf_score Run-AI did: the run's stored `result` since #645, read from
+ * the run so it survives a reload. The rows are not carried; the panel
+ * re-reads the profile.
+ */
 export interface CsfRunAiResponse {
   changed: CsfDimensionChange[];
-  rows: CsfDimensionScore[];
   /** Counted in suggested VALUES (one field on one row), not entries. */
   suggestions_received: number;
   suggestions_applied: number;

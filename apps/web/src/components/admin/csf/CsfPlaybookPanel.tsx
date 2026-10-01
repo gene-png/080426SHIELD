@@ -14,10 +14,15 @@ import {
 import {
   CsfProxyError,
   exportPlaybook,
+  fetchCsfRun,
+  fetchCsfRunSummary,
   fetchEnterpriseProfile,
   runCsfAi,
   seedProfiles,
 } from "@/lib/csf/client";
+import type { AiServes } from "@/lib/aiRuns/types";
+import { useAiRun } from "@/lib/aiRuns/useAiRun";
+import { AiRunStatus } from "@/components/admin/AiRunStatus";
 
 import { AiPreviewButton } from "../AiPreviewButton";
 import { AiDraftProvenanceNotice } from "@/components/admin/AiDraftProvenanceNotice";
@@ -70,6 +75,8 @@ const DROP_REASON_LABEL: Record<CsfDroppedSuggestion["reason"], string> = {
   superseded: "overwritten by a later suggestion for the same field",
   locked: "row is locked",
   protected: "score was typed by hand, and an offline run left it",
+  // #645: an edit that landed after the run started is kept, never overwritten.
+  edited: "row was edited after this run started, so the run left it",
 };
 
 /**
@@ -83,7 +90,12 @@ const DROP_REASON_LABEL: Record<CsfDroppedSuggestion["reason"], string> = {
  */
 // Named allow-list, so adding a by-design skip server-side is a deliberate
 // choice about which side it belongs on. `protected` joined it with #67.
-const BY_DESIGN_SKIPS: ReadonlySet<string> = new Set(["locked", "protected"]);
+// `edited` joined it with #645.
+const BY_DESIGN_SKIPS: ReadonlySet<string> = new Set([
+  "locked",
+  "protected",
+  "edited",
+]);
 
 /**
  * Reasons that mean "we did not understand this", not "we lost a value you
@@ -392,9 +404,6 @@ export function CsfPlaybookPanel({
   const [busy, setBusy] = React.useState<"seed" | "run" | "export" | null>(
     null,
   );
-  const [runResult, setRunResult] = React.useState<CsfRunAiResponse | null>(
-    null,
-  );
   const [exportResult, setExportResult] =
     React.useState<CsfPlaybookExport | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -445,13 +454,34 @@ export function CsfPlaybookPanel({
     }
   }
 
-  async function onRunAi(): Promise<void> {
+  // #645. A run this page did not start -- found in progress on load --
+  // ends here: re-read what it applied.
+  const onRunFinishedElsewhere = React.useCallback(
+    (run: { status: string }) => {
+      if (run.status !== "completed") return;
+      reload().catch((err: unknown) => setError(describeError(err)));
+    },
+    [reload],
+  );
+  const aiRun = useAiRun<CsfRunAiResponse>({
+    serviceId,
+    fetchSummary: fetchCsfRunSummary,
+    fetchRun: fetchCsfRun,
+    onFinished: onRunFinishedElsewhere,
+  });
+  /** #645: a run holds the edit lock; the api refuses edits until it ends. */
+  const runInProgress = aiRun.running !== null;
+  /** What the last COMPLETED run did, read from the run: survives a reload. */
+  const runResult = aiRun.lastCompleted?.result ?? null;
+
+  async function onRunAi(serves: AiServes): Promise<void> {
     setBusy("run");
     setError(null);
-    setRunResult(null);
     try {
-      setRunResult(await runCsfAi(serviceId));
-      await reload();
+      const started = await runCsfAi(serviceId, serves);
+      const finished = await aiRun.follow(started);
+      // A failed run applied nothing; `AiRunStatus` says why.
+      if (finished.status === "completed") await reload();
     } catch (err) {
       setError(describeError(err));
     } finally {
@@ -510,22 +540,24 @@ export function CsfPlaybookPanel({
               <button
                 type="button"
                 onClick={() => void onSeed()}
-                disabled={busy !== null || readOnly}
+                disabled={busy !== null || readOnly || runInProgress}
                 className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {busy === "seed" ? "Seeding…" : "Seed Working Profiles"}
               </button>
             ) : (
               /* Issue 2: warn before producing canned output when offline. */
-              <RunAiGuard onProceed={() => void onRunAi()}>
+              <RunAiGuard onProceed={(serves) => void onRunAi(serves)}>
                 {({ onClick }) => (
                   <button
                     type="button"
                     onClick={onClick}
-                    disabled={busy !== null || readOnly}
+                    disabled={busy !== null || readOnly || runInProgress}
                     className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {busy === "run" ? "Running…" : "Run AI (csf_score)"}
+                    {busy === "run" || runInProgress
+                      ? "Running…"
+                      : "Run AI (csf_score)"}
                   </button>
                 )}
               </RunAiGuard>
@@ -534,7 +566,7 @@ export function CsfPlaybookPanel({
               <button
                 type="button"
                 onClick={() => void onExport()}
-                disabled={busy !== null}
+                disabled={busy !== null || runInProgress}
                 className="rounded-md border border-border px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {busy === "export" ? "Exporting…" : "Export XLSX"}
@@ -569,6 +601,7 @@ export function CsfPlaybookPanel({
             <AiPreviewButton serviceId={serviceId} disabled={busy !== null} />
           ) : null}
 
+          <AiRunStatus run={aiRun} />
           {runResult ? <RunAiAccounting result={runResult} /> : null}
           {/* CSF's prompt carries the client's interview answers, so the
               provenance vector is identical to ZT's (#68). */}
@@ -594,7 +627,7 @@ export function CsfPlaybookPanel({
       {seeded ? (
         <CsfDimensionEditor
           serviceId={serviceId}
-          readOnly={readOnly}
+          readOnly={readOnly || runInProgress}
           onChanged={() => void onDimensionChanged()}
         />
       ) : null}
