@@ -164,6 +164,8 @@ describe("IntakeWizard: Submit and an in-flight save (#252)", () => {
       held[0].resolve(serverState({ legal_name: "Atlas Federal LLC" }));
     });
     expect(submit).toBeDisabled();
+    // And the save indicator does not say "Saved" while one is still out.
+    expect(screen.getByText("Saving…")).toBeInTheDocument();
 
     await act(async () => {
       held[1].resolve(

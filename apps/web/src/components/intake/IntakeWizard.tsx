@@ -164,9 +164,6 @@ export function IntakeWizard(): JSX.Element {
   async function onSubmit(): Promise<void> {
     const client = viewState?.client;
     if (!client) return;
-    // The button is off while a save is out (#252); the same rule here, where
-    // the submit starts, so no other caller can get round it.
-    if (autoSave.savesInFlight > 0) return;
     setSubmitting(true);
     setSubmitError(null);
     const picks = (client.service_interests ?? []) as ServiceType[];
