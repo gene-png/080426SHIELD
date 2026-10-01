@@ -53,3 +53,20 @@ advisor on this branch:
   without it.
 - R2-2: the other list-producing handlers now bump `listSeq`, so a late read
   cannot overwrite their result on screen. Display-only; no test.
+
+Independent review at `2a35fa1b` (round 3), fixed by track1 on this branch.
+Each test below goes red with its fix reverted (results in the PR body):
+
+- A report released before 0056 is re-released to repair its list again
+  (`_release_guard_for`). Tests:
+  `test_re_releasing_a_report_released_before_0056_repairs_its_list`, and
+  `test_the_repair_re_release_still_refuses_a_list_edited_since_approval`.
+- The two unpinned refusal conjuncts now have tests through the endpoint:
+  `test_a_release_after_edit_approve_edit_names_approving_again` and
+  `test_a_legacy_list_with_an_undecided_row_names_the_row_not_re_finalize`.
+- `_record_edit` refuses an edit to a list the release flip closed after the
+  route read it. Test: `test_an_edit_landing_after_the_release_flip_is_refused`,
+  one case per edit route.
+- The workspace re-reads the list when an approve response is overtaken by a
+  newer list operation. Web test: "an approve response landing after a newer
+  edit's re-read does not re-show Approved".

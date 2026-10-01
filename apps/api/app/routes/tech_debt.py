@@ -562,21 +562,29 @@ def _editable_list_or_404(db: Session, list_id: uuid.UUID, client: Client) -> Ca
         CapabilityListStatus.RELEASED,
         CapabilityListStatus.DISCARDED,
     ):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                {
-                    "reason": "capability_list_released",
-                    "message": "This capability list has been released and is locked.",
-                }
-                if cap_list.status == CapabilityListStatus.RELEASED
-                else {
-                    "reason": "capability_list_discarded",
-                    "message": "This capability list has been discarded.",
-                }
-            ),
-        )
+        raise _refuse_closed_list(cap_list)
     return cap_list
+
+
+def _refuse_closed_list(cap_list: CapabilityList) -> HTTPException:
+    """A list no longer open to edits: released (locked) or discarded. Shared by
+    the read-time check above and `_record_edit`'s write-time one, so an edit
+    refused by either says the same thing."""
+    if cap_list.status == CapabilityListStatus.DISCARDED:
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "capability_list_discarded",
+                "message": "This capability list has been discarded.",
+            },
+        )
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "reason": "capability_list_released",
+            "message": "This capability list has been released and is locked.",
+        },
+    )
 
 
 def _excluded_entry_or_404(cap_list: CapabilityList, row_index: int) -> dict:
@@ -698,12 +706,51 @@ def _record_edit(db: Session, list_id: uuid.UUID) -> None:
     which is what makes approve's compare-and-swap on `revision` see it.
     `test_capability_list_revision.py` derives the edit routes from the router
     and requires each one to call this, so a new edit route cannot skip it.
+
+    The increment matches only a list still open to edits, and a miss refuses
+    the whole edit (the caller has not committed, so its row change goes too).
+    Each route checked the status when it READ the list; a release flip that
+    commits after that read would otherwise let the edit land on a RELEASED
+    list, leaving `revision > approved_revision` on a list no step can approve
+    again, so every later release of it is refused with a remedy that loops
+    (independent review of #730 at 2a35fa1b, finding 3). The check is in this
+    UPDATE rather than in the release flip because this is the statement that
+    takes the list row's write lock on the edit side: whichever of the two
+    commits second re-reads the row and misses, under SQLite and Postgres alike.
     """
-    db.execute(
+    bumped = db.execute(
         update(CapabilityList)
-        .where(CapabilityList.id == list_id)
+        .where(
+            CapabilityList.id == list_id,
+            CapabilityList.status.not_in(
+                (CapabilityListStatus.RELEASED, CapabilityListStatus.DISCARDED)
+            ),
+        )
         .values(revision=CapabilityList.revision + 1)
-    )
+        .execution_options(synchronize_session=False)
+    ).rowcount
+    if bumped != 1:
+        cap_list = db.get(CapabilityList, list_id)
+        if cap_list is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Capability list not found.",
+            )
+        db.refresh(cap_list, attribute_names=["status"])
+        if cap_list.status not in (
+            CapabilityListStatus.RELEASED,
+            CapabilityListStatus.DISCARDED,
+        ):
+            raise RuntimeError(
+                f"capability list {list_id} is {cap_list.status.value} yet its "
+                f"revision bump matched {bumped} rows"
+            )
+        _log.warning(
+            "tech_debt.capability_list_edit_refused_list_closed",
+            capability_list_id=str(list_id),
+            status=cap_list.status.value,
+        )
+        raise _refuse_closed_list(cap_list)
     _log.info("tech_debt.capability_list_edited", capability_list_id=str(list_id))
 
 
@@ -1923,7 +1970,7 @@ def release_tech_debt_deliverable(
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],
 ) -> DeliverableResponse:
-    rendered_revision = _recorded_list_revision(db, deliverable_id, client.id)
+    guard = _release_guard_for(require_deliverable_in_tenant(db, deliverable_id, client.id))
     _refuse_a_deliverable_the_flip_guard_cannot_reach(db, deliverable_id, client.id)
     deliv = release_deliverable(
         db,
@@ -1932,18 +1979,29 @@ def release_tech_debt_deliverable(
         user=user,
         kinds=(ServiceKind.TECH_DEBT,),
         action="tech_debt.deliverable.released",
-        parent_guard=_releasable_with(rendered_revision),
+        parent_guard=guard,
     )
     return _serialize_deliverable(db, deliv)
 
 
-def _recorded_list_revision(
-    db: Session, deliverable_id: uuid.UUID, client_id: uuid.UUID
-) -> int | None:
-    """The list revision this deliverable was rendered from, or None when it
-    recorded none (finalized before 0056). Read through the tenant check, so a
-    foreign id raises the same 404 `release_deliverable` would."""
-    return require_deliverable_in_tenant(db, deliverable_id, client_id).capability_list_revision
+def _release_guard_for(deliv: Deliverable) -> ParentGuard:
+    """The flip guard for releasing `deliv`. Read through the tenant check, so a
+    foreign id raises the same 404 `release_deliverable` would.
+
+    A deliverable the client ALREADY HAS that recorded no list revision
+    (released before 0056) gets `_LIST_STILL_RELEASABLE` without the revision
+    match. Its re-release is the W4 repair of a list a pre-W4 release left
+    APPROVED, and 0056 backfilled that list's `approved_revision` to 0, so
+    `_releasable_with(None)`'s `approved_revision IS NULL` could never match:
+    the repair was refused for a report already delivered (independent review
+    of #730 at 2a35fa1b, finding 1). Nothing is re-judged about the report
+    itself; the list is still refused if it has an undecided row or was edited
+    since its approval, because the flip freezes the LIST. An UNRELEASED
+    deliverable with no revision keeps the revision match and is refused: the
+    plan's "finalized but not released before 0056 must be re-finalized once"."""
+    if deliv.released_at is not None and deliv.capability_list_revision is None:
+        return _LIST_STILL_RELEASABLE
+    return _releasable_with(deliv.capability_list_revision)
 
 
 def _refuse_a_deliverable_the_flip_guard_cannot_reach(
@@ -1958,9 +2016,11 @@ def _refuse_a_deliverable_the_flip_guard_cannot_reach(
     two; the APPROVED case stays in the flip's own WHERE, where a re-approval
     racing the release is still caught.
 
-    Scoped to a finalized, unreleased Tech Debt deliverable, so every other
-    refusal `release_deliverable` gives (wrong kind, not finalized) and its
-    idempotent re-release of an already-released deliverable are unchanged."""
+    Scoped to a finalized, unreleased Tech Debt deliverable, so it adds nothing
+    to `release_deliverable`'s other refusals (wrong kind, not finalized) or to
+    its idempotent re-release of an already-released deliverable. That re-release
+    still runs the flip guard `_release_guard_for` picks, which is where a
+    released deliverable from before 0056 is handled."""
     deliv = require_deliverable_in_tenant(db, deliverable_id, client_id)
     if deliv.finalized_at is None or deliv.released_at is not None:
         return
@@ -2005,7 +2065,9 @@ def _releasable_with(rendered_revision: int | None) -> ParentGuard:
     which is true for a draft; the refusal still holds because the flip's own
     WHERE requires `status == APPROVED` and `_LIST_STILL_RELEASABLE` requires
     `approved_revision == revision`, and an approved list always has a
-    non-NULL `approved_revision`. Do not drop either conjunct. The flip never
+    non-NULL `approved_revision`. Do not drop either conjunct. So a None here
+    always refuses, which is right only for a deliverable not yet released;
+    `_release_guard_for` keeps an already-released one away from it. The flip never
     runs for a RELEASED list or a deliverable with no `parent_version`; those
     are refused before it by `_refuse_a_deliverable_the_flip_guard_cannot_reach`.
     Residual, not closed here: two releases of different deliverables of one

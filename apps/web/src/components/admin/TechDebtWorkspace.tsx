@@ -405,10 +405,22 @@ Components carry no cost of their own — this licence keeps its full value.`,
     if (!list) return;
     setApproving(true);
     setApproveError(null);
-    listSeq.current += 1;
+    // Minted before the await. Approve's response is the only list a write
+    // returns that can say "approved and current", so it must not land over a
+    // newer operation: an edit committed after the approve makes that answer
+    // stale (independent review of #730, finding 4). Overtaken, it is not
+    // applied and the list is read again, so the server decides what shows.
+    const seq = ++listSeq.current;
     try {
       const next = await approveCapabilityList(list.id);
-      setList(next);
+      if (seq === listSeq.current) {
+        setList(next);
+      } else {
+        console.debug(
+          `[TechDebtWorkspace] approve response overtaken (seq ${seq}, latest ${listSeq.current}); re-reading the list`,
+        );
+        await refresh();
+      }
     } catch (err) {
       // The 409 the API raises when the list was discarded carries a typed
       // `{reason, message}` naming the remedy that exists ("upload a

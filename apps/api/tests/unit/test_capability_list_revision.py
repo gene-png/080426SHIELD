@@ -719,3 +719,161 @@ def test_the_seeded_released_list_reads_as_a_current_approval(tmp_path) -> None:
         assert cap_list.status.value == "released"
         assert cap_list.approved_revision is not None, "the seed must record its approval"
         assert cap_list.approval_current is True
+
+
+# ---------------------------------------------------------------------------
+# Round 3 of the independent review of #730 at 2a35fa1b
+# ---------------------------------------------------------------------------
+
+
+def _released_before_w4_and_0056(w: World) -> str:
+    """A deliverable the client already has, whose list was left APPROVED and
+    which recorded no list revision. Releases before W4 never flipped the
+    parent, which is what the idempotent re-release repairs; no current writer
+    leaves a released deliverable beside an APPROVED list, so that one column
+    is written by SQL. 0056 is then replayed, the writer that leaves the
+    deliverable's revision NULL and backfills the list's approval."""
+    from app.models.capability import CapabilityListStatus
+
+    _decide_all(w)
+    assert _approve(w).status_code == 200
+    fin = _finalize(w)
+    assert fin.status_code == 201, fin.text
+    assert _release(w, fin.json()["id"]).status_code == 200, "setup: the first release"
+    with w.sessions() as s:
+        s.execute(
+            update(CapabilityList)
+            .where(CapabilityList.id == uuid.UUID(w.list_id))
+            .values(status=CapabilityListStatus.APPROVED)
+        )
+        s.commit()
+    _replay_0056()
+    latest = _latest(w)
+    assert (latest["status"], latest["approval_current"]) == ("approved", True), latest
+    assert _deliverable_released(w, fin.json()["id"]), "setup: the client has the report"
+    return fin.json()["id"]
+
+
+@pytest.mark.unit
+def test_re_releasing_a_report_released_before_0056_repairs_its_list(app_client) -> None:
+    """Finding 1. The plan: a deliverable finalized but not released before 0056
+    is re-finalized once; RELEASED ones are unaffected. The repair re-release of
+    one must still flip its list, or the list stays editable and the client
+    dashboard keeps reading it live."""
+    w = _world(app_client)
+    deliverable_id = _released_before_w4_and_0056(w)
+
+    r = _release(w, deliverable_id)
+
+    assert r.status_code == 200, r.text
+    assert _latest(w)["status"] == "released"
+
+
+@pytest.mark.unit
+def test_the_repair_re_release_still_refuses_a_list_edited_since_approval(app_client) -> None:
+    """Finding 1's other half: the repair is not unguarded. Release freezes the
+    list, so it must not freeze rows edited after the approval, whichever
+    deliverable is being released."""
+    w = _world(app_client)
+    deliverable_id = _released_before_w4_and_0056(w)
+    EDIT_DRIVERS[("PATCH", "/tech-debt/capability-items/{item_id}")](w)
+
+    r = _release(w, deliverable_id)
+
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "capability_list_edited_since_approval", r.text
+    assert _latest(w)["status"] == "approved"
+
+
+@pytest.mark.unit
+def test_a_release_after_edit_approve_edit_names_approving_again(app_client) -> None:
+    """Finding 2(a). Finalize, edit, approve, edit, release. The deliverable also
+    predates the approval, but Re-finalize would be refused while the approval
+    is stale, so the refusal must name step 3, the remedy that works now."""
+    w = _world(app_client)
+    _decide_all(w)
+    assert _approve(w).status_code == 200
+    old = _finalize(w)
+    assert old.status_code == 201, old.text
+    EDIT_DRIVERS[("PATCH", "/tech-debt/capability-items/{item_id}")](w)
+    assert _approve(w).status_code == 200
+    EDIT_DRIVERS[("PATCH", "/tech-debt/capability-items/{item_id}")](w)
+    assert _latest(w)["approval_current"] is False, "setup: the approval must be stale"
+
+    r = _release(w, old.json()["id"])
+
+    assert r.status_code == 409, r.text
+    error = r.json()["error"]
+    assert error["reason"] == "capability_list_edited_since_approval", error
+    assert "Approve it again in step 3" in error["message"], error["message"]
+    assert _finalize(w).status_code == 409, "the remedy Re-finalize would not work here"
+
+
+@pytest.mark.unit
+def test_a_legacy_list_with_an_undecided_row_names_the_row_not_re_finalize(app_client) -> None:
+    """Finding 2(b). Before 0056 a row of an APPROVED list could be sent back to
+    undecided without moving any revision, and the backfill then reads that
+    approval as current. Built through the API (the bulk route) and then 0056 is
+    replayed, which is the writer that produces it. Re-finalize would be refused
+    over the undecided row, so the refusal must name the row."""
+    w = _world(app_client)
+    _decide_all(w)
+    assert _approve(w).status_code == 200
+    fin = _finalize(w)
+    assert fin.status_code == 201, fin.text
+    r = w.c.post(
+        f"/tech-debt/capability-lists/{w.list_id}/items/disposition",
+        headers=w.h,
+        json={"item_ids": [w.security_id], "disposition": None},
+    )
+    assert r.status_code == 200, r.text
+    _replay_0056()
+    assert _latest(w)["approval_current"] is True, "setup: the backfill reads it as current"
+
+    r = _release(w, fin.json()["id"])
+
+    assert r.status_code == 409, r.text
+    error = r.json()["error"]
+    assert error["reason"] == "capability_list_undecided_rows", error
+    assert "1 row is still undecided" in error["message"], error["message"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("route", sorted(EDIT_DRIVERS), ids=lambda r: f"{r[0]} {r[1]}")
+def test_an_edit_landing_after_the_release_flip_is_refused(app_client, monkeypatch, route) -> None:
+    """Finding 3. Every edit route reads the list as open, then writes. A release
+    flip that commits between the two must refuse the edit; otherwise a RELEASED
+    list carries `revision > approved_revision` and every later release of it is
+    refused with a remedy that loops. The competing flip is written on its own
+    connection, as `_release_parent` writes it, just before the edit's write."""
+    import app.routes.tech_debt as td
+    from app.models.capability import CapabilityListStatus
+
+    w = _world(app_client)
+    _decide_all(w)
+    assert _approve(w).status_code == 200
+    approved_at = _revision(w)
+    real_record_edit = td._record_edit
+    fired: list[str] = []
+
+    def release_first(db, list_id):
+        if not fired:
+            fired.append("release")
+            with w.sessions() as other:
+                other.execute(
+                    update(CapabilityList)
+                    .where(CapabilityList.id == uuid.UUID(w.list_id))
+                    .values(status=CapabilityListStatus.RELEASED)
+                )
+                other.commit()
+        return real_record_edit(db, list_id)
+
+    monkeypatch.setattr(td, "_record_edit", release_first)
+    r = EDIT_DRIVERS[route](w)
+
+    assert fired == ["release"], "the race was not exercised"
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "capability_list_released", r.text
+    latest = _latest(w)
+    assert (latest["status"], latest["approval_current"]) == ("released", True), latest
+    assert _revision(w) == approved_at

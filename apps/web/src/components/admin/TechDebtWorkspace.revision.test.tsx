@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as techDebtClient from "@/lib/tech_debt/client";
@@ -144,6 +144,67 @@ describe("TechDebtWorkspace after an edit to an approved list (#640)", () => {
     const button = await screen.findByRole("button", { name: "Approve again" });
     expect(button).toBeEnabled();
     expect(screen.getByText("Edited since approval v1")).toBeInTheDocument();
+  });
+
+  it("an approve response landing after a newer edit's re-read does not re-show Approved (independent review of #730, finding 4)", async () => {
+    // The approve request is answered only after a row edit and its re-read
+    // have landed. Its response says "approved and current", which was true
+    // when it was written and is not any more: the edit made it stale. The
+    // workspace must ask the server again rather than apply the older answer.
+    mount(list("approved", false));
+    await screen.findByRole("button", { name: "Approve again" });
+    let answerApprove: (l: CapabilityList) => void = () => {
+      throw new Error("approve was never requested");
+    };
+    vi.mocked(techDebtClient.approveCapabilityList).mockImplementation(
+      () =>
+        new Promise<CapabilityList>((resolve) => {
+          answerApprove = resolve;
+        }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Approve again" }));
+    await screen.findByRole("button", { name: "Approving…" });
+    // The edit lands while approve is in flight; its re-read sees it stale.
+    fetchLatestList.mockResolvedValue(list("approved", false));
+    const readsBeforeEdit = fetchLatestList.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "save row edit" }));
+    await waitFor(() =>
+      expect(fetchLatestList.mock.calls.length).toBe(readsBeforeEdit + 1),
+    );
+    await screen.findByText("Edited since approval v1");
+
+    answerApprove(list("approved", true));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Approving…" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Approve again" }),
+    ).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: "Approved" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Edited since approval v1")).toBeInTheDocument();
+  });
+
+  it("an approve response with nothing newer in flight shows Approved", async () => {
+    // The control for the test above: the guard discards only a response that
+    // a newer list operation has overtaken.
+    mount(list("approved", false));
+    await screen.findByRole("button", { name: "Approve again" });
+    vi.mocked(techDebtClient.approveCapabilityList).mockResolvedValue(
+      list("approved", true),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Approve again" }));
+
+    expect(
+      await screen.findByRole("button", { name: "Approved" }),
+    ).toBeDisabled();
+    expect(screen.getByText("Approved v1")).toBeInTheDocument();
   });
 
   it("keeps a released list read-only", async () => {
