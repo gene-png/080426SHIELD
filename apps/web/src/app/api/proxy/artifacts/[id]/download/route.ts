@@ -47,7 +47,17 @@ export async function GET(
     return upstreamOutcomeUnknown(err, "artifact download");
   }
   if (!upstream.ok) {
-    const text = await upstream.text();
+    // The refusal's body is read here, so a reset mid-body is the same "we
+    // did not see the answer" as a rejected fetch (review of #752, finding 3:
+    // this read sat outside any try and threw unhandled). The 200 branch
+    // below streams the body instead of reading it; a reset there happens
+    // after the status is sent, which no response can repair.
+    let text: string;
+    try {
+      text = await upstream.text();
+    } catch (err) {
+      return upstreamOutcomeUnknown(err, "artifact download");
+    }
     return new NextResponse(text, {
       status: upstream.status,
       headers: {

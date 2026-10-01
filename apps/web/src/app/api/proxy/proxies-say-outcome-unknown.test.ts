@@ -171,6 +171,19 @@ describe("proxies say the outcome is unknown when they cannot see the api's answ
     expect(HANDLERS.length).toBeGreaterThanOrEqual(ROUTES.length);
   });
 
+  it("finds at least one handler in EVERY selected route file", () => {
+    // A total can hide a file that contributes nothing: a handler declared in
+    // a spelling `declaredMethods` does not read would drop that route from
+    // every case below while the total still clears the bar (review of #752,
+    // advisory 5). Per file, so the gap is named.
+    const unread = ROUTES.filter((p) => declaredMethods(p).length === 0).map(
+      label,
+    );
+    expect(unread, "route files with no handler this test can call").toEqual(
+      [],
+    );
+  });
+
   it.each(HANDLERS)(
     "%s answers a rejected fetch with the typed 504",
     async (name, path, method) => {
@@ -192,6 +205,47 @@ describe("proxies say the outcome is unknown when they cannot see the api's answ
           reason: REASON,
           message: MESSAGE,
         },
+      });
+    },
+  );
+
+  it.each(HANDLERS)(
+    "%s answers a response whose BODY never arrives with the typed 504",
+    async (name, path, method) => {
+      // The api's headers arrived and the connection then reset mid-body: the
+      // status line says nothing about whether the work finished, and the
+      // body that would have said so is gone. Every route reads the body of a
+      // refusal itself, so a non-2xx status reaches that read on every route
+      // (review of #752, finding 3: the download route read it outside any
+      // try, an unhandled throw).
+      fetchMock.mockImplementation(
+        async () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.error(
+                  new TypeError("terminated", {
+                    cause: Object.assign(new Error("other side closed"), {
+                      code: "UND_ERR_SOCKET",
+                    }),
+                  }),
+                );
+              },
+            }),
+            { status: 409, headers: { "Content-Type": "application/json" } },
+          ),
+      );
+      const res = await call(path, method);
+      expect(fetchMock.mock.calls.length, name).toBeGreaterThan(0);
+      const body = (await res.json()) as {
+        error?: { code?: unknown; reason?: unknown; message?: unknown };
+      };
+      expect(
+        { status: res.status, error: body.error },
+        `${name} must answer 504 upstream_outcome_unknown when the body never arrives`,
+      ).toEqual({
+        status: 504,
+        error: { code: 504, reason: REASON, message: MESSAGE },
       });
     },
   );
