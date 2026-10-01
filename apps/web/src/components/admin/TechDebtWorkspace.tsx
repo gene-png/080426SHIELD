@@ -62,6 +62,16 @@ import { ProgressStages } from "./ProgressStages";
 import { SecurityClassificationQueue } from "./SecurityClassificationQueue";
 import { useServiceStages } from "@/lib/stages/client";
 import { useRefreshFailures } from "@/components/admin/useRefreshFailures";
+import { isUpstreamOutcomeUnknown } from "@/lib/describe-save-error";
+
+/**
+ * #550: what to say when the proxy never saw the extraction's answer. Not a
+ * failure: #550 measured the api finishing anyway and creating the draft, and
+ * a retry sends the client's inventory out again. Names where the draft would
+ * appear and that extraction stays off.
+ */
+const EXTRACT_OUTCOME_UNKNOWN =
+  "We couldn't confirm whether the extraction finished. It may still complete and create a draft capability list. Reload the page later and check step 2, Review and correct the extracted list, before extracting again. Extracting stays off on this page until you reload.";
 
 export interface TechDebtWorkspaceProps {
   serviceId: string;
@@ -108,6 +118,13 @@ export function TechDebtWorkspace({
   const [extracting, setExtracting] = React.useState(false);
   const [splitError, setSplitError] = React.useState<string | null>(null);
   const [extractError, setExtractError] = React.useState<string | null>(null);
+  // #550: set once an extraction's outcome is unknown and never cleared; a
+  // reload clears it, which the copy says. The ref is what `runExtraction`
+  // reads, because the upload's automatic extraction calls it from a closure
+  // created before the state changed.
+  const [extractOutcomeUnknown, setExtractOutcomeUnknown] =
+    React.useState(false);
+  const extractLocked = React.useRef(false);
   const [approveError, setApproveError] = React.useState<string | null>(null);
   const [approving, setApproving] = React.useState(false);
   const [discarding, setDiscarding] = React.useState(false);
@@ -346,6 +363,12 @@ Components carry no cost of their own — this licence keeps its full value.`,
     artifactId: string,
     serves: AiServes,
   ): Promise<void> {
+    if (extractLocked.current) {
+      console.warn(
+        `[tech-debt] not extracting ${artifactId}: an earlier extraction's outcome is unknown (#550)`,
+      );
+      return;
+    }
     extractionStarted.current.add(artifactId);
     setExtracting(true);
     setExtractError(null);
@@ -357,15 +380,31 @@ Components carry no cost of their own — this licence keeps its full value.`,
         // reason is `AiRunStatus`'s to show.
         const finished = await aiRun.follow(answer);
         if (finished.status !== "completed") return;
-        const next = await fetchLatestList(serviceId);
-        if (seq === listSeq.current) setList(next);
+        // A separate try (#550 review, finding 1): only the POST's own
+        // rejection can mean the extraction's outcome is unknown. This read
+        // happens after the run is known to have completed.
+        try {
+          const next = await fetchLatestList(serviceId);
+          if (seq === listSeq.current) setList(next);
+        } catch (err) {
+          setExtractError(
+            proxyMessage(
+              err,
+              "The extraction finished, but its list could not be loaded. Reload to see it.",
+            ),
+          );
+          return;
+        }
       } else {
         // The open draft from this same document, returned as it stands.
         setList(answer);
       }
       await refreshOverlap();
     } catch (err) {
-      if (err instanceof TechDebtProxyError) {
+      if (isUpstreamOutcomeUnknown(err)) {
+        extractLocked.current = true;
+        setExtractOutcomeUnknown(true);
+      } else if (err instanceof TechDebtProxyError) {
         setExtractError(
           proxyMessage(err, `Extraction failed (${err.status}).`),
         );
@@ -662,12 +701,18 @@ Components carry no cost of their own — this licence keeps its full value.`,
                 {extractError}
               </p>
             ) : null}
+            {extractOutcomeUnknown ? (
+              <p className="text-sm text-status-warning-fg" role="alert">
+                {EXTRACT_OUTCOME_UNKNOWN}
+              </p>
+            ) : null}
           </CardBody>
         </Card>
 
         <IntakeDocumentsPanel
           onExtract={(id, serves) => void runExtraction(id, serves)}
           extracting={extracting || aiRun.running !== null}
+          extractBlocked={extractOutcomeUnknown}
           reloadKey={docsReloadKey}
           draftSourceId={draftSourceArtifactId(list)}
         />

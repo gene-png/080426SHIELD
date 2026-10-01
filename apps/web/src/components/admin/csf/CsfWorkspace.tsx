@@ -160,6 +160,11 @@ export function CsfWorkspace({
    */
   const { messages: refreshMessages, begin: beginRefresh } =
     useRefreshFailures();
+  // #550: set once a Run AI's outcome is unknown and never cleared; a reload
+  // clears it, which the copy says. Held HERE rather than in the playbook
+  // panel, because this page unmounts the panel whenever there is no
+  // assessment (review of #752, finding 2).
+  const [runOutcomeUnknown, setRunOutcomeUnknown] = React.useState(false);
   const [busy, setBusy] = React.useState<
     "create" | "approve" | "discard" | null
   >(null);
@@ -682,7 +687,12 @@ export function CsfWorkspace({
             title="Work the Playbook and draft with AI"
             description="The 10-step CSF 2.0 Playbook builds the working profiles, and Run AI drafts a tier per subcategory from them. It drafts; you decide."
           >
-            <CsfPlaybookPanel serviceId={serviceId} readOnly={readOnly} />
+            <CsfPlaybookPanel
+              serviceId={serviceId}
+              readOnly={readOnly}
+              runOutcomeUnknown={runOutcomeUnknown}
+              onRunOutcomeUnknown={() => setRunOutcomeUnknown(true)}
+            />
           </WorkflowStep>
 
           <WorkflowStep

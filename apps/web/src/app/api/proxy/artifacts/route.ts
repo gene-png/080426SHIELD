@@ -10,6 +10,7 @@ import { NextResponse } from "next/server";
 
 import { ACTIVE_CLIENT_COOKIE } from "@/lib/api";
 import { auth } from "@/lib/auth/options";
+import { upstreamOutcomeUnknown } from "@/lib/upstream-outcome-unknown";
 
 const BASE_URL = process.env.API_BASE_URL ?? "http://api:8000";
 
@@ -61,36 +62,45 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  const upstream = await fetch(`${BASE_URL}/artifacts`, {
-    method: "POST",
-    headers: await upstreamHeaders(bearer),
-    body: form,
-  });
-  const body = await upstream.text();
+  // #550: the fetch sat outside any `try`, so a timeout or reset was an
+  // unhandled throw. Reading the body is inside too: a reset mid-body is the
+  // same "we did not see the answer". The `try` that used to wrap the
+  // `NextResponse` constructor caught nothing that can throw there.
+  let upstream: Response;
+  let body: string;
   try {
-    return new NextResponse(body, {
-      status: upstream.status,
-      headers: {
-        "Content-Type":
-          upstream.headers.get("Content-Type") ?? "application/json",
-      },
+    upstream = await fetch(`${BASE_URL}/artifacts`, {
+      method: "POST",
+      headers: await upstreamHeaders(bearer),
+      body: form,
     });
-  } catch {
-    return NextResponse.json(
-      { error: { message: "Upstream upload failed." } },
-      { status: 502 },
-    );
+    body = await upstream.text();
+  } catch (err) {
+    return upstreamOutcomeUnknown(err, "artifacts upload");
   }
+  return new NextResponse(body, {
+    status: upstream.status,
+    headers: {
+      "Content-Type":
+        upstream.headers.get("Content-Type") ?? "application/json",
+    },
+  });
 }
 
 export async function GET(): Promise<NextResponse> {
   const bearer = await bearerOrUnauthorized();
   if (bearer instanceof NextResponse) return bearer;
-  const upstream = await fetch(`${BASE_URL}/artifacts`, {
-    headers: await upstreamHeaders(bearer),
-    cache: "no-store",
-  });
-  const body = await upstream.text();
+  let upstream: Response;
+  let body: string;
+  try {
+    upstream = await fetch(`${BASE_URL}/artifacts`, {
+      headers: await upstreamHeaders(bearer),
+      cache: "no-store",
+    });
+    body = await upstream.text();
+  } catch (err) {
+    return upstreamOutcomeUnknown(err, "artifacts list");
+  }
   return new NextResponse(body, {
     status: upstream.status,
     headers: {

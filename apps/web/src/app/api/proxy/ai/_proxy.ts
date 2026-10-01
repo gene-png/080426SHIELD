@@ -10,6 +10,7 @@ import { NextResponse } from "next/server";
 
 import { ApiError, apiFetch } from "@/lib/api";
 import { auth } from "@/lib/auth/options";
+import { upstreamOutcomeUnknown } from "@/lib/upstream-outcome-unknown";
 
 export async function proxyAiJson(
   request: Request,
@@ -81,9 +82,6 @@ async function forward(
         status: err.status,
       });
     }
-    return NextResponse.json(
-      { error: { message: "Upstream AI call failed." } },
-      { status: 502 },
-    );
+    return upstreamOutcomeUnknown(err, "Upstream AI call");
   }
 }

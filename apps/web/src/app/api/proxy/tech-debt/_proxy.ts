@@ -10,6 +10,7 @@ import { NextResponse } from "next/server";
 
 import { ApiError, apiFetch } from "@/lib/api";
 import { auth } from "@/lib/auth/options";
+import { upstreamOutcomeUnknown } from "@/lib/upstream-outcome-unknown";
 
 export async function getBearer(): Promise<string | NextResponse> {
   const session = await auth();
@@ -70,10 +71,7 @@ export async function proxyJson<T = unknown>(
         status: err.status,
       });
     }
-    return NextResponse.json(
-      { error: { message: "Upstream tech-debt call failed." } },
-      { status: 502 },
-    );
+    return upstreamOutcomeUnknown(err, "Upstream tech-debt call");
   }
 }
 

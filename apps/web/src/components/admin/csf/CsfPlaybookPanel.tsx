@@ -29,6 +29,7 @@ import { AiDraftProvenanceNotice } from "@/components/admin/AiDraftProvenanceNot
 import { RunAiGuard } from "../RunAiGuard";
 import { CsfDimensionEditor } from "./CsfDimensionEditor";
 import { CsfGapActionEditor } from "./CsfGapActionEditor";
+import { isUpstreamOutcomeUnknown } from "@/lib/describe-save-error";
 import type {
   CsfDroppedSuggestion,
   CsfPlaybookExport,
@@ -42,7 +43,24 @@ import type { JSX } from "react";
 export interface CsfPlaybookPanelProps {
   serviceId: string;
   readOnly?: boolean;
+  /**
+   * #550: an earlier Run AI's outcome is unknown, so Run AI stays off. Owned
+   * by `CsfWorkspace`, not this panel: the workspace mounts the panel only
+   * while an assessment exists, so a lock held here was cleared by Discard
+   * then Start assessment (review of #752, finding 2).
+   */
+  runOutcomeUnknown?: boolean;
+  /** Called when a Run AI's own answer never arrived. */
+  onRunOutcomeUnknown?: () => void;
 }
+
+/**
+ * #550: what to say when the proxy never saw Run AI's answer. Not a failure:
+ * the api may have finished and written the dimension scores, and a retry
+ * sends the client's data out again.
+ */
+const RUN_OUTCOME_UNKNOWN =
+  "We couldn't confirm whether the AI run finished. It may still complete and fill in dimension scores. Reload the page later and check the dimension scores in Full Playbook — Working Profiles before running it again. Run AI stays off on this page until you reload.";
 
 function describeError(err: unknown): string {
   if (err instanceof CsfProxyError) {
@@ -396,6 +414,8 @@ const COLUMNS: DataTableColumn<EnterpriseSubcategory>[] = [
 export function CsfPlaybookPanel({
   serviceId,
   readOnly = false,
+  runOutcomeUnknown = false,
+  onRunOutcomeUnknown,
 }: CsfPlaybookPanelProps): JSX.Element {
   const [enterprise, setEnterprise] = React.useState<EnterpriseProfile | null>(
     null,
@@ -478,12 +498,33 @@ export function CsfPlaybookPanel({
     setBusy("run");
     setError(null);
     try {
-      const started = await runCsfAi(serviceId, serves);
+      // #550 review, finding 1: two tries, not one. Only the POST's own
+      // rejection can mean "the run's outcome is unknown"; a reload that
+      // fails after the run answered is that reload's error and must not
+      // lock Run AI.
+      let started: Awaited<ReturnType<typeof runCsfAi>>;
+      try {
+        started = await runCsfAi(serviceId, serves);
+      } catch (err) {
+        if (isUpstreamOutcomeUnknown(err)) {
+          // Its own alert, not `error`: every other action on this panel
+          // clears that, and the button would stay off with nothing saying
+          // why.
+          onRunOutcomeUnknown?.();
+        } else {
+          setError(describeError(err));
+        }
+        return;
+      }
+      // #645: the POST started the run; its result arrives on the run.
       const finished = await aiRun.follow(started);
       // A failed run applied nothing; `AiRunStatus` says why.
-      if (finished.status === "completed") await reload();
-    } catch (err) {
-      setError(describeError(err));
+      if (finished.status !== "completed") return;
+      try {
+        await reload();
+      } catch (err) {
+        setError(describeError(err));
+      }
     } finally {
       setBusy(null);
     }
@@ -534,6 +575,11 @@ export function CsfPlaybookPanel({
               {error}
             </p>
           ) : null}
+          {runOutcomeUnknown ? (
+            <p className="text-sm text-status-warning-fg" role="alert">
+              {RUN_OUTCOME_UNKNOWN}
+            </p>
+          ) : null}
 
           <div className="flex flex-wrap items-center gap-2">
             {!seeded ? (
@@ -552,7 +598,12 @@ export function CsfPlaybookPanel({
                   <button
                     type="button"
                     onClick={onClick}
-                    disabled={busy !== null || readOnly || runInProgress}
+                    disabled={
+                      busy !== null ||
+                      readOnly ||
+                      runInProgress ||
+                      runOutcomeUnknown
+                    }
                     className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {busy === "run" || runInProgress
