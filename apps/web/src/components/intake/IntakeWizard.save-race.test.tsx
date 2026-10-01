@@ -96,6 +96,55 @@ beforeEach(() => {
   submitIntake.mockResolvedValue(serverState());
 });
 
+/** What `lib/intake/client.ts` throws for an answered refusal. */
+function proxyError(status: number, payload: unknown): Error {
+  const ProxyError = intakeClient.ProxyError as unknown as new (
+    m: string,
+  ) => Error;
+  return Object.assign(new ProxyError(`Intake proxy ${status}`), {
+    status,
+    payload,
+  });
+}
+
+/**
+ * The api's schema 422, as `_handle_validation_error` sends it for a value
+ * `ClientProfilePatch` refuses. Captured from the api on 2026-10-01 for
+ * `{"client": {"website": "example.gov"}}` (`website: HttpUrl`); only the
+ * correlation id is dropped.
+ */
+function schema422(field: string, input: string): Error {
+  return proxyError(422, {
+    error: {
+      code: 422,
+      message: "Request validation failed.",
+      reason: "schema_url_parsing",
+      reasons: ["schema_url_parsing"],
+      details: [
+        {
+          type: "url_parsing",
+          loc: ["body", "client", field],
+          msg: "Input should be a valid URL, relative URL without a base",
+          input,
+          ctx: { error: "relative URL without a base" },
+        },
+      ],
+    },
+  });
+}
+
+/** The proxy's typed 504 (#550): the save may or may not have landed. */
+function outcomeUnknown(): Error {
+  return proxyError(504, {
+    error: {
+      code: 504,
+      reason: "upstream_outcome_unknown",
+      message:
+        "We couldn't confirm whether this finished. It may still complete; check before trying again.",
+    },
+  });
+}
+
 async function next(times = 1): Promise<void> {
   for (let i = 0; i < times; i += 1) {
     await act(async () => {
@@ -198,34 +247,116 @@ describe("IntakeWizard: Submit and an in-flight save (#252)", () => {
     expect(submitted().client?.legal_name).toBe("Atlas Federal LLC");
   });
 
-  it("re-enables Submit after a FAILED save, shows the error, and submits the typed value rather than the server's", async () => {
-    const submit = await editThenReview([["legal_name", "Atlas Federal LLC"]]);
-    const ProxyError = intakeClient.ProxyError as unknown as new (
-      m: string,
-    ) => Error;
+  it("drops a value the server REFUSED, keeps the error, and submits what the server holds", async () => {
+    // Review of #757, finding 2. A website the schema refuses ("example.gov",
+    // `website: HttpUrl`) used to stay in the overlay: the review showed it as
+    // accepted and Submit then failed with only "Failed to submit intake."
+    const submit = await editThenReview([["website", "example.gov"]]);
     await act(async () => {
-      held[0].reject(
-        Object.assign(new ProxyError("Intake proxy 409"), {
-          status: 409,
-          payload: {
-            error: {
-              code: 409,
-              reason: "intake_locked",
-              message: "This intake can no longer be edited.",
-            },
-          },
-        }),
-      );
+      held[0].reject(schema422("website", "example.gov"));
     });
 
-    expect(
-      screen.getByText(/Couldn.t save: This intake can no longer be edited\./),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/^Couldn.t save:/)).toBeInTheDocument();
+    expect(screen.queryByText("example.gov")).not.toBeInTheDocument();
     expect(submit).toBeEnabled();
     await act(async () => {
       fireEvent.click(submit);
     });
-    expect(submitted().client?.legal_name).toBe("Atlas Federal LLC");
+    expect(submitted().client?.website).toBeUndefined();
+  });
+
+  it("keeps a refused field's error after ANOTHER field saves, and clears it when that field saves", async () => {
+    // Review of #757, finding 4: a later answer overwrote an earlier save's
+    // error, which is what made the refusals above silent.
+    render(<IntakeWizard />);
+    await screen.findByRole("button", { name: "Next →" });
+    await next(); // -> organization
+    await typeAndBlur("website", "example.gov");
+    await act(async () => {
+      held[0].reject(schema422("website", "example.gov"));
+    });
+    expect(screen.getByText(/^Couldn.t save:/)).toBeInTheDocument();
+
+    await typeAndBlur("city", "Arlington");
+    await act(async () => {
+      held[1].resolve(serverState({ city: "Arlington" }));
+    });
+    expect(screen.getByText(/^Couldn.t save:/)).toBeInTheDocument();
+
+    await typeAndBlur("website", "https://atlas.example");
+    await act(async () => {
+      held[2].resolve(
+        serverState({ city: "Arlington", website: "https://atlas.example/" }),
+      );
+    });
+    expect(screen.queryByText(/^Couldn.t save:/)).not.toBeInTheDocument();
+  });
+
+  it("submits exactly the client fields onSubmit sends, and never lays a contact override over the server's", async () => {
+    // Review of #757, finding 1. Step 3's contact override is saved through
+    // `client` but NOT sent at submit, so laying it over the server's copy
+    // showed a failed override on revisit as if it were stored.
+    render(<IntakeWizard />);
+    await screen.findByRole("button", { name: "Next →" });
+    await next(2); // -> contact
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("checkbox", {
+          name: /I am not the primary contact/,
+        }),
+      );
+    });
+    const name = document.getElementById(
+      "primary_contact_name",
+    ) as HTMLInputElement;
+    expect(name, "setup: the override fields must open").not.toBeNull();
+    await act(async () => {
+      fireEvent.change(name, { target: { value: "Pat Doe" } });
+      fireEvent.blur(name, { target: { value: "Pat Doe" } });
+    });
+    expect(held.map((h) => h.patch)).toEqual([
+      { client: { primary_contact_name: "Pat Doe" } },
+    ]);
+    // Its answer never arrives: the case where an overlay keeps the typed
+    // value for fields Submit sends.
+    await act(async () => {
+      held[0].reject(outcomeUnknown());
+    });
+
+    await next(); // -> systems
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "← Back" }));
+    });
+    expect(
+      document.getElementById("primary_contact_name"),
+      "the override reappeared from the page's own memory, not the server",
+    ).toBeNull();
+    expect(
+      screen.getByRole("checkbox", { name: /I am not the primary contact/ }),
+    ).not.toBeChecked();
+
+    await next(3); // -> review
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Submit intake/ }));
+    });
+    // The fields onSubmit sends, as derived from main's onSubmit (#252).
+    expect(Object.keys(submitted().client ?? {}).sort()).toEqual(
+      [
+        "address_line1",
+        "address_line2",
+        "city",
+        "country",
+        "dba_name",
+        "industry",
+        "legal_name",
+        "postal_code",
+        "prompting_context",
+        "service_interests",
+        "size_band",
+        "state",
+        "website",
+      ].sort(),
+    );
   });
 
   it("after a save whose outcome is unknown (#550), says so and submits the typed value, never the server's older one", async () => {

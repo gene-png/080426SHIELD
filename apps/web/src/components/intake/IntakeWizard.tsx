@@ -31,6 +31,35 @@ import { useIntakeAutoSave } from "./useIntakeAutoSave";
 import type { JSX } from "react";
 import { clientFacingError } from "@/lib/describe-save-error";
 
+/**
+ * The client fields `onSubmit` sends, and so the ONLY fields `enteredClient`
+ * may hold (review of #757, finding 1). Step 3's contact override is saved
+ * through `client` too but is never sent at submit, so laying it over the
+ * server's copy showed a failed override on revisit as if it were stored. One
+ * list feeds both, so the overlay and the submit cannot drift apart.
+ */
+const SUBMITTED_CLIENT_FIELDS = [
+  "legal_name",
+  "dba_name",
+  "website",
+  "size_band",
+  "industry",
+  "address_line1",
+  "address_line2",
+  "city",
+  "state",
+  "postal_code",
+  "country",
+  "prompting_context",
+  "service_interests",
+] as const satisfies readonly (keyof ClientProfilePatch)[];
+
+type SubmittedClientField = (typeof SUBMITTED_CLIENT_FIELDS)[number];
+
+function isSubmittedField(key: string): key is SubmittedClientField {
+  return (SUBMITTED_CLIENT_FIELDS as readonly string[]).includes(key);
+}
+
 const STEP_INDEX: Record<WizardStepKey, number> = WIZARD_STEPS.reduce(
   (acc, step, i) => {
     acc[step.key] = i;
@@ -57,19 +86,38 @@ export function IntakeWizard(): JSX.Element {
   const [submitError, setSubmitError] = React.useState<string | null>(null);
   const [submitted, setSubmitted] = React.useState(false);
 
-  const autoSave = useIntakeAutoSave((next) => setState(next));
+  // What was entered, per `SUBMITTED_CLIENT_FIELDS`; see `viewState` below.
+  const [enteredClient, setEnteredClient] = React.useState<ClientProfilePatch>(
+    {},
+  );
+
+  const autoSave = useIntakeAutoSave(
+    (next) => setState(next),
+    // An answered refusal: the server does not hold the value and will not, so
+    // the review must show what it does hold (review of #757, finding 2). Only
+    // a key still holding THIS save's value is dropped; a newer typed value
+    // stays. The save's error stays in the header (`useIntakeAutoSave`).
+    (patch) =>
+      setEnteredClient((prev) => {
+        const nextEntered = { ...prev };
+        for (const [key, value] of Object.entries(patch.client ?? {})) {
+          if (isSubmittedField(key) && nextEntered[key] === value) {
+            delete nextEntered[key];
+          }
+        }
+        return nextEntered;
+      }),
+  );
 
   // #252: the client fields as this person last ENTERED them, from every save
   // this page has sent. The server's copy (`state.client`) changes only when a
   // save's answer arrives, so it lags an in-flight save, keeps the old value
-  // after a failed or unanswered one (#550), and can end on an older value
-  // when two answers land out of order. Submit and the steps read
-  // `viewState`, the server's copy with these entries laid over it, so what
-  // is shown and sent is what was typed. A key sent as `undefined` is left
-  // out, because JSON drops it and the server never saw it.
-  const [enteredClient, setEnteredClient] = React.useState<ClientProfilePatch>(
-    {},
-  );
+  // after an unanswered one (#550), and can end on an older value when two
+  // answers land out of order. Submit and the steps read `viewState`, the
+  // server's copy with these entries laid over it, so what is shown and sent
+  // is what was typed. A key sent as `undefined` is left out, because JSON
+  // drops it and the server never saw it. Only `SUBMITTED_CLIENT_FIELDS` are
+  // held, and a value the server ANSWERED with a refusal is dropped again.
   const viewState = React.useMemo<IntakeStateResponse | null>(
     () =>
       state && state.client
@@ -80,7 +128,9 @@ export function IntakeWizard(): JSX.Element {
 
   function saveEntered(patch: IntakePatchRequest): void {
     const entered = Object.fromEntries(
-      Object.entries(patch.client ?? {}).filter(([, v]) => v !== undefined),
+      Object.entries(patch.client ?? {}).filter(
+        ([k, v]) => isSubmittedField(k) && v !== undefined,
+      ),
     ) as ClientProfilePatch;
     if (Object.keys(entered).length > 0) {
       setEnteredClient((prev) => ({ ...prev, ...entered }));
@@ -174,24 +224,14 @@ export function IntakeWizard(): JSX.Element {
     try {
       const next = await submitIntake({
         client: {
-          // `?? undefined` like every sibling field below. Since D-080 an
-          // unnamed org is NULL rather than a sentinel, and submitting one is
-          // refused by the API with a typed 422 ("Organization legal name is
-          // required to submit intake.") — the wizard does not pre-empt that
-          // check, so the user gets the server's message rather than a silent
-          // no-op.
-          legal_name: client.legal_name ?? undefined,
-          dba_name: client.dba_name ?? undefined,
-          website: client.website ?? undefined,
-          size_band: client.size_band ?? undefined,
-          industry: client.industry ?? undefined,
-          address_line1: client.address_line1 ?? undefined,
-          address_line2: client.address_line2 ?? undefined,
-          city: client.city ?? undefined,
-          state: client.state ?? undefined,
-          postal_code: client.postal_code ?? undefined,
-          country: client.country ?? undefined,
-          prompting_context: client.prompting_context ?? undefined,
+          // Every field `?? undefined`. Since D-080 an unnamed org is NULL
+          // rather than a sentinel, and submitting one is refused by the API
+          // with a typed 422 ("Organization legal name is required to submit
+          // intake.") — the wizard does not pre-empt that check, so the user
+          // gets the server's message rather than a silent no-op.
+          ...(Object.fromEntries(
+            SUBMITTED_CLIENT_FIELDS.map((k) => [k, client[k] ?? undefined]),
+          ) as ClientProfilePatch),
           service_interests: picks,
         },
         service_requests: requests,
