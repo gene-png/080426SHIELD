@@ -539,6 +539,32 @@ def _gap_rows(rows: Sequence[Any], *, limit: int | None = None) -> list[Any]:
     return gaps[:limit] if limit else gaps
 
 
+#: The executive briefing's "Top priority gaps" list length.
+EXEC_GAP_LIMIT = 12
+
+
+def _exec_gap_caption(rows: Sequence[Any]) -> str:
+    """What the exec "Top priority gaps" list shows and what it leaves out
+    (#718), or "" when there is no gap to list (the renderers say so already).
+
+    The list stops at `EXEC_GAP_LIMIT` rows; without this the client read a
+    slice with no way to tell anything was omitted, the #75/#79 shape that the
+    Gap Plan captions (`csf/exporters.py`, `zt/exporters.py`) already close.
+    Same wording as the ZT Gap Plan caption, which also names no single target
+    (each row carries its own)."""
+    total = sum(1 for r in rows if r.gap)
+    shown = min(total, EXEC_GAP_LIMIT)
+    if total == 0:
+        return ""
+    if shown >= total:
+        return f"All {total} gap{'' if total == 1 else 's'} listed."
+    remaining = total - shown
+    return (
+        f"Showing the {shown} highest-priority of {total} gaps; "
+        f"{remaining} further gap{'' if remaining == 1 else 's'} not listed."
+    )
+
+
 # ---------------------------------------------------------------------------
 # PDF helpers
 # ---------------------------------------------------------------------------
@@ -761,7 +787,10 @@ def render_exec_pdf(
         story.append(Paragraph(line, styles["body"]))
     _scorecard(story, styles, enterprise_rows)
     story.append(Paragraph("Top priority gaps", styles["h2"]))
-    _gap_table(story, styles, _gap_rows(enterprise_rows, limit=12))
+    caption = _exec_gap_caption(enterprise_rows)
+    if caption:
+        story.append(Paragraph(caption, styles["body"]))
+    _gap_table(story, styles, _gap_rows(enterprise_rows, limit=EXEC_GAP_LIMIT))
     story.append(Paragraph("Recommended next steps", styles["h2"]))
     for step in _next_steps(enterprise_rows):
         story.append(Paragraph(f"• {step}", styles["body"]))
@@ -999,7 +1028,10 @@ def render_exec_docx(
     _docx_scorecard(doc, enterprise_rows)
 
     add_heading(doc, "Top priority gaps")
-    gaps = _gap_rows(enterprise_rows, limit=12)
+    caption = _exec_gap_caption(enterprise_rows)
+    if caption:
+        add_paragraphs(doc, [caption])
+    gaps = _gap_rows(enterprise_rows, limit=EXEC_GAP_LIMIT)
     if gaps:
         table = add_table(
             doc,

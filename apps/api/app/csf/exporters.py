@@ -97,12 +97,27 @@ def _gap_plan_caption(gap: GapAnalysis) -> str:
     shown, total = len(gap.gaps), gap.total_gap_count
     remaining = total - shown
     if shown >= total:
-        return f"All {total} gap{'' if total == 1 else 's'} at target T{gap.target_tier}."
-    return (
-        f"Showing the {shown} highest-priority of {total} gaps at target "
-        f"T{gap.target_tier}; {remaining} further gap"
-        f"{'' if remaining == 1 else 's'} not listed."
-    )
+        listed = f"All {total} gap{'' if total == 1 else 's'} at target T{gap.target_tier}."
+    else:
+        listed = (
+            f"Showing the {shown} highest-priority of {total} gaps at target "
+            f"T{gap.target_tier}; {remaining} further gap"
+            f"{'' if remaining == 1 else 's'} not listed."
+        )
+    return listed + _unscored_sentence(len(gap.unscored_codes))
+
+
+def _unscored_sentence(unscored: int) -> str:
+    """#699: `analyze_gaps` skips an unscored subcategory, so a gap count says
+    nothing about it. Without this a mostly-unscored assessment delivered "All 0
+    gaps" with no mention of what was never looked at. Disclosed rather than
+    blocked, because a partial self-assessment is allowed. The twin of
+    `app.zt.exporters._unscored_sentence`."""
+    if unscored == 0:
+        return ""
+    if unscored == 1:
+        return " 1 subcategory was not scored and is not in this plan."
+    return f" {unscored} subcategories were not scored and are not in this plan."
 
 
 def _fmt_tier(value: float | None) -> str:
