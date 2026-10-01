@@ -100,12 +100,30 @@ def _gap_plan_caption(gap: GapAnalysis) -> str:
             f" A per-capability target was recorded for {listed} but could not "
             f"be used, so the engagement target was applied to {rows} instead."
         )
+    # #699: the unscored sentence sits BETWEEN the count and the target
+    # sentences, so the target sentence stays the caption's tail -- the part
+    # the web copy (`targetNote`) transcribes and both parity tests pin.
+    unscored = _unscored_sentence(len(gap.unscored_codes))
     if shown >= total:
-        return f"All {total} gap{'' if total == 1 else 's'} listed. {target}"
+        return f"All {total} gap{'' if total == 1 else 's'} listed.{unscored} {target}"
     return (
         f"Showing the {shown} highest-priority of {total} gaps; "
-        f"{remaining} further gap{'' if remaining == 1 else 's'} not listed. {target}"
+        f"{remaining} further gap{'' if remaining == 1 else 's'} not listed.{unscored} "
+        f"{target}"
     )
+
+
+def _unscored_sentence(unscored: int) -> str:
+    """#699: `analyze_gaps` skips an unscored capability, so a gap count says
+    nothing about it. Without this a mostly-unscored assessment delivered "All 0
+    gaps listed" with no mention of what was never looked at. Disclosed rather
+    than blocked, because a partial self-assessment is allowed. The twin of
+    `app.csf.exporters._unscored_sentence`."""
+    if unscored == 0:
+        return ""
+    if unscored == 1:
+        return " 1 capability was not scored and is not in this plan."
+    return f" {unscored} capabilities were not scored and are not in this plan."
 
 
 def build_context(

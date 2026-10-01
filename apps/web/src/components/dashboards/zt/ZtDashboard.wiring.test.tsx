@@ -171,7 +171,7 @@ describe("ZtDashboard discarded-target disclosure (wiring)", () => {
     // `display: none`. In jsdom it is a style check and not a layout one, so
     // it is NOT evidence about clipping; that was settled by reading
     // `KpiCard`'s styles instead.
-    expect(screen.getByText("Your target, chosen at intake")).toBeVisible();
+    expect(screen.getByText("Your target, chosen at intake.")).toBeVisible();
     expect(screen.queryByText(SENTENCE)).not.toBeInTheDocument();
   });
 
