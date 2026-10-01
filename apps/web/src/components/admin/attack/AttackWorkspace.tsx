@@ -523,27 +523,39 @@ export function AttackWorkspace({
     setRunResult(null);
     const seq = ++assessmentSeq.current;
     try {
-      const result = await runAttackAi(serviceId);
+      // #550 review, finding 1: two tries, not one. Only the RUN's own
+      // rejection can mean "the run's outcome is unknown"; a re-read that
+      // fails after the run answered is that re-read's error and must not
+      // lock Run AI.
+      let result: Awaited<ReturnType<typeof runAttackAi>>;
+      try {
+        result = await runAttackAi(serviceId);
+      } catch (err) {
+        // A refused run is guidance, not a broken page. Mapping with an empty
+        // capability list would report every technique as a gap, so the API
+        // blocks it — render that as something to act on rather than as a red
+        // "failed to load" banner that reads like an outage.
+        if (errorReason(err) === "no_security_capabilities") {
+          setRunBlocked(describeError(err));
+        } else if (isUpstreamOutcomeUnknown(err)) {
+          // Its own alert beside the button, not `actionError`: that card is
+          // headed "That didn't go through", which is the claim this is not
+          // allowed to make, and any later action clears it.
+          setRunOutcomeUnknown(true);
+        } else {
+          setActionError(describeError(err));
+        }
+        return;
+      }
       setRunResult(result);
       setRunBlocked(null);
-      // Re-pull the assessment so the matrix reflects the AI's suggestions,
-      // guarded so a concurrent patch that started meanwhile still wins.
-      const a = await fetchLatestAssessment(serviceId);
-      if (seq === assessmentSeq.current) setAssessment(a);
-      await refreshHeatmap();
-    } catch (err) {
-      // A refused run is guidance, not a broken page. Mapping with an empty
-      // capability list would report every technique as a gap, so the API
-      // blocks it — render that as something to act on rather than as a red
-      // "failed to load" banner that reads like an outage.
-      if (errorReason(err) === "no_security_capabilities") {
-        setRunBlocked(describeError(err));
-      } else if (isUpstreamOutcomeUnknown(err)) {
-        // Its own alert beside the button, not `actionError`: that card is
-        // headed "That didn't go through", which is the claim this is not
-        // allowed to make, and any later action clears it.
-        setRunOutcomeUnknown(true);
-      } else {
+      try {
+        // Re-pull the assessment so the matrix reflects the AI's suggestions,
+        // guarded so a concurrent patch that started meanwhile still wins.
+        const a = await fetchLatestAssessment(serviceId);
+        if (seq === assessmentSeq.current) setAssessment(a);
+        await refreshHeatmap();
+      } catch (err) {
         setActionError(describeError(err));
       }
     } finally {

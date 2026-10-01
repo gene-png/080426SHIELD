@@ -724,19 +724,31 @@ export function ZtWorkspace({
     setRunResult(null);
     const seq = ++assessmentSeq.current;
     try {
-      const result = await runZtAi(serviceId);
+      // #550 review, finding 1: two tries, not one. Only the RUN's own
+      // rejection can mean "the run's outcome is unknown"; a re-read that
+      // fails after the run answered is that re-read's error and must not
+      // lock Run AI.
+      let result: Awaited<ReturnType<typeof runZtAi>>;
+      try {
+        result = await runZtAi(serviceId);
+      } catch (err) {
+        if (isUpstreamOutcomeUnknown(err)) {
+          // Its own alert beside the button: `loadError`'s card is headed
+          // "Couldn't load the assessment", which is not what happened.
+          setRunOutcomeUnknown(true);
+        } else {
+          setLoadError(describeError(err));
+        }
+        return;
+      }
       setRunResult(result);
-      // Re-pull so the questionnaire + score reflect the AI's suggestions,
-      // guarded so a concurrent edit that started meanwhile still wins.
-      const a = await fetchLatestAssessment(serviceId);
-      if (seq === assessmentSeq.current) setAssessment(a);
-      await refreshScoreAndGap(shownTargetRef.current);
-    } catch (err) {
-      if (isUpstreamOutcomeUnknown(err)) {
-        // Its own alert beside the button: `loadError`'s card is headed
-        // "Couldn't load the assessment", which is not what happened.
-        setRunOutcomeUnknown(true);
-      } else {
+      try {
+        // Re-pull so the questionnaire + score reflect the AI's suggestions,
+        // guarded so a concurrent edit that started meanwhile still wins.
+        const a = await fetchLatestAssessment(serviceId);
+        if (seq === assessmentSeq.current) setAssessment(a);
+        await refreshScoreAndGap(shownTargetRef.current);
+      } catch (err) {
         setLoadError(describeError(err));
       }
     } finally {

@@ -38,6 +38,15 @@ import type { JSX } from "react";
 export interface CsfPlaybookPanelProps {
   serviceId: string;
   readOnly?: boolean;
+  /**
+   * #550: an earlier Run AI's outcome is unknown, so Run AI stays off. Owned
+   * by `CsfWorkspace`, not this panel: the workspace mounts the panel only
+   * while an assessment exists, so a lock held here was cleared by Discard
+   * then Start assessment (review of #752, finding 2).
+   */
+  runOutcomeUnknown?: boolean;
+  /** Called when a Run AI's own answer never arrived. */
+  onRunOutcomeUnknown?: () => void;
 }
 
 /**
@@ -393,6 +402,8 @@ const COLUMNS: DataTableColumn<EnterpriseSubcategory>[] = [
 export function CsfPlaybookPanel({
   serviceId,
   readOnly = false,
+  runOutcomeUnknown = false,
+  onRunOutcomeUnknown,
 }: CsfPlaybookPanelProps): JSX.Element {
   const [enterprise, setEnterprise] = React.useState<EnterpriseProfile | null>(
     null,
@@ -404,9 +415,6 @@ export function CsfPlaybookPanel({
   const [runResult, setRunResult] = React.useState<CsfRunAiResponse | null>(
     null,
   );
-  // #550: set once a run's outcome is unknown and never cleared; a reload
-  // clears it, which the copy says.
-  const [runOutcomeUnknown, setRunOutcomeUnknown] = React.useState(false);
   const [exportResult, setExportResult] =
     React.useState<CsfPlaybookExport | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -462,14 +470,26 @@ export function CsfPlaybookPanel({
     setError(null);
     setRunResult(null);
     try {
-      setRunResult(await runCsfAi(serviceId));
-      await reload();
-    } catch (err) {
-      if (isUpstreamOutcomeUnknown(err)) {
-        // Its own alert, not `error`: every other action on this panel
-        // clears that, and the button would stay off with nothing saying why.
-        setRunOutcomeUnknown(true);
-      } else {
+      // #550 review, finding 1: two tries, not one. Only the RUN's own
+      // rejection can mean "the run's outcome is unknown"; a reload that
+      // fails after the run answered is that reload's error and must not
+      // lock Run AI.
+      try {
+        setRunResult(await runCsfAi(serviceId));
+      } catch (err) {
+        if (isUpstreamOutcomeUnknown(err)) {
+          // Its own alert, not `error`: every other action on this panel
+          // clears that, and the button would stay off with nothing saying
+          // why.
+          onRunOutcomeUnknown?.();
+        } else {
+          setError(describeError(err));
+        }
+        return;
+      }
+      try {
+        await reload();
+      } catch (err) {
         setError(describeError(err));
       }
     } finally {

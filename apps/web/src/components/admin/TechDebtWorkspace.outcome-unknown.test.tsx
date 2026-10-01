@@ -188,6 +188,46 @@ describe("TechDebtWorkspace, an extraction whose outcome is unknown (#550)", () 
     ).toBeInTheDocument();
   });
 
+  it("does not lock extraction when the extraction answered and only the overlap refresh after it did not", async () => {
+    // Review of #752, finding 1, for Tech Debt. `runExtraction` awaits
+    // `refreshOverlap` inside the same try as the extraction, so this pins
+    // that `refreshOverlap` catches its own failures: an unanswered overlap
+    // or plan read after a successful extraction must not reach the
+    // outcome-unknown branch.
+    extractCapabilities.mockResolvedValueOnce({
+      id: "list-1",
+      status: "draft",
+      version: 1,
+      items: [],
+      excluded_rows: [],
+    } as never);
+    vi.mocked(techDebtClient.fetchOverlapAnalysis).mockRejectedValue(
+      OUTCOME_UNKNOWN,
+    );
+    vi.mocked(techDebtClient.fetchConsolidationPlan).mockRejectedValue(
+      OUTCOME_UNKNOWN,
+    );
+    render(
+      <TechDebtWorkspace serviceId="svc-550-r1" serviceTitle="Atlas TD" />,
+    );
+    await act(async () => {
+      fireEvent.click(
+        await screen.findByRole("button", { name: "extract by hand" }),
+      );
+    });
+    await vi.waitFor(() =>
+      expect(techDebtClient.fetchOverlapAnalysis).toHaveBeenCalled(),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText(COPY)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "extract by hand" }),
+    ).toBeEnabled();
+  });
+
   it("keeps extraction on after a refusal the api DID send", async () => {
     await extractByHandRejectingWith(
       proxyRefusal(409, "capability_list_draft_open", "A draft is open."),

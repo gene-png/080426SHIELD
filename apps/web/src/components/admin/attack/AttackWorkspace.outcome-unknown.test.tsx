@@ -78,6 +78,10 @@ const OUTCOME_UNKNOWN = proxyRefusal(
   "We couldn't confirm whether this finished. It may still complete; check before trying again.",
 );
 
+/** The proxy's own sentence: what a re-read that got no answer shows. */
+const REREAD_MESSAGE =
+  "We couldn't confirm whether this finished. It may still complete; check before trying again.";
+
 const COPY =
   "We couldn't confirm whether the AI run finished. It may still complete and fill in technique rows. Reload the page later and check step 2, Review every technique and adjust, before running it again. Run AI stays off on this page until you reload.";
 
@@ -142,6 +146,26 @@ describe("AttackWorkspace, a Run AI whose outcome is unknown (#550)", () => {
     expect(
       screen.getByRole("heading", { name: `Step ${number}: ${title}` }),
     ).toBeInTheDocument();
+  });
+
+  it("does not lock Run AI when the RUN succeeded and only the re-read after it got no answer", async () => {
+    // Review of #752, finding 1. The run's own answer arrived; only the
+    // assessment re-read after it went unanswered. That is not an unknown
+    // RUN, so the page says the re-read failed and leaves Run AI on.
+    vi.mocked(attackClient.runAttackAi).mockResolvedValueOnce({
+      tools_available: 1,
+      changed: [],
+      coverage: [],
+    } as unknown as Awaited<ReturnType<typeof attackClient.runAttackAi>>);
+    vi.mocked(attackClient.fetchLatestAssessment)
+      .mockResolvedValueOnce(draft())
+      .mockRejectedValueOnce(OUTCOME_UNKNOWN);
+    render(<AttackWorkspace serviceId="svc-550-r1" serviceTitle="ATT&CK" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Run AI" }));
+
+    expect(await screen.findByText(REREAD_MESSAGE)).toBeInTheDocument();
+    expect(screen.queryByText(COPY)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run AI" })).toBeEnabled();
   });
 
   it("leaves Run AI on after a refusal the api DID send", async () => {

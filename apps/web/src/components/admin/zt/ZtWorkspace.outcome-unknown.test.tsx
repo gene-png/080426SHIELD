@@ -81,6 +81,10 @@ const OUTCOME_UNKNOWN = proxyRefusal(
   "We couldn't confirm whether this finished. It may still complete; check before trying again.",
 );
 
+/** The proxy's own sentence: what a re-read that got no answer shows. */
+const REREAD_MESSAGE =
+  "We couldn't confirm whether this finished. It may still complete; check before trying again.";
+
 const COPY =
   "We couldn't confirm whether the AI run finished. It may still complete and fill in capability rows. Reload the page later and check step 2, Review every capability and adjust, before running it again. Run AI stays off on this page until you reload.";
 
@@ -146,6 +150,39 @@ describe("ZtWorkspace, a Run AI whose outcome is unknown (#550)", () => {
     expect(
       screen.getByRole("heading", { name: `Step ${number}: ${title}` }),
     ).toBeInTheDocument();
+  });
+
+  it("does not lock Run AI when the RUN succeeded and only the re-read after it got no answer", async () => {
+    // Review of #752, finding 1: the run answered; the re-read did not.
+    vi.mocked(ztClient.runZtAi).mockResolvedValueOnce({
+      changed: [],
+      answers: [],
+      suggestions_received: 0,
+      suggestions_applied: 0,
+      dropped: [],
+    } as unknown as Awaited<ReturnType<typeof ztClient.runZtAi>>);
+    vi.mocked(ztClient.fetchLatestAssessment)
+      .mockResolvedValueOnce({
+        id: "zt-assess-1",
+        status: "draft",
+        version: 1,
+        answers: [],
+        client_target_stage: 3,
+        documents_stale: false,
+      } as unknown as ZtAssessment)
+      .mockRejectedValueOnce(OUTCOME_UNKNOWN);
+    render(
+      <ZtWorkspace
+        serviceId="svc-550-zt-r1"
+        framework="dod_ztra"
+        serviceTitle="Atlas Zero Trust"
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Run AI" }));
+
+    expect(await screen.findByText(REREAD_MESSAGE)).toBeInTheDocument();
+    expect(screen.queryByText(COPY)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run AI" })).toBeEnabled();
   });
 
   it("leaves Run AI on after a refusal the api DID send", async () => {
