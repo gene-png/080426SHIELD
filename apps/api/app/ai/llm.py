@@ -31,6 +31,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.ai.redact import RedactionMode, redact_payload
+from app.ai.run_context import ai_run_id_var
 from app.config import Settings, get_settings
 from app.logging import correlation_id_var, get_logger
 from app.models.llm_call import LLMCall, LLMCallMode, LLMCallStatus
@@ -693,6 +694,8 @@ class LLMClient:
             redaction_mode=mode,
             redacted_counts=removed_counts or None,
             correlation_id=correlation_id_var.get(),
+            # #645: NULL outside a Run-AI (the preview, Risk synthesis).
+            ai_run_id=ai_run_id_var.get(),
         )
         db.add(row)
         db.flush()
