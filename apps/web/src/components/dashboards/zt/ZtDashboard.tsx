@@ -12,6 +12,7 @@ import {
 } from "@/components/dashboards/shared";
 import {
   pillarsByGap,
+  scoredNote,
   targetNote,
   type ZtDashboardData,
   type ZtPillar,
@@ -52,7 +53,9 @@ function MaturityBar({
           {pillar.target_label} · {pctText(pillar.target_pct)}
         </span>
         <span style={{ marginLeft: "auto", color: C.muted, fontSize: 11.5 }}>
-          +{Math.round(pillar.gap_pct)} pt move
+          {/* #700: the pillar's own scored count beside its percentage, as the
+              CSF dashboard does per function. */}
+          {`+${Math.round(pillar.gap_pct)} pt move · ${pillar.answered_count}/${pillar.capability_count} scored`}
         </span>
       </div>
       <div
@@ -140,7 +143,7 @@ export function ZtDashboard({ data }: { data: ZtDashboardData }): JSX.Element {
         <KpiCard
           label="Current maturity"
           value={`${data.current_label} · ${pctText(data.current_pct)}`}
-          sub="Weighted across all pillars"
+          sub={`Weighted across all pillars · ${scoredNote(data.pillars)}`}
           accent={C.accent2}
         />
         <KpiCard
