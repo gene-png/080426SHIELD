@@ -9,10 +9,7 @@ import type {
 } from "@/lib/intake/types";
 
 import type { SaveState } from "./SaveStatus";
-import {
-  clientFacingError,
-  isUpstreamOutcomeUnknown,
-} from "@/lib/describe-save-error";
+import { clientFacingError } from "@/lib/describe-save-error";
 
 export interface AutoSaveHandle {
   saveState: SaveState;
@@ -34,17 +31,13 @@ function fieldsOf(patch: IntakePatchRequest): string[] {
   return [...top, ...client];
 }
 
-/** An answer the api DID send that refused the value (a 4xx), as opposed to
- *  no answer at all (#550's `upstream_outcome_unknown`, where the save may
- *  have landed). Duck-typed on the proxy error's numeric `status`. */
+/** An answer the api DID send that refused the value: a 4xx. Not a 5xx,
+ *  which includes #550's 504 `upstream_outcome_unknown`, where the save may
+ *  have landed, and not a thrown network error with no status at all.
+ *  Duck-typed on the proxy error's numeric `status`. */
 function isAnsweredRefusal(err: unknown): boolean {
   const status = (err as { status?: unknown } | null)?.status;
-  return (
-    typeof status === "number" &&
-    status >= 400 &&
-    status < 500 &&
-    !isUpstreamOutcomeUnknown(err)
-  );
+  return typeof status === "number" && status >= 400 && status < 500;
 }
 
 /** Wraps `patchIntake` with save-status state + lightweight error handling.
