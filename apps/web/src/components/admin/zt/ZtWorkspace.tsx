@@ -55,7 +55,10 @@ import type { JSX } from "react";
 import { ProgressStages } from "../ProgressStages";
 import { useServiceStages } from "@/lib/stages/client";
 import { useRefreshFailures } from "@/components/admin/useRefreshFailures";
-import { serverReason } from "@/lib/describe-save-error";
+import {
+  isUpstreamOutcomeUnknown,
+  serverReason,
+} from "@/lib/describe-save-error";
 import { MIN_TARGET_STAGE } from "@/lib/assessment-targets";
 
 export interface ZtWorkspaceProps {
@@ -151,6 +154,14 @@ function describeError(err: unknown): string {
   return err instanceof Error ? err.message : "Request failed.";
 }
 
+/**
+ * #550: what to say when the proxy never saw Run AI's answer. Not a failure
+ * and not a page that "couldn't load": the api may have finished and written
+ * the rows, and a retry sends the client's data out again.
+ */
+const RUN_OUTCOME_UNKNOWN =
+  "We couldn't confirm whether the AI run finished. It may still complete and fill in capability rows. Reload the page later and check step 2, Review every capability and adjust, before running it again. Run AI stays off on this page until you reload.";
+
 const FRAMEWORK_NAME: Record<ZtFramework, string> = {
   cisa_ztmm_2_0: "CISA ZTMM 2.0",
   dod_ztra: "DoD ZT Reference Architecture",
@@ -199,6 +210,9 @@ export function ZtWorkspace({
   const [runResult, setRunResult] = React.useState<ZtRunAiResponse | null>(
     null,
   );
+  // #550: set once a run's outcome is unknown and never cleared; a reload
+  // clears it, which the copy says.
+  const [runOutcomeUnknown, setRunOutcomeUnknown] = React.useState(false);
   /**
    * THE TARGET THE CONTROL SHOWS IS DERIVED, NOT REMEMBERED (#385).
    *
@@ -710,15 +724,33 @@ export function ZtWorkspace({
     setRunResult(null);
     const seq = ++assessmentSeq.current;
     try {
-      const result = await runZtAi(serviceId);
+      // #550 review, finding 1: two tries, not one. Only the RUN's own
+      // rejection can mean "the run's outcome is unknown"; a re-read that
+      // fails after the run answered is that re-read's error and must not
+      // lock Run AI.
+      let result: Awaited<ReturnType<typeof runZtAi>>;
+      try {
+        result = await runZtAi(serviceId);
+      } catch (err) {
+        if (isUpstreamOutcomeUnknown(err)) {
+          // Its own alert beside the button: `loadError`'s card is headed
+          // "Couldn't load the assessment", which is not what happened.
+          setRunOutcomeUnknown(true);
+        } else {
+          setLoadError(describeError(err));
+        }
+        return;
+      }
       setRunResult(result);
-      // Re-pull so the questionnaire + score reflect the AI's suggestions,
-      // guarded so a concurrent edit that started meanwhile still wins.
-      const a = await fetchLatestAssessment(serviceId);
-      if (seq === assessmentSeq.current) setAssessment(a);
-      await refreshScoreAndGap(shownTargetRef.current);
-    } catch (err) {
-      setLoadError(describeError(err));
+      try {
+        // Re-pull so the questionnaire + score reflect the AI's suggestions,
+        // guarded so a concurrent edit that started meanwhile still wins.
+        const a = await fetchLatestAssessment(serviceId);
+        if (seq === assessmentSeq.current) setAssessment(a);
+        await refreshScoreAndGap(shownTargetRef.current);
+      } catch (err) {
+        setLoadError(describeError(err));
+      }
     } finally {
       setBusy(null);
     }
@@ -904,7 +936,7 @@ export function ZtWorkspace({
                     <button
                       type="button"
                       onClick={onClick}
-                      disabled={busy !== null || readOnly}
+                      disabled={busy !== null || readOnly || runOutcomeUnknown}
                       className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {busy === "run" ? "Running…" : "Run AI"}
@@ -912,6 +944,11 @@ export function ZtWorkspace({
                   </div>
                 )}
               </RunAiGuard>
+              {runOutcomeUnknown ? (
+                <p className="text-sm text-status-warning-fg" role="alert">
+                  {RUN_OUTCOME_UNKNOWN}
+                </p>
+              ) : null}
               <AiPreviewButton serviceId={serviceId} disabled={busy !== null} />
               {/* Replaces the old "Updated N fields across M capabilities"
                   line, which reported only what LANDED — a run that lost every
