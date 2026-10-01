@@ -163,6 +163,31 @@ describe("TechDebtWorkspace, an extraction whose outcome is unknown (#550)", () 
     expect(extractCapabilities).toHaveBeenCalledTimes(1);
   });
 
+  it("names a step the page renders, by its number and its title", async () => {
+    // Step 2 renders once a list exists, so the page opens on a draft here.
+    // The number and title are read out of the rendered alert and the page
+    // must render that heading: renaming or renumbering the step turns this
+    // red.
+    vi.mocked(techDebtClient.fetchLatestList).mockResolvedValue({
+      id: "list-1",
+      status: "draft",
+      version: 1,
+      items: [],
+      excluded_rows: [],
+      approval_current: false,
+    } as never);
+    await extractByHandRejectingWith(OUTCOME_UNKNOWN);
+    const alert = await screen.findByText(COPY);
+    const named = /check step (\d+), ([^,]+), before/.exec(
+      alert.textContent ?? "",
+    );
+    expect(named, "the copy names no step").not.toBeNull();
+    const [, number, title] = named as RegExpExecArray;
+    expect(
+      await screen.findByRole("heading", { name: `Step ${number}: ${title}` }),
+    ).toBeInTheDocument();
+  });
+
   it("keeps extraction on after a refusal the api DID send", async () => {
     await extractByHandRejectingWith(
       proxyRefusal(409, "capability_list_draft_open", "A draft is open."),

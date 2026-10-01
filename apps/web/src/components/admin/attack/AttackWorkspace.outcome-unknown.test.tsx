@@ -128,6 +128,22 @@ describe("AttackWorkspace, a Run AI whose outcome is unknown (#550)", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("names a step the page renders, by its number and its title", async () => {
+    // The copy sends the reader to a step. Read the number and title out of
+    // the alert the page rendered, and require the page to render that step's
+    // heading, so renaming or renumbering the step turns this red.
+    await runAiRejectingWith(OUTCOME_UNKNOWN);
+    const alert = await screen.findByText(COPY);
+    const named = /check step (\d+), ([^,]+), before/.exec(
+      alert.textContent ?? "",
+    );
+    expect(named, "the copy names no step").not.toBeNull();
+    const [, number, title] = named as RegExpExecArray;
+    expect(
+      screen.getByRole("heading", { name: `Step ${number}: ${title}` }),
+    ).toBeInTheDocument();
+  });
+
   it("leaves Run AI on after a refusal the api DID send", async () => {
     // The control: only the unknown outcome locks the button.
     await runAiRejectingWith(

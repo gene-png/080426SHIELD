@@ -94,6 +94,20 @@ describe("CsfPlaybookPanel, a Run AI whose outcome is unknown (#550)", () => {
     expect(screen.getByRole("button", { name: RUN })).toBeDisabled();
   });
 
+  it("names a section the panel renders, by its title", async () => {
+    // The copy sends the reader to a section. Read its name out of the alert
+    // the panel rendered and require the panel to render that title, so
+    // renaming the section turns this red.
+    await runAiRejectingWith(OUTCOME_UNKNOWN);
+    const alert = await screen.findByText(COPY);
+    const named = /check the dimension scores in (.+?) before/.exec(
+      alert.textContent ?? "",
+    );
+    expect(named, "the copy names no section").not.toBeNull();
+    const [, section] = named as RegExpExecArray;
+    expect(screen.getByText(section, { exact: true })).toBeInTheDocument();
+  });
+
   it("leaves Run AI on after a refusal the api DID send", async () => {
     await runAiRejectingWith(
       proxyRefusal(409, "assessment_not_draft", "Not a draft."),
