@@ -116,6 +116,15 @@ beforeEach(() => {
   vi.mocked(techDebtClient.fetchLatestList).mockResolvedValue(null as never);
   vi.mocked(techDebtClient.fetchLatestDeliverable).mockResolvedValue(null);
   extractCapabilities.mockReset();
+  // A second extraction, if one were started, would succeed: so a revert of
+  // the lock fails on the call count below, not on an unmocked call.
+  extractCapabilities.mockResolvedValue({
+    id: "list-2",
+    status: "draft",
+    version: 1,
+    items: [],
+    excluded_rows: [],
+  } as never);
 });
 
 async function extractByHandRejectingWith(err: Error): Promise<void> {
