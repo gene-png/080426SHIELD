@@ -131,3 +131,14 @@ def csf_run_ai(c: TestClient, svc_id: str, headers: dict, **kwargs: Any) -> dict
         assert r.status_code == 200, r.text
         rows.extend(r.json()["rows"])
     return {**result, "rows": rows}
+
+
+def zt_run_ai(c: TestClient, svc_id: str, headers: dict, **kwargs: Any) -> dict:
+    """A ZT Run-AI, driven to completion: the run's `result`, plus the
+    assessment's answers as they stand afterwards. The synchronous response
+    carried `answers`; the run does not."""
+    result = run_ai_and_wait(c, f"/zt/services/{svc_id}/run-ai", headers, **kwargs)
+    latest = c.get(f"/zt/services/{svc_id}/assessments/latest", headers=headers)
+    assert latest.status_code == 200, latest.text
+    answers = sorted(latest.json()["answers"], key=lambda a: a["capability_code"])
+    return {**result, "answers": answers}

@@ -19,6 +19,7 @@ Endpoint surface:
 
 from __future__ import annotations
 
+import functools
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -34,6 +35,16 @@ from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
 from app.ai.provenance import SOURCE_AI, SOURCE_CLIENT, protected_keys
+from app.ai.runs import (
+    RunContext,
+    RunFailed,
+    Runner,
+    RunOutcome,
+    get_ai_run_runner,
+    refuse_while_running,
+    require_serves,
+    start_run,
+)
 from app.audit import audit
 from app.db.session import get_db
 from app.deliverable_release import release_deliverable
@@ -54,6 +65,7 @@ from app.models.zt_assessment import (
     ZtFramework,
 )
 from app.routes.artifacts import _storage_dep
+from app.schemas.ai_runs import AiRunStarted, RunAiRequest
 from app.schemas.tech_debt import DeliverableResponse
 from app.schemas.zt import (
     CatalogCapability,
@@ -563,6 +575,12 @@ def build_zt_ai_request(db: Session, svc: Service, client: Client) -> ZtAiReques
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Create an assessment first."
         )
+    return _zt_ai_request_for(db, a, client)
+
+
+def _zt_ai_request_for(db: Session, a: ZtAssessment, client: Client) -> ZtAiRequest:
+    """The request for ONE assessment, named by id: the background job (#645)
+    re-loads the assessment its POST validated, never "the latest"."""
     if a.status in (ZtAssessmentStatus.APPROVED, ZtAssessmentStatus.RELEASED):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="This assessment is locked."
@@ -600,8 +618,9 @@ def build_zt_ai_request(db: Session, svc: Service, client: Client) -> ZtAiReques
 
 @router.post(
     "/services/{service_id}/run-ai",
-    response_model=ZtRunAiResponse,
-    summary="Run the zt_score AI job: suggest current + target per capability (admin)",
+    response_model=AiRunStarted,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Start the zt_score AI job in the background; poll the run it returns (admin)",
 )
 def run_ai(
     service_id: uuid.UUID,
@@ -609,25 +628,55 @@ def run_ai(
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],
     llm: Annotated[LLMClient, Depends(_llm_dep)],
+    runner: Annotated[Runner, Depends(get_ai_run_runner)],
     _rl: Annotated[None, Depends(enforce_ai_rate_limit)],
-) -> ZtRunAiResponse:
+    body: RunAiRequest | None = None,
+) -> AiRunStarted:
     """The ZT 'Run AI'. Suggests a current and target maturity level per
     capability, on the framework's own scale. AI suggests; locked rows are
     untouched; code does the pillar roll-up + roadmap.
-    Returns a 'what changed' list.
+
+    #645: answers 202 with a run to poll. The refusals that need no AI are made
+    here, synchronously; the work is `_zt_run_work`, in the background.
     """
+    serves = require_serves(body.serves if body else None)
     svc = require_service_in_tenant(db, service_id, client.id)
     if svc.kind not in _SERVICE_KIND_TO_FRAMEWORK:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Zero Trust service not found."
         )
     req = build_zt_ai_request(db, svc, client)
-    a, rows, locked_keys, max_stage = (
-        req.assessment,
-        req.rows,
-        req.locked_keys,
-        req.max_stage,
+    return start_run(
+        db,
+        llm=llm,
+        serves=serves,
+        service_id=svc.id,
+        client_id=client.id,
+        purpose=req.preview.job_name,
+        subject_id=req.assessment.id,
+        requested_by=user.id,
+        runner=runner,
+        work=functools.partial(_zt_run_work, assessment_id=req.assessment.id),
     )
+
+
+def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID) -> RunOutcome:
+    """The zt_score run, in the background job's own session (#645). Re-loads
+    by id; a refusal becomes the run's FAILED state with the same reason."""
+    db = session
+    a = db.get(ZtAssessment, assessment_id)
+    if a is None or a.status in (
+        ZtAssessmentStatus.DISCARDED,
+        ZtAssessmentStatus.APPROVED,
+        ZtAssessmentStatus.RELEASED,
+    ):
+        raise RunFailed(
+            "assessment_not_editable",
+            "This assessment was discarded or locked before the run started.",
+        )
+    req = _zt_ai_request_for(db, a, db.get(Client, ctx.client_id))
+    rows, max_stage = req.rows, req.max_stage
+    llm = ctx.llm
 
     def _snap() -> dict[str, dict]:
         return {
@@ -635,6 +684,26 @@ def run_ai(
             for code, r in rows.items()
         }
 
+    # A provider failure here must stay typed and leave an llm_calls row.
+    with ai_call_boundary(db, llm, purpose=req.preview.job_name):
+        result = run_job(
+            db,
+            llm,
+            req.preview.job_name,
+            inputs=req.preview.inputs,
+            requested_by=ctx.requested_by,
+            service_id=ctx.service_id,
+            client_id=ctx.client_id,
+            client_org_name=req.preview.client_org_name,
+            name_hints=req.preview.name_hints,
+        )
+    # The provider call is over: keep its `llm_calls` row whatever happens to
+    # the apply. Then read the rows as they are NOW -- an edit that landed while
+    # the model answered must be seen -- and take the PRE-WRITE stamps:
+    # `onupdate=utcnow` stamps every row this job writes.
+    db.commit()
+    edited = frozenset(code for code, r in rows.items() if ctx.edited_since_start(r.updated_at))
+    locked_keys = frozenset(code for code, r in rows.items() if r.locked)
     before = _snap()
 
     # Fixture output must never overwrite what a client submitted (migration
@@ -645,20 +714,6 @@ def run_ai(
         ((code, r.answer_source, r.maturity_stage is not None) for code, r in rows.items()),
         is_fixture=llm.provider.name == "fixture",
     )
-
-    # A provider failure here must stay typed and leave an llm_calls row.
-    with ai_call_boundary(db, llm, purpose=req.preview.job_name):
-        result = run_job(
-            db,
-            llm,
-            req.preview.job_name,
-            inputs=req.preview.inputs,
-            requested_by=user.id,
-            service_id=svc.id,
-            client_id=client.id,
-            client_org_name=req.preview.client_org_name,
-            name_hints=req.preview.name_hints,
-        )
     # `parse_json_object` guarantees a dict or raises (issue #41). The old
     # `else {}` here discarded a whole unwrapped response and reported zero
     # changes, which read as the model agreeing with everything.
@@ -775,6 +830,12 @@ def run_ai(
                 ZtDroppedSuggestion(reason="protected", key=key, values=recognized_values)
             )
             continue
+        if raw_code in edited:
+            # #645: an answer edited after the run started (an edit that checked
+            # the lock before the run existed). Kept, never overwritten, and
+            # itemized like the other by-design skips.
+            dropped.append(ZtDroppedSuggestion(reason="edited", key=key, values=recognized_values))
+            continue
 
         # Provenance follows the VALUE, not the attempt (issue #38), and is
         # settled after the loop from the before/after snapshot — see below.
@@ -872,7 +933,7 @@ def run_ai(
         if after[code] == before[code]:
             continue  # net no-op: agreement, or a duplicate that round-tripped
         row = rows[code]
-        row.answered_by = user.id
+        row.answered_by = ctx.requested_by
         row.answered_at = utcnow()
         if after[code]["maturity_stage"] != before[code]["maturity_stage"]:
             row.answer_source = SOURCE_AI
@@ -910,7 +971,7 @@ def run_ai(
     # model text (#44 constraint 1).
     _log.info(
         "zt_run_ai_suggestions_accounted",
-        service_id=str(svc.id),
+        service_id=str(ctx.service_id),
         assessment_id=str(a.id),
         received=received,
         applied=applied,
@@ -923,31 +984,27 @@ def run_ai(
         action="zt.run_ai",
         target_type="zt_assessment",
         target_id=a.id,
-        actor_user_id=user.id,
+        actor_user_id=ctx.requested_by,
         # Reason codes and value counts only — never a capability code and never
         # model output (#44 constraint 1, Master Spec §12.1). The response
         # carries the verbatim key and value; the durable record does not.
         details={
+            "run_id": str(ctx.run_id),
             "changed_rows": len(diffs),
             "suggestions_received": received,
             "suggestions_applied": applied,
             "dropped_by_reason": dropped_by_reason,
         },
     )
-    db.commit()
-
-    answers_out = [
-        ZtAnswerResponse.model_validate(r, from_attributes=True)
-        for r in sorted(rows.values(), key=lambda r: r.capability_code)
-    ]
-    return ZtRunAiResponse(
+    # No commit: the framework commits this apply with the run's completion.
+    payload = ZtRunAiResponse(
         changed=changes,
-        answers=answers_out,
         suggestions_received=received,
         suggestions_applied=applied,
         dropped=dropped,
         preserved_client_answers=len(protected),
     )
+    return RunOutcome(result=payload.model_dump(mode="json"), applied_count=applied)
 
 
 # ---------------------------------------------------------------------------
@@ -974,6 +1031,7 @@ def create_assessment(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Zero Trust service not found.",
         )
+    refuse_while_running(db, svc.id)  # #645: the edit lock
     framework = _framework_for_kind(svc.kind)
     cat_fw = _to_catalog_framework(framework)
 
@@ -1084,6 +1142,8 @@ def patch_answer(
             detail="Answer not found.",
         )
     a = db.get(ZtAssessment, row.assessment_id)
+    if a is not None:
+        refuse_while_running(db, a.service_id)  # #645: the edit lock
     if a is None or a.status in (
         ZtAssessmentStatus.APPROVED,
         ZtAssessmentStatus.RELEASED,
@@ -1201,6 +1261,8 @@ def patch_self_assessment_answer(
             detail="Answer not found.",
         )
     a = db.get(ZtAssessment, row.assessment_id)
+    if a is not None:
+        refuse_while_running(db, a.service_id)  # #645: the edit lock
     if a is None or a.status != ZtAssessmentStatus.DRAFT:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1245,6 +1307,7 @@ def submit_self_assessment(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Zero Trust service not found.",
         )
+    refuse_while_running(db, svc.id)  # #645: the edit lock
     a = _latest_assessment(db, svc.id)
     if a is None:
         raise HTTPException(
@@ -1332,6 +1395,8 @@ def approve_assessment(
     db: Annotated[Session, Depends(get_db)],
 ) -> ZtAssessmentResponse:
     a = require_zt_assessment_in_tenant(db, assessment_id, client.id)
+    # #645: approving mid-run would approve answers about to change.
+    refuse_while_running(db, a.service_id)
     if a.status == ZtAssessmentStatus.APPROVED:
         return _serialize_assessment(db, a)
     if a.status == ZtAssessmentStatus.RELEASED:
@@ -1740,6 +1805,7 @@ def finalize_zt_deliverable(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Zero Trust service not found.",
         )
+    refuse_while_running(db, svc.id)  # #645: the edit lock
     assessment = _latest_assessment(db, svc.id)
     if assessment is None:
         raise HTTPException(

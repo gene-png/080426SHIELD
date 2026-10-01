@@ -14,6 +14,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
+from tests._ai_runs import run_ai_expecting_failure, zt_run_ai
 
 
 @pytest.fixture()
@@ -82,9 +83,8 @@ def test_zt_run_ai_applies_current_and_target(app_client) -> None:
             ' "executive_summary": "draft", "roadmap_summary": "12-month plan"}'
         ),
     )
-    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    body = r.json()
+    r = zt_run_ai(c, svc_id, h)
+    body = r
     row = next(x for x in body["answers"] if x["capability_code"] == code)
     assert row["maturity_stage"] == 2
     assert row["target_stage"] == 4
@@ -130,8 +130,8 @@ def test_zt_run_ai_clamps_out_of_range_for_dod(app_client) -> None:
         "zt_score",
         LLMResponse('{"capabilities": [{"code": "' + code + '", "current": 3, "target": 4}]}'),
     )
-    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
-    row = next(x for x in r.json()["answers"] if x["capability_code"] == code)
+    r = zt_run_ai(c, svc_id, h)
+    row = next(x for x in r["answers"] if x["capability_code"] == code)
     assert row["maturity_stage"] == 3
     assert row["target_stage"] is None  # 4 rejected for DoD
 
@@ -192,10 +192,10 @@ def test_zt_run_ai_skips_locked(app_client) -> None:
         "zt_score",
         LLMResponse('{"capabilities": [{"code": "' + code + '", "current": 3, "target": 4}]}'),
     )
-    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
-    row = next(x for x in r.json()["answers"] if x["capability_code"] == code)
+    r = zt_run_ai(c, svc_id, h)
+    row = next(x for x in r["answers"] if x["capability_code"] == code)
     assert row["maturity_stage"] is None
-    assert all(ch["capability_code"] != code for ch in r.json()["changed"])
+    assert all(ch["capability_code"] != code for ch in r["changed"])
 
 
 # --------------------------------------------------------------------------- #
@@ -235,9 +235,8 @@ def test_fixture_run_ai_leaves_client_submitted_answers_untouched(app_client) ->
         "zt_score",
         LLMResponse('{"capabilities": [{"code": "' + code + '", "current": 1, "target": 2}]}'),
     )
-    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    body = r.json()
+    r = zt_run_ai(c, svc_id, h)
+    body = r
 
     row = next(x for x in body["answers"] if x["capability_code"] == code)
     assert row["maturity_stage"] == 3, "canned output overwrote a client-submitted answer"
@@ -274,9 +273,8 @@ def test_live_run_ai_may_update_client_answers(app_client, monkeypatch) -> None:
         "zt_score",
         LLMResponse('{"capabilities": [{"code": "' + code + '", "current": 1, "target": 2}]}'),
     )
-    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    body = r.json()
+    r = zt_run_ai(c, svc_id, h, serves="live")
+    body = r
     row = next(x for x in body["answers"] if x["capability_code"] == code)
     assert row["maturity_stage"] == 1
     assert body["preserved_client_answers"] == 0
@@ -308,9 +306,8 @@ def test_live_run_ai_does_not_stamp_ai_provenance_on_a_rejected_suggestion(
         "zt_score",
         LLMResponse('{"capabilities": [{"code": "' + code + '", "current": 9, "target": 9}]}'),
     )
-    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    body = r.json()
+    r = zt_run_ai(c, svc_id, h, serves="live")
+    body = r
 
     row = next(x for x in body["answers"] if x["capability_code"] == code)
     assert row["maturity_stage"] == 3, "a rejected suggestion changed the value"
@@ -359,9 +356,8 @@ def test_live_run_ai_agreeing_with_the_client_does_not_claim_authorship(
         "zt_score",
         LLMResponse('{"capabilities": [{"code": "' + code + '", "current": 3, "target": 4}]}'),
     )
-    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    body = r.json()
+    r = zt_run_ai(c, svc_id, h, serves="live")
+    body = r
 
     row = next(x for x in body["answers"] if x["capability_code"] == code)
     assert row["maturity_stage"] == 3
@@ -407,9 +403,8 @@ def test_live_run_ai_duplicate_codes_that_round_trip_do_not_claim_authorship(
             '{"code": "' + code + '", "current": 3}]}'
         ),
     )
-    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    body = r.json()
+    r = zt_run_ai(c, svc_id, h, serves="live")
+    body = r
 
     row = next(x for x in body["answers"] if x["capability_code"] == code)
     assert row["maturity_stage"] == 3, "the round trip should net to the client's value"
@@ -452,9 +447,8 @@ def test_live_run_ai_drops_an_out_of_range_value_but_applies_its_sibling(
         "zt_score",
         LLMResponse('{"capabilities": [{"code": "' + code + '", "current": 9, "target": 3}]}'),
     )
-    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    body = r.json()
+    r = zt_run_ai(c, svc_id, h, serves="live")
+    body = r
 
     row = next(x for x in body["answers"] if x["capability_code"] == code)
     assert row["maturity_stage"] is None, "an out-of-range current must not apply"
@@ -485,9 +479,8 @@ def test_live_run_ai_does_stamp_ai_provenance_when_it_changes_a_stage(
         "zt_score",
         LLMResponse('{"capabilities": [{"code": "' + code + '", "current": 3, "target": 4}]}'),
     )
-    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    body = r.json()
+    r = zt_run_ai(c, svc_id, h, serves="live")
+    body = r
 
     row = next(x for x in body["answers"] if x["capability_code"] == code)
     assert row["maturity_stage"] == 3
@@ -533,9 +526,9 @@ def test_a_malformed_response_does_not_500_and_changes_nothing(app_client, monke
         '{"capabilities": [{"code": "NOPE-1", "current": 2}]}',  # unknown code
     ):
         provider.register_static("zt_score", LLMResponse(payload))
-        r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
-        assert r.status_code == 200, f"{payload} -> {r.status_code} {r.text}"
-        assert r.json()["changed"] == [], f"{payload} should change nothing"
+        # #645: the provider looks live here, so the run acknowledges live.
+        r = zt_run_ai(c, svc_id, h, serves="live")
+        assert r["changed"] == [], f"{payload} should change nothing"
 
     # A NON-LIST `capabilities` moved out of the loop above, because it is no
     # longer a 200. This is a deliberate behaviour change, not a test bent to
@@ -548,10 +541,10 @@ def test_a_malformed_response_does_not_500_and_changes_nothing(app_client, monke
     # is wrong: there are no entries to enumerate, so any per-entry number would
     # be invented.
     provider.register_static("zt_score", LLMResponse('{"capabilities": 0}'))
-    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 502, r.text
-    assert r.json()["error"]["reason"] == "ai_call_failed"
-    assert "drifted apart" in r.json()["error"]["message"]
+    # #645: the typed 502 is now the FAILED run's reason and message.
+    run = run_ai_expecting_failure(c, f"/zt/services/{svc_id}/run-ai", h, serves="live")
+    assert run["error_reason"] == "ai_call_failed"
+    assert "drifted apart" in run["error_message"]
 
     from app.models.zt_assessment import ZtAnswer
 
@@ -580,9 +573,12 @@ def _run_ai_caps(c, provider, h, svc_id: str, caps: list) -> dict:
     import json as _json
 
     provider.register_static("zt_score", LLMResponse(_json.dumps({"capabilities": caps})))
-    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    return r.json()
+    # #645 / #504: the run carries what the consultant acknowledged, which is
+    # what the provider serves. A test that makes the provider look live
+    # acknowledged live; acknowledging offline over it is refused.
+    serves = "offline" if provider.name == "fixture" else "live"
+    r = zt_run_ai(c, svc_id, h, serves=serves)
+    return r
 
 
 def _assert_invariant(body: dict) -> None:
@@ -1094,9 +1090,8 @@ def test_zt_run_ai_unencodable_code_does_not_500_after_committing(app_client) ->
             + '", "current": 2}]}'
         ),
     )
-    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    body = r.json()
+    r = zt_run_ai(c, svc_id, h)
+    body = r
 
     # The sibling entry still applied, and the run is reportable.
     assert _answer(body, code)["maturity_stage"] == 2
@@ -1125,9 +1120,8 @@ def test_zt_run_ai_control_characters_in_a_code_are_escaped(app_client) -> None:
         "zt_score",
         LLMResponse('{"capabilities": [{"code": "' + bidi + 'DEILPPA", "current": 1}]}'),
     )
-    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    d = _only_dropped(r.json())
+    r = zt_run_ai(c, svc_id, h)
+    d = _only_dropped(r)
     # The override is shown as its escape, not applied to the consultant's line.
     assert "\\u202e" in d["key"], d
     assert d["key"].isprintable(), d

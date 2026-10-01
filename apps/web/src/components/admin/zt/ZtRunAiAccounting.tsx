@@ -46,6 +46,8 @@ const DROP_REASON_LABEL: Record<ZtDroppedSuggestion["reason"], string> = {
   superseded: "overwritten by a later suggestion for the same field",
   locked: "row is locked",
   protected: "answer was not written by the AI, and an offline run left it",
+  // #645: an edit that landed after the run started is kept, never overwritten.
+  edited: "answer was edited after this run started, so the run left it",
 };
 
 /**
@@ -57,7 +59,12 @@ const DROP_REASON_LABEL: Record<ZtDroppedSuggestion["reason"], string> = {
  * NOT merged into one label, because telling a consultant a row is "locked"
  * when nobody locked it is a false statement about who did what.
  */
-const BY_DESIGN_SKIPS: ReadonlySet<string> = new Set(["locked", "protected"]);
+// `edited` joined it with #645.
+const BY_DESIGN_SKIPS: ReadonlySet<string> = new Set([
+  "locked",
+  "protected",
+  "edited",
+]);
 
 /**
  * Reasons that mean "we did not understand this", not "we lost a value you

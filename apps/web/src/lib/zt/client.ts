@@ -1,6 +1,13 @@
 "use client";
 
 import type {
+  AiRun,
+  AiRunStarted,
+  AiRunSummary,
+  AiServes,
+} from "@/lib/aiRuns/types";
+
+import type {
   GapAnalysis,
   ZtAnswer,
   ZtAnswerPatch,
@@ -135,10 +142,31 @@ export async function submitSelfAssessment(
   );
 }
 
-export async function runZtAi(serviceId: string): Promise<ZtRunAiResponse> {
-  return jsonRequest<ZtRunAiResponse>(
+/**
+ * Start a Run-AI (#645): answers with the run to follow; its result arrives on
+ * the run. `serves` is what the consultant acknowledged (#504).
+ */
+export async function runZtAi(
+  serviceId: string,
+  serves: AiServes,
+): Promise<AiRunStarted> {
+  return jsonRequest<AiRunStarted>(
     `/api/proxy/zt/services/${serviceId}/run-ai`,
-    { method: "POST" },
+    { method: "POST", body: { serves } },
+  );
+}
+
+export type ZtRun = AiRun<ZtRunAiResponse>;
+
+export async function fetchZtRun(runId: string): Promise<ZtRun> {
+  return jsonRequest<ZtRun>(`/api/proxy/ai/runs/${runId}`);
+}
+
+export async function fetchZtRunSummary(
+  serviceId: string,
+): Promise<AiRunSummary<ZtRunAiResponse>> {
+  return jsonRequest<AiRunSummary<ZtRunAiResponse>>(
+    `/api/proxy/ai/runs/services/${serviceId}`,
   );
 }
 

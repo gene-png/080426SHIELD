@@ -32,7 +32,6 @@ function headline(container: HTMLElement): string {
 function result(over: Partial<ZtRunAiResponse> = {}): ZtRunAiResponse {
   return {
     changed: [],
-    answers: [],
     suggestions_received: 0,
     suggestions_applied: 0,
     dropped: [],

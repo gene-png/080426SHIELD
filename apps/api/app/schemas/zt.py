@@ -269,6 +269,7 @@ class ZtDroppedSuggestion(BaseModel):
     | `superseded`   | a later entry in the same response overwrote this value  |
     | `locked`       | a human locked the row — a by-design skip, not a defect  |
     | `protected`    | an offline run declined to overwrite a non-AI answer     |
+    | `edited`       | the answer was edited after the run started (#645)       |
 
     `locked` and `protected` render separately from the rest. Both are by-design
     skips; folding them into one "N dropped" number rebuilds the alert-fatigue
@@ -291,6 +292,7 @@ class ZtDroppedSuggestion(BaseModel):
         "superseded",
         "locked",
         "protected",
+        "edited",
     ]
     # The capability code as the model wrote it (escaped and bounded), or None
     # when the model omitted it — never the literal "None", which fabricates a
@@ -318,7 +320,9 @@ class ZtDroppedSuggestion(BaseModel):
 
 
 class ZtRunAiResponse(BaseModel):
-    """Result of a zt_score Run-AI: what changed + the refreshed answers.
+    """What a zt_score Run-AI did: stored as `ai_runs.result` (#645), so it
+    survives a reload. The refreshed answers are not carried; the workspace
+    re-reads the assessment.
 
     `pillar_narratives`, `executive_summary` and `roadmap_summary` were removed
     in W1's ZT step (issue #64): all three were returned and none was ever
@@ -328,7 +332,6 @@ class ZtRunAiResponse(BaseModel):
     """
 
     changed: list[ZtCapabilityChange]
-    answers: list[ZtAnswerResponse]
     # Every suggested value the run received is either applied or itemized:
     #     received == applied + sum(d.values for d in dropped)
     # Counted in VALUES (one field on one capability), not entries — D-045.

@@ -109,7 +109,8 @@ export interface ZtDroppedSuggestion {
     | "out_of_range"
     | "superseded"
     | "locked"
-    | "protected";
+    | "protected"
+    | "edited";
   /** The capability code exactly as the model wrote it, or null. */
   key: string | null;
   /** "current" or "target", for drops attributable to one value. */
@@ -120,9 +121,13 @@ export interface ZtDroppedSuggestion {
   value?: unknown;
 }
 
+/**
+ * What a zt_score Run-AI did: the run's stored `result` since #645, read from
+ * the run so it survives a reload. The answers are not carried; the workspace
+ * re-reads the assessment.
+ */
 export interface ZtRunAiResponse {
   changed: ZtCapabilityChange[];
-  answers: ZtAnswer[];
   /**
    * received === applied + sum(d.values for d in dropped). Counted in VALUES
    * (one field on one capability), not entries — D-045.
