@@ -221,6 +221,22 @@ describe("CsfSelfAssessment: Submit and an in-flight answer save (#758)", () => 
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("does not let an OLDER save's refusal land over the same row's newer, accepted save", async () => {
+    // Two saves of one row; the newer is accepted first, then the older one
+    // is refused. The row's state is the newer save's, so nothing is shown.
+    await mount();
+    await editNotes("GV.OC-01", "first");
+    await editNotes("GV.OC-01", "second");
+    expect(held).toHaveLength(2);
+    await act(async () => {
+      held[1].resolve(answer("ans1", "GV.OC-01", "second"));
+    });
+    await act(async () => {
+      held[0].reject(NOT_EDITABLE());
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("says the outcome is unknown for an unanswered save, and lets Submit through after it", async () => {
     const submit = await mount();
     await editNotes("GV.OC-01", "maybe saved");
