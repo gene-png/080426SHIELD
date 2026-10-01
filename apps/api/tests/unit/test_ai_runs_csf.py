@@ -143,7 +143,17 @@ def test_a_csf_run_stores_its_accounting_on_the_run(world) -> None:
     assert result["suggestions_applied"] == 4
     assert result["dropped"] == []
     assert run["applied_count"] == 4
-    assert "rows" not in result, "the rows are the profile's to report, not the run's"
+    from app.schemas.csf import CsfRunAiResponse
+
+    # Derived from the schema, never hand-listed: `CsfRunAiResponse` was the
+    # synchronous route's `response_model` and is now the run result's model,
+    # so every key it declares must be on the stored result. A field dropped
+    # from the result fails here instead of silently shrinking what the
+    # migrated assertions can see.
+    assert set(result) == set(CsfRunAiResponse.model_fields), set(result) ^ set(
+        CsfRunAiResponse.model_fields
+    )
+    assert len(result["rows"]) == len(world.rows)
     assert world.row(world.rows[0]["id"]).governance == 2
 
 

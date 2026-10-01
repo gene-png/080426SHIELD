@@ -273,12 +273,13 @@ export interface CsfDroppedSuggestion {
 }
 
 /**
- * What a csf_score Run-AI did: the run's stored `result` since #645, read from
- * the run so it survives a reload. The rows are not carried; the panel
- * re-reads the profile.
+ * What a csf_score Run-AI did: the run's stored `result` since #645, every
+ * field the synchronous response carried, read from the run so it survives a
+ * reload.
  */
 export interface CsfRunAiResponse {
   changed: CsfDimensionChange[];
+  rows: CsfDimensionScore[];
   /** Counted in suggested VALUES (one field on one row), not entries. */
   suggestions_received: number;
   suggestions_applied: number;

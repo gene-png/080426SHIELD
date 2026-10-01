@@ -172,7 +172,10 @@ def _charged_likely(db: Session, run_id: uuid.UUID) -> bool:
 def _fail_if_running(
     db: Session, run_id: uuid.UUID, *, reason: str, message: str, charged_likely: bool | None
 ) -> bool:
-    """End a run FAILED, only if it is still RUNNING. Returns whether it did."""
+    """End a run FAILED, only if it is still RUNNING. Returns whether it did.
+
+    A compare-and-swap, never a read-then-write: a run that COMPLETED between
+    the caller's read and this UPDATE matches nothing and stands."""
     res = db.execute(
         update(AiRun)
         .where(AiRun.id == run_id, AiRun.status == AiRunStatus.RUNNING)
@@ -235,6 +238,7 @@ def reap(db: Session, *, service_id: uuid.UUID, purpose: str | None = None) -> N
         if cause is None:
             continue
         reason, message = cause
+        _between_reap_read_and_update()
         if _fail_if_running(
             db,
             run.id,
@@ -257,7 +261,18 @@ def reap(db: Session, *, service_id: uuid.UUID, purpose: str | None = None) -> N
 
 
 def running_run(db: Session, *, service_id: uuid.UUID, purpose: str | None = None) -> AiRun | None:
-    """The run holding this service's lock, after reaping any that cannot."""
+    """The run holding this service's lock, after reaping any that cannot.
+
+    EVERY surface that shows or acts on "a run is in progress" goes through
+    here (the POST, the edit lock, both status reads), so none can report or
+    honour a run no job will finish.
+
+    PRECONDITION: ONE api process. "No job will finish it" is decided by asking
+    THIS process (its boot id, its live set). True today -- compose runs
+    `uvicorn --reload` and the Dockerfile sets no `--workers` -- and false the
+    day the api runs several workers, each of which would reap its siblings'
+    live runs. That deploy needs a shared liveness signal first.
+    """
     reap(db, service_id=service_id, purpose=purpose)
     q = select(AiRun).where(AiRun.service_id == service_id, AiRun.status == AiRunStatus.RUNNING)
     if purpose is not None:
@@ -440,6 +455,10 @@ def _execute(bind: Engine | Connection, ctx: RunContext, work: Work) -> None:
         if not isinstance(exc, Exception):
             raise  # KeyboardInterrupt / SystemExit are the process's, not the run's
     finally:
+        # ORDER: out of the live set only AFTER the terminal commit above. A
+        # status read in a gap between the two would find a RUNNING run this
+        # process "is not executing" and reap a run that is about to complete.
+        # (The completion CAS is the backstop; this ordering is the guard.)
         session.close()
         _mark_done(ctx.run_id)
 
@@ -447,6 +466,11 @@ def _execute(bind: Engine | Connection, ctx: RunContext, work: Work) -> None:
 # ---------------------------------------------------------------------------
 # Start
 # ---------------------------------------------------------------------------
+
+#: Called between the reaper's read of a run and its compare-and-swap. Exists
+#: so a test can land a completion in that window and prove the CAS lets it
+#: stand.
+_between_reap_read_and_update: Callable[[], None] = lambda: None  # noqa: E731
 
 #: Called between the "is a run in progress" read and the insert. Exists so a
 #: test can commit a competing run in that window and drive the savepoint
@@ -565,6 +589,8 @@ def start_run(
     except IntegrityError:
         # A concurrent first POST inserted its run between our read and our
         # insert, and the unique index refused ours. Join it, or refuse it.
+        # A plain read, not `running_run`: this row was committed after our own
+        # reap, by a POST that marks its run live before committing it.
         _log.info("ai_runs.insert_lost_race", service_id=str(service_id), purpose=purpose)
         winner = db.execute(
             select(AiRun).where(
@@ -574,7 +600,16 @@ def start_run(
             )
         ).scalar_one()
         return _join_or_refuse(winner, serves, subject_id)
-    db.commit()
+    # Live BEFORE the commit makes the row visible: a status read in another
+    # request that sees the committed RUNNING row must find it live, or it
+    # reaps a run whose job has not been handed to the runner yet. Undone if
+    # the commit fails, so a row that never existed is never "live".
+    _mark_live(run.id)
+    try:
+        db.commit()
+    except BaseException:
+        _mark_done(run.id)
+        raise
 
     ctx = RunContext(
         run_id=run.id,
@@ -587,9 +622,6 @@ def start_run(
         llm=llm,
         extra=extra or {},
     )
-    # Live BEFORE the 202 leaves: a poll that beats the background task to the
-    # start must not find a RUNNING run this process "is not executing".
-    _mark_live(run.id)
     job_context = contextvars.copy_context()
     runner(functools.partial(job_context.run, _execute, db.get_bind(), ctx, work))
     _log.info(

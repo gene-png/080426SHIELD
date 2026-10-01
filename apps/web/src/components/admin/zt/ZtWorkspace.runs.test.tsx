@@ -87,6 +87,7 @@ function draft(): ZtAssessment {
 function result(over: Partial<ZtRunAiResponse> = {}): ZtRunAiResponse {
   return {
     changed: [],
+    answers: [],
     suggestions_received: 3,
     suggestions_applied: 2,
     dropped: [{ reason: "edited", key: "ID.1", field: null, values: 1 }],

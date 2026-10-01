@@ -429,9 +429,9 @@ class CsfDroppedSuggestion(BaseModel):
 
 
 class CsfRunAiResponse(BaseModel):
-    """What a csf_score Run-AI did: stored as `ai_runs.result` (#645), so it
-    survives a reload. The refreshed rows are not carried; the workspace
-    re-reads the profile.
+    """What a csf_score Run-AI did, with the refreshed rows. Stored as
+    `ai_runs.result` (#645), every field the synchronous response carried, so
+    it survives a reload.
 
     The counts are in units of ONE SUGGESTED VALUE — one field the model asked
     to set on one row — and satisfy, for every response that parsed:
@@ -444,6 +444,7 @@ class CsfRunAiResponse(BaseModel):
     """
 
     changed: list[CsfDimensionChange]
+    rows: list[CsfDimensionScoreResponse]
     suggestions_received: int = 0
     suggestions_applied: int = 0
     dropped: list[CsfDroppedSuggestion] = []

@@ -163,11 +163,13 @@ export function IntakeDocumentsPanel({
                       <RunAiGuard
                         onProceed={(serves) => onExtract(a.id, serves)}
                       >
-                        {({ onClick }) => (
+                        {({ onClick, statusUnknown }) => (
                           <button
                             type="button"
                             onClick={onClick}
-                            disabled={extracting || extractBlocked}
+                            disabled={
+                              extracting || extractBlocked || statusUnknown
+                            }
                             className="rounded-md bg-brand-500 px-3 py-1.5 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             {extracting ? "Extracting…" : "Extract from this"}

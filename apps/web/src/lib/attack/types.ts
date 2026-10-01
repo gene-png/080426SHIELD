@@ -141,12 +141,13 @@ export interface CoverageChange {
 
 /**
  * What a mitre_map Run-AI did. Since #645 this is the run's stored `result`,
- * read from the run rather than from the POST, which is what lets it survive a
- * reload (#271). It carries no coverage: the workspace re-reads the assessment.
+ * every field the synchronous response carried, read from the run rather than
+ * from the POST, which is what lets it survive a reload (#271).
  */
 export interface AttackRunAiResponse {
   tools_available: number;
   changed: CoverageChange[];
+  coverage: AttackCoverageRow[];
   // mitre_map runs as concurrent batches. Returned by the API since D-048 and
   // RENDERED since #115 by `AttackCitationAccounting`, which raises a
   // role=alert on a partial run. Was a known gap when this was written.

@@ -2248,6 +2248,10 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
     # No commit: the framework commits this apply with the run's completion.
     payload = CsfRunAiResponse(
         changed=changes,
+        rows=[
+            _score_response(r)
+            for r in sorted(rows.values(), key=lambda r: (r.tier, r.subcategory_code))
+        ],
         suggestions_received=received,
         suggestions_applied=applied,
         dropped=dropped,

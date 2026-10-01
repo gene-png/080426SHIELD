@@ -18,6 +18,7 @@ function result(over: Partial<AttackRunAiResponse> = {}): AttackRunAiResponse {
   return {
     tools_available: 3,
     changed: [],
+    coverage: [],
     citations_confirmed: 0,
     citations_needs_review: 0,
     citations_rejected: 0,
@@ -325,7 +326,9 @@ describe("AttackCitationAccounting", () => {
     // A stored payload with none of these fields never measured citations.
     // Rendering "0 citations" over it would assert something the run did not do.
     const { container } = render(
-      <AttackCitationAccounting result={{ tools_available: 3, changed: [] }} />,
+      <AttackCitationAccounting
+        result={{ tools_available: 3, changed: [], coverage: [] }}
+      />,
     );
     expect(container).toBeEmptyDOMElement();
   });

@@ -958,12 +958,14 @@ export function ZtWorkspace({
                   fixture run here silently overwrote a real client
                   self-assessment in the 2026-08-04 review. */}
               <RunAiGuard onProceed={(serves) => void onRunAi(serves)}>
-                {({ onClick }) => (
+                {({ onClick, statusUnknown }) => (
                   <div>
                     <button
                       type="button"
                       onClick={onClick}
                       disabled={
+                        // #645: an unreadable AI status fails closed.
+                        statusUnknown ||
                         busy !== null ||
                         readOnly ||
                         runInProgress ||

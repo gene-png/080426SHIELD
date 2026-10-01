@@ -173,6 +173,7 @@ describe("ZtWorkspace, a Run AI whose outcome is unknown (#550)", () => {
       status: "completed",
       result: {
         changed: [],
+        answers: [],
         suggestions_received: 0,
         suggestions_applied: 0,
         dropped: [],

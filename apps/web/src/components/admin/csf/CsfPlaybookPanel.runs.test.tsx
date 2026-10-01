@@ -85,6 +85,7 @@ function run(over: Partial<CsfRun> = {}): CsfRun {
 function result(over: Partial<CsfRunAiResponse> = {}): CsfRunAiResponse {
   return {
     changed: [],
+    rows: [],
     suggestions_received: 6,
     suggestions_applied: 5,
     dropped: [

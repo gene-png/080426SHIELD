@@ -2312,6 +2312,7 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
     result_payload = AttackRunAiResponse(
         tools_available=len(tools),
         changed=changes,
+        coverage=_serialize_coverage(rows.values(), parents_computed=parents_computed(a)),
         batches_total=batches_total,
         batches_failed=batches_failed,
         citations_confirmed=citations.confirmed,

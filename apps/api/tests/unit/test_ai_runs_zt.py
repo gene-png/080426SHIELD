@@ -120,7 +120,17 @@ def test_a_zt_run_stores_its_accounting_on_the_run(world) -> None:
     result = run["result"]
     assert (result["suggestions_received"], result["suggestions_applied"]) == (2, 2)
     assert run["applied_count"] == 2
-    assert "answers" not in result, "the answers are the assessment's to report, not the run's"
+    from app.schemas.zt import ZtRunAiResponse
+
+    # Derived from the schema, never hand-listed: `ZtRunAiResponse` was the
+    # synchronous route's `response_model` and is now the run result's model,
+    # so every key it declares must be on the stored result. A field dropped
+    # from the result fails here instead of silently shrinking what the
+    # migrated assertions can see.
+    assert set(result) == set(ZtRunAiResponse.model_fields), set(result) ^ set(
+        ZtRunAiResponse.model_fields
+    )
+    assert len(result["answers"]) == len(world.answers)
     assert world.answer(world.answers[0]["id"]).maturity_stage == 2
 
 

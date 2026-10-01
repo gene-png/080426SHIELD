@@ -377,6 +377,19 @@ def test_a_run_applies_its_results_and_records_every_disclosure(app_parts) -> No
         assert key in run["result"], key
     assert run["result"]["citations_confirmed"] == len(w.codes)
     assert all(w.row(code).status == "covered" for code in w.codes)
+    from app.schemas.attack import AttackRunAiResponse
+
+    # Derived from the schema, never hand-listed: `AttackRunAiResponse` was the
+    # synchronous route's `response_model` and is now the run result's model,
+    # so every key it declares must be on the stored result. A field dropped
+    # from the result fails here instead of silently shrinking what the
+    # migrated assertions can see.
+    result = run["result"]
+    assert set(result) == set(AttackRunAiResponse.model_fields), set(result) ^ set(
+        AttackRunAiResponse.model_fields
+    )
+    covered = {c["technique_code"] for c in result["coverage"] if c["status"] == "covered"}
+    assert covered >= set(w.codes)
 
 
 @pytest.mark.unit
@@ -679,3 +692,65 @@ def test_a_later_failure_does_not_hide_the_last_run_whose_results_stand(app_part
     assert summary["latest"]["status"] == "failed"
     assert summary["last_completed"]["id"] == first["run_id"]
     assert summary["last_completed"]["result"]["citations_confirmed"] == len(w.codes)
+
+
+@pytest.mark.unit
+def test_a_completion_landing_between_the_reapers_read_and_its_update_stands(
+    app_parts, monkeypatch
+) -> None:
+    """The reap is a compare-and-swap on RUNNING. A run that COMPLETED after
+    the reaper read it as an orphan, and before its UPDATE, must not be
+    overwritten FAILED."""
+    import app.ai.runs as runs
+
+    w, _runner = _deferred(app_parts)
+    with w.sessions() as s:
+        run = _competing_run(w, mode=LLMCallMode.FIXTURE)
+        run.boot_id = "a-previous-process"
+        s.add(run)
+        s.commit()
+        run_id = run.id
+    fired: list[str] = []
+
+    def complete_meanwhile() -> None:
+        fired.append("completed")
+        with w.sessions() as other:
+            other.execute(
+                update(AiRun)
+                .where(AiRun.id == run_id)
+                .values(status=AiRunStatus.COMPLETED, result={"landed": True})
+            )
+            other.commit()
+
+    monkeypatch.setattr(runs, "_between_reap_read_and_update", complete_meanwhile)
+    summary = w.c.get(f"/ai-runs/services/{w.svc_id}", headers=w.h).json()
+    assert fired == ["completed"], "the race was not exercised"
+    assert summary["running"] is None
+    assert (summary["latest"]["status"], summary["latest"]["error_reason"]) == (
+        "completed",
+        None,
+    ), summary["latest"]
+    assert summary["latest"]["result"] == {"landed": True}
+
+
+@pytest.mark.unit
+def test_the_job_leaves_the_live_set_only_after_its_terminal_commit(app_parts, monkeypatch) -> None:
+    """Out of the live set before the commit, a status read in the gap would
+    reap a run about to complete. Pinned by reading the run's stored status,
+    on another connection, at the moment the job leaves the live set."""
+    import app.ai.runs as runs
+
+    w, runner = _deferred(app_parts)
+    real_done = runs._mark_done
+    seen: list[str] = []
+
+    def record_then_leave(run_id: uuid.UUID) -> None:
+        with w.sessions() as other:
+            seen.append(other.get(AiRun, run_id).status.value)
+        real_done(run_id)
+
+    monkeypatch.setattr(runs, "_mark_done", record_then_leave)
+    started = start_run(w.c, w.run_url, w.h)
+    assert runner.run_all() == 1
+    assert seen == ["completed"], seen
+    assert get_run(w.c, started["run_id"], w.h)["status"] == "completed"

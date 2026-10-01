@@ -716,7 +716,7 @@ describe("AttackWorkspace, the parent re-read after round 3 (#620)", () => {
       run.resolve({
         id: "run-r3b",
         status: "completed",
-        result: { tools_available: 1, changed: [] },
+        result: { tools_available: 1, changed: [], coverage: [] },
       } as unknown as Awaited<ReturnType<typeof attackClient.fetchAttackRun>>),
     );
     await vi.waitFor(() =>
@@ -724,6 +724,63 @@ describe("AttackWorkspace, the parent re-read after round 3 (#620)", () => {
     );
     expect(readsBeforeRunEnds).toBe(1);
   });
+
+  it("does not let a re-read taken while the run still polls RUNNING overwrite the run", async () => {
+    // #645, the coordinator's case: a poll comes back RUNNING (the run is not
+    // over) after the edit landed. The write is still open, so the edit's
+    // re-read must still wait for the run's own re-pull.
+    fetchCatalog.mockResolvedValue(FAMILY_CATALOG);
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+    const preRun = snapshot([parent, child]);
+    const postRun = snapshot([
+      { ...parent, notes: "ran" },
+      { ...child, notes: "ran" },
+    ]);
+    fetchLatestAssessment.mockResolvedValue(preRun);
+    const edit = deferred<Patched>();
+    const finalPoll =
+      deferred<Awaited<ReturnType<typeof attackClient.fetchAttackRun>>>();
+    patchCoverage.mockReturnValueOnce(edit.promise);
+    runAttackAi.mockResolvedValueOnce({
+      run_id: "run-r3c",
+      status: "running",
+      serves: "offline",
+      deadline_at: "2026-10-01T12:45:00Z",
+      joined: false,
+    });
+    vi.mocked(attackClient.fetchAttackRun)
+      .mockResolvedValueOnce({
+        id: "run-r3c",
+        status: "running",
+        deadline_at: "2026-10-01T12:45:00Z",
+        result: null,
+      } as unknown as Awaited<ReturnType<typeof attackClient.fetchAttackRun>>)
+      .mockReturnValueOnce(finalPoll.promise);
+    render(<AttackWorkspace serviceId="svc-r3c" serviceTitle="ATT&CK" />);
+    fireEvent.click(await screen.findByText("select sub-technique"));
+    fireEvent.click(screen.getByText("set gap"));
+    fireEvent.click(screen.getByText("Run AI"));
+    await act(async () =>
+      edit.resolve({ ...child, status: "gap" } as unknown as Patched),
+    );
+    // The second poll is out: the first came back RUNNING after the edit.
+    await vi.waitFor(
+      () => expect(attackClient.fetchAttackRun).toHaveBeenCalledTimes(2),
+      { timeout: 6000 },
+    );
+    expect(fetchLatestAssessment.mock.calls.length).toBe(1);
+    fetchLatestAssessment.mockResolvedValue(postRun);
+    await act(async () =>
+      finalPoll.resolve({
+        id: "run-r3c",
+        status: "completed",
+        result: { tools_available: 1, changed: [], coverage: [] },
+      } as unknown as Awaited<ReturnType<typeof attackClient.fetchAttackRun>>),
+    );
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("panel-notes")).toHaveTextContent("ran"),
+    );
+  }, 15000);
 });
 
 describe("AttackWorkspace, a refused approve (#622 round 1)", () => {

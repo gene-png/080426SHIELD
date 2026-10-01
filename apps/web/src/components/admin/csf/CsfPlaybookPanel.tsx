@@ -594,11 +594,13 @@ export function CsfPlaybookPanel({
             ) : (
               /* Issue 2: warn before producing canned output when offline. */
               <RunAiGuard onProceed={(serves) => void onRunAi(serves)}>
-                {({ onClick }) => (
+                {({ onClick, statusUnknown }) => (
                   <button
                     type="button"
                     onClick={onClick}
                     disabled={
+                      // #645: an unreadable AI status fails closed.
+                      statusUnknown ||
                       busy !== null ||
                       readOnly ||
                       runInProgress ||

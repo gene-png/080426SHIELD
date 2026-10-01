@@ -62,15 +62,33 @@ def get_run(c: TestClient, run_id: str, headers: dict) -> dict:
     return r.json()
 
 
+def _fail_unless(run: dict, status: str, started: dict) -> None:
+    """Loud, with everything a reader needs: which run, how it ended, why."""
+    assert (
+        run["id"] == started["run_id"]
+    ), f"polled run {run['id']} is not the run the 202 returned ({started['run_id']})"
+    assert run["status"] == status, (
+        f"run {run['id']} ended {run['status']!r}, expected {status!r}: "
+        f"error_reason={run['error_reason']!r} error_message={run['error_message']!r} "
+        f"result={run['result']!r}"
+    )
+
+
 def run_ai_and_wait(
     c: TestClient, url: str, headers: dict, *, serves: str = "offline", **kwargs: Any
 ) -> dict:
-    """POST a Run-AI through the production runner and return the COMPLETED
-    run's `result`. Fails loudly, with the run, if it ended any other way."""
+    """POST a Run-AI and return the COMPLETED run's `result`.
+
+    RELIES ON THE PRODUCTION RUNNER: FastAPI's `BackgroundTasks`, which
+    Starlette's TestClient runs before `post()` returns, so the run has ended
+    by the time it is read here. Do not use it with a `DeferringRunner`
+    installed -- the run would still be RUNNING, and this fails loudly saying
+    so. Never returns a partial result or None.
+    """
     started = start_run(c, url, headers, serves=serves, **kwargs)
     run = get_run(c, started["run_id"], headers)
-    assert run["status"] == "completed", run
-    assert run["result"] is not None, run
+    _fail_unless(run, "completed", started)
+    assert isinstance(run["result"], dict), f"completed run {run['id']} has no result: {run!r}"
     return run["result"]
 
 
@@ -82,19 +100,14 @@ def run_ai_expecting_failure(
     `charged_likely` are on the run instead."""
     started = start_run(c, url, headers, serves=serves, **kwargs)
     run = get_run(c, started["run_id"], headers)
-    assert run["status"] == "failed", run
+    _fail_unless(run, "failed", started)
     return run
 
 
 def attack_run_ai(c: TestClient, svc_id: str, headers: dict, **kwargs: Any) -> dict:
-    """An ATT&CK Run-AI, driven to completion: the run's `result`, plus the
-    assessment's coverage as it stands after the run. The synchronous response
-    carried `coverage`; the run does not (the workspace re-reads the
-    assessment), so the helper reads it the same way the workspace does."""
-    result = run_ai_and_wait(c, f"/attack/services/{svc_id}/run-ai", headers, **kwargs)
-    latest = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=headers)
-    assert latest.status_code == 200, latest.text
-    return {**result, "coverage": latest.json()["coverage"]}
+    """An ATT&CK Run-AI, driven to completion: the run's `result`, which
+    carries every field the synchronous response did, `coverage` included."""
+    return run_ai_and_wait(c, f"/attack/services/{svc_id}/run-ai", headers, **kwargs)
 
 
 def tech_debt_extract(
@@ -119,26 +132,12 @@ def tech_debt_extract(
 
 
 def csf_run_ai(c: TestClient, svc_id: str, headers: dict, **kwargs: Any) -> dict:
-    """A CSF Run-AI, driven to completion: the run's `result`, plus every
-    profile row as it stands afterwards, read the way the workspace reads them.
-    The synchronous response carried `rows`; the run does not."""
-    from app.csf.playbook import Tier
-
-    result = run_ai_and_wait(c, f"/csf/services/{svc_id}/run-ai", headers, **kwargs)
-    rows: list[dict] = []
-    for tier in sorted(t.value for t in Tier):
-        r = c.get(f"/csf/services/{svc_id}/profile/{tier}", headers=headers)
-        assert r.status_code == 200, r.text
-        rows.extend(r.json()["rows"])
-    return {**result, "rows": rows}
+    """A CSF Run-AI, driven to completion: the run's `result`, which carries
+    every field the synchronous response did, `rows` included."""
+    return run_ai_and_wait(c, f"/csf/services/{svc_id}/run-ai", headers, **kwargs)
 
 
 def zt_run_ai(c: TestClient, svc_id: str, headers: dict, **kwargs: Any) -> dict:
-    """A ZT Run-AI, driven to completion: the run's `result`, plus the
-    assessment's answers as they stand afterwards. The synchronous response
-    carried `answers`; the run does not."""
-    result = run_ai_and_wait(c, f"/zt/services/{svc_id}/run-ai", headers, **kwargs)
-    latest = c.get(f"/zt/services/{svc_id}/assessments/latest", headers=headers)
-    assert latest.status_code == 200, latest.text
-    answers = sorted(latest.json()["answers"], key=lambda a: a["capability_code"])
-    return {**result, "answers": answers}
+    """A ZT Run-AI, driven to completion: the run's `result`, which carries
+    every field the synchronous response did, `answers` included."""
+    return run_ai_and_wait(c, f"/zt/services/{svc_id}/run-ai", headers, **kwargs)

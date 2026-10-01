@@ -129,6 +129,7 @@ describe("CsfPlaybookPanel run-AI accounting (W1, issue #44)", () => {
   function result(over: Partial<CsfRunAiResponse> = {}): CsfRunAiResponse {
     return {
       changed: [],
+      rows: [],
       suggestions_received: 0,
       suggestions_applied: 0,
       dropped: [],

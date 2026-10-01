@@ -187,17 +187,18 @@ class CoverageChange(BaseModel):
 
 
 class AttackRunAiResponse(BaseModel):
-    """What a mitre_map Run-AI did: stored as `ai_runs.result` (#645).
+    """What a mitre_map Run-AI did, with the refreshed coverage.
 
-    The run finishes in a background job, so this is no longer an HTTP response
-    body: the job persists it on the run, and the workspace reads it from the
-    run it polls -- which is what lets every disclosure here survive a reload
-    (#271). The refreshed coverage is not carried: the workspace re-reads the
-    assessment, the authority for the rows.
+    #645: the run finishes in a background job, so this is no longer an HTTP
+    response body. The job persists it as `ai_runs.result`, every field the
+    synchronous response carried, and the workspace reads it from the run it
+    polls -- which is what lets every disclosure here survive a reload (#271).
+    `test_ai_runs_result_schema.py` holds the stored keys to this model.
     """
 
     tools_available: int
     changed: list[CoverageChange]
+    coverage: list[AttackCoverageResponse]
     # mitre_map runs as concurrent batches (one llm_calls row each). Additive +
     # defaulted so older clients and stored payloads parse unchanged (C0).
     # A partial run APPLIES what succeeded rather than discarding it, so the

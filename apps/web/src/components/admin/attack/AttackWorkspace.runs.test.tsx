@@ -104,6 +104,7 @@ function result(over: Partial<AttackRunAiResponse> = {}): AttackRunAiResponse {
   return {
     tools_available: 2,
     changed: [],
+    coverage: [],
     batches_total: 26,
     batches_failed: 0,
     citations_confirmed: 4,

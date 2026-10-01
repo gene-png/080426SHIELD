@@ -320,9 +320,9 @@ class ZtDroppedSuggestion(BaseModel):
 
 
 class ZtRunAiResponse(BaseModel):
-    """What a zt_score Run-AI did: stored as `ai_runs.result` (#645), so it
-    survives a reload. The refreshed answers are not carried; the workspace
-    re-reads the assessment.
+    """What a zt_score Run-AI did, with the refreshed answers. Stored as
+    `ai_runs.result` (#645), every field the synchronous response carried, so
+    it survives a reload.
 
     `pillar_narratives`, `executive_summary` and `roadmap_summary` were removed
     in W1's ZT step (issue #64): all three were returned and none was ever
@@ -332,6 +332,7 @@ class ZtRunAiResponse(BaseModel):
     """
 
     changed: list[ZtCapabilityChange]
+    answers: list[ZtAnswerResponse]
     # Every suggested value the run received is either applied or itemized:
     #     received == applied + sum(d.values for d in dropped)
     # Counted in VALUES (one field on one capability), not entries — D-045.

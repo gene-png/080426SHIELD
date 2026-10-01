@@ -999,6 +999,10 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
     # No commit: the framework commits this apply with the run's completion.
     payload = ZtRunAiResponse(
         changed=changes,
+        answers=[
+            ZtAnswerResponse.model_validate(r, from_attributes=True)
+            for r in sorted(rows.values(), key=lambda r: r.capability_code)
+        ],
         suggestions_received=received,
         suggestions_applied=applied,
         dropped=dropped,

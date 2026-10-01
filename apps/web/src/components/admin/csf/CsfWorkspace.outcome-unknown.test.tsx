@@ -135,6 +135,7 @@ function draft(): CsfAssessment {
 
 const RUN_RESULT: CsfRunAiResponse = {
   changed: [],
+  rows: [],
   suggestions_received: 0,
   suggestions_applied: 0,
   dropped: [],

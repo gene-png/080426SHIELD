@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.ai.runs import reap, to_response
+from app.ai.runs import running_run, to_response
 from app.db.session import get_db
 from app.dependencies import current_client, require_role
 from app.logging import get_logger
@@ -51,7 +51,7 @@ def get_run(
     if run is None or run.client_id != client.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found.")
     if run.status == AiRunStatus.RUNNING:
-        reap(db, service_id=run.service_id, purpose=run.purpose)
+        running_run(db, service_id=run.service_id, purpose=run.purpose)  # reaps first
         db.refresh(run)
     _log.info("ai_runs.read", run_id=str(run.id), status=run.status.value)
     return to_response(run)
@@ -76,8 +76,7 @@ def service_runs(
     db: Annotated[Session, Depends(get_db)],
 ) -> AiRunSummary:
     svc = require_service_in_tenant(db, service_id, client.id)
-    reap(db, service_id=svc.id)
-    running = _newest(db, svc.id, AiRunStatus.RUNNING)
+    running = running_run(db, service_id=svc.id)  # reaps first
     latest = _newest(db, svc.id)
     last_completed = _newest(db, svc.id, AiRunStatus.COMPLETED)
     return AiRunSummary(

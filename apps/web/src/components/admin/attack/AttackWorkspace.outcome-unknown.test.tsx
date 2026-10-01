@@ -169,7 +169,7 @@ describe("AttackWorkspace, a Run AI whose outcome is unknown (#550)", () => {
     vi.mocked(attackClient.fetchAttackRun).mockResolvedValueOnce({
       id: "run-550",
       status: "completed",
-      result: { tools_available: 1, changed: [] },
+      result: { tools_available: 1, changed: [], coverage: [] },
     } as unknown as Awaited<ReturnType<typeof attackClient.fetchAttackRun>>);
     vi.mocked(attackClient.fetchLatestAssessment)
       .mockResolvedValueOnce(draft())

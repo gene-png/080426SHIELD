@@ -762,12 +762,14 @@ export function AttackWorkspace({
               {/* Issue 2: warn before producing canned output when no key is
                   loaded. Passes straight through when AI is live. */}
               <RunAiGuard onProceed={(serves) => void onRunAi(serves)}>
-                {({ onClick }) => (
+                {({ onClick, statusUnknown }) => (
                   <div>
                     <button
                       type="button"
                       onClick={onClick}
                       disabled={
+                        // #645: an unreadable AI status fails closed.
+                        statusUnknown ||
                         busy !== null ||
                         runInProgress ||
                         readOnly ||
