@@ -600,6 +600,19 @@ def _gap_rows(rows: Sequence[Any], *, limit: int | None = None) -> list[Any]:
 EXEC_GAP_LIMIT = 12
 
 
+def _untargeted_tail(rows: Sequence[Any]) -> str:
+    """#762: the sentence a list of gaps carries when some in-scope rows have no
+    target, with its leading space, or "". One place, so the executive list and
+    the full Playbook's roadmap (review of #764, F3) say it the same way."""
+    untargeted = _untargeted(rows)
+    if not untargeted:
+        return ""
+    return (
+        f" {_subcats(untargeted)} and {'is' if untargeted == 1 else 'are'} not "
+        "assessed for gaps."
+    )
+
+
 def _exec_gap_caption(rows: Sequence[Any]) -> str:
     """What the exec "Top priority gaps" list shows and what it leaves out
     (#718), or "" when there is no gap to list (the renderers say so already).
@@ -614,13 +627,7 @@ def _exec_gap_caption(rows: Sequence[Any]) -> str:
     if total == 0:
         return ""
     # #762: the gaps counted here are of TARGETED rows only.
-    untargeted = _untargeted(rows)
-    tail = (
-        f" {_subcats(untargeted)} and {'is' if untargeted == 1 else 'are'} not "
-        "assessed for gaps."
-        if untargeted
-        else ""
-    )
+    tail = _untargeted_tail(rows)
     if shown >= total:
         return f"All {total} gap{'' if total == 1 else 's'} listed.{tail}"
     remaining = total - shown
@@ -958,7 +965,12 @@ def render_full_pdf(
 
     story.append(PageBreak())
     story.append(Paragraph("5. Prioritized roadmap", styles["h2"]))
-    _gap_table(story, styles, _gap_rows(enterprise_rows), enterprise_rows)
+    roadmap = _gap_rows(enterprise_rows)
+    # #762 (review of #764, F3): the roadmap lists TARGETED gaps; with none,
+    # `_gap_table`'s own sentence already says why.
+    if roadmap and _untargeted_tail(enterprise_rows):
+        story.append(Paragraph(_untargeted_tail(enterprise_rows).strip(), styles["body"]))
+    _gap_table(story, styles, roadmap, enterprise_rows)
 
     story.append(PageBreak())
     story.append(Paragraph("6. Appendix — all subcategories", styles["h2"]))
@@ -1193,6 +1205,9 @@ def render_full_docx(
     add_page_break(doc)
     add_heading(doc, "5. Prioritized roadmap")
     gaps = _gap_rows(enterprise_rows)
+    # #762 (review of #764, F3), the DOCX twin of the PDF roadmap above.
+    if gaps and _untargeted_tail(enterprise_rows):
+        add_paragraphs(doc, [_untargeted_tail(enterprise_rows).strip()])
     if gaps:
         table = add_table(
             doc,

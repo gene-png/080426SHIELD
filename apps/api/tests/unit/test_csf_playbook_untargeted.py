@@ -206,6 +206,18 @@ def test_a_mixed_assessment_states_both_counts_everywhere() -> None:
 
 
 @pytest.mark.unit
+def test_the_full_playbook_roadmap_names_the_untargeted_rows_beside_its_gaps() -> None:
+    # Review of #764, F3: the full PDF and DOCX "5. Prioritized roadmap" lists
+    # the targeted gaps, and said nothing about the rows never measured.
+    out = _render(_mixed_world())
+    for name in ("full_pdf", "full_docx"):
+        assert (
+            "2 in-scope subcategories have no target set and are not assessed for gaps."
+            in out[name]
+        ), f"{name}: {out[name][-1500:]!r}"
+
+
+@pytest.mark.unit
 def test_one_untargeted_row_is_one_subcategory() -> None:
     rows = _mixed_world()[:3]
     out = _render(rows)
