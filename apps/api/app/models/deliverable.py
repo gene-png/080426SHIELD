@@ -147,6 +147,15 @@ class Deliverable(UUIDPKMixin, TimestampMixin, Base):
     frozen_target: Mapped[int | None] = mapped_column(Integer)
     frozen_target_source: Mapped[str | None] = mapped_column(String(16))
 
+    # #640 (migration 0056): the capability-list revision a TECH DEBT
+    # deliverable was rendered from, stamped at finalize. A list stays editable
+    # after approval until release, so release refuses a deliverable whose
+    # revision is not the list's `approved_revision`: one generated before an
+    # edit and a re-approval shows rows nobody approved. NULL on every other
+    # service and on Tech Debt deliverables finalized before 0056, and release
+    # refuses NULL (missing data defaults to unconfirmed).
+    capability_list_revision: Mapped[int | None] = mapped_column(Integer)
+
     superseded_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("deliverables.id", ondelete="SET NULL")
     )

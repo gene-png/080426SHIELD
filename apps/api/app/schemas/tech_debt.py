@@ -121,6 +121,10 @@ class CapabilityListResponse(BaseModel):
     # hard allow-list is the defect #32 records, and silently narrowing it is
     # this one. Re-approval is the deliberate, audited way to change it.
     approved_membership_stale: bool = False
+    # #640: False while the list is a draft, and false again after any step-2
+    # edit to an approved list until step 3 approves it again. Finalize and
+    # release refuse while it is false. Read from the ORM's derived property.
+    approval_current: bool
     # Reconciliation of the source upload against what was extracted (0036).
     # NULL on lists created before the column existed — the UI renders no claim
     # rather than implying a complete inventory.

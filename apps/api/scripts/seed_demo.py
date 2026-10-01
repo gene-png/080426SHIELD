@@ -534,6 +534,12 @@ def _seed_tech_debt(db: Session, storage: StorageBackend, admin: User, org: Clie
         status=CapabilityListStatus.RELEASED,
         approved_at=utcnow(),
         approved_by=admin.id,
+        # #640 (D-102): an approval records the revision it approved. The seed
+        # runs after every migration, so 0056's backfill never reaches this row;
+        # without it Re-finalize then Release on the demo is refused as
+        # "generated before the list was last approved", which is false.
+        revision=0,
+        approved_revision=0,
     )
     db.add(cap_list)
     db.flush()

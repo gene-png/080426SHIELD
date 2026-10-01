@@ -6427,6 +6427,33 @@ The shared dev database, read-only: DRAFT 2, RELEASED 2, APPROVED 0, at migratio
   3. **Migrations land in number order:** #620 takes 0054, then #640 0055, then #658 0056, renumbered at landing (with `down_revision`) if the order changes. `test_alembic_single_head.py` reads Alembic's `ScriptDirectory` and fails unless there is one head and an unbroken chain from base. It was shown red on a forked chain. The chain order is not the number order: on `main` it runs 0051 → 0053 → 0052, so 0054 chains from 0052.
 - **Conditions 4 and 6** both apply: this is a migration, and it changes client-visible numbers.
 
+## D-102 — A capability list counts its edits, and an edited approval must be given again
+
+**Date:** 2026-09-26 · **Issue:** #640 · **Decided by:** the owner (the rule, on #640, 2026-09-25); the coordinator (the design, on #640); track1 (the two calls marked below, overturnable)
+
+**The rule (owner):** Tech Debt classifications stay editable until release. Every edit is audited, and step 3 runs again after any edit. After release, a correction is a new version, as for ATT&CK (#558).
+
+**The mechanism (coordinator's design, migration 0056):** `capability_lists.revision` and `approved_revision`. Every step-2 edit route increments `revision` in SQL, in the transaction that writes its audit row. Approve's compare-and-swap copies the revision it read into `approved_revision`, and it matches only while the list is still at that revision. An edit that lands while the approval is being computed therefore refuses the approval rather than stamping unreviewed rows. The approval is current iff the two are equal. Finalize refuses a stale approval with a typed 409 `capability_list_edited_since_approval` naming step 3. Backfill: `revision = 0`, and `approved_revision = 0` for lists already APPROVED or RELEASED.
+
+**The edit routes are derived, not listed.** `test_capability_list_revision.py` reads the Tech Debt router's mutating routes under the list and item prefixes. Each one needs either a driver proving it moves the revision or a stated exemption (approve, discard). A new edit route fails that test until it has a driver. The bulk-disposition route from #709 is one. #709 landed first, and this PR added its driver and its `_record_edit` call. The derived test was red on that route until both were in.
+
+**Two calls, track1's, overturnable:**
+
+- **Release refuses a stale approval too**, not only finalize. Release freezes the list, so it must not freeze one edited since step 3. The condition is in the release flip's own WHERE (`ParentGuard`), beside #657's undecided-row check.
+- **Locking or unlocking a row is not an edit of the review.** It changes what an AI rerun may touch, not what the list says, so a lock-only PATCH does not move the revision.
+
+**Residuals, stated rather than fixed here:**
+
+- The progress bar (`routes/service_stages.py`) still shows `approve` complete for a stale approval. The bar is monotonic, and a deliverable generated before the edit keeps every earlier stage reached. The site says so. The workspace's step 3 and the finalize and release refusals are what act on the flag.
+
+**A released deliverable matches the approved rows (the coordinator's call, 2026-09-26).** Before this, a list could be edited, approved again, and the deliverable generated BEFORE the edit released: the approval was current, and the deliverable recorded no revision. #640 introduced that path, because before it a list could not change after approval, so it is closed here rather than filed. Migration 0056 adds `deliverables.capability_list_revision`, stamped at finalize. Release refuses, with a typed 409 `deliverable_predates_approval` naming Re-finalize in step 4, any deliverable whose revision is not the list's `approved_revision`. The condition is in the release flip's own WHERE while the list is APPROVED. The flip never runs once the list is RELEASED, or for a deliverable finalized before 0041 (no `parent_version`), so the release route checks those two cases itself before releasing (advisor review of #730, F1: without it, an older deliverable could be released after a newer one had released the list). One residual is not closed: two releases of one list's deliverables racing each other. A deliverable finalized before 0056 records NULL and is refused: missing data defaults to unconfirmed. Its message does not say it predates the approval, because finalize needed an approved list and nothing records when it was rendered; it says nothing confirms its rows. When the flip misses, the refusal is judged on what is true after it: an undecided row or a stale approval first, then the deliverable's own revision, and otherwise `capability_list_changed_during_release` (#657's race test goes red without this order). Measured read-only on the shared dev database (at revision 0054) on 2026-09-27: two Tech Debt deliverables are finalized, both released, both lists RELEASED, where release does not re-check the list. None would be refused. That is one developer database, not a deployment.
+
+**Independent review of #730 at `2a35fa1b` (round 3), fixed on this branch:**
+
+- **A report already released before 0056 can be re-released to repair its list.** The re-release is W4's repair of a list a pre-W4 release left APPROVED, and the backfill gives that list `approved_revision = 0`, so matching a NULL deliverable revision refused it. An already-released deliverable with no recorded revision is now released under the list checks alone (no undecided row, approval current). A deliverable not yet released with no revision is still refused.
+- **An edit cannot land on a released list.** `_record_edit`'s increment matches only a list that is neither RELEASED nor DISCARDED, and a miss refuses the edit (typed 409 `capability_list_released`). Otherwise an edit racing the release flip left `revision > approved_revision` on a RELEASED list, and every later release of it was refused with a remedy that loops.
+- **The workspace does not apply an overtaken approve response.** Approve's response is the only list a write returns that can claim a current approval; when a newer list operation has started, the workspace reads the list again instead.
+
 ## D-103 — Archiving a client ends every session its users hold
 
 **2026-09-26 · auth** (Gene's decision, relayed by the coordinator; #652)
