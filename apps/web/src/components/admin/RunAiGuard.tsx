@@ -9,6 +9,7 @@ import {
 } from "@/lib/admin/aiStatus";
 
 import type { AiStatus } from "@/lib/admin/client";
+import type { AiServes } from "@/lib/aiRuns/types";
 import type { JSX } from "react";
 
 /**
@@ -41,8 +42,14 @@ export function RunAiGuard({
   onProceed,
   children,
 }: {
-  /** Runs when AI is ready, already acknowledged, or the admin chooses to continue offline. */
-  onProceed: () => void;
+  /**
+   * Runs when AI is ready, already acknowledged, or the admin chooses to
+   * continue offline. Told WHAT the admin acknowledged (#504): the Run-AI
+   * request carries it, and the api refuses a run that would now go live
+   * after offline was acknowledged, closing the window between this page's
+   * status read and the click.
+   */
+  onProceed: (serves: AiServes) => void;
   /** The Run-AI control. Receives the click handler to attach. */
   children: (props: { onClick: () => void }) => React.ReactNode;
 }): JSX.Element {
@@ -53,9 +60,15 @@ export function RunAiGuard({
 
   /** Decide what a click means, given a SETTLED status. */
   function decide(s: AiStatus | null): void {
-    // A status OUTAGE fails open — it must not block work.
-    if (!s || s.ready || hasAcknowledgedOffline(s)) {
-      onProceed();
+    // A status OUTAGE fails open — it must not block work. It proceeds as
+    // "live": nothing was acknowledged, so the api is asked for no promise
+    // that the call stays offline, and runs exactly as it would have.
+    if (!s || s.ready) {
+      onProceed("live");
+      return;
+    }
+    if (hasAcknowledgedOffline(s)) {
+      onProceed("offline");
       return;
     }
     setPromptFor(s);
@@ -77,7 +90,7 @@ export function RunAiGuard({
   function continueOffline(): void {
     if (promptFor) acknowledgeOffline(promptFor);
     setPromptFor(null);
-    onProceed();
+    onProceed("offline");
   }
 
   return (

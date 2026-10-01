@@ -20,9 +20,14 @@ import {
   fetchLatestAssessment,
   fetchLatestDeliverable,
   confirmCoverageCitations,
+  fetchAttackRun,
+  fetchAttackRunSummary,
   patchCoverage,
   runAttackAi,
 } from "@/lib/attack/client";
+import type { AttackRun } from "@/lib/attack/client";
+import type { AiServes } from "@/lib/aiRuns/types";
+import { useAiRun } from "@/lib/aiRuns/useAiRun";
 import type {
   AttackAssessment,
   AttackCatalog,
@@ -30,7 +35,6 @@ import type {
   AttackCoverageRow,
   AttackDeliverable,
   AttackHeatmap,
-  AttackRunAiResponse,
   CatalogTechnique,
   TacticHeatmapEntry,
 } from "@/lib/attack/types";
@@ -39,6 +43,7 @@ import { MessageThread } from "@/components/messages/MessageThread";
 import { StaleDocsNudge } from "@/components/admin/StaleDocsNudge";
 import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { AiPreviewButton } from "@/components/admin/AiPreviewButton";
+import { AiRunStatus, clockTime } from "@/components/admin/AiRunStatus";
 import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
 
@@ -138,9 +143,6 @@ export function AttackWorkspace({
   const [busy, setBusy] = React.useState<
     "create" | "approve" | "run" | "discard" | null
   >(null);
-  const [runResult, setRunResult] = React.useState<AttackRunAiResponse | null>(
-    null,
-  );
   // Set when the API REFUSES a run (typed 409). Distinct from loadError: the
   // page is fine, the prerequisite is not.
   const [runBlocked, setRunBlocked] = React.useState<string | null>(null);
@@ -277,6 +279,28 @@ export function AttackWorkspace({
       await initialLoad();
     })();
   }, [initialLoad]);
+
+  // #645. A run this page did not start -- found in progress on load -- ends
+  // here: re-read what it applied, as `onRunAiWrite` does for its own.
+  const onRunFinishedElsewhere = React.useCallback(
+    (run: AttackRun) => {
+      if (run.status !== "completed") return;
+      const seq = ++assessmentSeq.current;
+      void fetchLatestAssessment(serviceId)
+        .then((a) => {
+          if (seq === assessmentSeq.current) setAssessment(a);
+          return refreshHeatmap();
+        })
+        .catch((err: unknown) => setActionError(describeError(err)));
+    },
+    [serviceId, refreshHeatmap],
+  );
+  const aiRun = useAiRun({
+    serviceId,
+    fetchSummary: fetchAttackRunSummary,
+    fetchRun: fetchAttackRun,
+    onFinished: onRunFinishedElsewhere,
+  });
 
   function onCreateAssessment(): Promise<void> {
     return trackWrite(() => onCreateAssessmentWrite());
@@ -501,19 +525,21 @@ export function AttackWorkspace({
     }
   }
 
-  function onRunAi(): Promise<void> {
-    return trackWrite(() => onRunAiWrite());
+  function onRunAi(serves: AiServes): Promise<void> {
+    return trackWrite(() => onRunAiWrite(serves));
   }
 
-  async function onRunAiWrite(): Promise<void> {
+  async function onRunAiWrite(serves: AiServes): Promise<void> {
     setActionError(null);
     setBusy("run");
-    setRunResult(null);
     const seq = ++assessmentSeq.current;
     try {
-      const result = await runAttackAi(serviceId);
-      setRunResult(result);
+      // #645: the POST starts the run; the write lasts until the run ends, so
+      // the re-read guard in `trackWrite` still counts it as one write.
+      const started = await runAttackAi(serviceId, serves);
       setRunBlocked(null);
+      const finished = await aiRun.follow(started);
+      if (finished.status !== "completed") return; // `AiRunStatus` says why
       // Re-pull the assessment so the matrix reflects the AI's suggestions,
       // guarded so a concurrent patch that started meanwhile still wins.
       const a = await fetchLatestAssessment(serviceId);
@@ -536,6 +562,14 @@ export function AttackWorkspace({
 
   const readOnly =
     assessment?.status === "approved" || assessment?.status === "released";
+  /** #645: a run holds the edit lock; the api refuses edits until it ends. */
+  const runInProgress = aiRun.running !== null;
+  /**
+   * What the last COMPLETED run did, read from the run itself, so it survives
+   * a reload (#271). It used to live only in this component's state, and a
+   * refresh left a partial run looking complete.
+   */
+  const runResult = aiRun.lastCompleted?.result ?? null;
 
   const scoredCount =
     assessment?.coverage.filter((c) => c.status !== null).length ?? 0;
@@ -609,7 +643,9 @@ export function AttackWorkspace({
               status={assessment.status}
               destructionSummary={discardSummary}
               onConfirm={onDiscard}
-              disabled={busy !== null}
+              // #645: NOT locked by a run. D-031: a discard racing a run
+              // wins, and the run then ends without applying anything.
+              disabled={busy !== null && busy !== "run"}
             />
           ) : null}
         </div>
@@ -696,7 +732,7 @@ export function AttackWorkspace({
             <div className="flex flex-col gap-3">
               {/* Issue 2: warn before producing canned output when no key is
                   loaded. Passes straight through when AI is live. */}
-              <RunAiGuard onProceed={() => void onRunAi()}>
+              <RunAiGuard onProceed={(serves) => void onRunAi(serves)}>
                 {({ onClick }) => (
                   <div>
                     <button
@@ -704,13 +740,14 @@ export function AttackWorkspace({
                       onClick={onClick}
                       disabled={
                         busy !== null ||
+                        runInProgress ||
                         readOnly ||
                         // #556: the API refuses it; the step says why.
                         assessment.catalog_current !== true
                       }
                       className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      {busy === "run" ? "Running…" : "Run AI"}
+                      {busy === "run" || runInProgress ? "Running…" : "Run AI"}
                     </button>
                   </div>
                 )}
@@ -723,6 +760,16 @@ export function AttackWorkspace({
                   the one behind a run that reports a filtered-out tool as a
                   gap. Read-only and not rate-limited, so it loads on mount. */}
               <AttackAiInputsPanel serviceId={serviceId} />
+              <AiRunStatus run={aiRun} />
+              {runResult && aiRun.lastCompleted?.finished_at ? (
+                <p
+                  className="text-xs text-ink-tertiary"
+                  data-testid="attack-run-from"
+                >
+                  From the last AI run that completed, at{" "}
+                  {clockTime(aiRun.lastCompleted.finished_at)}.
+                </p>
+              ) : null}
               {runResult ? (
                 <p className="text-sm text-ink-secondary" aria-live="polite">
                   Updated{" "}
@@ -787,7 +834,7 @@ export function AttackWorkspace({
                   coverage={selectedCoverage}
                   coverageDefinitions={catalog.coverage_definitions}
                   reasonCodes={catalog.reason_codes}
-                  readOnly={readOnly}
+                  readOnly={readOnly || runInProgress}
                   onPatch={(patch) => {
                     if (!selectedCoverage) return;
                     return onPatch(selectedCoverage.id, patch);
@@ -833,6 +880,7 @@ export function AttackWorkspace({
               onClick={() => void onApprove()}
               disabled={
                 busy !== null ||
+                runInProgress ||
                 assessment.status !== "draft" ||
                 scoredCount === 0 ||
                 assessment.catalog_current !== true

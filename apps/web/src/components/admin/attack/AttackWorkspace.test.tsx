@@ -29,6 +29,12 @@ vi.mock("@/lib/attack/client", () => ({
   patchCoverage: vi.fn(),
   confirmCoverageCitations: vi.fn(),
   runAttackAi: vi.fn(),
+  // #645: the workspace reads the service's runs on load and polls one it
+  // follows. No run, by default.
+  fetchAttackRun: vi.fn(),
+  fetchAttackRunSummary: vi.fn(() =>
+    Promise.resolve({ running: null, latest: null, last_completed: null }),
+  ),
 }));
 
 vi.mock("./AttackDeliverableCard", () => ({
@@ -679,28 +685,39 @@ describe("AttackWorkspace, the parent re-read after round 3 (#620)", () => {
     ]);
     fetchLatestAssessment.mockResolvedValue(preRun);
     const edit = deferred<Patched>();
+    // #645: the run's write is the POST and then the run it starts, until that
+    // run completes. The POST answers at once; the run is what is held back.
     const run =
-      deferred<Awaited<ReturnType<typeof attackClient.runAttackAi>>>();
+      deferred<Awaited<ReturnType<typeof attackClient.fetchAttackRun>>>();
     patchCoverage.mockReturnValueOnce(edit.promise);
-    runAttackAi.mockReturnValueOnce(run.promise);
+    runAttackAi.mockResolvedValueOnce({
+      run_id: "run-r3b",
+      status: "running",
+      serves: "offline",
+      deadline_at: "2026-10-01T12:45:00Z",
+      joined: false,
+    });
+    vi.mocked(attackClient.fetchAttackRun).mockReturnValueOnce(run.promise);
     render(<AttackWorkspace serviceId="svc-r3b" serviceTitle="ATT&CK" />);
     fireEvent.click(await screen.findByText("select sub-technique"));
     fireEvent.click(screen.getByText("set gap"));
     fireEvent.click(screen.getByText("Run AI"));
-    await vi.waitFor(() => expect(runAttackAi).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() =>
+      expect(attackClient.fetchAttackRun).toHaveBeenCalledTimes(1),
+    );
     // The edit lands while the run is out: its re-read must NOT happen yet.
     await act(async () =>
       edit.resolve({ ...child, status: "gap" } as unknown as Patched),
     );
     const readsBeforeRunEnds = fetchLatestAssessment.mock.calls.length;
     fetchLatestAssessment.mockResolvedValue(postRun);
-    // The shape the workspace renders: the required fields of the response.
+    // The shape the workspace renders: a completed run and its result.
     await act(async () =>
       run.resolve({
-        tools_available: 1,
-        changed: [],
-        coverage: [],
-      } as unknown as Awaited<ReturnType<typeof attackClient.runAttackAi>>),
+        id: "run-r3b",
+        status: "completed",
+        result: { tools_available: 1, changed: [] },
+      } as unknown as Awaited<ReturnType<typeof attackClient.fetchAttackRun>>),
     );
     await vi.waitFor(() =>
       expect(screen.getByTestId("panel-notes")).toHaveTextContent("ran"),

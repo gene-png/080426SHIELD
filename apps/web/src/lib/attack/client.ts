@@ -1,6 +1,13 @@
 "use client";
 
 import type {
+  AiRun,
+  AiRunStarted,
+  AiRunSummary,
+  AiServes,
+} from "@/lib/aiRuns/types";
+
+import type {
   AttackAiInputs,
   AttackAssessment,
   AttackCatalog,
@@ -129,12 +136,34 @@ export async function discardAssessment(
   );
 }
 
+/**
+ * Start a Run-AI (#645). Answers with the run to follow, not its results: the
+ * work happens in the background and the results arrive on the run.
+ *
+ * `serves` is the AI status the consultant acknowledged. The api refuses a run
+ * that would now go live after offline was acknowledged (#504).
+ */
 export async function runAttackAi(
   serviceId: string,
-): Promise<AttackRunAiResponse> {
-  return jsonRequest<AttackRunAiResponse>(
+  serves: AiServes,
+): Promise<AiRunStarted> {
+  return jsonRequest<AiRunStarted>(
     `/api/proxy/attack/services/${serviceId}/run-ai`,
-    { method: "POST" },
+    { method: "POST", body: { serves } },
+  );
+}
+
+export type AttackRun = AiRun<AttackRunAiResponse>;
+
+export async function fetchAttackRun(runId: string): Promise<AttackRun> {
+  return jsonRequest<AttackRun>(`/api/proxy/ai/runs/${runId}`);
+}
+
+export async function fetchAttackRunSummary(
+  serviceId: string,
+): Promise<AiRunSummary<AttackRunAiResponse>> {
+  return jsonRequest<AiRunSummary<AttackRunAiResponse>>(
+    `/api/proxy/ai/runs/services/${serviceId}`,
   );
 }
 

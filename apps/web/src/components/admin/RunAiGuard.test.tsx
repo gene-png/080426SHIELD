@@ -566,3 +566,58 @@ describe("the dialog's accessible description (#471)", () => {
     ).not.toBeNull();
   });
 });
+
+describe("RunAiGuard tells the run what the admin acknowledged (#504, #645)", () => {
+  it("passes 'live' when AI is live", async () => {
+    mockStatus(
+      statusBody({ ready: true, key_source: "database", serves: "live" }),
+    );
+    const onProceed = vi.fn();
+    renderGuard(onProceed);
+    fireEvent.click(screen.getByRole("button", { name: "Run AI" }));
+    await waitFor(() => expect(onProceed).toHaveBeenCalledWith("live"));
+  });
+
+  it("passes 'offline' when the admin chose to continue offline", async () => {
+    mockStatus(statusBody());
+    const onProceed = vi.fn();
+    renderGuard(onProceed);
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Run AI" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Continue offline" }),
+    );
+    expect(onProceed).toHaveBeenCalledWith("offline");
+  });
+
+  it("passes 'offline' on a later run the earlier acknowledgement covers", async () => {
+    // A FRESH Response per call: a body can be read once, and `mockStatus`
+    // hands the same one to every fetch, so the second render's status read
+    // would fail and the guard would fail open -- the outage path, not this.
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () =>
+        new Response(JSON.stringify(statusBody()), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+    const first = vi.fn();
+    const { unmount } = renderGuard(first);
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Run AI" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Continue offline" }),
+    );
+    unmount();
+    const reads = vi.mocked(globalThis.fetch).mock.calls.length;
+    const second = vi.fn();
+    renderGuard(second);
+    await waitFor(() =>
+      expect(vi.mocked(globalThis.fetch).mock.calls.length).toBeGreaterThan(
+        reads,
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Run AI" }));
+    await waitFor(() => expect(second).toHaveBeenCalledWith("offline"));
+  });
+});

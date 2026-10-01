@@ -139,10 +139,14 @@ export interface CoverageChange {
   new: unknown;
 }
 
+/**
+ * What a mitre_map Run-AI did. Since #645 this is the run's stored `result`,
+ * read from the run rather than from the POST, which is what lets it survive a
+ * reload (#271). It carries no coverage: the workspace re-reads the assessment.
+ */
 export interface AttackRunAiResponse {
   tools_available: number;
   changed: CoverageChange[];
-  coverage: AttackCoverageRow[];
   // mitre_map runs as concurrent batches. Returned by the API since D-048 and
   // RENDERED since #115 by `AttackCitationAccounting`, which raises a
   // role=alert on a partial run. Was a known gap when this was written.
@@ -183,6 +187,11 @@ export interface AttackRunAiResponse {
    */
   rows_left_unresolved?: number;
   unresolved_fields?: string[];
+  /**
+   * #645. Rows a consultant edited after this run started, which the run kept
+   * as edited rather than overwrite.
+   */
+  rows_skipped_edited?: number;
 }
 
 export interface TacticHeatmapEntry {

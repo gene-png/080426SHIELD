@@ -29,6 +29,47 @@ import type { Page, Request, Response } from "@playwright/test";
  */
 const GUARD_TIMEOUT_MS = 20000;
 
+/** How long a fixture-mode run may take to finish in CI. */
+const RUN_TIMEOUT_MS = 180_000;
+
+/** A Run-AI run as `/api/proxy/ai/runs/{id}` returns it (#645). */
+export interface PolledRun<R = Record<string, unknown>> {
+  id: string;
+  status: "running" | "completed" | "failed";
+  result: R | null;
+  error_reason: string | null;
+  error_message: string | null;
+}
+
+/**
+ * Follow a Run-AI run to its end (#645). The POST answers with a run id at
+ * once; the work happens in the background, so a spec that used to read the
+ * POST's body now reads the finished run.
+ *
+ * Polls through the same proxy the workspace uses, with the page's own
+ * session. Returns the run whatever it ended as -- the caller asserts which.
+ */
+export async function waitForRun<R = Record<string, unknown>>(
+  page: Page,
+  runId: string,
+): Promise<PolledRun<R>> {
+  const deadline = Date.now() + RUN_TIMEOUT_MS;
+  for (;;) {
+    const res = await page.request.get(`/api/proxy/ai/runs/${runId}`);
+    if (!res.ok()) {
+      throw new Error(
+        `polling run ${runId}: ${res.status()} ${await res.text()}`,
+      );
+    }
+    const run = (await res.json()) as PolledRun<R>;
+    if (run.status !== "running") return run;
+    if (Date.now() > deadline) {
+      throw new Error(`run ${runId} still running after ${RUN_TIMEOUT_MS}ms`);
+    }
+    await page.waitForTimeout(1000);
+  }
+}
+
 export async function acknowledgeOfflineAi(page: Page): Promise<void> {
   const dialog = page.getByRole("alertdialog", {
     name: "AI is not ready to run live",
