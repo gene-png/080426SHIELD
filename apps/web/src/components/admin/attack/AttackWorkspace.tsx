@@ -53,6 +53,7 @@ import type { JSX } from "react";
 import { ProgressStages } from "../ProgressStages";
 import { useServiceStages } from "@/lib/stages/client";
 import { useRefreshFailures } from "@/components/admin/useRefreshFailures";
+import { isUpstreamOutcomeUnknown } from "@/lib/describe-save-error";
 
 export interface AttackWorkspaceProps {
   serviceId: string;
@@ -71,6 +72,14 @@ function describeError(err: unknown): string {
   }
   return err instanceof Error ? err.message : "Request failed.";
 }
+
+/**
+ * #550: what to say when the proxy never saw Run AI's answer. Not "failed":
+ * the api may have finished and written the rows. It names where to look and
+ * that the button stays off, because a retry sends the client's data out again.
+ */
+const RUN_OUTCOME_UNKNOWN =
+  "We couldn't confirm whether the AI run finished. It may still complete and fill in technique rows. Reload the page later and check step 2, Review every technique and adjust, before running it again. Run AI stays off on this page until you reload.";
 
 /** The machine-readable `reason` on a typed error envelope (D-016), if present. */
 function errorReason(err: unknown): string | null {
@@ -144,6 +153,9 @@ export function AttackWorkspace({
   // Set when the API REFUSES a run (typed 409). Distinct from loadError: the
   // page is fine, the prerequisite is not.
   const [runBlocked, setRunBlocked] = React.useState<string | null>(null);
+  // #550: set once a run's outcome is unknown, never cleared. A reload clears
+  // it, which the copy says; nothing on this page can know the run finished.
+  const [runOutcomeUnknown, setRunOutcomeUnknown] = React.useState(false);
   const [selectedCode, setSelectedCode] = React.useState<string | null>(null);
   const [showSubs, setShowSubs] = React.useState(false);
 
@@ -526,6 +538,11 @@ export function AttackWorkspace({
       // "failed to load" banner that reads like an outage.
       if (errorReason(err) === "no_security_capabilities") {
         setRunBlocked(describeError(err));
+      } else if (isUpstreamOutcomeUnknown(err)) {
+        // Its own alert beside the button, not `actionError`: that card is
+        // headed "That didn't go through", which is the claim this is not
+        // allowed to make, and any later action clears it.
+        setRunOutcomeUnknown(true);
       } else {
         setActionError(describeError(err));
       }
@@ -705,6 +722,7 @@ export function AttackWorkspace({
                       disabled={
                         busy !== null ||
                         readOnly ||
+                        runOutcomeUnknown ||
                         // #556: the API refuses it; the step says why.
                         assessment.catalog_current !== true
                       }
@@ -715,6 +733,11 @@ export function AttackWorkspace({
                   </div>
                 )}
               </RunAiGuard>
+              {runOutcomeUnknown ? (
+                <p className="text-sm text-status-warning-fg" role="alert">
+                  {RUN_OUTCOME_UNKNOWN}
+                </p>
+              ) : null}
               <AiPreviewButton serviceId={serviceId} disabled={busy !== null} />
               {/* Beside the preview, not a second surface. The preview
                   answers "what will be sent?" (redacted); this answers

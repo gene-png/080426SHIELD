@@ -24,6 +24,7 @@ import { AiDraftProvenanceNotice } from "@/components/admin/AiDraftProvenanceNot
 import { RunAiGuard } from "../RunAiGuard";
 import { CsfDimensionEditor } from "./CsfDimensionEditor";
 import { CsfGapActionEditor } from "./CsfGapActionEditor";
+import { isUpstreamOutcomeUnknown } from "@/lib/describe-save-error";
 import type {
   CsfDroppedSuggestion,
   CsfPlaybookExport,
@@ -38,6 +39,14 @@ export interface CsfPlaybookPanelProps {
   serviceId: string;
   readOnly?: boolean;
 }
+
+/**
+ * #550: what to say when the proxy never saw Run AI's answer. Not a failure:
+ * the api may have finished and written the dimension scores, and a retry
+ * sends the client's data out again.
+ */
+const RUN_OUTCOME_UNKNOWN =
+  "We couldn't confirm whether the AI run finished. It may still complete and fill in dimension scores. Reload the page later and check the dimension scores in Full Playbook — Working Profiles before running it again. Run AI stays off on this page until you reload.";
 
 function describeError(err: unknown): string {
   if (err instanceof CsfProxyError) {
@@ -395,6 +404,9 @@ export function CsfPlaybookPanel({
   const [runResult, setRunResult] = React.useState<CsfRunAiResponse | null>(
     null,
   );
+  // #550: set once a run's outcome is unknown and never cleared; a reload
+  // clears it, which the copy says.
+  const [runOutcomeUnknown, setRunOutcomeUnknown] = React.useState(false);
   const [exportResult, setExportResult] =
     React.useState<CsfPlaybookExport | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -453,7 +465,13 @@ export function CsfPlaybookPanel({
       setRunResult(await runCsfAi(serviceId));
       await reload();
     } catch (err) {
-      setError(describeError(err));
+      if (isUpstreamOutcomeUnknown(err)) {
+        // Its own alert, not `error`: every other action on this panel
+        // clears that, and the button would stay off with nothing saying why.
+        setRunOutcomeUnknown(true);
+      } else {
+        setError(describeError(err));
+      }
     } finally {
       setBusy(null);
     }
@@ -504,6 +522,11 @@ export function CsfPlaybookPanel({
               {error}
             </p>
           ) : null}
+          {runOutcomeUnknown ? (
+            <p className="text-sm text-status-warning-fg" role="alert">
+              {RUN_OUTCOME_UNKNOWN}
+            </p>
+          ) : null}
 
           <div className="flex flex-wrap items-center gap-2">
             {!seeded ? (
@@ -522,7 +545,7 @@ export function CsfPlaybookPanel({
                   <button
                     type="button"
                     onClick={onClick}
-                    disabled={busy !== null || readOnly}
+                    disabled={busy !== null || readOnly || runOutcomeUnknown}
                     className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {busy === "run" ? "Running…" : "Run AI (csf_score)"}
