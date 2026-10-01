@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.models.csf_profile import CsfDimensionScore
+from app.storage.local import LocalFilesystemStorage
 from tests._ai_runs import DeferringRunner, defer_runs, get_run, start_run
 
 
@@ -76,6 +77,7 @@ def world(tmp_path) -> Iterator[World]:
     from app.main import create_app
     from app.models.client import Client
     from app.models.client_domain import ClientDomain
+    from app.routes.artifacts import _storage_dep
     from app.routes.csf import _llm_dep
 
     def override_get_db() -> Iterator[Session]:
@@ -89,6 +91,10 @@ def world(tmp_path) -> Iterator[World]:
     app = create_app()
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[_llm_dep] = lambda: LLMClient(provider)
+    # The export driver really exports once the run has ended, so it needs a
+    # store CI has: a local directory, not the compose stack's MinIO.
+    storage = LocalFilesystemStorage(tmp_path / "storage")
+    app.dependency_overrides[_storage_dep] = lambda: storage
     with sessions() as seed:
         tenant = Client(legal_name="Test Tenant")
         seed.add(tenant)
