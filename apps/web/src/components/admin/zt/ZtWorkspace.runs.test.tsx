@@ -123,11 +123,13 @@ function run(over: Partial<ZtRun> = {}): ZtRun {
   return {
     id: "run-1",
     service_id: "svc-1",
+    subject_id: "zt-assess-1",
     purpose: "zt_score",
     status: "running",
     serves: "offline",
     started_at: "2026-10-01T12:00:00Z",
     deadline_at: "2026-10-01T12:45:00Z",
+    lock_until: "2026-10-01T12:50:00Z",
     finished_at: null,
     batches_total: null,
     batches_failed: null,
@@ -207,6 +209,7 @@ describe("ZtWorkspace, Run-AI in the background (#645)", () => {
       status: "running",
       serves: "offline",
       deadline_at: "2026-10-01T12:45:00Z",
+      lock_until: "2026-10-01T12:50:00Z",
       joined: false,
     });
     m.fetchRun.mockResolvedValueOnce(

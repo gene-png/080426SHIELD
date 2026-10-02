@@ -35,6 +35,9 @@ class AiRunStarted(BaseModel):
     status: Literal["running"]
     serves: Serves
     deadline_at: datetime
+    # The latest the run can hold the lock: `deadline_at` plus the reaper's
+    # margin. What every "locked until" says.
+    lock_until: datetime
     # True when this POST found a run already in progress, in the same mode,
     # and handed back its id instead of starting a second one.
     joined: bool
@@ -46,10 +49,14 @@ class AiRunResponse(BaseModel):
     id: uuid.UUID
     service_id: uuid.UUID
     purpose: str
+    # What the run worked on: the assessment, or the Tech Debt document. A
+    # workspace shows a run's disclosures only for its own assessment.
+    subject_id: uuid.UUID
     status: Literal["running", "completed", "failed"]
     serves: Serves
     started_at: datetime
     deadline_at: datetime
+    lock_until: datetime
     finished_at: datetime | None
     batches_total: int | None
     batches_failed: int | None

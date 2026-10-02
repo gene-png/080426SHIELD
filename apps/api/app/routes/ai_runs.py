@@ -57,8 +57,15 @@ def get_run(
     return to_response(run)
 
 
-def _newest(db: Session, service_id: uuid.UUID, *only: AiRunStatus) -> AiRun | None:
+def _newest(
+    db: Session,
+    service_id: uuid.UUID,
+    *only: AiRunStatus,
+    subject_id: uuid.UUID | None = None,
+) -> AiRun | None:
     q = select(AiRun).where(AiRun.service_id == service_id)
+    if subject_id is not None:
+        q = q.where(AiRun.subject_id == subject_id)
     if only:
         q = q.where(AiRun.status.in_(only))
     return db.execute(q.order_by(AiRun.started_at.desc())).scalars().first()
@@ -74,11 +81,16 @@ def service_runs(
     user: Annotated[User, _admin_required],
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],
+    subject_id: uuid.UUID | None = None,
 ) -> AiRunSummary:
+    """`subject_id` scopes `latest` and `last_completed` to one assessment (or
+    Tech Debt document), so a discarded draft's run never describes the draft
+    that replaced it (#271). `running` is the service's lock and is never
+    scoped: a run on any subject locks the service."""
     svc = require_service_in_tenant(db, service_id, client.id)
     running = running_run(db, service_id=svc.id)  # reaps first
-    latest = _newest(db, svc.id)
-    last_completed = _newest(db, svc.id, AiRunStatus.COMPLETED)
+    latest = _newest(db, svc.id, subject_id=subject_id)
+    last_completed = _newest(db, svc.id, AiRunStatus.COMPLETED, subject_id=subject_id)
     return AiRunSummary(
         running=to_response(running) if running else None,
         latest=to_response(latest) if latest else None,

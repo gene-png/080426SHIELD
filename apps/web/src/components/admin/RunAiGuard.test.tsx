@@ -607,7 +607,8 @@ describe("RunAiGuard tells the run what the admin acknowledged (#504, #645)", ()
   it("passes 'offline' on a later run the earlier acknowledgement covers", async () => {
     // A FRESH Response per call: a body can be read once, and `mockStatus`
     // hands the same one to every fetch, so the second render's status read
-    // would fail and the guard would fail open -- the outage path, not this.
+    // would fail and the guard would fail CLOSED (statusUnknown) -- the
+    // outage path, not this.
     vi.spyOn(globalThis, "fetch").mockImplementation(
       async () =>
         new Response(JSON.stringify(statusBody()), {
@@ -655,7 +656,7 @@ describe("RunAiGuard fails closed on an unreadable AI status (#645)", () => {
     renderWithDisabled(onProceed);
     const notice = await screen.findByTestId("run-ai-status-unknown");
     expect(notice).toHaveTextContent(
-      /Couldn.t check whether AI is ready to run live, so Run AI is off\. Reload the page/,
+      /Couldn.t check whether AI is ready to run live, so this AI action is off\. Reload the page/,
     );
     expect(screen.getByRole("button", { name: "Run AI" })).toBeDisabled();
     expect(onProceed).not.toHaveBeenCalled();

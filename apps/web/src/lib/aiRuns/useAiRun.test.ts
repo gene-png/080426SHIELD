@@ -10,11 +10,13 @@ function run(over: Partial<AiRun<Result>> = {}): AiRun<Result> {
   return {
     id: "run-1",
     service_id: "svc-1",
+    subject_id: "assess-1",
     purpose: "mitre_map",
     status: "running",
     serves: "offline",
     started_at: "2026-10-01T12:00:00Z",
     deadline_at: "2026-10-01T12:45:00Z",
+    lock_until: "2099-01-01T00:00:00Z",
     finished_at: null,
     batches_total: null,
     batches_failed: null,
@@ -38,6 +40,7 @@ const STARTED: AiRunStarted = {
   status: "running",
   serves: "offline",
   deadline_at: "2026-10-01T12:45:00Z",
+  lock_until: "2099-01-01T00:00:00Z",
   joined: false,
 };
 
@@ -187,3 +190,137 @@ function deferredRun(): {
   });
   return { promise, resolve };
 }
+
+function refusal(status: number, message: string): Error {
+  return Object.assign(new Error(`proxy ${status}`), {
+    status,
+    payload: { error: { code: status, reason: "forbidden", message } },
+  });
+}
+
+describe("useAiRun, review round 1 (#645)", () => {
+  it("W4: an ANSWERED refusal stops polling and shows the api's message", async () => {
+    const fetchSummary = vi.fn().mockResolvedValue(summary());
+    const fetchRun = vi
+      .fn()
+      .mockRejectedValue(
+        refusal(403, "You no longer have access to this service."),
+      );
+    const { result } = renderHook(() =>
+      useAiRun<Result>({
+        serviceId: "svc-1",
+        fetchSummary,
+        fetchRun,
+        pollMs: 1,
+      }),
+    );
+    await waitFor(() => expect(result.current.phase).toBe("ready"));
+    let ended: AiRun<Result> | undefined;
+    await act(async () => {
+      ended = await result.current.follow(STARTED);
+    });
+    expect(result.current.pollRefused).toBe(
+      "You no longer have access to this service.",
+    );
+    expect(result.current.checkFailed).toBe(false);
+    expect(ended?.status).toBe("running"); // not completed: the caller re-reads nothing
+    const calls = fetchRun.mock.calls.length;
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fetchRun.mock.calls.length).toBe(calls);
+  });
+
+  it("W4: past lock_until with no answer, polling stops and says so -- never 'failed'", async () => {
+    const fetchSummary = vi.fn().mockResolvedValue(summary());
+    const fetchRun = vi
+      .fn()
+      .mockRejectedValue(new TypeError("Failed to fetch"));
+    const { result } = renderHook(() =>
+      useAiRun<Result>({
+        serviceId: "svc-1",
+        fetchSummary,
+        fetchRun,
+        pollMs: 1,
+      }),
+    );
+    await waitFor(() => expect(result.current.phase).toBe("ready"));
+    await act(async () => {
+      await result.current.follow({
+        ...STARTED,
+        lock_until: "2000-01-01T00:00:00Z",
+      });
+    });
+    expect(result.current.pastLockUntil).toBe(true);
+    expect(result.current.latest).toBeNull();
+    const calls = fetchRun.mock.calls.length;
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fetchRun.mock.calls.length).toBe(calls);
+  });
+
+  it("W3: a new service never shows the old service's run, and the old poll stops", async () => {
+    const held = deferredRun();
+    const fetchSummary = vi.fn((serviceId: string) =>
+      Promise.resolve(
+        serviceId === "svc-A"
+          ? summary({ running: run({ id: "run-A", service_id: "svc-A" }) })
+          : summary(),
+      ),
+    );
+    const fetchRun = vi.fn().mockReturnValueOnce(held.promise);
+    const { result, rerender } = renderHook(
+      ({ serviceId }) =>
+        useAiRun<Result>({ serviceId, fetchSummary, fetchRun, pollMs: 1 }),
+      { initialProps: { serviceId: "svc-A" } },
+    );
+    await waitFor(() => expect(result.current.running?.id).toBe("run-A"));
+    rerender({ serviceId: "svc-B" });
+    await waitFor(() => expect(result.current.phase).toBe("ready"));
+    expect(result.current.running).toBeNull();
+    await act(async () => {
+      held.resolve(run({ id: "run-A", service_id: "svc-A" }));
+      await held.promise;
+    });
+    expect(result.current.running).toBeNull();
+    const calls = fetchRun.mock.calls.length;
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fetchRun.mock.calls.length).toBe(calls);
+  });
+
+  it("W1: a past run on another subject never describes this one", async () => {
+    const other = run({
+      id: "run-0",
+      status: "completed",
+      subject_id: "assess-0",
+      result: { applied: 1 },
+    });
+    const fetchSummary = vi
+      .fn()
+      .mockResolvedValue(summary({ latest: other, last_completed: other }));
+    const { result } = renderHook(() =>
+      useAiRun<Result>({
+        serviceId: "svc-1",
+        subjectId: "assess-1",
+        fetchSummary,
+        fetchRun: vi.fn(),
+      }),
+    );
+    await waitFor(() => expect(result.current.phase).toBe("ready"));
+    expect(fetchSummary).toHaveBeenCalledWith("svc-1", "assess-1");
+    expect(result.current.lastCompleted).toBeNull();
+    expect(result.current.latest).toBeNull();
+  });
+
+  it("reconcile: an ANSWERED refusal is shown, not swallowed", async () => {
+    const fetchSummary = vi
+      .fn()
+      .mockResolvedValueOnce(summary())
+      .mockRejectedValueOnce(refusal(404, "Service not found."));
+    const { result } = renderHook(() =>
+      useAiRun<Result>({ serviceId: "svc-1", fetchSummary, fetchRun: vi.fn() }),
+    );
+    await waitFor(() => expect(result.current.phase).toBe("ready"));
+    await act(async () => {
+      await result.current.reconcile();
+    });
+    expect(result.current.pollRefused).toBe("Service not found.");
+  });
+});

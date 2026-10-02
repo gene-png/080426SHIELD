@@ -754,3 +754,137 @@ def test_the_job_leaves_the_live_set_only_after_its_terminal_commit(app_parts, m
     assert runner.run_all() == 1
     assert seen == ["completed"], seen
     assert get_run(w.c, started["run_id"], w.h)["status"] == "completed"
+
+
+# ---------------------------------------------------------------------------
+# Review round 1 (199e9853): A1, A2, A3, A4, W1
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("mode", "expected"), [(LLMCallMode.LIVE, None), (LLMCallMode.FIXTURE, False)]
+)
+def test_a_reaped_run_with_no_committed_live_call_is_charged_unknown_not_no(
+    app_parts, mode, expected
+) -> None:
+    """A1. `invoke` only flushes its row before the provider call, so a live
+    call in flight when the api restarted leaves no committed row and may be
+    billing. A LIVE run reaped with no committed live row is NOT KNOWN (None);
+    only an offline run is definitely not charged."""
+    w, _runner = _deferred(app_parts)
+    with w.sessions() as s:
+        run = _competing_run(w, mode=mode)
+        run.boot_id = "a-previous-process"
+        s.add(run)
+        s.commit()
+    latest = w.c.get(f"/ai-runs/services/{w.svc_id}", headers=w.h).json()["latest"]
+    assert latest["error_reason"] == "run_orphaned", latest
+    assert latest["charged_likely"] is expected, latest
+
+
+@pytest.mark.unit
+def test_a_reaped_runs_accounting_is_logged_voided_not_applied(app_parts, capsys) -> None:
+    """A2. The accounting line is emitted after the completion commit; a run
+    whose compare-and-swap misses logs it as `.voided`, never as applied."""
+    w, runner = _deferred(app_parts)
+    started = start_run(w.c, w.run_url, w.h)
+    with w.sessions() as s:
+        s.execute(
+            update(AiRun)
+            .where(AiRun.id == uuid.UUID(started["run_id"]))
+            .values(status=AiRunStatus.FAILED, error_reason="run_deadline_exceeded")
+        )
+        s.commit()
+    capsys.readouterr()
+    assert runner.run_all() == 1
+    out = capsys.readouterr().out
+    assert '"attack.run_ai.citations_resolved.voided"' in out, out[-2000:]
+    assert '"attack.run_ai.citations_resolved"' not in out
+
+
+@pytest.mark.unit
+def test_a_completed_runs_accounting_is_logged_after_its_commit(app_parts, capsys) -> None:
+    w, runner = _deferred(app_parts)
+    start_run(w.c, w.run_url, w.h)
+    capsys.readouterr()
+    assert runner.run_all() == 1
+    out = capsys.readouterr().out
+    assert '"attack.run_ai.citations_resolved"' in out
+    assert '"attack.run_ai.citations_resolved.voided"' not in out
+
+
+@pytest.mark.unit
+def test_rows_skipped_edited_counts_rows_not_suggestions(app_parts) -> None:
+    """A3. A model suggesting one edited technique twice is ONE row kept."""
+    from app.models._common import utcnow
+
+    w, runner = _deferred(app_parts)
+    edited = w.codes[0]
+    twice = (
+        '{"technique_code": "' + edited + '", "status": "covered",'
+        ' "detection_tools": ["CrowdStrike Falcon"]}'
+    )
+
+    def respond(payload: dict) -> LLMResponse:
+        sent = set(payload.get("technique_codes") or [])
+        body = f"{twice},{twice}" if edited in sent else ""
+        return LLMResponse('{"techniques": [' + body + "]}")
+
+    w.provider.register("mitre_map", respond)
+    started = start_run(w.c, w.run_url, w.h)
+    with w.sessions() as s:
+        s.execute(
+            update(AttackCoverage)
+            .where(AttackCoverage.id == uuid.UUID(w.coverage_ids[edited]))
+            .values(status="gap", updated_at=utcnow())
+        )
+        s.commit()
+    assert runner.run_all() == 1
+    run = get_run(w.c, started["run_id"], w.h)
+    assert run["result"]["rows_skipped_edited"] == 1, run["result"]["rows_skipped_edited"]
+
+
+@pytest.mark.unit
+def test_the_lock_states_the_deadline_plus_the_reapers_margin(app_parts) -> None:
+    """A4. A run can hold the lock until `deadline_at + REAP_MARGIN`; every
+    stated "until" is that, and the run reports it as `lock_until`."""
+    from datetime import datetime
+
+    from app.ai.runs import REAP_MARGIN
+
+    w, _runner = _deferred(app_parts)
+    started = start_run(w.c, w.run_url, w.h)
+    run = get_run(w.c, started["run_id"], w.h)
+    deadline = datetime.fromisoformat(run["deadline_at"].replace("Z", "+00:00"))
+    until = datetime.fromisoformat(run["lock_until"].replace("Z", "+00:00"))
+    assert until - deadline == REAP_MARGIN
+    assert datetime.fromisoformat(started["lock_until"].replace("Z", "+00:00")) == until
+    r = w.c.patch(
+        f"/attack/coverage/{w.coverage_ids[w.codes[0]]}", headers=w.h, json={"notes": "x"}
+    )
+    assert r.status_code == 409, r.text
+    assert until.strftime("%Y-%m-%d %H:%M UTC") in r.json()["error"]["message"]
+
+
+@pytest.mark.unit
+def test_a_discarded_drafts_run_does_not_describe_the_draft_that_replaced_it(
+    app_parts,
+) -> None:
+    """W1. Disclosures are scoped to the assessment: after a run on a draft
+    that is then discarded, the new draft's summary carries no run."""
+    w, runner = _deferred(app_parts)
+    start_run(w.c, w.run_url, w.h)
+    assert runner.run_all() == 1
+    assert (
+        w.c.post(f"/attack/assessments/{w.assessment_id}/discard", headers=w.h).status_code == 200
+    )
+    fresh = w.c.post(f"/attack/services/{w.svc_id}/assessments", headers=w.h).json()["id"]
+    scoped = w.c.get(
+        f"/ai-runs/services/{w.svc_id}", headers=w.h, params={"subject_id": fresh}
+    ).json()
+    assert (scoped["latest"], scoped["last_completed"]) == (None, None), scoped
+    old = w.c.get(
+        f"/ai-runs/services/{w.svc_id}", headers=w.h, params={"subject_id": w.assessment_id}
+    ).json()
+    assert old["last_completed"]["subject_id"] == w.assessment_id

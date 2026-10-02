@@ -22,7 +22,7 @@ import {
 } from "@/lib/csf/client";
 import type { AiServes } from "@/lib/aiRuns/types";
 import { useAiRun } from "@/lib/aiRuns/useAiRun";
-import { AiRunStatus } from "@/components/admin/AiRunStatus";
+import { AiRunStatus, LastRunNote } from "@/components/admin/AiRunStatus";
 
 import { AiPreviewButton } from "../AiPreviewButton";
 import { AiDraftProvenanceNotice } from "@/components/admin/AiDraftProvenanceNotice";
@@ -52,6 +52,16 @@ export interface CsfPlaybookPanelProps {
   runOutcomeUnknown?: boolean;
   /** Called when a Run AI's own answer never arrived. */
   onRunOutcomeUnknown?: () => void;
+  /**
+   * #271: the assessment this panel describes, so a past run's disclosures
+   * show only for it. `null` while there is none; left out, unscoped.
+   */
+  assessmentId?: string | null;
+  /**
+   * #645: told whenever a run starts or stops holding the lock, so the
+   * workspace can lock Approve, which it renders outside this panel.
+   */
+  onRunInProgressChange?: (running: boolean) => void;
 }
 
 /**
@@ -416,6 +426,8 @@ export function CsfPlaybookPanel({
   readOnly = false,
   runOutcomeUnknown = false,
   onRunOutcomeUnknown,
+  assessmentId,
+  onRunInProgressChange,
 }: CsfPlaybookPanelProps): JSX.Element {
   const [enterprise, setEnterprise] = React.useState<EnterpriseProfile | null>(
     null,
@@ -485,12 +497,17 @@ export function CsfPlaybookPanel({
   );
   const aiRun = useAiRun<CsfRunAiResponse>({
     serviceId,
+    // #271: only this assessment's runs describe it.
+    subjectId: assessmentId,
     fetchSummary: fetchCsfRunSummary,
     fetchRun: fetchCsfRun,
     onFinished: onRunFinishedElsewhere,
   });
   /** #645: a run holds the edit lock; the api refuses edits until it ends. */
   const runInProgress = aiRun.running !== null;
+  React.useEffect(() => {
+    onRunInProgressChange?.(runInProgress);
+  }, [onRunInProgressChange, runInProgress]);
   /** What the last COMPLETED run did, read from the run: survives a reload. */
   const runResult = aiRun.lastCompleted?.result ?? null;
 
@@ -666,6 +683,7 @@ export function CsfPlaybookPanel({
           ) : null}
 
           <AiRunStatus run={aiRun} />
+          <LastRunNote run={aiRun.lastCompleted} />
           {runResult ? <RunAiAccounting result={runResult} /> : null}
           {/* CSF's prompt carries the client's interview answers, so the
               provenance vector is identical to ZT's (#68). */}

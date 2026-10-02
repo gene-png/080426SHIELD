@@ -145,6 +145,7 @@ describe("CsfPlaybookPanel run-AI accounting (W1, issue #44)", () => {
       status: "running",
       serves: "offline",
       deadline_at: "2026-10-01T12:45:00Z",
+      lock_until: "2026-10-01T12:50:00Z",
       joined: false,
     });
     vi.mocked(csfClient.fetchCsfRun).mockResolvedValue({

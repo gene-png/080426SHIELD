@@ -965,17 +965,20 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
             },
         )
 
-    # BELOW the D-031 re-read on purpose. Above it, a run that lost the discard
-    # race logged "applied=N" for a transaction that then rolled back — a record
-    # asserting something the database does not contain. Counts only: no key, no
-    # model text (#44 constraint 1).
-    _log.info(
+    # NOT logged here: a run that lost the discard race once logged
+    # "applied=N" for a transaction that then rolled back. The apply commits
+    # with the run's completion compare-and-swap (#645), so the framework
+    # emits this only after that commit, or as `.voided` when it misses.
+    # Counts only: no key, no model text (#44 constraint 1).
+    accounting = (
         "zt_run_ai_suggestions_accounted",
-        service_id=str(ctx.service_id),
-        assessment_id=str(a.id),
-        received=received,
-        applied=applied,
-        dropped_by_reason=dropped_by_reason,
+        {
+            "service_id": str(ctx.service_id),
+            "assessment_id": str(a.id),
+            "received": received,
+            "applied": applied,
+            "dropped_by_reason": dropped_by_reason,
+        },
     )
 
     a.documents_stale = True  # Work Order C3
@@ -1008,7 +1011,9 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
         dropped=dropped,
         preserved_client_answers=len(protected),
     )
-    return RunOutcome(result=payload.model_dump(mode="json"), applied_count=applied)
+    return RunOutcome(
+        result=payload.model_dump(mode="json"), applied_count=applied, accounting=accounting
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -89,11 +89,13 @@ function run(over: Partial<CsfRun> = {}): CsfRun {
   return {
     id: "run-1",
     service_id: "svc-1",
+    subject_id: "assess-1",
     purpose: "csf_score",
     status: "running",
     serves: "live",
     started_at: "2026-10-01T12:00:00Z",
     deadline_at: "2026-10-01T12:45:00Z",
+    lock_until: "2026-10-01T12:50:00Z",
     finished_at: null,
     batches_total: null,
     batches_failed: null,
@@ -177,6 +179,7 @@ describe("CsfPlaybookPanel, Run-AI in the background (#645)", () => {
       status: "running",
       serves: "live",
       deadline_at: "2026-10-01T12:45:00Z",
+      lock_until: "2026-10-01T12:50:00Z",
       joined: false,
     });
     m.fetchRun.mockResolvedValueOnce(

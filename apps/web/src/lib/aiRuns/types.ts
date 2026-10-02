@@ -15,8 +15,10 @@ export interface AiRunStarted {
   run_id: string;
   status: "running";
   serves: AiServes;
-  /** When the run gives up, and the edit lock with it. */
+  /** When the run's job gives up. */
   deadline_at: string;
+  /** The latest the run can hold the edit lock: what "locked until" says. */
+  lock_until: string;
   /** True when this POST joined a run already in progress. */
   joined: boolean;
 }
@@ -25,11 +27,14 @@ export interface AiRunStarted {
 export interface AiRun<R> {
   id: string;
   service_id: string;
+  /** What the run worked on: the assessment, or the Tech Debt document. */
+  subject_id: string;
   purpose: string;
   status: "running" | "completed" | "failed";
   serves: AiServes;
   started_at: string;
   deadline_at: string;
+  lock_until: string;
   finished_at: string | null;
   batches_total: number | null;
   batches_failed: number | null;

@@ -678,7 +678,8 @@ Components carry no cost of their own — this licence keeps its full value.`,
                 // while the request is in flight, and a null ran the extraction
                 // -- reachable since #472 made the first status read slow. A
                 // status that cannot be read at all does not auto-run either;
-                // the guarded button, which fails open on an outage, remains.
+                // the guarded button remains, and it too is off until a status
+                // read succeeds (#645: RunAiGuard fails closed).
                 void aiSettled().then((s) => {
                   if (s === null) {
                     console.warn(

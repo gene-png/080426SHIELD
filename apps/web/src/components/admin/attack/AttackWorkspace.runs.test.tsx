@@ -142,11 +142,13 @@ function run(over: Partial<AttackRun> = {}): AttackRun {
   return {
     id: "run-1",
     service_id: "svc-1",
+    subject_id: "assess-1",
     purpose: "mitre_map",
     status: "running",
     serves: "offline",
     started_at: "2026-10-01T12:00:00Z",
     deadline_at: "2026-10-01T12:45:00Z",
+    lock_until: "2026-10-01T12:50:00Z",
     finished_at: null,
     batches_total: null,
     batches_failed: null,
@@ -189,7 +191,46 @@ describe("AttackWorkspace, Run-AI in the background (#645)", () => {
       await screen.findByTestId("attack-run-incomplete"),
     ).toHaveTextContent("3 of 26 batches failed");
     expect(screen.getByTestId("attack-citations-rejected")).toBeInTheDocument();
-    expect(screen.getByTestId("attack-run-from")).toBeInTheDocument();
+    expect(screen.getByTestId("ai-run-from")).toBeInTheDocument();
+  });
+
+  it("shows the run's date, and no disclosure from a discarded assessment's run (#271, W1)", async () => {
+    // The draft a partial run filled was discarded; this page's assessment is
+    // a new one. The api is asked for THIS assessment's runs, and a run on
+    // another one, should one come back, describes nothing here.
+    m.fetchLatestAssessment.mockResolvedValue({ ...draft(), id: "assess-2" });
+    const partial = run({
+      status: "completed",
+      subject_id: "assess-1",
+      finished_at: "2026-10-01T12:10:00Z",
+      result: result({ batches_failed: 3, citations_rejected: 1 }),
+    });
+    m.fetchAttackRunSummary.mockResolvedValue(
+      summary({ latest: partial, last_completed: partial }),
+    );
+    render(<AttackWorkspace serviceId="svc-1" serviceTitle="ATT&CK" />);
+    await waitFor(() =>
+      expect(m.fetchAttackRunSummary).toHaveBeenCalledWith("svc-1", "assess-2"),
+    );
+    await screen.findByRole("button", { name: /Run AI/ });
+    expect(screen.queryByTestId("attack-run-incomplete")).toBeNull();
+    expect(screen.queryByTestId("attack-citations-rejected")).toBeNull();
+    expect(screen.queryByTestId("ai-run-from")).toBeNull();
+  });
+
+  it("names the date of the run its disclosures come from", async () => {
+    const done = run({
+      status: "completed",
+      finished_at: "2026-10-01T12:10:00Z",
+      result: result({ batches_failed: 3 }),
+    });
+    m.fetchAttackRunSummary.mockResolvedValue(
+      summary({ latest: done, last_completed: done }),
+    );
+    render(<AttackWorkspace serviceId="svc-1" serviceTitle="ATT&CK" />);
+    expect(await screen.findByTestId("ai-run-from")).toHaveTextContent(
+      /on Oct 1, 2026/,
+    );
   });
 
   it("states rows the run left as a consultant edited them", async () => {
@@ -231,6 +272,7 @@ describe("AttackWorkspace, Run-AI in the background (#645)", () => {
       status: "running",
       serves: "offline",
       deadline_at: "2026-10-01T12:45:00Z",
+      lock_until: "2026-10-01T12:50:00Z",
       joined: false,
     });
     m.fetchAttackRun.mockResolvedValueOnce(
@@ -260,6 +302,7 @@ describe("AttackWorkspace, Run-AI in the background (#645)", () => {
       status: "running",
       serves: "offline",
       deadline_at: "2026-10-01T12:45:00Z",
+      lock_until: "2026-10-01T12:50:00Z",
       joined: false,
     });
     m.fetchAttackRun.mockResolvedValueOnce(

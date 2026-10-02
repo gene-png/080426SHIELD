@@ -43,7 +43,7 @@ import { MessageThread } from "@/components/messages/MessageThread";
 import { StaleDocsNudge } from "@/components/admin/StaleDocsNudge";
 import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { AiPreviewButton } from "@/components/admin/AiPreviewButton";
-import { AiRunStatus, clockTime } from "@/components/admin/AiRunStatus";
+import { AiRunStatus, LastRunNote } from "@/components/admin/AiRunStatus";
 import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
 
@@ -309,6 +309,8 @@ export function AttackWorkspace({
   );
   const aiRun = useAiRun({
     serviceId,
+    // #271: only this assessment's runs describe it. `null` until it loads.
+    subjectId: assessment?.id ?? null,
     fetchSummary: fetchAttackRunSummary,
     fetchRun: fetchAttackRun,
     onFinished: onRunFinishedElsewhere,
@@ -801,15 +803,7 @@ export function AttackWorkspace({
                   gap. Read-only and not rate-limited, so it loads on mount. */}
               <AttackAiInputsPanel serviceId={serviceId} />
               <AiRunStatus run={aiRun} />
-              {runResult && aiRun.lastCompleted?.finished_at ? (
-                <p
-                  className="text-xs text-ink-tertiary"
-                  data-testid="attack-run-from"
-                >
-                  From the last AI run that completed, at{" "}
-                  {clockTime(aiRun.lastCompleted.finished_at)}.
-                </p>
-              ) : null}
+              <LastRunNote run={aiRun.lastCompleted} />
               {runResult ? (
                 <p className="text-sm text-ink-secondary" aria-live="polite">
                   Updated{" "}

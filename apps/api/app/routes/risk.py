@@ -846,6 +846,14 @@ def generate(
     llm: Annotated[LLMClient, Depends(_llm_dep)],
     limiter: Annotated[RateLimiter, Depends(get_rate_limiter)],
 ) -> RiskRegisterResponse:
+    # DELIBERATELY NOT a background run, and it does NOT take `serves` yet.
+    # #645 moved ATT&CK, Tech Debt, CSF and ZT to runs that carry the AI status
+    # the consultant acknowledged, so the api refuses an "offline" run that
+    # would now go live (#504). Risk was set aside by Gene on 2026-09-27, so
+    # this route still acts on whatever provider `_llm_dep` builds: the #504
+    # race (a key loaded after the page read "offline") is OPEN here. Closing
+    # it means taking `serves` and refusing as `app/ai/runs.start_run` does.
+    #
     # Per-client throttle on the most expensive egress (cross-assessment
     # synthesis). Risk pins the tenant via the path `cid`, not X-Client-Id,
     # so we key on it directly rather than via the current_client dependency.

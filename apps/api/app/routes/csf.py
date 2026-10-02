@@ -2215,17 +2215,20 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
     # 1, Master Spec §12.1). Emitted on every run: a reader should never have to
     # wonder whether the accounting ran.
     #
-    # BELOW the D-031 re-read on purpose. Above it, a run that lost the discard
-    # race logged "applied=1908" for a transaction that then rolled back and
-    # wrote no audit row — logs and audit disagreeing about whether anything
-    # happened is precisely the confusion this accounting exists to remove.
-    _log.info(
+    # NOT logged here. A run that lost the discard race once logged
+    # "applied=1908" for a transaction that then rolled back. Since #645 the
+    # apply commits with the run's completion compare-and-swap, which can
+    # still miss, so the framework emits this line only after that commit
+    # (or as `.voided` when it misses). See `RunOutcome.accounting`.
+    accounting = (
         "csf_run_ai_suggestions_accounted",
-        service_id=str(ctx.service_id),
-        assessment_id=str(a.id),
-        received=received,
-        applied=applied,
-        dropped_by_reason=dropped_by_reason,
+        {
+            "service_id": str(ctx.service_id),
+            "assessment_id": str(a.id),
+            "received": received,
+            "applied": applied,
+            "dropped_by_reason": dropped_by_reason,
+        },
     )
 
     a.documents_stale = True  # Work Order C3
@@ -2256,7 +2259,9 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
         suggestions_applied=applied,
         dropped=dropped,
     )
-    return RunOutcome(result=payload.model_dump(mode="json"), applied_count=applied)
+    return RunOutcome(
+        result=payload.model_dump(mode="json"), applied_count=applied, accounting=accounting
+    )
 
 
 @router.post(

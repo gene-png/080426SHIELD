@@ -1969,7 +1969,8 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
     edited_since_start = {code for code, r in rows.items() if ctx.edited_since_start(r.updated_at)}
     locked_keys = frozenset(code for code, r in rows.items() if r.locked)
     before = _snap()
-    rows_skipped_edited = 0
+    # Distinct ROWS, not suggestions: a model may suggest one technique twice.
+    skipped_codes: set[str] = set()
     # Distinct rows written. A set, because a model may suggest one technique twice.
     applied_codes: set[str] = set()
 
@@ -2073,7 +2074,7 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
         if row.technique_code in edited_since_start:
             # #645: a consultant's edit that landed after this run started is
             # kept, never overwritten, and counted so the workspace says so.
-            rows_skipped_edited += 1
+            skipped_codes.add(row.technique_code)
             continue
         st = sugg.get("status")
         offered = sugg.get("reason_code")
@@ -2265,14 +2266,18 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
     # this same re-read and reported values applied for transactions that then
     # rolled back.
     pending = attack_pending_codes(rows.values(), parents_computed=parents_computed(a))
-    _log.info(
+    # Emitted by the framework only after the completion commit (#645), or as
+    # `.voided` when the compare-and-swap misses. See `RunOutcome.accounting`.
+    accounting = (
         "attack.run_ai.citations_resolved",
-        service_id=str(ctx.service_id),
-        confirmed=citations.confirmed,
-        needs_review=citations.needs_review,
-        rejected=citations.rejected,
-        unusable=citations.unusable,
-        pending_review_rows=len(pending),
+        {
+            "service_id": str(ctx.service_id),
+            "confirmed": citations.confirmed,
+            "needs_review": citations.needs_review,
+            "rejected": citations.rejected,
+            "unusable": citations.unusable,
+            "pending_review_rows": len(pending),
+        },
     )
     audit(
         db,
@@ -2304,7 +2309,7 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
             "parent_suggestions_refused": parent_suggestions_refused,
             "parents_recomputed": parents_recomputed,
             "parents_unlocked": parents_unlocked,
-            "rows_skipped_edited": rows_skipped_edited,
+            "rows_skipped_edited": len(skipped_codes),
         },
     )
     # No commit: the framework commits this apply together with the
@@ -2327,13 +2332,14 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
         rows_left_unresolved=rows_left_unresolved,
         unresolved_fields=list(unresolved_fields_seen),
         pending_review_rows=len(pending),
-        rows_skipped_edited=rows_skipped_edited,
+        rows_skipped_edited=len(skipped_codes),
     )
     return RunOutcome(
         result=result_payload.model_dump(mode="json"),
         applied_count=len(applied_codes),
         batches_total=batches_total,
         batches_failed=batches_failed,
+        accounting=accounting,
     )
 
 

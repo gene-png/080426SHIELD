@@ -127,8 +127,8 @@ export function RunAiGuard({
           {/* The remedies name controls that exist today: the browser's own
               reload, and the button below, which calls `useAiStatus`'s
               `refresh()` and so re-reads `/api/proxy/admin/ai-status`. */}
-          Couldn&apos;t check whether AI is ready to run live, so Run AI is off.
-          Reload the page, or{" "}
+          Couldn&apos;t check whether AI is ready to run live, so this AI action
+          is off. Reload the page, or{" "}
           <button
             type="button"
             onClick={checkAgain}

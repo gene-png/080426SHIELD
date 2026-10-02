@@ -149,8 +149,15 @@ def _aware(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
 
+def lock_until(run: AiRun) -> datetime:
+    """The latest a run can hold its service's lock: its deadline plus the
+    margin a status read waits before ending a run this process is still
+    executing. Every stated "until" is this, never the bare deadline."""
+    return _aware(run.deadline_at) + REAP_MARGIN
+
+
 def _deadline_text(run: AiRun) -> str:
-    return _aware(run.deadline_at).strftime("%H:%M UTC")
+    return lock_until(run).strftime("%Y-%m-%d %H:%M UTC")
 
 
 # ---------------------------------------------------------------------------
@@ -158,15 +165,23 @@ def _deadline_text(run: AiRun) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _charged_likely(db: Session, run_id: uuid.UUID) -> bool:
-    """Whether this run made a LIVE provider call, read from the egress
-    record itself rather than from what the job thought it was doing: every
-    call of the run stamps `ai_run_id` and its own `mode`."""
-    return bool(
-        db.execute(
-            select(exists().where(LLMCall.ai_run_id == run_id, LLMCall.mode == LLMCallMode.LIVE))
-        ).scalar()
-    )
+def _charged_likely(db: Session, run_id: uuid.UUID, mode: LLMCallMode) -> bool | None:
+    """Whether this run made a LIVE provider call, in three values.
+
+    True when a committed `llm_calls` row of this run says it went live. False
+    only for a run whose mode was OFFLINE: it could not have gone live. For a
+    LIVE run with no committed live row the answer is None, NOT KNOWN, never
+    False: `invoke` only FLUSHES its row before calling the provider, so a call
+    that was in flight when the api restarted, or one still streaming when the
+    run was ended at its deadline, leaves no committed row and may well be
+    billing. Missing data defaults to unconfirmed.
+    """
+    went_live = db.execute(
+        select(exists().where(LLMCall.ai_run_id == run_id, LLMCall.mode == LLMCallMode.LIVE))
+    ).scalar()
+    if went_live:
+        return True
+    return None if mode == LLMCallMode.LIVE else False
 
 
 def _fail_if_running(
@@ -207,7 +222,7 @@ def _orphan_cause(run: AiRun, now: datetime) -> tuple[str, str] | None:
             "This run stopped without recording an outcome. Nothing from it was "
             "applied; run it again.",
         )
-    if now > _aware(run.deadline_at) + REAP_MARGIN:
+    if now > lock_until(run):
         return (
             RUN_DEADLINE_EXCEEDED,
             "This run did not finish within its time limit, so it was stopped. "
@@ -244,7 +259,7 @@ def reap(db: Session, *, service_id: uuid.UUID, purpose: str | None = None) -> N
             run.id,
             reason=reason,
             message=message,
-            charged_likely=_charged_likely(db, run.id),
+            charged_likely=_charged_likely(db, run.id, run.mode),
         ):
             reaped += 1
             _log.warning(
@@ -301,7 +316,7 @@ def refuse_while_running(db: Session, service_id: uuid.UUID) -> None:
                 f"it finishes, or until {_deadline_text(run)} at the latest."
             ),
             "run_id": str(run.id),
-            "deadline_at": _aware(run.deadline_at).isoformat(),
+            "lock_until": lock_until(run).isoformat(),
         },
     )
 
@@ -348,6 +363,11 @@ class RunOutcome:
     applied_count: int
     batches_total: int = 1
     batches_failed: int = 0
+    # The service's own accounting log line, as (event, fields). Emitted by the
+    # framework only AFTER the completion commit, or as `<event>.voided` when
+    # the compare-and-swap misses: a record that says "this was applied"
+    # belongs below the commit that makes it true.
+    accounting: tuple[str, dict[str, Any]] | None = None
 
 
 @dataclass(frozen=True)
@@ -363,6 +383,10 @@ class RunContext:
     deadline_at: datetime
     llm: LLMClient
     extra: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def mode(self) -> LLMCallMode:
+        return _mode_for(provider_serves(self.llm))
 
     def edited_since_start(self, updated_at: datetime | None) -> bool:
         """Whether a row's PRE-WRITE `updated_at` says a consultant edited it at
@@ -415,7 +439,7 @@ def _execute(bind: Engine | Connection, ctx: RunContext, work: Work) -> None:
                 applied_count=outcome.applied_count,
                 batches_total=outcome.batches_total,
                 batches_failed=outcome.batches_failed,
-                charged_likely=_charged_likely(session, ctx.run_id),
+                charged_likely=_charged_likely(session, ctx.run_id, ctx.mode),
                 finished_at=utcnow(),
             )
             .execution_options(synchronize_session=False)
@@ -425,8 +449,14 @@ def _execute(bind: Engine | Connection, ctx: RunContext, work: Work) -> None:
             # workspace has already been told failed.
             session.rollback()
             _log.warning("ai_runs.completion_refused_reaped", run_id=str(ctx.run_id))
+            if outcome.accounting is not None:
+                event, fields = outcome.accounting
+                _log.warning(f"{event}.voided", run_id=str(ctx.run_id), **fields)
             return
         session.commit()
+        if outcome.accounting is not None:
+            event, fields = outcome.accounting
+            _log.info(event, run_id=str(ctx.run_id), **fields)
         _log.info(
             "ai_runs.completed",
             run_id=str(ctx.run_id),
@@ -442,7 +472,7 @@ def _execute(bind: Engine | Connection, ctx: RunContext, work: Work) -> None:
             ctx.run_id,
             reason=reason,
             message=message,
-            charged_likely=_charged_likely(session, ctx.run_id),
+            charged_likely=_charged_likely(session, ctx.run_id, ctx.mode),
         )
         session.commit()
         _log.error(
@@ -484,6 +514,7 @@ def _started(run: AiRun, *, joined: bool) -> AiRunStarted:
         status="running",
         serves=serves_of(run),
         deadline_at=_aware(run.deadline_at),
+        lock_until=lock_until(run),
         joined=joined,
     )
 
@@ -639,10 +670,12 @@ def to_response(run: AiRun) -> AiRunResponse:
         id=run.id,
         service_id=run.service_id,
         purpose=run.purpose,
+        subject_id=run.subject_id,
         status=run.status.value,  # type: ignore[arg-type]
         serves=serves_of(run),
         started_at=_aware(run.started_at),
         deadline_at=_aware(run.deadline_at),
+        lock_until=lock_until(run),
         finished_at=_aware(run.finished_at) if run.finished_at else None,
         batches_total=run.batches_total,
         batches_failed=run.batches_failed,

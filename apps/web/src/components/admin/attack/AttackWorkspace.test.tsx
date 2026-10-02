@@ -695,6 +695,7 @@ describe("AttackWorkspace, the parent re-read after round 3 (#620)", () => {
       status: "running",
       serves: "offline",
       deadline_at: "2026-10-01T12:45:00Z",
+      lock_until: "2026-10-01T12:50:00Z",
       joined: false,
     });
     vi.mocked(attackClient.fetchAttackRun).mockReturnValueOnce(run.promise);
@@ -746,6 +747,7 @@ describe("AttackWorkspace, the parent re-read after round 3 (#620)", () => {
       status: "running",
       serves: "offline",
       deadline_at: "2026-10-01T12:45:00Z",
+      lock_until: "2026-10-01T12:50:00Z",
       joined: false,
     });
     vi.mocked(attackClient.fetchAttackRun)
@@ -753,6 +755,7 @@ describe("AttackWorkspace, the parent re-read after round 3 (#620)", () => {
         id: "run-r3c",
         status: "running",
         deadline_at: "2026-10-01T12:45:00Z",
+        lock_until: "2026-10-01T12:50:00Z",
         result: null,
       } as unknown as Awaited<ReturnType<typeof attackClient.fetchAttackRun>>)
       .mockReturnValueOnce(finalPoll.promise);

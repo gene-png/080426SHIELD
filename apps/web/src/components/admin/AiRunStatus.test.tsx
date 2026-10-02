@@ -5,17 +5,19 @@ import { describe, expect, it } from "vitest";
 
 import type { AiRun } from "@/lib/aiRuns/types";
 
-import { AiRunStatus, clockTime } from "./AiRunStatus";
+import { AiRunStatus, whenText } from "./AiRunStatus";
 
 function run(over: Partial<AiRun<unknown>> = {}): AiRun<unknown> {
   return {
     id: "run-1",
     service_id: "svc-1",
+    subject_id: "assess-1",
     purpose: "mitre_map",
     status: "running",
     serves: "live",
     started_at: "2026-10-01T12:00:00Z",
     deadline_at: "2026-10-01T12:45:00Z",
+    lock_until: "2026-10-01T12:50:00Z",
     finished_at: null,
     batches_total: null,
     batches_failed: null,
@@ -34,6 +36,8 @@ const READY = {
   running: null,
   latest: null,
   checkFailed: false,
+  pollRefused: null,
+  pastLockUntil: false,
 };
 
 describe("AiRunStatus (#645)", () => {
@@ -42,7 +46,7 @@ describe("AiRunStatus (#645)", () => {
     const el = screen.getByTestId("ai-run-running");
     expect(el).toHaveTextContent(/AI run in progress/);
     expect(el).toHaveTextContent(/Editing this assessment is locked/);
-    expect(el).toHaveTextContent(clockTime("2026-10-01T12:45:00Z"));
+    expect(el).toHaveTextContent(whenText("2026-10-01T12:50:00Z"));
     expect(screen.queryByTestId("ai-run-check-failed")).toBeNull();
   });
 
@@ -58,10 +62,28 @@ describe("AiRunStatus (#645)", () => {
     expect(screen.queryByText(/failed/i)).toBeNull();
   });
 
+  it("never says 'no live AI call' when nothing on record says so (A1)", () => {
+    render(
+      <AiRunStatus
+        run={{
+          ...READY,
+          latest: run({
+            status: "failed",
+            error_reason: "orphaned",
+            charged_likely: null,
+          }),
+        }}
+      />,
+    );
+    const el = screen.getByTestId("ai-run-failed");
+    expect(el).toHaveTextContent(/may have made a live AI call/);
+    expect(el).not.toHaveTextContent(/no live AI call/);
+  });
+
   it.each([
     [true, /provider has probably charged/],
     [false, /made no live AI call/],
-    [null, /Whether it made a billable AI call is not known/],
+    [null, /It may have made a live AI call/],
   ])(
     "states a failed run's reason and charged_likely=%s in words",
     (charged, words) => {

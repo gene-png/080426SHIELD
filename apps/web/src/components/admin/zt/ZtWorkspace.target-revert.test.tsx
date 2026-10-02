@@ -251,6 +251,7 @@ const STARTED = {
   status: "running" as const,
   serves: "offline" as const,
   deadline_at: "2026-10-01T12:45:00Z",
+  lock_until: "2026-10-01T12:50:00Z",
   joined: false,
 };
 const COMPLETED = {

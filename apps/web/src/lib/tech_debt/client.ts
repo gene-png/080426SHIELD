@@ -129,11 +129,17 @@ export async function fetchTechDebtRun(runId: string): Promise<TechDebtRun> {
   return jsonRequest<TechDebtRun>(`/api/proxy/ai/runs/${runId}`);
 }
 
+/**
+ * The service's runs. `subjectId` scopes the newest and last completed runs
+ * to one assessment (#271); the run holding the lock is always the service's.
+ */
 export async function fetchTechDebtRunSummary(
   serviceId: string,
+  subjectId?: string,
 ): Promise<AiRunSummary<TechDebtExtractResult>> {
+  const scope = subjectId ? `?subject_id=${encodeURIComponent(subjectId)}` : "";
   return jsonRequest<AiRunSummary<TechDebtExtractResult>>(
-    `/api/proxy/ai/runs/services/${serviceId}`,
+    `/api/proxy/ai/runs/services/${serviceId}${scope}`,
   );
 }
 

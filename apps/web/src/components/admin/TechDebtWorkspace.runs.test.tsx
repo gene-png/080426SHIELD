@@ -98,11 +98,13 @@ function run(over: Partial<TechDebtRun> = {}): TechDebtRun {
   return {
     id: "run-1",
     service_id: "svc-1",
+    subject_id: "artifact-1",
     purpose: "tech_debt_extract",
     status: "running",
     serves: "offline",
     started_at: "2026-10-01T12:00:00Z",
     deadline_at: "2026-10-01T12:45:00Z",
+    lock_until: "2026-10-01T12:50:00Z",
     finished_at: null,
     batches_total: null,
     batches_failed: null,
@@ -120,6 +122,7 @@ const STARTED = {
   status: "running" as const,
   serves: "offline" as const,
   deadline_at: "2026-10-01T12:45:00Z",
+  lock_until: "2026-10-01T12:50:00Z",
   joined: false,
 };
 
@@ -262,5 +265,33 @@ describe("TechDebtWorkspace, an extraction whose outcome is unknown, reconciled 
     ).toBeInTheDocument();
     await waitFor(() => expect(m.fetchSummary).toHaveBeenCalledTimes(2));
     expect(screen.queryByTestId("ai-run-load-failed")).toBeNull();
+  });
+});
+
+describe("TechDebtWorkspace, a re-read failing after a completed run (#645, #752's rule)", () => {
+  it("says the list could not be loaded, and does NOT lock extraction", async () => {
+    // The worst case for the rule: the list re-read itself comes back as an
+    // outcome-unknown 504. Only the POST's own rejection may lock (#752).
+    m.fetchLatestList
+      .mockResolvedValueOnce(null as never)
+      .mockRejectedValueOnce(outcomeUnknown());
+    m.extract.mockResolvedValue(STARTED);
+    m.fetchRun.mockResolvedValue(run({ status: "completed", result: null }));
+    render(<TechDebtWorkspace serviceId="svc-1" serviceTitle="Atlas TD" />);
+    const button = await screen.findByRole("button", {
+      name: "extract artifact-1",
+    });
+    fireEvent.click(button);
+    expect(
+      // The read's own error, through this file's proxyMessage mock (which
+      // returns err.message) -- not the outcome-unknown lock's copy.
+      await screen.findByText("proxy 504"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/couldn't confirm whether the extraction finished/),
+    ).toBeNull();
+    await waitFor(() => expect(button).not.toBeDisabled());
+    fireEvent.click(button);
+    await waitFor(() => expect(m.extract).toHaveBeenCalledTimes(2));
   });
 });

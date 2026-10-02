@@ -159,11 +159,17 @@ export async function fetchAttackRun(runId: string): Promise<AttackRun> {
   return jsonRequest<AttackRun>(`/api/proxy/ai/runs/${runId}`);
 }
 
+/**
+ * The service's runs. `subjectId` scopes the newest and last completed runs
+ * to one assessment (#271); the run holding the lock is always the service's.
+ */
 export async function fetchAttackRunSummary(
   serviceId: string,
+  subjectId?: string,
 ): Promise<AiRunSummary<AttackRunAiResponse>> {
+  const scope = subjectId ? `?subject_id=${encodeURIComponent(subjectId)}` : "";
   return jsonRequest<AiRunSummary<AttackRunAiResponse>>(
-    `/api/proxy/ai/runs/services/${serviceId}`,
+    `/api/proxy/ai/runs/services/${serviceId}${scope}`,
   );
 }
 

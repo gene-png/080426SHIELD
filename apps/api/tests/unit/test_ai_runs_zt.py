@@ -240,3 +240,26 @@ def test_each_locked_zt_route_is_refused_while_a_run_is_in_progress(world, route
     assert runner.run_all() == 1
     after = LOCK_DRIVERS[route](world)
     assert after.status_code != 409 or after.json()["error"].get("reason") != "ai_run_in_progress"
+
+
+@pytest.mark.unit
+def test_a_reaped_runs_accounting_is_logged_voided_not_applied(world, capsys) -> None:
+    """Review A2: the accounting line is emitted only after the completion
+    commit; a run whose compare-and-swap misses logs it as `.voided`."""
+    from app.models.ai_run import AiRun, AiRunStatus
+
+    runner = _deferred(world)
+    world.suggest(2)
+    started = start_run(world.c, world.run_url, world.h)
+    with world.sessions() as s:
+        s.execute(
+            update(AiRun)
+            .where(AiRun.id == uuid.UUID(started["run_id"]))
+            .values(status=AiRunStatus.FAILED, error_reason="run_deadline_exceeded")
+        )
+        s.commit()
+    capsys.readouterr()
+    assert runner.run_all() == 1
+    out = capsys.readouterr().out
+    assert '"zt_run_ai_suggestions_accounted.voided"' in out, out[-2000:]
+    assert '"zt_run_ai_suggestions_accounted"' not in out

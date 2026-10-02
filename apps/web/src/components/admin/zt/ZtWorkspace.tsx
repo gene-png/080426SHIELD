@@ -28,7 +28,7 @@ import {
 import type { ZtRun } from "@/lib/zt/client";
 import type { AiServes } from "@/lib/aiRuns/types";
 import { useAiRun } from "@/lib/aiRuns/useAiRun";
-import { AiRunStatus } from "@/components/admin/AiRunStatus";
+import { AiRunStatus, LastRunNote } from "@/components/admin/AiRunStatus";
 import type {
   GapAnalysis,
   ZtAnswer,
@@ -729,6 +729,8 @@ export function ZtWorkspace({
   }
   const aiRun = useAiRun<ZtRunAiResponse>({
     serviceId,
+    // #271: only this assessment's runs describe it. `null` until it loads.
+    subjectId: assessment?.id ?? null,
     fetchSummary: fetchZtRunSummary,
     fetchRun: fetchZtRun,
     onFinished: (run: ZtRun) => {
@@ -993,6 +995,7 @@ export function ZtWorkspace({
                   to say about (W1, issue #44). The accounting states the same
                   change counts and the shortfall alongside them. */}
               <AiRunStatus run={aiRun} />
+              <LastRunNote run={aiRun.lastCompleted} />
               {/* Keyed by the run, which is LOAD-BEARING for accessibility: a
                   new run's accounting mounts fresh, so the live region is
                   created anew. Its headline switches between role="alert" and

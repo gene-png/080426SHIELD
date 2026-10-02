@@ -250,6 +250,7 @@ describe("CsfWorkspace, a Run AI whose outcome is unknown (#550)", () => {
       status: "running",
       serves: "offline",
       deadline_at: "2026-10-01T12:45:00Z",
+      lock_until: "2026-10-01T12:50:00Z",
       joined: false,
     });
     vi.mocked(csfClient.fetchCsfRun).mockResolvedValueOnce({
