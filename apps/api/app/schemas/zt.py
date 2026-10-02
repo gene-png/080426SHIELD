@@ -207,9 +207,13 @@ class ZtSelfAssessmentSubmit(BaseModel):
 
     `target_stage` lets the client confirm/adjust the maturity goal the gap
     engine measures against; persisted on the source request.
+
+    NO `ge`/`le` bound, deliberately (#85, as #406 did at intake): both ends are
+    refused in `routes/zt.py::submit_self_assessment` with a typed
+    `{reason, message}`, against the ladder of the assessment's own framework.
     """
 
-    target_stage: IntNotBool | None = Field(default=None, ge=1, le=4)
+    target_stage: IntNotBool | None = None
 
 
 # ---------------------------------------------------------------------------

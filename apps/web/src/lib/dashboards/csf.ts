@@ -7,6 +7,11 @@
  * home page and had no way to open the results.
  */
 
+import {
+  BELOW_FLOOR_SOURCE,
+  TIER_BELOW_FLOOR_NOTE,
+} from "@/lib/assessment-targets";
+
 export interface CsfFunction {
   code: string;
   name: string;
@@ -136,6 +141,9 @@ export function targetFaultNote(source: string): string | null {
       return "no tier chosen at intake";
     case "client_out_of_range":
       return "the tier on file is not one CSF has";
+    // #85: Tier 1 IS a tier CSF has, so the line above would be false of it.
+    case BELOW_FLOOR_SOURCE:
+      return TIER_BELOW_FLOOR_NOTE;
     case "client_unparseable":
       return "the tier on file could not be read";
     default:

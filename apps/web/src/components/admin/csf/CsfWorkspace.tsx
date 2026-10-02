@@ -40,7 +40,11 @@ import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
 import { useRefreshFailures } from "@/components/admin/useRefreshFailures";
 import { serverReason } from "@/lib/describe-save-error";
-import { MIN_TARGET_TIER } from "@/lib/assessment-targets";
+import {
+  MIN_TARGET_TIER,
+  TIER_BELOW_FLOOR_NOTE,
+  isBelowTargetFloor,
+} from "@/lib/assessment-targets";
 
 import { CsfDeliverableCard } from "./CsfDeliverableCard";
 import { CsfGapList } from "./CsfGapList";
@@ -197,6 +201,18 @@ export function CsfWorkspace({
 
   /** What the picker shows: a pure function of `(pendingTarget, gap)`. */
   const shownTier = pendingTarget ?? gap?.target_tier ?? targetTier;
+  // #85, and the reason the coercion above stays: `normalizeTarget` selects
+  // the default for a stored target below the floor, which is what the API's
+  // resolver does too, so this screen and the document agree. It must not do
+  // so SILENTLY, so the consultant is told why. DERIVED from the stored value
+  // on every render, never synchronised, and worded from the same string the
+  // client dashboard renders for `client_below_floor`.
+  const targetNote = isBelowTargetFloor(
+    assessment?.client_target_tier,
+    MIN_TARGET_TIER,
+  )
+    ? `Client's target not used — ${TIER_BELOW_FLOOR_NOTE}.`
+    : null;
 
   /**
    * The live `shownTier`, for callers that read it after an await --
@@ -781,6 +797,7 @@ export function CsfWorkspace({
             analysis={gap}
             targetTier={shownTier}
             onChangeTargetTier={(t) => void onChangeTargetTier(t)}
+            targetNote={targetNote}
           />
           <MessageThread serviceId={serviceId} />
         </>

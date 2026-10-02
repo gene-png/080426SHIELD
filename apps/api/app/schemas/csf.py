@@ -227,9 +227,14 @@ class CsfSelfAssessmentSubmit(BaseModel):
 
     `target_tier` lets the client confirm/adjust the maturity goal the gap
     engine measures against; persisted on the source request.
+
+    NO `ge`/`le` bound, deliberately (#85, as #406 did at intake): both ends are
+    refused in `routes/csf.py::submit_self_assessment` with a typed
+    `{reason, message}`. A schema bound arrives as a `schema_*` reason the web
+    layer withholds by design, so the client would read a generic fallback.
     """
 
-    target_tier: IntNotBool | None = Field(default=None, ge=1, le=4)
+    target_tier: IntNotBool | None = None
 
 
 # ---------------------------------------------------------------------------

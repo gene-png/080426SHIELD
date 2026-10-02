@@ -45,6 +45,7 @@ from app.ai.runs import (
     require_serves,
     start_run,
 )
+from app.assessment_targets import MIN_TARGET_TIER, floor_refusal
 from app.audit import audit
 from app.client_naming import org_display_name
 from app.csf import playbook_export as csf_playbook_export
@@ -727,6 +728,27 @@ def patch_self_assessment_answer(
     return CsfAnswerResponse.model_validate(row, from_attributes=True)
 
 
+def _refuse_submitted_target_tier(tier: int) -> None:
+    """Refuse a client's submitted target tier, naming the CAUSE (#85).
+
+    Below the floor and off the ladder are different mistakes -- Tier 1 exists
+    and is not a target; Tier 0 and Tier 5 are not tiers -- so each gets its own
+    sentence. The floor sentence is intake's, CALLED from
+    `assessment_targets.floor_refusal`; the reason is this module's, the one
+    the gap-analysis route already uses for the same field.
+    """
+    if 1 <= tier < MIN_TARGET_TIER:
+        message = floor_refusal("Tier", tier, MIN_TARGET_TIER)
+    elif not 1 <= tier <= CSF_MAX_TIER:
+        message = f"NIST CSF 2.0 has tiers 1-{CSF_MAX_TIER}; {tier} is not one of them."
+    else:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={"reason": "target_tier_out_of_range", "message": message},
+    )
+
+
 @router.post(
     "/services/{service_id}/self-assessment/submit",
     response_model=CsfAssessmentResponse,
@@ -752,7 +774,11 @@ def submit_self_assessment(
             detail="This self-assessment has already been submitted.",
         )
     # Persist the (possibly adjusted) maturity target so the gap engine measures
-    # against the client's goal.
+    # against the client's goal. RANGE first (#85): this route had no check at
+    # all, so a direct call stored a 1 that every gap list then measured
+    # against -- "0 gap(s) at target T1".
+    if body.target_tier is not None:
+        _refuse_submitted_target_tier(body.target_tier)
     if body.target_tier is not None and svc.source_request_id is not None:
         sr = db.get(ServiceRequest, svc.source_request_id)
         if sr is not None:

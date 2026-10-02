@@ -618,3 +618,41 @@ describe("ZtWorkspace target stage is derived from the rows (#385)", () => {
     expect(refreshed).not.toContain(2);
   });
 });
+
+describe("ZtWorkspace says why a stored Stage 1 is not the selected target (#85)", () => {
+  // The coercion of a stored 1 to the default 3 is KEPT on purpose (#85): the
+  // API resolves a stored 1 to the same default, so screen and document agree.
+  // It must not be silent. Copy approved on #85, written out, not imported.
+  const NOTE =
+    "Client's target not used — the stage on file is a starting point, not a target.";
+
+  it("shows the reason beside the select, with the default selected", async () => {
+    baseMocks();
+    fetchLatestAssessment.mockResolvedValue({
+      ...draftAtStage2(),
+      client_target_stage: 1,
+    } as unknown as ZtAssessment);
+    fetchGapAnalysis.mockImplementation(async (_id, opts) =>
+      gapAt(requestedStage(opts)),
+    );
+
+    renderWorkspace("svc-85-zt-floor");
+
+    await screen.findByText("rows-computed-for-stage-3");
+    expect(picker()).toHaveValue("3");
+    // By its TEXT: the workspace carries other role="note" elements.
+    expect(screen.getByText(NOTE)).toBeInTheDocument();
+  });
+
+  it("says nothing when the stored stage is a real target", async () => {
+    baseMocks();
+    fetchGapAnalysis.mockImplementation(async (_id, opts) =>
+      gapAt(requestedStage(opts)),
+    );
+
+    renderWorkspace("svc-85-zt-ok");
+
+    await screen.findByText("rows-computed-for-stage-2");
+    expect(screen.queryByText(/starting point, not a target/)).toBeNull();
+  });
+});

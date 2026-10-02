@@ -3,6 +3,11 @@
  * Mirrors the backend `ZtDashboardResponse` (apps/api/app/schemas/clients.py).
  */
 
+import {
+  BELOW_FLOOR_SOURCE,
+  STAGE_BELOW_FLOOR_NOTE,
+} from "@/lib/assessment-targets";
+
 import { renderedAgainstNote } from "./frozenTarget";
 
 export interface ZtPillar {
@@ -228,6 +233,10 @@ function targetFault(source: string): string | null {
       return "no stage chosen at intake";
     case "client_out_of_range":
       return "the stage on file is not one this framework has";
+    // #85: Stage 1 IS a stage both frameworks have, so the line above would be
+    // false of it.
+    case BELOW_FLOOR_SOURCE:
+      return STAGE_BELOW_FLOOR_NOTE;
     case "client_unparseable":
       return "the stage on file could not be read";
     default:

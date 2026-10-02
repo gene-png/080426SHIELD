@@ -45,6 +45,7 @@ from app.ai.runs import (
     require_serves,
     start_run,
 )
+from app.assessment_targets import MIN_TARGET_STAGE, floor_refusal
 from app.audit import audit
 from app.db.session import get_db
 from app.deliverable_release import release_deliverable
@@ -1329,10 +1330,10 @@ def submit_self_assessment(
             detail="This self-assessment has already been submitted.",
         )
     if body.target_stage is not None:
-        # RANGE, per framework. `ZtSelfAssessmentSubmit.target_stage` is bound
-        # `ge=1, le=4` for both frameworks -- a pydantic field constraint cannot
-        # see the service -- and DoD ZTRA ends at 3, so the schema admits a DoD
-        # Stage 4 and this is the only place that can refuse it FOR THIS ROUTE.
+        # RANGE, per framework. `ZtSelfAssessmentSubmit.target_stage` carries no
+        # bound since #85 (a pydantic field constraint cannot see the service,
+        # and DoD ZTRA ends at 3), so this is the only place that refuses an
+        # off-ladder stage FOR THIS ROUTE, at either end.
         #
         # The THIRD writer of the engagement target, and the one an earlier
         # draft of the #125 fix missed while its intake sibling carried a
@@ -1341,7 +1342,21 @@ def submit_self_assessment(
         # self-assessment UI re-persists whatever is stored when the client
         # submits without touching the control -- refreshing an invalid legacy
         # value straight past the new door.
+        #
+        # THE FLOOR (#85), checked before the ladder: Stage 1 is a stage both
+        # frameworks have and not a target. This route used to accept it, as a
+        # written decision; #85 reverses that, so a client may not choose 1
+        # after intake any more than at intake. The sentence is intake's,
+        # CALLED from `assessment_targets.floor_refusal`.
         max_stage = level_count(_to_catalog_framework(a.framework))
+        if 1 <= body.target_stage < MIN_TARGET_STAGE:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "reason": "target_stage_out_of_range",
+                    "message": floor_refusal("Stage", body.target_stage, MIN_TARGET_STAGE),
+                },
+            )
         if not 1 <= body.target_stage <= max_stage:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

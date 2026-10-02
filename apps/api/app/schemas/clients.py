@@ -314,7 +314,9 @@ class CsfDashboardResponse(BaseModel):
     target_label: str
     target_pct: float
     # "client" when the tier came from the intake choice, "default" when the
-    # client never set one. Never silently conflated — see the docstring.
+    # client never set one; "client_out_of_range", "client_unparseable" and
+    # "client_below_floor" (#85) when they set one that could not be used.
+    # Never silently conflated — see the docstring.
     target_tier_source: str
     #: #209: the moment the engagement target behind every figure above was
     #: FROZEN -- the finalize timestamp of the deliverable this dashboard
@@ -389,7 +391,8 @@ class ZtDashboardResponse(BaseModel):
 
     # The engagement-level target the gaps were computed against, and where it
     # came from: "client" | "default" | "client_out_of_range" |
-    # "client_unparseable". Never silently conflated — see the docstring.
+    # "client_unparseable" | "client_below_floor" (#85). Never silently
+    # conflated — see the docstring.
     target_stage: int
     target_stage_source: str
     #: The ZT twin of `CsfDashboardResponse.target_frozen_at`; see there for
