@@ -114,3 +114,36 @@ export const MIN_TARGET_STAGE = 2;
 
 /** NIST CSF 2.0. Tier 1 ("Partial") is a starting point, not a goal. */
 export const MIN_TARGET_TIER = 2;
+
+/**
+ * #85: what a stored target BELOW the floor means, in one place.
+ *
+ * The API's resolvers (`csf/gap.py::resolve_target_tier`,
+ * `zt/scoring.py::resolve_target_stage`) report a stored 1 as
+ * `client_below_floor` and fall back to the engine default: Tier/Stage 1 is a
+ * level the ladder has and not a target. The dashboards render that source
+ * with these strings, and the consultant workspaces render the SAME strings
+ * beside the target select, so the screen that keeps 3 selected says why.
+ * Declared here rather than in a dashboard module so the workspace does not
+ * pull a dashboard into its bundle (the reason the floors live here too).
+ */
+export const BELOW_FLOOR_SOURCE = "client_below_floor";
+export const TIER_BELOW_FLOOR_NOTE =
+  "the tier on file is a starting point, not a target";
+export const STAGE_BELOW_FLOOR_NOTE =
+  "the stage on file is a starting point, not a target";
+
+/**
+ * True when a stored engagement target is a real level below `floor` -- the
+ * case the API resolves as `client_below_floor`. Mirrors the resolvers'
+ * order: a non-number or a fraction is a different fault, and 0 or less is
+ * off the ladder rather than below the floor.
+ */
+export function isBelowTargetFloor(value: unknown, floor: number): boolean {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 1 &&
+    value < floor
+  );
+}
