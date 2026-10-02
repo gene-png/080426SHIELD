@@ -27,7 +27,15 @@ from app.attack.catalog import TACTICS, TECHNIQUES, all_codes, technique_by_id, 
 from app.attack.coverage import ASSESSED, CoverageStatus, coverage_label
 from app.attack.parents import is_computed_parent
 from app.attack.pending import pending_codes as attack_pending_codes
-from app.attack.pending import uncleared_tools
+from app.attack.pending import row_tools, uncleared_tools
+from app.attack.retirement import (
+    NO_PLAN,
+    PLANNED_MARK,
+    UNKNOWN_MARK,
+    RetirementIndex,
+    summarize,
+    summary_sentences,
+)
 from app.attack.rules import parents_computed
 from app.client_naming import org_display_name
 from app.models.attack_assessment import AttackAssessment, AttackCoverage
@@ -54,6 +62,10 @@ class AttackDeliverableContext:
     #: mark individual rows would otherwise re-derive the set — a second source
     #: of truth for the same fact, which is the drift D-052 rejected.
     pending_codes: frozenset[str] = frozenset()
+    #: #686 (D-105): which cited tools the client's Tech Debt consolidation plan
+    #: retires, read at finalize. `NO_PLAN` marks nothing, which is also what an
+    #: assessment for a client with no approved Tech Debt list renders.
+    retirement: RetirementIndex = NO_PLAN
 
 
 def build_context(
@@ -63,6 +75,7 @@ def build_context(
     assessment: AttackAssessment,
     coverage: Iterable[AttackCoverage],
     rollup: CoverageRollup,
+    retirement: RetirementIndex = NO_PLAN,
 ) -> AttackDeliverableContext:
     rows = list(coverage)
     rule = parents_computed(assessment)
@@ -77,6 +90,33 @@ def build_context(
         # techniques are withheld.
         pending_codes=attack_pending_codes(rows, parents_computed=rule),
         parents_computed=rule,
+        retirement=retirement,
+    )
+
+
+def _delivered_rows(ctx: AttackDeliverableContext) -> list[AttackCoverage]:
+    """The rows whose tools the deliverable prints: a computed parent's own
+    tools are not delivered (D-094), so they cannot carry a mark either."""
+    return [
+        c
+        for c in ctx.coverage
+        if not (ctx.parents_computed and is_computed_parent(c.technique_code))
+    ]
+
+
+def retirement_sentences(ctx: AttackDeliverableContext) -> list[str]:
+    """#686: the count sentences, each only when non-zero; [] with no plan.
+    `of_techniques` is this rollup's own covered + partial, and only rows inside
+    it (not withheld, #102) can count, so the sentence agrees with the figure."""
+    return summary_sentences(
+        summarize(
+            _delivered_rows(ctx),
+            ctx.retirement,
+            counted_codes=[
+                c.technique_code for c in ctx.coverage if c.technique_code not in ctx.pending_codes
+            ],
+            of_techniques=ctx.rollup.covered + ctx.rollup.partial,
+        )
     )
 
 
@@ -231,9 +271,13 @@ def outside_assessed_text(rollup: CoverageRollup) -> str:
     )
 
 
-def _tools(value: list | None, unconfirmed: frozenset[str]) -> str:
+def _tools(
+    value: list | None, unconfirmed: frozenset[str], retirement: RetirementIndex = NO_PLAN
+) -> str:
+    # #686: the retirement mark stacks AFTER " (unconfirmed)".
     return "; ".join(
-        f"{t}{UNCONFIRMED_MARK}" if t in unconfirmed else str(t) for t in (value or [])
+        f"{t}{UNCONFIRMED_MARK if t in unconfirmed else ''}{retirement.mark(t)}"
+        for t in (value or [])
     )
 
 
@@ -350,7 +394,28 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
             "confirmed by a consultant.",
         ]
     )
-    for row in ws.iter_rows(min_row=1, max_row=10 if outside else 8, min_col=1, max_col=1):
+    # #686: a legend row only for a mark the Coverage sheet actually carries,
+    # so a workbook with none of them renders as it did before.
+    delivered_marks = {
+        ctx.retirement.mark(t) for row in _delivered_rows(ctx) for t in row_tools(row)
+    }
+    if PLANNED_MARK in delivered_marks:
+        ws.append(
+            [
+                f"Tools marked{PLANNED_MARK}",
+                "Marked cut in the Tech Debt consolidation plan. Still deployed, so still "
+                "counted toward coverage; this coverage drops when the tool is retired.",
+            ]
+        )
+    if UNKNOWN_MARK in delivered_marks:
+        ws.append(
+            [
+                f"Tools marked{UNKNOWN_MARK}",
+                "Could not be matched to one Tech Debt capability, so whether it is planned "
+                "for retirement is not known.",
+            ]
+        )
+    for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=1):
         for cell in row:
             cell.font = bold
     ws.append([])
@@ -446,9 +511,9 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
                 _status_or_unscored(cov.status if cov else None),
                 "Yes" if tech.id in ctx.pending_codes else "",
                 (own.rationale if own else None) or "",
-                _tools(own.detection_tools if own else None, unconfirmed),
-                _tools(own.prevention_tools if own else None, unconfirmed),
-                _tools(own.response_tools if own else None, unconfirmed),
+                _tools(own.detection_tools if own else None, unconfirmed, ctx.retirement),
+                _tools(own.prevention_tools if own else None, unconfirmed, ctx.retirement),
+                _tools(own.response_tools if own else None, unconfirmed, ctx.retirement),
                 (cov.notes if cov else None) or "",
             ],
         )
@@ -548,6 +613,8 @@ def render_docx(ctx: AttackDeliverableContext) -> bytes:
             f"Gap {ctx.rollup.gap}, N/A {ctx.rollup.not_applicable}, "
             f"Pending review {ctx.rollup.pending_review}"
             + (", " + outside_assessed_text(ctx.rollup) if outside else ""),
+            # #686: only when non-zero, so nothing changes without a plan.
+            *retirement_sentences(ctx),
         ],
     )
 
@@ -707,6 +774,9 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
         )
     )
     story.append(Paragraph(_definition(ctx), body))
+    # #686: only when non-zero, so nothing changes without a plan.
+    for sentence in retirement_sentences(ctx):
+        story.append(Paragraph(html_escape(sentence, quote=False), body))
 
     story.append(Paragraph("Per-tactic rollup", h2))
     tactic_table_data: list[list] = [

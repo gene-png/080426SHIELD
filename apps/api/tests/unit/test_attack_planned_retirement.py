@@ -1,0 +1,448 @@
+"""A Tech Debt tool marked `cut` is a PLANNED RETIREMENT on every ATT&CK surface (#686).
+
+Gene's decision (2026-09-26, D-105): the tool still counts toward coverage --
+it is still deployed -- and every surface that counts it says "planned
+retirement". The coordinator's verdicts on the join: only an APPROVED or
+RELEASED Tech Debt list's `cut` is a plan (a tool cut only on a DRAFT reads as
+not retiring); a cited name the plan cannot answer for is "retirement status
+unknown"; and a client with no plan at all gets no marks and no counts.
+
+ONE WORLD carries every state, so the per-surface assertions cannot pass on a
+world that lacks the case:
+
+    Splunk Enterprise   approved list, cut       -> planned retirement
+    Legacy AV           approved list, cut       -> planned retirement
+    CrowdStrike Falcon  approved list, keep      -> not retiring
+    Okta                approved list, undecided -> not retiring
+    Tenable             DRAFT list only, cut     -> not retiring (Q1)
+    Homegrown Script    on no list (free text)   -> unknown
+
+Expected strings are the coordinator-approved copy on #686, written out here,
+never imported from `app/attack/retirement.py`.
+"""
+
+from __future__ import annotations
+
+import io
+import uuid
+
+import pytest
+from sqlalchemy import update
+
+from app.models.capability import (
+    CapabilityDisposition,
+    CapabilityItem,
+    CapabilityList,
+    CapabilityListStatus,
+)
+from app.models.service import Service, ServiceKind
+from tests._attack_rows import standalone_rows
+from tests.unit.test_attack_catalog_version_guard import (  # noqa: F401  (fixture)
+    _auth,
+    _register,
+    _service_and_assessment,
+    env,
+)
+
+pytestmark = pytest.mark.unit
+
+CUT = CapabilityDisposition.CUT
+KEEP = CapabilityDisposition.KEEP
+
+#: (status, detection tools) per scored row, in order.
+ROWS = [
+    ("covered", ["Splunk Enterprise", "CrowdStrike Falcon"]),  # cites a retiring tool
+    ("covered", ["Legacy AV"]),  # relies on one alone
+    ("partial", ["Okta"]),
+    ("covered", ["Tenable"]),
+    ("covered", ["Homegrown Script"]),
+]
+
+PLANNED_SENTENCE = (
+    "2 of the 5 covered or partial techniques cite a tool marked for planned "
+    "retirement; 1 relies on such tools alone."
+)
+UNKNOWN_SENTENCE = "Retirement status could not be determined for 1 cited tool."
+
+
+def _tech_debt_list(
+    Sess,
+    client_id: str,
+    opened_by: str,
+    *,
+    status: CapabilityListStatus,
+    items: list[tuple[str, CapabilityDisposition | None]],
+) -> dict[str, uuid.UUID]:
+    """A Tech Debt service and list, written straight to the database: the
+    world, not the step under test. An approved list carries the membership
+    snapshot its approve route would have written."""
+    with Sess() as s:
+        svc = Service(
+            kind=ServiceKind.TECH_DEBT,
+            title="Tech Debt",
+            client_id=uuid.UUID(client_id),
+            opened_by=uuid.UUID(opened_by),
+        )
+        s.add(svc)
+        s.flush()
+        cl = CapabilityList(service_id=svc.id, version=1, status=status)
+        s.add(cl)
+        s.flush()
+        ids: dict[str, uuid.UUID] = {}
+        for name, disposition in items:
+            it = CapabilityItem(
+                capability_list_id=cl.id,
+                name=name,
+                security_related=True,
+                disposition=disposition,
+            )
+            s.add(it)
+            s.flush()
+            ids[name] = it.id
+        if status in (CapabilityListStatus.APPROVED, CapabilityListStatus.RELEASED):
+            cl.approved_membership = [
+                {"item_id": str(i), "name": n, "vendor": None} for n, i in ids.items()
+            ]
+        s.commit()
+        return ids
+
+
+def _world(env, *, with_plan: bool = True):  # noqa: F811
+    """Admin + client, the Tech Debt plan, and an ATT&CK assessment whose
+    scored rows cite the tools above. Returns everything a surface test needs."""
+    c, Sess = env
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer = admin["tokens"]["access_token"]
+    client_id = client["user"]["client_id"]
+    ids: dict[str, uuid.UUID] = {}
+    if with_plan:
+        ids = _tech_debt_list(
+            Sess,
+            client_id,
+            admin["user"]["id"],
+            status=CapabilityListStatus.APPROVED,
+            items=[
+                ("Splunk Enterprise", CUT),
+                ("Legacy AV", CUT),
+                ("CrowdStrike Falcon", KEEP),
+                ("Okta", None),
+            ],
+        )
+        _tech_debt_list(
+            Sess,
+            client_id,
+            admin["user"]["id"],
+            status=CapabilityListStatus.DRAFT,
+            items=[("Tenable", CUT)],
+        )
+    svc, a = _service_and_assessment(c, bearer)
+    rows = standalone_rows(a["coverage"], len(ROWS))
+    for row, (st, tools) in zip(rows, ROWS, strict=True):
+        body: dict = {"status": st, "detection_tools": tools}
+        if st == "partial":
+            # Approve refuses a Partial with no reason (#554).
+            body["reason_code"] = "reach_limited"
+        r = c.patch(f"/attack/coverage/{row['id']}", headers=_auth(bearer), json=body)
+        assert r.status_code == 200, r.text
+    return c, Sess, bearer, client, client_id, svc, a, ids
+
+
+def _approve_finalize(c, bearer: str, svc: str, a: dict) -> dict:
+    r = c.post(f"/attack/assessments/{a['id']}/approve", headers=_auth(bearer))
+    assert r.status_code == 200, r.text
+    fin = c.post(f"/attack/services/{svc}/deliverables/finalize", headers=_auth(bearer))
+    assert fin.status_code in (200, 201), fin.text
+    return fin.json()
+
+
+def _download(c, bearer: str, artifact_id: str) -> bytes:
+    r = c.get(f"/artifacts/{artifact_id}/download", headers=_auth(bearer))
+    assert r.status_code == 200, r.text
+    return r.content
+
+
+def _xlsx_tool_cells(raw: bytes) -> set[str]:
+    from openpyxl import load_workbook
+
+    ws = load_workbook(io.BytesIO(raw))["Coverage"]
+    col = [c.value for c in ws[1]].index("Detection tools") + 1
+    return {
+        str(ws.cell(row=r, column=col).value)
+        for r in range(2, ws.max_row + 1)
+        if ws.cell(row=r, column=col).value
+    }
+
+
+def _xlsx_summary_labels(raw: bytes) -> dict:
+    from openpyxl import load_workbook
+
+    ws = load_workbook(io.BytesIO(raw))["Heatmap Summary"]
+    return {r[0].value: r[1].value for r in ws.iter_rows(max_row=20) if r and r[0].value}
+
+
+def _pdf_text(raw: bytes) -> str:
+    from pypdf import PdfReader
+
+    return " ".join(
+        " ".join((p.extract_text() or "") for p in PdfReader(io.BytesIO(raw)).pages).split()
+    )
+
+
+def _docx_text(raw: bytes) -> str:
+    from docx import Document
+
+    return " ".join(" ".join(p.text for p in Document(io.BytesIO(raw)).paragraphs).split())
+
+
+# --- the deliverable ----------------------------------------------------------
+
+
+def test_the_xlsx_marks_each_tool_by_its_state(env) -> None:  # noqa: F811
+    c, _Sess, bearer, *_rest, svc, a, _ids = _world(env)
+    fin = _approve_finalize(c, bearer, svc, a)
+    cells = _xlsx_tool_cells(_download(c, bearer, fin["xlsx_artifact_id"]))
+    assert {
+        "Splunk Enterprise (planned retirement); CrowdStrike Falcon",
+        "Legacy AV (planned retirement)",
+        "Okta",
+        "Tenable",
+        "Homegrown Script (retirement status unknown)",
+    } <= cells, cells
+
+
+def test_the_xlsx_legend_explains_both_marks(env) -> None:  # noqa: F811
+    c, _Sess, bearer, *_rest, svc, a, _ids = _world(env)
+    fin = _approve_finalize(c, bearer, svc, a)
+    labels = _xlsx_summary_labels(_download(c, bearer, fin["xlsx_artifact_id"]))
+    assert labels.get("Tools marked (planned retirement)") == (
+        "Marked cut in the Tech Debt consolidation plan. Still deployed, so still "
+        "counted toward coverage; this coverage drops when the tool is retired."
+    ), labels
+    assert labels.get("Tools marked (retirement status unknown)") == (
+        "Could not be matched to one Tech Debt capability, so whether it is planned "
+        "for retirement is not known."
+    ), labels
+
+
+def test_the_pdf_docx_and_summary_state_the_counts(env) -> None:  # noqa: F811
+    c, _Sess, bearer, *_rest, svc, a, _ids = _world(env)
+    fin = _approve_finalize(c, bearer, svc, a)
+    pdf = _pdf_text(_download(c, bearer, fin["pdf_artifact_id"]))
+    docx = _docx_text(_download(c, bearer, fin["docx_artifact_id"]))
+    for name, text in (("pdf", pdf), ("docx", docx), ("summary", fin["summary"])):
+        assert PLANNED_SENTENCE in text, f"{name}: {text[:2000]!r}"
+        assert UNKNOWN_SENTENCE in text, f"{name}: {text[:2000]!r}"
+
+
+def test_the_deliverable_keeps_the_disposition_it_was_finalized_with(env) -> None:  # noqa: F811
+    """Q2: the document is rendered at finalize. A disposition changed after
+    that must not change the stored document."""
+    c, Sess, bearer, *_rest, svc, a, ids = _world(env)
+    fin = _approve_finalize(c, bearer, svc, a)
+    with Sess() as s:
+        s.execute(
+            update(CapabilityItem)
+            .where(CapabilityItem.id == ids["Legacy AV"])
+            .values(disposition=KEEP)
+        )
+        s.commit()
+    cells = _xlsx_tool_cells(_download(c, bearer, fin["xlsx_artifact_id"]))
+    assert "Legacy AV (planned retirement)" in cells, cells
+
+
+def test_a_client_with_no_consolidation_plan_gets_no_marks_and_no_counts(env) -> None:  # noqa: F811
+    """No approved or released Tech Debt list: nothing CAN be cut, so nothing
+    is marked and "could not be determined" is not printed either."""
+    c, _Sess, bearer, *_rest, svc, a, _ids = _world(env, with_plan=False)
+    fin = _approve_finalize(c, bearer, svc, a)
+    cells = _xlsx_tool_cells(_download(c, bearer, fin["xlsx_artifact_id"]))
+    assert "Homegrown Script" in cells, cells
+    assert not any("retirement" in x for x in cells), cells
+    pdf = _pdf_text(_download(c, bearer, fin["pdf_artifact_id"]))
+    for text in (pdf, fin["summary"]):
+        assert "retirement" not in text.lower(), text[:2000]
+
+
+def test_a_cut_on_a_draft_list_alone_is_not_a_plan(env) -> None:  # noqa: F811
+    """Q1: a client whose only Tech Debt list is a DRAFT has no plan, even with
+    a tool cut on it."""
+    c, Sess = env
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer = admin["tokens"]["access_token"]
+    _tech_debt_list(
+        Sess,
+        client["user"]["client_id"],
+        admin["user"]["id"],
+        status=CapabilityListStatus.DRAFT,
+        items=[("Tenable", CUT)],
+    )
+    svc, a = _service_and_assessment(c, bearer)
+    row = standalone_rows(a["coverage"], 1)[0]
+    c.patch(
+        f"/attack/coverage/{row['id']}",
+        headers=_auth(bearer),
+        json={"status": "covered", "detection_tools": ["Tenable"]},
+    )
+    fin = _approve_finalize(c, bearer, svc, a)
+    cells = _xlsx_tool_cells(_download(c, bearer, fin["xlsx_artifact_id"]))
+    assert "Tenable" in cells, cells
+    assert "retirement" not in fin["summary"].lower(), fin["summary"]
+
+
+# --- the client dashboard -------------------------------------------------------
+
+
+def test_the_client_dashboard_carries_the_marks_and_the_counts(env) -> None:  # noqa: F811
+    c, Sess, bearer, client, client_id, svc, a, ids = _world(env)
+    fin = _approve_finalize(c, bearer, svc, a)
+    rel = c.post(f"/attack/deliverables/{fin['id']}/release", headers=_auth(bearer))
+    assert rel.status_code == 200, rel.text
+    c.headers["X-Client-Id"] = client_id
+    dash = c.get(
+        f"/clients/{client_id}/attack/{svc}/dashboard",
+        headers=_auth(client["tokens"]["access_token"]),
+    )
+    assert dash.status_code == 200, dash.text
+    body = dash.json()
+    assert body["tool_retirement"] == {
+        "Splunk Enterprise": "planned_retirement",
+        "Legacy AV": "planned_retirement",
+        "Homegrown Script": "unknown",
+    }, body.get("tool_retirement")
+    assert body["retirement_notes"] == [PLANNED_SENTENCE, UNKNOWN_SENTENCE], body.get(
+        "retirement_notes"
+    )
+
+    # Q2: the dashboard reads the CURRENT plan, and says so on the web side.
+    with Sess() as s:
+        s.execute(
+            update(CapabilityItem)
+            .where(CapabilityItem.id == ids["Legacy AV"])
+            .values(disposition=KEEP)
+        )
+        s.commit()
+    after = c.get(
+        f"/clients/{client_id}/attack/{svc}/dashboard",
+        headers=_auth(client["tokens"]["access_token"]),
+    ).json()
+    assert "Legacy AV" not in after["tool_retirement"], after["tool_retirement"]
+
+
+def test_the_dashboard_omits_both_keys_with_no_plan(env) -> None:  # noqa: F811
+    """Additive keys, OMITTED rather than null or empty when there is no plan,
+    so a response for a client without Tech Debt is what it was before #686."""
+    c, _Sess, bearer, client, client_id, svc, a, _ids = _world(env, with_plan=False)
+    fin = _approve_finalize(c, bearer, svc, a)
+    assert (
+        c.post(f"/attack/deliverables/{fin['id']}/release", headers=_auth(bearer)).status_code
+        == 200
+    )
+    c.headers["X-Client-Id"] = client_id
+    body = c.get(
+        f"/clients/{client_id}/attack/{svc}/dashboard",
+        headers=_auth(client["tokens"]["access_token"]),
+    ).json()
+    assert "techniques" in body, body
+    assert "tool_retirement" not in body and "retirement_notes" not in body, sorted(body)
+
+
+# --- the admin workspace ----------------------------------------------------------
+
+
+def test_the_admin_assessment_carries_the_marks(env) -> None:  # noqa: F811
+    c, _Sess, bearer, *_rest, svc, _a, _ids = _world(env)
+    latest = c.get(f"/attack/services/{svc}/assessments/latest", headers=_auth(bearer))
+    assert latest.status_code == 200, latest.text
+    assert latest.json()["tool_retirement"] == {
+        "Splunk Enterprise": "planned_retirement",
+        "Legacy AV": "planned_retirement",
+        "Homegrown Script": "unknown",
+    }
+
+
+# --- the join's other unknowns, through the same index the surfaces use --------
+
+
+def test_two_approved_lists_that_disagree_are_unknown_not_a_guess(env) -> None:  # noqa: F811
+    c, Sess = env
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer = admin["tokens"]["access_token"]
+    for disposition in (CUT, KEEP):
+        _tech_debt_list(
+            Sess,
+            client["user"]["client_id"],
+            admin["user"]["id"],
+            status=CapabilityListStatus.APPROVED,
+            items=[("Splunk Enterprise", disposition)],
+        )
+    svc, _a = _service_and_assessment(c, bearer)
+    a = c.get(f"/attack/services/{svc}/assessments/latest", headers=_auth(bearer)).json()
+    row = standalone_rows(a["coverage"], 1)[0]
+    c.patch(
+        f"/attack/coverage/{row['id']}",
+        headers=_auth(bearer),
+        json={"status": "covered", "detection_tools": ["Splunk Enterprise"]},
+    )
+    latest = c.get(f"/attack/services/{svc}/assessments/latest", headers=_auth(bearer)).json()
+    assert latest["tool_retirement"] == {"Splunk Enterprise": "unknown"}
+
+
+def test_a_snapshot_entry_whose_item_is_gone_is_unknown(env) -> None:  # noqa: F811
+    c, Sess = env
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer = admin["tokens"]["access_token"]
+    ids = _tech_debt_list(
+        Sess,
+        client["user"]["client_id"],
+        admin["user"]["id"],
+        status=CapabilityListStatus.APPROVED,
+        items=[("Splunk Enterprise", CUT)],
+    )
+    with Sess() as s:
+        s.delete(s.get(CapabilityItem, ids["Splunk Enterprise"]))
+        s.commit()
+    svc, a = _service_and_assessment(c, bearer)
+    row = standalone_rows(a["coverage"], 1)[0]
+    c.patch(
+        f"/attack/coverage/{row['id']}",
+        headers=_auth(bearer),
+        json={"status": "covered", "detection_tools": ["Splunk Enterprise"]},
+    )
+    latest = c.get(f"/attack/services/{svc}/assessments/latest", headers=_auth(bearer)).json()
+    assert latest["tool_retirement"] == {"Splunk Enterprise": "unknown"}
+
+
+def test_a_renamed_item_still_joins_through_the_snapshot(env) -> None:  # noqa: F811
+    """A rename after approval: the snapshot keeps the old name and the item id,
+    so the cited (old) name still reaches the live disposition."""
+    c, Sess = env
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer = admin["tokens"]["access_token"]
+    ids = _tech_debt_list(
+        Sess,
+        client["user"]["client_id"],
+        admin["user"]["id"],
+        status=CapabilityListStatus.APPROVED,
+        items=[("Splunk Enterprise", CUT)],
+    )
+    with Sess() as s:
+        s.execute(
+            update(CapabilityItem)
+            .where(CapabilityItem.id == ids["Splunk Enterprise"])
+            .values(name="Splunk Cloud")
+        )
+        s.commit()
+    svc, a = _service_and_assessment(c, bearer)
+    row = standalone_rows(a["coverage"], 1)[0]
+    c.patch(
+        f"/attack/coverage/{row['id']}",
+        headers=_auth(bearer),
+        json={"status": "covered", "detection_tools": ["Splunk Enterprise"]},
+    )
+    latest = c.get(f"/attack/services/{svc}/assessments/latest", headers=_auth(bearer)).json()
+    assert latest["tool_retirement"] == {"Splunk Enterprise": "planned_retirement"}

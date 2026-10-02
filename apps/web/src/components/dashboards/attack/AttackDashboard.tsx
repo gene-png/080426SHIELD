@@ -1,6 +1,12 @@
 "use client";
 
 import { outsideAssessedText } from "@/lib/attack/outsideAssessed";
+import {
+  CURRENT_PLAN_NOTE,
+  anyRetirementMark,
+  withRetirementMark,
+  type ToolRetirement,
+} from "@/lib/attack/retirement";
 import dynamic from "next/dynamic";
 import * as React from "react";
 
@@ -539,6 +545,17 @@ export function AttackDashboard({
         title="Per-technique coverage matrix"
         pill={`${data.techniques.length} techniques`}
       >
+        {/* #686: the counts, and that the labels are the CURRENT plan's. */}
+        {(data.retirement_notes ?? []).map((n) => (
+          <p key={n} style={{ margin: "0 0 6px", fontSize: 13 }}>
+            {n}
+          </p>
+        ))}
+        {anyRetirementMark(data.tool_retirement) ? (
+          <p style={{ margin: "0 0 12px", fontSize: 13 }}>
+            {CURRENT_PLAN_NOTE}
+          </p>
+        ) : null}
         <div
           style={{
             display: "flex",
@@ -638,7 +655,7 @@ export function AttackDashboard({
             </thead>
             <tbody>
               {rows.map((t) => (
-                <MatrixRow key={t.code} t={t} />
+                <MatrixRow key={t.code} t={t} marks={data.tool_retirement} />
               ))}
               {rows.length === 0 ? (
                 <tr>
@@ -758,11 +775,20 @@ function TriadCard({
   );
 }
 
-function toolCell(tools: string[]): string {
-  return tools.length ? tools.join(", ") : "—";
+function toolCell(tools: string[], marks: ToolRetirement): string {
+  // #686: each tool carries its retirement label, the deliverable's words.
+  return tools.length
+    ? tools.map((tool) => withRetirementMark(tool, marks)).join(", ")
+    : "—";
 }
 
-function MatrixRow({ t }: { t: DashTechnique }): JSX.Element {
+function MatrixRow({
+  t,
+  marks,
+}: {
+  t: DashTechnique;
+  marks: ToolRetirement;
+}): JSX.Element {
   // #620 round 3: a computed parent has no tools of its own (D-094). Drawing
   // its legs would show a covered parent as having none of the three.
   if (t.computed_parent) {
@@ -808,9 +834,13 @@ function MatrixRow({ t }: { t: DashTechnique }): JSX.Element {
           <Leg on={t.response_tools.length > 0} label="R" />
         </span>
       </td>
-      <td style={cell({ muted: true })}>{toolCell(t.detection_tools)}</td>
-      <td style={cell({ muted: true })}>{toolCell(t.prevention_tools)}</td>
-      <td style={cell({ muted: true })}>{toolCell(t.response_tools)}</td>
+      <td style={cell({ muted: true })}>
+        {toolCell(t.detection_tools, marks)}
+      </td>
+      <td style={cell({ muted: true })}>
+        {toolCell(t.prevention_tools, marks)}
+      </td>
+      <td style={cell({ muted: true })}>{toolCell(t.response_tools, marks)}</td>
     </tr>
   );
 }
