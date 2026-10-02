@@ -361,3 +361,34 @@ def test_the_client_sees_what_is_in_place_and_the_disclosure(env) -> None:  # no
     }
     assert body["awaiting_review_sentence"] == sentence
     assert untouched["technique_code"] not in techs  # unscored rows are not listed
+
+
+def test_the_value_summary_counts_the_computed_gaps(env) -> None:  # noqa: F811
+    """The client overview's ATT&CK figure is the dashboard's gap count: two rows
+    the AI called Gap with all three tools in place compute to Covered, so the
+    figure is 0 where the stored statuses would say 2."""
+    c, _Sess = env
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer = admin["tokens"]["access_token"]
+    svc, a = _service_and_assessment(c, bearer)
+    rows = standalone_rows(a["coverage"], 2)
+    for row in rows:
+        _patch(c, bearer, row["id"], {"status": "gap", **ALL_THREE})
+    deliverable = _approve_and_finalize(c, bearer, svc, a["id"])
+    r = c.post(
+        f"/attack/assessments/{a['id']}/computed-status-review",
+        headers=_auth(bearer),
+        json={"codes": sorted(row["technique_code"] for row in rows)},
+    )
+    assert r.status_code == 200, r.text
+    rel = c.post(f"/attack/deliverables/{deliverable}/release", headers=_auth(bearer))
+    assert rel.status_code == 200, rel.text
+
+    client_id = client["user"]["client_id"]
+    c.headers["X-Client-Id"] = client_id
+    body = c.get(
+        f"/clients/{client_id}/value-summary",
+        headers=_auth(client["tokens"]["access_token"]),
+    ).json()
+    assert body["attack_uncovered_count"] == 0, body
