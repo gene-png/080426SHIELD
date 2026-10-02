@@ -115,10 +115,10 @@ class Deliverable(UUIDPKMixin, TimestampMixin, Base):
     # `frozen_target_source` IS THE DISCRIMINATOR, AND ITS NAME IS A TRAP. The
     # field it sits beside in every response -- `target_stage_source` /
     # `target_tier_source` -- is the RESOLVER's verdict (`client`, `default`,
-    # `client_out_of_range`, `client_unparseable`). This column is nothing of the
-    # kind. It records HOW THE FREEZE WAS ESTABLISHED: `finalize` (stamped by the
-    # finalize route), `audit` or `updated_at` (backfilled by 0051), or NULL --
-    # never frozen.
+    # `client_out_of_range`, `client_unparseable`, `client_below_floor`). This
+    # column is nothing of the kind. It records HOW THE FREEZE WAS ESTABLISHED:
+    # `finalize` (stamped by the finalize route), `audit` or `updated_at`
+    # (backfilled by 0051), or NULL -- never frozen.
     #
     # It exists because `frozen_target IS NULL` otherwise carries two facts. A
     # client who chose no target has a legitimately NULL choice, frozen exactly;

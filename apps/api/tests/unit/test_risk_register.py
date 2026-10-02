@@ -2653,3 +2653,25 @@ def test_a_computed_parent_is_never_a_register_finding_of_its_own(app_client) ->
     assert r.status_code == 201, r.text
     # The parent is a gap too (all children are), and still not a finding.
     assert sorted(sent) == sorted(children)
+
+
+@pytest.mark.unit
+def test_a_stored_csf_tier_1_is_named_below_the_floor_not_used(app_client) -> None:
+    """#85. Tier 1 is a tier CSF has and not a target: its own third state."""
+    c, _provider = app_client
+    bearer, cid = _admin(c)
+    _seed_csf_answer_at_tier(c, bearer, cid, tier=1)
+
+    _set_csf_target(cid, 1)
+    assert _csf_targets(cid) == {"target": 3, "source": "client_below_floor"}
+
+
+@pytest.mark.unit
+def test_a_stored_zt_stage_1_is_named_below_the_floor_not_used(app_client) -> None:
+    """#85, the ZT twin."""
+    c, _provider = app_client
+    bearer, cid = _admin(c)
+    _seed_attack_and_zt(c, bearer, cid)
+
+    _set_zt_target(cid, 1)
+    assert _zt_targets(cid) == {"target": 3, "source": "client_below_floor"}
