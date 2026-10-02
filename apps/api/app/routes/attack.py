@@ -72,6 +72,7 @@ from app.attack.coverage import (
 )
 from app.attack.exporters import build_context as build_attack_context
 from app.attack.exporters import (
+    coverage_measured,
     coverage_pct_text,
     outside_assessed_text,
     states_outside_counts,
@@ -2456,6 +2457,7 @@ def heatmap(
         outside_control_surface=outside(rollup.outside_control_surface),
         unable_to_determine=outside(rollup.unable_to_determine),
         coverage_pct=rollup.coverage_pct,
+        coverage_measured=coverage_measured(rollup),
         by_tactic=[
             TacticHeatmapEntry(
                 tactic_id=tc.tactic_id,
@@ -2471,6 +2473,7 @@ def heatmap(
                 outside_control_surface=outside(tc.outside_control_surface),
                 unable_to_determine=outside(tc.unable_to_determine),
                 coverage_pct=tc.coverage_pct,
+                coverage_measured=coverage_measured(tc),
             )
             for tc in rollup.by_tactic
         ],
@@ -3061,6 +3064,8 @@ def finalize_attack_deliverable(
             "assessment_version": assessment.version,
             "version": next_version,
             "coverage_pct": rollup.coverage_pct,
+            # #489: 0.0 above is "not measured" when this is False.
+            "coverage_measured": coverage_measured(rollup),
             "gap_count": rollup.gap,
         },
     )

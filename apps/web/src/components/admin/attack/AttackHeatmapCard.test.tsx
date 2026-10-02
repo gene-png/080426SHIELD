@@ -21,6 +21,7 @@ function heatmap(over: Partial<AttackHeatmap> = {}): AttackHeatmap {
     outside_control_surface: 0,
     unable_to_determine: 0,
     coverage_pct: 50,
+    coverage_measured: true, // #489 (Batch A): required since; not under test here
     by_tactic: [],
     ...over,
   };
