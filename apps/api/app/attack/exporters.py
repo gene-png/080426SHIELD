@@ -19,8 +19,8 @@ from __future__ import annotations
 import io
 from collections.abc import Iterable
 from dataclasses import dataclass
+from html import escape as html_escape
 from typing import TYPE_CHECKING
-from xml.sax.saxutils import escape as xml_escape
 
 from app.attack.analytics import CoverageRollup, TacticCoverage
 from app.attack.catalog import TACTICS, TECHNIQUES, all_codes, technique_by_id, technique_url
@@ -688,8 +688,10 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
                 # #419, under #620's rules only (option (a)).
                 f"Scored: <b>{ctx.rollup.scored_count}</b> of "
                 # Escaped: a Paragraph is markup, and a bare "&" in "ATT&CK"
-                # renders as "ATT&CK;".
-                f"{ctx.rollup.catalogue_count} {xml_escape(_catalog_phrase(ctx))} · "
+                # renders as "ATT&CK;". quote=False escapes exactly &, < and >,
+                # what reportlab's markup needs; quotes are literal text there.
+                f"{ctx.rollup.catalogue_count} "
+                f"{html_escape(_catalog_phrase(ctx), quote=False)} · "
                 if outside
                 else f"Scored: <b>{_scored_total(ctx)}</b> · "
             )
