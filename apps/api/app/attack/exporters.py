@@ -118,6 +118,10 @@ def _delivered_rows(ctx: AttackDeliverableContext) -> list[AttackCoverage]:
     ]
 
 
+#: The statuses that make a computed parent's coverage (#787 round 2, N2).
+_COVERAGE_MAKING = frozenset({CoverageStatus.COVERED.value, CoverageStatus.PARTIAL.value})
+
+
 def _evidence_rows(ctx: AttackDeliverableContext) -> list[SimpleNamespace]:
     """Each row with the tools its status rests on (#787 review, F4).
 
@@ -126,7 +130,13 @@ def _evidence_rows(ctx: AttackDeliverableContext) -> list[SimpleNamespace]:
     children's -- so its evidence is the union of its children's tools: when
     they retire, its coverage drops with theirs. Without this the numerator
     skipped parents while the denominator held them, a ratio over two
-    populations."""
+    populations.
+
+    Only the children that MAKE its coverage: covered or partial, and not
+    withheld -- the same population `summarize` counts for a standalone row
+    (#787 round 2, N2). A gap, N/A or outside child can carry tools (the
+    PATCH writes status and tools independently), and those tools are not
+    what the parent's coverage rests on."""
     by_code = {c.technique_code: c for c in ctx.coverage}
     out: list[SimpleNamespace] = []
     for c in ctx.coverage:
@@ -135,6 +145,8 @@ def _evidence_rows(ctx: AttackDeliverableContext) -> list[SimpleNamespace]:
                 t
                 for child in PARENT_CHILDREN.get(c.technique_code, ())
                 if child in by_code
+                and by_code[child].status in _COVERAGE_MAKING
+                and child not in ctx.pending_codes
                 for t in row_tools(by_code[child])
             ]
         else:

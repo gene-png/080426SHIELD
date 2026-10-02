@@ -542,9 +542,12 @@ def _one_service_two_versions(
     env,  # noqa: F811
     v1: list[tuple[str, CapabilityDisposition | None]],
     v2: list[tuple[str, CapabilityDisposition | None]],
+    *,
+    v2_status: CapabilityListStatus = CapabilityListStatus.APPROVED,
 ):
-    """One Tech Debt service whose v1 and v2 lists are both APPROVED, the state
-    each extraction leaves behind, and an ATT&CK service citing Splunk."""
+    """One Tech Debt service with an APPROVED v1 and a v2 in `v2_status` (by
+    default APPROVED, the state each extraction leaves behind), and an ATT&CK
+    service citing Splunk."""
     c, Sess = env
     admin = _register(c, "admin@example.com")
     client = _register(c, "client@example.com")
@@ -559,10 +562,11 @@ def _one_service_two_versions(
         )
         s.add(svc)
         s.flush()
-        for version, items in ((1, v1), (2, v2)):
-            cl = CapabilityList(
-                service_id=svc.id, version=version, status=CapabilityListStatus.APPROVED
-            )
+        for version, items, status in (
+            (1, v1, CapabilityListStatus.APPROVED),
+            (2, v2, v2_status),
+        ):
+            cl = CapabilityList(service_id=svc.id, version=version, status=status)
             s.add(cl)
             s.flush()
             entries = []
@@ -576,7 +580,8 @@ def _one_service_two_versions(
                 s.add(it)
                 s.flush()
                 entries.append({"item_id": str(it.id), "name": name, "vendor": None})
-            cl.approved_membership = entries
+            if status in (CapabilityListStatus.APPROVED, CapabilityListStatus.RELEASED):
+                cl.approved_membership = entries
         s.commit()
     asvc, a = _service_and_assessment(c, bearer)
     row = standalone_rows(a["coverage"], 1)[0]
@@ -627,3 +632,74 @@ def test_a_tool_dropped_from_the_latest_version_is_unknown_not_retiring(env) -> 
         "Retirement status could not be determined for 1 cited tool."
     ], dash["retirement_notes"]
     assert "planned retirement" not in fin["summary"], fin["summary"]
+
+
+@pytest.mark.parametrize("v2_status", [CapabilityListStatus.DRAFT, CapabilityListStatus.DISCARDED])
+def test_a_newer_unapproved_version_does_not_unseat_the_approved_plan(  # noqa: F811
+    env, v2_status  # noqa: F811
+) -> None:
+    """#787 round 2, N1: v1 APPROVED with Splunk cut, v2 a DRAFT or DISCARDED
+    with it kept. The plan is the latest APPROVED or RELEASED version, so v1
+    still decides: the status is judged BEFORE taking the highest version."""
+    fin, dash, cells = _one_service_two_versions(
+        env,
+        v1=[("Splunk Enterprise", CUT)],
+        v2=[("Splunk Enterprise", KEEP)],
+        v2_status=v2_status,
+    )
+    assert "Splunk Enterprise (planned retirement)" in cells, cells
+    assert dash["tool_retirement"] == {"Splunk Enterprise": "planned_retirement"}, dash[
+        "tool_retirement"
+    ]
+
+
+def test_a_computed_parent_rests_only_on_the_children_that_make_its_coverage(  # noqa: F811
+    env,  # noqa: F811
+) -> None:
+    """#787 round 2, N2: a parent's coverage is made by its covered and partial
+    children. One child covered by a retiring tool and one GAP child carrying a
+    kept tool make the parent PARTIAL, resting on the retiring tool alone; the
+    gap child's tool is not evidence for it."""
+    from app.attack.catalog import TECHNIQUES
+
+    kids: dict[str, list[str]] = {}
+    for t in TECHNIQUES:
+        if t.parent_id is not None:
+            kids.setdefault(t.parent_id, []).append(t.id)
+    parent = min((p for p in kids if len(kids[p]) >= 2), key=lambda p: (len(kids[p]), p))
+    first, *rest = sorted(kids[parent])
+
+    c, Sess = env
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer = admin["tokens"]["access_token"]
+    _tech_debt_list(
+        Sess,
+        client["user"]["client_id"],
+        admin["user"]["id"],
+        status=CapabilityListStatus.APPROVED,
+        items=[("Legacy AV", CUT), ("CrowdStrike Falcon", KEEP)],
+    )
+    svc, a = _service_and_assessment(c, bearer)
+    by_code = {row["technique_code"]: row for row in a["coverage"]}
+    writes = [(first, "covered", ["Legacy AV"])] + [
+        (code, "gap", ["CrowdStrike Falcon"]) for code in rest
+    ]
+    for code, st, tools in writes:
+        # A gap row CAN carry tools: the PATCH writes status and tool lists
+        # independently, so this state is reachable today.
+        r = c.patch(
+            f"/attack/coverage/{by_code[code]['id']}",
+            headers=_auth(bearer),
+            json={"status": st, "detection_tools": tools},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["detection_tools"] == tools, r.json()
+    latest = c.get(f"/attack/services/{svc}/assessments/latest", headers=_auth(bearer)).json()
+    assert {row["technique_code"]: row["status"] for row in latest["coverage"]}[parent] == "partial"
+    fin = _approve_finalize(c, bearer, svc, a)
+    # The covered child and the partial parent: both rest on Legacy AV alone.
+    assert (
+        "2 of the 2 covered or partial techniques cite a tool marked for planned "
+        "retirement; 2 rely on such tools alone."
+    ) in fin["summary"], fin["summary"]
