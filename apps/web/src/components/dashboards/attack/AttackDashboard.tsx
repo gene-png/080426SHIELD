@@ -541,6 +541,57 @@ export function AttackDashboard({
         </Section>
       ) : null}
 
+      {/* #554 R1, the advisor's ruling (i): why the Partials are partial,
+          counted -- the deliverable's own table, so the rows add up to the
+          Partial figure above. R3 SLOT: a "What is in place" breakdown would
+          follow this table; it waits on Gene's decision and is not built. */}
+      {data.partial_reasons && data.partial_reasons.length > 0 ? (
+        <Section title="Partial coverage, by reason">
+          <table
+            aria-label="Partial coverage, by reason"
+            style={{
+              width: "100%",
+              borderCollapse: "collapse",
+              fontSize: 12.5,
+            }}
+          >
+            <thead>
+              <tr>
+                {["Reason", "What it means", "Techniques"].map((h) => (
+                  <th
+                    key={h}
+                    style={{
+                      color: C.muted,
+                      textAlign: "left",
+                      padding: "10px 12px",
+                      fontWeight: 600,
+                      fontSize: 11,
+                      borderBottom: `1px solid ${C.border}`,
+                    }}
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {data.partial_reasons.map((r) => (
+                <tr key={r.label}>
+                  <td style={cell({ weight: 600 })}>{r.label}</td>
+                  <td style={cell({ muted: true })}>{r.sentence}</td>
+                  <td style={cell()}>{r.count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p style={{ margin: "10px 0 0", fontSize: 13 }}>
+            {data.rollup.partial === 1
+              ? "This adds up to the 1 Partial technique above."
+              : `These add up to the ${data.rollup.partial} Partial techniques above.`}
+          </p>
+        </Section>
+      ) : null}
+
       {/* Technique matrix */}
       <Section
         title="Per-technique coverage matrix"
@@ -783,6 +834,27 @@ function toolCell(tools: string[], marks: ToolRetirement): string {
     : "—";
 }
 
+/**
+ * #554 R1: why a Partial row is partial, as a small line under its chip; the
+ * sentence is its title. Nothing on any other row. The wording comes from the
+ * API (`app/attack/partial_reasons.py`), so it matches the deliverable.
+ *
+ * R3 SLOT: Gene's "What is in place: Detect / Prevent / Respond" line goes
+ * directly under this one. It waits on his "in place" decision and is not
+ * built.
+ */
+function PartialReasonLine({ t }: { t: DashTechnique }): JSX.Element | null {
+  if (!t.partial_reason) return null;
+  return (
+    <div
+      title={t.partial_reason.sentence}
+      style={{ marginTop: 4, fontSize: 12, color: C.muted }}
+    >
+      {t.partial_reason.label}
+    </div>
+  );
+}
+
 function MatrixRow({
   t,
   marks,
@@ -800,6 +872,7 @@ function MatrixRow({
         <td style={cell()}>{t.tactic_name}</td>
         <td style={cell()}>
           <Chip status={t.status} pendingReview={t.pending_review} />
+          <PartialReasonLine t={t} />
         </td>
         <td style={cell({ muted: true })} colSpan={4}>
           {`From ${t.sub_technique_count} sub-techniques`}
@@ -827,6 +900,7 @@ function MatrixRow({
       </td>
       <td style={cell()}>
         <Chip status={t.status} pendingReview={t.pending_review} />
+        <PartialReasonLine t={t} />
       </td>
       <td style={cell()}>
         <span style={{ display: "inline-flex", gap: 4 }}>

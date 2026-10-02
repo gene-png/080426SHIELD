@@ -27,6 +27,12 @@ from app.attack.analytics import CoverageRollup, TacticCoverage
 from app.attack.catalog import TACTICS, TECHNIQUES, all_codes, technique_by_id, technique_url
 from app.attack.coverage import ASSESSED, CoverageStatus, coverage_label
 from app.attack.parents import PARENT_CHILDREN, is_computed_parent
+from app.attack.partial_reasons import (
+    TABLE_ORDER,
+    WHY_PARTIAL_LEGEND,
+    PartialReason,
+    partial_reason,
+)
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.pending import row_tools, uncleared_tools
 from app.attack.retirement import (
@@ -179,6 +185,50 @@ def retirement_sentences(ctx: AttackDeliverableContext) -> list[str]:
             of_techniques=ctx.rollup.covered + ctx.rollup.partial,
         )
     )
+
+
+def _row_reason(ctx: AttackDeliverableContext, cov: AttackCoverage | None) -> PartialReason | None:
+    """#554 R1: what the client reads for why this row is Partial, or None.
+
+    A computed parent's Partial is its children's only under #620's rules
+    (`ctx.parents_computed`); an assessment approved before #620 scored its
+    parents directly, so its parent reads like any other row."""
+    if cov is None:
+        return None
+    return partial_reason(
+        cov.status,
+        cov.reason_code,
+        computed_parent=ctx.parents_computed and is_computed_parent(cov.technique_code),
+    )
+
+
+def partial_reason_counts(ctx: AttackDeliverableContext) -> list[tuple[PartialReason, int]]:
+    """#554 R1: the "Partial coverage, by reason" table, in `TABLE_ORDER`,
+    zero rows omitted.
+
+    Over the rows the rollup counts as Partial -- in the catalogue and not
+    withheld (#102) -- so the counts add up to the Partial figure printed
+    beside them, never to a second population. A mismatch RAISES: a table
+    that does not add up is a wrong number in a client deliverable."""
+    catalogue = {t.id for t in TECHNIQUES}
+    counts: dict[PartialReason, int] = {}
+    for cov in ctx.coverage:
+        if cov.technique_code not in catalogue or cov.technique_code in ctx.pending_codes:
+            continue
+        reason = _row_reason(ctx, cov)
+        if reason is not None:
+            counts[reason] = counts.get(reason, 0) + 1
+    if sum(counts.values()) != ctx.rollup.partial:
+        raise ValueError(
+            f"the Partial-by-reason table counts {sum(counts.values())} techniques "
+            f"beside a Partial figure of {ctx.rollup.partial}"
+        )
+    return [(reason, counts[reason]) for reason in TABLE_ORDER if counts.get(reason)]
+
+
+#: The count table's heading and columns, in the DOCX and the PDF.
+PARTIAL_TABLE_HEADING = "Partial coverage, by reason"
+PARTIAL_TABLE_COLUMNS = ["Reason", "What it means", "Techniques"]
 
 
 def _status_or_unscored(value: str | None) -> str:
@@ -455,6 +505,8 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
             "confirmed by a consultant.",
         ]
     )
+    # #554 R1: the Coverage sheet's "Why partial" column, explained.
+    ws.append(list(WHY_PARTIAL_LEGEND))
     # #686: a legend row only for a mark the Coverage sheet actually carries,
     # so a workbook with none of them renders as it did before.
     delivered_marks = {
@@ -539,6 +591,10 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
         "Type",
         "Status",
         "Pending review",
+        # #554 R1, immediately after "Pending review". R3 SLOT: Gene's "What is
+        # in place: Detect / Prevent / Respond" column goes after this one; it
+        # waits on his "in place" decision and is not built.
+        "Why partial",
         "Rationale",
         "Detection tools",
         "Prevention tools",
@@ -571,6 +627,7 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
                 "sub" if tech.is_sub_technique else "parent",
                 _status_or_unscored(cov.status if cov else None),
                 "Yes" if tech.id in ctx.pending_codes else "",
+                reason.cell() if (reason := _row_reason(ctx, cov)) is not None else "",
                 (own.rationale if own else None) or "",
                 _tools(own.detection_tools if own else None, unconfirmed, ctx.retirement),
                 _tools(own.prevention_tools if own else None, unconfirmed, ctx.retirement),
@@ -579,7 +636,7 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
             ],
         )
         _link_technique(ws2, tech.id)
-    widths2 = [14, 38, 28, 8, 12, 15, 60, 30, 30, 30, 40]
+    widths2 = [14, 38, 28, 8, 12, 15, 60, 60, 30, 30, 30, 40]
     for w, col in zip(widths2, range(1, len(widths2) + 1), strict=True):
         ws2.column_dimensions[get_column_letter(col)].width = w
 
@@ -680,6 +737,18 @@ def render_docx(ctx: AttackDeliverableContext) -> bytes:
             *retirement_sentences(ctx),
         ],
     )
+
+    # #554 R1: why the Partials are partial, counted. Only when there is one.
+    # R3 SLOT: a "What is in place" breakdown would follow this table; it waits
+    # on Gene's decision and is not built.
+    reason_counts = partial_reason_counts(ctx)
+    if reason_counts:
+        add_heading(doc, PARTIAL_TABLE_HEADING)
+        add_table(
+            doc,
+            PARTIAL_TABLE_COLUMNS,
+            [[reason.label, reason.sentence, n] for reason, n in reason_counts],
+        )
 
     add_heading(doc, "Per-tactic rollup")
     add_table(
@@ -841,6 +910,29 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
     # #686: only when non-zero, so nothing changes without a plan.
     for sentence in retirement_sentences(ctx):
         story.append(Paragraph(html_escape(sentence, quote=False), body))
+
+    # #554 R1: the same table as the DOCX, and they MUST move together.
+    # R3 SLOT: a "What is in place" breakdown would follow it; not built.
+    reason_counts = partial_reason_counts(ctx)
+    if reason_counts:
+        story.append(Paragraph(PARTIAL_TABLE_HEADING, h2))
+        reason_table = Table(
+            [
+                PARTIAL_TABLE_COLUMNS,
+                *[
+                    [
+                        Paragraph(html_escape(reason.label, quote=False), body),
+                        Paragraph(html_escape(reason.sentence, quote=False), body),
+                        str(n),
+                    ]
+                    for reason, n in reason_counts
+                ],
+            ],
+            colWidths=[1.8 * inch, 4.4 * inch, 0.9 * inch],
+            repeatRows=1,
+        )
+        reason_table.setStyle(_table_style())
+        story.append(reason_table)
 
     story.append(Paragraph("Per-tactic rollup", h2))
     tactic_table_data: list[list] = [

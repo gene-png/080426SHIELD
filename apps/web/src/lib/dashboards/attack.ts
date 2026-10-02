@@ -62,6 +62,11 @@ export interface DashTechnique {
   /** How many sub-techniques it is computed from; 0 when it is not a computed
    *  parent. Set by the API with `computed_parent`, from the same links. */
   sub_technique_count?: number;
+  /**
+   * #554 R1: why a Partial technique is partial, in the client's words
+   * (`app/attack/partial_reasons.py`). Present on a Partial row only.
+   */
+  partial_reason?: { label: string; sentence: string };
   detection_tools: string[];
   prevention_tools: string[];
   response_tools: string[];
@@ -113,6 +118,12 @@ export interface AttackDashboardData {
   tool_retirement?: Record<string, string>;
   /** The deliverable's own count sentences, each only when non-zero. */
   retirement_notes?: string[];
+  /**
+   * #554 R1: the "Partial coverage, by reason" table, the deliverable's own
+   * rows (`partial_reason_counts`), adding up to `rollup.partial`. Absent when
+   * there is no Partial.
+   */
+  partial_reasons?: { label: string; sentence: string; count: number }[];
 }
 
 export interface Kpi {
