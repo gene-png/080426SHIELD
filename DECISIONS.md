@@ -6489,9 +6489,10 @@ The shared dev database, read-only: DRAFT 2, RELEASED 2, APPROVED 0, at migratio
 
 **The join** (`app/attack/retirement.py`, which carries the rules and their reasons). An ATT&CK row stores tool NAMES. Each cited name is matched by `strip().casefold()` against every entry `_client_capability_membership` was built from, before its de-duplication, and each entry is followed by its `item_id` to the live item's disposition:
 
-- **Only an APPROVED or RELEASED Tech Debt list's `cut` is the plan.** A consultant's unreviewed draft disposition is not "the consolidation plan", so a tool cut only on a DRAFT list reads as not retiring.
-- Cut on every approved/released entry: planned retirement. Known on every one with none cut: not retiring (undecided counts as not cut).
-- Entries that disagree, an entry whose live item is gone, or a name matching no entry: **retirement status unknown**, never a silent "not retiring".
+- **"The consolidation plan" is each Tech Debt service's LATEST (highest-version) APPROVED or RELEASED capability list, and only it votes** (#787 review, F1). A DRAFT is a consultant's unreviewed disposition, and an older approved version is superseded by the next extraction, so neither votes. A cited tool on no service's latest plan (a draft only, an older version only, or nowhere) is **retirement status unknown**: "the plan does not list it" cannot support "not retiring". This refines the first verdict, which read a draft-only cut as not retiring. The citation membership itself still unions every non-discarded version; retirement deliberately narrows to the latest plan.
+- Across DIFFERENT Tech Debt services the latest plans are unioned, and disagreement is unknown.
+- Cut on every voting entry: planned retirement. Known on every one with none cut: not retiring (undecided counts as not cut). **Only `cut` counts**: Gene's decision names `cut`, so `consolidate` reads as not retiring. Whether a consolidation should count is an open question to the owner (#787 review, F2).
+- Voting entries that disagree, a voting entry whose live item is gone, or a name with no voting entry: **retirement status unknown**, never a silent "not retiring".
 - **No approved or released Tech Debt list at all: nothing is marked and no unknown count is printed.** "No consolidation plan" is not "could not determine".
 - A rename after approval still joins, through the snapshot's `item_id`. A redacted alias never reaches the stored name (#133).
 
@@ -6499,4 +6500,4 @@ The shared dev database, read-only: DRAFT 2, RELEASED 2, APPROVED 0, at migratio
 
 **Freshness.** A deliverable holds the disposition as of its finalize, because it is rendered then. The dashboard and the admin panel read the CURRENT plan and say so beside the labels ("Retirement labels reflect the current consolidation plan."). Freezing the labels for the dashboard is a follow-up, filed by the coordinator.
 
-**Overturnable:** whether a draft list's `cut` should count, and whether a free-text tool should read "unknown" rather than unmarked.
+**Overturnable:** whether `consolidate` should count, and whether a free-text tool should read "unknown" rather than unmarked.

@@ -18,24 +18,34 @@ back to that name before anything is stored, so #133 never reaches this join);
 and the consultant's coverage PATCH, which stores free text. Disposition lives
 on the LIVE `CapabilityItem`, and one tool can sit on several lists.
 
-So a cited name is matched, by `strip().casefold()`, against EVERY entry the
+So a cited name is matched, by `strip().casefold()`, against the entries the
 membership was built from -- before its de-duplication, because the dedupe
 keeps one list's row and the disposition may differ on another -- and each
-entry is followed by its `item_id` to the live item:
+entry is followed by its `item_id` to the live item.
 
-  * Only an APPROVED or RELEASED list's `cut` is a plan. A consultant's
-    unreviewed draft disposition is not "the consolidation plan", so a tool
-    cut only on a DRAFT list reads as NOT retiring.
-  * Every approved/released entry `cut`  ->  PLANNED.
-  * Every approved/released entry known and none `cut`  ->  NOT retiring.
-    An undecided (None) disposition is not a plan to retire.
-  * Approved/released entries that DISAGREE, or one whose live item is gone,
-    ->  UNKNOWN. Picking either side would assert a plan nobody stated.
-  * A name matching no entry at all  ->  UNKNOWN. That is a consultant's free
-    text, or a draft-list rename after the AI cited the old name; either way
-    the plan cannot be read for it, and saying nothing would be a silent
-    "not retiring".
-  * Matched only on DRAFT lists  ->  NOT retiring, per the first bullet.
+**ONE RULE decides which entries vote: "the consolidation plan" is each Tech
+Debt service's LATEST (highest-version) APPROVED or RELEASED list.** Nothing
+else votes -- not a DRAFT (a consultant's unreviewed disposition), and not an
+older approved or released version (each extraction mints a new version, and
+the old one stays approved). A tool on no service's latest plan cannot be
+read from the plan, whether it sits on a draft, an older version or nowhere,
+so it is UNKNOWN. (Refined from the first verdict on #686, which read a
+draft-only cut as "not retiring": "the plan does not list it" cannot support
+"not retiring". #787 review, F1.)
+
+  * Every voting entry `cut`  ->  PLANNED.
+  * Every voting entry known and none `cut`  ->  NOT retiring.
+    An undecided (None) disposition is not a plan to retire. Neither is
+    `consolidate`: Gene's decision names `cut`, and only `cut` counts. Whether
+    a consolidation should read as a retirement is an open question to the
+    owner (#787 review, F2), deliberately not answered here.
+  * Voting entries that DISAGREE -- two Tech Debt SERVICES whose latest plans
+    differ -- or one whose live item is gone  ->  UNKNOWN. Picking either side
+    would assert a plan nobody stated.
+  * No voting entry at all  ->  UNKNOWN: a consultant's free text, a rename
+    after the AI cited the old name, a tool only on a draft, or one dropped
+    from the latest version. The plan cannot be read for it, and saying
+    nothing would be a silent "not retiring".
 
 **"No consolidation plan" is not "could not determine".** A client with no
 APPROVED or RELEASED Tech Debt list has no plan in which a tool could be cut,
@@ -77,7 +87,8 @@ class Retirement(enum.StrEnum):
 class PlanEntry:
     """One membership entry, as this module needs it.
 
-    `in_plan` is True when the entry's list is APPROVED or RELEASED. `cut` is
+    `in_plan` is True when the entry's list is its Tech Debt service's latest
+    APPROVED or RELEASED version -- the only lists that vote. `cut` is
     the live item's disposition read as cut-or-not, or None when the live
     item is gone.
     """
@@ -131,17 +142,15 @@ def build_index(entries: Iterable[PlanEntry], *, has_plan: bool) -> RetirementIn
     """Fold the entries into one verdict per casefold name (rules above)."""
     if not has_plan:
         return NO_PLAN
+    # Only the latest plan votes; every other entry is ignored, so a name with
+    # no voting entry falls to `state()`'s UNKNOWN default.
     grouped: dict[str, list[PlanEntry]] = {}
     for e in entries:
         k = _key(e.name)
-        if k:
+        if k and e.in_plan:
             grouped.setdefault(k, []).append(e)
     by_key: dict[str, Retirement] = {}
-    for k, group in grouped.items():
-        planned = [e for e in group if e.in_plan]
-        if not planned:
-            by_key[k] = Retirement.NOT_RETIRING
-            continue
+    for k, planned in grouped.items():
         cuts = {e.cut for e in planned}
         if None in cuts or len(cuts) > 1:
             by_key[k] = Retirement.UNKNOWN

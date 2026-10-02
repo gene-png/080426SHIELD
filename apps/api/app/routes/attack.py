@@ -881,6 +881,19 @@ class CapabilityMembership:
 _PLAN_STATUSES = frozenset({CapabilityListStatus.APPROVED, CapabilityListStatus.RELEASED})
 
 
+def _latest_plan_ids(lists: Iterable[CapabilityList]) -> frozenset[uuid.UUID]:
+    """#787 review, F1: per Tech Debt SERVICE, the highest-version APPROVED or
+    RELEASED list -- "the consolidation plan". Older versions do not vote."""
+    latest: dict[uuid.UUID, CapabilityList] = {}
+    for cl in lists:
+        if cl.status not in _PLAN_STATUSES:
+            continue
+        held = latest.get(cl.service_id)
+        if held is None or cl.version > held.version:
+            latest[cl.service_id] = cl
+    return frozenset(cl.id for cl in latest.values())
+
+
 def _client_capabilities(db: Session, client_id: uuid.UUID) -> list[Candidate]:
     """Name + vendor only, for the citation resolver. See
     `_client_capability_membership`, which this projects from — one query, one
@@ -1453,16 +1466,24 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
             # re-approving.
             withheld[key] = drop
 
+    plan_ids = _latest_plan_ids(lists)
     return CapabilityMembership(
         sent=sent,
         withheld=sorted(withheld.values(), key=lambda d: d.name),
         lists=list(lists),
         # #686: from `pairs`, the rows the dedupe chose among, each followed by
         # its item_id to the LIVE disposition. A gone live row is `cut=None`.
+        #
+        # RETIREMENT DELIBERATELY NARROWS TO THE LATEST PLAN (#787 review, F1).
+        # The membership above unions every non-discarded version of every list
+        # -- pre-existing, "arguably wrong", and left alone here because it
+        # decides what may be CITED. "The consolidation plan" is narrower: only
+        # each Tech Debt service's latest APPROVED or RELEASED list votes, so an
+        # older version's `cut` cannot outvote, or outlive, the current one.
         plan_entries=[
             PlanEntry(
                 name=p.name,
-                in_plan=p.cap_list.status in _PLAN_STATUSES,
+                in_plan=p.cap_list.id in plan_ids,
                 cut=(
                     None
                     if (live := live_by_id.get(str(p.item_id or ""))) is None

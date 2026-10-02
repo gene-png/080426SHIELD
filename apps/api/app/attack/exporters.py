@@ -20,12 +20,13 @@ import io
 from collections.abc import Iterable
 from dataclasses import dataclass
 from html import escape as html_escape
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 from app.attack.analytics import CoverageRollup, TacticCoverage
 from app.attack.catalog import TACTICS, TECHNIQUES, all_codes, technique_by_id, technique_url
 from app.attack.coverage import ASSESSED, CoverageStatus, coverage_label
-from app.attack.parents import is_computed_parent
+from app.attack.parents import PARENT_CHILDREN, is_computed_parent
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.pending import row_tools, uncleared_tools
 from app.attack.retirement import (
@@ -117,13 +118,41 @@ def _delivered_rows(ctx: AttackDeliverableContext) -> list[AttackCoverage]:
     ]
 
 
+def _evidence_rows(ctx: AttackDeliverableContext) -> list[SimpleNamespace]:
+    """Each row with the tools its status rests on (#787 review, F4).
+
+    `of_techniques` is the rollup's covered + partial, which COUNTS a computed
+    parent (D-094). A parent has no tools of its own -- its status is its
+    children's -- so its evidence is the union of its children's tools: when
+    they retire, its coverage drops with theirs. Without this the numerator
+    skipped parents while the denominator held them, a ratio over two
+    populations."""
+    by_code = {c.technique_code: c for c in ctx.coverage}
+    out: list[SimpleNamespace] = []
+    for c in ctx.coverage:
+        if ctx.parents_computed and is_computed_parent(c.technique_code):
+            tools = [
+                t
+                for child in PARENT_CHILDREN.get(c.technique_code, ())
+                if child in by_code
+                for t in row_tools(by_code[child])
+            ]
+        else:
+            tools = row_tools(c)
+        out.append(
+            SimpleNamespace(technique_code=c.technique_code, status=c.status, detection_tools=tools)
+        )
+    return out
+
+
 def retirement_sentences(ctx: AttackDeliverableContext) -> list[str]:
     """#686: the count sentences, each only when non-zero; [] with no plan.
     `of_techniques` is this rollup's own covered + partial, and only rows inside
-    it (not withheld, #102) can count, so the sentence agrees with the figure."""
+    it (not withheld, #102) can count, so the sentence agrees with the figure.
+    Both sides count the same rows: see `_evidence_rows`."""
     return summary_sentences(
         summarize(
-            _delivered_rows(ctx),
+            _evidence_rows(ctx),
             ctx.retirement,
             counted_codes=[
                 c.technique_code for c in ctx.coverage if c.technique_code not in ctx.pending_codes

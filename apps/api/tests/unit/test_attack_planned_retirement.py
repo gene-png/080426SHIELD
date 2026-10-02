@@ -2,10 +2,11 @@
 
 Gene's decision (2026-09-26, D-105): the tool still counts toward coverage --
 it is still deployed -- and every surface that counts it says "planned
-retirement". The coordinator's verdicts on the join: only an APPROVED or
-RELEASED Tech Debt list's `cut` is a plan (a tool cut only on a DRAFT reads as
-not retiring); a cited name the plan cannot answer for is "retirement status
-unknown"; and a client with no plan at all gets no marks and no counts.
+retirement". The coordinator's verdicts on the join: "the consolidation
+plan" is each Tech Debt service's LATEST approved or released list, and only it
+votes (#787 review, F1); a cited name on no service's latest plan -- a draft
+only, an older version only, or nowhere -- is "retirement status unknown"; and
+a client with no plan at all gets no marks and no counts.
 
 ONE WORLD carries every state, so the per-surface assertions cannot pass on a
 world that lacks the case:
@@ -14,7 +15,7 @@ world that lacks the case:
     Legacy AV           approved list, cut       -> planned retirement
     CrowdStrike Falcon  approved list, keep      -> not retiring
     Okta                approved list, undecided -> not retiring
-    Tenable             DRAFT list only, cut     -> not retiring (Q1)
+    Tenable             DRAFT list only, cut     -> unknown (on no latest plan)
     Homegrown Script    on no list (free text)   -> unknown
 
 Expected strings are the coordinator-approved copy on #686, written out here,
@@ -62,7 +63,7 @@ PLANNED_SENTENCE = (
     "2 of the 5 covered or partial techniques cite a tool marked for planned "
     "retirement; 1 relies on such tools alone."
 )
-UNKNOWN_SENTENCE = "Retirement status could not be determined for 1 cited tool."
+UNKNOWN_SENTENCE = "Retirement status could not be determined for 2 cited tools."
 
 
 def _tech_debt_list(
@@ -206,7 +207,7 @@ def test_the_xlsx_marks_each_tool_by_its_state(env) -> None:  # noqa: F811
         "Splunk Enterprise (planned retirement); CrowdStrike Falcon",
         "Legacy AV (planned retirement)",
         "Okta",
-        "Tenable",
+        "Tenable (retirement status unknown)",
         "Homegrown Script (retirement status unknown)",
     } <= cells, cells
 
@@ -309,6 +310,7 @@ def test_the_client_dashboard_carries_the_marks_and_the_counts(env) -> None:  # 
     assert body["tool_retirement"] == {
         "Splunk Enterprise": "planned_retirement",
         "Legacy AV": "planned_retirement",
+        "Tenable": "unknown",
         "Homegrown Script": "unknown",
     }, body.get("tool_retirement")
     assert body["retirement_notes"] == [PLANNED_SENTENCE, UNKNOWN_SENTENCE], body.get(
@@ -358,6 +360,7 @@ def test_the_admin_assessment_carries_the_marks(env) -> None:  # noqa: F811
     assert latest.json()["tool_retirement"] == {
         "Splunk Enterprise": "planned_retirement",
         "Legacy AV": "planned_retirement",
+        "Tenable": "unknown",
         "Homegrown Script": "unknown",
     }
 
@@ -365,11 +368,14 @@ def test_the_admin_assessment_carries_the_marks(env) -> None:  # noqa: F811
 # --- the join's other unknowns, through the same index the surfaces use --------
 
 
-def test_two_approved_lists_that_disagree_are_unknown_not_a_guess(env) -> None:  # noqa: F811
+def test_two_services_whose_plans_disagree_are_unknown_not_a_guess(env) -> None:  # noqa: F811
     c, Sess = env
     admin = _register(c, "admin@example.com")
     client = _register(c, "client@example.com")
     bearer = admin["tokens"]["access_token"]
+    # TWO Tech Debt SERVICES (`_tech_debt_list` opens a service per call), each
+    # with its own latest plan. The union rule applies across services; two
+    # VERSIONS of one service are the next tests, where the latest wins.
     for disposition in (CUT, KEEP):
         _tech_debt_list(
             Sess,
@@ -446,3 +452,178 @@ def test_a_renamed_item_still_joins_through_the_snapshot(env) -> None:  # noqa: 
     )
     latest = c.get(f"/attack/services/{svc}/assessments/latest", headers=_auth(bearer)).json()
     assert latest["tool_retirement"] == {"Splunk Enterprise": "planned_retirement"}
+
+
+# --- the count sentence's numbers (#787 review, F3 and F4) ----------------------
+
+
+def _family() -> tuple[str, list[str]]:
+    """The catalog parent with the fewest sub-techniques, and those sub-techniques.
+
+    Derived from the catalog's own parent links, NOT from `app.attack.parents`,
+    so the setup does not agree with the code under test by construction.
+    """
+    from app.attack.catalog import TECHNIQUES
+
+    kids: dict[str, list[str]] = {}
+    for t in TECHNIQUES:
+        if t.parent_id is not None:
+            kids.setdefault(t.parent_id, []).append(t.id)
+    parent = min(kids, key=lambda p: (len(kids[p]), p))
+    return parent, sorted(kids[parent])
+
+
+def _plan_with_legacy_av_cut(env):  # noqa: F811
+    c, Sess = env
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer = admin["tokens"]["access_token"]
+    _tech_debt_list(
+        Sess,
+        client["user"]["client_id"],
+        admin["user"]["id"],
+        status=CapabilityListStatus.APPROVED,
+        items=[("Legacy AV", CUT)],
+    )
+    return c, bearer
+
+
+def test_one_technique_reads_in_the_singular(env) -> None:  # noqa: F811
+    """F3: "1 of the 1 covered or partial technique cites ...; 1 relies ...",
+    through finalize, not only through a hand-written web string."""
+    c, bearer = _plan_with_legacy_av_cut(env)
+    svc, a = _service_and_assessment(c, bearer)
+    row = standalone_rows(a["coverage"], 1)[0]
+    r = c.patch(
+        f"/attack/coverage/{row['id']}",
+        headers=_auth(bearer),
+        json={"status": "covered", "detection_tools": ["Legacy AV"]},
+    )
+    assert r.status_code == 200, r.text
+    fin = _approve_finalize(c, bearer, svc, a)
+    assert (
+        "1 of the 1 covered or partial technique cites a tool marked for planned "
+        "retirement; 1 relies on such tools alone."
+    ) in fin["summary"], fin["summary"]
+
+
+def test_a_computed_parent_counts_on_both_sides_of_the_sentence(env) -> None:  # noqa: F811
+    """F4: M is the rollup's covered + partial, which includes a computed parent
+    (D-094). N must count over the SAME population, so a parent covered by
+    children that cite a retiring tool counts in N too -- its coverage drops
+    with theirs. Before, N skipped parents while M included them: a ratio over
+    two populations."""
+    c, bearer = _plan_with_legacy_av_cut(env)
+    parent, children = _family()
+    svc, a = _service_and_assessment(c, bearer)
+    by_code = {row["technique_code"]: row for row in a["coverage"]}
+    for code in children:
+        r = c.patch(
+            f"/attack/coverage/{by_code[code]['id']}",
+            headers=_auth(bearer),
+            json={"status": "covered", "detection_tools": ["Legacy AV"]},
+        )
+        assert r.status_code == 200, r.text
+    latest = c.get(f"/attack/services/{svc}/assessments/latest", headers=_auth(bearer)).json()
+    statuses = {row["technique_code"]: row["status"] for row in latest["coverage"]}
+    assert statuses[parent] == "covered", (parent, statuses[parent])
+    fin = _approve_finalize(c, bearer, svc, a)
+    n = len(children) + 1  # every child, and the parent they cover
+    assert (
+        f"{n} of the {n} covered or partial techniques cite a tool marked for planned "
+        f"retirement; {n} rely on such tools alone."
+    ) in fin["summary"], fin["summary"]
+
+
+# --- two VERSIONS of one Tech Debt service: the latest plan wins (#787, F1) -----
+
+
+def _one_service_two_versions(
+    env,  # noqa: F811
+    v1: list[tuple[str, CapabilityDisposition | None]],
+    v2: list[tuple[str, CapabilityDisposition | None]],
+):
+    """One Tech Debt service whose v1 and v2 lists are both APPROVED, the state
+    each extraction leaves behind, and an ATT&CK service citing Splunk."""
+    c, Sess = env
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer = admin["tokens"]["access_token"]
+    client_id = client["user"]["client_id"]
+    with Sess() as s:
+        svc = Service(
+            kind=ServiceKind.TECH_DEBT,
+            title="Tech Debt",
+            client_id=uuid.UUID(client_id),
+            opened_by=uuid.UUID(admin["user"]["id"]),
+        )
+        s.add(svc)
+        s.flush()
+        for version, items in ((1, v1), (2, v2)):
+            cl = CapabilityList(
+                service_id=svc.id, version=version, status=CapabilityListStatus.APPROVED
+            )
+            s.add(cl)
+            s.flush()
+            entries = []
+            for name, disposition in items:
+                it = CapabilityItem(
+                    capability_list_id=cl.id,
+                    name=name,
+                    security_related=True,
+                    disposition=disposition,
+                )
+                s.add(it)
+                s.flush()
+                entries.append({"item_id": str(it.id), "name": name, "vendor": None})
+            cl.approved_membership = entries
+        s.commit()
+    asvc, a = _service_and_assessment(c, bearer)
+    row = standalone_rows(a["coverage"], 1)[0]
+    r = c.patch(
+        f"/attack/coverage/{row['id']}",
+        headers=_auth(bearer),
+        json={"status": "covered", "detection_tools": ["Splunk Enterprise"]},
+    )
+    assert r.status_code == 200, r.text
+    fin = _approve_finalize(c, bearer, asvc, a)
+    assert (
+        c.post(f"/attack/deliverables/{fin['id']}/release", headers=_auth(bearer)).status_code
+        == 200
+    )
+    c.headers["X-Client-Id"] = client_id
+    dash = c.get(
+        f"/clients/{client_id}/attack/{asvc}/dashboard",
+        headers=_auth(client["tokens"]["access_token"]),
+    )
+    assert dash.status_code == 200, dash.text
+    cells = _xlsx_tool_cells(_download(c, bearer, fin["xlsx_artifact_id"]))
+    return fin, dash.json(), cells
+
+
+def test_an_older_versions_cut_is_outvoted_by_the_latest_keep(env) -> None:  # noqa: F811
+    """v1 cut, v2 keep: the current plan keeps the tool. Before F1 both versions
+    voted, and the disagreement read UNKNOWN."""
+    fin, dash, cells = _one_service_two_versions(
+        env, v1=[("Splunk Enterprise", CUT)], v2=[("Splunk Enterprise", KEEP)]
+    )
+    assert "Splunk Enterprise" in cells, cells
+    assert not any("retirement" in x for x in cells), cells
+    assert dash["tool_retirement"] == {}, dash["tool_retirement"]
+    assert dash["retirement_notes"] == [], dash["retirement_notes"]
+    assert "retirement" not in fin["summary"].lower(), fin["summary"]
+
+
+def test_a_tool_dropped_from_the_latest_version_is_unknown_not_retiring(env) -> None:  # noqa: F811
+    """v1 cut, absent from v2: the current plan does not list it. Before F1 the
+    stale cut read PLANNED beside "Retirement labels reflect the current
+    consolidation plan." -- which was then false."""
+    fin, dash, cells = _one_service_two_versions(
+        env, v1=[("Splunk Enterprise", CUT)], v2=[("Okta", KEEP)]
+    )
+    assert "Splunk Enterprise (retirement status unknown)" in cells, cells
+    assert dash["tool_retirement"] == {"Splunk Enterprise": "unknown"}, dash["tool_retirement"]
+    assert dash["retirement_notes"] == [
+        "Retirement status could not be determined for 1 cited tool."
+    ], dash["retirement_notes"]
+    assert "planned retirement" not in fin["summary"], fin["summary"]
