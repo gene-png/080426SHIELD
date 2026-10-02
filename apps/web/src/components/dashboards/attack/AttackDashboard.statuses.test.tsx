@@ -65,6 +65,7 @@ function data(
       outside_control_surface: counts.out,
       unable_to_determine: counts.nv,
       coverage_pct: 100,
+      coverage_measured: true, // #489 (Batch A): required since; not under test here
       by_tactic: [],
     },
     techniques,

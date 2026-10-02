@@ -34,6 +34,10 @@ export interface DashTactic {
   outside_control_surface?: number;
   unable_to_determine?: number;
   coverage_pct: number;
+  /** #489: false where nothing is Covered, Partial, Gap or pending review, so
+   *  `coverage_pct` (0.0 there) is shown as "not measured", as the deliverable
+   *  says. Decided by the API with the exporter's own rule; never re-derived. */
+  coverage_measured: boolean;
 }
 
 export interface DashTechnique {
@@ -82,6 +86,10 @@ export interface DashRollup {
   outside_control_surface?: number;
   unable_to_determine?: number;
   coverage_pct: number;
+  /** #489: false where nothing is Covered, Partial, Gap or pending review, so
+   *  `coverage_pct` (0.0 there) is shown as "not measured", as the deliverable
+   *  says. Decided by the API with the exporter's own rule; never re-derived. */
+  coverage_measured: boolean;
   by_tactic: DashTactic[];
 }
 

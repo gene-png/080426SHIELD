@@ -44,6 +44,7 @@ function entry(over: Partial<TacticHeatmapEntry>): TacticHeatmapEntry {
     outside_control_surface: 0,
     unable_to_determine: 0,
     coverage_pct: 100,
+    coverage_measured: true, // #489 (Batch A): required since; not under test here
     ...over,
   };
 }

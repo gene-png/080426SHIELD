@@ -90,6 +90,12 @@ class AttackTacticCoverage(BaseModel):
     outside_control_surface: int | None
     unable_to_determine: int | None
     coverage_pct: float
+    # #489: False where nothing here is Covered, Partial, Gap or pending review,
+    # so `coverage_pct` (0.0 there) is "not measured", as the deliverable says.
+    # The exporter's own rule (`attack.exporters.coverage_measured`). Under BOTH
+    # rule sets: a dashboard is a live render, and showing 0.0% where the
+    # delivered document says "not measured" is #489 itself. REQUIRED.
+    coverage_measured: bool
 
     @model_serializer(mode="wrap")
     def _drop_counts_not_shown(self, handler: Any) -> dict[str, Any]:
@@ -173,6 +179,8 @@ class AttackDashboardRollup(BaseModel):
     outside_control_surface: int | None
     unable_to_determine: int | None
     coverage_pct: float
+    # #489, as on each tactic above.
+    coverage_measured: bool
     by_tactic: list[AttackTacticCoverage]
 
     @model_serializer(mode="wrap")

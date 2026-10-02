@@ -32,6 +32,7 @@ from app.attack.catalog_version import (
 )
 from app.attack.catalog_version import is_current as attack_catalog_is_current
 from app.attack.coverage import ASSESSED
+from app.attack.exporters import coverage_measured
 from app.attack.parents import PARENT_CHILDREN as ATTACK_PARENT_CHILDREN
 from app.attack.parents import is_computed_parent as attack_is_computed_parent
 from app.attack.pending import pending_codes as attack_pending_codes
@@ -1306,6 +1307,7 @@ def attack_dashboard(
             outside_control_surface=rollup.outside_control_surface if rule else None,
             unable_to_determine=rollup.unable_to_determine if rule else None,
             coverage_pct=rollup.coverage_pct,
+            coverage_measured=coverage_measured(rollup),
             by_tactic=[
                 AttackTacticCoverage(
                     tactic_id=tc.tactic_id,
@@ -1319,6 +1321,7 @@ def attack_dashboard(
                     outside_control_surface=tc.outside_control_surface if rule else None,
                     unable_to_determine=tc.unable_to_determine if rule else None,
                     coverage_pct=tc.coverage_pct,
+                    coverage_measured=coverage_measured(tc),
                 )
                 for tc in rollup.by_tactic
             ],

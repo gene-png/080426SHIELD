@@ -2,9 +2,10 @@
 
 A released assessment keeps rendering what was delivered. `main`'s rendering
 of a fixed world was recorded ONCE (`tests/golden/parent_rules_old/`, see its
-RECORDED.md) and is compared here, never regenerated -- `dashboard.json` and
-`finalize_b.json` were amended once, 2026-10-02, to add #646's AI-source
-stamp and nothing else (RECORDED.md has the check). This test loads that
+RECORDED.md) and is compared here, never regenerated -- amended twice on
+2026-10-02, each time adding a field and nothing else: `dashboard.json` gained
+#489's `coverage_measured`, and `dashboard.json` and `finalize_b.json` gained
+#646's AI-source stamp (RECORDED.md has both checks). This test loads that
 world's database -- recorded at `main`'s migration head -- and runs `alembic
 upgrade head` on it, so migration 0054's backfill is the path under test, as it
 will be in production.

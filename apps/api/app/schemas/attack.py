@@ -307,6 +307,11 @@ class TacticHeatmapEntry(BaseModel):
     outside_control_surface: int | None
     unable_to_determine: int | None
     coverage_pct: float
+    # #489: False where nothing here is Covered, Partial, Gap or pending review,
+    # so `coverage_pct` (0.0 there) is "not measured", as the deliverable says.
+    # The exporter's own rule (`attack.exporters.coverage_measured`). REQUIRED:
+    # a default would turn missing wiring into a confident percentage.
+    coverage_measured: bool
 
 
 class AttackHeatmap(BaseModel):
@@ -339,6 +344,8 @@ class AttackHeatmap(BaseModel):
     outside_control_surface: int | None
     unable_to_determine: int | None
     coverage_pct: float
+    # #489, as on each tactic above.
+    coverage_measured: bool
     by_tactic: list[TacticHeatmapEntry]
 
 

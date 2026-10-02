@@ -49,6 +49,7 @@ const DATA: AttackDashboardData = {
     outside_control_surface: 0,
     unable_to_determine: 0,
     coverage_pct: 62.5,
+    coverage_measured: true, // #489 (Batch A): required since; not under test here
     by_tactic: [
       {
         tactic_id: "TA0002",
@@ -61,6 +62,7 @@ const DATA: AttackDashboardData = {
         outside_control_surface: 0,
         unable_to_determine: 0,
         coverage_pct: 50,
+        coverage_measured: true, // #489 (Batch A): required since; not under test here
       },
       {
         tactic_id: "TA0003",
@@ -73,6 +75,7 @@ const DATA: AttackDashboardData = {
         outside_control_surface: 0,
         unable_to_determine: 0,
         coverage_pct: 100,
+        coverage_measured: true, // #489 (Batch A): required since; not under test here
       },
       {
         tactic_id: "TA0007",
@@ -85,6 +88,7 @@ const DATA: AttackDashboardData = {
         outside_control_surface: 0,
         unable_to_determine: 0,
         coverage_pct: 0,
+        coverage_measured: true, // #489 (Batch A): required since; not under test here
       },
     ],
   },
