@@ -47,7 +47,9 @@ def _item(name: str, row: int | None) -> dict:
     }
 
 
-def _released(c, provider, items: list[dict], *, null_flag: bool = False) -> dict:
+def _released(
+    c, provider, items: list[dict], *, null_flag: bool = False, include_all: bool = False
+) -> dict:
     """Extract, keep everything, approve, finalize, release. Returns the ids
     and every surface's reading of the list."""
     provider.register(
@@ -74,6 +76,18 @@ def _released(c, provider, items: list[dict], *, null_flag: bool = False) -> dic
                 .values(attribution_complete=None)
             )
             s.commit()
+    if include_all:
+        # The consultant pulls every named excluded row back in, through the
+        # include-row endpoint, one at a time.
+        for row in ext["excluded_rows"]:
+            r = c.post(
+                f"/tech-debt/capability-lists/{ext['id']}/excluded-rows/{row['index']}/include",
+                headers=h,
+                json={"name": f"row {row['index']}", "annual_cost_usd": 1000},
+            )
+            assert r.status_code == 201, r.text
+        ext = c.get(f"/tech-debt/services/{svc}/capability-lists/latest", headers=h).json()
+        assert ext["excluded_rows"] == []
     for it in ext["items"]:
         c.patch(f"/tech-debt/capability-items/{it['id']}", headers=h, json={"disposition": "keep"})
     assert c.post(f"/tech-debt/capability-lists/{ext['id']}/approve", headers=h).status_code == 200
@@ -224,3 +238,18 @@ def test_an_unbalanced_list_is_never_exact(app_client, null_flag) -> None:  # no
     assert got["admin"]["exclusion_count_state"] == "unknown"
     assert got["dash"]["excluded_count_exact"] is False
     assert got["dash"]["spend_completeness"] == "partial"
+
+
+def test_including_every_named_row_keeps_a_pre_0058_list_exact(app_client) -> None:  # noqa: F811
+    """A pre-0058 list proves its count exact only by its NAMED rows. Including
+    every one of them empties that list, and NULL with [] reads unknown, so the
+    include-row route stamps the proof (`attribution_complete=True`) before it
+    consumes it. Built by the real writer with the flag nulled."""
+    c, provider = app_client
+    got = _released(c, provider, [_item("Wiz", 0)], null_flag=True, include_all=True)
+    assert got["admin"]["attribution_complete"] is True
+    assert got["admin"]["exclusion_count_state"] == "exact"
+    assert got["dash"]["excluded_count_exact"] is True
+    for surface in ("pdf", "docx", "xlsx"):
+        assert "Total annual cost" in got[surface], surface
+        assert UNKNOWN_TAIL not in got[surface], surface

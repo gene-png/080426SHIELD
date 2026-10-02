@@ -858,8 +858,10 @@ Components carry no cost of their own — this licence keeps its full value.`,
               where rows WERE excluded and nobody can say which, and measuring
               the named list concluded nothing was excluded. That is the
               2026-08-04 defect reachable through the mechanism added to prevent
-              it. The count is `received - source-derived items` and is exact in
-              both regimes; the exporter derives it the same way. */}
+              it. The count is `received - source-derived items`, which is exact
+              only when attribution was complete; otherwise it is a floor and
+              the box says the count is unknown (#193, `exclusionUnknown`). The
+              exporter decides it the same way. */}
             {typeof list.source_rows_total === "number" &&
             (exclusionUnknown(list) ||
               list.source_rows_total -

@@ -589,6 +589,9 @@ def _extract_run_work(
             "version": next_version,
             "item_count": len(result.items),
             "source_rows_total": result.reconciliation.received,
+            # The NAMED excluded rows, which `reconcile_rows` fills only when
+            # attribution was complete: 0 when it failed, so this is NOT the
+            # excluded count (#193). No surface renders it.
             "excluded_rows": len(result.reconciliation.excluded_rows),
         },
         applied_count=len(result.items),
@@ -714,6 +717,13 @@ def include_excluded_row(
     """
     cap_list = _editable_list_or_404(db, list_id, client)
     entry = _excluded_entry_or_404(cap_list, row_index)
+    if cap_list.attribution_complete is None:
+        # #193: a pre-0058 list proves its count exact only by its NAMED rows
+        # (`exclusion_count_state`), and this route consumes them -- including
+        # the last one would leave NULL with [] and read as unknown. The entry
+        # just found proves the list non-empty, so stamp the proof first.
+        # `confirm_excluded_row` needs nothing: it never removes an entry.
+        cap_list.attribution_complete = True
 
     item = CapabilityItem(
         capability_list_id=cap_list.id,
@@ -760,6 +770,9 @@ def confirm_excluded_row(
     db: Annotated[Session, Depends(get_db)],
 ) -> CapabilityListResponse:
     """Acknowledge an exclusion as correct.
+
+    Unlike include, it needs no #193 stamp: the row stays in `excluded_rows`,
+    so a pre-0058 list keeps the named rows that prove its count exact.
 
     The row STAYS listed — the reconciliation has to keep telling the truth
     about what was uploaded — but the workspace can stop flagging it as
