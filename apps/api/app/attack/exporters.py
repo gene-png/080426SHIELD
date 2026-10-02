@@ -136,7 +136,14 @@ def _evidence_rows(ctx: AttackDeliverableContext) -> list[SimpleNamespace]:
     withheld -- the same population `summarize` counts for a standalone row
     (#787 round 2, N2). A gap, N/A or outside child can carry tools (the
     PATCH writes status and tools independently), and those tools are not
-    what the parent's coverage rests on."""
+    what the parent's coverage rests on.
+
+    The `pending_codes` clause CANNOT FIRE for a parent this sentence counts,
+    and no test pins it: `attack/pending.py::pending_codes` withholds a
+    covered or partial parent whenever ANY child is pending, so a counted
+    parent has none. It is a ratchet against a looser parent rule there, and
+    would be reachable again the day that rule stops withholding such a
+    parent."""
     by_code = {c.technique_code: c for c in ctx.coverage}
     out: list[SimpleNamespace] = []
     for c in ctx.coverage:
