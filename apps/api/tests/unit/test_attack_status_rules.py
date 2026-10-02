@@ -161,3 +161,70 @@ def test_downgrading_0059_succeeds_when_nothing_was_approved_or_reviewed(tmp_pat
         c_cols = [r[1] for r in db.execute(text("PRAGMA table_info(attack_coverage)"))]
     assert "status_rules" not in a_cols
     assert not {"reviewed_status", "reviewed_by", "reviewed_at"} & set(c_cols)
+
+
+@pytest.mark.unit
+def test_a_draft_in_progress_before_0059_reads_as_computed_and_queues_its_changes(
+    tmp_path,
+) -> None:
+    """The one population the backfill does not stamp: a DRAFT scored before R3.
+
+    It stays NULL, so it reads exactly as a draft created after R3 does -- its
+    statuses are computed, and any that differ from what was stored wait in the
+    review queue rather than being accepted. Nothing is lost: the stored status
+    is untouched, and approve stamps it 2 like any other draft."""
+    from sqlalchemy.orm import Session
+
+    from app.attack.computed import effective_coverage, review_queue
+    from app.models.attack_assessment import AttackAssessment, AttackCoverage
+
+    url = f"sqlite:///{tmp_path / 'shield-0059-draft.db'}"
+    os.environ["DATABASE_URL"] = url
+    cfg = _cfg(url)
+    command.upgrade(cfg, "0058")
+    engine = create_engine(url, future=True)
+    with engine.begin() as db:
+        client = _insert_client(db)
+        aid = _insert_assessment(db, client, "DRAFT")
+        for code, status, tools in (
+            # Scored Partial with all three in place: computes to Covered.
+            ("T1003.001", "partial", '["Tool"]'),
+            # Scored Covered with nothing in place: computes to Gap.
+            ("T1003.002", "covered", "[]"),
+            # Scored Gap with nothing in place: agrees.
+            ("T1003.003", "gap", "[]"),
+        ):
+            db.execute(
+                text(
+                    "INSERT INTO attack_coverage "
+                    "(id, assessment_id, client_id, technique_code, status, locked, "
+                    "detection_tools, prevention_tools, response_tools, unconfirmed_citations, "
+                    "created_at, updated_at) VALUES "
+                    "(:id, :aid, :client, :code, :status, 0, :t, :t, :t, '[]', "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "aid": aid,
+                    "client": client,
+                    "code": code,
+                    "status": status,
+                    "t": tools,
+                },
+            )
+    command.upgrade(cfg, "0059")
+    with Session(engine) as s:
+        # The only assessment and its rows. Raw SQL above wrote hyphenated ids,
+        # which the ORM's UUID type does not look up by key on SQLite.
+        (a,) = s.query(AttackAssessment).all()
+        rows = s.query(AttackCoverage).all()
+        assert a.status_rules is None
+        assert statuses_computed(a) is True
+        effective = {r.technique_code: r for r in effective_coverage(a, rows)}
+        assert {c: (e.suggested_status, e.status) for c, e in effective.items()} == {
+            "T1003.001": ("partial", "covered"),
+            "T1003.002": ("covered", "gap"),
+            "T1003.003": ("gap", "gap"),
+        }
+        assert review_queue(effective.values()) == ("T1003.001", "T1003.002")
+        assert all(r.reviewed_status is None for r in rows)

@@ -25,6 +25,19 @@ gap dispositions stay post-MVP and are added when #557 is built):
   rows cannot change, so the queue cannot grow between the check and the flip;
   reviewing (`computed.review_queue`) only shrinks it.
 
+  **One stated limit (the build plan on #554, accepted by the advisor):** a
+  consultant who PATCHes a DRAFT row's stored status to equal its computed
+  status also takes it out of the queue, without a `reviewed_status`. That
+  PATCH is audited with its actor (`attack.coverage.updated`, pinned by
+  `test_a_patch_that_clears_the_queue_is_audited`), so the human step is on
+  record; refusing status edits on R3 rows instead would change PATCH for
+  every draft.
+
+  **Every input the queue reads is re-read HERE, at release, from the stored
+  rows** -- never carried from the review. A review on a draft, followed by an
+  edit that moves a computed status, therefore puts the row back in the queue
+  and this gate refuses (`test_an_edit_after_the_review_is_caught_at_release`).
+
 ONE predicate, two forms: `blocking_condition` for the SQL that joins the
 release flip's WHERE (`deliverable_release.ParentGuard`), and `blocking_rows`
 for the Python that names the codes in a refusal and gates approve. Both read

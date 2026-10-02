@@ -34,6 +34,20 @@ SET_BY = {
 }
 
 
+def _tools_for(status: str) -> dict:
+    """#554 R3: the tools that make each status, so the status computed from
+    Detect / Prevent / Respond is the one this test sets."""
+    if status == "covered":
+        return {
+            "detection_tools": ["Tool A"],
+            "prevention_tools": ["Tool A"],
+            "response_tools": ["Tool A"],
+        }
+    if status == "partial":
+        return {"detection_tools": ["Tool A"]}
+    return {"detection_tools": []}
+
+
 def _family() -> tuple[str, list[str]]:
     """Derived from the catalog's parent links, not from `app.attack.parents`."""
     kids: dict[str, list[str]] = {}
@@ -64,7 +78,7 @@ def test_the_dashboard_says_why_each_partial_is_partial(env) -> None:  # noqa: F
         r = c.patch(
             f"/attack/coverage/{row_id}",
             headers=_auth(bearer),
-            json={**body, "detection_tools": ["Tool A"] if body["status"] != "gap" else []},
+            json={**body, **_tools_for(body["status"])},
         )
         assert r.status_code == 200, r.text
     assert (
@@ -114,7 +128,7 @@ def test_the_dashboard_has_no_reason_table_without_a_partial(env) -> None:  # no
     r = c.patch(
         f"/attack/coverage/{row['id']}",
         headers=_auth(bearer),
-        json={"status": "covered", "detection_tools": ["Tool A"]},
+        json={"status": "covered", **_tools_for("covered")},
     )
     assert r.status_code == 200, r.text
     assert (

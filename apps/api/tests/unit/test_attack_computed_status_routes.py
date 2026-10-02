@@ -419,3 +419,58 @@ def test_the_risk_feed_reads_the_computed_status(env) -> None:  # noqa: F811
     assert attack == {
         was_covered["technique_code"]: f"ATT&CK {was_covered['technique_code']}: gap"
     }, attack
+
+
+def test_a_patch_that_clears_the_queue_is_audited(env) -> None:  # noqa: F811
+    """The stated limit: setting the stored status to the computed one takes the
+    row out of the queue without a review record -- and the PATCH that does it is
+    on record, with its actor and the field it wrote."""
+    c, Sess = env
+    admin = _register(c, "admin@example.com")
+    bearer = admin["tokens"]["access_token"]
+    _svc, a = _service_and_assessment(c, bearer)
+    (row,) = standalone_rows(a["coverage"], 1)
+    assert _patch(c, bearer, row["id"], {"status": "partial", **ALL_THREE})["in_review_queue"]
+
+    out = _patch(c, bearer, row["id"], {"status": "covered"})
+    assert (out["computed_status"], out["in_review_queue"]) == ("covered", False)
+    assert out["reviewed_status"] is None
+    with Sess() as s:
+        events = (
+            s.execute(
+                select(AuditEntry)
+                .where(AuditEntry.action == "attack.coverage.updated")
+                .order_by(AuditEntry.at)
+            )
+            .scalars()
+            .all()
+        )
+    last = events[-1]
+    assert last.actor_user_id == uuid.UUID(admin["user"]["id"])
+    assert last.target_id == uuid.UUID(row["id"])
+    assert last.details["technique_code"] == row["technique_code"]
+    assert last.details["fields"] == ["status"], last.details
+
+
+def test_an_edit_after_the_review_is_caught_at_release(env) -> None:  # noqa: F811
+    """The advisor's required proof (22:25Z): an input that moves after the queue
+    was cleared is re-checked at release. Reviewed on the DRAFT, then an edit
+    moves the computed status (Covered to Partial); approve, finalize, release:
+    refused, naming the row."""
+    c, _Sess = env
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc, a = _service_and_assessment(c, bearer)
+    (row,) = standalone_rows(a["coverage"], 1)
+    _patch(c, bearer, row["id"], {"status": "gap", **ALL_THREE})
+    r = c.post(
+        f"/attack/assessments/{a['id']}/computed-status-review",
+        headers=_auth(bearer),
+        json={"codes": [row["technique_code"]]},
+    )
+    assert r.status_code == 200, r.text
+    _patch(c, bearer, row["id"], {"prevention_tools": []})
+    deliverable = _approve_and_finalize(c, bearer, svc, a["id"])
+    refused = c.post(f"/attack/deliverables/{deliverable}/release", headers=_auth(bearer))
+    assert refused.status_code == 409, refused.text
+    assert _detail(refused)["reason"] == "attack_computed_status_unreviewed"
+    assert _detail(refused)["unreviewed"] == [row["technique_code"]]
