@@ -233,16 +233,19 @@ def run_batches(
         # is typed exactly as it always was -- `ai_call_failed`, the same
         # friendly message, `charged_likely` -- and then carry the batch counts
         # to the run (#797): every planned batch came back without an answer.
+        # The rejection, when there is one, whatever finished first: it is the
+        # error that stopped the run, and the message must say so (#797).
+        cause = rejected or first_error
         try:
             with ai_call_boundary(db, llm, purpose=job_name):
-                raise first_error
+                raise cause
         except HTTPException as typed:
             detail = typed.detail if isinstance(typed.detail, dict) else {}
             raise RunFailed(
                 str(detail.get("reason") or AI_CALL_FAILED),
                 str(detail.get("message") or typed.detail),
                 batches=(len(batches), len(batches)),
-            ) from first_error
+            ) from cause
 
     _log.info(
         f"{job_name}_batched",

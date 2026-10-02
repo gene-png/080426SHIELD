@@ -157,6 +157,32 @@ def test_attack_a_rejected_key_costs_at_most_one_call_per_worker(
     assert (run["batches_total"], run["batches_failed"]) == (planned, planned), run
 
 
+def _stopped_line(out: str) -> dict:
+    """The `<job>_stopped_on_credential_rejection` log line, parsed."""
+    import json
+
+    lines = [
+        json.loads(line)
+        for line in out.splitlines()
+        if line.startswith("{") and "_stopped_on_credential_rejection" in line
+    ]
+    assert len(lines) == 1, f"expected one stopped line, got {len(lines)}"
+    return lines[0]
+
+
+def test_attack_the_stop_is_logged_with_what_was_attempted_and_planned(
+    app_parts, capsys  # noqa: F811
+) -> None:
+    """Attempted is the provider calls made, never the batches that were
+    skipped: a skipped batch is not an attempt."""
+    calls = _Calls(lambda _i: REJECTIONS["anthropic-401"]())
+    _run, planned = _attack_run(app_parts, calls)
+
+    line = _stopped_line(capsys.readouterr().out)
+    assert line["event"] == "mitre_map_stopped_on_credential_rejection"
+    assert (line["attempted"], line["planned"], line["answered"]) == (calls.n, planned, 0), line
+
+
 def test_attack_with_one_worker_a_rejected_key_costs_exactly_one_call(
     app_parts, monkeypatch  # noqa: F811
 ) -> None:
@@ -232,3 +258,23 @@ def test_csf_a_key_revoked_mid_run_starts_no_further_batches(world) -> None:  # 
     assert 1 < rec.n <= 1 + _CSF_MAX_WORKERS, f"{rec.n} of 33 batches attempted"
     assert run["status"] == "completed", run
     assert (run["batches_total"], run["batches_failed"]) == (33, 32), run
+
+
+def test_attack_the_run_names_the_rejection_even_after_another_failure(
+    app_parts, monkeypatch  # noqa: F811
+) -> None:
+    """One worker, so the order is fixed: a 500 on the first call, then the
+    rejection. Nothing answered, so the run fails -- and says the KEY was
+    rejected, the error that stopped it, not the 500 that happened first."""
+    import app.routes.attack as attack_routes
+
+    monkeypatch.setattr(attack_routes, "_MITRE_MAX_WORKERS", 1)
+
+    def respond(i: int) -> Exception:
+        return (NOT_REJECTIONS["anthropic-500"] if i == 1 else REJECTIONS["anthropic-401"])()
+
+    calls = _Calls(respond)
+    run, _planned = _attack_run(app_parts, calls)
+
+    assert calls.n == 2, f"{calls.n} calls: the 500, then the rejection, then nothing"
+    assert run["error_message"].startswith(MESSAGE["anthropic-401"]), run["error_message"]
