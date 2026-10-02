@@ -65,7 +65,6 @@ from app.models.csf_assessment import CsfAnswer, CsfAssessment, CsfAssessmentSta
 from app.models.deliverable import Deliverable
 from app.models.risk_register import RiskEntry, RiskRegister
 from app.models.service import Service, ServiceKind
-from app.models.service_request import ServiceRequest
 from app.models.user import User, UserRole
 from app.models.zt_assessment import (
     ZtAnswer,
@@ -106,6 +105,7 @@ from app.schemas.clients import (
     ZtDashboardResponse,
     ZtPillarDashboard,
 )
+from app.services.engagement_targets import client_target_stage, client_target_tier
 from app.tech_debt.reconcile import exclusion_count_state
 from app.zt.catalog import capability_by_code as zt_capability_by_code
 from app.zt.maturity import ZtFrameworkCode
@@ -500,56 +500,6 @@ def _csf_function_label(average_tier: float | None) -> str:
     return csf_label_from_average(average_tier)
 
 
-def _csf_client_target_tier(db: Session, service_id: uuid.UUID) -> int | None:
-    """The CSF target tier the client chose at intake, via the source request.
-
-    Deliberately duplicated from `routes/csf.py::_client_target_tier` rather
-    than imported: that one is private to the admin router, and a router
-    importing another router's underscore helper is how import cycles start.
-    Three lines, one query, and the duplication is stated here so the next
-    reader does not "fix" it by reaching across.
-
-    THAT LAST CLAUSE IS NO LONGER TRUE OF THE CODEBASE, and saying so here is
-    the point of this paragraph. `routes/risk.py` DOES reach across now
-    (#84): it imports `_client_target_tier` and `_client_target_stage` rather
-    than adding a fourth copy. Two files asserting opposite conventions is
-    worse than either convention, so the split is stated rather than left for
-    a reader to trip over.
-
-    The distinction that makes both correct: the cycle hazard is real and was
-    MEASURED, not inherited. The `app/routes/*` import graph is a DAG --
-    `ai_preview -> attack, csf, zt`; `attack -> tech_debt`; `oidc -> auth`;
-    `risk -> csf, zt, artifacts`; and NOTHING imports `risk` or `clients`.
-    So `risk` is a leaf and may import upward safely; `clients` is imported
-    by nothing today but sits where a future importer is likelier.
-
-    THE REAL ANSWER IS NEITHER, and it is filed rather than done here: three
-    copies of one query plus one importer is past the point where a shared
-    non-router helper is speculative abstraction. That is #84's own argument
-    -- four sites disagreeing about one client's target is the defect #84 is
-    titled for. Tracked; not folded into the PR that closes #84, because a
-    four-router refactor is not what that PR is for.
-    """
-    svc = db.get(Service, service_id)
-    if svc is None or svc.source_request_id is None:
-        return None
-    sr = db.get(ServiceRequest, svc.source_request_id)
-    return sr.csf_target_tier if sr is not None else None
-
-
-def _zt_client_target_stage(db: Session, service_id: uuid.UUID) -> int | None:
-    """The ZT target stage the client chose at intake, via the source request.
-
-    Twin of `_csf_client_target_tier` above, and duplicated from
-    `routes/zt.py::_client_target_stage` for the same reason stated there.
-    """
-    svc = db.get(Service, service_id)
-    if svc is None or svc.source_request_id is None:
-        return None
-    sr = db.get(ServiceRequest, svc.source_request_id)
-    return sr.zt_target_stage if sr is not None else None
-
-
 def _frozen_or_live_target(
     deliv: Deliverable | None, live: int | None
 ) -> tuple[int | None, datetime | None]:
@@ -580,15 +530,17 @@ def _frozen_or_live_target(
     runs its own resolver over it exactly as it does today. The number and its
     caption stay one derivation rather than two stored values.
 
-    ## THE FOUR SITES, AND THE THREE DELIBERATE NON-SITES
+    ## THE FOUR SITES, AND THE DELIBERATE NON-SITES
 
     Four callers: `zt_dashboard`, `csf_dashboard`, `_zt_gap_total`,
-    `_csf_gap_total`. A sweep for `_csf_client_target_tier(` /
-    `_zt_client_target_stage(` and for `_client_target_tier(` /
-    `_client_target_stage(` across `app/` finds three more, and every one is
-    deliberately left reading LIVE. Written here rather than left for the next
-    sweeper to re-derive, because a site that SHOULD read live is
-    indistinguishable from one that was missed.
+    `_csf_gap_total`. Since #352 every reader of the intake target calls
+    `services/engagement_targets.py`, so the sweep is one grep: the callers of
+    `client_target_tier(` / `client_target_stage(` across `app/`. Every other
+    one is deliberately left reading LIVE. Written here rather than left for
+    the next sweeper to re-derive, because a site that SHOULD read live is
+    indistinguishable from one that was missed. (The admin workspaces' serializers also
+    read it live, as the consultant's working default; that is not a figure a
+    client reads.)
 
       * `routes/zt.py` and `routes/csf.py` at FINALIZE. This is the write side
         -- the value read there is what gets frozen. Freezing a frozen value
@@ -776,7 +728,7 @@ def _csf_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _TargetedKindTo
         # fallback, because a figure computed against today's target is not the
         # figure the delivered document states. Same call as the per-service
         # dashboard makes, so the card and the dashboard cannot disagree.
-        tier, frozen_at = _frozen_or_live_target(deliv, _csf_client_target_tier(db, sid))
+        tier, frozen_at = _frozen_or_live_target(deliv, client_target_tier(db, sid))
         if frozen_at is None:
             live += 1
         # #184: resolve rather than branch on `is not None`. An unusable stored
@@ -837,7 +789,7 @@ def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _TargetedKindTot
         # #209, the CSF twin's fix applied here in the same commit -- see
         # `_csf_gap_total`. Fixing one of these two and not the other is the
         # half-sweep this repo keeps paying for (#75/#79).
-        stage, frozen_at = _frozen_or_live_target(deliv, _zt_client_target_stage(db, sid))
+        stage, frozen_at = _frozen_or_live_target(deliv, client_target_stage(db, sid))
         if frozen_at is None:
             live += 1
         # #125: resolve rather than let `zt_analyze_gaps` clamp -- it now
@@ -1469,9 +1421,7 @@ def zt_dashboard(
     # to the live read only where nothing was frozen. The resolver call below
     # is UNCHANGED -- the freeze holds the client's CHOSEN value, so the number
     # and `target_stage_source` stay one derivation over it.
-    chosen, target_frozen_at = _frozen_or_live_target(
-        deliv, _zt_client_target_stage(db, service_id)
-    )
+    chosen, target_frozen_at = _frozen_or_live_target(deliv, client_target_stage(db, service_id))
     target_stage, target_stage_source = zt_resolve_target_stage(fw, chosen)
     effective_targets = zt_effective_target_stages(fw, targets, target_stage)
     # NOT `gap`: the per-pillar loop below binds that name to a float.
@@ -2037,9 +1987,7 @@ def csf_dashboard(
     # mistaken for a decision.
     # #209, the ZT twin's fix applied here in the same commit -- see
     # `zt_dashboard`. The resolver call below is unchanged.
-    chosen, target_frozen_at = _frozen_or_live_target(
-        deliv, _csf_client_target_tier(db, service_id)
-    )
+    chosen, target_frozen_at = _frozen_or_live_target(deliv, client_target_tier(db, service_id))
     # #184: one resolver, four sources. This was
     # `"client" if chosen is not None else "default"` -- keyed on whether a
     # value was OFFERED, never on whether it SURVIVED -- so a stored tier the
