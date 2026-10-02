@@ -8,11 +8,13 @@ on the client's choice. The client dashboard already said which it was
 reads the STORED bytes of all three artifacts, plus the stored summary that
 `/results` shows, because those are what the client keeps.
 
-THIS TABLE IS DUPLICATED, word for word, in
-`apps/web/src/lib/dashboards/target-source-sentences.test.ts`. The TS and
-Python sentences are synchronised, not derived: a fixture both runners could
-read would close the window, and it needs the compose mount tracked in #422.
-Change a sentence here and you must change it there.
+The expected sentences are built from the ONE table, `TARGET_SOURCE_NOTES` in
+`apps/web/src/lib/assessment-targets.ts`, read through the api container's
+read-only mount (or in place on a CI checkout) -- the table the dashboards
+derive from, NOT the api's own copy, so these tests cannot agree with the
+exporters by construction. `test_target_floor_parity.py` asserts the api's copy
+equal to it (#422). `apps/web/src/lib/dashboards/target-source-sentences.test.ts`
+reads the same table by import.
 """
 
 from __future__ import annotations
@@ -20,11 +22,13 @@ from __future__ import annotations
 import io
 import os
 import uuid
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
+from tests._ts_parity import ts_object, web_targets_source
 from tests.unit.test_export_targets import (  # noqa: F401  (fixture)
     _attach_intake_target,
     _register,
@@ -33,20 +37,14 @@ from tests.unit.test_export_targets import (  # noqa: F401  (fixture)
 
 pytestmark = pytest.mark.unit
 
-TIER = {
-    "default": "Default target — no tier chosen at intake.",
-    "client_out_of_range": "Default target — the tier on file is not one CSF has.",
-    "client_below_floor": "Default target — the tier on file is a starting point, not a target.",
-    "client_unparseable": "Default target — the tier on file could not be read.",
-    "unrecognised": "Default target — the tier on file was not usable.",
-}
-STAGE = {
-    "default": "Default target — no stage chosen at intake.",
-    "client_out_of_range": "Default target — the stage on file is not one this framework has.",
-    "client_below_floor": "Default target — the stage on file is a starting point, not a target.",
-    "client_unparseable": "Default target — the stage on file could not be read.",
-    "unrecognised": "Default target — the stage on file was not usable.",
-}
+_NOTES = ts_object(web_targets_source(Path(__file__)), "TARGET_SOURCE_NOTES")
+TIER = {source: f"Default target — {note}." for source, note in _NOTES["tier"].items()}
+STAGE = {source: f"Default target — {note}." for source, note in _NOTES["stage"].items()}
+
+#: A source no resolver writes and no table names: the row it must read is
+#: `unrecognised`. Not "unrecognised" itself, which IS a table row since #422
+#: and would no longer exercise the fallback.
+UNKNOWN_SOURCE = "client_from_a_future_build"
 
 
 def _flat(s: str) -> str:
@@ -267,26 +265,32 @@ def test_zt_a_failed_choice_is_stated_even_when_it_decided_no_capability(
 # stored bytes and the summary -- is real.
 
 
-@pytest.mark.parametrize("source", ["client_unparseable", "unrecognised"])
+@pytest.mark.parametrize(
+    ("source", "row"),
+    [("client_unparseable", "client_unparseable"), (UNKNOWN_SOURCE, "unrecognised")],
+)
 def test_csf_an_unreachable_source_is_still_stated(
-    app_client, monkeypatch, source  # noqa: F811
+    app_client, monkeypatch, source, row  # noqa: F811
 ) -> None:
     import app.routes.csf as csf_routes
 
     monkeypatch.setattr(csf_routes, "resolve_target_tier", lambda _chosen: (3, source))
     got = _csf_finalized(app_client, _admin(app_client), tier=3)
-    _says_on_every_surface(got, TIER[source])
+    _says_on_every_surface(got, TIER[row])
 
 
-@pytest.mark.parametrize("source", ["client_unparseable", "unrecognised"])
+@pytest.mark.parametrize(
+    ("source", "row"),
+    [("client_unparseable", "client_unparseable"), (UNKNOWN_SOURCE, "unrecognised")],
+)
 def test_zt_an_unreachable_source_is_still_stated(
-    app_client, monkeypatch, source  # noqa: F811
+    app_client, monkeypatch, source, row  # noqa: F811
 ) -> None:
     import app.routes.zt as zt_routes
 
     monkeypatch.setattr(zt_routes, "resolve_target_stage", lambda _fw, _chosen: (3, source))
     got = _zt_finalized(app_client, _admin(app_client), stage=3)
-    _says_on_every_surface(got, STAGE[source])
+    _says_on_every_surface(got, STAGE[row])
 
 
 # --- the one function ------------------------------------------------------
@@ -299,3 +303,4 @@ def test_every_source_has_its_sentence(rung, table) -> None:
     assert target_source_sentence(rung, "client") is None
     for source, sentence in table.items():
         assert target_source_sentence(rung, source) == sentence, source
+    assert target_source_sentence(rung, UNKNOWN_SOURCE) == table["unrecognised"]

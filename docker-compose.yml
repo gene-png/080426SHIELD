@@ -329,6 +329,12 @@ services:
       # -- the zt-data precedent above. At `/web-parity/` and not under `/apps/`:
       # `/packages` existing here already trapped one walk-up root search
       # (`test_root_discovery.py`). Not part of the app runtime.
+      # RENAME BOTH: move or rename that file and change this line too, or the
+      # parity test fails hard (it never skips).
+      # A single-file bind pins the file's INODE: after a checkout or a
+      # rename-on-save this container can keep reading the OLD content, so a
+      # local green from a long-running api is not evidence. CI's fresh
+      # checkout is; locally, recreate api or `docker compose run --rm api`.
       - ./apps/web/src/lib/assessment-targets.ts:/web-parity/assessment-targets.ts:ro
       # Host gcloud config, READ-ONLY, so the Vertex provider can use this box's
       # Application Default Credentials without any API key or committed secret

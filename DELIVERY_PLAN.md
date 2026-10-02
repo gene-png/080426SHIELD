@@ -1058,12 +1058,18 @@ are required for the item to be complete:
   bare generic fallback naming neither the field nor the range. Both ends now
   live in `_validate_targets` as a typed `{reason, message}` refusal.
 
-  **What is still open after #406: #85**, the two self-assessment submit routes,
+  **What was still open after #406** (history; date-qualified 2026-10-02):
+  **#85**, the two self-assessment submit routes,
   which write the same columns and accept a target of 1 —
   `routes/csf.py::submit_self_assessment` with no range check at all. Left
   deliberately, because reversing ZT's written floor of 1 is a product
-  question. Also filed from that work: **#422** (no cross-language parity gate;
-  buildable, deferred on scope), **#425** (a raw `ServiceType` enum in client
+  question. **#85 LANDED in #782**: both submit routes now refuse a target below
+  the floor (`_refuse_submitted_target_tier` on the CSF route). Also filed from
+  that work: **#422** (no cross-language parity gate; buildable, deferred on
+  scope — **as of 2026-10-02 part 1 LANDED in #794**, a read-only one-file
+  mount of `assessment-targets.ts` and a parity test for the floors and the
+  below-floor source, **and part 2 is in #795**, one default-target table the
+  dashboards derive from and the api asserts equal), **#425** (a raw `ServiceType` enum in client
   copy — fixed in the #406 PR after review), **#428** (the range spelled
   `(2-4)` in three API docstrings, and WRONG for DoD), **#429**
   (`clients-dev.md` briefs #125 as unfixed), **#430**, **#431**.

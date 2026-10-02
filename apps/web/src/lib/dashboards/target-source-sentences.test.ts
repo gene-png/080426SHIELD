@@ -1,57 +1,75 @@
 import { describe, expect, it } from "vitest";
 
+import {
+  BELOW_FLOOR_SOURCE,
+  STAGE_BELOW_FLOOR_NOTE,
+  TARGET_SOURCE_NOTES,
+  TIER_BELOW_FLOOR_NOTE,
+} from "@/lib/assessment-targets";
+
 import { targetFaultNote } from "./csf";
 import { targetFault } from "./zt";
 
 /**
- * #783: the client's dashboard and the client's documents describe a default
- * target in the same words.
+ * #783 / #422: the client's dashboard and the client's documents describe a
+ * default target in the same words, because both read ONE table,
+ * `TARGET_SOURCE_NOTES` in `lib/assessment-targets.ts`.
  *
- * THIS TABLE IS DUPLICATED, word for word, in
- * `apps/api/tests/unit/test_target_source_in_deliverables.py`, which asserts
- * every sentence in the stored PDF, DOCX and XLSX and the `/results` summary.
- * The TS and Python sentences are synchronised, not derived: a fixture both
- * runners could read would close the window, and it needs the compose mount
- * tracked in #422. Change a sentence here and you must change it there.
+ * What this file pins is the DERIVATION: that the dashboards read that table,
+ * row for row, and nothing else. The WORDS are pinned on the api side, where
+ * `test_target_floor_parity.py` asserts the api's copy equal to this table and
+ * `test_target_source_in_deliverables.py` asserts every row in the stored
+ * PDF, DOCX, XLSX and `/results` summary, both reading this file through the
+ * api container's read-only mount.
  */
-const TIER: Record<string, string> = {
-  default: "Default target — no tier chosen at intake.",
-  client_out_of_range: "Default target — the tier on file is not one CSF has.",
-  client_below_floor:
-    "Default target — the tier on file is a starting point, not a target.",
-  client_unparseable: "Default target — the tier on file could not be read.",
-  unrecognised: "Default target — the tier on file was not usable.",
-};
-const STAGE: Record<string, string> = {
-  default: "Default target — no stage chosen at intake.",
-  client_out_of_range:
-    "Default target — the stage on file is not one this framework has.",
-  client_below_floor:
-    "Default target — the stage on file is a starting point, not a target.",
-  client_unparseable: "Default target — the stage on file could not be read.",
-  unrecognised: "Default target — the stage on file was not usable.",
-};
-
-/** The dashboards' lead-in, as `CsfDashboard` and `targetNote` write it. */
-function sentence(note: string | null): string | null {
-  return note === null ? null : `Default target — ${note}.`;
-}
-
-describe("the default-target sentences match the deliverables' (#783)", () => {
+describe("the dashboards' default-target notes derive from the one table (#783, #422)", () => {
   it("says nothing for the client's own choice", () => {
     expect(targetFaultNote("client")).toBeNull();
     expect(targetFault("client")).toBeNull();
   });
 
-  for (const [source, expected] of Object.entries(TIER)) {
+  for (const [source, note] of Object.entries(TARGET_SOURCE_NOTES.tier)) {
     it(`CSF, ${source}`, () => {
-      expect(sentence(targetFaultNote(source))).toBe(expected);
+      expect(targetFaultNote(source)).toBe(note);
     });
   }
 
-  for (const [source, expected] of Object.entries(STAGE)) {
+  for (const [source, note] of Object.entries(TARGET_SOURCE_NOTES.stage)) {
     it(`ZT, ${source}`, () => {
-      expect(sentence(targetFault(source))).toBe(expected);
+      expect(targetFault(source)).toBe(note);
     });
   }
+
+  it("reads an unknown source as the unrecognised row, never as nothing", () => {
+    expect(targetFaultNote("client_from_a_future_build")).toBe(
+      TARGET_SOURCE_NOTES.tier.unrecognised,
+    );
+    expect(targetFault("client_from_a_future_build")).toBe(
+      TARGET_SOURCE_NOTES.stage.unrecognised,
+    );
+  });
+
+  it("reads a source named like an Object method as unrecognised, not a function", () => {
+    expect(targetFaultNote("toString")).toBe(
+      TARGET_SOURCE_NOTES.tier.unrecognised,
+    );
+    expect(targetFault("constructor")).toBe(
+      TARGET_SOURCE_NOTES.stage.unrecognised,
+    );
+  });
+
+  it("derives the below-floor notes the workspaces render from the same rows", () => {
+    expect(TIER_BELOW_FLOOR_NOTE).toBe(
+      TARGET_SOURCE_NOTES.tier[BELOW_FLOOR_SOURCE],
+    );
+    expect(STAGE_BELOW_FLOOR_NOTE).toBe(
+      TARGET_SOURCE_NOTES.stage[BELOW_FLOOR_SOURCE],
+    );
+  });
+
+  it("has the same sources on both rungs", () => {
+    expect(Object.keys(TARGET_SOURCE_NOTES.stage).sort()).toEqual(
+      Object.keys(TARGET_SOURCE_NOTES.tier).sort(),
+    );
+  });
 });
