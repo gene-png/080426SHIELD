@@ -263,7 +263,8 @@ export interface CsfDroppedSuggestion {
     | "superseded"
     | "locked"
     | "protected"
-    | "edited";
+    | "edited"
+    | "not_in_batch";
   /** "tier|subcategory_code" as the model wrote it; null if it wrote neither. */
   key: string | null;
   field: string | null;

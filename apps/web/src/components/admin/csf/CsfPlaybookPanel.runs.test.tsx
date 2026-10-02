@@ -330,6 +330,28 @@ describe("CsfPlaybookPanel, a batched run that lost batches (#479)", () => {
     );
   });
 
+  it("names a stray answer as one, in the could-not-apply alert", async () => {
+    showsLastRun(
+      result({
+        batches_total: 33,
+        batches_failed: 0,
+        dropped: [
+          {
+            reason: "not_in_batch",
+            key: "high|GV.OC-01",
+            field: null,
+            values: 6,
+            value: null,
+          },
+        ],
+      }),
+    );
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      /answered for a row its batch was not asked about, so it was not applied/,
+    );
+  });
+
   it("says nothing about batches for a run that lost none", async () => {
     showsLastRun(result({ batches_total: 33, batches_failed: 0 }));
     expect(await screen.findByText(/AI applied/)).not.toHaveTextContent(

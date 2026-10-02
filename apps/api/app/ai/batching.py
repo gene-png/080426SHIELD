@@ -38,6 +38,9 @@ class Batched:
     same sequence every run."""
 
     answers: list[dict[str, Any]]
+    # The inputs each answer was given, index for index with `answers`, so a
+    # caller can tell an answer about what it was asked from one that strays.
+    inputs: list[dict[str, Any]]
     total: int
     failed: int
 
@@ -169,4 +172,10 @@ def run_batches(
         batches_total=len(batches),
         batches_failed=failed,
     )
-    return Batched(answers=[answers[i] for i in sorted(answers)], total=len(batches), failed=failed)
+    done = sorted(answers)
+    return Batched(
+        answers=[answers[i] for i in done],
+        inputs=[batches[i] for i in done],
+        total=len(batches),
+        failed=failed,
+    )

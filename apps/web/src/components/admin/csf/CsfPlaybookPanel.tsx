@@ -105,6 +105,10 @@ const DROP_REASON_LABEL: Record<CsfDroppedSuggestion["reason"], string> = {
   protected: "score was typed by hand, and an offline run left it",
   // #645: an edit that landed after the run started is kept, never overwritten.
   edited: "row was edited after this run started, so the run left it",
+  // #479: a batch answered a real row another batch was asked for. Not
+  // applied, so a row is only ever written from the batch that asked for it.
+  not_in_batch:
+    "answered for a row its batch was not asked about, so it was not applied",
 };
 
 /**

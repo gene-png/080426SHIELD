@@ -1734,6 +1734,7 @@ def _apply_suggestions(
     rows: dict[str, CsfDimensionScore],
     protected: frozenset[str] | set[str] = frozenset(),
     edited: frozenset[str] | set[str] = frozenset(),
+    strays: list[Any] | None = None,
 ) -> tuple[int, int, list[CsfDroppedSuggestion]]:
     """Apply the csf_score suggestions, accounting for every one of them (W1).
 
@@ -1765,6 +1766,11 @@ def _apply_suggestions(
     not exist and a row a human locked. Only the recognized values are charged
     to `unknown_key` / `locked`, so nothing is counted twice.
 
+    `strays` (#479) are entries a batch returned for a real row that batch
+    was NOT asked for. They are counted and itemized exactly like the rest, then
+    dropped as `not_in_batch`: the batch that asked for the row answers it, and
+    a stray must neither apply twice nor overwrite that answer from outside.
+
     Returns ``(received, applied, dropped)`` satisfying
     ``received == applied + sum(d.values for d in dropped)``.
     """
@@ -1774,7 +1780,9 @@ def _apply_suggestions(
     # (row key, field) already written by an earlier entry in this response.
     written: set[tuple[str, str]] = set()
 
-    for sugg in data.get("scores", []):
+    entries = [(s, False) for s in data.get("scores", [])]
+    entries += [(s, True) for s in strays or []]
+    for sugg, stray in entries:
         if not isinstance(sugg, dict):
             received += _ROW_VALUE_SLOTS
             dropped.append(
@@ -1847,6 +1855,11 @@ def _apply_suggestions(
         if row is None:
             dropped.append(
                 CsfDroppedSuggestion(reason="unknown_key", key=key, values=recognized_values)
+            )
+            continue
+        if stray:
+            dropped.append(
+                CsfDroppedSuggestion(reason="not_in_batch", key=key, values=recognized_values)
             )
             continue
         if row.locked:
@@ -2173,7 +2186,25 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
     # here discarded a whole unwrapped response and reported zero changes,
     # which read as the model agreeing with everything. The batches' scores
     # are applied as one response, in batch order.
-    data = {"scores": [entry for answer in batched.answers for entry in answer["scores"]]}
+    #
+    # An entry naming a real row its batch was not asked for is a STRAY: kept
+    # out of the applied set and itemized as `not_in_batch`, so a row is only
+    # ever written from the batch that asked for it.
+    scores: list[Any] = []
+    strays: list[Any] = []
+    for inputs, answer in zip(batched.inputs, batched.answers, strict=True):
+        asked = {f"{t}|{c}" for t in inputs["tiers"] for c in inputs["subcategories"]}
+        for entry in answer["scores"]:
+            named = (
+                f"{entry.get('tier')}|{entry.get('subcategory_code')}"
+                if isinstance(entry, dict)
+                else None
+            )
+            if named is not None and named in rows and named not in asked:
+                strays.append(entry)
+            else:
+                scores.append(entry)
+    data = {"scores": scores}
 
     # Offline output must never overwrite what a human typed (#67, migration
     # 0042). `protected_keys` returns an empty set off-fixture, so a LIVE run may
@@ -2187,7 +2218,7 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
         ((k, r.answer_source, r.answer_source is not None) for k, r in rows.items()),
         is_fixture=llm.provider.name == "fixture",
     )
-    received, applied, dropped = _apply_suggestions(data, rows, protected, edited)
+    received, applied, dropped = _apply_suggestions(data, rows, protected, edited, strays)
 
     db.flush()
     after = _snap()

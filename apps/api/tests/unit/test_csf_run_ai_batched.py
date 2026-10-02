@@ -263,3 +263,74 @@ def test_every_batch_failing_fails_the_run_with_the_providers_reason(world) -> N
     assert run["status"] == "failed", run
     assert run["error_reason"] == "ai_call_failed"
     assert len(rec.payloads) == 33
+
+
+def _row_entry(tier: str, code: str, value: int) -> dict[str, Any]:
+    return {
+        "tier": tier,
+        "subcategory_code": code,
+        "governance": value,
+        "policy": value,
+        "implementation": value,
+        "monitoring": value,
+        "improvement": value,
+        "what_we_found": f"Answered with {value}.",
+    }
+
+
+@pytest.mark.unit
+def test_a_row_answered_by_a_batch_that_did_not_ask_for_it_is_dropped_and_said(world) -> None:
+    """A model asked about ten rows may answer an eleventh. That row belongs to
+    another batch, which answers it too. It must be applied ONCE, from the
+    batch that asked, and the stray answer dropped with a reason a reader
+    sees -- never applied twice, never applied silently from the wrong batch."""
+    profile = _profile_rows(world)
+    high = sorted(code for t, code in profile if t == "high")
+    stray = ("high", high[-1])  # asked by the LAST high batch
+
+    def _answer(payload: dict[str, Any]) -> LLMResponse:
+        scores = [_row_entry(t, c, 1) for t, c in _rows_asked(payload)]
+        if payload["tiers"] == ["high"] and high[0] in payload["subcategories"]:
+            scores.append(_row_entry(*stray, 2))  # not this batch's row
+        return LLMResponse(json.dumps({"scores": scores}))
+
+    world.provider.register("csf_score", _answer)
+    result = csf_run_ai(world.c, world.svc_id, world.h)
+
+    row = next(r for r in result["rows"] if (r["tier"], r["subcategory_code"]) == stray)
+    assert row["governance"] == 1, "applied from the batch that asked, not the stray"
+    assert row["what_we_found"] == "Answered with 1."
+    stray_drops = [d for d in result["dropped"] if d["key"] == "|".join(stray)]
+    assert [d["reason"] for d in stray_drops] == ["not_in_batch"]
+    assert stray_drops[0]["values"] == 6
+    assert result["suggestions_received"] == 319 * 6
+    assert result["suggestions_applied"] == 318 * 6
+    accounted = result["suggestions_applied"] + sum(d["values"] for d in result["dropped"])
+    assert result["suggestions_received"] == accounted
+
+
+@pytest.mark.unit
+def test_every_batch_answering_the_same_rows_applies_each_once_and_counts_the_rest(
+    world,
+) -> None:
+    """The old single-call fixture shape, as a misbehaving model: every batch
+    answers the same two rows. Each is applied once, from the batch that asked
+    for it; the 32 other copies are dropped as not asked, and counted."""
+    profile = _profile_rows(world)
+    high = sorted(code for t, code in profile if t == "high")
+    canned = [_row_entry("high", high[0], 2), _row_entry("high", high[-1], 2)]
+    world.provider.register_static("csf_score", LLMResponse(json.dumps({"scores": canned})))
+
+    result = csf_run_ai(world.c, world.svc_id, world.h)
+
+    assert result["batches_total"] == 33
+    assert result["suggestions_received"] == 33 * 2 * 6
+    assert result["suggestions_applied"] == 2 * 6
+    reasons = {d["reason"] for d in result["dropped"]}
+    assert reasons == {"not_in_batch"}
+    assert sum(d["values"] for d in result["dropped"]) == 32 * 2 * 6
+    for code in (high[0], high[-1]):
+        row = next(
+            r for r in result["rows"] if (r["tier"], r["subcategory_code"]) == ("high", code)
+        )
+        assert row["governance"] == 2

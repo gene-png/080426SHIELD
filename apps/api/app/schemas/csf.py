@@ -389,6 +389,7 @@ class CsfDroppedSuggestion(BaseModel):
     | `locked`       | a human locked the row — a by-design skip, not a defect  |
     | `protected`    | an offline run declined to overwrite a hand-typed score  |
     | `edited`       | a consultant edited the row after the run started (#645) |
+    | `not_in_batch` | answered a real row its batch was not asked for (#479)   |
 
     `locked` renders separately from the rest. Folding a by-design skip into one
     "N dropped" number rebuilds the alert-fatigue problem issue #31 rejected.
@@ -409,6 +410,7 @@ class CsfDroppedSuggestion(BaseModel):
         "locked",
         "protected",
         "edited",
+        "not_in_batch",
     ]
     # "tier|subcategory_code" exactly as the model wrote it, or None when the
     # model omitted them. Never the literal "None|None" — that fabricates a row
