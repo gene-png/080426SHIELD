@@ -123,12 +123,15 @@ def test_the_scored_total_does_not_shrink_as_rows_move_to_not_verified() -> None
 
     ctx = _ctx(NOT_VERIFIED, OUTSIDE)
     scored = len(TECHNIQUES) - NOT_VERIFIED  # literal arithmetic, not the rollup
-    expected = f"{scored}/{len(TECHNIQUES)}"
+    # #419 (coordinator's verdict, Batch A): the same proposition in the
+    # wording that names the denominator, under #620's rules.
+    expected = f"{scored} of {len(TECHNIQUES)}"
     ws = load_workbook(io.BytesIO(render_xlsx(ctx)))["Heatmap Summary"]
     labels = {r[0].value: r[1].value for r in ws.iter_rows(max_row=14)}
-    assert labels["Scored / Total"] == expected
-    assert f"Scored: {expected}" in _docx_text(render_docx(ctx))
-    assert f"Scored: {expected}" in _pdf_text(render_pdf(ctx))
+    label = "Scored, of the techniques in the catalog this assessment was scored against"
+    assert labels[label] == expected
+    assert f"Scored: {expected} techniques in the " in _docx_text(render_docx(ctx))
+    assert f"Scored: {expected} techniques in the " in _pdf_text(render_pdf(ctx))
 
 
 def test_the_count_is_never_dropped_at_zero() -> None:

@@ -1,3 +1,5 @@
+import type { AiSource } from "@/lib/aiSource/types";
+
 /**
  * Client Tech Debt (software portfolio) dashboard — types + pure transforms
  * (D-035). Mirrors the backend `TechDebtDashboardResponse`.
@@ -28,6 +30,8 @@ export interface Redundancy {
 }
 
 export interface TechDebtDashboardData {
+  /** #646: which mode drafted the AI suggestions, as the API states it. */
+  ai_source: AiSource;
   service_id: string;
   service_title: string;
   released_at: string;

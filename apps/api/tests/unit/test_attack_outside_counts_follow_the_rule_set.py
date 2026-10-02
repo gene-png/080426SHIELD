@@ -9,7 +9,8 @@ after #620 (parent_rules = 2) or a draft (NULL). An assessment approved before
 
 BOTH HALVES, from one world. The rule-1 half compares against text RECORDED from
 `main` at 22c47a4, before #621 (`tests/golden/outside_counts_rule1/`, see its
-RECORDED.md), never regenerated. The rule-2 and draft halves assert the counts
+RECORDED.md), never regenerated -- amended once, 2026-10-02, to add #646's
+AI-source stamp and nothing else (RECORDED.md has the check). The rule-2 and draft halves assert the counts
 appear, so the rule-1 half cannot pass for a change that removed them everywhere.
 
 The client dashboard JSON and the finalize workbook and summary under rule 1 are
@@ -30,6 +31,7 @@ from app.attack.analytics import compute
 from app.attack.catalog import TECHNIQUES
 from app.attack.exporters import build_context, render_docx, render_pdf, render_xlsx
 from app.attack.pending import pending_codes
+from app.mode_stamp import UNKNOWN_AI_MODE
 from app.models.attack_assessment import (
     AttackAssessment,
     AttackAssessmentStatus,
@@ -324,6 +326,7 @@ def _response(*, parents_computed: bool | None, counts: int | None, omit: bool =
         not_applicable=0,
         unscored=0,
         coverage_pct=100.0,
+        coverage_measured=True,  # #489: required since Batch A; not under test here
         **extra,
     )
     return AttackDashboardResponse(
@@ -332,6 +335,8 @@ def _response(*, parents_computed: bool | None, counts: int | None, omit: bool =
         released_at=datetime(2026, 9, 1, tzinfo=UTC),
         deliverable_version=1,
         parents_computed=parents_computed,
+        # #646: required since Batch F; not under test here (coordinator's verdict).
+        ai_source=UNKNOWN_AI_MODE.as_api(),
         rollup=AttackDashboardRollup(
             total_evaluated=1,
             covered=1,
@@ -339,6 +344,7 @@ def _response(*, parents_computed: bool | None, counts: int | None, omit: bool =
             gap=0,
             not_applicable=0,
             coverage_pct=100.0,
+            coverage_measured=True,  # #489, as above
             by_tactic=[tactic],
             **extra,
         ),

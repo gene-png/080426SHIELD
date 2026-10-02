@@ -115,6 +115,7 @@ export function CsfDashboard({
 
   return (
     <DashShell
+      aiSource={data.ai_source}
       title={data.service_title}
       subtitle="NIST CSF 2.0 · Current state vs target profile"
       releasedAt={data.released_at}

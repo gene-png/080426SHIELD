@@ -1,3 +1,5 @@
+import type { AiSource } from "@/lib/aiSource/types";
+
 export type SecurityFunction = "prevent" | "detect" | "respond";
 
 /** Wire types mirroring apps/api/app/schemas/tech_debt.py. */
@@ -70,6 +72,9 @@ export interface CapabilityList {
   /** #177/#193: from the api's one reader. "exact" licenses the excluded count
    *  as the count; "unknown" makes it a floor. Absent reads as unknown. */
   exclusion_count_state?: "not_recorded" | "exact" | "unknown" | null;
+  /** #646: which mode drafted this list, as the API states it. Null only on
+   *  a response built without it. */
+  ai_source?: AiSource | null;
   id: string;
   service_id: string;
   version: number;

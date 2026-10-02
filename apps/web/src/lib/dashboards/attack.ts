@@ -1,3 +1,5 @@
+import type { AiSource } from "@/lib/aiSource/types";
+
 /**
  * Client ATT&CK coverage dashboard — types + pure transforms (D-035).
  *
@@ -32,6 +34,10 @@ export interface DashTactic {
   outside_control_surface?: number;
   unable_to_determine?: number;
   coverage_pct: number;
+  /** #489: false where nothing is Covered, Partial, Gap or pending review, so
+   *  `coverage_pct` (0.0 there) is shown as "not measured", as the deliverable
+   *  says. Decided by the API with the exporter's own rule; never re-derived. */
+  coverage_measured: boolean;
 }
 
 export interface DashTechnique {
@@ -80,10 +86,16 @@ export interface DashRollup {
   outside_control_surface?: number;
   unable_to_determine?: number;
   coverage_pct: number;
+  /** #489: false where nothing is Covered, Partial, Gap or pending review, so
+   *  `coverage_pct` (0.0 there) is shown as "not measured", as the deliverable
+   *  says. Decided by the API with the exporter's own rule; never re-derived. */
+  coverage_measured: boolean;
   by_tactic: DashTactic[];
 }
 
 export interface AttackDashboardData {
+  /** #646: which mode drafted the AI suggestions, as the API states it. */
+  ai_source: AiSource;
   /** True for an assessment approved under D-094's rules for computed parents
    *  (#620). Absent for one approved before, which renders as delivered. */
   parents_computed?: boolean;

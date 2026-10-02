@@ -72,6 +72,7 @@ from app.attack.coverage import (
 )
 from app.attack.exporters import build_context as build_attack_context
 from app.attack.exporters import (
+    coverage_measured,
     coverage_pct_text,
     outside_assessed_text,
     states_outside_counts,
@@ -93,6 +94,7 @@ from app.db.session import get_db
 from app.deliverable_release import ParentGuard, release_deliverable
 from app.dependencies import current_client, current_user, require_role
 from app.logging import get_logger
+from app.mode_stamp import ai_mode_for
 from app.models._common import utcnow
 from app.models.artifact import Artifact, ArtifactOrigin
 from app.models.attack_assessment import (
@@ -214,6 +216,8 @@ def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentR
         # The ONE definition of current (`catalog_version.is_current`), never a
         # second inline comparison that could disagree with the guards.
         catalog_current=attack_catalog_is_current(a),
+        # #646: the ONE derivation every surface calls.
+        ai_source=ai_mode_for(db, db.get(Service, a.service_id), a).as_api(),
         coverage=_serialize_coverage(rows, parents_computed=parents_computed(a)),
     )
 
@@ -2457,6 +2461,7 @@ def heatmap(
         outside_control_surface=outside(rollup.outside_control_surface),
         unable_to_determine=outside(rollup.unable_to_determine),
         coverage_pct=rollup.coverage_pct,
+        coverage_measured=coverage_measured(rollup),
         by_tactic=[
             TacticHeatmapEntry(
                 tactic_id=tc.tactic_id,
@@ -2472,6 +2477,7 @@ def heatmap(
                 outside_control_surface=outside(tc.outside_control_surface),
                 unable_to_determine=outside(tc.unable_to_determine),
                 coverage_pct=tc.coverage_pct,
+                coverage_measured=coverage_measured(tc),
             )
             for tc in rollup.by_tactic
         ],
@@ -2966,6 +2972,8 @@ def finalize_attack_deliverable(
         assessment=assessment,
         coverage=coverage,
         rollup=rollup,
+        # #646: the ONE derivation every surface calls.
+        ai_mode=ai_mode_for(db, svc, assessment),
     )
     pdf_bytes = render_attack_pdf(ctx)
     xlsx_bytes = render_attack_xlsx(ctx)
@@ -3048,6 +3056,8 @@ def finalize_attack_deliverable(
             "assessment_version": assessment.version,
             "version": next_version,
             "coverage_pct": rollup.coverage_pct,
+            # #489: 0.0 above is "not measured" when this is False.
+            "coverage_measured": coverage_measured(rollup),
             "gap_count": rollup.gap,
         },
     )

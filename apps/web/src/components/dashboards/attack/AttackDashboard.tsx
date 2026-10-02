@@ -298,6 +298,7 @@ export function AttackDashboard({
   // pinned to UTC) left this one wrong while the other four re-tested clean.
   return (
     <DashShell
+      aiSource={data.ai_source}
       title={data.service_title}
       subtitle="MITRE ATT&CK Coverage · Detect / Prevent / Respond posture"
       releasedAt={data.released_at}
@@ -366,12 +367,17 @@ export function AttackDashboard({
         <Section
           title="Overall coverage mix"
           desc={
-            ((data.rollup.pending_review ?? 0) > 0
-              ? `Weighted coverage across evaluated techniques: ${data.rollup.coverage_pct}%. ` +
-                `${data.rollup.pending_review} technique${data.rollup.pending_review === 1 ? " is" : "s are"} ` +
-                `held out of this figure pending evidence review, so it is a percentage of what can be ` +
-                `claimed today — not of the whole catalogue.`
-              : `Weighted coverage across evaluated techniques: ${data.rollup.coverage_pct}%.`) +
+            // #489: the API's `coverage_measured`, the exporter's rule. Not
+            // measured cannot hold a pending row (the rule counts pending), so
+            // the pending branch below never meets it.
+            (!data.rollup.coverage_measured
+              ? "Weighted coverage across evaluated techniques: not measured — no technique has been judged Covered, Partial or Gap."
+              : (data.rollup.pending_review ?? 0) > 0
+                ? `Weighted coverage across evaluated techniques: ${data.rollup.coverage_pct}%. ` +
+                  `${data.rollup.pending_review} technique${data.rollup.pending_review === 1 ? " is" : "s are"} ` +
+                  `held out of this figure pending evidence review, so it is a percentage of what can be ` +
+                  `claimed today — not of the whole catalogue.`
+                : `Weighted coverage across evaluated techniques: ${data.rollup.coverage_pct}%.`) +
             // #554: beside the percentage on every surface, even at zero.
             (outside === null ? "" : ` ${outside}`)
           }

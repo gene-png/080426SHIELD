@@ -1,3 +1,5 @@
+import type { AiSource } from "@/lib/aiSource/types";
+
 /** Wire types mirroring apps/api/app/schemas/attack.py. */
 
 /** Every status the API can store (#554). The two new ones are not WRITABLE
@@ -103,6 +105,8 @@ export interface UnconfirmedCitation {
 }
 
 export interface AttackAssessment {
+  /** #646: which mode drafted the AI suggestions, as the API states it. */
+  ai_source: AiSource;
   id: string;
   service_id: string;
   version: number;
@@ -211,6 +215,10 @@ export interface TacticHeatmapEntry {
   outside_control_surface: number | null;
   unable_to_determine: number | null;
   coverage_pct: number;
+  /** #489: false where nothing is Covered, Partial, Gap or pending review, so
+   *  `coverage_pct` (0.0 there) is shown as "not measured", as the deliverable
+   *  says. Decided by the API with the exporter's own rule; never re-derived. */
+  coverage_measured: boolean;
 }
 
 export interface AttackHeatmap {
@@ -237,6 +245,10 @@ export interface AttackHeatmap {
   outside_control_surface: number | null;
   unable_to_determine: number | null;
   coverage_pct: number;
+  /** #489: false where nothing is Covered, Partial, Gap or pending review, so
+   *  `coverage_pct` (0.0 there) is shown as "not measured", as the deliverable
+   *  says. Decided by the API with the exporter's own rule; never re-derived. */
+  coverage_measured: boolean;
   by_tactic: TacticHeatmapEntry[];
 }
 

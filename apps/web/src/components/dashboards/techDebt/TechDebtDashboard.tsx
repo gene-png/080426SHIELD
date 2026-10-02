@@ -194,6 +194,7 @@ export function TechDebtDashboard({
 
   return (
     <DashShell
+      aiSource={data.ai_source}
       title={data.service_title}
       subtitle="Software portfolio · Spend, sprawl, and consolidation savings"
       releasedAt={data.released_at}

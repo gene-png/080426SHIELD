@@ -256,6 +256,10 @@ export function HomeDashboard({
   const readable = deliverables.filter((d) => !d.withheld);
   // Which services already have a released report (drives the grid + hero).
   const releasedServiceIds = new Set(readable.map((d) => d.service_id));
+  // #588: the engagement list now carries the same fact as `withheld`, by
+  // this rule (`routes/intake.py::_report_withheld`). Not read here: this
+  // page's handling of a failed deliverables panel depends on deriving it from
+  // the deliverables themselves. Change the rule in both places.
   const withheldServiceIds = new Set(
     deliverables
       .filter((d) => d.withheld && !releasedServiceIds.has(d.service_id))

@@ -65,8 +65,20 @@ export function AttackHeatmapCard({
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-2">
-              <StatusPill tone={toneFor(heatmap.coverage_pct)} withDot>
-                Coverage {heatmap.coverage_pct}%
+              {/* #489: the API's `coverage_measured`, the exporter's rule, so
+                  "never assessed" never reads as the 0% an all-gap assessment
+                  earns. Not re-derived here. */}
+              <StatusPill
+                tone={
+                  heatmap.coverage_measured
+                    ? toneFor(heatmap.coverage_pct)
+                    : "neutral"
+                }
+                withDot
+              >
+                {heatmap.coverage_measured
+                  ? `Coverage ${heatmap.coverage_pct}%`
+                  : "Coverage not measured"}
               </StatusPill>
               <span className="text-xs text-ink-tertiary">
                 {/* Y from catalogue_count under both rule sets: it equals scored +

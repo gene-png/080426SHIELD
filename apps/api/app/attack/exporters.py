@@ -19,6 +19,7 @@ from __future__ import annotations
 import io
 from collections.abc import Iterable
 from dataclasses import dataclass
+from html import escape as html_escape
 from typing import TYPE_CHECKING
 
 from app.attack.analytics import CoverageRollup, TacticCoverage
@@ -29,6 +30,13 @@ from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.pending import uncleared_tools
 from app.attack.rules import parents_computed
 from app.client_naming import org_display_name
+from app.mode_stamp import (
+    UNKNOWN_AI_MODE,
+    AiModeStamp,
+    add_docx_paragraph,
+    add_xlsx_sheet,
+    pdf_paragraph,
+)
 from app.models.attack_assessment import AttackAssessment, AttackCoverage
 
 if TYPE_CHECKING:
@@ -53,6 +61,10 @@ class AttackDeliverableContext:
     #: mark individual rows would otherwise re-derive the set — a second source
     #: of truth for the same fact, which is the drift D-052 rejected.
     pending_codes: frozenset[str] = frozenset()
+    #: #646: which mode drafted the AI suggestions behind this document. The
+    #: default is "not recorded", never live: a context built without a lookup
+    #: must not read as a clean one.
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE
 
 
 def build_context(
@@ -62,6 +74,7 @@ def build_context(
     assessment: AttackAssessment,
     coverage: Iterable[AttackCoverage],
     rollup: CoverageRollup,
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
 ) -> AttackDeliverableContext:
     rows = list(coverage)
     rule = parents_computed(assessment)
@@ -76,6 +89,7 @@ def build_context(
         # techniques are withheld.
         pending_codes=attack_pending_codes(rows, parents_computed=rule),
         parents_computed=rule,
+        ai_mode=ai_mode,
     )
 
 
@@ -129,6 +143,33 @@ def _definition(ctx: AttackDeliverableContext) -> str:
     return COVERAGE_PCT_DEFINITION if states_outside_counts(ctx) else COVERAGE_PCT_DEFINITION_RULE_1
 
 
+def _catalog_phrase(ctx: AttackDeliverableContext) -> str:
+    """#419: what "Y" counts. The Risk register prints its own denominator
+    ("ATT&CK coverage 12 of 700", the assessment's ROWS), so this one names the
+    catalog it divides by rather than leaving the pair unexplained.
+
+    `catalog_version` is NULL only for an assessment whose catalog was never
+    recorded, which is never current, and finalize calls
+    `require_current_catalog` before it builds this context -- so the
+    versionless wording is unreachable through the routes today. It is written
+    anyway rather than printing "ATT&CK None"."""
+    version = ctx.assessment.catalog_version
+    if version is None:
+        return "techniques in the catalog this assessment was scored against"
+    return f"techniques in the ATT&CK {version} catalog this assessment was scored against"
+
+
+#: #419: the XLSX row naming the denominator, under #620's rules.
+SCORED_OF_CATALOG_LABEL = (
+    "Scored, of the techniques in the catalog this assessment was scored against"
+)
+
+
+def _scored_of(ctx: AttackDeliverableContext) -> str:
+    """ "X of Y", under #620's rules (#419)."""
+    return f"{ctx.rollup.scored_count} of {ctx.rollup.catalogue_count}"
+
+
 def _scored_total(ctx: AttackDeliverableContext) -> str:
     """ "X/Y" scored, Y from `catalogue_count` under both rule sets and NOT gated:
     it differs from the scored + unscored delivered before #621 only by
@@ -164,6 +205,14 @@ def _measured(t: CoverageRollup | TacticCoverage) -> bool:
     pending count, as the #102 note in `render_xlsx` intends -- not "never
     assessed", which is what "not measured" says."""
     return sum(getattr(t, s.value) for s in ASSESSED) + t.pending_review > 0
+
+
+def coverage_measured(t: CoverageRollup | TacticCoverage) -> bool:
+    """`_measured`, for the API (#489): the ONE rule deciding whether a
+    percentage is a measurement or "not measured", so the screens say what the
+    deliverable says. The heatmap and the client dashboard emit it as
+    `coverage_measured`; the web never re-derives it."""
+    return _measured(t)
 
 
 def _pct_value(t: CoverageRollup | TacticCoverage) -> float | str:
@@ -284,12 +333,17 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
     ws.append(["Assessment version", ctx.assessment.version])
     r = ctx.rollup
     ws.append(["Coverage %", _pct_value(r)])
-    ws.append(
-        [
-            "Scored / Total",
-            _scored_total(ctx),
-        ]
-    )
+    # #419: the denominator named, under #620's rules only (option (a)); an
+    # assessment approved before #620 renders the row it was delivered with.
+    if states_outside_counts(ctx):
+        ws.append([SCORED_OF_CATALOG_LABEL, _scored_of(ctx)])
+    else:
+        ws.append(
+            [
+                "Scored / Total",
+                _scored_total(ctx),
+            ]
+        )
     # #102. Beside the percentage, never instead of it and never omitted: the
     # percentage is a ratio over what can currently be CLAIMED, so a withheld row
     # leaves both sides of it. An assessment whose every positive claim is
@@ -467,6 +521,7 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
         ws4.column_dimensions[get_column_letter(col)].width = w
 
     out = io.BytesIO()
+    add_xlsx_sheet(wb, ctx.ai_mode)  # #646: the LAST sheet
     wb.save(out)
     return out.getvalue()
 
@@ -490,6 +545,7 @@ def render_docx(ctx: AttackDeliverableContext) -> bytes:
     outside = states_outside_counts(ctx)
     doc = new_document(f"{ctx.service_title} — {ctx.client_legal_name}")
     add_title(doc, ctx.service_title, ctx.client_legal_name)
+    add_docx_paragraph(doc, ctx.ai_mode)  # #646, under the title
 
     add_heading(doc, "Coverage summary")
     add_paragraphs(
@@ -497,7 +553,12 @@ def render_docx(ctx: AttackDeliverableContext) -> bytes:
         [
             "Overall coverage: " + coverage_pct_text(ctx.rollup),
             _definition(ctx),
-            f"Scored: {_scored_total(ctx)}",
+            (
+                # #419, under #620's rules only (option (a)).
+                f"Scored: {_scored_of(ctx)} {_catalog_phrase(ctx)}"
+                if outside
+                else f"Scored: {_scored_total(ctx)}"
+            ),
             f"Covered {ctx.rollup.covered}, Partial {ctx.rollup.partial}, "
             f"Gap {ctx.rollup.gap}, N/A {ctx.rollup.not_applicable}, "
             f"Pending review {ctx.rollup.pending_review}"
@@ -632,14 +693,25 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
     story: list = []
     story.append(Paragraph(ctx.service_title, h1))
     story.append(Paragraph(ctx.client_legal_name, body))
+    story.append(pdf_paragraph(ctx.ai_mode, body))  # #646, under the title
     story.append(Spacer(1, 0.2 * inch))
 
     story.append(Paragraph("Coverage summary", h2))
     story.append(
         Paragraph(
             f"Overall coverage: <b>{coverage_pct_text(ctx.rollup)}</b> · "
-            f"Scored: <b>{_scored_total(ctx)}</b> · "
-            f"Covered <b>{ctx.rollup.covered}</b>, "
+            + (
+                # #419, under #620's rules only (option (a)).
+                f"Scored: <b>{ctx.rollup.scored_count}</b> of "
+                # Escaped: a Paragraph is markup, and a bare "&" in "ATT&CK"
+                # renders as "ATT&CK;". quote=False escapes exactly &, < and >,
+                # what reportlab's markup needs; quotes are literal text there.
+                f"{ctx.rollup.catalogue_count} "
+                f"{html_escape(_catalog_phrase(ctx), quote=False)} · "
+                if outside
+                else f"Scored: <b>{_scored_total(ctx)}</b> · "
+            )
+            + f"Covered <b>{ctx.rollup.covered}</b>, "
             f"Partial <b>{ctx.rollup.partial}</b>, "
             f"Gap <b>{ctx.rollup.gap}</b>, "
             f"N/A <b>{ctx.rollup.not_applicable}</b>, "

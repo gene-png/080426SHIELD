@@ -15,6 +15,7 @@ from app.models.capability import (
 )
 from app.models.service import ServiceKind, ServiceStatus
 from app.schemas._numeric import IntNotBool
+from app.schemas.ai_runs import AiSource
 
 
 class ServiceCreateRequest(BaseModel):
@@ -130,6 +131,9 @@ class CapabilityListResponse(BaseModel):
     # edit to an approved list until step 3 approves it again. Finalize and
     # release refuse while it is false. Read from the ORM's derived property.
     approval_current: bool
+    # #646: which mode drafted this list. Filled by the route from a separate
+    # derivation, as `items` is; None only on a response built without it.
+    ai_source: AiSource | None = None
     # Reconciliation of the source upload against what was extracted (0036).
     # NULL on lists created before the column existed — the UI renders no claim
     # rather than implying a complete inventory.
