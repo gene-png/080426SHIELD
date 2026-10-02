@@ -116,6 +116,19 @@ class UnconfirmedCitation(BaseModel):
     cleared_at: datetime | None = None
 
 
+class AttackCapabilities(BaseModel):
+    """#554 R3: which of Detect / Prevent / Respond are in place on a row whose
+    status is computed. Each is `in_place`, `not_in_place`, `awaiting_review` or
+    (Prevent only) `cannot_be_prevented`; `line` is the approved client line."""
+
+    detect: str
+    prevent: str
+    respond: str
+    line: str
+    awaiting_review: bool
+    cannot_be_prevented: bool
+
+
 class AttackCoverageResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -155,6 +168,22 @@ class AttackCoverageResponse(BaseModel):
     #: which one row cannot see. Required, with no default, so a response built
     #: without deriving it fails loudly instead of guessing.
     pending_review: bool
+    #: #554 R3, all REQUIRED for the same reason as `pending_review`: derived by
+    #: the route over the whole assessment (`attack/computed.py`).
+    #: The status every surface counts for this row, or None when the assessment
+    #: was approved before R3 and its stored `status` is what renders. On an R3
+    #: assessment `status` stays the stored suggestion (the AI's, or a
+    #: consultant's), which the review queue compares this against.
+    computed_status: CoverageStatus | None
+    #: What is in place, for a row whose status was computed; None otherwise.
+    capabilities: AttackCapabilities | None
+    #: True while this row's computed status awaits a consultant's review, which
+    #: holds back release (the advisor's Q1, 2026-10-02).
+    in_review_queue: bool
+    #: The computed status a consultant accepted, and who and when (0059).
+    reviewed_status: str | None = None
+    reviewed_by: uuid.UUID | None = None
+    reviewed_at: datetime | None = None
 
 
 class AttackAssessmentResponse(BaseModel):
@@ -177,12 +206,23 @@ class AttackAssessmentResponse(BaseModel):
     catalog_current: bool
     # #646: which mode drafted this assessment's AI suggestions. REQUIRED.
     ai_source: AiSource
+    #: #554 R3: whether statuses are computed from Detect / Prevent / Respond.
+    #: REQUIRED.
+    statuses_computed: bool
     coverage: list[AttackCoverageResponse]
     #: #686: cited tool -> "planned_retirement" | "unknown", for the tools the
     #: client's Tech Debt consolidation plan retires or cannot answer for. A tool
     #: absent here is not retiring. None: the client has no approved or released
     #: Tech Debt list, so there is no plan and nothing is marked.
     tool_retirement: dict[str, str] | None = None
+
+
+class ComputedStatusReviewRequest(BaseModel):
+    """#554 R3: the techniques a consultant reviewed -- the codes the panel
+    showed them, so a row that entered the queue after the page loaded is never
+    accepted unseen. Bulk accept passes them all."""
+
+    codes: list[str]
 
 
 class CoverageChange(BaseModel):
@@ -352,6 +392,9 @@ class AttackHeatmap(BaseModel):
     # #489, as on each tactic above.
     coverage_measured: bool
     by_tactic: list[TacticHeatmapEntry]
+    #: #554 R3 (Q4): the disclosure printed beside `coverage_pct`, or None before
+    #: R3 and when nothing awaits review. The renderers' own sentence.
+    awaiting_review_sentence: str | None = None
 
 
 # ---------------------------------------------------------------------------

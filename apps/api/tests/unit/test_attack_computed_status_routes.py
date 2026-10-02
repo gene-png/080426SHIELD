@@ -1,0 +1,363 @@
+"""#554 R3 through the routes: computed statuses, the review queue and the gate.
+
+The advisor's decisions on #554 (2026-10-02, 21:55Z and 22:20Z):
+
+* an assessment approved after R3 ships computes its statuses from Detect /
+  Prevent / Respond (status_rules = 2); one approved before keeps its stored
+  statuses;
+* a computed status that differs from the stored (AI) suggestion is reviewed
+  by a consultant before RELEASE -- gated at release, not at approve; bulk
+  accept is allowed; the review is recorded (who, when, how many rows); the
+  typed refusal names the count still unreviewed.
+
+Every refusal's text is COPIED from the build plan posted on #554 (A8-A13),
+never imported from the code under test.
+"""
+
+from __future__ import annotations
+
+import uuid
+
+import pytest
+from sqlalchemy import select, update
+
+from app.models.attack_assessment import AttackAssessment, AttackCoverage
+from app.models.audit_entry import AuditEntry
+from tests._attack_rows import standalone_rows
+from tests.unit.test_attack_catalog_version_guard import (  # noqa: F401  (fixture)
+    _auth,
+    _register,
+    _service_and_assessment,
+    env,
+)
+
+pytestmark = pytest.mark.unit
+
+ALL_THREE = {
+    "detection_tools": ["Tool D"],
+    "prevention_tools": ["Tool P"],
+    "response_tools": ["Tool R"],
+}
+
+
+def _detail(r) -> dict:
+    """The typed error's own fields: `reason`, `message` and any payload, without
+    the envelope's `code` and `correlation_id`."""
+    body = r.json()
+    body = body.get("detail", body)
+    body = body.get("error", body)
+    return {k: v for k, v in body.items() if k not in ("code", "correlation_id")}
+
+
+def _patch(c, bearer: str, row_id: str, body: dict) -> dict:
+    r = c.patch(f"/attack/coverage/{row_id}", headers=_auth(bearer), json=body)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _approve_and_finalize(c, bearer: str, svc: str, assessment_id: str) -> str:
+    r = c.post(f"/attack/assessments/{assessment_id}/approve", headers=_auth(bearer))
+    assert r.status_code == 200, r.text
+    fin = c.post(f"/attack/services/{svc}/deliverables/finalize", headers=_auth(bearer))
+    assert fin.status_code in (200, 201), fin.text
+    return fin.json()["id"]
+
+
+def _assessment(c, bearer: str, svc: str) -> dict:
+    r = c.get(f"/attack/services/{svc}/assessments/latest", headers=_auth(bearer))
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_a_draft_reads_its_computed_status_beside_the_suggestion(env) -> None:  # noqa: F811
+    c, _Sess = env
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc, a = _service_and_assessment(c, bearer)
+    (row,) = standalone_rows(a["coverage"], 1)
+    out = _patch(c, bearer, row["id"], {"status": "covered", "detection_tools": ["Tool D"]})
+
+    assert out["status"] == "covered"  # the stored suggestion, untouched
+    assert out["computed_status"] == "partial"
+    assert out["capabilities"]["line"] == (
+        "Detect: in place · Prevent: not in place · Respond: not in place"
+    )
+    assert out["in_review_queue"] is True
+
+    heat = c.get(f"/attack/services/{svc}/heatmap", headers=_auth(bearer)).json()
+    assert (heat["covered"], heat["partial"]) == (0, 1), heat
+
+
+def test_approve_records_r3_and_is_not_refused_by_the_queue(env) -> None:  # noqa: F811
+    """Gated at release, NOT at the click: an unreviewed row does not stop approve."""
+    c, Sess = env
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc, a = _service_and_assessment(c, bearer)
+    (row,) = standalone_rows(a["coverage"], 1)
+    out = _patch(c, bearer, row["id"], {"status": "partial", **ALL_THREE})
+    assert out["in_review_queue"] is True
+
+    r = c.post(f"/attack/assessments/{a['id']}/approve", headers=_auth(bearer))
+    assert r.status_code == 200, r.text
+    assert r.json()["statuses_computed"] is True
+    with Sess() as s:
+        stored = s.get(AttackAssessment, uuid.UUID(a["id"]))
+        assert (stored.status_rules, stored.parent_rules) == (2, 2)
+
+
+def test_release_is_refused_until_the_queue_is_reviewed(env) -> None:  # noqa: F811
+    c, Sess = env
+    admin = _register(c, "admin@example.com")
+    bearer = admin["tokens"]["access_token"]
+    svc, a = _service_and_assessment(c, bearer)
+    differs, agrees = standalone_rows(a["coverage"], 2)
+    _patch(c, bearer, differs["id"], {"status": "partial", **ALL_THREE})
+    _patch(c, bearer, agrees["id"], {"status": "covered", **ALL_THREE})
+    deliverable = _approve_and_finalize(c, bearer, svc, a["id"])
+
+    refused = c.post(f"/attack/deliverables/{deliverable}/release", headers=_auth(bearer))
+    assert refused.status_code == 409, refused.text
+    detail = _detail(refused)
+    code = differs["technique_code"]
+    assert detail["reason"] == "attack_computed_status_unreviewed", detail
+    assert detail["message"] == (
+        "Nothing was released: 1 technique has a computed status that differs from the "
+        f"AI's suggestion and has not been reviewed ({code}). Review them in the Computed "
+        "status review panel, then release again."
+    )
+    assert detail["unreviewed"] == [code]
+
+    # Bulk accept, on the APPROVED assessment.
+    r = c.post(
+        f"/attack/assessments/{a['id']}/computed-status-review",
+        headers=_auth(bearer),
+        json={"codes": [code]},
+    )
+    assert r.status_code == 200, r.text
+    reviewed = {row["technique_code"]: row for row in r.json()["coverage"]}[code]
+    assert reviewed["reviewed_status"] == "covered"
+    assert reviewed["reviewed_by"] == admin["user"]["id"]
+    assert reviewed["reviewed_at"] is not None
+    assert reviewed["in_review_queue"] is False
+    # The suggestion is untouched: a review records, it does not rewrite.
+    assert reviewed["status"] == "partial"
+    with Sess() as s:
+        (event,) = (
+            s.execute(
+                select(AuditEntry).where(AuditEntry.action == "attack.computed_status.reviewed")
+            )
+            .scalars()
+            .all()
+        )
+        assert event.details == {"rows": 1, "codes": [code], "remaining": 0}
+
+    released = c.post(f"/attack/deliverables/{deliverable}/release", headers=_auth(bearer))
+    assert released.status_code == 200, released.text
+
+
+def test_the_refusal_counts_in_the_plural(env) -> None:  # noqa: F811
+    c, _Sess = env
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc, a = _service_and_assessment(c, bearer)
+    rows = standalone_rows(a["coverage"], 2)
+    for row in rows:
+        _patch(c, bearer, row["id"], {"status": "gap", **ALL_THREE})
+    deliverable = _approve_and_finalize(c, bearer, svc, a["id"])
+    detail = _detail(c.post(f"/attack/deliverables/{deliverable}/release", headers=_auth(bearer)))
+    codes = ", ".join(sorted(r["technique_code"] for r in rows))
+    assert detail["message"].startswith(
+        "Nothing was released: 2 techniques have a computed status that differs from the "
+        f"AI's suggestion and has not been reviewed ({codes})."
+    ), detail
+
+
+def test_a_review_does_not_carry_over_to_a_different_outcome(env) -> None:  # noqa: F811
+    c, _Sess = env
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc, a = _service_and_assessment(c, bearer)
+    (row,) = standalone_rows(a["coverage"], 1)
+    _patch(c, bearer, row["id"], {"status": "gap", **ALL_THREE})
+    r = c.post(
+        f"/attack/assessments/{a['id']}/computed-status-review",
+        headers=_auth(bearer),
+        json={"codes": [row["technique_code"]]},
+    )
+    assert r.status_code == 200, r.text
+    # Prevention removed: the computed status moves from Covered to Partial, which
+    # is not what the consultant reviewed.
+    out = _patch(c, bearer, row["id"], {"prevention_tools": []})
+    assert (out["computed_status"], out["reviewed_status"]) == ("partial", "covered")
+    assert out["in_review_queue"] is True
+
+
+def test_the_review_endpoint_refuses_in_its_own_words(env) -> None:  # noqa: F811
+    c, Sess = env
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc, a = _service_and_assessment(c, bearer)
+    queued, other = standalone_rows(a["coverage"], 2)
+    _patch(c, bearer, queued["id"], {"status": "partial", **ALL_THREE})
+    url = f"/attack/assessments/{a['id']}/computed-status-review"
+
+    empty = c.post(url, headers=_auth(bearer), json={"codes": []})
+    assert empty.status_code == 422, empty.text
+    assert _detail(empty) == {
+        "reason": "no_codes",
+        "message": "No techniques were given to review.",
+    }
+
+    stale = c.post(url, headers=_auth(bearer), json={"codes": [other["technique_code"]]})
+    assert stale.status_code == 422, stale.text
+    assert _detail(stale)["reason"] == "codes_not_in_review_queue"
+    assert _detail(stale)["message"] == (
+        f"Some techniques are no longer awaiting review ({other['technique_code']}). "
+        "Reload the panel and review again."
+    )
+    # Nothing was recorded for the code that WAS in the queue either.
+    assert _assessment(c, bearer, svc)["coverage"]
+    with Sess() as s:
+        assert (
+            s.execute(
+                select(AttackCoverage.reviewed_status).where(
+                    AttackCoverage.technique_code == queued["technique_code"]
+                )
+            ).scalar_one()
+            is None
+        )
+
+    with Sess() as s:
+        s.execute(
+            update(AttackAssessment)
+            .where(AttackAssessment.id == uuid.UUID(a["id"]))
+            .values(status_rules=1)
+        )
+        s.commit()
+    before = c.post(url, headers=_auth(bearer), json={"codes": [queued["technique_code"]]})
+    assert before.status_code == 409, before.text
+    assert _detail(before) == {
+        "reason": "attack_computed_status_not_used",
+        "message": (
+            "This assessment's statuses were set before computed status existed, so there "
+            "is nothing to review."
+        ),
+    }
+
+
+def test_a_released_assessment_cannot_be_reviewed(env) -> None:  # noqa: F811
+    c, _Sess = env
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc, a = _service_and_assessment(c, bearer)
+    (row,) = standalone_rows(a["coverage"], 1)
+    _patch(c, bearer, row["id"], {"status": "covered", **ALL_THREE})
+    deliverable = _approve_and_finalize(c, bearer, svc, a["id"])
+    assert (
+        c.post(f"/attack/deliverables/{deliverable}/release", headers=_auth(bearer)).status_code
+        == 200
+    )
+    r = c.post(
+        f"/attack/assessments/{a['id']}/computed-status-review",
+        headers=_auth(bearer),
+        json={"codes": [row["technique_code"]]},
+    )
+    assert r.status_code == 409, r.text
+    assert _detail(r) == {
+        "reason": "attack_assessment_released",
+        "message": "This assessment has been released, so its review is closed.",
+    }
+
+
+def test_an_assessment_approved_before_r3_is_never_gated_by_the_queue(env) -> None:  # noqa: F811
+    """Rule 1 renders stored statuses, so nothing is computed and nothing differs."""
+    c, Sess = env
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc, a = _service_and_assessment(c, bearer)
+    (row,) = standalone_rows(a["coverage"], 1)
+    _patch(c, bearer, row["id"], {"status": "partial", "reason_code": "reach_limited", **ALL_THREE})
+    r = c.post(f"/attack/assessments/{a['id']}/approve", headers=_auth(bearer))
+    assert r.status_code == 200, r.text
+    with Sess() as s:
+        s.execute(
+            update(AttackAssessment)
+            .where(AttackAssessment.id == uuid.UUID(a["id"]))
+            .values(status_rules=1)
+        )
+        s.commit()
+    latest = _assessment(c, bearer, svc)
+    assert latest["statuses_computed"] is False
+    (out,) = [x for x in latest["coverage"] if x["technique_code"] == row["technique_code"]]
+    assert (out["status"], out["computed_status"], out["capabilities"]) == ("partial", None, None)
+    fin = c.post(f"/attack/services/{svc}/deliverables/finalize", headers=_auth(bearer))
+    assert fin.status_code in (200, 201), fin.text
+    rel = c.post(f"/attack/deliverables/{fin.json()['id']}/release", headers=_auth(bearer))
+    assert rel.status_code == 200, rel.text
+
+
+def test_the_client_sees_what_is_in_place_and_the_disclosure(env) -> None:  # noqa: F811
+    """Through the route a client calls, and the finalize summary beside it."""
+    c, Sess = env
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer = admin["tokens"]["access_token"]
+    svc, a = _service_and_assessment(c, bearer)
+    by_code = {row["technique_code"]: row for row in a["coverage"]}
+    # T1082 is one MITRE lists no mitigation for (test_attack_not_preventable.py).
+    _patch(
+        c,
+        bearer,
+        by_code["T1082"]["id"],
+        {"status": "covered", "detection_tools": ["Tool D"], "response_tools": ["Tool R"]},
+    )
+    awaiting, untouched = standalone_rows(
+        [r for r in a["coverage"] if r["technique_code"] != "T1082"], 2
+    )
+    _patch(c, bearer, awaiting["id"], {"status": "partial", **ALL_THREE})
+    # The world, not the outcome: one tool's citation is still awaiting a human,
+    # as a run that inferred it leaves it. The PATCH above confirmed everything.
+    with Sess() as s:
+        s.execute(
+            update(AttackCoverage)
+            .where(AttackCoverage.id == uuid.UUID(awaiting["id"]))
+            .values(
+                unconfirmed_citations=[
+                    {"tool": "Tool D", "cited": "Tool D", "reason": "inferred", "cleared_at": None}
+                ]
+            )
+        )
+        s.commit()
+    deliverable = _approve_and_finalize(c, bearer, svc, a["id"])
+    sentence = (
+        "1 technique lists tools awaiting review; it is scored as if those tools were not in "
+        "place."
+    )
+    latest = c.get(f"/attack/services/{svc}/deliverables/latest", headers=_auth(bearer)).json()
+    assert latest["summary"].endswith(sentence), latest["summary"]
+    rel = c.post(f"/attack/deliverables/{deliverable}/release", headers=_auth(bearer))
+    assert rel.status_code == 200, rel.text
+
+    client_id = client["user"]["client_id"]
+    c.headers["X-Client-Id"] = client_id
+    dash = c.get(
+        f"/clients/{client_id}/attack/{svc}/dashboard",
+        headers=_auth(client["tokens"]["access_token"]),
+    )
+    assert dash.status_code == 200, dash.text
+    body = dash.json()
+    techs = {t["code"]: t for t in body["techniques"]}
+    assert techs["T1082"]["status"] == "covered"
+    assert techs["T1082"]["in_place"] == {
+        "detect": "in place",
+        "prevent": "cannot be prevented",
+        "respond": "in place",
+        "line": "Detect: in place · Prevent: cannot be prevented · Respond: in place",
+        "cannot_be_prevented": True,
+    }
+    code = awaiting["technique_code"]
+    assert techs[code]["status"] == "partial"
+    assert techs[code]["in_place"]["line"] == (
+        "Detect: awaiting review · Prevent: in place · Respond: in place"
+    )
+    assert techs[code]["partial_reason"] == {
+        "label": "Set by what is in place",
+        "sentence": "This technique's status is computed from which of Detect, Prevent and "
+        "Respond are in place.",
+    }
+    assert body["awaiting_review_sentence"] == sentence
+    assert untouched["technique_code"] not in techs  # unscored rows are not listed

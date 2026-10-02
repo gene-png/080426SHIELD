@@ -24,6 +24,7 @@ from app.ai.engine import get_job, run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.attack.catalog_version import catalog_mismatch_message, require_current_catalog
+from app.attack.computed import effective_coverage
 from app.attack.parents import is_computed_parent
 from app.attack.rules import parents_computed
 from app.audit import audit
@@ -479,10 +480,13 @@ def _gather_findings(
         # "ATT&CK T1649.001" is not a technique, and a T1558 row was answered
         # against the swapped name. Refused, never relabelled by ID (D-091).
         require_current_catalog(db, attack)
-        rows = (
+        # #554 R3: computed statuses where they apply, so a finding's status is
+        # the one the client's dashboard and deliverable show.
+        rows = effective_coverage(
+            attack,
             db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == attack.id))
             .scalars()
-            .all()
+            .all(),
         )
         # PENDING-REVIEW ROWS ARE CITABLE HERE, AND THAT IS AN OPEN QUESTION
         # RATHER THAN AN OVERSIGHT -- stated at the site because an unstated

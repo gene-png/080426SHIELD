@@ -62,6 +62,9 @@ from app.attack.citations import (
     CitationResolver,
     resolve_citations,
 )
+from app.attack.computed import EffectiveRow, effective_coverage, review_queue
+from app.attack.computed import awaiting_review_count as attack_awaiting_review_count
+from app.attack.computed import awaiting_review_sentence as attack_awaiting_review_sentence
 from app.attack.coverage import (
     COVERAGE_DEFINITIONS,
     REASON_CODES,
@@ -70,6 +73,7 @@ from app.attack.coverage import (
     is_valid_reason,
     reason_codes_for,
 )
+from app.attack.exporters import awaiting_review_text as attack_awaiting_review_text
 from app.attack.exporters import build_context as build_attack_context
 from app.attack.exporters import (
     coverage_measured,
@@ -90,7 +94,7 @@ from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.pending import row_tools as attack_row_tools
 from app.attack.retirement import PlanEntry, RetirementIndex
 from app.attack.retirement import build_index as build_retirement_index
-from app.attack.rules import NEW_RULES, parents_computed
+from app.attack.rules import COMPUTED_STATUSES, NEW_RULES, parents_computed, statuses_computed
 from app.audit import audit
 from app.config import get_settings
 from app.db.session import get_db
@@ -138,6 +142,7 @@ from app.schemas.attack import (
     CatalogResponse,
     CatalogTactic,
     CatalogTechnique,
+    ComputedStatusReviewRequest,
     CoverageChange,
     TacticHeatmapEntry,
 )
@@ -165,7 +170,7 @@ _log = get_logger(__name__)
 
 
 def _serialize_coverage(
-    rows: Iterable[AttackCoverage], *, parents_computed: bool
+    a: AttackAssessment, rows: Iterable[AttackCoverage]
 ) -> list[AttackCoverageResponse]:
     """Every coverage row on the wire goes through here.
 
@@ -181,13 +186,33 @@ def _serialize_coverage(
     forget.
     """
     rows = list(rows)
+    # #554 R3: every derived field below is read off the SAME effective rows the
+    # heatmap counts, so a badge and the percentage cannot disagree.
+    effective = {e.technique_code: e for e in effective_coverage(a, rows)}
+    computed = statuses_computed(a)
+    queue = frozenset(review_queue(effective.values()))
     # `pending_review` is derived over the WHOLE assessment, because a computed
     # parent's claim rests on its children's evidence (#554, D-094). Set on each
     # row as a plain attribute for `model_validate` to read; the schema field is
     # required, so a site that skips this fails loudly rather than guessing.
-    pending = attack_pending_codes(rows, parents_computed=parents_computed)
+    pending = attack_pending_codes(effective.values(), parents_computed=parents_computed(a))
     for r in rows:
+        e = effective[r.technique_code]
         r.pending_review = r.technique_code in pending
+        r.computed_status = e.status if computed else None
+        r.capabilities = (
+            {
+                "detect": e.capabilities.detect.value,
+                "prevent": e.capabilities.prevent.value,
+                "respond": e.capabilities.respond.value,
+                "line": e.capabilities.line(),
+                "awaiting_review": e.capabilities.awaiting,
+                "cannot_be_prevented": e.capabilities.cannot_be_prevented,
+            }
+            if isinstance(e, EffectiveRow) and e.is_computed
+            else None
+        )
+        r.in_review_queue = r.technique_code in queue
     return [
         AttackCoverageResponse.model_validate(r, from_attributes=True)
         for r in sorted(rows, key=lambda r: r.technique_code)
@@ -202,8 +227,7 @@ def _serialize_one(db: Session, row: AttackCoverage) -> AttackCoverageResponse:
         .all()
     )
     a = db.get(AttackAssessment, row.assessment_id)
-    rule = parents_computed(a)
-    return next(c for c in _serialize_coverage(siblings, parents_computed=rule) if c.id == row.id)
+    return next(c for c in _serialize_coverage(a, siblings) if c.id == row.id)
 
 
 def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentResponse:
@@ -226,7 +250,8 @@ def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentR
         catalog_current=attack_catalog_is_current(a),
         # #646: the ONE derivation every surface calls.
         ai_source=ai_mode_for(db, db.get(Service, a.service_id), a).as_api(),
-        coverage=_serialize_coverage(rows, parents_computed=parents_computed(a)),
+        statuses_computed=statuses_computed(a),
+        coverage=_serialize_coverage(a, rows),
         tool_retirement=_tool_retirement_marks(db, a.service_id, rows),
     )
 
@@ -2264,7 +2289,11 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
     # database does not contain -- W1's accounting log claimed `applied=N` above
     # this same re-read and reported values applied for transactions that then
     # rolled back.
-    pending = attack_pending_codes(rows.values(), parents_computed=parents_computed(a))
+    # #554 R3: over the rows every surface counts, so the audit's number is the
+    # badge's number.
+    pending = attack_pending_codes(
+        effective_coverage(a, rows.values()), parents_computed=parents_computed(a)
+    )
     # Emitted by the framework only after the completion commit (#645), or as
     # `.voided` when the compare-and-swap misses. See `RunOutcome.accounting`.
     accounting = (
@@ -2316,7 +2345,7 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
     result_payload = AttackRunAiResponse(
         tools_available=len(tools),
         changed=changes,
-        coverage=_serialize_coverage(rows.values(), parents_computed=parents_computed(a)),
+        coverage=_serialize_coverage(a, rows.values()),
         batches_total=batches_total,
         batches_failed=batches_failed,
         citations_confirmed=citations.confirmed,
@@ -2390,6 +2419,10 @@ def approve_assessment(
     # #620 (migration 0054, D-094): this assessment was approved under D-094's
     # rules for computed parents, and every client surface renders it so.
     a.parent_rules = NEW_RULES
+    # #554 R3 (migration 0059): its statuses are computed from Detect / Prevent /
+    # Respond on every surface. The review queue is gated at RELEASE, not here
+    # (the advisor's Q1: "gated at release, not at the click").
+    a.status_rules = COMPUTED_STATUSES
     audit(
         db,
         action="attack.assessment.approved",
@@ -2403,6 +2436,115 @@ def approve_assessment(
         },
     )
     db.commit()
+    db.refresh(a)
+    return _serialize_assessment(db, a)
+
+
+@router.post(
+    "/assessments/{assessment_id}/computed-status-review",
+    response_model=AttackAssessmentResponse,
+    summary="Record a review of computed statuses that differ from the AI's (admin, #554 R3)",
+)
+def review_computed_statuses(
+    assessment_id: uuid.UUID,
+    body: ComputedStatusReviewRequest,
+    user: Annotated[User, _admin_required],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> AttackAssessmentResponse:
+    """The advisor's Q1 (2026-10-02, 22:20Z): on an assessment whose statuses
+    are computed, each technique whose computed status differs from the AI's
+    stored suggestion is reviewed before release. This records it: the computed
+    status accepted, who, and when, on each row, plus one audit event.
+
+    Allowed on DRAFT and APPROVED. It changes no status, tool or rationale, so
+    the lock on an approved assessment is untouched; the release gate is what
+    reads it (`release_readiness.unreviewed_codes`)."""
+    a = require_attack_assessment_in_tenant(db, assessment_id, client.id)
+    # #645: a run would change the stored suggestions under the review.
+    refuse_while_running(db, a.service_id)
+    if a.status == AttackAssessmentStatus.RELEASED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "attack_assessment_released",
+                "message": "This assessment has been released, so its review is closed.",
+            },
+        )
+    if a.status == AttackAssessmentStatus.DISCARDED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "attack_assessment_discarded",
+                "message": "This assessment was discarded, so there is nothing to review.",
+            },
+        )
+    if not statuses_computed(a):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "attack_computed_status_not_used",
+                "message": (
+                    "This assessment's statuses were set before computed status existed, "
+                    "so there is nothing to review."
+                ),
+            },
+        )
+    codes = frozenset(body.codes)
+    if not codes:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "no_codes",
+                "message": "No techniques were given to review.",
+            },
+        )
+    rows = (
+        db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
+        .scalars()
+        .all()
+    )
+    effective = {e.technique_code: e for e in effective_coverage(a, rows)}
+    queue = frozenset(review_queue(effective.values()))
+    stale = sorted(codes - queue)
+    if stale:
+        shown = ", ".join(stale[:10]) + (f" and {len(stale) - 10} more" if len(stale) > 10 else "")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "codes_not_in_review_queue",
+                "message": (
+                    f"Some techniques are no longer awaiting review ({shown}). Reload the "
+                    "panel and review again."
+                ),
+                "codes": stale,
+            },
+        )
+    now = utcnow()
+    for row in rows:
+        if row.technique_code in codes:
+            row.reviewed_status = effective[row.technique_code].status
+            row.reviewed_by = user.id
+            row.reviewed_at = now
+    audit(
+        db,
+        action="attack.computed_status.reviewed",
+        target_type="attack_assessment",
+        target_id=a.id,
+        actor_user_id=user.id,
+        details={
+            "rows": len(codes),
+            "codes": sorted(codes),
+            "remaining": len(queue) - len(codes),
+        },
+    )
+    db.commit()
+    _log.info(
+        "attack.computed_status.reviewed",
+        assessment_id=str(a.id),
+        rows=len(codes),
+        remaining=len(queue) - len(codes),
+    )
     db.refresh(a)
     return _serialize_assessment(db, a)
 
@@ -2512,10 +2654,12 @@ def heatmap(
     # silently. A stale assessment is refused before any number is computed.
     require_current_catalog(db, a)
     valid = attack_all_codes()
-    rows = (
+    # #554 R3: computed statuses where they apply; the stored rows otherwise.
+    rows = effective_coverage(
+        a,
         db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
         .scalars()
-        .all()
+        .all(),
     )
     coverage_map: dict[str, str | None] = {
         r.technique_code: r.status for r in rows if r.technique_code in valid
@@ -2544,6 +2688,11 @@ def heatmap(
         unable_to_determine=outside(rollup.unable_to_determine),
         coverage_pct=rollup.coverage_pct,
         coverage_measured=coverage_measured(rollup),
+        awaiting_review_sentence=(
+            attack_awaiting_review_sentence(attack_awaiting_review_count(rows))
+            if statuses_computed(a)
+            else None
+        ),
         by_tactic=[
             TacticHeatmapEntry(
                 tactic_id=tc.tactic_id,
@@ -3004,10 +3153,13 @@ def finalize_attack_deliverable(
         )
     require_current_catalog(db, assessment)  # #556: never render a stale denominator
     valid = attack_all_codes()
-    coverage = (
+    # #554 R3: computed statuses where they apply; the stored rows otherwise.
+    # `build_attack_context` refuses stored rows for a computed assessment.
+    coverage = effective_coverage(
+        assessment,
         db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == assessment.id))
         .scalars()
-        .all()
+        .all(),
     )
     coverage_map: dict[str, str | None] = {
         r.technique_code: r.status for r in coverage if r.technique_code in valid
@@ -3109,6 +3261,8 @@ def finalize_attack_deliverable(
         + (f" {outside_assessed_text(rollup)}." if states_outside_counts(ctx) else "")
         # #686: the renderers' own sentences, only when non-zero.
         + "".join(f" {s}" for s in attack_retirement_sentences(ctx))
+        # #554 R3 (Q4): the renderers' own sentence, only when non-zero.
+        + (f" {awaiting}" if (awaiting := attack_awaiting_review_text(ctx)) else "")
     )
 
     deliv = Deliverable(

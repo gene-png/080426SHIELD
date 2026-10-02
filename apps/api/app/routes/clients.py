@@ -31,7 +31,10 @@ from app.attack.catalog_version import (
     require_current_catalog_for_client,
 )
 from app.attack.catalog_version import is_current as attack_catalog_is_current
+from app.attack.computed import IN_PLACE_TEXT as ATTACK_IN_PLACE_TEXT
+from app.attack.computed import effective_coverage as attack_effective_coverage
 from app.attack.coverage import ASSESSED
+from app.attack.exporters import awaiting_review_text as attack_awaiting_review_text
 from app.attack.exporters import build_context as attack_build_context
 from app.attack.exporters import coverage_measured
 from app.attack.exporters import partial_reason_counts as attack_partial_reason_counts
@@ -90,6 +93,7 @@ from app.schemas.clients import (
     AttackDashboardResponse,
     AttackDashboardRollup,
     AttackDashboardTechnique,
+    AttackInPlace,
     AttackPartialReason,
     AttackPartialReasonCount,
     AttackTacticCoverage,
@@ -879,10 +883,13 @@ def _attack_uncovered_total(
             # answer as an unresolvable service: the whole kind is unresolved,
             # and the card is told the cause.
             return _KindTotal(None, True), True, None
-        rows = (
+        # #554 R3: computed statuses where they apply, so this gap count is the
+        # dashboard's gap count.
+        rows = attack_effective_coverage(
+            a,
             db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
             .scalars()
-            .all()
+            .all(),
         )
         coverage_map: dict[str, str | None] = {r.technique_code: r.status for r in rows}
         # No `pending_codes` here, and that is deliberate rather than an
@@ -1189,10 +1196,12 @@ def attack_dashboard(
     require_current_catalog_for_client(assessment)
 
     valid = attack_all_codes()
-    rows = (
+    # #554 R3: computed statuses where they apply; the stored rows otherwise.
+    rows = attack_effective_coverage(
+        assessment,
         db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == assessment.id))
         .scalars()
-        .all()
+        .all(),
     )
     coverage_map: dict[str, str | None] = {
         r.technique_code: r.status for r in rows if r.technique_code in valid
@@ -1240,10 +1249,26 @@ def attack_dashboard(
                     AttackPartialReason(label=reason.label, sentence=reason.sentence)
                     if (
                         reason := attack_partial_reason(
-                            r.status, r.reason_code, computed_parent=bool(parent)
+                            r.status,
+                            r.reason_code,
+                            computed_parent=bool(parent),
+                            # #554 R3: the exporters' `_row_reason` twin.
+                            computed_leaf=getattr(r, "is_computed", False),
                         )
                     )
                     is not None
+                    else None
+                ),
+                # #554 R3: the deliverable's own words for each value.
+                in_place=(
+                    AttackInPlace(
+                        detect=ATTACK_IN_PLACE_TEXT[r.capabilities.detect],
+                        prevent=ATTACK_IN_PLACE_TEXT[r.capabilities.prevent],
+                        respond=ATTACK_IN_PLACE_TEXT[r.capabilities.respond],
+                        line=r.capabilities.line(),
+                        cannot_be_prevented=r.capabilities.cannot_be_prevented,
+                    )
+                    if getattr(r, "is_computed", False)
                     else None
                 ),
             )
@@ -1302,6 +1327,8 @@ def attack_dashboard(
         released=is_released,
         deliverable_version=deliv.version,
         parents_computed=True if rule else None,
+        # #554 R3 (Q4): the deliverable's own sentence, from the same context.
+        awaiting_review_sentence=attack_awaiting_review_text(deliverable_ctx),
         # #646: the ONE derivation every surface calls, for the released assessment.
         ai_source=ai_mode_for(db, svc, assessment).as_api(),
         rollup=AttackDashboardRollup(

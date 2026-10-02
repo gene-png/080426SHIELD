@@ -15,6 +15,16 @@ gap dispositions stay post-MVP and are added when #557 is built):
   would refuse every such release, with nothing able to clear it (an approved
   assessment is locked).
 
+  NOT under #554 R3 (the advisor's Q6, 2026-10-02): a status computed from
+  Detect / Prevent / Respond carries its reason in which of the three are in
+  place, so an assessment whose statuses are computed is not held to it.
+* **A computed status nobody has reviewed** -- #554 R3 (the advisor's Q1,
+  22:20Z): where a computed status differs from the AI's stored suggestion, a
+  consultant reviews it before release. Gated at RELEASE, not at approve ("not
+  at the click"), so `refuse_approve` never names it. An approved assessment's
+  rows cannot change, so the queue cannot grow between the check and the flip;
+  reviewing (`computed.review_queue`) only shrinks it.
+
 ONE predicate, two forms: `blocking_condition` for the SQL that joins the
 release flip's WHERE (`deliverable_release.ParentGuard`), and `blocking_rows`
 for the Python that names the codes in a refusal and gates approve. Both read
@@ -28,13 +38,14 @@ import uuid
 from dataclasses import dataclass
 
 from fastapi import HTTPException, status
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, false, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.attack.computed import effective_coverage, review_queue
 from app.attack.coverage import CoverageStatus
 from app.attack.parents import PARENT_CHILDREN
-from app.attack.rules import parents_computed
+from app.attack.rules import parents_computed, statuses_computed
 from app.logging import get_logger
 from app.models.attack_assessment import AttackAssessment, AttackCoverage
 
@@ -67,6 +78,12 @@ def _is_blocking(row: AttackCoverage, *, new_rules: bool) -> tuple[bool, bool]:
     return not_verified, reasonless
 
 
+def _reasons_required(assessment: AttackAssessment) -> bool:
+    """The Partial-without-reason clause: under #620's rules, and not where
+    statuses are computed (#554 R3, Q6)."""
+    return parents_computed(assessment) and not statuses_computed(assessment)
+
+
 def _blocking_sql(assessment_id: uuid.UUID, *, new_rules: bool) -> ColumnElement[bool]:
     clauses = [AttackCoverage.status == _NOT_VERIFIED]
     if new_rules:
@@ -81,7 +98,7 @@ def _blocking_sql(assessment_id: uuid.UUID, *, new_rules: bool) -> ColumnElement
 
 
 def blocking_rows(db: Session, assessment: AttackAssessment) -> BlockingRows:
-    new_rules = parents_computed(assessment)
+    new_rules = _reasons_required(assessment)
     not_verified: list[str] = []
     reasonless: list[str] = []
     for row in (
@@ -114,10 +131,33 @@ def blocking_condition(db: Session) -> object:
         a = db.get(AttackAssessment, assessment_id)
         if a is None:  # the flip's own WHERE would match nothing either
             raise RuntimeError(f"ATT&CK assessment {assessment_id} vanished mid-release")
-        new_rules = parents_computed(a)
-        return ~select(AttackCoverage.id).where(_blocking_sql(a.id, new_rules=new_rules)).exists()
+        new_rules = _reasons_required(a)
+        clear = ~select(AttackCoverage.id).where(_blocking_sql(a.id, new_rules=new_rules)).exists()
+        # #554 R3: the review queue is computed in Python, over rows an approved
+        # assessment cannot change; an unreviewed row makes the flip miss, and
+        # `refuse_release` names it.
+        return and_(clear, false()) if unreviewed_codes(db, a) else clear
 
     return condition
+
+
+def unreviewed_codes(db: Session, assessment: AttackAssessment) -> tuple[str, ...]:
+    """#554 R3: the techniques whose computed status awaits a consultant's
+    review, sorted; () for an assessment approved before R3."""
+    if not statuses_computed(assessment):
+        return ()
+    rows = (
+        db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == assessment.id))
+        .scalars()
+        .all()
+    )
+    found = review_queue(effective_coverage(assessment, rows))
+    _log.info(
+        "attack.release_readiness.review_queue",
+        assessment_id=str(assessment.id),
+        unreviewed=len(found),
+    )
+    return found
 
 
 def _codes(codes: tuple[str, ...]) -> str:
@@ -169,6 +209,23 @@ def refuse_release(db: Session, assessment_id: uuid.UUID) -> HTTPException:
     blocks the release and that nothing was released."""
     a = db.get(AttackAssessment, assessment_id)
     found = blocking_rows(db, a) if a is not None else BlockingRows((), ())
+    unreviewed = unreviewed_codes(db, a) if a is not None and not found else ()
+    if unreviewed:
+        n = len(unreviewed)
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "attack_computed_status_unreviewed",
+                "message": (
+                    f"Nothing was released: {n} "
+                    f"{'technique has' if n == 1 else 'techniques have'} a computed status "
+                    "that differs from the AI's suggestion and has not been reviewed "
+                    f"({_codes(unreviewed)}). Review them in the Computed status review "
+                    "panel, then release again."
+                ),
+                "unreviewed": list(unreviewed),
+            },
+        )
     if not found:
         return HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -201,4 +258,5 @@ __all__ = [
     "blocking_rows",
     "refuse_approve",
     "refuse_release",
+    "unreviewed_codes",
 ]

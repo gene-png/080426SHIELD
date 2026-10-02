@@ -72,7 +72,9 @@ def _row(code: str, d: str, p: str, r: str, *, status: str = "partial", reviewed
         elif value == "U":
             name = f"{field}-inferred"
             lists[field] = [name]
-            citations.append({"tool": name, "cited": name, "reason": "inferred", "cleared_at": None})
+            citations.append(
+                {"tool": name, "cited": name, "reason": "inferred", "cleared_at": None}
+            )
         else:
             lists[field] = []
     return SimpleNamespace(

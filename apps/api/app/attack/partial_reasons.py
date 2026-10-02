@@ -103,10 +103,20 @@ SET_BY_SUB_TECHNIQUES = PartialReason(
     "sub-technique for its own coverage and reason.",
 )
 
-#: The order the count table lists them in: the codes, then the two states.
+#: #554 R3 (C7): a Partial whose status was COMPUTED from Detect / Prevent /
+#: Respond and which carries no stored reason. Its reason is which of the three
+#: are in place (the advisor's Q6), so "Reason not recorded" would be false.
+SET_BY_WHAT_IS_IN_PLACE = PartialReason(
+    "Set by what is in place",
+    "This technique's status is computed from which of Detect, Prevent and Respond "
+    "are in place.",
+)
+
+#: The order the count table lists them in: the codes, then the three states.
 TABLE_ORDER: tuple[PartialReason, ...] = (
     *CLIENT_WORDING.values(),
     SET_BY_SUB_TECHNIQUES,
+    SET_BY_WHAT_IS_IN_PLACE,
     REASON_NOT_RECORDED,
 )
 
@@ -115,13 +125,22 @@ WHY_PARTIAL_LEGEND = ("Why partial", "The reason a Partial technique is only par
 
 
 def partial_reason(
-    status: str | None, reason_code: str | None, *, computed_parent: bool
+    status: str | None,
+    reason_code: str | None,
+    *,
+    computed_parent: bool,
+    computed_leaf: bool = False,
 ) -> PartialReason | None:
     """What a client reads for one row, or None when the row is not Partial.
 
     `computed_parent` is True only under #620's rules (`parents_computed`) for a
     technique with sub-techniques; under rule 1 a parent was scored directly
     and reads like any other row.
+
+    `computed_leaf` is True for a row whose status #554 R3 computed from Detect /
+    Prevent / Respond (`computed.EffectiveRow.is_computed`). Its stored reason,
+    when it has one, is kept beside the D/P/R line (the advisor's Q7); without
+    one it reads `SET_BY_WHAT_IS_IN_PLACE`, never "Reason not recorded".
 
     An unknown code RAISES. Every writer validates the code against the status
     (`coverage.is_valid_reason`), so one here is a writer bug; rendering it as
@@ -133,7 +152,7 @@ def partial_reason(
     if computed_parent:
         return SET_BY_SUB_TECHNIQUES
     if reason_code is None:
-        return REASON_NOT_RECORDED
+        return SET_BY_WHAT_IS_IN_PLACE if computed_leaf else REASON_NOT_RECORDED
     wording = CLIENT_WORDING.get(reason_code)
     if wording is None:
         raise ValueError(

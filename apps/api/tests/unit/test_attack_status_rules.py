@@ -61,19 +61,27 @@ def _insert_client(db) -> str:
     return client
 
 
-def _insert_assessment(db, client: str, status: str, **cols) -> str:
+_BEFORE_0059 = text(
+    "INSERT INTO attack_assessments "
+    "(id, service_id, client_id, version, status, documents_stale, created_at, updated_at) "
+    "VALUES (:id, :svc, :client, 1, :status, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+)
+_AT_0059 = text(
+    "INSERT INTO attack_assessments "
+    "(id, service_id, client_id, version, status, documents_stale, status_rules, "
+    "created_at, updated_at) VALUES "
+    "(:id, :svc, :client, 1, :status, 0, :rules, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+)
+
+
+def _insert_assessment(db, client: str, status: str, *, rules: object = _BEFORE_0059) -> str:
+    """`rules` left out: the table before 0059, which has no `status_rules`."""
     aid = str(uuid.uuid4())
-    extra = "".join(f", {k}" for k in cols)
-    params = "".join(f", :{k}" for k in cols)
-    db.execute(
-        text(
-            "INSERT INTO attack_assessments "
-            f"(id, service_id, client_id, version, status, documents_stale{extra}, "
-            f"created_at, updated_at) VALUES "
-            f"(:id, :svc, :client, 1, :status, 0{params}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
-        ),
-        {"id": aid, "svc": str(uuid.uuid4()), "client": client, "status": status, **cols},
-    )
+    params = {"id": aid, "svc": str(uuid.uuid4()), "client": client, "status": status}
+    if rules is _BEFORE_0059:
+        db.execute(_BEFORE_0059, params)
+    else:
+        db.execute(_AT_0059, {**params, "rules": rules})
     return aid
 
 
@@ -105,7 +113,7 @@ def _db_at_0059(tmp_path, *, rules: int | None, reviewed: str | None) -> tuple[C
     engine = create_engine(url, future=True)
     with engine.begin() as db:
         client = _insert_client(db)
-        aid = _insert_assessment(db, client, "APPROVED", status_rules=rules)
+        aid = _insert_assessment(db, client, "APPROVED", rules=rules)
         db.execute(
             text(
                 "INSERT INTO attack_coverage "

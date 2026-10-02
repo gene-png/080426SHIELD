@@ -129,6 +129,17 @@ class AttackPartialReasonCount(BaseModel):
     count: int
 
 
+class AttackInPlace(BaseModel):
+    """#554 R3: which of Detect / Prevent / Respond are in place, in the
+    client's words (`attack/computed.py::IN_PLACE_TEXT`), and the approved line."""
+
+    detect: str
+    prevent: str
+    respond: str
+    line: str
+    cannot_be_prevented: bool
+
+
 class AttackDashboardTechnique(BaseModel):
     """One evaluated technique row for the client coverage matrix. Only techniques
     with a non-null coverage status are serialized (the 'evaluated' set)."""
@@ -165,8 +176,12 @@ class AttackDashboardTechnique(BaseModel):
     #: both rule sets (the coordinator's option (a)). OMITTED on every other
     #: row, so a Covered or Gap row's JSON is unchanged.
     partial_reason: AttackPartialReason | None = None
+    #: #554 R3: what is in place, on a row whose status was computed. OMITTED on
+    #: every other row and for an assessment approved before R3, whose JSON is
+    #: unchanged.
+    in_place: AttackInPlace | None = None
     _omit_when_none: ClassVar[frozenset[str]] = frozenset(
-        {"computed_parent", "sub_technique_count", "partial_reason"}
+        {"computed_parent", "sub_technique_count", "partial_reason", "in_place"}
     )
 
     @model_serializer(mode="wrap")
@@ -246,13 +261,22 @@ class AttackDashboardResponse(BaseModel):
     #: by reason" table, from the deliverable's own `partial_reason_counts`, so
     #: its rows add up to `rollup.partial`. OMITTED when there is no Partial.
     partial_reasons: list[AttackPartialReasonCount] | None = None
+    #: #554 R3 (Q4): the deliverable's sentence beside the percentage. OMITTED
+    #: before R3 and when nothing awaits review.
+    awaiting_review_sentence: str | None = None
 
     @model_serializer(mode="wrap")
     def _drop_unset_rule_key(self, handler: Any) -> dict[str, Any]:
         return _without_none(
             handler(self),
             frozenset(
-                {"parents_computed", "tool_retirement", "retirement_notes", "partial_reasons"}
+                {
+                    "parents_computed",
+                    "tool_retirement",
+                    "retirement_notes",
+                    "partial_reasons",
+                    "awaiting_review_sentence",
+                }
             ),
         )
 

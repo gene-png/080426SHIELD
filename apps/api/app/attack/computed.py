@@ -204,13 +204,54 @@ def effective_coverage(assessment: Any, rows: Iterable[Any]) -> list[Any]:
     return [out[row.technique_code] for row in rows]
 
 
+# ---------------------------------------------------------------------------
+# Client copy, approved on #554 (21:55Z, and C1-C7 of the build plan). The
+# dashboard's copies live in `apps/web/src/lib/dashboards/attack.ts`; change both.
+# ---------------------------------------------------------------------------
+
+#: The heading of the dashboard section and of the PDF / DOCX table.
+CANNOT_BE_PREVENTED_HEADING = "Techniques that cannot be prevented"
+CANNOT_BE_PREVENTED_SENTENCE = (
+    "MITRE ATT&CK lists no preventive control for these techniques, so they are assessed "
+    "on detection and response. A technique here is Covered when it is both detected "
+    "and responded to."
+)
+#: The PDF / DOCX table's columns (C4).
+CANNOT_BE_PREVENTED_COLUMNS = ["Status", "Techniques"]
+#: The XLSX legend rows: the D/P/R columns (C3) and "cannot be prevented".
+IN_PLACE_LEGEND = (
+    "Detect, Prevent, Respond",
+    "in place means at least one confirmed tool provides it; awaiting review means its "
+    "tools are still to be confirmed, and the status is scored as if they were not in "
+    "place.",
+)
+CANNOT_BE_PREVENTED_LEGEND = (
+    "Cannot be prevented",
+    "MITRE ATT&CK lists no preventive mitigation for this technique. It is Covered when "
+    "it is detected and responded to.",
+)
+
+
+def awaiting_review_sentence(n: int) -> str | None:
+    """Q4's disclosure beside the percentage, or None at zero (C1 for one)."""
+    if n == 0:
+        return None
+    if n == 1:
+        return (
+            "1 technique lists tools awaiting review; it is scored as if those tools were "
+            "not in place."
+        )
+    return (
+        f"{n} techniques list tools awaiting review; they are scored as if those tools "
+        "were not in place."
+    )
+
+
 def awaiting_review_count(rows: Iterable[Any]) -> int:
     """How many computed techniques are scored as if tools awaiting review were
     not in place (Q4's disclosure)."""
     return sum(
-        1
-        for r in rows
-        if isinstance(r, EffectiveRow) and r.is_computed and r.capabilities.awaiting
+        1 for r in rows if isinstance(r, EffectiveRow) and r.is_computed and r.capabilities.awaiting
     )
 
 
@@ -234,11 +275,17 @@ def review_queue(rows: Iterable[Any]) -> tuple[str, ...]:
 
 
 __all__ = [
+    "CANNOT_BE_PREVENTED_COLUMNS",
+    "CANNOT_BE_PREVENTED_HEADING",
+    "CANNOT_BE_PREVENTED_LEGEND",
+    "CANNOT_BE_PREVENTED_SENTENCE",
+    "IN_PLACE_LEGEND",
     "IN_PLACE_TEXT",
     "Capabilities",
     "EffectiveRow",
     "InPlace",
     "awaiting_review_count",
+    "awaiting_review_sentence",
     "capabilities",
     "capability",
     "effective_coverage",

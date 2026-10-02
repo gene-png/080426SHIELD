@@ -25,6 +25,17 @@ from typing import TYPE_CHECKING
 
 from app.attack.analytics import CoverageRollup, TacticCoverage
 from app.attack.catalog import TACTICS, TECHNIQUES, all_codes, technique_by_id, technique_url
+from app.attack.computed import (
+    CANNOT_BE_PREVENTED_COLUMNS,
+    CANNOT_BE_PREVENTED_HEADING,
+    CANNOT_BE_PREVENTED_LEGEND,
+    CANNOT_BE_PREVENTED_SENTENCE,
+    IN_PLACE_LEGEND,
+    IN_PLACE_TEXT,
+    EffectiveRow,
+    awaiting_review_count,
+    awaiting_review_sentence,
+)
 from app.attack.coverage import ASSESSED, CoverageStatus, coverage_label
 from app.attack.parents import PARENT_CHILDREN, is_computed_parent
 from app.attack.partial_reasons import (
@@ -43,7 +54,7 @@ from app.attack.retirement import (
     summarize,
     summary_sentences,
 )
-from app.attack.rules import parents_computed
+from app.attack.rules import parents_computed, statuses_computed
 from app.client_naming import org_display_name
 from app.mode_stamp import (
     UNKNOWN_AI_MODE,
@@ -84,6 +95,9 @@ class AttackDeliverableContext:
     #: default is "not recorded", never live: a context built without a lookup
     #: must not read as a clean one.
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE
+    #: #554 R3: whether `coverage` holds statuses computed from Detect / Prevent /
+    #: Respond (`attack/rules.py::statuses_computed`). Derived in `build_context`.
+    statuses_computed: bool = False
 
 
 def build_context(
@@ -98,6 +112,15 @@ def build_context(
 ) -> AttackDeliverableContext:
     rows = list(coverage)
     rule = parents_computed(assessment)
+    computed = statuses_computed(assessment)
+    # #554 R3: the caller's rollup was computed over `computed.effective_coverage`
+    # rows, and these rows must be the SAME ones, or the per-technique sheet would
+    # print stored statuses beside a percentage computed from the others.
+    if computed and not all(isinstance(r, EffectiveRow) for r in rows):
+        raise ValueError(
+            "an assessment whose statuses are computed needs effective_coverage rows; "
+            "build_context was given stored rows"
+        )
     return AttackDeliverableContext(
         client_legal_name=org_display_name(client_legal_name),
         service_title=service_title,
@@ -111,7 +134,47 @@ def build_context(
         parents_computed=rule,
         retirement=retirement,
         ai_mode=ai_mode,
+        statuses_computed=computed,
     )
+
+
+def _computed_leaf(cov: object) -> bool:
+    """True for a row whose status #554 R3 computed (`EffectiveRow.is_computed`)."""
+    return isinstance(cov, EffectiveRow) and cov.is_computed
+
+
+def awaiting_review_text(ctx: AttackDeliverableContext) -> str | None:
+    """#554 R3 (Q4): the disclosure every renderer prints beside the percentage,
+    or None -- before R3, and when nothing awaits review."""
+    if not ctx.statuses_computed:
+        return None
+    return awaiting_review_sentence(awaiting_review_count(ctx.coverage))
+
+
+def in_place_cells(cov: object) -> list[str]:
+    """#554 R3: the Coverage sheet's Detect / Prevent / Respond cells."""
+    if not _computed_leaf(cov):
+        return ["", "", ""]
+    caps = cov.capabilities
+    return [IN_PLACE_TEXT[caps.detect], IN_PLACE_TEXT[caps.prevent], IN_PLACE_TEXT[caps.respond]]
+
+
+def cannot_be_prevented_counts(ctx: AttackDeliverableContext) -> list[tuple[str, int]]:
+    """#554 R3: the "Techniques that cannot be prevented" table, by status in
+    Covered / Partial / Gap order, zero rows omitted. Over the computed rows in
+    the catalogue and not withheld: the population the rollup counts."""
+    catalogue = {t.id for t in TECHNIQUES}
+    counts: dict[str, int] = {}
+    for cov in ctx.coverage:
+        if (
+            _computed_leaf(cov)
+            and cov.capabilities.cannot_be_prevented
+            and cov.technique_code in catalogue
+            and cov.technique_code not in ctx.pending_codes
+        ):
+            counts[cov.status] = counts.get(cov.status, 0) + 1
+    order = (CoverageStatus.COVERED, CoverageStatus.PARTIAL, CoverageStatus.GAP)
+    return [(coverage_label(s), counts[s.value]) for s in order if counts.get(s.value)]
 
 
 def _delivered_rows(ctx: AttackDeliverableContext) -> list[AttackCoverage]:
@@ -199,6 +262,7 @@ def _row_reason(ctx: AttackDeliverableContext, cov: AttackCoverage | None) -> Pa
         cov.status,
         cov.reason_code,
         computed_parent=ctx.parents_computed and is_computed_parent(cov.technique_code),
+        computed_leaf=_computed_leaf(cov),
     )
 
 
@@ -492,6 +556,9 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
     # withheld renders 0.0% here, which without this line is indistinguishable
     # from a client who owns no controls at all.
     ws.append(["Pending review", ctx.rollup.pending_review])
+    # #554 R3 (Q4): beside the percentage, only when something awaits review.
+    if (awaiting := awaiting_review_text(ctx)) is not None:
+        ws.append([awaiting])
     outside = states_outside_counts(ctx)
     if outside:
         # #554: outside the assessed denominator, and beside it, never omitted.
@@ -507,6 +574,12 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
     )
     # #554 R1: the Coverage sheet's "Why partial" column, explained.
     ws.append(list(WHY_PARTIAL_LEGEND))
+    # #554 R3: the Detect / Prevent / Respond columns, explained, and the
+    # "cannot be prevented" value only when a row carries it.
+    if ctx.statuses_computed:
+        ws.append(list(IN_PLACE_LEGEND))
+        if any(_computed_leaf(c) and c.capabilities.cannot_be_prevented for c in ctx.coverage):
+            ws.append(list(CANNOT_BE_PREVENTED_LEGEND))
     # #686: a legend row only for a mark the Coverage sheet actually carries,
     # so a workbook with none of them renders as it did before.
     delivered_marks = {
@@ -591,10 +664,11 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
         "Type",
         "Status",
         "Pending review",
-        # #554 R1, immediately after "Pending review". R3 SLOT: Gene's "What is
-        # in place: Detect / Prevent / Respond" column goes after this one; it
-        # waits on his "in place" decision and is not built.
+        # #554 R1, immediately after "Pending review".
         "Why partial",
+        # #554 R3: what is in place, only where statuses are computed. An
+        # assessment approved before R3 renders the columns it was delivered with.
+        *(["Detect", "Prevent", "Respond"] if ctx.statuses_computed else []),
         "Rationale",
         "Detection tools",
         "Prevention tools",
@@ -628,6 +702,7 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
                 _status_or_unscored(cov.status if cov else None),
                 "Yes" if tech.id in ctx.pending_codes else "",
                 reason.cell() if (reason := _row_reason(ctx, cov)) is not None else "",
+                *(in_place_cells(cov) if ctx.statuses_computed else []),
                 (own.rationale if own else None) or "",
                 _tools(own.detection_tools if own else None, unconfirmed, ctx.retirement),
                 _tools(own.prevention_tools if own else None, unconfirmed, ctx.retirement),
@@ -636,7 +711,11 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
             ],
         )
         _link_technique(ws2, tech.id)
-    widths2 = [14, 38, 28, 8, 12, 15, 60, 60, 30, 30, 30, 40]
+    widths2 = [
+        *[14, 38, 28, 8, 12, 15, 60],
+        *([16, 20, 16] if ctx.statuses_computed else []),
+        *[60, 30, 30, 30, 40],
+    ]
     for w, col in zip(widths2, range(1, len(widths2) + 1), strict=True):
         ws2.column_dimensions[get_column_letter(col)].width = w
 
@@ -735,12 +814,12 @@ def render_docx(ctx: AttackDeliverableContext) -> bytes:
             + (", " + outside_assessed_text(ctx.rollup) if outside else ""),
             # #686: only when non-zero, so nothing changes without a plan.
             *retirement_sentences(ctx),
+            # #554 R3 (Q4): only when something awaits review.
+            *([awaiting] if (awaiting := awaiting_review_text(ctx)) is not None else []),
         ],
     )
 
     # #554 R1: why the Partials are partial, counted. Only when there is one.
-    # R3 SLOT: a "What is in place" breakdown would follow this table; it waits
-    # on Gene's decision and is not built.
     reason_counts = partial_reason_counts(ctx)
     if reason_counts:
         add_heading(doc, PARTIAL_TABLE_HEADING)
@@ -749,6 +828,14 @@ def render_docx(ctx: AttackDeliverableContext) -> bytes:
             PARTIAL_TABLE_COLUMNS,
             [[reason.label, reason.sentence, n] for reason, n in reason_counts],
         )
+
+    # #554 R3: the techniques that cannot be prevented, by status. Only when
+    # there is one; the PDF carries the same table and they MUST move together.
+    unpreventable = cannot_be_prevented_counts(ctx)
+    if unpreventable:
+        add_heading(doc, CANNOT_BE_PREVENTED_HEADING)
+        add_table(doc, CANNOT_BE_PREVENTED_COLUMNS, [[label, n] for label, n in unpreventable])
+        add_paragraphs(doc, [CANNOT_BE_PREVENTED_SENTENCE])
 
     add_heading(doc, "Per-tactic rollup")
     add_table(
@@ -910,9 +997,11 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
     # #686: only when non-zero, so nothing changes without a plan.
     for sentence in retirement_sentences(ctx):
         story.append(Paragraph(html_escape(sentence, quote=False), body))
+    # #554 R3 (Q4): only when something awaits review.
+    if (awaiting := awaiting_review_text(ctx)) is not None:
+        story.append(Paragraph(html_escape(awaiting, quote=False), body))
 
     # #554 R1: the same table as the DOCX, and they MUST move together.
-    # R3 SLOT: a "What is in place" breakdown would follow it; not built.
     reason_counts = partial_reason_counts(ctx)
     if reason_counts:
         story.append(Paragraph(PARTIAL_TABLE_HEADING, h2))
@@ -933,6 +1022,20 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
         )
         reason_table.setStyle(_table_style())
         story.append(reason_table)
+
+    # #554 R3: the DOCX's table, and they MUST move together.
+    unpreventable = cannot_be_prevented_counts(ctx)
+    if unpreventable:
+        story.append(Paragraph(CANNOT_BE_PREVENTED_HEADING, h2))
+        unpreventable_table = Table(
+            [CANNOT_BE_PREVENTED_COLUMNS, *[[label, str(n)] for label, n in unpreventable]],
+            colWidths=[2.0 * inch, 1.2 * inch],
+            repeatRows=1,
+            hAlign="LEFT",
+        )
+        unpreventable_table.setStyle(_table_style())
+        story.append(unpreventable_table)
+        story.append(Paragraph(html_escape(CANNOT_BE_PREVENTED_SENTENCE, quote=False), body))
 
     story.append(Paragraph("Per-tactic rollup", h2))
     tactic_table_data: list[list] = [
