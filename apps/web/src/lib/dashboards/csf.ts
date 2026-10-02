@@ -55,10 +55,11 @@ export interface CsfDashboardData {
   target_label: string;
   target_pct: number;
   /**
-   * FOUR values, not two (#184): "client", "default", "client_out_of_range",
-   * "client_unparseable". The last two mean the client DID choose and the
-   * choice could not be used — a different fact from choosing nothing, and the
-   * only one a consultant can act on by re-asking them.
+   * Not two values (#184): "client", "default", "client_out_of_range",
+   * "client_unparseable", and since #85 "client_below_floor". The last three
+   * mean the client DID choose and the choice could not be used — a different
+   * fact from choosing nothing, and the only one a consultant can act on by
+   * re-asking them.
    *
    * Rendered, not just carried — see `targetIsAssumed` and `targetFaultNote`.
    */
