@@ -1,6 +1,13 @@
 "use client";
 
 import type {
+  AiRun,
+  AiRunStarted,
+  AiRunSummary,
+  AiServes,
+} from "@/lib/aiRuns/types";
+
+import type {
   CapabilityDisposition,
   CapabilityItem,
   CapabilityItemPatch,
@@ -86,16 +93,53 @@ export async function createService(title: string): Promise<ServiceResponse> {
   });
 }
 
+/**
+ * Start an extraction (#645). Two answers: an open draft from the same
+ * document comes back as it stands (no AI call), and anything else starts a
+ * run to follow -- the list arrives when the run completes.
+ *
+ * `serves` is the AI status the consultant acknowledged (#504).
+ */
 export async function extractCapabilities(
   serviceId: string,
   artifactId: string,
-): Promise<CapabilityList> {
-  return jsonRequest<CapabilityList>(
+  serves: AiServes,
+): Promise<CapabilityList | AiRunStarted> {
+  return jsonRequest<CapabilityList | AiRunStarted>(
     `/api/proxy/tech-debt/services/${serviceId}/capability-lists/extract`,
     {
       method: "POST",
-      body: { artifact_id: artifactId },
+      body: { artifact_id: artifactId, serves },
     },
+  );
+}
+
+/** What an extraction run did, as stored on the run. */
+export interface TechDebtExtractResult {
+  capability_list_id: string;
+  version: number;
+  item_count: number;
+  source_rows_total: number;
+  excluded_rows: number;
+}
+
+export type TechDebtRun = AiRun<TechDebtExtractResult>;
+
+export async function fetchTechDebtRun(runId: string): Promise<TechDebtRun> {
+  return jsonRequest<TechDebtRun>(`/api/proxy/ai/runs/${runId}`);
+}
+
+/**
+ * The service's runs. `subjectId` scopes the newest and last completed runs
+ * to one assessment (#271); the run holding the lock is always the service's.
+ */
+export async function fetchTechDebtRunSummary(
+  serviceId: string,
+  subjectId?: string,
+): Promise<AiRunSummary<TechDebtExtractResult>> {
+  const scope = subjectId ? `?subject_id=${encodeURIComponent(subjectId)}` : "";
+  return jsonRequest<AiRunSummary<TechDebtExtractResult>>(
+    `/api/proxy/ai/runs/services/${serviceId}${scope}`,
   );
 }
 

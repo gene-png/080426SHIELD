@@ -29,6 +29,11 @@ vi.mock("@/lib/tech_debt/client", () => ({
   approveCapabilityList: vi.fn(),
   discardCapabilityList: vi.fn(),
   extractCapabilities: vi.fn(),
+  // #645: the workspace reads the service's runs on load. No run, by default.
+  fetchTechDebtRun: vi.fn(),
+  fetchTechDebtRunSummary: vi.fn(() =>
+    Promise.resolve({ running: null, latest: null, last_completed: null }),
+  ),
   fetchConsolidationPlan: vi.fn(),
   fetchLatestDeliverable: vi.fn(),
   fetchLatestList: vi.fn(),
@@ -161,7 +166,12 @@ describe("auto-extraction on upload waits for a settled AI status (#509)", () =>
     await act(async () => {
       settle(status({ ready: true, serves: "live", key_source: "database" }));
     });
-    expect(extractCapabilities).toHaveBeenCalledWith("svc-1", "artifact-1");
+    // #645 / #504: the run carries what the settled status said it would do.
+    expect(extractCapabilities).toHaveBeenCalledWith(
+      "svc-1",
+      "artifact-1",
+      "live",
+    );
   });
 
   it("does not run when the status cannot be read -- the guarded button is the way in", async () => {

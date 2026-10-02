@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.models.capability import CapabilityItem, CapabilityList, CapabilityListStatus
 from app.models.service import Service, ServiceKind, ServiceStatus
+from tests._ai_runs import attack_run_ai
 from tests._attack_rows import standalone_rows
 
 
@@ -143,15 +144,14 @@ def test_an_inferred_citation_survives_the_reload(app_client) -> None:
             ' "detection_tools": ["CrowdStrike"]}]}'
         ),
     )
-    run = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
-    assert run.status_code == 200, run.text
+    run = attack_run_ai(c, svc_id, h)
     # Asserted on the DEDUPED tool list, not on `citations_needs_review`. The run
     # is batched and a registered fixture answers every batch identically, so the
     # raw counter reads 26 here -- an artifact of the harness, not of the code.
     # The tool list is deduped run-wide and says the thing under test: this
     # citation was an inference.
-    assert run.json()["citations_needs_review_tools"] == ["CrowdStrike Falcon"]
-    assert run.json()["pending_review_rows"] == 1
+    assert run["citations_needs_review_tools"] == ["CrowdStrike Falcon"]
+    assert run["pending_review_rows"] == 1
 
     reloaded = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h)
     assert reloaded.status_code == 200, reloaded.text
@@ -196,10 +196,10 @@ def test_an_exact_citation_persists_an_empty_list_not_null(app_client) -> None:
             ' "detection_tools": ["crowdstrike falcon"]}]}'
         ),
     )
-    run = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
-    assert run.json()["citations_needs_review_tools"] == []
-    assert run.json()["citations_rejected_examples"] == []
-    assert run.json()["pending_review_rows"] == 0
+    run = attack_run_ai(c, svc_id, h)
+    assert run["citations_needs_review_tools"] == []
+    assert run["citations_rejected_examples"] == []
+    assert run["pending_review_rows"] == 0
 
     row = _row(c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json(), code)
     assert row["unconfirmed_citations"] == []
@@ -264,7 +264,7 @@ def test_taking_authorship_of_a_row_clears_its_flags_but_keeps_the_record(app_cl
             ' "detection_tools": ["CrowdStrike"]}]}'
         ),
     )
-    c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    attack_run_ai(c, svc_id, h)
     assert c.get(f"/attack/services/{svc_id}/heatmap", headers=h).json()["pending_review"] == 1
 
     latest = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json()
@@ -303,7 +303,7 @@ def test_editing_a_note_does_not_clear_the_review_queue(app_client) -> None:
             ' "detection_tools": ["CrowdStrike"]}]}'
         ),
     )
-    c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    attack_run_ai(c, svc_id, h)
 
     latest = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json()
     row_id = _row(latest, code)["id"]
@@ -341,9 +341,9 @@ def test_a_technique_whose_every_citation_was_rejected_is_pending(app_client) ->
             ' "detection_tools": ["Qradar"]}]}'
         ),
     )
-    run = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
-    assert run.json()["citations_rejected_examples"] == ["Qradar"]
-    assert run.json()["pending_review_rows"] == 1
+    run = attack_run_ai(c, svc_id, h)
+    assert run["citations_rejected_examples"] == ["Qradar"]
+    assert run["pending_review_rows"] == 1
 
     row = _row(c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json(), code)
     assert row["status"] == "covered", "the status survives -- it is the SCORE that withholds"
@@ -385,7 +385,7 @@ def test_the_heatmap_withholds_a_pending_technique_and_says_how_many(app_client)
             ' "detection_tools": []}]}'
         ),
     )
-    c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    attack_run_ai(c, svc_id, h)
 
     hm = c.get(f"/attack/services/{svc_id}/heatmap", headers=h)
     assert hm.status_code == 200, hm.text
@@ -442,7 +442,7 @@ def test_a_row_the_run_never_touched_stays_null_and_scores_as_pending(app_client
         db.commit()
 
     provider.register_static("mitre_map", LLMResponse('{"techniques": []}'))
-    c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    attack_run_ai(c, svc_id, h)
 
     with TestSession() as db:
         assert (
@@ -493,9 +493,8 @@ def test_a_model_claim_with_no_citation_at_all_is_pending(app_client) -> None:
             '{"technique_code": "' + gapped + '", "status": "gap"}]}'
         ),
     )
-    run = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
-    assert run.status_code == 200, run.text
-    assert run.json()["pending_review_rows"] == 1
+    run = attack_run_ai(c, svc_id, h)
+    assert run["pending_review_rows"] == 1
 
     latest = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json()
     row = _row(latest, claimed)
@@ -548,7 +547,7 @@ def test_confirming_a_rows_citations_is_a_first_class_action(app_client) -> None
             ' "detection_tools": ["CrowdStrike"]}]}'
         ),
     )
-    c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    attack_run_ai(c, svc_id, h)
     latest = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json()
     row_id = _row(latest, code)["id"]
 
@@ -611,7 +610,7 @@ def test_confirming_is_refused_on_a_locked_assessment(app_client) -> None:
             ' "detection_tools": ["CrowdStrike"]}]}'
         ),
     )
-    c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    attack_run_ai(c, svc_id, h)
     latest = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json()
     row_id = _row(latest, code)["id"]
     approved = c.post(f"/attack/assessments/{latest['id']}/approve", headers=h)
@@ -652,7 +651,7 @@ def test_a_rerun_that_omits_a_tool_field_does_not_erase_its_flags(app_client) ->
             ' "detection_tools": ["CrowdStrike"]}]}'
         ),
     )
-    c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    attack_run_ai(c, svc_id, h)
     first = _row(c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json(), code)
     assert first["pending_review"] is True
 
@@ -661,7 +660,7 @@ def test_a_rerun_that_omits_a_tool_field_does_not_erase_its_flags(app_client) ->
         "mitre_map",
         LLMResponse('{"techniques": [{"technique_code": "' + code + '", "status": "covered"}]}'),
     )
-    c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    attack_run_ai(c, svc_id, h)
 
     row = _row(c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json(), code)
     assert row["detection_tools"] == ["CrowdStrike Falcon"], "the tool survived the rerun"
@@ -693,7 +692,7 @@ def test_a_rerun_replaces_only_the_fields_it_resolved(app_client) -> None:
             ' "detection_tools": ["CrowdStrike"], "response_tools": ["Splunk"]}]}'
         ),
     )
-    c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    attack_run_ai(c, svc_id, h)
     first = _row(c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json(), code)
     assert {e["field"] for e in first["unconfirmed_citations"]} == {
         "detection_tools",
@@ -708,7 +707,7 @@ def test_a_rerun_replaces_only_the_fields_it_resolved(app_client) -> None:
             ' "detection_tools": ["CrowdStrike Falcon"]}]}'
         ),
     )
-    c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    attack_run_ai(c, svc_id, h)
 
     row = _row(c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json(), code)
     fields = {e["field"] for e in row["unconfirmed_citations"]}
@@ -742,7 +741,7 @@ def test_a_later_citation_clears_the_no_citation_marker(app_client) -> None:
         "mitre_map",
         LLMResponse('{"techniques": [{"technique_code": "' + code + '", "status": "covered"}]}'),
     )
-    c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    attack_run_ai(c, svc_id, h)
     first = _row(c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json(), code)
     assert [e["reason"] for e in first["unconfirmed_citations"]] == ["no_citation"]
 
@@ -753,7 +752,7 @@ def test_a_later_citation_clears_the_no_citation_marker(app_client) -> None:
             ' "detection_tools": ["crowdstrike falcon"]}]}'
         ),
     )
-    c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    attack_run_ai(c, svc_id, h)
 
     row = _row(c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json(), code)
     assert row["detection_tools"] == ["CrowdStrike Falcon"]

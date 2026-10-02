@@ -29,6 +29,12 @@ vi.mock("@/lib/tech_debt/client", () => ({
   approveCapabilityList: vi.fn(),
   discardCapabilityList: vi.fn(),
   extractCapabilities: vi.fn(),
+  // #645: the page reads the service's runs on load and polls one it
+  // follows. No run, by default.
+  fetchTechDebtRun: vi.fn(),
+  fetchTechDebtRunSummary: vi.fn(() =>
+    Promise.resolve({ running: null, latest: null, last_completed: null }),
+  ),
   fetchConsolidationPlan: vi.fn(),
   fetchLatestDeliverable: vi.fn(),
   fetchLatestList: vi.fn(),

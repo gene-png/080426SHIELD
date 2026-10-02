@@ -36,6 +36,7 @@ of what it will have does.
 
 from __future__ import annotations
 
+import functools
 import uuid
 from typing import Annotated
 
@@ -44,6 +45,15 @@ from sqlalchemy import and_, func, select, update
 from sqlalchemy.orm import Session
 
 from app.ai.llm import LLMClient
+from app.ai.runs import (
+    RunContext,
+    RunFailed,
+    Runner,
+    RunOutcome,
+    get_ai_run_runner,
+    require_serves,
+    start_run,
+)
 from app.audit import audit
 from app.db.session import get_db
 from app.deliverable_release import ParentGuard, release_deliverable
@@ -57,6 +67,7 @@ from app.models.deliverable import Deliverable
 from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.user import User, UserRole
 from app.routes.artifacts import _storage_dep
+from app.schemas.ai_runs import AiRunStarted
 from app.schemas.tech_debt import (
     CapabilityComponentsRequest,
     CapabilityDispositionBulkSet,
@@ -79,8 +90,9 @@ from app.storage import StorageBackend
 from app.tech_debt.exporters import build_context, render_docx, render_pdf, render_xlsx
 from app.tech_debt.extract import (
     client_org_name_for_tenant,
-    extract_capabilities,
+    extract_from_rows,
     name_hints_for_tenant,
+    read_inventory,
 )
 from app.tech_debt.filename import (
     SERVICE_SLUG_BY_KIND,
@@ -372,9 +384,9 @@ def _refuse_draft_from_other_document(
 
 @router.post(
     "/services/{service_id}/capability-lists/extract",
-    response_model=CapabilityListResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Extract capability list from an inventory artifact (admin)",
+    response_model=CapabilityListResponse | AiRunStarted,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Extract a capability list from an inventory artifact in the background (admin)",
 )
 def extract_capability_list(
     service_id: uuid.UUID,
@@ -385,8 +397,17 @@ def extract_capability_list(
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[StorageBackend, Depends(_storage_dep)],
     llm: Annotated[LLMClient, Depends(_llm_dep)],
+    runner: Annotated[Runner, Depends(get_ai_run_runner)],
     _rl: Annotated[None, Depends(enforce_ai_rate_limit)],
-) -> CapabilityListResponse:
+) -> CapabilityListResponse | AiRunStarted:
+    """Start an extraction (#645): a 202 with a run to poll, whose job writes
+    the new list version. Two answers are NOT a run, and keep their status:
+
+    * an open draft from the SAME document is returned as it stands (200),
+      exactly as before -- no extraction, no AI call;
+    * every refusal (404, 415, the #644 409) is made here, synchronously.
+    """
+    serves = require_serves(body.serves)
     svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.TECH_DEBT)
     artifact = require_artifact_in_tenant(db, body.artifact_id, client.id)
     if artifact.mime_type not in SUPPORTED_MIME:
@@ -399,8 +420,8 @@ def extract_capability_list(
     # this route used to mint a new version and fire a fresh LLM extraction on
     # EVERY call, so a double-click on "extract" produced unbounded v2, v3, v4…
     # drafts and burned an AI call per click. The guard sits AFTER service/
-    # artifact validation but BEFORE extract_capabilities() so a second POST
-    # while a draft is open does NOT invoke the LLM. If an unsubmitted draft is
+    # artifact validation but BEFORE any extraction so a second POST while a
+    # draft is open does NOT invoke the LLM. If an unsubmitted draft is
     # already open, return it idempotently (HTTP 200) untouched — NO
     # re-extraction, NO clear-and-repopulate, so consultant edits/locks on the
     # open draft survive. A new version is only cut once the prior list has
@@ -419,37 +440,94 @@ def extract_capability_list(
         response.status_code = status.HTTP_200_OK
         return _serialize_list_with_items(db, existing)
 
+    # Parsed HERE so an unreadable document is the request's 415, not a failed
+    # run. The rows are plain data and travel to the job as they are.
     try:
-        result = extract_capabilities(
-            db=db,
-            storage=storage,
-            artifact=artifact,
-            requested_by=user,
-            service_id=svc.id,
-            client_id=client.id,
-            client_org_name=client_org_name_for_tenant(db, client.id),
-            name_hints=name_hints_for_tenant(db, client.id),
-            llm=llm,
-        )
+        rows = read_inventory(storage, artifact)
     except UnsupportedInventoryFormat as exc:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             detail=str(exc),
         ) from exc
+
+    return start_run(
+        db,
+        llm=llm,
+        serves=serves,
+        service_id=svc.id,
+        client_id=client.id,
+        purpose=_EXTRACT_PURPOSE,
+        subject_id=artifact.id,
+        requested_by=user.id,
+        runner=runner,
+        work=functools.partial(
+            _extract_run_work,
+            artifact_id=artifact.id,
+            source_filename=artifact.title,
+            source_mime=artifact.mime_type,
+            rows=rows,
+        ),
+    )
+
+
+#: The Run-AI purpose of an extraction: the AI job's name, as ATT&CK's runs use
+#: theirs (`mitre_map`). The `llm_calls` purpose stays "extract.capabilities".
+_EXTRACT_PURPOSE = "tech_debt_extract"
+
+
+def _extract_run_work(
+    session: Session,
+    ctx: RunContext,
+    *,
+    artifact_id: uuid.UUID,
+    source_filename: str | None,
+    source_mime: str,
+    rows: list[dict],
+) -> RunOutcome:
+    """The extraction, in the background job's own session (#645). Writes a NEW
+    list version; it never touches an existing list's rows, which is why no
+    edit route is locked while it runs (see `test_ai_runs_tech_debt.py`)."""
+    db = session
+    # Re-checked: the POST found no open draft, and this run is the only
+    # thing that mints one -- a second extract POST joins or is refused. Kept
+    # so that if something else ever mints a draft, this run says so rather
+    # than putting a second draft beside it.
+    existing = _latest_list_or_none(db, ctx.service_id)
+    if existing is not None and existing.status == CapabilityListStatus.DRAFT:
+        raise RunFailed(
+            "capability_list_draft_exists",
+            "A draft capability list was opened while this extraction ran, so it "
+            "was not added beside it. Nothing was applied.",
+        )
+    try:
+        result = extract_from_rows(
+            db=db,
+            rows=rows,
+            source_filename=source_filename,
+            source_mime=source_mime,
+            requested_by_id=ctx.requested_by,
+            service_id=ctx.service_id,
+            client_id=ctx.client_id,
+            client_org_name=client_org_name_for_tenant(db, ctx.client_id),
+            name_hints=name_hints_for_tenant(db, ctx.client_id),
+            llm=ctx.llm,
+        )
     except ValueError as exc:
-        # LLM returned unparseable JSON. The llm_calls row is already
-        # written; surface a 502 so the admin sees this is upstream, not
-        # client error.
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"AI extraction failed to parse: {exc}",
+        # LLM returned unparseable JSON. The llm_calls row is already written;
+        # the synchronous route answered a 502 here.
+        db.commit()
+        raise RunFailed(
+            "ai_extraction_unparseable", f"AI extraction failed to parse: {exc}"
         ) from exc
+    # The provider call is over and recorded: keep its `llm_calls` row whatever
+    # happens to the apply below.
+    db.commit()
 
     # Determine next version off the true max (discarded rows still hold their
     # version under the unique constraint - D-031 version trap).
-    next_version = _max_list_version(db, svc.id) + 1
+    next_version = _max_list_version(db, ctx.service_id) + 1
     cap_list = CapabilityList(
-        service_id=svc.id,
+        service_id=ctx.service_id,
         version=next_version,
         # Persisted so the disclosure survives a page reload: the workspace
         # re-fetches the list on every load, and a warning that vanishes on
@@ -474,7 +552,7 @@ def extract_capability_list(
                 license_count=item.license_count,
                 notes=item.notes,
                 confidence_pct=item.confidence_pct,
-                source_artifact_id=artifact.id,
+                source_artifact_id=artifact_id,
                 # Prompt v2 classifies rather than filters. None stays None: an
                 # unclassified row is not a negative one.
                 security_related=item.security_related,
@@ -487,18 +565,28 @@ def extract_capability_list(
         action="capability_list.extracted",
         target_type="capability_list",
         target_id=cap_list.id,
-        actor_user_id=user.id,
+        actor_user_id=ctx.requested_by,
         details={
-            "service_id": str(svc.id),
+            "service_id": str(ctx.service_id),
             "version": next_version,
-            "artifact_id": str(artifact.id),
+            "artifact_id": str(artifact_id),
             "item_count": len(result.items),
             "llm_call_id": str(result.llm_call.id),
+            "run_id": str(ctx.run_id),
         },
     )
-    db.commit()
-    db.refresh(cap_list)
-    return _serialize_list_with_items(db, cap_list)
+    db.flush()
+    # No commit: the framework commits the list with the run's completion.
+    return RunOutcome(
+        result={
+            "capability_list_id": str(cap_list.id),
+            "version": next_version,
+            "item_count": len(result.items),
+            "source_rows_total": result.reconciliation.received,
+            "excluded_rows": len(result.reconciliation.excluded_rows),
+        },
+        applied_count=len(result.items),
+    )
 
 
 @router.get(
