@@ -137,6 +137,9 @@ def context_with_items():
         # it asserted was consequently labelled for a list whose completeness
         # was never recorded. See `cost_label`'s three outcomes.
         source_rows_total=3,
+        # And a RECORDED clean run (#177, migration 0058): with the flag NULL an
+        # empty excluded list proves nothing, and the count reads unknown.
+        attribution_complete=True,
     )
     items = [
         _item(name="Wiz", annual_cost_usd=350_000, disposition=CapabilityDisposition.KEEP),

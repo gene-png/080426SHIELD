@@ -66,6 +66,12 @@ export interface ExcludedRow {
 }
 
 export interface CapabilityList {
+  /** #177: whether the extraction attributed every item to one uploaded row;
+   *  null is "not recorded". */
+  attribution_complete?: boolean | null;
+  /** #177/#193: from the api's one reader. "exact" licenses the excluded count
+   *  as the count; "unknown" makes it a floor. Absent reads as unknown. */
+  exclusion_count_state?: "not_recorded" | "exact" | "unknown" | null;
   /** #646: which mode drafted this list, as the API states it. Null only on
    *  a response built without it. */
   ai_source?: AiSource | null;

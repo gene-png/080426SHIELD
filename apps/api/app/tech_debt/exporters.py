@@ -28,6 +28,7 @@ from app.mode_stamp import (
     pdf_paragraph,
 )
 from app.models.capability import CapabilityDisposition, CapabilityItem, CapabilityList
+from app.tech_debt.reconcile import exclusion_count_state
 
 
 @dataclass(frozen=True)
@@ -66,10 +67,18 @@ class DeliverableContext:
     # without this field is one whose items were never checked, and the
     # pre-existing behaviour for those is the unqualified label.
     spend_cost_known: bool = True
+    #: #177/#193: `reconcile.exclusion_count_state` for the list -- whether
+    #: `excluded_count` is exact or only a floor. Defaulted to "unknown", never
+    #: "exact": a context built without the reader must not claim an exact count.
+    exclusion_state: str = "unknown"
     #: #646: which mode drafted the AI suggestions behind this document. The
     #: default is "not recorded", never live: a context built without a lookup
     #: must not read as a clean one.
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE
+
+
+#: #193: why the exclusion count is unknown, as every surface states it.
+UNKNOWN_EXCLUSION_CAUSE = "the AI could not match every extracted capability to one uploaded row"
 
 
 def reconciliation_line(ctx: DeliverableContext) -> str | None:
@@ -80,7 +89,20 @@ def reconciliation_line(ctx: DeliverableContext) -> str | None:
     has to carry the same reconciliation the workspace shows, or it states a
     partial figure as a total.
     """
-    if not ctx.excluded_count or ctx.source_rows_total is None:
+    if ctx.source_rows_total is None:
+        return None
+    if ctx.exclusion_state == "unknown":
+        # #193: the attribution failed, so `excluded_count` is a FLOOR -- the
+        # rows the items actually claimed are fewer than the items -- and it is
+        # 0 when items are as many as rows, which used to print nothing here
+        # and "Total annual cost" beside it. Said even at 0, and never as the
+        # count.
+        floor = f" (at least {ctx.excluded_count})" if ctx.excluded_count else ""
+        return (
+            f"{ctx.source_rows_total} rows received · {ctx.included_count} included · "
+            f"excluded count unknown{floor}: {UNKNOWN_EXCLUSION_CAUSE}"
+        )
+    if not ctx.excluded_count:
         return None
     line = (
         f"{ctx.source_rows_total} rows received · {ctx.included_count} included · "
@@ -88,9 +110,10 @@ def reconciliation_line(ctx: DeliverableContext) -> str | None:
     )
     if not ctx.excluded_rows_named:
         # A count with no accompanying list reads as a rendering bug unless it
-        # says why. `reconcile.py` withholds the names rather than guessing when
-        # the provider did not attribute every item to a source row; the count is
-        # still exact, and saying so is what keeps it usable.
+        # says why. Since 0058 (#193) no writer reaches this: an exact count
+        # comes from a complete attribution, which names every excluded row,
+        # and a failed one takes the unknown branch above. Kept as a ratchet
+        # in case `exclusion_count_state` is ever loosened.
         line += " (excluded rows were not attributed individually)"
     return line
 
@@ -137,6 +160,12 @@ def cost_label(ctx: DeliverableContext) -> str:
     sits exactly where a reader would check and describes a NARROWER case than
     they would assume it covers.
     """
+    if ctx.source_rows_total is not None and ctx.exclusion_state == "unknown":
+        # #193: how many rows were excluded is not known (the extraction could
+        # not attribute every item), so neither "Total" nor "Included" can be
+        # claimed. Covers the unbalanced case below too: more items than rows
+        # can only come from a failed attribution, which is "unknown".
+        return "Annual cost (may not be complete)"
     if ctx.source_rows_total is not None and ctx.included_count > ctx.source_rows_total:
         # THE UNBALANCED CASE. More items than there were source rows, so
         # `excluded_count` floored to 0 and the two branches below both fall
@@ -258,6 +287,8 @@ def build_context(
         estimated_savings=estimated_savings,
         savings_cost_known=savings_known,
         spend_cost_known=spend_known,
+        # #177: THE ONE READER, as the dashboard and the admin list call it.
+        exclusion_state=exclusion_count_state(cap_list),
     )
 
 
