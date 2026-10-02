@@ -138,3 +138,8 @@ class LLMCall(UUIDPKMixin, TimestampMixin, Base):
     )
     redacted_counts: Mapped[dict | None] = mapped_column(JSONB().with_variant(JSONB, "postgresql"))
     correlation_id: Mapped[str | None] = mapped_column(String(128))
+    # The Run-AI this call belongs to (#645). NULL for calls made outside a run
+    # (the redaction preview, Risk synthesis) and for every row before 0057.
+    ai_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("ai_runs.id", ondelete="SET NULL")
+    )

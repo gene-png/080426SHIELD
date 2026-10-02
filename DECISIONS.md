@@ -6463,3 +6463,20 @@ The shared dev database, read-only: DRAFT 2, RELEASED 2, APPROVED 0, at migratio
 **One helper.** `app/security/sessions.py::end_user_sessions` is now the only place a session is ended. It is called by the password reset, by deactivation in `PATCH /admin/users/{id}`, and by `DELETE /admin/clients/{cid}`. Deactivation now also stamps the cutoff. Before, it relied on the `is_active` check alone, so a reactivated user's pre-deactivation access tokens worked again until their TTL.
 
 **Not decided here.** Signing in AFTER the archive is not refused: nothing on the login path reads `Client.archived_at`, which is #652's other half. A password reset still ends sessions without blocking a later sign-in, and this decision matches that and goes no further.
+
+## D-104 — Run-AI runs in the background, and the run row is what the page reads
+
+**2026-10-01 · ai** (plan of record v3.1, section 3, approved by Gene 2026-09-27; #645, with #504 and #271)
+
+**Decision.** A Run-AI POST makes every refusal that needs no AI synchronously, inserts an `ai_runs` row (migration 0057) and answers 202 with the run. A background job does the work in its own session bound to the request's engine, inside a copy of the request's context, and finishes the run with a compare-and-swap on `status = 'RUNNING'` in the same transaction as the apply. The workspace polls the run, and reads every disclosure from the last COMPLETED run, so they survive a reload. ATT&CK, Tech Debt extraction, CSF and ZT run this way; Risk does not (set aside by Gene, 2026-09-27).
+
+**Gene's three product calls, as the plan assumed them.** `serves` is required on the POST; acknowledged offline while the provider would go live is a typed 409 `ai_status_changed`, and the reverse is allowed. A running run in the other mode is refused, not joined. Row edits, approve and finalize are locked while a run is in progress and discard is not. A row edited at or after the run's start is kept and counted, never overwritten.
+
+**Decided in the build, each overturnable:**
+
+- **Reap on read, not at boot.** The reaper runs wherever a run is read (the POST, the edit lock, the status reads) through the request's session. A lifespan sweep would have needed a reachable database at startup, which `tests/conftest.py`'s default `DATABASE_URL` is not, so it would have either crashed every test that builds the app without overriding `get_db` or swallowed the error. Nothing can be locked by an orphaned run, because every surface that consults the lock reaps first. The one-process precondition is written at the reaper.
+- **`ai_runs.subject_id`.** What the run works on: the assessment, or the Tech Debt inventory document. A second POST naming a different subject is refused with 409 `ai_run_in_progress_other_input` rather than handed someone else's run, which is #644's shape one layer down.
+- **No edit lock for Tech Debt.** An extraction writes a new list version and never an existing list's rows, and none runs while a draft is open. Every mutating Tech Debt route is classified with that reason by a router-derived test.
+- **ZT locks the client's own self-assessment routes.** The ZT run writes the answers themselves, so the client's answer PATCH and submit are refused while it runs, with the same typed message.
+- **A status outage proceeds as `live`.** When RunAiGuard could not read the AI status it fails open, as before; the run then asks the api for no promise that it stays offline.
+- **A row edited mid-run is a new by-design drop reason, `edited`,** for CSF and ZT, inside the received == applied + dropped invariant; ATT&CK counts it as `rows_skipped_edited`.

@@ -33,6 +33,12 @@ vi.mock("@/lib/zt/client", () => ({
   discardAssessment: vi.fn(),
   patchAnswer: vi.fn(),
   runZtAi: vi.fn(),
+  // #645: the page reads the service's runs on load and polls one it
+  // follows. No run, by default.
+  fetchZtRun: vi.fn(),
+  fetchZtRunSummary: vi.fn(() =>
+    Promise.resolve({ running: null, latest: null, last_completed: null }),
+  ),
   finalizeZtDeliverable: vi.fn(),
   releaseZtDeliverable: vi.fn(),
 }));
@@ -154,13 +160,26 @@ describe("ZtWorkspace, a Run AI whose outcome is unknown (#550)", () => {
 
   it("does not lock Run AI when the RUN succeeded and only the re-read after it got no answer", async () => {
     // Review of #752, finding 1: the run answered; the re-read did not.
+    // #645: the POST answered with a run, and the run completed.
     vi.mocked(ztClient.runZtAi).mockResolvedValueOnce({
-      changed: [],
-      answers: [],
-      suggestions_received: 0,
-      suggestions_applied: 0,
-      dropped: [],
-    } as unknown as Awaited<ReturnType<typeof ztClient.runZtAi>>);
+      run_id: "run-550",
+      status: "running",
+      serves: "offline",
+      deadline_at: "2026-10-01T12:45:00Z",
+      lock_until: "2026-10-01T12:50:00Z",
+      joined: false,
+    });
+    vi.mocked(ztClient.fetchZtRun).mockResolvedValueOnce({
+      id: "run-550",
+      status: "completed",
+      result: {
+        changed: [],
+        answers: [],
+        suggestions_received: 0,
+        suggestions_applied: 0,
+        dropped: [],
+      },
+    } as unknown as Awaited<ReturnType<typeof ztClient.fetchZtRun>>);
     vi.mocked(ztClient.fetchLatestAssessment)
       .mockResolvedValueOnce({
         id: "zt-assess-1",

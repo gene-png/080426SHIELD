@@ -7,7 +7,7 @@ import {
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
 import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
-import { acknowledgeOfflineAi } from "../helpers/ai";
+import { acknowledgeOfflineAi, waitForRun } from "../helpers/ai";
 
 /**
  * SMOKE_TEST.md section 11 (T8): the C3 "documents are stale" nudge.
@@ -77,9 +77,9 @@ async function openFreshDraft(
   return attackServiceId;
 }
 
-/** Click Run AI and wait for the run-ai POST to resolve. */
+/** Click Run AI and wait for the run it starts to complete (#645). */
 async function runAi(page: Page): Promise<void> {
-  const runDone = page.waitForResponse(
+  const runStarted = page.waitForResponse(
     (r) =>
       r.url().includes("/attack/services/") &&
       r.url().includes("/run-ai") &&
@@ -90,7 +90,9 @@ async function runAi(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Run AI" }).click();
   // The offline guard intercepts the first click when no key is loaded.
   await acknowledgeOfflineAi(page);
-  await runDone;
+  const started = (await (await runStarted).json()) as { run_id: string };
+  const run = await waitForRun(page, started.run_id);
+  expect(run.status, `run ${run.id}: ${run.error_message}`).toBe("completed");
 }
 
 test("Run AI raises the stale-documents nudge; finalising the deliverable clears it", async ({

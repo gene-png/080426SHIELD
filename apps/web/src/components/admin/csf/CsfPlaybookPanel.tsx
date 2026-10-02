@@ -14,10 +14,15 @@ import {
 import {
   CsfProxyError,
   exportPlaybook,
+  fetchCsfRun,
+  fetchCsfRunSummary,
   fetchEnterpriseProfile,
   runCsfAi,
   seedProfiles,
 } from "@/lib/csf/client";
+import type { AiServes } from "@/lib/aiRuns/types";
+import { useAiRun } from "@/lib/aiRuns/useAiRun";
+import { AiRunStatus, LastRunNote } from "@/components/admin/AiRunStatus";
 
 import { AiPreviewButton } from "../AiPreviewButton";
 import { AiDraftProvenanceNotice } from "@/components/admin/AiDraftProvenanceNotice";
@@ -47,6 +52,16 @@ export interface CsfPlaybookPanelProps {
   runOutcomeUnknown?: boolean;
   /** Called when a Run AI's own answer never arrived. */
   onRunOutcomeUnknown?: () => void;
+  /**
+   * #271: the assessment this panel describes, so a past run's disclosures
+   * show only for it. `null` while there is none; left out, unscoped.
+   */
+  assessmentId?: string | null;
+  /**
+   * #645: told whenever a run starts or stops holding the lock, so the
+   * workspace can lock Approve, which it renders outside this panel.
+   */
+  onRunInProgressChange?: (running: boolean) => void;
 }
 
 /**
@@ -88,6 +103,8 @@ const DROP_REASON_LABEL: Record<CsfDroppedSuggestion["reason"], string> = {
   superseded: "overwritten by a later suggestion for the same field",
   locked: "row is locked",
   protected: "score was typed by hand, and an offline run left it",
+  // #645: an edit that landed after the run started is kept, never overwritten.
+  edited: "row was edited after this run started, so the run left it",
 };
 
 /**
@@ -101,7 +118,12 @@ const DROP_REASON_LABEL: Record<CsfDroppedSuggestion["reason"], string> = {
  */
 // Named allow-list, so adding a by-design skip server-side is a deliberate
 // choice about which side it belongs on. `protected` joined it with #67.
-const BY_DESIGN_SKIPS: ReadonlySet<string> = new Set(["locked", "protected"]);
+// `edited` joined it with #645.
+const BY_DESIGN_SKIPS: ReadonlySet<string> = new Set([
+  "locked",
+  "protected",
+  "edited",
+]);
 
 /**
  * Reasons that mean "we did not understand this", not "we lost a value you
@@ -404,15 +426,14 @@ export function CsfPlaybookPanel({
   readOnly = false,
   runOutcomeUnknown = false,
   onRunOutcomeUnknown,
+  assessmentId,
+  onRunInProgressChange,
 }: CsfPlaybookPanelProps): JSX.Element {
   const [enterprise, setEnterprise] = React.useState<EnterpriseProfile | null>(
     null,
   );
   const [loading, setLoading] = React.useState(true);
   const [busy, setBusy] = React.useState<"seed" | "run" | "export" | null>(
-    null,
-  );
-  const [runResult, setRunResult] = React.useState<CsfRunAiResponse | null>(
     null,
   );
   const [exportResult, setExportResult] =
@@ -465,28 +486,60 @@ export function CsfPlaybookPanel({
     }
   }
 
-  async function onRunAi(): Promise<void> {
+  // #645. A run this page did not start -- found in progress on load --
+  // ends here: re-read what it applied.
+  const onRunFinishedElsewhere = React.useCallback(
+    (run: { status: string }) => {
+      if (run.status !== "completed") return;
+      reload().catch((err: unknown) => setError(describeError(err)));
+    },
+    [reload],
+  );
+  const aiRun = useAiRun<CsfRunAiResponse>({
+    serviceId,
+    // #271: only this assessment's runs describe it.
+    subjectId: assessmentId,
+    fetchSummary: fetchCsfRunSummary,
+    fetchRun: fetchCsfRun,
+    onFinished: onRunFinishedElsewhere,
+  });
+  /** #645: a run holds the edit lock; the api refuses edits until it ends. */
+  const runInProgress = aiRun.running !== null;
+  React.useEffect(() => {
+    onRunInProgressChange?.(runInProgress);
+  }, [onRunInProgressChange, runInProgress]);
+  /** What the last COMPLETED run did, read from the run: survives a reload. */
+  const runResult = aiRun.lastCompleted?.result ?? null;
+
+  async function onRunAi(serves: AiServes): Promise<void> {
     setBusy("run");
     setError(null);
-    setRunResult(null);
     try {
-      // #550 review, finding 1: two tries, not one. Only the RUN's own
+      // #550 review, finding 1: two tries, not one. Only the POST's own
       // rejection can mean "the run's outcome is unknown"; a reload that
       // fails after the run answered is that reload's error and must not
       // lock Run AI.
+      let started: Awaited<ReturnType<typeof runCsfAi>>;
       try {
-        setRunResult(await runCsfAi(serviceId));
+        started = await runCsfAi(serviceId, serves);
       } catch (err) {
         if (isUpstreamOutcomeUnknown(err)) {
           // Its own alert, not `error`: every other action on this panel
           // clears that, and the button would stay off with nothing saying
           // why.
           onRunOutcomeUnknown?.();
+          // #645: a run may have started. Look once, and follow it if so; the
+          // lock and the copy above stand either way.
+          void aiRun.reconcile();
         } else {
           setError(describeError(err));
         }
         return;
       }
+      // #645: the POST started the run; its result arrives on the run.
+      const finished = await aiRun.follow(started);
+      // A failed run applied nothing; `AiRunStatus` says why.
+      if (finished.status !== "completed") return;
       try {
         await reload();
       } catch (err) {
@@ -558,22 +611,31 @@ export function CsfPlaybookPanel({
               <button
                 type="button"
                 onClick={() => void onSeed()}
-                disabled={busy !== null || readOnly}
+                disabled={busy !== null || readOnly || runInProgress}
                 className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {busy === "seed" ? "Seeding…" : "Seed Working Profiles"}
               </button>
             ) : (
               /* Issue 2: warn before producing canned output when offline. */
-              <RunAiGuard onProceed={() => void onRunAi()}>
-                {({ onClick }) => (
+              <RunAiGuard onProceed={(serves) => void onRunAi(serves)}>
+                {({ onClick, statusUnknown }) => (
                   <button
                     type="button"
                     onClick={onClick}
-                    disabled={busy !== null || readOnly || runOutcomeUnknown}
+                    disabled={
+                      // #645: an unreadable AI status fails closed.
+                      statusUnknown ||
+                      busy !== null ||
+                      readOnly ||
+                      runInProgress ||
+                      runOutcomeUnknown
+                    }
                     className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {busy === "run" ? "Running…" : "Run AI (csf_score)"}
+                    {busy === "run" || runInProgress
+                      ? "Running…"
+                      : "Run AI (csf_score)"}
                   </button>
                 )}
               </RunAiGuard>
@@ -582,7 +644,7 @@ export function CsfPlaybookPanel({
               <button
                 type="button"
                 onClick={() => void onExport()}
-                disabled={busy !== null}
+                disabled={busy !== null || runInProgress}
                 className="rounded-md border border-border px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {busy === "export" ? "Exporting…" : "Export XLSX"}
@@ -620,6 +682,8 @@ export function CsfPlaybookPanel({
             <AiPreviewButton serviceId={serviceId} disabled={busy !== null} />
           ) : null}
 
+          <AiRunStatus run={aiRun} />
+          <LastRunNote run={aiRun.lastCompleted} />
           {runResult ? <RunAiAccounting result={runResult} /> : null}
           {/* CSF's prompt carries the client's interview answers, so the
               provenance vector is identical to ZT's (#68). */}
@@ -645,7 +709,7 @@ export function CsfPlaybookPanel({
       {seeded ? (
         <CsfDimensionEditor
           serviceId={serviceId}
-          readOnly={readOnly}
+          readOnly={readOnly || runInProgress}
           onChanged={() => void onDimensionChanged()}
         />
       ) : null}

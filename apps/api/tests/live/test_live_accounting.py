@@ -48,6 +48,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.ai.llm import LLMClient, LLMResponse
 from app.config import get_settings
+from tests._ai_runs import run_ai_expecting_failure, zt_run_ai
 
 
 def _live_ready() -> tuple[bool, str]:
@@ -191,9 +192,8 @@ def test_live_zt_run_ai_accounting_holds_against_a_real_response(app_client) -> 
     _use(c, live)
     svc_id, _code = _zt_service(c, h)
 
-    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    body = r.json()
+    r = zt_run_ai(c, svc_id, h, serves="live")
+    body = r
 
     _invariant(body)
     assert body["suggestions_received"] > 0, "a live run that received nothing proves nothing"
@@ -247,9 +247,8 @@ def test_live_zt_drop_reason_after_a_real_call(app_client, name, mutation, reaso
     _use(c, CorruptingProvider(live, _corrupt_zt(mutation)))
     svc_id, _code = _zt_service(c, h)
 
-    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    body = r.json()
+    r = zt_run_ai(c, svc_id, h, serves="live")
+    body = r
 
     assert reason in {d["reason"] for d in body["dropped"]}, (name, body["dropped"])
     _invariant(body)
@@ -271,10 +270,10 @@ def test_live_zt_non_list_capabilities_is_a_typed_502_after_a_real_call(app_clie
     _use(c, CorruptingProvider(live, _scalar))
     svc_id, _code = _zt_service(c, h)
 
-    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 502, r.text
-    assert r.json()["error"]["reason"] == "ai_call_failed"
-    assert "drifted apart" in r.json()["error"]["message"]
+    # #645: the typed 502 is now the FAILED run's reason and message.
+    run = run_ai_expecting_failure(c, f"/zt/services/{svc_id}/run-ai", h, serves="live")
+    assert run["error_reason"] == "ai_call_failed"
+    assert "drifted apart" in run["error_message"]
 
 
 @pytest.mark.live
@@ -293,9 +292,8 @@ def test_live_zt_locked_row_is_reported_after_a_real_call(app_client) -> None:
     for ans in a["answers"]:
         c.patch(f"/zt/answers/{ans['id']}", headers=h, json={"locked": True})
 
-    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    body = r.json()
+    r = zt_run_ai(c, svc_id, h, serves="live")
+    body = r
     assert "locked" in {d["reason"] for d in body["dropped"]}, body["dropped"]
     _invariant(body)
 

@@ -14,6 +14,9 @@ import {
 
 import { Dropzone } from "@/components/intake/Dropzone";
 import { hasAcknowledgedOffline, useAiStatus } from "@/lib/admin/aiStatus";
+import type { AiServes } from "@/lib/aiRuns/types";
+import { useAiRun } from "@/lib/aiRuns/useAiRun";
+import { AiRunStatus } from "@/components/admin/AiRunStatus";
 import { splitLines } from "@/lib/text";
 import { RedactionDisclosure } from "@/components/intake/RedactionDisclosure";
 import {
@@ -24,6 +27,8 @@ import {
   approveCapabilityList,
   discardCapabilityList,
   extractCapabilities,
+  fetchTechDebtRun,
+  fetchTechDebtRunSummary,
   fetchConsolidationPlan,
   fetchLatestDeliverable,
   fetchLatestList,
@@ -31,6 +36,7 @@ import {
   proxyMessage,
   TechDebtProxyError,
 } from "@/lib/tech_debt/client";
+import type { TechDebtRun } from "@/lib/tech_debt/client";
 import type {
   CapabilityDisposition,
   CapabilityItem,
@@ -318,13 +324,45 @@ Components carry no cost of their own — this licence keeps its full value.`,
     }
   }
 
+  // #645. An extraction found in progress on load ends here: read the list it
+  // wrote, as `runExtraction` does for one this page started.
+  const onRunFinishedElsewhere = React.useCallback(
+    (run: TechDebtRun) => {
+      if (run.status !== "completed") return;
+      const seq = ++listSeq.current;
+      void fetchLatestList(serviceId)
+        .then((next) => {
+          if (seq === listSeq.current) setList(next);
+          return refreshOverlap();
+        })
+        .catch((err: unknown) =>
+          setExtractError(
+            proxyMessage(
+              err,
+              "The extraction finished, but its list could not be loaded. Reload to see it.",
+            ),
+          ),
+        );
+    },
+    [serviceId, refreshOverlap],
+  );
+  const aiRun = useAiRun({
+    serviceId,
+    fetchSummary: fetchTechDebtRunSummary,
+    fetchRun: fetchTechDebtRun,
+    onFinished: onRunFinishedElsewhere,
+  });
+
   // Artifacts whose extraction has started on this page. The upload's
   // deferred auto-extraction consults it: a user who clicked "Extract from
   // this" while the AI status was still settling must not get a second
   // extraction once it settles (found by the e2e suite on #472).
   const extractionStarted = React.useRef(new Set<string>());
 
-  async function runExtraction(artifactId: string): Promise<void> {
+  async function runExtraction(
+    artifactId: string,
+    serves: AiServes,
+  ): Promise<void> {
     if (extractLocked.current) {
       console.warn(
         `[tech-debt] not extracting ${artifactId}: an earlier extraction's outcome is unknown (#550)`,
@@ -334,15 +372,41 @@ Components carry no cost of their own — this licence keeps its full value.`,
     extractionStarted.current.add(artifactId);
     setExtracting(true);
     setExtractError(null);
-    listSeq.current += 1;
+    const seq = ++listSeq.current;
     try {
-      const next = await extractCapabilities(serviceId, artifactId);
-      setList(next);
+      const answer = await extractCapabilities(serviceId, artifactId, serves);
+      if ("run_id" in answer) {
+        // #645: a run. The list exists once it completes; a failed run's
+        // reason is `AiRunStatus`'s to show.
+        const finished = await aiRun.follow(answer);
+        if (finished.status !== "completed") return;
+        // A separate try (#550 review, finding 1): only the POST's own
+        // rejection can mean the extraction's outcome is unknown. This read
+        // happens after the run is known to have completed.
+        try {
+          const next = await fetchLatestList(serviceId);
+          if (seq === listSeq.current) setList(next);
+        } catch (err) {
+          setExtractError(
+            proxyMessage(
+              err,
+              "The extraction finished, but its list could not be loaded. Reload to see it.",
+            ),
+          );
+          return;
+        }
+      } else {
+        // The open draft from this same document, returned as it stands.
+        setList(answer);
+      }
       await refreshOverlap();
     } catch (err) {
       if (isUpstreamOutcomeUnknown(err)) {
         extractLocked.current = true;
         setExtractOutcomeUnknown(true);
+        // #645: a run may have started. Look once, and follow it if so; the
+        // lock and the copy above stand either way.
+        void aiRun.reconcile();
       } else if (err instanceof TechDebtProxyError) {
         setExtractError(
           proxyMessage(err, `Extraction failed (${err.status}).`),
@@ -614,7 +678,8 @@ Components carry no cost of their own — this licence keeps its full value.`,
                 // while the request is in flight, and a null ran the extraction
                 // -- reachable since #472 made the first status read slow. A
                 // status that cannot be read at all does not auto-run either;
-                // the guarded button, which fails open on an outage, remains.
+                // the guarded button remains, and it too is off until a status
+                // read succeeds (#645: RunAiGuard fails closed).
                 void aiSettled().then((s) => {
                   if (s === null) {
                     console.warn(
@@ -624,12 +689,13 @@ Components carry no cost of their own — this licence keeps its full value.`,
                   }
                   if (!s.ready && !hasAcknowledgedOffline(s)) return;
                   if (extractionStarted.current.has(a.id)) return;
-                  void runExtraction(a.id);
+                  void runExtraction(a.id, s.ready ? "live" : "offline");
                 });
               }}
               accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
             />
-            {extracting ? (
+            <AiRunStatus run={aiRun} />
+            {extracting && !aiRun.running ? (
               <p className="text-sm text-ink-tertiary" aria-live="polite">
                 Extracting capability list…
               </p>
@@ -648,8 +714,8 @@ Components carry no cost of their own — this licence keeps its full value.`,
         </Card>
 
         <IntakeDocumentsPanel
-          onExtract={(id) => void runExtraction(id)}
-          extracting={extracting}
+          onExtract={(id, serves) => void runExtraction(id, serves)}
+          extracting={extracting || aiRun.running !== null}
           extractBlocked={extractOutcomeUnknown}
           reloadKey={docsReloadKey}
           draftSourceId={draftSourceArtifactId(list)}

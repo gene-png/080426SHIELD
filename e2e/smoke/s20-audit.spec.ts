@@ -2,6 +2,7 @@ import { expect, test, type APIRequestContext } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
 import { adminApiToken, API_BASE } from "../helpers/ids";
+import { apiWaitForRun } from "../helpers/ai";
 
 /**
  * SMOKE_TEST §11 (Sprint 5 T7): the /admin/audit viewer.
@@ -108,12 +109,19 @@ test.describe("s20 /admin/audit — read-only audit viewer", () => {
 
     const runRes = await request.post(
       `${API_BASE}/csf/services/${serviceId}/run-ai`,
-      { headers },
+      { headers, data: { serves: "offline" } },
     );
     expect(
       runRes.ok(),
       `run-ai (${runRes.status()} ${await runRes.text()})`,
     ).toBeTruthy();
+    // #645: the POST starts a run; the audited action happens when it ends.
+    const run = await apiWaitForRun(
+      request,
+      headers,
+      ((await runRes.json()) as { run_id: string }).run_id,
+    );
+    expect(run.status, `run ${run.id}: ${run.error_message}`).toBe("completed");
 
     // Sign in as the admin and open the viewer.
     await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);

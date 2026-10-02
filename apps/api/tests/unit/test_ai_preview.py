@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.csf.catalog import SUBCATEGORIES
 from app.models.llm_call import LLMCall
+from tests._ai_runs import csf_run_ai
 
 
 @pytest.fixture()
@@ -125,8 +126,7 @@ def test_preview_equals_run_ai_egress_and_counts_match(app_client) -> None:
 
     # Now a real run: what egresses (minus the __purpose__ control key) must equal
     # the previewed payload.
-    run = c.post(f"/csf/services/{svc_id}/run-ai", headers=h)
-    assert run.status_code == 200, run.text
+    csf_run_ai(c, svc_id, h)
     egress = {k: v for k, v in captured.items() if not str(k).startswith("__")}
     assert body["payload"] == egress
 
@@ -168,7 +168,7 @@ def test_preview_counts_match_recorded_run(app_client) -> None:
     provider.register_static("csf_score", LLMResponse('{"scores": []}'))
 
     prev = c.post("/ai/preview", json={"service_id": svc_id}, headers=h).json()
-    assert c.post(f"/csf/services/{svc_id}/run-ai", headers=h).status_code == 200
+    csf_run_ai(c, svc_id, h)
 
     with TestSession() as db:
         row = db.execute(select(LLMCall)).scalars().one()

@@ -139,6 +139,11 @@ export interface CoverageChange {
   new: unknown;
 }
 
+/**
+ * What a mitre_map Run-AI did. Since #645 this is the run's stored `result`,
+ * every field the synchronous response carried, read from the run rather than
+ * from the POST, which is what lets it survive a reload (#271).
+ */
 export interface AttackRunAiResponse {
   tools_available: number;
   changed: CoverageChange[];
@@ -183,6 +188,11 @@ export interface AttackRunAiResponse {
    */
   rows_left_unresolved?: number;
   unresolved_fields?: string[];
+  /**
+   * #645. Rows a consultant edited after this run started, which the run kept
+   * as edited rather than overwrite.
+   */
+  rows_skipped_edited?: number;
 }
 
 export interface TacticHeatmapEntry {
