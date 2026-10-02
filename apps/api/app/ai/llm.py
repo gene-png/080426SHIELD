@@ -230,16 +230,15 @@ _MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
     # The three below ran on the shared 8192 until 2026-09-23 because nobody
     # had listed them (#479).
     #
-    # csf_score is ONE unbatched call over the whole assessment: a full Working
-    # Profile is 106 subcategories x 3 tiers = 318 rows, each five integers and
-    # a narrative. That per-row cost is an ESTIMATE -- no live csf_score has run
-    # on the dev stack -- and it spans a wide range: at ~100 tokens a row the
-    # JSON is ~32k, at the ~575 a mitre_map row was measured at (routes/attack.py)
-    # it is ~183k. So 8192 could not fit even one tier, and 64000 -- the largest
-    # cap the dev stack's Anthropic model has accepted (mitre_map) -- fits only
-    # the low end. The real fix is batching per tier, as risk_synthesize and
-    # mitre_map already are. Until then an overrun fails loudly on Anthropic
-    # (stop_reason, streamed). The non-streamed adapters keep the shared 8192
+    # csf_score is BATCHED since #479: at most `_CSF_BATCH_ROWS` (10) of a full
+    # Working Profile's 318 (tier, subcategory) rows a call, sized so a batch
+    # fits the non-streamed adapters' 8192 even after Gemini/Vertex thinking
+    # (the arithmetic is beside the constant, routes/csf.py). A row's cost is
+    # still an ESTIMATE -- ~100 to ~575 tokens; no live csf_score has been
+    # measured -- so 64000 is per batch and generous on the streamed Anthropic
+    # path, where output is billed as generated. An overrun still fails loudly
+    # (stop_reason, streamed; finishReason, non-streamed) and costs that batch,
+    # which the run discloses. The non-streamed adapters keep the shared 8192
     # for this purpose (`non_streamed_output_cap`).
     "csf_score": 64000,
     # extract.capabilities output scales with the uploaded inventory, which the

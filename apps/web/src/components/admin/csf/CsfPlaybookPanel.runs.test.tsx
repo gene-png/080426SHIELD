@@ -283,3 +283,80 @@ describe("CsfPlaybookPanel, an unreadable AI status (#645)", () => {
     expect(screen.queryByTestId("run-ai-status-unknown")).toBeNull();
   });
 });
+
+describe("CsfPlaybookPanel, a batched run that lost batches (#479)", () => {
+  function showsLastRun(r: CsfRunAiResponse) {
+    const done = run({ status: "completed", result: r });
+    m.summary.mockResolvedValue({
+      running: null,
+      latest: done,
+      last_completed: done,
+    });
+    render(<CsfPlaybookPanel serviceId="svc-1" />);
+  }
+
+  it("says how many batches failed and qualifies the headline", async () => {
+    showsLastRun(result({ batches_total: 33, batches_failed: 2 }));
+    expect(await screen.findByTestId("csf-run-incomplete")).toHaveTextContent(
+      /2 of 33 batches failed, so their rows were not scored/,
+    );
+    expect(screen.getByText(/AI applied/)).toHaveTextContent(
+      /from the batches that completed/,
+    );
+  });
+
+  it("still says so when the batches that completed suggested nothing", async () => {
+    showsLastRun(
+      result({
+        batches_total: 33,
+        batches_failed: 32,
+        suggestions_received: 0,
+        suggestions_applied: 0,
+        dropped: [],
+      }),
+    );
+    expect(await screen.findByTestId("csf-run-incomplete")).toHaveTextContent(
+      /32 of 33 batches failed/,
+    );
+    expect(
+      screen.getByText(/The AI returned no suggestions at all/),
+    ).toBeInTheDocument();
+  });
+
+  it("fails closed on a failure count with no total", async () => {
+    showsLastRun(result({ batches_failed: 3 }));
+    expect(await screen.findByTestId("csf-run-incomplete")).toHaveTextContent(
+      /3 batches failed/,
+    );
+  });
+
+  it("names a stray answer as one, in the could-not-apply alert", async () => {
+    showsLastRun(
+      result({
+        batches_total: 33,
+        batches_failed: 0,
+        dropped: [
+          {
+            reason: "not_in_batch",
+            key: "high|GV.OC-01",
+            field: null,
+            values: 6,
+            value: null,
+          },
+        ],
+      }),
+    );
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      /answered for a row its batch was not asked about, so it was not applied/,
+    );
+  });
+
+  it("says nothing about batches for a run that lost none", async () => {
+    showsLastRun(result({ batches_total: 33, batches_failed: 0 }));
+    expect(await screen.findByText(/AI applied/)).not.toHaveTextContent(
+      /batches/,
+    );
+    expect(screen.queryByTestId("csf-run-incomplete")).toBeNull();
+  });
+});

@@ -141,3 +141,40 @@ def zt_run_ai(c: TestClient, svc_id: str, headers: dict, **kwargs: Any) -> dict:
     """A ZT Run-AI, driven to completion: the run's `result`, which carries
     every field the synchronous response did, `answers` included."""
     return run_ai_and_wait(c, f"/zt/services/{svc_id}/run-ai", headers, **kwargs)
+
+
+def csf_scores_by_batch(
+    scores: list, *, tiers: list[str], codes: list[str]
+) -> Callable[[dict], Any]:
+    """A csf_score fixture for a BATCHED run (#479), over a profile seeded with
+    `tiers` x `codes`.
+
+    Each batch is answered with the entries naming a (tier, subcategory) row
+    that batch asked for, as a model asked about those rows would answer. An
+    entry naming no row any batch asks for (malformed, misnamed, unknown) goes
+    to the FIRST batch -- the first tier's first subcategories. So each canned
+    entry reaches the run exactly once, as it did when the run was one call,
+    and a test's expected counts stay what the single response implies."""
+    import json
+
+    from app.ai.llm import LLMResponse
+
+    profile = {(t, c) for t in tiers for c in codes}
+    first_tier, first_code = min(tiers), min(codes)
+
+    def _row(entry: Any) -> tuple[Any, Any] | None:
+        if not isinstance(entry, dict):
+            return None
+        return (entry.get("tier"), entry.get("subcategory_code"))
+
+    def _answer(payload: dict) -> LLMResponse:
+        asked = {(t, c) for t in payload["tiers"] for c in payload["subcategories"]}
+        first = payload["tiers"] == [first_tier] and first_code in payload["subcategories"]
+        mine = [
+            e
+            for e in scores
+            if _row(e) in asked or (first and (_row(e) is None or _row(e) not in profile))
+        ]
+        return LLMResponse(json.dumps({"scores": mine}))
+
+    return _answer

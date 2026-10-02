@@ -81,9 +81,10 @@ test.describe("s20 /admin/audit — read-only audit viewer", () => {
     const headers = tenantHeaders(token, clientId);
 
     // Open a fresh CSF service + assessment, seed the Working Profile, then run
-    // the fixture-mode AI job. That single request writes ONE llm_calls row
-    // (purpose csf_score) AND one audit row (action csf.run_ai) sharing a
-    // correlation id — exactly the pair the viewer must link.
+    // the fixture-mode AI job. That single request writes llm_calls rows
+    // (purpose csf_score, one per batch since #479) AND one audit row (action
+    // csf.run_ai), all sharing a correlation id — exactly the pair the viewer
+    // must link.
     const serviceTitle = `Audit QA CSF ${Date.now()}`;
     const svcRes = await request.post(`${API_BASE}/csf/services`, {
       headers,
