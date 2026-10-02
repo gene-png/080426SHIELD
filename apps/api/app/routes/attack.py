@@ -80,6 +80,7 @@ from app.attack.exporters import (
 from app.attack.exporters import render_docx as render_attack_docx
 from app.attack.exporters import render_pdf as render_attack_pdf
 from app.attack.exporters import render_xlsx as render_attack_xlsx
+from app.attack.exporters import retirement_sentences as attack_retirement_sentences
 from app.attack.parents import PARENT_CHILDREN, is_computed_parent, recompute_parents
 from app.attack.pending import CLAIMS_SUPPORT as _STATUS_CLAIMS_SUPPORT
 from app.attack.pending import NO_CITATION as _NO_CITATION
@@ -87,6 +88,8 @@ from app.attack.pending import TOOL_FIELDS as _TOOL_FIELDS
 from app.attack.pending import confirm_all as confirm_attack_citations
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.pending import row_tools as attack_row_tools
+from app.attack.retirement import PlanEntry, RetirementIndex
+from app.attack.retirement import build_index as build_retirement_index
 from app.attack.rules import NEW_RULES, parents_computed
 from app.audit import audit
 from app.config import get_settings
@@ -102,7 +105,12 @@ from app.models.attack_assessment import (
     AttackAssessmentStatus,
     AttackCoverage,
 )
-from app.models.capability import CapabilityItem, CapabilityList, CapabilityListStatus
+from app.models.capability import (
+    CapabilityDisposition,
+    CapabilityItem,
+    CapabilityList,
+    CapabilityListStatus,
+)
 from app.models.client import Client
 from app.models.deliverable import Deliverable
 from app.models.service import Service, ServiceKind, ServiceStatus
@@ -219,7 +227,30 @@ def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentR
         # #646: the ONE derivation every surface calls.
         ai_source=ai_mode_for(db, db.get(Service, a.service_id), a).as_api(),
         coverage=_serialize_coverage(rows, parents_computed=parents_computed(a)),
+        tool_retirement=_tool_retirement_marks(db, a.service_id, rows),
     )
+
+
+def _tool_retirement_marks(
+    db: Session, service_id: uuid.UUID, rows: Iterable[AttackCoverage]
+) -> dict[str, str] | None:
+    """#686: the cited tools the consolidation plan retires or cannot answer
+    for, keyed by the exact cited string; None when the client has no plan.
+    The client dashboard calls this too, so the two read one join."""
+    svc = db.get(Service, service_id)
+    if svc is None:
+        raise ValueError(f"assessment's service {service_id} does not exist")
+    index = client_retirement_index(db, svc.client_id)
+    if not index.has_plan:
+        return None
+    return index.marks(t for r in rows for t in attack_row_tools(r))
+
+
+def client_retirement_index(db: Session, client_id: uuid.UUID) -> RetirementIndex:
+    """#686: the ONE join every ATT&CK surface labels planned retirements from
+    -- the admin assessment, finalize and the client dashboard -- over the same
+    membership the citations were checked against. Rules: `attack/retirement.py`."""
+    return _client_capability_membership(db, client_id).retirement()
 
 
 def _latest_assessment(db: Session, service_id: uuid.UUID) -> AttackAssessment | None:
@@ -830,9 +861,38 @@ class CapabilityMembership:
     sent: list[CapabilityProvenance]
     withheld: list[WithheldCapability]
     lists: list[CapabilityList]
+    #: #686: EVERY contributing entry, before the de-duplication above keeps one
+    #: per name -- the disposition may differ on the list the dedupe dropped.
+    #: Read by `attack/retirement.py`; see there for the rules.
+    plan_entries: list[PlanEntry] = field(default_factory=list)
 
     def inputs(self) -> list[CapabilityInput]:
         return [p.capability for p in self.sent]
+
+    def has_consolidation_plan(self) -> bool:
+        """#686: an APPROVED or RELEASED Tech Debt list exists. Without one no
+        tool can be a planned retirement, and nothing is marked."""
+        return any(cl.status in _PLAN_STATUSES for cl in self.lists)
+
+    def retirement(self) -> RetirementIndex:
+        return build_retirement_index(self.plan_entries, has_plan=self.has_consolidation_plan())
+
+
+#: #686, Q1: only these lists' dispositions are "the consolidation plan".
+_PLAN_STATUSES = frozenset({CapabilityListStatus.APPROVED, CapabilityListStatus.RELEASED})
+
+
+def _latest_plan_ids(lists: Iterable[CapabilityList]) -> frozenset[uuid.UUID]:
+    """#787 review, F1: per Tech Debt SERVICE, the highest-version APPROVED or
+    RELEASED list -- "the consolidation plan". Older versions do not vote."""
+    latest: dict[uuid.UUID, CapabilityList] = {}
+    for cl in lists:
+        if cl.status not in _PLAN_STATUSES:
+            continue
+        held = latest.get(cl.service_id)
+        if held is None or cl.version > held.version:
+            latest[cl.service_id] = cl
+    return frozenset(cl.id for cl in latest.values())
 
 
 def _client_capabilities(db: Session, client_id: uuid.UUID) -> list[Candidate]:
@@ -1407,10 +1467,32 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
             # re-approving.
             withheld[key] = drop
 
+    plan_ids = _latest_plan_ids(lists)
     return CapabilityMembership(
         sent=sent,
         withheld=sorted(withheld.values(), key=lambda d: d.name),
         lists=list(lists),
+        # #686: from `pairs`, the rows the dedupe chose among, each followed by
+        # its item_id to the LIVE disposition. A gone live row is `cut=None`.
+        #
+        # RETIREMENT DELIBERATELY NARROWS TO THE LATEST PLAN (#787 review, F1).
+        # The membership above unions every non-discarded version of every list
+        # -- pre-existing, "arguably wrong", and left alone here because it
+        # decides what may be CITED. "The consolidation plan" is narrower: only
+        # each Tech Debt service's latest APPROVED or RELEASED list votes, so an
+        # older version's `cut` cannot outvote, or outlive, the current one.
+        plan_entries=[
+            PlanEntry(
+                name=p.name,
+                in_plan=p.cap_list.id in plan_ids,
+                cut=(
+                    None
+                    if (live := live_by_id.get(str(p.item_id or ""))) is None
+                    else live.disposition == CapabilityDisposition.CUT
+                ),
+            )
+            for p in pairs
+        ],
     )
 
 
@@ -2972,6 +3054,8 @@ def finalize_attack_deliverable(
         assessment=assessment,
         coverage=coverage,
         rollup=rollup,
+        # #686: the disposition AS OF this finalize; the rendered bytes keep it.
+        retirement=client_retirement_index(db, svc.client_id),
         # #646: the ONE derivation every surface calls.
         ai_mode=ai_mode_for(db, svc, assessment),
     )
@@ -3023,6 +3107,8 @@ def finalize_attack_deliverable(
         # sentence every renderer prints, never dropped even at zero -- where the
         # renderers print it, which is under #620's rules only (option (a)).
         + (f" {outside_assessed_text(rollup)}." if states_outside_counts(ctx) else "")
+        # #686: the renderers' own sentences, only when non-zero.
+        + "".join(f" {s}" for s in attack_retirement_sentences(ctx))
     )
 
     deliv = Deliverable(

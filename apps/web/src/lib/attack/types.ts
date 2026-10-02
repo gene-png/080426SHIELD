@@ -121,6 +121,9 @@ export interface AttackAssessment {
    *  NOT current, because missing data defaults to unconfirmed. */
   catalog_current: boolean;
   coverage: AttackCoverageRow[];
+  /** #686 (D-105): cited tool -> "planned_retirement" | "unknown"; a tool
+   *  absent here is not retiring. Null: the client has no consolidation plan. */
+  tool_retirement?: Record<string, string> | null;
 }
 
 export interface AttackCoveragePatch {

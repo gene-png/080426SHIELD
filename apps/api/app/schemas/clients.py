@@ -214,10 +214,20 @@ class AttackDashboardResponse(BaseModel):
     ai_source: AiSource
     rollup: AttackDashboardRollup
     techniques: list[AttackDashboardTechnique]
+    #: #686 (D-105): cited tool -> "planned_retirement" | "unknown", from the
+    #: client's CURRENT Tech Debt consolidation plan. A tool absent here is not
+    #: retiring. OMITTED, with `retirement_notes`, when the client has no
+    #: approved or released Tech Debt list, so such a response is unchanged.
+    tool_retirement: dict[str, str] | None = None
+    #: The count sentences the deliverable prints, each only when non-zero.
+    retirement_notes: list[str] | None = None
 
     @model_serializer(mode="wrap")
     def _drop_unset_rule_key(self, handler: Any) -> dict[str, Any]:
-        return _without_none(handler(self), frozenset({"parents_computed"}))
+        return _without_none(
+            handler(self),
+            frozenset({"parents_computed", "tool_retirement", "retirement_notes"}),
+        )
 
     @model_validator(mode="after")
     def _counts_travel_with_the_rule(self) -> AttackDashboardResponse:
