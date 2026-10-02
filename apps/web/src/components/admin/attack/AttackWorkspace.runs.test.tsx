@@ -132,6 +132,21 @@ function draft(): AttackAssessment {
   } as unknown as AttackAssessment;
 }
 
+/** #646 (#778 review F3): the draft as the api returns it once a completed
+ *  OFFLINE run is on it: its AI source is "fixture", never "none". */
+function draftAfterOfflineRun(): AttackAssessment {
+  return {
+    ...draft(),
+    ai_source: {
+      state: "fixture",
+      sentence:
+        "OFFLINE TEST DATA: every AI suggestion in this assessment came from built-in test data, not a live AI model. Treat AI-drafted values as placeholders, not analysis.",
+      live_runs: 0,
+      fixture_runs: 1,
+    },
+  } as unknown as AttackAssessment;
+}
+
 function result(over: Partial<AttackRunAiResponse> = {}): AttackRunAiResponse {
   return {
     tools_available: 2,
@@ -191,6 +206,7 @@ describe("AttackWorkspace, Run-AI in the background (#645)", () => {
       finished_at: "2026-10-01T12:10:00Z",
       result: result({ batches_failed: 3, citations_rejected: 1 }),
     });
+    m.fetchLatestAssessment.mockResolvedValue(draftAfterOfflineRun());
     m.fetchAttackRunSummary.mockResolvedValue(
       summary({ latest: partial, last_completed: partial }),
     );
@@ -232,6 +248,7 @@ describe("AttackWorkspace, Run-AI in the background (#645)", () => {
       finished_at: "2026-10-01T12:10:00Z",
       result: result({ batches_failed: 3 }),
     });
+    m.fetchLatestAssessment.mockResolvedValue(draftAfterOfflineRun());
     m.fetchAttackRunSummary.mockResolvedValue(
       summary({ latest: done, last_completed: done }),
     );
@@ -247,6 +264,7 @@ describe("AttackWorkspace, Run-AI in the background (#645)", () => {
       finished_at: "2026-10-01T12:10:00Z",
       result: result({ rows_skipped_edited: 2 }),
     });
+    m.fetchLatestAssessment.mockResolvedValue(draftAfterOfflineRun());
     m.fetchAttackRunSummary.mockResolvedValue(
       summary({ latest: done, last_completed: done }),
     );

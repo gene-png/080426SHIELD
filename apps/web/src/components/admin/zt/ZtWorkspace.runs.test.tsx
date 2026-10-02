@@ -116,6 +116,21 @@ function draft(): ZtAssessment {
   } as unknown as ZtAssessment;
 }
 
+/** #646 (#778 review F3): the draft as the api returns it once a completed
+ *  OFFLINE run is on it: its AI source is "fixture", never "none". */
+function draftAfterOfflineRun(): ZtAssessment {
+  return {
+    ...draft(),
+    ai_source: {
+      state: "fixture",
+      sentence:
+        "OFFLINE TEST DATA: every AI suggestion in this assessment came from built-in test data, not a live AI model. Treat AI-drafted values as placeholders, not analysis.",
+      live_runs: 0,
+      fixture_runs: 1,
+    },
+  } as unknown as ZtAssessment;
+}
+
 function result(over: Partial<ZtRunAiResponse> = {}): ZtRunAiResponse {
   return {
     changed: [],
@@ -181,6 +196,7 @@ beforeEach(() => {
 describe("ZtWorkspace, Run-AI in the background (#645)", () => {
   it("shows the last completed run's accounting after a reload (#271)", async () => {
     const done = run({ status: "completed", result: result() });
+    m.latest.mockResolvedValue(draftAfterOfflineRun());
     m.summary.mockResolvedValue({
       running: null,
       latest: done,

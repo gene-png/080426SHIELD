@@ -151,3 +151,25 @@ def test_the_five_states(env) -> None:  # noqa: F811
     # A pre-#756 call no run accounts for: nothing says which mode drafted it.
     seed_unattributed_call(Sess, service_id=svc, purpose="mitre_map")
     assert _source(c, bearer, svc)["sentence"] == UNKNOWN
+
+
+def test_a_call_made_before_the_assessment_does_not_make_it_unknown(env) -> None:  # noqa: F811
+    """#778 review F2: the `since` bound. A pre-#756 call made before this
+    assessment existed cannot have drafted it, so it says nothing about it."""
+    import uuid
+    from datetime import timedelta
+
+    from app.models.attack_assessment import AttackAssessment
+
+    c, Sess = env
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc, a = _service_and_assessment(c, bearer)
+    with Sess() as s:
+        created = s.get(AttackAssessment, uuid.UUID(a["id"])).created_at
+    seed_unattributed_call(
+        Sess, service_id=svc, purpose="mitre_map", created_at=created - timedelta(days=1)
+    )
+    assert _source(c, bearer, svc)["state"] == "none"
+    # The same call made after it does.
+    seed_unattributed_call(Sess, service_id=svc, purpose="mitre_map")
+    assert _source(c, bearer, svc)["state"] == "unknown"

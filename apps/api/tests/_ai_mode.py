@@ -87,7 +87,10 @@ def seed_run(
         s.commit()
 
 
-def seed_unattributed_call(Sess: sessionmaker, *, service_id: str, purpose: str) -> None:
+def seed_unattributed_call(
+    Sess: sessionmaker, *, service_id: str, purpose: str, created_at=None
+) -> None:
+    """`created_at` backdates the call, as one made before a later assessment."""
     from app.models.service import Service
     from app.models.user import User
 
@@ -106,6 +109,7 @@ def seed_unattributed_call(Sess: sessionmaker, *, service_id: str, purpose: str)
                 service_id=svc.id,
                 client_id=svc.client_id,
                 ai_run_id=None,
+                **({"created_at": created_at} if created_at is not None else {}),
             )
         )
         s.commit()

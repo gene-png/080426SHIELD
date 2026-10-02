@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy import select
 
 from app.models.llm_call import LLMCallMode
-from tests._ai_mode import FIXTURE, LIVE, env_sessions, seed_run
+from tests._ai_mode import FIXTURE, LIVE, env_sessions, seed_run, seed_unattributed_call
 from tests.unit.test_value_summary import (  # noqa: F401  (fixture)
     _csf_codes,
     _make_released_csf,
@@ -130,6 +130,49 @@ def test_a_tech_debt_list_counts_only_the_run_that_wrote_it(app_client) -> None:
         mode=LLMCallMode.FIXTURE,
         result={"capability_list_id": str(_uuid.uuid4())},
     )
+    seed_run(
+        Sess,
+        service_id=svc,
+        subject_id=str(_uuid.uuid4()),
+        purpose="tech_debt_extract",
+        mode=LLMCallMode.LIVE,
+        result={"capability_list_id": list_id},
+    )
+    r = c.get(f"/clients/{cid}/tech-debt/{svc}/dashboard", headers=h)
+    assert r.status_code == 200, r.text
+    assert r.json()["ai_source"]["state"] == "live"
+
+
+def test_a_list_extracted_before_756_says_not_recorded(app_client) -> None:  # noqa: F811
+    """#778 review F1. A completed extraction call with no run (made before
+    #756), and no run naming this list: nothing says which mode wrote it, so
+    the client is told "not recorded" -- never "No AI suggestions were used"."""
+    c = app_client
+    cid, h = _world(c)
+    Sess = env_sessions()
+    svc, _list_id = _subjects(Sess)["tech-debt"]
+    seed_unattributed_call(Sess, service_id=svc, purpose="extract.capabilities")
+    r = c.get(f"/clients/{cid}/tech-debt/{svc}/dashboard", headers=h)
+    assert r.status_code == 200, r.text
+    src = r.json()["ai_source"]
+    assert src["state"] == "unknown"
+    assert src["sentence"] == (
+        "It is not recorded whether the AI suggestions in this capability list came "
+        "from a live AI model or from offline test data."
+    )
+
+
+def test_a_run_naming_the_list_wins_over_an_older_unattributed_call(
+    app_client,  # noqa: F811
+) -> None:
+    """The rule: a list is written by exactly one extraction, so a completed run
+    that names it IS the record of what wrote it; an unattributed call belongs
+    to some other, older extraction of the service."""
+    c = app_client
+    cid, h = _world(c)
+    Sess = env_sessions()
+    svc, list_id = _subjects(Sess)["tech-debt"]
+    seed_unattributed_call(Sess, service_id=svc, purpose="extract.capabilities")
     seed_run(
         Sess,
         service_id=svc,
