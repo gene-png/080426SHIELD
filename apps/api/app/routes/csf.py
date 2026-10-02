@@ -29,9 +29,8 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
+from app.ai.batching import run_batches
 from app.ai.diff import diff_keyed_rows
-from app.ai.engine import run_job
-from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
 from app.ai.provenance import SOURCE_CONSULTANT, protected_keys
@@ -1738,6 +1737,7 @@ def _apply_suggestions(
     rows: dict[str, CsfDimensionScore],
     protected: frozenset[str] | set[str] = frozenset(),
     edited: frozenset[str] | set[str] = frozenset(),
+    strays: list[Any] | None = None,
 ) -> tuple[int, int, list[CsfDroppedSuggestion]]:
     """Apply the csf_score suggestions, accounting for every one of them (W1).
 
@@ -1769,6 +1769,11 @@ def _apply_suggestions(
     not exist and a row a human locked. Only the recognized values are charged
     to `unknown_key` / `locked`, so nothing is counted twice.
 
+    `strays` (#479) are entries a batch returned for a real row that batch
+    was NOT asked for. They are counted and itemized exactly like the rest, then
+    dropped as `not_in_batch`: the batch that asked for the row answers it, and
+    a stray must neither apply twice nor overwrite that answer from outside.
+
     Returns ``(received, applied, dropped)`` satisfying
     ``received == applied + sum(d.values for d in dropped)``.
     """
@@ -1778,7 +1783,9 @@ def _apply_suggestions(
     # (row key, field) already written by an earlier entry in this response.
     written: set[tuple[str, str]] = set()
 
-    for sugg in data.get("scores", []):
+    entries = [(s, False) for s in data.get("scores", [])]
+    entries += [(s, True) for s in strays or []]
+    for sugg, stray in entries:
         if not isinstance(sugg, dict):
             received += _ROW_VALUE_SLOTS
             dropped.append(
@@ -1851,6 +1858,11 @@ def _apply_suggestions(
         if row is None:
             dropped.append(
                 CsfDroppedSuggestion(reason="unknown_key", key=key, values=recognized_values)
+            )
+            continue
+        if stray:
+            dropped.append(
+                CsfDroppedSuggestion(reason="not_in_batch", key=key, values=recognized_values)
             )
             continue
         if row.locked:
@@ -2041,6 +2053,45 @@ def _csf_ai_request_for(db: Session, a: CsfAssessment, client: Client) -> CsfAiR
     )
 
 
+# csf_score is asked for in batches of at most this many (tier, subcategory)
+# rows (#479). A full Working Profile is 106 subcategories x 3 tiers = 318
+# rows, and one call over all of them could not fit any provider's output cap.
+#
+# Sized for the WORST provider, by a fixed row count:
+#   * the non-streamed adapters (OpenAI, Gemini, Vertex) cap csf_score at 8192
+#     output tokens (`non_streamed_output_cap`, app/ai/llm.py);
+#   * on Gemini and Vertex, gemini-2.5+ spends up to 2048 of those on thinking
+#     (`_THINKING_BUDGET_TOKENS`, the same file), leaving ~6.1k;
+#   * a row's output is ESTIMATED at up to ~575 tokens: a mitre_map row as
+#     measured live on 2026-08-07 (the comment above `_MITRE_BATCH_SIZE`,
+#     routes/attack.py), the high end of the range the llm.py comment gives
+#     for csf_score. No live csf_score has been measured.
+# (8192 - 2048) / 575 = 10.7, so 10 rows: ~5.75k tokens, leaving ~400 for the
+# JSON wrapper and the prompt's `executive_summary`. A tier's subcategories are
+# split in tens, so the 318-row profile is 3 x 11 = 33 batches, 6 short ones.
+# The streamed Anthropic adapter (64000) has room to spare at this size.
+_CSF_BATCH_ROWS = 10
+# The same modest concurrency as mitre_map: the provider rate limit is shared
+# with every other job in the deployment.
+_CSF_MAX_WORKERS = 5
+
+
+def _csf_batch_inputs(inputs: dict[str, Any]) -> list[dict[str, Any]]:
+    """The payload split into batches of at most `_CSF_BATCH_ROWS` rows: one
+    tier per batch, that tier's subcategories in order, each batch carrying
+    every interview answer (input tokens are the cheap side, and a batch must
+    not lose the grounding the prompt asks it to use). Every (tier,
+    subcategory) row the single-call payload asked for is asked for once."""
+    tiers = list(inputs.get("tiers") or [])
+    codes = list(inputs.get("subcategories") or [])
+    batches = [
+        {**inputs, "tiers": [tier], "subcategories": codes[i : i + _CSF_BATCH_ROWS]}
+        for tier in tiers
+        for i in range(0, len(codes), _CSF_BATCH_ROWS)
+    ]
+    return batches or [inputs]
+
+
 @router.post(
     "/services/{service_id}/run-ai",
     response_model=AiRunStarted,
@@ -2103,31 +2154,60 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
     def _snap() -> dict[str, dict]:
         return {k: {f: getattr(r, f) for f in _RUN_FIELDS} for k, r in rows.items()}
 
-    # A provider failure here must stay typed and leave an llm_calls row.
-    with ai_call_boundary(db, llm, purpose=req.preview.job_name):
-        result = run_job(
-            db,
-            llm,
-            req.preview.job_name,
-            inputs=req.preview.inputs,
-            requested_by=ctx.requested_by,
-            service_id=ctx.service_id,
-            client_id=ctx.client_id,
-            client_org_name=req.preview.client_org_name,
-            name_hints=req.preview.name_hints,
-        )
-    # The provider call is over: keep its `llm_calls` row whatever happens to
-    # the apply. Then read the rows as they are NOW -- an edit that landed while
-    # the model answered must be seen -- and take the PRE-WRITE stamps:
-    # `onupdate=utcnow` stamps every row this job writes.
-    db.commit()
+    # #479: in batches (`_CSF_BATCH_ROWS`). Each batch writes its own
+    # `llm_calls` row in its own session; a failed batch leaves its rows as
+    # they were and is counted, and only a total failure fails the run, typed,
+    # through `ai_call_boundary`.
+    batched = run_batches(
+        db,
+        llm,
+        req.preview.job_name,
+        _csf_batch_inputs(req.preview.inputs),
+        requested_by=ctx.requested_by,
+        service_id=ctx.service_id,
+        client_id=ctx.client_id,
+        client_org_name=req.preview.client_org_name,
+        name_hints=req.preview.name_hints,
+        deadline_at=ctx.deadline_at,
+        max_workers=_CSF_MAX_WORKERS,
+        deadline_message=(
+            "This run did not finish within its time limit, so it was stopped and "
+            "nothing from it was applied. Run it again; if it repeats, the AI "
+            "provider is answering too slowly for a full CSF run."
+        ),
+    )
+    # The provider calls are over, in the batches' own sessions. Read the rows
+    # as they are NOW -- an edit that landed while the model answered must be
+    # seen -- and take the PRE-WRITE stamps: `onupdate=utcnow` stamps every row
+    # this job writes.
+    db.expire_all()
     edited = frozenset(k for k, r in rows.items() if ctx.edited_since_start(r.updated_at))
     locked_keys = frozenset(k for k, r in rows.items() if r.locked)
     before = _snap()
-    # `parse_json_object` guarantees a dict or raises (issue #41). The old
-    # `else {}` here discarded a whole unwrapped response and reported zero
-    # changes, which read as the model agreeing with everything.
-    data = result.data
+    # `parse_json_object` guarantees each batch a dict with a `scores` list or
+    # raises (issue #41), which counts that batch failed. The old `else {}`
+    # here discarded a whole unwrapped response and reported zero changes,
+    # which read as the model agreeing with everything. The batches' scores
+    # are applied as one response, in batch order.
+    #
+    # An entry naming a real row its batch was not asked for is a STRAY: kept
+    # out of the applied set and itemized as `not_in_batch`, so a row is only
+    # ever written from the batch that asked for it.
+    scores: list[Any] = []
+    strays: list[Any] = []
+    for inputs, answer in zip(batched.inputs, batched.answers, strict=True):
+        asked = {f"{t}|{c}" for t in inputs["tiers"] for c in inputs["subcategories"]}
+        for entry in answer["scores"]:
+            named = (
+                f"{entry.get('tier')}|{entry.get('subcategory_code')}"
+                if isinstance(entry, dict)
+                else None
+            )
+            if named is not None and named in rows and named not in asked:
+                strays.append(entry)
+            else:
+                scores.append(entry)
+    data = {"scores": scores}
 
     # Offline output must never overwrite what a human typed (#67, migration
     # 0042). `protected_keys` returns an empty set off-fixture, so a LIVE run may
@@ -2141,7 +2221,7 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
         ((k, r.answer_source, r.answer_source is not None) for k, r in rows.items()),
         is_fixture=llm.provider.name == "fixture",
     )
-    received, applied, dropped = _apply_suggestions(data, rows, protected, edited)
+    received, applied, dropped = _apply_suggestions(data, rows, protected, edited, strays)
 
     db.flush()
     after = _snap()
@@ -2231,6 +2311,8 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
             "received": received,
             "applied": applied,
             "dropped_by_reason": dropped_by_reason,
+            "batches_total": batched.total,
+            "batches_failed": batched.failed,
         },
     )
 
@@ -2249,6 +2331,8 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
             # Values, not records, so the durable row can check its own
             # arithmetic: received == applied + sum(dropped_by_reason.values()).
             "dropped_by_reason": dropped_by_reason,
+            "batches_total": batched.total,
+            "batches_failed": batched.failed,
         },
     )
     # No commit: the framework commits this apply with the run's completion.
@@ -2261,9 +2345,15 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
         suggestions_received=received,
         suggestions_applied=applied,
         dropped=dropped,
+        batches_total=batched.total,
+        batches_failed=batched.failed,
     )
     return RunOutcome(
-        result=payload.model_dump(mode="json"), applied_count=applied, accounting=accounting
+        result=payload.model_dump(mode="json"),
+        applied_count=applied,
+        batches_total=batched.total,
+        batches_failed=batched.failed,
+        accounting=accounting,
     )
 
 

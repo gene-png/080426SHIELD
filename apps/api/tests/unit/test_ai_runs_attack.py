@@ -444,6 +444,43 @@ def test_a_provider_failure_ends_the_run_failed_with_its_typed_reason(app_parts)
 
 
 @pytest.mark.unit
+def test_one_failed_batch_leaves_a_partial_run_that_says_so(app_parts) -> None:
+    """#479: the batch loop moved to `app.ai.batching.run_batches`, shared with
+    csf_score. Through ATT&CK's own endpoint: one batch raising costs that
+    batch's techniques, the run completes, and the run and its result say how
+    many batches failed."""
+    w, runner = _deferred(app_parts)
+    lost = w.codes[0]
+
+    def respond(payload: dict) -> LLMResponse:
+        sent = set(payload.get("technique_codes") or [])
+        if lost in sent:
+            raise RuntimeError("provider closed the connection")
+        techniques = ",".join(
+            '{"technique_code": "' + code + '", "status": "covered",'
+            ' "detection_tools": ["CrowdStrike Falcon"], "prevention_tools": [],'
+            ' "response_tools": [], "rationale": "EDR detects."}'
+            for code in w.codes
+            if code in sent
+        )
+        return LLMResponse('{"techniques": [' + techniques + "]}")
+
+    w.provider.register("mitre_map", respond)
+    started = start_run(w.c, w.run_url, w.h)
+    assert runner.run_all() == 1
+    run = get_run(w.c, started["run_id"], w.h)
+    assert run["status"] == "completed", run
+    assert run["batches_failed"] == 1
+    assert run["batches_total"] > 1
+    assert run["result"]["batches_failed"] == 1
+    assert run["result"]["batches_total"] == run["batches_total"]
+    assert w.row(lost).status is None
+    with w.sessions() as s:
+        calls = s.execute(select(LLMCall)).scalars().all()
+    assert len(calls) == run["batches_total"]
+
+
+@pytest.mark.unit
 def test_a_discard_during_the_run_wins_and_the_run_ends_not_editable(app_parts) -> None:
     w, runner = _deferred(app_parts)
     started = start_run(w.c, w.run_url, w.h)

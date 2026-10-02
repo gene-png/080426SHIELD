@@ -704,6 +704,12 @@ def _run_risk_synthesize_batched(
 ) -> tuple[list[dict], int, int, dict[str, int]]:
     """Run risk_synthesize as concurrent batches.
 
+    A COPY of the loop mitre_map and csf_score now share in
+    `app.ai.batching.run_batches` (#479), left here on purpose: Risk does not
+    run in the background yet (#504; set aside 2026-09-27), so it has no run
+    deadline to pass, and moving it is that service's change to make. A fix to
+    either loop is owed to the other until then.
+
     Returns `(entries, total, failed, discarded)`. The fourth is #122: the merge
     below drops any entry that is not an object, and it dropped them with no
     counter -- so a batch answering with a list of strings contributed nothing
