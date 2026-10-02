@@ -226,6 +226,32 @@ class ConsolidationPlanSummary(BaseModel):
     savings_cost_known: bool
 
 
+class SavingsPreviewRequest(BaseModel):
+    """#804: proposed dispositions, `{item_id: "cut" | "consolidate" | "keep" |
+    null}`. Rows not named keep their stored disposition.
+
+    Typed `object` on purpose: a malformed map is refused by the route with a
+    typed `{reason, message}` 422, the convention the rest of Tech Debt uses,
+    rather than by FastAPI's schema handler (CLAUDE.md, the `Query(ge=...)`
+    entry)."""
+
+    dispositions: object = None
+
+
+class SavingsPreviewResponse(BaseModel):
+    """What the proposed dispositions would make the savings figure. Computed
+    by `tech_debt.savings.estimated_savings`, the deliverable's derivation;
+    nothing is written."""
+
+    capability_list_id: uuid.UUID
+    estimated_annual_savings: float
+    savings_cost_known: bool
+    keep_count: int
+    consolidate_count: int
+    cut_count: int
+    undecided_count: int
+
+
 class OverlapBucketResponse(BaseModel):
     key: str
     item_count: int
