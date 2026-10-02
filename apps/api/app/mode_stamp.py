@@ -41,7 +41,7 @@ from app.models.service import Service, ServiceKind
 _log = get_logger(__name__)
 
 AiModeState = Literal["live", "fixture", "mixed", "none", "unknown"]
-Subject = Literal["assessment", "capability list"]
+Subject = Literal["assessment", "capability list", "register"]
 
 
 @dataclass(frozen=True)
@@ -112,6 +112,11 @@ class AiModeStamp:
 
 #: For a context built without a lookup. Renders "not recorded", never live.
 UNKNOWN_AI_MODE = AiModeStamp(live_runs=0, fixture_runs=0, recorded=False)
+
+#: The Risk Register's, always, until Risk runs through the run framework (#504).
+UNKNOWN_AI_MODE_REGISTER = AiModeStamp(
+    live_runs=0, fixture_runs=0, recorded=False, subject="register"
+)
 
 
 def _run_counts(runs: list[AiRun]) -> tuple[int, int]:

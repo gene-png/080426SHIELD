@@ -15,7 +15,7 @@ from typing import Any
 
 from app.client_naming import org_display_name
 from app.mode_stamp import (
-    UNKNOWN_AI_MODE,
+    UNKNOWN_AI_MODE_REGISTER,
     AiModeStamp,
     add_docx_paragraph,
     add_xlsx_sheet,
@@ -74,7 +74,7 @@ class RiskExportContext:
     #: selecting the client's calls by purpose would read every register ever
     #: generated (the population defect #646's review rejected). It becomes a
     #: real answer when Risk runs through the run framework (#504).
-    ai_mode: AiModeStamp = UNKNOWN_AI_MODE
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE_REGISTER
 
 
 def _enum_list(values, enum_cls):

@@ -44,7 +44,7 @@ from app.csf.scoring import compute as csf_compute
 from app.db.session import get_db
 from app.dependencies import current_client, current_user
 from app.logging import get_logger
-from app.mode_stamp import UNKNOWN_AI_MODE, ai_mode_for
+from app.mode_stamp import UNKNOWN_AI_MODE_REGISTER, ai_mode_for
 from app.models.artifact import Artifact
 from app.models.attack_assessment import (
     AttackAssessment,
@@ -1851,7 +1851,7 @@ def risk_dashboard(
         # #646: "not recorded", deliberately -- nothing ties a register to the
         # calls that drafted it until Risk runs through the run framework
         # (#504). The register's own export says the same.
-        ai_source=UNKNOWN_AI_MODE.as_api(),
+        ai_source=UNKNOWN_AI_MODE_REGISTER.as_api(),
         # #330 TWIN, DELIBERATELY NOT FOLLOWED HERE -- and the reason is the ranking,
         # not the effort.
         #

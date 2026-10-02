@@ -98,11 +98,12 @@ function draft(): CsfAssessment {
     answers: [],
     client_target_tier: 3,
     documents_stale: false,
-    // #646 (Batch F): required since; not under test here.
+    // #646 (Batch F): required since; not under test here. A fresh
+    // draft with no completed run on load: "none", its true state.
     ai_source: {
-      state: "live",
-      sentence: "AI suggestions in this assessment came from a live AI model.",
-      live_runs: 1,
+      state: "none",
+      sentence: "No AI suggestions were used in this assessment.",
+      live_runs: 0,
       fixture_runs: 0,
     },
   } as unknown as CsfAssessment;
@@ -220,7 +221,7 @@ describe("CsfWorkspace re-reads the assessment's AI source when a run ends (#646
     render(<CsfWorkspace serviceId="svc-645-csf" serviceTitle="Atlas CSF" />);
     expect(await screen.findByTestId("ai-source")).toHaveAttribute(
       "data-state",
-      "live",
+      "none",
     );
     await waitFor(() =>
       expect(screen.getByTestId("ai-source")).toHaveAttribute(

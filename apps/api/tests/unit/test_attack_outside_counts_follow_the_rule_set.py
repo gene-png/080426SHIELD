@@ -31,6 +31,7 @@ from app.attack.analytics import compute
 from app.attack.catalog import TECHNIQUES
 from app.attack.exporters import build_context, render_docx, render_pdf, render_xlsx
 from app.attack.pending import pending_codes
+from app.mode_stamp import UNKNOWN_AI_MODE
 from app.models.attack_assessment import (
     AttackAssessment,
     AttackAssessmentStatus,
@@ -333,6 +334,8 @@ def _response(*, parents_computed: bool | None, counts: int | None, omit: bool =
         released_at=datetime(2026, 9, 1, tzinfo=UTC),
         deliverable_version=1,
         parents_computed=parents_computed,
+        # #646: required since Batch F; not under test here (coordinator's verdict).
+        ai_source=UNKNOWN_AI_MODE.as_api(),
         rollup=AttackDashboardRollup(
             total_evaluated=1,
             covered=1,

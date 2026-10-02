@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from tests._ai_mode import (
-    UNKNOWN,
     docx_text,
     pdf_text,
     xlsx_ai_sheet,
@@ -17,6 +16,13 @@ from tests.unit.test_risk_dashboard import (  # noqa: F401  (fixture)
 )
 
 pytestmark = pytest.mark.unit
+
+#: The approved "not recorded" sentence, in the register's own word (the
+#: coordinator's copy verdict, as Tech Debt says "capability list").
+REGISTER = (
+    "It is not recorded whether the AI suggestions in this register came from a live "
+    "AI model or from offline test data."
+)
 
 
 def _files(c, headers: dict, body: dict) -> tuple[str, str, list[list[object]]]:
@@ -45,8 +51,8 @@ def test_the_risk_register_states_it_is_not_recorded(app_client) -> None:  # noq
     ex = c.post(f"/risk/clients/{cid}/register/export", headers=h)
     assert ex.status_code in (200, 201), ex.text
     pdf, docx, sheet = _files(c, h, ex.json())
-    assert UNKNOWN in pdf
-    assert UNKNOWN in docx
+    assert REGISTER in pdf
+    assert REGISTER in docx
     assert sheet[0][:2] == ["AI source", "unknown"]
 
     dash = c.get(
@@ -54,4 +60,4 @@ def test_the_risk_register_states_it_is_not_recorded(app_client) -> None:  # noq
         headers={"Authorization": f"Bearer {client['tokens']['access_token']}"},
     )
     assert dash.status_code == 200, dash.text
-    assert dash.json()["ai_source"]["sentence"] == UNKNOWN
+    assert dash.json()["ai_source"]["sentence"] == REGISTER
