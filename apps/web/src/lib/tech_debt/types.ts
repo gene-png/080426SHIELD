@@ -143,6 +143,10 @@ export interface OverlapAnalysis {
   by_vendor: OverlapBucket[];
   top_cost_items: TopCostItem[];
   total_cost: number;
+  /** #781: what `total_cost` may honestly be called -- the deliverable's own
+   *  `cost_label` for this list: "Total annual cost", "Included annual cost"
+   *  or "Annual cost (may not be complete)". */
+  total_cost_label: string;
   total_items: number;
   uncategorized_count: number;
   no_vendor_count: number;
