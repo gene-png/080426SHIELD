@@ -19,6 +19,14 @@ from collections.abc import Mapping, Sequence
 from html import escape
 from typing import Any
 
+from app.ai.mode_stamp import (
+    UNKNOWN_AI_MODE,
+    AiModeStamp,
+    add_docx_paragraph,
+    add_xlsx_sheet,
+    pdf_paragraph,
+)
+
 # ---------------------------------------------------------------------------
 # XLSX workbook
 # ---------------------------------------------------------------------------
@@ -130,6 +138,7 @@ def _banner(ws: Any, approved: bool) -> None:
 def render_xlsx(
     *,
     approved: bool,
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -328,6 +337,7 @@ def render_xlsx(
     cover["A1"].font = Font(bold=True, size=14)
 
     out = io.BytesIO()
+    add_xlsx_sheet(wb, ai_mode)
     wb.save(out)
     return out.getvalue()
 
@@ -734,6 +744,7 @@ def _cover(
     styles: dict[str, Any],
     *,
     approved: bool,
+    ai_mode: AiModeStamp,
     subtitle: str,
     client_name: str,
     version: int,
@@ -751,6 +762,8 @@ def _cover(
     # #277: on the COVER, not only in the filename. A filename does not
     # survive being opened, printed, re-saved or pasted into a deck.
     story.append(Paragraph(escape(_approval_notice(approved)), styles["body"]))
+    # #646: beside the approval notice, for the same reason (#277).
+    story.append(pdf_paragraph(ai_mode, styles["body"]))
     if generated_on:
         story.append(Paragraph(f"Generated: {escape(generated_on)}", styles["body"]))
     story.append(Spacer(1, 0.3 * inch))
@@ -878,6 +891,7 @@ def _build_pdf(doc: Any, story: list[Any], approved: bool) -> None:
 def render_exec_pdf(
     *,
     approved: bool,
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -897,6 +911,7 @@ def render_exec_pdf(
         version=version,
         generated_on=generated_on,
         approved=approved,
+        ai_mode=ai_mode,
     )
     story.append(PageBreak())
 
@@ -919,6 +934,7 @@ def render_exec_pdf(
 def render_full_pdf(
     *,
     approved: bool,
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -939,6 +955,7 @@ def render_full_pdf(
         version=version,
         generated_on=generated_on,
         approved=approved,
+        ai_mode=ai_mode,
     )
     story.append(PageBreak())
 
@@ -1077,6 +1094,7 @@ def _docx_cover(
     version: int,
     generated_on: str | None,
     approved: bool,
+    ai_mode: AiModeStamp,
 ) -> None:
     from app.docx_export import add_paragraphs, add_title, set_footer
 
@@ -1088,6 +1106,8 @@ def _docx_cover(
     set_footer(doc, _approval_notice(approved), rgb=_NOTICE_DOCX_RGB[approved])
 
     add_title(doc, "NIST CSF 2.0", subtitle)
+    # #646: first thing under the title, before the cover metadata.
+    add_docx_paragraph(doc, ai_mode)
     meta = [
         f"Prepared for: {client_name}",
         f"Working profile version: {version}",
@@ -1129,6 +1149,7 @@ def _docx_scorecard(doc: Any, rows: Sequence[Any]) -> None:
 def render_exec_docx(
     *,
     approved: bool,
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -1144,6 +1165,7 @@ def render_exec_docx(
         version=version,
         generated_on=generated_on,
         approved=approved,
+        ai_mode=ai_mode,
     )
 
     add_heading(doc, "Executive summary")
@@ -1182,6 +1204,7 @@ def render_exec_docx(
 def render_full_docx(
     *,
     approved: bool,
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -1204,6 +1227,7 @@ def render_full_docx(
         version=version,
         generated_on=generated_on,
         approved=approved,
+        ai_mode=ai_mode,
     )
     add_page_break(doc)
 

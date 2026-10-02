@@ -33,6 +33,7 @@ from app.ai.diff import diff_keyed_rows
 from app.ai.engine import run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
+from app.ai.mode_stamp import ai_mode_for
 from app.ai.preview import AiPreviewPayload
 from app.ai.provenance import SOURCE_AI, SOURCE_CLIENT, protected_keys
 from app.ai.runs import (
@@ -302,6 +303,8 @@ def _serialize_assessment(db: Session, a: ZtAssessment) -> ZtAssessmentResponse:
         documents_stale=a.documents_stale,
         answers=_serialize_answers(rows),
         client_target_stage=_client_target_stage(db, a.service_id),
+        # #646: the ONE derivation every surface calls.
+        ai_source=ai_mode_for(db, db.get(Service, a.service_id), a).as_api(),
     )
 
 
@@ -1918,6 +1921,8 @@ def finalize_zt_deliverable(
         answers=answers,
         score=score,
         gap=gap,
+        # #646: the ONE derivation every surface calls.
+        ai_mode=ai_mode_for(db, svc, assessment),
     )
     pdf_bytes = render_zt_pdf(ctx)
     xlsx_bytes = render_zt_xlsx(ctx)

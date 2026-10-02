@@ -58,6 +58,13 @@ function data(
 ): AttackDashboardData {
   return {
     ...(parentsComputed ? { parents_computed: true } : {}),
+    // #646 (Batch F): required since; not under test here.
+    ai_source: {
+      state: "live",
+      sentence: "AI suggestions in this assessment came from a live AI model.",
+      live_runs: 1,
+      fixture_runs: 0,
+    },
     service_id: "s1",
     service_title: "ATT&CK Coverage",
     released_at: "2026-09-01T12:00:00Z",

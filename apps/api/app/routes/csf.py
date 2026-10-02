@@ -33,6 +33,7 @@ from app.ai.diff import diff_keyed_rows
 from app.ai.engine import run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
+from app.ai.mode_stamp import ai_mode_for
 from app.ai.preview import AiPreviewPayload
 from app.ai.provenance import SOURCE_CONSULTANT, protected_keys
 from app.ai.runs import (
@@ -198,6 +199,8 @@ def _serialize_assessment(db: Session, a: CsfAssessment) -> CsfAssessmentRespons
         answers=_serialize_answers(rows),
         client_target_tier=_client_target_tier(db, a.service_id),
         client_profile=_client_profile(db, a.service_id),
+        # #646: the ONE derivation every surface calls.
+        ai_source=ai_mode_for(db, db.get(Service, a.service_id), a).as_api(),
     )
 
 
@@ -2339,6 +2342,8 @@ def export_playbook(
     # and the artifact is deliverable-grade, so the label keeps meaning
     # something rather than becoming furniture that gets read past.
     _approved = a.status in (CsfAssessmentStatus.APPROVED, CsfAssessmentStatus.RELEASED)
+    # #646: the ONE derivation every surface calls; every file of the export.
+    _ai_mode = ai_mode_for(db, svc, a)
 
     def _pb_name(extension: str, variant: str | None = None) -> str:
         # §15.5: {Company}_CSF_Playbook{MMDDYY}[_v{n}][_variant].ext
@@ -2365,6 +2370,7 @@ def export_playbook(
                 tier_profiles=tier_profiles,
                 gap_actions=gap_actions,
                 approved=_approved,
+                ai_mode=_ai_mode,
             ),
         ),
         (
@@ -2378,6 +2384,7 @@ def export_playbook(
                 enterprise_rows=enterprise_rows,
                 generated_on=on,
                 approved=_approved,
+                ai_mode=_ai_mode,
             ),
         ),
         (
@@ -2391,6 +2398,7 @@ def export_playbook(
                 enterprise_rows=enterprise_rows,
                 generated_on=on,
                 approved=_approved,
+                ai_mode=_ai_mode,
             ),
         ),
         (
@@ -2404,6 +2412,7 @@ def export_playbook(
                 enterprise_rows=enterprise_rows,
                 generated_on=on,
                 approved=_approved,
+                ai_mode=_ai_mode,
             ),
         ),
         (
@@ -2417,6 +2426,7 @@ def export_playbook(
                 enterprise_rows=enterprise_rows,
                 generated_on=on,
                 approved=_approved,
+                ai_mode=_ai_mode,
             ),
         ),
     ]
@@ -2609,6 +2619,8 @@ def finalize_csf_deliverable(
         answers=answers,
         score=score,
         gap=gap,
+        # #646: the ONE derivation every surface calls.
+        ai_mode=ai_mode_for(db, svc, assessment),
     )
     pdf_bytes = render_csf_pdf(ctx)
     xlsx_bytes = render_csf_xlsx(ctx)

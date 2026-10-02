@@ -106,6 +106,13 @@ beforeEach(() => {
     answers: [],
     client_target_stage: 3,
     documents_stale: false,
+    // #646 (Batch F): required since; not under test here.
+    ai_source: {
+      state: "live",
+      sentence: "AI suggestions in this assessment came from a live AI model.",
+      live_runs: 1,
+      fixture_runs: 0,
+    },
   } as unknown as ZtAssessment);
   vi.mocked(ztClient.fetchLatestDeliverable).mockResolvedValue(null);
   vi.mocked(ztClient.fetchScore).mockResolvedValue(
@@ -188,6 +195,14 @@ describe("ZtWorkspace, a Run AI whose outcome is unknown (#550)", () => {
         answers: [],
         client_target_stage: 3,
         documents_stale: false,
+        // #646 (Batch F): required since; not under test here.
+        ai_source: {
+          state: "live",
+          sentence:
+            "AI suggestions in this assessment came from a live AI model.",
+          live_runs: 1,
+          fixture_runs: 0,
+        },
       } as unknown as ZtAssessment)
       .mockRejectedValueOnce(OUTCOME_UNKNOWN);
     render(

@@ -9,7 +9,8 @@ after #620 (parent_rules = 2) or a draft (NULL). An assessment approved before
 
 BOTH HALVES, from one world. The rule-1 half compares against text RECORDED from
 `main` at 22c47a4, before #621 (`tests/golden/outside_counts_rule1/`, see its
-RECORDED.md), never regenerated. The rule-2 and draft halves assert the counts
+RECORDED.md), never regenerated -- amended once, 2026-10-02, to add #646's
+AI-source stamp and nothing else (RECORDED.md has the check). The rule-2 and draft halves assert the counts
 appear, so the rule-1 half cannot pass for a change that removed them everywhere.
 
 The client dashboard JSON and the finalize workbook and summary under rule 1 are

@@ -1,3 +1,5 @@
+import type { AiSource } from "@/lib/aiSource/types";
+
 /**
  * Client ATT&CK coverage dashboard — types + pure transforms (D-035).
  *
@@ -84,6 +86,8 @@ export interface DashRollup {
 }
 
 export interface AttackDashboardData {
+  /** #646: which mode drafted the AI suggestions, as the API states it. */
+  ai_source: AiSource;
   /** True for an assessment approved under D-094's rules for computed parents
    *  (#620). Absent for one approved before, which renders as delivered. */
   parents_computed?: boolean;

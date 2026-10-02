@@ -12,6 +12,7 @@ from pydantic_core import PydanticCustomError
 from app.models.service import ServiceKind, ServiceStatus
 from app.models.zt_assessment import ZtAssessmentStatus, ZtFramework
 from app.schemas._numeric import IntNotBool
+from app.schemas.ai_runs import AiSource
 
 # ---------------------------------------------------------------------------
 # Catalog
@@ -98,6 +99,8 @@ class ZtAssessmentResponse(BaseModel):
     answers: list[ZtAnswerResponse]
     # Target stage the client picked at intake (2-4), or null if not set.
     client_target_stage: int | None = None
+    # #646: which mode drafted this assessment's AI suggestions. REQUIRED.
+    ai_source: AiSource
 
 
 class ZtAnswerPatch(BaseModel):

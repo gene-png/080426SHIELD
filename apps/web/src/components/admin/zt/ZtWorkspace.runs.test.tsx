@@ -105,6 +105,13 @@ function draft(): ZtAssessment {
     answers: [],
     client_target_stage: 3,
     documents_stale: false,
+    // #646 (Batch F): required since; not under test here.
+    ai_source: {
+      state: "live",
+      sentence: "AI suggestions in this assessment came from a live AI model.",
+      live_runs: 1,
+      fixture_runs: 0,
+    },
   } as unknown as ZtAssessment;
 }
 
@@ -338,5 +345,24 @@ describe("ZtWorkspace, an unreadable AI status (#645)", () => {
       expect(screen.getByRole("button", { name: "Run AI" })).toBeEnabled(),
     );
     expect(screen.queryByTestId("run-ai-status-unknown")).toBeNull();
+  });
+});
+
+describe("ZtWorkspace, the assessment's AI source (#646)", () => {
+  it("states the API's sentence for the assessment, warning-toned when not all live", async () => {
+    m.latest.mockResolvedValue({
+      ...draft(),
+      ai_source: {
+        state: "mixed",
+        sentence:
+          "OFFLINE TEST DATA: 1 of the 3 AI runs on this assessment used built-in test data, not a live AI model. Values they drafted are placeholders, not analysis.",
+        live_runs: 2,
+        fixture_runs: 1,
+      },
+    } as unknown as ZtAssessment);
+    renderWorkspace();
+    const note = await screen.findByTestId("ai-source");
+    expect(note).toHaveTextContent(/1 of the 3 AI runs on this assessment/);
+    expect(note).toHaveAttribute("role", "alert");
   });
 });

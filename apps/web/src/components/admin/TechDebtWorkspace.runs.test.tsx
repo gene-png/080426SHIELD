@@ -327,3 +327,24 @@ describe("TechDebtWorkspace, a re-read failing after a completed run (#645, #752
     await waitFor(() => expect(m.extract).toHaveBeenCalledTimes(2));
   });
 });
+
+describe("TechDebtWorkspace, the list's AI source (#646)", () => {
+  it("states the API's sentence for the capability list", async () => {
+    m.fetchLatestList.mockResolvedValue({
+      ...list(),
+      ai_source: {
+        state: "fixture",
+        sentence:
+          "OFFLINE TEST DATA: every AI suggestion in this capability list came from built-in test data, not a live AI model. Treat AI-drafted values as placeholders, not analysis.",
+        live_runs: 0,
+        fixture_runs: 1,
+      },
+    } as unknown as CapabilityList);
+    render(<TechDebtWorkspace serviceId="svc-1" serviceTitle="Atlas TD" />);
+    const note = await screen.findByTestId("ai-source");
+    expect(note).toHaveTextContent(
+      /in this capability list came from built-in test data/,
+    );
+    expect(note).toHaveAttribute("role", "alert");
+  });
+});

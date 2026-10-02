@@ -1574,6 +1574,9 @@ def export(
         version=reg.version,
         entries=entries,
         link_scope=[(r.service, r.scored, r.total) for r in _scope_rows],
+        # #646: `ai_mode` is left at "not recorded", deliberately -- see
+        # `RiskExportContext.ai_mode`. Nothing ties a register to the calls
+        # that drafted it until Risk runs through the run framework (#504).
     )
     today = utcnow().date()
 

@@ -34,6 +34,7 @@ from app.ai.diff import diff_keyed_rows
 from app.ai.engine import get_job, run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
+from app.ai.mode_stamp import ai_mode_for
 from app.ai.preview import AiPreviewPayload
 from app.ai.runs import (
     RUN_DEADLINE_EXCEEDED,
@@ -217,6 +218,8 @@ def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentR
         # The ONE definition of current (`catalog_version.is_current`), never a
         # second inline comparison that could disagree with the guards.
         catalog_current=attack_catalog_is_current(a),
+        # #646: the ONE derivation every surface calls.
+        ai_source=ai_mode_for(db, db.get(Service, a.service_id), a).as_api(),
         coverage=_serialize_coverage(rows, parents_computed=parents_computed(a)),
     )
 
@@ -3067,6 +3070,8 @@ def finalize_attack_deliverable(
         assessment=assessment,
         coverage=coverage,
         rollup=rollup,
+        # #646: the ONE derivation every surface calls.
+        ai_mode=ai_mode_for(db, svc, assessment),
     )
     pdf_bytes = render_attack_pdf(ctx)
     xlsx_bytes = render_attack_xlsx(ctx)

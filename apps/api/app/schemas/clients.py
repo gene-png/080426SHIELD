@@ -14,6 +14,7 @@ from typing import Any, ClassVar, Literal
 from pydantic import BaseModel, model_serializer, model_validator
 
 from app.models.service import ServiceKind
+from app.schemas.ai_runs import AiSource
 
 __all__ = [
     "AttackDashboardResponse",
@@ -200,6 +201,9 @@ class AttackDashboardResponse(BaseModel):
     #: byte-identical to what was delivered (Gene's condition, D-094). The web
     #: shows the triad's population sentence only when this is true.
     parents_computed: bool | None = None
+    # #646: which mode drafted the released assessment's AI suggestions, as the
+    # deliverable states it. REQUIRED.
+    ai_source: AiSource
     rollup: AttackDashboardRollup
     techniques: list[AttackDashboardTechnique]
 
@@ -304,6 +308,9 @@ class CsfDashboardResponse(BaseModel):
     # only ever receive True. Same contract as the other four (issue 4).
     released: bool = True
     deliverable_version: int
+    # #646: which mode drafted the AI suggestions behind these figures, as the
+    # deliverable states it. REQUIRED.
+    ai_source: AiSource
 
     overall_label: str
     current_tier: float | None
@@ -380,6 +387,9 @@ class ZtDashboardResponse(BaseModel):
     # the default keeps every existing consumer working.
     released: bool = True
     deliverable_version: int
+    # #646: which mode drafted the AI suggestions behind these figures, as the
+    # deliverable states it. REQUIRED.
+    ai_source: AiSource
     framework: str  # "cisa_ztmm_2_0" | "dod_ztra"
     framework_label: str
     current_label: str
@@ -496,6 +506,9 @@ class TechDebtDashboardResponse(BaseModel):
     # the default keeps every existing consumer working.
     released: bool = True
     deliverable_version: int
+    # #646: which mode drafted the AI suggestions behind these figures, as the
+    # deliverable states it. REQUIRED.
+    ai_source: AiSource
     total_applications: int
     annual_spend_usd: float
     identified_savings_usd: float
@@ -562,6 +575,9 @@ class RiskDashboardResponse(BaseModel):
     # the default keeps every existing consumer working.
     released: bool = True
     version: int
+    # #646: "not recorded" until Risk runs through the run framework (#504);
+    # see `RiskExportContext.ai_mode`. REQUIRED, so the client is told.
+    ai_source: AiSource
     total_entries: int
     #: #313. How many entries are in `total_entries` and in NO breakdown.
     #:

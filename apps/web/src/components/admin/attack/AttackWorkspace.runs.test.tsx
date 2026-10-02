@@ -119,6 +119,13 @@ function draft(): AttackAssessment {
     version: 1,
     coverage: [{ id: "c1", technique_code: "T1595", status: "covered" }],
     documents_stale: false,
+    // #646 (Batch F): required since; not under test here.
+    ai_source: {
+      state: "live",
+      sentence: "AI suggestions in this assessment came from a live AI model.",
+      live_runs: 1,
+      fixture_runs: 0,
+    },
     catalog_version: "19.2",
     catalog_current: true,
   } as unknown as AttackAssessment;
@@ -416,5 +423,25 @@ describe("AttackWorkspace, an unreadable AI status (#645)", () => {
       expect(screen.getByRole("button", { name: "Run AI" })).toBeEnabled(),
     );
     expect(screen.queryByTestId("run-ai-status-unknown")).toBeNull();
+  });
+});
+
+describe("AttackWorkspace, the assessment's AI source (#646)", () => {
+  it("states the API's sentence for the assessment, warning-toned when not all live", async () => {
+    m.fetchAttackRunSummary.mockResolvedValue(summary());
+    m.fetchLatestAssessment.mockResolvedValue({
+      ...draft(),
+      ai_source: {
+        state: "mixed",
+        sentence:
+          "OFFLINE TEST DATA: 1 of the 3 AI runs on this assessment used built-in test data, not a live AI model. Values they drafted are placeholders, not analysis.",
+        live_runs: 2,
+        fixture_runs: 1,
+      },
+    } as unknown as AttackAssessment);
+    render(<AttackWorkspace serviceId="svc-1" serviceTitle="ATT&CK" />);
+    const note = await screen.findByTestId("ai-source");
+    expect(note).toHaveTextContent(/1 of the 3 AI runs on this assessment/);
+    expect(note).toHaveAttribute("role", "alert");
   });
 });

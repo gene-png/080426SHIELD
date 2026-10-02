@@ -111,6 +111,13 @@ function draft(): ZtAssessment {
     answers: [],
     client_target_stage: 3,
     documents_stale: false,
+    // #646 (Batch F): required since; not under test here.
+    ai_source: {
+      state: "live",
+      sentence: "AI suggestions in this assessment came from a live AI model.",
+      live_runs: 1,
+      fixture_runs: 0,
+    },
   } as unknown as ZtAssessment;
 }
 

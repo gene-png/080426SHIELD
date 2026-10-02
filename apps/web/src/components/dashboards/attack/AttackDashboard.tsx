@@ -298,6 +298,7 @@ export function AttackDashboard({
   // pinned to UTC) left this one wrong while the other four re-tested clean.
   return (
     <DashShell
+      aiSource={data.ai_source}
       title={data.service_title}
       subtitle="MITRE ATT&CK Coverage · Detect / Prevent / Respond posture"
       releasedAt={data.released_at}

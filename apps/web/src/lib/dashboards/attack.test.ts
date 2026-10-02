@@ -29,6 +29,13 @@ function tech(partial: Partial<DashTechnique>): DashTechnique {
 }
 
 const DATA: AttackDashboardData = {
+  // #646 (Batch F): required since; not under test here.
+  ai_source: {
+    state: "live",
+    sentence: "AI suggestions in this assessment came from a live AI model.",
+    live_runs: 1,
+    fixture_runs: 0,
+  },
   service_id: "s1",
   service_title: "Atlas — ATT&CK Coverage",
   released_at: "2026-05-12T00:00:00Z",

@@ -8,6 +8,18 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
+
+class AiSource(BaseModel):
+    """Whether an assessment's AI suggestions came from a live model or test
+    data (#646), as every surface states it. From `app.ai.mode_stamp.ai_mode_for`,
+    the one derivation: the subject's COMPLETED runs, by mode."""
+
+    state: Literal["live", "fixture", "mixed", "none", "unknown"]
+    sentence: str
+    live_runs: int
+    fixture_runs: int
+
+
 #: What the consultant acknowledged a Run-AI would do: call the provider, or
 #: serve canned offline output. The AI status's third value, "broken", is never
 #: something a run can be started under, so it is not one of these.

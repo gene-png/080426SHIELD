@@ -98,6 +98,13 @@ function draft(): AttackAssessment {
     version: 1,
     coverage: [],
     documents_stale: false,
+    // #646 (Batch F): required since; not under test here.
+    ai_source: {
+      state: "live",
+      sentence: "AI suggestions in this assessment came from a live AI model.",
+      live_runs: 1,
+      fixture_runs: 0,
+    },
     catalog_version: "19.2",
     catalog_current: true,
   } as unknown as AttackAssessment;

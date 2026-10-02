@@ -1,3 +1,5 @@
+import type { AiSource } from "@/lib/aiSource/types";
+
 /**
  * Client Risk Register dashboard — types + pure transforms (D-035).
  * Mirrors the backend `RiskDashboardResponse`. The 5x5 likelihood x impact
@@ -21,6 +23,8 @@ export interface RiskEntry {
 }
 
 export interface RiskDashboardData {
+  /** #646: which mode drafted the AI suggestions, as the API states it. */
+  ai_source: AiSource;
   client_id: string;
   released_at: string;
   version: number;
