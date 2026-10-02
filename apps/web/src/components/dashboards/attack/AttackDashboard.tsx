@@ -585,7 +585,9 @@ export function AttackDashboard({
             </tbody>
           </table>
           <p style={{ margin: "10px 0 0", fontSize: 13 }}>
-            {`These add up to the ${data.rollup.partial} Partial techniques above.`}
+            {data.rollup.partial === 1
+              ? "This adds up to the 1 Partial technique above."
+              : `These add up to the ${data.rollup.partial} Partial techniques above.`}
           </p>
         </Section>
       ) : null}

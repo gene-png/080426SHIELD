@@ -167,3 +167,34 @@ describe("AttackDashboard, the Partial-by-reason table (#554 R1)", () => {
     ).toBeNull();
   });
 });
+
+describe("AttackDashboard, the reason table's caption agrees in number (#554 R1)", () => {
+  // #743's defect: "the 1 Partial techniques". Singular approved for N = 1.
+  function withTable(partial: number, counts: number[]) {
+    const base = data([
+      technique("T1190", "partial", { partial_reason: REACH }),
+    ]);
+    return {
+      ...base,
+      rollup: { ...base.rollup, partial },
+      partial_reasons: counts.map((count, i) => ({
+        ...(i === 0 ? REACH : SET_BY),
+        count,
+      })),
+    };
+  }
+
+  it("reads in the singular for one Partial", () => {
+    render(<AttackDashboard data={withTable(1, [1])} />);
+    expect(
+      screen.getByText("This adds up to the 1 Partial technique above."),
+    ).toBeInTheDocument();
+  });
+
+  it("reads in the plural for two", () => {
+    render(<AttackDashboard data={withTable(2, [1, 1])} />);
+    expect(
+      screen.getByText("These add up to the 2 Partial techniques above."),
+    ).toBeInTheDocument();
+  });
+});
