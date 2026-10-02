@@ -352,3 +352,42 @@ describe("useAiRun, review round 1 (#645)", () => {
     expect(result.current.pollRefused).toBe("Service not found.");
   });
 });
+
+describe("useAiRun, review round 2 (#645)", () => {
+  it("R2-1: a subject change while the poll sits in its TIMER settles the follower", async () => {
+    const fetchSummary = vi.fn().mockResolvedValue(summary());
+    // Every read answers RUNNING at once, so the loop spends its time in the
+    // timer between polls, which is where a subject change almost always
+    // finds it.
+    const fetchRun = vi.fn().mockResolvedValue(run({ id: "run-1" }));
+    const { result, rerender } = renderHook(
+      ({ subjectId }) =>
+        useAiRun<Result>({
+          serviceId: "svc-1",
+          subjectId,
+          fetchSummary,
+          fetchRun,
+          pollMs: 60_000,
+        }),
+      { initialProps: { subjectId: "assess-1" as string | null } },
+    );
+    await waitFor(() => expect(result.current.phase).toBe("ready"));
+    let settled: AiRun<Result> | undefined;
+    let done!: Promise<AiRun<Result>>;
+    act(() => {
+      done = result.current.follow(STARTED);
+    });
+    void done.then((r) => {
+      settled = r;
+    });
+    await waitFor(() => expect(fetchRun).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(settled).toBeUndefined(); // still running, in its timer
+    rerender({ subjectId: null }); // Discard: no assessment now
+    await waitFor(() => expect(settled).toBeDefined());
+    expect(settled?.id).toBe("run-1");
+    expect(settled?.status).toBe("running"); // superseded, not completed
+  });
+});

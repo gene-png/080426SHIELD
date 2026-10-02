@@ -153,6 +153,8 @@ export function useAiRun<R>({
   const timers = React.useRef(new Set<ReturnType<typeof setTimeout>>());
   const polling = React.useRef(new Set<string>());
   const followers = React.useRef(new Map<string, (run: AiRun<R>) => void>());
+  /** The newest read of each followed run, to settle its follower with. */
+  const lastSeen = React.useRef(new Map<string, AiRun<R>>());
 
   /** setState, but only into the generation's own key. */
   const update = React.useCallback(
@@ -163,6 +165,7 @@ export function useAiRun<R>({
 
   const settle = React.useCallback((runId: string, run: AiRun<R>) => {
     const follower = followers.current.get(runId);
+    lastSeen.current.delete(runId);
     if (follower) {
       followers.current.delete(runId);
       follower(run);
@@ -176,6 +179,7 @@ export function useAiRun<R>({
       if (polling.current.has(runId)) return;
       polling.current.add(runId);
       let latestSeen = last;
+      if (last) lastSeen.current.set(runId, last);
       const later = (fn: () => void) => {
         const t = setTimeout(() => {
           timers.current.delete(t);
@@ -221,6 +225,7 @@ export function useAiRun<R>({
         }
         if (generation.current !== gen) return stop();
         latestSeen = run;
+        lastSeen.current.set(runId, run);
         if (run.status === "running") {
           update(forKey, (s) => ({ ...s, checkFailed: false, running: run }));
           later(() => void tick());
@@ -257,6 +262,13 @@ export function useAiRun<R>({
       for (const t of timersNow) clearTimeout(t);
       timersNow.clear();
       pollingNow.clear();
+      // A loop stopped in its timer never reaches `stop()`, so settle every
+      // follower here, with the newest read of its run: still RUNNING, which
+      // every caller treats as "not completed, nothing to re-read". Without
+      // this, a caller awaiting `follow()` (ATT&CK's Run-AI write) waits for
+      // the page's life (#756 round 2). The run itself is the next
+      // generation's to show: the service's summary still names it.
+      for (const [runId, run] of [...lastSeen.current]) settle(runId, run);
     };
     // No assessment yet: a run needs one, so there is nothing to read.
     if (subjectId === null) return cleanup;
@@ -277,7 +289,7 @@ export function useAiRun<R>({
         });
       });
     return cleanup;
-  }, [key, serviceId, subjectId, poll]);
+  }, [key, serviceId, subjectId, poll, settle]);
 
   const follow = React.useCallback(
     (started: AiRunStarted): Promise<AiRun<R>> => {

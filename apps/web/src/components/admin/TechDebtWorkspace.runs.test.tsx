@@ -245,6 +245,38 @@ describe("TechDebtWorkspace, an extraction whose outcome is unknown, reconciled 
     ).toBeDisabled();
   });
 
+  it("keeps extraction locked after the reconciled run COMPLETES (#756 round 2)", async () => {
+    m.fetchSummary
+      .mockResolvedValueOnce({
+        running: null,
+        latest: null,
+        last_completed: null,
+      })
+      .mockResolvedValueOnce({
+        running: run(),
+        latest: run(),
+        last_completed: null,
+      });
+    m.fetchRun.mockResolvedValue(run({ status: "completed", result: null }));
+    m.extract.mockRejectedValueOnce(outcomeUnknown());
+    render(<TechDebtWorkspace serviceId="svc-1" serviceTitle="Atlas TD" />);
+    const button = await screen.findByRole("button", {
+      name: "extract artifact-1",
+    });
+    fireEvent.click(button);
+    await waitFor(() => expect(m.fetchRun).toHaveBeenCalledWith("run-1"));
+    await waitFor(() =>
+      expect(screen.queryByTestId("ai-run-running")).toBeNull(),
+    );
+    expect(
+      screen.getByText(/couldn't confirm whether the extraction finished/),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(button).not.toBeDisabled());
+    fireEvent.click(button);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(m.extract).toHaveBeenCalledTimes(1);
+  });
+
   it("stays outcome-unknown, with no second message, when that look fails", async () => {
     m.fetchSummary
       .mockResolvedValueOnce({

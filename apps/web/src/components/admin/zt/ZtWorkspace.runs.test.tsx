@@ -259,6 +259,38 @@ describe("ZtWorkspace, a Run AI whose outcome is unknown, reconciled (#645)", ()
     expect(screen.getByRole("button", { name: "Running…" })).toBeDisabled();
   });
 
+  it("keeps the page-life lock after the reconciled run COMPLETES (#756 round 2)", async () => {
+    m.summary
+      .mockResolvedValueOnce({
+        running: null,
+        latest: null,
+        last_completed: null,
+      })
+      .mockResolvedValueOnce({
+        running: run(),
+        latest: run(),
+        last_completed: null,
+      });
+    m.fetchRun.mockResolvedValue(
+      run({
+        status: "completed",
+        finished_at: "2026-10-01T12:05:00Z",
+        result: result(),
+      }),
+    );
+    m.run.mockRejectedValueOnce(outcomeUnknown());
+    renderWorkspace();
+    fireEvent.click(await screen.findByRole("button", { name: "Run AI" }));
+    await waitFor(() => expect(m.fetchRun).toHaveBeenCalledWith("run-1"));
+    await waitFor(() =>
+      expect(screen.queryByTestId("ai-run-running")).toBeNull(),
+    );
+    expect(
+      screen.getByText(/couldn't confirm whether the AI run finished/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run AI" })).toBeDisabled();
+  });
+
   it("stays outcome-unknown, with no second message, when that look fails", async () => {
     m.summary
       .mockResolvedValueOnce({

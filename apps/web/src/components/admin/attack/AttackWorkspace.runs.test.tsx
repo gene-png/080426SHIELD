@@ -353,6 +353,32 @@ describe("AttackWorkspace, a Run AI whose outcome is unknown, reconciled (#645)"
     expect(screen.getByRole("button", { name: "Running…" })).toBeDisabled();
   });
 
+  it("keeps the page-life lock after the reconciled run COMPLETES (#756 round 2)", async () => {
+    m.fetchAttackRunSummary
+      .mockResolvedValueOnce(summary())
+      .mockResolvedValueOnce(summary({ running: run(), latest: run() }));
+    m.fetchAttackRun.mockResolvedValue(
+      run({
+        status: "completed",
+        finished_at: "2026-10-01T12:05:00Z",
+        result: result(),
+      }),
+    );
+    m.runAttackAi.mockRejectedValueOnce(outcomeUnknown());
+    render(<AttackWorkspace serviceId="svc-1" serviceTitle="ATT&CK" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Run AI" }));
+    // The run ended, and the page re-read what it applied...
+    await waitFor(() =>
+      expect(m.fetchLatestAssessment).toHaveBeenCalledTimes(2),
+    );
+    expect(screen.queryByTestId("ai-run-running")).toBeNull();
+    // ...but the POST's own outcome is still unknown, so the lock stands.
+    expect(
+      screen.getByText(/couldn't confirm whether the AI run finished/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run AI" })).toBeDisabled();
+  });
+
   it("stays outcome-unknown, with no second message, when that look fails", async () => {
     m.fetchAttackRunSummary
       .mockResolvedValueOnce(summary())
