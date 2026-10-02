@@ -8,7 +8,6 @@ discard racing the run winning.
 
 from __future__ import annotations
 
-import json
 import os
 import uuid
 from collections.abc import Callable, Iterator
@@ -23,10 +22,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, update
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
+from app.ai.llm import FixtureProvider, LLMClient
 from app.models.csf_profile import CsfDimensionScore
 from app.storage.local import LocalFilesystemStorage
-from tests._ai_runs import DeferringRunner, defer_runs, get_run, start_run
+from tests._ai_runs import DeferringRunner, csf_scores_by_batch, defer_runs, get_run, start_run
 
 
 @dataclass
@@ -54,7 +53,14 @@ class World:
             }
             for r in self.rows[:n]
         ]
-        self.provider.register_static("csf_score", LLMResponse(json.dumps({"scores": scores})))
+        # #479: the run is batched; each entry goes to the batch that asked
+        # for its row, once.
+        self.provider.register(
+            "csf_score",
+            csf_scores_by_batch(
+                scores, tiers=["high"], codes=[r["subcategory_code"] for r in self.rows]
+            ),
+        )
 
     def row(self, score_id: str) -> CsfDimensionScore:
         with self.sessions() as s:

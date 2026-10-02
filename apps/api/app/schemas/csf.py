@@ -394,6 +394,7 @@ class CsfDroppedSuggestion(BaseModel):
     | `locked`       | a human locked the row — a by-design skip, not a defect  |
     | `protected`    | an offline run declined to overwrite a hand-typed score  |
     | `edited`       | a consultant edited the row after the run started (#645) |
+    | `not_in_batch` | answered a real row its batch was not asked for (#479)   |
 
     `locked` renders separately from the rest. Folding a by-design skip into one
     "N dropped" number rebuilds the alert-fatigue problem issue #31 rejected.
@@ -414,6 +415,7 @@ class CsfDroppedSuggestion(BaseModel):
         "locked",
         "protected",
         "edited",
+        "not_in_batch",
     ]
     # "tier|subcategory_code" exactly as the model wrote it, or None when the
     # model omitted them. Never the literal "None|None" — that fabricates a row
@@ -453,6 +455,11 @@ class CsfRunAiResponse(BaseModel):
     suggestions_received: int = 0
     suggestions_applied: int = 0
     dropped: list[CsfDroppedSuggestion] = []
+    # #479: csf_score runs in batches. A failed batch's rows were never
+    # answered, so they are in neither count above; `batches_failed` of
+    # `batches_total` is what says the run is partial.
+    batches_total: int = 0
+    batches_failed: int = 0
 
 
 class ExportedArtifact(BaseModel):

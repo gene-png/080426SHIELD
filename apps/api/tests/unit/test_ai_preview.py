@@ -100,17 +100,21 @@ def _bootstrap_csf(c: TestClient) -> tuple[dict, str, str]:
 
 @pytest.mark.unit
 def test_preview_equals_run_ai_egress_and_counts_match(app_client) -> None:
-    """The redacted preview payload equals what run-ai actually egresses, and the
-    preview's removed_counts equal the counts the run records."""
+    """The redacted preview payload is what run-ai actually egresses, and the
+    preview's removed_counts equal the counts the run records.
+
+    #479: csf_score egresses in batches, each the previewed payload with its
+    tiers and subcategories narrowed to one batch's rows. So every batch must
+    equal the preview outside those two keys, and the batches together must
+    ask for exactly the previewed rows, each once."""
     c, provider, _ = app_client
     h, svc_id, _code = _bootstrap_csf(c)
 
-    # Capture the post-redaction payload that reaches the provider on a real run.
-    captured: dict = {}
+    # Capture every post-redaction payload that reaches the provider.
+    captured: list[dict] = []
 
     def _capture(payload: dict) -> LLMResponse:
-        captured.clear()
-        captured.update(payload)
+        captured.append(payload)
         return LLMResponse('{"scores": []}')  # empty -> run-ai mutates no rows
 
     provider.register("csf_score", _capture)
@@ -127,8 +131,15 @@ def test_preview_equals_run_ai_egress_and_counts_match(app_client) -> None:
     # Now a real run: what egresses (minus the __purpose__ control key) must equal
     # the previewed payload.
     csf_run_ai(c, svc_id, h)
-    egress = {k: v for k, v in captured.items() if not str(k).startswith("__")}
-    assert body["payload"] == egress
+    egress = [{k: v for k, v in p.items() if not str(k).startswith("__")} for p in captured]
+    assert len(egress) > 1, "a batched run egresses more than one payload"
+    preview = body["payload"]
+    for batch in egress:
+        narrowed = {**preview, "tiers": batch["tiers"], "subcategories": batch["subcategories"]}
+        assert batch == narrowed
+    asked = sorted((t, c) for b in egress for t in b["tiers"] for c in b["subcategories"])
+    previewed = sorted((t, c) for t in preview["tiers"] for c in preview["subcategories"])
+    assert asked == previewed
 
 
 @pytest.mark.unit
@@ -170,9 +181,13 @@ def test_preview_counts_match_recorded_run(app_client) -> None:
     prev = c.post("/ai/preview", json={"service_id": svc_id}, headers=h).json()
     csf_run_ai(c, svc_id, h)
 
+    # #479: one llm_calls row per batch, and every batch carries the redacted
+    # answers, so every row records what the preview said would be removed.
     with TestSession() as db:
-        row = db.execute(select(LLMCall)).scalars().one()
-    assert (row.redacted_counts or {}) == prev["removed_counts"]
+        rows = db.execute(select(LLMCall)).scalars().all()
+    assert len(rows) > 1
+    for row in rows:
+        assert (row.redacted_counts or {}) == prev["removed_counts"]
 
 
 @pytest.mark.unit

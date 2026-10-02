@@ -263,7 +263,8 @@ export interface CsfDroppedSuggestion {
     | "superseded"
     | "locked"
     | "protected"
-    | "edited";
+    | "edited"
+    | "not_in_batch";
   /** "tier|subcategory_code" as the model wrote it; null if it wrote neither. */
   key: string | null;
   field: string | null;
@@ -284,6 +285,13 @@ export interface CsfRunAiResponse {
   suggestions_received: number;
   suggestions_applied: number;
   dropped: CsfDroppedSuggestion[];
+  /**
+   * #479: csf_score runs in batches. A failed batch's rows were never
+   * answered, so they are in neither count above. Optional: a result stored
+   * before batching carries neither, and that is not "no batch failed".
+   */
+  batches_total?: number;
+  batches_failed?: number;
 }
 
 export interface ExportedArtifact {
