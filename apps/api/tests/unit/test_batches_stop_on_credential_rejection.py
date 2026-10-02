@@ -7,11 +7,13 @@ dropped connection costs one batch, not the run. A rejected key is not that.
 Every later call is rejected for the same reason, so each one is a provider
 round trip and an `llm_calls` row that can only say the same thing.
 
-So `app.ai.batching.run_batches` runs the FIRST batch alone, and fans the rest
-out only if it did not come back as a credential rejection; a rejection later
-in the run cancels every batch not yet started. Everything here is driven
-through the run endpoints a consultant reaches, never the helper, and counts
-the provider calls actually made.
+So `app.ai.batching.run_batches` starts no batch after the first credential
+rejection: a bad key costs at most one call per worker -- the ones already in
+flight -- instead of one per batch. The bound is pinned to the pool-size
+constant each loop is given, with N well above it so it cannot pass by luck,
+and a pool of one makes it exactly one call. Everything here is driven through
+the run endpoints a consultant reaches, never the helper, and counts the
+provider calls actually made.
 
 A credential rejection is narrow and TYPED -- the provider SDK's auth/permission
 exception, or an HTTP 401/403 -- never a match on message text. A rate limit, a
@@ -133,20 +135,46 @@ def _attack_run(app_parts, calls: _Calls) -> tuple[dict, int]:  # noqa: F811
 
 
 @pytest.mark.parametrize("case", REJECTIONS.keys())
-def test_attack_a_rejected_key_costs_one_call_not_one_per_batch(
+def test_attack_a_rejected_key_costs_at_most_one_call_per_worker(
     app_parts, case  # noqa: F811
 ) -> None:
+    # test-integrity: the bound IS the pool size the loop is given (in-flight calls cannot be recalled); a restated 5 would go stale silently
+    from app.routes.attack import _MITRE_MAX_WORKERS
+
     calls = _Calls(lambda _i: REJECTIONS[case]())
     run, planned = _attack_run(app_parts, calls)
 
-    assert calls.n == 1, f"{calls.n} provider calls after the first rejection"
+    assert (
+        planned is not None and planned > 2 * _MITRE_MAX_WORKERS
+    ), f"{planned} batches is too close to the pool of {_MITRE_MAX_WORKERS} to prove a bound"
+    assert calls.n <= _MITRE_MAX_WORKERS, f"{calls.n} calls, pool is {_MITRE_MAX_WORKERS}"
+    assert calls.n < planned, f"{calls.n} of {planned} batches tried after a rejection"
     assert (run["status"], run["error_reason"]) == ("failed", "ai_call_failed"), run
     # The message is the one it always was: `friendly_reason` of the error.
     assert run["error_message"].startswith(MESSAGE[case]), run["error_message"]
     # Planned vs answered, on the run's existing columns: none of the planned
     # batches answered. Attempted is the llm_calls count, asserted above.
-    assert planned is not None and planned > 1, "the run must be batched to prove anything"
     assert (run["batches_total"], run["batches_failed"]) == (planned, planned), run
+
+
+def test_attack_with_one_worker_a_rejected_key_costs_exactly_one_call(
+    app_parts, monkeypatch  # noqa: F811
+) -> None:
+    """The deterministic form of the bound: with nothing else in flight, the
+    first rejection is the only call."""
+    import app.routes.attack as attack_routes
+
+    monkeypatch.setattr(attack_routes, "_MITRE_MAX_WORKERS", 1)
+    calls = _Calls(lambda _i: REJECTIONS["anthropic-401"]())
+    run, planned = _attack_run(app_parts, calls)
+
+    assert calls.n == 1, f"{calls.n} provider calls with one worker"
+    assert planned is not None and planned > 1
+    assert (run["status"], run["batches_total"], run["batches_failed"]) == (
+        "failed",
+        planned,
+        planned,
+    ), run
 
 
 @pytest.mark.parametrize("make", NOT_REJECTIONS.values(), ids=NOT_REJECTIONS.keys())
@@ -161,15 +189,18 @@ def test_attack_any_other_failure_still_tries_every_batch(app_parts, make) -> No
     assert (run["status"], run["error_reason"]) == ("failed", "ai_call_failed"), run
 
 
-def test_csf_a_rejected_key_costs_one_call_not_one_per_batch(world) -> None:  # noqa: F811
+def test_csf_a_rejected_key_costs_at_most_one_call_per_worker(world) -> None:  # noqa: F811
     """The shared loop's other caller, through CSF's own endpoint: 33 batches."""
+    # test-integrity: the bound IS the pool size the loop is given (in-flight calls cannot be recalled); a restated 5 would go stale silently
+    from app.routes.csf import _CSF_MAX_WORKERS
+
     calls = _Calls(lambda _i: REJECTIONS["anthropic-401"]())
     world.provider.register("csf_score", calls)
 
     started = start_run(world.c, f"/csf/services/{world.svc_id}/run-ai", world.h)
     run = get_run(world.c, started["run_id"], world.h)
 
-    assert calls.n == 1, f"{calls.n} provider calls after the first rejection"
+    assert calls.n <= _CSF_MAX_WORKERS < 33, f"{calls.n} calls, pool is {_CSF_MAX_WORKERS}"
     assert (run["status"], run["error_reason"]) == ("failed", "ai_call_failed"), run
     assert (run["batches_total"], run["batches_failed"]) == (33, 33), run
 
@@ -177,7 +208,7 @@ def test_csf_a_rejected_key_costs_one_call_not_one_per_batch(world) -> None:  # 
 def test_csf_a_key_revoked_mid_run_starts_no_further_batches(world) -> None:  # noqa: F811
     """The first batch answers; every call after it is rejected. Batches
     already inside a provider call cannot be recalled, so the bound is the
-    pool, not one: but nothing near the 33 planned is attempted, the run
+    pool, not one: but no batch starts after the first rejection, the run
     keeps the answer it paid for, and says how many batches came back empty."""
     # test-integrity: the bound IS the pool size (in-flight calls cannot be recalled); a restated 5 would go stale silently
     from app.routes.csf import _CSF_MAX_WORKERS
@@ -197,6 +228,7 @@ def test_csf_a_key_revoked_mid_run_starts_no_further_batches(world) -> None:  # 
     started = start_run(world.c, f"/csf/services/{world.svc_id}/run-ai", world.h)
     run = get_run(world.c, started["run_id"], world.h)
 
-    assert 1 < rec.n <= 1 + 2 * _CSF_MAX_WORKERS, f"{rec.n} of 33 batches attempted"
+    # The one success, plus at most one call per worker already in flight.
+    assert 1 < rec.n <= 1 + _CSF_MAX_WORKERS, f"{rec.n} of 33 batches attempted"
     assert run["status"] == "completed", run
     assert (run["batches_total"], run["batches_failed"]) == (33, 32), run

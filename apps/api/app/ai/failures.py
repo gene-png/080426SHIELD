@@ -90,12 +90,23 @@ def is_credential_rejection(exc: BaseException) -> bool:
     * the OpenAI, Gemini and Vertex adapters call `raise_for_status()`, which
       raises `httpx.HTTPStatusError` with the response's status.
 
-    NOT a rejection, deliberately: 429 (rate limit), 5xx, timeouts, a dropped
-    connection, a truncated or malformed answer -- each can succeed on the next
-    batch. And not 400, although Gemini answers a bad key with 400
-    API_KEY_INVALID: stopping on 400 would also stop on a genuine bad request,
-    so on Gemini a bad key still costs one call per batch. Known, and narrower
-    is the safe direction.
+    The truth table (#797), approved as written:
+
+        error                                     adapter                  stops?
+        anthropic APIStatusError 401 (auth)       Anthropic                yes
+        anthropic APIStatusError 403 (permission) Anthropic                yes
+        httpx.HTTPStatusError 401 / 403           OpenAI, Gemini, Vertex   yes
+        429 rate limit                            any                      no
+        5xx, 529 overloaded                       any                      no
+        timeout, dropped connection               any                      no
+        max_tokens, AIResponseShapeError          any                      no
+        any other exception                       any                      no
+        400                                       Gemini (API_KEY_INVALID) no -- GAP
+
+    Each "no" can succeed on the next batch. The 400 row is a KNOWN GAP:
+    Gemini answers a bad key with 400 API_KEY_INVALID, but stopping on 400
+    would also stop on a genuine bad request, so on Gemini a bad key still
+    costs one call per batch. Narrower is the safe direction.
     """
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code in _CREDENTIAL_STATUSES

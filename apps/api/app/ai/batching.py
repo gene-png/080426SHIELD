@@ -14,6 +14,7 @@ that service's change to make, and brings both with it.
 from __future__ import annotations
 
 import contextvars
+import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -31,6 +32,11 @@ from app.logging import get_logger
 from app.models._common import utcnow
 
 _log = get_logger(__name__)
+
+
+class _NotSent(Exception):
+    """A batch its worker did not send, because a credential rejection had
+    already stopped the run (#797). Never counted as an attempt or an error."""
 
 
 @dataclass(frozen=True)
@@ -81,10 +87,10 @@ def run_batches(
 
     A CREDENTIAL REJECTION is the one failure that stops the run (#797,
     `failures.is_credential_rejection`): every later call with the same key is
-    refused the same way. The first batch runs alone, so a rejected key costs
-    one call; a rejection later cancels every batch not yet started. Any other
-    failure -- a rate limit, a 5xx, a timeout, a malformed answer -- costs its
-    batch and the run goes on.
+    refused the same way. No batch STARTS after the first rejection, so a bad
+    key costs at most `max_workers` calls -- the ones already in flight --
+    instead of one per batch. Any other failure -- a rate limit, a 5xx, a
+    timeout, a malformed answer -- costs its batch and the run goes on.
 
     The single-call purposes (`zt_score`, `extract.capabilities`) do not come
     through here: one call already stops at its first failure.
@@ -94,8 +100,18 @@ def run_batches(
         # it says so by passing one. An empty list here is a caller's bug.
         raise ValueError(f"{job_name}: no batches to run")
     batches = batch_inputs
+    # #797: set by the first worker whose call comes back as a credential
+    # rejection, and read by every worker BEFORE it calls. Set in the worker,
+    # not by the collecting thread: a provider that refuses instantly lets
+    # workers start many batches before the collector sees the first 401, and
+    # cancelling futures from there would not bound the calls. With the flag,
+    # no call starts after the first rejection lands, so a bad key costs at
+    # most one call per worker.
+    stop = threading.Event()
 
     def _one(inputs: dict[str, Any]) -> dict:
+        if stop.is_set():
+            raise _NotSent()
         # Bind to the CALLER's engine, not the module-level SessionLocal:
         # reaching for SessionLocal opens a connection outside whatever the
         # caller is bound to, which silently bypassed the test suite's
@@ -117,7 +133,9 @@ def run_batches(
             # Guaranteed a dict by `parse_json_object`; a wrong shape raises
             # and is counted as a failed batch rather than a silent empty one.
             return out.data
-        except Exception:
+        except Exception as exc:
+            if is_credential_rejection(exc):
+                stop.set()
             # Mirror ai_call_boundary: commit so the FAILED row survives the
             # exception, then let it propagate to be counted.
             session.commit()
@@ -150,22 +168,23 @@ def run_batches(
         return {pool.submit(contextvars.copy_context().run, _one, batches[i]): i for i in indexes}
 
     def _collect(futures: dict) -> None:
-        # #645: the job's overall deadline. Batches are submitted a wave at a
-        # time, so there is no natural boundary to check it at; it is checked
-        # between results, and `as_completed` is given the time remaining so
-        # one hung provider stream cannot hold the run past it.
+        # #645: the job's overall deadline. All batches are submitted up front,
+        # so there is no natural boundary to check it at; it is checked between
+        # results, and `as_completed` is given the time remaining so one hung
+        # provider stream cannot hold the run past it.
         nonlocal failed, first_error, rejected, attempted
         remaining = (deadline_at - utcnow()).total_seconds()
         for fut in as_completed(futures, timeout=max(remaining, 0)):
             if utcnow() > deadline_at:
                 raise TimeoutError("past the run deadline")
-            if fut.cancelled():
-                # #797: never started, so never sent. No answer, no call.
-                continue
-            attempted += 1
             try:
                 answers[futures[fut]] = fut.result()
+                attempted += 1
+            except _NotSent:
+                # #797: its worker saw the stop flag. No answer, no call.
+                continue
             except Exception as exc:  # noqa: BLE001 - counted, not swallowed
+                attempted += 1
                 failed += 1
                 first_error = first_error or exc
                 _log.error(
@@ -174,22 +193,19 @@ def run_batches(
                     error=f"{type(exc).__name__}: {exc}",
                 )
                 if rejected is None and is_credential_rejection(exc):
-                    # #797: every later call with this key is refused the same
-                    # way. Cancel what has not started; a batch already inside
-                    # a provider call cannot be recalled and finishes into its
-                    # own `llm_calls` row.
+                    # #797: recorded for the log line below. The stop itself is
+                    # the worker's `stop` flag: every batch not yet started
+                    # returns `_NotSent` without calling, and one already inside
+                    # a provider call finishes into its own `llm_calls` row.
                     rejected = exc
-                    for other in futures:
-                        other.cancel()
 
     try:
-        # #797: the FIRST batch runs alone. A rejected key then costs one
-        # provider call, where submitting every batch up front had `max_workers`
-        # of them in flight before the first 401 came back and made every
-        # other call after it. The price is one batch of latency per run.
-        _collect(_submit(range(1)))
-        if rejected is None and len(batches) > 1:
-            _collect(_submit(range(1, len(batches))))
+        # Every batch at once, as before #797. A first batch run alone would
+        # bound a bad key to one call, at the price of a whole batch round
+        # trip -- tens of seconds on a large model -- on EVERY successful run,
+        # to save at most `max_workers - 1` calls that are refused at auth and
+        # not billed. The stop flag bounds it at `max_workers` instead.
+        _collect(_submit(range(len(batches))))
     except TimeoutError as exc:
         # Batches not yet started are cancelled; one already inside a provider
         # call cannot be, and is left to finish into its own `llm_calls` row.
