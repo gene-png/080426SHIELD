@@ -4,10 +4,7 @@
  */
 
 import type { AiSource } from "@/lib/aiSource/types";
-import {
-  BELOW_FLOOR_SOURCE,
-  STAGE_BELOW_FLOOR_NOTE,
-} from "@/lib/assessment-targets";
+import { targetSourceNote } from "@/lib/assessment-targets";
 
 import { renderedAgainstNote } from "./frozenTarget";
 
@@ -228,28 +225,12 @@ function isChoiceFailure(source: string): boolean {
  * places for the wording to drift, and the drift would be invisible because
  * each branch is reached by a different fixture.
  *
- * #783: THE CLIENT'S DOCUMENTS SAY THESE WORDS TOO, from a Python copy:
- * `apps/api/app/assessment_targets.py::target_source_sentence`. Synchronised,
- * not derived (a shared fixture needs the compose mount tracked in #422); the
- * two literal tables are `target-source-sentences.test.ts` here and
- * `tests/unit/test_target_source_in_deliverables.py` there. Reword one side
- * and you must reword the other. Exported for that test only.
+ * #783 / #422: the words are the `stage` rows of `TARGET_SOURCE_NOTES` in
+ * `lib/assessment-targets.ts`, the ONE table. The client's documents state the
+ * same rows from the api's copy (`assessment_targets.py::target_source_sentence`),
+ * which the api's `test_target_floor_parity.py` asserts equal to that table.
+ * Reword the table, never here. Exported for `target-source-sentences.test.ts`.
  */
 export function targetFault(source: string): string | null {
-  switch (source) {
-    case "client":
-      return null;
-    case "default":
-      return "no stage chosen at intake";
-    case "client_out_of_range":
-      return "the stage on file is not one this framework has";
-    // #85: Stage 1 IS a stage both frameworks have, so the line above would be
-    // false of it.
-    case BELOW_FLOOR_SOURCE:
-      return STAGE_BELOW_FLOOR_NOTE;
-    case "client_unparseable":
-      return "the stage on file could not be read";
-    default:
-      return "the stage on file was not usable";
-  }
+  return targetSourceNote("stage", source);
 }

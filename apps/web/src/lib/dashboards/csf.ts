@@ -9,10 +9,7 @@ import type { AiSource } from "@/lib/aiSource/types";
  * home page and had no way to open the results.
  */
 
-import {
-  BELOW_FLOOR_SOURCE,
-  TIER_BELOW_FLOOR_NOTE,
-} from "@/lib/assessment-targets";
+import { targetSourceNote } from "@/lib/assessment-targets";
 
 export interface CsfFunction {
   code: string;
@@ -134,33 +131,15 @@ export function targetIsAssumed(data: CsfDashboardData): boolean {
  * Mirrored from `dashboards/zt.ts::targetFault` rather than worded again, so
  * two services cannot describe one fault differently.
  *
- * The default arm is deliberate and not dead: the API is the source of this
- * string, so an unrecognised value must still say SOMETHING true rather than
- * fall through to the "chose nothing" copy.
+ * An unrecognised value still says SOMETHING true rather than falling through
+ * to the "chose nothing" copy: the API is the source of this string.
  *
- * #783: THE CLIENT'S DOCUMENTS SAY THESE WORDS TOO, from a Python copy:
- * `apps/api/app/assessment_targets.py::target_source_sentence`, which every
- * CSF and ZT deliverable and stored summary calls. The TS and Python sentences
- * are synchronised, not derived; a fixture both runners could read needs the
- * compose mount tracked in #422. Until then two literal tables pin it, each
- * naming the other: `target-source-sentences.test.ts` here and
- * `tests/unit/test_target_source_in_deliverables.py` there. Reword one side
- * and you must reword the other.
+ * #783 / #422: the words are the `tier` rows of `TARGET_SOURCE_NOTES` in
+ * `lib/assessment-targets.ts`, the ONE table. The client's documents state the
+ * same rows from the api's copy (`assessment_targets.py::target_source_sentence`),
+ * which the api's `test_target_floor_parity.py` asserts equal to that table.
+ * Reword the table, never here.
  */
 export function targetFaultNote(source: string): string | null {
-  switch (source) {
-    case "client":
-      return null;
-    case "default":
-      return "no tier chosen at intake";
-    case "client_out_of_range":
-      return "the tier on file is not one CSF has";
-    // #85: Tier 1 IS a tier CSF has, so the line above would be false of it.
-    case BELOW_FLOOR_SOURCE:
-      return TIER_BELOW_FLOOR_NOTE;
-    case "client_unparseable":
-      return "the tier on file could not be read";
-    default:
-      return "the tier on file was not usable";
-  }
+  return targetSourceNote("tier", source);
 }
