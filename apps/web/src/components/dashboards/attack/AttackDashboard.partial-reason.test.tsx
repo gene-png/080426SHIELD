@@ -125,12 +125,18 @@ describe("AttackDashboard, the Partial-by-reason table (#554 R1)", () => {
   // The advisor's ruling (i), #736 18:34Z: the headers, and the caption,
   // approved as written.
   it("lists each reason with its count, and says they add up", () => {
+    // Three Partials over two rows (2 + 1), so the caption's N is the
+    // rollup's figure and cannot be confused with the number of rows.
+    const base = data([
+      technique("T1190", "partial", { partial_reason: REACH }),
+    ]);
     render(
       <AttackDashboard
         data={{
-          ...data([technique("T1190", "partial", { partial_reason: REACH })]),
+          ...base,
+          rollup: { ...base.rollup, partial: 3 },
           partial_reasons: [
-            { ...REACH, count: 1 },
+            { ...REACH, count: 2 },
             { ...SET_BY, count: 1 },
           ],
         }}
@@ -145,10 +151,11 @@ describe("AttackDashboard, the Partial-by-reason table (#554 R1)", () => {
     }
     const reachRow = t.getByText(REACH.label).closest("tr") as HTMLElement;
     expect(within(reachRow).getByText(REACH.sentence)).toBeInTheDocument();
-    expect(within(reachRow).getByText("1")).toBeInTheDocument();
-    expect(t.getByText(SET_BY.label)).toBeInTheDocument();
+    expect(within(reachRow).getByText("2")).toBeInTheDocument();
+    const setByRow = t.getByText(SET_BY.label).closest("tr") as HTMLElement;
+    expect(within(setByRow).getByText("1")).toBeInTheDocument();
     expect(
-      screen.getByText("These add up to the 2 Partial techniques above."),
+      screen.getByText("These add up to the 3 Partial techniques above."),
     ).toBeInTheDocument();
   });
 
