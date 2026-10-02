@@ -36,3 +36,18 @@ checked against the file above before it was replaced. Deleting every
 (16 of them, the rollup and 15 tactics) gives the recorded bytes EXACTLY. So
 the amendment adds that field and changes nothing else. The original was
 recorded at the SHA above.
+
+## Amendment, 2026-10-02: the #646 AI-source stamp (Phase 2 Batch F)
+
+The coordinator's verdict on Batch F, Q1 (b): every deliverable and dashboard
+states which mode drafted its AI suggestions, including those of an assessment
+approved before #620. It is an ADDED disclosure, not a reworded number.
+
+Re-rendered from this world by the current code and checked against the files
+above before replacing them:
+
+- `dashboard.json`: deleting `,"ai_source":{...}` from the new bytes gives the
+  file as the #489 amendment above left it EXACTLY, byte for byte. It reads `"state":"none"`, because this world holds
+  no AI run and no unattributed AI call for Golden A.
+- `finalize_b.json`: the summary and every one of the four recorded sheets are
+  identical; the only change is a fifth sheet, "AI source", added last.

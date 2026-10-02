@@ -1,6 +1,7 @@
 [
   "ATT&CK Coverage",
   "Golden Client",
+  "It is not recorded whether the AI suggestions in this assessment came from a live AI model or from offline test data.",
   "Coverage summary",
   "Overall coverage: 50.0%",
   "Coverage % = (Covered + 0.5 x Partial) / (Covered + Partial + Gap). N/A, Unscored and Pending review techniques are outside it; 'not measured' means no technique there has a Covered, Partial or Gap status, counting those pending review.",

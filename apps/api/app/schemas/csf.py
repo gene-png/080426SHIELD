@@ -12,6 +12,7 @@ from pydantic_core import PydanticCustomError
 from app.models.csf_assessment import CsfAssessmentStatus
 from app.models.service import ServiceKind, ServiceStatus
 from app.schemas._numeric import IntNotBool
+from app.schemas.ai_runs import AiSource
 
 # ---------------------------------------------------------------------------
 # Catalog
@@ -142,6 +143,8 @@ class CsfAssessmentResponse(BaseModel):
     # Impact profile the client picked at intake (LOW/MOD/HIGH), or null. Drives
     # which subcategories the client self-assessment shows.
     client_profile: str | None = None
+    # #646: which mode drafted this assessment's AI suggestions. REQUIRED.
+    ai_source: AiSource
 
 
 class CsfAnswerPatch(BaseModel):

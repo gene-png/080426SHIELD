@@ -1,3 +1,5 @@
+import type { AiSource } from "@/lib/aiSource/types";
+
 /** Wire types mirroring apps/api/app/schemas/csf.py. */
 
 export type CsfAssessmentStatus =
@@ -52,6 +54,8 @@ export interface CsfAnswer {
 }
 
 export interface CsfAssessment {
+  /** #646: which mode drafted the AI suggestions, as the API states it. */
+  ai_source: AiSource;
   id: string;
   service_id: string;
   version: number;

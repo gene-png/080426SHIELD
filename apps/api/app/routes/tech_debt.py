@@ -59,6 +59,7 @@ from app.db.session import get_db
 from app.deliverable_release import ParentGuard, release_deliverable
 from app.dependencies import current_client, current_user, require_role
 from app.logging import get_logger
+from app.mode_stamp import ai_mode_for
 from app.models._common import utcnow
 from app.models.artifact import Artifact, ArtifactOrigin
 from app.models.capability import CapabilityItem, CapabilityList, CapabilityListStatus
@@ -67,7 +68,7 @@ from app.models.deliverable import Deliverable
 from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.user import User, UserRole
 from app.routes.artifacts import _storage_dep
-from app.schemas.ai_runs import AiRunStarted
+from app.schemas.ai_runs import AiRunStarted, AiSource
 from app.schemas.tech_debt import (
     CapabilityComponentsRequest,
     CapabilityDispositionBulkSet,
@@ -325,6 +326,10 @@ def _serialize_list_with_items(db: Session, cap_list: CapabilityList) -> Capabil
     resp = CapabilityListResponse.model_validate(cap_list, from_attributes=True)
     resp.items = [CapabilityItemResponse.model_validate(i, from_attributes=True) for i in items]
     resp.approved_membership_stale = approved_membership_stale(db, cap_list)
+    # #646: the ONE derivation every surface calls.
+    resp.ai_source = AiSource.model_validate(
+        ai_mode_for(db, db.get(Service, cap_list.service_id), cap_list).as_api()
+    )
     return resp
 
 
@@ -1932,6 +1937,8 @@ def finalize_deliverable(
         service_title=svc.title,
         cap_list=cap_list,
         items=items,
+        # #646: the ONE derivation every surface calls.
+        ai_mode=ai_mode_for(db, svc, cap_list),
     )
     pdf_bytes = render_pdf(ctx)
     xlsx_bytes = render_xlsx(ctx)

@@ -62,7 +62,7 @@ def _ctx(*, default_status: str | None = "covered"):
 
 
 @pytest.mark.unit
-def test_xlsx_has_four_sheets() -> None:
+def test_xlsx_sheets_are_exactly_these() -> None:
     from openpyxl import load_workbook
 
     raw = render_xlsx(_ctx())
@@ -70,7 +70,8 @@ def test_xlsx_has_four_sheets() -> None:
     wb = load_workbook(io.BytesIO(raw))
     # Four since the Unscored sheet: an unscored technique used to be one
     # "Unscored" cell among 600+ rows, findable only by filtering.
-    assert set(wb.sheetnames) == {"Heatmap Summary", "Coverage", "Gaps", "Unscored"}
+    # #646 (coordinator's verdict, Batch F): plus the "AI source" sheet, last.
+    assert set(wb.sheetnames) == {"Heatmap Summary", "Coverage", "Gaps", "Unscored", "AI source"}
 
 
 @pytest.mark.unit

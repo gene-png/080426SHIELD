@@ -130,6 +130,14 @@ function draft(): CsfAssessment {
     answers: [],
     client_target_tier: 3,
     documents_stale: false,
+    // #646 (Batch F): required since; not under test here. A fresh
+    // draft with no completed run on load: "none", its true state.
+    ai_source: {
+      state: "none",
+      sentence: "No AI suggestions were used in this assessment.",
+      live_runs: 0,
+      fixture_runs: 0,
+    },
   } as unknown as CsfAssessment;
 }
 

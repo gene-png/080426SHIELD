@@ -119,8 +119,31 @@ function draft(): AttackAssessment {
     version: 1,
     coverage: [{ id: "c1", technique_code: "T1595", status: "covered" }],
     documents_stale: false,
+    // #646 (Batch F): required since; not under test here. A fresh
+    // draft with no completed run on load: "none", its true state.
+    ai_source: {
+      state: "none",
+      sentence: "No AI suggestions were used in this assessment.",
+      live_runs: 0,
+      fixture_runs: 0,
+    },
     catalog_version: "19.2",
     catalog_current: true,
+  } as unknown as AttackAssessment;
+}
+
+/** #646 (#778 review F3): the draft as the api returns it once a completed
+ *  OFFLINE run is on it: its AI source is "fixture", never "none". */
+function draftAfterOfflineRun(): AttackAssessment {
+  return {
+    ...draft(),
+    ai_source: {
+      state: "fixture",
+      sentence:
+        "OFFLINE TEST DATA: every AI suggestion in this assessment came from built-in test data, not a live AI model. Treat AI-drafted values as placeholders, not analysis.",
+      live_runs: 0,
+      fixture_runs: 1,
+    },
   } as unknown as AttackAssessment;
 }
 
@@ -183,6 +206,7 @@ describe("AttackWorkspace, Run-AI in the background (#645)", () => {
       finished_at: "2026-10-01T12:10:00Z",
       result: result({ batches_failed: 3, citations_rejected: 1 }),
     });
+    m.fetchLatestAssessment.mockResolvedValue(draftAfterOfflineRun());
     m.fetchAttackRunSummary.mockResolvedValue(
       summary({ latest: partial, last_completed: partial }),
     );
@@ -224,6 +248,7 @@ describe("AttackWorkspace, Run-AI in the background (#645)", () => {
       finished_at: "2026-10-01T12:10:00Z",
       result: result({ batches_failed: 3 }),
     });
+    m.fetchLatestAssessment.mockResolvedValue(draftAfterOfflineRun());
     m.fetchAttackRunSummary.mockResolvedValue(
       summary({ latest: done, last_completed: done }),
     );
@@ -239,6 +264,7 @@ describe("AttackWorkspace, Run-AI in the background (#645)", () => {
       finished_at: "2026-10-01T12:10:00Z",
       result: result({ rows_skipped_edited: 2 }),
     });
+    m.fetchLatestAssessment.mockResolvedValue(draftAfterOfflineRun());
     m.fetchAttackRunSummary.mockResolvedValue(
       summary({ latest: done, last_completed: done }),
     );
@@ -416,5 +442,25 @@ describe("AttackWorkspace, an unreadable AI status (#645)", () => {
       expect(screen.getByRole("button", { name: "Run AI" })).toBeEnabled(),
     );
     expect(screen.queryByTestId("run-ai-status-unknown")).toBeNull();
+  });
+});
+
+describe("AttackWorkspace, the assessment's AI source (#646)", () => {
+  it("states the API's sentence for the assessment, warning-toned when not all live", async () => {
+    m.fetchAttackRunSummary.mockResolvedValue(summary());
+    m.fetchLatestAssessment.mockResolvedValue({
+      ...draft(),
+      ai_source: {
+        state: "mixed",
+        sentence:
+          "OFFLINE TEST DATA: 1 of the 3 AI runs on this assessment used built-in test data, not a live AI model. Values they drafted are placeholders, not analysis.",
+        live_runs: 2,
+        fixture_runs: 1,
+      },
+    } as unknown as AttackAssessment);
+    render(<AttackWorkspace serviceId="svc-1" serviceTitle="ATT&CK" />);
+    const note = await screen.findByTestId("ai-source");
+    expect(note).toHaveTextContent(/1 of the 3 AI runs on this assessment/);
+    expect(note).toHaveAttribute("role", "alert");
   });
 });

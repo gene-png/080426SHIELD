@@ -51,6 +51,7 @@ import { CsfScoreCard } from "./CsfScoreCard";
 import type { JSX } from "react";
 import { ProgressStages } from "../ProgressStages";
 import { useServiceStages } from "@/lib/stages/client";
+import { AiSourceNote } from "@/components/AiSourceNote";
 
 export interface CsfWorkspaceProps {
   serviceId: string;
@@ -223,6 +224,27 @@ export function CsfWorkspace({
   // (the T8 stale-fetch race). Every mutation bumps the sequence before it
   // writes, so any in-flight load is discarded on arrival.
   const assessmentSeq = React.useRef(0);
+
+  // #646: a completed run may have changed the assessment's AI source, and
+  // the run is followed by the Playbook panel, which re-reads only its own
+  // rows. So the panel says when one completes, and the assessment is re-read,
+  // under the same sequence guard every assessment write takes. A failed
+  // re-read is said, as the other side reads here are.
+  const onRunCompleted = React.useCallback(() => {
+    const seq = ++assessmentSeq.current;
+    const attempt = beginRefresh("assessment");
+    void fetchLatestAssessment(serviceId).then(
+      (a) => {
+        attempt.clear();
+        if (seq === assessmentSeq.current) setAssessment(a);
+      },
+      () => {
+        attempt.note(
+          "The AI run ended, but the assessment could not be re-read, so its AI source may be out of date. Reload to see it.",
+        );
+      },
+    );
+  }, [serviceId, beginRefresh]);
 
   const answersByCode = React.useMemo(() => {
     const out: Record<string, CsfAnswer> = {};
@@ -690,6 +712,9 @@ export function CsfWorkspace({
             title="Work the Playbook and draft with AI"
             description="The 10-step CSF 2.0 Playbook builds the working profiles, and Run AI drafts a tier per subcategory from them. It drafts; you decide."
           >
+            {/* #646: the assessment's AI source, from the derivation the
+                deliverable and the client dashboard call. */}
+            <AiSourceNote source={assessment.ai_source} className="mb-3" />
             <CsfPlaybookPanel
               serviceId={serviceId}
               readOnly={readOnly}
@@ -697,6 +722,7 @@ export function CsfWorkspace({
               onRunOutcomeUnknown={() => setRunOutcomeUnknown(true)}
               assessmentId={assessment.id}
               onRunInProgressChange={setRunInProgress}
+              onRunCompleted={onRunCompleted}
             />
           </WorkflowStep>
 
