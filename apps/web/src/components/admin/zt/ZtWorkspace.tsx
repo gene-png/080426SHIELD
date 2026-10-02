@@ -757,6 +757,9 @@ export function ZtWorkspace({
           // Its own alert beside the button: `loadError`'s card is headed
           // "Couldn't load the assessment", which is not what happened.
           setRunOutcomeUnknown(true);
+          // #645: a run may have started. Look once, and follow it if so; the
+          // lock and the copy above stand either way.
+          void aiRun.reconcile();
         } else {
           setLoadError(describeError(err));
         }

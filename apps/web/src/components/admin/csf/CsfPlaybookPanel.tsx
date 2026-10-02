@@ -511,6 +511,9 @@ export function CsfPlaybookPanel({
           // clears that, and the button would stay off with nothing saying
           // why.
           onRunOutcomeUnknown?.();
+          // #645: a run may have started. Look once, and follow it if so; the
+          // lock and the copy above stand either way.
+          void aiRun.reconcile();
         } else {
           setError(describeError(err));
         }

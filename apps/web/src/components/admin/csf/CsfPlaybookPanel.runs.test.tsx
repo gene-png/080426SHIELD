@@ -28,11 +28,35 @@ vi.mock("./CsfDimensionEditor", () => ({
   ),
 }));
 vi.mock("./CsfGapActionEditor", () => ({ CsfGapActionEditor: () => null }));
-vi.mock("../RunAiGuard", () => ({
-  RunAiGuard: (props: {
-    onProceed: (serves: "live" | "offline") => void;
-    children: (p: { onClick: () => void }) => React.ReactNode;
-  }) => props.children({ onClick: () => props.onProceed("live") }),
+// The REAL RunAiGuard (#645): its AI status is what each test sets here, so
+// these tests reach the guard's fail-closed path through this surface.
+const aiStatus = vi.hoisted(() => {
+  const ok = {
+    ready: true,
+    serves: "live",
+    mode: "fixture",
+    provider: "anthropic",
+    model: "m",
+    detail: "",
+    can_configure: true,
+    key_source: "database",
+  };
+  return {
+    ok,
+    current: { status: ok as unknown, phase: "loaded" as string },
+    refresh: vi.fn(),
+  };
+});
+vi.mock("@/lib/admin/aiStatus", () => ({
+  useAiStatus: () => ({
+    status: aiStatus.current.status,
+    phase: aiStatus.current.phase,
+    settled: async () => aiStatus.current.status,
+    refresh: aiStatus.refresh,
+  }),
+  // An offline status counts as already acknowledged, so a click proceeds.
+  hasAcknowledgedOffline: () => true,
+  acknowledgeOffline: () => undefined,
 }));
 
 const m = {
@@ -103,6 +127,7 @@ function result(over: Partial<CsfRunAiResponse> = {}): CsfRunAiResponse {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  aiStatus.current = { status: aiStatus.ok, phase: "loaded" };
   m.ent.mockResolvedValue(ent());
   m.summary.mockResolvedValue({
     running: null,
@@ -166,5 +191,92 @@ describe("CsfPlaybookPanel, Run-AI in the background (#645)", () => {
     expect(await screen.findByText(/AI applied/)).toHaveTextContent(
       "AI applied 5 of 6 suggested score values",
     );
+  });
+});
+
+function outcomeUnknown(): Error {
+  return Object.assign(new Error("proxy 504"), {
+    status: 504,
+    payload: {
+      error: {
+        code: 504,
+        reason: "upstream_outcome_unknown",
+        message: "We couldn't confirm whether this finished.",
+      },
+    },
+  });
+}
+
+describe("CsfPlaybookPanel, a Run AI whose outcome is unknown, reconciled (#645)", () => {
+  it("looks once, and follows a run that did start", async () => {
+    m.summary
+      .mockResolvedValueOnce({
+        running: null,
+        latest: null,
+        last_completed: null,
+      })
+      .mockResolvedValueOnce({
+        running: run(),
+        latest: run(),
+        last_completed: null,
+      });
+    m.fetchRun.mockReturnValue(new Promise(() => {}));
+    m.run.mockRejectedValueOnce(outcomeUnknown());
+    const onUnknown = vi.fn();
+    render(
+      <CsfPlaybookPanel serviceId="svc-1" onRunOutcomeUnknown={onUnknown} />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Run AI (csf_score)" }),
+    );
+    expect(await screen.findByTestId("ai-run-running")).toBeInTheDocument();
+    // The page-life lock and its copy belong to CsfWorkspace (#752); the
+    // panel tells it, as before.
+    expect(onUnknown).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Running…" })).toBeDisabled();
+  });
+
+  it("adds no message of its own when that look fails", async () => {
+    m.summary
+      .mockResolvedValueOnce({
+        running: null,
+        latest: null,
+        last_completed: null,
+      })
+      .mockRejectedValueOnce(new Error("down"));
+    m.run.mockRejectedValueOnce(outcomeUnknown());
+    const onUnknown = vi.fn();
+    render(
+      <CsfPlaybookPanel serviceId="svc-1" onRunOutcomeUnknown={onUnknown} />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Run AI (csf_score)" }),
+    );
+    await waitFor(() => expect(m.summary).toHaveBeenCalledTimes(2));
+    expect(onUnknown).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("ai-run-load-failed")).toBeNull();
+    expect(screen.queryByTestId("ai-run-running")).toBeNull();
+  });
+});
+
+describe("CsfPlaybookPanel, an unreadable AI status (#645)", () => {
+  it("disables Run AI while the status is unknown, and enables it after a later read succeeds", async () => {
+    aiStatus.current = { status: null, phase: "error" };
+    const { rerender } = render(<CsfPlaybookPanel serviceId="svc-1" />);
+    expect(
+      await screen.findByTestId("run-ai-status-unknown"),
+    ).toHaveTextContent(/Reload the page/);
+    expect(
+      screen.getByRole("button", { name: "Run AI (csf_score)" }),
+    ).toBeDisabled();
+
+    aiStatus.current = { status: aiStatus.ok, phase: "loaded" };
+    rerender(<CsfPlaybookPanel serviceId="svc-1" />);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Run AI (csf_score)" }),
+      ).toBeEnabled(),
+    );
+    expect(screen.queryByTestId("run-ai-status-unknown")).toBeNull();
   });
 });

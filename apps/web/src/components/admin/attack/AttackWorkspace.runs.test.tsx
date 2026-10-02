@@ -56,11 +56,35 @@ vi.mock("@/components/admin/StaleDocsNudge", () => ({
 }));
 // The guard decides WHAT was acknowledged; its own tests cover how. Here it
 // proceeds as an admin who chose to continue offline.
-vi.mock("@/components/admin/RunAiGuard", () => ({
-  RunAiGuard: (props: {
-    onProceed: (serves: "live" | "offline") => void;
-    children: (p: { onClick: () => void }) => React.ReactNode;
-  }) => props.children({ onClick: () => props.onProceed("offline") }),
+// The REAL RunAiGuard (#645): its AI status is what each test sets here, so
+// these tests reach the guard's fail-closed path through this surface.
+const aiStatus = vi.hoisted(() => {
+  const ok = {
+    ready: false,
+    serves: "offline",
+    mode: "fixture",
+    provider: "anthropic",
+    model: "m",
+    detail: "",
+    can_configure: true,
+    key_source: "database",
+  };
+  return {
+    ok,
+    current: { status: ok as unknown, phase: "loaded" as string },
+    refresh: vi.fn(),
+  };
+});
+vi.mock("@/lib/admin/aiStatus", () => ({
+  useAiStatus: () => ({
+    status: aiStatus.current.status,
+    phase: aiStatus.current.phase,
+    settled: async () => aiStatus.current.status,
+    refresh: aiStatus.refresh,
+  }),
+  // An offline status counts as already acknowledged, so a click proceeds.
+  hasAcknowledgedOffline: () => true,
+  acknowledgeOffline: () => undefined,
 }));
 vi.mock("@/components/admin/AiPreviewButton", () => ({
   AiPreviewButton: () => null,
@@ -143,6 +167,7 @@ function summary(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  aiStatus.current = { status: aiStatus.ok, phase: "loaded" };
   m.fetchCatalog.mockResolvedValue(CATALOG);
   m.fetchHeatmap.mockResolvedValue(HEATMAP);
   m.fetchLatestAssessment.mockResolvedValue(draft());
@@ -252,5 +277,75 @@ describe("AttackWorkspace, Run-AI in the background (#645)", () => {
       /discarded or locked during the run/,
     );
     expect(m.fetchLatestAssessment).toHaveBeenCalledTimes(1);
+  });
+});
+
+function outcomeUnknown(): Error {
+  return Object.assign(new Error("proxy 504"), {
+    status: 504,
+    payload: {
+      error: {
+        code: 504,
+        reason: "upstream_outcome_unknown",
+        message: "We couldn't confirm whether this finished.",
+      },
+    },
+  });
+}
+
+describe("AttackWorkspace, a Run AI whose outcome is unknown, reconciled (#645)", () => {
+  it("looks once, and follows a run that did start, keeping the page-life lock", async () => {
+    m.fetchAttackRunSummary
+      .mockResolvedValueOnce(summary())
+      .mockResolvedValueOnce(summary({ running: run(), latest: run() }));
+    m.fetchAttackRun.mockReturnValue(new Promise(() => {}));
+    m.runAttackAi.mockRejectedValueOnce(outcomeUnknown());
+    render(<AttackWorkspace serviceId="svc-1" serviceTitle="ATT&CK" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Run AI" }));
+    expect(await screen.findByTestId("ai-run-running")).toBeInTheDocument();
+    expect(
+      screen.getByText(/couldn't confirm whether the AI run finished/),
+    ).toBeInTheDocument();
+    expect(m.fetchAttackRun).toHaveBeenCalledWith("run-1");
+    expect(screen.getByRole("button", { name: "Running…" })).toBeDisabled();
+  });
+
+  it("stays outcome-unknown, with no second message, when that look fails", async () => {
+    m.fetchAttackRunSummary
+      .mockResolvedValueOnce(summary())
+      .mockRejectedValueOnce(new Error("down"));
+    m.runAttackAi.mockRejectedValueOnce(outcomeUnknown());
+    render(<AttackWorkspace serviceId="svc-1" serviceTitle="ATT&CK" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Run AI" }));
+    expect(
+      await screen.findByText(/couldn't confirm whether the AI run finished/),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(m.fetchAttackRunSummary).toHaveBeenCalledTimes(2),
+    );
+    expect(screen.queryByTestId("ai-run-load-failed")).toBeNull();
+    expect(screen.queryByTestId("ai-run-running")).toBeNull();
+    expect(screen.getByRole("button", { name: "Run AI" })).toBeDisabled();
+  });
+});
+
+describe("AttackWorkspace, an unreadable AI status (#645)", () => {
+  it("disables Run AI while the status is unknown, and enables it after a later read succeeds", async () => {
+    m.fetchAttackRunSummary.mockResolvedValue(summary());
+    aiStatus.current = { status: null, phase: "error" };
+    const { rerender } = render(
+      <AttackWorkspace serviceId="svc-1" serviceTitle="ATT&CK" />,
+    );
+    expect(
+      await screen.findByTestId("run-ai-status-unknown"),
+    ).toHaveTextContent(/Reload the page/);
+    expect(screen.getByRole("button", { name: "Run AI" })).toBeDisabled();
+
+    aiStatus.current = { status: aiStatus.ok, phase: "loaded" };
+    rerender(<AttackWorkspace serviceId="svc-1" serviceTitle="ATT&CK" />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Run AI" })).toBeEnabled(),
+    );
+    expect(screen.queryByTestId("run-ai-status-unknown")).toBeNull();
   });
 });

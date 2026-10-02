@@ -200,3 +200,67 @@ describe("TechDebtWorkspace, extraction in the background (#645)", () => {
     await waitFor(() => expect(m.fetchLatestList).toHaveBeenCalledTimes(1));
   });
 });
+
+function outcomeUnknown(): Error {
+  return Object.assign(new Error("proxy 504"), {
+    status: 504,
+    payload: {
+      error: {
+        code: 504,
+        reason: "upstream_outcome_unknown",
+        message: "We couldn't confirm whether this finished.",
+      },
+    },
+  });
+}
+
+describe("TechDebtWorkspace, an extraction whose outcome is unknown, reconciled (#645)", () => {
+  it("looks once, and follows an extraction that did start", async () => {
+    m.fetchSummary
+      .mockResolvedValueOnce({
+        running: null,
+        latest: null,
+        last_completed: null,
+      })
+      .mockResolvedValueOnce({
+        running: run(),
+        latest: run(),
+        last_completed: null,
+      });
+    m.fetchRun.mockReturnValue(new Promise(() => {}));
+    m.extract.mockRejectedValueOnce(outcomeUnknown());
+    render(<TechDebtWorkspace serviceId="svc-1" serviceTitle="Atlas TD" />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "extract artifact-1" }),
+    );
+    expect(await screen.findByTestId("ai-run-running")).toBeInTheDocument();
+    expect(
+      screen.getByText(/couldn't confirm whether the extraction finished/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "extract artifact-1" }),
+    ).toBeDisabled();
+  });
+
+  it("stays outcome-unknown, with no second message, when that look fails", async () => {
+    m.fetchSummary
+      .mockResolvedValueOnce({
+        running: null,
+        latest: null,
+        last_completed: null,
+      })
+      .mockRejectedValueOnce(new Error("down"));
+    m.extract.mockRejectedValueOnce(outcomeUnknown());
+    render(<TechDebtWorkspace serviceId="svc-1" serviceTitle="Atlas TD" />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "extract artifact-1" }),
+    );
+    expect(
+      await screen.findByText(
+        /couldn't confirm whether the extraction finished/,
+      ),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(m.fetchSummary).toHaveBeenCalledTimes(2));
+    expect(screen.queryByTestId("ai-run-load-failed")).toBeNull();
+  });
+});

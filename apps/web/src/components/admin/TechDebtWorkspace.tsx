@@ -404,6 +404,9 @@ Components carry no cost of their own — this licence keeps its full value.`,
       if (isUpstreamOutcomeUnknown(err)) {
         extractLocked.current = true;
         setExtractOutcomeUnknown(true);
+        // #645: a run may have started. Look once, and follow it if so; the
+        // lock and the copy above stand either way.
+        void aiRun.reconcile();
       } else if (err instanceof TechDebtProxyError) {
         setExtractError(
           proxyMessage(err, `Extraction failed (${err.status}).`),

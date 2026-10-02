@@ -27,6 +27,13 @@ export interface UseAiRun<R> {
   checkFailed: boolean;
   /** Follow a run this page started. Resolves once it finishes, either way. */
   follow: (started: AiRunStarted) => Promise<AiRun<R>>;
+  /**
+   * After a Run-AI POST whose outcome is unknown (#550): read the service's
+   * runs ONCE, and if one is in progress, show and follow it. A read that
+   * fails changes nothing -- the page already says the outcome is unknown,
+   * and a second message would contradict it.
+   */
+  reconcile: () => Promise<void>;
 }
 
 interface State<R> {
@@ -220,5 +227,28 @@ export function useAiRun<R>({
   // Derived, not reset: a render for a new service never shows the old one's
   // runs, even before the effect above has run.
   const current = state.serviceId === serviceId ? state : initial<R>(serviceId);
-  return { ...current, follow };
+  const reconcile = React.useCallback(async (): Promise<void> => {
+    let summary: AiRunSummary<R>;
+    try {
+      summary = await fetchers.current.fetchSummary(serviceId);
+    } catch (err) {
+      console.warn(
+        `[useAiRun] could not re-read runs after an unknown outcome: ${String(err)}`,
+      );
+      return;
+    }
+    if (!alive.current) return;
+    setState({
+      serviceId,
+      phase: "ready",
+      loadError: null,
+      running: summary.running,
+      latest: summary.latest,
+      lastCompleted: summary.last_completed,
+      checkFailed: false,
+    });
+    if (summary.running) poll(summary.running.id);
+  }, [poll, serviceId]);
+
+  return { ...current, follow, reconcile };
 }

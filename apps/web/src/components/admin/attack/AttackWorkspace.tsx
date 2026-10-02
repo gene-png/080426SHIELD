@@ -565,6 +565,9 @@ export function AttackWorkspace({
           // headed "That didn't go through", which is the claim this is not
           // allowed to make, and any later action clears it.
           setRunOutcomeUnknown(true);
+          // #645: a run may have started. Look once, and follow it if so; the
+          // lock and the copy above stand either way.
+          void aiRun.reconcile();
         } else {
           setActionError(describeError(err));
         }

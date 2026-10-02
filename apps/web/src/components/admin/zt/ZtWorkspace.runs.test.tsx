@@ -56,11 +56,35 @@ vi.mock("@/components/admin/StaleDocsNudge", () => ({
 vi.mock("@/components/admin/AiPreviewButton", () => ({
   AiPreviewButton: () => null,
 }));
-vi.mock("@/components/admin/RunAiGuard", () => ({
-  RunAiGuard: (props: {
-    onProceed: (serves: "live" | "offline") => void;
-    children: (p: { onClick: () => void }) => React.ReactNode;
-  }) => props.children({ onClick: () => props.onProceed("offline") }),
+// The REAL RunAiGuard (#645): its AI status is what each test sets here, so
+// these tests reach the guard's fail-closed path through this surface.
+const aiStatus = vi.hoisted(() => {
+  const ok = {
+    ready: false,
+    serves: "offline",
+    mode: "fixture",
+    provider: "anthropic",
+    model: "m",
+    detail: "",
+    can_configure: true,
+    key_source: "database",
+  };
+  return {
+    ok,
+    current: { status: ok as unknown, phase: "loaded" as string },
+    refresh: vi.fn(),
+  };
+});
+vi.mock("@/lib/admin/aiStatus", () => ({
+  useAiStatus: () => ({
+    status: aiStatus.current.status,
+    phase: aiStatus.current.phase,
+    settled: async () => aiStatus.current.status,
+    refresh: aiStatus.refresh,
+  }),
+  // An offline status counts as already acknowledged, so a click proceeds.
+  hasAcknowledgedOffline: () => true,
+  acknowledgeOffline: () => undefined,
 }));
 
 const m = {
@@ -128,6 +152,7 @@ function renderWorkspace(): void {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  aiStatus.current = { status: aiStatus.ok, phase: "loaded" };
   m.catalog.mockResolvedValue({
     pillars: [],
     stages: [],
@@ -191,5 +216,92 @@ describe("ZtWorkspace, Run-AI in the background (#645)", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Run AI" }));
     await waitFor(() => expect(m.run).toHaveBeenCalledWith("svc-1", "offline"));
     await waitFor(() => expect(m.latest).toHaveBeenCalledTimes(2));
+  });
+});
+
+function outcomeUnknown(): Error {
+  return Object.assign(new Error("proxy 504"), {
+    status: 504,
+    payload: {
+      error: {
+        code: 504,
+        reason: "upstream_outcome_unknown",
+        message: "We couldn't confirm whether this finished.",
+      },
+    },
+  });
+}
+
+describe("ZtWorkspace, a Run AI whose outcome is unknown, reconciled (#645)", () => {
+  it("looks once, and follows a run that did start, keeping the page-life lock", async () => {
+    m.summary
+      .mockResolvedValueOnce({
+        running: null,
+        latest: null,
+        last_completed: null,
+      })
+      .mockResolvedValueOnce({
+        running: run(),
+        latest: run(),
+        last_completed: null,
+      });
+    m.fetchRun.mockReturnValue(new Promise(() => {}));
+    m.run.mockRejectedValueOnce(outcomeUnknown());
+    renderWorkspace();
+    fireEvent.click(await screen.findByRole("button", { name: "Run AI" }));
+    expect(await screen.findByTestId("ai-run-running")).toBeInTheDocument();
+    expect(
+      screen.getByText(/couldn't confirm whether the AI run finished/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Running…" })).toBeDisabled();
+  });
+
+  it("stays outcome-unknown, with no second message, when that look fails", async () => {
+    m.summary
+      .mockResolvedValueOnce({
+        running: null,
+        latest: null,
+        last_completed: null,
+      })
+      .mockRejectedValueOnce(new Error("down"));
+    m.run.mockRejectedValueOnce(outcomeUnknown());
+    renderWorkspace();
+    fireEvent.click(await screen.findByRole("button", { name: "Run AI" }));
+    expect(
+      await screen.findByText(/couldn't confirm whether the AI run finished/),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(m.summary).toHaveBeenCalledTimes(2));
+    expect(screen.queryByTestId("ai-run-load-failed")).toBeNull();
+    expect(screen.getByRole("button", { name: "Run AI" })).toBeDisabled();
+  });
+});
+
+describe("ZtWorkspace, an unreadable AI status (#645)", () => {
+  it("disables Run AI while the status is unknown, and enables it after a later read succeeds", async () => {
+    aiStatus.current = { status: null, phase: "error" };
+    const { rerender } = render(
+      <ZtWorkspace
+        serviceId="svc-1"
+        framework="dod_ztra"
+        serviceTitle="Atlas Zero Trust"
+      />,
+    );
+    expect(
+      await screen.findByTestId("run-ai-status-unknown"),
+    ).toHaveTextContent(/Reload the page/);
+    expect(screen.getByRole("button", { name: "Run AI" })).toBeDisabled();
+
+    aiStatus.current = { status: aiStatus.ok, phase: "loaded" };
+    rerender(
+      <ZtWorkspace
+        serviceId="svc-1"
+        framework="dod_ztra"
+        serviceTitle="Atlas Zero Trust"
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Run AI" })).toBeEnabled(),
+    );
+    expect(screen.queryByTestId("run-ai-status-unknown")).toBeNull();
   });
 });
