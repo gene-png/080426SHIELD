@@ -33,3 +33,26 @@ def find_workflows_dir(start: Path) -> Path | None:
         if (candidate / ".github" / "workflows").is_dir():
             return candidate / ".github" / "workflows"
     return None
+
+
+#: Where `docker-compose.yml` mounts the web bundle's target constants in the
+#: api container, read-only (#422). A CI checkout has the file in place instead.
+WEB_PARITY_TARGETS = Path("/web-parity/assessment-targets.ts")
+
+
+def find_web_assessment_targets(
+    start: Path, container_path: Path = WEB_PARITY_TARGETS
+) -> Path | None:
+    """`apps/web/src/lib/assessment-targets.ts` from a checkout at or above
+    `start`, else the api container's read-only mount, else None.
+
+    Mounted at `/web-parity/` and NOT under `/apps/...`: the zt-data mount
+    already made `/packages` exist in the container, and `test_root_discovery.py`
+    records what that did to a walk-up search keyed on `packages/`. A `/apps`
+    would set the same trap for anything keyed on `apps/`.
+    """
+    for candidate in [start, *start.parents]:
+        ts = candidate / "apps" / "web" / "src" / "lib" / "assessment-targets.ts"
+        if ts.is_file():
+            return ts
+    return container_path if container_path.is_file() else None
