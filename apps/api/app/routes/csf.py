@@ -44,7 +44,7 @@ from app.ai.runs import (
     require_serves,
     start_run,
 )
-from app.assessment_targets import MIN_TARGET_TIER, floor_refusal
+from app.assessment_targets import MIN_TARGET_TIER, floor_refusal, target_source_sentence
 from app.audit import audit
 from app.client_naming import org_display_name
 from app.csf import playbook_export as csf_playbook_export
@@ -2737,6 +2737,8 @@ def finalize_csf_deliverable(
         gap=gap,
         # #646: the ONE derivation every surface calls.
         ai_mode=ai_mode_for(db, svc, assessment),
+        # #783: the resolver's verdict travels with the number it produced.
+        target_source=target_tier_source,
     )
     pdf_bytes = render_csf_pdf(ctx)
     xlsx_bytes = render_csf_xlsx(ctx)
@@ -2777,6 +2779,11 @@ def finalize_csf_deliverable(
         f"{score.answered_subcategories}/{score.total_subcategories} subcategories scored; "
         f"{gap.total_gap_count} gap(s) at target T{gap.target_tier}."
     )
+    # #783: `/results` shows this line to the client, so it says what the
+    # document says when the target is a default.
+    target_note = target_source_sentence("tier", target_tier_source)
+    if target_note:
+        summary_line += f" {target_note}"
 
     deliv = Deliverable(
         service_id=svc.id,

@@ -227,8 +227,15 @@ function isChoiceFailure(source: string): boolean {
  * the same fault in the same words: two copies of this mapping would be two
  * places for the wording to drift, and the drift would be invisible because
  * each branch is reached by a different fixture.
+ *
+ * #783: THE CLIENT'S DOCUMENTS SAY THESE WORDS TOO, from a Python copy:
+ * `apps/api/app/assessment_targets.py::target_source_sentence`. Synchronised,
+ * not derived (a shared fixture needs the compose mount tracked in #422); the
+ * two literal tables are `target-source-sentences.test.ts` here and
+ * `tests/unit/test_target_source_in_deliverables.py` there. Reword one side
+ * and you must reword the other. Exported for that test only.
  */
-function targetFault(source: string): string | null {
+export function targetFault(source: string): string | null {
   switch (source) {
     case "client":
       return null;
