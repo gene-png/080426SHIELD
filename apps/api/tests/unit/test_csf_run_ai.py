@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.csf.catalog import SUBCATEGORIES
-from tests._ai_runs import csf_run_ai, run_ai_expecting_failure
+from tests._ai_runs import csf_run_ai, csf_scores_by_batch, run_ai_expecting_failure
 
 
 @pytest.fixture()
@@ -289,13 +289,29 @@ _ROW_VALUE_SLOTS = 6
 
 
 def _run_ai(c, provider, h, svc_id, scores: list) -> dict:
-    provider.register_static("csf_score", LLMResponse(json.dumps({"scores": scores})))
+    # #479: the run is batched, so each canned entry is delivered to the batch
+    # that asked for its row (unknown rows to the first), exactly once.
+    provider.register(
+        "csf_score",
+        csf_scores_by_batch(scores, tiers=["high"], codes=[s.code for s in SUBCATEGORIES]),
+    )
     # #645 / #504: the run carries what the consultant acknowledged, which is
     # what the provider serves. A test that makes the provider look live
     # acknowledged live; acknowledging offline over it is refused.
     serves = "offline" if provider.name == "fixture" else "live"
     r = csf_run_ai(c, svc_id, h, serves=serves)
     return r
+
+
+def _register_routed(provider, raw: str) -> None:
+    """A raw JSON response, delivered through the batch routing `_run_ai`
+    uses (#479), so its entries reach the run once."""
+    provider.register(
+        "csf_score",
+        csf_scores_by_batch(
+            json.loads(raw)["scores"], tiers=["high"], codes=[s.code for s in SUBCATEGORIES]
+        ),
+    )
 
 
 def _assert_invariant(body: dict) -> None:
@@ -1212,9 +1228,9 @@ def test_csf_run_ai_unencodable_key_does_not_500_after_committing(app_client) ->
     h, svc_id = _bootstrap(c)
 
     lone_surrogate = "\\u" + "d800"
-    provider.register_static(
-        "csf_score",
-        LLMResponse(
+    _register_routed(
+        provider,
+        (
             '{"scores": [{"tier": "high", "subcategory_code": "'
             + lone_surrogate
             + '", "governance": 1}]}'
@@ -1237,9 +1253,9 @@ def test_csf_run_ai_control_characters_in_a_key_are_escaped(app_client) -> None:
     h, svc_id = _bootstrap(c)
 
     bidi = "\\u" + "202e"
-    provider.register_static(
-        "csf_score",
-        LLMResponse(
+    _register_routed(
+        provider,
+        (
             '{"scores": [{"tier": "high", "subcategory_code": "'
             + bidi
             + 'DEILPPA", "governance": 1}]}'
@@ -1257,11 +1273,9 @@ def test_csf_run_ai_ordinary_key_is_not_mangled_by_the_escaping(app_client) -> N
     c, provider = app_client
     h, svc_id = _bootstrap(c)
 
-    provider.register_static(
-        "csf_score",
-        LLMResponse(
-            '{"scores": [{"tier": "high", "subcategory_code": "GV.OC-1", "governance": 1}]}'
-        ),
+    _register_routed(
+        provider,
+        ('{"scores": [{"tier": "high", "subcategory_code": "GV.OC-1", "governance": 1}]}'),
     )
     r = csf_run_ai(c, svc_id, h)
     d = _only_dropped(r)

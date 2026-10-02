@@ -246,6 +246,31 @@ function RunAiAccounting({
   const unrecognizedValues = unrecognized.reduce((n, d) => n + d.values, 0);
   const changedRows = new Set(result.changed.map((c) => c.subcategory_code))
     .size;
+  // #479. The trigger is the failure counter alone, as ATT&CK's is
+  // (`AttackCitationAccounting`): a failure count with no total must not read
+  // as a clean run. The total only turns "2" into "2 of 33".
+  const batchesFailed = result.batches_failed ?? 0;
+  const runIncomplete = batchesFailed > 0;
+  const incomplete = runIncomplete ? (
+    <p
+      className="text-sm text-status-danger-fg"
+      role="alert"
+      data-testid="csf-run-incomplete"
+    >
+      <span className="font-semibold">
+        {result.batches_total === undefined
+          ? `${batchesFailed} batches failed`
+          : `${batchesFailed} of ${result.batches_total} batches failed`}
+      </span>
+      , so their rows were not scored and the counts here do not include them. A
+      batch can fail after the model answered &mdash; a malformed response is
+      refused on arrival &mdash; so check the AI spend for this run rather than
+      assuming nothing was sent. Re-run before relying on this draft. On a
+      re-run over a Playbook that was already scored, the rows a failed batch
+      missed keep the scores they had, so the Playbook will look complete either
+      way &mdash; this line is the only place that says otherwise.
+    </p>
+  ) : null;
 
   // A run that received NOTHING is not a clean run. The response parsed, so no
   // error path fired, and "applied 0 of 0" reads as calmly as "applied 12 of
@@ -254,12 +279,15 @@ function RunAiAccounting({
   // still yields an empty list); the accounting must not bless it.
   if (result.suggestions_received === 0) {
     return (
-      <p className="text-sm text-status-danger-fg" role="alert">
-        The AI returned no suggestions at all, so nothing was applied. That is
-        expected only if the model genuinely had nothing to say — otherwise its
-        response did not match the shape this job expects. Re-run, and if it
-        repeats, the prompt and the parser have drifted apart.
-      </p>
+      <div className="space-y-2">
+        {incomplete}
+        <p className="text-sm text-status-danger-fg" role="alert">
+          The AI returned no suggestions at all, so nothing was applied. That is
+          expected only if the model genuinely had nothing to say — otherwise
+          its response did not match the shape this job expects. Re-run, and if
+          it repeats, the prompt and the parser have drifted apart.
+        </p>
+      </div>
     );
   }
 
@@ -277,8 +305,11 @@ function RunAiAccounting({
         {result.suggestions_received === 1 ? "" : "s"}, changing{" "}
         {result.changed.length} field
         {result.changed.length === 1 ? "" : "s"} across {changedRows} subcategor
-        {changedRows === 1 ? "y" : "ies"}.
+        {changedRows === 1 ? "y" : "ies"}
+        {runIncomplete ? ", from the batches that completed" : ""}.
       </p>
+
+      {incomplete}
 
       {failed.length > 0 ? (
         <div className="text-sm text-status-danger-fg" role="alert">
