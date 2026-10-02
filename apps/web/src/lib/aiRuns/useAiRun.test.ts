@@ -285,6 +285,34 @@ describe("useAiRun, review round 1 (#645)", () => {
     expect(fetchRun.mock.calls.length).toBe(calls);
   });
 
+  it("W3: unmounting stops a poll whose read is in flight", async () => {
+    const held = deferredRun();
+    const fetchSummary = vi
+      .fn()
+      .mockResolvedValue(summary({ running: run({ id: "run-A" }) }));
+    const fetchRun = vi
+      .fn()
+      .mockReturnValueOnce(held.promise)
+      .mockResolvedValue(run({ id: "run-A" }));
+    const { result, unmount } = renderHook(() =>
+      useAiRun<Result>({
+        serviceId: "svc-1",
+        fetchSummary,
+        fetchRun,
+        pollMs: 1,
+      }),
+    );
+    await waitFor(() => expect(result.current.running?.id).toBe("run-A"));
+    await waitFor(() => expect(fetchRun).toHaveBeenCalledTimes(1));
+    unmount();
+    await act(async () => {
+      held.resolve(run({ id: "run-A" }));
+      await held.promise;
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fetchRun).toHaveBeenCalledTimes(1);
+  });
+
   it("W1: a past run on another subject never describes this one", async () => {
     const other = run({
       id: "run-0",

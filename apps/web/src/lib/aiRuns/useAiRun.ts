@@ -250,7 +250,10 @@ export function useAiRun<R>({
     const timersNow = timers.current;
     const pollingNow = polling.current;
     const cleanup = () => {
-      // This generation is over: its ticks see a newer one and stop.
+      // This generation is over: its ticks see a newer one and stop. The
+      // bump is HERE, not only in the next effect, because an unmount has no
+      // next effect, and a tick whose read is in flight would poll on.
+      if (generation.current === gen) generation.current += 1;
       for (const t of timersNow) clearTimeout(t);
       timersNow.clear();
       pollingNow.clear();
