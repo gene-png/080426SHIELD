@@ -25,6 +25,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     ForeignKey,
     Integer,
@@ -104,6 +105,11 @@ class CapabilityList(UUIDPKMixin, TimestampMixin, Base):
     # "nothing was excluded" from "a row was excluded and another row produced
     # two items" — see `tech_debt/exporters.py`.
     excluded_rows: Mapped[list | None] = mapped_column(JSON)
+    # #177 (migration 0058): whether the extraction attributed every item to
+    # one uploaded row, so the exclusion count above is exact. NULL means NOT
+    # RECORDED -- a list written before 0058, or one no extraction wrote --
+    # and is never read as complete (`reconcile.exclusion_count_state`).
+    attribution_complete: Mapped[bool | None] = mapped_column(Boolean)
 
     # [{item_id, name}] — the security-scope membership as it stood at approval
     # (migration 0043, W3). An APPROVED list stays editable through five doors

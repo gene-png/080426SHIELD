@@ -63,28 +63,23 @@ export function spendSub(data: TechDebtDashboardData): string {
     return "May not be complete - upload not reconciled";
   }
   if (data.spend_completeness === "partial") {
+    // #193: an exclusion count the extraction could not attribute is a FLOOR,
+    // and 0 when items were as many as rows -- never stated as the count.
+    if (!data.excluded_count_exact && data.source_rows_total !== null) {
+      return data.excluded_count > 0
+        ? `Floor - at least ${data.excluded_count} of ${data.source_rows_total} uploaded rows excluded`
+        : "May not be complete - excluded rows could not be counted";
+    }
     if (data.excluded_count > 0 && data.source_rows_total !== null) {
       return `Floor - ${data.excluded_count} of ${data.source_rows_total} uploaded rows excluded`;
     }
-    // The API reports "partial" for THREE causes and this renderer must not
-    // guess which. `spend_completeness` is a three-valued label over a
-    // four-state world, so the unbalanced case -- more items than there were
-    // source rows -- arrives here indistinguishable from an uncosted tool.
-    //
-    // Saying "some tools lacked a cost" for it would be a precise, checkable
-    // FALSEHOOD: in that state every tool is costed, and a client who went
-    // looking for the uncosted one would find nothing. A vague label converted
-    // into a confident wrong sentence is worse than the vague label.
-    //
-    // These two numbers are on the response, so the cause is recoverable here
-    // without the `attribution_complete` migration that naming it precisely
-    // would need (#193).
-    if (
-      data.source_rows_total !== null &&
-      data.included_count > data.source_rows_total
-    ) {
-      return "Floor - upload does not reconcile";
-    }
+    // The unbalanced case -- more items than source rows -- used to arrive
+    // here looking like an uncosted tool, and had its own "does not
+    // reconcile" branch. Since 0058 (#193) it cannot: two items sharing a row
+    // means attribution failed, so the API reports `excluded_count_exact`
+    // false and the branch above takes it. Pinned at the API by
+    // `test_an_unbalanced_list_is_never_exact`. What remains here is the one
+    // cause left: an included tool with no cost.
     return "Floor - some tools lacked a cost";
   }
   return "Across all tools";

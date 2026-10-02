@@ -51,6 +51,12 @@ export interface TechDebtDashboardData {
   source_rows_total: number | null;
   included_count: number;
   excluded_count: number;
+  /**
+   * #177/#193: true only when the extraction attributed every item to one
+   * uploaded row, so `excluded_count` is the count. False makes it a FLOOR:
+   * the true number of excluded rows is unknown, and may be higher.
+   */
+  excluded_count_exact: boolean;
   redundant_category_count: number;
   spend_by_category: CategorySpend[];
   sprawl_by_category: CategorySpend[];

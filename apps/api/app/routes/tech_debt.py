@@ -101,6 +101,7 @@ from app.tech_debt.filename import (
 )
 from app.tech_debt.overlap import analyze_overlap
 from app.tech_debt.parsers import SUPPORTED_MIME, UnsupportedInventoryFormat
+from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.security_scope import security_scope_filter
 from app.tenant import (
     require_artifact_in_tenant,
@@ -326,6 +327,8 @@ def _serialize_list_with_items(db: Session, cap_list: CapabilityList) -> Capabil
     resp = CapabilityListResponse.model_validate(cap_list, from_attributes=True)
     resp.items = [CapabilityItemResponse.model_validate(i, from_attributes=True) for i in items]
     resp.approved_membership_stale = approved_membership_stale(db, cap_list)
+    # #177/#193: the one reader, as the deliverable and the dashboard call it.
+    resp.exclusion_count_state = exclusion_count_state(cap_list)
     # #646: the ONE derivation every surface calls.
     resp.ai_source = AiSource.model_validate(
         ai_mode_for(db, db.get(Service, cap_list.service_id), cap_list).as_api()
@@ -541,6 +544,9 @@ def _extract_run_work(
         excluded_rows=[
             {"index": e.index, "summary": e.summary} for e in result.reconciliation.excluded_rows
         ],
+        # #177: persisted, so an empty `excluded_rows` can say which of its two
+        # meanings it carries -- nothing excluded, or attribution failed.
+        attribution_complete=result.reconciliation.attribution_complete,
     )
     db.add(cap_list)
     db.flush()
@@ -588,6 +594,9 @@ def _extract_run_work(
             "version": next_version,
             "item_count": len(result.items),
             "source_rows_total": result.reconciliation.received,
+            # The NAMED excluded rows, which `reconcile_rows` fills only when
+            # attribution was complete: 0 when it failed, so this is NOT the
+            # excluded count (#193). No surface renders it.
             "excluded_rows": len(result.reconciliation.excluded_rows),
         },
         applied_count=len(result.items),
@@ -713,6 +722,13 @@ def include_excluded_row(
     """
     cap_list = _editable_list_or_404(db, list_id, client)
     entry = _excluded_entry_or_404(cap_list, row_index)
+    if cap_list.attribution_complete is None:
+        # #193: a pre-0058 list proves its count exact only by its NAMED rows
+        # (`exclusion_count_state`), and this route consumes them -- including
+        # the last one would leave NULL with [] and read as unknown. The entry
+        # just found proves the list non-empty, so stamp the proof first.
+        # `confirm_excluded_row` needs nothing: it never removes an entry.
+        cap_list.attribution_complete = True
 
     item = CapabilityItem(
         capability_list_id=cap_list.id,
@@ -759,6 +775,9 @@ def confirm_excluded_row(
     db: Annotated[Session, Depends(get_db)],
 ) -> CapabilityListResponse:
     """Acknowledge an exclusion as correct.
+
+    Unlike include, it needs no #193 stamp: the row stays in `excluded_rows`,
+    so a pre-0058 list keeps the named rows that prove its count exact.
 
     The row STAYS listed — the reconciliation has to keep telling the truth
     about what was uploaded — but the workspace can stop flagging it as

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Any, Literal
 
 _SUMMARY_MAX = 200
 
@@ -95,3 +96,47 @@ def reconcile_rows(
         excluded_rows=excluded_rows,
         attribution_complete=attribution_complete,
     )
+
+
+ExclusionCountState = Literal["not_recorded", "exact", "unknown"]
+
+
+def exclusion_count_state(cap_list: Any) -> ExclusionCountState:
+    """How much a stored list may honestly say about rows its extraction excluded.
+
+    THE ONE READER (#177): the exporter, the client dashboard, the admin list
+    and ATT&CK's AI-inputs view all call it, so no surface can call a count
+    exact that another calls unknown.
+
+    * ``not_recorded`` -- ``source_rows_total`` is NULL: no reconciliation was
+      stored (a pre-0036 list, or one no extraction wrote). No claim either way.
+    * ``exact`` -- the extraction attributed every item to one uploaded row
+      (``attribution_complete`` True, migration 0058), so
+      ``received - included`` is the exclusion count and ``excluded_rows``
+      names every one of them. Zero is a true zero.
+    * ``unknown`` -- attribution failed: two items claimed one row, or an item
+      named none. ``received - included`` is then only a FLOOR (the rows the
+      items actually claimed are fewer than the items), and floors to zero when
+      items outnumber rows, which is #193.
+
+    NULL ``attribution_complete`` -- a list written before 0058 -- is NEVER read
+    as complete by default. One inference is sound, and WHY is the writer:
+    ``reconcile_rows`` above builds ``excluded_rows`` only inside
+    ``if attribution_complete:`` (otherwise it stays ``[]``), and the
+    extraction job (``routes/tech_debt.py``, the ``CapabilityList(`` insert)
+    stores exactly that list, unchanged since migration 0036. So a NON-EMPTY
+    stored list could only have been written with attribution complete. An
+    empty one is what BOTH a clean run that excluded nothing and a failed
+    attribution wrote, so it proves nothing, and reads ``unknown``.
+    ``test_tech_debt_exclusion_count.py`` builds each pre-0058 state through
+    that writer and nulls the flag, rather than hand-building a combination
+    the writer could not produce.
+    """
+    if getattr(cap_list, "source_rows_total", None) is None:
+        return "not_recorded"
+    flag = getattr(cap_list, "attribution_complete", None)
+    if flag is True:
+        return "exact"
+    if flag is None and getattr(cap_list, "excluded_rows", None):
+        return "exact"
+    return "unknown"
