@@ -250,6 +250,12 @@ class OverlapAnalysisResponse(BaseModel):
     by_vendor: list[OverlapBucketResponse]
     top_cost_items: list[TopCostItemResponse]
     total_cost: float
+    #: #781: what `total_cost` may honestly be called -- "Total annual cost",
+    #: "Included annual cost" or "Annual cost (may not be complete)". The
+    #: deliverable's own `cost_label` over the same list, so the admin card and
+    #: the released document cannot disagree. Required: a response built
+    #: without deciding it must fail, never default to "Total".
+    total_cost_label: str
     total_items: int
     uncategorized_count: int
     no_vendor_count: int

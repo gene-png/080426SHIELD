@@ -53,18 +53,6 @@ from app.risk.engine import (
 )
 from app.risk.link_scope import LinkScope, scope_for
 from app.routes.artifacts import _storage_dep
-
-# IMPORTED, not copied -- and `routes/clients.py` carries a comment saying the
-# opposite, which is stated at both sites rather than left contradictory.
-#
-# A fourth copy of this two-line query is how four surfaces come to disagree
-# about one client's target, which is the defect #84 is titled for. The cycle
-# hazard `clients.py` names is real and measured: the `app/routes/*` graph is
-# a DAG and NOTHING imports `risk`, so this module is a leaf and may import
-# upward. The durable answer is a shared non-router helper; filed, not done
-# here.
-from app.routes.csf import _client_target_tier
-from app.routes.zt import _client_target_stage
 from app.schemas.risk import (
     LinkScopeDisclosure,
     RiskEntryResponse,
@@ -72,6 +60,13 @@ from app.schemas.risk import (
     RiskRegisterResponse,
 )
 from app.security.rate_limit import RateLimiter, get_rate_limiter
+
+# The one reader of the intake target (#352), shared by every router that
+# needs it. Aliased to the names this module used when it imported the
+# admin routers' private copies, so no line below changes: Risk is set aside,
+# and this is an import repoint, not a behaviour change.
+from app.services.engagement_targets import client_target_stage as _client_target_stage
+from app.services.engagement_targets import client_target_tier as _client_target_tier
 from app.storage import StorageBackend
 from app.tech_debt.filename import SERVICE_SLUG_RISK_REGISTER, deliverable_filename
 from app.zt.maturity import ZtFrameworkCode
