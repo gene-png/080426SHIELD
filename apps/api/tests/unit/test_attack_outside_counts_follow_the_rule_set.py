@@ -324,6 +324,7 @@ def _response(*, parents_computed: bool | None, counts: int | None, omit: bool =
         not_applicable=0,
         unscored=0,
         coverage_pct=100.0,
+        coverage_measured=True,  # #489: required since Batch A; not under test here
         **extra,
     )
     return AttackDashboardResponse(
@@ -339,6 +340,7 @@ def _response(*, parents_computed: bool | None, counts: int | None, omit: bool =
             gap=0,
             not_applicable=0,
             coverage_pct=100.0,
+            coverage_measured=True,  # #489, as above
             by_tactic=[tactic],
             **extra,
         ),

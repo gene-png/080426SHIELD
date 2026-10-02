@@ -114,7 +114,10 @@ export function AttackMatrix({
                     {hm ? (
                       <>
                         <div className="text-[10px] text-ink-tertiary">
-                          cov {hm.coverage_pct}%
+                          {/* #489: the API's `coverage_measured`. */}
+                          {hm.coverage_measured
+                            ? `cov ${hm.coverage_pct}%`
+                            : "cov not measured"}
                         </div>
                         {/* #554: beside the per-tactic percentage, even at
                             zero -- "cov 100%" over one covered row and twenty
