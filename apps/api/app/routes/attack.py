@@ -16,12 +16,10 @@ analytics endpoint in place of scoring/gap.
 
 from __future__ import annotations
 
-import contextvars
 import functools
 import re
 import uuid
 from collections.abc import Iterable
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Any, NamedTuple
@@ -30,13 +28,11 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
+from app.ai.batching import run_batches
 from app.ai.diff import diff_keyed_rows
-from app.ai.engine import get_job, run_job
-from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
 from app.ai.runs import (
-    RUN_DEADLINE_EXCEEDED,
     RunContext,
     RunFailed,
     Runner,
@@ -1573,119 +1569,35 @@ def _run_mitre_map_batched(
     client_id: uuid.UUID,
     deadline_at: datetime,
 ) -> tuple[list[dict], int, int]:
-    """Run mitre_map as concurrent batches. Returns (suggestions, total, failed).
-
-    Each batch is a real `run_job` call and therefore writes its own `llm_calls`
-    row — N rows per run instead of one. That is the honest accounting: N
-    provider calls were made and each is separately billable.
-
-    Each worker gets its OWN Session. A SQLAlchemy Session is not thread-safe,
-    and the request-scoped `db` belongs to the endpoint; sharing it across
-    threads corrupts state. Each worker commits its own audit row so evidence of
-    a call survives independently of whether its siblings — or the request —
-    succeed.
-
-    A partial failure does NOT discard the run. Losing 1 batch of 26 should cost
-    the consultant 25 techniques, not all 633 and the money already spent on
-    them. Only a total failure raises, and it raises through `ai_call_boundary`
-    so the error stays typed and carries `charged_likely`.
-    """
+    """Run mitre_map as concurrent batches of `_MITRE_BATCH_SIZE` techniques.
+    Returns (suggestions, total, failed). How batches run, fail and are
+    accounted for is `app.ai.batching.run_batches`, shared with csf_score."""
     codes = [c for c in (req.preview.inputs.get("technique_codes") or []) if isinstance(c, str)]
     batches = [
         codes[i : i + _MITRE_BATCH_SIZE] for i in range(0, len(codes), _MITRE_BATCH_SIZE)
     ] or [[]]
-
-    def _one(batch: list[str]) -> dict:
-        # Bind to the REQUEST session's engine, not the module-level
-        # SessionLocal. A Session is not thread-safe so each worker needs its
-        # own, but reaching for SessionLocal opens a connection outside whatever
-        # the caller is bound to — which silently bypassed the test suite's
-        # dependency-injected engine and broke isolation across test files.
-        # get_bind() keeps workers on the same database the request is using.
-        session = Session(bind=db.get_bind())
-        try:
-            out = run_job(
-                session,
-                llm,
-                req.preview.job_name,
-                inputs={**req.preview.inputs, "technique_codes": batch},
-                requested_by=requested_by,
-                service_id=service_id,
-                client_id=client_id,
-                client_org_name=req.preview.client_org_name,
-                name_hints=req.preview.name_hints,
-            )
-            session.commit()
-            # Guaranteed a dict by `parse_json_object`; a wrong shape raises
-            # and is counted as a failed batch rather than a silent empty one.
-            return out.data
-        except Exception:
-            # Mirror ai_call_boundary: commit so the FAILED row survives the
-            # exception, then let it propagate to be counted.
-            session.commit()
-            raise
-        finally:
-            session.close()
-
-    # Warm the job registry on THIS thread before any worker touches it. Lazy
-    # registration behind a module flag is not something a worker should be the
-    # first to trigger, even now that the flag ordering is fixed.
-    get_job(req.preview.job_name)
-
-    suggestions: list[dict] = []
-    failed = 0
-    first_error: Exception | None = None
-
-    pool = ThreadPoolExecutor(max_workers=_MITRE_MAX_WORKERS)
-    # #645: the job's overall deadline. All batches are submitted up front, so
-    # there is no natural boundary to check it at; it is checked between
-    # results, and `as_completed` is given the time remaining so one hung
-    # provider stream cannot hold the run past it.
-    remaining = (deadline_at - utcnow()).total_seconds()
-    try:
-        # Each worker runs inside a COPY of the request's context. A pool thread
-        # starts with an empty one, so `correlation_id_var` read None there and
-        # every `llm_calls` row a batch wrote lost the request's correlation id
-        # -- measured 2026-09-23, 0 of 52 live mitre_map rows carried one. A
-        # fresh copy per submit, because one Context cannot be entered by two
-        # threads at once. `routes/risk.py` has the same runner and the same fix.
-        # The copy carries the run id too (#645), so each batch's row names its run.
-        futures = [pool.submit(contextvars.copy_context().run, _one, b) for b in batches]
-        for fut in as_completed(futures, timeout=max(remaining, 0)):
-            if utcnow() > deadline_at:
-                raise TimeoutError("past the run deadline")
-            try:
-                data = fut.result()
-            except Exception as exc:  # noqa: BLE001 - counted, not swallowed
-                failed += 1
-                first_error = first_error or exc
-                _log.error(
-                    "mitre_map_batch_failed",
-                    service_id=str(service_id),
-                    error=f"{type(exc).__name__}: {exc}",
-                )
-                continue
-            suggestions.extend(t for t in (data.get("techniques") or []) if isinstance(t, dict))
-    except TimeoutError as exc:
-        # Batches not yet started are cancelled; one already inside a provider
-        # call cannot be, and is left to finish into its own `llm_calls` row.
-        pool.shutdown(wait=False, cancel_futures=True)
-        _log.error("mitre_map_deadline_exceeded", service_id=str(service_id))
-        raise RunFailed(
-            RUN_DEADLINE_EXCEEDED,
+    out = run_batches(
+        db,
+        llm,
+        req.preview.job_name,
+        [{**req.preview.inputs, "technique_codes": b} for b in batches],
+        requested_by=requested_by,
+        service_id=service_id,
+        client_id=client_id,
+        client_org_name=req.preview.client_org_name,
+        name_hints=req.preview.name_hints,
+        deadline_at=deadline_at,
+        max_workers=_MITRE_MAX_WORKERS,
+        deadline_message=(
             "This run did not finish within its time limit, so it was stopped and "
             "nothing from it was applied. Run it again; if it repeats, the AI "
-            "provider is answering too slowly for a full ATT&CK run.",
-        ) from exc
-    pool.shutdown(wait=True)
-
-    if failed == len(batches) and first_error is not None:
-        # Nothing usable came back. Re-raise inside the boundary so the caller
-        # gets the same typed 502 + charged_likely it always did.
-        with ai_call_boundary(db, llm, purpose=req.preview.job_name):
-            raise first_error
-
-    return suggestions, len(batches), failed
+            "provider is answering too slowly for a full ATT&CK run."
+        ),
+    )
+    suggestions = [
+        t for data in out.answers for t in (data.get("techniques") or []) if isinstance(t, dict)
+    ]
+    return suggestions, out.total, out.failed
 
 
 @router.post(
