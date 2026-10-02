@@ -34,6 +34,7 @@ from app.attack.catalog_version import is_current as attack_catalog_is_current
 from app.attack.coverage import ASSESSED
 from app.attack.exporters import build_context as attack_build_context
 from app.attack.exporters import coverage_measured
+from app.attack.exporters import partial_reason_counts as attack_partial_reason_counts
 from app.attack.exporters import retirement_sentences as attack_retirement_sentences
 from app.attack.parents import PARENT_CHILDREN as ATTACK_PARENT_CHILDREN
 from app.attack.parents import is_computed_parent as attack_is_computed_parent
@@ -90,6 +91,7 @@ from app.schemas.clients import (
     AttackDashboardRollup,
     AttackDashboardTechnique,
     AttackPartialReason,
+    AttackPartialReasonCount,
     AttackTacticCoverage,
     ClientDeliverableListResponse,
     ClientDeliverableResponse,
@@ -1254,6 +1256,16 @@ def attack_dashboard(
     # from these rows and this rollup, so the dashboard and the document count
     # the same rows the same way.
     retirement = client_retirement_index(db, client.id)
+    # ONE context for both the retirement sentences and the reason table, so
+    # each is computed exactly as the deliverable computes it.
+    deliverable_ctx = attack_build_context(
+        client_legal_name=client.legal_name,
+        service_title=svc.title,
+        assessment=assessment,
+        coverage=[r for r in rows if r.technique_code in valid],
+        rollup=rollup,
+        retirement=retirement,
+    )
     tool_retirement = (
         retirement.marks(
             t
@@ -1267,20 +1279,12 @@ def attack_dashboard(
         if retirement.has_plan
         else None
     )
-    retirement_notes = (
-        attack_retirement_sentences(
-            attack_build_context(
-                client_legal_name=client.legal_name,
-                service_title=svc.title,
-                assessment=assessment,
-                coverage=[r for r in rows if r.technique_code in valid],
-                rollup=rollup,
-                retirement=retirement,
-            )
-        )
-        if retirement.has_plan
-        else None
-    )
+    retirement_notes = attack_retirement_sentences(deliverable_ctx) if retirement.has_plan else None
+    # #554 R1, ruling (i): the deliverable's own count table. Omitted when empty.
+    partial_reasons = [
+        AttackPartialReasonCount(label=reason.label, sentence=reason.sentence, count=n)
+        for reason, n in attack_partial_reason_counts(deliverable_ctx)
+    ] or None
 
     _log.info(
         "client.attack_dashboard.built",
@@ -1333,6 +1337,7 @@ def attack_dashboard(
         techniques=techniques,
         tool_retirement=tool_retirement,
         retirement_notes=retirement_notes,
+        partial_reasons=partial_reasons,
     )
 
 

@@ -22,10 +22,10 @@ const REACH = {
   sentence:
     "Defended on most of your environment, but not on some systems, such as another operating system, a cloud or SaaS service, or unmanaged or off-network devices.",
 };
-const DIFFER = {
-  label: "Sub-techniques differ",
+const SET_BY = {
+  label: "Set by its sub-techniques",
   sentence:
-    "Its sub-techniques are covered to different degrees; each sub-technique states its own reason.",
+    "This technique's coverage is computed from its sub-techniques; see each sub-technique for its own coverage and reason.",
 };
 
 function technique(
@@ -102,14 +102,14 @@ describe("AttackDashboard, why a technique is Partial (#554 R1)", () => {
           technique("T1001", "partial", {
             computed_parent: true,
             sub_technique_count: 3,
-            partial_reason: DIFFER,
+            partial_reason: SET_BY,
           }),
         ])}
       />,
     );
-    expect(within(row("T1001")).getByText(DIFFER.label)).toHaveAttribute(
+    expect(within(row("T1001")).getByText(SET_BY.label)).toHaveAttribute(
       "title",
-      DIFFER.sentence,
+      SET_BY.sentence,
     );
   });
 
@@ -118,5 +118,45 @@ describe("AttackDashboard, why a technique is Partial (#554 R1)", () => {
     // APPEAR before ABSENT: the row renders, so the absence means something.
     expect(within(row("T1059")).getByText("Covered")).toBeInTheDocument();
     expect(within(row("T1059")).queryByText(REACH.label)).toBeNull();
+  });
+});
+
+describe("AttackDashboard, the Partial-by-reason table (#554 R1)", () => {
+  // The advisor's ruling (i), #736 18:34Z: the headers, and the caption,
+  // approved as written.
+  it("lists each reason with its count, and says they add up", () => {
+    render(
+      <AttackDashboard
+        data={{
+          ...data([technique("T1190", "partial", { partial_reason: REACH })]),
+          partial_reasons: [
+            { ...REACH, count: 1 },
+            { ...SET_BY, count: 1 },
+          ],
+        }}
+      />,
+    );
+    const table = screen.getByRole("table", {
+      name: "Partial coverage, by reason",
+    });
+    const t = within(table);
+    for (const h of ["Reason", "What it means", "Techniques"]) {
+      expect(t.getByRole("columnheader", { name: h })).toBeInTheDocument();
+    }
+    const reachRow = t.getByText(REACH.label).closest("tr") as HTMLElement;
+    expect(within(reachRow).getByText(REACH.sentence)).toBeInTheDocument();
+    expect(within(reachRow).getByText("1")).toBeInTheDocument();
+    expect(t.getByText(SET_BY.label)).toBeInTheDocument();
+    expect(
+      screen.getByText("These add up to the 2 Partial techniques above."),
+    ).toBeInTheDocument();
+  });
+
+  it("renders no table when there is no Partial", () => {
+    render(<AttackDashboard data={data([technique("T1059", "covered")])} />);
+    expect(within(row("T1059")).getByText("Covered")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("table", { name: "Partial coverage, by reason" }),
+    ).toBeNull();
   });
 });

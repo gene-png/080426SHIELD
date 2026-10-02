@@ -9,14 +9,19 @@ be in without one of the seven:
   * REASON NOT RECORDED -- a Partial with no reason. Only an assessment
     approved before #620 can hold one: under #620's rules approve refuses a
     reasonless Partial (`release_readiness.py`).
-  * SUB-TECHNIQUES DIFFER -- a COMPUTED parent's Partial (D-094). Its reason is
-    None by design, because its status is its children's; "Reason not
-    recorded" would be false of it.
+  * SET BY ITS SUB-TECHNIQUES -- a COMPUTED parent's Partial (D-094). Its
+    reason is None by design, because its status is its children's; "Reason
+    not recorded" would be false of it. It says only that the coverage is
+    computed, never how the children compare: `computed_parent_status` returns
+    Partial for children that are mixed, all Partial, or one Partial beside
+    N/A siblings, and a wording that described the children was false for the
+    last two (#798 review; the advisor's ruling on #736, 2026-10-02 18:34Z).
 
 The wording is the text Gene's advisor approved as written on 2026-10-02
 (condition 6): the R1 proposal on #554 (issue comment 5953613758) for the
-seven codes and "Reason not recorded", and the final-wording table for
-"Sub-techniques differ". Changing a word here changes client deliverables.
+seven codes and "Reason not recorded", and the advisor's #798 ruling (#736,
+18:34Z) for "Set by its sub-techniques". Changing a word here changes client
+deliverables.
 
 **The vocabulary is not here on purpose.** `coverage.py` owns the codes and is
 condition 5 (a scoring surface); this module only words them, and
@@ -92,16 +97,16 @@ REASON_NOT_RECORDED = PartialReason(
     "This technique was assessed as partly covered, and no reason was recorded.",
 )
 
-SUB_TECHNIQUES_DIFFER = PartialReason(
-    "Sub-techniques differ",
-    "Its sub-techniques are covered to different degrees; each sub-technique states "
-    "its own reason.",
+SET_BY_SUB_TECHNIQUES = PartialReason(
+    "Set by its sub-techniques",
+    "This technique's coverage is computed from its sub-techniques; see each "
+    "sub-technique for its own coverage and reason.",
 )
 
 #: The order the count table lists them in: the codes, then the two states.
 TABLE_ORDER: tuple[PartialReason, ...] = (
     *CLIENT_WORDING.values(),
-    SUB_TECHNIQUES_DIFFER,
+    SET_BY_SUB_TECHNIQUES,
     REASON_NOT_RECORDED,
 )
 
@@ -126,7 +131,7 @@ def partial_reason(
     if status != CoverageStatus.PARTIAL.value:
         return None
     if computed_parent:
-        return SUB_TECHNIQUES_DIFFER
+        return SET_BY_SUB_TECHNIQUES
     if reason_code is None:
         return REASON_NOT_RECORDED
     wording = CLIENT_WORDING.get(reason_code)

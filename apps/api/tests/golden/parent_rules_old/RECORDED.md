@@ -69,3 +69,13 @@ throwaway script that asserted each difference:
   holds no Partial. With that column removed from every row, the sheet is
   identical. The Heatmap Summary gains one legend row, "Why partial". With it
   removed, the sheet is identical. The other sheets are unchanged.
+
+## Amendment, 2026-10-02: the #554 R1 dashboard table
+
+The advisor's ruling (i) on #798 (#736, 18:34Z): the client dashboard carries
+the deliverable's "Partial coverage, by reason" table. It is an ADDED key.
+Re-rendered from this world by the current code and checked against the file
+above before replacing it: deleting `,"partial_reasons":[...]` from the new
+bytes gives the file as the R1 amendment above left it EXACTLY, byte for
+byte. One key was removed, carrying one row: "Reason not recorded", count 1,
+Golden A's one Partial.

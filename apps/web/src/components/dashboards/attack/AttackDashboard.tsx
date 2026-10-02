@@ -541,6 +541,55 @@ export function AttackDashboard({
         </Section>
       ) : null}
 
+      {/* #554 R1, the advisor's ruling (i): why the Partials are partial,
+          counted -- the deliverable's own table, so the rows add up to the
+          Partial figure above. R3 SLOT: a "What is in place" breakdown would
+          follow this table; it waits on Gene's decision and is not built. */}
+      {data.partial_reasons && data.partial_reasons.length > 0 ? (
+        <Section title="Partial coverage, by reason">
+          <table
+            aria-label="Partial coverage, by reason"
+            style={{
+              width: "100%",
+              borderCollapse: "collapse",
+              fontSize: 12.5,
+            }}
+          >
+            <thead>
+              <tr>
+                {["Reason", "What it means", "Techniques"].map((h) => (
+                  <th
+                    key={h}
+                    style={{
+                      color: C.muted,
+                      textAlign: "left",
+                      padding: "10px 12px",
+                      fontWeight: 600,
+                      fontSize: 11,
+                      borderBottom: `1px solid ${C.border}`,
+                    }}
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {data.partial_reasons.map((r) => (
+                <tr key={r.label}>
+                  <td style={cell({ weight: 600 })}>{r.label}</td>
+                  <td style={cell({ muted: true })}>{r.sentence}</td>
+                  <td style={cell()}>{r.count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p style={{ margin: "10px 0 0", fontSize: 13 }}>
+            {`These add up to the ${data.rollup.partial} Partial techniques above.`}
+          </p>
+        </Section>
+      ) : null}
+
       {/* Technique matrix */}
       <Section
         title="Per-technique coverage matrix"

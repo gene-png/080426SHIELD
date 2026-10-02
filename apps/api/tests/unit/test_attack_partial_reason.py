@@ -5,7 +5,9 @@ without a reason. The seven Partial reason codes existed (`coverage.py`) with
 model-facing definitions; no client surface showed them. The client wording,
 approved by Gene's advisor as written on 2026-10-02 (condition 6), is the R1
 proposal on #554 (issue comment 5953613758) plus the two extra rows from the
-final-wording table: "Reason not recorded" and "Sub-techniques differ".
+final-wording table: "Reason not recorded", and "Set by its sub-techniques"
+(the advisor's #798 ruling on #736, 2026-10-02 18:34Z, replacing the first
+wording for a computed parent).
 
 The expected strings below are COPIED from that approved text, never imported
 from the module under test.
@@ -77,10 +79,10 @@ NOT_RECORDED = (
     "Reason not recorded",
     "This technique was assessed as partly covered, and no reason was recorded.",
 )
-SUB_TECHNIQUES_DIFFER = (
-    "Sub-techniques differ",
-    "Its sub-techniques are covered to different degrees; each sub-technique states "
-    "its own reason.",
+SET_BY_SUB_TECHNIQUES = (
+    "Set by its sub-techniques",
+    "This technique's coverage is computed from its sub-techniques; see each "
+    "sub-technique for its own coverage and reason.",
 )
 WHY_LEGEND = ("Why partial", "The reason a Partial technique is only partly covered.")
 
@@ -108,12 +110,12 @@ def test_the_wording_is_the_approved_text() -> None:
         REASON_NOT_RECORDED,
     )
     from app.attack.partial_reasons import (
-        SUB_TECHNIQUES_DIFFER as DIFFER,
+        SET_BY_SUB_TECHNIQUES as SET_BY,
     )
 
     assert {k: (v.label, v.sentence) for k, v in CLIENT_WORDING.items()} == APPROVED
     assert (REASON_NOT_RECORDED.label, REASON_NOT_RECORDED.sentence) == NOT_RECORDED
-    assert (DIFFER.label, DIFFER.sentence) == SUB_TECHNIQUES_DIFFER
+    assert (SET_BY.label, SET_BY.sentence) == SET_BY_SUB_TECHNIQUES
 
 
 def test_an_unknown_code_on_a_partial_row_fails_loudly() -> None:
@@ -261,7 +263,7 @@ def test_the_xlsx_says_why_each_partial_is_partial(parent_rules) -> None:
     assert rows[covered.technique_code][col] in (None, ""), "a Covered row has no reason"
     # A computed parent's Partial is its children's, under #620's rules; an
     # assessment approved before #620 scored its parents directly.
-    expected_parent = SUB_TECHNIQUES_DIFFER if parent_rules == 2 else NOT_RECORDED
+    expected_parent = SET_BY_SUB_TECHNIQUES if parent_rules == 2 else NOT_RECORDED
     assert rows[parent_row.technique_code][col] == _cell(expected_parent)
 
     assert _summary_labels(render_xlsx(ctx)).get(WHY_LEGEND[0]) == WHY_LEGEND[1]
@@ -273,7 +275,7 @@ def _expected_table(parent_rules: int) -> list[tuple[tuple[str, str], int]]:
     then the parent, then the reasonless row."""
     rows = [(APPROVED[code], 1) for code in APPROVED]
     if parent_rules == 2:
-        rows.append((SUB_TECHNIQUES_DIFFER, 1))
+        rows.append((SET_BY_SUB_TECHNIQUES, 1))
         rows.append((NOT_RECORDED, 1))
     else:
         rows.append((NOT_RECORDED, 2))

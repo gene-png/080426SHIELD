@@ -118,6 +118,12 @@ export interface AttackDashboardData {
   tool_retirement?: Record<string, string>;
   /** The deliverable's own count sentences, each only when non-zero. */
   retirement_notes?: string[];
+  /**
+   * #554 R1: the "Partial coverage, by reason" table, the deliverable's own
+   * rows (`partial_reason_counts`), adding up to `rollup.partial`. Absent when
+   * there is no Partial.
+   */
+  partial_reasons?: { label: string; sentence: string; count: number }[];
 }
 
 export interface Kpi {

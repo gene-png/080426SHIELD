@@ -120,6 +120,15 @@ class AttackPartialReason(BaseModel):
     sentence: str
 
 
+class AttackPartialReasonCount(BaseModel):
+    """#554 R1: one row of the dashboard's "Partial coverage, by reason" table,
+    the same row the deliverable's table prints."""
+
+    label: str
+    sentence: str
+    count: int
+
+
 class AttackDashboardTechnique(BaseModel):
     """One evaluated technique row for the client coverage matrix. Only techniques
     with a non-null coverage status are serialized (the 'evaluated' set)."""
@@ -233,12 +242,18 @@ class AttackDashboardResponse(BaseModel):
     tool_retirement: dict[str, str] | None = None
     #: The count sentences the deliverable prints, each only when non-zero.
     retirement_notes: list[str] | None = None
+    #: #554 R1 (the advisor's ruling (i), #736 18:34Z): the "Partial coverage,
+    #: by reason" table, from the deliverable's own `partial_reason_counts`, so
+    #: its rows add up to `rollup.partial`. OMITTED when there is no Partial.
+    partial_reasons: list[AttackPartialReasonCount] | None = None
 
     @model_serializer(mode="wrap")
     def _drop_unset_rule_key(self, handler: Any) -> dict[str, Any]:
         return _without_none(
             handler(self),
-            frozenset({"parents_computed", "tool_retirement", "retirement_notes"}),
+            frozenset(
+                {"parents_computed", "tool_retirement", "retirement_notes", "partial_reasons"}
+            ),
         )
 
     @model_validator(mode="after")
