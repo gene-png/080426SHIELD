@@ -45,7 +45,7 @@ from app.ai.runs import (
     require_serves,
     start_run,
 )
-from app.assessment_targets import MIN_TARGET_STAGE, floor_refusal
+from app.assessment_targets import MIN_TARGET_STAGE, floor_refusal, target_source_sentence
 from app.audit import audit
 from app.db.session import get_db
 from app.deliverable_release import release_deliverable
@@ -114,7 +114,12 @@ from app.zt.exporters import render_docx as render_zt_docx
 from app.zt.exporters import render_pdf as render_zt_pdf
 from app.zt.exporters import render_xlsx as render_zt_xlsx
 from app.zt.maturity import ZtFrameworkCode, level_count, stage_definitions
-from app.zt.scoring import analyze_gaps, build_roadmap, resolve_target_stage
+from app.zt.scoring import (
+    analyze_gaps,
+    build_roadmap,
+    engagement_target_capability_count,
+    resolve_target_stage,
+)
 from app.zt.scoring import compute as compute_score
 
 router = APIRouter(prefix="/zt", tags=["zt"])
@@ -1926,6 +1931,11 @@ def finalize_zt_deliverable(
         gap=gap,
         # #646: the ONE derivation every surface calls.
         ai_mode=ai_mode_for(db, svc, assessment),
+        # #783: the resolver's verdict travels with the number it produced,
+        # and whether that number decided any row (the dashboard asks the same
+        # function, `engagement_target_capability_count`).
+        target_source=target_stage_source,
+        engagement_target_used=engagement_target_capability_count(cat_fw, targets_map) > 0,
     )
     pdf_bytes = render_zt_pdf(ctx)
     xlsx_bytes = render_zt_xlsx(ctx)
@@ -1966,6 +1976,15 @@ def finalize_zt_deliverable(
         f"{score.answered_capabilities}/{score.total_capabilities} capabilities scored; "
         f"{gap.total_gap_count} gap(s) at target S{gap.target_stage}."
     )
+    # #783: `/results` shows this line to the client, so it says what the
+    # document says when the target is a default.
+    target_note = target_source_sentence(
+        "stage",
+        target_stage_source,
+        engagement_target_used=ctx.engagement_target_used,
+    )
+    if target_note:
+        summary_line += f" {target_note}"
 
     deliv = Deliverable(
         service_id=svc.id,

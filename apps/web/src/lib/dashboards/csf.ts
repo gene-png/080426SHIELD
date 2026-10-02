@@ -137,6 +137,15 @@ export function targetIsAssumed(data: CsfDashboardData): boolean {
  * The default arm is deliberate and not dead: the API is the source of this
  * string, so an unrecognised value must still say SOMETHING true rather than
  * fall through to the "chose nothing" copy.
+ *
+ * #783: THE CLIENT'S DOCUMENTS SAY THESE WORDS TOO, from a Python copy:
+ * `apps/api/app/assessment_targets.py::target_source_sentence`, which every
+ * CSF and ZT deliverable and stored summary calls. The TS and Python sentences
+ * are synchronised, not derived; a fixture both runners could read needs the
+ * compose mount tracked in #422. Until then two literal tables pin it, each
+ * naming the other: `target-source-sentences.test.ts` here and
+ * `tests/unit/test_target_source_in_deliverables.py` there. Reword one side
+ * and you must reword the other.
  */
 export function targetFaultNote(source: string): string | null {
   switch (source) {
