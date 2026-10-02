@@ -113,3 +113,31 @@ def test_a_released_subject_with_no_run_says_none(app_client) -> None:  # noqa: 
     r = c.get(f"/clients/{cid}/csf/{subj['csf'][0]}/dashboard", headers=h)
     assert r.status_code == 200, r.text
     assert r.json()["ai_source"]["state"] == "none"
+
+
+def test_a_tech_debt_list_counts_only_the_run_that_wrote_it(app_client) -> None:  # noqa: F811
+    """Another extraction's run -- one that wrote a different list -- says
+    nothing about this one."""
+    c = app_client
+    cid, h = _world(c)
+    Sess = env_sessions()
+    svc, list_id = _subjects(Sess)["tech-debt"]
+    seed_run(
+        Sess,
+        service_id=svc,
+        subject_id=str(_uuid.uuid4()),
+        purpose="tech_debt_extract",
+        mode=LLMCallMode.FIXTURE,
+        result={"capability_list_id": str(_uuid.uuid4())},
+    )
+    seed_run(
+        Sess,
+        service_id=svc,
+        subject_id=str(_uuid.uuid4()),
+        purpose="tech_debt_extract",
+        mode=LLMCallMode.LIVE,
+        result={"capability_list_id": list_id},
+    )
+    r = c.get(f"/clients/{cid}/tech-debt/{svc}/dashboard", headers=h)
+    assert r.status_code == 200, r.text
+    assert r.json()["ai_source"]["state"] == "live"
