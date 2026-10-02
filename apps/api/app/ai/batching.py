@@ -138,8 +138,21 @@ def run_batches(
                 stop.set()
             # Mirror ai_call_boundary: commit so the FAILED row survives the
             # exception, then let it propagate to be counted.
-            session.commit()
-            raise
+            try:
+                session.commit()
+            except Exception as commit_exc:  # noqa: BLE001 - logged; the cause wins
+                # The ORIGINAL error must reach the collector (#800 review):
+                # a commit failure raised in its place turned a rejected key
+                # into a DB error -- after `stop` had already silenced every
+                # later batch -- and the stop was never logged. So the commit
+                # failure is LOGGED, loudly, and the cause is re-raised.
+                _log.error(
+                    f"{job_name}_batch_commit_failed",
+                    service_id=str(service_id),
+                    error=f"{type(commit_exc).__name__}: {commit_exc}",
+                    cause=f"{type(exc).__name__}: {exc}",
+                )
+            raise exc
         finally:
             session.close()
 

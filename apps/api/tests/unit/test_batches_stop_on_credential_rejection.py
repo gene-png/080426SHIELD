@@ -278,3 +278,40 @@ def test_attack_the_run_names_the_rejection_even_after_another_failure(
 
     assert calls.n == 2, f"{calls.n} calls: the 500, then the rejection, then nothing"
     assert run["error_message"].startswith(MESSAGE["anthropic-401"]), run["error_message"]
+
+
+def test_a_rejection_survives_a_failed_commit_on_its_failure_path(
+    app_parts, monkeypatch, capsys  # noqa: F811
+) -> None:
+    """#800 review: the worker commits its FAILED `llm_calls` row before
+    re-raising. If that commit raises, the collector used to receive the
+    database error instead of the rejection -- the stop flag was already set,
+    so every later batch went silent, yet the run named a DB error and the
+    stop was never logged. One worker, every call rejected, and every batch
+    session's commit failing."""
+    from sqlalchemy.exc import OperationalError
+
+    import app.ai.batching as batching
+    import app.routes.attack as attack_routes
+
+    class _CommitFails(batching.Session):
+        def commit(self) -> None:
+            raise OperationalError("COMMIT", {}, RuntimeError("database went away"))
+
+    monkeypatch.setattr(attack_routes, "_MITRE_MAX_WORKERS", 1)
+    monkeypatch.setattr(batching, "Session", _CommitFails)
+    calls = _Calls(lambda _i: REJECTIONS["anthropic-401"]())
+    w, runner = _deferred(app_parts, provider=LiveLookingProvider())
+    w.provider.register("mitre_map", calls)
+    started = start_run(w.c, w.run_url, w.h, serves="live")
+    assert runner.run_all() == 1
+    run = get_run(w.c, started["run_id"], w.h)
+
+    assert calls.n == 1, f"{calls.n} calls with one worker"
+    assert (run["status"], run["error_reason"]) == ("failed", "ai_call_failed"), run
+    assert run["error_message"].startswith(MESSAGE["anthropic-401"]), run["error_message"]
+    out = capsys.readouterr().out
+    line = _stopped_line(out)
+    assert line["attempted"] == calls.n, line
+    # And the commit failure is LOUD, not swallowed.
+    assert "batch_commit_failed" in out
