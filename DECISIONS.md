@@ -6480,3 +6480,24 @@ The shared dev database, read-only: DRAFT 2, RELEASED 2, APPROVED 0, at migratio
 - **ZT locks the client's own self-assessment routes.** The ZT run writes the answers themselves, so the client's answer PATCH and submit are refused while it runs, with the same typed message.
 - **A status outage proceeds as `live`.** When RunAiGuard could not read the AI status it fails open, as before; the run then asks the api for no promise that it stays offline.
 - **A row edited mid-run is a new by-design drop reason, `edited`,** for CSF and ZT, inside the received == applied + dropped invariant; ATT&CK counts it as `rows_skipped_edited`.
+
+## D-105 — A Tech Debt tool marked `cut` is a planned retirement on every ATT&CK surface
+
+**2026-10-02 · attack** (Gene's decision, 2026-09-26, recorded on #686; slice R2 of #554; join and copy approved by the coordinator, 2026-10-02)
+
+**Decision.** A Tech Debt tool whose disposition is `cut` is a PLANNED RETIREMENT. It still counts toward ATT&CK coverage, because it is still deployed, and every surface that shows or counts it labels it, so the client can see which coverage will drop. Coverage is not recomputed: `attack/analytics.py` and the percentage are unchanged.
+
+**The join** (`app/attack/retirement.py`, which carries the rules and their reasons). An ATT&CK row stores tool NAMES. Each cited name is matched by `strip().casefold()` against every entry `_client_capability_membership` was built from, before its de-duplication, and each entry is followed by its `item_id` to the live item's disposition:
+
+- **"The consolidation plan" is each Tech Debt service's LATEST (highest-version) APPROVED or RELEASED capability list, and only it votes** (#787 review, F1). A DRAFT is a consultant's unreviewed disposition, and an older approved version is superseded by the next extraction, so neither votes. A cited tool on no service's latest plan (a draft only, an older version only, or nowhere) is **retirement status unknown**: "the plan does not list it" cannot support "not retiring". This refines the first verdict, which read a draft-only cut as not retiring. The citation membership itself still unions every non-discarded version; retirement deliberately narrows to the latest plan.
+- Across DIFFERENT Tech Debt services the latest plans are unioned, and disagreement is unknown.
+- Cut on every voting entry: planned retirement. Known on every one with none cut: not retiring (undecided counts as not cut). **Only `cut` counts**: Gene's decision names `cut`, so `consolidate` reads as not retiring. Whether a consolidation should count is an open question to the owner (#787 review, F2).
+- Voting entries that disagree, a voting entry whose live item is gone, or a name with no voting entry: **retirement status unknown**, never a silent "not retiring".
+- **No approved or released Tech Debt list at all: nothing is marked and no unknown count is printed.** "No consolidation plan" is not "could not determine".
+- A rename after approval still joins, through the snapshot's `item_id`. A redacted alias never reaches the stored name (#133).
+
+**The copy.** Each tool carries " (planned retirement)" or " (retirement status unknown)", after " (unconfirmed)" when both apply, on the XLSX Coverage sheet, the client dashboard and the admin technique panel. The XLSX legend explains each mark it uses. The PDF, DOCX, finalize summary and dashboard state "N of the M covered or partial techniques cite a tool marked for planned retirement; K rely on such tools alone." and "Retirement status could not be determined for U cited tools.", each only when non-zero. M is the rollup's own covered + partial, so the sentence cannot disagree with the percentage.
+
+**Freshness.** A deliverable holds the disposition as of its finalize, because it is rendered then. The dashboard and the admin panel read the CURRENT plan and say so beside the labels ("Retirement labels reflect the current consolidation plan."). Freezing the labels for the dashboard is a follow-up, filed by the coordinator.
+
+**Overturnable:** whether `consolidate` should count, and whether a free-text tool should read "unknown" rather than unmarked.

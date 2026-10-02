@@ -32,7 +32,9 @@ from app.attack.catalog_version import (
 )
 from app.attack.catalog_version import is_current as attack_catalog_is_current
 from app.attack.coverage import ASSESSED
+from app.attack.exporters import build_context as attack_build_context
 from app.attack.exporters import coverage_measured
+from app.attack.exporters import retirement_sentences as attack_retirement_sentences
 from app.attack.parents import PARENT_CHILDREN as ATTACK_PARENT_CHILDREN
 from app.attack.parents import is_computed_parent as attack_is_computed_parent
 from app.attack.pending import pending_codes as attack_pending_codes
@@ -82,6 +84,7 @@ from app.risk.engine import (
     matrix_counts,
     tier_counts,
 )
+from app.routes.attack import client_retirement_index
 from app.schemas.clients import (
     AttackDashboardResponse,
     AttackDashboardRollup,
@@ -1279,6 +1282,40 @@ def attack_dashboard(
         )
     techniques.sort(key=lambda t: t.code)
 
+    # #686 (D-105): the SAME join finalize renders from, read LIVE -- the web
+    # says beside the labels that they reflect the current consolidation plan.
+    # The sentences come from the exporters' own function over a context built
+    # from these rows and this rollup, so the dashboard and the document count
+    # the same rows the same way.
+    retirement = client_retirement_index(db, client.id)
+    tool_retirement = (
+        retirement.marks(
+            t
+            for tech_row in techniques
+            for t in (
+                *tech_row.detection_tools,
+                *tech_row.prevention_tools,
+                *tech_row.response_tools,
+            )
+        )
+        if retirement.has_plan
+        else None
+    )
+    retirement_notes = (
+        attack_retirement_sentences(
+            attack_build_context(
+                client_legal_name=client.legal_name,
+                service_title=svc.title,
+                assessment=assessment,
+                coverage=[r for r in rows if r.technique_code in valid],
+                rollup=rollup,
+                retirement=retirement,
+            )
+        )
+        if retirement.has_plan
+        else None
+    )
+
     _log.info(
         "client.attack_dashboard.built",
         client_id=str(client.id),
@@ -1328,6 +1365,8 @@ def attack_dashboard(
             ],
         ),
         techniques=techniques,
+        tool_retirement=tool_retirement,
+        retirement_notes=retirement_notes,
     )
 
 

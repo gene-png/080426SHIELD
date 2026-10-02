@@ -105,6 +105,14 @@ export interface AttackDashboardData {
   deliverable_version: number;
   rollup: DashRollup;
   techniques: DashTechnique[];
+  /**
+   * #686 (D-105): cited tool -> "planned_retirement" | "unknown", from the
+   * client's CURRENT Tech Debt consolidation plan; a tool absent here is not
+   * retiring. Absent (with `retirement_notes`) when the client has no plan.
+   */
+  tool_retirement?: Record<string, string>;
+  /** The deliverable's own count sentences, each only when non-zero. */
+  retirement_notes?: string[];
 }
 
 export interface Kpi {

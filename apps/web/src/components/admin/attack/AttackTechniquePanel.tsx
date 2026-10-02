@@ -19,6 +19,13 @@ import type {
   UnconfirmedCitation,
 } from "@/lib/attack/types";
 
+import {
+  CURRENT_PLAN_NOTE,
+  anyRetirementMark,
+  withRetirementMark,
+  type ToolRetirement,
+} from "@/lib/attack/retirement";
+
 import { StatusBadge } from "./StatusBadge";
 
 import type { JSX } from "react";
@@ -33,9 +40,12 @@ const ALL_STATUSES: CoverageStatus[] = [
 function ToolRow({
   label,
   tools,
+  marks,
 }: {
   label: string;
   tools: string[] | null | undefined;
+  /** #686: the plan's retirement state per tool; absent marks nothing. */
+  marks?: ToolRetirement;
 }): JSX.Element {
   return (
     <div className="flex flex-col gap-1">
@@ -49,7 +59,7 @@ function ToolRow({
               key={t}
               className="rounded-full bg-surface-sunken px-2 py-0.5 text-xs text-ink-secondary"
             >
-              {t}
+              {withRetirementMark(t, marks)}
             </span>
           ))}
         </div>
@@ -189,6 +199,12 @@ export interface AttackTechniquePanelProps {
    * make the row score.
    */
   onConfirmCitations?: () => void | Promise<void>;
+  /**
+   * #686 (D-105): cited tool -> "planned_retirement" | "unknown" from the
+   * client's CURRENT consolidation plan (`AttackAssessment.tool_retirement`).
+   * Null or absent: no plan, nothing is labelled.
+   */
+  toolRetirement?: ToolRetirement;
 }
 
 export function AttackTechniquePanel({
@@ -200,6 +216,7 @@ export function AttackTechniquePanel({
   readOnly = false,
   onPatch,
   onConfirmCitations,
+  toolRetirement,
 }: AttackTechniquePanelProps): JSX.Element {
   if (!technique) {
     return (
@@ -338,9 +355,26 @@ export function AttackTechniquePanel({
           </p>
         ) : (
           <div className="grid grid-cols-1 gap-3 border-t border-border-subtle pt-3 sm:grid-cols-3">
-            <ToolRow label="Detection" tools={coverage?.detection_tools} />
-            <ToolRow label="Prevention" tools={coverage?.prevention_tools} />
-            <ToolRow label="Response" tools={coverage?.response_tools} />
+            <ToolRow
+              label="Detection"
+              tools={coverage?.detection_tools}
+              marks={toolRetirement}
+            />
+            <ToolRow
+              label="Prevention"
+              tools={coverage?.prevention_tools}
+              marks={toolRetirement}
+            />
+            <ToolRow
+              label="Response"
+              tools={coverage?.response_tools}
+              marks={toolRetirement}
+            />
+            {anyRetirementMark(toolRetirement) ? (
+              <p className="text-xs text-ink-tertiary sm:col-span-3">
+                {CURRENT_PLAN_NOTE}
+              </p>
+            ) : null}
           </div>
         )}
         {computedParent && (coverage?.pending_review ?? false) ? (
