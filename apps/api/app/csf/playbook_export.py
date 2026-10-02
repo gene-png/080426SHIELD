@@ -405,7 +405,8 @@ def _function_summary(rows: Sequence[Any]) -> list[dict[str, Any]]:
     groups: dict[str, dict[str, Any]] = {}
     for r in rows:
         code = _fn_code(r.function)
-        g = groups.setdefault(code, {"levels": [], "gaps": 0, "targets": []})
+        g = groups.setdefault(code, {"levels": [], "gaps": 0, "targets": [], "rows": []})
+        g["rows"].append(r)
         g["levels"].append(r.enterprise_level)
         if r.gap:
             g["gaps"] += 1
@@ -426,6 +427,8 @@ def _function_summary(rows: Sequence[Any]) -> list[dict[str, Any]]:
                 "avg": avg,
                 "gaps": g["gaps"],
                 "target": max(g["targets"]) if g["targets"] else None,
+                # #765: "Target" and "gaps" above are of TARGETED rows only.
+                "untargeted": _untargeted(g["rows"]),
             }
         )
     return out
@@ -445,17 +448,26 @@ def _overview_sentences(rows: Sequence[Any]) -> list[str]:
         if gaps == 1
         else "subcategories fall short of their target maturity"
     )
+    untargeted = _untargeted(rows)
+    if total and untargeted == total:
+        # #765 item 2: with no target anywhere, "0 subcategories fall short ...
+        # 0 Priority 1" counts shortfalls nothing was measured for.
+        shortfall = f"No gaps or priorities are assessed: {_subcats(untargeted)}."
+    else:
+        shortfall = (
+            f"{gaps} {short} — "
+            f"{pc['P1']} Priority 1 (critical), {pc['P2']} Priority 2, and "
+            f"{pc['P3']} Priority 3."
+            # #762: the count above is of TARGETED rows; the rest are not short
+            # of anything, they were never measured against a target.
+            + (f" {_subcats(untargeted)}." if untargeted else "")
+        )
     lines = [
         f"This assessment covers {total} in-scope NIST CSF 2.0 "
         f"{'subcategory' if total == 1 else 'subcategories'}. "
         f"Enterprise maturity, rolled up across the impact tiers in use, "
         f"averages Level {overall} of 5.",
-        f"{gaps} {short} — "
-        f"{pc['P1']} Priority 1 (critical), {pc['P2']} Priority 2, and "
-        f"{pc['P3']} Priority 3."
-        # #762: the count above is of TARGETED rows; the rest are not short of
-        # anything, they were never measured against a target.
-        + (f" {_subcats(_untargeted(rows))}." if _untargeted(rows) else ""),
+        shortfall,
     ]
     if len(fns) >= 2:
         strongest = max(fns, key=lambda f: f["avg"])
@@ -496,6 +508,25 @@ def _gap_cell(r: Any) -> str:
     return "Yes" if r.gap else ""
 
 
+def _scorecard_target(f: Mapping[str, Any]) -> str:
+    """A function's scorecard Target cell (#765): "No target" when none of its
+    rows has one, as `_gap_cell` says of a row."""
+    if f["untargeted"] == f["count"]:
+        return NO_TARGET
+    return f"L{f['target']}"
+
+
+def _scorecard_gaps(f: Mapping[str, Any]) -> str:
+    """A function's scorecard Gaps cell (#765): the count of its TARGETED rows'
+    gaps, with its untargeted rows beside it, or "—" when it has no target at
+    all. A bare "0" over untargeted rows read as the function meeting it."""
+    if f["untargeted"] == f["count"]:
+        return "—"
+    if f["untargeted"]:
+        return f"{f['gaps']} ({f['untargeted']} no target)"
+    return str(f["gaps"])
+
+
 def _subcats(n: int) -> str:
     return f"{n} in-scope subcategor{'y has' if n == 1 else 'ies have'} no target set"
 
@@ -524,7 +555,18 @@ def _function_detail(frows: Sequence[Any]) -> str:
     avg = round(sum(r.enterprise_level for r in frows) / n)
     fgaps = sum(1 for r in frows if r.gap)
     what = "subcategory" if n == 1 else "subcategories"
-    return f"{n} {what} · average Level {avg} · {fgaps} {_gaps(fgaps)}."
+    # #765: the gap count is of the function's TARGETED rows only.
+    untargeted = _untargeted(frows)
+    if untargeted == n:
+        gaps = "no target set, so not assessed for gaps"
+    elif untargeted:
+        gaps = (
+            f"{fgaps} {_gaps(fgaps)} among the {n - untargeted} with a target · "
+            f"{untargeted} with no target set"
+        )
+    else:
+        gaps = f"{fgaps} {_gaps(fgaps)}"
+    return f"{n} {what} · average Level {avg} · {gaps}."
 
 
 def _next_steps(rows: Sequence[Any]) -> list[str]:
@@ -733,8 +775,8 @@ def _scorecard(story: list[Any], styles: dict[str, Any], rows: Sequence[Any]) ->
             f["name"],
             str(f["count"]),
             f"L{f['avg']}",
-            f"L{f['target']}" if f["target"] else "—",
-            str(f["gaps"]),
+            _scorecard_target(f),
+            _scorecard_gaps(f),
         ]
         for f in fns
     ]
@@ -743,7 +785,9 @@ def _scorecard(story: list[Any], styles: dict[str, Any], rows: Sequence[Any]) ->
         _pdf_table(
             ["Function", "Subcategories", "Maturity", "Target", "Gaps"],
             body,
-            [2.2 * inch, 1.3 * inch, 1.1 * inch, 1.0 * inch, 0.9 * inch],
+            # Gaps is wider than its header since #765: "0 (2 no target)", and
+            # a plain-string reportlab cell does not wrap.
+            [2.0 * inch, 1.3 * inch, 1.1 * inch, 1.0 * inch, 1.1 * inch],
             color_col=2,
             color_levels=levels,
         )
@@ -1073,8 +1117,8 @@ def _docx_scorecard(doc: Any, rows: Sequence[Any]) -> None:
                 f["name"],
                 f["count"],
                 f"L{f['avg']}",
-                f"L{f['target']}" if f["target"] else "—",
-                f["gaps"],
+                _scorecard_target(f),
+                _scorecard_gaps(f),
             ]
             for f in fns
         ],
