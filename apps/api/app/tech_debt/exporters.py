@@ -19,14 +19,14 @@ import io
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from app.ai.mode_stamp import (
+from app.client_naming import org_display_name
+from app.mode_stamp import (
     UNKNOWN_AI_MODE,
     AiModeStamp,
     add_docx_paragraph,
     add_xlsx_sheet,
     pdf_paragraph,
 )
-from app.client_naming import org_display_name
 from app.models.capability import CapabilityDisposition, CapabilityItem, CapabilityList
 
 

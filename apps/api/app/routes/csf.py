@@ -33,7 +33,6 @@ from app.ai.diff import diff_keyed_rows
 from app.ai.engine import run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
-from app.ai.mode_stamp import ai_mode_for
 from app.ai.preview import AiPreviewPayload
 from app.ai.provenance import SOURCE_CONSULTANT, protected_keys
 from app.ai.runs import (
@@ -81,6 +80,7 @@ from app.db.session import get_db
 from app.deliverable_release import release_deliverable
 from app.dependencies import current_client, current_user, require_role
 from app.logging import get_logger
+from app.mode_stamp import ai_mode_for
 from app.models._common import utcnow
 from app.models.artifact import Artifact, ArtifactOrigin
 from app.models.client import Client

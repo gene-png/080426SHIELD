@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 class AiSource(BaseModel):
     """Whether an assessment's AI suggestions came from a live model or test
-    data (#646), as every surface states it. From `app.ai.mode_stamp.ai_mode_for`,
+    data (#646), as every surface states it. From `app.mode_stamp.ai_mode_for`,
     the one derivation: the subject's COMPLETED runs, by mode."""
 
     state: Literal["live", "fixture", "mixed", "none", "unknown"]

@@ -284,6 +284,20 @@ def add_docx_paragraph(doc: Any, stamp: AiModeStamp) -> None:
     run.bold = stamp.is_warning
 
 
+def xlsx_rows(stamp: AiModeStamp) -> tuple[list[Any], list[list[Any]]]:
+    """The "AI source" sheet's heading row and data rows: ONE definition, for
+    `add_xlsx_sheet` and for the CSF Playbook, whose every sheet carries the
+    approval banner above its heading (#294)."""
+    return (
+        ["AI source", stamp.state],
+        [
+            [stamp.sentence()],
+            ["Live AI runs", stamp.live_runs if stamp.recorded else "not recorded"],
+            ["Offline test-data runs", stamp.fixture_runs if stamp.recorded else "not recorded"],
+        ],
+    )
+
+
 def add_xlsx_sheet(wb: Any, stamp: AiModeStamp) -> None:
     """The stamp as its own LAST sheet.
 
@@ -294,10 +308,10 @@ def add_xlsx_sheet(wb: Any, stamp: AiModeStamp) -> None:
     from openpyxl.styles import Font
 
     ws = wb.create_sheet(XLSX_SHEET_TITLE)
-    ws.append(["AI source", stamp.state])
-    ws.append([stamp.sentence()])
-    ws.append(["Live AI runs", stamp.live_runs if stamp.recorded else "not recorded"])
-    ws.append(["Offline test-data runs", stamp.fixture_runs if stamp.recorded else "not recorded"])
+    heading, rows = xlsx_rows(stamp)
+    ws.append(heading)
+    for row in rows:
+        ws.append(row)
     ws.cell(row=1, column=1).font = Font(bold=True)
     ws.cell(row=2, column=1).font = Font(bold=stamp.is_warning)
     ws.column_dimensions["A"].width = 24

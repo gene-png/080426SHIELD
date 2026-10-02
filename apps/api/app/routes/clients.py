@@ -19,7 +19,6 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.ai.mode_stamp import UNKNOWN_AI_MODE, ai_mode_for
 from app.attack.analytics import compute as attack_compute
 from app.attack.catalog import all_codes as attack_all_codes
 from app.attack.catalog import tactic_by_id as attack_tactic_by_id
@@ -45,6 +44,7 @@ from app.csf.scoring import compute as csf_compute
 from app.db.session import get_db
 from app.dependencies import current_client, current_user
 from app.logging import get_logger
+from app.mode_stamp import UNKNOWN_AI_MODE, ai_mode_for
 from app.models.artifact import Artifact
 from app.models.attack_assessment import (
     AttackAssessment,

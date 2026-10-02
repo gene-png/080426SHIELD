@@ -23,17 +23,17 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from app.ai.mode_stamp import (
+from app.csf.catalog import FUNCTIONS, SUBCATEGORIES, FunctionCode, Subcategory
+from app.csf.gap import GapAnalysis
+from app.csf.maturity import tier_label
+from app.csf.scoring import ScoreResult
+from app.mode_stamp import (
     UNKNOWN_AI_MODE,
     AiModeStamp,
     add_docx_paragraph,
     add_xlsx_sheet,
     pdf_paragraph,
 )
-from app.csf.catalog import FUNCTIONS, SUBCATEGORIES, FunctionCode, Subcategory
-from app.csf.gap import GapAnalysis
-from app.csf.maturity import tier_label
-from app.csf.scoring import ScoreResult
 
 if TYPE_CHECKING:
     from reportlab.platypus import TableStyle

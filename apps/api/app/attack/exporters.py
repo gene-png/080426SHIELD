@@ -21,13 +21,6 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from app.ai.mode_stamp import (
-    UNKNOWN_AI_MODE,
-    AiModeStamp,
-    add_docx_paragraph,
-    add_xlsx_sheet,
-    pdf_paragraph,
-)
 from app.attack.analytics import CoverageRollup, TacticCoverage
 from app.attack.catalog import TACTICS, TECHNIQUES, all_codes, technique_by_id, technique_url
 from app.attack.coverage import ASSESSED, CoverageStatus, coverage_label
@@ -36,6 +29,13 @@ from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.pending import uncleared_tools
 from app.attack.rules import parents_computed
 from app.client_naming import org_display_name
+from app.mode_stamp import (
+    UNKNOWN_AI_MODE,
+    AiModeStamp,
+    add_docx_paragraph,
+    add_xlsx_sheet,
+    pdf_paragraph,
+)
 from app.models.attack_assessment import AttackAssessment, AttackCoverage
 
 if TYPE_CHECKING:

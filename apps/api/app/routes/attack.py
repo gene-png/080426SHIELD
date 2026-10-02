@@ -34,7 +34,6 @@ from app.ai.diff import diff_keyed_rows
 from app.ai.engine import get_job, run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
-from app.ai.mode_stamp import ai_mode_for
 from app.ai.preview import AiPreviewPayload
 from app.ai.runs import (
     RUN_DEADLINE_EXCEEDED,
@@ -98,6 +97,7 @@ from app.db.session import get_db
 from app.deliverable_release import ParentGuard, release_deliverable
 from app.dependencies import current_client, current_user, require_role
 from app.logging import get_logger
+from app.mode_stamp import ai_mode_for
 from app.models._common import utcnow
 from app.models.artifact import Artifact, ArtifactOrigin
 from app.models.attack_assessment import (

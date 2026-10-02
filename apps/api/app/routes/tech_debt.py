@@ -45,7 +45,6 @@ from sqlalchemy import and_, func, select, update
 from sqlalchemy.orm import Session
 
 from app.ai.llm import LLMClient
-from app.ai.mode_stamp import ai_mode_for
 from app.ai.runs import (
     RunContext,
     RunFailed,
@@ -60,6 +59,7 @@ from app.db.session import get_db
 from app.deliverable_release import ParentGuard, release_deliverable
 from app.dependencies import current_client, current_user, require_role
 from app.logging import get_logger
+from app.mode_stamp import ai_mode_for
 from app.models._common import utcnow
 from app.models.artifact import Artifact, ArtifactOrigin
 from app.models.capability import CapabilityItem, CapabilityList, CapabilityListStatus

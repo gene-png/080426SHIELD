@@ -93,7 +93,11 @@ def test_every_file_of_the_playbook_export_states_its_ai_source(app_client) -> N
     for f in files:
         raw = c.get(f"/artifacts/{f['artifact_id']}/download", headers=h).content
         if f["kind"] == "xlsx":
-            assert xlsx_ai_sheet(raw)[1][0] == FIXTURE, f["kind"]
+            # Under the Playbook's approval banner (#294), like its every sheet.
+            rows = xlsx_ai_sheet(raw)
+            assert rows[0][0].startswith("NOT APPROVED"), rows[0]
+            assert rows[1][:2] == ["AI source", "fixture"], rows[1]
+            assert rows[2][0] == FIXTURE, f["kind"]
         elif f["kind"].endswith("pdf"):
             assert FIXTURE in pdf_text(raw), f["kind"]
         else:

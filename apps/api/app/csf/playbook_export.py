@@ -19,12 +19,13 @@ from collections.abc import Mapping, Sequence
 from html import escape
 from typing import Any
 
-from app.ai.mode_stamp import (
+from app.mode_stamp import (
     UNKNOWN_AI_MODE,
+    XLSX_SHEET_TITLE,
     AiModeStamp,
     add_docx_paragraph,
-    add_xlsx_sheet,
     pdf_paragraph,
+    xlsx_rows,
 )
 
 # ---------------------------------------------------------------------------
@@ -336,8 +337,17 @@ def render_xlsx(
     )
     cover["A1"].font = Font(bold=True, size=14)
 
+    # #646: the "AI source" sheet, last, as every deliverable carries it -- and
+    # stamped like every data sheet here: banner, frozen heading (#294).
+    ai_ws = wb.create_sheet(XLSX_SHEET_TITLE)
+    _banner(ai_ws, approved)
+    ai_heading, ai_rows = xlsx_rows(ai_mode)
+    _header(ai_ws, ai_heading)
+    for ai_row in ai_rows:
+        ai_ws.append(ai_row)
+    ai_ws.column_dimensions["A"].width = 24
+
     out = io.BytesIO()
-    add_xlsx_sheet(wb, ai_mode)
     wb.save(out)
     return out.getvalue()
 

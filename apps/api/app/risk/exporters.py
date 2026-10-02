@@ -13,14 +13,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from app.ai.mode_stamp import (
+from app.client_naming import org_display_name
+from app.mode_stamp import (
     UNKNOWN_AI_MODE,
     AiModeStamp,
     add_docx_paragraph,
     add_xlsx_sheet,
     pdf_paragraph,
 )
-from app.client_naming import org_display_name
 from app.risk.engine import (
     IMPACT_ORDER,
     LIKELIHOOD_ORDER,

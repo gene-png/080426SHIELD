@@ -1,6 +1,6 @@
 """#646 through ATT&CK's surfaces: the workspace's assessment, the deliverable
 files, and the client dashboard all say which mode drafted the assessment, in
-the same words, from ONE derivation (`app.ai.mode_stamp.ai_mode_for`).
+the same words, from ONE derivation (`app.mode_stamp.ai_mode_for`).
 
 The population is the assessment, never the service: a run on a discarded
 earlier draft says nothing about the next one (the parked draft's bug, #646
