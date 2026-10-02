@@ -6,8 +6,9 @@ Each caller decides how its job splits and what a batch's answer means; this
 decides how the batches run, fail and are accounted for, in one place.
 
 `risk_synthesize` (routes/risk.py) still has its own copy of this loop, without
-the run deadline: Risk does not run in the background yet (#504), and was set
-aside on 2026-09-27. Moving it here is that service's change to make.
+the run deadline or #797's stop on a credential rejection: Risk does not run in
+the background yet (#504), and was set aside on 2026-09-27. Moving it here is
+that service's change to make, and brings both with it.
 """
 
 from __future__ import annotations
@@ -19,10 +20,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.ai.engine import get_job, run_job
-from app.ai.failures import ai_call_boundary
+from app.ai.failures import AI_CALL_FAILED, ai_call_boundary, is_credential_rejection
 from app.ai.llm import LLMClient
 from app.ai.runs import RUN_DEADLINE_EXCEEDED, RunFailed
 from app.logging import get_logger
@@ -74,8 +76,18 @@ def run_batches(
     A partial failure does NOT discard the run. Losing 1 batch of 26 should cost
     the consultant that batch's rows, not all of them and the money already
     spent on them; the caller discloses `failed` of `total`. Only a total
-    failure raises, and it raises through `ai_call_boundary` so the error stays
-    typed and carries `charged_likely`.
+    failure raises, typed through `ai_call_boundary` as it always was, as a
+    `RunFailed` carrying the batch counts.
+
+    A CREDENTIAL REJECTION is the one failure that stops the run (#797,
+    `failures.is_credential_rejection`): every later call with the same key is
+    refused the same way. The first batch runs alone, so a rejected key costs
+    one call; a rejection later cancels every batch not yet started. Any other
+    failure -- a rate limit, a 5xx, a timeout, a malformed answer -- costs its
+    batch and the run goes on.
+
+    The single-call purposes (`zt_score`, `extract.capabilities`) do not come
+    through here: one call already stops at its first failure.
     """
     if not batch_inputs:
         # A caller with nothing to split still makes one call (an empty batch);
@@ -121,14 +133,13 @@ def run_batches(
     answers: dict[int, dict[str, Any]] = {}
     failed = 0
     first_error: Exception | None = None
+    # #797: the credential rejection that ended the run early, if one did.
+    rejected: Exception | None = None
+    attempted = 0
 
     pool = ThreadPoolExecutor(max_workers=max_workers)
-    # #645: the job's overall deadline. All batches are submitted up front, so
-    # there is no natural boundary to check it at; it is checked between
-    # results, and `as_completed` is given the time remaining so one hung
-    # provider stream cannot hold the run past it.
-    remaining = (deadline_at - utcnow()).total_seconds()
-    try:
+
+    def _submit(indexes: range) -> dict:
         # Each worker runs inside a COPY of the caller's context. A pool thread
         # starts with an empty one, so `correlation_id_var` read None there and
         # every `llm_calls` row a batch wrote lost the request's correlation id
@@ -136,12 +147,22 @@ def run_batches(
         # fresh copy per submit, because one Context cannot be entered by two
         # threads at once. The copy carries the run id too (#645), so each
         # batch's row names its run.
-        futures = {
-            pool.submit(contextvars.copy_context().run, _one, b): i for i, b in enumerate(batches)
-        }
+        return {pool.submit(contextvars.copy_context().run, _one, batches[i]): i for i in indexes}
+
+    def _collect(futures: dict) -> None:
+        # #645: the job's overall deadline. Batches are submitted a wave at a
+        # time, so there is no natural boundary to check it at; it is checked
+        # between results, and `as_completed` is given the time remaining so
+        # one hung provider stream cannot hold the run past it.
+        nonlocal failed, first_error, rejected, attempted
+        remaining = (deadline_at - utcnow()).total_seconds()
         for fut in as_completed(futures, timeout=max(remaining, 0)):
             if utcnow() > deadline_at:
                 raise TimeoutError("past the run deadline")
+            if fut.cancelled():
+                # #797: never started, so never sent. No answer, no call.
+                continue
+            attempted += 1
             try:
                 answers[futures[fut]] = fut.result()
             except Exception as exc:  # noqa: BLE001 - counted, not swallowed
@@ -152,6 +173,23 @@ def run_batches(
                     service_id=str(service_id),
                     error=f"{type(exc).__name__}: {exc}",
                 )
+                if rejected is None and is_credential_rejection(exc):
+                    # #797: every later call with this key is refused the same
+                    # way. Cancel what has not started; a batch already inside
+                    # a provider call cannot be recalled and finishes into its
+                    # own `llm_calls` row.
+                    rejected = exc
+                    for other in futures:
+                        other.cancel()
+
+    try:
+        # #797: the FIRST batch runs alone. A rejected key then costs one
+        # provider call, where submitting every batch up front had `max_workers`
+        # of them in flight before the first 401 came back and made every
+        # other call after it. The price is one batch of latency per run.
+        _collect(_submit(range(1)))
+        if rejected is None and len(batches) > 1:
+            _collect(_submit(range(1, len(batches))))
     except TimeoutError as exc:
         # Batches not yet started are cancelled; one already inside a provider
         # call cannot be, and is left to finish into its own `llm_calls` row.
@@ -160,11 +198,35 @@ def run_batches(
         raise RunFailed(RUN_DEADLINE_EXCEEDED, deadline_message) from exc
     pool.shutdown(wait=True)
 
-    if failed == len(batches) and first_error is not None:
-        # Nothing usable came back. Re-raise inside the boundary so the caller
-        # gets the same typed failure + charged_likely it always did.
-        with ai_call_boundary(db, llm, purpose=job_name):
-            raise first_error
+    # A batch with no answer is a failed batch, whether it was sent and failed
+    # or was never sent because the key was rejected (#797). The caller's
+    # "N of M batches failed" disclosure counts every missing answer.
+    failed = len(batches) - len(answers)
+    if rejected is not None:
+        _log.error(
+            f"{job_name}_stopped_on_credential_rejection",
+            service_id=str(service_id),
+            attempted=attempted,
+            planned=len(batches),
+            answered=len(answers),
+            error=f"{type(rejected).__name__}: {rejected}",
+        )
+
+    if not answers and first_error is not None:
+        # Nothing usable came back. Re-raise inside the boundary so the error
+        # is typed exactly as it always was -- `ai_call_failed`, the same
+        # friendly message, `charged_likely` -- and then carry the batch counts
+        # to the run (#797): every planned batch came back without an answer.
+        try:
+            with ai_call_boundary(db, llm, purpose=job_name):
+                raise first_error
+        except HTTPException as typed:
+            detail = typed.detail if isinstance(typed.detail, dict) else {}
+            raise RunFailed(
+                str(detail.get("reason") or AI_CALL_FAILED),
+                str(detail.get("message") or typed.detail),
+                batches=(len(batches), len(batches)),
+            ) from first_error
 
     _log.info(
         f"{job_name}_batched",

@@ -781,6 +781,10 @@ def _run_risk_synthesize_batched(
     failed = 0
     first_error: Exception | None = None
 
+    # #797 is NOT applied here, deliberately: this is the one batched loop that
+    # is not `app.ai.batching.run_batches`, so a rejected key still costs one
+    # call per batch. Risk is synchronous (#504) and set aside since
+    # 2026-09-27; moving it onto `run_batches` brings the stop with it.
     with ThreadPoolExecutor(max_workers=_RISK_MAX_WORKERS) as pool:
         # Each worker runs inside a COPY of the request's context. A pool thread
         # starts with an empty one, so `correlation_id_var` read None there and

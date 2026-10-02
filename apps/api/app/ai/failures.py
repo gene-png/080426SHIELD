@@ -19,6 +19,8 @@ import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 
+import anthropic
+import httpx
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -69,6 +71,37 @@ def friendly_reason(exc: BaseException) -> str:
     if re.search(r"429|rate.?limit", text, re.IGNORECASE):
         return f"The AI provider rate-limited this request. Try again shortly. ({text})"
     return f"The AI call failed and nothing was applied. ({text})"
+
+
+#: HTTP statuses that mean the provider refused our CREDENTIALS, not the
+#: request: every later call with the same key is refused the same way (#797).
+_CREDENTIAL_STATUSES = frozenset({401, 403})
+
+
+def is_credential_rejection(exc: BaseException) -> bool:
+    """True when a provider refused the key itself, so retrying is pointless.
+
+    TYPED, never a match on message text: `friendly_reason` above matches
+    "401|authentication" in the text, which is right for choosing copy and
+    wrong for deciding to stop a run. Two shapes, one per adapter family:
+
+    * the Anthropic SDK raises an `APIStatusError` subclass carrying
+      `status_code` (`AuthenticationError` 401, `PermissionDeniedError` 403);
+    * the OpenAI, Gemini and Vertex adapters call `raise_for_status()`, which
+      raises `httpx.HTTPStatusError` with the response's status.
+
+    NOT a rejection, deliberately: 429 (rate limit), 5xx, timeouts, a dropped
+    connection, a truncated or malformed answer -- each can succeed on the next
+    batch. And not 400, although Gemini answers a bad key with 400
+    API_KEY_INVALID: stopping on 400 would also stop on a genuine bad request,
+    so on Gemini a bad key still costs one call per batch. Known, and narrower
+    is the safe direction.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in _CREDENTIAL_STATUSES
+    if isinstance(exc, anthropic.APIStatusError):
+        return exc.status_code in _CREDENTIAL_STATUSES
+    return False
 
 
 @contextmanager

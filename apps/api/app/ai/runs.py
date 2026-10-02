@@ -185,22 +185,34 @@ def _charged_likely(db: Session, run_id: uuid.UUID, mode: LLMCallMode) -> bool |
 
 
 def _fail_if_running(
-    db: Session, run_id: uuid.UUID, *, reason: str, message: str, charged_likely: bool | None
+    db: Session,
+    run_id: uuid.UUID,
+    *,
+    reason: str,
+    message: str,
+    charged_likely: bool | None,
+    batches: tuple[int, int] | None = None,
 ) -> bool:
     """End a run FAILED, only if it is still RUNNING. Returns whether it did.
 
     A compare-and-swap, never a read-then-write: a run that COMPLETED between
-    the caller's read and this UPDATE matches nothing and stands."""
+    the caller's read and this UPDATE matches nothing and stands.
+
+    `batches` is (total, failed) when the failure is a batched job's (#797),
+    on the same columns a completed run's counts use; otherwise left NULL."""
+    values: dict[str, Any] = {
+        "status": AiRunStatus.FAILED,
+        "error_reason": reason,
+        "error_message": message,
+        "charged_likely": charged_likely,
+        "finished_at": utcnow(),
+    }
+    if batches is not None:
+        values["batches_total"], values["batches_failed"] = batches
     res = db.execute(
         update(AiRun)
         .where(AiRun.id == run_id, AiRun.status == AiRunStatus.RUNNING)
-        .values(
-            status=AiRunStatus.FAILED,
-            error_reason=reason,
-            error_message=message,
-            charged_likely=charged_likely,
-            finished_at=utcnow(),
-        )
+        .values(**values)
         .execution_options(synchronize_session=False)
     )
     return res.rowcount == 1
@@ -347,12 +359,19 @@ def get_ai_run_runner(background_tasks: BackgroundTasks) -> Runner:
 
 
 class RunFailed(Exception):
-    """A typed terminal failure raised from inside a job."""
+    """A typed terminal failure raised from inside a job.
 
-    def __init__(self, reason: str, message: str) -> None:
+    `batches` is (total, failed) when a batched job failed outright (#797):
+    the run records how many batches it planned and how many came back
+    without an answer, as a completed run does."""
+
+    def __init__(
+        self, reason: str, message: str, *, batches: tuple[int, int] | None = None
+    ) -> None:
         super().__init__(f"{reason}: {message}")
         self.reason = reason
         self.message = message
+        self.batches = batches
 
 
 @dataclass
@@ -473,6 +492,7 @@ def _execute(bind: Engine | Connection, ctx: RunContext, work: Work) -> None:
             reason=reason,
             message=message,
             charged_likely=_charged_likely(session, ctx.run_id, ctx.mode),
+            batches=exc.batches if isinstance(exc, RunFailed) else None,
         )
         session.commit()
         _log.error(
