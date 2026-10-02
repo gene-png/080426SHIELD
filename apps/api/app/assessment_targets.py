@@ -14,29 +14,22 @@ Duplicated across the LANGUAGE boundary rather than derived, because there is
 no build step shared by this app and the web bundle -- the same conclusion
 `SCHEMA_REASON_PREFIX` reached one module over, for the same reason.
 
-**What closes the window, stated exactly rather than implied.** Each side's own
-suite spells the number and names the other file in its failure message:
-`tests/unit/test_intake_target_floor.py` here, and
-`lib/intake/target-options-are-derived.test.ts` there. So a unilateral change
-goes RED on the side that made it, pointing at the side that did not.
+**What closes the window, since #422.** `tests/unit/test_target_floor_parity.py`
+reads `assessment-targets.ts` itself -- through a read-only one-file mount at
+`/web-parity/` in the api container (`docker-compose.yml`), or in place on a CI
+checkout -- and asserts the floors, `BELOW_FLOOR` and `TARGET_SOURCE_NOTES`
+below EQUAL the TypeScript ones, failing hard (never skipping) when it cannot
+read the file. The per-side spelled literals (`tests/unit/test_intake_target_floor.py`
+here, `lib/intake/target-options-are-derived.test.ts` there) still turn a
+unilateral edit red on the side that made it; the parity test is what proves
+the two agree. A local green from a long-running container is not evidence:
+a single-file bind pins the inode, so CI's fresh checkout is.
 
-That is all it does. It does **not** prove the two agree. An author who edits
-the number here, updates the assertion here, and stops has not been stopped.
-
-**A REAL PARITY GATE IS BUILDABLE AND THIS PARAGRAPH USED TO SAY IT WAS NOT.**
-The claim was that neither container can read the other's tree, so a parity
-check "would pass in CI and fail on every developer's machine". False, and the
-counter-example is one line further down the file it appealed to:
-`docker-compose.yml` mounts `./packages/zt-data:/packages/zt-data:ro` on the
-api service, commented "read-only, for the questionnaire contract test" -- a
-read-only single-path mount added so a contract test can read a tree outside
-the app, working identically in CI and locally. That is exactly the mechanism
-the old sentence said did not exist.
-
-So the deferral rests on SCOPE, not impossibility: the mount is a
-`docker-compose.yml` edit, which merge-rule condition 5 sends to a human, and
-it did not belong in the change that created the second constant. Tracked in
-**#422**, whose body carries the mount as the cheapest of its options.
+**A REAL PARITY GATE WAS ALWAYS BUILDABLE, AND THIS PARAGRAPH ONCE SAID IT WAS
+NOT.** The claim was that neither container can read the other's tree. False:
+`docker-compose.yml` already mounted `./packages/zt-data` read-only so a
+contract test could read a tree outside the app, which is the mechanism #422
+then used.
 
 Recorded rather than quietly replaced, because the false version is the more
 instructive one: it was a per-file check ("what does the api service mount for
@@ -127,38 +120,37 @@ def floor_refusal(rung: str, value: int, floor: int) -> str:
 #: Why the engagement target is a default, per resolver source, in the client
 #: dashboard's own words (#783). Keyed by rung because CSF says "tier" and ZT
 #: says "stage", and an out-of-range CSF tier is "not one CSF has" while ZT
-#: names no framework (two ladders, one module).
+#: names no framework (two ladders, one module). `UNRECOGNISED` is not a
+#: resolver source: it is the row a source this build does not know reads,
+#: the dashboards' default arm -- a value nobody recognises is not evidence
+#: that the client chose it.
 #:
-#: THESE ARE DUPLICATED IN THE WEB BUNDLE, word for word:
-#: `apps/web/src/lib/dashboards/csf.ts::targetFaultNote`,
-#: `apps/web/src/lib/dashboards/zt.ts::targetFault`, and the below-floor notes in
-#: `apps/web/src/lib/assessment-targets.ts`. The TS and Python sentences are
-#: synchronised, not derived; a fixture both runners could read would close the
-#: window, and it needs the compose mount tracked in #422. Until then two literal
-#: tables pin it, each naming the other: `tests/unit/test_target_source_in_deliverables.py`
-#: here and `lib/dashboards/target-source-sentences.test.ts` there. Reword one
-#: side and you must reword the other.
+#: THE WEB BUNDLE HAS THE SAME TABLE, `TARGET_SOURCE_NOTES` in
+#: `apps/web/src/lib/assessment-targets.ts`, and the dashboards DERIVE from it
+#: (`csf.ts::targetFaultNote`, `zt.ts::targetFault`, the below-floor notes).
+#: This copy is asserted EQUAL to that one by
+#: `tests/unit/test_target_floor_parity.py`, which reads the TS file through
+#: the api container's read-only mount (or a CI checkout), and #783's
+#: deliverable tests build their expected sentences from the TS table, not
+#: from this one. #422 closed the window: a reword on either side alone goes
+#: red. Reword both.
+UNRECOGNISED = "unrecognised"
+
 TARGET_SOURCE_NOTES: dict[str, dict[str, str]] = {
     "tier": {
         "default": "no tier chosen at intake",
         "client_out_of_range": "the tier on file is not one CSF has",
         BELOW_FLOOR: "the tier on file is a starting point, not a target",
         "client_unparseable": "the tier on file could not be read",
+        UNRECOGNISED: "the tier on file was not usable",
     },
     "stage": {
         "default": "no stage chosen at intake",
         "client_out_of_range": "the stage on file is not one this framework has",
         BELOW_FLOOR: "the stage on file is a starting point, not a target",
         "client_unparseable": "the stage on file could not be read",
+        UNRECOGNISED: "the stage on file was not usable",
     },
-}
-
-#: An unrecognised source still says something true rather than nothing, the
-#: dashboards' default arm: a value this build does not know is not evidence
-#: that the client chose it.
-_UNUSABLE_NOTE = {
-    "tier": "the tier on file was not usable",
-    "stage": "the stage on file was not usable",
 }
 
 
@@ -178,5 +170,6 @@ def target_source_sentence(
         return None
     if source == "default" and not engagement_target_used:
         return None
-    note = TARGET_SOURCE_NOTES[rung].get(source, _UNUSABLE_NOTE[rung])
+    notes = TARGET_SOURCE_NOTES[rung]
+    note = notes.get(source, notes[UNRECOGNISED])
     return f"Default target — {note}."
