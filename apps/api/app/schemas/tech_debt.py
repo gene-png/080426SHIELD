@@ -134,6 +134,9 @@ class CapabilityListResponse(BaseModel):
     # rather than implying a complete inventory.
     source_rows_total: int | None = None
     excluded_rows: list[ExcludedRowResponse] = []
+    # #177: whether the extraction attributed every item to one uploaded row.
+    # NULL is "not recorded" (pre-0058, or no extraction), never complete.
+    attribution_complete: bool | None = None
 
     @field_validator("excluded_rows", mode="before")
     @classmethod

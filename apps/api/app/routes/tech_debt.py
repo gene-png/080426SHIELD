@@ -536,6 +536,9 @@ def _extract_run_work(
         excluded_rows=[
             {"index": e.index, "summary": e.summary} for e in result.reconciliation.excluded_rows
         ],
+        # #177: persisted, so an empty `excluded_rows` can say which of its two
+        # meanings it carries -- nothing excluded, or attribution failed.
+        attribution_complete=result.reconciliation.attribution_complete,
     )
     db.add(cap_list)
     db.flush()

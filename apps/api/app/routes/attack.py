@@ -135,6 +135,7 @@ from app.schemas.tech_debt import DeliverableResponse
 from app.security.rate_limit import enforce_ai_rate_limit
 from app.storage import StorageBackend
 from app.tech_debt.filename import SERVICE_SLUG_ATTACK, deliverable_filename
+from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.security_scope import awaiting_security_signoff, in_security_scope
 from app.tenant import (
     require_attack_assessment_in_tenant,
@@ -2516,35 +2517,21 @@ def _excluded_source_rows(cap_list: CapabilityList) -> list[AttackAiInputExclude
 def _excluded_attribution(cap_list: CapabilityList) -> str:
     """How much this endpoint may honestly say about extraction-time drops.
 
-    `Reconciliation.attribution_complete` is NOT persisted (see
-    `app/tech_debt/reconcile.py`), and the writer stores an empty `excluded_rows`
-    in BOTH of the cases that matter: when nothing was excluded, and when the
-    model did not attribute every item to a source row so the rows could not be
-    named. Those are the same stored bytes.
+    #177: from `tech_debt.reconcile.exclusion_count_state`, the one reader every
+    surface calls, which reads the persisted `attribution_complete` (migration
+    0058). A clean extraction that excluded nothing now reads `complete` with
+    a true zero; before 0058 its empty `excluded_rows` was the same bytes as a
+    failed attribution, and read `unknown`. A list written before 0058 keeps
+    that reading -- a named drop proves completeness, an empty list proves
+    nothing -- and is never read as complete by default.
 
-    So the two are not collapsed into a zero. A non-empty list is proof the
-    reconciliation balanced — the writer only fills it under
-    `if attribution_complete` — and an empty one is proof of nothing. Reporting
-    "0 excluded" for the empty case would be the silent under-report this whole
-    endpoint exists to end, and it would be the persuasive kind: a number, in a
-    provenance view, that a consultant would reasonably act on.
-
-    Persisting the flag is the real fix and it needs `tech_debt/reconcile.py`
-    and a migration. Until then this reports `unknown` and the panel says so.
+    `not_recorded` (no reconciliation stored) is distinct from `unknown` (a
+    reconciliation happened and its per-row half is unrecoverable). Its cause is
+    not named: NULL is usually a pre-0036 list, but `seed_demo.py` builds lists
+    without one too.
     """
-    if cap_list.source_rows_total is None:
-        # NULL means no reconciliation was stored, so there is no claim to make
-        # either way. Distinct from `unknown`, which means a reconciliation
-        # happened and its per-row half is unrecoverable.
-        #
-        # Do NOT name the cause here. NULL is usually a pre-0036 list, but
-        # `seed_demo.py` builds lists without either field too, so every demo and
-        # e2e run would be told a list created minutes earlier "predates the
-        # extraction record". The condition observes ABSENCE; it cannot see WHY.
-        return "not_recorded"
-    if cap_list.excluded_rows:
-        return "complete"
-    return "unknown"
+    state = exclusion_count_state(cap_list)
+    return {"not_recorded": "not_recorded", "exact": "complete", "unknown": "unknown"}[state]
 
 
 @router.get(
