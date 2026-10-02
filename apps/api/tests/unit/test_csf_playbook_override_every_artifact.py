@@ -389,9 +389,10 @@ def test_the_p1_next_step_for_every_mix_of_computed_and_overridden(computed, ove
     from app.csf.playbook_export import _next_steps
 
     rows = [
-        SimpleNamespace(priority="P1", gap=True, priority_overridden=False) for _ in range(computed)
+        SimpleNamespace(priority="P1", gap=True, priority_overridden=False, target_level=3)
+        for _ in range(computed)
     ] + [
-        SimpleNamespace(priority="P1", gap=True, priority_overridden=True)
+        SimpleNamespace(priority="P1", gap=True, priority_overridden=True, target_level=3)
         for _ in range(overridden)
     ]
     p1 = [s for s in _next_steps(rows) if "Priority 1" in s]
