@@ -135,6 +135,7 @@ from app.schemas.csf import (
 )
 from app.schemas.tech_debt import DeliverableResponse
 from app.security.rate_limit import enforce_ai_rate_limit
+from app.services.engagement_targets import client_target_tier
 from app.storage import StorageBackend
 from app.tech_debt.filename import (
     SERVICE_SLUG_CSF_PLAYBOOK,
@@ -164,19 +165,6 @@ def _serialize_answers(rows: Iterable[CsfAnswer]) -> list[CsfAnswerResponse]:
     return [CsfAnswerResponse.model_validate(r, from_attributes=True) for r in ordered]
 
 
-def _client_target_tier(db: Session, service_id: uuid.UUID) -> int | None:
-    """The CSF target tier the client chose at intake, via the source request.
-
-    Lets the admin workspace default its gap target to the client's goal
-    instead of a hardcoded tier.
-    """
-    svc = db.get(Service, service_id)
-    if svc is None or svc.source_request_id is None:
-        return None
-    sr = db.get(ServiceRequest, svc.source_request_id)
-    return sr.csf_target_tier if sr is not None else None
-
-
 def _client_profile(db: Session, service_id: uuid.UUID) -> str | None:
     """The CSF impact profile the client chose at intake (LOW/MOD/HIGH)."""
     svc = db.get(Service, service_id)
@@ -197,7 +185,7 @@ def _serialize_assessment(db: Session, a: CsfAssessment) -> CsfAssessmentRespons
         approved_by=a.approved_by,
         documents_stale=a.documents_stale,
         answers=_serialize_answers(rows),
-        client_target_tier=_client_target_tier(db, a.service_id),
+        client_target_tier=client_target_tier(db, a.service_id),
         client_profile=_client_profile(db, a.service_id),
         # #646: the ONE derivation every surface calls.
         ai_source=ai_mode_for(db, db.get(Service, a.service_id), a).as_api(),
@@ -2692,7 +2680,7 @@ def finalize_csf_deliverable(
     # Same scope note as the ZT twin: this follows the CONTRACTED tier, not the
     # `/gap-analysis` selector, which finalize never receives. The audit row
     # below records which tier was used and whether the client chose it.
-    engagement_tier = _client_target_tier(db, svc.id)
+    engagement_tier = client_target_tier(db, svc.id)
     # #184: resolve, do not branch on `is not None`. The conditional kwarg let
     # an unusable stored tier reach the engine, which clamped it; the audit row
     # below then recorded the clamp as the client's own choice.

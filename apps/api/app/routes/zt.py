@@ -93,6 +93,7 @@ from app.schemas.zt import (
     ZtServiceResponse,
 )
 from app.security.rate_limit import enforce_ai_rate_limit
+from app.services.engagement_targets import client_target_stage
 from app.storage import StorageBackend
 from app.tech_debt.filename import (
     SERVICE_SLUG_ZT_CISA,
@@ -278,19 +279,6 @@ def _serialize_answers(rows: Iterable[ZtAnswer]) -> list[ZtAnswerResponse]:
     return [ZtAnswerResponse.model_validate(r, from_attributes=True) for r in ordered]
 
 
-def _client_target_stage(db: Session, service_id: uuid.UUID) -> int | None:
-    """The ZT target stage the client chose at intake, via the source request.
-
-    Lets the admin workspace default its gap target to the client's goal
-    instead of a hardcoded stage.
-    """
-    svc = db.get(Service, service_id)
-    if svc is None or svc.source_request_id is None:
-        return None
-    sr = db.get(ServiceRequest, svc.source_request_id)
-    return sr.zt_target_stage if sr is not None else None
-
-
 def _serialize_assessment(db: Session, a: ZtAssessment) -> ZtAssessmentResponse:
     rows = db.execute(select(ZtAnswer).where(ZtAnswer.assessment_id == a.id)).scalars().all()
     return ZtAssessmentResponse(
@@ -303,7 +291,7 @@ def _serialize_assessment(db: Session, a: ZtAssessment) -> ZtAssessmentResponse:
         approved_by=a.approved_by,
         documents_stale=a.documents_stale,
         answers=_serialize_answers(rows),
-        client_target_stage=_client_target_stage(db, a.service_id),
+        client_target_stage=client_target_stage(db, a.service_id),
         # #646: the ONE derivation every surface calls.
         ai_source=ai_mode_for(db, db.get(Service, a.service_id), a).as_api(),
     )
@@ -1882,7 +1870,7 @@ def finalize_zt_deliverable(
     targets_map: dict[str, int | None] = {
         r.capability_code: r.target_stage for r in answers if r.capability_code in valid
     }
-    engagement_target = _client_target_stage(db, svc.id)
+    engagement_target = client_target_stage(db, svc.id)
     # #125: the stored value is resolved ONCE, here, and both the number and
     # its provenance come from that single call. They used to be derived
     # independently -- the number by a silent clamp inside `analyze_gaps`, the
