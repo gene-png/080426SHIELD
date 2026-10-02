@@ -60,7 +60,26 @@ export function ZtSelfAssessment({
   // reload silently lost it. Core principle 2 — never a lie that something
   // succeeded — and the API half of that was fixed in #195/#282 while this
   // layer kept telling the client it had worked.
-  const [saveError, setSaveError] = React.useState<string | null>(null);
+  // #758: one error per answer FIELD, keyed `<answer id>:<field>`, kept until
+  // THAT field saves. A single slot cleared on any row's success let row B's
+  // save wipe row A's refusal -- the #757 shape, here on the client's own
+  // answers. Per field and not per row, because a row's fields save
+  // separately and the api applies only the fields sent (`exclude_unset`):
+  // a notes save says nothing about the tier beside it.
+  const [saveErrors, setSaveErrors] = React.useState<Record<string, string>>(
+    {},
+  );
+  // #758: answer saves sent and not yet answered. Submit waits for all of
+  // them: it moves the assessment out of draft, so a save still out is then
+  // refused, and by then the page has become `SelfAssessmentSubmitted` and the
+  // refusal has nowhere to show. A count, not a flag, so the first of two
+  // answers does not read as "nothing in flight".
+  const [savesInFlight, setSavesInFlight] = React.useState(0);
+  // Each field's newest save, keyed as `saveErrors` is. An older save cannot
+  // clear or set the error of a field a newer save has since sent; it still
+  // owns every field no newer save covers.
+  const latestSave = React.useRef(new Map<string, number>());
+  const saveCounter = React.useRef(0);
   // Guards the failure re-fetch below: a later save's truth must not be
   // overwritten by an earlier one's recovery. Same mechanism, and the same
   // reason, as `assessmentSeq` in the admin workspaces.
@@ -142,13 +161,40 @@ export function ZtSelfAssessment({
           }
         : curr,
     );
+    const saveId = ++saveCounter.current;
+    // A patch naming no field still gets a key, the row's own, so its failure
+    // is shown rather than recorded against nothing.
+    const fields = Object.keys(patch);
+    const keys = (fields.length > 0 ? fields : [""]).map(
+      (f) => `${answerId}:${f}`,
+    );
+    for (const k of keys) latestSave.current.set(k, saveId);
+    const owned = () =>
+      keys.filter((k) => latestSave.current.get(k) === saveId);
+    // Sets or clears the error of every field this save still owns, read NOW
+    // rather than inside the updater, which runs later.
+    const setOwnedErrors = (message: string | null) => {
+      const mine = owned();
+      if (mine.length === 0) return;
+      setSaveErrors((prev) => {
+        const next = { ...prev };
+        for (const k of mine) {
+          if (message === null) delete next[k];
+          else next[k] = message;
+        }
+        return next;
+      });
+    };
+    setSavesInFlight((n) => n + 1);
     try {
       const updated = await patchSelfAssessmentAnswer(answerId, patch);
       // Cleared HERE, on a confirmed success, and not at the top of this
       // function. A first draft cleared it before the request, so a client
       // whose answer to one row was refused lost the message the instant
-      // they touched another -- while that answer was still gone.
-      setSaveError(null);
+      // they touched another -- while that answer was still gone. And only
+      // the errors of the fields THIS save sent (#758), and only those no
+      // newer save has sent since.
+      setOwnedErrors(null);
       setAssessment((curr) =>
         curr
           ? {
@@ -174,14 +220,14 @@ export function ZtSelfAssessment({
       // to learn that. But say only that: the restoration sentence is opt-in
       // now, because it used to be printed here, before the restoration had
       // happened, and it stayed on screen when it never happened (#371).
-      setSaveError(describeSaveError(err, subject));
+      setOwnedErrors(describeSaveError(err, subject));
       const seq = ++saveSeq.current;
       try {
         const truth = await fetchSelfAssessment(serviceId);
         if (seq === saveSeq.current) {
           setAssessment(truth);
           // NOW the claim is true, so now it is made.
-          setSaveError(describeSaveError(err, subject, { restored: true }));
+          setOwnedErrors(describeSaveError(err, subject, { restored: true }));
         }
       } catch {
         // The re-fetch failed too, so the value on screen is still the
@@ -191,6 +237,8 @@ export function ZtSelfAssessment({
         // while the message said the value HAD BEEN restored. Silence here
         // would put us back where #283 started.
       }
+    } finally {
+      setSavesInFlight((n) => n - 1);
     }
   }
 
@@ -439,6 +487,12 @@ export function ZtSelfAssessment({
                           value={ans.maturity_stage}
                           stages={catalog.stages}
                           ariaLabel={`Maturity stage for ${cap.code}`}
+                          // #758 review: read-only while Submit is out. Submit
+                          // cannot start while a save is out, but a save
+                          // started DURING Submit went after the assessment
+                          // left draft, and its 409 landed after the page had
+                          // become `SelfAssessmentSubmitted`.
+                          disabled={submitting}
                           onChange={(next) => {
                             void onAnswerUpdate(ans.id, {
                               maturity_stage: next,
@@ -471,6 +525,7 @@ export function ZtSelfAssessment({
                           // the client.
                           key={`${ans.id}:${ans.notes ?? ""}`}
                           defaultValue={ans.notes ?? ""}
+                          disabled={submitting}
                           rows={3}
                           onBlur={(e) => {
                             const v = e.currentTarget.value.trim();
@@ -522,12 +577,15 @@ export function ZtSelfAssessment({
         </CardBody>
       </Card>
 
-      {saveError ? (
+      {Object.keys(saveErrors).length > 0 ? (
         <div
           role="alert"
           className="rounded-md border border-status-danger-border bg-status-danger-bg px-4 py-3 text-sm text-status-danger-fg"
         >
-          {saveError}
+          {/* Two fields of one row refused alike read as ONE line. */}
+          {[...new Set(Object.values(saveErrors))].map((message) => (
+            <p key={message}>{message}</p>
+          ))}
         </div>
       ) : null}
       {submitError ? (
@@ -557,7 +615,7 @@ export function ZtSelfAssessment({
         <button
           type="button"
           onClick={() => void onSubmit()}
-          disabled={submitting || !everyPillarStarted}
+          disabled={submitting || !everyPillarStarted || savesInFlight > 0}
           title={
             everyPillarStarted
               ? undefined
