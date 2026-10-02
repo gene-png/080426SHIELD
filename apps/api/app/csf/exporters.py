@@ -37,6 +37,7 @@ from app.mode_stamp import (
 
 if TYPE_CHECKING:
     from reportlab.platypus import TableStyle
+from app.assessment_targets import target_source_sentence
 from app.client_naming import org_display_name
 from app.models.csf_assessment import CsfAnswer, CsfAssessment
 
@@ -55,6 +56,11 @@ class CsfDeliverableContext:
     #: default is "not recorded", never live: a context built without a lookup
     #: must not read as a clean one.
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE
+    #: #783: the resolver's verdict on the engagement target -- "client", or
+    #: why a default stands in for it. Defaulted to "client" for the callers
+    #: that predate it (tests building a context directly); both finalize
+    #: routes and the seed pass the real verdict.
+    target_source: str = "client"
 
 
 def build_context(
@@ -66,9 +72,11 @@ def build_context(
     score: ScoreResult,
     gap: GapAnalysis,
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
+    target_source: str = "client",
 ) -> CsfDeliverableContext:
     return CsfDeliverableContext(
         ai_mode=ai_mode,
+        target_source=target_source,
         client_legal_name=org_display_name(client_legal_name),
         service_title=service_title,
         assessment=assessment,
@@ -92,7 +100,7 @@ def _subcategory_meta(code: str) -> Subcategory | None:
     return None
 
 
-def _gap_plan_caption(gap: GapAnalysis) -> str:
+def _gap_plan_caption(gap: GapAnalysis, target_note: str | None = None) -> str:
     """What the Gap Plan is showing, and what it is NOT (#75).
 
     The twin of `app.zt.exporters._gap_plan_caption`. #75 was filed against Zero
@@ -109,6 +117,9 @@ def _gap_plan_caption(gap: GapAnalysis) -> str:
     """
     shown, total = len(gap.gaps), gap.total_gap_count
     remaining = total - shown
+    # #783: why the target is a default, directly after the sentence stating
+    # it, so the number and its provenance are read together.
+    note = f" {target_note}" if target_note else ""
     if shown >= total:
         listed = f"All {total} gap{'' if total == 1 else 's'} at target T{gap.target_tier}."
     else:
@@ -117,7 +128,12 @@ def _gap_plan_caption(gap: GapAnalysis) -> str:
             f"T{gap.target_tier}; {remaining} further gap"
             f"{'' if remaining == 1 else 's'} not listed."
         )
-    return listed + _unscored_sentence(len(gap.unscored_codes))
+    return listed + note + _unscored_sentence(len(gap.unscored_codes))
+
+
+def _target_note(ctx: CsfDeliverableContext) -> str | None:
+    """#783: the dashboard's sentence for a target the client did not choose."""
+    return target_source_sentence("tier", ctx.target_source)
 
 
 def _unscored_sentence(unscored: int) -> str:
@@ -247,7 +263,7 @@ def render_xlsx(ctx: CsfDeliverableContext) -> bytes:
     # Caption first, so a client reading top-down learns the list is a slice
     # BEFORE reading it. That puts the header on row 2 — every row index below
     # is offset accordingly.
-    ws3.append([_gap_plan_caption(ctx.gap)])
+    ws3.append([_gap_plan_caption(ctx.gap, _target_note(ctx))])
     ws3.append(headers3)
     for col in range(1, len(headers3) + 1):
         cell = ws3.cell(row=2, column=col)
@@ -339,7 +355,7 @@ def render_docx(ctx: CsfDeliverableContext) -> bytes:
     )
 
     add_heading(doc, f"Top remediation gaps (target T{ctx.gap.target_tier})")
-    add_paragraphs(doc, [_gap_plan_caption(ctx.gap)])
+    add_paragraphs(doc, [_gap_plan_caption(ctx.gap, _target_note(ctx))])
     if not ctx.gap.gaps:
         add_paragraphs(
             doc,
@@ -432,7 +448,7 @@ def render_pdf(ctx: CsfDeliverableContext) -> bytes:
     story.append(PageBreak())
 
     story.append(Paragraph(f"Top remediation gaps (target T{ctx.gap.target_tier})", h2))
-    story.append(Paragraph(_gap_plan_caption(ctx.gap), body))
+    story.append(Paragraph(_gap_plan_caption(ctx.gap, _target_note(ctx)), body))
     if not ctx.gap.gaps:
         story.append(
             Paragraph(

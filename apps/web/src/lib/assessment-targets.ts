@@ -126,6 +126,11 @@ export const MIN_TARGET_TIER = 2;
  * beside the target select, so the screen that keeps 3 selected says why.
  * Declared here rather than in a dashboard module so the workspace does not
  * pull a dashboard into its bundle (the reason the floors live here too).
+ *
+ * #783: the two notes are also in the client's DOCUMENTS, from the Python copy
+ * in `apps/api/app/assessment_targets.py::TARGET_SOURCE_NOTES`. Synchronised,
+ * not derived (#422); `lib/dashboards/target-source-sentences.test.ts` and
+ * `tests/unit/test_target_source_in_deliverables.py` pin both copies.
  */
 export const BELOW_FLOOR_SOURCE = "client_below_floor";
 export const TIER_BELOW_FLOOR_NOTE =

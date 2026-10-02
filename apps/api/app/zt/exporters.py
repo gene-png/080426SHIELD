@@ -13,6 +13,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from app.assessment_targets import target_source_sentence
 from app.client_naming import org_display_name
 from app.mode_stamp import (
     UNKNOWN_AI_MODE,
@@ -43,9 +44,16 @@ class ZtDeliverableContext:
     #: default is "not recorded", never live: a context built without a lookup
     #: must not read as a clean one.
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE
+    #: #783: the resolver's verdict on the engagement target -- "client", or
+    #: why a default stands in for it -- and whether that target decided any
+    #: capability at all. Defaulted to "client" for the callers that predate
+    #: them (tests building a context directly); the finalize route and the
+    #: seed pass the real values.
+    target_source: str = "client"
+    engagement_target_used: bool = True
 
 
-def _gap_plan_caption(gap: GapAnalysis) -> str:
+def _gap_plan_caption(gap: GapAnalysis, target_note: str | None = None) -> str:
     """What the Gap Plan is showing, and what it is NOT (#75).
 
     `analyze_gaps` truncates to `top_n` while keeping the true count in
@@ -66,6 +74,11 @@ def _gap_plan_caption(gap: GapAnalysis) -> str:
         f"Engagement target S{gap.target_stage}; each row shows the target "
         f"applied to that capability."
     )
+    # #783: why the engagement target is a default, directly after the sentence
+    # stating it and BEFORE #188's sentence below, which must stay the
+    # caption's tail (both parity tests pin that tail).
+    if target_note:
+        target += f" {target_note}"
     # #188: a stored per-capability target that could not be used was replaced
     # by the engagement target, and until now nothing said so. The sentence
     # above is TRUE of such a row and misleading in the way `CLAUDE.md` warns
@@ -147,9 +160,13 @@ def build_context(
     score: ScoreResult,
     gap: GapAnalysis,
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
+    target_source: str = "client",
+    engagement_target_used: bool = True,
 ) -> ZtDeliverableContext:
     return ZtDeliverableContext(
         ai_mode=ai_mode,
+        target_source=target_source,
+        engagement_target_used=engagement_target_used,
         client_legal_name=org_display_name(client_legal_name),
         service_title=service_title,
         framework=framework,
@@ -157,6 +174,13 @@ def build_context(
         answers=list(answers),
         score=score,
         gap=gap,
+    )
+
+
+def _target_note(ctx: ZtDeliverableContext) -> str | None:
+    """#783: the dashboard's sentence for a target the client did not choose."""
+    return target_source_sentence(
+        "stage", ctx.target_source, engagement_target_used=ctx.engagement_target_used
     )
 
 
@@ -274,7 +298,7 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
     # assumes row 1 is the header (`pandas.read_excel`, Excel's "Format as
     # Table") will take the caption as column names. Nothing in this repo reads
     # this sheet, and the disclosure is for a human, so visibility wins.
-    ws3.append([_gap_plan_caption(ctx.gap)])
+    ws3.append([_gap_plan_caption(ctx.gap, _target_note(ctx))])
     ws3.append(headers3)
     for col in range(1, len(headers3) + 1):
         cell = ws3.cell(row=2, column=col)
@@ -360,7 +384,7 @@ def render_docx(ctx: ZtDeliverableContext) -> bytes:
     )
 
     add_heading(doc, f"Top remediation gaps (target S{ctx.gap.target_stage})")
-    doc.add_paragraph(_gap_plan_caption(ctx.gap))
+    doc.add_paragraph(_gap_plan_caption(ctx.gap, _target_note(ctx)))
     if not ctx.gap.gaps:
         add_paragraphs(
             doc,
@@ -453,7 +477,7 @@ def render_pdf(ctx: ZtDeliverableContext) -> bytes:
     story.append(PageBreak())
 
     story.append(Paragraph(f"Top remediation gaps (target S{ctx.gap.target_stage})", h2))
-    story.append(Paragraph(_gap_plan_caption(ctx.gap), styles["BodyText"]))
+    story.append(Paragraph(_gap_plan_caption(ctx.gap, _target_note(ctx)), styles["BodyText"]))
     if not ctx.gap.gaps:
         story.append(
             Paragraph(

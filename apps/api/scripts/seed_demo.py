@@ -38,6 +38,7 @@ from alembic.config import Config  # noqa: E402
 from sqlalchemy import create_engine, select  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
+from app.assessment_targets import target_source_sentence  # noqa: E402
 from app.attack.analytics import compute as compute_attack  # noqa: E402
 from app.attack.catalog import SOURCE_VERSION as ATTACK_SOURCE_VERSION  # noqa: E402
 from app.attack.catalog import TECHNIQUES, parent_techniques  # noqa: E402
@@ -678,6 +679,9 @@ def _seed_csf(db: Session, storage: StorageBackend, admin: User, org: Client) ->
         answers=answers,
         score=score,
         gap=gap,
+        # #783: this service has no intake request, so the engine default above
+        # is what the resolver would report as "default". Said, not implied.
+        target_source="default",
     )
     _release(
         db,
@@ -691,7 +695,8 @@ def _seed_csf(db: Session, storage: StorageBackend, admin: User, org: Client) ->
         summary=(
             f"Overall maturity: {score.overall_maturity_label}. "
             f"{score.answered_subcategories}/{score.total_subcategories} scored; "
-            f"{gap.total_gap_count} gaps at target T{gap.target_tier}."
+            f"{gap.total_gap_count} gaps at target T{gap.target_tier}. "
+            f"{target_source_sentence('tier', ctx.target_source)}"
         ),
         stage="csf.deliverable",
     )
@@ -869,6 +874,9 @@ def _seed_zt(
         answers=answers,
         score=score,
         gap=gap,
+        # #783: no intake request and no per-capability targets, so the engine
+        # default above decided every row and the resolver would say "default".
+        target_source="default",
     )
     _release(
         db,
@@ -882,7 +890,8 @@ def _seed_zt(
         summary=(
             f"Overall stage: {score.overall_stage_label}. "
             f"{score.answered_capabilities}/{score.total_capabilities} scored; "
-            f"{gap.total_gap_count} gaps at target S{gap.target_stage}."
+            f"{gap.total_gap_count} gaps at target S{gap.target_stage}. "
+            f"{target_source_sentence('stage', ctx.target_source)}"
         ),
         stage="zt.deliverable",
     )

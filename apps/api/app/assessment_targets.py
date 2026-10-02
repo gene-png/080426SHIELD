@@ -122,3 +122,61 @@ def floor_refusal(rung: str, value: int, floor: int) -> str:
         f"{rung} {value} is where an organization starts, not a target to "
         f"aim at. Choose {rung} {floor} or higher."
     )
+
+
+#: Why the engagement target is a default, per resolver source, in the client
+#: dashboard's own words (#783). Keyed by rung because CSF says "tier" and ZT
+#: says "stage", and an out-of-range CSF tier is "not one CSF has" while ZT
+#: names no framework (two ladders, one module).
+#:
+#: THESE ARE DUPLICATED IN THE WEB BUNDLE, word for word:
+#: `apps/web/src/lib/dashboards/csf.ts::targetFaultNote`,
+#: `apps/web/src/lib/dashboards/zt.ts::targetFault`, and the below-floor notes in
+#: `apps/web/src/lib/assessment-targets.ts`. The TS and Python sentences are
+#: synchronised, not derived; a fixture both runners could read would close the
+#: window, and it needs the compose mount tracked in #422. Until then two literal
+#: tables pin it, each naming the other: `tests/unit/test_target_source_in_deliverables.py`
+#: here and `lib/dashboards/target-source-sentences.test.ts` there. Reword one
+#: side and you must reword the other.
+TARGET_SOURCE_NOTES: dict[str, dict[str, str]] = {
+    "tier": {
+        "default": "no tier chosen at intake",
+        "client_out_of_range": "the tier on file is not one CSF has",
+        BELOW_FLOOR: "the tier on file is a starting point, not a target",
+        "client_unparseable": "the tier on file could not be read",
+    },
+    "stage": {
+        "default": "no stage chosen at intake",
+        "client_out_of_range": "the stage on file is not one this framework has",
+        BELOW_FLOOR: "the stage on file is a starting point, not a target",
+        "client_unparseable": "the stage on file could not be read",
+    },
+}
+
+#: An unrecognised source still says something true rather than nothing, the
+#: dashboards' default arm: a value this build does not know is not evidence
+#: that the client chose it.
+_UNUSABLE_NOTE = {
+    "tier": "the tier on file was not usable",
+    "stage": "the stage on file was not usable",
+}
+
+
+def target_source_sentence(
+    rung: str, source: str, *, engagement_target_used: bool = True
+) -> str | None:
+    """The sentence a deliverable states beside its target when the resolver
+    did not use the client's own choice (#783), or None when it did.
+
+    `rung` is "tier" (CSF) or "stage" (ZT). `engagement_target_used` is False
+    when every ZT capability carried its own target, so the engagement target
+    decided nothing: then "no stage chosen" is neither a fault nor actionable
+    and is omitted, as the dashboard's `targetNote` omits it, while a choice
+    the client MADE that could not be used is still stated.
+    """
+    if source == "client":
+        return None
+    if source == "default" and not engagement_target_used:
+        return None
+    note = TARGET_SOURCE_NOTES[rung].get(source, _UNUSABLE_NOTE[rung])
+    return f"Default target — {note}."
