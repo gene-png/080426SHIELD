@@ -112,6 +112,14 @@ def _without_none(data: dict[str, Any], keys: frozenset[str]) -> dict[str, Any]:
     return {k: v for k, v in data.items() if not (k in keys and v is None)}
 
 
+class AttackPartialReason(BaseModel):
+    """#554 R1: why a Partial technique is partial, in the client's words: a
+    short label and one sentence, from `attack/partial_reasons.py`."""
+
+    label: str
+    sentence: str
+
+
 class AttackDashboardTechnique(BaseModel):
     """One evaluated technique row for the client coverage matrix. Only techniques
     with a non-null coverage status are serialized (the 'evaluated' set)."""
@@ -144,8 +152,12 @@ class AttackDashboardTechnique(BaseModel):
     #: #620 (Gene's condition, D-094): its dashboard must be byte-identical to
     #: what was delivered, and main never sent them. ONLY these two are dropped;
     #: every other null (a missing rationale) is still sent as null.
+    #: #554 R1: why this technique is Partial, on a Partial row only, under
+    #: both rule sets (the coordinator's option (a)). OMITTED on every other
+    #: row, so a Covered or Gap row's JSON is unchanged.
+    partial_reason: AttackPartialReason | None = None
     _omit_when_none: ClassVar[frozenset[str]] = frozenset(
-        {"computed_parent", "sub_technique_count"}
+        {"computed_parent", "sub_technique_count", "partial_reason"}
     )
 
     @model_serializer(mode="wrap")

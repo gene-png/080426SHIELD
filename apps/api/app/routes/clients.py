@@ -37,6 +37,7 @@ from app.attack.exporters import coverage_measured
 from app.attack.exporters import retirement_sentences as attack_retirement_sentences
 from app.attack.parents import PARENT_CHILDREN as ATTACK_PARENT_CHILDREN
 from app.attack.parents import is_computed_parent as attack_is_computed_parent
+from app.attack.partial_reasons import partial_reason as attack_partial_reason
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.rules import parents_computed as attack_parents_computed
 from app.csf.gap import MAX_TIER as CSF_MAX_TIER
@@ -88,6 +89,7 @@ from app.schemas.clients import (
     AttackDashboardResponse,
     AttackDashboardRollup,
     AttackDashboardTechnique,
+    AttackPartialReason,
     AttackTacticCoverage,
     ClientDeliverableListResponse,
     ClientDeliverableResponse,
@@ -1230,6 +1232,18 @@ def attack_dashboard(
                 prevention_tools=[] if parent else list(r.prevention_tools or []),
                 response_tools=[] if parent else list(r.response_tools or []),
                 rationale=None if parent else r.rationale,
+                # #554 R1: the deliverable's own wording (`partial_reasons`),
+                # so the dashboard and the document say the same thing.
+                partial_reason=(
+                    AttackPartialReason(label=reason.label, sentence=reason.sentence)
+                    if (
+                        reason := attack_partial_reason(
+                            r.status, r.reason_code, computed_parent=bool(parent)
+                        )
+                    )
+                    is not None
+                    else None
+                ),
             )
         )
     techniques.sort(key=lambda t: t.code)

@@ -62,6 +62,11 @@ export interface DashTechnique {
   /** How many sub-techniques it is computed from; 0 when it is not a computed
    *  parent. Set by the API with `computed_parent`, from the same links. */
   sub_technique_count?: number;
+  /**
+   * #554 R1: why a Partial technique is partial, in the client's words
+   * (`app/attack/partial_reasons.py`). Present on a Partial row only.
+   */
+  partial_reason?: { label: string; sentence: string };
   detection_tools: string[];
   prevention_tools: string[];
   response_tools: string[];

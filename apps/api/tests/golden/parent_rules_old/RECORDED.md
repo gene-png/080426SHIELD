@@ -51,3 +51,21 @@ above before replacing them:
   no AI run and no unattributed AI call for Golden A.
 - `finalize_b.json`: the summary and every one of the four recorded sheets are
   identical; the only change is a fifth sheet, "AI source", added last.
+
+## Amendment, 2026-10-02: the #554 R1 Partial reason
+
+The coordinator's ruling on #554 R1, option (a), approved by Gene's advisor:
+the client sees WHY a technique is Partial on assessments approved before #620
+too. It is an ADDED disclosure. Re-rendered from this world by the current
+code and checked against the files above before replacing them, by a
+throwaway script that asserted each difference:
+
+- `dashboard.json`: deleting `,"partial_reason":{...}` from the new bytes gives
+  the file as the #646 amendment above left it EXACTLY, byte for byte. One
+  key was removed this way, on Golden A's one Partial technique. It reads
+  "Reason not recorded", because that row carries no reason.
+- `finalize_b.json`: the summary is identical. The Coverage sheet gains a "Why
+  partial" column after "Pending review", empty on every row because Golden B
+  holds no Partial. With that column removed from every row, the sheet is
+  identical. The Heatmap Summary gains one legend row, "Why partial". With it
+  removed, the sheet is identical. The other sheets are unchanged.

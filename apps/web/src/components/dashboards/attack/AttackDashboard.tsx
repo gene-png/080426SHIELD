@@ -783,6 +783,27 @@ function toolCell(tools: string[], marks: ToolRetirement): string {
     : "—";
 }
 
+/**
+ * #554 R1: why a Partial row is partial, as a small line under its chip; the
+ * sentence is its title. Nothing on any other row. The wording comes from the
+ * API (`app/attack/partial_reasons.py`), so it matches the deliverable.
+ *
+ * R3 SLOT: Gene's "What is in place: Detect / Prevent / Respond" line goes
+ * directly under this one. It waits on his "in place" decision and is not
+ * built.
+ */
+function PartialReasonLine({ t }: { t: DashTechnique }): JSX.Element | null {
+  if (!t.partial_reason) return null;
+  return (
+    <div
+      title={t.partial_reason.sentence}
+      style={{ marginTop: 4, fontSize: 12, color: C.muted }}
+    >
+      {t.partial_reason.label}
+    </div>
+  );
+}
+
 function MatrixRow({
   t,
   marks,
@@ -800,6 +821,7 @@ function MatrixRow({
         <td style={cell()}>{t.tactic_name}</td>
         <td style={cell()}>
           <Chip status={t.status} pendingReview={t.pending_review} />
+          <PartialReasonLine t={t} />
         </td>
         <td style={cell({ muted: true })} colSpan={4}>
           {`From ${t.sub_technique_count} sub-techniques`}
@@ -827,6 +849,7 @@ function MatrixRow({
       </td>
       <td style={cell()}>
         <Chip status={t.status} pendingReview={t.pending_review} />
+        <PartialReasonLine t={t} />
       </td>
       <td style={cell()}>
         <span style={{ display: "inline-flex", gap: 4 }}>
