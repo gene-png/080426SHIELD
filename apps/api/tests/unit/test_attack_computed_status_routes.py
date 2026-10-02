@@ -392,3 +392,30 @@ def test_the_value_summary_counts_the_computed_gaps(env) -> None:  # noqa: F811
         headers=_auth(client["tokens"]["access_token"]),
     ).json()
     assert body["attack_uncovered_count"] == 0, body
+
+
+def test_the_risk_feed_reads_the_computed_status(env) -> None:  # noqa: F811
+    """Risk synthesis turns each ATT&CK Gap or Partial into a finding, labelled
+    with its status. Called at `_gather_findings`, the one function every
+    synthesis route reads its ATT&CK findings from: a row the AI called Covered
+    with nothing in place is a Gap finding, and one it called Gap with all three
+    in place is no finding at all."""
+    from app.routes.risk import _gather_findings
+
+    c, Sess = env
+    admin = _register(c, "admin@example.com")
+    bearer = admin["tokens"]["access_token"]
+    svc, a = _service_and_assessment(c, bearer)
+    was_covered, was_gap = standalone_rows(a["coverage"], 2)
+    _patch(c, bearer, was_covered["id"], {"status": "covered"})
+    _patch(c, bearer, was_gap["id"], {"status": "gap", **ALL_THREE})
+    r = c.post(f"/attack/assessments/{a['id']}/approve", headers=_auth(bearer))
+    assert r.status_code == 200, r.text
+
+    with Sess() as s:
+        client_id = s.get(AttackAssessment, uuid.UUID(a["id"])).client_id
+        findings, *_ = _gather_findings(s, client_id)
+    attack = {f["source_id"]: f["label"] for f in findings if f["kind"] == "attack"}
+    assert attack == {
+        was_covered["technique_code"]: f"ATT&CK {was_covered['technique_code']}: gap"
+    }, attack
