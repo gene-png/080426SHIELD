@@ -33,6 +33,14 @@ function technique(code: string, tools: string[]): DashTechnique {
 
 function data(extra: Partial<AttackDashboardData> = {}): AttackDashboardData {
   return {
+    // #778 (merged after this file was written): required since; not under
+    // test here. The same value `AttackDashboard.statuses.test.tsx` uses.
+    ai_source: {
+      state: "live",
+      sentence: "AI suggestions in this assessment came from a live AI model.",
+      live_runs: 1,
+      fixture_runs: 0,
+    },
     service_id: "s1",
     service_title: "ATT&CK Coverage",
     released_at: "2026-09-01T12:00:00Z",
