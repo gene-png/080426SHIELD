@@ -74,8 +74,12 @@ vi.mock("./AttackTechniquePanel", () => ({
     coverage?: { notes?: string | null } | null;
     onPatch: (patch: Record<string, unknown>) => void;
     onConfirmCitations?: () => void;
+    toolRetirement?: Record<string, string> | null;
   }) => (
     <div>
+      <div data-testid="panel-retirement">
+        {JSON.stringify(props.toolRetirement ?? null)}
+      </div>
       <div data-testid="panel-reason-codes">
         {JSON.stringify(
           (props.reasonCodes ?? null) && props.reasonCodes?.map((r) => r.code),
@@ -854,5 +858,22 @@ describe("AttackWorkspace, a refused approve (#622 round 1)", () => {
       await screen.findByRole("button", { name: "Approved" }),
     ).toBeInTheDocument();
     expect(screen.queryByText(REFUSAL)).toBeNull();
+  });
+});
+
+describe("AttackWorkspace hands the panel the consolidation plan's labels (#686)", () => {
+  it("passes the assessment's tool_retirement through", async () => {
+    fetchCatalog.mockResolvedValue(FAMILY_CATALOG);
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+    const marks = { "Splunk Enterprise": "planned_retirement" };
+    fetchLatestAssessment.mockResolvedValue({
+      ...draft(),
+      tool_retirement: marks,
+    } as unknown as AttackAssessment);
+    render(<AttackWorkspace serviceId="svc-686" serviceTitle="ATT&CK" />);
+    fireEvent.click(await screen.findByText("select sub-technique"));
+    expect(await screen.findByTestId("panel-retirement")).toHaveTextContent(
+      JSON.stringify(marks),
+    );
   });
 });

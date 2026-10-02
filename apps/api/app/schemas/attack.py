@@ -178,6 +178,11 @@ class AttackAssessmentResponse(BaseModel):
     # #646: which mode drafted this assessment's AI suggestions. REQUIRED.
     ai_source: AiSource
     coverage: list[AttackCoverageResponse]
+    #: #686: cited tool -> "planned_retirement" | "unknown", for the tools the
+    #: client's Tech Debt consolidation plan retires or cannot answer for. A tool
+    #: absent here is not retiring. None: the client has no approved or released
+    #: Tech Debt list, so there is no plan and nothing is marked.
+    tool_retirement: dict[str, str] | None = None
 
 
 class CoverageChange(BaseModel):

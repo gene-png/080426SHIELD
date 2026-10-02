@@ -874,6 +874,7 @@ export function AttackWorkspace({
                   coverage={selectedCoverage}
                   coverageDefinitions={catalog.coverage_definitions}
                   reasonCodes={catalog.reason_codes}
+                  toolRetirement={assessment.tool_retirement}
                   readOnly={readOnly || runInProgress}
                   onPatch={(patch) => {
                     if (!selectedCoverage) return;
