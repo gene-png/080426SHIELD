@@ -3,6 +3,7 @@
  * Mirrors the backend `ZtDashboardResponse` (apps/api/app/schemas/clients.py).
  */
 
+import type { AiSource } from "@/lib/aiSource/types";
 import {
   BELOW_FLOOR_SOURCE,
   STAGE_BELOW_FLOOR_NOTE,
@@ -24,6 +25,8 @@ export interface ZtPillar {
 }
 
 export interface ZtDashboardData {
+  /** #646: which mode drafted the AI suggestions, as the API states it. */
+  ai_source: AiSource;
   service_id: string;
   service_title: string;
   released_at: string;

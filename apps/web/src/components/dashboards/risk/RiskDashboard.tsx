@@ -249,6 +249,7 @@ export function RiskDashboard({
     ) : null;
   return (
     <DashShell
+      aiSource={data.ai_source}
       title="Risk Register"
       subtitle="Synthesized 5×5 NIST 800-30 register · inherent risk across your services"
       releasedAt={data.released_at}

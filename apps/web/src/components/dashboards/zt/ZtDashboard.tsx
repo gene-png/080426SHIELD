@@ -129,6 +129,7 @@ export function ZtDashboard({ data }: { data: ZtDashboardData }): JSX.Element {
   const ordered = pillarsByGap(data.pillars);
   return (
     <DashShell
+      aiSource={data.ai_source}
       title={data.service_title}
       subtitle={`${data.framework_label} · Current state vs 12–18 month target`}
       releasedAt={data.released_at}

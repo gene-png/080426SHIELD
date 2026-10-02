@@ -55,6 +55,13 @@ describe("zt dashboard transforms", () => {
 
 function data(p: Partial<ZtDashboardData>): ZtDashboardData {
   return {
+    // #646 (Batch F): required since; not under test here.
+    ai_source: {
+      state: "live",
+      sentence: "AI suggestions in this assessment came from a live AI model.",
+      live_runs: 1,
+      fixture_runs: 0,
+    },
     service_id: "s",
     unusable_target_codes: [],
     service_title: "Atlas — Zero Trust",

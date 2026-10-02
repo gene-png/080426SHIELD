@@ -63,6 +63,7 @@ import { SecurityClassificationQueue } from "./SecurityClassificationQueue";
 import { useServiceStages } from "@/lib/stages/client";
 import { useRefreshFailures } from "@/components/admin/useRefreshFailures";
 import { isUpstreamOutcomeUnknown } from "@/lib/describe-save-error";
+import { AiSourceNote } from "@/components/AiSourceNote";
 
 /**
  * #550: what to say when the proxy never saw the extraction's answer. Not a
@@ -695,6 +696,9 @@ Components carry no cost of their own — this licence keeps its full value.`,
               accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
             />
             <AiRunStatus run={aiRun} />
+            {/* #646: the list's AI source, from the derivation the
+                deliverable and the client dashboard call. */}
+            {list?.ai_source ? <AiSourceNote source={list.ai_source} /> : null}
             {extracting && !aiRun.running ? (
               <p className="text-sm text-ink-tertiary" aria-live="polite">
                 Extracting capability list…

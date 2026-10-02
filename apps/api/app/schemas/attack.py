@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.attack.coverage import CoverageStatus
 from app.models.attack_assessment import AttackAssessmentStatus
 from app.models.service import ServiceKind, ServiceStatus
+from app.schemas.ai_runs import AiSource
 
 # ---------------------------------------------------------------------------
 # Catalog
@@ -174,6 +175,8 @@ class AttackAssessmentResponse(BaseModel):
     # unconfirmed, never to confirmed.
     catalog_version: str | None
     catalog_current: bool
+    # #646: which mode drafted this assessment's AI suggestions. REQUIRED.
+    ai_source: AiSource
     coverage: list[AttackCoverageResponse]
 
 

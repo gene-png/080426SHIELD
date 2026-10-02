@@ -30,6 +30,13 @@ import type { RiskDashboardData } from "@/lib/dashboards/risk";
 
 function data(overrides: Partial<RiskDashboardData> = {}): RiskDashboardData {
   return {
+    // #646 (Batch F): required since; not under test here.
+    ai_source: {
+      state: "live",
+      sentence: "AI suggestions in this assessment came from a live AI model.",
+      live_runs: 1,
+      fixture_runs: 0,
+    },
     client_id: "00000000-0000-0000-0000-0000000000aa",
     released_at: "2026-09-20T00:00:00Z",
     version: 3,

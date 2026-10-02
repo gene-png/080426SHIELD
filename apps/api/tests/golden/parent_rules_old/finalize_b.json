@@ -1,6 +1,24 @@
 {
  "summary": "Coverage: 33.3%. 1 covered, 0 partial, 2 gaps, 0 pending review, 0 N/A across 3 scored techniques.",
  "xlsx": {
+  "AI source": [
+   [
+    "AI source",
+    "none"
+   ],
+   [
+    "No AI suggestions were used in this assessment.",
+    null
+   ],
+   [
+    "Live AI runs",
+    0
+   ],
+   [
+    "Offline test-data runs",
+    0
+   ]
+  ],
   "Coverage": [
    [
     "Technique",

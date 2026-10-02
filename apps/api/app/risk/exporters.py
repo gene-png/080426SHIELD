@@ -14,6 +14,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.client_naming import org_display_name
+from app.mode_stamp import (
+    UNKNOWN_AI_MODE_REGISTER,
+    AiModeStamp,
+    add_docx_paragraph,
+    add_xlsx_sheet,
+    pdf_paragraph,
+)
 from app.risk.engine import (
     IMPACT_ORDER,
     LIKELIHOOD_ORDER,
@@ -61,6 +68,13 @@ class RiskExportContext:
     #: a concrete false claim about a client's assessments, where silence is
     #: merely an absence. `CLAUDE.md`: missing data defaults to UNCONFIRMED.
     link_scope: tuple[tuple[str, int, int], ...] = ()
+    #: #646: ALWAYS "not recorded" today, deliberately. `risk_synthesize` runs
+    #: synchronously, with no `ai_runs` row, and the register records no
+    #: correlation id, so nothing ties a register to the calls that drafted it;
+    #: selecting the client's calls by purpose would read every register ever
+    #: generated (the population defect #646's review rejected). It becomes a
+    #: real answer when Risk runs through the run framework (#504).
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE_REGISTER
 
 
 def _enum_list(values, enum_cls):
@@ -205,6 +219,7 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
         )
 
     out = io.BytesIO()
+    add_xlsx_sheet(wb, ctx.ai_mode)  # #646: the LAST sheet
     wb.save(out)
     return out.getvalue()
 
@@ -358,6 +373,7 @@ def render_pdf(ctx: RiskExportContext) -> bytes:
     story: list = [
         Paragraph(f"Risk Register (v{ctx.version})", h1),
         Paragraph(ctx.client_legal_name, body),
+        pdf_paragraph(ctx.ai_mode, body),  # #646, under the title
         Spacer(1, 0.2 * inch),
         Paragraph("Summary", h2),
     ]
@@ -428,6 +444,7 @@ def render_docx(ctx: RiskExportContext) -> bytes:
 
     doc = new_document(f"Risk Register — {ctx.client_legal_name}")
     add_title(doc, f"Risk Register (v{ctx.version})", ctx.client_legal_name)
+    add_docx_paragraph(doc, ctx.ai_mode)  # #646, under the title
 
     add_heading(doc, "Summary")
     add_paragraphs(doc, _summary_lines(ctx))

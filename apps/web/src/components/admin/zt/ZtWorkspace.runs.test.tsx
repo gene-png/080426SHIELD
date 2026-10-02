@@ -105,6 +105,29 @@ function draft(): ZtAssessment {
     answers: [],
     client_target_stage: 3,
     documents_stale: false,
+    // #646 (Batch F): required since; not under test here. A fresh
+    // draft with no completed run on load: "none", its true state.
+    ai_source: {
+      state: "none",
+      sentence: "No AI suggestions were used in this assessment.",
+      live_runs: 0,
+      fixture_runs: 0,
+    },
+  } as unknown as ZtAssessment;
+}
+
+/** #646 (#778 review F3): the draft as the api returns it once a completed
+ *  OFFLINE run is on it: its AI source is "fixture", never "none". */
+function draftAfterOfflineRun(): ZtAssessment {
+  return {
+    ...draft(),
+    ai_source: {
+      state: "fixture",
+      sentence:
+        "OFFLINE TEST DATA: every AI suggestion in this assessment came from built-in test data, not a live AI model. Treat AI-drafted values as placeholders, not analysis.",
+      live_runs: 0,
+      fixture_runs: 1,
+    },
   } as unknown as ZtAssessment;
 }
 
@@ -173,6 +196,7 @@ beforeEach(() => {
 describe("ZtWorkspace, Run-AI in the background (#645)", () => {
   it("shows the last completed run's accounting after a reload (#271)", async () => {
     const done = run({ status: "completed", result: result() });
+    m.latest.mockResolvedValue(draftAfterOfflineRun());
     m.summary.mockResolvedValue({
       running: null,
       latest: done,
@@ -338,5 +362,24 @@ describe("ZtWorkspace, an unreadable AI status (#645)", () => {
       expect(screen.getByRole("button", { name: "Run AI" })).toBeEnabled(),
     );
     expect(screen.queryByTestId("run-ai-status-unknown")).toBeNull();
+  });
+});
+
+describe("ZtWorkspace, the assessment's AI source (#646)", () => {
+  it("states the API's sentence for the assessment, warning-toned when not all live", async () => {
+    m.latest.mockResolvedValue({
+      ...draft(),
+      ai_source: {
+        state: "mixed",
+        sentence:
+          "OFFLINE TEST DATA: 1 of the 3 AI runs on this assessment used built-in test data, not a live AI model. Values they drafted are placeholders, not analysis.",
+        live_runs: 2,
+        fixture_runs: 1,
+      },
+    } as unknown as ZtAssessment);
+    renderWorkspace();
+    const note = await screen.findByTestId("ai-source");
+    expect(note).toHaveTextContent(/1 of the 3 AI runs on this assessment/);
+    expect(note).toHaveAttribute("role", "alert");
   });
 });

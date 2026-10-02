@@ -9969,5 +9969,14 @@
     ["T1685.002", "Disable or Modify Cloud Log", "Defense Impairment"],
     ["T1686", "Disable or Modify System Firewall", "Defense Impairment"],
     ["T1688", "Safe Mode Boot", "Defense Impairment"]
+  ],
+  "AI source": [
+    ["AI source", "unknown"],
+    [
+      "It is not recorded whether the AI suggestions in this assessment came from a live AI model or from offline test data.",
+      null
+    ],
+    ["Live AI runs", "not recorded"],
+    ["Offline test-data runs", "not recorded"]
   ]
 }

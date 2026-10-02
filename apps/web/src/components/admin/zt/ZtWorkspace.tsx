@@ -70,6 +70,7 @@ import {
   STAGE_BELOW_FLOOR_NOTE,
   isBelowTargetFloor,
 } from "@/lib/assessment-targets";
+import { AiSourceNote } from "@/components/AiSourceNote";
 
 export interface ZtWorkspaceProps {
   serviceId: string;
@@ -1011,6 +1012,11 @@ export function ZtWorkspace({
                   to say about (W1, issue #44). The accounting states the same
                   change counts and the shortfall alongside them. */}
               <AiRunStatus run={aiRun} />
+              {/* #646: the assessment's AI source, from the derivation the
+                  deliverable and the client dashboard call. */}
+              {assessment ? (
+                <AiSourceNote source={assessment.ai_source} />
+              ) : null}
               <LastRunNote run={aiRun.lastCompleted} />
               {/* Keyed by the run, which is LOAD-BEARING for accessibility: a
                   new run's accounting mounts fresh, so the live region is
