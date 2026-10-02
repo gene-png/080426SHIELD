@@ -88,7 +88,13 @@ from app.schemas.tech_debt import (
 )
 from app.security.rate_limit import enforce_ai_rate_limit
 from app.storage import StorageBackend
-from app.tech_debt.exporters import build_context, render_docx, render_pdf, render_xlsx
+from app.tech_debt.exporters import (
+    build_context,
+    cost_label,
+    render_docx,
+    render_pdf,
+    render_xlsx,
+)
 from app.tech_debt.extract import (
     client_org_name_for_tenant,
     extract_from_rows,
@@ -1693,6 +1699,17 @@ def overlap_analysis(
             for i in analysis.top_cost_items
         ],
         total_cost=analysis.total_cost,
+        # #781: CALLED, not re-derived. `cost_label` reads the exclusion state
+        # (#177/#193), the reconciliation and whether every item is costed, and
+        # it is what the deliverable prints for this list.
+        total_cost_label=cost_label(
+            build_context(
+                client_legal_name=None,
+                service_title=svc.title,
+                cap_list=cap_list,
+                items=items,
+            )
+        ),
         total_items=analysis.total_items,
         uncategorized_count=analysis.uncategorized_count,
         no_vendor_count=analysis.no_vendor_count,
