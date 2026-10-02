@@ -23,6 +23,11 @@ vi.mock("@/lib/csf/client", () => ({
   seedProfiles: vi.fn(),
   runCsfAi: vi.fn(),
   exportPlaybook: vi.fn(),
+  // #645: the panel reads the service's runs on load. No run, by default.
+  fetchCsfRun: vi.fn(),
+  fetchCsfRunSummary: vi.fn(() =>
+    Promise.resolve({ running: null, latest: null, last_completed: null }),
+  ),
 }));
 vi.mock("../AiPreviewButton", () => ({ AiPreviewButton: () => null }));
 vi.mock("./CsfDimensionEditor", () => ({ CsfDimensionEditor: () => null }));
