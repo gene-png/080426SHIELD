@@ -9,6 +9,11 @@ import type { AiSource } from "@/lib/aiSource/types";
  * home page and had no way to open the results.
  */
 
+import {
+  BELOW_FLOOR_SOURCE,
+  TIER_BELOW_FLOOR_NOTE,
+} from "@/lib/assessment-targets";
+
 export interface CsfFunction {
   code: string;
   name: string;
@@ -54,10 +59,11 @@ export interface CsfDashboardData {
   target_label: string;
   target_pct: number;
   /**
-   * FOUR values, not two (#184): "client", "default", "client_out_of_range",
-   * "client_unparseable". The last two mean the client DID choose and the
-   * choice could not be used — a different fact from choosing nothing, and the
-   * only one a consultant can act on by re-asking them.
+   * Not two values (#184): "client", "default", "client_out_of_range",
+   * "client_unparseable", and since #85 "client_below_floor". The last three
+   * mean the client DID choose and the choice could not be used — a different
+   * fact from choosing nothing, and the only one a consultant can act on by
+   * re-asking them.
    *
    * Rendered, not just carried — see `targetIsAssumed` and `targetFaultNote`.
    */
@@ -140,6 +146,9 @@ export function targetFaultNote(source: string): string | null {
       return "no tier chosen at intake";
     case "client_out_of_range":
       return "the tier on file is not one CSF has";
+    // #85: Tier 1 IS a tier CSF has, so the line above would be false of it.
+    case BELOW_FLOOR_SOURCE:
+      return TIER_BELOW_FLOOR_NOTE;
     case "client_unparseable":
       return "the tier on file could not be read";
     default:

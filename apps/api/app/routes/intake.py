@@ -24,7 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.assessment_targets import MIN_TARGET_STAGE, MIN_TARGET_TIER
+from app.assessment_targets import MIN_TARGET_STAGE, MIN_TARGET_TIER, floor_refusal
 from app.attack.catalog_version import is_stale_attack_deliverable
 from app.audit import audit
 from app.csf.maturity import TIER_DEFINITIONS
@@ -112,10 +112,7 @@ def _refuse_csf_tier_out_of_range(tier: int) -> None:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={
                 "reason": "csf_target_tier_out_of_range",
-                "message": (
-                    f"Tier {tier} is where an organization starts, not a target to "
-                    f"aim at. Choose Tier {MIN_TARGET_TIER} or higher."
-                ),
+                "message": floor_refusal("Tier", tier, MIN_TARGET_TIER),
             },
         )
     if tier > max_tier:
@@ -154,10 +151,7 @@ def _refuse_zt_stage_out_of_range(stage: int, service_type: ServiceType) -> None
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={
                 "reason": "zt_target_stage_out_of_range",
-                "message": (
-                    f"Stage {stage} is where an organization starts, not a target to "
-                    f"aim at. Choose Stage {MIN_TARGET_STAGE} or higher."
-                ),
+                "message": floor_refusal("Stage", stage, MIN_TARGET_STAGE),
             },
         )
     if stage > max_stage:
@@ -210,15 +204,13 @@ def _validate_targets(item: ServiceRequestInput) -> None:
 
     ## This is NOT the only floor, and saying so is load-bearing
 
-    Two other routes write these same columns and neither enforces the floor:
-    `routes/csf.py::submit_self_assessment` writes `sr.csf_target_tier` with no
-    range check at all, and `routes/zt.py::submit_self_assessment` guards the
-    ceiling from a floor of 1. Both resolvers then report a stored 1 as the
-    client's own choice. That is **#85**, and it is left alone deliberately --
-    see `app/assessment_targets.py`, which carries the reasoning. An earlier
-    version of this docstring said the ZT path "carries its own copy of this
-    check", which is true of the CEILING and false of the FLOOR, and never
-    mentioned the CSF path at all.
+    Two other routes write these same columns, and since #85 both enforce the
+    floor too: `routes/csf.py::submit_self_assessment` and
+    `routes/zt.py::submit_self_assessment`. All three take the sentence from
+    `app/assessment_targets.py::floor_refusal`, which carries the reasoning. An
+    earlier version of this docstring said the ZT path "carries its own copy of
+    this check", which was true of the CEILING and false of the FLOOR until #85,
+    and never mentioned the CSF path at all.
     """
     if item.service_type == ServiceType.NIST_CSF:
         if item.csf_target_tier is None or item.csf_profile is None:

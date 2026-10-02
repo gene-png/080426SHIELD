@@ -339,7 +339,9 @@ class CsfDashboardResponse(BaseModel):
     target_label: str
     target_pct: float
     # "client" when the tier came from the intake choice, "default" when the
-    # client never set one. Never silently conflated — see the docstring.
+    # client never set one; "client_out_of_range", "client_unparseable" and
+    # "client_below_floor" (#85) when they set one that could not be used.
+    # Never silently conflated — see the docstring.
     target_tier_source: str
     #: #209: the moment the engagement target behind every figure above was
     #: FROZEN -- the finalize timestamp of the deliverable this dashboard
@@ -389,12 +391,13 @@ class ZtDashboardResponse(BaseModel):
     reads as good news, which is why this shipped unnoticed.
 
     `target_stage_source` states which target was used, so a fallback is never
-    mistaken for a decision. It carries FOUR values, not the CSF twin's two,
-    because `zt/scoring.py::resolve_target_stage` distinguishes "the client
-    chose nothing" from "the client's choice could not be used" — and the
-    latter is answerable by re-asking them, so flattening the two would throw
-    away the more actionable fact. See `targetNote` in `lib/dashboards/zt.ts`,
-    which renders all four.
+    mistaken for a decision. It carries more than two values, because
+    `zt/scoring.py::resolve_target_stage` distinguishes "the client chose
+    nothing" from "the client's choice could not be used" (out of range,
+    unparseable, or, since #85, below the floor) — and the latter is
+    answerable by re-asking them, so flattening the two would throw away the
+    more actionable fact. See `targetNote` in `lib/dashboards/zt.ts`, which
+    renders every one, and the resolver's docstring for the list.
     """
 
     service_id: uuid.UUID
@@ -417,7 +420,8 @@ class ZtDashboardResponse(BaseModel):
 
     # The engagement-level target the gaps were computed against, and where it
     # came from: "client" | "default" | "client_out_of_range" |
-    # "client_unparseable". Never silently conflated — see the docstring.
+    # "client_unparseable" | "client_below_floor" (#85). Never silently
+    # conflated — see the docstring.
     target_stage: int
     target_stage_source: str
     #: The ZT twin of `CsfDashboardResponse.target_frozen_at`; see there for

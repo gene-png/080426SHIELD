@@ -54,31 +54,33 @@ either here would be a third spelling of a number those modules already own.
 ROUTES, because a pydantic field constraint cannot see `service_type`. It is
 not the only comparison in the system -- see the next section.
 
-## TWO WRITERS OF THESE COLUMNS ARE DELIBERATELY NOT WIRED TO THIS
+## EVERY WRITER OF THE ENGAGEMENT TARGET ENFORCES THIS, SINCE #85
 
-Intake is not the only door. `ServiceRequest.csf_target_tier` and
-`.zt_target_stage` are also written by the self-assessment SUBMIT routes, and
-both accept a target of 1 today:
+`ServiceRequest.csf_target_tier` and `.zt_target_stage` have three writers, and
+all three refuse a target below the floor with a typed `{reason, message}`:
 
-    routes/csf.py   CsfSelfAssessmentSubmit.target_tier    ge=1, le=4
-                    -- and NO range check in the route at all; the schema
-                       bound is the only thing between the body and
-                       `sr.csf_target_tier = body.target_tier`.
-    routes/zt.py    ZtSelfAssessmentSubmit.target_stage    ge=1, le=4
-                    -- the route DOES guard, `if not 1 <= ... <= max_stage`,
-                       so its floor of 1 is a written decision rather than an
-                       omission.
+    routes/intake.py  `_validate_targets`
+    routes/csf.py     `submit_self_assessment` (`_refuse_submitted_target_tier`)
+    routes/zt.py      `submit_self_assessment`
 
-That is **#85**, filed long before #406 and re-measured at `1281cbd`. It is
-left alone here on purpose: reversing a deliberate floor is a product question
-about whether a client may re-confirm a target of 1 after intake, and the two
-routes need different edits. An unstated exemption reads as an oversight to
-whoever greps `MIN_TARGET_TIER` next, which is why it is written down.
+Until #85 the two submit routes accepted 1: CSF had no range check at all
+behind a schema `ge=1, le=4`, and ZT guarded `1 <= stage` as a written
+decision. That decision is REVERSED by #85, a product call assumed by the
+Phase 2 plan and flagged for the owner: a client may not choose a target of 1
+after intake, the same as at intake. All three call `floor_refusal` below for
+the sentence, so the client reads one rule in one wording at every door.
 
-**So closing the intake door does not retire a stored 1.** `routes/zt.py`'s own
-comment records that the ZT self-assessment UI re-persists whatever is stored
-when a client submits without touching the control — refreshing a legacy value
-straight past the new guard.
+**A 1 ALREADY STORED is not a client's target either.** Both resolvers
+(`csf/gap.py::resolve_target_tier`, `zt/scoring.py::resolve_target_stage`)
+report it as `BELOW_FLOOR` and fall back to the engine default rather than
+calling it the client's choice. That covers a deliverable target frozen as 1
+too, because the freeze stores the raw choice and the dashboard re-resolves it
+on read.
+
+**NOT covered, deliberately (#85's Q4):** a consultant's per-capability
+`zt_answers.target_stage`, which still accepts 1 on PATCH, on the AI apply
+path and in `effective_target_stages`; and the gap-analysis what-if query
+parameter, which is not persisted.
 
 ## Why the floor is NOT a `Field(ge=2)` bound
 
@@ -99,3 +101,24 @@ MIN_TARGET_STAGE = 2
 
 #: NIST CSF 2.0. Tier 1 ("Partial") is a starting point, not a goal.
 MIN_TARGET_TIER = 2
+
+#: The resolver source for a stored target that is a real level but below the
+#: floor (#85). Its own state: not "client" (it is not a target), and not
+#: "client_out_of_range" (the ladder HAS a level 1, so "not a tier CSF has"
+#: would be false). The web dashboards and workspaces render it as "a starting
+#: point, not a target" (`apps/web/src/lib/assessment-targets.ts`).
+BELOW_FLOOR = "client_below_floor"
+
+
+def floor_refusal(rung: str, value: int, floor: int) -> str:
+    """The sentence every target door refuses a below-floor value with.
+
+    `rung` is "Tier" or "Stage". One builder, CALLED by intake and by both
+    self-assessment submit routes, so the rule cannot be worded three ways.
+    The control it names is real: every client target picker offers `floor`
+    and up.
+    """
+    return (
+        f"{rung} {value} is where an organization starts, not a target to "
+        f"aim at. Choose {rung} {floor} or higher."
+    )
