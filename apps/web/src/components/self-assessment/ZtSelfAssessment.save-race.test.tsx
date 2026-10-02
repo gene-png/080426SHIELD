@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as ztClient from "@/lib/zt/client";
@@ -256,5 +256,108 @@ describe("ZtSelfAssessment: Submit and an in-flight answer save (#758)", () => {
       "CISA.ID.01: we couldn't confirm whether it was saved.",
     );
     expect(submit).toBeEnabled();
+  });
+});
+
+/** The api's own 500 envelope, `exceptions.py`'s `_handle_unexpected`. */
+const SERVER_ERROR = () =>
+  proxyError(500, {
+    error: {
+      code: 500,
+      message: "An internal error occurred. Please contact support.",
+    },
+  });
+
+function stageRadio(code: string, stage: number): HTMLElement {
+  const group = screen.getByRole("radiogroup", {
+    name: `Maturity stage for ${code}`,
+  });
+  return within(group).getByRole("radio", {
+    name: new RegExp(`^S${stage}(?![0-9])`),
+  });
+}
+
+describe("ZtSelfAssessment through the real stage picker and notes box (#758 review)", () => {
+  it("sends no answer save while Submit is in flight: the answer controls are read-only", async () => {
+    // Finding 1. Submit cannot START while a save is out, but nothing stopped
+    // a save starting while SUBMIT was out: the stage changed during
+    // "Submitting…", the PATCH went after the assessment left draft, and its
+    // 409 landed after the page became `SelfAssessmentSubmitted`.
+    let releaseSubmit: (a: ZtAssessment) => void = () => undefined;
+    vi.mocked(ztClient.submitSelfAssessment).mockImplementation(
+      () =>
+        new Promise<ZtAssessment>((resolve) => {
+          releaseSubmit = resolve;
+        }),
+    );
+    const submit = await mount();
+    await act(async () => {
+      fireEvent.click(submit);
+    });
+    expect(
+      screen.getByRole("button", { name: "Submitting…" }),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(stageRadio("CISA.ID.01", 4));
+    });
+    expect(ztClient.patchSelfAssessmentAnswer).not.toHaveBeenCalled();
+    expect(stageRadio("CISA.ID.01", 4)).toBeDisabled();
+    expect(screen.getByLabelText("Notes for CISA.ID.01")).toBeDisabled();
+
+    await act(async () => {
+      releaseSubmit(assessment("submitted"));
+    });
+  });
+
+  it("shows a stage save's failure even after a NEWER notes save of the same row was accepted", async () => {
+    // Finding 2. The two fields of one row save separately and the api
+    // applies only the fields sent, so a notes save says nothing about the
+    // stage. Keyed per row, the accepted notes save made the older stage save
+    // "not newest", and its failure was shown nowhere.
+    const patches: object[] = [];
+    vi.mocked(ztClient.patchSelfAssessmentAnswer).mockImplementation(
+      (answerId: string, patch: object) =>
+        new Promise<ZtAnswer>((resolve, reject) => {
+          patches.push(patch);
+          held.push({ answerId, resolve, reject });
+        }),
+    );
+    await mount();
+    await act(async () => {
+      fireEvent.click(stageRadio("CISA.ID.01", 4));
+    });
+    await editNotes("CISA.ID.01", "  a note  ");
+    expect(patches).toEqual([{ maturity_stage: 4 }, { notes: "a note" }]);
+
+    await act(async () => {
+      held[1].resolve(answer("ans1", "CISA.ID.01", "a note"));
+    });
+    await act(async () => {
+      held[0].reject(SERVER_ERROR());
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("CISA.ID.01");
+  });
+
+  it("still lets a newer save of the SAME field supersede an older one's failure", async () => {
+    await mount();
+    await act(async () => {
+      fireEvent.click(stageRadio("CISA.ID.01", 4));
+    });
+    await act(async () => {
+      fireEvent.click(stageRadio("CISA.ID.01", 3));
+    });
+    expect(held).toHaveLength(2);
+    await act(async () => {
+      held[1].resolve({
+        ...answer("ans1", "CISA.ID.01", null),
+        maturity_stage: 3,
+      });
+    });
+    await act(async () => {
+      held[0].reject(SERVER_ERROR());
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });
