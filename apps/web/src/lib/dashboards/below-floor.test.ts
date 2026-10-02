@@ -16,6 +16,14 @@ import { targetNote, type ZtDashboardData } from "./zt";
 
 function zt(p: Partial<ZtDashboardData>): ZtDashboardData {
   return {
+    // #778 (merged after this file was written): required since; not under
+    // test here. The same value `zt.test.ts` uses.
+    ai_source: {
+      state: "live",
+      sentence: "AI suggestions in this assessment came from a live AI model.",
+      live_runs: 1,
+      fixture_runs: 0,
+    },
     service_id: "s",
     unusable_target_codes: [],
     service_title: "Atlas — Zero Trust",
