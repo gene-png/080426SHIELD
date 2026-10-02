@@ -955,7 +955,6 @@ function MatrixRow({
         <td style={cell()}>
           <Chip status={t.status} pendingReview={t.pending_review} />
           <PartialReasonLine t={t} />
-          <InPlaceLine t={t} />
         </td>
         <td style={cell({ muted: true })} colSpan={4}>
           {`From ${t.sub_technique_count} sub-techniques`}
