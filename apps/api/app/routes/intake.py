@@ -25,6 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.assessment_targets import MIN_TARGET_STAGE, MIN_TARGET_TIER
+from app.attack.catalog_version import is_stale_attack_deliverable
 from app.audit import audit
 from app.csf.maturity import TIER_DEFINITIONS
 from app.db.session import get_db
@@ -32,6 +33,7 @@ from app.dependencies import current_client, current_user
 from app.models._common import utcnow
 from app.models.client import Client
 from app.models.csf_assessment import CsfAssessment
+from app.models.deliverable import Deliverable
 from app.models.service import Service, ServiceKind
 from app.models.service_request import ServiceRequest, ServiceType
 from app.models.user import User, UserRole
@@ -586,6 +588,29 @@ def _latest_assessment_status(db: Session, svc: Service) -> str | None:
     return getattr(row, "value", row) if row is not None else None
 
 
+def _report_withheld(db: Session, svc: Service) -> bool:
+    """Whether every report released for `svc` is withheld from the client (#588).
+
+    The rule the home page applies to the deliverables list
+    (`HomeDashboard.tsx`, `withheldServiceIds`): a service with at least one
+    released report, none of which the client can read. The predicate is the
+    one every client path to a released document uses,
+    `is_stale_attack_deliverable` (#556), so this list cannot call a report
+    readable that the deliverables list, the dashboard and the downloads
+    withhold. Another kind's report is never withheld by it.
+    """
+    released = (
+        db.execute(
+            select(Deliverable).where(
+                Deliverable.service_id == svc.id, Deliverable.released_at.is_not(None)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return bool(released) and all(is_stale_attack_deliverable(db, d) for d in released)
+
+
 def _engagement_response(db: Session, svc: Service) -> EngagementResponse:
     return EngagementResponse(
         service_id=svc.id,
@@ -593,6 +618,7 @@ def _engagement_response(db: Session, svc: Service) -> EngagementResponse:
         title=svc.title,
         status=getattr(svc.status, "value", svc.status),
         assessment_status=_latest_assessment_status(db, svc),
+        withheld=_report_withheld(db, svc),
         created_at=svc.created_at,
     )
 
