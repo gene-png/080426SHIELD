@@ -12,6 +12,7 @@ import {
 
 import {
   approveAssessment,
+  reviewComputedStatuses,
   AttackProxyError,
   createAssessment,
   discardAssessment,
@@ -49,6 +50,7 @@ import { RunAiGuard } from "@/components/admin/RunAiGuard";
 
 import { AttackAiInputsPanel } from "./AttackAiInputsPanel";
 import { AttackCitationAccounting } from "./AttackCitationAccounting";
+import { AttackComputedReviewPanel } from "./AttackComputedReviewPanel";
 import { AttackDeliverableCard } from "./AttackDeliverableCard";
 import { AttackHeatmapCard } from "./AttackHeatmapCard";
 import { AttackMatrix } from "./AttackMatrix";
@@ -151,7 +153,7 @@ export function AttackWorkspace({
   const { messages: refreshMessages, begin: beginRefresh } =
     useRefreshFailures();
   const [busy, setBusy] = React.useState<
-    "create" | "approve" | "run" | "discard" | null
+    "create" | "approve" | "review" | "run" | "discard" | null
   >(null);
   // Set when the API REFUSES a run (typed 409). Distinct from loadError: the
   // page is fine, the prerequisite is not.
@@ -501,6 +503,26 @@ export function AttackWorkspace({
     assessmentSeq.current += 1;
     try {
       const next = await approveAssessment(assessment.id);
+      setAssessment(next);
+    } catch (err) {
+      setActionError(describeError(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function onReview(codes: string[]): Promise<void> {
+    return trackWrite(() => onReviewWrite(codes));
+  }
+
+  /** #554 R3: record the review of the codes the panel showed. */
+  async function onReviewWrite(codes: string[]): Promise<void> {
+    if (!assessment) return;
+    setActionError(null);
+    setBusy("review");
+    assessmentSeq.current += 1;
+    try {
+      const next = await reviewComputedStatuses(assessment.id, codes);
       setAssessment(next);
     } catch (err) {
       setActionError(describeError(err));
@@ -951,6 +973,13 @@ export function AttackWorkspace({
             }
           >
             <div className="flex flex-col gap-3">
+              {/* #554 R3: the release gate's review queue, named by the release
+                  refusal, so it sits in the step where that refusal is met. */}
+              <AttackComputedReviewPanel
+                assessment={assessment}
+                busy={busy !== null || runInProgress}
+                onReview={onReview}
+              />
               <StaleDocsNudge stale={assessment.documents_stale} />
               <AttackDeliverableCard
                 serviceId={serviceId}

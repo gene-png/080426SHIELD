@@ -17,8 +17,11 @@ import {
   dprCoverage,
   filterTechniques,
   kpis,
+  legOn,
   tacticOptions,
   triadPopulationText,
+  CANNOT_BE_PREVENTED_HEADING,
+  CANNOT_BE_PREVENTED_SENTENCE,
   type AttackDashboardData,
   type DashTechnique,
   type DprLeg,
@@ -385,7 +388,11 @@ export function AttackDashboard({
                   `claimed today — not of the whole catalogue.`
                 : `Weighted coverage across evaluated techniques: ${data.rollup.coverage_pct}%.`) +
             // #554: beside the percentage on every surface, even at zero.
-            (outside === null ? "" : ` ${outside}`)
+            (outside === null ? "" : ` ${outside}`) +
+            // #554 R3 (Q4): the deliverable's sentence, only when non-zero.
+            (data.awaiting_review_sentence
+              ? ` ${data.awaiting_review_sentence}`
+              : "")
           }
         >
           <div style={{ position: "relative", height: 340 }}>
@@ -543,8 +550,7 @@ export function AttackDashboard({
 
       {/* #554 R1, the advisor's ruling (i): why the Partials are partial,
           counted -- the deliverable's own table, so the rows add up to the
-          Partial figure above. R3 SLOT: a "What is in place" breakdown would
-          follow this table; it waits on Gene's decision and is not built. */}
+          Partial figure above. */}
       {data.partial_reasons && data.partial_reasons.length > 0 ? (
         <Section title="Partial coverage, by reason">
           <table
@@ -591,6 +597,10 @@ export function AttackDashboard({
           </p>
         </Section>
       ) : null}
+
+      {/* #554 R3: the techniques MITRE lists no preventive control for, in
+          their own area (Gene's decision 3), judged on Detect and Respond. */}
+      <CannotBePreventedSection data={data} />
 
       {/* Technique matrix */}
       <Section
@@ -838,10 +848,6 @@ function toolCell(tools: string[], marks: ToolRetirement): string {
  * #554 R1: why a Partial row is partial, as a small line under its chip; the
  * sentence is its title. Nothing on any other row. The wording comes from the
  * API (`app/attack/partial_reasons.py`), so it matches the deliverable.
- *
- * R3 SLOT: Gene's "What is in place: Detect / Prevent / Respond" line goes
- * directly under this one. It waits on his "in place" decision and is not
- * built.
  */
 function PartialReasonLine({ t }: { t: DashTechnique }): JSX.Element | null {
   if (!t.partial_reason) return null;
@@ -852,6 +858,82 @@ function PartialReasonLine({ t }: { t: DashTechnique }): JSX.Element | null {
     >
       {t.partial_reason.label}
     </div>
+  );
+}
+
+/**
+ * #554 R3: which of Detect / Prevent / Respond are in place, under the reason
+ * line, on a row whose status was computed. The line comes from the API
+ * (`app/attack/computed.py`), so it matches the deliverable's columns.
+ */
+function InPlaceLine({ t }: { t: DashTechnique }): JSX.Element | null {
+  if (!t.in_place) return null;
+  return (
+    <div style={{ marginTop: 4, fontSize: 12, color: C.muted }}>
+      {t.in_place.line}
+    </div>
+  );
+}
+
+/**
+ * #554 R3: "Techniques that cannot be prevented" -- the computed rows MITRE
+ * lists no preventive control for. Omitted when there is none.
+ */
+function CannotBePreventedSection({
+  data,
+}: {
+  data: AttackDashboardData;
+}): JSX.Element | null {
+  const rows = data.techniques.filter((t) => t.in_place?.cannot_be_prevented);
+  if (rows.length === 0) return null;
+  const m = data.rollup.total_evaluated;
+  return (
+    <Section title={CANNOT_BE_PREVENTED_HEADING}>
+      <p style={{ margin: "0 0 10px", fontSize: 13 }}>
+        {CANNOT_BE_PREVENTED_SENTENCE}
+      </p>
+      <table
+        aria-label={CANNOT_BE_PREVENTED_HEADING}
+        style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}
+      >
+        <thead>
+          <tr>
+            {["Technique", "Status", "Detect", "Respond"].map((h) => (
+              <th
+                key={h}
+                style={{
+                  color: C.muted,
+                  textAlign: "left",
+                  padding: "10px 12px",
+                  fontWeight: 600,
+                  fontSize: 11,
+                  borderBottom: `1px solid ${C.border}`,
+                }}
+              >
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((t) => (
+            <tr key={t.code}>
+              <td style={cell({ mono: true })}>{t.code}</td>
+              <td style={cell()}>
+                <Chip status={t.status} pendingReview={t.pending_review} />
+              </td>
+              <td style={cell({ muted: true })}>{t.in_place?.detect}</td>
+              <td style={cell({ muted: true })}>{t.in_place?.respond}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p style={{ margin: "10px 0 0", fontSize: 13 }}>
+        {rows.length === 1
+          ? `This is 1 of the ${m} assessed techniques above.`
+          : `These are ${rows.length} of the ${m} assessed techniques above.`}
+      </p>
+    </Section>
   );
 }
 
@@ -873,6 +955,7 @@ function MatrixRow({
         <td style={cell()}>
           <Chip status={t.status} pendingReview={t.pending_review} />
           <PartialReasonLine t={t} />
+          <InPlaceLine t={t} />
         </td>
         <td style={cell({ muted: true })} colSpan={4}>
           {`From ${t.sub_technique_count} sub-techniques`}
@@ -901,12 +984,14 @@ function MatrixRow({
       <td style={cell()}>
         <Chip status={t.status} pendingReview={t.pending_review} />
         <PartialReasonLine t={t} />
+        <InPlaceLine t={t} />
       </td>
       <td style={cell()}>
         <span style={{ display: "inline-flex", gap: 4 }}>
-          <Leg on={t.detection_tools.length > 0} label="D" />
-          <Leg on={t.prevention_tools.length > 0} label="P" />
-          <Leg on={t.response_tools.length > 0} label="R" />
+          {/* #554 R3: the triad's own test, so a leg agrees with the line. */}
+          <Leg on={legOn(t, "detect")} label="D" />
+          <Leg on={legOn(t, "prevent")} label="P" />
+          <Leg on={legOn(t, "respond")} label="R" />
         </span>
       </td>
       <td style={cell({ muted: true })}>

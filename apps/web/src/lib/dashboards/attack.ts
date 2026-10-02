@@ -67,6 +67,18 @@ export interface DashTechnique {
    * (`app/attack/partial_reasons.py`). Present on a Partial row only.
    */
   partial_reason?: { label: string; sentence: string };
+  /**
+   * #554 R3: which of Detect / Prevent / Respond are in place, in the client's
+   * words (`app/attack/computed.py::IN_PLACE_TEXT`), and the approved line.
+   * Present on a row whose status was computed; absent before R3.
+   */
+  in_place?: {
+    detect: string;
+    prevent: string;
+    respond: string;
+    line: string;
+    cannot_be_prevented: boolean;
+  };
   detection_tools: string[];
   prevention_tools: string[];
   response_tools: string[];
@@ -124,7 +136,19 @@ export interface AttackDashboardData {
    * there is no Partial.
    */
   partial_reasons?: { label: string; sentence: string; count: number }[];
+  /** #554 R3 (Q4): the deliverable's sentence beside the percentage. Absent
+   *  before R3 and when nothing awaits review. */
+  awaiting_review_sentence?: string;
 }
+
+/**
+ * #554 R3: the "Techniques that cannot be prevented" section, approved on #554
+ * (21:55Z). COPIED from `apps/api/app/attack/computed.py`; change both.
+ */
+export const CANNOT_BE_PREVENTED_HEADING =
+  "Techniques that cannot be prevented";
+export const CANNOT_BE_PREVENTED_SENTENCE =
+  "MITRE ATT&CK lists no preventive control for these techniques, so they are assessed on detection and response. A technique here is Covered when it is both detected and responded to.";
 
 export interface Kpi {
   n: number;
@@ -217,6 +241,25 @@ const ASSESSED: ReadonlySet<CoverageStatus> = new Set([
   "gap",
 ]);
 
+/**
+ * #554 R3: whether one leg is present on a technique. On a row whose status was
+ * computed it is the API's "in place" -- a listed tool still awaiting review is
+ * NOT a leg, and neither is "cannot be prevented" -- so the triad agrees with
+ * the status beside it. Before R3 it is a non-empty tool list, as delivered.
+ */
+export function legOn(
+  t: DashTechnique,
+  leg: "detect" | "prevent" | "respond",
+): boolean {
+  if (t.in_place) return t.in_place[leg] === "in place";
+  const tools = {
+    detect: t.detection_tools,
+    prevent: t.prevention_tools,
+    respond: t.response_tools,
+  }[leg];
+  return tools.length > 0;
+}
+
 export function dprCoverage(
   techniques: DashTechnique[],
   /** `data.parents_computed === true`: the assessment is under #620's rules.
@@ -249,9 +292,9 @@ export function dprCoverage(
         ).length
       : 0;
   const total = claimable.length;
-  const detect = claimable.filter((t) => t.detection_tools.length > 0).length;
-  const prevent = claimable.filter((t) => t.prevention_tools.length > 0).length;
-  const respond = claimable.filter((t) => t.response_tools.length > 0).length;
+  const detect = claimable.filter((t) => legOn(t, "detect")).length;
+  const prevent = claimable.filter((t) => legOn(t, "prevent")).length;
+  const respond = claimable.filter((t) => legOn(t, "respond")).length;
   return {
     total,
     excluded: {
