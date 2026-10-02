@@ -6,6 +6,7 @@ against `Base.metadata`, which Alembic autogenerate relies on.
 
 from __future__ import annotations
 
+from app.models.ai_run import AiRun, AiRunStatus
 from app.models.artifact import Artifact, ArtifactOrigin
 from app.models.attack_assessment import (
     AttackAssessment,
@@ -46,6 +47,8 @@ from app.models.zt_assessment import (
 )
 
 __all__ = [
+    "AiRun",
+    "AiRunStatus",
     "Artifact",
     "ArtifactOrigin",
     "AttackAssessment",

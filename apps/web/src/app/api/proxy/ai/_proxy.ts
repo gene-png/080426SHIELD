@@ -16,6 +16,25 @@ export async function proxyAiJson(
   request: Request,
   upstream: string,
 ): Promise<NextResponse> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    body = undefined;
+  }
+  return forward(upstream, "POST", body);
+}
+
+/** A GET through the same path: the Run-AI run reads (#645). */
+export async function proxyAiGet(upstream: string): Promise<NextResponse> {
+  return forward(upstream, "GET", undefined);
+}
+
+async function forward(
+  upstream: string,
+  method: "GET" | "POST",
+  body: unknown,
+): Promise<NextResponse> {
   const session = await auth();
   const token = session?.accessToken;
   if (!token) {
@@ -24,15 +43,9 @@ export async function proxyAiJson(
       { status: 401 },
     );
   }
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    body = undefined;
-  }
   try {
     const result = await apiFetch(upstream, {
-      method: "POST",
+      method,
       bearer: token,
       body: body as Record<string, unknown> | undefined,
     });

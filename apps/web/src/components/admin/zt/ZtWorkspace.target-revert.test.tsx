@@ -58,6 +58,12 @@ vi.mock("@/lib/zt/client", () => ({
   discardAssessment: vi.fn(),
   patchAnswer: vi.fn(),
   runZtAi: vi.fn(),
+  // #645: the workspace reads the service's runs on load and polls one it
+  // follows. No run, by default.
+  fetchZtRun: vi.fn(),
+  fetchZtRunSummary: vi.fn(() =>
+    Promise.resolve({ running: null, latest: null, last_completed: null }),
+  ),
   finalizeZtDeliverable: vi.fn(),
   releaseZtDeliverable: vi.fn(),
 }));
@@ -239,6 +245,26 @@ function deferredGap(): {
 }
 
 /** The same tap, for the ACTION a refresh hangs off (`runZtAi`). */
+/** #645: what a Run-AI POST answers, and the run it starts, completed. */
+const STARTED = {
+  run_id: "run-zt",
+  status: "running" as const,
+  serves: "offline" as const,
+  deadline_at: "2026-10-01T12:45:00Z",
+  lock_until: "2026-10-01T12:50:00Z",
+  joined: false,
+};
+const COMPLETED = {
+  id: "run-zt",
+  status: "completed",
+  result: {
+    changed: [],
+    suggestions_received: 0,
+    suggestions_applied: 0,
+    dropped: [],
+  },
+} as unknown as Awaited<ReturnType<typeof ztClient.fetchZtRun>>;
+
 function deferredRun(): {
   promise: Promise<unknown>;
   settled: Promise<string>;
@@ -505,9 +531,9 @@ describe("ZtWorkspace target stage is derived from the rows (#385)", () => {
       }
       return gapAt(t);
     });
-    vi.mocked(ztClient.runZtAi).mockResolvedValue(
-      {} as unknown as Awaited<ReturnType<typeof ztClient.runZtAi>>,
-    );
+    // #645: the POST starts a run; the refresh follows its completion.
+    vi.mocked(ztClient.runZtAi).mockResolvedValue(STARTED);
+    vi.mocked(ztClient.fetchZtRun).mockResolvedValue(COMPLETED);
 
     renderWorkspace("svc-385-zt-stale-refresh");
     await screen.findByText("rows-computed-for-stage-2");
@@ -561,6 +587,8 @@ describe("ZtWorkspace target stage is derived from the rows (#385)", () => {
     vi.mocked(ztClient.runZtAi).mockImplementation(
       () => slowRun.promise as never,
     );
+    // #645: the POST starts a run; the refresh follows its completion.
+    vi.mocked(ztClient.fetchZtRun).mockResolvedValue(COMPLETED);
 
     renderWorkspace("svc-385-zt-live-ref");
     await screen.findByText("rows-computed-for-stage-2");
@@ -578,7 +606,7 @@ describe("ZtWorkspace target stage is derived from the rows (#385)", () => {
     //    its closure began with.
     fetchGapAnalysis.mockClear();
     await act(async () => {
-      slowRun.resolve({});
+      slowRun.resolve(STARTED);
       expect(await slowRun.settled).toBe("resolved");
     });
 

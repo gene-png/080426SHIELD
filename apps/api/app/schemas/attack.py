@@ -187,7 +187,14 @@ class CoverageChange(BaseModel):
 
 
 class AttackRunAiResponse(BaseModel):
-    """Result of a mitre_map Run-AI: what changed + the refreshed coverage."""
+    """What a mitre_map Run-AI did, with the refreshed coverage.
+
+    #645: the run finishes in a background job, so this is no longer an HTTP
+    response body. The job persists it as `ai_runs.result`, every field the
+    synchronous response carried, and the workspace reads it from the run it
+    polls -- which is what lets every disclosure here survive a reload (#271).
+    `test_ai_runs_result_schema.py` holds the stored keys to this model.
+    """
 
     tools_available: int
     changed: list[CoverageChange]
@@ -242,6 +249,10 @@ class AttackRunAiResponse(BaseModel):
     # consultant acts on TECHNIQUES; one flagged tool cited by forty techniques
     # is one number and forty pieces of work.
     pending_review_rows: int = 0
+    # #645. Rows a consultant edited after this run started (an edit that
+    # checked the lock before the run existed). Kept as edited, never
+    # overwritten, and counted so the workspace can say which run left them.
+    rows_skipped_edited: int = 0
 
 
 class AttackCoveragePatch(BaseModel):

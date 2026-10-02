@@ -32,6 +32,12 @@ vi.mock("@/lib/attack/client", () => ({
   patchCoverage: vi.fn(),
   confirmCoverageCitations: vi.fn(),
   runAttackAi: vi.fn(),
+  // #645: the page reads the service's runs on load and polls one it
+  // follows. No run, by default.
+  fetchAttackRun: vi.fn(),
+  fetchAttackRunSummary: vi.fn(() =>
+    Promise.resolve({ running: null, latest: null, last_completed: null }),
+  ),
 }));
 vi.mock("./AttackDeliverableCard", () => ({
   AttackDeliverableCard: () => null,
@@ -152,11 +158,20 @@ describe("AttackWorkspace, a Run AI whose outcome is unknown (#550)", () => {
     // Review of #752, finding 1. The run's own answer arrived; only the
     // assessment re-read after it went unanswered. That is not an unknown
     // RUN, so the page says the re-read failed and leaves Run AI on.
+    // #645: the POST answered with a run, and the run completed.
     vi.mocked(attackClient.runAttackAi).mockResolvedValueOnce({
-      tools_available: 1,
-      changed: [],
-      coverage: [],
-    } as unknown as Awaited<ReturnType<typeof attackClient.runAttackAi>>);
+      run_id: "run-550",
+      status: "running",
+      serves: "offline",
+      deadline_at: "2026-10-01T12:45:00Z",
+      lock_until: "2026-10-01T12:50:00Z",
+      joined: false,
+    });
+    vi.mocked(attackClient.fetchAttackRun).mockResolvedValueOnce({
+      id: "run-550",
+      status: "completed",
+      result: { tools_available: 1, changed: [], coverage: [] },
+    } as unknown as Awaited<ReturnType<typeof attackClient.fetchAttackRun>>);
     vi.mocked(attackClient.fetchLatestAssessment)
       .mockResolvedValueOnce(draft())
       .mockRejectedValueOnce(OUTCOME_UNKNOWN);

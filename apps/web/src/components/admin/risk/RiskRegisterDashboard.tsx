@@ -458,13 +458,15 @@ export function RiskRegisterDashboard(): JSX.Element {
           {/* Issue 2: risk_synthesize is an AI job — warn before producing
               canned output when no key is loaded. */}
           <RunAiGuard onProceed={() => void onGenerate()}>
-            {({ onClick }) => (
+            {({ onClick, statusUnknown }) => (
               <button
                 type="button"
                 onClick={onClick}
                 // #556: a stale ATT&CK input's only outcome is the 409 the
                 // banner above already explains, so the button is not offered.
-                disabled={busy !== null || catalogMismatch !== null}
+                disabled={
+                  busy !== null || catalogMismatch !== null || statusUnknown
+                }
                 className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:opacity-50"
               >
                 {busy === "generate"

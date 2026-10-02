@@ -17,11 +17,13 @@ analytics endpoint in place of scoring/gap.
 from __future__ import annotations
 
 import contextvars
+import functools
 import re
 import uuid
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Annotated, Any, NamedTuple
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -33,6 +35,17 @@ from app.ai.engine import get_job, run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
+from app.ai.runs import (
+    RUN_DEADLINE_EXCEEDED,
+    RunContext,
+    RunFailed,
+    Runner,
+    RunOutcome,
+    get_ai_run_runner,
+    refuse_while_running,
+    require_serves,
+    start_run,
+)
 from app.attack import release_readiness
 from app.attack.analytics import compute as compute_heatmap
 from app.attack.catalog import (
@@ -98,6 +111,7 @@ from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.user import User, UserRole
 from app.routes.artifacts import _storage_dep
 from app.routes.tech_debt import approved_membership_stale
+from app.schemas.ai_runs import AiRunStarted, RunAiRequest
 from app.schemas.attack import (
     AttackAiInputCapability,
     AttackAiInputDocument,
@@ -408,6 +422,7 @@ def create_assessment(
     db: Annotated[Session, Depends(get_db)],
 ) -> AttackAssessmentResponse:
     svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.ATTACK_COVERAGE)
+    refuse_while_running(db, svc.id)  # #645: the edit lock
     prior = _latest_assessment(db, svc.id)
     # Draft-exists guard (SPRINT_3 T1, ported from CSF T7): this route used to
     # mint a new version on EVERY call and pre-seed ~600 coverage rows per mint,
@@ -535,6 +550,8 @@ def patch_coverage(
             detail="Coverage row not found.",
         )
     a = db.get(AttackAssessment, row.assessment_id)
+    if a is not None:
+        refuse_while_running(db, a.service_id)  # #645: the edit lock
     if a is None or a.status in (
         AttackAssessmentStatus.APPROVED,
         AttackAssessmentStatus.RELEASED,
@@ -1472,6 +1489,13 @@ def build_attack_ai_request(db: Session, svc: Service, client: Client) -> Attack
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Create an assessment first."
         )
+    return _attack_ai_request_for(db, a, client)
+
+
+def _attack_ai_request_for(db: Session, a: AttackAssessment, client: Client) -> AttackAiRequest:
+    """The request for ONE assessment, named by id. The background job (#645)
+    re-loads the assessment its POST validated rather than "the latest": a
+    discard in between retires that one, and "latest" would then be another."""
     if a.status in (AttackAssessmentStatus.APPROVED, AttackAssessmentStatus.RELEASED):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="This assessment is locked."
@@ -1547,6 +1571,7 @@ def _run_mitre_map_batched(
     requested_by: uuid.UUID,
     service_id: uuid.UUID,
     client_id: uuid.UUID,
+    deadline_at: datetime,
 ) -> tuple[list[dict], int, int]:
     """Run mitre_map as concurrent batches. Returns (suggestions, total, failed).
 
@@ -1611,15 +1636,24 @@ def _run_mitre_map_batched(
     failed = 0
     first_error: Exception | None = None
 
-    with ThreadPoolExecutor(max_workers=_MITRE_MAX_WORKERS) as pool:
+    pool = ThreadPoolExecutor(max_workers=_MITRE_MAX_WORKERS)
+    # #645: the job's overall deadline. All batches are submitted up front, so
+    # there is no natural boundary to check it at; it is checked between
+    # results, and `as_completed` is given the time remaining so one hung
+    # provider stream cannot hold the run past it.
+    remaining = (deadline_at - utcnow()).total_seconds()
+    try:
         # Each worker runs inside a COPY of the request's context. A pool thread
         # starts with an empty one, so `correlation_id_var` read None there and
         # every `llm_calls` row a batch wrote lost the request's correlation id
         # -- measured 2026-09-23, 0 of 52 live mitre_map rows carried one. A
         # fresh copy per submit, because one Context cannot be entered by two
         # threads at once. `routes/risk.py` has the same runner and the same fix.
+        # The copy carries the run id too (#645), so each batch's row names its run.
         futures = [pool.submit(contextvars.copy_context().run, _one, b) for b in batches]
-        for fut in as_completed(futures):
+        for fut in as_completed(futures, timeout=max(remaining, 0)):
+            if utcnow() > deadline_at:
+                raise TimeoutError("past the run deadline")
             try:
                 data = fut.result()
             except Exception as exc:  # noqa: BLE001 - counted, not swallowed
@@ -1632,6 +1666,18 @@ def _run_mitre_map_batched(
                 )
                 continue
             suggestions.extend(t for t in (data.get("techniques") or []) if isinstance(t, dict))
+    except TimeoutError as exc:
+        # Batches not yet started are cancelled; one already inside a provider
+        # call cannot be, and is left to finish into its own `llm_calls` row.
+        pool.shutdown(wait=False, cancel_futures=True)
+        _log.error("mitre_map_deadline_exceeded", service_id=str(service_id))
+        raise RunFailed(
+            RUN_DEADLINE_EXCEEDED,
+            "This run did not finish within its time limit, so it was stopped and "
+            "nothing from it was applied. Run it again; if it repeats, the AI "
+            "provider is answering too slowly for a full ATT&CK run.",
+        ) from exc
+    pool.shutdown(wait=True)
 
     if failed == len(batches) and first_error is not None:
         # Nothing usable came back. Re-raise inside the boundary so the caller
@@ -1675,6 +1721,8 @@ def confirm_coverage_citations(
             detail="Coverage row not found.",
         )
     a = db.get(AttackAssessment, row.assessment_id)
+    if a is not None:
+        refuse_while_running(db, a.service_id)  # #645: the edit lock
     if a is None or a.status in (
         AttackAssessmentStatus.APPROVED,
         AttackAssessmentStatus.RELEASED,
@@ -1750,8 +1798,9 @@ def confirm_coverage_citations(
 
 @router.post(
     "/services/{service_id}/run-ai",
-    response_model=AttackRunAiResponse,
-    summary="Run the mitre_map AI job: suggest coverage + D/P/R per technique (admin)",
+    response_model=AiRunStarted,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Start the mitre_map AI job in the background; poll the run it returns (admin)",
 )
 def run_ai(
     service_id: uuid.UUID,
@@ -1759,20 +1808,101 @@ def run_ai(
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],
     llm: Annotated[LLMClient, Depends(_llm_dep)],
+    runner: Annotated[Runner, Depends(get_ai_run_runner)],
     _rl: Annotated[None, Depends(enforce_ai_rate_limit)],
-) -> AttackRunAiResponse:
+    body: RunAiRequest | None = None,
+) -> AiRunStarted:
     """The ATT&CK 'Run AI'. Suggests coverage status + which listed tools provide
     Detection / Prevention / Response per technique, validating every cited tool
     against the client's capability list. AI suggests; locked rows are left
-    untouched; code computes coverage % elsewhere. Returns a 'what changed' list.
+    untouched; code computes coverage % elsewhere.
+
+    #645: answers 202 with a run to poll. Every refusal that needs no AI is made
+    HERE, synchronously, with the status and reason it always had; the work is
+    `_attack_run_work`, in the background (`app/ai/runs.py`).
     """
+    serves = require_serves(body.serves if body else None)
     svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.ATTACK_COVERAGE)
     req = build_attack_ai_request(db, svc, client)
-    a, rows, locked_keys = (
-        req.assessment,
-        req.rows,
-        req.locked_keys,
+    _refuse_without_capabilities(req, svc_id=svc.id, client_id=client.id)
+    return start_run(
+        db,
+        llm=llm,
+        serves=serves,
+        service_id=svc.id,
+        client_id=client.id,
+        purpose=req.preview.job_name,
+        subject_id=req.assessment.id,
+        requested_by=user.id,
+        runner=runner,
+        work=functools.partial(_attack_run_work, assessment_id=req.assessment.id),
     )
+
+
+def _refuse_without_capabilities(
+    req: AttackAiRequest, *, svc_id: uuid.UUID, client_id: uuid.UUID
+) -> None:
+    """An empty allow-list cannot produce an assessment -- only a fabricated one.
+
+    `valid_tools` is a HARD allow-list (see `_client_tool_names`): a tool that
+    is not in it cannot be cited, so with zero tools every technique can only
+    come back uncovered no matter what the client actually runs.
+
+    This is not hypothetical. A live run on 2026-08-07 with tools_available=0
+    wrote 607 `gap` + 26 `not_applicable` across all 633 techniques, billed for
+    the call, and left a releasable assessment stating a catastrophic security
+    posture that was an artifact of missing input. The audit row recorded
+    `tools_available: 0`, so the system knew; the only disclosure was a
+    post-run sentence, after the money was spent and the rows were written.
+
+    Refuse before spending anything, and name the actual remedy -- the usual
+    cause is that the Tech Debt work was done under a DIFFERENT client, and
+    tenant isolation (correctly) will not reach across for it.
+    """
+    if req.preview.inputs["capability_list"]:
+        return
+    _log.warning(
+        "attack.run_ai.refused_no_capabilities",
+        service_id=str(svc_id),
+        client_id=str(client_id),
+    )
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "reason": "no_security_capabilities",
+            "message": (
+                "This client has no security capabilities to map against, so "
+                "every technique would be reported as a gap regardless of what "
+                "the client actually runs. Complete this client's Tech Debt "
+                "capability list first — if you already did, check it was done "
+                "under this client and not another one."
+            ),
+        },
+    )
+
+
+def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID) -> RunOutcome:
+    """The mitre_map run, in the background job's own session (#645).
+
+    Re-loads everything by id: the request's ORM objects belong to a session
+    that closed when the 202 was sent. A refusal here is not an HTTP answer to
+    anyone -- the framework turns it into the run's FAILED state with the same
+    typed reason.
+    """
+    db = session
+    a = db.get(AttackAssessment, assessment_id)
+    if a is None or a.status in (
+        AttackAssessmentStatus.DISCARDED,
+        AttackAssessmentStatus.APPROVED,
+        AttackAssessmentStatus.RELEASED,
+    ):
+        raise RunFailed(
+            "assessment_not_editable",
+            "This assessment was discarded or locked before the run started.",
+        )
+    client = db.get(Client, ctx.client_id)
+    req = _attack_ai_request_for(db, a, client)
+    rows = req.rows
     # `req.valid_tools` is no longer consulted: the resolver owns matching now,
     # and an exact-match frozenset beside it would be a second, laxer answer to
     # the same question. The field stays on the request because the preview
@@ -1803,40 +1933,7 @@ def run_ai(
     unresolved_fields_seen: list[str] = []
     tools = req.preview.inputs["capability_list"]
 
-    # An empty allow-list cannot produce an assessment — only a fabricated one.
-    # `valid_tools` is a HARD allow-list (see `_client_tool_names`): a tool that
-    # is not in it cannot be cited, so with zero tools every technique can only
-    # come back uncovered no matter what the client actually runs.
-    #
-    # This is not hypothetical. A live run on 2026-08-07 with tools_available=0
-    # wrote 607 `gap` + 26 `not_applicable` across all 633 techniques, billed for
-    # the call, and left a releasable assessment stating a catastrophic security
-    # posture that was an artifact of missing input. The audit row recorded
-    # `tools_available: 0`, so the system knew; the only disclosure was a
-    # post-run sentence, after the money was spent and the rows were written.
-    #
-    # Refuse before spending anything, and name the actual remedy — the usual
-    # cause is that the Tech Debt work was done under a DIFFERENT client, and
-    # tenant isolation (correctly) will not reach across for it.
-    if not tools:
-        _log.warning(
-            "attack.run_ai.refused_no_capabilities",
-            service_id=str(svc.id),
-            client_id=str(client.id),
-        )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "reason": "no_security_capabilities",
-                "message": (
-                    "This client has no security capabilities to map against, so "
-                    "every technique would be reported as a gap regardless of what "
-                    "the client actually runs. Complete this client's Tech Debt "
-                    "capability list first — if you already did, check it was done "
-                    "under this client and not another one."
-                ),
-            },
-        )
+    _refuse_without_capabilities(req, svc_id=ctx.service_id, client_id=ctx.client_id)
 
     def _snap() -> dict[str, dict]:
         return {
@@ -1851,16 +1948,31 @@ def run_ai(
             for code, r in rows.items()
         }
 
-    before = _snap()
     suggestions, batches_total, batches_failed = _run_mitre_map_batched(
         db,
-        llm,
+        ctx.llm,
         req,
-        requested_by=user.id,
-        service_id=svc.id,
-        client_id=client.id,
+        requested_by=ctx.requested_by,
+        service_id=ctx.service_id,
+        client_id=ctx.client_id,
+        deadline_at=ctx.deadline_at,
     )
     result = _BatchedResult(data={"techniques": suggestions})
+    # The snapshot is taken AFTER the provider calls, from the database as it
+    # is now: a row edited while the batches ran (an edit that checked the lock
+    # before this run existed) must be seen as edited, and the rows above were
+    # loaded before the calls. `expire_all` makes the next read go to the
+    # database. Nothing is pending: the batches wrote in their own sessions.
+    db.expire_all()
+    # The PRE-WRITE stamps. `onupdate=utcnow` stamps every row this job writes,
+    # so read after its own flush every row would look edited.
+    edited_since_start = {code for code, r in rows.items() if ctx.edited_since_start(r.updated_at)}
+    locked_keys = frozenset(code for code, r in rows.items() if r.locked)
+    before = _snap()
+    # Distinct ROWS, not suggestions: a model may suggest one technique twice.
+    skipped_codes: set[str] = set()
+    # Distinct rows written. A set, because a model may suggest one technique twice.
+    applied_codes: set[str] = set()
 
     def _validate_tools(names: object, field: str, row_flags: list[dict]) -> list[str]:
         """Resolve the cited names against the allow-list, and ACCOUNT for each.
@@ -1958,6 +2070,11 @@ def run_ai(
             continue
         row = rows.get(sugg.get("technique_code"))
         if row is None or row.locked:
+            continue
+        if row.technique_code in edited_since_start:
+            # #645: a consultant's edit that landed after this run started is
+            # kept, never overwritten, and counted so the workspace says so.
+            skipped_codes.add(row.technique_code)
             continue
         st = sugg.get("status")
         offered = sugg.get("reason_code")
@@ -2103,8 +2220,9 @@ def run_ai(
             row.unconfirmed_citations = merged
         if isinstance(sugg.get("rationale"), str):
             row.rationale = sugg["rationale"]
-        row.answered_by = user.id
+        row.answered_by = ctx.requested_by
         row.answered_at = utcnow()
+        applied_codes.add(row.technique_code)
 
     # #554 (D-094): every parent recomputed from the children this run wrote,
     # before the snapshot, so the run's own diff shows what the rule changed. A
@@ -2148,22 +2266,27 @@ def run_ai(
     # this same re-read and reported values applied for transactions that then
     # rolled back.
     pending = attack_pending_codes(rows.values(), parents_computed=parents_computed(a))
-    _log.info(
+    # Emitted by the framework only after the completion commit (#645), or as
+    # `.voided` when the compare-and-swap misses. See `RunOutcome.accounting`.
+    accounting = (
         "attack.run_ai.citations_resolved",
-        service_id=str(svc.id),
-        confirmed=citations.confirmed,
-        needs_review=citations.needs_review,
-        rejected=citations.rejected,
-        unusable=citations.unusable,
-        pending_review_rows=len(pending),
+        {
+            "service_id": str(ctx.service_id),
+            "confirmed": citations.confirmed,
+            "needs_review": citations.needs_review,
+            "rejected": citations.rejected,
+            "unusable": citations.unusable,
+            "pending_review_rows": len(pending),
+        },
     )
     audit(
         db,
         action="attack.run_ai",
         target_type="attack_assessment",
         target_id=a.id,
-        actor_user_id=user.id,
+        actor_user_id=ctx.requested_by,
         details={
+            "run_id": str(ctx.run_id),
             "tools_available": len(tools),
             "changed_rows": len(diffs),
             # #102. The audit row is where "why did coverage drop" gets answered
@@ -2186,15 +2309,15 @@ def run_ai(
             "parent_suggestions_refused": parent_suggestions_refused,
             "parents_recomputed": parents_recomputed,
             "parents_unlocked": parents_unlocked,
+            "rows_skipped_edited": len(skipped_codes),
         },
     )
-    db.commit()
-
-    coverage = _serialize_coverage(rows.values(), parents_computed=parents_computed(a))
-    return AttackRunAiResponse(
+    # No commit: the framework commits this apply together with the
+    # compare-and-swap that marks the run COMPLETED, or rolls both back.
+    result_payload = AttackRunAiResponse(
         tools_available=len(tools),
         changed=changes,
-        coverage=coverage,
+        coverage=_serialize_coverage(rows.values(), parents_computed=parents_computed(a)),
         batches_total=batches_total,
         batches_failed=batches_failed,
         citations_confirmed=citations.confirmed,
@@ -2209,6 +2332,14 @@ def run_ai(
         rows_left_unresolved=rows_left_unresolved,
         unresolved_fields=list(unresolved_fields_seen),
         pending_review_rows=len(pending),
+        rows_skipped_edited=len(skipped_codes),
+    )
+    return RunOutcome(
+        result=result_payload.model_dump(mode="json"),
+        applied_count=len(applied_codes),
+        batches_total=batches_total,
+        batches_failed=batches_failed,
+        accounting=accounting,
     )
 
 
@@ -2224,6 +2355,8 @@ def approve_assessment(
     db: Annotated[Session, Depends(get_db)],
 ) -> AttackAssessmentResponse:
     a = require_attack_assessment_in_tenant(db, assessment_id, client.id)
+    # #645: approving mid-run would approve rows about to change.
+    refuse_while_running(db, a.service_id)
     if a.status == AttackAssessmentStatus.APPROVED:
         return _serialize_assessment(db, a)
     if a.status == AttackAssessmentStatus.RELEASED:
@@ -2867,6 +3000,7 @@ def finalize_attack_deliverable(
     storage: Annotated[StorageBackend, Depends(_storage_dep)],
 ) -> DeliverableResponse:
     svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.ATTACK_COVERAGE)
+    refuse_while_running(db, svc.id)  # #645: the edit lock
     assessment = _latest_assessment(db, svc.id)
     if assessment is None:
         raise HTTPException(

@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.models.capability import CapabilityItem, CapabilityList
 from app.storage.local import LocalFilesystemStorage
+from tests._ai_runs import tech_debt_extract
 
 
 @pytest.fixture()
@@ -149,13 +150,7 @@ def _world(app_client) -> World:
     svc_id = c.post("/tech-debt/services", headers=h, json={"title": "Portfolio"}).json()["id"]
     art = c.post("/artifacts", headers=h, files={"file": ("inv.csv", io.BytesIO(_CSV), "text/csv")})
     assert art.status_code == 201, art.text
-    r = c.post(
-        f"/tech-debt/services/{svc_id}/capability-lists/extract",
-        headers=h,
-        json={"artifact_id": art.json()["id"]},
-    )
-    assert r.status_code == 201, r.text
-    body = r.json()
+    body = tech_debt_extract(c, svc_id, h, art.json()["id"])
     assert [e["index"] for e in body["excluded_rows"]] == [1, 3], body["excluded_rows"]
     by_name = {i["name"]: i["id"] for i in body["items"]}
     return World(
@@ -561,11 +556,7 @@ def test_the_backfill_reads_an_approved_list_as_current_and_a_draft_as_not(
     art = w.c.post(
         "/artifacts", headers=w.h, files={"file": ("d.csv", io.BytesIO(_CSV), "text/csv")}
     )
-    draft = w.c.post(
-        f"/tech-debt/services/{draft_svc}/capability-lists/extract",
-        headers=w.h,
-        json={"artifact_id": art.json()["id"]},
-    ).json()["id"]
+    draft = tech_debt_extract(w.c, draft_svc, w.h, art.json()["id"])["id"]
 
     url = os.environ["DATABASE_URL"]
     cfg = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))

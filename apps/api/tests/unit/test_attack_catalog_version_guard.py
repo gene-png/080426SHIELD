@@ -149,7 +149,9 @@ def test_an_unrecorded_catalog_refuses_heatmap_patch_and_run_ai(env) -> None:
     # check (D-094).
     row = first_standalone(a["coverage"])["id"]
     _refused(c.patch(f"/attack/coverage/{row}", headers=_auth(bearer), json={"status": "covered"}))
-    _refused(c.post(f"/attack/services/{svc}/run-ai", headers=_auth(bearer)))
+    _refused(
+        c.post(f"/attack/services/{svc}/run-ai", headers=_auth(bearer), json={"serves": "offline"})
+    )
     # Checked BEFORE the route's own `nothing_to_confirm`, so the reason says which.
     _refused(c.post(f"/attack/coverage/{row}/confirm-citations", headers=_auth(bearer)))
 

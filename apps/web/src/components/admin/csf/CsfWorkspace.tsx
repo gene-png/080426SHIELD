@@ -165,6 +165,9 @@ export function CsfWorkspace({
   // panel, because this page unmounts the panel whenever there is no
   // assessment (review of #752, finding 2).
   const [runOutcomeUnknown, setRunOutcomeUnknown] = React.useState(false);
+  // #645: a Run AI in progress, as the Playbook panel (which follows it)
+  // reports. Approve is rendered here, outside the panel, and must lock too.
+  const [runInProgress, setRunInProgress] = React.useState(false);
   const [busy, setBusy] = React.useState<
     "create" | "approve" | "discard" | null
   >(null);
@@ -692,6 +695,8 @@ export function CsfWorkspace({
               readOnly={readOnly}
               runOutcomeUnknown={runOutcomeUnknown}
               onRunOutcomeUnknown={() => setRunOutcomeUnknown(true)}
+              assessmentId={assessment.id}
+              onRunInProgressChange={setRunInProgress}
             />
           </WorkflowStep>
 
@@ -730,6 +735,8 @@ export function CsfWorkspace({
               onClick={() => void onApprove()}
               disabled={
                 busy !== null ||
+                // #645: approving mid-run would approve rows about to change.
+                runInProgress ||
                 (assessment.status !== "draft" &&
                   assessment.status !== "submitted")
               }

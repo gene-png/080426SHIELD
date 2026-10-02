@@ -43,6 +43,12 @@ vi.mock("@/lib/zt/client", () => ({
   discardAssessment: vi.fn(),
   patchAnswer: vi.fn(),
   runZtAi: vi.fn(),
+  // #645: the workspace reads the service's runs on load and polls one it
+  // follows. No run, by default.
+  fetchZtRun: vi.fn(),
+  fetchZtRunSummary: vi.fn(() =>
+    Promise.resolve({ running: null, latest: null, last_completed: null }),
+  ),
   finalizeZtDeliverable: vi.fn(),
   releaseZtDeliverable: vi.fn(),
 }));

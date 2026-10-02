@@ -43,6 +43,12 @@ vi.mock("@/lib/csf/client", () => ({
   fetchEnterpriseProfile: vi.fn(),
   seedProfiles: vi.fn(),
   runCsfAi: vi.fn(),
+  // #645: the page reads the service's runs on load and polls one it
+  // follows. No run, by default.
+  fetchCsfRun: vi.fn(),
+  fetchCsfRunSummary: vi.fn(() =>
+    Promise.resolve({ running: null, latest: null, last_completed: null }),
+  ),
   exportPlaybook: vi.fn(),
 }));
 vi.mock("@/lib/stages/client", () => ({
@@ -238,7 +244,20 @@ describe("CsfWorkspace, a Run AI whose outcome is unknown (#550)", () => {
   it("does not lock Run AI when the RUN succeeded and only the re-read after it got no answer", async () => {
     // Review of #752, finding 1: `runCsfAi` answered; the panel's reload of
     // the enterprise profile after it did not. That is the reload's error.
-    vi.mocked(csfClient.runCsfAi).mockResolvedValueOnce(RUN_RESULT);
+    // #645: the POST answered with a run, and the run completed.
+    vi.mocked(csfClient.runCsfAi).mockResolvedValueOnce({
+      run_id: "run-550",
+      status: "running",
+      serves: "offline",
+      deadline_at: "2026-10-01T12:45:00Z",
+      lock_until: "2026-10-01T12:50:00Z",
+      joined: false,
+    });
+    vi.mocked(csfClient.fetchCsfRun).mockResolvedValueOnce({
+      id: "run-550",
+      status: "completed",
+      result: RUN_RESULT,
+    } as unknown as Awaited<ReturnType<typeof csfClient.fetchCsfRun>>);
     vi.mocked(csfClient.fetchEnterpriseProfile)
       .mockResolvedValueOnce(ENTERPRISE)
       .mockRejectedValueOnce(OUTCOME_UNKNOWN);
