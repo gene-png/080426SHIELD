@@ -540,6 +540,9 @@ def _seed_tech_debt(db: Session, storage: StorageBackend, admin: User, org: Clie
         # "generated before the list was last approved", which is false.
         revision=0,
         approved_revision=0,
+        # #177: `attribution_complete` is left NULL ("not recorded"), and that is
+        # the truth here -- this list was built by hand, not by an extraction,
+        # so no reconciliation exists (`source_rows_total` is NULL too).
     )
     db.add(cap_list)
     db.flush()

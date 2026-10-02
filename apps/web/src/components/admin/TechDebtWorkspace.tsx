@@ -78,6 +78,29 @@ export interface TechDebtWorkspaceProps {
   serviceTitle: string;
 }
 
+/**
+ * #177/#193: whether the list's excluded count is unknown, from the api's one
+ * reader (`exclusion_count_state`). Absent reads as unknown when a
+ * reconciliation is on record: never as exact by default.
+ */
+function exclusionUnknown(list: CapabilityList): boolean {
+  if (typeof list.source_rows_total !== "number") return false;
+  return list.exclusion_count_state !== "exact";
+}
+
+/** "N rows received · M included · K excluded", or, when the count is
+ *  unknown, "… · excluded count unknown (at least K)" -- K is a floor then. */
+function reconciliationHeading(list: CapabilityList): string {
+  const received = list.source_rows_total ?? 0;
+  const included = list.items.filter((i) => !i.parent_item_id).length;
+  const floor = Math.max(received - included, 0);
+  const head = `${received} rows received · ${included} included · `;
+  if (exclusionUnknown(list)) {
+    return `${head}excluded count unknown${floor > 0 ? ` (at least ${floor})` : ""}`;
+  }
+  return `${head}${floor} excluded`;
+}
+
 export function TechDebtWorkspace({
   serviceId,
   serviceTitle,
@@ -838,26 +861,23 @@ Components carry no cost of their own — this licence keeps its full value.`,
               it. The count is `received - source-derived items` and is exact in
               both regimes; the exporter derives it the same way. */}
             {typeof list.source_rows_total === "number" &&
-            list.source_rows_total -
-              list.items.filter((i) => !i.parent_item_id).length >
-              0 ? (
+            (exclusionUnknown(list) ||
+              list.source_rows_total -
+                list.items.filter((i) => !i.parent_item_id).length >
+                0) ? (
               <div
                 className="rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm"
                 role="status"
                 aria-label="Extraction reconciliation"
               >
                 <p className="font-semibold text-status-warning-fg">
-                  {list.source_rows_total} rows received ·{" "}
-                  {list.items.filter((i) => !i.parent_item_id).length} included
-                  ·{" "}
-                  {list.source_rows_total -
-                    list.items.filter((i) => !i.parent_item_id).length}{" "}
-                  excluded
+                  {reconciliationHeading(list)}
                 </p>
-                {(list.excluded_rows?.length ?? 0) === 0 ? (
+                {exclusionUnknown(list) ? (
                   <p className="mt-1 text-ink-secondary">
-                    The excluded rows were not attributed individually, so they
-                    cannot be listed below. The count above is exact.
+                    The AI could not match every extracted capability to one
+                    uploaded row, so the excluded rows cannot be listed and how
+                    many there were is not known exactly.
                   </p>
                 ) : null}
                 <p className="mt-1 text-ink-secondary">

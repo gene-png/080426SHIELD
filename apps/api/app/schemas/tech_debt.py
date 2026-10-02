@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -137,6 +138,9 @@ class CapabilityListResponse(BaseModel):
     # #177: whether the extraction attributed every item to one uploaded row.
     # NULL is "not recorded" (pre-0058, or no extraction), never complete.
     attribution_complete: bool | None = None
+    # #177/#193: `reconcile.exclusion_count_state` -- whether the excluded count
+    # is exact or only a floor, from the one reader every surface calls.
+    exclusion_count_state: Literal["not_recorded", "exact", "unknown"] | None = None
 
     @field_validator("excluded_rows", mode="before")
     @classmethod

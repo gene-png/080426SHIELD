@@ -101,6 +101,7 @@ from app.schemas.clients import (
     ZtDashboardResponse,
     ZtPillarDashboard,
 )
+from app.tech_debt.reconcile import exclusion_count_state
 from app.zt.catalog import capability_by_code as zt_capability_by_code
 from app.zt.maturity import ZtFrameworkCode
 from app.zt.maturity import stage_label as zt_stage_label
@@ -1676,9 +1677,15 @@ def tech_debt_dashboard(
     # `getattr(cap_list, "source_rows_total", None) is not None`, already reads
     # NULL here as un-analysed and calls that the conservative direction; this
     # agrees with it rather than contradicting it.
+    # #177/#193: THE ONE READER, as the deliverable and the admin list call it.
+    # "exact" licenses `excluded_count` as the count; "unknown" makes it a
+    # FLOOR, and never "complete".
+    exclusion_state = exclusion_count_state(cl)
     if source_rows_total is None:
         spend_completeness = "unknown"
-    elif excluded_count or not spend_cost_known:
+    elif excluded_count or not spend_cost_known or exclusion_state == "unknown":
+        # An unknown exclusion count is never "complete": a row may have been
+        # excluded that the arithmetic floors to zero (#193).
         spend_completeness = "partial"
     elif included_count > source_rows_total:
         # THE UNBALANCED CASE, and it must not reach "complete".
@@ -1718,6 +1725,7 @@ def tech_debt_dashboard(
         annual_spend_usd=round(annual_spend, 2),
         identified_savings_usd=round(savings, 2),
         savings_cost_known=savings_cost_known,
+        excluded_count_exact=exclusion_state == "exact",
         spend_completeness=spend_completeness,
         source_rows_total=source_rows_total,
         included_count=included_count,

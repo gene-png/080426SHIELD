@@ -100,6 +100,7 @@ from app.tech_debt.filename import (
 )
 from app.tech_debt.overlap import analyze_overlap
 from app.tech_debt.parsers import SUPPORTED_MIME, UnsupportedInventoryFormat
+from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.security_scope import security_scope_filter
 from app.tenant import (
     require_artifact_in_tenant,
@@ -325,6 +326,8 @@ def _serialize_list_with_items(db: Session, cap_list: CapabilityList) -> Capabil
     resp = CapabilityListResponse.model_validate(cap_list, from_attributes=True)
     resp.items = [CapabilityItemResponse.model_validate(i, from_attributes=True) for i in items]
     resp.approved_membership_stale = approved_membership_stale(db, cap_list)
+    # #177/#193: the one reader, as the deliverable and the dashboard call it.
+    resp.exclusion_count_state = exclusion_count_state(cap_list)
     return resp
 
 

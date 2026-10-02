@@ -36,6 +36,9 @@ function data(over: Partial<TechDebtDashboardData>): TechDebtDashboardData {
     // to the renderer, not states the API can actually emit. Said out loud so
     // nobody reads a passing case as proof the backend can produce it.
     included_count: 10,
+    // #177/#193 (Batch E): the count is exact unless a case says otherwise --
+    // the world every case below was written for. Not under test here.
+    excluded_count_exact: true,
     ...over,
   } as TechDebtDashboardData;
 }
@@ -102,17 +105,21 @@ describe("spendSub, the fourth state", () => {
     // The API reports "partial" for this state with `excluded_count` floored to
     // 0 and every cost present. Rendering "some tools lacked a cost" here is a
     // checkable falsehood -- the client goes looking for an uncosted tool and
-    // finds none. This is the one branch a three-valued label cannot express,
-    // so the renderer recovers it from the two counts.
+    // finds none. Since 0058 (#193) the API also reports the count as not
+    // exact for it (`test_an_unbalanced_list_is_never_exact`), so it reads as
+    // the unknown-count state.
     const out = spendSub(
       data({
         spend_completeness: "partial",
         excluded_count: 0,
+        excluded_count_exact: false,
         source_rows_total: 30,
         included_count: 31,
       }),
     );
-    expect(out).toBe("Floor - upload does not reconcile");
+    expect(out).toBe(
+      "May not be complete - excluded rows could not be counted",
+    );
     expect(out).not.toContain("lacked a cost");
   });
 

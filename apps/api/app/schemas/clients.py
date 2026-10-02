@@ -525,6 +525,10 @@ class TechDebtDashboardResponse(BaseModel):
     source_rows_total: int | None = None
     included_count: int = 0
     excluded_count: int = 0
+    # #177/#193: True only when the extraction attributed every item to one
+    # uploaded row, so `excluded_count` is the count. False makes it a FLOOR
+    # (the true count may be higher, and is unknown); the client is told so.
+    excluded_count_exact: bool
     redundant_category_count: int
     spend_by_category: list[TechDebtCategorySpend]
     sprawl_by_category: list[TechDebtCategorySpend]

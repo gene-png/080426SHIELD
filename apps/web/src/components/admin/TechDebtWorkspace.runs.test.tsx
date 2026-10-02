@@ -327,3 +327,62 @@ describe("TechDebtWorkspace, a re-read failing after a completed run (#645, #752
     await waitFor(() => expect(m.extract).toHaveBeenCalledTimes(2));
   });
 });
+
+describe("TechDebtWorkspace, an unknown exclusion count (#193)", () => {
+  function reconciled(over: Partial<CapabilityList>): CapabilityList {
+    return {
+      ...list(),
+      source_rows_total: 3,
+      items: [
+        { id: "i1", name: "Wiz" },
+        { id: "i2", name: "Wiz CNAPP" },
+        { id: "i3", name: "Splunk" },
+      ],
+      excluded_rows: [],
+      ...over,
+    } as unknown as CapabilityList;
+  }
+
+  it("says so even when the floor is zero, and never calls it exact", async () => {
+    m.fetchLatestList.mockResolvedValue(
+      reconciled({ exclusion_count_state: "unknown" }),
+    );
+    render(<TechDebtWorkspace serviceId="svc-1" serviceTitle="Atlas TD" />);
+    const box = await screen.findByRole("status", {
+      name: "Extraction reconciliation",
+    });
+    expect(box).toHaveTextContent(
+      "3 rows received · 3 included · excluded count unknown",
+    );
+    expect(box).toHaveTextContent(
+      "The AI could not match every extracted capability to one uploaded row, so the excluded rows cannot be listed and how many there were is not known exactly.",
+    );
+    expect(box).not.toHaveTextContent("exact.");
+  });
+
+  it("states the floor as a floor", async () => {
+    m.fetchLatestList.mockResolvedValue(
+      reconciled({
+        exclusion_count_state: "unknown",
+        items: [{ id: "i1", name: "Wiz" }],
+      } as Partial<CapabilityList>),
+    );
+    render(<TechDebtWorkspace serviceId="svc-1" serviceTitle="Atlas TD" />);
+    expect(
+      await screen.findByRole("status", { name: "Extraction reconciliation" }),
+    ).toHaveTextContent(
+      "3 rows received · 1 included · excluded count unknown (at least 2)",
+    );
+  });
+
+  it("shows nothing for an exact, clean list", async () => {
+    m.fetchLatestList.mockResolvedValue(
+      reconciled({ exclusion_count_state: "exact" }),
+    );
+    render(<TechDebtWorkspace serviceId="svc-1" serviceTitle="Atlas TD" />);
+    expect(await screen.findByText("Wiz CNAPP")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("status", { name: "Extraction reconciliation" }),
+    ).toBeNull();
+  });
+});

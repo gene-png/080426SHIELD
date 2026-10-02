@@ -120,9 +120,17 @@ def exclusion_count_state(cap_list: Any) -> ExclusionCountState:
       items outnumber rows, which is #193.
 
     NULL ``attribution_complete`` -- a list written before 0058 -- is NEVER read
-    as complete by default. One inference is sound: the writer filled
-    ``excluded_rows`` only when attribution was complete, so a NON-EMPTY list
-    proves it. An empty one proves nothing, and reads ``unknown``.
+    as complete by default. One inference is sound, and WHY is the writer:
+    ``reconcile_rows`` above builds ``excluded_rows`` only inside
+    ``if attribution_complete:`` (otherwise it stays ``[]``), and the
+    extraction job (``routes/tech_debt.py``, the ``CapabilityList(`` insert)
+    stores exactly that list, unchanged since migration 0036. So a NON-EMPTY
+    stored list could only have been written with attribution complete. An
+    empty one is what BOTH a clean run that excluded nothing and a failed
+    attribution wrote, so it proves nothing, and reads ``unknown``.
+    ``test_tech_debt_exclusion_count.py`` builds each pre-0058 state through
+    that writer and nulls the flag, rather than hand-building a combination
+    the writer could not produce.
     """
     if getattr(cap_list, "source_rows_total", None) is None:
         return "not_recorded"
