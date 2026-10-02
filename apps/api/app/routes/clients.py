@@ -47,6 +47,7 @@ from app.csf.scoring import compute as csf_compute
 from app.db.session import get_db
 from app.dependencies import current_client, current_user
 from app.logging import get_logger
+from app.mode_stamp import UNKNOWN_AI_MODE_REGISTER, ai_mode_for
 from app.models.artifact import Artifact
 from app.models.attack_assessment import (
     AttackAssessment,
@@ -1330,6 +1331,8 @@ def attack_dashboard(
         released=is_released,
         deliverable_version=deliv.version,
         parents_computed=True if rule else None,
+        # #646: the ONE derivation every surface calls, for the released assessment.
+        ai_source=ai_mode_for(db, svc, assessment).as_api(),
         rollup=AttackDashboardRollup(
             total_evaluated=sum(getattr(rollup, s.value) for s in ASSESSED),
             covered=rollup.covered,
@@ -1536,6 +1539,8 @@ def zt_dashboard(
         released_at=_dashboard_stamp(deliv, is_released),
         released=is_released,
         deliverable_version=deliv.version,
+        # #646: the ONE derivation every surface calls, for the released assessment.
+        ai_source=ai_mode_for(db, svc, assessment).as_api(),
         framework=fw.value,
         framework_label=_ZT_FRAMEWORK_LABELS.get(fw, fw.value),
         current_label=current.overall_stage_label,
@@ -1756,6 +1761,8 @@ def tech_debt_dashboard(
         released_at=_dashboard_stamp(deliv, is_released),
         released=is_released,
         deliverable_version=deliv.version,
+        # #646: the ONE derivation every surface calls, for the released list.
+        ai_source=ai_mode_for(db, svc, cl).as_api(),
         total_applications=len(items),
         annual_spend_usd=round(annual_spend, 2),
         identified_savings_usd=round(savings, 2),
@@ -1883,6 +1890,10 @@ def risk_dashboard(
         client_id=client.id,
         released_at=reg.finalized_at,
         version=reg.version,
+        # #646: "not recorded", deliberately -- nothing ties a register to the
+        # calls that drafted it until Risk runs through the run framework
+        # (#504). The register's own export says the same.
+        ai_source=UNKNOWN_AI_MODE_REGISTER.as_api(),
         # #330 TWIN, DELIBERATELY NOT FOLLOWED HERE -- and the reason is the ranking,
         # not the effort.
         #
@@ -2082,6 +2093,8 @@ def csf_dashboard(
         released_at=_dashboard_stamp(deliv, is_released),
         released=is_released,
         deliverable_version=deliv.version,
+        # #646: the ONE derivation every surface calls, for the released assessment.
+        ai_source=ai_mode_for(db, svc, assessment).as_api(),
         overall_label=score.overall_maturity_label,
         current_tier=score.average_tier,
         current_pct=(

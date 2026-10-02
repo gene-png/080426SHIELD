@@ -1,3 +1,5 @@
+import type { AiSource } from "@/lib/aiSource/types";
+
 /**
  * Client NIST CSF 2.0 dashboard — types + pure transforms.
  * Mirrors the backend `CsfDashboardResponse` (apps/api/app/schemas/clients.py).
@@ -35,6 +37,8 @@ export interface CsfGap {
 }
 
 export interface CsfDashboardData {
+  /** #646: which mode drafted the AI suggestions, as the API states it. */
+  ai_source: AiSource;
   service_id: string;
   service_title: string;
   released_at: string;

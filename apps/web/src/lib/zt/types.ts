@@ -1,3 +1,5 @@
+import type { AiSource } from "@/lib/aiSource/types";
+
 /** Wire types mirroring apps/api/app/schemas/zt.py. */
 
 export type ZtFramework = "cisa_ztmm_2_0" | "dod_ztra";
@@ -45,6 +47,8 @@ export interface ZtAnswer {
 }
 
 export interface ZtAssessment {
+  /** #646: which mode drafted the AI suggestions, as the API states it. */
+  ai_source: AiSource;
   id: string;
   service_id: string;
   framework: ZtFramework;

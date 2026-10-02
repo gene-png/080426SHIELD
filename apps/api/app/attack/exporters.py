@@ -38,6 +38,13 @@ from app.attack.retirement import (
 )
 from app.attack.rules import parents_computed
 from app.client_naming import org_display_name
+from app.mode_stamp import (
+    UNKNOWN_AI_MODE,
+    AiModeStamp,
+    add_docx_paragraph,
+    add_xlsx_sheet,
+    pdf_paragraph,
+)
 from app.models.attack_assessment import AttackAssessment, AttackCoverage
 
 if TYPE_CHECKING:
@@ -66,6 +73,10 @@ class AttackDeliverableContext:
     #: retires, read at finalize. `NO_PLAN` marks nothing, which is also what an
     #: assessment for a client with no approved Tech Debt list renders.
     retirement: RetirementIndex = NO_PLAN
+    #: #646: which mode drafted the AI suggestions behind this document. The
+    #: default is "not recorded", never live: a context built without a lookup
+    #: must not read as a clean one.
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE
 
 
 def build_context(
@@ -76,6 +87,7 @@ def build_context(
     coverage: Iterable[AttackCoverage],
     rollup: CoverageRollup,
     retirement: RetirementIndex = NO_PLAN,
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
 ) -> AttackDeliverableContext:
     rows = list(coverage)
     rule = parents_computed(assessment)
@@ -91,6 +103,7 @@ def build_context(
         pending_codes=attack_pending_codes(rows, parents_computed=rule),
         parents_computed=rule,
         retirement=retirement,
+        ai_mode=ai_mode,
     )
 
 
@@ -573,6 +586,7 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
         ws4.column_dimensions[get_column_letter(col)].width = w
 
     out = io.BytesIO()
+    add_xlsx_sheet(wb, ctx.ai_mode)  # #646: the LAST sheet
     wb.save(out)
     return out.getvalue()
 
@@ -596,6 +610,7 @@ def render_docx(ctx: AttackDeliverableContext) -> bytes:
     outside = states_outside_counts(ctx)
     doc = new_document(f"{ctx.service_title} — {ctx.client_legal_name}")
     add_title(doc, ctx.service_title, ctx.client_legal_name)
+    add_docx_paragraph(doc, ctx.ai_mode)  # #646, under the title
 
     add_heading(doc, "Coverage summary")
     add_paragraphs(
@@ -745,6 +760,7 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
     story: list = []
     story.append(Paragraph(ctx.service_title, h1))
     story.append(Paragraph(ctx.client_legal_name, body))
+    story.append(pdf_paragraph(ctx.ai_mode, body))  # #646, under the title
     story.append(Spacer(1, 0.2 * inch))
 
     story.append(Paragraph("Coverage summary", h2))

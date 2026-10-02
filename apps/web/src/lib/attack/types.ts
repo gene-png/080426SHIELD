@@ -1,3 +1,5 @@
+import type { AiSource } from "@/lib/aiSource/types";
+
 /** Wire types mirroring apps/api/app/schemas/attack.py. */
 
 /** Every status the API can store (#554). The two new ones are not WRITABLE
@@ -103,6 +105,8 @@ export interface UnconfirmedCitation {
 }
 
 export interface AttackAssessment {
+  /** #646: which mode drafted the AI suggestions, as the API states it. */
+  ai_source: AiSource;
   id: string;
   service_id: string;
   version: number;

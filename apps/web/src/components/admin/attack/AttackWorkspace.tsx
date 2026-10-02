@@ -59,6 +59,7 @@ import { ProgressStages } from "../ProgressStages";
 import { useServiceStages } from "@/lib/stages/client";
 import { useRefreshFailures } from "@/components/admin/useRefreshFailures";
 import { isUpstreamOutcomeUnknown } from "@/lib/describe-save-error";
+import { AiSourceNote } from "@/components/AiSourceNote";
 
 export interface AttackWorkspaceProps {
   serviceId: string;
@@ -803,6 +804,11 @@ export function AttackWorkspace({
                   gap. Read-only and not rate-limited, so it loads on mount. */}
               <AttackAiInputsPanel serviceId={serviceId} />
               <AiRunStatus run={aiRun} />
+              {/* #646: the assessment's AI source, from the derivation the
+                  deliverable and the client dashboard call. */}
+              {assessment ? (
+                <AiSourceNote source={assessment.ai_source} />
+              ) : null}
               <LastRunNote run={aiRun.lastCompleted} />
               {runResult ? (
                 <p className="text-sm text-ink-secondary" aria-live="polite">

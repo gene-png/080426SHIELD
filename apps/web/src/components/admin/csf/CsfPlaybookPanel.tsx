@@ -62,6 +62,10 @@ export interface CsfPlaybookPanelProps {
    * workspace can lock Approve, which it renders outside this panel.
    */
   onRunInProgressChange?: (running: boolean) => void;
+  /** #646: called when a run this panel follows COMPLETES, so the workspace
+   *  can re-read what the run changed outside these rows (the assessment's AI
+   *  source). */
+  onRunCompleted?: () => void;
 }
 
 /**
@@ -463,6 +467,7 @@ export function CsfPlaybookPanel({
   onRunOutcomeUnknown,
   assessmentId,
   onRunInProgressChange,
+  onRunCompleted,
 }: CsfPlaybookPanelProps): JSX.Element {
   const [enterprise, setEnterprise] = React.useState<EnterpriseProfile | null>(
     null,
@@ -526,9 +531,10 @@ export function CsfPlaybookPanel({
   const onRunFinishedElsewhere = React.useCallback(
     (run: { status: string }) => {
       if (run.status !== "completed") return;
+      onRunCompleted?.();
       reload().catch((err: unknown) => setError(describeError(err)));
     },
-    [reload],
+    [reload, onRunCompleted],
   );
   const aiRun = useAiRun<CsfRunAiResponse>({
     serviceId,
@@ -575,6 +581,7 @@ export function CsfPlaybookPanel({
       const finished = await aiRun.follow(started);
       // A failed run applied nothing; `AiRunStatus` says why.
       if (finished.status !== "completed") return;
+      onRunCompleted?.();
       try {
         await reload();
       } catch (err) {

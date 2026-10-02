@@ -27,6 +27,13 @@ from app.csf.catalog import FUNCTIONS, SUBCATEGORIES, FunctionCode, Subcategory
 from app.csf.gap import GapAnalysis
 from app.csf.maturity import tier_label
 from app.csf.scoring import ScoreResult
+from app.mode_stamp import (
+    UNKNOWN_AI_MODE,
+    AiModeStamp,
+    add_docx_paragraph,
+    add_xlsx_sheet,
+    pdf_paragraph,
+)
 
 if TYPE_CHECKING:
     from reportlab.platypus import TableStyle
@@ -44,6 +51,10 @@ class CsfDeliverableContext:
     answers: list[CsfAnswer]
     score: ScoreResult
     gap: GapAnalysis
+    #: #646: which mode drafted the AI suggestions behind this document. The
+    #: default is "not recorded", never live: a context built without a lookup
+    #: must not read as a clean one.
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE
 
 
 def build_context(
@@ -54,8 +65,10 @@ def build_context(
     answers: Iterable[CsfAnswer],
     score: ScoreResult,
     gap: GapAnalysis,
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
 ) -> CsfDeliverableContext:
     return CsfDeliverableContext(
+        ai_mode=ai_mode,
         client_legal_name=org_display_name(client_legal_name),
         service_title=service_title,
         assessment=assessment,
@@ -274,6 +287,7 @@ def render_xlsx(ctx: CsfDeliverableContext) -> bytes:
         ws3.column_dimensions[get_column_letter(col)].width = w
 
     out = io.BytesIO()
+    add_xlsx_sheet(wb, ctx.ai_mode)  # #646: the LAST sheet
     wb.save(out)
     return out.getvalue()
 
@@ -296,6 +310,7 @@ def render_docx(ctx: CsfDeliverableContext) -> bytes:
 
     doc = new_document(f"{ctx.service_title} — {ctx.client_legal_name}")
     add_title(doc, ctx.service_title, ctx.client_legal_name)
+    add_docx_paragraph(doc, ctx.ai_mode)  # #646, under the title
 
     add_heading(doc, "Maturity summary")
     add_paragraphs(
@@ -380,6 +395,7 @@ def render_pdf(ctx: CsfDeliverableContext) -> bytes:
     story: list = []
     story.append(Paragraph(ctx.service_title, h1))
     story.append(Paragraph(ctx.client_legal_name, body))
+    story.append(pdf_paragraph(ctx.ai_mode, body))  # #646, under the title
     story.append(Spacer(1, 0.2 * inch))
 
     story.append(Paragraph("Maturity summary", h2))

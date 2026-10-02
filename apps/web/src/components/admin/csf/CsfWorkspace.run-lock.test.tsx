@@ -98,6 +98,14 @@ function draft(): CsfAssessment {
     answers: [],
     client_target_tier: 3,
     documents_stale: false,
+    // #646 (Batch F): required since; not under test here. A fresh
+    // draft with no completed run on load: "none", its true state.
+    ai_source: {
+      state: "none",
+      sentence: "No AI suggestions were used in this assessment.",
+      live_runs: 0,
+      fixture_runs: 0,
+    },
   } as unknown as CsfAssessment;
 }
 
@@ -175,5 +183,51 @@ describe("CsfWorkspace locks Approve while a Run AI is in progress (#645)", () =
     expect(
       await screen.findByRole("button", { name: "Approve" }),
     ).toBeEnabled();
+  });
+});
+
+describe("CsfWorkspace re-reads the assessment's AI source when a run ends (#646)", () => {
+  it("shows the source the run left, not the one read on load", async () => {
+    const fixture = {
+      ...draft(),
+      ai_source: {
+        state: "fixture",
+        sentence:
+          "OFFLINE TEST DATA: every AI suggestion in this assessment came from built-in test data, not a live AI model. Treat AI-drafted values as placeholders, not analysis.",
+        live_runs: 0,
+        fixture_runs: 1,
+      },
+    } as unknown as CsfAssessment;
+    vi.mocked(csfClient.fetchLatestAssessment)
+      .mockResolvedValueOnce(draft())
+      .mockResolvedValue(fixture);
+    vi.mocked(csfClient.fetchCsfRunSummary).mockResolvedValue({
+      running: RUNNING,
+      latest: RUNNING,
+      last_completed: null,
+    } as never);
+    vi.mocked(csfClient.fetchCsfRun).mockResolvedValue({
+      ...RUNNING,
+      status: "completed",
+      finished_at: "2026-10-01T12:05:00Z",
+      result: {
+        changed: [],
+        rows: [],
+        suggestions_received: 0,
+        suggestions_applied: 0,
+        dropped: [],
+      },
+    } as never);
+    render(<CsfWorkspace serviceId="svc-645-csf" serviceTitle="Atlas CSF" />);
+    expect(await screen.findByTestId("ai-source")).toHaveAttribute(
+      "data-state",
+      "none",
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("ai-source")).toHaveAttribute(
+        "data-state",
+        "fixture",
+      ),
+    );
   });
 });

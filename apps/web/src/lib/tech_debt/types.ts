@@ -1,3 +1,5 @@
+import type { AiSource } from "@/lib/aiSource/types";
+
 export type SecurityFunction = "prevent" | "detect" | "respond";
 
 /** Wire types mirroring apps/api/app/schemas/tech_debt.py. */
@@ -64,6 +66,9 @@ export interface ExcludedRow {
 }
 
 export interface CapabilityList {
+  /** #646: which mode drafted this list, as the API states it. Null only on
+   *  a response built without it. */
+  ai_source?: AiSource | null;
   id: string;
   service_id: string;
   version: number;
