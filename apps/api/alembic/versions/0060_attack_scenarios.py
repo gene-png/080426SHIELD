@@ -4,8 +4,10 @@
   assessment it is compared with, with that assessment's version, catalog
   version and status rules at creation), the confirmed change list, the
   techniques the change affects, its state, its run, and what the run
-  disclosed: drops by reason, techniques no batch re-assessed, and how many
-  affected techniques would score HIGHER than in the base. `state` follows the
+  disclosed: drops by reason, techniques no batch re-assessed, how many
+  affected techniques would score HIGHER than in the base, and the offered
+  tools added to the client's list since the base was approved (NULL when
+  that could not be checked). `state` follows the
   `ai_runs` convention (`native_enum=False`, no `values_callable`), so the
   stored value is the member NAME (`DRAFT`).
 - `attack_scenario_rows`: one row per affected technique, its three tool
@@ -80,6 +82,7 @@ def upgrade() -> None:
         _json("dropped"),
         _json("not_reassessed"),
         sa.Column("scored_higher", sa.Integer),
+        _json("tools_added_since_base"),
         _uuid("created_by", nullable=False),
         *_timestamps(),
         _restrict("client_id", "client.id"),

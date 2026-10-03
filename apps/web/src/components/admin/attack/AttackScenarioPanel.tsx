@@ -66,6 +66,17 @@ function scoredHigherLine(n: number): string {
     : `${n} techniques would score higher than today, because the AI credited a remaining tool the last confirmed assessment did not. Check these before relying on the result.`;
 }
 
+/** The advisor's (b2) copy, 08:10Z, byte for byte; shown only above zero. */
+function addedToolsLine(n: number): string {
+  return n === 1
+    ? "1 tool was added to the client's list after the last confirmed assessment was approved. It was offered to the AI and may have taken over a removed tool's role."
+    : `${n} tools were added to the client's list after the last confirmed assessment was approved. They were offered to the AI and may have taken over a removed tool's role.`;
+}
+
+/** The advisor's (b2) copy for a count that could not be checked (null). */
+const ADDED_UNCHECKED =
+  "Whether tools were added since the last confirmed assessment could not be checked for this client's list.";
+
 /** NEW: the techniques a failed batch left with the removal alone. */
 function notReassessedLine(n: number): string {
   return n === 1
@@ -472,6 +483,15 @@ function ScenarioView({
 }): JSX.Element {
   const higher = s.scored_higher ?? 0;
   const notReassessed = s.not_reassessed ?? [];
+  // (b2): techniques credited to an added tool whose status did not move, so
+  // the differences table cannot mark them.
+  const changed = new Set(s.differences.map((d) => d.technique_code));
+  const creditedUnchanged = s.techniques
+    .filter(
+      (t) =>
+        t.credited_added_tools.length > 0 && !changed.has(t.technique_code),
+    )
+    .map((t) => t.technique_code);
   // Runnable: not set aside, not stale, and no result standing. A FAILED
   // run wrote nothing, and the api accepts running the same what-if again --
   // but a result can stand beside a failed run (#815 round 2: a later run
@@ -578,6 +598,31 @@ function ScenarioView({
               {scoredHigherLine(higher)}
             </p>
           ) : null}
+          {s.tools_added_since_base === null ? (
+            <p
+              className="text-sm text-status-warning-fg"
+              data-testid="attack-scenario-added-unchecked"
+            >
+              {ADDED_UNCHECKED}
+            </p>
+          ) : s.tools_added_since_base > 0 ? (
+            <p
+              role="alert"
+              className="text-sm text-status-warning-fg"
+              data-testid="attack-scenario-added"
+            >
+              {addedToolsLine(s.tools_added_since_base)}
+            </p>
+          ) : null}
+          {creditedUnchanged.length > 0 ? (
+            <p
+              className="text-sm text-status-warning-fg"
+              data-testid="attack-scenario-added-unchanged"
+            >
+              Also credited to an added tool, with no change in status:{" "}
+              {creditedUnchanged.join(", ")}.
+            </p>
+          ) : null}
           {notReassessed.length > 0 ? (
             <p
               className="text-sm text-status-warning-fg"
@@ -617,6 +662,14 @@ function ScenarioView({
                           data-testid="attack-scenario-diff-higher"
                         >
                           Scores higher
+                        </span>
+                      ) : null}
+                      {d.credited_added_tool ? (
+                        <span
+                          className="ml-2 font-semibold text-status-warning-fg"
+                          data-testid="attack-scenario-diff-added"
+                        >
+                          Credited to an added tool
                         </span>
                       ) : null}
                     </td>

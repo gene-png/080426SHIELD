@@ -50,6 +50,9 @@ class ScenarioDifference(BaseModel):
     #: True when `after` ranks above `today`: the AI credited a remaining tool
     #: the last confirmed assessment did not. Counted in `scored_higher`.
     scored_higher: bool
+    #: The AI credited a tool added to the client's list after the base was
+    #: approved (the advisor's (b2)).
+    credited_added_tool: bool
 
 
 class ScenarioTechnique(BaseModel):
@@ -61,6 +64,8 @@ class ScenarioTechnique(BaseModel):
     prevention_tools: list[str]
     response_tools: list[str]
     ai_rows: list[dict[str, Any]]
+    #: The tools added since the base that the AI credited here (b2).
+    credited_added_tools: list[str]
 
 
 class ScenarioSummary(BaseModel):
@@ -127,4 +132,9 @@ class ScenarioResponse(BaseModel):
     #: How many affected techniques would score HIGHER than today; None before
     #: a run.
     scored_higher: int | None
+    #: How many offered tools were added to the client's list after the base
+    #: was approved (b2). None before a run AND when it could not be checked:
+    #: never 0 for "unknown". A client reads "could not be checked" only beside
+    #: a result (`after`).
+    tools_added_since_base: int | None
     created_at: datetime

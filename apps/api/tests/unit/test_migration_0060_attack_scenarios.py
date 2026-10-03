@@ -76,6 +76,7 @@ def test_0060_creates_both_tables_and_drops_them_when_empty(tmp_path) -> None:
         "dropped",
         "not_reassessed",
         "scored_higher",
+        "tools_added_since_base",
         "created_by",
     } <= columns
 

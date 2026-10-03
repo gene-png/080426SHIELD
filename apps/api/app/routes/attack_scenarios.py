@@ -46,6 +46,7 @@ from app.logging import get_logger
 from app.models.ai_run import AiRun, AiRunStatus
 from app.models.attack_assessment import AttackAssessment, AttackCoverage
 from app.models.attack_scenario import AttackScenario, AttackScenarioRow, AttackScenarioState
+from app.models.capability import CapabilityItem
 from app.models.client import Client
 from app.models.service import ServiceKind
 from app.models.user import User, UserRole
@@ -56,7 +57,7 @@ from app.models.user import User, UserRole
 # way. It reads the client's CURRENT Tech Debt membership, NOT the set the
 # base assessment was offered when it ran: a tool added to or dropped from
 # the capability list since then is offered, or not, accordingly.
-from app.routes.attack import _capability_payload, _client_capability_inputs, _llm_dep
+from app.routes.attack import _capability_payload, _client_capability_membership, _llm_dep
 from app.schemas.ai_runs import AiRunStarted, RunAiRequest
 from app.schemas.attack_scenario import (
     ScenarioBase,
@@ -174,6 +175,14 @@ def _serialize(db: Session, s: AttackScenario) -> ScenarioResponse:
     what_if = scenario.scenario_rows(base_rows, _lists_of(rows)) if rows else base_rows
     comparison = scenario.compare(base, base_rows, what_if)
     higher = set(scenario.scored_higher(comparison, s.affected_codes))
+    added = {t.casefold() for t in (s.tools_added_since_base or [])}
+    credited_added = {
+        r.technique_code: sorted(
+            {a["tool"] for a in r.ai_rows if str(a.get("tool", "")).casefold() in added},
+            key=str.casefold,
+        )
+        for r in rows
+    }
     # The deliverable's own rule for stating the outside counts (#621, option
     # (a)): `states_outside_counts` reads `parents_computed`, so this does too.
     outside = parents_computed(base)
@@ -204,7 +213,11 @@ def _serialize(db: Session, s: AttackScenario) -> ScenarioResponse:
         ),
         differences=[
             ScenarioDifference(
-                technique_code=code, today=before, after=after, scored_higher=code in higher
+                technique_code=code,
+                today=before,
+                after=after,
+                scored_higher=code in higher,
+                credited_added_tool=bool(credited_added.get(code)),
             )
             for code, before, after in comparison.changed
         ],
@@ -215,12 +228,16 @@ def _serialize(db: Session, s: AttackScenario) -> ScenarioResponse:
                 prevention_tools=list(r.prevention_tools),
                 response_tools=list(r.response_tools),
                 ai_rows=list(r.ai_rows),
+                credited_added_tools=credited_added[r.technique_code],
             )
             for r in rows
         ],
         dropped=s.dropped,
         not_reassessed=s.not_reassessed,
         scored_higher=s.scored_higher,
+        tools_added_since_base=(
+            len(s.tools_added_since_base) if s.tools_added_since_base is not None else None
+        ),
         created_at=s.created_at,
     )
 
@@ -526,8 +543,21 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
     spellings = scenario.removed_spellings(
         removed, client_org_name=client.legal_name, redaction_mode=mode
     )
-    kept = scenario.remaining_tools(_client_capability_inputs(db, ctx.client_id), spellings)
+    membership = _client_capability_membership(db, ctx.client_id)
+    kept_offers = [p for p in membership.sent if not spellings.covers(p.capability.name)]
+    kept = [p.capability for p in kept_offers]
     indistinct = [c.name for c in kept if spellings.shares_shown_form(c.name)]
+    # (b2): which offered tools are newer than the base, or None if unknowable.
+    item_ids = [uuid.UUID(p.item_id) for p in kept_offers if p.item_id]
+    created = {
+        str(i): at
+        for i, at in db.execute(
+            select(CapabilityItem.id, CapabilityItem.created_at).where(
+                CapabilityItem.id.in_(item_ids)
+            )
+        ).all()
+    }
+    added = scenario.tools_added_since(kept_offers, membership.lists, created, base.approved_at)
     inputs = scenario.batch_inputs(
         base_rows, affected, spellings, _capability_payload(kept), size=scenario.BATCH_SIZE
     )
@@ -607,6 +637,7 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
     s.dropped = merged.dropped
     s.not_reassessed = merged.not_reassessed
     s.scored_higher = len(higher)
+    s.tools_added_since_base = added
     db.flush()
     reassessed = len(affected) - len(merged.not_reassessed)
     return RunOutcome(

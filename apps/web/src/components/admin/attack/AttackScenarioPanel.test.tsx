@@ -62,11 +62,13 @@ function scenario(over: Record<string, unknown> = {}) {
     dropped: null,
     not_reassessed: null,
     scored_higher: null,
+    tools_added_since_base: null,
     ...over,
   };
 }
 
 const COMPLETED = {
+  tools_added_since_base: 0,
   state: "confirmed",
   run_status: "completed",
   ai_run_id: "r1",
@@ -229,6 +231,81 @@ describe("AttackScenarioPanel", () => {
     });
     expect(screen.getByTestId("scenario-today").textContent).toContain(q4);
     expect(screen.getByTestId("scenario-after").textContent).not.toContain(q4);
+  });
+
+  it("(b2) above zero: says how many tools were added, in the plural, and marks their credit", async () => {
+    await startWith({
+      ...COMPLETED,
+      tools_added_since_base: 2,
+      differences: [
+        {
+          technique_code: "T1005",
+          today: "gap",
+          after: "partial",
+          scored_higher: true,
+          credited_added_tool: true,
+        },
+        {
+          technique_code: "T1008",
+          today: "covered",
+          after: "partial",
+          scored_higher: false,
+          credited_added_tool: false,
+        },
+      ],
+      techniques: [
+        {
+          technique_code: "T1005",
+          detection_tools: ["XDR Tool"],
+          prevention_tools: [],
+          response_tools: [],
+          ai_rows: [],
+          credited_added_tools: ["XDR Tool"],
+        },
+        {
+          technique_code: "T1066",
+          detection_tools: ["XDR Tool"],
+          prevention_tools: [],
+          response_tools: [],
+          ai_rows: [],
+          credited_added_tools: ["XDR Tool"],
+        },
+      ],
+    });
+    expect(screen.getByTestId("attack-scenario-added").textContent).toBe(
+      "2 tools were added to the client's list after the last confirmed assessment was approved. They were offered to the AI and may have taken over a removed tool's role.",
+    );
+    const marks = screen.getAllByTestId("attack-scenario-diff-added");
+    expect(marks).toHaveLength(1);
+    expect(marks[0].closest("tr")?.textContent).toContain("T1005");
+    expect(
+      screen.getByTestId("attack-scenario-added-unchanged").textContent,
+    ).toBe("Also credited to an added tool, with no change in status: T1066.");
+    expect(screen.queryByTestId("attack-scenario-added-unchecked")).toBeNull();
+  });
+
+  it("(b2) one tool: the singular", async () => {
+    await startWith({ ...COMPLETED, tools_added_since_base: 1 });
+    expect(screen.getByTestId("attack-scenario-added").textContent).toBe(
+      "1 tool was added to the client's list after the last confirmed assessment was approved. It was offered to the AI and may have taken over a removed tool's role.",
+    );
+  });
+
+  it("(b2) zero: says nothing about added tools", async () => {
+    await startWith({ ...COMPLETED, tools_added_since_base: 0 });
+    expect(screen.getByTestId("scenario-after")).toBeTruthy();
+    expect(screen.queryByTestId("attack-scenario-added")).toBeNull();
+    expect(screen.queryByTestId("attack-scenario-added-unchecked")).toBeNull();
+  });
+
+  it("(b2) could not be checked: says so, never a confident nothing", async () => {
+    await startWith({ ...COMPLETED, tools_added_since_base: null });
+    expect(
+      screen.getByTestId("attack-scenario-added-unchecked").textContent,
+    ).toBe(
+      "Whether tools were added since the last confirmed assessment could not be checked for this client's list.",
+    );
+    expect(screen.queryByTestId("attack-scenario-added")).toBeNull();
   });
 
   it("says nothing about scoring higher when nothing does", async () => {

@@ -28,6 +28,8 @@ export interface ScenarioDifference {
   today: string | null;
   after: string | null;
   scored_higher: boolean;
+  /** The AI credited a tool added since the base was approved (b2). */
+  credited_added_tool: boolean;
 }
 
 export interface ScenarioTechnique {
@@ -35,6 +37,8 @@ export interface ScenarioTechnique {
   detection_tools: string[];
   prevention_tools: string[];
   response_tools: string[];
+  /** The tools added since the base that the AI credited here (b2). */
+  credited_added_tools: string[];
 }
 
 export interface Scenario {
@@ -59,6 +63,12 @@ export interface Scenario {
   dropped: Record<string, number> | null;
   not_reassessed: string[] | null;
   scored_higher: number | null;
+  /**
+   * Offered tools added to the client's list after the base was approved
+   * (b2). Null before a run AND when it could not be checked; never 0 for
+   * "unknown".
+   */
+  tools_added_since_base: number | null;
 }
 
 export interface ScenarioBase {

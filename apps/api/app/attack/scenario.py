@@ -23,6 +23,7 @@ import uuid
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -38,6 +39,7 @@ from app.attack.pending import pending_codes, row_tools
 from app.attack.release_readiness import unreviewed_codes
 from app.attack.rules import parents_computed, statuses_computed
 from app.models.attack_assessment import AttackAssessment, AttackAssessmentStatus
+from app.models.capability import CapabilityListStatus
 
 _LISTS = ("detection_tools", "prevention_tools", "response_tools")
 _FLAGS = (
@@ -401,6 +403,59 @@ def is_stale(db: Session, service_id: uuid.UUID, base_id: uuid.UUID) -> bool:
     scenario is shown as stale, never re-based or recomputed silently."""
     newest = confirmed_base(db, service_id)
     return newest is not None and newest.id != base_id
+
+
+def _aware(value: datetime) -> datetime:
+    """SQLite hands timestamps back naive; every stored one is UTC."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def tools_added_since(
+    offered: Iterable[Any],
+    lists: Iterable[Any],
+    created_at: Mapping[str, datetime],
+    base_approved_at: datetime | None,
+) -> list[str] | None:
+    """The offered tools added to the client's list AFTER the base was approved
+    (the advisor's (b2), 08:10Z), by name; or None when that cannot be checked.
+
+    `offered` are `CapabilityProvenance`s (`.capability.name`, `.item_id`);
+    `created_at` maps an item id to its row's `created_at`. A tool counts when
+    the capability item it was offered from was created after
+    `base_approved_at`: for a live row that is the row itself, for a snapshot
+    entry the row its `item_id` names.
+
+    None -- NEVER an empty list -- whenever the answer is not known, because
+    missing data defaults to unconfirmed:
+    - the base has no approval time;
+    - ANY of the client's lists was approved before migration 0043 (APPROVED or
+      RELEASED with no `approved_membership`): its membership at any earlier
+      moment was never recorded, so it cannot be checked;
+    - an offered tool names no item, or an item whose row is gone.
+
+    Two limits, stated here and in #815's body, both approved with (b2):
+    - **a RENAME after the base was approved is missed.** A renamed row keeps
+      its `created_at`, so the tool reads as one the base had;
+    - **lists approved before 0043 cannot be checked**, which is the second
+      None above, never a guess.
+    """
+    if base_approved_at is None:
+        return None
+    if any(
+        cl.status in (CapabilityListStatus.APPROVED, CapabilityListStatus.RELEASED)
+        and cl.approved_membership is None
+        for cl in lists
+    ):
+        return None
+    base = _aware(base_approved_at)
+    added: list[str] = []
+    for p in offered:
+        made = created_at.get(p.item_id) if p.item_id else None
+        if made is None:
+            return None
+        if _aware(made) > base:
+            added.append(p.capability.name)
+    return sorted(added, key=str.casefold)
 
 
 #: Techniques per AI call, as `mitre_map` batches them.

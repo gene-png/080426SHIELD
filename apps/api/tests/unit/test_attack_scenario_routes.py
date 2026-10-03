@@ -163,8 +163,16 @@ UNIT_7 = "Unit 7"
 
 
 def _world(
-    parts, *, release: bool = True, soc_twins: bool = False, unit_pair: bool = False
+    parts,
+    *,
+    release: bool = True,
+    soc_twins: bool = False,
+    unit_pair: bool = False,
+    list_status: CapabilityListStatus = CapabilityListStatus.APPROVED,
 ) -> World:
+    """`list_status` APPROVED (the default) makes a list approved with no
+    `approved_membership`: the shape of a list approved before migration 0043,
+    whose drift since the base cannot be checked. DRAFT reads live rows."""
     c, app, sessions = parts
     bearer = c.post(
         "/auth/register",
@@ -190,7 +198,7 @@ def _world(
         )
         db.add(td)
         db.flush()
-        cl = CapabilityList(service_id=td.id, version=1, status=CapabilityListStatus.APPROVED)
+        cl = CapabilityList(service_id=td.id, version=1, status=list_status)
         db.add(cl)
         db.flush()
         extra = (SOC_NAMED, SOC_PLACEHOLDER) if soc_twins else ()
@@ -804,6 +812,59 @@ def test_a_completed_what_if_is_never_repointed_at_a_later_run(
     assert body["run_status"] == "completed"
     late = w.c.get(f"/ai-runs/{second.json()['run_id']}", headers=w.h).json()
     assert late["status"] == "failed" and late["error_reason"] == "scenario_already_run", late
+
+
+XDR = "XDR Tool"
+
+
+def _add_tool_after_approval(w: World, name: str) -> None:
+    """A row added to the client's (DRAFT) list after the base was approved:
+    the second change the advisor's (b2) discloses."""
+    with w.sessions() as db:
+        cl = db.execute(select(CapabilityList)).scalars().one()
+        db.add(CapabilityItem(capability_list_id=cl.id, name=name))
+        db.commit()
+
+
+def test_a_tool_added_since_the_base_is_counted_and_its_credit_marked(
+    app_parts, analysis_job  # noqa: F811
+) -> None:
+    """(b2), count above zero: the tool added after approval is offered, the
+    count says so, and the technique the AI credited to it is marked."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    _add_tool_after_approval(w, XDR)
+    w.answer({w.cc: [_flags(w.cc, XDR, d=True)], w.a: [_flags(w.a, SIEM, d=True)]})
+    sid = w.create([EDR]).json()["id"]
+    body = _run_to_completion(w, sid)
+    assert body["tools_added_since_base"] == 1
+    lists = {t["technique_code"]: t for t in body["techniques"]}
+    assert lists[w.cc]["credited_added_tools"] == [XDR]
+    assert lists[w.a]["credited_added_tools"] == []
+    marks = {d["technique_code"]: d["credited_added_tool"] for d in body["differences"]}
+    assert marks[w.cc] is True and marks[w.a] is False
+
+
+def test_no_tool_added_since_the_base_counts_zero(app_parts, analysis_job) -> None:  # noqa: F811
+    """(b2), count zero: checked, and nothing was added. 0, not None."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    w.answer({w.cc: [_flags(w.cc, SIEM, d=True)]})
+    sid = w.create([EDR]).json()["id"]
+    body = _run_to_completion(w, sid)
+    assert body["tools_added_since_base"] == 0
+    assert all(d["credited_added_tool"] is False for d in body["differences"])
+
+
+def test_a_list_approved_before_0043_cannot_be_checked_and_reads_null_never_zero(
+    app_parts, analysis_job  # noqa: F811
+) -> None:
+    """(b2), could not check: an approved list with no recorded membership.
+    Missing data defaults to unconfirmed: None, never 0."""
+    w = _world(app_parts)  # APPROVED, no approved_membership
+    w.answer({w.cc: [_flags(w.cc, SIEM, d=True)]})
+    sid = w.create([EDR]).json()["id"]
+    body = _run_to_completion(w, sid)
+    assert body["after"] is not None
+    assert body["tools_added_since_base"] is None
 
 
 class _CountingLimiter:

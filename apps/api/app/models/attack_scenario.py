@@ -72,6 +72,11 @@ class AttackScenario(UUIDPKMixin, TimestampMixin, Base):
     # The advisor's addition (05:05Z): affected techniques whose computed
     # status after the change is HIGHER than in the base. NULL before a run.
     scored_higher: Mapped[int | None] = mapped_column(Integer)
+    # The advisor's (b2), 08:10Z: the OFFERED tools added to the client's list
+    # after the base was approved, by name. NULL before a run AND when that
+    # could not be checked (`scenario.tools_added_since`); never [] for
+    # "unknown". The count every surface shows is its length.
+    tools_added_since_base: Mapped[list | None] = mapped_column(_JSON)
     created_by: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
