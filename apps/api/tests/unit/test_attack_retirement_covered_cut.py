@@ -54,7 +54,14 @@ def _world(env):  # noqa: F811
     r = c.patch(
         f"/attack/coverage/{row['id']}",
         headers=_auth(bearer),
-        json={"status": "covered", "detection_tools": [COVERED_CUT, KEPT]},
+        # #554 R3 (class B): the same tools in all three lists, so the row
+        # computes to Covered; the tool names the marks read are unchanged.
+        json={
+            "status": "covered",
+            "detection_tools": [COVERED_CUT, KEPT],
+            "prevention_tools": [COVERED_CUT, KEPT],
+            "response_tools": [COVERED_CUT, KEPT],
+        },
     )
     assert r.status_code == 200, r.text
     return c, bearer, client, client_id, svc, a
