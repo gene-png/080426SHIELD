@@ -80,6 +80,16 @@ class RunRecord:
     failure: str | None
     input_tokens: int | None
     output_tokens: int | None
+    # B3: a failed run's typed reason is often a constant (`ai_call_failed`),
+    # so the underlying exception's TYPE name is kept too -- never its message,
+    # which can quote the model -- with the boundary's `charged_likely`.
+    cause: str | None = None
+    charged_likely: bool | None = None
+
+
+#: More runs than this is refused: every run is billed, and five pairs already
+#: show an observed set rather than one value.
+MAX_RUNS = 5
 
 
 def preflight(*, database_url: str, llm_mode: str, redaction_mode: str) -> None:
@@ -247,11 +257,19 @@ def zt_downstream(framework: Any, *, engagement_stage: int, data: Mapping[str, A
     Only whole-number stages are passed on; anything else is counted in
     `non_integer_values` and treated as absent, because the engine's own
     validator calls `int()`, which would read `true` as 1 and `"2"` as 2.
+    A whole number outside the framework's stages is passed on (the engine
+    treats it as unscored, or an unusable target) and ALSO counted in
+    `out_of_range_values`, so a run of stage 9s cannot read as a run that
+    simply left rows blank. `unusable_target_codes` is the engine's own list.
     Rows the real apply path would skip (locked, protected, edited) are not
     modelled: this is what the model ASKED for, not what a run would write.
     """
     from app.zt.catalog import capabilities
+    from app.zt.maturity import level_count
     from app.zt.scoring import analyze_gaps
+
+    max_stage = level_count(framework)
+    out_of_range = 0
 
     answers: dict[str, int] = {}
     targets: dict[str, int] = {}
@@ -264,6 +282,8 @@ def zt_downstream(framework: Any, *, engagement_stage: int, data: Mapping[str, A
                 continue
             if _is_whole(row[field]):
                 dest[row["code"]] = row[field]
+                if not 1 <= row[field] <= max_stage:
+                    out_of_range += 1
             else:
                 non_integer += 1
     gaps = analyze_gaps(
@@ -278,6 +298,8 @@ def zt_downstream(framework: Any, *, engagement_stage: int, data: Mapping[str, A
         "total_gap_count": gaps.total_gap_count,
         "unscored_count": len(gaps.unscored_codes),
         "non_integer_values": non_integer,
+        "out_of_range_values": out_of_range,
+        "unusable_target_codes": sorted(gaps.unusable_target_codes),
     }
 
 
@@ -323,7 +345,7 @@ def run_loop(
     for n in range(1, runs + 1):
         if max_output_tokens is not None and spent > max_output_tokens:
             _log.warning("measure_ai_consistency.budget_stop", run=n, output_tokens=spent)
-            records.append(RunRecord(False, None, "stopped_output_budget", None, None))
+            records.append(RunRecord(False, None, "stopped_output_budget", 0, 0))
             continue
         record = one_run(n)
         spent += record.output_tokens or 0
@@ -339,7 +361,19 @@ def summarize(job: str, runs: Sequence[RunRecord]) -> dict:
         {"pair": [i, j], **compare_pair(job, ra.data or {}, rb.data or {})}
         for (i, ra), (j, rb) in itertools.combinations(ok, 2)
     ]
-    failed = [{"run": i + 1, "failure": r.failure} for i, r in enumerate(runs) if not r.ok]
+    failed = [
+        {
+            "run": i + 1,
+            "failure": r.failure,
+            "cause": r.cause,
+            "charged_likely": r.charged_likely,
+        }
+        for i, r in enumerate(runs)
+        if not r.ok
+    ]
+    # A run that called the provider and has no output count is spend nobody
+    # can see. A budget-stopped run made no call, so it does not count.
+    called = [r for r in runs if r.failure != "stopped_output_budget"]
     return {
         "job": job,
         "runs_requested": len(runs),
@@ -349,6 +383,7 @@ def summarize(job: str, runs: Sequence[RunRecord]) -> dict:
         "tokens": {
             "input": sum(r.input_tokens or 0 for r in runs),
             "output": sum(r.output_tokens or 0 for r in runs),
+            "complete": all(r.output_tokens is not None for r in called),
         },
         "exit_code": 0 if not failed and len(ok) >= 2 else 1,
     }
@@ -384,6 +419,7 @@ def _pick_assessment(
     if a is None and reopen_released:
         a = latest([status.RELEASED, status.APPROVED])
         if a is not None:
+            _require_sqlite_bind(db, "reopening a released assessment")
             reopened_from = a.status.value
             a.status = status.DRAFT
             db.commit()
@@ -402,14 +438,27 @@ def _pick_assessment(
     return a, reopened_from
 
 
-def _requester_and_client(db: Any, a: Any) -> tuple[Any, Any]:
+def _session_dialect(db: Any) -> str:
+    return db.get_bind().dialect.name
+
+
+def _require_sqlite_bind(db: Any, what: str) -> None:
+    """A second, local check before any state change: `preflight` reads the
+    settings, this reads the session actually in hand."""
+    dialect = _session_dialect(db)
+    if dialect != "sqlite":
+        raise Refused(
+            "state_change_needs_sqlite",
+            f"Refusing {what}: the session is bound to {dialect!r}, not SQLite.",
+        )
+
+
+def _admin_user(db: Any) -> Any:
+    """The requester recorded on each call. Checked BEFORE any state change."""
     from sqlalchemy import select
 
-    from app.models.client import Client
-    from app.models.service import Service
     from app.models.user import User, UserRole
 
-    client = db.get(Client, db.get(Service, a.service_id).client_id)
     admin = (
         db.execute(select(User).where(User.role == UserRole.ADMIN).order_by(User.created_at))
         .scalars()
@@ -417,16 +466,38 @@ def _requester_and_client(db: Any, a: Any) -> tuple[Any, Any]:
     )
     if admin is None:
         raise Refused("no_admin_user", "No admin user to record as the requester.")
-    return admin, client
+    return admin
 
 
-def _failure_reason(exc: Exception) -> str:
-    """A typed failure's reason, never its message, which can quote the model."""
+def _client_of(db: Any, a: Any) -> Any:
+    from app.models.client import Client
+    from app.models.service import Service
+
+    return db.get(Client, db.get(Service, a.service_id).client_id)
+
+
+def _builder_refusal(exc: Exception) -> Refused:
+    """A route builder's typed refusal (locked, not seeded), as a Refused."""
     detail = getattr(exc, "detail", None)
-    if isinstance(detail, dict) and detail.get("reason"):
-        return str(detail["reason"])
-    reason = getattr(exc, "reason", None)
-    return str(reason) if isinstance(reason, str) else type(exc).__name__
+    text = detail.get("message") if isinstance(detail, dict) else detail
+    return Refused("builder_refused", f"The route's payload builder refused: {text}")
+
+
+def _failure(exc: Exception) -> tuple[str, str | None, bool | None]:
+    """(reason, cause, charged_likely) for a failed run. The reason is typed;
+    the cause is the underlying exception's TYPE name. Never a message, which
+    can quote the model."""
+    detail = getattr(exc, "detail", None)
+    detail = detail if isinstance(detail, dict) else {}
+    if detail.get("reason"):
+        reason = str(detail["reason"])
+    elif isinstance(getattr(exc, "reason", None), str):
+        reason = exc.reason  # type: ignore[attr-defined]
+    else:
+        reason = type(exc).__name__
+    cause = type(exc.__cause__).__name__ if exc.__cause__ is not None else None
+    charged = detail.get("charged_likely")
+    return reason, cause, charged if isinstance(charged, bool) else None
 
 
 def _ok_runs(records: Sequence[RunRecord]) -> list[tuple[int, dict]]:
@@ -454,6 +525,7 @@ def measure_zt(
     from app.services.engagement_targets import client_target_stage
     from app.zt.scoring import resolve_target_stage
 
+    admin = _admin_user(db)
     a, reopened_from = _pick_assessment(
         db,
         ZtAssessment,
@@ -462,8 +534,11 @@ def measure_zt(
         reopen_released=reopen_released,
         framework=_framework_enum(framework),
     )
-    admin, client = _requester_and_client(db, a)
-    req = _zt_ai_request_for(db, a, client)
+    client = _client_of(db, a)
+    try:
+        req = _zt_ai_request_for(db, a, client)
+    except HTTPException as exc:
+        raise _builder_refusal(exc) from exc
     fw = _to_catalog_framework(a.framework)
     stage, stage_source = resolve_target_stage(fw, client_target_stage(db, a.service_id))
     _log.info(
@@ -479,6 +554,7 @@ def measure_zt(
     )
 
     def one_run(n: int) -> RunRecord:
+        before = _call_ids(db)
         try:
             with ai_call_boundary(db, llm, purpose=req.preview.job_name):
                 result = run_job(
@@ -493,22 +569,30 @@ def measure_zt(
                     name_hints=req.preview.name_hints,
                 )
         except HTTPException as exc:
-            failure = _failure_reason(exc)
-            _log.error("measure_ai_consistency.run_failed", run=n, failure=failure)
-            return RunRecord(False, None, failure, None, None)
+            reason, cause, charged = _failure(exc)
+            tokens_in, tokens_out = _tokens_since(db, before)
+            _log.error(
+                "measure_ai_consistency.run_failed",
+                run=n,
+                failure=reason,
+                cause=cause,
+                charged_likely=charged,
+            )
+            return RunRecord(False, None, reason, tokens_in, tokens_out, cause, charged)
         db.commit()
-        call = result.llm_call
+        tokens_in, tokens_out = _tokens_since(db, before)
         _log.info(
             "measure_ai_consistency.run_ok",
             run=n,
-            input_tokens=call.input_tokens,
-            output_tokens=call.output_tokens,
-            duration_ms=call.duration_ms,
+            input_tokens=tokens_in,
+            output_tokens=tokens_out,
+            duration_ms=result.llm_call.duration_ms,
         )
-        return RunRecord(True, result.data, None, call.input_tokens, call.output_tokens)
+        return RunRecord(True, result.data, None, tokens_in, tokens_out)
 
     records = run_loop(runs, one_run, max_output_tokens=max_output_tokens)
     report = summarize("zt_score", records)
+    report["assessment_id"] = str(a.id)
     report["assessment_capabilities"] = len(req.rows)
     report["engagement_stage"] = {"stage": stage, "source": stage_source}
     report["input_setup"] = {"reopened_from": reopened_from}
@@ -549,6 +633,38 @@ def _tokens_since(db: Any, before: set) -> tuple[int | None, int | None]:
     return total("input_tokens"), total("output_tokens")
 
 
+def _seed_profile_if_empty(db: Any, a: Any, admin: Any, client: Any, tiers: Sequence[str]) -> list:
+    """Seed the Working Profile through the route's own handler when the
+    assessment has no profile rows -- the demo seed creates answers and no
+    profile, and the builder refuses an unseeded one. Returns the tiers seeded,
+    or [] when rows already existed (nothing is changed then)."""
+    from sqlalchemy import func, select
+
+    from app.models.csf_profile import CsfDimensionScore
+    from app.routes.csf import _latest_assessment, seed_profiles
+    from app.schemas.csf import ProfileSeedRequest
+
+    existing = db.execute(
+        select(func.count())
+        .select_from(CsfDimensionScore)
+        .where(CsfDimensionScore.assessment_id == a.id)
+    ).scalar_one()
+    if existing or not tiers:
+        return []
+    _require_sqlite_bind(db, "seeding a Working Profile")
+    if _latest_assessment(db, a.service_id).id != a.id:
+        # The handler seeds the service's LATEST assessment, by its own rule.
+        raise Refused(
+            "profile_seed_target_mismatch",
+            "The route would seed a different assessment than the one measured.",
+        )
+    seeded = seed_profiles(
+        a.service_id, ProfileSeedRequest(tiers=list(tiers)), user=admin, client=client, db=db
+    )
+    _log.info("measure_ai_consistency.profile_seeded", assessment_id=str(a.id), tiers=seeded)
+    return list(seeded)
+
+
 def measure_csf(
     db: Any,
     llm: Any,
@@ -556,6 +672,7 @@ def measure_csf(
     runs: int,
     reopen_released: bool = False,
     max_output_tokens: int | None = None,
+    seed_profile_tiers: Sequence[str] = (),
 ) -> dict:
     """Run csf_score `runs` times on the latest editable CSF assessment, batched
     exactly as the route batches it, and summarize.
@@ -575,6 +692,7 @@ def measure_csf(
     from app.models.csf_assessment import CsfAssessment, CsfAssessmentStatus
     from app.routes.csf import _CSF_MAX_WORKERS, _csf_ai_request_for, _csf_batch_inputs
 
+    admin = _admin_user(db)
     a, reopened_from = _pick_assessment(
         db,
         CsfAssessment,
@@ -582,8 +700,12 @@ def measure_csf(
         label="CSF",
         reopen_released=reopen_released,
     )
-    admin, client = _requester_and_client(db, a)
-    req = _csf_ai_request_for(db, a, client)
+    client = _client_of(db, a)
+    seeded_tiers = _seed_profile_if_empty(db, a, admin, client, seed_profile_tiers)
+    try:
+        req = _csf_ai_request_for(db, a, client)
+    except HTTPException as exc:
+        raise _builder_refusal(exc) from exc
     batches = _csf_batch_inputs(req.preview.inputs)
     has_evidence = {key: bool(row.has_evidence) for key, row in req.rows.items()}
     _log.info(
@@ -616,15 +738,21 @@ def measure_csf(
                 deadline_message="The measurement run did not finish within the run deadline.",
             )
         except (HTTPException, RunFailed) as exc:
-            failure = _failure_reason(exc)
+            reason, cause, charged = _failure(exc)
             tokens_in, tokens_out = _tokens_since(db, before)
-            _log.error("measure_ai_consistency.run_failed", run=n, failure=failure)
-            return RunRecord(False, None, failure, tokens_in, tokens_out)
+            _log.error(
+                "measure_ai_consistency.run_failed",
+                run=n,
+                failure=reason,
+                cause=cause,
+                charged_likely=charged,
+            )
+            return RunRecord(False, None, reason, tokens_in, tokens_out, cause, charged)
         tokens_in, tokens_out = _tokens_since(db, before)
         if batched.failed:
             failure = f"batches_failed:{batched.failed}/{batched.total}"
             _log.error("measure_ai_consistency.run_failed", run=n, failure=failure)
-            return RunRecord(False, None, failure, tokens_in, tokens_out)
+            return RunRecord(False, None, failure, tokens_in, tokens_out, None, True)
         data = {"scores": [entry for answer in batched.answers for entry in answer["scores"]]}
         _log.info(
             "measure_ai_consistency.run_ok",
@@ -642,10 +770,11 @@ def measure_csf(
         la, lb = levels[pair["pair"][0]]["levels"], levels[pair["pair"][1]]["levels"]
         both = set(la) & set(lb)
         pair["level"] = {"compared": len(both), "equal": sum(la[k] == lb[k] for k in both)}
+    report["assessment_id"] = str(a.id)
     report["rows"] = len(req.rows)
     report["batches_per_run"] = len(batches)
     report["answers_sent"] = len(req.preview.inputs.get("answers") or {})
-    report["input_setup"] = {"reopened_from": reopened_from}
+    report["input_setup"] = {"reopened_from": reopened_from, "profile_seeded_tiers": seeded_tiers}
     report["provider"] = {"name": llm.provider.name, "model": llm.provider.model}
     report["downstream"] = [
         {"run": n, "not_scoreable": lv["not_scoreable"], "scored_rows": len(lv["levels"])}
@@ -709,6 +838,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         "first (the demo seed releases them all). Recorded in the report.",
     )
     p.add_argument(
+        "--seed-profile-tiers",
+        default="",
+        help="csf_score only: comma-separated tiers (high,moderate,low) to seed, through "
+        "the route's own handler, when the assessment has no Working Profile rows. "
+        "Recorded in the report.",
+    )
+    p.add_argument(
         "--max-output-tokens",
         type=int,
         default=None,
@@ -718,6 +854,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = p.parse_args(argv)
     if args.runs < 2:
         print("REFUSED (runs_below_two): agreement needs at least two runs.", file=sys.stderr)
+        return 2
+    if args.runs > MAX_RUNS:
+        print(f"REFUSED (runs_above_max): at most {MAX_RUNS} runs.", file=sys.stderr)
         return 2
 
     from app.config import get_settings
@@ -748,7 +887,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "max_output_tokens": args.max_output_tokens,
             }
             if args.job == "csf_score":
-                report = measure_csf(db, llm, **common)
+                tiers = [t for t in args.seed_profile_tiers.split(",") if t]
+                report = measure_csf(db, llm, seed_profile_tiers=tiers, **common)
             else:
                 report = measure_zt(db, llm, framework=args.framework, **common)
         except Refused as exc:

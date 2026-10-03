@@ -27,11 +27,13 @@ from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
 from scripts.measure_ai_consistency import (
+    MAX_RUNS,
     Refused,
     RunRecord,
     compare_pair,
     csf_levels,
     echo_share,
+    main,
     measure_csf,
     measure_zt,
     preflight,
@@ -266,29 +268,12 @@ def _ok(data: dict) -> RunRecord:
     return RunRecord(ok=True, data=data, failure=None, input_tokens=10, output_tokens=20)
 
 
-def test_a_failed_run_is_reported_and_excluded_from_pairs() -> None:
-    good = _caps({"code": "C1", "current": 2, "target": 3})
-    runs = [
-        _ok(good),
-        RunRecord(
-            ok=False, data=None, failure="AIResponseShapeError", input_tokens=10, output_tokens=None
-        ),
-        _ok(good),
-    ]
-    s = summarize("zt_score", runs)
-    assert s["runs_requested"] == 3
-    assert s["runs_ok"] == 2
-    assert s["failed_runs"] == [{"run": 2, "failure": "AIResponseShapeError"}]
-    assert [p["pair"] for p in s["pairs"]] == [[1, 3]]
-    assert s["exit_code"] == 1
-
-
 def test_all_runs_ok_exits_zero_and_pairs_every_combination() -> None:
     good = _caps({"code": "C1", "current": 2, "target": 3})
     s = summarize("zt_score", [_ok(good), _ok(good), _ok(good)])
     assert [p["pair"] for p in s["pairs"]] == [[1, 2], [1, 3], [2, 3]]
     assert s["exit_code"] == 0
-    assert s["tokens"] == {"input": 30, "output": 60}
+    assert s["tokens"] == {"input": 30, "output": 60, "complete": True}
 
 
 def test_fewer_than_two_good_runs_is_a_failure_not_a_result() -> None:
@@ -425,7 +410,7 @@ def test_measure_zt_runs_the_job_n_times_and_applies_nothing(world) -> None:
     assert report["runs_ok"] == 2
     assert report["pairs"][0]["rows"]["in_both"] == 1
     assert report["pairs"][0]["fields"]["current"]["equal"] == 1
-    assert report["tokens"] == {"input": 200, "output": 80}
+    assert report["tokens"] == {"input": 200, "output": 80, "complete": True}
     assert report["downstream"][0]["gap_codes"] == [code]
     assert report["input_setup"] == {"reopened_from": None}
     # The fixture's `current` (2) differs from the new assessment's (None).
@@ -609,7 +594,7 @@ def test_measure_csf_runs_every_batch_and_applies_nothing(csf_world) -> None:
     assert report["pairs"][0]["rows"]["in_both"] == 106
     assert report["pairs"][0]["fields"]["governance"]["equal"] == 106
     # Tokens are every batch's, read from the llm_calls rows each batch wrote.
-    assert report["tokens"] == {"input": 2 * 11 * 7, "output": 2 * 11 * 11}
+    assert report["tokens"] == {"input": 2 * 11 * 7, "output": 2 * 11 * 11, "complete": True}
     assert report["pairs"][0]["level"] == {"compared": 106, "equal": 106}
 
 
@@ -628,7 +613,9 @@ def test_a_csf_run_with_a_failed_batch_is_a_failed_run(csf_world) -> None:
         report = measure_csf(db, LLMClient(provider), runs=2)
         db.commit()
     assert report["runs_ok"] == 1
-    assert report["failed_runs"] == [{"run": 1, "failure": "batches_failed:1/11"}]
+    assert report["failed_runs"] == [
+        {"run": 1, "failure": "batches_failed:1/11", "cause": None, "charged_likely": True}
+    ]
     assert report["pairs"] == []
     assert report["exit_code"] == 1
 
@@ -652,3 +639,215 @@ def test_measure_csf_reports_level_disagreement_between_runs(csf_world) -> None:
     # Total 5 is Level 2 and total 0 is Level 1: every row's level moved.
     assert report["pairs"][0]["level"] == {"compared": 106, "equal": 0}
     assert report["pairs"][0]["fields"]["governance"]["equal"] == 0
+
+
+# --- B2: a stage the framework does not have is counted, not hidden ---------
+
+
+def test_downstream_counts_an_out_of_range_current_instead_of_calling_it_unscored() -> None:
+    from app.zt.catalog import all_codes
+    from app.zt.maturity import ZtFrameworkCode
+
+    fw = ZtFrameworkCode.CISA_ZTMM_2_0  # stages 1-4
+    codes = sorted(all_codes(fw))
+    data = _caps(*({"code": c, "current": 9, "target": 3} for c in codes))
+    d = zt_downstream(fw, engagement_stage=3, data=data)
+    assert d["out_of_range_values"] == len(codes)
+    assert d["unscored_count"] == len(codes)
+    assert d["total_gap_count"] == 0
+
+
+def test_downstream_reports_targets_the_engine_could_not_use() -> None:
+    from app.zt.catalog import all_codes
+    from app.zt.maturity import ZtFrameworkCode
+
+    fw = ZtFrameworkCode.CISA_ZTMM_2_0
+    codes = sorted(all_codes(fw))
+    data = _caps(*({"code": c, "current": 1, "target": 9} for c in codes))
+    d = zt_downstream(fw, engagement_stage=3, data=data)
+    assert d["out_of_range_values"] == len(codes)
+    assert d["unusable_target_codes"] == codes
+    # The engagement stage (3) applied instead, so every capability at 1 is a gap.
+    assert d["total_gap_count"] == len(codes)
+
+
+# --- B3: a failed run, through the real path --------------------------------
+
+
+def test_a_non_json_response_is_a_failed_run_through_the_real_path(world) -> None:
+    c, TestSession, provider = world
+    code = _zt_assessment(c)
+    good = '{"capabilities": [{"code": "' + code + '", "current": 2, "target": 3}]}'
+    calls: list[int] = []
+
+    def second_is_prose(payload: dict) -> LLMResponse:
+        calls.append(1)
+        if len(calls) == 2:
+            return LLMResponse("Sorry, here is my answer in prose.", 5, 6)
+        return LLMResponse(good, 5, 6)
+
+    provider.register("zt_score", second_is_prose)
+    with TestSession() as db:
+        report = measure_zt(db, LLMClient(provider), framework="cisa", runs=3)
+        db.commit()
+    assert report["runs_ok"] == 2
+    assert report["failed_runs"] == [
+        # The boundary's typed reason is a constant; the cause names what went
+        # wrong (stdlib json's error for a non-JSON body), and a fixture
+        # provider charges nothing.
+        {"run": 2, "failure": "ai_call_failed", "cause": "JSONDecodeError", "charged_likely": False}
+    ]
+    assert [p["pair"] for p in report["pairs"]] == [[1, 3]]
+    # The failed call's tokens are read from its llm_calls row, not zeroed.
+    assert report["tokens"] == {"input": 15, "output": 18, "complete": True}
+    assert report["exit_code"] == 1
+
+
+# --- B1: main() refuses before it builds a provider -------------------------
+
+
+@pytest.fixture()
+def cli(monkeypatch, tmp_path):
+    from app.ai.llm import LLMClient as _Client
+    from app.config import get_settings
+
+    built: list[int] = []
+
+    def recording_from_db(cls, db, settings=None):
+        built.append(1)
+        return _Client(FixtureProvider())
+
+    monkeypatch.setattr(_Client, "from_db", classmethod(recording_from_db))
+    monkeypatch.setenv("SHIELD_LLM_MODE", "live")
+    monkeypatch.setenv("SHIELD_LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-not-a-key")
+    monkeypatch.setenv("SHIELD_REDACTION_MODE", "strict")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'cli.db'}")
+    get_settings.cache_clear()
+    yield built, tmp_path
+    get_settings.cache_clear()
+
+
+def test_main_refuses_a_postgres_database_before_building_a_provider(cli, monkeypatch) -> None:
+    from app.config import get_settings
+
+    built, tmp_path = cli
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://shield:shield@db:5432/shield")
+    get_settings.cache_clear()
+    code = main(["--job", "zt_score", "--runs", "2", "--out", str(tmp_path / "o.json")])
+    assert code == 2
+    assert built == []
+
+
+def test_main_refuses_a_job_with_no_measure_before_building_a_provider(cli) -> None:
+    built, tmp_path = cli
+    code = main(["--job", "tech_debt_extract", "--runs", "2", "--out", str(tmp_path / "o.json")])
+    assert code == 2
+    assert built == []
+
+
+@pytest.mark.parametrize("runs", ["1", str(MAX_RUNS + 1)])
+def test_main_refuses_a_run_count_outside_two_to_max(cli, runs: str) -> None:
+    built, tmp_path = cli
+    code = main(["--job", "zt_score", "--runs", runs, "--out", str(tmp_path / "o.json")])
+    assert code == 2
+    assert built == []
+
+
+# --- A1: reopening is guarded, and happens only after the admin check -------
+
+
+def test_reopening_refuses_a_session_not_bound_to_sqlite(world, monkeypatch) -> None:
+    # SQLAlchemy queries through the session's own bind, so the dialect READ is
+    # replaced here rather than the bind.
+    from app.models.zt_assessment import ZtAssessment, ZtAssessmentStatus
+
+    c, TestSession, provider = world
+    _zt_assessment(c)
+    _release_all_zt(TestSession)
+    monkeypatch.setattr("scripts.measure_ai_consistency._session_dialect", lambda db: "postgresql")
+    with TestSession() as db, pytest.raises(Refused) as exc:
+        measure_zt(db, LLMClient(provider), framework="cisa", runs=2, reopen_released=True)
+    assert exc.value.reason == "state_change_needs_sqlite"
+    with TestSession() as db:
+        assert db.execute(select(ZtAssessment.status)).scalar_one() == ZtAssessmentStatus.RELEASED
+
+
+def test_no_admin_user_is_refused_before_anything_is_reopened(world) -> None:
+    from app.models.user import User, UserRole
+    from app.models.zt_assessment import ZtAssessment, ZtAssessmentStatus
+
+    c, TestSession, provider = world
+    _zt_assessment(c)
+    _release_all_zt(TestSession)
+    with TestSession() as db:
+        for u in db.execute(select(User)).scalars():
+            u.role = UserRole.CLIENT
+        db.commit()
+    with TestSession() as db, pytest.raises(Refused) as exc:
+        measure_zt(db, LLMClient(provider), framework="cisa", runs=2, reopen_released=True)
+    assert exc.value.reason == "no_admin_user"
+    with TestSession() as db:
+        assert db.execute(select(ZtAssessment.status)).scalar_one() == ZtAssessmentStatus.RELEASED
+
+
+def test_the_report_names_the_assessment_it_measured(world) -> None:
+    from app.models.zt_assessment import ZtAssessment
+
+    c, TestSession, provider = world
+    code = _zt_assessment(c)
+    provider.register_static(
+        "zt_score",
+        LLMResponse('{"capabilities": [{"code": "' + code + '", "current": 1, "target": 3}]}'),
+    )
+    with TestSession() as db:
+        report = measure_zt(db, LLMClient(provider), framework="cisa", runs=2)
+        db.commit()
+        assert report["assessment_id"] == str(db.execute(select(ZtAssessment.id)).scalar_one())
+
+
+# --- csf_score on an assessment with no Working Profile ---------------------
+
+
+@pytest.fixture()
+def unseeded_csf(world):
+    c, TestSession, provider = world
+    admin = c.post(
+        "/auth/register",
+        json={
+            "email": "admin@kentro.example",
+            "password": "correct horse battery staple!",
+            "display_name": "A",
+        },
+    )
+    bearer = admin.json()["tokens"]["access_token"]
+    cid = c.post(
+        "/admin/clients",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"legal_name": "Acme"},
+    ).json()["id"]
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    svc_id = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "C"}).json()[
+        "id"
+    ]
+    assert c.post(f"/csf/services/{svc_id}/assessments", headers=h).status_code in (200, 201)
+    yield TestSession, provider
+
+
+def test_an_unseeded_profile_is_refused_without_the_seed_flag(unseeded_csf) -> None:
+    TestSession, provider = unseeded_csf
+    provider.register("csf_score", _answer_every_asked_row)
+    with TestSession() as db, pytest.raises(Refused) as exc:
+        measure_csf(db, LLMClient(provider), runs=2)
+    assert exc.value.reason == "builder_refused"
+
+
+def test_the_seed_flag_seeds_the_named_tiers_through_the_route_and_says_so(unseeded_csf) -> None:
+    TestSession, provider = unseeded_csf
+    provider.register("csf_score", _answer_every_asked_row)
+    with TestSession() as db:
+        report = measure_csf(db, LLMClient(provider), runs=2, seed_profile_tiers=["high"])
+        db.commit()
+    assert report["input_setup"] == {"reopened_from": None, "profile_seeded_tiers": ["high"]}
+    assert report["rows"] == 106
+    assert report["runs_ok"] == 2
