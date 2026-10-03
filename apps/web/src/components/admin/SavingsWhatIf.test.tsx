@@ -77,6 +77,7 @@ describe("SavingsWhatIf (#804)", () => {
         list={list()}
         planSavings={480000}
         planKnown
+        readOnly={false}
         onApplied={vi.fn()}
       />,
     );
@@ -91,6 +92,7 @@ describe("SavingsWhatIf (#804)", () => {
         list={list()}
         planSavings={480000}
         planKnown
+        readOnly={false}
         onApplied={vi.fn()}
       />,
     );
@@ -115,6 +117,7 @@ describe("SavingsWhatIf (#804)", () => {
         list={list()}
         planSavings={480000}
         planKnown
+        readOnly={false}
         onApplied={vi.fn()}
       />,
     );
@@ -138,6 +141,7 @@ describe("SavingsWhatIf (#804)", () => {
         list={list()}
         planSavings={480000}
         planKnown
+        readOnly={false}
         onApplied={onApplied}
       />,
     );
@@ -169,6 +173,7 @@ describe("SavingsWhatIf (#804)", () => {
         list={list()}
         planSavings={480000}
         planKnown
+        readOnly={false}
         onApplied={vi.fn()}
       />,
     );
@@ -192,6 +197,7 @@ describe("SavingsWhatIf (#804)", () => {
         list={list()}
         planSavings={480000}
         planKnown
+        readOnly={false}
         onApplied={vi.fn()}
       />,
     );
@@ -211,10 +217,109 @@ describe("SavingsWhatIf (#804)", () => {
         list={list()}
         planSavings={480000}
         planKnown
+        readOnly={false}
         onApplied={vi.fn()}
       />,
     );
     expect(screen.queryByText(/coverage/i)).toBeNull();
     expect(screen.queryByText(/ATT&CK/)).toBeNull();
+  });
+
+  it("after a partial apply, refreshes with what landed and says what did not", async () => {
+    // #810 review: call 1 commits, call 2 is refused. The plan must refresh
+    // with call 1's list, and the message must name both halves.
+    m.previewSavings.mockResolvedValue(preview());
+    const afterFirst = { ...list(), version: 1 } as CapabilityList;
+    m.bulkSetDisposition
+      .mockResolvedValueOnce(afterFirst)
+      .mockRejectedValueOnce(
+        new Error("This capability list has been released and is locked."),
+      );
+    const onApplied = vi.fn();
+    render(
+      <SavingsWhatIf
+        list={list()}
+        planSavings={480000}
+        planKnown
+        readOnly={false}
+        onApplied={onApplied}
+      />,
+    );
+    choose("Wiz", "consolidate");
+    choose("Splunk", "keep");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    vi.useRealTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Apply to plan" }));
+    await waitFor(() => expect(onApplied).toHaveBeenCalledWith(afterFirst));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Applied to the plan: Cut, covered by another tool (1 tool). Not applied: Keep (1 tool). This capability list has been released and is locked.",
+    );
+    // Only the choice that did not land is still proposed.
+    expect(
+      screen.getByRole("combobox", { name: "What-if for Wiz" }),
+    ).toHaveValue("");
+    expect(
+      screen.getByRole("combobox", { name: "What-if for Splunk" }),
+    ).toHaveValue("keep");
+  });
+
+  it("asks again when a row is edited in the table above", async () => {
+    // #810 review: the answer is keyed on the list's stored dispositions and
+    // costs too, so an edit above refreshes "With these choices".
+    m.previewSavings
+      .mockResolvedValueOnce(preview({ estimated_annual_savings: 830000 }))
+      .mockResolvedValueOnce(preview({ estimated_annual_savings: 350000 }));
+    const { rerender } = render(
+      <SavingsWhatIf
+        list={list()}
+        planSavings={480000}
+        planKnown
+        readOnly={false}
+        onApplied={vi.fn()}
+      />,
+    );
+    choose("Wiz", "cut");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    expect(screen.getByTestId("what-if-savings")).toHaveTextContent("$830,000");
+
+    const edited = list();
+    edited.items[1] = { ...edited.items[1], disposition: "keep" };
+    rerender(
+      <SavingsWhatIf
+        list={edited}
+        planSavings={0}
+        planKnown
+        readOnly={false}
+        onApplied={vi.fn()}
+      />,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    expect(m.previewSavings).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId("what-if-savings")).toHaveTextContent("$350,000");
+  });
+
+  it("offers no Apply on a released list, and still previews", async () => {
+    m.previewSavings.mockResolvedValue(preview());
+    render(
+      <SavingsWhatIf
+        list={list()}
+        planSavings={480000}
+        planKnown
+        readOnly
+        onApplied={vi.fn()}
+      />,
+    );
+    choose("Wiz", "cut");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    expect(screen.queryByRole("button", { name: "Apply to plan" })).toBeNull();
+    expect(screen.getByTestId("what-if-savings")).toHaveTextContent("$830,000");
   });
 });

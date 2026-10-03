@@ -162,3 +162,16 @@ def test_a_client_role_is_refused_as_on_the_disposition_routes(app_client) -> No
         {ids["Splunk"]: "cut"},
     )
     assert r.status_code == 403, r.text
+
+
+def test_the_undecided_refusal_names_the_dispositions_by_their_labels(
+    app_client,  # noqa: F811
+) -> None:
+    """#810 review: the approve refusal still said "keep, consolidate or cut"
+    after the rename."""
+    c, _s, h, _b, _svc, list_id, _ids = _world(app_client)
+    r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+    assert r.status_code == 409, r.text
+    message = r.json()["error"]["message"]
+    assert "Give every row a decision (Keep, Cut, or Cut, covered by another tool)" in message
+    assert "consolidate" not in message.lower()

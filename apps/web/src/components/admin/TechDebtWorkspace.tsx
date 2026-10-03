@@ -1021,6 +1021,7 @@ Components carry no cost of their own — this licence keeps its full value.`,
               list={list}
               planSavings={plan.estimated_annual_savings}
               planKnown={plan.savings_cost_known}
+              readOnly={readOnly}
               onApplied={(next) => {
                 // Applied through the disposition route, as a row edit is;
                 // the plan and its savings refresh in the background.

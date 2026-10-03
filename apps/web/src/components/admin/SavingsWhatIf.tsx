@@ -60,7 +60,14 @@ const COPY = {
   reset: "Reset",
   previewFailed: "Couldn't work out the savings for these choices.",
   applyFailed: "Couldn't apply these choices to the plan.",
+  partlyApplied: (applied: string, notApplied: string) =>
+    `Applied to the plan: ${applied}. Not applied: ${notApplied}.`,
 } as const;
+
+/** "Cut (2 tools)": what one bulk write covered, in the labels the admin chose. */
+function groupLabel(disposition: CapabilityDisposition, count: number): string {
+  return `${DISPOSITION_LABEL[disposition]} (${count} ${count === 1 ? "tool" : "tools"})`;
+}
 
 function usd(amount: number, known: boolean): string {
   const text = `$${amount.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
@@ -78,6 +85,8 @@ export interface SavingsWhatIfProps {
   /** The real plan's savings, from the consolidation-plan summary. */
   planSavings: number;
   planKnown: boolean;
+  /** A released list cannot be edited, so the what-if cannot be applied to it. */
+  readOnly: boolean;
   onApplied: (list: CapabilityList) => void;
 }
 
@@ -85,6 +94,7 @@ export function SavingsWhatIf({
   list,
   planSavings,
   planKnown,
+  readOnly,
   onApplied,
 }: SavingsWhatIfProps): JSX.Element {
   const [proposed, setProposed] = React.useState<
@@ -98,10 +108,15 @@ export function SavingsWhatIf({
   const [applyError, setApplyError] = React.useState<string | null>(null);
 
   const changed = Object.keys(proposed).length > 0;
-  // Each answer is stored under the choices it was asked for, and the phase
-  // shown is DERIVED from whether that matches the choices now. An answer that
-  // arrives late, for choices the admin has since changed, can never show.
-  const key = JSON.stringify(proposed);
+  // Each answer is stored under what it was asked about -- the choices AND
+  // the list's stored dispositions and costs -- and the phase shown is DERIVED
+  // from whether that matches now. An answer for choices since changed, or
+  // for a list edited in the table above since, can never show; either change
+  // asks again (#810 review).
+  const key = JSON.stringify([
+    proposed,
+    list.items.map((it) => [it.id, it.disposition, it.annual_cost_usd]),
+  ]);
   const phase: Phase = !changed
     ? { kind: "idle" }
     : result?.key === key
@@ -139,22 +154,46 @@ export function SavingsWhatIf({
   async function apply(): Promise<void> {
     setApplying(true);
     setApplyError(null);
+    // One bulk write per chosen disposition, through the route's own guards
+    // (the route takes one disposition a call). The writes are NOT one
+    // transaction: if a later one is refused, the earlier ones have landed, so
+    // the screen refreshes with what the server returned and says exactly
+    // which choices were applied and which were not (#810 review).
+    const groups = new Map<CapabilityDisposition, string[]>();
+    for (const [itemId, disposition] of Object.entries(proposed)) {
+      groups.set(disposition, [...(groups.get(disposition) ?? []), itemId]);
+    }
+    let latest: CapabilityList | null = null;
+    const applied: Array<[CapabilityDisposition, string[]]> = [];
     try {
-      // One bulk write per chosen disposition, through the route's own guards.
-      const groups = new Map<CapabilityDisposition, string[]>();
-      for (const [itemId, disposition] of Object.entries(proposed)) {
-        groups.set(disposition, [...(groups.get(disposition) ?? []), itemId]);
-      }
-      let latest: CapabilityList | null = null;
       for (const [disposition, itemIds] of groups) {
         latest = await bulkSetDisposition(list.id, itemIds, disposition);
+        applied.push([disposition, itemIds]);
       }
       setProposed({});
-      if (latest) onApplied(latest);
     } catch (err) {
-      setApplyError(proxyMessage(err, COPY.applyFailed));
+      const reason = proxyMessage(err, COPY.applyFailed);
+      if (applied.length === 0) {
+        setApplyError(reason);
+      } else {
+        const done = new Set(applied.map(([d]) => d));
+        const notApplied = [...groups].filter(([d]) => !done.has(d));
+        setApplyError(
+          `${COPY.partlyApplied(
+            applied.map(([d, ids]) => groupLabel(d, ids.length)).join(", "),
+            notApplied.map(([d, ids]) => groupLabel(d, ids.length)).join(", "),
+          )} ${reason}`,
+        );
+        // Keep only the choices that did not land, so the admin can retry them.
+        setProposed((prev) => {
+          const next = { ...prev };
+          for (const [, ids] of applied) for (const id of ids) delete next[id];
+          return next;
+        });
+      }
     } finally {
       setApplying(false);
+      if (latest) onApplied(latest);
     }
   }
 
@@ -248,14 +287,16 @@ export function SavingsWhatIf({
           </p>
         ) : null}
         <div className="mt-3 flex gap-2">
-          <button
-            type="button"
-            onClick={() => void apply()}
-            disabled={!changed || applying}
-            className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {applying ? COPY.applying : COPY.apply}
-          </button>
+          {readOnly ? null : (
+            <button
+              type="button"
+              onClick={() => void apply()}
+              disabled={!changed || applying}
+              className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {applying ? COPY.applying : COPY.apply}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setProposed({})}

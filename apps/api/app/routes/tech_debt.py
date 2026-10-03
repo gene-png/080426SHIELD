@@ -1326,8 +1326,9 @@ def _refuse_undecided(count: int, *, then: str = "approve again") -> HTTPExcepti
         detail={
             "reason": "capability_list_undecided_rows",
             "message": (
-                f"{rows} still undecided. Give every row a keep, consolidate or cut "
-                f"decision in step 2, Review and correct the extracted list, then {then}."
+                f"{rows} still undecided. Give every row a decision (Keep, Cut, or Cut, "
+                f"covered by another tool) in step 2, Review and correct the extracted "
+                f"list, then {then}."
             ),
         },
     )
