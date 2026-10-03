@@ -234,7 +234,12 @@ def test_gemini_request_shape_and_response_parsing(monkeypatch) -> None:
         _FakeResponse(
             200,
             {
-                "candidates": [{"content": {"parts": [{"text": "gemini "}, {"text": "draft"}]}}],
+                "candidates": [
+                    {
+                        "content": {"parts": [{"text": "gemini "}, {"text": "draft"}]},
+                        "finishReason": "STOP",
+                    }
+                ],
                 "usageMetadata": {"promptTokenCount": 100, "candidatesTokenCount": 9},
             },
         ),
@@ -309,8 +314,8 @@ def test_generate_content_truncation_raises_loudly() -> None:
 
 @pytest.mark.unit
 def test_generate_content_normal_finish_parses(monkeypatch) -> None:
-    """finishReason=STOP (or absent) parses normally — the guard only fires on a
-    non-STOP terminal reason."""
+    """finishReason=STOP parses normally — the guard fires on any other terminal
+    reason, and on an absent one (#823)."""
     ok = {
         "candidates": [
             {
@@ -358,7 +363,12 @@ def test_vertex_request_shape_and_response_parsing(monkeypatch) -> None:
         _FakeResponse(
             200,
             {
-                "candidates": [{"content": {"parts": [{"text": "vertex "}, {"text": "draft"}]}}],
+                "candidates": [
+                    {
+                        "content": {"parts": [{"text": "vertex "}, {"text": "draft"}]},
+                        "finishReason": "STOP",
+                    }
+                ],
                 "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 6},
             },
         ),
@@ -623,14 +633,16 @@ def test_anthropic_refusal_raises_loudly(monkeypatch) -> None:
 
 @pytest.mark.unit
 def test_anthropic_normal_finish_parses(monkeypatch) -> None:
-    """end_turn (and an absent stop_reason, as in hand-built fixtures) parse."""
+    """end_turn parses. A null stop_reason is refused (#823): nothing says the
+    response finished."""
     provider, _ = _anthropic_with(monkeypatch, '{"ok": true}', "end_turn")
     resp = provider.complete("Draft it.", {"k": "v"})
     assert resp.content == '{"ok": true}'
     assert resp.output_tokens == 22
 
     provider2, _ = _anthropic_with(monkeypatch, '{"ok": true}', None)
-    assert provider2.complete("Draft it.", {"k": "v"}).content == '{"ok": true}'
+    with pytest.raises(RuntimeError, match=r"Anthropic did not finish cleanly \(no stop_reason\)"):
+        provider2.complete("Draft it.", {"k": "v"})
 
 
 @pytest.mark.unit
@@ -814,7 +826,7 @@ _OPENAI_OK = {
     "choices": [{"message": {"content": "{}"}, "finish_reason": "stop"}],
     "usage": {"prompt_tokens": 1, "completion_tokens": 1},
 }
-_GEMINI_OK = {"candidates": [{"content": {"parts": [{"text": "{}"}]}}]}
+_GEMINI_OK = {"candidates": [{"content": {"parts": [{"text": "{}"}]}, "finishReason": "STOP"}]}
 
 
 @pytest.mark.unit
