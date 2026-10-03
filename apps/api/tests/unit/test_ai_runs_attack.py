@@ -645,16 +645,42 @@ NOT_LOCKED = {
     # is refused on an approved or released assessment, so it can never be
     # writing the rows a release ships.
     ("POST", "/attack/deliverables/{deliverable_id}/release"),
+    # #802, the what-if: these write only the what-if's own tables, which no
+    # Run-AI writes, against a base that is APPROVED or RELEASED.
+    ("POST", "/attack/services/{service_id}/scenarios"),
+    ("POST", "/attack/scenarios/{scenario_id}/discard"),
+    # Joins or refuses its own run through `start_run`, as run-ai does.
+    ("POST", "/attack/scenarios/{scenario_id}/run"),
 }
 
 
+def _app_routes(routes: Any, out: list[Any] | None = None) -> list[Any]:
+    """Every real route, with FastAPI's lazily-included routers expanded
+    (`original_router`, as `test_bool_is_not_a_number._flatten` does)."""
+    out = [] if out is None else out
+    for route in routes:
+        inner = getattr(route, "original_router", None)
+        if inner is not None:
+            _app_routes(inner.routes, out)
+        else:
+            out.append(route)
+    return out
+
+
 def _mutating_attack_routes() -> set[tuple[str, str]]:
-    from app.routes.attack import router
+    """Every mutating ATT&CK route THE APP serves, whichever module declares
+    it. Derived from the app rather than from `app.routes.attack.router`, which
+    could not see `app.routes.attack_scenarios` (#802) and would not see the
+    next module either."""
+    from app.main import app
 
     found: set[tuple[str, str]] = set()
-    for route in router.routes:
+    for route in _app_routes(app.routes):
+        path = getattr(route, "path", "")
+        if not path.startswith("/attack/") and path != "/attack":
+            continue
         for method in getattr(route, "methods", set()) - {"GET", "HEAD", "OPTIONS"}:
-            found.add((method, getattr(route, "path", "")))
+            found.add((method, path))
     return found
 
 
