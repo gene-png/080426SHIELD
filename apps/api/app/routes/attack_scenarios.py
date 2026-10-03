@@ -19,7 +19,7 @@ from collections.abc import Callable
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import exists, select, update
+from sqlalchemy import exists, func, select, update
 from sqlalchemy.orm import Session
 
 from app.ai.batching import run_batches
@@ -46,6 +46,7 @@ from app.logging import get_logger
 from app.models.ai_run import AiRun, AiRunStatus
 from app.models.attack_assessment import AttackAssessment, AttackCoverage
 from app.models.attack_scenario import AttackScenario, AttackScenarioRow, AttackScenarioState
+from app.models.audit_entry import AuditEntry
 from app.models.capability import CapabilityItem
 from app.models.client import Client
 from app.models.service import ServiceKind
@@ -78,6 +79,12 @@ _log = get_logger(__name__)
 router = APIRouter(prefix="/attack", tags=["attack"])
 
 _admin_required = Depends(require_role(UserRole.ADMIN))
+
+#: The audit action `routes/tech_debt.override_security_classification`
+#: writes. A COPY of that literal: if it is renamed there, the (ii) half of the
+#: drift check finds nothing and undercounts. `test_attack_scenario_routes`
+#: drives the real endpoint, so a rename goes red there.
+OVERRIDE_ACTION = "capability_item.security_classification_overridden"
 
 #: Concurrent batches, as `mitre_map` runs them.
 _MAX_WORKERS = 5
@@ -564,7 +571,23 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
             )
         ).all()
     }
-    added = scenario.tools_added_since(kept_offers, membership.lists, created, base.approved_at)
+    # (ii): the latest classification override per offered item. The audit
+    # row is the only record of WHEN; `updated_at` moves on every edit.
+    overridden = {
+        str(i): at
+        for i, at in db.execute(
+            select(AuditEntry.target_id, func.max(AuditEntry.at))
+            .where(
+                AuditEntry.action == OVERRIDE_ACTION,
+                AuditEntry.target_type == "capability_item",
+                AuditEntry.target_id.in_(item_ids),
+            )
+            .group_by(AuditEntry.target_id)
+        ).all()
+    }
+    added = scenario.tools_added_since(
+        kept_offers, membership.lists, created, base.approved_at, overridden
+    )
     inputs = scenario.batch_inputs(
         base_rows, affected, spellings, _capability_payload(kept), size=scenario.BATCH_SIZE
     )

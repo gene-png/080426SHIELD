@@ -66,11 +66,11 @@ function scoredHigherLine(n: number): string {
     : `${n} techniques would score higher than today, because the AI credited a remaining tool the last confirmed assessment did not. Check these before relying on the result.`;
 }
 
-/** The advisor's (b2) copy, 08:10Z, byte for byte; shown only above zero. */
+/** The advisor's (ii) copy, 08:57Z, byte for byte; shown only above zero. */
 function addedToolsLine(n: number): string {
   return n === 1
-    ? "1 tool was added to the client's list after the last confirmed assessment was approved. It was offered to the AI and may have taken over a removed tool's role."
-    : `${n} tools were added to the client's list after the last confirmed assessment was approved. They were offered to the AI and may have taken over a removed tool's role.`;
+    ? "1 tool was added to the client's list, or brought into scope, after the last confirmed assessment was approved. It was offered to the AI and may have taken over a removed tool's role."
+    : `${n} tools were added to the client's list, or brought into scope, after the last confirmed assessment was approved. They were offered to the AI and may have taken over a removed tool's role.`;
 }
 
 /** The advisor's (b2) copy for a count that could not be checked (null). */

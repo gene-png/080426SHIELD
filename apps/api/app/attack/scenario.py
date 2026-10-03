@@ -415,15 +415,21 @@ def tools_added_since(
     lists: Iterable[Any],
     created_at: Mapping[str, datetime],
     base_approved_at: datetime | None,
+    overridden_at: Mapping[str, datetime] | None = None,
 ) -> list[str] | None:
-    """The offered tools added to the client's list AFTER the base was approved
-    (the advisor's (b2), 08:10Z), by name; or None when that cannot be checked.
+    """The offered tools added to the client's list, or brought into scope,
+    AFTER the base was approved (the advisor's (b2) at 08:10Z and (ii) at
+    08:57Z), by name; or None when that cannot be checked.
 
     `offered` are `CapabilityProvenance`s (`.capability.name`, `.item_id`);
-    `created_at` maps an item id to its row's `created_at`. A tool counts when
-    the capability item it was offered from was created after
-    `base_approved_at`: for a live row that is the row itself, for a snapshot
-    entry the row its `item_id` names.
+    `created_at` maps an item id to its row's `created_at`; `overridden_at` maps
+    an item id to the time of its latest
+    `capability_item.security_classification_overridden` audit entry. A tool
+    counts when the capability item it was offered from was created after
+    `base_approved_at`, OR had its security classification overridden after it
+    -- an OLD row an override brought into scope is as new to the AI as a new
+    row. For a live row the item is the row itself; for a snapshot entry, the
+    row its `item_id` names.
 
     None -- NEVER an empty list -- whenever the answer is not known, because
     missing data defaults to unconfirmed:
@@ -433,11 +439,13 @@ def tools_added_since(
       moment was never recorded, so it cannot be checked;
     - an offered tool names no item, or an item whose row is gone.
 
-    Two limits, stated here and in #815's body, both approved with (b2):
+    Three limits, stated here and in #815's body, all approved:
     - **a RENAME after the base was approved is missed.** A renamed row keeps
       its `created_at`, so the tool reads as one the base had;
     - **lists approved before 0043 cannot be checked**, which is the second
-      None above, never a guess.
+      None above, never a guess;
+    - **a discarded draft re-uploaded OVERCOUNTS.** Every re-uploaded tool is a
+      new row, so each reads as added though the base may have had it.
     """
     if base_approved_at is None:
         return None
@@ -448,12 +456,14 @@ def tools_added_since(
     ):
         return None
     base = _aware(base_approved_at)
+    overrides = overridden_at or {}
     added: list[str] = []
     for p in offered:
         made = created_at.get(p.item_id) if p.item_id else None
         if made is None:
             return None
-        if _aware(made) > base:
+        override = overrides.get(p.item_id)
+        if _aware(made) > base or (override is not None and _aware(override) > base):
             added.append(p.capability.name)
     return sorted(added, key=str.casefold)
 

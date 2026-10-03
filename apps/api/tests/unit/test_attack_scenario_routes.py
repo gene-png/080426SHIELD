@@ -17,6 +17,7 @@ import json
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -31,6 +32,7 @@ from app.attack.catalog import NOT_PREVENTABLE
 from app.models.ai_run import AiRun
 from app.models.attack_assessment import AttackAssessment, AttackCoverage
 from app.models.attack_scenario import AttackScenario, AttackScenarioRow, AttackScenarioState
+from app.models.audit_entry import AuditEntry
 from app.models.capability import CapabilityItem, CapabilityList, CapabilityListStatus
 from app.models.deliverable import Deliverable
 from app.models.llm_call import LLMCall
@@ -922,6 +924,57 @@ def test_one_scenarios_result_never_stops_anothers_run_being_recorded(
     started = w.run(second)
     assert started.status_code == 202, started.text
     assert w.get(second)["ai_run_id"] == started.json()["run_id"]
+
+
+def test_an_old_row_brought_into_scope_after_the_base_is_counted_and_one_before_is_not(
+    app_parts, analysis_job  # noqa: F811
+) -> None:
+    """The advisor's (ii), 08:57Z. Two rows created BEFORE the base, both
+    classified non-security, so neither was offered to the base. One is brought
+    into scope by the real override endpoint AFTER the base was approved: it
+    counts. The other's override was recorded BEFORE the base: it does not."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    with w.sessions() as db:
+        cl = db.execute(select(CapabilityList)).scalars().one()
+        a = db.get(AttackAssessment, uuid.UUID(w.assessment_id))
+        base_at = a.approved_at
+        late = CapabilityItem(
+            capability_list_id=cl.id,
+            name="Late Override Tool",
+            security_related=False,
+            created_at=base_at - timedelta(days=30),
+        )
+        early = CapabilityItem(
+            capability_list_id=cl.id,
+            name="Early Override Tool",
+            security_related=True,
+            security_functions=["detect"],
+            created_at=base_at - timedelta(days=30),
+        )
+        db.add_all([late, early])
+        db.flush()
+        # The early row's override, recorded before the base was approved:
+        # the world, written as the audit spine writes it.
+        db.add(
+            AuditEntry(
+                action="capability_item.security_classification_overridden",
+                target_type="capability_item",
+                target_id=early.id,
+                at=base_at - timedelta(days=1),
+            )
+        )
+        db.commit()
+        late_id = str(late.id)
+    r = w.c.post(
+        f"/tech-debt/capability-items/{late_id}/security-classification/override",
+        headers=w.h,
+        json={"security_functions": ["detect"]},
+    )
+    assert r.status_code == 200, r.text
+    w.answer({w.cc: [_flags(w.cc, SIEM, d=True)]})
+    sid = w.create([EDR]).json()["id"]
+    body = _run_to_completion(w, sid)
+    assert body["tools_added_since_base"] == 1
 
 
 class _CountingLimiter:

@@ -352,6 +352,13 @@ def test_tools_added_since_cannot_be_checked_and_says_none_not_a_partial_list(
     assert scenario.tools_added_since(offers, lists, created, base_at) is None
 
 
+def test_an_old_row_overridden_after_the_base_counts_and_one_overridden_before_does_not() -> None:
+    offers = [_offer("Late", "i1"), _offer("Early", "i2"), _offer("Never", "i3")]
+    created = {"i1": _BEFORE, "i2": _BEFORE, "i3": _BEFORE}
+    overridden = {"i1": _AFTER, "i2": _BEFORE}
+    assert scenario.tools_added_since(offers, _DRAFT, created, _BASE_AT, overridden) == ["Late"]
+
+
 def test_a_snapshot_list_approved_after_0043_is_checkable() -> None:
     lists = [_list("approved", [{"item_id": "i2", "name": "New Tool"}])]
     offers = [_offer("New Tool", "i2")]

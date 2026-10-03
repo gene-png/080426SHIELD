@@ -273,7 +273,7 @@ describe("AttackScenarioPanel", () => {
       ],
     });
     expect(screen.getByTestId("attack-scenario-added").textContent).toBe(
-      "2 tools were added to the client's list after the last confirmed assessment was approved. They were offered to the AI and may have taken over a removed tool's role.",
+      "2 tools were added to the client's list, or brought into scope, after the last confirmed assessment was approved. They were offered to the AI and may have taken over a removed tool's role.",
     );
     const marks = screen.getAllByTestId("attack-scenario-diff-added");
     expect(marks).toHaveLength(1);
@@ -287,7 +287,7 @@ describe("AttackScenarioPanel", () => {
   it("(b2) one tool: the singular", async () => {
     await startWith({ ...COMPLETED, tools_added_since_base: 1 });
     expect(screen.getByTestId("attack-scenario-added").textContent).toBe(
-      "1 tool was added to the client's list after the last confirmed assessment was approved. It was offered to the AI and may have taken over a removed tool's role.",
+      "1 tool was added to the client's list, or brought into scope, after the last confirmed assessment was approved. It was offered to the AI and may have taken over a removed tool's role.",
     );
   });
 
