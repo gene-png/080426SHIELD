@@ -48,6 +48,18 @@ def test_a_description_becomes_a_proposed_change_list(app_parts) -> None:  # noq
     assert r.json() == {"removed": [EDR, SIEM], "added": ["XDR Suite"], "not_understood": []}
 
 
+def test_a_verb_matched_through_case_folding_is_a_proposal_not_a_500(
+    app_parts,  # noqa: F811
+) -> None:
+    """#824 narrow review F1: a long s matches "swap" case-insensitively, and
+    the division once looked the verb up by its lowercased TEXT, which a long
+    s survives. The reviewer's exact body."""
+    w = _world(app_parts)
+    r = _parse(w, chr(0x17F) + "wap EDR Tool for XDR Suite")
+    assert r.status_code == 200, r.text
+    assert (r.json()["removed"], r.json()["added"]) == ([EDR], ["XDR Suite"])
+
+
 @pytest.mark.parametrize(
     "text",
     [

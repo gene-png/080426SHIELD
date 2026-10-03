@@ -334,3 +334,64 @@ def test_a_typed_nul_is_text_like_any_other(text) -> None:
     parsed = _parse(text, cited=cited, client=cited)
     assert parsed.removed == []
     assert len(parsed.not_understood) == 1
+
+
+# --- #824 narrow review at 02993287 -------------------------------------------------
+
+
+def test_a_verb_matched_through_case_folding_still_divides() -> None:
+    """F1: a long s matches "swap" case-insensitively, and the division must
+    follow the verb that MATCHED, not a lowercased copy of the typed text."""
+    parsed = _parse(chr(0x17F) + "wap EDR Tool for XDR Suite")
+    assert (parsed.removed, parsed.added) == (["EDR Tool"], ["XDR Suite"])
+
+
+def test_a_held_name_never_matches_inside_another_word() -> None:
+    """F4: cited "R and D" is not held inside "HR and Dev Portal"."""
+    cited = ("HR", "Dev Portal", "R and D")
+    parsed = _parse("retire HR and Dev Portal", cited=cited, client=cited)
+    assert parsed.removed == ["HR", "Dev Portal"]
+    assert parsed.not_understood == []
+
+
+@pytest.mark.parametrize(
+    ("cited", "text"),
+    [
+        (("R and D",), "add HR and Dev Portal"),
+        (("Detection and Response",), "add Extended Detection and Response Suite"),
+    ],
+)
+def test_an_added_name_with_a_break_is_never_proposed_whatever_is_held(cited, text) -> None:
+    """F4: whether an addition may carry a break is not decided by what the
+    removal side holds. A cited name inside it leaves it a new name cut at a
+    break, as it would be with nothing cited."""
+    parsed = _parse(text, cited=cited, client=cited)
+    assert parsed.added == []
+    assert _reasons(parsed) == [(text, "split_name")]
+
+
+def test_a_swap_whose_added_half_carries_a_break_is_not_proposed() -> None:
+    cited = ("EDR Tool", "Detection and Response")
+    parsed = _parse(
+        "swap EDR Tool for Extended Detection and Response Suite", cited=cited, client=cited
+    )
+    assert (parsed.removed, parsed.added) == ([], [])
+    assert _reasons(parsed) == [
+        ("swap EDR Tool for Extended Detection and Response Suite", "split_name")
+    ]
+
+
+def test_the_shown_form_of_a_cited_name_is_held_too() -> None:
+    """F3: the client's own name is shown as [CLIENT], and an admin can type
+    that form; it is held like the stored one, so the list is not split into
+    two other cited tools in silence."""
+    cited = ("Acme SIEM and SOAR", "Acme SIEM", "SOAR")
+    parsed = _parse("retire [CLIENT] SIEM and SOAR", cited=cited, client=cited)
+    assert parsed.removed == []
+    assert _reasons(parsed) == [("retire [CLIENT] SIEM and SOAR", "ambiguous_tool")]
+
+
+def test_a_swap_with_several_cuts_and_none_plausible_is_unrecognised() -> None:
+    parsed = _parse("swap Foo Tool for Bar Tool for Baz Tool")
+    assert (parsed.removed, parsed.added) == ([], [])
+    assert _reasons(parsed) == [("swap Foo Tool for Bar Tool for Baz Tool", "unrecognised")]

@@ -422,7 +422,10 @@ _LEAD = re.compile(r"^\s*what\s+if(?:\s+we)?\s+", re.IGNORECASE)
 _SPLIT = re.compile(r"\s*(?:[,;]|\.(?=\s|$)|\band\b)\s*", re.IGNORECASE)
 _REMOVE = re.compile(r"^(?:remove|retire|drop|cut)\s+(?P<a>.+)$", re.IGNORECASE)
 _ADD = re.compile(r"^(?:add|introduce)\s+(?P<a>.+)$", re.IGNORECASE)
-_SWAP = re.compile(r"^(?P<verb>swap|replace)\s+(?P<rest>.+)$", re.IGNORECASE)
+#: The verb is read from WHICH alternative matched: IGNORECASE matches a
+#: long s as "s", and `.lower()` keeps it, so a lookup keyed on the typed
+#: text raised (#824 narrow review, F1).
+_SWAP = re.compile(r"^(?:(?P<swap>swap)|(?P<replace>replace))\s+(?P<rest>.+)$", re.IGNORECASE)
 #: Where a swap's two names may divide: "swap X for Y", "replace X with Y".
 _SWAP_JOIN = {
     "swap": re.compile(r"\s+for\s+", re.IGNORECASE),
@@ -469,7 +472,7 @@ class _Clauses:
     span: Callable[[int, int], str]
 
 
-def _clauses(text: str, cited: Sequence[str]) -> _Clauses:
+def _clauses(text: str, forms: Sequence[str]) -> _Clauses:
     """The text split into clauses, WITHOUT cutting a cited tool's name: a
     cited name that itself contains a break ("Identity and Access Manager",
     "Acme, Inc. EDR") is held whole while the rest is split (#824 review, B1).
@@ -483,8 +486,11 @@ def _clauses(text: str, cited: Sequence[str]) -> _Clauses:
     resolved by length or order: the clause is reported as `clashing`."""
     text = _LEAD.sub("", text.strip()).rstrip("?").strip()
     found: list[tuple[int, int]] = []
-    for name in {c for c in cited if _SPLIT.search(c)}:
-        pattern = re.compile(r"\s+".join(re.escape(w) for w in name.split()), re.IGNORECASE)
+    for name in {f for f in forms if _SPLIT.search(f)}:
+        pattern = re.compile(
+            r"(?<!\w)" + r"\s+".join(re.escape(w) for w in name.split()) + r"(?!\w)",
+            re.IGNORECASE,
+        )
         found.extend((m.start(), m.end()) for m in pattern.finditer(text))
     # [start, end, how many matches]: overlapping matches merge into one.
     regions: list[list[int]] = []
@@ -614,6 +620,12 @@ def parse_change(
             raise _Refused("duplicate") from exc
         except AddedToolRefused as exc:
             raise _Refused("unrecognised") from exc
+        if _SPLIT.search(_bare(name)):
+            # A break inside a NEW name means it may be one name cut apart or
+            # several; only a cited name held for removal kept it whole, which
+            # is no evidence about an addition (#824 narrow review, F4). After
+            # the check above, so a client's own tool still names itself (B4).
+            raise _Refused("split_name")
         return tool.name
 
     def swap(verb: str, rest: str) -> tuple[str, str]:
@@ -621,7 +633,7 @@ def parse_change(
         # Exactly one plausible division is checked on its own terms; several
         # are ambiguous whatever their added halves do, so a division is never
         # chosen because another one failed (#824 narrow review).
-        cuts = list(_SWAP_JOIN[verb.lower()].finditer(rest))
+        cuts = list(_SWAP_JOIN[verb].finditer(rest))
         plausible = [m for m in cuts if resolver.named_by(_bare(rest[: m.start()]))]
         if len(plausible) > 1:
             raise _Refused("ambiguous_split")
@@ -633,7 +645,7 @@ def parse_change(
             raise _Refused("unrecognised")
         return removal(rest[: m.start()]), addition(rest[m.end() :])
 
-    split = _clauses(text, cited)
+    split = _clauses(text, resolver.citable_forms())
     clauses, span = split.texts, split.span
     sharing = False
     i = 0
@@ -662,7 +674,7 @@ def parse_change(
             elif kind == "swap":
                 sharing = False
                 m = _SWAP.match(clause)
-                gone, new = swap(m["verb"], m["rest"])
+                gone, new = swap("swap" if m["swap"] is not None else "replace", m["rest"])
                 removed.append(gone)
                 added.append(new)
             elif kind == "add":
