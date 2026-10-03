@@ -458,32 +458,50 @@ class _Refused(Exception):
         self.name = name
 
 
-def _clauses(text: str, cited: Sequence[str]) -> tuple[list[str], Callable[[int, int], str]]:
+@dataclass(frozen=True)
+class _Clauses:
+    """A description split into clauses, with what the split could not decide."""
+
+    texts: list[str]
+    #: clauses where two cited names claim overlapping words: neither is chosen
+    clashing: frozenset[int]
+    #: `span(i, j)`: clauses i..j-1 exactly as typed, separators and all
+    span: Callable[[int, int], str]
+
+
+def _clauses(text: str, cited: Sequence[str]) -> _Clauses:
     """The text split into clauses, WITHOUT cutting a cited tool's name: a
     cited name that itself contains a break ("Identity and Access Manager",
     "Acme, Inc. EDR") is held whole while the rest is split (#824 review, B1).
     A name the base does not cite cannot be protected this way; the caller
     refuses a span that may have been cut instead (see `parse_change`).
 
-    Also returns `span(i, j)`: clauses i..j-1 exactly as typed, separators and
-    all, for quoting a span back."""
+    Held words are found as POSITIONS and the breaks inside them skipped, so
+    nothing is substituted into the text and no typed character can collide
+    with a marker (the earlier NUL-sentinel form raised on a typed NUL, #824
+    narrow review). Two cited names claiming overlapping words are NOT
+    resolved by length or order: the clause is reported as `clashing`."""
     text = _LEAD.sub("", text.strip()).rstrip("?").strip()
-    held: list[str] = []
-    for name in sorted({c for c in cited if _SPLIT.search(c)}, key=len, reverse=True):
+    found: list[tuple[int, int]] = []
+    for name in {c for c in cited if _SPLIT.search(c)}:
         pattern = re.compile(r"\s+".join(re.escape(w) for w in name.split()), re.IGNORECASE)
+        found.extend((m.start(), m.end()) for m in pattern.finditer(text))
+    # [start, end, how many matches]: overlapping matches merge into one.
+    regions: list[list[int]] = []
+    for lo, hi in sorted(found):
+        if regions and lo < regions[-1][1]:
+            regions[-1][1] = max(regions[-1][1], hi)
+            regions[-1][2] += 1
+        else:
+            regions.append([lo, hi, 1])
 
-        def hold(m: re.Match[str]) -> str:
-            held.append(m.group(0))
-            return f"\x00{len(held) - 1}\x00"
-
-        text = pattern.sub(hold, text)
-
-    def restore(clause: str) -> str:
-        return re.sub("\x00(\\d+)\x00", lambda m: held[int(m.group(1))], clause)
+    def held(lo: int, hi: int, *, clash: bool = False) -> bool:
+        return any(a < hi and lo < b and (n > 1 or not clash) for a, b, n in regions)
 
     pieces: list[tuple[str, int, int]] = []
     at = 0
-    for brk in [*_SPLIT.finditer(text), None]:
+    breaks = [m for m in _SPLIT.finditer(text) if not held(m.start(), m.end())]
+    for brk in [*breaks, None]:
         stop = brk.start() if brk is not None else len(text)
         if text[at:stop].strip():
             pieces.append((text[at:stop].strip(), at, stop))
@@ -491,9 +509,13 @@ def _clauses(text: str, cited: Sequence[str]) -> tuple[list[str], Callable[[int,
             at = brk.end()
 
     def span(i: int, j: int) -> str:
-        return restore(text[pieces[i][1] : pieces[j - 1][2]].strip())
+        return text[pieces[i][1] : pieces[j - 1][2]].strip()
 
-    return [restore(p) for p, _a, _b in pieces], span
+    return _Clauses(
+        texts=[p for p, _a, _b in pieces],
+        clashing=frozenset(i for i, (_p, a, b) in enumerate(pieces) if held(a, b, clash=True)),
+        span=span,
+    )
 
 
 def _bare(name: str) -> str:
@@ -562,6 +584,10 @@ def parse_change(
         if len(hits) > 1:
             raise _Refused("ambiguous_tool")
         (tool,) = hits
+        parts = [p for p in _SPLIT.split(_bare(name)) if p.strip()]
+        if len(parts) > 1 and all(len(resolver.named_by(_bare(p))) == 1 for p in parts):
+            # The words name one cited tool AND several: not a guess either way.
+            raise _Refused("ambiguous_tool")
         if tool in removed:
             raise _Refused("duplicate")
         return tool
@@ -591,26 +617,33 @@ def parse_change(
         return tool.name
 
     def swap(verb: str, rest: str) -> tuple[str, str]:
-        passed: list[tuple[str, str]] = []
-        failures: list[_Refused] = []
-        for m in _SWAP_JOIN[verb.lower()].finditer(rest):
-            try:
-                passed.append((removal(rest[: m.start()]), addition(rest[m.end() :])))
-            except _Refused as why:
-                failures.append(why)
-        if len(passed) == 1:
-            return passed[0]
-        if passed:
+        # A division is PLAUSIBLE when its removal half names a cited tool.
+        # Exactly one plausible division is checked on its own terms; several
+        # are ambiguous whatever their added halves do, so a division is never
+        # chosen because another one failed (#824 narrow review).
+        cuts = list(_SWAP_JOIN[verb.lower()].finditer(rest))
+        plausible = [m for m in cuts if resolver.named_by(_bare(rest[: m.start()]))]
+        if len(plausible) > 1:
             raise _Refused("ambiguous_split")
-        if len(failures) == 1:
-            raise failures[0]
-        raise _Refused("unrecognised")
+        if plausible:
+            (m,) = plausible
+        elif len(cuts) == 1:
+            (m,) = cuts
+        else:
+            raise _Refused("unrecognised")
+        return removal(rest[: m.start()]), addition(rest[m.end() :])
 
-    clauses, span = _clauses(text, cited)
+    split = _clauses(text, cited)
+    clauses, span = split.texts, split.span
     sharing = False
     i = 0
     while i < len(clauses):
         clause = clauses[i]
+        if i in split.clashing:
+            not_understood.append(NotUnderstood(text=clause, reason="ambiguous_tool"))
+            sharing = False
+            i += 1
+            continue
         kind = _kind(clause)
         # An add or swap with bare clauses after it may be one name cut apart.
         j = i + 1

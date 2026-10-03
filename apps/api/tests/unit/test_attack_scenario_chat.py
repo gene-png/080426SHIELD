@@ -244,3 +244,61 @@ def test_a_failed_removal_shares_nothing() -> None:
 def test_text_with_no_clause_parses_to_nothing(text) -> None:
     parsed = _parse(text)
     assert (parsed.removed, parsed.added, parsed.not_understood) == ([], [], [])
+
+
+# --- #824 narrow review: B1's remaining shapes ---------------------------------------
+
+
+def test_a_swap_is_never_divided_where_another_division_failed() -> None:
+    """Both "Defender Suite" and "Defender Suite for Endpoint" are cited, so
+    the swap divides two ways. Only one division's ADDED half passes, but
+    that is not evidence it is the division meant: nothing is proposed."""
+    cited = ("Defender Suite", "Defender Suite for Endpoint", "SIEM Tool")
+    parsed = _parse("swap Defender Suite for Endpoint for SIEM Tool", cited=cited, client=cited)
+    assert (parsed.removed, parsed.added) == ([], [])
+    assert _reasons(parsed) == [
+        ("swap Defender Suite for Endpoint for SIEM Tool", "ambiguous_split")
+    ]
+
+
+def test_a_swap_with_one_plausible_division_reports_that_divisions_own_failure() -> None:
+    """Only "Defender Suite for Endpoint" is cited, so the swap divides one way,
+    and the admin is told why THAT division fails (SIEM Tool is the client's)."""
+    cited = ("Defender Suite for Endpoint", "SIEM Tool")
+    parsed = _parse("swap Defender Suite for Endpoint for SIEM Tool", cited=cited, client=cited)
+    assert (parsed.removed, parsed.added) == ([], [])
+    assert [(n.reason, n.name) for n in parsed.not_understood] == [("already_clients", "SIEM Tool")]
+
+
+def test_overlapping_cited_names_are_not_chosen_between() -> None:
+    """ "Identity and Access" and "Identity and Access Manager" both claim the
+    words: neither the longer nor the earlier is preferred."""
+    cited = ("Identity and Access", "Identity and Access Manager", "SIEM Tool")
+    parsed = _parse(
+        "retire Identity and Access Manager; remove SIEM Tool", cited=cited, client=cited
+    )
+    assert parsed.removed == ["SIEM Tool"]
+    assert _reasons(parsed) == [("retire Identity and Access Manager", "ambiguous_tool")]
+
+
+def test_words_naming_one_cited_tool_and_several_are_not_a_guess() -> None:
+    """ "Identity and Access Manager" is one cited tool, and also "Identity"
+    and "Access Manager", two more: nothing is proposed."""
+    cited = ("Identity and Access Manager", "Identity", "Access Manager")
+    parsed = _parse("retire Identity and Access Manager", cited=cited, client=cited)
+    assert parsed.removed == []
+    assert _reasons(parsed) == [("retire Identity and Access Manager", "ambiguous_tool")]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "remove " + chr(0) + "0" + chr(0),
+        "retire Identity and Access Manager " + chr(0) + "1" + chr(0),
+    ],
+)
+def test_a_typed_nul_is_text_like_any_other(text) -> None:
+    cited = ("Identity and Access Manager", "SIEM Tool")
+    parsed = _parse(text, cited=cited, client=cited)
+    assert parsed.removed == []
+    assert len(parsed.not_understood) == 1

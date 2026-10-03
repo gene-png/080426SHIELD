@@ -48,6 +48,18 @@ def test_a_description_becomes_a_proposed_change_list(app_parts) -> None:  # noq
     assert r.json() == {"removed": [EDR, SIEM], "added": ["XDR Suite"], "not_understood": []}
 
 
+def test_a_typed_nul_is_quoted_back_not_a_500(app_parts) -> None:  # noqa: F811
+    """#824 narrow review: a NUL in the text once reached a lookup the matcher
+    had planted, and raised. It is now text like any other."""
+    w = _world(app_parts)
+    text = "remove " + chr(0) + "0" + chr(0)
+    r = _parse(w, text)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert (body["removed"], body["added"]) == ([], [])
+    assert [(n["text"], n["reason"]) for n in body["not_understood"]] == [(text, "unknown_tool")]
+
+
 def test_a_parse_writes_nothing_and_calls_no_ai(app_parts) -> None:  # noqa: F811
     """Pure: no what-if, no scenario row, no run, no `llm_calls` row and no
     audit entry -- on a proposal, on a clause not understood, and on a
