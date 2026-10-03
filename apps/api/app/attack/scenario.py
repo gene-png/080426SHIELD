@@ -19,6 +19,7 @@ are never mutated.
 
 from __future__ import annotations
 
+import unicodedata
 import uuid
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -199,6 +200,14 @@ def resolve_removed(rows: Sequence[Any], names: Iterable[str]) -> list[str]:
 MAX_ADDED = 10
 #: The longest name, vendor or category an admin may enter.
 MAX_TEXT = 200
+#: Unicode categories a name, vendor or category may not hold (#826): every
+#: control character (Cc: C0, DEL and C1) and the line and paragraph
+#: separators (Zl, Zp). Named by category, so the set is Unicode's, not a
+#: hand list. NUL is the one Postgres cannot store in the change list
+#: (jsonb: "unsupported Unicode escape sequence", an untyped 500); the
+#: rest store, but a name is one line of visible text. Format characters
+#: (Cf, a zero-width joiner) are deliberately NOT refused: scripts use them.
+_UNPRINTABLE = frozenset({"Cc", "Zl", "Zp"})
 
 #: An added tool's declared functions, as the Tech Debt classification spells
 #: them (`SecurityFunction`), and the coverage flag each maps to, in D/P/R order.
@@ -270,6 +279,15 @@ class Duplicate(AddedToolRefused):
 class TooLong(AddedToolRefused):
     """A name, vendor or category longer than `MAX_TEXT`; `field` is the
     panel's label for it."""
+
+    def __init__(self, name: str, field: str) -> None:
+        super().__init__(name)
+        self.field = field
+
+
+class Unprintable(AddedToolRefused):
+    """A name, vendor or category holding a character in `_UNPRINTABLE`;
+    `field` is the panel's label for it (#826)."""
 
     def __init__(self, name: str, field: str) -> None:
         super().__init__(name)
@@ -354,11 +372,12 @@ def validate_added(
             raise BlankName()
         vendor, category = _text(entry.get("vendor")), _text(entry.get("category"))
         # The panel's own labels (B2).
-        for label, value in (
+        fields = (
             ("Name", name),
             ("Vendor (optional)", vendor),
             ("Category (optional)", category),
-        ):
+        )
+        for label, value in fields:
             if value is not None and len(value) > MAX_TEXT:
                 raise TooLong(name, label)
         functions = entry.get("security_functions")
@@ -377,6 +396,11 @@ def validate_added(
         # client's own tools is still their tool (#818 narrow review, 1).
         if any(before.named_by(form) for form in citable(name)):
             raise _why_refused(name, before, resolver(client, "off"), client, earlier, citable)
+        # After the checks above, so a client's own tool spelled with a tab is
+        # still named as theirs (B4), the more useful refusal (#826).
+        for label, value in fields:
+            if value is not None and any(unicodedata.category(ch) in _UNPRINTABLE for ch in value):
+                raise Unprintable(name, label)
         out.append(
             AddedTool(
                 name=name,

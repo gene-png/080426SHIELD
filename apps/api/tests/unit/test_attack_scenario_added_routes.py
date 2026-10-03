@@ -377,6 +377,40 @@ def test_each_malformed_tool_is_refused_naming_its_field(
     assert _error(r) == {"reason": reason, "message": message}
 
 
+@pytest.mark.parametrize(
+    "tool, message",
+    [
+        (
+            # #826: Postgres cannot store a NUL in the change list (jsonb), so
+            # this was an untyped 500 at insert there; SQLite stored it.
+            {"name": "XDR" + chr(0) + "Suite", "security_functions": ["detect"]},
+            "A Name under Tools to add contains a line break or another character "
+            "that cannot be shown. Retype it.",
+        ),
+        (
+            {"name": XDR, "vendor": "Ven" + chr(0x2028) + "dor", "security_functions": ["detect"]},
+            f"Vendor (optional) for {XDR} contains a line break or another character "
+            "that cannot be shown. Retype it.",
+        ),
+        (
+            {"name": XDR, "category": "Ca" + chr(0x1F) + "t", "security_functions": ["detect"]},
+            f"Category (optional) for {XDR} contains a line break or another character "
+            "that cannot be shown. Retype it.",
+        ),
+    ],
+)
+def test_a_character_that_cannot_be_shown_is_a_typed_422_and_nothing_is_stored(
+    app_parts, tool, message  # noqa: F811
+) -> None:
+    w = _world(app_parts)
+    r = _create(w, added=[tool])
+    assert r.status_code == 422, r.text
+    assert _error(r) == {"reason": "scenario_added_tool_unprintable", "message": message}
+    listed = w.c.get(f"/attack/services/{w.svc_id}/scenarios", headers=w.h)
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["scenarios"] == []
+
+
 def test_a_tool_listed_twice_is_refused_naming_the_control(app_parts) -> None:  # noqa: F811
     w = _world(app_parts)
     r = _create(w, added=[_tool(), _tool("xdr suite")])

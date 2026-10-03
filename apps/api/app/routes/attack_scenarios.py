@@ -147,6 +147,15 @@ def _added_refusal(exc: Exception, *, cited: Iterable[str]) -> tuple[str, str]:
             "scenario_added_tool_duplicate",
             f"{name} is listed twice under Tools to add. Remove one with Remove this tool.",
         )
+    if isinstance(exc, scenario.Unprintable):
+        # NEW copy (#826), pending the advisor. The Name case does not echo
+        # the name: it is the text holding the character.
+        what = "A Name under Tools to add" if exc.field == "Name" else f"{exc.field} for {name}"
+        return (
+            "scenario_added_tool_unprintable",
+            f"{what} contains a line break or another character that cannot be "
+            "shown. Retype it.",
+        )
     if isinstance(exc, scenario.TooLong):
         return (
             "scenario_added_tool_too_long",

@@ -420,3 +420,53 @@ def test_a_function_that_is_not_a_string_is_refused_not_raised(value) -> None:
     with pytest.raises(scenario.BadFunction) as exc:
         _validate([_tool("XDR Tool", (value,))])
     assert exc.value.value == value
+
+
+# --- #826: a character that cannot be stored or shown ------------------------------
+#
+# The set is Unicode's own: every control character (category Cc: C0, DEL and
+# C1) and the line and paragraph separators (Zl, Zp). Rows are written out here
+# from that definition, not read from the code under test. NUL is the one
+# Postgres refuses to store (measured: jsonb answers "unsupported Unicode escape
+# sequence"); the rest store, but a name is one line of visible text.
+
+REFUSED = [
+    pytest.param(chr(0x00), id="NUL"),
+    pytest.param(chr(0x09), id="tab"),
+    pytest.param(chr(0x0A), id="line-feed"),
+    pytest.param(chr(0x0D), id="carriage-return"),
+    pytest.param(chr(0x1B), id="escape"),
+    pytest.param(chr(0x1F), id="unit-separator"),
+    pytest.param(chr(0x7F), id="DEL"),
+    pytest.param(chr(0x85), id="next-line-C1"),
+    pytest.param(chr(0x9F), id="last-C1"),
+    pytest.param(chr(0x2028), id="line-separator"),
+    pytest.param(chr(0x2029), id="paragraph-separator"),
+]
+
+
+@pytest.mark.parametrize("ch", REFUSED)
+@pytest.mark.parametrize(
+    ("field", "label"),
+    [("name", "Name"), ("vendor", "Vendor (optional)"), ("category", "Category (optional)")],
+)
+def test_a_control_character_or_line_separator_in_any_field_is_refused(ch, field, label) -> None:
+    tool = _tool("XDR Tool")
+    tool[field] = "X" + ch + "Y"
+    with pytest.raises(scenario.Unprintable) as exc:
+        _validate([tool])
+    assert exc.value.field == label
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Caf" + chr(0xE9) + " Suite",  # a letter outside ASCII
+        "XDR " + chr(0x2014) + " Cloud",  # an em dash
+        "XDR" + chr(0xA0) + "Suite",  # a no-break space: a space, not a control
+        "Tool" + chr(0x200D) + "X",  # a zero-width joiner: a format character, kept
+    ],
+)
+def test_visible_text_outside_ascii_is_not_refused(name) -> None:
+    (tool,) = _validate([_tool(name)])
+    assert tool.name == name
