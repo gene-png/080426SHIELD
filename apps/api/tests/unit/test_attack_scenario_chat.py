@@ -270,6 +270,14 @@ def test_a_swap_with_one_plausible_division_reports_that_divisions_own_failure()
     assert [(n.reason, n.name) for n in parsed.not_understood] == [("already_clients", "SIEM Tool")]
 
 
+def test_a_swap_that_divides_one_way_names_why_its_removal_fails() -> None:
+    """One "for", so one division: its removal names no cited tool, and the
+    admin is told that, rather than that the form was not recognised."""
+    parsed = _parse("swap Firewall Tool for XDR Suite")
+    assert (parsed.removed, parsed.added) == ([], [])
+    assert _reasons(parsed) == [("swap Firewall Tool for XDR Suite", "unknown_tool")]
+
+
 def test_overlapping_cited_names_are_not_chosen_between() -> None:
     """ "Identity and Access" and "Identity and Access Manager" both claim the
     words: neither the longer nor the earlier is preferred."""
