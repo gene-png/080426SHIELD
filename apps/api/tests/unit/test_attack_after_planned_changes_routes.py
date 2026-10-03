@@ -146,6 +146,7 @@ def test_the_documents_carry_the_figure(env) -> None:  # noqa: F811
         _pdf_text(_download(c, bearer, fin["pdf_artifact_id"])),
         _docx_text(_download(c, bearer, fin["docx_artifact_id"])),
     ):
+        # test-integrity: the needle is three full approved sentences, written out above.
         assert f"{P1} {A1} {A3}" in text, text
     ws = load_workbook(io.BytesIO(_download(c, bearer, fin["xlsx_artifact_id"])))["Heatmap Summary"]
     rows = [tuple(cell.value for cell in r[:2]) for r in ws.iter_rows()]
