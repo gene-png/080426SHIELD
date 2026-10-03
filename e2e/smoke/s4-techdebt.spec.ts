@@ -12,7 +12,7 @@ import { atlasServiceId } from "../helpers/ids";
  * CSV line, each stamped with an AI confidence percentage. We assert the spec's
  * two contract points:
  *   1. The dashboard summarizes the extracted list (capability count, annual
- *      cost, categories, to-consolidate/cut, low-confidence counts).
+ *      cost, categories, "To cut", low-confidence counts).
  *   2. Editing any cell clears that row's AI-confidence badge and re-labels it
  *      "Human-curated" (the API sets confidence_pct = NULL on a human edit).
  *
@@ -118,7 +118,7 @@ test("tech-debt extract builds the dashboard, and editing a cell clears the AI-c
   });
   await expect(page.getByText("Annual cost", { exact: true })).toBeVisible();
   await expect(page.getByText("Categories", { exact: true })).toBeVisible();
-  await expect(page.getByText("To consolidate / cut")).toBeVisible();
+  await expect(page.getByText("To cut", { exact: true })).toBeVisible();
   // exact: the "N low-confidence rows" StatusPill would otherwise also match.
   await expect(
     page.getByText("Low-confidence rows", { exact: true }),

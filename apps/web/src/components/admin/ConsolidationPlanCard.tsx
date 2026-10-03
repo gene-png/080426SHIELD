@@ -8,6 +8,7 @@ import {
   NumberCard,
 } from "@shield/design-system";
 
+import { DISPOSITION_LABEL } from "@/lib/tech_debt/dispositionLabels";
 import type { ConsolidationPlanSummary } from "@/lib/tech_debt/types";
 
 import type { JSX } from "react";
@@ -34,16 +35,17 @@ export function ConsolidationPlanCard({
       <CardHeader>
         <CardTitle>Consolidation plan</CardTitle>
         <CardDescription>
-          Each row in the table above carries a disposition (keep / consolidate
-          / cut). The cut-row costs add up to the estimated annual savings shown
-          below. Finalize the deliverable when the dispositions are settled.
+          Each row in the table above carries a disposition: Keep, Cut, or Cut,
+          covered by another tool. The annual costs of both kinds of cut add up
+          to the estimated annual savings shown below. Finalize the deliverable
+          when the dispositions are settled.
         </CardDescription>
       </CardHeader>
       <CardBody>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
           <NumberCard label="Keep" value={summary.keep_count.toString()} />
           <NumberCard
-            label="Consolidate"
+            label={DISPOSITION_LABEL.consolidate}
             value={summary.consolidate_count.toString()}
           />
           <NumberCard label="Cut" value={summary.cut_count.toString()} />
@@ -63,8 +65,8 @@ export function ConsolidationPlanCard({
             deltaTone="positive"
             hint={
               summary.savings_cost_known
-                ? "Sum of annual_cost_usd on cut rows."
-                : "At least one cut row is missing a cost; this is a lower bound."
+                ? "Sum of the annual costs of rows marked Cut or Cut, covered by another tool."
+                : "At least one row marked to cut is missing a cost; this is a lower bound."
             }
           />
         </div>

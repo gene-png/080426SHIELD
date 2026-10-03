@@ -251,6 +251,8 @@ NOT_EDITS = {
     ("POST", "/tech-debt/capability-lists/{list_id}/approve"),
     # Ends the list; a discarded list is not approvable at all (#231).
     ("POST", "/tech-debt/capability-lists/{list_id}/discard"),
+    # #804: a what-if; writes nothing.
+    ("POST", "/tech-debt/capability-lists/{list_id}/savings-preview"),
 }
 
 

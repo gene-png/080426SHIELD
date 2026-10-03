@@ -62,7 +62,12 @@ from app.logging import get_logger
 from app.mode_stamp import ai_mode_for
 from app.models._common import utcnow
 from app.models.artifact import Artifact, ArtifactOrigin
-from app.models.capability import CapabilityItem, CapabilityList, CapabilityListStatus
+from app.models.capability import (
+    CapabilityDisposition,
+    CapabilityItem,
+    CapabilityList,
+    CapabilityListStatus,
+)
 from app.models.client import Client
 from app.models.deliverable import Deliverable
 from app.models.service import Service, ServiceKind, ServiceStatus
@@ -81,6 +86,8 @@ from app.schemas.tech_debt import (
     IncludeExcludedRowRequest,
     OverlapAnalysisResponse,
     OverlapBucketResponse,
+    SavingsPreviewRequest,
+    SavingsPreviewResponse,
     SecurityClassificationOverride,
     ServiceCreateRequest,
     ServiceResponse,
@@ -108,6 +115,7 @@ from app.tech_debt.filename import (
 from app.tech_debt.overlap import analyze_overlap
 from app.tech_debt.parsers import SUPPORTED_MIME, UnsupportedInventoryFormat
 from app.tech_debt.reconcile import exclusion_count_state
+from app.tech_debt.savings import estimated_savings
 from app.tech_debt.security_scope import security_scope_filter
 from app.tenant import (
     require_artifact_in_tenant,
@@ -1318,8 +1326,9 @@ def _refuse_undecided(count: int, *, then: str = "approve again") -> HTTPExcepti
         detail={
             "reason": "capability_list_undecided_rows",
             "message": (
-                f"{rows} still undecided. Give every row a keep, consolidate or cut "
-                f"decision in step 2, Review and correct the extracted list, then {then}."
+                f"{rows} still undecided. Give every row a decision (Keep, Cut, or Cut, "
+                f"covered by another tool) in step 2, Review and correct the extracted "
+                f"list, then {then}."
             ),
         },
     )
@@ -1717,6 +1726,94 @@ def overlap_analysis(
     )
 
 
+def _preview_refusal(reason: str, message: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={"reason": reason, "message": message},
+    )
+
+
+@router.post(
+    "/capability-lists/{list_id}/savings-preview",
+    response_model=SavingsPreviewResponse,
+    summary="What the estimated annual savings would be for proposed dispositions (admin)",
+)
+def savings_preview(
+    list_id: uuid.UUID,
+    body: SavingsPreviewRequest,
+    _user: Annotated[User, _admin_required],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> SavingsPreviewResponse:
+    """#804: the savings what-if. Overlays the proposed dispositions on the
+    stored items IN MEMORY and computes the figure with the deliverable's own
+    derivation. Writes nothing, calls no AI; "Apply to plan" goes through the
+    disposition routes and their guards."""
+    cap_list = db.get(CapabilityList, list_id)
+    svc = db.get(Service, cap_list.service_id) if cap_list is not None else None
+    if cap_list is None or svc is None or svc.client_id != client.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Capability list not found.",
+        )
+    proposed = body.dispositions
+    if not isinstance(proposed, dict):
+        raise _preview_refusal(
+            "savings_preview_bad_request",
+            "Send the proposed dispositions as a map of capability id to disposition.",
+        )
+    items = (
+        db.execute(select(CapabilityItem).where(CapabilityItem.capability_list_id == cap_list.id))
+        .scalars()
+        .all()
+    )
+    by_id = {str(it.id): it for it in items}
+    overlay: dict[str, CapabilityDisposition | None] = {}
+    for item_id, value in proposed.items():
+        if str(item_id) not in by_id:
+            raise _preview_refusal(
+                "savings_preview_unknown_item",
+                "A proposed disposition names a capability that is not in this list. "
+                "Reload the list and try again.",
+            )
+        if value is None:
+            overlay[str(item_id)] = None
+            continue
+        try:
+            overlay[str(item_id)] = CapabilityDisposition(value)
+        except ValueError:
+            raise _preview_refusal(
+                "savings_preview_unknown_disposition",
+                "A proposed disposition is not one of Keep, Cut, or Cut, covered by another tool.",
+            ) from None
+    # `.get` keeps an explicit None: unticking a row in the what-if is a choice.
+    rows = [(overlay.get(key, it.disposition), it.annual_cost_usd) for key, it in by_id.items()]
+    savings = estimated_savings(rows)
+    counts = dict.fromkeys(CapabilityDisposition, 0)
+    undecided = 0
+    for disposition, _cost in rows:
+        if disposition is None:
+            undecided += 1
+        else:
+            counts[disposition] += 1
+    _log.info(
+        "tech_debt.savings_preview",
+        capability_list_id=str(cap_list.id),
+        proposed=len(overlay),
+        estimated_annual_savings=savings.amount,
+        savings_cost_known=savings.known,
+    )
+    return SavingsPreviewResponse(
+        capability_list_id=cap_list.id,
+        estimated_annual_savings=savings.amount,
+        savings_cost_known=savings.known,
+        keep_count=counts[CapabilityDisposition.KEEP],
+        consolidate_count=counts[CapabilityDisposition.CONSOLIDATE],
+        cut_count=counts[CapabilityDisposition.CUT],
+        undecided_count=undecided,
+    )
+
+
 @router.get(
     "/services/{service_id}/consolidation-plan",
     response_model=ConsolidationPlanSummary,
@@ -1749,8 +1846,6 @@ def consolidation_plan_summary(
     # The approve guard's own count (#639), so the plan and the refusal cannot
     # disagree about how many rows are undecided.
     undecided = undecided_row_count(db, cap_list.id)
-    cut_savings = 0.0
-    savings_cost_known = True
     for it in items:
         if it.disposition is None:
             continue
@@ -1760,10 +1855,8 @@ def consolidation_plan_summary(
             consolidate += 1
         elif it.disposition == CapabilityDisposition.CUT:
             cut += 1
-            if it.annual_cost_usd is None:
-                savings_cost_known = False
-            else:
-                cut_savings += float(it.annual_cost_usd)
+    # #804: the deliverable's own derivation, not a copy of it.
+    savings = estimated_savings((it.disposition, it.annual_cost_usd) for it in items)
 
     return ConsolidationPlanSummary(
         capability_list_id=cap_list.id,
@@ -1773,8 +1866,8 @@ def consolidation_plan_summary(
         consolidate_count=consolidate,
         cut_count=cut,
         undecided_count=undecided,
-        estimated_annual_savings=cut_savings,
-        savings_cost_known=savings_cost_known,
+        estimated_annual_savings=savings.amount,
+        savings_cost_known=savings.known,
     )
 
 

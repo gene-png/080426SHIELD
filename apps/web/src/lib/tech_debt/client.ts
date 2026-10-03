@@ -15,6 +15,7 @@ import type {
   ConsolidationPlanSummary,
   Deliverable,
   OverlapAnalysis,
+  SavingsPreview,
   SecurityFunction,
   ServiceResponse,
 } from "./types";
@@ -186,6 +187,18 @@ export async function bulkSetDisposition(
       method: "POST",
       body: { item_ids: itemIds, disposition },
     },
+  );
+}
+
+/** #804: the savings what-if. Rows not in `dispositions` keep their stored
+ *  disposition; `null` proposes Undecided. Writes nothing. */
+export async function previewSavings(
+  listId: string,
+  dispositions: Record<string, CapabilityDisposition | null>,
+): Promise<SavingsPreview> {
+  return jsonRequest<SavingsPreview>(
+    `/api/proxy/tech-debt/capability-lists/${listId}/savings-preview`,
+    { method: "POST", body: { dispositions } },
   );
 }
 
