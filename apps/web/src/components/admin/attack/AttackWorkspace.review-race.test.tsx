@@ -217,58 +217,65 @@ async function editWhileTheReviewIsInFlight(): Promise<void> {
   expect(attackClient.patchCoverage).toHaveBeenCalled();
 }
 
+function stale409(): Error {
+  const ProxyError = attackClient.AttackProxyError as unknown as new (
+    m: string,
+  ) => Error;
+  return Object.assign(new ProxyError("ATT&CK proxy 409"), {
+    status: 409,
+    payload: {
+      error: {
+        code: 409,
+        reason: "computed_status_changed",
+        message: "ignored by the panel",
+        codes: ["T1003.001"],
+      },
+    },
+  });
+}
+
 describe("AttackWorkspace, a row edit during a review (#554 R3)", () => {
-  it("applies the review the server recorded", async () => {
-    // The page's load, then the quiet re-read the overlapping edit asks for,
-    // which reads what the server holds after the review: reviewed.
+  it("applies the review the server recorded, before the quiet re-read settles", async () => {
+    // The quiet re-read is held open, so what is on screen is the REVIEW's
+    // result -- a guard that dropped it would leave "1 reviewed, 1 awaiting".
+    const quiet = deferred<AttackAssessment>();
     vi.mocked(attackClient.fetchLatestAssessment)
       .mockResolvedValueOnce(draft(true))
-      .mockResolvedValue(draft(false));
+      .mockReturnValueOnce(quiet.promise);
     const review = deferred<AttackAssessment>();
     vi.mocked(attackClient.reviewComputedStatuses).mockReturnValueOnce(
       review.promise,
     );
     await editWhileTheReviewIsInFlight();
-
-    // Before: the other row already reviewed, this one awaiting (1 + 1).
     expect(
       screen.getByText("1 reviewed, 1 awaiting review."),
     ).toBeInTheDocument();
+
     await act(async () => {
       review.resolve(draft(false));
     });
     expect(
       await screen.findByText("2 reviewed, 0 awaiting review."),
     ).toBeInTheDocument();
+    await act(async () => {
+      quiet.resolve(draft(false, "covered", "x"));
+    });
   });
 
-  it("applies the refresh it announces after a stale review", async () => {
+  it("applies the refresh it announces, before the quiet re-read settles", async () => {
+    const quiet = deferred<AttackAssessment>();
     vi.mocked(attackClient.fetchLatestAssessment)
       .mockResolvedValueOnce(draft(true))
-      .mockResolvedValue(draft(true, "partial"));
+      .mockResolvedValueOnce(draft(true, "partial"))
+      .mockReturnValueOnce(quiet.promise);
     const review = deferred<AttackAssessment>();
     vi.mocked(attackClient.reviewComputedStatuses).mockReturnValueOnce(
       review.promise,
     );
     await editWhileTheReviewIsInFlight();
 
-    const ProxyError = attackClient.AttackProxyError as unknown as new (
-      m: string,
-    ) => Error;
     await act(async () => {
-      review.reject(
-        Object.assign(new ProxyError("ATT&CK proxy 409"), {
-          status: 409,
-          payload: {
-            error: {
-              code: 409,
-              reason: "computed_status_changed",
-              message: "ignored by the panel",
-              codes: ["T1003.001"],
-            },
-          },
-        }),
-      );
+      review.reject(stale409());
     });
     expect(
       await screen.findByText(
@@ -279,11 +286,12 @@ describe("AttackWorkspace, a row edit during a review (#554 R3)", () => {
     const panel = screen.getByTestId("attack-computed-review");
     expect(within(panel).getByText("Partial")).toBeInTheDocument();
     expect(within(panel).queryByText("Covered")).toBeNull();
+    await act(async () => {
+      quiet.resolve(draft(true, "partial", "x"));
+    });
   });
 
-  it("re-reads quietly when the review's snapshot predates the edit", async () => {
-    // Round 4: the snapshot was read before the edit committed (notes null), and
-    // lands after it. One quiet re-read once every write is done restores "x".
+  it("re-reads quietly when the review's snapshot predates an edit made during it", async () => {
     vi.mocked(attackClient.fetchLatestAssessment)
       .mockResolvedValueOnce(draft(true))
       .mockResolvedValueOnce(draft(false, "covered", "x"));
@@ -292,8 +300,6 @@ describe("AttackWorkspace, a row edit during a review (#554 R3)", () => {
       review.promise,
     );
     await editWhileTheReviewIsInFlight();
-    expect(screen.getByText("notes: x")).toBeInTheDocument();
-
     await act(async () => {
       review.resolve(draft(false));
     });
@@ -303,7 +309,7 @@ describe("AttackWorkspace, a row edit during a review (#554 R3)", () => {
     expect(await screen.findByText("notes: x")).toBeInTheDocument();
   });
 
-  it("re-reads quietly when the 409 re-read predates the edit", async () => {
+  it("re-reads quietly when the 409 re-read predates an edit made during it", async () => {
     vi.mocked(attackClient.fetchLatestAssessment)
       .mockResolvedValueOnce(draft(true))
       .mockResolvedValueOnce(draft(true, "partial"))
@@ -313,27 +319,47 @@ describe("AttackWorkspace, a row edit during a review (#554 R3)", () => {
       review.promise,
     );
     await editWhileTheReviewIsInFlight();
-
-    const ProxyError = attackClient.AttackProxyError as unknown as new (
-      m: string,
-    ) => Error;
     await act(async () => {
-      review.reject(
-        Object.assign(new ProxyError("ATT&CK proxy 409"), {
-          status: 409,
-          payload: {
-            error: {
-              code: 409,
-              reason: "computed_status_changed",
-              message: "ignored by the panel",
-              codes: ["T1003.001"],
-            },
-          },
-        }),
-      );
+      review.reject(stale409());
     });
     await waitFor(() =>
       expect(attackClient.fetchLatestAssessment).toHaveBeenCalledTimes(3),
+    );
+    expect(await screen.findByText("notes: x")).toBeInTheDocument();
+  });
+
+  it("re-reads quietly when the edit was already in flight at the click", async () => {
+    // Round 5, F1: the edit started BEFORE the review, so no edit "started
+    // since" the review began; the review's snapshot (notes null) lands after
+    // the edit (notes "x") and would revert it with nothing re-reading.
+    vi.mocked(attackClient.fetchLatestAssessment)
+      .mockResolvedValueOnce(draft(true))
+      .mockResolvedValueOnce(draft(false, "covered", "x"));
+    const patch = deferred<AttackCoverageRow>();
+    vi.mocked(attackClient.patchCoverage).mockReturnValueOnce(patch.promise);
+    const review = deferred<AttackAssessment>();
+    vi.mocked(attackClient.reviewComputedStatuses).mockReturnValueOnce(
+      review.promise,
+    );
+    render(<AttackWorkspace serviceId="svc" serviceTitle="ATT&CK" />);
+    const panel = await screen.findByTestId("attack-computed-review");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "select the other row" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "edit the selected row" }),
+    );
+    fireEvent.click(
+      within(panel).getByRole("button", { name: "Mark 1 as reviewed" }),
+    );
+    await act(async () => {
+      patch.resolve(row("T1059.001", "partial", false, "x"));
+    });
+    await act(async () => {
+      review.resolve(draft(false));
+    });
+    await waitFor(() =>
+      expect(attackClient.fetchLatestAssessment).toHaveBeenCalledTimes(2),
     );
     expect(await screen.findByText("notes: x")).toBeInTheDocument();
   });

@@ -130,7 +130,7 @@ describe("AttackWorkspace, a review whose computed status moved (#554 R3)", () =
   it("re-reads the panel and says so, instead of naming a reload control", async () => {
     vi.mocked(attackClient.fetchLatestAssessment)
       .mockResolvedValueOnce(draft("covered"))
-      .mockResolvedValueOnce(draft("partial"));
+      .mockResolvedValue(draft("partial"));
     const ProxyError = attackClient.AttackProxyError as unknown as new (
       m: string,
     ) => Error;
@@ -173,7 +173,7 @@ describe("AttackWorkspace, a review whose computed status moved (#554 R3)", () =
   it("does the same when a row left the queue (A11)", async () => {
     vi.mocked(attackClient.fetchLatestAssessment)
       .mockResolvedValueOnce(draft("covered"))
-      .mockResolvedValueOnce({
+      .mockResolvedValue({
         ...draft("covered"),
         coverage: [{ ...row("covered"), in_review_queue: false }],
       } as unknown as AttackAssessment);

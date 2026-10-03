@@ -384,7 +384,9 @@ export function AttackWorkspace({
       a = await fetchLatestAssessment(serviceId);
     } catch {
       attempt.note(
-        "Your change was saved, but the assessment could not be re-read, so a parent technique's status may be out of date. Reload to see it.",
+        // Copy for the advisor (#808 round 5): general, because a review now
+        // asks for this re-read too, not only a parent's recompute.
+        "Your change was saved, but the assessment could not be re-read, so what is shown may be out of date. Reload to see it.",
       );
       return;
     }
@@ -545,24 +547,24 @@ export function AttackWorkspace({
     if (!assessment) return;
     setActionError(null);
     setBusy("review");
-    // Bumped so a slow LOAD arriving late cannot overwrite the review's result
-    // (near-unreachable today: the page's loads finish before the panel can be
-    // clicked). The result itself is applied unconditionally, like approve's: a
-    // row edit made while the review is in flight also bumps the counter, and
+    // Bumped so a load already in flight (the page's own, or one started by
+    // `onRunFinishedElsewhere`) cannot overwrite the review's result when it
+    // lands late. The result itself is applied unconditionally, like approve's:
+    // a row edit made while the review is in flight also bumps the counter, and
     // guarding on it would drop a review the server recorded (#808 round 3).
     assessmentSeq.current += 1;
-    // A row edit made while this is out may commit after the server read the
-    // snapshot applied below, which would then revert it on screen. If any
-    // edit started meanwhile, ask for one quiet re-read once every write is
-    // done (`trackWrite`'s trailing `refetchWhenQuiet`) -- #808 round 4.
-    const started = editsStarted.current;
-    const rereadIfEdited = () => {
-      if (editsStarted.current !== started) refetchWanted.current = true;
+    // The snapshot applied below may predate a row edit -- one in flight when
+    // the review was clicked, or one made since -- and would then revert it on
+    // screen. So after ANY review write, ask for one quiet re-read once every
+    // write is done (`trackWrite`'s trailing `refetchWhenQuiet`): one extra GET
+    // per review, correct in every interleaving (#808 rounds 4 and 5).
+    const rereadAfter = () => {
+      refetchWanted.current = true;
     };
     try {
       const next = await reviewComputedStatuses(assessment.id, reviews);
       setAssessment(next);
-      rereadIfEdited();
+      rereadAfter();
     } catch (err) {
       const reason = errorReason(err);
       if (
@@ -580,7 +582,7 @@ export function AttackWorkspace({
         try {
           const latest = await fetchLatestAssessment(serviceId);
           setAssessment(latest);
-          rereadIfEdited();
+          rereadAfter();
           setActionError(reviewRefreshedMessage(reason, codes ?? [], true));
         } catch {
           setActionError(reviewRefreshedMessage(reason, codes ?? [], false));
