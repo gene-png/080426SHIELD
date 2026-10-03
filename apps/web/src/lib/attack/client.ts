@@ -127,6 +127,28 @@ export async function approveAssessment(
   );
 }
 
+/** #554 R3: one technique as the review panel showed it. */
+export interface ComputedStatusReview {
+  code: string;
+  computed_status: string;
+}
+
+/**
+ * #554 R3: record a review of the computed statuses that differ from the AI's.
+ * `reviews` are the techniques the panel showed, each with the computed status
+ * on screen, so the API refuses any that entered the queue or changed after the
+ * page loaded rather than record a status nobody saw.
+ */
+export async function reviewComputedStatuses(
+  assessmentId: string,
+  reviews: ComputedStatusReview[],
+): Promise<AttackAssessment> {
+  return jsonRequest<AttackAssessment>(
+    `/api/proxy/attack/assessments/${assessmentId}/computed-status-review`,
+    { method: "POST", body: { reviews } },
+  );
+}
+
 export async function discardAssessment(
   assessmentId: string,
 ): Promise<AttackAssessment> {

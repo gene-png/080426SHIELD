@@ -42,6 +42,8 @@ from app.assessment_targets import target_source_sentence  # noqa: E402
 from app.attack.analytics import compute as compute_attack  # noqa: E402
 from app.attack.catalog import SOURCE_VERSION as ATTACK_SOURCE_VERSION  # noqa: E402
 from app.attack.catalog import TECHNIQUES, parent_techniques  # noqa: E402
+from app.attack.computed import effective_coverage as attack_effective_coverage  # noqa: E402
+from app.attack.computed import review_queue as attack_review_queue  # noqa: E402
 from app.attack.coverage import CoverageStatus  # noqa: E402
 from app.attack.exporters import (  # noqa: E402
     build_context as build_attack_context,
@@ -56,6 +58,7 @@ from app.attack.parents import recompute_parents  # noqa: E402
 from app.attack.pending import CLAIMS_SUPPORT  # noqa: E402
 from app.attack.pending import pending_codes as attack_pending_codes  # noqa: E402
 from app.attack.pending import row_tools as attack_row_tools  # noqa: E402
+from app.attack.rules import COMPUTED_STATUSES as ATTACK_COMPUTED_STATUSES  # noqa: E402
 from app.attack.rules import NEW_RULES as ATTACK_NEW_RULES  # noqa: E402
 from app.attack.rules import parents_computed as attack_parents_computed  # noqa: E402
 from app.audit import audit  # noqa: E402
@@ -917,17 +920,28 @@ def _attack_status_for(index: int, is_sub: bool) -> str | None:
     return None
 
 
-def _attack_tools_for(status_value: str | None) -> tuple[list[str] | None, list[str] | None]:
-    """(detection_tools, response_tools) for a seeded coverage status.
+def _attack_tools_for(
+    status_value: str | None,
+) -> tuple[list[str] | None, list[str] | None, list[str] | None]:
+    """(detection_tools, prevention_tools, response_tools) for a seeded status.
 
     Only the POSITIVE statuses get tools. A `gap` naming a control would
     contradict itself, and `not_applicable` makes no claim to support.
+
+    #554 R3: a status is computed from which of the three are in place, so the
+    tools are what MAKE each status: all three for `covered`, detection alone for
+    `partial`. Without prevention lists every seeded Covered row computed to
+    Partial (measured on the dev seed, 2026-10-02: prevention on 0 of 633 rows).
     """
     if status_value == CoverageStatus.COVERED.value:
-        return ["CrowdStrike Falcon", "Splunk Enterprise"], ["Splunk Enterprise"]
+        return (
+            ["CrowdStrike Falcon", "Splunk Enterprise"],
+            ["CrowdStrike Falcon"],
+            ["Splunk Enterprise"],
+        )
     if status_value == CoverageStatus.PARTIAL.value:
-        return ["Splunk Enterprise"], None
-    return None, None
+        return ["Splunk Enterprise"], None, None
+    return None, None, None
 
 
 def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client) -> Service:
@@ -954,6 +968,9 @@ def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client)
         # #620 (D-094): the rows below are recomputed under D-094's rules, so
         # the demo renders under them -- as approve would have recorded.
         parent_rules=ATTACK_NEW_RULES,
+        # #554 R3 (migration 0059): statuses computed from Detect / Prevent /
+        # Respond, as approve records it.
+        status_rules=ATTACK_COMPUTED_STATUSES,
     )
     db.add(assessment)
     db.flush()
@@ -968,7 +985,7 @@ def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client)
         # was modelling the defect. The names are drawn from `_TD_ITEMS` above,
         # so they resolve against this client's own approved capability list
         # exactly as a real run's citations would.
-        detection, response = _attack_tools_for(status_value)
+        detection, prevention, response = _attack_tools_for(status_value)
         coverage_rows.append(
             AttackCoverage(
                 assessment_id=assessment.id,
@@ -981,6 +998,7 @@ def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client)
                     else None
                 ),
                 detection_tools=detection,
+                prevention_tools=prevention,
                 response_tools=response,
                 # `[]`, never NULL. A deliberate single-place assertion that
                 # seeded demo data is CONFIRMED, rather than every seeded row
@@ -1000,10 +1018,24 @@ def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client)
     # claim guard below still holds for it.
     for code in recompute_parents({r.technique_code: r for r in coverage_rows}).changed:
         parent = next(r for r in coverage_rows if r.technique_code == code)
-        parent.detection_tools, parent.response_tools = _attack_tools_for(parent.status)
+        (
+            parent.detection_tools,
+            parent.prevention_tools,
+            parent.response_tools,
+        ) = _attack_tools_for(parent.status)
     db.flush()
 
-    coverage_map = {r.technique_code: r.status for r in coverage_rows}
+    # #554 R3: what every surface counts. The seeded tools make each computed
+    # status equal the stored one, so the release gate's review queue is empty --
+    # a released demo holding a state the gate refuses would be #732's defect.
+    effective_rows = attack_effective_coverage(assessment, coverage_rows)
+    differ = attack_review_queue(effective_rows)
+    if differ:
+        raise RuntimeError(
+            f"seed_demo wrote {len(differ)} ATT&CK rows whose computed status differs from "
+            f"the seeded one (e.g. {list(differ)[:3]}); the release gate would refuse them."
+        )
+    coverage_map = {r.technique_code: r.status for r in effective_rows}
     # Asserted on the PROPERTY, not through `is_pending_review`. The first
     # version of this guard called the predicate -- and could never fire, because
     # every row here is written with `unconfirmed_citations=[]`, which is case 3
@@ -1024,7 +1056,7 @@ def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client)
             "tool or drop the status."
         )
     pending = attack_pending_codes(
-        coverage_rows, parents_computed=attack_parents_computed(assessment)
+        effective_rows, parents_computed=attack_parents_computed(assessment)
     )
     assert not pending, f"seeded rows the scoring rule would withhold: {sorted(pending)[:3]}"
     rollup = compute_attack(coverage_map, pending)
@@ -1046,7 +1078,7 @@ def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client)
         client_legal_name=org.legal_name,
         service_title=svc.title,
         assessment=assessment,
-        coverage=coverage_rows,
+        coverage=effective_rows,
         rollup=rollup,
     )
     _release(

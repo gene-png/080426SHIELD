@@ -136,6 +136,37 @@ test("Run AI raises the stale-documents nudge; finalising the deliverable clears
   );
   expect(finalized.ok()).toBeTruthy();
 
+  // #554 R3: the approved assessment this spec leaves on the shared client
+  // computes its statuses, and any that differ from the AI's suggestion wait
+  // for a consultant's review. Risk synthesis refuses until they are reviewed,
+  // so review them here: the spec leaves nothing that blocks s8 or s30, in
+  // whatever order they run.
+  const approvedNow = await page.request.get(
+    `/api/proxy/attack/services/${attackServiceId}/assessments/latest`,
+  );
+  expect(approvedNow.ok()).toBeTruthy();
+  const reviews = (
+    (await approvedNow.json()) as {
+      coverage: {
+        technique_code: string;
+        computed_status: string | null;
+        in_review_queue?: boolean;
+      }[];
+    }
+  ).coverage
+    .filter((row) => row.in_review_queue === true)
+    .map((row) => ({
+      code: row.technique_code,
+      computed_status: row.computed_status,
+    }));
+  if (reviews.length > 0) {
+    const reviewed = await page.request.post(
+      `/api/proxy/attack/assessments/${assessmentId}/computed-status-review`,
+      { data: { reviews } },
+    );
+    expect(reviewed.ok(), await reviewed.text()).toBeTruthy();
+  }
+
   // On reload the flag is cleared, so the nudge is gone.
   await page.reload();
   await expect(page.getByText(/v\d+/).first()).toBeVisible({ timeout: 60000 });

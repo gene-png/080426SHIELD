@@ -73,6 +73,8 @@ def _xlsx_parent_cell(case: str) -> str:
         version=1,
         status=AttackAssessmentStatus.APPROVED,
         parent_rules=2,
+        # #554 R3: models an approved/released pre-R3 assessment, backfilled by 0059.
+        status_rules=1,
     )
     parent, children = _family()
     rows = []

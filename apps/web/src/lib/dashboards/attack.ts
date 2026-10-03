@@ -67,11 +67,35 @@ export interface DashTechnique {
    * (`app/attack/partial_reasons.py`). Present on a Partial row only.
    */
   partial_reason?: { label: string; sentence: string };
+  /**
+   * #554 R3: which of Detect / Prevent / Respond are in place, in the client's
+   * words (`app/attack/computed.py::IN_PLACE_TEXT`), and the approved line.
+   * Present on a row whose status was computed; absent before R3.
+   */
+  in_place?: {
+    /** The client's words, for display only. */
+    detect: string;
+    prevent: string;
+    respond: string;
+    line: string;
+    cannot_be_prevented: boolean;
+    /** The machine values (`app/attack/computed.py::InPlace`). Logic reads
+     *  these, never the words above. */
+    state: {
+      detect: InPlaceState;
+      prevent: InPlaceState;
+      respond: InPlaceState;
+    };
+  };
   detection_tools: string[];
   prevention_tools: string[];
   response_tools: string[];
   rationale: string | null;
 }
+
+/** #554 R3: one capability's machine value. */
+export type InPlaceState =
+  "in_place" | "not_in_place" | "awaiting_review" | "cannot_be_prevented";
 
 export interface DashRollup {
   total_evaluated: number;
@@ -124,7 +148,22 @@ export interface AttackDashboardData {
    * there is no Partial.
    */
   partial_reasons?: { label: string; sentence: string; count: number }[];
+  /** #554 R3 (Q4): the deliverable's sentence beside the percentage. Absent
+   *  before R3 and when nothing awaits review. */
+  awaiting_review_sentence?: string;
+  /** #554 R3: true when statuses are computed from Detect / Prevent / Respond.
+   *  Absent before R3. */
+  statuses_computed?: boolean;
 }
+
+/**
+ * #554 R3: the "Techniques that cannot be prevented" section, approved on #554
+ * (21:55Z). COPIED from `apps/api/app/attack/computed.py`; change both.
+ */
+export const CANNOT_BE_PREVENTED_HEADING =
+  "Techniques that cannot be prevented";
+export const CANNOT_BE_PREVENTED_SENTENCE =
+  "MITRE ATT&CK lists no preventive control for these techniques, so they are assessed on detection and response. A technique here is Covered when it is both detected and responded to.";
 
 export interface Kpi {
   n: number;
@@ -173,6 +212,9 @@ export interface DprCoverage {
   prevent: DprLeg;
   respond: DprLeg;
   total: number;
+  /** #554 R3, the advisor's ruling (a): Prevent's own denominator, which leaves
+   *  out the techniques that cannot be prevented. Equals `total` otherwise. */
+  preventTotal: number;
   /** Rows the population left out, from the SAME filter, so the page can say
    *  what the percentages are over (#620 round 3). */
   excluded: {
@@ -183,6 +225,8 @@ export interface DprCoverage {
     notApplicable: number;
     notVerified: number;
     outside: number;
+    /** #554 R3: left out of Prevent's denominator only. */
+    cannotBePrevented: number;
   };
 }
 
@@ -217,6 +261,25 @@ const ASSESSED: ReadonlySet<CoverageStatus> = new Set([
   "gap",
 ]);
 
+/**
+ * #554 R3: whether one leg is present on a technique. On a row whose status was
+ * computed it is the API's "in place" -- a listed tool still awaiting review is
+ * NOT a leg, and neither is "cannot be prevented" -- so the triad agrees with
+ * the status beside it. Before R3 it is a non-empty tool list, as delivered.
+ */
+export function legOn(
+  t: DashTechnique,
+  leg: "detect" | "prevent" | "respond",
+): boolean {
+  if (t.in_place) return t.in_place.state[leg] === "in_place";
+  const tools = {
+    detect: t.detection_tools,
+    prevent: t.prevention_tools,
+    respond: t.response_tools,
+  }[leg];
+  return tools.length > 0;
+}
+
 export function dprCoverage(
   techniques: DashTechnique[],
   /** `data.parents_computed === true`: the assessment is under #620's rules.
@@ -249,9 +312,12 @@ export function dprCoverage(
         ).length
       : 0;
   const total = claimable.length;
-  const detect = claimable.filter((t) => t.detection_tools.length > 0).length;
-  const prevent = claimable.filter((t) => t.prevention_tools.length > 0).length;
-  const respond = claimable.filter((t) => t.response_tools.length > 0).length;
+  const detect = claimable.filter((t) => legOn(t, "detect")).length;
+  // #554 R3, ruling (a): a technique that cannot be prevented is not in
+  // Prevent's denominator, and the population sentence says so.
+  const preventable = claimable.filter((t) => !t.in_place?.cannot_be_prevented);
+  const prevent = preventable.filter((t) => legOn(t, "prevent")).length;
+  const respond = claimable.filter((t) => legOn(t, "respond")).length;
   return {
     total,
     excluded: {
@@ -260,9 +326,11 @@ export function dprCoverage(
       notApplicable: notAssessed("not_applicable"),
       notVerified: notAssessed("unable_to_determine"),
       outside: notAssessed("outside_control_surface"),
+      cannotBePrevented: total - preventable.length,
     },
+    preventTotal: preventable.length,
     detect: { n: detect, pct: pctOf(detect, total) },
-    prevent: { n: prevent, pct: pctOf(prevent, total) },
+    prevent: { n: prevent, pct: pctOf(prevent, preventable.length) },
     respond: { n: respond, pct: pctOf(respond, total) },
   };
 }
@@ -309,9 +377,18 @@ export function triadPopulationText(d: DprCoverage): string {
   if (d.excluded.outside > 0)
     out.push(`${d.excluded.outside} outside the control surface`);
   const base = `Over ${d.total} technique${d.total === 1 ? "" : "s"}.`;
-  return out.length === 0
-    ? base
-    : `${base} Not counted here: ${out.join(", and ")}.`;
+  const text =
+    out.length === 0
+      ? base
+      : `${base} Not counted here: ${out.join(", and ")}.`;
+  // #554 R3, ruling (a): Prevent's own denominator, named.
+  const np = d.excluded.cannotBePrevented;
+  return np === 0
+    ? text
+    : `${text} Prevent is over ${d.preventTotal} technique${d.preventTotal === 1 ? "" : "s"}: ` +
+        (np === 1
+          ? "1 that cannot be prevented is not counted for it."
+          : `${np} that cannot be prevented are not counted for it.`);
 }
 
 export interface TacticBar {

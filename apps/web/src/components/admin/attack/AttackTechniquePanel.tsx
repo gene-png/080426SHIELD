@@ -76,6 +76,28 @@ function ToolRow({
  * list holds something else, where the resolved name tells them nothing about
  * why the citation needed rescuing.
  */
+/** #554 R3 (A7): "Computed status: Covered (AI suggested: Partial)". */
+const STATUS_WORD: Record<string, string> = {
+  covered: "Covered",
+  partial: "Partial",
+  gap: "Gap",
+  not_applicable: "N/A",
+  outside_control_surface: "Outside control surface",
+  unable_to_determine: "Not verified",
+};
+
+function computedStatusText(
+  computed: string | null | undefined,
+  suggested: string | null | undefined,
+): string {
+  const word = (v: string | null | undefined) =>
+    v ? (STATUS_WORD[v] ?? v) : "Unscored";
+  const base = `Computed status: ${word(computed)}`;
+  return computed === suggested
+    ? base
+    : `${base} (AI suggested: ${word(suggested)})`;
+}
+
 function citationLine(c: UnconfirmedCitation): string {
   if (c.reason === "no_citation") {
     return "The model claimed this status and cited no tool at all.";
@@ -263,7 +285,8 @@ export function AttackTechniquePanel({
             · {technique.name}
           </CardTitle>
           <StatusBadge
-            status={coverage?.status ?? null}
+            // #554 R3: the status the heatmap counts.
+            status={coverage?.computed_status ?? coverage?.status ?? null}
             pendingReview={coverage?.pending_review ?? false}
           />
         </div>
@@ -273,6 +296,19 @@ export function AttackTechniquePanel({
         </CardDescription>
       </CardHeader>
       <CardBody className="flex flex-col gap-4">
+        {coverage?.capabilities ? (
+          // #554 R3 (A7): the computed status, the AI's suggestion when it
+          // differs, and the line the client reads.
+          <div
+            className="text-xs text-ink-secondary"
+            data-testid="computed-status"
+          >
+            <p>
+              {computedStatusText(coverage.computed_status, coverage.status)}
+            </p>
+            <p>{coverage.capabilities.line}</p>
+          </div>
+        ) : null}
         {subTechniqueCount > 0 ? (
           <p
             className="text-xs text-ink-secondary"

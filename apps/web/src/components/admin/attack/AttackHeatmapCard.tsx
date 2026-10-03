@@ -105,6 +105,15 @@ export function AttackHeatmapCard({
                   {outside}
                 </span>
               )}
+              {/* #554 R3 (Q4): the renderers' sentence, beside the percentage. */}
+              {heatmap.awaiting_review_sentence ? (
+                <span
+                  className="text-xs text-ink-secondary"
+                  data-testid="attack-heatmap-awaiting-review"
+                >
+                  {heatmap.awaiting_review_sentence}
+                </span>
+              ) : null}
               {(heatmap.pending_review ?? 0) > 0 ? (
                 <StatusPill tone="warning" withDot>
                   <span data-testid="attack-heatmap-pending">

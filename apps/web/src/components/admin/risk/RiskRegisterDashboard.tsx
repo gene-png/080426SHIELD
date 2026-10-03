@@ -339,6 +339,10 @@ export function RiskRegisterDashboard(): JSX.Element {
   const catalogMismatch = gate?.unlocked
     ? (gate.attack_catalog_mismatch ?? null)
     : null;
+  // #554 R3: blocks the same way, with the server's own sentence.
+  const unreviewedAttack = gate?.unlocked
+    ? (gate.attack_computed_status_unreviewed ?? null)
+    : null;
   // Inputs that existed, were not approved, did not BLOCK (the unlock rule was
   // satisfied without them) and therefore contributed nothing. The `??` guards
   // `register` being null before anything is generated -- not an absent field,
@@ -433,6 +437,15 @@ export function RiskRegisterDashboard(): JSX.Element {
         </p>
       ) : null}
 
+      {unreviewedAttack !== null ? (
+        <p
+          className="text-sm font-medium text-status-warning-fg"
+          data-testid="risk-register-attack-unreviewed"
+        >
+          {unreviewedAttack} Anything already generated below is unaffected.
+        </p>
+      ) : null}
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-ink-primary">
@@ -465,7 +478,10 @@ export function RiskRegisterDashboard(): JSX.Element {
                 // #556: a stale ATT&CK input's only outcome is the 409 the
                 // banner above already explains, so the button is not offered.
                 disabled={
-                  busy !== null || catalogMismatch !== null || statusUnknown
+                  busy !== null ||
+                  catalogMismatch !== null ||
+                  unreviewedAttack !== null ||
+                  statusUnknown
                 }
                 className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:opacity-50"
               >

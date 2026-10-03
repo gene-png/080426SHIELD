@@ -34,6 +34,8 @@ def _build_inputs(*, default_status: str | None = "covered"):
         version=1,
         status=AttackAssessmentStatus.APPROVED,
         parent_rules=2,  # what approve writes (#620, migration 0054)
+        # #554 R3: models an approved/released pre-R3 assessment, backfilled by 0059.
+        status_rules=1,
     )
     coverage: list[AttackCoverage] = []
     for t in TECHNIQUES:

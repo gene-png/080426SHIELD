@@ -108,6 +108,13 @@ def _tech_debt_list(
         return ids
 
 
+def _all_three(tools: list[str]) -> dict:
+    """#554 R3: the same tools in Detect, Prevent and Respond, so a covered row
+    computes to Covered. The tool NAMES, which this file's marks and counts read,
+    are unchanged."""
+    return {"detection_tools": tools, "prevention_tools": tools, "response_tools": tools}
+
+
 def _world(env, *, with_plan: bool = True):  # noqa: F811
     """Admin + client, the Tech Debt plan, and an ATT&CK assessment whose
     scored rows cite the tools above. Returns everything a surface test needs."""
@@ -140,7 +147,12 @@ def _world(env, *, with_plan: bool = True):  # noqa: F811
     svc, a = _service_and_assessment(c, bearer)
     rows = standalone_rows(a["coverage"], len(ROWS))
     for row, (st, tools) in zip(rows, ROWS, strict=True):
-        body: dict = {"status": st, "detection_tools": tools}
+        # #554 R3: a covered row names its tools in all three lists, so its
+        # computed status is the one this world sets (class B).
+        body: dict = {
+            "status": st,
+            **(_all_three(tools) if st == "covered" else {"detection_tools": tools}),
+        }
         if st == "partial":
             # Approve refuses a Partial with no reason (#554).
             body["reason_code"] = "reach_limited"
@@ -285,7 +297,7 @@ def test_a_cut_on_a_draft_list_alone_is_not_a_plan(env) -> None:  # noqa: F811
     c.patch(
         f"/attack/coverage/{row['id']}",
         headers=_auth(bearer),
-        json={"status": "covered", "detection_tools": ["Tenable"]},
+        json={"status": "covered", **_all_three(["Tenable"])},
     )
     fin = _approve_finalize(c, bearer, svc, a)
     cells = _xlsx_tool_cells(_download(c, bearer, fin["xlsx_artifact_id"]))
@@ -391,7 +403,7 @@ def test_two_services_whose_plans_disagree_are_unknown_not_a_guess(env) -> None:
     c.patch(
         f"/attack/coverage/{row['id']}",
         headers=_auth(bearer),
-        json={"status": "covered", "detection_tools": ["Splunk Enterprise"]},
+        json={"status": "covered", **_all_three(["Splunk Enterprise"])},
     )
     latest = c.get(f"/attack/services/{svc}/assessments/latest", headers=_auth(bearer)).json()
     assert latest["tool_retirement"] == {"Splunk Enterprise": "unknown"}
@@ -417,7 +429,7 @@ def test_a_snapshot_entry_whose_item_is_gone_is_unknown(env) -> None:  # noqa: F
     c.patch(
         f"/attack/coverage/{row['id']}",
         headers=_auth(bearer),
-        json={"status": "covered", "detection_tools": ["Splunk Enterprise"]},
+        json={"status": "covered", **_all_three(["Splunk Enterprise"])},
     )
     latest = c.get(f"/attack/services/{svc}/assessments/latest", headers=_auth(bearer)).json()
     assert latest["tool_retirement"] == {"Splunk Enterprise": "unknown"}
@@ -449,7 +461,7 @@ def test_a_renamed_item_still_joins_through_the_snapshot(env) -> None:  # noqa: 
     c.patch(
         f"/attack/coverage/{row['id']}",
         headers=_auth(bearer),
-        json={"status": "covered", "detection_tools": ["Splunk Enterprise"]},
+        json={"status": "covered", **_all_three(["Splunk Enterprise"])},
     )
     latest = c.get(f"/attack/services/{svc}/assessments/latest", headers=_auth(bearer)).json()
     assert latest["tool_retirement"] == {"Splunk Enterprise": "planned_retirement"}
@@ -498,7 +510,7 @@ def test_one_technique_reads_in_the_singular(env) -> None:  # noqa: F811
     r = c.patch(
         f"/attack/coverage/{row['id']}",
         headers=_auth(bearer),
-        json={"status": "covered", "detection_tools": ["Legacy AV"]},
+        json={"status": "covered", **_all_three(["Legacy AV"])},
     )
     assert r.status_code == 200, r.text
     fin = _approve_finalize(c, bearer, svc, a)
@@ -522,7 +534,7 @@ def test_a_computed_parent_counts_on_both_sides_of_the_sentence(env) -> None:  #
         r = c.patch(
             f"/attack/coverage/{by_code[code]['id']}",
             headers=_auth(bearer),
-            json={"status": "covered", "detection_tools": ["Legacy AV"]},
+            json={"status": "covered", **_all_three(["Legacy AV"])},
         )
         assert r.status_code == 200, r.text
     latest = c.get(f"/attack/services/{svc}/assessments/latest", headers=_auth(bearer)).json()
@@ -589,7 +601,7 @@ def _one_service_two_versions(
     r = c.patch(
         f"/attack/coverage/{row['id']}",
         headers=_auth(bearer),
-        json={"status": "covered", "detection_tools": ["Splunk Enterprise"]},
+        json={"status": "covered", **_all_three(["Splunk Enterprise"])},
     )
     assert r.status_code == 200, r.text
     fin = _approve_finalize(c, bearer, asvc, a)
@@ -698,7 +710,24 @@ def test_a_computed_parent_rests_only_on_the_children_that_make_its_coverage(  #
         assert r.json()["detection_tools"] == tools, r.json()
     latest = c.get(f"/attack/services/{svc}/assessments/latest", headers=_auth(bearer)).json()
     assert {row["technique_code"]: row["status"] for row in latest["coverage"]}[parent] == "partial"
-    fin = _approve_finalize(c, bearer, svc, a)
+    # #554 R3 (C1, ruled by the advisor 01:05Z): a GAP child carrying a tool is
+    # this test's subject, and under R3 that row computes to Partial. Approve,
+    # then stamp status_rules=1 -- the reachable state of an assessment approved
+    # before R3 -- then finalize, so the document renders the stored statuses.
+    r = c.post(f"/attack/assessments/{a['id']}/approve", headers=_auth(bearer))
+    assert r.status_code == 200, r.text
+    from app.models.attack_assessment import AttackAssessment
+
+    with Sess() as s:
+        s.execute(
+            update(AttackAssessment)
+            .where(AttackAssessment.id == uuid.UUID(a["id"]))
+            .values(status_rules=1)
+        )
+        s.commit()
+    r = c.post(f"/attack/services/{svc}/deliverables/finalize", headers=_auth(bearer))
+    assert r.status_code in (200, 201), r.text
+    fin = r.json()
     # The covered child and the partial parent: both rest on Legacy AV alone.
     assert (
         "2 of the 2 covered or partial techniques cite a tool marked for planned "

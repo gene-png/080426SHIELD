@@ -54,6 +54,11 @@ class RiskGateStatus(BaseModel):
     # so it is not an entry in `synthesizable_missing`. Required, no default:
     # the gate is built live, and a default would hide missing wiring.
     attack_catalog_mismatch: str | None
+    # #554 R3: the sentence when the finalized ATT&CK input's computed statuses
+    # await a consultant's review; None otherwise. BLOCKS generation, as the
+    # catalog mismatch does, and is the refusal's own sentence. Required, for
+    # the same reason.
+    attack_computed_status_unreviewed: str | None
 
 
 class RiskEntryResponse(BaseModel):
