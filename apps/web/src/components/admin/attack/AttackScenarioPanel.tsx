@@ -472,11 +472,15 @@ function ScenarioView({
 }): JSX.Element {
   const higher = s.scored_higher ?? 0;
   const notReassessed = s.not_reassessed ?? [];
-  // Runnable: not set aside, not stale, and no analysis standing. A FAILED
-  // run wrote nothing, and the api accepts running the same what-if again.
+  // Runnable: not set aside, not stale, and no result standing. A FAILED
+  // run wrote nothing, and the api accepts running the same what-if again --
+  // but a result can stand beside a failed run (#815 round 2: a later run
+  // that found the result already written), so the result decides, not the
+  // run's status.
   const runnable =
     s.state !== "discarded" &&
     !s.stale &&
+    s.after === null &&
     (s.run_status === null || s.run_status === "failed");
   return (
     <div className="flex flex-col gap-3" data-testid="attack-scenario">

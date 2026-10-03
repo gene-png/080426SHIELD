@@ -342,6 +342,24 @@ describe("AttackScenarioPanel", () => {
     expect(screen.queryByTestId("attack-scenario-run-failed")).toBeNull();
   });
 
+  it("offers no run on a what-if whose result stands, even beside a failed run", async () => {
+    await startWith({
+      ...COMPLETED,
+      run_status: "failed",
+      run_error: {
+        reason: "scenario_already_run",
+        message:
+          "This what-if was analysed by another run while this one was working, so this run's result was not kept.",
+      },
+    });
+    expect(screen.getByTestId("scenario-after")).toBeTruthy();
+    expect(
+      screen.queryByRole("button", {
+        name: "Run AI analysis on these changes",
+      }),
+    ).toBeNull();
+  });
+
   it("starts another what-if after a discard, without a reload", async () => {
     await startWith({});
     routes["POST /api/proxy/attack/scenarios/s1/discard"] = () =>

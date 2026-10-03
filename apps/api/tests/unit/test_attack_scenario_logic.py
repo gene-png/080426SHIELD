@@ -228,10 +228,62 @@ def test_every_spelling_of_a_removed_tool_is_removed() -> None:
     shown, _ = redact_for_ai(named, mode="strict", client_org_name="Acme")
     tools = [SimpleNamespace(name=n) for n in (named, shown, "SIEM Tool")]
     for removed in ([named], [shown]):
-        kept = scenario.remaining_tools(
-            tools, removed, client_org_name="Acme", redaction_mode="strict"
+        spellings = scenario.removed_spellings(
+            removed, client_org_name="Acme", redaction_mode="strict"
         )
+        kept = scenario.remaining_tools(tools, spellings)
         assert [t.name for t in kept] == ["SIEM Tool"], removed
+
+
+def test_a_row_citing_the_twin_spelling_is_affected_and_loses_it() -> None:
+    """Round 2, item 1: one spelling set for every question. Removing the
+    client-named tool affects a technique that cites its placeholder twin,
+    strips the twin from the frozen row, and names the function it lost."""
+    from app.ai.redact import redact_for_ai
+
+    named = "Acme SOC Platform"
+    twin, _ = redact_for_ai(named, mode="strict", client_org_name="Acme")
+    rows = [
+        _row("T1003", d=[named]),
+        _row("T1059", r=["SOAR Tool", twin]),
+        _row("T1566", d=["SIEM Tool"]),
+    ]
+    spellings = scenario.removed_spellings([named], client_org_name="Acme", redaction_mode="strict")
+    assert scenario.affected_codes(rows, spellings) == ["T1003", "T1059"]
+    (batch,) = scenario.batch_inputs(rows, ["T1003", "T1059"], spellings, CAPS)
+    frozen = {r["technique_code"]: r for r in batch["frozen_rows"]}
+    assert frozen["T1059"]["response_tools"] == ["SOAR Tool"]
+    assert batch["lost_functions"]["T1059"] == ["response"]
+
+
+def test_a_distinct_tool_sharing_only_a_placeholder_is_kept_but_marked_indistinct() -> None:
+    """Round 2, item 2. `Unit 42` and `Unit 7` are two tools the egress shows
+    as the same placeholder. Removing one keeps the other -- shown-to-shown is
+    never a match -- and marks it indistinct, so a citation of the shared
+    string is refused, not credited to either."""
+    from app.ai.redact import redact_for_ai
+
+    a, _ = redact_for_ai("Unit 42", mode="strict")
+    b, _ = redact_for_ai("Unit 7", mode="strict")
+    assert a == b and a != "Unit 42"  # the world: two tools, one shown string
+    spellings = scenario.removed_spellings(
+        ["Unit 42"], client_org_name=None, redaction_mode="strict"
+    )
+    tools = [SimpleNamespace(name=n) for n in ("Unit 42", "Unit 7", "SIEM Tool")]
+    kept = scenario.remaining_tools(tools, spellings)
+    assert [t.name for t in kept] == ["Unit 7", "SIEM Tool"]
+    assert spellings.shares_shown_form("Unit 7") is True
+    assert spellings.shares_shown_form("SIEM Tool") is False
+    parsed = scenario.parse_delta(
+        _ai([_flags("T1003", a), _flags("T1003", "SIEM Tool")]),
+        asked=["T1003"],
+        available=["Unit 7", "SIEM Tool"],
+        lost={"T1003": ALL_LOST},
+        indistinct=["Unit 7"],
+        redaction_mode="strict",
+    )
+    assert parsed.dropped == {"tool_unconfirmed": 1}
+    assert parsed.lists["T1003"]["detection_tools"] == ["SIEM Tool"]
 
 
 def test_a_missing_rows_list_is_a_shape_error_not_an_empty_answer() -> None:

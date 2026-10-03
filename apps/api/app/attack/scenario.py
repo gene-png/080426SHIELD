@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import uuid
 from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
@@ -68,51 +68,83 @@ def _key(name: object) -> str:
     return str(name or "").strip().casefold()
 
 
-def is_removed(name: object, removed: Iterable[str]) -> bool:
-    """Whether `name` is one of the removals, compared as everything here
-    compares tool names: trimmed and case-folded."""
-    return _key(name) in {_key(n) for n in removed}
+@dataclass(frozen=True)
+class Removed:
+    """The removed tools and every spelling of them, decided ONCE and used by
+    every question this module asks about a removal: which techniques are
+    affected, which functions they lost, what the frozen rows keep, and which
+    tools stay (#815 review rounds 1 and 2, F2).
+
+    A list can hold `<Client> SOC Platform` AND `[CLIENT] SOC Platform`
+    (`citations.py`, the alias tier): one tool, which the egress shows the
+    model as one string. A name is a spelling of a removed tool when its
+    STORED form is a removed tool's stored or shown form, or its SHOWN form is
+    a removed tool's stored form. Shown-to-shown alone is NOT a match: two
+    distinct tools can redact to one placeholder, and a derived key never
+    decides on its own (CLAUDE.md, the derived-key tier). Such a kept tool is
+    kept, and `shares_shown_form` names it so its credit can be refused.
+    """
+
+    names: tuple[str, ...]
+    stored: frozenset[str]
+    shown: frozenset[str]
+    show: Callable[[str], str]
+
+    def covers(self, name: object) -> bool:
+        if not isinstance(name, str):
+            return False
+        key = _key(name)
+        return key in self.stored or key in self.shown or self.show(name) in self.stored
+
+    def shares_shown_form(self, name: str) -> bool:
+        """A kept tool the model cannot tell apart from a removed one."""
+        return not self.covers(name) and self.show(name) in self.shown
 
 
-def _forms(
-    name: str, *, client_org_name: str | None, redaction_mode: RedactionMode, name_hints
-) -> set[str]:
-    """A tool name as stored and as the model is SHOWN it, keyed as this
-    module keys names. The shown form is asked of `redact_for_ai`, the egress's
-    own redactor, with the egress's mode and hints -- what `CitationResolver`
-    asks when it indexes its aliases, so the two cannot disagree."""
-    shown, _counts = redact_for_ai(
-        name,
-        mode=redaction_mode,
-        client_org_name=client_org_name or None,
-        name_hints=tuple(name_hints),
-    )
-    return {_key(name), _key(shown)}
-
-
-def remaining_tools(
-    candidates: Iterable[Any],
-    removed: Iterable[str],
+def removed_spellings(
+    names: Iterable[str],
     *,
     client_org_name: str | None,
     redaction_mode: RedactionMode,
     name_hints: Iterable[str] = (),
-) -> list[Any]:
-    """The client's tools that stay, by `.name`. A tool is REMOVED when any of
-    its spellings -- stored, or as the model is shown it -- is a spelling of a
-    removed tool. A list can hold both `<Client> SOC Platform` and
-    `[CLIENT] SOC Platform` (`citations.py`, the alias tier), and the
-    membership dedupes by case only, so removing one by name left the other
-    available and confirmable (#815 review, F2)."""
+) -> Removed:
+    """The shown form is asked of `redact_for_ai`, the egress's own redactor,
+    with the egress's mode and hints -- what `CitationResolver` asks when it
+    indexes its aliases, so the two cannot disagree."""
     hints = tuple(name_hints)
 
-    def forms(n: str) -> set[str]:
-        return _forms(
-            n, client_org_name=client_org_name, redaction_mode=redaction_mode, name_hints=hints
+    def show(name: str) -> str:
+        shown, _counts = redact_for_ai(
+            name,
+            mode=redaction_mode,
+            client_org_name=client_org_name or None,
+            name_hints=hints,
         )
+        return _key(shown)
 
-    gone = set().union(*(forms(r) for r in removed)) if removed else set()
-    return [c for c in candidates if not (forms(c.name) & gone)]
+    names = tuple(names)
+    return Removed(
+        names=names,
+        stored=frozenset(_key(n) for n in names),
+        shown=frozenset(show(n) for n in names),
+        show=show,
+    )
+
+
+def _plain(names: Iterable[str]) -> Removed:
+    """Removals compared by stored spelling only: for callers with no client
+    to redact for (the pure tests). The routes always pass `removed_spellings`."""
+    return removed_spellings(names, client_org_name=None, redaction_mode="off")
+
+
+def _as_removed(removed: Removed | Iterable[str]) -> Removed:
+    return removed if isinstance(removed, Removed) else _plain(removed)
+
+
+def remaining_tools(candidates: Iterable[Any], removed: Removed) -> list[Any]:
+    """The client's tools that stay, by `.name`: every spelling of a removed
+    tool goes."""
+    return [c for c in candidates if not removed.covers(c.name)]
 
 
 def _cited(rows: Iterable[Any]) -> dict[str, str]:
@@ -148,13 +180,11 @@ def resolve_removed(rows: Sequence[Any], names: Iterable[str]) -> list[str]:
     return out
 
 
-def affected_codes(rows: Iterable[Any], removed: Iterable[str]) -> list[str]:
-    """The techniques a removed tool appears on, in any of the three lists,
-    sorted. These, and only these, are sent to the AI."""
-    gone = {_key(n) for n in removed}
-    return sorted(
-        row.technique_code for row in rows if any(_key(t) in gone for t in row_tools(row))
-    )
+def affected_codes(rows: Iterable[Any], removed: Removed | Iterable[str]) -> list[str]:
+    """The techniques any spelling of a removed tool appears on, in any of the
+    three lists, sorted. These, and only these, are sent to the AI."""
+    gone = _as_removed(removed)
+    return sorted(row.technique_code for row in rows if any(gone.covers(t) for t in row_tools(row)))
 
 
 @dataclass(frozen=True)
@@ -173,6 +203,7 @@ def parse_delta(
     asked: Iterable[str],
     available: Iterable[str | Candidate],
     lost: Mapping[str, Iterable[str]],
+    indistinct: Iterable[str] = (),
     client_org_name: str | None = None,
     redaction_mode: RedactionMode = "strict",
     name_hints: tuple[str, ...] = (),
@@ -195,6 +226,7 @@ def parse_delta(
         raise ScenarioShapeError("the answer has no `rows` list")
     asked = list(asked)
     asked_set = set(asked)
+    indistinct_names = set(indistinct)
     resolver = CitationResolver(
         [c if isinstance(c, Candidate) else Candidate(name=c) for c in available],
         client_org_name=client_org_name,
@@ -218,7 +250,10 @@ def parse_delta(
         if resolution.name is None:
             dropped["tool_outside_change"] += 1
             continue
-        if not resolution.confirmed:
+        # `indistinct`: kept tools the model is shown as the SAME string as a
+        # removed one (`Removed.shares_shown_form`). Which one it meant cannot
+        # be known, so the credit is refused and counted, never given.
+        if not resolution.confirmed or resolution.name in indistinct_names:
             dropped["tool_unconfirmed"] += 1
             continue
         tool = resolution.name
@@ -372,24 +407,24 @@ def is_stale(db: Session, service_id: uuid.UUID, base_id: uuid.UUID) -> bool:
 BATCH_SIZE = 25
 
 
-def _without(tools: Iterable[Any] | None, gone: set[str]) -> list[str]:
-    return [t for t in tools or [] if isinstance(t, str) and _key(t) not in gone]
+def _without(tools: Iterable[Any] | None, gone: Removed) -> list[str]:
+    return [t for t in tools or [] if isinstance(t, str) and not gone.covers(t)]
 
 
-def _lost(row: Any, gone: set[str]) -> list[str]:
+def _lost(row: Any, gone: Removed) -> list[str]:
     """The functions a removed tool was listed for on this row, in D/P/R
     order: the only ones the AI is asked about."""
     return [
         flag
         for flag, list_name in _FLAGS
-        if any(_key(t) in gone for t in getattr(row, list_name) or [])
+        if any(gone.covers(t) for t in getattr(row, list_name) or [])
     ]
 
 
 def batch_inputs(
     base_rows: Sequence[Any],
     affected: Sequence[str],
-    removed: Sequence[str],
+    removed: Removed | Sequence[str],
     capability_payload: Sequence[Mapping[str, Any]],
     *,
     size: int = BATCH_SIZE,
@@ -397,9 +432,9 @@ def batch_inputs(
     """One input per batch of affected techniques: the slice, those frozen rows
     with the removed tools taken out, the removals, and the client's tools that
     remain (the same four fields `mitre_map` sends for a capability)."""
-    gone = {_key(n) for n in removed}
+    gone = _as_removed(removed)
     by_code = {r.technique_code: r for r in base_rows}
-    remaining = [dict(c) for c in capability_payload if _key(c.get("name")) not in gone]
+    remaining = [dict(c) for c in capability_payload if not gone.covers(c.get("name"))]
     out: list[dict[str, Any]] = []
     for i in range(0, len(affected), size):
         codes = list(affected[i : i + size])
@@ -414,7 +449,7 @@ def batch_inputs(
                     for code in codes
                 ],
                 "lost_functions": {code: _lost(by_code[code], gone) for code in codes},
-                "removed_tools": list(removed),
+                "removed_tools": list(gone.names),
                 "available_tools": remaining,
             }
         )

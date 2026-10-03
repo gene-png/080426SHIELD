@@ -19,7 +19,7 @@ from collections.abc import Callable
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, update
+from sqlalchemy import exists, select, update
 from sqlalchemy.orm import Session
 
 from app.ai.batching import run_batches
@@ -257,7 +257,12 @@ def create_scenario(
         raise _refuse(
             status.HTTP_422_UNPROCESSABLE_ENTITY, "scenario_empty_change", EMPTY_MESSAGE
         ) from exc
-    affected = scenario.affected_codes(base_rows, removed)
+    spellings = scenario.removed_spellings(
+        removed,
+        client_org_name=client.legal_name,
+        redaction_mode=get_settings().shield_redaction_mode,
+    )
+    affected = scenario.affected_codes(base_rows, spellings)
     s = AttackScenario(
         client_id=client.id,
         service_id=svc.id,
@@ -432,10 +437,12 @@ def run_scenario(
     """Every refusal that needs no AI is made here, synchronously, before
     anything is spent. The work is `_scenario_run_work`, in the background.
 
-    The rate limit and the provider are taken HERE, in the body, after every
-    refusal, not as dependencies: a dependency runs before the body, so a run
-    the 503 refuses used to spend a rate-limit token and build a provider
-    (#815 review, F4)."""
+    The rate limit and the provider are taken HERE, in the body, after the
+    route's own refusals (404, 503, the `serves` 422, and the discarded,
+    already-run and stale 409s), not as dependencies: a dependency runs before
+    the body, so a run the 503 refused used to spend a rate-limit token and
+    build a provider (#815 review, F4). `start_run`'s refusals (#504's mode
+    change, a run in progress on other input) still come after both."""
     s = _scenario_or_404(db, scenario_id, client)
     if not scenario.analysis_available():
         raise _refuse(
@@ -463,9 +470,17 @@ def run_scenario(
     # a discard may have landed since `s` was read. Assigning `s.state` would
     # flush CONFIRMED over that discard. The run id is recorded either way;
     # the state moves only from DRAFT.
+    #
+    # Nor is the run id repointed once a result exists: a run that completed
+    # between `_refuse_unless_runnable` and `start_run` stays the scenario's
+    # run, and the later one fails `scenario_already_run` on its own (#815
+    # review round 2).
     db.execute(
         update(AttackScenario)
-        .where(AttackScenario.id == s.id)
+        .where(
+            AttackScenario.id == s.id,
+            ~exists().where(AttackScenarioRow.scenario_id == AttackScenario.id),
+        )
         .values(ai_run_id=started.run_id)
         .execution_options(synchronize_session=False)
     )
@@ -508,14 +523,13 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
     # Every spelling of a removed tool goes, the redacted one included (F2),
     # from what the model is offered AND from what the resolver may confirm,
     # so a removed tool the AI names anyway is counted, never credited.
-    kept = scenario.remaining_tools(
-        _client_capability_inputs(db, ctx.client_id),
-        removed,
-        client_org_name=client.legal_name,
-        redaction_mode=mode,
+    spellings = scenario.removed_spellings(
+        removed, client_org_name=client.legal_name, redaction_mode=mode
     )
+    kept = scenario.remaining_tools(_client_capability_inputs(db, ctx.client_id), spellings)
+    indistinct = [c.name for c in kept if spellings.shares_shown_form(c.name)]
     inputs = scenario.batch_inputs(
-        base_rows, affected, removed, _capability_payload(kept), size=scenario.BATCH_SIZE
+        base_rows, affected, spellings, _capability_payload(kept), size=scenario.BATCH_SIZE
     )
     remaining = [Candidate(name=c.name, vendor=c.vendor) for c in kept]
     out = run_batches(
@@ -547,6 +561,7 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
                 asked=codes,
                 available=remaining,
                 lost=inputs[i]["lost_functions"],
+                indistinct=indistinct,
                 client_org_name=client.legal_name,
                 redaction_mode=mode,
             )

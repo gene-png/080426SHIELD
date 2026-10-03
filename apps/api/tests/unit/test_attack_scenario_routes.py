@@ -157,7 +157,14 @@ SOC_NAMED = "Acme SOC Platform"
 SOC_PLACEHOLDER = "[CLIENT] SOC Platform"
 
 
-def _world(parts, *, release: bool = True, soc_twins: bool = False) -> World:
+#: Two DISTINCT tools the egress shows as one placeholder (the address rule).
+UNIT_42 = "Unit 42"
+UNIT_7 = "Unit 7"
+
+
+def _world(
+    parts, *, release: bool = True, soc_twins: bool = False, unit_pair: bool = False
+) -> World:
     c, app, sessions = parts
     bearer = c.post(
         "/auth/register",
@@ -186,7 +193,9 @@ def _world(parts, *, release: bool = True, soc_twins: bool = False) -> World:
         cl = CapabilityList(service_id=td.id, version=1, status=CapabilityListStatus.APPROVED)
         db.add(cl)
         db.flush()
-        for name in (EDR, SIEM, SOAR, *((SOC_NAMED, SOC_PLACEHOLDER) if soc_twins else ())):
+        extra = (SOC_NAMED, SOC_PLACEHOLDER) if soc_twins else ()
+        extra += (UNIT_42, UNIT_7) if unit_pair else ()
+        for name in (EDR, SIEM, SOAR, *extra):
             db.add(CapabilityItem(capability_list_id=cl.id, name=name))
         db.commit()
     h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
@@ -206,7 +215,19 @@ def _world(parts, *, release: bool = True, soc_twins: bool = False) -> World:
         response_tools=[SOAR],
     )
     if soc_twins:
+        # B cites the client-named spelling; A also cites its placeholder twin.
         _patch(c, h, b["id"], status="partial", detection_tools=[SIEM], response_tools=[SOC_NAMED])
+        _patch(
+            c,
+            h,
+            a["id"],
+            status="covered",
+            detection_tools=[EDR],
+            prevention_tools=[EDR],
+            response_tools=[SOAR, SOC_PLACEHOLDER],
+        )
+    elif unit_pair:
+        _patch(c, h, b["id"], status="partial", detection_tools=[SIEM], response_tools=[UNIT_42])
     else:
         _patch(c, h, b["id"], status="partial", detection_tools=[SIEM])
     _patch(c, h, cc["id"], status="gap", detection_tools=[EDR])
@@ -721,12 +742,68 @@ def test_a_removed_tool_is_not_offered_or_credited_under_its_other_spelling(
     w.use(provider)
     sid = w.create([SOC_NAMED]).json()["id"]
     body = _run_to_completion(w, sid)
-    assert body["affected_codes"] == [w.b]
+    # Round 2, item 1: A cites only the TWIN spelling, and is affected too.
+    assert body["affected_codes"] == sorted([w.a, w.b])
     assert len(offered) == 1
     assert SOC_PLACEHOLDER not in offered[0] and SOC_NAMED not in offered[0], offered
     assert body["dropped"] == {"tool_outside_change": 1}
     lists = {t["technique_code"]: t for t in body["techniques"]}
     assert lists[w.b]["response_tools"] == []
+    # A loses the twin's Respond credit and keeps SOAR's.
+    assert lists[w.a]["response_tools"] == [SOAR]
+
+
+def test_a_distinct_tool_sharing_only_a_placeholder_stays_offered_but_is_not_credited(
+    app_parts, analysis_job  # noqa: F811
+) -> None:
+    """Round 2, item 2. `Unit 7` is not `Unit 42`, but the model is shown both
+    as one placeholder. It stays offered; a citation of the shared string is
+    refused and counted, never credited."""
+    from app.ai.redact import redact_for_ai
+
+    shared, _ = redact_for_ai(UNIT_42, mode="strict", client_org_name="Acme")
+    assert shared == redact_for_ai(UNIT_7, mode="strict", client_org_name="Acme")[0]
+    w = _world(app_parts, unit_pair=True)
+    offered: list[list[str]] = []
+    provider = FixtureProvider()
+
+    def respond(payload: dict) -> LLMResponse:
+        offered.append([t["name"] for t in payload.get("available_tools") or []])
+        return LLMResponse(json.dumps({"rows": [_flags(w.b, shared, r=True)]}))
+
+    provider.register(PURPOSE, respond)
+    w.use(provider)
+    sid = w.create([UNIT_42]).json()["id"]
+    body = _run_to_completion(w, sid)
+    assert body["affected_codes"] == [w.b]
+    assert shared in offered[0], offered  # Unit 7 is still offered
+    assert body["dropped"] == {"tool_unconfirmed": 1}
+    lists = {t["technique_code"]: t for t in body["techniques"]}
+    assert lists[w.b]["response_tools"] == []
+
+
+def test_a_completed_what_if_is_never_repointed_at_a_later_run(
+    app_parts, analysis_job, monkeypatch  # noqa: F811
+) -> None:
+    """Round 2, item 3. A run completing between the route's check and
+    `start_run` lets a second run start; the scenario keeps the run that wrote
+    its result, and the second fails on its own."""
+    from app.routes import attack_scenarios
+
+    w = _world(app_parts)
+    w.answer({w.cc: [_flags(w.cc, SIEM, d=True)]})
+    sid = w.create([EDR]).json()["id"]
+    first = _run_to_completion(w, sid)
+    assert first["run_status"] == "completed"
+    # The window: the route's check has passed, the result has landed.
+    monkeypatch.setattr(attack_scenarios, "_refuse_unless_runnable", lambda _db, _s: None)
+    second = w.run(sid)
+    assert second.status_code == 202, second.text
+    body = w.get(sid)
+    assert body["ai_run_id"] == first["ai_run_id"]
+    assert body["run_status"] == "completed"
+    late = w.c.get(f"/ai-runs/{second.json()['run_id']}", headers=w.h).json()
+    assert late["status"] == "failed" and late["error_reason"] == "scenario_already_run", late
 
 
 class _CountingLimiter:
