@@ -29,10 +29,10 @@ from app.ai.engine import AIJob
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.attack.catalog import NOT_PREVENTABLE
 from app.models.ai_run import AiRun
-from app.models.llm_call import LLMCall
 from app.models.attack_assessment import AttackCoverage
 from app.models.attack_scenario import AttackScenario, AttackScenarioState
 from app.models.capability import CapabilityItem, CapabilityList, CapabilityListStatus
+from app.models.llm_call import LLMCall
 from app.models.service import Service, ServiceKind, ServiceStatus
 from tests._ai_runs import DeferringRunner, defer_runs
 from tests._attack_rows import standalone_rows
@@ -67,7 +67,7 @@ class World:
     svc_id: str
     assessment_id: str
     deliverable_id: str
-    #: covered (EDR, EDR, SOAR); partial (SIEM); partial (EDR)
+    #: covered (EDR, EDR, SOAR); partial (SIEM); gap (EDR, an uncleared inference)
     a: str
     b: str
     cc: str
@@ -178,7 +178,22 @@ def _world(parts, *, release: bool = True) -> World:
         response_tools=[SOAR],
     )
     _patch(c, h, b["id"], status="partial", detection_tools=[SIEM])
-    _patch(c, h, cc["id"], status="partial", detection_tools=[EDR])
+    _patch(c, h, cc["id"], status="gap", detection_tools=[EDR])
+    # C's Detect tool is an INFERRED citation nobody has cleared: the state a
+    # mitre_map run writes when it resolves a cited word to EDR Tool (#102),
+    # here suggesting Gap. R3 computes Detect as awaiting review, so C is Gap
+    # and agrees with its suggestion: no review queue, a confirmed base.
+    with sessions() as db:
+        db.execute(
+            update(AttackCoverage)
+            .where(AttackCoverage.id == uuid.UUID(cc["id"]))
+            .values(
+                unconfirmed_citations=[
+                    {"tool": EDR, "cited": "EDR", "reason": "substring", "cleared_at": None}
+                ]
+            )
+        )
+        db.commit()
     r = c.post(f"/attack/assessments/{assessment['id']}/approve", headers=h)
     assert r.status_code == 200, r.text
     deliv = c.post(f"/attack/services/{svc_id}/deliverables/finalize", headers=h)
@@ -324,12 +339,13 @@ def test_a_run_reassesses_only_the_affected_techniques_and_compares(
     app_parts, analysis_job  # noqa: F811
 ) -> None:
     w = _world(app_parts)
-    # A: SIEM detects only -> Partial (was Covered). C: SIEM in all three ->
-    # Covered (was Partial): HIGHER than the base.
+    # A lost Detect and Prevent; SIEM re-credits Detect -> Partial (was
+    # Covered). C lost Detect; SIEM, a confirmed tool, credits it where the
+    # base had only an uncleared inference -> Partial (was Gap).
     w.answer(
         {
             w.a: [_flags(w.a, SIEM, d=True)],
-            w.cc: [_flags(w.cc, SIEM, d=True, p=True, r=True)],
+            w.cc: [_flags(w.cc, SIEM, d=True)],
         }
     )
     sid = w.create([EDR]).json()["id"]
@@ -340,15 +356,15 @@ def test_a_run_reassesses_only_the_affected_techniques_and_compares(
     assert set(lists) == {w.a, w.cc}
     assert lists[w.a]["detection_tools"] == [SIEM]
     assert lists[w.a]["prevention_tools"] == []
-    # The AI named no Respond tool for A, so SOAR is gone too: the lists are
-    # the AI's answer for an affected technique, not a patch over the base.
-    assert lists[w.a]["response_tools"] == []
+    # The AI named no Respond tool for A; SOAR keeps the credit the base gave
+    # it (the advisor, 05:25Z: the AI may only add).
+    assert lists[w.a]["response_tools"] == [SOAR]
     diffs = {d["technique_code"]: d for d in body["differences"]}
     assert diffs[w.a]["today"] == "covered" and diffs[w.a]["after"] == "partial"
-    assert diffs[w.cc]["today"] == "partial" and diffs[w.cc]["after"] == "covered"
+    assert diffs[w.cc]["today"] == "gap" and diffs[w.cc]["after"] == "partial"
     assert w.b not in diffs
-    assert body["today"]["covered"] == 1 and body["today"]["partial"] == 2
-    assert body["after"]["covered"] == 1 and body["after"]["partial"] == 2
+    assert (body["today"]["covered"], body["today"]["partial"], body["today"]["gap"]) == (1, 1, 1)
+    assert (body["after"]["covered"], body["after"]["partial"], body["after"]["gap"]) == (0, 3, 0)
     # Approved under #620's rules, so the outside counts are stated on both.
     for side in ("today", "after"):
         assert body[side]["unable_to_determine"] == 0, body[side]
@@ -360,15 +376,16 @@ def test_a_run_reassesses_only_the_affected_techniques_and_compares(
 def test_a_technique_that_would_score_higher_is_counted_and_marked(
     app_parts, analysis_job  # noqa: F811
 ) -> None:
-    """The advisor's addition (05:05Z). Removing a tool cannot add capability,
-    so a technique scoring HIGHER is the AI crediting a remaining tool the
-    confirmed assessment did not: counted on the scenario, marked in the
-    differences, and only that one."""
+    """The advisor's addition (05:05Z). With base credits kept and only lost
+    functions asked about, a technique can end HIGHER only where a lost
+    function is re-credited by a confirmed tool and the base's was an uncleared
+    inference (C). Counted on the scenario, marked in the differences, and only
+    that one."""
     w = _world(app_parts)
     w.answer(
         {
             w.a: [_flags(w.a, SIEM, d=True)],
-            w.cc: [_flags(w.cc, SIEM, d=True, p=True, r=True)],
+            w.cc: [_flags(w.cc, SIEM, d=True)],
         }
     )
     sid = w.create([EDR]).json()["id"]
@@ -376,6 +393,38 @@ def test_a_technique_that_would_score_higher_is_counted_and_marked(
     assert body["scored_higher"] == 1
     marked = {d["technique_code"]: d["scored_higher"] for d in body["differences"]}
     assert marked == {w.a: False, w.cc: True}
+
+
+def test_the_base_credits_stand_when_the_ai_names_nothing(
+    app_parts, analysis_job  # noqa: F811
+) -> None:
+    """The AI may only add (the advisor, 05:25Z): an answer naming nothing
+    leaves each affected technique with the removal alone, re-assessed."""
+    w = _world(app_parts)
+    w.answer({})
+    sid = w.create([EDR]).json()["id"]
+    body = _run_to_completion(w, sid)
+    lists = {t["technique_code"]: t for t in body["techniques"]}
+    assert lists[w.a]["response_tools"] == [SOAR]
+    assert lists[w.a]["detection_tools"] == [] and lists[w.a]["prevention_tools"] == []
+    diffs = {d["technique_code"]: d for d in body["differences"]}
+    assert diffs[w.a]["today"] == "covered" and diffs[w.a]["after"] == "partial"
+    assert body["not_reassessed"] == []
+
+
+def test_a_row_crediting_a_function_the_removal_did_not_take_is_set_aside(
+    app_parts, analysis_job  # noqa: F811
+) -> None:
+    """A lost Detect and Prevent; its Respond was untouched. A row crediting
+    Respond is dropped whole and counted, so it cannot raise anything."""
+    w = _world(app_parts)
+    w.answer({w.a: [_flags(w.a, SIEM, d=True, r=True)]})
+    sid = w.create([EDR]).json()["id"]
+    body = _run_to_completion(w, sid)
+    assert body["dropped"] == {"function_not_lost": 1}
+    lists = {t["technique_code"]: t for t in body["techniques"]}
+    assert lists[w.a]["detection_tools"] == []
+    assert lists[w.a]["response_tools"] == [SOAR]
 
 
 def test_nothing_scoring_higher_counts_zero_not_none(app_parts, analysis_job) -> None:  # noqa: F811

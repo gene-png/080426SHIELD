@@ -84,6 +84,10 @@ def _ai(rows):
     return {"rows": rows}
 
 
+#: Every function lost, for the parse tests that are about something else.
+ALL_LOST = ["detection", "prevention", "response"]
+
+
 def test_accepted_rows_become_the_affected_techniques_new_lists() -> None:
     parsed = scenario.parse_delta(
         _ai(
@@ -108,6 +112,7 @@ def test_accepted_rows_become_the_affected_techniques_new_lists() -> None:
         ),
         asked=["T1003", "T1566"],
         available=AVAILABLE,
+        lost={"T1003": ALL_LOST, "T1566": ALL_LOST},
     )
     assert parsed.lists["T1003"] == {
         "detection_tools": ["SIEM Tool"],
@@ -150,7 +155,9 @@ def test_accepted_rows_become_the_affected_techniques_new_lists() -> None:
     ],
 )
 def test_anything_outside_the_contract_is_dropped_and_counted(row, reason) -> None:
-    parsed = scenario.parse_delta(_ai([row]), asked=["T1003"], available=AVAILABLE)
+    parsed = scenario.parse_delta(
+        _ai([row]), asked=["T1003"], available=AVAILABLE, lost={"T1003": ALL_LOST}
+    )
     assert parsed.dropped == {reason: 1}
     assert parsed.lists["T1003"] == {
         "detection_tools": [],
@@ -180,6 +187,7 @@ def test_a_client_named_tool_cited_as_the_model_was_shown_it_is_accepted() -> No
         _ai([_flags("T1003", shown)]),
         asked=["T1003"],
         available=[*AVAILABLE, stored],
+        lost={"T1003": ALL_LOST},
         client_org_name="Northwind",
     )
     assert parsed.dropped == {}
@@ -190,7 +198,10 @@ def test_an_inferred_tool_match_is_dropped_as_unconfirmed_not_credited() -> None
     """A word of a tool's name is an inference about which tool was meant. The
     what-if has no review queue for it, so it is counted, never credited."""
     parsed = scenario.parse_delta(
-        _ai([_flags("T1003", "SIEM")]), asked=["T1003"], available=AVAILABLE
+        _ai([_flags("T1003", "SIEM")]),
+        asked=["T1003"],
+        available=AVAILABLE,
+        lost={"T1003": ALL_LOST},
     )
     assert parsed.dropped == {"tool_unconfirmed": 1}
     assert parsed.lists["T1003"]["detection_tools"] == []
@@ -198,9 +209,11 @@ def test_an_inferred_tool_match_is_dropped_as_unconfirmed_not_credited() -> None
 
 def test_a_missing_rows_list_is_a_shape_error_not_an_empty_answer() -> None:
     with pytest.raises(scenario.ScenarioShapeError):
-        scenario.parse_delta({"rows": "none"}, asked=["T1003"], available=AVAILABLE)
+        scenario.parse_delta(
+            {"rows": "none"}, asked=["T1003"], available=AVAILABLE, lost={"T1003": ALL_LOST}
+        )
     with pytest.raises(scenario.ScenarioShapeError):
-        scenario.parse_delta({}, asked=["T1003"], available=AVAILABLE)
+        scenario.parse_delta({}, asked=["T1003"], available=AVAILABLE, lost={"T1003": ALL_LOST})
 
 
 # --- the scenario rows and the comparison -----------------------------------
@@ -281,6 +294,57 @@ def test_each_batch_carries_its_slice_the_frozen_rows_without_the_removed_tools_
     assert [c["name"] for c in batches[0]["available_tools"]] == ["SIEM Tool", "SOAR Tool"]
 
 
+def test_each_batch_names_the_functions_the_removal_took_away() -> None:
+    """In BASE, EDR Tool is T1003's Detect and Prevent tool and T1566's Respond
+    tool; T1059 never cites it."""
+    (batch,) = scenario.batch_inputs(BASE, ["T1003", "T1566"], ["EDR Tool"], CAPS)
+    assert batch["lost_functions"] == {
+        "T1003": ["detection", "prevention"],
+        "T1566": ["response"],
+    }
+
+
+def test_a_row_crediting_a_function_the_removal_did_not_take_is_dropped_whole() -> None:
+    """The AI is asked only about lost functions. A row that also asserts an
+    unaffected one is set aside, all of it: it was not answering the question."""
+    parsed = scenario.parse_delta(
+        _ai(
+            [
+                {**_flags("T1003", "SIEM Tool"), "response": True},
+                _flags("T1003", "SOAR Tool"),
+            ]
+        ),
+        asked=["T1003"],
+        available=AVAILABLE,
+        lost={"T1003": ["detection"]},
+    )
+    assert parsed.dropped == {"function_not_lost": 1}
+    assert parsed.lists["T1003"] == {
+        "detection_tools": ["SOAR Tool"],
+        "prevention_tools": [],
+        "response_tools": [],
+    }
+
+
+def test_a_frozen_tool_the_ai_omits_keeps_its_function() -> None:
+    """The advisor's 05:25Z change: code keeps what the base credits, and the
+    AI may only add. An answer naming nothing leaves the frozen row as is."""
+    inputs = scenario.batch_inputs(BASE, ["T1003"], ["EDR Tool"], CAPS)
+    nothing = scenario.parse_delta(
+        _ai([]),
+        asked=inputs[0]["technique_codes"],
+        available=[c["name"] for c in inputs[0]["available_tools"]],
+        lost=inputs[0]["lost_functions"],
+    )
+    merged = scenario.merge_batches(inputs, {0: nothing})
+    assert merged.lists["T1003"] == {
+        "detection_tools": [],
+        "prevention_tools": [],
+        "response_tools": ["SOAR Tool"],
+    }
+    assert merged.not_reassessed == []
+
+
 def test_a_failed_batch_falls_back_to_the_removal_alone_and_says_so() -> None:
     """A batch that came back with nothing usable is not silently the frozen
     row: its techniques lose the removed tools by code, and are counted as
@@ -300,9 +364,12 @@ def test_a_failed_batch_falls_back_to_the_removal_alone_and_says_so() -> None:
         },
         asked=inputs[0]["technique_codes"],
         available=[c["name"] for c in inputs[0]["available_tools"]],
+        lost=inputs[0]["lost_functions"],
     )
     merged = scenario.merge_batches(inputs, {0: answered})
     assert merged.lists["T1003"]["detection_tools"] == ["SIEM Tool"]
+    # The AI named no Respond tool; the base's remaining one keeps its credit.
+    assert merged.lists["T1003"]["response_tools"] == ["SOAR Tool"]
     assert merged.lists["T1566"] == {
         "detection_tools": ["Mail Gateway"],
         "prevention_tools": ["Mail Gateway"],

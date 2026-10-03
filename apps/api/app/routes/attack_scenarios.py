@@ -504,11 +504,13 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
     shape_failures = 0
     for asked, data in zip(out.inputs, out.answers, strict=True):
         codes = list(asked["technique_codes"])
+        i = index[tuple(codes)]
         try:
-            parsed[index[tuple(codes)]] = scenario.parse_delta(
+            parsed[i] = scenario.parse_delta(
                 data,
                 asked=codes,
                 available=remaining,
+                lost=inputs[i]["lost_functions"],
                 client_org_name=client.legal_name,
                 redaction_mode=get_settings().shield_redaction_mode,
             )

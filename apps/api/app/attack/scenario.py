@@ -131,6 +131,7 @@ def parse_delta(
     *,
     asked: Iterable[str],
     available: Iterable[str | Candidate],
+    lost: Mapping[str, Iterable[str]],
     client_org_name: str | None = None,
     redaction_mode: RedactionMode = "strict",
     name_hints: tuple[str, ...] = (),
@@ -143,7 +144,11 @@ def parse_delta(
     so a client-named tool cited in the redacted form the model was shown
     resolves to its stored name (#33 finding 5). Only a CONFIRMED resolution is
     credited: an inference (a word of a name, a vendor) has no review queue
-    here, so it is dropped and counted as `tool_unconfirmed`."""
+    here, so it is dropped and counted as `tool_unconfirmed`.
+
+    `lost` is each technique's `lost_functions` (see `batch_inputs`): the AI is
+    asked only about those, so a row setting any OTHER function true is
+    dropped whole and counted as `function_not_lost` (the advisor, 05:25Z)."""
     rows = data.get("rows") if isinstance(data, Mapping) else None
     if not isinstance(rows, list):
         raise ScenarioShapeError("the answer has no `rows` list")
@@ -178,6 +183,10 @@ def parse_delta(
         # `bool` only: `1`, "yes" and a missing key are refused, never coerced.
         if not all(isinstance(v, bool) for v in flags.values()):
             dropped["not_boolean"] += 1
+            continue
+        allowed = set(lost.get(code) or ())
+        if any(value and flag not in allowed for flag, value in flags.items()):
+            dropped["function_not_lost"] += 1
             continue
         for flag, list_name in _FLAGS:
             if flags[flag] and tool not in lists[code][list_name]:
@@ -312,6 +321,16 @@ def _without(tools: Iterable[Any] | None, gone: set[str]) -> list[str]:
     return [t for t in tools or [] if isinstance(t, str) and _key(t) not in gone]
 
 
+def _lost(row: Any, gone: set[str]) -> list[str]:
+    """The functions a removed tool was listed for on this row, in D/P/R
+    order: the only ones the AI is asked about."""
+    return [
+        flag
+        for flag, list_name in _FLAGS
+        if any(_key(t) in gone for t in getattr(row, list_name) or [])
+    ]
+
+
 def batch_inputs(
     base_rows: Sequence[Any],
     affected: Sequence[str],
@@ -339,6 +358,7 @@ def batch_inputs(
                     }
                     for code in codes
                 ],
+                "lost_functions": {code: _lost(by_code[code], gone) for code in codes},
                 "removed_tools": list(removed),
                 "available_tools": remaining,
             }
@@ -358,24 +378,32 @@ class Merged:
 
 
 def merge_batches(inputs: Sequence[Mapping[str, Any]], parsed: Mapping[int, ParsedDelta]) -> Merged:
-    """Join the batches. A batch with no usable answer (`parsed` has no entry
-    for it) is NOT the frozen row passed off as re-assessed: its techniques
-    take the removal alone -- the removed tools stripped by code -- and are
-    named in `not_reassessed`, which the result discloses."""
+    """Join the batches. Every affected technique starts from its frozen row,
+    the removed tools stripped by code, and KEEPS those credits: an answered
+    batch can only ADD tools to them (the advisor, 05:25Z), so a tool the AI
+    leaves out never loses a function the last confirmed assessment gave it.
+
+    A batch with no usable answer (`parsed` has no entry for it) is NOT the
+    frozen row passed off as re-assessed: its techniques take the removal
+    alone and are named in `not_reassessed`, which the result discloses."""
     lists: dict[str, dict[str, list[str]]] = {}
     accepted: list[dict[str, Any]] = []
     dropped: Counter[str] = Counter()
     not_reassessed: list[str] = []
     for i, batch in enumerate(inputs):
         answer = parsed.get(i)
-        if answer is None:
-            for row in batch["frozen_rows"]:
-                lists[row["technique_code"]] = {name: list(row[name]) for name in _LISTS}
-                not_reassessed.append(row["technique_code"])
-            continue
-        lists.update(answer.lists)
-        accepted.extend(answer.accepted)
-        dropped.update(answer.dropped)
+        for row in batch["frozen_rows"]:
+            code = row["technique_code"]
+            added = answer.lists.get(code, {}) if answer is not None else {}
+            lists[code] = {
+                name: list(row[name]) + [t for t in added.get(name, []) if t not in row[name]]
+                for name in _LISTS
+            }
+            if answer is None:
+                not_reassessed.append(code)
+        if answer is not None:
+            accepted.extend(answer.accepted)
+            dropped.update(answer.dropped)
     return Merged(
         lists=lists, accepted=accepted, dropped=dict(dropped), not_reassessed=sorted(not_reassessed)
     )
