@@ -14,9 +14,11 @@ When that text lands in `app/ai/jobs.py`, delete `_PLACEHOLDER_PROMPT` and
 from __future__ import annotations
 
 import json
+import tempfile
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
+from pathlib import Path
 from datetime import timedelta
 from typing import Any
 
@@ -38,6 +40,7 @@ from app.models.deliverable import Deliverable
 from app.models.llm_call import LLMCall
 from app.models.service import Service, ServiceKind, ServiceStatus
 from app.routes.tech_debt import SECURITY_CLASSIFICATION_OVERRIDDEN
+from app.storage.local import LocalFilesystemStorage
 from tests._ai_runs import DeferringRunner, defer_runs
 from tests._attack_rows import standalone_rows
 from tests.unit.test_ai_runs_attack import app_parts  # noqa: F401  (fixture)
@@ -177,6 +180,14 @@ def _world(
     `approved_membership`: the shape of a list approved before migration 0043,
     whose drift since the base cannot be checked. DRAFT reads live rows."""
     c, app, sessions = parts
+    # Storage on local disk, never the real backend: finalizing the base's
+    # deliverable uploads its PDF, and the real dependency is MinIO, which CI
+    # does not run and a dev container would share (#815 CI). As
+    # `test_attack_acceptance` and `test_ai_runs_csf` do.
+    from app.routes.artifacts import _storage_dep
+
+    storage = LocalFilesystemStorage(Path(tempfile.mkdtemp(prefix="scenario-storage-")))
+    app.dependency_overrides[_storage_dep] = lambda: storage
     bearer = c.post(
         "/auth/register",
         json={
