@@ -945,6 +945,12 @@ def confirm_security_classification(
     return _serialize_list_with_items(db, cap_list)
 
 
+#: The audit action an override writes. Named so its readers import it: the
+#: ATT&CK what-if counts a row overridden after its base as brought into scope
+#: (`routes/attack_scenarios.py`, #802 (ii)).
+SECURITY_CLASSIFICATION_OVERRIDDEN = "capability_item.security_classification_overridden"
+
+
 @router.post(
     "/capability-items/{item_id}/security-classification/override",
     response_model=CapabilityListResponse,
@@ -972,7 +978,7 @@ def override_security_classification(
     _record_edit(db, item.capability_list_id)
     audit(
         db,
-        action="capability_item.security_classification_overridden",
+        action=SECURITY_CLASSIFICATION_OVERRIDDEN,
         target_type="capability_item",
         target_id=item.id,
         actor_user_id=user.id,

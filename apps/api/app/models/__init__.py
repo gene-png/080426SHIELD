@@ -13,6 +13,11 @@ from app.models.attack_assessment import (
     AttackAssessmentStatus,
     AttackCoverage,
 )
+from app.models.attack_scenario import (
+    AttackScenario,
+    AttackScenarioRow,
+    AttackScenarioState,
+)
 from app.models.audit_entry import AuditEntry
 from app.models.capability import (
     CapabilityItem,
@@ -54,6 +59,9 @@ __all__ = [
     "AttackAssessment",
     "AttackAssessmentStatus",
     "AttackCoverage",
+    "AttackScenario",
+    "AttackScenarioRow",
+    "AttackScenarioState",
     "AuditEntry",
     "CapabilityItem",
     "CapabilityList",

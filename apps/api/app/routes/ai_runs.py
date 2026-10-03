@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.ai.runs import running_run, to_response
+from app.ai.runs import NON_LOCKING_PURPOSES, running_run, to_response
 from app.db.session import get_db
 from app.dependencies import current_client, require_role
 from app.logging import get_logger
@@ -63,7 +63,11 @@ def _newest(
     *only: AiRunStatus,
     subject_id: uuid.UUID | None = None,
 ) -> AiRun | None:
-    q = select(AiRun).where(AiRun.service_id == service_id)
+    # The workspace's runs: a what-if's run is the what-if's (its own GET reads
+    # it), never the workspace's newest or last completed (#802).
+    q = select(AiRun).where(
+        AiRun.service_id == service_id, AiRun.purpose.not_in(NON_LOCKING_PURPOSES)
+    )
     if subject_id is not None:
         q = q.where(AiRun.subject_id == subject_id)
     if only:
@@ -88,7 +92,7 @@ def service_runs(
     that replaced it (#271). `running` is the service's lock and is never
     scoped: a run on any subject locks the service."""
     svc = require_service_in_tenant(db, service_id, client.id)
-    running = running_run(db, service_id=svc.id)  # reaps first
+    running = running_run(db, service_id=svc.id, locking_only=True)  # reaps first
     latest = _newest(db, svc.id, subject_id=subject_id)
     last_completed = _newest(db, svc.id, AiRunStatus.COMPLETED, subject_id=subject_id)
     return AiRunSummary(

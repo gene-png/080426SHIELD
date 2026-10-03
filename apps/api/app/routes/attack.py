@@ -876,6 +876,10 @@ class CapabilityProvenance:
     # own name (#96), but with no description available — and "we cannot look"
     # is not "uncategorised".
     live_row_missing: bool = False
+    # The capability item the offer came from (the live row, or the snapshot
+    # entry's `item_id`); None when the entry names none. Read by the ATT&CK
+    # what-if to tell a tool added since its base (#802, the advisor's (b2)).
+    item_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1450,6 +1454,7 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
                 list_version=cap_list.version,
                 source_artifact_id=item.source_artifact_id if item is not None else None,
                 live_row_missing=item is None,
+                item_id=item_id or None,
             )
         )
 

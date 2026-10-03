@@ -22,6 +22,7 @@ from app.routes import (
     ai_runs,
     artifacts,
     attack,
+    attack_scenarios,
     auth,
     clients,
     csf,
@@ -82,6 +83,7 @@ def create_app() -> FastAPI:
     app.include_router(csf.router)
     app.include_router(zt.router)
     app.include_router(attack.router)
+    app.include_router(attack_scenarios.router)
     app.include_router(messages.router)
     app.include_router(risk.router)
     app.include_router(clients.router)

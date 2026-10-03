@@ -54,6 +54,7 @@ import { AttackComputedReviewPanel } from "./AttackComputedReviewPanel";
 import { AttackDeliverableCard } from "./AttackDeliverableCard";
 import { AttackHeatmapCard } from "./AttackHeatmapCard";
 import { AttackMatrix } from "./AttackMatrix";
+import { AttackScenarioPanel } from "./AttackScenarioPanel";
 import { AttackTechniquePanel } from "./AttackTechniquePanel";
 
 import type { JSX } from "react";
@@ -1060,6 +1061,9 @@ export function AttackWorkspace({
           {/* Reference, not steps: useful throughout, required at no particular
               point. Kept below the flow so the numbered path stays unbroken. */}
           <AttackHeatmapCard heatmap={heatmap} />
+          {/* #802: a what-if against the last confirmed assessment. Reads and
+              writes only its own records, so it sits outside the flow. */}
+          <AttackScenarioPanel serviceId={serviceId} />
           <MessageThread serviceId={serviceId} />
         </>
       )}
