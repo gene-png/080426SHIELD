@@ -29,6 +29,7 @@ from app.ai.engine import AIJob
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.attack.catalog import NOT_PREVENTABLE
 from app.models.ai_run import AiRun
+from app.models.llm_call import LLMCall
 from app.models.attack_assessment import AttackCoverage
 from app.models.attack_scenario import AttackScenario, AttackScenarioState
 from app.models.capability import CapabilityItem, CapabilityList, CapabilityListStatus
@@ -460,6 +461,8 @@ def test_a_discarded_what_if_cannot_be_run(app_parts, analysis_job) -> None:  # 
 
 
 def test_a_discard_racing_the_run_wins(app_parts, analysis_job) -> None:  # noqa: F811
+    """Discarded before the job starts: it ends FAILED without calling the AI,
+    so nothing is spent on a what-if nobody will read."""
     w = _world(app_parts)
     w.answer({w.cc: [_flags(w.cc, SIEM, d=True, p=True, r=True)]})
     runner: DeferringRunner = defer_runs(w.app)
@@ -471,6 +474,8 @@ def test_a_discard_racing_the_run_wins(app_parts, analysis_job) -> None:  # noqa
     assert body["run_status"] == "failed"
     assert body["techniques"] == []
     assert body["scored_higher"] is None
+    with w.sessions() as db:
+        assert db.execute(select(LLMCall)).scalars().all() == []
 
 
 def test_a_what_if_overtaken_by_a_newer_confirmed_assessment_is_stale_and_not_run(
