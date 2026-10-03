@@ -307,4 +307,31 @@ describe("AttackScenarioPanel, the chat box (slice C)", () => {
     // Nor does the new service's chat box claim it filled anything in.
     expect(screen.queryByTestId("attack-scenario-chat-filled")).toBeNull();
   });
+
+  it("a parse orphaned by a service change is not applied on coming back", async () => {
+    routes[LIST] = () => ({ base: BASE, scenarios: [] });
+    routes["GET /api/proxy/attack/services/svc2/scenarios"] = () => ({
+      base: BASE,
+      scenarios: [],
+    });
+    const { rerender } = render(<AttackScenarioPanel serviceId="svc" />);
+    await screen.findByLabelText("EDR Tool");
+    let release: (v: unknown) => void = () => undefined;
+    fillWith(new Promise((r) => (release = r)));
+    rerender(<AttackScenarioPanel serviceId="svc2" />);
+    await screen.findByLabelText("EDR Tool");
+    release({
+      removed: ["EDR Tool"],
+      added: ["XDR Suite"],
+      not_understood: [],
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    rerender(<AttackScenarioPanel serviceId="svc" />);
+    await screen.findByLabelText("EDR Tool");
+    expect(
+      (screen.getByLabelText("EDR Tool") as HTMLInputElement).checked,
+    ).toBe(false);
+    expect(screen.queryByDisplayValue("XDR Suite")).toBeNull();
+    expect(screen.queryByTestId("attack-scenario-chat-filled")).toBeNull();
+  });
 });
