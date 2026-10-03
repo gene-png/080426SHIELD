@@ -118,7 +118,7 @@ test("tech-debt extract builds the dashboard, and editing a cell clears the AI-c
   });
   await expect(page.getByText("Annual cost", { exact: true })).toBeVisible();
   await expect(page.getByText("Categories", { exact: true })).toBeVisible();
-  await expect(page.getByText("To consolidate / cut")).toBeVisible();
+  await expect(page.getByText("To cut", { exact: true })).toBeVisible();
   // exact: the "N low-confidence rows" StatusPill would otherwise also match.
   await expect(
     page.getByText("Low-confidence rows", { exact: true }),

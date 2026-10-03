@@ -778,7 +778,7 @@ Components carry no cost of their own — this licence keeps its full value.`,
           <NumberCard label="Annual cost" value={costFmt} />
           <NumberCard label="Categories" value={categoryCount} />
           <NumberCard
-            label="To consolidate / cut"
+            label="To cut"
             value={dispositionCounts.consolidate + dispositionCounts.cut}
             deltaTone="negative"
           />

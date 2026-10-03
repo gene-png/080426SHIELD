@@ -19,6 +19,7 @@ import {
   type TechDebtDashboardData,
   type TechDebtItem,
 } from "@/lib/dashboards/techDebt";
+import { DISPOSITION_LABEL } from "@/lib/tech_debt/dispositionLabels";
 
 import type { JSX } from "react";
 
@@ -32,13 +33,21 @@ const ToolSprawl = dynamic(
 );
 
 const DISPOSITION: Record<string, { bg: string; fg: string; label: string }> = {
-  keep: { bg: "rgba(16,185,129,.18)", fg: "#a7f3d0", label: "Keep" },
+  keep: {
+    bg: "rgba(16,185,129,.18)",
+    fg: "#a7f3d0",
+    label: DISPOSITION_LABEL.keep,
+  },
   consolidate: {
     bg: "rgba(245,158,11,.18)",
     fg: "#fde68a",
-    label: "Consolidate",
+    label: DISPOSITION_LABEL.consolidate,
   },
-  cut: { bg: "rgba(239,68,68,.18)", fg: "#fecaca", label: "Cut" },
+  cut: {
+    bg: "rgba(239,68,68,.18)",
+    fg: "#fecaca",
+    label: DISPOSITION_LABEL.cut,
+  },
 };
 
 /** The spend card's subtitle. THREE outcomes, mirroring the API's tri-state.

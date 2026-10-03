@@ -208,7 +208,9 @@ def _disposition_label(d: CapabilityDisposition | None) -> str:
         return "Undecided"
     return {
         CapabilityDisposition.KEEP: "Keep",
-        CapabilityDisposition.CONSOLIDATE: "Consolidate",
+        # #804: the stored value stays `consolidate`; its label changed (Gene,
+        # 2026-10-02). The web twin is `lib/tech_debt/dispositionLabels.ts`.
+        CapabilityDisposition.CONSOLIDATE: "Cut, covered by another tool",
         CapabilityDisposition.CUT: "Cut",
     }[d]
 
@@ -445,7 +447,8 @@ def render_pdf(ctx: DeliverableContext) -> bytes:
     if not ctx.savings_cost_known:
         story.append(
             Paragraph(
-                "Note: at least one row marked <i>Cut</i> is missing an annual cost. "
+                "Note: at least one row marked <i>Cut</i> or <i>Cut, covered by another "
+                "tool</i> is missing an annual cost. "
                 "The savings figure is a lower bound.",
                 body,
             )
@@ -528,7 +531,8 @@ def render_docx(ctx: DeliverableContext) -> bytes:
     ]
     if not ctx.savings_cost_known:
         lines.append(
-            "Note: at least one row marked Cut is missing an annual cost. "
+            "Note: at least one row marked Cut or Cut, covered by another tool is "
+            "missing an annual cost. "
             "The savings figure is a lower bound."
         )
     add_paragraphs(doc, lines)
