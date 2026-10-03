@@ -625,3 +625,54 @@ def test_editing_one_tool_list_confirms_only_that_lists_inferences(env) -> None:
     assert out["capabilities"]["detect"] == "awaiting_review"
     assert [e["cleared_at"] for e in out["unconfirmed_citations"]] == [None]
     assert (out["computed_status"], out["in_review_queue"]) == ("partial", True)
+
+
+def test_the_audit_counts_only_the_confirmations_an_edit_made(env) -> None:  # noqa: F811
+    """F1's record half: an edit to one list stamps only that list's inferences,
+    and the audit row says how many it stamped -- never the whole record. A row
+    claiming confirmations that did not happen is a success record written where
+    the success is not."""
+    c, Sess = env
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    _svc, a = _service_and_assessment(c, bearer)
+    (row,) = standalone_rows(a["coverage"], 1)
+    _patch(c, bearer, row["id"], {"status": "gap", **ALL_THREE})
+    with Sess() as s:
+        s.execute(
+            update(AttackCoverage)
+            .where(AttackCoverage.id == uuid.UUID(row["id"]))
+            .values(
+                unconfirmed_citations=[
+                    {
+                        "tool": "Tool D",
+                        "cited": "Tool D",
+                        "reason": "inferred",
+                        "field": "detection_tools",
+                        "cleared_at": None,
+                    },
+                    {
+                        "tool": "Tool R",
+                        "cited": "Tool R",
+                        "reason": "inferred",
+                        "field": "response_tools",
+                        "cleared_at": None,
+                    },
+                ]
+            )
+        )
+        s.commit()
+
+    out = _patch(c, bearer, row["id"], {"response_tools": ["Tool R"]})
+    stamped = [e["field"] for e in out["unconfirmed_citations"] if e["cleared_at"] is not None]
+    assert stamped == ["response_tools"]
+    with Sess() as s:
+        event = (
+            s.execute(
+                select(AuditEntry)
+                .where(AuditEntry.action == "attack.coverage.updated")
+                .order_by(AuditEntry.at.desc())
+            )
+            .scalars()
+            .first()
+        )
+    assert event.details["citations_confirmed_by_hand"] == len(stamped) == 1

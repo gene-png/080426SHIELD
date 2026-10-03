@@ -729,6 +729,10 @@ def patch_coverage(
         else {"status", "detection_tools", "prevention_tools", "response_tools"}
     )
     authored = authoring & set(data)
+    # #554 R3: what this edit actually stamped, for the audit row below. On a
+    # computed assessment that is only the edited lists' entries (F1), so the
+    # row must not claim the whole record was confirmed.
+    stamped = 0
     if authored:
         before_uncleared = len(row.unconfirmed_citations or []) - sum(
             1 for e in (row.unconfirmed_citations or []) if e.get("cleared_at") is not None
@@ -740,12 +744,15 @@ def patch_coverage(
             # before R3 every entry, as the row's author.
             fields=authored if statuses_computed(a) else None,
         )
+        stamped = before_uncleared - sum(
+            1 for e in row.unconfirmed_citations if e.get("cleared_at") is None
+        )
         _log.info(
             "attack.coverage.citations_confirmed_by_hand",
             coverage_id=str(row.id),
             technique_code=row.technique_code,
             fields=sorted(authored),
-            cleared=before_uncleared,
+            cleared=stamped,
         )
     row.answered_by = user.id
     row.answered_at = utcnow()
@@ -785,7 +792,13 @@ def patch_coverage(
             # Recorded because this is the one path that CLEARS a review queue,
             # and "why does this technique count now" has to be answerable later
             # from the audit trail rather than from the row's current state.
-            "citations_confirmed_by_hand": len(row.unconfirmed_citations or []) if authored else 0,
+            "citations_confirmed_by_hand": (
+                # #554 R3: the entries this edit stamped. Before R3, unchanged:
+                # the whole record, which a status or tool edit confirmed.
+                stamped
+                if statuses_computed(a)
+                else (len(row.unconfirmed_citations or []) if authored else 0)
+            ),
         },
     )
     db.commit()
