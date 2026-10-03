@@ -56,12 +56,12 @@ class LLMResponse:
         self.output_tokens = output_tokens
 
 
-class IncompleteResponseError(RuntimeError):
-    """A provider stopped without finishing (a cut-off at the output cap, a
-    content filter, ...). The response is NOT parsed, but it was generated and
-    billed, so the error carries the usage the provider reported and
-    `LLMClient.invoke` records it on the FAILED `llm_calls` row. Without it a
-    truncated call billed up to the cap reads as zero tokens (the N-019 shape).
+class UnparsedResponseError(RuntimeError):
+    """The provider answered, but nothing in the answer may be parsed. The call
+    was still sent and counted, so the error carries the usage the provider
+    reported and `LLMClient.invoke` records it on the FAILED `llm_calls` row.
+    Without it the spend reads as zero tokens (the N-019 shape). Raise one of
+    the two subclasses, which name what was wrong with the answer.
     """
 
     def __init__(
@@ -70,6 +70,19 @@ class IncompleteResponseError(RuntimeError):
         super().__init__(message)
         self.input_tokens = input_tokens
         self.output_tokens = output_tokens
+
+
+class IncompleteResponseError(UnparsedResponseError):
+    """A provider stopped without finishing (a cut-off at the output cap, a
+    content filter, no stop signal, ...): something was generated, and it is
+    not the whole answer."""
+
+
+class NoUsableResponseError(UnparsedResponseError):
+    """A provider returned nothing to parse: the prompt was blocked, no
+    candidate came back, or the one that did has no content (#828). Nothing
+    was cut short, so this is not an `IncompleteResponseError`, whose message
+    `failures.friendly_reason` reads as "cut off"."""
 
 
 class LLMProvider(Protocol):
@@ -407,8 +420,18 @@ def _parse_generate_content(data: dict[str, Any]) -> LLMResponse:
     ``finishReason`` is refused too (#823): nothing then says the generation
     finished, the same rule as the Anthropic and OpenAI adapters.
     """
-    candidate = data["candidates"][0]
     usage = data.get("usageMetadata") or {}
+    candidates = data.get("candidates") or []
+    if not candidates:
+        # A blocked PROMPT returns promptFeedback.blockReason and no candidate.
+        block = (data.get("promptFeedback") or {}).get("blockReason")
+        cause = f": the prompt was blocked (blockReason={block})" if block else ""
+        raise NoUsableResponseError(
+            f"generateContent returned no candidates{cause}. " "Nothing was generated or parsed.",
+            input_tokens=usage.get("promptTokenCount"),
+            output_tokens=usage.get("candidatesTokenCount"),
+        )
+    candidate = candidates[0]
     finish_reason = candidate.get("finishReason")
     if finish_reason != "STOP":
         stated = "no finishReason" if finish_reason is None else f"finishReason={finish_reason}"
@@ -419,7 +442,14 @@ def _parse_generate_content(data: dict[str, Any]) -> LLMResponse:
             input_tokens=usage.get("promptTokenCount"),
             output_tokens=usage.get("candidatesTokenCount"),
         )
-    parts = candidate["content"]["parts"]
+    parts = (candidate.get("content") or {}).get("parts")
+    if parts is None:
+        raise NoUsableResponseError(
+            "generateContent returned a candidate with no content "
+            f"(finishReason={finish_reason}). Nothing was parsed.",
+            input_tokens=usage.get("promptTokenCount"),
+            output_tokens=usage.get("candidatesTokenCount"),
+        )
     text = "".join(p.get("text", "") for p in parts)
     return LLMResponse(
         text,
@@ -781,7 +811,7 @@ class LLMClient:
         except Exception as exc:  # noqa: BLE001 - boundary; log + record + re-raise
             row.status = LLMCallStatus.FAILED
             row.error_message = f"{type(exc).__name__}: {exc}"
-            if isinstance(exc, IncompleteResponseError):
+            if isinstance(exc, UnparsedResponseError):
                 # Generated and billed, though not parsed: record what it cost.
                 row.input_tokens = exc.input_tokens
                 row.output_tokens = exc.output_tokens
