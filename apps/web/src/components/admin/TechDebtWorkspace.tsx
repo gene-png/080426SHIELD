@@ -59,6 +59,7 @@ import { OverlapDashboard } from "./OverlapDashboard";
 
 import type { JSX } from "react";
 import { ProgressStages } from "./ProgressStages";
+import { SavingsWhatIf } from "./SavingsWhatIf";
 import { SecurityClassificationQueue } from "./SecurityClassificationQueue";
 import { useServiceStages } from "@/lib/stages/client";
 import { useRefreshFailures } from "@/components/admin/useRefreshFailures";
@@ -1015,6 +1016,20 @@ Components carry no cost of their own — this licence keeps its full value.`,
 
           {/* Reference, not steps: analysis output, useful throughout. */}
           <ConsolidationPlanCard summary={plan} />
+          {list && plan && plan.capability_list_id === list.id ? (
+            <SavingsWhatIf
+              list={list}
+              planSavings={plan.estimated_annual_savings}
+              planKnown={plan.savings_cost_known}
+              onApplied={(next) => {
+                // Applied through the disposition route, as a row edit is;
+                // the plan and its savings refresh in the background.
+                listSeq.current += 1;
+                setList(next);
+                void refreshOverlap();
+              }}
+            />
+          ) : null}
           <OverlapDashboard
             analysis={overlap}
             loading={overlapLoading && overlap === null}
