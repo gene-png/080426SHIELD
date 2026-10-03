@@ -21,7 +21,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import sessionmaker
 
 from app.ai import engine as ai_engine
@@ -30,6 +30,7 @@ from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.attack.catalog import NOT_PREVENTABLE
 from app.models.ai_run import AiRun
 from app.models.attack_assessment import AttackCoverage
+from app.models.attack_scenario import AttackScenario, AttackScenarioState
 from app.models.capability import CapabilityItem, CapabilityList, CapabilityListStatus
 from app.models.service import Service, ServiceKind, ServiceStatus
 from tests._ai_runs import DeferringRunner, defer_runs
@@ -487,6 +488,37 @@ def test_a_what_if_overtaken_by_a_newer_confirmed_assessment_is_stale_and_not_ru
     assert r.status_code == 409, r.text
     assert _error(r)["reason"] == "scenario_stale"
     assert _ai_runs(w) == []
+
+
+def test_a_discard_landing_while_the_ai_answers_still_wins(
+    app_parts, analysis_job  # noqa: F811
+) -> None:
+    """The job's second check, after the AI call (D-031's re-read): a discard
+    made while the batches were out is not overwritten by their answers."""
+    w = _world(app_parts)
+    sid = w.create([EDR]).json()["id"]
+    provider = FixtureProvider()
+
+    def respond(payload: dict) -> LLMResponse:
+        with w.sessions() as s:
+            s.execute(
+                update(AttackScenario)
+                .where(AttackScenario.id == uuid.UUID(sid))
+                .values(state=AttackScenarioState.DISCARDED)
+            )
+            s.commit()
+        return LLMResponse(json.dumps({"rows": [_flags(w.cc, SIEM, d=True)]}))
+
+    provider.register(PURPOSE, respond)
+    from app.routes.attack import _llm_dep
+
+    w.app.dependency_overrides[_llm_dep] = lambda: LLMClient(provider)
+    assert w.run(sid).status_code == 202
+    body = w.get(sid)
+    assert body["state"] == "discarded"
+    assert body["run_status"] == "failed"
+    assert body["techniques"] == []
+    assert body["scored_higher"] is None
 
 
 def test_an_analysed_what_if_is_not_run_twice(app_parts, analysis_job) -> None:  # noqa: F811
