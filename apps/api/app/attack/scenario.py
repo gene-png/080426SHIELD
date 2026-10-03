@@ -32,14 +32,21 @@ from sqlalchemy.orm import Session
 
 from app.ai.redact import RedactionMode, redact_for_ai
 from app.attack.analytics import CoverageRollup, compute
-from app.attack.catalog import all_codes
+from app.attack.catalog import NOT_PREVENTABLE, all_codes
 from app.attack.citations import Candidate, CitationResolver
-from app.attack.computed import awaiting_review_count, effective_coverage
+from app.attack.computed import (
+    _ASSESSED,
+    InPlace,
+    awaiting_review_count,
+    capability,
+    effective_coverage,
+)
+from app.attack.parents import is_computed_parent
 from app.attack.pending import pending_codes, row_tools
 from app.attack.release_readiness import unreviewed_codes
 from app.attack.rules import parents_computed, statuses_computed
 from app.models.attack_assessment import AttackAssessment, AttackAssessmentStatus
-from app.models.capability import CapabilityListStatus
+from app.models.capability import CapabilityListStatus, SecurityFunction
 
 _LISTS = ("detection_tools", "prevention_tools", "response_tools")
 _FLAGS = (
@@ -159,6 +166,11 @@ def _cited(rows: Iterable[Any]) -> dict[str, str]:
     return out
 
 
+def cited_key(name: object) -> str:
+    """A tool name as this module compares names: trimmed and case-folded."""
+    return _key(name)
+
+
 def cited_tools(rows: Iterable[Any]) -> list[str]:
     """The tools the rows cite, one spelling each, sorted case-insensitively:
     the names a removal may pick."""
@@ -167,8 +179,9 @@ def cited_tools(rows: Iterable[Any]) -> list[str]:
 
 def resolve_removed(rows: Sequence[Any], names: Iterable[str]) -> list[str]:
     """The removals as the names the assessment cites, de-duplicated, in the
-    order given. Refuses an empty list and any name the assessment does not
-    cite: a guess would assess a tool nobody named."""
+    order given. Refuses any name the assessment does not cite: a guess would
+    assess a tool nobody named. An EMPTY list is valid since slice B -- a
+    what-if may only add -- and `require_change` refuses a change of nothing."""
     cited = _cited(rows)
     out: list[str] = []
     for name in names:
@@ -177,9 +190,313 @@ def resolve_removed(rows: Sequence[Any], names: Iterable[str]) -> list[str]:
             raise UnknownTool(str(name))
         if found not in out:
             out.append(found)
-    if not out:
-        raise EmptyChangeList("choose at least one tool to remove")
     return out
+
+
+# --- slice B: tools the client doesn't have ------------------------------------
+
+#: The advisor's cap (14:58Z): added tools per what-if, to bound the cost.
+MAX_ADDED = 10
+#: The longest name, vendor or category an admin may enter.
+MAX_TEXT = 200
+
+#: An added tool's declared functions, as the Tech Debt classification spells
+#: them (`SecurityFunction`), and the coverage flag each maps to, in D/P/R order.
+_FUNCTION_FLAG = {
+    SecurityFunction.DETECT.value: "detection",
+    SecurityFunction.PREVENT.value: "prevention",
+    SecurityFunction.RESPOND.value: "response",
+}
+
+
+@dataclass(frozen=True)
+class AddedTool:
+    """A tool the client does not have, as the admin described it. Its
+    functions are EVIDENCE for the AI, as a real tool's classification is;
+    code never credits a function from them."""
+
+    name: str
+    vendor: str | None
+    category: str | None
+    functions: tuple[str, ...]
+
+    def payload(self) -> dict[str, Any]:
+        """The same four fields `mitre_map` sends for a capability."""
+        return {
+            "name": self.name,
+            "vendor": self.vendor,
+            "category": self.category,
+            "security_functions": list(self.functions),
+        }
+
+    @classmethod
+    def from_stored(cls, entry: Mapping[str, Any]) -> AddedTool:
+        return cls(
+            name=entry["name"],
+            vendor=entry.get("vendor"),
+            category=entry.get("category"),
+            functions=tuple(entry.get("security_functions") or ()),
+        )
+
+
+class AddedToolRefused(ValueError):
+    """An added tool the what-if will not take, by the name the admin typed."""
+
+    def __init__(self, name: str = "") -> None:
+        super().__init__(name)
+        self.name = name
+
+
+class AlreadyClients(AddedToolRefused):
+    """A spelling of a tool the client has (copy B4)."""
+
+
+class Indistinct(AddedToolRefused):
+    """Shown to the AI as the same string as another tool (copy B5)."""
+
+
+class NoFunctions(AddedToolRefused):
+    """No Detect, Prevent or Respond chosen (copy B6)."""
+
+
+class BlankName(AddedToolRefused):
+    """No name."""
+
+
+class Duplicate(AddedToolRefused):
+    """The same tool twice in one change list."""
+
+
+class TooLong(AddedToolRefused):
+    """A name, vendor or category longer than `MAX_TEXT`; `field` is the
+    panel's label for it."""
+
+    def __init__(self, name: str, field: str) -> None:
+        super().__init__(name)
+        self.field = field
+
+
+class BadFunction(AddedToolRefused):
+    """A function that is not detect, prevent or respond."""
+
+    def __init__(self, name: str, value: object) -> None:
+        super().__init__(name)
+        self.value = value
+
+
+class TooMany(ValueError):
+    """More than `MAX_ADDED` added tools (copy B7)."""
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(f"at most {limit} added tools")
+        self.limit = limit
+
+
+def _text(value: object) -> str | None:
+    return value.strip() or None if isinstance(value, str) else None
+
+
+def validate_added(
+    raw: Sequence[Any],
+    *,
+    client_tools: Iterable[str],
+    client_org_name: str | None,
+    redaction_mode: RedactionMode,
+    name_hints: Iterable[str] = (),
+    limit: int = MAX_ADDED,
+) -> list[AddedTool]:
+    """The admin's added tools, or a typed refusal naming the first bad one.
+
+    Whether a name can stand beside the client's tools is decided by CALLING
+    the resolver the run uses (`CitationResolver`, with the egress's org name,
+    mode and hints), never by a second key: it collapses internal whitespace
+    and indexes the shown forms, and a looser check here let a name through
+    that the run then could not credit (#818 review, F1). An added tool is
+    refused when any string the model can cite for it -- its name, or the form
+    it is SHOWN as -- is a hit in the resolver's real-name or alias tier
+    (`CitationResolver.named_by`), CONFIRMED OR AMBIGUOUS, among the client's
+    and earlier-added tools. Ambiguous counts: when the client's own tools
+    already collide, a name that resolves ambiguously is still their tool, and
+    a confirmed-only check let it through (#818 narrow review). Those two tiers
+    are the only ones that index a name, so a name that clears this check
+    cannot disturb another tool's resolution either. An inference (a word of a
+    name, a vendor) never decides a credit, so it does not refuse.
+
+    A refusal names the cause: a spelling of a client tool (B4/B4b), a second
+    spelling of an earlier added tool, or a name the model could not tell apart
+    from another tool (B5)."""
+    raw = list(raw)
+    if len(raw) > limit:
+        raise TooMany(limit)
+    hints = tuple(name_hints)
+    client = list(dict.fromkeys(t for t in client_tools if isinstance(t, str) and t.strip()))
+
+    def resolver(names: Sequence[str], mode: RedactionMode = redaction_mode) -> CitationResolver:
+        return CitationResolver(
+            [Candidate(name=n) for n in names],
+            client_org_name=client_org_name,
+            redaction_mode=mode,
+            name_hints=hints,
+        )
+
+    def citable(name: str) -> set[str]:
+        """The strings the model can cite for a tool: as stored and as shown."""
+        shown, _counts = redact_for_ai(
+            name, mode=redaction_mode, client_org_name=client_org_name or None, name_hints=hints
+        )
+        return {name, shown}
+
+    out: list[AddedTool] = []
+    for entry in raw:
+        entry = entry if isinstance(entry, Mapping) else {}
+        name = _text(entry.get("name"))
+        if name is None:
+            raise BlankName()
+        vendor, category = _text(entry.get("vendor")), _text(entry.get("category"))
+        # The panel's own labels (B2).
+        for label, value in (
+            ("Name", name),
+            ("Vendor (optional)", vendor),
+            ("Category (optional)", category),
+        ):
+            if value is not None and len(value) > MAX_TEXT:
+                raise TooLong(name, label)
+        functions = entry.get("security_functions")
+        functions = list(functions) if isinstance(functions, list) else []
+        for value in functions:
+            # `isinstance` first: a list or dict is unhashable and `in` on a
+            # dict would raise -- an untyped 500 (#818 review, F2).
+            if not isinstance(value, str) or value not in _FUNCTION_FLAG:
+                raise BadFunction(name, value)
+        if not functions:
+            raise NoFunctions(name)
+
+        earlier = [t.name for t in out]
+        before = resolver([*client, *earlier])
+        # Taken in a NAME tier, confirmed or ambiguous: an ambiguity among the
+        # client's own tools is still their tool (#818 narrow review, 1).
+        if any(before.named_by(form) for form in citable(name)):
+            raise _why_refused(name, before, resolver(client, "off"), client, earlier, citable)
+        out.append(
+            AddedTool(
+                name=name,
+                vendor=vendor,
+                category=category,
+                functions=tuple(f for f in _FUNCTION_FLAG if f in functions),
+            )
+        )
+    return out
+
+
+def _why_refused(
+    name: str,
+    before: CitationResolver,
+    client_real: CitationResolver,
+    client: Sequence[str],
+    earlier: Sequence[str],
+    citable: Callable[[str], set[str]],
+) -> AddedToolRefused:
+    """The cause, for a name the resolver could not keep apart. A spelling of a
+    client tool: the name itself already resolves to one (case, whitespace, or
+    its `[CLIENT]` twin), or the form it is SHOWN as is a client tool's stored
+    name. A second spelling of an earlier added tool, likewise. Anything else
+    -- two tools shown as one placeholder -- cannot be told apart."""
+    own = before.named_by(name)
+    shown_hits = {n for form in citable(name) - {name} for n in client_real.named_by(form)}
+    if own & set(client) or shown_hits & set(client):
+        return AlreadyClients(name)
+    if own & set(earlier):
+        return Duplicate(name)
+    return Indistinct(name)
+
+
+def require_change(removed: Sequence[str], added: Sequence[AddedTool]) -> None:
+    """A what-if must remove or add something (copy B8)."""
+    if not removed and not added:
+        raise EmptyChangeList("choose at least one tool to remove or add")
+
+
+def open_functions(
+    rows: Iterable[Any],
+    added: Sequence[AddedTool],
+    *,
+    removed: Removed | None = None,
+) -> dict[str, list[str]]:
+    """The techniques an added tool could change, and the functions it may be
+    asked about there: for every assessed, non-parent technique, each function
+    some added tool declares that is NOT in place in the frozen row (after the
+    removal), judged by R3's own `computed.capability`. Prevention is never
+    open where the technique cannot be prevented. Techniques with none are
+    left out."""
+    declared = {_FUNCTION_FLAG[f] for t in added for f in t.functions}
+    if not declared:
+        return {}
+    gone = removed if removed is not None else _plain(())
+    out: dict[str, list[str]] = {}
+    for row in rows:
+        code = row.technique_code
+        if row.status not in _ASSESSED or is_computed_parent(code):
+            continue
+        opened = []
+        for flag, list_name in _FLAGS:
+            if flag not in declared:
+                continue
+            if flag == "prevention" and code in NOT_PREVENTABLE:
+                continue
+            tools = _without(getattr(row, list_name), gone)
+            if capability(tools, row.unconfirmed_citations) is not InPlace.IN_PLACE:
+                opened.append(flag)
+        if opened:
+            out[code] = opened
+    return out
+
+
+def split_higher(
+    assessment: Any,
+    base_rows: Sequence[Any],
+    lists: Mapping[str, Mapping[str, list[str]]],
+    comparison: Comparison,
+    affected: Iterable[str],
+    *,
+    added_names: Iterable[str],
+) -> tuple[list[str], list[str]]:
+    """The affected techniques that would score higher, by cause: (copy 18's
+    warning; B11's result). A technique can be in BOTH.
+
+    COUNTERFACTUAL, not "was an added tool named": the after-status is computed
+    again from the what-if's lists WITHOUT the added tools, by the same R3
+    rules (#818 review, F3), and the advisor's option (b) at 16:47Z decides:
+    - a rise the REMAINING tools alone still produce is copy 18's anomaly,
+      even when an added tool was credited too;
+    - a rise where the added tools reach a HIGHER final status than the
+      remaining tools alone (Gap to Partial on a remaining tool, then Covered
+      with an added one; or a rise the remaining tools do not produce at all)
+      is B11's result too.
+    A row naming an added tool with every function false put nothing in the
+    lists, so it explains nothing."""
+    affected = list(affected)
+    rises = scored_higher(comparison, affected)
+    added = {_key(n) for n in added_names}
+    if not added:
+        return rises, []
+    without = {
+        code: {name: [t for t in tools if _key(t) not in added] for name, tools in row.items()}
+        for code, row in lists.items()
+    }
+    alone = compare(assessment, base_rows, scenario_rows(base_rows, without))
+    survives = set(scored_higher(alone, affected))
+    with_added = {code: after for code, _before, after in comparison.changed}
+    before = {code: b for code, b, _after in comparison.changed}
+    alone_after = {code: after for code, _before, after in alone.changed}
+
+    def raised_by_added(code: str) -> bool:
+        reached_alone = alone_after.get(code, before[code])
+        return _RANK.get(with_added[code], -1) > _RANK.get(reached_alone, -1)
+
+    return (
+        [c for c in rises if c in survives],
+        [c for c in rises if raised_by_added(c)],
+    )
 
 
 def affected_codes(rows: Iterable[Any], removed: Removed | Iterable[str]) -> list[str]:
@@ -205,6 +522,8 @@ def parse_delta(
     asked: Iterable[str],
     available: Iterable[str | Candidate],
     lost: Mapping[str, Iterable[str]],
+    opened: Mapping[str, Iterable[str]] | None = None,
+    added: Sequence[AddedTool] = (),
     indistinct: Iterable[str] = (),
     client_org_name: str | None = None,
     redaction_mode: RedactionMode = "strict",
@@ -222,13 +541,25 @@ def parse_delta(
 
     `lost` is each technique's `lost_functions` (see `batch_inputs`): the AI is
     asked only about those, so a row setting any OTHER function true is
-    dropped whole and counted as `function_not_lost` (the advisor, 05:25Z)."""
+    dropped whole and counted as `function_not_lost` (the advisor, 05:25Z).
+
+    `opened` is each technique's `open_functions` (slice B): a function there
+    may be credited only to an ADDED tool (`added`). A row crediting one of the
+    client's tools for a function that is open and not lost is dropped whole
+    and counted as `tool_not_added`.
+
+    An added tool may be credited only for the functions DECLARED for it, in a
+    lost function as much as an open one (the advisor, 16:00Z, #818 F6): the
+    admin's choice is the only evidence there is. A row crediting it with any
+    other is dropped whole and counted as `function_not_declared`."""
     rows = data.get("rows") if isinstance(data, Mapping) else None
     if not isinstance(rows, list):
         raise ScenarioShapeError("the answer has no `rows` list")
     asked = list(asked)
     asked_set = set(asked)
     indistinct_names = set(indistinct)
+    opened = opened or {}
+    declared = {_key(t.name): {_FUNCTION_FLAG[f] for f in t.functions} for t in added}
     resolver = CitationResolver(
         [c if isinstance(c, Candidate) else Candidate(name=c) for c in available],
         client_org_name=client_org_name,
@@ -264,9 +595,17 @@ def parse_delta(
         if not all(isinstance(v, bool) for v in flags.values()):
             dropped["not_boolean"] += 1
             continue
-        allowed = set(lost.get(code) or ())
-        if any(value and flag not in allowed for flag, value in flags.items()):
+        lost_here = set(lost.get(code) or ())
+        open_here = set(opened.get(code) or ())
+        claimed = {flag for flag, value in flags.items() if value}
+        if claimed - lost_here - open_here:
             dropped["function_not_lost"] += 1
+            continue
+        if (claimed - lost_here) and _key(tool) not in declared:
+            dropped["tool_not_added"] += 1
+            continue
+        if _key(tool) in declared and claimed - declared[_key(tool)]:
+            dropped["function_not_declared"] += 1
             continue
         for flag, list_name in _FLAGS:
             if flags[flag] and tool not in lists[code][list_name]:
@@ -498,6 +837,7 @@ def batch_inputs(
     capability_payload: Sequence[Mapping[str, Any]],
     *,
     size: int = BATCH_SIZE,
+    added: Sequence[AddedTool] = (),
 ) -> list[dict[str, Any]]:
     """One input per batch of affected techniques: the slice, those frozen rows
     with the removed tools taken out, the removals, and the client's tools that
@@ -505,6 +845,8 @@ def batch_inputs(
     gone = _as_removed(removed)
     by_code = {r.technique_code: r for r in base_rows}
     remaining = [dict(c) for c in capability_payload if not gone.covers(c.get("name"))]
+    added_payload = [t.payload() for t in added]
+    opened = open_functions(base_rows, added, removed=gone)
     out: list[dict[str, Any]] = []
     for i in range(0, len(affected), size):
         codes = list(affected[i : i + size])
@@ -519,8 +861,10 @@ def batch_inputs(
                     for code in codes
                 ],
                 "lost_functions": {code: _lost(by_code[code], gone) for code in codes},
+                "open_functions": {code: list(opened.get(code, [])) for code in codes},
                 "removed_tools": list(gone.names),
-                "available_tools": remaining,
+                "added_tools": added_payload,
+                "available_tools": remaining + added_payload,
             }
         )
     return out
