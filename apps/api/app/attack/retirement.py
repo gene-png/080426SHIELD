@@ -3,7 +3,12 @@
 ## The decision
 
 Gene, 2026-09-26: a Tech Debt tool whose disposition is `cut` is a planned
-retirement. It STILL COUNTS toward ATT&CK coverage, because it is still
+retirement. Gene, 2026-10-03 (ruled by the advisor on #736, #810): so is one
+marked "Cut, covered by another tool" (stored `consolidate`). The set is
+`models/capability.py::RETIRING_DISPOSITIONS`, the SAME one Tech Debt savings
+counts, so a tool cannot be savings in one product and staying in the other.
+
+A planned retirement STILL COUNTS toward ATT&CK coverage, because it is still
 deployed, and every surface that counts it labels it "planned retirement" so
 the client can see which coverage will drop. Coverage is not recomputed here
 and nothing in `attack/analytics.py` changes: this module only labels.
@@ -33,12 +38,13 @@ so it is UNKNOWN. (Refined from the first verdict on #686, which read a
 draft-only cut as "not retiring": "the plan does not list it" cannot support
 "not retiring". #787 review, F1.)
 
-  * Every voting entry `cut`  ->  PLANNED.
-  * Every voting entry known and none `cut`  ->  NOT retiring.
-    An undecided (None) disposition is not a plan to retire. Neither is
-    `consolidate`: Gene's decision names `cut`, and only `cut` counts. Whether
-    a consolidation should read as a retirement is an open question to the
-    owner (#787 review, F2), deliberately not answered here.
+  * Every voting entry retiring (`cut` or `consolidate`)  ->  PLANNED.
+  * Every voting entry known and none retiring  ->  NOT retiring.
+    An undecided (None) disposition is not a plan to retire, and neither is
+    `keep`. `consolidate` -- "Cut, covered by another tool" -- IS: Gene
+    decided it on 2026-10-03 (#810), answering the question the #787 review
+    (F2) left open. Whether a retiring tool still counts toward coverage is
+    #801's, not this module's.
   * Voting entries that DISAGREE -- two Tech Debt SERVICES whose latest plans
     differ -- or one whose live item is gone  ->  UNKNOWN. Picking either side
     would assert a plan nobody stated.
@@ -88,14 +94,14 @@ class PlanEntry:
     """One membership entry, as this module needs it.
 
     `in_plan` is True when the entry's list is its Tech Debt service's latest
-    APPROVED or RELEASED version -- the only lists that vote. `cut` is
-    the live item's disposition read as cut-or-not, or None when the live
-    item is gone.
+    APPROVED or RELEASED version -- the only lists that vote. `retiring` is
+    whether the live item's disposition is in `RETIRING_DISPOSITIONS`, or None
+    when the live item is gone.
     """
 
     name: str
     in_plan: bool
-    cut: bool | None
+    retiring: bool | None
 
 
 def _key(name: object) -> str:
@@ -151,10 +157,10 @@ def build_index(entries: Iterable[PlanEntry], *, has_plan: bool) -> RetirementIn
             grouped.setdefault(k, []).append(e)
     by_key: dict[str, Retirement] = {}
     for k, planned in grouped.items():
-        cuts = {e.cut for e in planned}
-        if None in cuts or len(cuts) > 1:
+        votes = {e.retiring for e in planned}
+        if None in votes or len(votes) > 1:
             by_key[k] = Retirement.UNKNOWN
-        elif cuts == {True}:
+        elif votes == {True}:
             by_key[k] = Retirement.PLANNED
         else:
             by_key[k] = Retirement.NOT_RETIRING

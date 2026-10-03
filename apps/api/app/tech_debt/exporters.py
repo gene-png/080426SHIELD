@@ -29,6 +29,7 @@ from app.mode_stamp import (
 )
 from app.models.capability import CapabilityDisposition, CapabilityItem, CapabilityList
 from app.tech_debt.reconcile import exclusion_count_state
+from app.tech_debt.savings import estimated_savings as estimated_savings_of
 
 
 @dataclass(frozen=True)
@@ -207,7 +208,9 @@ def _disposition_label(d: CapabilityDisposition | None) -> str:
         return "Undecided"
     return {
         CapabilityDisposition.KEEP: "Keep",
-        CapabilityDisposition.CONSOLIDATE: "Consolidate",
+        # #804: the stored value stays `consolidate`; its label changed (Gene,
+        # 2026-10-02). The web twin is `lib/tech_debt/dispositionLabels.ts`.
+        CapabilityDisposition.CONSOLIDATE: "Cut, covered by another tool",
         CapabilityDisposition.CUT: "Cut",
     }[d]
 
@@ -222,8 +225,11 @@ def build_context(
 ) -> DeliverableContext:
     items_list = list(items)
     total_cost = 0.0
-    estimated_savings = 0.0
-    savings_known = True
+    # #804: the one savings derivation, shared with the plan card, the client
+    # dashboard, the home value card and the savings what-if.
+    savings = estimated_savings_of((it.disposition, it.annual_cost_usd) for it in items_list)
+    estimated_savings = savings.amount
+    savings_known = savings.known
     # `total_cost` SKIPS an uncosted item rather than failing, which makes the
     # figure a floor. Nothing recorded that, so `cost_label` had no way to know
     # and printed "Total annual cost" over it (#126, exporter half).
@@ -233,11 +239,6 @@ def build_context(
             total_cost += float(it.annual_cost_usd)
         else:
             spend_known = False
-        if it.disposition == CapabilityDisposition.CUT:
-            if it.annual_cost_usd is None:
-                savings_known = False
-            else:
-                estimated_savings += float(it.annual_cost_usd)
     named = list(getattr(cap_list, "excluded_rows", None) or [])
     received = getattr(cap_list, "source_rows_total", None)
     # Rows that came from the upload. Children of a decomposed bundle carry a
@@ -446,7 +447,8 @@ def render_pdf(ctx: DeliverableContext) -> bytes:
     if not ctx.savings_cost_known:
         story.append(
             Paragraph(
-                "Note: at least one row marked <i>Cut</i> is missing an annual cost. "
+                "Note: at least one row marked <i>Cut</i> or <i>Cut, covered by another "
+                "tool</i> is missing an annual cost. "
                 "The savings figure is a lower bound.",
                 body,
             )
@@ -529,7 +531,8 @@ def render_docx(ctx: DeliverableContext) -> bytes:
     ]
     if not ctx.savings_cost_known:
         lines.append(
-            "Note: at least one row marked Cut is missing an annual cost. "
+            "Note: at least one row marked Cut or Cut, covered by another tool is "
+            "missing an annual cost. "
             "The savings figure is a lower bound."
         )
     add_paragraphs(doc, lines)

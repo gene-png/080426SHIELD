@@ -220,9 +220,10 @@ def test_pdf_render_carries_title_client_and_a_known_row(context_with_items) -> 
 
 
 @pytest.mark.unit
-def test_context_estimated_savings_sums_cut_items(context_with_items) -> None:
-    # Only the Lacework row is "cut" with cost=120k.
-    assert context_with_items.estimated_savings == 120_000
+def test_context_estimated_savings_sums_both_kinds_of_cut(context_with_items) -> None:
+    # Lacework (Cut, 120k) and Splunk (Cut, covered by another tool, 480k) both
+    # count; Wiz (Keep) does not. #804, the advisor's ruling on #736.
+    assert context_with_items.estimated_savings == 600_000
     assert context_with_items.savings_cost_known is True
     assert context_with_items.total_cost == 950_000
 
