@@ -322,4 +322,83 @@ describe("SavingsWhatIf (#804)", () => {
     expect(screen.queryByRole("button", { name: "Apply to plan" })).toBeNull();
     expect(screen.getByTestId("what-if-savings")).toHaveTextContent("$830,000");
   });
+
+  it("when the first write is refused, says only why and applies nothing", async () => {
+    // #810 narrow review: the nothing-landed branch. Without it the message
+    // read "Applied to the plan: . Not applied: …".
+    m.previewSavings.mockResolvedValue(preview());
+    m.bulkSetDisposition.mockRejectedValueOnce(
+      new Error("This capability list has been released and is locked."),
+    );
+    const onApplied = vi.fn();
+    render(
+      <SavingsWhatIf
+        list={list()}
+        planSavings={480000}
+        planKnown
+        readOnly={false}
+        onApplied={onApplied}
+      />,
+    );
+    choose("Wiz", "consolidate");
+    choose("Splunk", "keep");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    vi.useRealTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Apply to plan" }));
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        /^This capability list has been released and is locked\.$/,
+      ),
+    );
+    expect(onApplied).not.toHaveBeenCalled();
+    expect(m.bulkSetDisposition).toHaveBeenCalledTimes(1);
+    // Every choice stays selected for a retry.
+    expect(
+      screen.getByRole("combobox", { name: "What-if for Wiz" }),
+    ).toHaveValue("consolidate");
+    expect(
+      screen.getByRole("combobox", { name: "What-if for Splunk" }),
+    ).toHaveValue("keep");
+  });
+
+  it("asks again when only a row's cost is edited in the table above", async () => {
+    // #810 narrow review: the key carries each row's cost as well as its
+    // disposition, and only a cost edit proves the cost half.
+    m.previewSavings
+      .mockResolvedValueOnce(preview({ estimated_annual_savings: 830000 }))
+      .mockResolvedValueOnce(preview({ estimated_annual_savings: 880000 }));
+    const { rerender } = render(
+      <SavingsWhatIf
+        list={list()}
+        planSavings={480000}
+        planKnown
+        readOnly={false}
+        onApplied={vi.fn()}
+      />,
+    );
+    choose("Wiz", "cut");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    expect(screen.getByTestId("what-if-savings")).toHaveTextContent("$830,000");
+
+    const repriced = list();
+    repriced.items[0] = { ...repriced.items[0], annual_cost_usd: 400000 };
+    rerender(
+      <SavingsWhatIf
+        list={repriced}
+        planSavings={480000}
+        planKnown
+        readOnly={false}
+        onApplied={vi.fn()}
+      />,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    expect(m.previewSavings).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId("what-if-savings")).toHaveTextContent("$880,000");
+  });
 });
