@@ -445,3 +445,47 @@ def test_a_verb_after_a_removal_still_reads_as_a_verb_when_it_names_no_tool() ->
     parsed = _parse("retire Splunk and Cut Shield", cited=cited, client=cited)
     assert parsed.removed == ["Splunk", "Shield"]
     assert parsed.not_understood == []
+
+
+# --- #824 narrow review at 9e493157 -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "removed", "reasons"),
+    [
+        # U1: the removal before it failed (a typo), and the list still reads as one
+        (
+            "retire Splunkk and Add Manager",
+            [],
+            [("retire Splunkk", "unknown_tool"), ("Add Manager", "ambiguous_tool")],
+        ),
+        # U1: the removal before it failed as a duplicate
+        (
+            "retire Splunk and Splunk and Add Manager",
+            ["Splunk"],
+            [("Splunk", "duplicate"), ("Add Manager", "ambiguous_tool")],
+        ),
+        # a refused clause keeps the list's position for the one after it
+        (
+            "retire Splunk and Add Manager and Cut Shield",
+            ["Splunk"],
+            [("Add Manager", "ambiguous_tool"), ("Cut Shield", "ambiguous_tool")],
+        ),
+    ],
+)
+def test_a_cited_name_starting_with_a_verb_after_any_removal_attempt_is_not_a_guess(
+    text, removed, reasons
+) -> None:
+    cited = ("Splunk", "Add Manager", "Cut Shield", "Shield")
+    parsed = _parse(text, cited=cited, client=cited)
+    assert (parsed.removed, parsed.added) == (removed, [])
+    assert _reasons(parsed) == reasons
+
+
+def test_a_cited_name_starting_with_a_verb_outside_a_list_reads_as_the_verb() -> None:
+    """U2: not after any removal, "Add Manager" has only the verb reading the
+    forms allow (a clause with no verb is never a removal on its own), so the
+    refusal above is gated on the list position."""
+    cited = ("Add Manager",)
+    parsed = _parse("Add Manager", cited=cited, client=cited)
+    assert (parsed.removed, parsed.added, parsed.not_understood) == ([], ["Manager"], [])

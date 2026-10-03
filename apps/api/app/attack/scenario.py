@@ -558,12 +558,15 @@ def parse_change(
     - an add or a swap followed by a clause with no verb may be ONE name cut
       at a break ("add Endpoint Detection and Response Suite", "add Acme Inc.
       Scanner"), so the whole span is not understood rather than guessed;
-    - a swap tries EVERY "for" / "with" in it and proposes only when exactly
-      one division passes both checks.
+    - a swap divides where its REMOVAL half names a cited tool; several such
+      divisions are ambiguous, whatever their added halves do.
 
     A clause with no verb shares the previous verb only after a SUCCESSFUL
     removal ("retire X and Y"): a failed one shares nothing (B7), and an add
-    never shares, since any words would make a "new tool".
+    never shares, since any words would make a "new tool". After any removal
+    ATTEMPT, successful or not, a clause that parses as a verb AND is itself a
+    cited name ("Add Manager") is not understood rather than read either way
+    (#824 narrow review, T2 and U1).
 
     Each name is checked by the code the create route uses: a removal must hit
     exactly ONE cited tool in the resolver's name tiers
@@ -648,21 +651,29 @@ def parse_change(
     split = _clauses(text, resolver.citable_forms())
     clauses, span = split.texts, split.span
     sharing = False
+    #: The clause before was a removal ATTEMPT, or a list position after one,
+    #: whether or not it succeeded. Wider than `sharing`, which B7 keeps to a
+    #: SUCCESSFUL removal.
+    attempted = False
     i = 0
     while i < len(clauses):
         clause = clauses[i]
+        kind = _kind(clause)
+        listed, attempted = attempted, False
         if i in split.clashing:
             not_understood.append(NotUnderstood(text=clause, reason="ambiguous_tool"))
             sharing = False
+            attempted = listed or kind == "remove"
             i += 1
             continue
-        kind = _kind(clause)
-        if sharing and kind != "bare" and resolver.named_by(_bare(clause)):
-            # After a removal, "Add Manager" is a cited tool sharing the verb AND
-            # an addition of "Manager": neither reading is chosen (#824 narrow
-            # review, T2).
+        if listed and kind != "bare" and resolver.named_by(_bare(clause)):
+            # In a removal list, "Add Manager" is a cited tool AND an addition of
+            # "Manager": neither reading is chosen, whether or not the removal
+            # before it succeeded (#824 narrow review, T2 and U1). The clause
+            # keeps the list position for the one after it.
             not_understood.append(NotUnderstood(text=clause, reason="ambiguous_tool"))
             sharing = False
+            attempted = True
             i += 1
             continue
         # An add or swap with bare clauses after it may be one name cut apart.
@@ -696,6 +707,7 @@ def parse_change(
                 raise _Refused("unrecognised")
         except _Refused as why:
             not_understood.append(NotUnderstood(text=clause, reason=why.reason, name=why.name))
+        attempted = kind == "remove" or (kind == "bare" and listed)
         i += 1
     return ParsedChange(removed=removed, added=added, not_understood=not_understood)
 
