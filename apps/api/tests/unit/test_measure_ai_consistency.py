@@ -30,9 +30,12 @@ from scripts.measure_ai_consistency import (
     Refused,
     RunRecord,
     compare_pair,
+    csf_levels,
     echo_share,
+    measure_csf,
     measure_zt,
     preflight,
+    run_loop,
     summarize,
     zt_downstream,
 )
@@ -431,3 +434,221 @@ def test_measure_zt_runs_the_job_n_times_and_applies_nothing(world) -> None:
         {"run": 2, "current": {"sent_and_answered": 0, "echoed": 0, "nothing_sent": 1}},
     ]
     assert report["exit_code"] == 0
+
+
+# --- csf_score -------------------------------------------------------------
+# Rows below follow `_CSF_SCORE_PROMPT`'s own example:
+# {"scores": [{"tier": "high", "subcategory_code": "GV.OC-01", "governance": 0,
+#  "policy": 0, "implementation": 0, "monitoring": 0, "improvement": 0,
+#  "what_we_found": "..."}], "executive_summary": "..."}
+
+
+def _csf_row(tier: str, code: str, dims: tuple, found: str = "x") -> dict:
+    g, p, i, m, c = dims
+    return {
+        "tier": tier,
+        "subcategory_code": code,
+        "governance": g,
+        "policy": p,
+        "implementation": i,
+        "monitoring": m,
+        "improvement": c,
+        "what_we_found": found,
+    }
+
+
+def test_csf_rows_are_keyed_by_tier_and_subcategory_and_compare_the_five_dimensions() -> None:
+    a = {"scores": [_csf_row("high", "GV.OC-01", (1, 1, 1, 1, 1), "first wording")]}
+    b = {
+        "scores": [
+            _csf_row("high", "GV.OC-01", (1, 2, 1, 1, 1), "other wording"),
+            _csf_row("low", "GV.OC-01", (0, 0, 0, 0, 0)),
+        ]
+    }
+    r = compare_pair("csf_score", a, b)
+    assert r["rows"]["in_both"] == 1
+    assert r["rows"]["only_in_b"] == 1  # same code, different tier: a different row
+    assert sorted(r["fields"]) == [
+        "governance",
+        "implementation",
+        "improvement",
+        "monitoring",
+        "policy",
+    ]
+    assert r["fields"]["policy"]["equal"] == 0
+    assert r["fields"]["governance"]["equal"] == 1
+    # The narrative is never compared: wording differs on every run.
+    assert "what_we_found" not in r["fields"]
+
+
+def test_csf_levels_go_through_the_engine_and_apply_the_evidence_cap() -> None:
+    data = {
+        "scores": [
+            _csf_row("high", "A", (2, 2, 2, 2, 2)),  # total 10 -> L5
+            _csf_row("high", "B", (2, 2, 2, 2, 2)),  # same, but no evidence -> L2
+            _csf_row("high", "C", (0, 1, 0, 1, 0)),  # total 2 -> L1
+        ]
+    }
+    levels = csf_levels(data, has_evidence={"high|A": True, "high|B": False, "high|C": True})
+    assert levels == {
+        "levels": {"high|A": 5, "high|B": 2, "high|C": 1},
+        "not_scoreable": 0,
+    }
+
+
+def test_csf_levels_never_clamp_or_coerce_a_bad_dimension() -> None:
+    # The engine's `clamped()` would read 3 as 2, `true` as 1 and "2" as 2.
+    data = {
+        "scores": [
+            _csf_row("high", "A", (3, 1, 1, 1, 1)),
+            _csf_row("high", "B", (True, 1, 1, 1, 1)),
+            _csf_row("high", "C", ("2", 1, 1, 1, 1)),
+            {"tier": "high", "subcategory_code": "D", "governance": 1},  # four missing
+            _csf_row("high", "E", (1, 1, 1, 1, 1)),
+        ]
+    }
+    levels = csf_levels(data, has_evidence={f"high|{k}": True for k in "ABCDE"})
+    assert levels == {"levels": {"high|E": 2}, "not_scoreable": 4}
+
+
+# --- run_loop: the output-token budget ---------------------------------------
+
+
+def test_run_loop_stops_starting_runs_once_the_output_budget_is_spent() -> None:
+    calls: list[int] = []
+
+    def one(n: int) -> RunRecord:
+        calls.append(n)
+        return RunRecord(True, {"capabilities": []}, None, 10, 600)
+
+    records = run_loop(3, one, max_output_tokens=1000)
+    # Run 2 takes the total to 1200 > 1000, so run 3 never starts.
+    assert calls == [1, 2]
+    assert [r.failure for r in records] == [None, None, "stopped_output_budget"]
+    assert summarize("zt_score", records)["exit_code"] == 1
+
+
+def test_run_loop_without_a_budget_runs_them_all() -> None:
+    records = run_loop(3, lambda n: RunRecord(True, {}, None, 1, 10**9), max_output_tokens=None)
+    assert [r.ok for r in records] == [True, True, True]
+
+
+# --- measure_csf: the real batched path, applying nothing -------------------
+
+
+@pytest.fixture()
+def csf_world(world) -> Iterator[tuple[TestClient, sessionmaker, FixtureProvider, dict, str]]:
+    c, TestSession, provider = world
+    admin = c.post(
+        "/auth/register",
+        json={
+            "email": "admin@kentro.example",
+            "password": "correct horse battery staple!",
+            "display_name": "A",
+        },
+    )
+    bearer = admin.json()["tokens"]["access_token"]
+    cid = c.post(
+        "/admin/clients",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"legal_name": "Acme"},
+    ).json()["id"]
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    svc_id = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "C"}).json()[
+        "id"
+    ]
+    assert c.post(f"/csf/services/{svc_id}/assessments", headers=h).status_code in (200, 201)
+    seeded = c.post(f"/csf/services/{svc_id}/profiles/seed", headers=h, json={"tiers": ["high"]})
+    assert seeded.status_code in (200, 201), seeded.text
+    yield c, TestSession, provider, h, svc_id
+
+
+def _answer_every_asked_row(payload: dict) -> LLMResponse:
+    # "for every subcategory code emit one row per tier listed in tiers"
+    scores = [
+        _csf_row(t, code, (1, 1, 1, 1, 1))
+        for t in payload["tiers"]
+        for code in payload["subcategories"]
+    ]
+    return LLMResponse(json.dumps({"scores": scores}), input_tokens=7, output_tokens=11)
+
+
+def _dimension_rows(db: Session) -> list[tuple]:
+    from app.models.csf_profile import CsfDimensionScore
+
+    rows = db.execute(select(CsfDimensionScore)).scalars().all()
+    return sorted(
+        (
+            r.tier,
+            r.subcategory_code,
+            r.governance,
+            r.policy,
+            r.implementation,
+            r.monitoring,
+            r.improvement,
+            r.what_we_found,
+            r.updated_at,
+        )
+        for r in rows
+    )
+
+
+def test_measure_csf_runs_every_batch_and_applies_nothing(csf_world) -> None:
+    c, TestSession, provider, h, _ = csf_world
+    provider.register("csf_score", _answer_every_asked_row)
+    with TestSession() as db:
+        before = _dimension_rows(db)
+        report = measure_csf(db, LLMClient(provider), runs=2)
+        db.commit()
+    with TestSession() as db:
+        assert _dimension_rows(db) == before
+
+    assert len(before) == 106, "precondition: one seeded tier of 106 subcategories"
+    assert report["runs_ok"] == 2
+    assert report["batches_per_run"] == 11  # 106 rows in tens
+    assert report["pairs"][0]["rows"]["in_both"] == 106
+    assert report["pairs"][0]["fields"]["governance"]["equal"] == 106
+    # Tokens are every batch's, read from the llm_calls rows each batch wrote.
+    assert report["tokens"] == {"input": 2 * 11 * 7, "output": 2 * 11 * 11}
+    assert report["pairs"][0]["level"] == {"compared": 106, "equal": 106}
+
+
+def test_a_csf_run_with_a_failed_batch_is_a_failed_run(csf_world) -> None:
+    c, TestSession, provider, h, _ = csf_world
+    seen: list[int] = []
+
+    def flaky(payload: dict) -> LLMResponse:
+        seen.append(1)
+        if len(seen) == 3:  # one batch of the first run
+            raise RuntimeError("provider closed the connection")
+        return _answer_every_asked_row(payload)
+
+    provider.register("csf_score", flaky)
+    with TestSession() as db:
+        report = measure_csf(db, LLMClient(provider), runs=2)
+        db.commit()
+    assert report["runs_ok"] == 1
+    assert report["failed_runs"] == [{"run": 1, "failure": "batches_failed:1/11"}]
+    assert report["pairs"] == []
+    assert report["exit_code"] == 1
+
+
+def test_measure_csf_reports_level_disagreement_between_runs(csf_world) -> None:
+    c, TestSession, provider, h, _ = csf_world
+    calls: list[int] = []
+
+    def drifting(payload: dict) -> LLMResponse:
+        calls.append(1)
+        dims = (1, 1, 1, 1, 1) if len(calls) <= 11 else (0, 0, 0, 0, 0)  # run 2 differs
+        scores = [
+            _csf_row(t, code, dims) for t in payload["tiers"] for code in payload["subcategories"]
+        ]
+        return LLMResponse(json.dumps({"scores": scores}))
+
+    provider.register("csf_score", drifting)
+    with TestSession() as db:
+        report = measure_csf(db, LLMClient(provider), runs=2)
+        db.commit()
+    # Total 5 is Level 2 and total 0 is Level 1: every row's level moved.
+    assert report["pairs"][0]["level"] == {"compared": 106, "equal": 0}
+    assert report["pairs"][0]["fields"]["governance"]["equal"] == 0
