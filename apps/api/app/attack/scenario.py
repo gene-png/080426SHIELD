@@ -328,3 +328,16 @@ def merge_batches(inputs: Sequence[Mapping[str, Any]], parsed: Mapping[int, Pars
     return Merged(
         lists=lists, accepted=accepted, dropped=dict(dropped), not_reassessed=sorted(not_reassessed)
     )
+
+
+#: The AI purpose. Registered only once #806 releases its prompt text.
+PURPOSE = "attack_scenario_delta"
+
+
+def analysis_available() -> bool:
+    """True when the what-if's AI job is registered. False until #806's prompt
+    text lands; the run route refuses with a typed 503 rather than failing
+    inside a background job."""
+    from app.ai.engine import registered_jobs
+
+    return PURPOSE in registered_jobs()

@@ -253,6 +253,11 @@ _MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
     # is CHOSEN, not defaulted: raising it buys nothing for an output this
     # size.
     "zt_score": _MAX_OUTPUT_TOKENS,
+    # #802's ATT&CK what-if: only contributing (technique, tool) rows come back,
+    # far smaller than mitre_map's; sized like it, per batch of 25, because
+    # output is billed as generated. To be live-measured once #806 releases
+    # the prompt text.
+    "attack_scenario_delta": 64000,
 }
 
 
@@ -282,7 +287,9 @@ def max_output_tokens_for(purpose: str | None) -> int:
 # a configuration that worked at 8192. A list of provider limits cannot be
 # complete; "these adapters are unchanged" can be, and a test pins it. Raising
 # them is its own change, with #485's ceilings and 60 s timeout.
-_RAISED_FOR_THE_STREAMED_ADAPTER_ONLY = frozenset({"csf_score", "extract.capabilities"})
+_RAISED_FOR_THE_STREAMED_ADAPTER_ONLY = frozenset(
+    {"csf_score", "extract.capabilities", "attack_scenario_delta"}
+)
 
 
 def non_streamed_output_cap(purpose: str | None) -> int:

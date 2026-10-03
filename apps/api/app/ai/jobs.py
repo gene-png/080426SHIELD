@@ -268,3 +268,22 @@ register_job(
         top_level_key="entries",
     )
 )
+
+
+# --- ATT&CK what-if (#802) ----------------------------------------------------
+# The scoped re-assessment of removing tools. Its prompt TEXT is held by #806
+# until Gene's drafts arrive, so none ships: the job is registered only when
+# this constant is set. Until then the run route refuses with a typed 503
+# (`attack/scenario.py::analysis_available`), and the tests install a
+# placeholder job of their own. The CONTRACT any text must meet is on #802
+# and enforced by `attack/scenario.py::parse_delta`, never by trusting it.
+_ATTACK_SCENARIO_DELTA_PROMPT: str | None = None
+
+if _ATTACK_SCENARIO_DELTA_PROMPT is not None:
+    register_job(
+        AIJob(
+            name="attack_scenario_delta",
+            prompt=_ATTACK_SCENARIO_DELTA_PROMPT,
+            top_level_key="rows",
+        )
+    )

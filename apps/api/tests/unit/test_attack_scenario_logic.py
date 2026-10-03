@@ -271,3 +271,15 @@ def test_a_failed_batch_falls_back_to_the_removal_alone_and_says_so() -> None:
         "response_tools": [],
     }
     assert merged.not_reassessed == ["T1566"]
+
+
+def test_no_prompt_text_ships_until_806_releases_it() -> None:
+    """#806 holds all new prompt text. The what-if's job is therefore NOT
+    registered, and the run route refuses with a typed 503 instead of failing
+    in a background job. When #806 releases the text, this test is the one
+    that is meant to change."""
+    # test-integrity: the spec IS that this constant is unset until #806; the assertion reads the value, it derives nothing from it
+    from app.ai.jobs import _ATTACK_SCENARIO_DELTA_PROMPT
+
+    assert _ATTACK_SCENARIO_DELTA_PROMPT is None
+    assert scenario.analysis_available() is False
