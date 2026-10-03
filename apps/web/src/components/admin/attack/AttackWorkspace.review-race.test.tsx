@@ -300,6 +300,8 @@ describe("AttackWorkspace, a row edit during a review (#554 R3)", () => {
       review.promise,
     );
     await editWhileTheReviewIsInFlight();
+    // The edit's own result is on screen before the older snapshot lands.
+    expect(screen.getByText("notes: x")).toBeInTheDocument();
     await act(async () => {
       review.resolve(draft(false));
     });
