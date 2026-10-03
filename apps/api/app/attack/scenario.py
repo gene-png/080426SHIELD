@@ -84,6 +84,12 @@ def _cited(rows: Iterable[Any]) -> dict[str, str]:
     return out
 
 
+def cited_tools(rows: Iterable[Any]) -> list[str]:
+    """The tools the rows cite, one spelling each, sorted case-insensitively:
+    the names a removal may pick."""
+    return sorted(_cited(rows).values(), key=str.casefold)
+
+
 def resolve_removed(rows: Sequence[Any], names: Iterable[str]) -> list[str]:
     """The removals as the names the assessment cites, de-duplicated, in the
     order given. Refuses an empty list and any name the assessment does not

@@ -29,6 +29,11 @@ class ScenarioRollup(BaseModel):
     pending_review: int
     scored_count: int
     catalogue_count: int
+    #: #621's two counts outside the assessed denominator, stated beside the
+    #: percentage. None for a base approved before #620's rules, which never
+    #: stated them (`exporters.states_outside_counts`).
+    unable_to_determine: int | None
+    outside_control_surface: int | None
 
 
 class ScenarioDifference(BaseModel):
@@ -64,7 +69,19 @@ class ScenarioSummary(BaseModel):
     created_at: datetime
 
 
+class ScenarioBase(BaseModel):
+    """The assessment a new what-if would compare with, and the tools it
+    cites: the only names a removal may pick."""
+
+    assessment_id: uuid.UUID
+    version: int
+    approved_at: datetime | None
+    tools: list[str]
+
+
 class ScenarioListResponse(BaseModel):
+    #: None when there is no confirmed assessment to compare with.
+    base: ScenarioBase | None
     scenarios: list[ScenarioSummary]
 
 
@@ -77,6 +94,7 @@ class ScenarioResponse(BaseModel):
     base_assessment_id: uuid.UUID
     base_version: int
     base_catalog_version: str | None
+    base_approved_at: datetime | None
     #: A newer assessment is now the confirmed base. Shown, never re-based.
     stale: bool
     #: True when the run route would refuse with 503 (no prompt text yet).

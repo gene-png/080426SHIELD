@@ -34,6 +34,7 @@ from app.ai.runs import (
 )
 from app.attack import scenario
 from app.attack.citations import Candidate
+from app.attack.rules import parents_computed
 from app.audit import audit
 from app.config import get_settings
 from app.db.session import get_db
@@ -53,6 +54,7 @@ from app.models.user import User, UserRole
 from app.routes.attack import _capability_payload, _client_capability_inputs, _llm_dep
 from app.schemas.ai_runs import AiRunStarted, RunAiRequest
 from app.schemas.attack_scenario import (
+    ScenarioBase,
     ScenarioCreateRequest,
     ScenarioDifference,
     ScenarioListResponse,
@@ -73,6 +75,9 @@ _admin_required = Depends(require_role(UserRole.ADMIN))
 #: Concurrent batches, as `mitre_map` runs them.
 _MAX_WORKERS = 5
 
+# NEEDS_CONFIRMED_MESSAGE and UNAVAILABLE_MESSAGE are COPIED into
+# `apps/web/src/components/admin/attack/AttackScenarioPanel.tsx` (`NO_BASE`,
+# `UNAVAILABLE`), which shows them before any request is refused. Change both.
 NEEDS_CONFIRMED_MESSAGE = (
     "There is no confirmed assessment to compare with yet. Approve the ATT&CK "
     "assessment and review every technique in its review queue, then try again."
@@ -106,7 +111,7 @@ def _scenario_or_404(db: Session, scenario_id: uuid.UUID, client: Client) -> Att
     return found
 
 
-def _rollup(r: Any) -> ScenarioRollup:
+def _rollup(r: Any, *, states_outside: bool) -> ScenarioRollup:
     return ScenarioRollup(
         coverage_pct=r.coverage_pct,
         covered=r.covered,
@@ -116,6 +121,8 @@ def _rollup(r: Any) -> ScenarioRollup:
         pending_review=r.pending_review,
         scored_count=r.scored_count,
         catalogue_count=r.catalogue_count,
+        unable_to_determine=r.unable_to_determine if states_outside else None,
+        outside_control_surface=r.outside_control_surface if states_outside else None,
     )
 
 
@@ -152,6 +159,9 @@ def _serialize(db: Session, s: AttackScenario) -> ScenarioResponse:
     what_if = scenario.scenario_rows(base_rows, _lists_of(rows)) if rows else base_rows
     comparison = scenario.compare(base, base_rows, what_if)
     higher = set(scenario.scored_higher(comparison, s.affected_codes))
+    # The deliverable's own rule for stating the outside counts (#621, option
+    # (a)): `states_outside_counts` reads `parents_computed`, so this does too.
+    outside = parents_computed(base)
     return ScenarioResponse(
         id=s.id,
         service_id=s.service_id,
@@ -161,12 +171,13 @@ def _serialize(db: Session, s: AttackScenario) -> ScenarioResponse:
         base_assessment_id=s.base_assessment_id,
         base_version=s.base_version,
         base_catalog_version=s.base_catalog_version,
+        base_approved_at=base.approved_at,
         stale=scenario.is_stale(db, s.service_id, s.base_assessment_id),
         analysis_available=scenario.analysis_available(),
         ai_run_id=s.ai_run_id,
         run_status=run.status.value if run is not None else None,
-        today=_rollup(comparison.today),
-        after=_rollup(comparison.after) if rows else None,
+        today=_rollup(comparison.today, states_outside=outside),
+        after=_rollup(comparison.after, states_outside=outside) if rows else None,
         differences=[
             ScenarioDifference(
                 technique_code=code, today=before, after=after, scored_higher=code in higher
@@ -282,7 +293,18 @@ def list_scenarios(
         .scalars()
         .all()
     )
+    base = scenario.confirmed_base(db, svc.id)
     return ScenarioListResponse(
+        base=(
+            None
+            if base is None
+            else ScenarioBase(
+                assessment_id=base.id,
+                version=base.version,
+                approved_at=base.approved_at,
+                tools=scenario.cited_tools(_base_rows(db, base.id)),
+            )
+        ),
         scenarios=[
             ScenarioSummary(
                 id=s.id,
@@ -295,7 +317,7 @@ def list_scenarios(
                 created_at=s.created_at,
             )
             for s in found
-        ]
+        ],
     )
 
 

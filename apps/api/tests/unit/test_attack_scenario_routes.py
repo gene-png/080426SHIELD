@@ -233,6 +233,9 @@ def test_without_a_confirmed_assessment_a_what_if_is_refused_with_the_remedy(
             "assessment and review every technique in its review queue, then try again."
         ),
     }
+    listed = c.get(f"/attack/services/{svc}/scenarios", headers=w.h)
+    assert listed.status_code == 200, listed.text
+    assert listed.json() == {"base": None, "scenarios": []}
 
 
 def test_a_tool_the_assessment_does_not_cite_is_refused_by_name(app_parts) -> None:  # noqa: F811
@@ -267,10 +270,13 @@ def test_a_what_if_pins_its_base_and_names_the_techniques_it_affects(
     assert body["removed"] == [EDR]
     assert body["affected_codes"] == sorted([w.a, w.cc])
     assert body["base_assessment_id"] == w.assessment_id
+    assert body["base_approved_at"] is not None
     assert body["stale"] is False
     assert body["after"] is None
     assert body["run_status"] is None
     listed = w.c.get(f"/attack/services/{w.svc_id}/scenarios", headers=w.h).json()
+    assert listed["base"]["assessment_id"] == w.assessment_id
+    assert listed["base"]["tools"] == [EDR, SIEM, SOAR]
     assert [s["id"] for s in listed["scenarios"]] == [body["id"]]
     assert listed["scenarios"][0]["affected_count"] == 2
 
@@ -341,6 +347,10 @@ def test_a_run_reassesses_only_the_affected_techniques_and_compares(
     assert w.b not in diffs
     assert body["today"]["covered"] == 1 and body["today"]["partial"] == 2
     assert body["after"]["covered"] == 1 and body["after"]["partial"] == 2
+    # Approved under #620's rules, so the outside counts are stated on both.
+    for side in ("today", "after"):
+        assert body[side]["unable_to_determine"] == 0, body[side]
+        assert body[side]["outside_control_surface"] == 0, body[side]
     assert body["dropped"] == {}
     assert body["not_reassessed"] == []
 
