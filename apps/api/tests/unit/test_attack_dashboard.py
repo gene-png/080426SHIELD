@@ -250,6 +250,24 @@ def test_client_dashboard_withholds_the_same_rows_the_released_pdf_does(app_clie
     svc_id = _seed_finalize_release(c, bearer_admin, release=True)
 
     engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    # #554 R3 (C1, ruled by the advisor 01:05Z): #102's withholding renders only
+    # for an assessment approved before R3, so this one is stamped
+    # status_rules=1, the state 0059's backfill gives a released pre-R3
+    # assessment. Under R3 an unconfirmed tool is scored at the lower bound
+    # instead (test_attack_computed_status.py).
+    import uuid as _uuid
+
+    from sqlalchemy import update as _update
+
+    from app.models.attack_assessment import AttackAssessment as _Assessment
+
+    with _Session(engine) as db:
+        db.execute(
+            _update(_Assessment)
+            .where(_Assessment.service_id == _uuid.UUID(svc_id))
+            .values(status_rules=1)
+        )
+        db.commit()
     with _Session(engine) as db:
         rows = db.query(AttackCoverage).filter(AttackCoverage.status == "covered").all()
         assert rows, "fixture produced no covered rows"
@@ -257,6 +275,11 @@ def test_client_dashboard_withholds_the_same_rows_the_released_pdf_does(app_clie
         # tool is applied, and nobody has vouched for it.
         for r in rows:
             r.detection_tools = ["CrowdStrike Falcon"]
+            # #554 R3: the seed helper now names a confirmed tool in all three
+            # lists (class B); "every citation had to be inferred" means the
+            # other two lists carry nothing confirmed either.
+            r.prevention_tools = []
+            r.response_tools = []
             r.unconfirmed_citations = [
                 {
                     "tool": "CrowdStrike Falcon",

@@ -551,6 +551,26 @@ def test_a_wrong_shaped_tool_list_is_counted_not_silently_dropped(app_client) ->
     # `pending.py` names. That is a real behaviour change and it is pinned so it
     # reads as a decision rather than as something nobody noticed.
     assert not any(e["reason"] == "no_citation" for e in row["unconfirmed_citations"])
+    # #554 R3 (C2, option (iii), ruled by the advisor 01:05Z): the RECORD above
+    # is asserted on the R3 draft. Withholding renders only where statuses are
+    # stored (an assessment approved before R3, status_rules=1), so the draft is
+    # stamped to model a released pre-R3 assessment's render path, and the flag
+    # is read there.
+    import uuid as _uuid
+
+    from sqlalchemy import update
+
+    from app.models.attack_assessment import AttackAssessment
+
+    with TestSession() as db:
+        db.execute(
+            update(AttackAssessment)
+            .where(AttackAssessment.service_id == _uuid.UUID(svc_id))
+            .values(status_rules=1)
+        )
+        db.commit()
+    latest = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json()
+    row = next(r for r in latest["coverage"] if r["technique_code"] == code)
     assert row["pending_review"] is True
 
 

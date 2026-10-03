@@ -118,6 +118,36 @@ def _row(payload: dict, code: str) -> dict:
     return next(t for t in payload["coverage"] if t["technique_code"] == code)
 
 
+def _render_as_pre_r3(TestSession: sessionmaker, svc_id: str) -> None:
+    """#554 R3 (C2, option (iii), ruled by the advisor 01:05Z).
+
+    #102's withholding -- `pending_review`, the heatmap's withheld count -- now
+    renders only for an assessment whose statuses are STORED: one approved
+    before R3 (status_rules=1, 0059's backfill). Under R3 an unconfirmed tool is
+    scored at the lower bound instead (Q4). So the citation RECORD is asserted on
+    the R3 draft first, and only then is the draft stamped 1 to model a released
+    pre-R3 assessment's render path, which these withholding assertions pin. No
+    draft reaches that state through the routes after 0059."""
+    import uuid as _uuid
+
+    from sqlalchemy import update
+
+    from app.models.attack_assessment import AttackAssessment
+
+    with TestSession() as db:
+        db.execute(
+            update(AttackAssessment)
+            .where(AttackAssessment.service_id == _uuid.UUID(svc_id))
+            .values(status_rules=1)
+        )
+        db.commit()
+
+
+def _pending_rows(c: TestClient, svc_id: str, h: dict) -> int:
+    latest = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json()
+    return sum(1 for t in latest["coverage"] if t["pending_review"])
+
+
 @pytest.mark.unit
 def test_an_inferred_citation_survives_the_reload(app_client) -> None:
     """#101's entire complaint, asserted on a SECOND request.
@@ -151,7 +181,6 @@ def test_an_inferred_citation_survives_the_reload(app_client) -> None:
     # The tool list is deduped run-wide and says the thing under test: this
     # citation was an inference.
     assert run["citations_needs_review_tools"] == ["CrowdStrike Falcon"]
-    assert run["pending_review_rows"] == 1
 
     reloaded = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h)
     assert reloaded.status_code == 200, reloaded.text
@@ -169,7 +198,12 @@ def test_an_inferred_citation_survives_the_reload(app_client) -> None:
             "cleared_at": None,
         }
     ]
+    _render_as_pre_r3(TestSession, svc_id)
+    row = _row(c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json(), code)
     assert row["pending_review"] is True
+    # Was `run["pending_review_rows"] == 1`, read off the R3 run; the same count,
+    # read from the pre-R3 render.
+    assert _pending_rows(c, svc_id, h) == 1
 
 
 @pytest.mark.unit
@@ -224,6 +258,10 @@ def test_a_hand_curated_status_is_not_held_for_review(app_client) -> None:
     _seed_tools(TestSession, cid, me["id"], ["CrowdStrike Falcon"])
     h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
     svc_id, codes = _service(c, h)
+    # Before the PATCH: on a computed assessment a status-only edit authors
+    # nothing (the review's API finding 3); authorship by status is the pre-R3
+    # rule this test pins.
+    _render_as_pre_r3(TestSession, svc_id)
 
     latest = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json()
     row_id = _row(latest, codes[0])["id"]
@@ -265,6 +303,9 @@ def test_taking_authorship_of_a_row_clears_its_flags_but_keeps_the_record(app_cl
         ),
     )
     attack_run_ai(c, svc_id, h)
+    # Authorship by a status edit is the pre-R3 rule (API finding 3), so the
+    # whole escape hatch is pinned on the pre-R3 render path.
+    _render_as_pre_r3(TestSession, svc_id)
     assert c.get(f"/attack/services/{svc_id}/heatmap", headers=h).json()["pending_review"] == 1
 
     latest = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json()
@@ -311,6 +352,8 @@ def test_editing_a_note_does_not_clear_the_review_queue(app_client) -> None:
 
     row = _row(c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json(), code)
     assert row["unconfirmed_citations"][0]["cleared_at"] is None
+    _render_as_pre_r3(TestSession, svc_id)
+    row = _row(c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json(), code)
     assert row["pending_review"] is True
 
 
@@ -343,7 +386,6 @@ def test_a_technique_whose_every_citation_was_rejected_is_pending(app_client) ->
     )
     run = attack_run_ai(c, svc_id, h)
     assert run["citations_rejected_examples"] == ["Qradar"]
-    assert run["pending_review_rows"] == 1
 
     row = _row(c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json(), code)
     assert row["status"] == "covered", "the status survives -- it is the SCORE that withholds"
@@ -361,7 +403,11 @@ def test_a_technique_whose_every_citation_was_rejected_is_pending(app_client) ->
             "cleared_at": None,
         }
     ]
+    _render_as_pre_r3(TestSession, svc_id)
+    row = _row(c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json(), code)
     assert row["pending_review"] is True
+    # Was `run["pending_review_rows"] == 1`, read off the R3 run.
+    assert _pending_rows(c, svc_id, h) == 1
 
 
 @pytest.mark.unit
@@ -386,6 +432,7 @@ def test_the_heatmap_withholds_a_pending_technique_and_says_how_many(app_client)
         ),
     )
     attack_run_ai(c, svc_id, h)
+    _render_as_pre_r3(TestSession, svc_id)
 
     hm = c.get(f"/attack/services/{svc_id}/heatmap", headers=h)
     assert hm.status_code == 200, hm.text
@@ -448,6 +495,7 @@ def test_a_row_the_run_never_touched_stays_null_and_scores_as_pending(app_client
         assert (
             db.get(AttackCoverage, _uuid.UUID(row_id)).unconfirmed_citations is None
         ), "run_ai wrote to a LOCKED row"
+    _render_as_pre_r3(TestSession, svc_id)
 
     body = c.get(f"/attack/services/{svc_id}/heatmap", headers=h).json()
     assert body["pending_review"] == 1, (
@@ -493,8 +541,7 @@ def test_a_model_claim_with_no_citation_at_all_is_pending(app_client) -> None:
             '{"technique_code": "' + gapped + '", "status": "gap"}]}'
         ),
     )
-    run = attack_run_ai(c, svc_id, h)
-    assert run["pending_review_rows"] == 1
+    attack_run_ai(c, svc_id, h)
 
     latest = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json()
     row = _row(latest, claimed)
@@ -508,13 +555,17 @@ def test_a_model_claim_with_no_citation_at_all_is_pending(app_client) -> None:
             "cleared_at": None,
         }
     ]
-    assert row["pending_review"] is True
 
     # A `gap` cited nothing either, and that is exactly what a gap means. It is
     # never withheld -- withholding an absence claim deletes a finding and raises
     # the coverage ratio.
     assert _row(latest, gapped)["unconfirmed_citations"] == []
+    _render_as_pre_r3(TestSession, svc_id)
+    latest = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json()
+    assert _row(latest, claimed)["pending_review"] is True
     assert _row(latest, gapped)["pending_review"] is False
+    # Was `run["pending_review_rows"] == 1`, read off the R3 run.
+    assert _pending_rows(c, svc_id, h) == 1
 
 
 @pytest.mark.unit
@@ -560,6 +611,7 @@ def test_confirming_a_rows_citations_is_a_first_class_action(app_client) -> None
     assert len(body["unconfirmed_citations"]) == 1, "the record was deleted, not stamped"
     assert body["unconfirmed_citations"][0]["cleared_at"] is not None
 
+    _render_as_pre_r3(TestSession, svc_id)
     assert c.get(f"/attack/services/{svc_id}/heatmap", headers=h).json()["covered"] == 1
 
 
@@ -652,6 +704,10 @@ def test_a_rerun_that_omits_a_tool_field_does_not_erase_its_flags(app_client) ->
         ),
     )
     attack_run_ai(c, svc_id, h)
+    first = _row(c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json(), code)
+    # The record is written the same whatever the rule; the withholding is the
+    # pre-R3 render, so stamped before it is read.
+    _render_as_pre_r3(TestSession, svc_id)
     first = _row(c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json(), code)
     assert first["pending_review"] is True
 

@@ -306,6 +306,22 @@ def test_the_stored_summary_carries_the_withheld_count(app_client) -> None:
     engine.dispose()
 
     c.post(f"/attack/assessments/{assessment['id']}/approve", headers=h)
+    # #554 R3 (C2, ruled by the advisor 01:05Z): the withheld count renders only
+    # where statuses are stored -- an assessment approved before R3
+    # (status_rules=1, 0059's backfill). Stamped after approve, before finalize,
+    # to model a pre-R3 assessment's render path; under R3 an unconfirmed tool is
+    # scored at the lower bound and disclosed instead.
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with Session(engine) as db:
+        from app.models.attack_assessment import AttackAssessment
+
+        db.execute(
+            update(AttackAssessment)
+            .where(AttackAssessment.id == _uuid.UUID(assessment["id"]))
+            .values(status_rules=1)
+        )
+        db.commit()
+    engine.dispose()
     fin = c.post(f"/attack/services/{svc_id}/deliverables/finalize", headers=h)
     assert fin.status_code == 201, fin.text
     summary = fin.json()["summary"]

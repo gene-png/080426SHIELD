@@ -709,7 +709,24 @@ def test_a_computed_parent_rests_only_on_the_children_that_make_its_coverage(  #
         assert r.json()["detection_tools"] == tools, r.json()
     latest = c.get(f"/attack/services/{svc}/assessments/latest", headers=_auth(bearer)).json()
     assert {row["technique_code"]: row["status"] for row in latest["coverage"]}[parent] == "partial"
-    fin = _approve_finalize(c, bearer, svc, a)
+    # #554 R3 (C1, ruled by the advisor 01:05Z): a GAP child carrying a tool is
+    # this test's subject, and under R3 that row computes to Partial. Approve,
+    # then stamp status_rules=1 -- the reachable state of an assessment approved
+    # before R3 -- then finalize, so the document renders the stored statuses.
+    r = c.post(f"/attack/assessments/{a['id']}/approve", headers=_auth(bearer))
+    assert r.status_code == 200, r.text
+    from app.models.attack_assessment import AttackAssessment
+
+    with Sess() as s:
+        s.execute(
+            update(AttackAssessment)
+            .where(AttackAssessment.id == uuid.UUID(a["id"]))
+            .values(status_rules=1)
+        )
+        s.commit()
+    r = c.post(f"/attack/services/{svc}/deliverables/finalize", headers=_auth(bearer))
+    assert r.status_code in (200, 201), r.text
+    fin = r.json()
     # The covered child and the partial parent: both rest on Legacy AV alone.
     assert (
         "2 of the 2 covered or partial techniques cite a tool marked for planned "

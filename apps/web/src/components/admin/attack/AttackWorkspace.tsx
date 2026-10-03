@@ -89,6 +89,17 @@ function describeError(err: unknown): string {
 const RUN_OUTCOME_UNKNOWN =
   "We couldn't confirm whether the AI run finished. It may still complete and fill in technique rows. Reload the page later and check step 2, Review every technique and adjust, before running it again. Run AI stays off on this page until you reload.";
 
+/**
+ * #554 R3: what the review panel says after it re-read itself because a
+ * computed status moved between loading and the click. Copy pending the
+ * advisor (the #808 copy draft, item 4).
+ */
+function reviewRefreshedMessage(codes: string[]): string {
+  const shown = codes.slice(0, 10).join(", ");
+  const more = codes.length > 10 ? ` and ${codes.length - 10} more` : "";
+  return `The computed status of some techniques changed after the panel loaded (${shown}${more}). The panel has been refreshed; review again.`;
+}
+
 /** The machine-readable `reason` on a typed error envelope (D-016), if present. */
 function errorReason(err: unknown): string | null {
   if (!(err instanceof AttackProxyError)) return null;
@@ -525,7 +536,18 @@ export function AttackWorkspace({
       const next = await reviewComputedStatuses(assessment.id, reviews);
       setAssessment(next);
     } catch (err) {
-      setActionError(describeError(err));
+      if (errorReason(err) === "computed_status_changed") {
+        // What the panel showed is stale, so it re-reads itself rather than
+        // telling the consultant to find a reload control.
+        const codes = (
+          (err as AttackProxyError).payload as { error?: { codes?: string[] } }
+        ).error?.codes;
+        const latest = await fetchLatestAssessment(serviceId);
+        setAssessment(latest);
+        setActionError(reviewRefreshedMessage(codes ?? []));
+      } else {
+        setActionError(describeError(err));
+      }
     } finally {
       setBusy(null);
     }
