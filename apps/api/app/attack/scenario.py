@@ -307,10 +307,12 @@ def validate_added(
     mode and hints), never by a second key: it collapses internal whitespace
     and indexes the shown forms, and a looser check here let a name through
     that the run then could not credit (#818 review, F1). An added tool is
-    accepted only if, with it among the candidates, every string the model can
-    cite for it (its name, and the form it is SHOWN as) resolves, confirmed, to
-    it alone -- and every client or earlier-added tool that resolved to itself
-    before still does.
+    refused when any string the model can cite for it -- its name, or the form
+    it is SHOWN as -- already resolves, CONFIRMED, to a client or earlier-added
+    tool. Confirmed resolution is the resolver's real-name and alias tiers, the
+    only tiers that index a name, so a name that clears this check cannot
+    disturb another tool's resolution either. An inference (a word of a name, a
+    vendor) never decides a credit, so it does not refuse.
 
     A refusal names the cause: a spelling of a client tool (B4/B4b), a second
     spelling of an earlier added tool, or a name the model could not tell apart
@@ -336,9 +338,6 @@ def validate_added(
         )
         return {name, shown}
 
-    def resolves_to_itself(res: CitationResolver, name: str) -> bool:
-        return all((r := res.resolve(form)).confirmed and r.name == name for form in citable(name))
-
     out: list[AddedTool] = []
     for entry in raw:
         entry = entry if isinstance(entry, Mapping) else {}
@@ -360,20 +359,7 @@ def validate_added(
 
         earlier = [t.name for t in out]
         before = resolver([*client, *earlier])
-        after = resolver([*client, *earlier, name])
-        # A string that ALREADY resolves, confirmed, to an existing tool is that
-        # tool, however the candidate sets read afterwards: two identical names
-        # are one entry to the resolver.
-        taken = any(before.resolve(form).confirmed for form in citable(name))
-        broken = (
-            taken
-            or not resolves_to_itself(after, name)
-            or any(
-                resolves_to_itself(before, other) and not resolves_to_itself(after, other)
-                for other in (*client, *earlier)
-            )
-        )
-        if broken:
+        if any(before.resolve(form).confirmed for form in citable(name)):
             raise _why_refused(name, before, resolver(client, "off"), client, earlier, citable)
         out.append(
             AddedTool(
