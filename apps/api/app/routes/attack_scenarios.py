@@ -176,9 +176,16 @@ def _serialize(db: Session, s: AttackScenario) -> ScenarioResponse:
     comparison = scenario.compare(base, base_rows, what_if)
     higher = set(scenario.scored_higher(comparison, s.affected_codes))
     added = {t.casefold() for t in (s.tools_added_since_base or [])}
+    # A mark needs a CREDIT: an accepted row with every function false names a
+    # tool and credits it with nothing (#815 review round 3).
     credited_added = {
         r.technique_code: sorted(
-            {a["tool"] for a in r.ai_rows if str(a.get("tool", "")).casefold() in added},
+            {
+                a["tool"]
+                for a in r.ai_rows
+                if str(a.get("tool", "")).casefold() in added
+                and any(a.get(f) is True for f in ("detection", "prevention", "response"))
+            },
             key=str.casefold,
         )
         for r in rows

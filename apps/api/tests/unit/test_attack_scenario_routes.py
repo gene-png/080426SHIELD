@@ -867,6 +867,63 @@ def test_a_list_approved_before_0043_cannot_be_checked_and_reads_null_never_zero
     assert body["tools_added_since_base"] is None
 
 
+def test_a_row_naming_an_added_tool_with_no_function_is_not_marked(
+    app_parts, analysis_job  # noqa: F811
+) -> None:
+    """Round 3, item 1: an accepted row whose functions are all false names the
+    added tool and credits it with nothing. No mark."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    _add_tool_after_approval(w, XDR)
+    w.answer({w.cc: [_flags(w.cc, XDR)]})  # every function false
+    sid = w.create([EDR]).json()["id"]
+    body = _run_to_completion(w, sid)
+    assert body["tools_added_since_base"] == 1
+    lists = {t["technique_code"]: t for t in body["techniques"]}
+    assert lists[w.cc]["credited_added_tools"] == []
+    assert all(d["credited_added_tool"] is False for d in body["differences"])
+
+
+def test_a_post_0043_snapshot_judges_each_entry_by_its_item(
+    app_parts, analysis_job  # noqa: F811
+) -> None:
+    """Round 3, item 2. The list is approved WITH a D-053 snapshot, written by
+    the real writer. A tool added and re-approved after the base is counted;
+    the snapshot's older entries are not."""
+    from app.routes.tech_debt import build_approved_membership
+
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    with w.sessions() as db:
+        cl = db.execute(select(CapabilityList)).scalars().one()
+        db.add(CapabilityItem(capability_list_id=cl.id, name=XDR))
+        db.flush()
+        cl.status = CapabilityListStatus.APPROVED
+        cl.approved_membership = build_approved_membership(db, cl.id)
+        db.commit()
+        assert {e["name"] for e in cl.approved_membership} >= {EDR, SIEM, SOAR, XDR}
+    w.answer({w.cc: [_flags(w.cc, XDR, d=True)]})
+    sid = w.create([EDR]).json()["id"]
+    body = _run_to_completion(w, sid)
+    assert body["tools_added_since_base"] == 1
+    lists = {t["technique_code"]: t for t in body["techniques"]}
+    assert lists[w.cc]["credited_added_tools"] == [XDR]
+
+
+def test_one_scenarios_result_never_stops_anothers_run_being_recorded(
+    app_parts, analysis_job  # noqa: F811
+) -> None:
+    """Round 3, item 5: the no-repoint guard is correlated to ITS scenario. A
+    result written for one what-if does not keep another from recording its
+    run."""
+    w = _world(app_parts)
+    w.answer({w.cc: [_flags(w.cc, SIEM, d=True)]})
+    first = w.create([EDR]).json()["id"]
+    assert _run_to_completion(w, first)["run_status"] == "completed"
+    second = w.create([SOAR]).json()["id"]
+    started = w.run(second)
+    assert started.status_code == 202, started.text
+    assert w.get(second)["ai_run_id"] == started.json()["run_id"]
+
+
 class _CountingLimiter:
     def __init__(self) -> None:
         self.charged = 0

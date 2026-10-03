@@ -9,6 +9,7 @@ tools, what of the AI's answer is accepted, and the comparison.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -284,6 +285,77 @@ def test_a_distinct_tool_sharing_only_a_placeholder_is_kept_but_marked_indistinc
     )
     assert parsed.dropped == {"tool_unconfirmed": 1}
     assert parsed.lists["T1003"]["detection_tools"] == ["SIEM Tool"]
+
+
+# --- tools added since the base (the advisor's (b2)) ------------------------
+
+_BASE_AT = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
+_BEFORE = datetime(2026, 9, 1, tzinfo=UTC)
+_AFTER = datetime(2026, 10, 2, tzinfo=UTC)
+
+
+def _offer(name: str, item_id: str | None) -> SimpleNamespace:
+    return SimpleNamespace(capability=SimpleNamespace(name=name), item_id=item_id)
+
+
+def _list(status: str, membership) -> SimpleNamespace:
+    from app.models.capability import CapabilityListStatus
+
+    return SimpleNamespace(status=CapabilityListStatus(status), approved_membership=membership)
+
+
+_DRAFT = [_list("draft", None)]
+
+
+def test_tools_added_since_counts_items_created_after_the_base_was_approved() -> None:
+    offers = [_offer("Old Tool", "i1"), _offer("New Tool", "i2")]
+    created = {"i1": _BEFORE, "i2": _AFTER}
+    assert scenario.tools_added_since(offers, _DRAFT, created, _BASE_AT) == ["New Tool"]
+    assert scenario.tools_added_since(offers[:1], _DRAFT, created, _BASE_AT) == []
+
+
+@pytest.mark.parametrize(
+    ("offers", "lists", "created", "base_at"),
+    [
+        pytest.param(
+            [_offer("New Tool", "i2")], _DRAFT, {"i2": _AFTER}, None, id="base-not-approved"
+        ),
+        pytest.param(
+            [_offer("New Tool", "i2")],
+            [_list("approved", None)],
+            {"i2": _AFTER},
+            _BASE_AT,
+            id="list-approved-before-0043",
+        ),
+        pytest.param(
+            [_offer("New Tool", "i2"), _offer("No Item", None)],
+            _DRAFT,
+            {"i2": _AFTER},
+            _BASE_AT,
+            id="offer-names-no-item",
+        ),
+        pytest.param(
+            [_offer("New Tool", "i2"), _offer("Row Gone", "i9")],
+            _DRAFT,
+            {"i2": _AFTER},
+            _BASE_AT,
+            id="item-row-gone",
+        ),
+    ],
+)
+def test_tools_added_since_cannot_be_checked_and_says_none_not_a_partial_list(
+    offers, lists, created, base_at
+) -> None:
+    """Each branch that cannot know: None, never a list -- and in two cases
+    with a countable tool BESIDE the unknowable one, so `continue` in place of
+    `return None` would answer ['New Tool'] and go red."""
+    assert scenario.tools_added_since(offers, lists, created, base_at) is None
+
+
+def test_a_snapshot_list_approved_after_0043_is_checkable() -> None:
+    lists = [_list("approved", [{"item_id": "i2", "name": "New Tool"}])]
+    offers = [_offer("New Tool", "i2")]
+    assert scenario.tools_added_since(offers, lists, {"i2": _AFTER}, _BASE_AT) == ["New Tool"]
 
 
 def test_a_missing_rows_list_is_a_shape_error_not_an_empty_answer() -> None:
