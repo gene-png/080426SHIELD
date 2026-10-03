@@ -26,7 +26,7 @@ import {
   patchCoverage,
   runAttackAi,
 } from "@/lib/attack/client";
-import type { AttackRun } from "@/lib/attack/client";
+import type { AttackRun, ComputedStatusReview } from "@/lib/attack/client";
 import type { AiServes } from "@/lib/aiRuns/types";
 import { useAiRun } from "@/lib/aiRuns/useAiRun";
 import type {
@@ -511,18 +511,18 @@ export function AttackWorkspace({
     }
   }
 
-  function onReview(codes: string[]): Promise<void> {
-    return trackWrite(() => onReviewWrite(codes));
+  function onReview(reviews: ComputedStatusReview[]): Promise<void> {
+    return trackWrite(() => onReviewWrite(reviews));
   }
 
-  /** #554 R3: record the review of the codes the panel showed. */
-  async function onReviewWrite(codes: string[]): Promise<void> {
+  /** #554 R3: record the review of what the panel showed. */
+  async function onReviewWrite(reviews: ComputedStatusReview[]): Promise<void> {
     if (!assessment) return;
     setActionError(null);
     setBusy("review");
     assessmentSeq.current += 1;
     try {
-      const next = await reviewComputedStatuses(assessment.id, codes);
+      const next = await reviewComputedStatuses(assessment.id, reviews);
       setAssessment(next);
     } catch (err) {
       setActionError(describeError(err));

@@ -264,6 +264,10 @@ export function AttackDashboard({
   const dpr = dprCoverage(data.techniques, newRules);
   // #554, option (a): null for an assessment approved before #620.
   const outside = outsideAssessedText(data.rollup);
+  // #554 R3 (Q4): the approved sentence, appended at every percentage site.
+  const awaiting = data.awaiting_review_sentence
+    ? ` ${data.awaiting_review_sentence}`
+    : "";
   // "Rule 1, not sent" and "rule 2, missing" must not look alike. The API sends
   // the counts exactly when it sends parents_computed and refuses to build a
   // response otherwise, so a payload breaking that is a contract violation:
@@ -330,15 +334,23 @@ export function AttackDashboard({
           // #554: the KPI percentages divide by covered + partial + gap, so
           // the two counts outside that denominator sit beside them.
           sub={
-            outside === null
+            (outside === null
               ? "Coverage assessed this engagement"
-              : `Coverage assessed this engagement. ${outside}`
+              : `Coverage assessed this engagement. ${outside}`) +
+            // #554 R3 (Q4): beside the KPI percentages too.
+            awaiting
           }
         />
         <KpiCard
           label="Fully covered"
           value={`${k.covered.n} · ${k.covered.pct}%`}
-          sub="Detection + prevention + response present"
+          sub={
+            // #554 R3 (Q3): a technique that cannot be prevented is Covered
+            // without prevention, so the old sub would be false there.
+            data.statuses_computed === true
+              ? FULLY_COVERED_SUB_R3
+              : "Detection + prevention + response present"
+          }
           accent={C.green}
         />
         <KpiCard
@@ -390,9 +402,7 @@ export function AttackDashboard({
             // #554: beside the percentage on every surface, even at zero.
             (outside === null ? "" : ` ${outside}`) +
             // #554 R3 (Q4): the deliverable's sentence, only when non-zero.
-            (data.awaiting_review_sentence
-              ? ` ${data.awaiting_review_sentence}`
-              : "")
+            awaiting
           }
         >
           <div style={{ position: "relative", height: 340 }}>
@@ -405,9 +415,13 @@ export function AttackDashboard({
       <Section
         title="Detect · Prevent · Respond posture"
         desc={
-          "A technique is fully covered only when all three legs are present." +
+          (data.statuses_computed === true
+            ? TRIAD_DESC_R3
+            : "A technique is fully covered only when all three legs are present.") +
           // #554: beside the three percentages, which exclude both.
-          (outside === null ? "" : ` ${outside}`)
+          (outside === null ? "" : ` ${outside}`) +
+          // #554 R3 (Q4): beside the three leg percentages too.
+          awaiting
         }
       >
         {/* #620: only under D-094's rules. An assessment approved before #620
@@ -439,7 +453,8 @@ export function AttackDashboard({
           <TriadCard
             title="Prevent"
             leg={dpr.prevent}
-            total={dpr.total}
+            // #554 R3, ruling (a): Prevent's own denominator.
+            total={dpr.preventTotal}
             color={C.accent}
             desc="A control reduces the chance the technique succeeds."
           />
@@ -836,6 +851,12 @@ function TriadCard({
     </div>
   );
 }
+
+/** #554 R3 copy, pending the advisor (the copy draft on #808). */
+const FULLY_COVERED_SUB_R3 =
+  "Detection, prevention and response in place, or detection and response where it cannot be prevented";
+const TRIAD_DESC_R3 =
+  "A technique is fully covered when detection, prevention and response are all in place, or detection and response where MITRE ATT&CK lists no preventive control.";
 
 function toolCell(tools: string[], marks: ToolRetirement): string {
   // #686: each tool carries its retirement label, the deliverable's words.

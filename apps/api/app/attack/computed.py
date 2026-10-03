@@ -65,8 +65,11 @@ class InPlace(enum.StrEnum):
     CANNOT_BE_PREVENTED = "cannot_be_prevented"
 
 
-#: The client copy for each value, approved on #554 (21:55Z). COPIED to
-#: `apps/web/src/lib/dashboards/attack.ts`; change both.
+#: The client copy for each value, approved on #554 (21:55Z). The client
+#: dashboard receives these words from the API (`AttackInPlace`); the admin review
+#: panel holds a COPY, `IN_PLACE_TEXT` in
+#: `apps/web/src/components/admin/attack/AttackComputedReviewPanel.tsx` -- change
+#: both. Logic never reads these words: it reads the `InPlace` value.
 IN_PLACE_TEXT: dict[InPlace, str] = {
     InPlace.IN_PLACE: "in place",
     InPlace.NOT_IN_PLACE: "not in place",

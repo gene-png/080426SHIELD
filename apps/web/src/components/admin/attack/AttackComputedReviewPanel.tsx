@@ -13,6 +13,8 @@ const STATUS_TEXT: Record<string, string> = {
   unable_to_determine: "Not verified",
 };
 
+/** The client words for each value, COPIED from `IN_PLACE_TEXT` in
+ *  `apps/api/app/attack/computed.py`; change both. Display only. */
 const IN_PLACE_TEXT: Record<string, string> = {
   in_place: "in place",
   not_in_place: "not in place",
@@ -38,8 +40,11 @@ function isReviewed(row: AttackCoverageRow): boolean {
 export interface AttackComputedReviewPanelProps {
   assessment: AttackAssessment;
   busy: boolean;
-  /** Records the review of `codes`, the ones this panel shows. */
-  onReview: (codes: string[]) => Promise<void> | void;
+  /** Records the review of what this panel shows: each code with the computed
+   *  status on screen, so the API can refuse one that moved since. */
+  onReview: (
+    reviews: { code: string; computed_status: string }[],
+  ) => Promise<void> | void;
 }
 
 /**
@@ -63,7 +68,10 @@ export function AttackComputedReviewPanel({
     .filter((row) => row.in_review_queue === true)
     .sort((a, b) => a.technique_code.localeCompare(b.technique_code));
   const reviewed = assessment.coverage.filter(isReviewed).length;
-  const codes = queue.map((row) => row.technique_code);
+  const shown = queue.map((row) => ({
+    code: row.technique_code,
+    computed_status: row.computed_status ?? "",
+  }));
 
   return (
     <section
@@ -135,7 +143,7 @@ export function AttackComputedReviewPanel({
           <div>
             <button
               type="button"
-              onClick={() => void onReview(codes)}
+              onClick={() => void onReview(shown)}
               disabled={busy}
               className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
             >

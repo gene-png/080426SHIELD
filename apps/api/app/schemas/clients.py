@@ -129,15 +129,27 @@ class AttackPartialReasonCount(BaseModel):
     count: int
 
 
+class AttackInPlaceState(BaseModel):
+    """#554 R3: the machine value of each capability (`computed.InPlace`):
+    in_place, not_in_place, awaiting_review or cannot_be_prevented. What the
+    web branches on; the words beside it are only for display."""
+
+    detect: str
+    prevent: str
+    respond: str
+
+
 class AttackInPlace(BaseModel):
     """#554 R3: which of Detect / Prevent / Respond are in place, in the
-    client's words (`attack/computed.py::IN_PLACE_TEXT`), and the approved line."""
+    client's words (`attack/computed.py::IN_PLACE_TEXT`), the approved line, and
+    the machine values (`state`) any logic must read instead of the words."""
 
     detect: str
     prevent: str
     respond: str
     line: str
     cannot_be_prevented: bool
+    state: AttackInPlaceState
 
 
 class AttackDashboardTechnique(BaseModel):
@@ -264,6 +276,9 @@ class AttackDashboardResponse(BaseModel):
     #: #554 R3 (Q4): the deliverable's sentence beside the percentage. OMITTED
     #: before R3 and when nothing awaits review.
     awaiting_review_sentence: str | None = None
+    #: #554 R3: True when this assessment's statuses are computed from Detect /
+    #: Prevent / Respond. OMITTED before R3, whose JSON is unchanged.
+    statuses_computed: bool | None = None
 
     @model_serializer(mode="wrap")
     def _drop_unset_rule_key(self, handler: Any) -> dict[str, Any]:
@@ -276,6 +291,7 @@ class AttackDashboardResponse(BaseModel):
                     "retirement_notes",
                     "partial_reasons",
                     "awaiting_review_sentence",
+                    "statuses_computed",
                 }
             ),
         )

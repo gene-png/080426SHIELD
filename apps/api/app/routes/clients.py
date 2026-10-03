@@ -44,6 +44,7 @@ from app.attack.parents import is_computed_parent as attack_is_computed_parent
 from app.attack.partial_reasons import partial_reason as attack_partial_reason
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.rules import parents_computed as attack_parents_computed
+from app.attack.rules import statuses_computed as attack_statuses_computed
 from app.csf.gap import MAX_TIER as CSF_MAX_TIER
 from app.csf.gap import analyze as csf_analyze_gaps
 from app.csf.gap import resolve_target_tier as csf_resolve_target_tier
@@ -94,6 +95,7 @@ from app.schemas.clients import (
     AttackDashboardRollup,
     AttackDashboardTechnique,
     AttackInPlace,
+    AttackInPlaceState,
     AttackPartialReason,
     AttackPartialReasonCount,
     AttackTacticCoverage,
@@ -1267,6 +1269,11 @@ def attack_dashboard(
                         respond=ATTACK_IN_PLACE_TEXT[r.capabilities.respond],
                         line=r.capabilities.line(),
                         cannot_be_prevented=r.capabilities.cannot_be_prevented,
+                        state=AttackInPlaceState(
+                            detect=r.capabilities.detect.value,
+                            prevent=r.capabilities.prevent.value,
+                            respond=r.capabilities.respond.value,
+                        ),
                     )
                     if getattr(r, "is_computed", False)
                     else None
@@ -1329,6 +1336,7 @@ def attack_dashboard(
         parents_computed=True if rule else None,
         # #554 R3 (Q4): the deliverable's own sentence, from the same context.
         awaiting_review_sentence=attack_awaiting_review_text(deliverable_ctx),
+        statuses_computed=True if attack_statuses_computed(assessment) else None,
         # #646: the ONE derivation every surface calls, for the released assessment.
         ai_source=ai_mode_for(db, svc, assessment).as_api(),
         rollup=AttackDashboardRollup(

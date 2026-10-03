@@ -26,6 +26,7 @@ from app.ai.llm import LLMClient
 from app.attack.catalog_version import catalog_mismatch_message, require_current_catalog
 from app.attack.computed import effective_coverage
 from app.attack.parents import is_computed_parent
+from app.attack.release_readiness import unreviewed_codes as attack_unreviewed_codes
 from app.attack.rules import parents_computed
 from app.audit import audit
 from app.csf.gap import resolve_target_tier
@@ -480,6 +481,28 @@ def _gather_findings(
         # "ATT&CK T1649.001" is not a technique, and a T1558 row was answered
         # against the swapped name. Refused, never relabelled by ID (D-091).
         require_current_catalog(db, attack)
+        # #554 R3, the advisor's ruling (00:35Z): FAIL-CLOSED. An APPROVED
+        # assessment whose computed statuses nobody has reviewed is not released
+        # (`release_readiness`), and synthesis must not carry those statuses into
+        # a register the client can export either. Refused, typed, rather than
+        # excluded: an exclusion would yield a register silently missing ATT&CK.
+        unreviewed = attack_unreviewed_codes(db, attack)
+        if unreviewed:
+            n = len(unreviewed)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "reason": "attack_computed_status_unreviewed",
+                    "message": (
+                        f"The Risk Register cannot be generated yet: {n} ATT&CK "
+                        f"{'technique has' if n == 1 else 'techniques have'} a computed "
+                        "status that differs from the AI's suggestion and has not been "
+                        "reviewed. Review them in the ATT&CK Computed status review panel, "
+                        "then generate again."
+                    ),
+                    "unreviewed": list(unreviewed),
+                },
+            )
         # #554 R3: computed statuses where they apply, so a finding's status is
         # the one the client's dashboard and deliverable show.
         rows = effective_coverage(

@@ -109,6 +109,11 @@ A human clears case 2 the way 5.1 says: by vouching for the entry (`cleared_at`)
 by naming a tool that resolves cleanly, or -- through `patch_coverage` -- by
 setting the status or the tool lists themselves, which makes them the author of
 the claim rather than a reviewer of the model's.
+
+**On an assessment whose statuses are computed (#554 R3) only the tool lists
+author the claim.** There the stored status is a suggestion that scores
+nothing, so a status-only edit leaves the citations as they were; see the
+`authoring` set in `patch_coverage`.
 """
 
 from __future__ import annotations

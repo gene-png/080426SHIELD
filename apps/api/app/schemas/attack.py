@@ -217,12 +217,21 @@ class AttackAssessmentResponse(BaseModel):
     tool_retirement: dict[str, str] | None = None
 
 
-class ComputedStatusReviewRequest(BaseModel):
-    """#554 R3: the techniques a consultant reviewed -- the codes the panel
-    showed them, so a row that entered the queue after the page loaded is never
-    accepted unseen. Bulk accept passes them all."""
+class ComputedStatusReviewItem(BaseModel):
+    """One technique as the review panel SHOWED it: its code and the computed
+    status on screen. The API refuses the pair if the status has since moved,
+    so a review never records a status the consultant did not see."""
 
-    codes: list[str]
+    code: str
+    computed_status: str
+
+
+class ComputedStatusReviewRequest(BaseModel):
+    """#554 R3: the techniques a consultant reviewed, exactly as the panel showed
+    them. A row that entered the queue, or whose computed status changed, after
+    the page loaded is never accepted unseen. Bulk accept passes them all."""
+
+    reviews: list[ComputedStatusReviewItem]
 
 
 class CoverageChange(BaseModel):

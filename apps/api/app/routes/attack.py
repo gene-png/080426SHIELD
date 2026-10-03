@@ -717,7 +717,18 @@ def patch_coverage(
     #
     # Entries are stamped, never deleted: "a human accepted this" and "nobody
     # ever cited it" are different answers to why a technique counts.
-    authored = {"status", "detection_tools", "prevention_tools", "response_tools"} & set(data)
+    #
+    # #554 R3: on an assessment whose statuses are COMPUTED, the stored status is
+    # a suggestion that scores nothing, so setting it authors no claim -- only the
+    # tool lists do. Confirming every inferred tool on a status-only edit would
+    # raise the computed status (Gap to Covered) as a side effect, and the review
+    # queue would then label the consultant's entry "AI suggested".
+    authoring = (
+        {"detection_tools", "prevention_tools", "response_tools"}
+        if statuses_computed(a)
+        else {"status", "detection_tools", "prevention_tools", "response_tools"}
+    )
+    authored = authoring & set(data)
     if authored:
         before_uncleared = len(row.unconfirmed_citations or []) - sum(
             1 for e in (row.unconfirmed_citations or []) if e.get("cleared_at") is not None
@@ -2490,7 +2501,8 @@ def review_computed_statuses(
                 ),
             },
         )
-    codes = frozenset(body.codes)
+    shown = {item.code: item.computed_status for item in body.reviews}
+    codes = frozenset(shown)
     if not codes:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -2518,6 +2530,24 @@ def review_computed_statuses(
                     "panel and review again."
                 ),
                 "codes": stale,
+            },
+        )
+    # The review records what the consultant SAW: a computed status that moved
+    # between the panel loading and the click is refused, never recorded.
+    moved = sorted(c for c in codes if effective[c].status != shown[c])
+    if moved:
+        shown_moved = ", ".join(moved[:10]) + (
+            f" and {len(moved) - 10} more" if len(moved) > 10 else ""
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "computed_status_changed",
+                "message": (
+                    f"The computed status of some techniques changed after the panel "
+                    f"loaded ({shown_moved}). Reload the panel and review again."
+                ),
+                "codes": moved,
             },
         )
     now = utcnow()

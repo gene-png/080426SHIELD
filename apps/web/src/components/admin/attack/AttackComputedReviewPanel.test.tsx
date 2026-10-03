@@ -132,7 +132,11 @@ describe("AttackComputedReviewPanel", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Mark all 2 as reviewed" }),
     );
-    expect(onReview).toHaveBeenCalledWith(["T1003.001", "T1003.002"]);
+    // What the panel SHOWED: each code with the computed status on screen.
+    expect(onReview).toHaveBeenCalledWith([
+      { code: "T1003.001", computed_status: "gap" },
+      { code: "T1003.002", computed_status: "partial" },
+    ]);
   });
 
   it("says one in the singular", () => {
