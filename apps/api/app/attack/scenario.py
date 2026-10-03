@@ -19,6 +19,7 @@ are never mutated.
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -408,6 +409,149 @@ def _why_refused(
     if own & set(earlier):
         return Duplicate(name)
     return Indistinct(name)
+
+
+# --- slice C: the chat box's deterministic matcher -------------------------------
+
+#: The longest description the chat box takes (copy C8).
+MAX_CHAT = 500
+
+_LEAD = re.compile(r"^\s*what\s+if(?:\s+we)?\s+", re.IGNORECASE)
+#: Clause breaks: a comma, a semicolon, the word "and", or a full stop that
+#: ends a sentence -- never the one inside a name like `Tenable.io`.
+_SPLIT = re.compile(r"\s*(?:[,;]|\.(?=\s|$)|\band\b)\s*", re.IGNORECASE)
+_REMOVE = re.compile(r"^(?:remove|retire|drop|cut)\s+(?P<a>.+)$", re.IGNORECASE)
+_ADD = re.compile(r"^(?:add|introduce)\s+(?P<a>.+)$", re.IGNORECASE)
+_SWAP = re.compile(r"^swap\s+(?P<a>.+?)\s+for\s+(?P<b>.+)$", re.IGNORECASE)
+_REPLACE = re.compile(r"^replace\s+(?P<a>.+?)\s+with\s+(?P<b>.+)$", re.IGNORECASE)
+_QUOTES = "\"'\u201c\u201d\u2018\u2019"
+
+
+@dataclass(frozen=True)
+class NotUnderstood:
+    """A clause the matcher will not guess at: the clause as typed, why, and
+    (for `already_clients`) the tool it named."""
+
+    text: str
+    reason: str
+    name: str | None = None
+
+
+@dataclass(frozen=True)
+class ParsedChange:
+    """A PROPOSED change list. It pre-fills the picker; nothing is stored or
+    run from it -- Continue and Run stay the only paths."""
+
+    removed: list[str]
+    added: list[str]
+    not_understood: list[NotUnderstood]
+
+
+class _Refused(Exception):
+    def __init__(self, reason: str, name: str | None = None) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.name = name
+
+
+def _clauses(text: str) -> list[str]:
+    text = _LEAD.sub("", text.strip()).rstrip("?").strip()
+    return [c for c in (part.strip() for part in _SPLIT.split(text)) if c]
+
+
+def _bare(name: str) -> str:
+    return name.strip().strip(_QUOTES).strip()
+
+
+def parse_change(
+    text: str,
+    *,
+    cited: Sequence[str],
+    client_tools: Sequence[str],
+    client_org_name: str | None,
+    redaction_mode: RedactionMode,
+    name_hints: Iterable[str] = (),
+) -> ParsedChange:
+    """Turn the admin's description into a proposed change list, by code
+    (#802 slice C, approved 18:32Z; the AI parse is NOT part of it).
+
+    The forms, case-insensitive: remove / retire / drop / cut X; add /
+    introduce Y; swap X for Y; replace X with Y. A clause with no verb shares
+    the previous clause's verb only when that was a REMOVAL ("retire X and
+    Y"): a removal must still hit a cited tool, while a shared ADD would turn
+    any words into a "new tool", which is a guess.
+
+    Each name is checked by the code the create route uses, so the chat never
+    proposes what Continue would refuse: a removal must hit exactly ONE cited
+    tool in the resolver's name tiers (`CitationResolver.named_by`, so case,
+    whitespace and the `[CLIENT]` twin, never an inference); an addition must
+    pass `validate_added`'s name check. A swap is one unit: if either half
+    fails, neither is proposed. Anything else is not understood, quoted back."""
+    hints = tuple(name_hints)
+    resolver = CitationResolver(
+        [Candidate(name=c) for c in cited],
+        client_org_name=client_org_name,
+        redaction_mode=redaction_mode,
+        name_hints=hints,
+    )
+    removed: list[str] = []
+    added: list[str] = []
+    not_understood: list[NotUnderstood] = []
+
+    def removal(name: str) -> str:
+        hits = resolver.named_by(_bare(name))
+        if not hits:
+            raise _Refused("unknown_tool")
+        if len(hits) > 1:
+            raise _Refused("ambiguous_tool")
+        (tool,) = hits
+        if tool in removed:
+            raise _Refused("duplicate")
+        return tool
+
+    def addition(name: str) -> str:
+        entries = [{"name": n, "security_functions": ["detect"]} for n in added]
+        entries.append({"name": _bare(name), "security_functions": ["detect"]})
+        try:
+            *_, tool = validate_added(
+                entries,
+                client_tools=client_tools,
+                client_org_name=client_org_name,
+                redaction_mode=redaction_mode,
+                name_hints=hints,
+                limit=len(entries),
+            )
+        except AlreadyClients as exc:
+            raise _Refused("already_clients", exc.name) from exc
+        except Indistinct as exc:
+            raise _Refused("indistinct") from exc
+        except Duplicate as exc:
+            raise _Refused("duplicate") from exc
+        except AddedToolRefused as exc:
+            raise _Refused("unrecognised") from exc
+        return tool.name
+
+    sharing = False
+    for clause in _clauses(text):
+        try:
+            if m := _REMOVE.match(clause):
+                sharing = True
+                removed.append(removal(m["a"]))
+            elif m := (_SWAP.match(clause) or _REPLACE.match(clause)):
+                sharing = False
+                gone, new = removal(m["a"]), addition(m["b"])
+                removed.append(gone)
+                added.append(new)
+            elif m := _ADD.match(clause):
+                sharing = False
+                added.append(addition(m["a"]))
+            elif sharing:
+                removed.append(removal(clause))
+            else:
+                raise _Refused("unrecognised")
+        except _Refused as why:
+            not_understood.append(NotUnderstood(text=clause, reason=why.reason, name=why.name))
+    return ParsedChange(removed=removed, added=added, not_understood=not_understood)
 
 
 def require_change(removed: Sequence[str], added: Sequence[AddedTool]) -> None:

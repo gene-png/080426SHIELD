@@ -10,12 +10,14 @@ import {
   discardScenario,
   fetchScenario,
   fetchScenarios,
+  parseChange,
   runScenario,
 } from "@/lib/attack/scenarios";
 
 import type { AiServes } from "@/lib/aiRuns/types";
 import type {
   AddedTool,
+  ParsedChange,
   Scenario,
   ScenarioList as ScenarioListData,
   ScenarioRollup,
@@ -393,6 +395,21 @@ export function AttackScenarioPanel({
             {phase.list.base.version}, approved{" "}
             {approvedText(phase.list.base.approved_at)}.
           </p>
+          <ChatBox
+            serviceId={serviceId}
+            onProposal={(proposal) => {
+              setPicked(proposal.removed);
+              setAdding(
+                proposal.added.map((name) => ({
+                  name,
+                  vendor: "",
+                  category: "",
+                  functions: [],
+                  fromChat: true,
+                })),
+              );
+            }}
+          />
           <fieldset className="flex flex-col gap-1">
             <legend className="text-sm font-semibold">Tools to remove</legend>
             {phase.list.base.tools.map((tool) => (
@@ -477,12 +494,109 @@ export function AttackScenarioPanel({
   );
 }
 
+/**
+ * Slice C (approved 18:32Z, copy C1-C8): the chat box. The api's matcher, by
+ * code and with no AI, PROPOSES a change list that fills in the picker below;
+ * nothing is created or run until Continue and Run, which stay the only paths.
+ */
+function ChatBox({
+  serviceId,
+  onProposal,
+}: {
+  serviceId: string;
+  onProposal: (proposal: ParsedChange) => void;
+}): JSX.Element {
+  const [text, setText] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [result, setResult] = React.useState<ParsedChange | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+
+  async function fill(): Promise<void> {
+    setBusy(true);
+    setError(null);
+    try {
+      const proposal = await parseChange(serviceId, text);
+      setResult(proposal);
+      onProposal(proposal);
+    } catch (err) {
+      setResult(null);
+      setError(clientFacingError(err, "The description could not be read."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const matched =
+    result !== null && result.removed.length + result.added.length > 0;
+  return (
+    <div className="flex flex-col gap-1" data-testid="attack-scenario-chat">
+      <label className="flex flex-col gap-1 text-sm font-semibold">
+        Describe the change
+        <textarea
+          className="rounded border border-line p-1 font-normal"
+          rows={2}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+        />
+      </label>
+      <p className="text-sm text-ink-secondary">
+        {'For example "retire X and Y" or "swap X for Z".'}
+      </p>
+      <div>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void fill()}
+          className="rounded-md border border-line px-3 py-1.5 text-sm font-semibold disabled:opacity-60"
+        >
+          Fill in the change list
+        </button>
+      </div>
+      {matched ? (
+        <p className="text-sm" data-testid="attack-scenario-chat-filled">
+          The change list below was filled in from your description. Check it
+          before you continue.
+        </p>
+      ) : null}
+      {result !== null && !matched ? (
+        <p
+          className="text-sm text-status-warning-fg"
+          data-testid="attack-scenario-chat-nothing"
+        >
+          Nothing in your description matched a change. Pick the tools from the
+          list instead.
+        </p>
+      ) : null}
+      {(result?.not_understood ?? []).map((n, i) => (
+        <p
+          key={i}
+          className="text-sm text-status-warning-fg"
+          data-testid="attack-scenario-chat-not-understood"
+        >
+          {n.message}
+        </p>
+      ))}
+      {error ? (
+        <p
+          role="alert"
+          className="text-sm text-status-danger-fg"
+          data-testid="attack-scenario-chat-error"
+        >
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 /** A tool to add, as typed: every field a string until it is sent. */
 interface Draft {
   name: string;
   vendor: string;
   category: string;
   functions: AddedTool["security_functions"];
+  /** Filled in from the chat box (slice C): C9 asks for its functions. */
+  fromChat?: boolean;
 }
 
 const FUNCTIONS: [AddedTool["security_functions"][number], string][] = [
@@ -582,6 +696,14 @@ function AddToolsFieldset({
           >
             Remove this tool
           </button>
+          {d.fromChat && d.functions.length === 0 ? (
+            <p
+              className="basis-full text-sm text-status-warning-fg"
+              data-testid="attack-scenario-chat-functions"
+            >
+              {`Choose what ${d.name} does before you continue.`}
+            </p>
+          ) : null}
         </div>
       ))}
       <div>
