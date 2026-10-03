@@ -85,6 +85,10 @@ class RunRecord:
     # which can quote the model -- with the boundary's `charged_likely`.
     cause: str | None = None
     charged_likely: bool | None = None
+    # B1 (review 2): False when any `llm_calls` row of this run has no output
+    # count -- a call that failed after billing writes a FAILED row with NULL
+    # tokens, and leaving it out of a sum would understate the spend in silence.
+    tokens_complete: bool = True
 
 
 #: More runs than this is refused: every run is billed, and five pairs already
@@ -316,7 +320,7 @@ def csf_levels(data: Mapping[str, Any], *, has_evidence: Mapping[str, bool]) -> 
     from app.routes.csf import _DIM_FIELDS
 
     levels: dict[str, int] = {}
-    not_scoreable = 0
+    not_scoreable = evidence_capped = 0
     for row in data.get("scores") or []:
         if not isinstance(row, dict):
             continue
@@ -330,7 +334,11 @@ def csf_levels(data: Mapping[str, Any], *, has_evidence: Mapping[str, bool]) -> 
             has_evidence=has_evidence[key],
         )
         levels[key] = result.level
-    return {"levels": levels, "not_scoreable": not_scoreable}
+        evidence_capped += int(result.evidence_capped)
+    # `evidence_capped` counts the rows whose level the engine CAPPED for want of
+    # evidence (CSF_Flow_Spec section 8: at most Level 2). Without it, a run that
+    # scored every row L4 and one that scored every row L2 read as agreeing.
+    return {"levels": levels, "not_scoreable": not_scoreable, "evidence_capped": evidence_capped}
 
 
 def run_loop(
@@ -343,26 +351,44 @@ def run_loop(
     """Call `one_run(n)` for n = 1..runs. Once the output tokens spent exceed
     `max_output_tokens`, no further run STARTS; each one not started is recorded
     as failed (`stopped_output_budget`). A run already under way is never cut
-    off, so the overrun is bounded by one run's output. With `stop_on_failure`,
-    no run starts after a failed one (`stopped_after_failure`): a rate-limited
-    provider is not retried into."""
+    off, so the overrun is bounded by one run's output. A run whose spend is
+    UNKNOWN (no output count, or a call with none) also stops the rest under a
+    budget (`stopped_unknown_spend`): a budget that cannot be counted is not
+    being kept. With `stop_on_failure`, no run starts after a failed one
+    (`stopped_after_failure`): a rate-limited provider is not retried into."""
     records: list[RunRecord] = []
     spent = 0
+    unknown = False
     for n in range(1, runs + 1):
         if stop_on_failure and any(not r.ok for r in records):
             records.append(RunRecord(False, None, "stopped_after_failure", 0, 0))
+            continue
+        if max_output_tokens is not None and unknown:
+            _log.warning("measure_ai_consistency.budget_unknown_stop", run=n)
+            records.append(RunRecord(False, None, "stopped_unknown_spend", 0, 0))
             continue
         if max_output_tokens is not None and spent > max_output_tokens:
             _log.warning("measure_ai_consistency.budget_stop", run=n, output_tokens=spent)
             records.append(RunRecord(False, None, "stopped_output_budget", 0, 0))
             continue
         record = one_run(n)
+        if record.output_tokens is None or not record.tokens_complete:
+            unknown = True
         spent += record.output_tokens or 0
         records.append(record)
     return records
 
 
-def summarize(job: str, runs: Sequence[RunRecord]) -> dict:
+_NOT_STARTED = ("stopped_output_budget", "stopped_after_failure", "stopped_unknown_spend")
+
+
+def summarize(
+    job: str,
+    runs: Sequence[RunRecord],
+    *,
+    max_output_tokens: int | None = None,
+    min_ok_runs: int = 2,
+) -> dict:
     """Every pair of successful runs, plus the failed runs by number (1-based).
     Fewer than two successes is a failure: there is nothing to compare."""
     ok = [(i + 1, r) for i, r in enumerate(runs) if r.ok]
@@ -382,9 +408,8 @@ def summarize(job: str, runs: Sequence[RunRecord]) -> dict:
     ]
     # A run that called the provider and has no output count is spend nobody
     # can see. A budget-stopped run made no call, so it does not count.
-    called = [
-        r for r in runs if r.failure not in ("stopped_output_budget", "stopped_after_failure")
-    ]
+    called = [r for r in runs if r.failure not in _NOT_STARTED]
+    spent = sum(r.output_tokens or 0 for r in runs)
     return {
         "job": job,
         "runs_requested": len(runs),
@@ -394,9 +419,14 @@ def summarize(job: str, runs: Sequence[RunRecord]) -> dict:
         "tokens": {
             "input": sum(r.input_tokens or 0 for r in runs),
             "output": sum(r.output_tokens or 0 for r in runs),
-            "complete": all(r.output_tokens is not None for r in called),
+            "complete": all(r.output_tokens is not None and r.tokens_complete for r in called),
         },
-        "exit_code": 0 if not failed and len(ok) >= 2 else 1,
+        "budget": {
+            "max_output_tokens": max_output_tokens,
+            "spent_output_tokens": spent,
+            "overrun": max_output_tokens is not None and spent > max_output_tokens,
+        },
+        "exit_code": 0 if not failed and len(ok) >= min_ok_runs else 1,
     }
 
 
@@ -430,7 +460,6 @@ def _pick_assessment(
     if a is None and reopen_released:
         a = latest([status.RELEASED, status.APPROVED])
         if a is not None:
-            _require_sqlite_bind(db, "reopening a released assessment")
             reopened_from = a.status.value
             a.status = status.DRAFT
             db.commit()
@@ -449,6 +478,10 @@ def _pick_assessment(
     return a, reopened_from
 
 
+#: Every `measure_*` calls `_require_sqlite_bind` FIRST, before reading
+#: anything: a measurement writes `llm_calls` rows, may reopen an assessment and
+#: may seed a Working Profile, and each of those writes is then covered by the
+#: one check rather than by a check beside each.
 def _session_dialect(db: Any) -> str:
     return db.get_bind().dialect.name
 
@@ -537,6 +570,7 @@ def measure_zt(
     from app.services.engagement_targets import client_target_stage
     from app.zt.scoring import resolve_target_stage
 
+    _require_sqlite_bind(db, "a zt_score measurement")
     admin = _admin_user(db)
     a, reopened_from = _pick_assessment(
         db,
@@ -582,7 +616,7 @@ def measure_zt(
                 )
         except HTTPException as exc:
             reason, cause, charged = _failure(exc)
-            tokens_in, tokens_out = _tokens_since(db, before)
+            tokens_in, tokens_out, complete = _tokens_since(db, before)
             _log.error(
                 "measure_ai_consistency.run_failed",
                 run=n,
@@ -590,9 +624,9 @@ def measure_zt(
                 cause=cause,
                 charged_likely=charged,
             )
-            return RunRecord(False, None, reason, tokens_in, tokens_out, cause, charged)
+            return RunRecord(False, None, reason, tokens_in, tokens_out, cause, charged, complete)
         db.commit()
-        tokens_in, tokens_out = _tokens_since(db, before)
+        tokens_in, tokens_out, complete = _tokens_since(db, before)
         _log.info(
             "measure_ai_consistency.run_ok",
             run=n,
@@ -600,12 +634,12 @@ def measure_zt(
             output_tokens=tokens_out,
             duration_ms=result.llm_call.duration_ms,
         )
-        return RunRecord(True, result.data, None, tokens_in, tokens_out)
+        return RunRecord(True, result.data, None, tokens_in, tokens_out, tokens_complete=complete)
 
     records = run_loop(
         runs, one_run, max_output_tokens=max_output_tokens, stop_on_failure=stop_on_failure
     )
-    report = summarize("zt_score", records)
+    report = summarize("zt_score", records, max_output_tokens=max_output_tokens)
     report["assessment_id"] = str(a.id)
     report["assessment_capabilities"] = len(req.rows)
     report["engagement_stage"] = {"stage": stage, "source": stage_source}
@@ -630,9 +664,12 @@ def _call_ids(db: Any) -> set:
     return set(db.execute(select(LLMCall.id)).scalars())
 
 
-def _tokens_since(db: Any, before: set) -> tuple[int | None, int | None]:
+def _tokens_since(db: Any, before: set) -> tuple[int | None, int | None, bool]:
     """Input and output tokens over the `llm_calls` rows written since `before`
-    -- one per batch, each in its own session. None when no row reported any."""
+    -- one per batch, each in its own session -- and whether EVERY such row
+    reported an output count. A row with none (a call that failed after the
+    provider may have billed it) is not summed, and makes the third value False
+    rather than vanishing from the total."""
     from sqlalchemy import select
 
     from app.models.llm_call import LLMCall
@@ -644,7 +681,8 @@ def _tokens_since(db: Any, before: set) -> tuple[int | None, int | None]:
         values = [getattr(r, attr) for r in rows if getattr(r, attr) is not None]
         return sum(values) if values else None
 
-    return total("input_tokens"), total("output_tokens")
+    complete = bool(rows) and all(r.output_tokens is not None for r in rows)
+    return total("input_tokens"), total("output_tokens"), complete
 
 
 def _seed_profile_if_empty(db: Any, a: Any, admin: Any, client: Any, tiers: Sequence[str]) -> list:
@@ -665,7 +703,6 @@ def _seed_profile_if_empty(db: Any, a: Any, admin: Any, client: Any, tiers: Sequ
     ).scalar_one()
     if existing or not tiers:
         return []
-    _require_sqlite_bind(db, "seeding a Working Profile")
     if _latest_assessment(db, a.service_id).id != a.id:
         # The handler seeds the service's LATEST assessment, by its own rule.
         raise Refused(
@@ -688,6 +725,7 @@ def measure_csf(
     max_output_tokens: int | None = None,
     seed_profile_tiers: Sequence[str] = (),
     stop_on_failure: bool = False,
+    probe_batches: int | None = None,
 ) -> dict:
     """Run csf_score `runs` times on the latest editable CSF assessment, batched
     exactly as the route batches it, and summarize.
@@ -707,6 +745,7 @@ def measure_csf(
     from app.models.csf_assessment import CsfAssessment, CsfAssessmentStatus
     from app.routes.csf import _CSF_MAX_WORKERS, _csf_ai_request_for, _csf_batch_inputs
 
+    _require_sqlite_bind(db, "a csf_score measurement")
     admin = _admin_user(db)
     a, reopened_from = _pick_assessment(
         db,
@@ -722,6 +761,10 @@ def measure_csf(
     except HTTPException as exc:
         raise _builder_refusal(exc) from exc
     batches = _csf_batch_inputs(req.preview.inputs)
+    all_batches = len(batches)
+    if probe_batches is not None:
+        # A cost probe: the first N of the route's own batches, unchanged.
+        batches = batches[:probe_batches]
     has_evidence = {key: bool(row.has_evidence) for key, row in req.rows.items()}
     _log.info(
         "measure_ai_consistency.start",
@@ -754,7 +797,7 @@ def measure_csf(
             )
         except (HTTPException, RunFailed) as exc:
             reason, cause, charged = _failure(exc)
-            tokens_in, tokens_out = _tokens_since(db, before)
+            tokens_in, tokens_out, complete = _tokens_since(db, before)
             _log.error(
                 "measure_ai_consistency.run_failed",
                 run=n,
@@ -762,12 +805,12 @@ def measure_csf(
                 cause=cause,
                 charged_likely=charged,
             )
-            return RunRecord(False, None, reason, tokens_in, tokens_out, cause, charged)
-        tokens_in, tokens_out = _tokens_since(db, before)
+            return RunRecord(False, None, reason, tokens_in, tokens_out, cause, charged, complete)
+        tokens_in, tokens_out, complete = _tokens_since(db, before)
         if batched.failed:
             failure = f"batches_failed:{batched.failed}/{batched.total}"
             _log.error("measure_ai_consistency.run_failed", run=n, failure=failure)
-            return RunRecord(False, None, failure, tokens_in, tokens_out, None, True)
+            return RunRecord(False, None, failure, tokens_in, tokens_out, None, True, complete)
         data = {"scores": [entry for answer in batched.answers for entry in answer["scores"]]}
         _log.info(
             "measure_ai_consistency.run_ok",
@@ -776,25 +819,44 @@ def measure_csf(
             input_tokens=tokens_in,
             output_tokens=tokens_out,
         )
-        return RunRecord(True, data, None, tokens_in, tokens_out)
+        return RunRecord(True, data, None, tokens_in, tokens_out, tokens_complete=complete)
 
     records = run_loop(
         runs, one_run, max_output_tokens=max_output_tokens, stop_on_failure=stop_on_failure
     )
-    report = summarize("csf_score", records)
+    report = summarize(
+        "csf_score",
+        records,
+        max_output_tokens=max_output_tokens,
+        min_ok_runs=1 if probe_batches is not None else 2,
+    )
     levels = {n: csf_levels(data, has_evidence=has_evidence) for n, data in _ok_runs(records)}
     for pair in report["pairs"]:
         la, lb = levels[pair["pair"][0]]["levels"], levels[pair["pair"][1]]["levels"]
         both = set(la) & set(lb)
-        pair["level"] = {"compared": len(both), "equal": sum(la[k] == lb[k] for k in both)}
+        pair["level"] = {
+            "compared": len(both),
+            "equal": sum(la[k] == lb[k] for k in both),
+            # Rows with no evidence can never score above Level 2, so their
+            # level agreement is agreement within a capped range.
+            "no_evidence_rows": sum(1 for k in both if not has_evidence[k]),
+        }
     report["assessment_id"] = str(a.id)
     report["rows"] = len(req.rows)
     report["batches_per_run"] = len(batches)
+    report["probe"] = (
+        None if probe_batches is None else {"batches": len(batches), "of": all_batches}
+    )
     report["answers_sent"] = len(req.preview.inputs.get("answers") or {})
     report["input_setup"] = {"reopened_from": reopened_from, "profile_seeded_tiers": seeded_tiers}
     report["provider"] = {"name": llm.provider.name, "model": llm.provider.model}
     report["downstream"] = [
-        {"run": n, "not_scoreable": lv["not_scoreable"], "scored_rows": len(lv["levels"])}
+        {
+            "run": n,
+            "not_scoreable": lv["not_scoreable"],
+            "scored_rows": len(lv["levels"]),
+            "evidence_capped": lv["evidence_capped"],
+        }
         for n, lv in levels.items()
     ]
     return report
@@ -827,19 +889,38 @@ def _print_table(report: dict) -> None:
     for p in report["pairs"]:
         if "level" in p:
             lv = p["level"]
-            print(f"pair {p['pair']} maturity level: equal {lv['equal']}/{lv['compared']}")
+            print(
+                f"pair {p['pair']} maturity level: equal {lv['equal']}/{lv['compared']} "
+                f"({lv['no_evidence_rows']} of those rows have no evidence: capped at Level 2)"
+            )
     for d in report.get("downstream", []):
         if "total_gap_count" in d:
             print(
                 f"run {d['run']}: client-visible gaps {d['total_gap_count']}, "
-                f"unscored {d['unscored_count']}, non-integer values {d['non_integer_values']}"
+                f"unscored {d['unscored_count']}, non-integer values {d['non_integer_values']}, "
+                f"out-of-range values {d['out_of_range_values']}, "
+                f"unusable targets {len(d['unusable_target_codes'])}"
             )
         else:
             print(
                 f"run {d['run']}: rows scored {d['scored_rows']}, "
-                f"not scoreable {d['not_scoreable']}"
+                f"not scoreable {d['not_scoreable']}, evidence-capped {d['evidence_capped']}"
             )
-    print(f"tokens: input {report['tokens']['input']}, output {report['tokens']['output']}")
+    asked = report.get("rows", report.get("assessment_capabilities"))
+    print(f"rows asked per run: {asked}")
+    if report.get("probe"):
+        print(f"PROBE: {report['probe']['batches']} of {report['probe']['of']} batches")
+    t, b = report["tokens"], report["budget"]
+    print(
+        f"tokens: input {t['input']}, output {t['output']}, "
+        f"complete {t['complete']}"
+        + ("" if t["complete"] else " (a call reported no tokens: spend is UNDERSTATED)")
+    )
+    if b["max_output_tokens"] is not None:
+        print(
+            f"budget: {b['spent_output_tokens']} of {b['max_output_tokens']} output tokens"
+            + (" -- OVERRUN" if b["overrun"] else "")
+        )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -862,6 +943,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         "Recorded in the report.",
     )
     p.add_argument(
+        "--probe-batches",
+        type=int,
+        default=None,
+        help="csf_score only: run just the first N of the route's batches, to measure "
+        "per-batch cost before a full run. Allows --runs 1; reports no agreement.",
+    )
+    p.add_argument(
         "--stop-on-failure",
         action="store_true",
         help="Start no further run after a failed one (a rate limit is not retried into).",
@@ -874,7 +962,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         "under way is never cut off, so the overrun is at most one run.",
     )
     args = p.parse_args(argv)
-    if args.runs < 2:
+    if args.probe_batches is not None and (args.job != "csf_score" or args.probe_batches < 1):
+        print(
+            "REFUSED (probe_not_applicable): --probe-batches is csf_score only, >= 1.",
+            file=sys.stderr,
+        )
+        return 2
+    if args.runs < 2 and args.probe_batches is None:
         print("REFUSED (runs_below_two): agreement needs at least two runs.", file=sys.stderr)
         return 2
     if args.runs > MAX_RUNS:
@@ -911,7 +1005,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             }
             if args.job == "csf_score":
                 tiers = [t for t in args.seed_profile_tiers.split(",") if t]
-                report = measure_csf(db, llm, seed_profile_tiers=tiers, **common)
+                report = measure_csf(
+                    db, llm, seed_profile_tiers=tiers, probe_batches=args.probe_batches, **common
+                )
             else:
                 report = measure_zt(db, llm, framework=args.framework, **common)
         except Refused as exc:

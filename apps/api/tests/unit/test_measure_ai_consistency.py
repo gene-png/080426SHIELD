@@ -478,6 +478,8 @@ def test_csf_levels_go_through_the_engine_and_apply_the_evidence_cap() -> None:
     assert levels == {
         "levels": {"high|A": 5, "high|B": 2, "high|C": 1},
         "not_scoreable": 0,
+        # B scored a total of 10 and was capped to Level 2 for want of evidence.
+        "evidence_capped": 1,
     }
 
 
@@ -493,7 +495,7 @@ def test_csf_levels_never_clamp_or_coerce_a_bad_dimension() -> None:
         ]
     }
     levels = csf_levels(data, has_evidence={f"high|{k}": True for k in "ABCDE"})
-    assert levels == {"levels": {"high|E": 2}, "not_scoreable": 4}
+    assert levels == {"levels": {"high|E": 2}, "not_scoreable": 4, "evidence_capped": 0}
 
 
 # --- run_loop: the output-token budget ---------------------------------------
@@ -595,7 +597,8 @@ def test_measure_csf_runs_every_batch_and_applies_nothing(csf_world) -> None:
     assert report["pairs"][0]["fields"]["governance"]["equal"] == 106
     # Tokens are every batch's, read from the llm_calls rows each batch wrote.
     assert report["tokens"] == {"input": 2 * 11 * 7, "output": 2 * 11 * 11, "complete": True}
-    assert report["pairs"][0]["level"] == {"compared": 106, "equal": 106}
+    # Seeded rows carry no evidence, so every compared level is capped at L2.
+    assert report["pairs"][0]["level"] == {"compared": 106, "equal": 106, "no_evidence_rows": 106}
 
 
 def test_a_csf_run_with_a_failed_batch_is_a_failed_run(csf_world) -> None:
@@ -618,6 +621,9 @@ def test_a_csf_run_with_a_failed_batch_is_a_failed_run(csf_world) -> None:
     ]
     assert report["pairs"] == []
     assert report["exit_code"] == 1
+    # The failed batch's llm_calls row has no token counts; the total must say
+    # it is incomplete rather than quietly summing what is left.
+    assert report["tokens"]["complete"] is False
 
 
 def test_measure_csf_reports_level_disagreement_between_runs(csf_world) -> None:
@@ -637,7 +643,7 @@ def test_measure_csf_reports_level_disagreement_between_runs(csf_world) -> None:
         report = measure_csf(db, LLMClient(provider), runs=2)
         db.commit()
     # Total 5 is Level 2 and total 0 is Level 1: every row's level moved.
-    assert report["pairs"][0]["level"] == {"compared": 106, "equal": 0}
+    assert report["pairs"][0]["level"] == {"compared": 106, "equal": 0, "no_evidence_rows": 106}
     assert report["pairs"][0]["fields"]["governance"]["equal"] == 0
 
 
@@ -728,7 +734,9 @@ def cli(monkeypatch, tmp_path):
     get_settings.cache_clear()
 
 
-def test_main_refuses_a_postgres_database_before_building_a_provider(cli, monkeypatch) -> None:
+def test_main_refuses_a_postgres_database_before_building_a_provider(
+    cli, monkeypatch, capsys
+) -> None:
     from app.config import get_settings
 
     built, tmp_path = cli
@@ -737,21 +745,36 @@ def test_main_refuses_a_postgres_database_before_building_a_provider(cli, monkey
     code = main(["--job", "zt_score", "--runs", "2", "--out", str(tmp_path / "o.json")])
     assert code == 2
     assert built == []
+    assert "REFUSED (database_not_sqlite)" in capsys.readouterr().err
 
 
-def test_main_refuses_a_job_with_no_measure_before_building_a_provider(cli) -> None:
+def test_main_refuses_a_job_with_no_measure_before_building_a_provider(cli, capsys) -> None:
     built, tmp_path = cli
     code = main(["--job", "tech_debt_extract", "--runs", "2", "--out", str(tmp_path / "o.json")])
     assert code == 2
     assert built == []
+    assert "REFUSED (job_not_implemented)" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("runs", ["1", str(MAX_RUNS + 1)])
-def test_main_refuses_a_run_count_outside_two_to_max(cli, runs: str) -> None:
+@pytest.mark.parametrize(
+    ("runs", "reason"), [("1", "runs_below_two"), (str(MAX_RUNS + 1), "runs_above_max")]
+)
+def test_main_refuses_a_run_count_outside_two_to_max(cli, capsys, runs: str, reason: str) -> None:
     built, tmp_path = cli
     code = main(["--job", "zt_score", "--runs", runs, "--out", str(tmp_path / "o.json")])
     assert code == 2
     assert built == []
+    assert f"REFUSED ({reason})" in capsys.readouterr().err
+
+
+def test_main_refuses_a_probe_for_a_job_that_is_not_batched(cli, capsys) -> None:
+    built, tmp_path = cli
+    code = main(
+        ["--job", "zt_score", "--runs", "1", "--probe-batches", "1", "--out", str(tmp_path / "o")]
+    )
+    assert code == 2
+    assert built == []
+    assert "REFUSED (probe_not_applicable)" in capsys.readouterr().err
 
 
 # --- A1: reopening is guarded, and happens only after the admin check -------
@@ -874,3 +897,112 @@ def test_stop_on_failure_starts_no_run_after_a_failed_one() -> None:
     # Runs that never started made no call, so they do not make tokens incomplete;
     # run 1 did call and reported no output, so the total is incomplete.
     assert summarize("zt_score", records)["tokens"]["complete"] is False
+
+
+# --- review 2: the budget fails closed, and says what it spent ----------------
+
+
+def test_unknown_spend_stops_further_runs_under_a_budget() -> None:
+    calls: list[int] = []
+
+    def one(n: int) -> RunRecord:
+        calls.append(n)
+        return RunRecord(True, {}, None, 5, None)  # the provider reported no output
+
+    records = run_loop(3, one, max_output_tokens=10**6)
+    assert calls == [1]
+    assert [r.failure for r in records] == [None, "stopped_unknown_spend", "stopped_unknown_spend"]
+
+
+def test_a_run_with_an_uncounted_call_also_stops_the_budget() -> None:
+    calls: list[int] = []
+
+    def one(n: int) -> RunRecord:
+        calls.append(n)
+        # Some of its calls were counted, one was not.
+        return RunRecord(True, {}, None, 5, 100, tokens_complete=False)
+
+    records = run_loop(2, one, max_output_tokens=10**6)
+    assert calls == [1]
+    assert records[1].failure == "stopped_unknown_spend"
+
+
+def test_the_report_carries_the_budget_and_an_overrun_on_the_last_run() -> None:
+    records = run_loop(2, lambda n: RunRecord(True, {}, None, 1, 600), max_output_tokens=1000)
+    # Run 2 started at 600 <= 1000 and finished at 1200: an overrun, reported.
+    s = summarize("zt_score", records, max_output_tokens=1000)
+    assert s["budget"] == {
+        "max_output_tokens": 1000,
+        "spent_output_tokens": 1200,
+        "overrun": True,
+    }
+
+
+# --- review 2: the seed path is guarded and pinned ---------------------------
+
+
+def _profile_row_count(TestSession: sessionmaker) -> int:
+    from sqlalchemy import func
+
+    from app.models.csf_profile import CsfDimensionScore
+
+    with TestSession() as db:
+        return db.execute(select(func.count()).select_from(CsfDimensionScore)).scalar_one()
+
+
+def test_seeding_refuses_a_session_not_bound_to_sqlite(unseeded_csf, monkeypatch) -> None:
+    TestSession, provider = unseeded_csf
+    monkeypatch.setattr("scripts.measure_ai_consistency._session_dialect", lambda db: "postgresql")
+    with TestSession() as db, pytest.raises(Refused) as exc:
+        measure_csf(db, LLMClient(provider), runs=2, seed_profile_tiers=["high"])
+    assert exc.value.reason == "state_change_needs_sqlite"
+    assert _profile_row_count(TestSession) == 0
+
+
+def test_seeding_refuses_when_the_route_would_seed_another_assessment(unseeded_csf) -> None:
+    # The route's handler seeds the service's HIGHEST-version assessment; the
+    # measure picks the newest editable one. They can only differ on a state no
+    # route produces (an older draft beside a newer approved version), so the
+    # state is built directly: this pins the guard as a ratchet against the two
+    # rules drifting apart.
+    from app.models.csf_assessment import CsfAssessment, CsfAssessmentStatus
+
+    TestSession, provider = unseeded_csf
+    with TestSession() as db:
+        v1 = db.execute(select(CsfAssessment)).scalar_one()
+        db.add(
+            CsfAssessment(
+                service_id=v1.service_id,
+                client_id=v1.client_id,
+                version=v1.version + 1,
+                status=CsfAssessmentStatus.APPROVED,
+            )
+        )
+        db.commit()
+    with TestSession() as db, pytest.raises(Refused) as exc:
+        measure_csf(db, LLMClient(provider), runs=2, seed_profile_tiers=["high"])
+    assert exc.value.reason == "profile_seed_target_mismatch"
+    assert _profile_row_count(TestSession) == 0
+
+
+# --- the CSF cost probe --------------------------------------------------------
+
+
+def test_a_probe_runs_only_the_first_batches_and_reports_its_cost(csf_world) -> None:
+    c, TestSession, provider, h, _ = csf_world
+    asked: list[int] = []
+
+    def answer(payload: dict) -> LLMResponse:
+        asked.append(1)
+        return _answer_every_asked_row(payload)
+
+    provider.register("csf_score", answer)
+    with TestSession() as db:
+        report = measure_csf(db, LLMClient(provider), runs=1, probe_batches=1)
+        db.commit()
+    assert asked == [1]
+    assert report["probe"] == {"batches": 1, "of": 11}
+    assert report["runs_ok"] == 1
+    assert report["pairs"] == []
+    assert report["tokens"] == {"input": 7, "output": 11, "complete": True}
+    assert report["exit_code"] == 0
