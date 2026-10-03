@@ -203,4 +203,106 @@ describe("AttackScenarioPanel, the chat box (slice C)", () => {
       removed: ["EDR Tool"],
     });
   });
+
+  // --- #824 review: B2 (merge) and B3 (late results) ---------------------------
+
+  async function withPriorChoices(): Promise<void> {
+    routes[LIST] = () => ({ base: BASE, scenarios: [] });
+    render(<AttackScenarioPanel serviceId="svc" />);
+    fireEvent.click(await screen.findByLabelText("SIEM Tool"));
+    fireEvent.click(screen.getByRole("button", { name: "Add a tool" }));
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Typed Tool" },
+    });
+  }
+
+  function fillWith(answer: unknown, text = "x"): void {
+    routes[PARSE] = () => answer;
+    fireEvent.change(screen.getByLabelText("Describe the change"), {
+      target: { value: text },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Fill in the change list" }),
+    );
+  }
+
+  it("an empty proposal keeps what the admin ticked and typed", async () => {
+    await withPriorChoices();
+    fillWith({ removed: [], added: [], not_understood: [] });
+    await screen.findByTestId("attack-scenario-chat-nothing");
+    expect(
+      (screen.getByLabelText("SIEM Tool") as HTMLInputElement).checked,
+    ).toBe(true);
+    expect(
+      screen
+        .getAllByLabelText("Name")
+        .map((i) => (i as HTMLInputElement).value),
+    ).toEqual(["Typed Tool"]);
+  });
+
+  it("a proposal MERGES into what the admin ticked and typed", async () => {
+    await withPriorChoices();
+    fillWith({
+      removed: ["EDR Tool"],
+      added: ["XDR Suite", "typed tool"],
+      not_understood: [],
+    });
+    await screen.findByTestId("attack-scenario-chat-filled");
+    expect(
+      (screen.getByLabelText("SIEM Tool") as HTMLInputElement).checked,
+    ).toBe(true);
+    expect(
+      (screen.getByLabelText("EDR Tool") as HTMLInputElement).checked,
+    ).toBe(true);
+    expect(
+      screen
+        .getAllByLabelText("Name")
+        .map((i) => (i as HTMLInputElement).value),
+    ).toEqual(["Typed Tool", "XDR Suite"]);
+  });
+
+  it("holds the picker still while a parse is in flight", async () => {
+    routes[LIST] = () => ({ base: BASE, scenarios: [] });
+    render(<AttackScenarioPanel serviceId="svc" />);
+    await screen.findByLabelText("Describe the change");
+    let release: (v: unknown) => void = () => undefined;
+    fillWith(new Promise((r) => (release = r)));
+    await waitFor(() =>
+      expect(screen.getByLabelText("EDR Tool").matches(":disabled")).toBe(true),
+    );
+    expect(
+      (screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    release({ removed: [], added: [], not_understood: [] });
+    await waitFor(() =>
+      expect(screen.getByLabelText("EDR Tool").matches(":disabled")).toBe(
+        false,
+      ),
+    );
+  });
+
+  it("a service change empties the picker, and a late parse for the old one lands nowhere", async () => {
+    routes[LIST] = () => ({ base: BASE, scenarios: [] });
+    routes["GET /api/proxy/attack/services/svc2/scenarios"] = () => ({
+      base: BASE,
+      scenarios: [],
+    });
+    const { rerender } = render(<AttackScenarioPanel serviceId="svc" />);
+    fireEvent.click(await screen.findByLabelText("SIEM Tool"));
+    let release: (v: unknown) => void = () => undefined;
+    fillWith(new Promise((r) => (release = r)));
+    rerender(<AttackScenarioPanel serviceId="svc2" />);
+    await waitFor(() =>
+      expect(
+        (screen.getByLabelText("SIEM Tool") as HTMLInputElement).checked,
+      ).toBe(false),
+    );
+    release({ removed: ["EDR Tool"], added: [], not_understood: [] });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(
+      (screen.getByLabelText("EDR Tool") as HTMLInputElement).checked,
+    ).toBe(false);
+    expect(screen.getByLabelText("EDR Tool").matches(":disabled")).toBe(false);
+  });
 });
