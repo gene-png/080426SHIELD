@@ -38,8 +38,9 @@ model text reaches the output or the logs.
 
 `--max-output-tokens N` starts no further run once N output tokens are spent.
 
-EXIT: 0 every run succeeded; 1 a run failed, or fewer than two succeeded (the
-report is still written, and names each failure); 2 refused.
+EXIT: 0 every run succeeded; 1 a run failed, or fewer than two succeeded -- one,
+for a `--probe-batches` run (the report is still written, and names each
+failure); 2 refused.
 
 `zt_score` and `csf_score` are implemented. `tech_debt_extract` needs an input
 builder of its own (#806 step 5); asking for it now is refused rather than
@@ -390,7 +391,8 @@ def summarize(
     min_ok_runs: int = 2,
 ) -> dict:
     """Every pair of successful runs, plus the failed runs by number (1-based).
-    Fewer than two successes is a failure: there is nothing to compare."""
+    Fewer than `min_ok_runs` successes is a failure: 2 for a measurement, since
+    there is nothing to compare below that, and 1 for a cost probe."""
     ok = [(i + 1, r) for i, r in enumerate(runs) if r.ok]
     pairs = [
         {"pair": [i, j], **compare_pair(job, ra.data or {}, rb.data or {})}
@@ -425,6 +427,8 @@ def summarize(
             "max_output_tokens": max_output_tokens,
             "spent_output_tokens": spent,
             "overrun": max_output_tokens is not None and spent > max_output_tokens,
+            # An overrun of False means nothing when the count is not complete.
+            "complete": all(r.output_tokens is not None and r.tokens_complete for r in called),
         },
         "exit_code": 0 if not failed and len(ok) >= min_ok_runs else 1,
     }
@@ -704,7 +708,11 @@ def _seed_profile_if_empty(db: Any, a: Any, admin: Any, client: Any, tiers: Sequ
     if existing or not tiers:
         return []
     if _latest_assessment(db, a.service_id).id != a.id:
-        # The handler seeds the service's LATEST assessment, by its own rule.
+        # The handler seeds the service's LATEST assessment, by its own rule:
+        # the highest version. `_pick_assessment` takes the newest editable
+        # one. No route produces a state where they differ (an older draft
+        # beside a newer approved version), so this should normally never
+        # fire: it is a ratchet against the two rules drifting apart.
         raise Refused(
             "profile_seed_target_mismatch",
             "The route would seed a different assessment than the one measured.",
@@ -740,7 +748,7 @@ def measure_csf(
     from fastapi import HTTPException
 
     from app.ai.batching import run_batches
-    from app.ai.runs import RUN_DEADLINE, RunFailed
+    from app.ai.runs import RUN_DEADLINE, RUN_DEADLINE_EXCEEDED, RunFailed
     from app.models._common import utcnow
     from app.models.csf_assessment import CsfAssessment, CsfAssessmentStatus
     from app.routes.csf import _CSF_MAX_WORKERS, _csf_ai_request_for, _csf_batch_inputs
@@ -763,8 +771,16 @@ def measure_csf(
     batches = _csf_batch_inputs(req.preview.inputs)
     all_batches = len(batches)
     if probe_batches is not None:
-        # A cost probe: the first N of the route's own batches, unchanged.
+        # A cost probe: the first N of the route's own batches, unchanged. N
+        # must be fewer than all of them, or it is a full run under another name.
+        if probe_batches >= all_batches:
+            raise Refused(
+                "probe_not_smaller",
+                f"--probe-batches {probe_batches} is not fewer than the "
+                f"{all_batches} batches of a full run.",
+            )
         batches = batches[:probe_batches]
+    rows_sent = sum(len(b["tiers"]) * len(b["subcategories"]) for b in batches)
     has_evidence = {key: bool(row.has_evidence) for key, row in req.rows.items()}
     _log.info(
         "measure_ai_consistency.start",
@@ -798,6 +814,12 @@ def measure_csf(
         except (HTTPException, RunFailed) as exc:
             reason, cause, charged = _failure(exc)
             tokens_in, tokens_out, complete = _tokens_since(db, before)
+            if isinstance(exc, RunFailed) and exc.reason == RUN_DEADLINE_EXCEEDED:
+                # `run_batches` cancels batches not yet started, but one already
+                # inside a provider call keeps running and writes its row LATER
+                # -- after this count, possibly into the next run's window. The
+                # spend so far is therefore not the run's spend.
+                complete = False
             _log.error(
                 "measure_ai_consistency.run_failed",
                 run=n,
@@ -844,6 +866,9 @@ def measure_csf(
     report["assessment_id"] = str(a.id)
     report["rows"] = len(req.rows)
     report["batches_per_run"] = len(batches)
+    # The (tier, subcategory) rows each run actually ASKED for: all of `rows` on
+    # a full run, only the probed batches' rows on a probe.
+    report["rows_sent"] = rows_sent
     report["probe"] = (
         None if probe_batches is None else {"batches": len(batches), "of": all_batches}
     )
@@ -906,7 +931,7 @@ def _print_table(report: dict) -> None:
                 f"run {d['run']}: rows scored {d['scored_rows']}, "
                 f"not scoreable {d['not_scoreable']}, evidence-capped {d['evidence_capped']}"
             )
-    asked = report.get("rows", report.get("assessment_capabilities"))
+    asked = report.get("rows_sent", report.get("assessment_capabilities"))
     print(f"rows asked per run: {asked}")
     if report.get("probe"):
         print(f"PROBE: {report['probe']['batches']} of {report['probe']['of']} batches")
@@ -920,6 +945,7 @@ def _print_table(report: dict) -> None:
         print(
             f"budget: {b['spent_output_tokens']} of {b['max_output_tokens']} output tokens"
             + (" -- OVERRUN" if b["overrun"] else "")
+            + ("" if b["complete"] else " (count INCOMPLETE)")
         )
 
 
@@ -967,6 +993,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             "REFUSED (probe_not_applicable): --probe-batches is csf_score only, >= 1.",
             file=sys.stderr,
         )
+        return 2
+    if args.probe_batches is not None and args.runs != 1:
+        print("REFUSED (probe_runs_not_one): a probe is a single run.", file=sys.stderr)
         return 2
     if args.runs < 2 and args.probe_batches is None:
         print("REFUSED (runs_below_two): agreement needs at least two runs.", file=sys.stderr)

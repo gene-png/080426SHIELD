@@ -935,6 +935,7 @@ def test_the_report_carries_the_budget_and_an_overrun_on_the_last_run() -> None:
         "max_output_tokens": 1000,
         "spent_output_tokens": 1200,
         "overrun": True,
+        "complete": True,
     }
 
 
@@ -1006,3 +1007,110 @@ def test_a_probe_runs_only_the_first_batches_and_reports_its_cost(csf_world) -> 
     assert report["pairs"] == []
     assert report["tokens"] == {"input": 7, "output": 11, "complete": True}
     assert report["exit_code"] == 0
+    # The first of the route's batches: ten of the 106 rows, not all of them.
+    assert report["rows_sent"] == 10
+
+
+# --- review 3 -----------------------------------------------------------------
+
+
+def test_a_probe_prints_the_rows_it_sent_not_the_whole_profile(csf_world, capsys) -> None:
+    from scripts.measure_ai_consistency import _print_table
+
+    c, TestSession, provider, h, _ = csf_world
+    provider.register("csf_score", _answer_every_asked_row)
+    with TestSession() as db:
+        report = measure_csf(db, LLMClient(provider), runs=1, probe_batches=1)
+        db.commit()
+    _print_table(report)
+    out = capsys.readouterr().out
+    # One batch's tokens beside one batch's rows; 106 here would mis-size the
+    # full run about tenfold.
+    assert "rows asked per run: 10\n" in out
+    assert "PROBE: 1 of 11 batches" in out
+
+
+def test_a_probe_must_be_smaller_than_a_full_run(csf_world) -> None:
+    c, TestSession, provider, h, _ = csf_world
+    asked: list[int] = []
+    provider.register("csf_score", lambda p: asked.append(1) or _answer_every_asked_row(p))
+    with TestSession() as db, pytest.raises(Refused) as exc:
+        measure_csf(db, LLMClient(provider), runs=1, probe_batches=11)
+    assert exc.value.reason == "probe_not_smaller"
+    assert asked == []
+
+
+def test_main_refuses_a_probe_of_more_than_one_run(cli, capsys) -> None:
+    built, tmp_path = cli
+    code = main(
+        ["--job", "csf_score", "--runs", "2", "--probe-batches", "1", "--out", str(tmp_path / "o")]
+    )
+    assert code == 2
+    assert built == []
+    assert "REFUSED (probe_runs_not_one)" in capsys.readouterr().err
+
+
+def test_a_csf_deadline_leaves_the_spend_incomplete(csf_world, monkeypatch) -> None:
+    # `run_batches` on its deadline path: batches already finished have written
+    # their rows; one still inside a provider call has not, and will later.
+    # Built from what that path does (`app/ai/batching.py`): finished rows
+    # committed, then `RunFailed(RUN_DEADLINE_EXCEEDED)`.
+    from app.ai.engine import run_job
+    from app.ai.runs import RUN_DEADLINE_EXCEEDED, RunFailed
+
+    c, TestSession, provider, h, _ = csf_world
+    provider.register("csf_score", _answer_every_asked_row)
+
+    def deadline_after_one_batch(db, llm, job_name, batch_inputs, **kw):
+        session = Session(bind=db.get_bind())
+        run_job(
+            session,
+            llm,
+            job_name,
+            inputs=batch_inputs[0],
+            requested_by=kw["requested_by"],
+            service_id=kw["service_id"],
+            client_id=kw["client_id"],
+            client_org_name=kw["client_org_name"],
+            name_hints=kw["name_hints"],
+        )
+        session.commit()
+        session.close()
+        raise RunFailed(RUN_DEADLINE_EXCEEDED, kw["deadline_message"])
+
+    monkeypatch.setattr("app.ai.batching.run_batches", deadline_after_one_batch)
+    with TestSession() as db:
+        report = measure_csf(
+            db, LLMClient(provider), runs=2, max_output_tokens=10**6, stop_on_failure=False
+        )
+        db.commit()
+    assert report["failed_runs"][0]["failure"] == RUN_DEADLINE_EXCEEDED
+    # The finished batch's tokens ARE counted ...
+    assert report["tokens"]["output"] == 11
+    # ... and the total says it is not the whole spend, which stops run 2.
+    assert report["tokens"]["complete"] is False
+    assert report["failed_runs"][1]["failure"] == "stopped_unknown_spend"
+    # The budget block says so too: "no overrun" over an incomplete count is no claim.
+    assert report["budget"]["complete"] is False
+
+
+def test_a_zt_call_that_failed_without_tokens_leaves_the_spend_incomplete(world) -> None:
+    c, TestSession, provider = world
+    code = _zt_assessment(c)
+    calls: list[int] = []
+
+    def second_raises(payload: dict) -> LLMResponse:
+        calls.append(1)
+        if len(calls) == 2:
+            raise RuntimeError("provider closed the connection")
+        return LLMResponse(
+            '{"capabilities": [{"code": "' + code + '", "current": 2, "target": 3}]}', 5, 6
+        )
+
+    provider.register("zt_score", second_raises)
+    with TestSession() as db:
+        report = measure_zt(db, LLMClient(provider), framework="cisa", runs=3)
+        db.commit()
+    assert report["failed_runs"][0]["run"] == 2
+    assert report["tokens"]["output"] == 12
+    assert report["tokens"]["complete"] is False
