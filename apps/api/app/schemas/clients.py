@@ -279,6 +279,9 @@ class AttackDashboardResponse(BaseModel):
     #: #554 R3: True when this assessment's statuses are computed from Detect /
     #: Prevent / Respond. OMITTED before R3, whose JSON is unchanged.
     statuses_computed: bool | None = None
+    #: #801: the figure after planned changes with the current plan, and its
+    #: counts. OMITTED where there is nothing to recount.
+    after_planned_changes: list[str] | None = None
 
     @model_serializer(mode="wrap")
     def _drop_unset_rule_key(self, handler: Any) -> dict[str, Any]:
@@ -292,6 +295,7 @@ class AttackDashboardResponse(BaseModel):
                     "partial_reasons",
                     "awaiting_review_sentence",
                     "statuses_computed",
+                    "after_planned_changes",
                 }
             ),
         )

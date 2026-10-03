@@ -284,6 +284,9 @@ export interface AttackHeatmap {
   /** #554 R3 (Q4): the sentence printed beside the percentage; absent before
    *  R3 and when nothing awaits review. */
   awaiting_review_sentence?: string | null;
+  /** #801 (H1): the figure after planned changes and its counts, as the API
+   *  words them; absent or null where there is nothing to recount. */
+  after_planned_changes?: string[] | null;
 }
 
 export interface AttackDeliverable {

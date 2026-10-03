@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.attack.after import sentences as attack_after_sentences
 from app.attack.analytics import compute as attack_compute
 from app.attack.catalog import all_codes as attack_all_codes
 from app.attack.catalog import tactic_by_id as attack_tactic_by_id
@@ -37,6 +38,7 @@ from app.attack.coverage import ASSESSED
 from app.attack.exporters import awaiting_review_text as attack_awaiting_review_text
 from app.attack.exporters import build_context as attack_build_context
 from app.attack.exporters import coverage_measured
+from app.attack.exporters import coverage_pct_text as attack_coverage_pct_text
 from app.attack.exporters import partial_reason_counts as attack_partial_reason_counts
 from app.attack.exporters import retirement_sentences as attack_retirement_sentences
 from app.attack.parents import PARENT_CHILDREN as ATTACK_PARENT_CHILDREN
@@ -1335,6 +1337,16 @@ def attack_dashboard(
         parents_computed=True if rule else None,
         # #554 R3 (Q4): the deliverable's own sentence, from the same context.
         awaiting_review_sentence=attack_awaiting_review_text(deliverable_ctx),
+        # #801 (D1, D2, A1, A3): from the same context, over the LIVE plan.
+        after_planned_changes=(
+            attack_after_sentences(
+                deliverable_ctx.after,
+                attack_coverage_pct_text(deliverable_ctx.after.rollup),
+                current_plan=True,
+            )
+            if deliverable_ctx.after is not None
+            else None
+        ),
         statuses_computed=True if attack_statuses_computed(assessment) else None,
         # #646: the ONE derivation every surface calls, for the released assessment.
         ai_source=ai_mode_for(db, svc, assessment).as_api(),
