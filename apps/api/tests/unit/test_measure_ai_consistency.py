@@ -1114,3 +1114,5 @@ def test_a_zt_call_that_failed_without_tokens_leaves_the_spend_incomplete(world)
     assert report["failed_runs"][0]["run"] == 2
     assert report["tokens"]["output"] == 12
     assert report["tokens"]["complete"] is False
+    # Named per run: the failed run's own count is the incomplete one.
+    assert [r["tokens_complete"] for r in report["runs"]] == [True, False, True]

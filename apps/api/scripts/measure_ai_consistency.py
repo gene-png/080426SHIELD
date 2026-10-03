@@ -418,6 +418,18 @@ def summarize(
         "runs_ok": len(ok),
         "failed_runs": failed,
         "pairs": pairs,
+        # Per run, so a cost is sized from one run's spend and a run that
+        # could not count its own spend is named, not only folded into a total.
+        "runs": [
+            {
+                "run": i + 1,
+                "ok": r.ok,
+                "input_tokens": r.input_tokens,
+                "output_tokens": r.output_tokens,
+                "tokens_complete": r.tokens_complete,
+            }
+            for i, r in enumerate(runs)
+        ],
         "tokens": {
             "input": sum(r.input_tokens or 0 for r in runs),
             "output": sum(r.output_tokens or 0 for r in runs),
