@@ -14,7 +14,6 @@ When that text lands in `app/ai/jobs.py`, delete `_PLACEHOLDER_PROMPT` and
 from __future__ import annotations
 
 import json
-import tempfile
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -183,10 +182,13 @@ def _world(
     # Storage on local disk, never the real backend: finalizing the base's
     # deliverable uploads its PDF, and the real dependency is MinIO, which CI
     # does not run and a dev container would share (#815 CI). As
-    # `test_attack_acceptance` and `test_ai_runs_csf` do.
+    # `test_attack_acceptance` and `test_ai_runs_csf` do, it lives under
+    # pytest's `tmp_path`: the `app_parts` fixture's, the directory holding its
+    # SQLite database, so pytest cleans it up with the test.
     from app.routes.artifacts import _storage_dep
 
-    storage = LocalFilesystemStorage(Path(tempfile.mkdtemp(prefix="scenario-storage-")))
+    tmp_path = Path(sessions.kw["bind"].url.database).parent
+    storage = LocalFilesystemStorage(tmp_path / "storage")
     app.dependency_overrides[_storage_dep] = lambda: storage
     bearer = c.post(
         "/auth/register",
