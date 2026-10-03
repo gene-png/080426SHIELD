@@ -68,8 +68,14 @@ def test_a_removed_name_the_assessment_does_not_cite_is_refused_by_name() -> Non
 
 
 def test_an_empty_change_list_is_refused() -> None:
+    """Slice B (approved edit): the refusal moved from `resolve_removed` to
+    `require_change`, which sees the removals AND the additions."""
     with pytest.raises(scenario.EmptyChangeList):
-        scenario.resolve_removed(BASE, [])
+        scenario.require_change([], [])
+
+
+def test_no_removals_is_a_valid_removal_list_when_tools_are_added() -> None:
+    assert scenario.resolve_removed(BASE, []) == []
 
 
 def test_a_duplicate_removal_counts_once() -> None:
