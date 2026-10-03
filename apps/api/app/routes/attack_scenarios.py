@@ -95,6 +95,11 @@ NEEDS_CONFIRMED_MESSAGE = (
 UNAVAILABLE_MESSAGE = "AI analysis for what-ifs is not available yet."
 # B8 (14:58Z) replaces copy 17: a what-if may only add.
 EMPTY_MESSAGE = "Choose at least one tool to remove or add."
+# NEW copy, for the advisor.
+NOTHING_AFFECTED_MESSAGE = (
+    "Every technique the last confirmed assessment scored already has what these "
+    "tools do in place, so there is nothing to re-assess."
+)
 
 
 def _unknown_tool_message(name: str) -> str:
@@ -408,6 +413,15 @@ def create_scenario(
         set(scenario.affected_codes(base_rows, spellings))
         | set(scenario.open_functions(base_rows, added, removed=spellings))
     )
+    if not affected:
+        # Only possible when tools are only ADDED and every technique already
+        # has each declared function in place: nothing to ask, nothing to pay
+        # for. A removal always affects the techniques that cite it.
+        raise _refuse(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "scenario_nothing_affected",
+            NOTHING_AFFECTED_MESSAGE,
+        )
     s = AttackScenario(
         client_id=client.id,
         service_id=svc.id,

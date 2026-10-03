@@ -93,6 +93,26 @@ def test_a_change_of_nothing_is_refused_with_b8(app_parts, removed, added) -> No
     }
 
 
+def test_an_addition_that_could_change_nothing_is_refused_before_anything_is_stored(
+    app_parts, monkeypatch  # noqa: F811
+) -> None:
+    """Every technique already has the declared functions in place: nothing is
+    asked, nothing paid for, and no what-if is stored."""
+    w = _world(app_parts)
+    monkeypatch.setattr("app.attack.scenario.open_functions", lambda *a, **k: {})
+    r = _create(w, added=[_tool()])
+    assert r.status_code == 422, r.text
+    assert _error(r) == {
+        "reason": "scenario_nothing_affected",
+        "message": (
+            "Every technique the last confirmed assessment scored already has what these "
+            "tools do in place, so there is nothing to re-assess."
+        ),
+    }
+    listed = w.c.get(f"/attack/services/{w.svc_id}/scenarios", headers=w.h).json()
+    assert listed["scenarios"] == []
+
+
 def test_adding_a_tool_the_base_cites_is_refused_with_b4(app_parts) -> None:  # noqa: F811
     w = _world(app_parts)
     r = _create(w, added=[_tool("edr tool")])
