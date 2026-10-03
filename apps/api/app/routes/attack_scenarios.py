@@ -59,6 +59,7 @@ from app.models.user import User, UserRole
 # base assessment was offered when it ran: a tool added to or dropped from
 # the capability list since then is offered, or not, accordingly.
 from app.routes.attack import _capability_payload, _client_capability_membership, _llm_dep
+from app.routes.tech_debt import SECURITY_CLASSIFICATION_OVERRIDDEN
 from app.schemas.ai_runs import AiRunStarted, RunAiRequest
 from app.schemas.attack_scenario import (
     ScenarioBase,
@@ -79,12 +80,6 @@ _log = get_logger(__name__)
 router = APIRouter(prefix="/attack", tags=["attack"])
 
 _admin_required = Depends(require_role(UserRole.ADMIN))
-
-#: The audit action `routes/tech_debt.override_security_classification`
-#: writes. A COPY of that literal: if it is renamed there, the (ii) half of the
-#: drift check finds nothing and undercounts. `test_attack_scenario_routes`
-#: drives the real endpoint, so a rename goes red there.
-OVERRIDE_ACTION = "capability_item.security_classification_overridden"
 
 #: Concurrent batches, as `mitre_map` runs them.
 _MAX_WORKERS = 5
@@ -578,7 +573,7 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
         for i, at in db.execute(
             select(AuditEntry.target_id, func.max(AuditEntry.at))
             .where(
-                AuditEntry.action == OVERRIDE_ACTION,
+                AuditEntry.action == SECURITY_CLASSIFICATION_OVERRIDDEN,
                 AuditEntry.target_type == "capability_item",
                 AuditEntry.target_id.in_(item_ids),
             )

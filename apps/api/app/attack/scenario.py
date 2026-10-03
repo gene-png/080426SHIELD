@@ -439,13 +439,18 @@ def tools_added_since(
       moment was never recorded, so it cannot be checked;
     - an offered tool names no item, or an item whose row is gone.
 
-    Three limits, stated here and in #815's body, all approved:
+    Four limits, stated here and in #815's body:
     - **a RENAME after the base was approved is missed.** A renamed row keeps
       its `created_at`, so the tool reads as one the base had;
     - **lists approved before 0043 cannot be checked**, which is the second
       None above, never a guess;
     - **a discarded draft re-uploaded OVERCOUNTS.** Every re-uploaded tool is a
-      new row, so each reads as added though the base may have had it.
+      new row, so each reads as added though the base may have had it;
+    - **an override on a row ALREADY in scope OVERCOUNTS.** The audit entry
+      records that an override happened, not that it changed the row's scope:
+      overriding a provisional negative (in scope until a consultant confirms
+      it) or re-picking an in-scope row's functions after the base reads as
+      "brought into scope" though the base was offered that row (#815 review).
     """
     if base_approved_at is None:
         return None

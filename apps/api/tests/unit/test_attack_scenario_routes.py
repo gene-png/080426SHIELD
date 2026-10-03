@@ -37,6 +37,7 @@ from app.models.capability import CapabilityItem, CapabilityList, CapabilityList
 from app.models.deliverable import Deliverable
 from app.models.llm_call import LLMCall
 from app.models.service import Service, ServiceKind, ServiceStatus
+from app.routes.tech_debt import SECURITY_CLASSIFICATION_OVERRIDDEN
 from tests._ai_runs import DeferringRunner, defer_runs
 from tests._attack_rows import standalone_rows
 from tests.unit.test_ai_runs_attack import app_parts  # noqa: F401  (fixture)
@@ -926,13 +927,26 @@ def test_one_scenarios_result_never_stops_anothers_run_being_recorded(
     assert w.get(second)["ai_run_id"] == started.json()["run_id"]
 
 
+LATE = "Late Override Tool"
+EARLY = "Early Override Tool"
+
+
 def test_an_old_row_brought_into_scope_after_the_base_is_counted_and_one_before_is_not(
     app_parts, analysis_job  # noqa: F811
 ) -> None:
-    """The advisor's (ii), 08:57Z. Two rows created BEFORE the base, both
-    classified non-security, so neither was offered to the base. One is brought
-    into scope by the real override endpoint AFTER the base was approved: it
-    counts. The other's override was recorded BEFORE the base: it does not."""
+    """The advisor's (ii), 08:57Z. Two rows created BEFORE the base.
+
+    - LATE is a CONFIRMED non-security row (`security_class_confirmed`), so it
+      is genuinely OUT of scope and offered to nobody -- until the real
+      override endpoint brings it in, AFTER the base was approved. It counts.
+    - EARLY was overridden BEFORE the base was approved, so it has been in
+      scope throughout, exactly as the override leaves a row. It does not.
+
+    The scope precondition is asserted through the membership rule itself,
+    not assumed. Which tool counted is asserted where the GET names it: the
+    technique credited to it."""
+    from app.routes.attack import _client_capability_membership
+
     w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
     with w.sessions() as db:
         cl = db.execute(select(CapabilityList)).scalars().one()
@@ -940,24 +954,27 @@ def test_an_old_row_brought_into_scope_after_the_base_is_counted_and_one_before_
         base_at = a.approved_at
         late = CapabilityItem(
             capability_list_id=cl.id,
-            name="Late Override Tool",
+            name=LATE,
             security_related=False,
+            security_class_confirmed=True,
             created_at=base_at - timedelta(days=30),
         )
+        # As `override_security_classification` leaves a row.
         early = CapabilityItem(
             capability_list_id=cl.id,
-            name="Early Override Tool",
+            name=EARLY,
             security_related=True,
             security_functions=["detect"],
+            security_class_confirmed=False,
             created_at=base_at - timedelta(days=30),
         )
         db.add_all([late, early])
         db.flush()
-        # The early row's override, recorded before the base was approved:
-        # the world, written as the audit spine writes it.
+        # EARLY's override, recorded before the base was approved: the world,
+        # written as the audit spine writes it.
         db.add(
             AuditEntry(
-                action="capability_item.security_classification_overridden",
+                action=SECURITY_CLASSIFICATION_OVERRIDDEN,
                 target_type="capability_item",
                 target_id=early.id,
                 at=base_at - timedelta(days=1),
@@ -965,16 +982,25 @@ def test_an_old_row_brought_into_scope_after_the_base_is_counted_and_one_before_
         )
         db.commit()
         late_id = str(late.id)
+        offered = {
+            p.capability.name for p in _client_capability_membership(db, uuid.UUID(w.cid)).sent
+        }
+    assert LATE not in offered and EARLY in offered, offered  # the precondition
     r = w.c.post(
         f"/tech-debt/capability-items/{late_id}/security-classification/override",
         headers=w.h,
         json={"security_functions": ["detect"]},
     )
     assert r.status_code == 200, r.text
-    w.answer({w.cc: [_flags(w.cc, SIEM, d=True)]})
+    # A lost Detect and Prevent; C lost Detect. The AI credits each old row.
+    w.answer({w.cc: [_flags(w.cc, LATE, d=True)], w.a: [_flags(w.a, EARLY, d=True)]})
     sid = w.create([EDR]).json()["id"]
     body = _run_to_completion(w, sid)
     assert body["tools_added_since_base"] == 1
+    lists = {t["technique_code"]: t for t in body["techniques"]}
+    assert lists[w.cc]["credited_added_tools"] == [LATE]
+    assert lists[w.a]["detection_tools"] == [EARLY]
+    assert lists[w.a]["credited_added_tools"] == []
 
 
 class _CountingLimiter:
