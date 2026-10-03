@@ -24,7 +24,9 @@ from app.ai.engine import get_job, run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.attack.catalog_version import catalog_mismatch_message, require_current_catalog
+from app.attack.computed import effective_coverage
 from app.attack.parents import is_computed_parent
+from app.attack.release_readiness import unreviewed_codes as attack_unreviewed_codes
 from app.attack.rules import parents_computed
 from app.audit import audit
 from app.csf.gap import resolve_target_tier
@@ -188,6 +190,19 @@ def _latest_register(db: Session, client_id: uuid.UUID) -> RiskRegister | None:
     ).scalar_one_or_none()
 
 
+def _unreviewed_sentence(n: int) -> str:
+    """#554 R3: why a register cannot be generated while the ATT&CK review queue
+    holds rows. ONE sentence for the gate and the refusal (approved by the
+    advisor 01:35Z), so the page never says something generate contradicts."""
+    return (
+        f"The Risk Register cannot be generated yet: {n} ATT&CK "
+        f"{'technique has' if n == 1 else 'techniques have'} a computed status that "
+        "differs from the AI's suggestion and has not been reviewed. "
+        f"Review {'it' if n == 1 else 'them'} in the ATT&CK Computed status review "
+        "panel, then generate again."
+    )
+
+
 def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
     """Whether the Risk Register can be generated, in THREE dimensions (#237).
 
@@ -246,6 +261,18 @@ def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
     # separate field, not `synthesizable_missing`: that list is rendered as
     # "cannot be generated until these are approved", and this input already is.
     attack_catalog_mismatch = catalog_mismatch_message(db, attack) if attack is not None else None
+    # #554 R3, the same precedent: synthesis refuses an assessment whose computed
+    # statuses await review (`_gather_findings`), so the gate asks the SAME
+    # predicate and carries the SAME sentence. Asked only of a current catalog,
+    # because synthesis refuses a stale one first.
+    unreviewed = (
+        attack_unreviewed_codes(db, attack)
+        if attack is not None and attack_catalog_mismatch is None
+        else ()
+    )
+    attack_computed_status_unreviewed = (
+        _unreviewed_sentence(len(unreviewed)) if unreviewed else None
+    )
     finalized_csf = _finalized_for_synthesis(db, CsfAssessment, client_id) is not None
     finalized_zt = _finalized_for_synthesis(db, ZtAssessment, client_id) is not None
     for label, present, finalized in (
@@ -274,6 +301,7 @@ def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
         not_finalized=not_finalized,
         synthesizable_missing=synthesizable_missing,
         attack_catalog_mismatch=attack_catalog_mismatch,
+        attack_computed_status_unreviewed=attack_computed_status_unreviewed,
     )
 
 
@@ -479,10 +507,28 @@ def _gather_findings(
         # "ATT&CK T1649.001" is not a technique, and a T1558 row was answered
         # against the swapped name. Refused, never relabelled by ID (D-091).
         require_current_catalog(db, attack)
-        rows = (
+        # #554 R3, the advisor's ruling (00:35Z): FAIL-CLOSED. An APPROVED
+        # assessment whose computed statuses nobody has reviewed is not released
+        # (`release_readiness`), and synthesis must not carry those statuses into
+        # a register the client can export either. Refused, typed, rather than
+        # excluded: an exclusion would yield a register silently missing ATT&CK.
+        unreviewed = attack_unreviewed_codes(db, attack)
+        if unreviewed:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "reason": "attack_computed_status_unreviewed",
+                    "message": _unreviewed_sentence(len(unreviewed)),
+                    "unreviewed": list(unreviewed),
+                },
+            )
+        # #554 R3: computed statuses where they apply, so a finding's status is
+        # the one the client's dashboard and deliverable show.
+        rows = effective_coverage(
+            attack,
             db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == attack.id))
             .scalars()
-            .all()
+            .all(),
         )
         # PENDING-REVIEW ROWS ARE CITABLE HERE, AND THAT IS AN OPEN QUESTION
         # RATHER THAN AN OVERSIGHT -- stated at the site because an unstated

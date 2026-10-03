@@ -162,6 +162,8 @@ def _world(parent_rules: int | None):
         version=1,
         status=AttackAssessmentStatus.APPROVED,
         parent_rules=parent_rules,
+        # #554 R3: models an approved/released pre-R3 assessment, backfilled by 0059.
+        status_rules=1,
     )
     standalone = iter(_standalone_codes())
     rows: list[AttackCoverage] = []
@@ -316,7 +318,12 @@ def test_the_pdf_counts_the_partials_by_reason(parent_rules) -> None:
 
 def test_a_document_with_no_partial_has_no_reason_table() -> None:
     a = AttackAssessment(
-        id=uuid.UUID(int=1), service_id=uuid.UUID(int=2), version=1, parent_rules=2
+        id=uuid.UUID(int=1),
+        service_id=uuid.UUID(int=2),
+        version=1,
+        parent_rules=2,
+        # #554 R3: models an approved/released pre-R3 assessment, backfilled by 0059.
+        status_rules=1,
     )
     rows = [
         AttackCoverage(

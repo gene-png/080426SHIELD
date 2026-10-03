@@ -61,6 +61,9 @@ test("client views a released MITRE ATT&CK coverage dashboard", async ({
       // #622: approve refuses a Partial with no reason, so a consultant now
       // picks one. A real Partial code from `coverage.REASON_CODES`.
       body.reason_code = "missing_control_category";
+      // #554 R3: a status is computed from Detect / Prevent / Respond, so a
+      // Partial needs something in place; detection alone makes it Partial.
+      body.detection_tools = ["CrowdStrike Falcon"];
     } else if (status === "gap") {
       body.rationale = "Container runtime detection gap — no coverage today.";
     }

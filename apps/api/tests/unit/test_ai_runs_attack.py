@@ -623,6 +623,14 @@ LOCK_DRIVERS: dict[tuple[str, str], Callable[[World], Any]] = {
     ("POST", "/attack/services/{service_id}/deliverables/finalize"): (
         lambda w: w.c.post(f"/attack/services/{w.svc_id}/deliverables/finalize", headers=w.h)
     ),
+    # #554 R3: a run rewrites the stored suggestions the review compares against.
+    ("POST", "/attack/assessments/{assessment_id}/computed-status-review"): (
+        lambda w: w.c.post(
+            f"/attack/assessments/{w.assessment_id}/computed-status-review",
+            headers=w.h,
+            json={"reviews": [{"code": w.codes[0], "computed_status": "gap"}]},
+        )
+    ),
 }
 
 # Mutating ATT&CK routes the lock deliberately leaves open, each for a reason.

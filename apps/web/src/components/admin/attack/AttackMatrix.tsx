@@ -171,7 +171,10 @@ export function AttackMatrix({
                               ].join(" ")}
                             >
                               <StatusBadge
-                                status={cov?.status ?? null}
+                                // #554 R3: the status the heatmap counts.
+                                status={
+                                  cov?.computed_status ?? cov?.status ?? null
+                                }
                                 pendingReview={cov?.pending_review ?? false}
                               />
                               <span className="flex flex-col">

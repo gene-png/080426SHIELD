@@ -65,6 +65,8 @@ def world(parent_rules: int | None):
         version=3,
         status=AttackAssessmentStatus.APPROVED,
         parent_rules=parent_rules,
+        # #554 R3: models an approved/released pre-R3 assessment, backfilled by 0059.
+        status_rules=1,
     )
     cycle = ["covered", "partial", "gap", "not_applicable", None]
     coverage = []

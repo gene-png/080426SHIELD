@@ -12,6 +12,7 @@ import {
 
 import {
   approveAssessment,
+  reviewComputedStatuses,
   AttackProxyError,
   createAssessment,
   discardAssessment,
@@ -25,7 +26,7 @@ import {
   patchCoverage,
   runAttackAi,
 } from "@/lib/attack/client";
-import type { AttackRun } from "@/lib/attack/client";
+import type { AttackRun, ComputedStatusReview } from "@/lib/attack/client";
 import type { AiServes } from "@/lib/aiRuns/types";
 import { useAiRun } from "@/lib/aiRuns/useAiRun";
 import type {
@@ -49,6 +50,7 @@ import { RunAiGuard } from "@/components/admin/RunAiGuard";
 
 import { AttackAiInputsPanel } from "./AttackAiInputsPanel";
 import { AttackCitationAccounting } from "./AttackCitationAccounting";
+import { AttackComputedReviewPanel } from "./AttackComputedReviewPanel";
 import { AttackDeliverableCard } from "./AttackDeliverableCard";
 import { AttackHeatmapCard } from "./AttackHeatmapCard";
 import { AttackMatrix } from "./AttackMatrix";
@@ -86,6 +88,29 @@ function describeError(err: unknown): string {
  */
 const RUN_OUTCOME_UNKNOWN =
   "We couldn't confirm whether the AI run finished. It may still complete and fill in technique rows. Reload the page later and check step 2, Review every technique and adjust, before running it again. Run AI stays off on this page until you reload.";
+
+/**
+ * #554 R3: what the review panel says after it re-read itself because what it
+ * showed went stale -- a computed status moved, or a row left the queue -- between
+ * loading and the click. Approved by the advisor 01:35Z (#808 copy, item 4 and
+ * A11).
+ */
+function reviewRefreshedMessage(
+  reason: string,
+  codes: string[],
+  refreshed: boolean,
+): string {
+  const shown = codes.slice(0, 10).join(", ");
+  const more = codes.length > 10 ? ` and ${codes.length - 10} more` : "";
+  const what =
+    reason === "codes_not_in_review_queue"
+      ? `Some techniques are no longer awaiting review (${shown}${more}).`
+      : `The computed status of some techniques changed after the panel loaded (${shown}${more}).`;
+  // The failed re-read's ending: approved by the advisor 02:10Z.
+  return refreshed
+    ? `${what} The panel has been refreshed; review again.`
+    : `${what} The panel could not be refreshed; reload the page and review again.`;
+}
 
 /** The machine-readable `reason` on a typed error envelope (D-016), if present. */
 function errorReason(err: unknown): string | null {
@@ -151,7 +176,7 @@ export function AttackWorkspace({
   const { messages: refreshMessages, begin: beginRefresh } =
     useRefreshFailures();
   const [busy, setBusy] = React.useState<
-    "create" | "approve" | "run" | "discard" | null
+    "create" | "approve" | "review" | "run" | "discard" | null
   >(null);
   // Set when the API REFUSES a run (typed 409). Distinct from loadError: the
   // page is fine, the prerequisite is not.
@@ -345,9 +370,11 @@ export function AttackWorkspace({
   }
 
   /** Re-read the assessment once no write is in flight (#620 round 2,
-   *  finding 7). NEVER throws: it runs after a write that already landed, so
-   *  a failed re-read is reported as that -- a saved change whose parent may
-   *  be stale -- and never as a failed save or an unhandled rejection. */
+   *  finding 7). Asked for after a parent's input is edited, and after every
+   *  review write -- recorded or refused (#554 R3). NEVER throws: a failed
+   *  re-read is reported as exactly that -- what is shown may be out of date --
+   *  and never as a failed save or an unhandled rejection. It claims nothing
+   *  about a save, because after a refused review nothing was saved. */
   async function refetchWhenQuiet(): Promise<void> {
     if (!refetchWanted.current || editsInFlight.current > 0) return;
     refetchWanted.current = false;
@@ -359,7 +386,9 @@ export function AttackWorkspace({
       a = await fetchLatestAssessment(serviceId);
     } catch {
       attempt.note(
-        "Your change was saved, but the assessment could not be re-read, so a parent technique's status may be out of date. Reload to see it.",
+        // Copy for the advisor (#808 round 6): true after a parent edit, a
+        // recorded review and a refused one alike.
+        "The assessment could not be re-read, so what is shown may be out of date. Reload to see it.",
       );
       return;
     }
@@ -498,12 +527,71 @@ export function AttackWorkspace({
     if (!assessment) return;
     setActionError(null);
     setBusy("approve");
+    // Same shape as the review's snapshot (a concurrent edit can be reverted on
+    // screen); filed as #809.
     assessmentSeq.current += 1;
     try {
       const next = await approveAssessment(assessment.id);
       setAssessment(next);
     } catch (err) {
       setActionError(describeError(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function onReview(reviews: ComputedStatusReview[]): Promise<void> {
+    return trackWrite(() => onReviewWrite(reviews));
+  }
+
+  /** #554 R3: record the review of what the panel showed. */
+  async function onReviewWrite(reviews: ComputedStatusReview[]): Promise<void> {
+    if (!assessment) return;
+    setActionError(null);
+    setBusy("review");
+    // Bumped so a load already in flight (the page's own, or one started by
+    // `onRunFinishedElsewhere`) cannot overwrite the review's result when it
+    // lands late. The result itself is applied unconditionally, like approve's:
+    // a row edit made while the review is in flight also bumps the counter, and
+    // guarding on it would drop a review the server recorded (#808 round 3).
+    assessmentSeq.current += 1;
+    // The snapshot applied below may predate a row edit -- one in flight when
+    // the review was clicked, or one made since -- and would then revert it on
+    // screen. So after ANY review write, ask for one quiet re-read once every
+    // write is done (`trackWrite`'s trailing `refetchWhenQuiet`): one extra GET
+    // per review, correct in every interleaving (#808 rounds 4 and 5).
+    const rereadAfter = () => {
+      refetchWanted.current = true;
+    };
+    try {
+      const next = await reviewComputedStatuses(assessment.id, reviews);
+      setAssessment(next);
+      rereadAfter();
+    } catch (err) {
+      const reason = errorReason(err);
+      if (
+        reason === "computed_status_changed" ||
+        reason === "codes_not_in_review_queue"
+      ) {
+        // What the panel showed is stale, so it re-reads itself rather than
+        // telling the consultant to find a reload control.
+        const codes = (
+          (err as AttackProxyError).payload as { error?: { codes?: string[] } }
+        ).error?.codes;
+        // The re-read can fail too, and must say so: an unhandled rejection
+        // here would leave stale statuses and an enabled button, every click
+        // silent.
+        try {
+          const latest = await fetchLatestAssessment(serviceId);
+          setAssessment(latest);
+          rereadAfter();
+          setActionError(reviewRefreshedMessage(reason, codes ?? [], true));
+        } catch {
+          setActionError(reviewRefreshedMessage(reason, codes ?? [], false));
+        }
+      } else {
+        setActionError(describeError(err));
+      }
     } finally {
       setBusy(null);
     }
@@ -951,6 +1039,13 @@ export function AttackWorkspace({
             }
           >
             <div className="flex flex-col gap-3">
+              {/* #554 R3: the release gate's review queue, named by the release
+                  refusal, so it sits in the step where that refusal is met. */}
+              <AttackComputedReviewPanel
+                assessment={assessment}
+                busy={busy !== null || runInProgress}
+                onReview={onReview}
+              />
               <StaleDocsNudge stale={assessment.documents_stale} />
               <AttackDeliverableCard
                 serviceId={serviceId}

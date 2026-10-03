@@ -676,7 +676,7 @@ describe("AttackWorkspace, the parent re-read after round 3 (#620)", () => {
     fireEvent.click(screen.getByText("set gap"));
     expect(
       await screen.findByText(
-        "Your change was saved, but the assessment could not be re-read, so a parent technique's status may be out of date. Reload to see it.",
+        "The assessment could not be re-read, so what is shown may be out of date. Reload to see it.",
       ),
     ).toBeInTheDocument();
     await vi.waitFor(() =>
