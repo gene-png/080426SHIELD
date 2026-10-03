@@ -270,6 +270,21 @@ def test_a_swap_with_one_plausible_division_reports_that_divisions_own_failure()
     assert [(n.reason, n.name) for n in parsed.not_understood] == [("already_clients", "SIEM Tool")]
 
 
+def test_a_swap_is_not_divided_where_the_other_division_is_a_duplicate() -> None:
+    """The reviewer's second row: division 2's removal repeats the one before
+    it, which is no reason to take division 1."""
+    cited = ("Defender Suite", "Defender Suite for Endpoint")
+    parsed = _parse(
+        "retire Defender Suite for Endpoint; swap Defender Suite for Endpoint for XDR Suite",
+        cited=cited,
+        client=cited,
+    )
+    assert (parsed.removed, parsed.added) == (["Defender Suite for Endpoint"], [])
+    assert _reasons(parsed) == [
+        ("swap Defender Suite for Endpoint for XDR Suite", "ambiguous_split")
+    ]
+
+
 def test_a_swap_that_divides_one_way_names_why_its_removal_fails() -> None:
     """One "for", so one division: its removal names no cited tool, and the
     admin is told that, rather than that the form was not recognised."""
@@ -287,6 +302,15 @@ def test_overlapping_cited_names_are_not_chosen_between() -> None:
     )
     assert parsed.removed == ["SIEM Tool"]
     assert _reasons(parsed) == [("retire Identity and Access Manager", "ambiguous_tool")]
+
+
+def test_a_removal_list_never_prefers_the_longer_held_name() -> None:
+    """The reviewer's row: "Access Manager and Audit Log" is cited, and so are
+    "Access Manager" and "Audit Log". The list is not read as the one tool."""
+    cited = ("EDR Tool", "Access Manager", "Audit Log", "Access Manager and Audit Log")
+    parsed = _parse("retire EDR Tool and Access Manager and Audit Log", cited=cited, client=cited)
+    assert parsed.removed == ["EDR Tool"]
+    assert _reasons(parsed) == [("Access Manager and Audit Log", "ambiguous_tool")]
 
 
 def test_words_naming_one_cited_tool_and_several_are_not_a_guess() -> None:

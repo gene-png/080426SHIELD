@@ -48,11 +48,17 @@ def test_a_description_becomes_a_proposed_change_list(app_parts) -> None:  # noq
     assert r.json() == {"removed": [EDR, SIEM], "added": ["XDR Suite"], "not_understood": []}
 
 
-def test_a_typed_nul_is_quoted_back_not_a_500(app_parts) -> None:  # noqa: F811
+@pytest.mark.parametrize(
+    "text",
+    [
+        "retire " + chr(0) + "9" + chr(0),  # the reviewer's exact body
+        "remove " + chr(0) + "0" + chr(0),
+    ],
+)
+def test_a_typed_nul_is_quoted_back_not_a_500(app_parts, text) -> None:  # noqa: F811
     """#824 narrow review: a NUL in the text once reached a lookup the matcher
     had planted, and raised. It is now text like any other."""
     w = _world(app_parts)
-    text = "remove " + chr(0) + "0" + chr(0)
     r = _parse(w, text)
     assert r.status_code == 200, r.text
     body = r.json()
