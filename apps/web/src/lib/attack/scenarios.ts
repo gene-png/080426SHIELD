@@ -14,6 +14,10 @@ export interface ScenarioRollup {
   pending_review: number;
   scored_count: number;
   catalogue_count: number;
+  /** Q4 (R3): techniques scored as if tools awaiting review were not in place. */
+  awaiting_review: number;
+  /** Q4's approved sentence, from the api; null at zero. */
+  awaiting_review_text: string | null;
   /** #621's outside counts; null for a base approved before #620's rules. */
   unable_to_determine: number | null;
   outside_control_surface: number | null;

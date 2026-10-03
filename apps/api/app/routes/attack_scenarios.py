@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import functools
 import uuid
+from collections.abc import Callable
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import delete, select, update
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.ai.batching import run_batches
@@ -35,6 +36,7 @@ from app.ai.runs import (
 )
 from app.attack import scenario
 from app.attack.citations import Candidate
+from app.attack.computed import awaiting_review_sentence
 from app.attack.rules import parents_computed
 from app.audit import audit
 from app.config import get_settings
@@ -48,10 +50,12 @@ from app.models.client import Client
 from app.models.service import ServiceKind
 from app.models.user import User, UserRole
 
-# The egress projection and the LLM dependency are mitre_map's own, imported
-# rather than copied: the what-if must offer the model exactly the tools, and
-# the same four fields per tool, that the assessment it compares with was
-# offered, and must call the provider the same way.
+# The egress projection and the LLM builder are mitre_map's own, imported
+# rather than copied: the what-if offers the model the same four fields per
+# tool, chosen by the same membership rules, and calls the provider the same
+# way. It reads the client's CURRENT Tech Debt membership, NOT the set the
+# base assessment was offered when it ran: a tool added to or dropped from
+# the capability list since then is offered, or not, accordingly.
 from app.routes.attack import _capability_payload, _client_capability_inputs, _llm_dep
 from app.schemas.ai_runs import AiRunStarted, RunAiRequest
 from app.schemas.attack_scenario import (
@@ -65,7 +69,7 @@ from app.schemas.attack_scenario import (
     ScenarioSummary,
     ScenarioTechnique,
 )
-from app.security.rate_limit import enforce_ai_rate_limit
+from app.security.rate_limit import RateLimiter, get_rate_limiter
 from app.tenant import require_service_in_tenant
 
 _log = get_logger(__name__)
@@ -113,8 +117,11 @@ def _scenario_or_404(db: Session, scenario_id: uuid.UUID, client: Client) -> Att
     return found
 
 
-def _rollup(r: Any, *, states_outside: bool) -> ScenarioRollup:
+def _rollup(r: Any, *, states_outside: bool, awaiting: int) -> ScenarioRollup:
     return ScenarioRollup(
+        awaiting_review=awaiting,
+        # Q4's approved sentence, from the one function every surface calls.
+        awaiting_review_text=awaiting_review_sentence(awaiting),
         coverage_pct=r.coverage_pct,
         covered=r.covered,
         partial=r.partial,
@@ -189,8 +196,12 @@ def _serialize(db: Session, s: AttackScenario) -> ScenarioResponse:
             if run is not None and run.status is AiRunStatus.FAILED
             else None
         ),
-        today=_rollup(comparison.today, states_outside=outside),
-        after=_rollup(comparison.after, states_outside=outside) if rows else None,
+        today=_rollup(comparison.today, states_outside=outside, awaiting=comparison.today_awaiting),
+        after=(
+            _rollup(comparison.after, states_outside=outside, awaiting=comparison.after_awaiting)
+            if rows
+            else None
+        ),
         differences=[
             ScenarioDifference(
                 technique_code=code, today=before, after=after, scored_higher=code in higher
@@ -374,6 +385,12 @@ def discard_scenario(
     return _serialize(db, s)
 
 
+def _llm_builder(db: Annotated[Session, Depends(get_db)]) -> Callable[[], LLMClient]:
+    """The provider, built only when called: mitre_map's `_llm_dep`, deferred
+    until the run route has made every refusal (#815 review, F4)."""
+    return lambda: _llm_dep(db)
+
+
 def _refuse_unless_runnable(db: Session, s: AttackScenario) -> None:
     if s.state is AttackScenarioState.DISCARDED:
         raise _refuse(
@@ -407,13 +424,18 @@ def run_scenario(
     user: Annotated[User, _admin_required],
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],
-    llm: Annotated[LLMClient, Depends(_llm_dep)],
+    build_llm: Annotated[Callable[[], LLMClient], Depends(_llm_builder)],
     runner: Annotated[Runner, Depends(get_ai_run_runner)],
-    _rl: Annotated[None, Depends(enforce_ai_rate_limit)],
+    limiter: Annotated[RateLimiter, Depends(get_rate_limiter)],
     body: RunAiRequest | None = None,
 ) -> AiRunStarted:
     """Every refusal that needs no AI is made here, synchronously, before
-    anything is spent. The work is `_scenario_run_work`, in the background."""
+    anything is spent. The work is `_scenario_run_work`, in the background.
+
+    The rate limit and the provider are taken HERE, in the body, after every
+    refusal, not as dependencies: a dependency runs before the body, so a run
+    the 503 refuses used to spend a rate-limit token and build a provider
+    (#815 review, F4)."""
     s = _scenario_or_404(db, scenario_id, client)
     if not scenario.analysis_available():
         raise _refuse(
@@ -423,6 +445,8 @@ def run_scenario(
         )
     serves = require_serves(body.serves if body else None)
     _refuse_unless_runnable(db, s)
+    limiter.enforce_ai(client.id)
+    llm = build_llm()
     started = start_run(
         db,
         llm=llm,
@@ -480,21 +504,20 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
     base_rows = _base_rows(db, base.id)
     removed = list(s.change_list.get("removed") or [])
     affected = list(s.affected_codes)
-    capability_inputs = _client_capability_inputs(db, ctx.client_id)
-    inputs = scenario.batch_inputs(
-        base_rows,
-        affected,
+    mode = get_settings().shield_redaction_mode
+    # Every spelling of a removed tool goes, the redacted one included (F2),
+    # from what the model is offered AND from what the resolver may confirm,
+    # so a removed tool the AI names anyway is counted, never credited.
+    kept = scenario.remaining_tools(
+        _client_capability_inputs(db, ctx.client_id),
         removed,
-        _capability_payload(capability_inputs),
-        size=scenario.BATCH_SIZE,
+        client_org_name=client.legal_name,
+        redaction_mode=mode,
     )
-    # The resolver is offered the remaining tools only, so a removed tool the
-    # AI names anyway resolves to nothing and is counted, never credited.
-    remaining = [
-        Candidate(name=c.name, vendor=c.vendor)
-        for c in capability_inputs
-        if not scenario.is_removed(c.name, removed)
-    ]
+    inputs = scenario.batch_inputs(
+        base_rows, affected, removed, _capability_payload(kept), size=scenario.BATCH_SIZE
+    )
+    remaining = [Candidate(name=c.name, vendor=c.vendor) for c in kept]
     out = run_batches(
         db,
         ctx.llm,
@@ -525,7 +548,7 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
                 available=remaining,
                 lost=inputs[i]["lost_functions"],
                 client_org_name=client.legal_name,
-                redaction_mode=get_settings().shield_redaction_mode,
+                redaction_mode=mode,
             )
         except scenario.ScenarioShapeError:
             # Answered, but not in the contract's shape: its techniques are not
@@ -540,10 +563,18 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
     db.refresh(s)
     if s.state is AttackScenarioState.DISCARDED:
         raise RunFailed("scenario_discarded", "This what-if was set aside before the run finished.")
+    # The run route checks this before `start_run`, but a run completing in
+    # between could let a second one start. Its answer is never written over
+    # the first's: refused, typed, nothing deleted (#815 review, F5).
+    if _scenario_lists(db, s.id):
+        raise RunFailed(
+            "scenario_already_run",
+            "This what-if was analysed by another run while this one was working, "
+            "so this run's result was not kept.",
+        )
     by_code: dict[str, list[dict[str, Any]]] = {}
     for row in merged.accepted:
         by_code.setdefault(row["technique_code"], []).append(row)
-    db.execute(delete(AttackScenarioRow).where(AttackScenarioRow.scenario_id == s.id))
     for code in affected:
         lists = merged.lists[code]
         db.add(

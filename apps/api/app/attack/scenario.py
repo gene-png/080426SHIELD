@@ -29,11 +29,11 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.ai.redact import RedactionMode
+from app.ai.redact import RedactionMode, redact_for_ai
 from app.attack.analytics import CoverageRollup, compute
 from app.attack.catalog import all_codes
 from app.attack.citations import Candidate, CitationResolver
-from app.attack.computed import effective_coverage
+from app.attack.computed import awaiting_review_count, effective_coverage
 from app.attack.pending import pending_codes, row_tools
 from app.attack.release_readiness import unreviewed_codes
 from app.attack.rules import parents_computed, statuses_computed
@@ -72,6 +72,47 @@ def is_removed(name: object, removed: Iterable[str]) -> bool:
     """Whether `name` is one of the removals, compared as everything here
     compares tool names: trimmed and case-folded."""
     return _key(name) in {_key(n) for n in removed}
+
+
+def _forms(
+    name: str, *, client_org_name: str | None, redaction_mode: RedactionMode, name_hints
+) -> set[str]:
+    """A tool name as stored and as the model is SHOWN it, keyed as this
+    module keys names. The shown form is asked of `redact_for_ai`, the egress's
+    own redactor, with the egress's mode and hints -- what `CitationResolver`
+    asks when it indexes its aliases, so the two cannot disagree."""
+    shown, _counts = redact_for_ai(
+        name,
+        mode=redaction_mode,
+        client_org_name=client_org_name or None,
+        name_hints=tuple(name_hints),
+    )
+    return {_key(name), _key(shown)}
+
+
+def remaining_tools(
+    candidates: Iterable[Any],
+    removed: Iterable[str],
+    *,
+    client_org_name: str | None,
+    redaction_mode: RedactionMode,
+    name_hints: Iterable[str] = (),
+) -> list[Any]:
+    """The client's tools that stay, by `.name`. A tool is REMOVED when any of
+    its spellings -- stored, or as the model is shown it -- is a spelling of a
+    removed tool. A list can hold both `<Client> SOC Platform` and
+    `[CLIENT] SOC Platform` (`citations.py`, the alias tier), and the
+    membership dedupes by case only, so removing one by name left the other
+    available and confirmable (#815 review, F2)."""
+    hints = tuple(name_hints)
+
+    def forms(n: str) -> set[str]:
+        return _forms(
+            n, client_org_name=client_org_name, redaction_mode=redaction_mode, name_hints=hints
+        )
+
+    gone = set().union(*(forms(r) for r in removed)) if removed else set()
+    return [c for c in candidates if not (forms(c.name) & gone)]
 
 
 def _cited(rows: Iterable[Any]) -> dict[str, str]:
@@ -168,7 +209,9 @@ def parse_delta(
             dropped["not_an_object"] += 1
             continue
         code = row.get("technique_code")
-        if code not in asked_set:
+        # `isinstance` first: a list or dict is unhashable, and `in` on a set
+        # would raise and lose every batch's answer (#815 review, F1).
+        if not isinstance(code, str) or code not in asked_set:
             dropped["technique_outside_slice"] += 1
             continue
         resolution = resolver.resolve(row.get("tool"))
@@ -238,28 +281,40 @@ class Comparison:
     today: CoverageRollup
     after: CoverageRollup
     changed: list[tuple[str, str | None, str | None]]
+    #: Q4: techniques scored as if tools awaiting review were not in place.
+    today_awaiting: int = 0
+    after_awaiting: int = 0
 
 
-def _rollup(assessment: Any, rows: Iterable[Any]) -> tuple[CoverageRollup, dict[str, str | None]]:
+def _rollup(
+    assessment: Any, rows: Iterable[Any]
+) -> tuple[CoverageRollup, dict[str, str | None], int]:
     """The client dashboard's own derivation (`routes/clients.attack_dashboard`):
-    R3's computed statuses, the one pending set, the one rollup."""
+    R3's computed statuses, the one pending set, the one rollup, and Q4's
+    awaiting-review count (`computed.awaiting_review_count`)."""
     valid = all_codes()
     eff = effective_coverage(assessment, rows)
     statuses = {r.technique_code: r.status for r in eff if r.technique_code in valid}
     withheld = pending_codes(eff, parents_computed=parents_computed(assessment))
-    return compute(statuses, withheld), statuses
+    return compute(statuses, withheld), statuses, awaiting_review_count(eff)
 
 
 def compare(assessment: Any, base_rows: Sequence[Any], what_if_rows: Sequence[Any]) -> Comparison:
     """Both sides computed the same way from the same assessment's rules."""
-    today, before = _rollup(assessment, base_rows)
-    after, now = _rollup(assessment, what_if_rows)
+    today, before, today_awaiting = _rollup(assessment, base_rows)
+    after, now, after_awaiting = _rollup(assessment, what_if_rows)
     changed = [
         (code, before.get(code), now.get(code))
         for code in sorted(set(before) | set(now))
         if before.get(code) != now.get(code)
     ]
-    return Comparison(today=today, after=after, changed=changed)
+    return Comparison(
+        today=today,
+        after=after,
+        changed=changed,
+        today_awaiting=today_awaiting,
+        after_awaiting=after_awaiting,
+    )
 
 
 #: The order "higher" means: Gap < Partial < Covered. Not applicable and an

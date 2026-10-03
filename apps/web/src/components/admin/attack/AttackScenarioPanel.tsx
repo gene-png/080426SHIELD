@@ -123,6 +123,11 @@ function Rollup({
         {r.covered} covered, {r.partial} partial, {r.gap} gap
         {r.pending_review > 0 ? `, ${r.pending_review} pending review` : ""}
       </p>
+      {r.awaiting_review_text ? (
+        <p className="text-sm text-status-warning-fg">
+          {r.awaiting_review_text}
+        </p>
+      ) : null}
       {outsideAssessedText(r) === null ? null : (
         <p className="text-sm text-ink-secondary">{outsideAssessedText(r)}</p>
       )}

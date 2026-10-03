@@ -36,6 +36,8 @@ const ROLLUP = {
   catalogue_count: 3,
   unable_to_determine: 0,
   outside_control_surface: 1,
+  awaiting_review: 0,
+  awaiting_review_text: null,
 };
 
 function scenario(over: Record<string, unknown> = {}) {
@@ -171,6 +173,10 @@ describe("AttackScenarioPanel", () => {
     const run = calls.find((c) => c.url.endsWith("/s1/run"));
     expect(JSON.parse(String(run?.init?.body))).toEqual({ serves: "offline" });
     expect(screen.getByText("With these changes")).toBeTruthy();
+    // Q4: shown only where the api sends the sentence (it sends none at zero).
+    expect(screen.getByTestId("scenario-today").textContent).not.toContain(
+      "awaiting review",
+    );
     // #554: the outside counts beside each percentage, never dropped at zero.
     expect(screen.getByTestId("scenario-after").textContent).toContain(
       "Not verified 0, Outside control surface 1.",
@@ -212,6 +218,17 @@ describe("AttackScenarioPanel", () => {
     expect(screen.getByTestId("attack-scenario-higher").textContent).toBe(
       "2 techniques would score higher than today, because the AI credited a remaining tool the last confirmed assessment did not. Check these before relying on the result.",
     );
+  });
+
+  it("states Q4's awaiting-review sentence beside the percentage it qualifies", async () => {
+    const q4 =
+      "1 technique lists tools awaiting review; it is scored as if those tools were not in place.";
+    await startWith({
+      ...COMPLETED,
+      today: { ...ROLLUP, awaiting_review: 1, awaiting_review_text: q4 },
+    });
+    expect(screen.getByTestId("scenario-today").textContent).toContain(q4);
+    expect(screen.getByTestId("scenario-after").textContent).not.toContain(q4);
   });
 
   it("says nothing about scoring higher when nothing does", async () => {

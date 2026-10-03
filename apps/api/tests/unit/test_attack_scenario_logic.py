@@ -207,6 +207,33 @@ def test_an_inferred_tool_match_is_dropped_as_unconfirmed_not_credited() -> None
     assert parsed.lists["T1003"]["detection_tools"] == []
 
 
+@pytest.mark.parametrize("code", [["T1003"], {"code": "T1003"}, 1003, None])
+def test_a_technique_code_that_is_not_a_string_is_dropped_not_raised(code) -> None:
+    parsed = scenario.parse_delta(
+        _ai([{**_flags("T1003", "SIEM Tool"), "technique_code": code}]),
+        asked=["T1003"],
+        available=AVAILABLE,
+        lost={"T1003": ALL_LOST},
+    )
+    assert parsed.dropped == {"technique_outside_slice": 1}
+
+
+def test_every_spelling_of_a_removed_tool_is_removed() -> None:
+    """F2: the stored name and the placeholder spelling the egress shows for
+    it are one tool; removing either removes both. The shown form comes from
+    the egress redactor, not from the code under test."""
+    from app.ai.redact import redact_for_ai
+
+    named = "Acme SOC Platform"
+    shown, _ = redact_for_ai(named, mode="strict", client_org_name="Acme")
+    tools = [SimpleNamespace(name=n) for n in (named, shown, "SIEM Tool")]
+    for removed in ([named], [shown]):
+        kept = scenario.remaining_tools(
+            tools, removed, client_org_name="Acme", redaction_mode="strict"
+        )
+        assert [t.name for t in kept] == ["SIEM Tool"], removed
+
+
 def test_a_missing_rows_list_is_a_shape_error_not_an_empty_answer() -> None:
     with pytest.raises(scenario.ScenarioShapeError):
         scenario.parse_delta(

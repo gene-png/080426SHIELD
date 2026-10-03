@@ -29,6 +29,11 @@ class ScenarioRollup(BaseModel):
     pending_review: int
     scored_count: int
     catalogue_count: int
+    #: Q4 (R3): techniques scored as if tools awaiting review were not in
+    #: place, and the approved sentence stating it beside the percentage (None
+    #: at zero), as `computed.awaiting_review_sentence` words it.
+    awaiting_review: int
+    awaiting_review_text: str | None
     #: #621's two counts outside the assessed denominator, stated beside the
     #: percentage. None for a base approved before #620's rules, which never
     #: stated them (`exporters.states_outside_counts`).

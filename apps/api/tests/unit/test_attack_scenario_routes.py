@@ -29,9 +29,10 @@ from app.ai.engine import AIJob
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.attack.catalog import NOT_PREVENTABLE
 from app.models.ai_run import AiRun
-from app.models.attack_assessment import AttackCoverage
-from app.models.attack_scenario import AttackScenario, AttackScenarioState
+from app.models.attack_assessment import AttackAssessment, AttackCoverage
+from app.models.attack_scenario import AttackScenario, AttackScenarioRow, AttackScenarioState
 from app.models.capability import CapabilityItem, CapabilityList, CapabilityListStatus
+from app.models.deliverable import Deliverable
 from app.models.llm_call import LLMCall
 from app.models.service import Service, ServiceKind, ServiceStatus
 from tests._ai_runs import DeferringRunner, defer_runs
@@ -84,9 +85,16 @@ class World:
         provider.register(PURPOSE, respond)
         # mitre_map answers with nothing, for the tests that hold one running.
         provider.register("mitre_map", lambda _p: LLMResponse('{"techniques": []}'))
+        self.use(provider)
+
+    def use(self, provider: FixtureProvider) -> None:
+        """Serve `provider` to mitre_map's route and to the what-if's, which
+        builds its client only after its refusals (F4)."""
         from app.routes.attack import _llm_dep
+        from app.routes.attack_scenarios import _llm_builder
 
         self.app.dependency_overrides[_llm_dep] = lambda: LLMClient(provider)
+        self.app.dependency_overrides[_llm_builder] = lambda: (lambda: LLMClient(provider))
 
     def create(self, removed: list[str] | None) -> Any:
         body = {} if removed is None else {"removed": removed}
@@ -109,10 +117,21 @@ class World:
                 .where(AttackCoverage.assessment_id == uuid.UUID(self.assessment_id))
                 .order_by(AttackCoverage.technique_code)
             ).scalars()
-            return [
+            out: list[tuple] = [
                 tuple(getattr(r, col.name) for col in AttackCoverage.__table__.columns)
                 for r in rows
             ]
+            # The assessment row itself and every deliverable of the service:
+            # a what-if may write none of them (#815 review, F9).
+            a = s.get(AttackAssessment, uuid.UUID(self.assessment_id))
+            out.append(tuple(getattr(a, col.name) for col in AttackAssessment.__table__.columns))
+            for d in s.execute(
+                select(Deliverable)
+                .where(Deliverable.service_id == uuid.UUID(self.svc_id))
+                .order_by(Deliverable.id)
+            ).scalars():
+                out.append(tuple(getattr(d, col.name) for col in Deliverable.__table__.columns))
+            return out
 
 
 def _flags(code: str, tool: str, d=False, p=False, r=False) -> dict:
@@ -131,7 +150,14 @@ def _patch(c: TestClient, h: dict, row_id: str, **body) -> None:
     assert r.status_code == 200, r.text
 
 
-def _world(parts, *, release: bool = True) -> World:
+#: A tool named after the client ("Acme"), and the spelling a later
+#: extraction stores for the same tool once the tenant has a legal name
+#: (`citations.py`, the alias tier): both can sit on one capability list.
+SOC_NAMED = "Acme SOC Platform"
+SOC_PLACEHOLDER = "[CLIENT] SOC Platform"
+
+
+def _world(parts, *, release: bool = True, soc_twins: bool = False) -> World:
     c, app, sessions = parts
     bearer = c.post(
         "/auth/register",
@@ -160,7 +186,7 @@ def _world(parts, *, release: bool = True) -> World:
         cl = CapabilityList(service_id=td.id, version=1, status=CapabilityListStatus.APPROVED)
         db.add(cl)
         db.flush()
-        for name in (EDR, SIEM, SOAR):
+        for name in (EDR, SIEM, SOAR, *((SOC_NAMED, SOC_PLACEHOLDER) if soc_twins else ())):
             db.add(CapabilityItem(capability_list_id=cl.id, name=name))
         db.commit()
     h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
@@ -179,7 +205,10 @@ def _world(parts, *, release: bool = True) -> World:
         prevention_tools=[EDR],
         response_tools=[SOAR],
     )
-    _patch(c, h, b["id"], status="partial", detection_tools=[SIEM])
+    if soc_twins:
+        _patch(c, h, b["id"], status="partial", detection_tools=[SIEM], response_tools=[SOC_NAMED])
+    else:
+        _patch(c, h, b["id"], status="partial", detection_tools=[SIEM])
     _patch(c, h, cc["id"], status="gap", detection_tools=[EDR])
     # C's Detect tool is an INFERRED citation nobody has cleared: the state a
     # mitre_map run writes when it resolves a cited word to EDR Tool (#102),
@@ -367,6 +396,16 @@ def test_a_run_reassesses_only_the_affected_techniques_and_compares(
     assert w.b not in diffs
     assert (body["today"]["covered"], body["today"]["partial"], body["today"]["gap"]) == (1, 1, 1)
     assert (body["after"]["covered"], body["after"]["partial"], body["after"]["gap"]) == (0, 3, 0)
+    # Q4 (R3): C's Detect rested on a tool awaiting review in the base; after
+    # the change it rests on SIEM, which is confirmed. The sentence is the
+    # approved Q4 text, written out here from the approval, not imported.
+    assert body["today"]["awaiting_review"] == 1
+    assert body["today"]["awaiting_review_text"] == (
+        "1 technique lists tools awaiting review; it is scored as if those tools were "
+        "not in place."
+    )
+    assert body["after"]["awaiting_review"] == 0
+    assert body["after"]["awaiting_review_text"] is None
     # Approved under #620's rules, so the outside counts are stated on both.
     for side in ("today", "after"):
         assert body[side]["unable_to_determine"] == 0, body[side]
@@ -467,9 +506,7 @@ def test_a_batch_that_fails_leaves_its_techniques_not_reassessed(
         return LLMResponse(json.dumps({"rows": [_flags(w.cc, SIEM, d=True)]}))
 
     provider.register(PURPOSE, respond)
-    from app.routes.attack import _llm_dep
-
-    w.app.dependency_overrides[_llm_dep] = lambda: LLMClient(provider)
+    w.use(provider)
     sid = w.create([EDR]).json()["id"]
     body = _run_to_completion(w, sid)
     assert body["run_status"] == "completed"
@@ -624,9 +661,7 @@ def test_a_failed_run_says_why_and_can_be_run_again(app_parts, analysis_job) -> 
     w = _world(app_parts)
     provider = FixtureProvider()
     provider.register(PURPOSE, lambda _p: LLMResponse('{"rows": "nothing"}'))
-    from app.routes.attack import _llm_dep
-
-    w.app.dependency_overrides[_llm_dep] = lambda: LLMClient(provider)
+    w.use(provider)
     sid = w.create([EDR]).json()["id"]
     assert w.run(sid).status_code == 202
     body = w.get(sid)
@@ -640,6 +675,130 @@ def test_a_failed_run_says_why_and_can_be_run_again(app_parts, analysis_job) -> 
     again = w.get(sid)
     assert again["run_status"] == "completed"
     assert again["run_error"] is None
+
+
+def test_a_row_whose_technique_is_not_a_string_is_dropped_and_the_run_completes(
+    app_parts, analysis_job  # noqa: F811
+) -> None:
+    """F1: a list where a code belongs is unhashable. It is set aside and
+    counted; it never takes the batch's other answers, or the run, with it."""
+    w = _world(app_parts)
+    w.answer(
+        {
+            w.cc: [
+                {**_flags(w.cc, SIEM, d=True), "technique_code": [w.cc]},
+                _flags(w.cc, SIEM, d=True),
+            ]
+        }
+    )
+    sid = w.create([EDR]).json()["id"]
+    body = _run_to_completion(w, sid)
+    assert body["run_status"] == "completed", body["run_error"]
+    assert body["dropped"] == {"technique_outside_slice": 1}
+    lists = {t["technique_code"]: t for t in body["techniques"]}
+    assert lists[w.cc]["detection_tools"] == [SIEM]
+
+
+def test_a_removed_tool_is_not_offered_or_credited_under_its_other_spelling(
+    app_parts, analysis_job  # noqa: F811
+) -> None:
+    """F2. The list holds the client-named tool AND its placeholder spelling,
+    which the egress shows the model identically. Removing one removes both:
+    neither is offered, and the AI naming the other spelling is not credited."""
+    from app.ai.redact import redact_for_ai
+
+    shown, counts = redact_for_ai(SOC_NAMED, mode="strict", client_org_name="Acme")
+    assert counts and shown == SOC_PLACEHOLDER  # the world: one tool, two spellings
+    w = _world(app_parts, soc_twins=True)
+    offered: list[list[str]] = []
+    provider = FixtureProvider()
+
+    def respond(payload: dict) -> LLMResponse:
+        offered.append([t["name"] for t in payload.get("available_tools") or []])
+        return LLMResponse(json.dumps({"rows": [_flags(w.b, SOC_PLACEHOLDER, r=True)]}))
+
+    provider.register(PURPOSE, respond)
+    w.use(provider)
+    sid = w.create([SOC_NAMED]).json()["id"]
+    body = _run_to_completion(w, sid)
+    assert body["affected_codes"] == [w.b]
+    assert len(offered) == 1
+    assert SOC_PLACEHOLDER not in offered[0] and SOC_NAMED not in offered[0], offered
+    assert body["dropped"] == {"tool_outside_change": 1}
+    lists = {t["technique_code"]: t for t in body["techniques"]}
+    assert lists[w.b]["response_tools"] == []
+
+
+class _CountingLimiter:
+    def __init__(self) -> None:
+        self.charged = 0
+
+    def enforce_ai(self, _client_id) -> None:
+        self.charged += 1
+
+
+def test_a_run_refused_before_any_ai_spends_no_rate_limit_token_and_builds_no_provider(
+    app_parts,  # noqa: F811
+) -> None:
+    """F4: the 503 comes before the rate limit and the provider."""
+    from app.routes.attack_scenarios import _llm_builder
+    from app.security.rate_limit import get_rate_limiter
+
+    w = _world(app_parts)
+    limiter = _CountingLimiter()
+    built: list[int] = []
+    w.app.dependency_overrides[get_rate_limiter] = lambda: limiter
+    w.app.dependency_overrides[_llm_builder] = lambda: (lambda: built.append(1))
+    sid = w.create([EDR]).json()["id"]
+    assert w.run(sid).status_code == 503
+    assert limiter.charged == 0
+    assert built == []
+
+
+def test_a_run_that_starts_spends_one_rate_limit_token(
+    app_parts, analysis_job  # noqa: F811
+) -> None:
+    """The other half of F4's test: the counter is the one the route charges."""
+    from app.security.rate_limit import get_rate_limiter
+
+    w = _world(app_parts)
+    w.answer({})
+    limiter = _CountingLimiter()
+    w.app.dependency_overrides[get_rate_limiter] = lambda: limiter
+    sid = w.create([EDR]).json()["id"]
+    assert w.run(sid).status_code == 202
+    assert limiter.charged == 1
+
+
+def test_a_second_run_never_replaces_a_result_already_written(
+    app_parts, analysis_job  # noqa: F811
+) -> None:
+    """F5: a run that passed the route's check but finds a result already
+    written by the time it answers is refused, typed, and deletes nothing."""
+    w = _world(app_parts)
+    w.answer({w.cc: [_flags(w.cc, SIEM, d=True)]})
+    runner = defer_runs(w.app)
+    sid = w.create([EDR]).json()["id"]
+    assert w.run(sid).status_code == 202
+    with w.sessions() as db:
+        db.add(
+            AttackScenarioRow(
+                scenario_id=uuid.UUID(sid),
+                technique_code=w.cc,
+                detection_tools=[SOAR],
+                prevention_tools=[],
+                response_tools=[],
+                ai_rows=[],
+            )
+        )
+        db.commit()
+    assert runner.run_all() == 1
+    body = w.get(sid)
+    assert body["run_status"] == "failed"
+    assert body["run_error"]["reason"] == "scenario_already_run"
+    assert [(t["technique_code"], t["detection_tools"]) for t in body["techniques"]] == [
+        (w.cc, [SOAR])
+    ]
 
 
 def test_an_analysed_what_if_is_not_run_twice(app_parts, analysis_job) -> None:  # noqa: F811
