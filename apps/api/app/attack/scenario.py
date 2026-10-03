@@ -569,7 +569,8 @@ def parse_change(
     names a cited tool, through `named_by` with its alias tier ("Add Manager"),
     is not understood, wherever it stands, and nothing is proposed for it. It
     is read neither as the verb nor as the tool (the advisor's fallback after
-    #824 round 5).
+    #824 round 5). Likewise a held cited name with a verb clause after its
+    first break ("Splunk and Add Manager") is not removed (after round 6).
 
     Each name is checked by the code the create route uses: a removal must hit
     exactly ONE cited tool in the resolver's name tiers
@@ -599,6 +600,11 @@ def parse_change(
         parts = [p for p in _SPLIT.split(_bare(name)) if p.strip()]
         if len(parts) > 1 and all(len(resolver.named_by(_bare(p))) == 1 for p in parts):
             # The words name one cited tool AND several: not a guess either way.
+            raise _Refused("ambiguous_tool")
+        if any(_kind(p.strip()) != "bare" for p in parts[1:]):
+            # "Splunk and Add Manager" is one cited tool AND "Splunk" plus an
+            # addition of "Manager": neither reading is chosen (the advisor's
+            # fallback after #824 round 6).
             raise _Refused("ambiguous_tool")
         if tool in removed:
             raise _Refused("duplicate")

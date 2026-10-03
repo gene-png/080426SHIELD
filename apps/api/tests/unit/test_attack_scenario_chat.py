@@ -533,3 +533,27 @@ def test_a_verb_led_clause_that_is_a_cited_name_is_refused_in_any_position(
     parsed = _parse(text, cited=cited, client=cited)
     assert (parsed.removed, parsed.added) == (removed, added)
     assert _reasons(parsed) == reasons
+
+
+@pytest.mark.parametrize(
+    ("cited", "text"),
+    [
+        (("Splunk", "Splunk and Add Manager"), "retire Splunk and Add Manager"),
+        (("Identity", "Shield", "Identity and Cut Shield"), "retire Identity and Cut Shield"),
+    ],
+)
+def test_a_held_name_is_not_chosen_over_a_reading_with_a_verb_inside_it(cited, text) -> None:
+    """Round 6, per the advisor's fallback: a held cited name whose later part
+    parses as a verb clause can also be read as a removal plus that verb
+    ("retire Splunk" and "Add Manager"). Neither reading is chosen."""
+    parsed = _parse(text, cited=cited, client=cited)
+    assert (parsed.removed, parsed.added) == ([], [])
+    assert _reasons(parsed) == [(text, "ambiguous_tool")]
+
+
+def test_a_held_name_starting_with_a_verb_word_is_still_removed_whole() -> None:
+    """The check above looks AFTER the first break only: the first part is the
+    removal's own object ("retire" + "Add Manager and Splunk"), not a clause."""
+    cited = ("Add Manager and Splunk",)
+    parsed = _parse("retire Add Manager and Splunk", cited=cited, client=cited)
+    assert (parsed.removed, parsed.not_understood) == (["Add Manager and Splunk"], [])
