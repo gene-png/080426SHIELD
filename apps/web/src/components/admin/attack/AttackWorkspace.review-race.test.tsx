@@ -1,6 +1,13 @@
 import "@testing-library/jest-dom/vitest";
 
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as attackClient from "@/lib/attack/client";
@@ -57,11 +64,15 @@ vi.mock("./AttackMatrix", () => ({
 }));
 vi.mock("./AttackTechniquePanel", () => ({
   AttackTechniquePanel: (props: {
+    coverage: AttackCoverageRow | null;
     onPatch: (patch: AttackCoveragePatch) => unknown;
   }) => (
-    <button type="button" onClick={() => void props.onPatch({ notes: "x" })}>
-      edit the selected row
-    </button>
+    <>
+      <span>{`notes: ${props.coverage?.notes ?? "none"}`}</span>
+      <button type="button" onClick={() => void props.onPatch({ notes: "x" })}>
+        edit the selected row
+      </button>
+    </>
   ),
 }));
 vi.mock("./AttackAiInputsPanel", () => ({
@@ -87,6 +98,7 @@ function row(
   code: string,
   computed: "covered" | "partial",
   queued: boolean,
+  notes: string | null = null,
 ): AttackCoverageRow {
   return {
     id: `row-${code}`,
@@ -95,7 +107,7 @@ function row(
     status: "gap",
     reason_code: null,
     narrative: null,
-    notes: null,
+    notes,
     evidence_artifact_id: null,
     answered_by: null,
     answered_at: null,
@@ -113,7 +125,11 @@ function row(
   };
 }
 
-function draft(queued: boolean, computed: "covered" | "partial" = "covered") {
+function draft(
+  queued: boolean,
+  computed: "covered" | "partial" = "covered",
+  notes: string | null = null,
+) {
   return {
     id: "assess-1",
     service_id: "svc",
@@ -121,7 +137,7 @@ function draft(queued: boolean, computed: "covered" | "partial" = "covered") {
     version: 1,
     coverage: [
       row("T1003.001", computed, queued),
-      row("T1059.001", "partial", false),
+      row("T1059.001", "partial", false, notes),
     ],
     documents_stale: false,
     statuses_computed: true,
@@ -176,8 +192,9 @@ beforeEach(() => {
     by_tactic: [],
   } as unknown as AttackHeatmap);
   vi.mocked(attackClient.fetchLatestDeliverable).mockResolvedValue(null);
+  // The edit's own result: notes "x", which a snapshot read before it lacks.
   vi.mocked(attackClient.patchCoverage).mockResolvedValue(
-    row("T1059.001", "partial", false),
+    row("T1059.001", "partial", false, "x"),
   );
 });
 
@@ -202,9 +219,11 @@ async function editWhileTheReviewIsInFlight(): Promise<void> {
 
 describe("AttackWorkspace, a row edit during a review (#554 R3)", () => {
   it("applies the review the server recorded", async () => {
-    vi.mocked(attackClient.fetchLatestAssessment).mockResolvedValue(
-      draft(true),
-    );
+    // The page's load, then the quiet re-read the overlapping edit asks for,
+    // which reads what the server holds after the review: reviewed.
+    vi.mocked(attackClient.fetchLatestAssessment)
+      .mockResolvedValueOnce(draft(true))
+      .mockResolvedValue(draft(false));
     const review = deferred<AttackAssessment>();
     vi.mocked(attackClient.reviewComputedStatuses).mockReturnValueOnce(
       review.promise,
@@ -260,5 +279,62 @@ describe("AttackWorkspace, a row edit during a review (#554 R3)", () => {
     const panel = screen.getByTestId("attack-computed-review");
     expect(within(panel).getByText("Partial")).toBeInTheDocument();
     expect(within(panel).queryByText("Covered")).toBeNull();
+  });
+
+  it("re-reads quietly when the review's snapshot predates the edit", async () => {
+    // Round 4: the snapshot was read before the edit committed (notes null), and
+    // lands after it. One quiet re-read once every write is done restores "x".
+    vi.mocked(attackClient.fetchLatestAssessment)
+      .mockResolvedValueOnce(draft(true))
+      .mockResolvedValueOnce(draft(false, "covered", "x"));
+    const review = deferred<AttackAssessment>();
+    vi.mocked(attackClient.reviewComputedStatuses).mockReturnValueOnce(
+      review.promise,
+    );
+    await editWhileTheReviewIsInFlight();
+    expect(screen.getByText("notes: x")).toBeInTheDocument();
+
+    await act(async () => {
+      review.resolve(draft(false));
+    });
+    await waitFor(() =>
+      expect(attackClient.fetchLatestAssessment).toHaveBeenCalledTimes(2),
+    );
+    expect(await screen.findByText("notes: x")).toBeInTheDocument();
+  });
+
+  it("re-reads quietly when the 409 re-read predates the edit", async () => {
+    vi.mocked(attackClient.fetchLatestAssessment)
+      .mockResolvedValueOnce(draft(true))
+      .mockResolvedValueOnce(draft(true, "partial"))
+      .mockResolvedValueOnce(draft(true, "partial", "x"));
+    const review = deferred<AttackAssessment>();
+    vi.mocked(attackClient.reviewComputedStatuses).mockReturnValueOnce(
+      review.promise,
+    );
+    await editWhileTheReviewIsInFlight();
+
+    const ProxyError = attackClient.AttackProxyError as unknown as new (
+      m: string,
+    ) => Error;
+    await act(async () => {
+      review.reject(
+        Object.assign(new ProxyError("ATT&CK proxy 409"), {
+          status: 409,
+          payload: {
+            error: {
+              code: 409,
+              reason: "computed_status_changed",
+              message: "ignored by the panel",
+              codes: ["T1003.001"],
+            },
+          },
+        }),
+      );
+    });
+    await waitFor(() =>
+      expect(attackClient.fetchLatestAssessment).toHaveBeenCalledTimes(3),
+    );
+    expect(await screen.findByText("notes: x")).toBeInTheDocument();
   });
 });

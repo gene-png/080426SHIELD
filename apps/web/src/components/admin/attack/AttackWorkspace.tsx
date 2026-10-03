@@ -523,6 +523,8 @@ export function AttackWorkspace({
     if (!assessment) return;
     setActionError(null);
     setBusy("approve");
+    // Same shape as the review's snapshot (a concurrent edit can be reverted on
+    // screen); filed as #809.
     assessmentSeq.current += 1;
     try {
       const next = await approveAssessment(assessment.id);
@@ -543,14 +545,24 @@ export function AttackWorkspace({
     if (!assessment) return;
     setActionError(null);
     setBusy("review");
-    // Bumped so a slow LOAD arriving late cannot overwrite the review's result.
-    // The result itself is applied unconditionally, like approve's: a row edit
-    // made while the review is in flight also bumps the counter, and guarding
-    // on it would drop a review the server recorded (the #808 round-3 review).
+    // Bumped so a slow LOAD arriving late cannot overwrite the review's result
+    // (near-unreachable today: the page's loads finish before the panel can be
+    // clicked). The result itself is applied unconditionally, like approve's: a
+    // row edit made while the review is in flight also bumps the counter, and
+    // guarding on it would drop a review the server recorded (#808 round 3).
     assessmentSeq.current += 1;
+    // A row edit made while this is out may commit after the server read the
+    // snapshot applied below, which would then revert it on screen. If any
+    // edit started meanwhile, ask for one quiet re-read once every write is
+    // done (`trackWrite`'s trailing `refetchWhenQuiet`) -- #808 round 4.
+    const started = editsStarted.current;
+    const rereadIfEdited = () => {
+      if (editsStarted.current !== started) refetchWanted.current = true;
+    };
     try {
       const next = await reviewComputedStatuses(assessment.id, reviews);
       setAssessment(next);
+      rereadIfEdited();
     } catch (err) {
       const reason = errorReason(err);
       if (
@@ -568,6 +580,7 @@ export function AttackWorkspace({
         try {
           const latest = await fetchLatestAssessment(serviceId);
           setAssessment(latest);
+          rereadIfEdited();
           setActionError(reviewRefreshedMessage(reason, codes ?? [], true));
         } catch {
           setActionError(reviewRefreshedMessage(reason, codes ?? [], false));
