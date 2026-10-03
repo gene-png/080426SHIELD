@@ -175,6 +175,24 @@ describe("AttackScenarioPanel, the chat box (slice C)", () => {
     ).toBe("Describe the change first.");
   });
 
+  it("says to try again when the parse fails with no sentence of its own", async () => {
+    routes[LIST] = () => ({ base: BASE, scenarios: [] });
+    routes[PARSE] = () => {
+      throw new TypeError("Failed to fetch");
+    };
+    render(<AttackScenarioPanel serviceId="svc" />);
+    fireEvent.change(await screen.findByLabelText("Describe the change"), {
+      target: { value: "retire EDR Tool" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Fill in the change list" }),
+    );
+    // Approved by the advisor at 19:18Z, byte for byte.
+    expect(
+      (await screen.findByTestId("attack-scenario-chat-error")).textContent,
+    ).toBe("The description could not be checked. Try again.");
+  });
+
   it("creates and runs nothing; Continue sends what the admin left after editing", async () => {
     await describeChange("retire EDR Tool and SIEM Tool", {
       removed: ["EDR Tool", "SIEM Tool"],

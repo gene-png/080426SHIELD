@@ -595,7 +595,12 @@ function ChatBox({
     } catch (err) {
       if (latest.current !== mine) return;
       setResult(null);
-      setError(clientFacingError(err, "The description could not be read."));
+      setError(
+        clientFacingError(
+          err,
+          "The description could not be checked. Try again.",
+        ),
+      );
     } finally {
       if (latest.current === mine) {
         setBusy(false);
