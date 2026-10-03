@@ -11,9 +11,10 @@ from __future__ import annotations
 import json
 
 import pytest
+from sqlalchemy import select
 
 from app.ai.llm import FixtureProvider, LLMResponse
-from app.models.capability import CapabilityListStatus
+from app.models.capability import CapabilityItem, CapabilityListStatus
 from tests._ai_runs import defer_runs
 from tests.unit.test_ai_runs_attack import app_parts  # noqa: F401  (fixture)
 from tests.unit.test_attack_scenario_routes import (  # noqa: F401  (fixture)
@@ -335,7 +336,7 @@ def test_an_added_tool_credited_beyond_what_it_was_declared_for_is_set_aside(
         (
             {"name": "XDR Suite", "vendor": "V" * 201, "security_functions": ["detect"]},
             "scenario_added_tool_too_long",
-            "Vendor for XDR Suite is longer than 200 characters. Shorten it.",
+            "Vendor (optional) for XDR Suite is longer than 200 characters. Shorten it.",
         ),
         (
             {"name": "XDR Suite", "security_functions": ["recover"]},
@@ -361,6 +362,65 @@ def test_a_tool_listed_twice_is_refused_naming_the_control(app_parts) -> None:  
         "reason": "scenario_added_tool_duplicate",
         "message": "xdr suite is listed twice under Tools to add. Remove one with Remove this tool.",
     }
+
+
+def test_two_client_tools_sharing_a_placeholder_still_refuse_a_third(
+    app_parts,  # noqa: F811
+) -> None:
+    """#818 narrow review, 1(a), through the route."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    _add_tool_after_approval(w, "Suite 100 Scanner")
+    _add_tool_after_approval(w, "Suite 200 Scanner")
+    r = _create(w, added=[_tool("Suite 300 Scanner")])
+    assert r.status_code == 422, r.text
+    assert _error(r)["reason"] == "scenario_added_tool_indistinct"
+
+
+def test_a_client_tool_spelled_two_ways_is_still_the_clients(app_parts) -> None:  # noqa: F811
+    """#818 narrow review, 1(b), through the route. The client's list sends
+    `EDR TOOL` while the base cites `EDR Tool`: the two collide in the
+    resolver, ambiguously. `Edr Tool` is still the client's tool -- accepting
+    it would credit the client's own tool as the added one."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    with w.sessions() as db:
+        item = db.execute(select(CapabilityItem).where(CapabilityItem.name == EDR)).scalar_one()
+        item.name = "EDR TOOL"
+        db.commit()
+    r = _create(w, added=[_tool("Edr Tool")])
+    assert r.status_code == 422, r.text
+    assert _error(r)["reason"] == "scenario_added_tool_is_clients"
+
+
+def test_a_placeholder_collision_the_client_gains_later_stops_the_run(
+    app_parts, analysis_job  # noqa: F811
+) -> None:
+    """#818 narrow review, 1, in F4's run-time re-check: after the what-if was
+    created, the client gains two tools shown as the added tool's placeholder."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    _answering(w, {})
+    sid = _create(w, added=[_tool("Suite 300 Scanner")]).json()["id"]
+    _add_tool_after_approval(w, "Suite 100 Scanner")
+    _add_tool_after_approval(w, "Suite 200 Scanner")
+    r = w.run(sid)
+    assert r.status_code == 409, r.text
+    assert _error(r)["reason"] == "scenario_added_tool_collides"
+
+
+def test_each_added_tool_is_held_to_its_own_functions_not_the_union(
+    app_parts, analysis_job  # noqa: F811
+) -> None:
+    """#818 narrow review, 2. XDR is chosen for Detect, Patch Tool for
+    Prevent, so B's Prevention is open. The AI credits XDR -- not Patch Tool
+    -- for it: dropped, though Prevent is declared for SOME added tool."""
+    w = _world(app_parts)
+    _answering(w, {w.b: [_flags(w.b, XDR, p=True)]})
+    sid = _create(
+        w, added=[_tool(functions=("detect",)), _tool("Patch Tool", functions=("prevent",))]
+    ).json()["id"]
+    body = _run_to_completion(w, sid)
+    assert body["dropped"] == {"function_not_declared": 1}
+    lists = {t["technique_code"]: t for t in body["techniques"]}
+    assert lists[w.b]["prevention_tools"] == []
 
 
 def test_an_added_tool_is_never_drift(app_parts, analysis_job) -> None:  # noqa: F811

@@ -350,7 +350,12 @@ def validate_added(
         if name is None:
             raise BlankName()
         vendor, category = _text(entry.get("vendor")), _text(entry.get("category"))
-        for label, value in (("Name", name), ("Vendor", vendor), ("Category", category)):
+        # The panel's own labels (B2).
+        for label, value in (
+            ("Name", name),
+            ("Vendor (optional)", vendor),
+            ("Category (optional)", category),
+        ):
             if value is not None and len(value) > MAX_TEXT:
                 raise TooLong(name, label)
         functions = entry.get("security_functions")
@@ -365,7 +370,9 @@ def validate_added(
 
         earlier = [t.name for t in out]
         before = resolver([*client, *earlier])
-        if any(before.resolve(form).confirmed for form in citable(name)):
+        # Taken in a NAME tier, confirmed or ambiguous: an ambiguity among the
+        # client's own tools is still their tool (#818 narrow review, 1).
+        if any(before.named_by(form) for form in citable(name)):
             raise _why_refused(name, before, resolver(client, "off"), client, earlier, citable)
         out.append(
             AddedTool(
@@ -391,15 +398,11 @@ def _why_refused(
     its `[CLIENT]` twin), or the form it is SHOWN as is a client tool's stored
     name. A second spelling of an earlier added tool, likewise. Anything else
     -- two tools shown as one placeholder -- cannot be told apart."""
-    own = before.resolve(name)
-    shown_hits = {client_real.resolve(form).name for form in citable(name) - {name}}
-    if (own.confirmed and own.name in client) or (
-        own.rejected_reason == "ambiguous" and not earlier
-    ):
+    own = before.named_by(name)
+    shown_hits = {n for form in citable(name) - {name} for n in client_real.named_by(form)}
+    if own & set(client) or shown_hits & set(client):
         return AlreadyClients(name)
-    if shown_hits & set(client):
-        return AlreadyClients(name)
-    if own.confirmed and own.name in earlier:
+    if own & set(earlier):
         return Duplicate(name)
     return Indistinct(name)
 

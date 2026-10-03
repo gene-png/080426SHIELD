@@ -136,10 +136,10 @@ def test_an_overlong_name_or_vendor_is_refused() -> None:
     assert exc.value.field == "Name"
     with pytest.raises(scenario.TooLong) as exc:
         _validate([_tool("XDR Tool", vendor="V" * 201)])
-    assert exc.value.field == "Vendor"
+    assert exc.value.field == "Vendor (optional)"
     with pytest.raises(scenario.TooLong) as exc:
         _validate([_tool("XDR Tool", category="C" * 201)])
-    assert exc.value.field == "Category"
+    assert exc.value.field == "Category (optional)"
 
 
 def test_a_change_needs_a_removal_or_an_addition() -> None:
@@ -375,6 +375,20 @@ def test_a_client_tool_spelled_with_other_whitespace_is_refused(name) -> None:
     passed, then made BOTH it and the client's tool resolve ambiguous."""
     with pytest.raises(scenario.AlreadyClients):
         _validate([_tool(name)])
+
+
+def test_a_spelling_of_client_tools_that_already_collide_is_still_theirs() -> None:
+    """#818 narrow review, 1(b): the client's own two spellings make the name
+    AMBIGUOUS, not confirmed. It is still the client's tool."""
+    with pytest.raises(scenario.AlreadyClients):
+        _validate([_tool("Edr Tool")], client=("EDR TOOL", "EDR Tool"))
+
+
+def test_a_name_shown_as_two_colliding_client_tools_is_indistinct() -> None:
+    """#818 narrow review, 1(a): two client tools already share a placeholder;
+    a third name shown as it is refused, not accepted on the ambiguity."""
+    with pytest.raises(scenario.Indistinct):
+        _validate([_tool("Suite 300 Scanner")], client=("Suite 100 Scanner", "Suite 200 Scanner"))
 
 
 def test_two_added_tools_differing_only_in_whitespace_are_refused() -> None:
