@@ -1,9 +1,12 @@
+import { DISPOSITION_LABEL } from "@/lib/tech_debt/dispositionLabels";
+
 import type { JSX } from "react";
 
 // #642. Every statement here was checked against the API's readers of
 // `CapabilityItem.disposition` at c39e6c8 (the answer is on the issue): only
-// Tech Debt's own surfaces read it, and only `cut` moves a number. If a
-// disposition ever starts feeding another service, this copy is wrong.
+// Tech Debt's own surfaces read it. Since #804 both cuts move the savings
+// number (`tech_debt/savings.py::SAVINGS_DISPOSITIONS`). If a disposition ever
+// starts feeding another service, this copy is wrong.
 const DISPOSITIONS: ReadonlyArray<{ label: string; effect: string }> = [
   {
     label: "Undecided",
@@ -11,19 +14,19 @@ const DISPOSITIONS: ReadonlyArray<{ label: string; effect: string }> = [
       "No recommendation yet. Counted under Undecided in the consolidation plan.",
   },
   {
-    label: "Keep",
+    label: DISPOSITION_LABEL.keep,
     effect:
       "Recommend keeping the tool. Counted under Keep; no figure changes.",
   },
   {
-    label: "Consolidate",
+    label: DISPOSITION_LABEL.consolidate,
     effect:
-      "Recommend folding the tool into another one. Counted under Consolidate; its cost is not counted as savings.",
+      "Recommend retiring the tool because another tool covers what it does. Its full annual cost is added to the estimated annual savings, as for Cut.",
   },
   {
-    label: "Cut",
+    label: DISPOSITION_LABEL.cut,
     effect:
-      "Recommend retiring the tool. Its annual cost is added to the estimated annual savings. If a cut row has no cost, the savings figure is shown as a lower bound.",
+      "Recommend retiring the tool. Its annual cost is added to the estimated annual savings. If a row marked to cut has no cost, the savings figure is shown as a lower bound.",
   },
 ];
 

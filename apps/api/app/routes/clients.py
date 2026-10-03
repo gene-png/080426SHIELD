@@ -57,7 +57,6 @@ from app.models.attack_assessment import (
     AttackCoverage,
 )
 from app.models.capability import (
-    CapabilityDisposition,
     CapabilityItem,
     CapabilityList,
     CapabilityListStatus,
@@ -111,6 +110,7 @@ from app.schemas.clients import (
 )
 from app.services.engagement_targets import client_target_stage, client_target_tier
 from app.tech_debt.reconcile import exclusion_count_state
+from app.tech_debt.savings import estimated_savings
 from app.zt.catalog import capability_by_code as zt_capability_by_code
 from app.zt.maturity import ZtFrameworkCode
 from app.zt.maturity import stage_label as zt_stage_label
@@ -906,9 +906,10 @@ def _attack_uncovered_total(
 
 
 def _tech_debt_savings(db: Session, service_ids: list[uuid.UUID]) -> _TechDebtTotal:
-    """(annual savings, cost_known). Savings = sum of annual cost over CUT
-    capabilities; cost_known is False when any CUT item lacked a cost (so the
-    figure is a floor). Mirrors routes/tech_debt.py:consolidation_plan_summary."""
+    """(annual savings, cost_known), summed over the released lists through
+    `tech_debt.savings.estimated_savings` -- the deliverable's own derivation
+    (#804). cost_known is False when a counted item lacked a cost (so the
+    figure is a floor)."""
     if not service_ids:
         return _TechDebtTotal(None, True, False)
     total = 0.0
@@ -933,12 +934,10 @@ def _tech_debt_savings(db: Session, service_ids: list[uuid.UUID]) -> _TechDebtTo
             .scalars()
             .all()
         )
-        for it in items:
-            if it.disposition == CapabilityDisposition.CUT:
-                if it.annual_cost_usd is None:
-                    cost_known = False
-                else:
-                    total += float(it.annual_cost_usd)
+        # #804: the deliverable's own derivation, per released list.
+        found = estimated_savings((it.disposition, it.annual_cost_usd) for it in items)
+        total += found.amount
+        cost_known = cost_known and found.known
     return _TechDebtTotal(total, cost_known, False)
 
 
@@ -1615,8 +1614,10 @@ def tech_debt_dashboard(
     )
 
     annual_spend = 0.0
-    savings = 0.0
-    savings_cost_known = True
+    # #804: the deliverable's own derivation, not a copy of it.
+    found = estimated_savings((it.disposition, it.annual_cost_usd) for it in items)
+    savings = found.amount
+    savings_cost_known = found.known
     # #126: the same floor question the SAVINGS figure has always asked, asked
     # of SPEND. An uncosted item contributes 0.0 below and is still counted in
     # `total_applications`, so the spend figure was a floor and said so nowhere
@@ -1629,11 +1630,6 @@ def tech_debt_dashboard(
         if it.annual_cost_usd is None:
             spend_cost_known = False
         annual_spend += cost
-        if it.disposition == CapabilityDisposition.CUT:
-            if it.annual_cost_usd is None:
-                savings_cost_known = False
-            else:
-                savings += cost
         cat = it.category or _UNCATEGORIZED
         bucket = by_cat.setdefault(cat, {"total": 0.0, "count": 0, "items": []})
         bucket["total"] += cost
@@ -1653,12 +1649,11 @@ def tech_debt_dashboard(
         TechDebtRedundancy(
             category=cat,
             count=b["count"],
+            # #804: the same derivation, per category. Its `known` flag is not
+            # rendered per category today (pre-existing); the dashboard's
+            # headline savings carries it.
             savings_usd=round(
-                sum(
-                    float(i.annual_cost_usd)
-                    for i in b["items"]
-                    if i.disposition == CapabilityDisposition.CUT and i.annual_cost_usd is not None
-                ),
+                estimated_savings((i.disposition, i.annual_cost_usd) for i in b["items"]).amount,
                 2,
             ),
             items=[_td_item(i) for i in b["items"]],

@@ -235,6 +235,8 @@ NOT_LOCKED_BY_EXTRACTION = {
     ("POST", "/tech-debt/capability-items/{item_id}/components"),
     ("PATCH", "/tech-debt/capability-items/{item_id}"),
     ("POST", "/tech-debt/capability-lists/{list_id}/items/disposition"),
+    # #804: a what-if; writes nothing, so there is nothing for a run to race.
+    ("POST", "/tech-debt/capability-lists/{list_id}/savings-preview"),
     ("POST", "/tech-debt/capability-lists/{list_id}/approve"),
     ("POST", "/tech-debt/capability-lists/{list_id}/discard"),
     ("POST", "/tech-debt/services/{service_id}/deliverables/finalize"),

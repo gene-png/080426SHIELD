@@ -536,7 +536,7 @@ class TechDebtRedundancy(BaseModel):
 
     category: str
     count: int
-    savings_usd: float  # sum of annual cost of items marked CUT in this category
+    savings_usd: float  # tech_debt.savings.estimated_savings over this category (#804)
     items: list[TechDebtItem]
 
 
@@ -561,7 +561,7 @@ class TechDebtDashboardResponse(BaseModel):
     total_applications: int
     annual_spend_usd: float
     identified_savings_usd: float
-    savings_cost_known: bool  # False when a CUT item lacked a cost (savings is a floor)
+    savings_cost_known: bool  # False when a counted (cut) item lacked a cost (savings is a floor)
     # #126. THREE states, not a bool mirroring `savings_cost_known`.
     #
     #   "complete" every source row is accounted for and every item is costed
@@ -674,7 +674,7 @@ class ValueSummaryResponse(BaseModel):
     A DETERMINISTIC synthesis of already-computed engine outputs — no LLM, no new
     scoring. Each slot is `None` until the service has a RELEASED deliverable
     (§12 visibility): the card renders "pending" for a null, never a fake number.
-    `tech_debt_savings_cost_known` is False when a cut capability lacked a cost,
+    `tech_debt_savings_cost_known` is False when a counted (cut) capability lacked a cost,
     so the UI can flag the savings figure as a floor.
 
     **A null slot carries TWO facts and needs a companion flag to tell them

@@ -516,8 +516,9 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
         ws.append(
             [
                 f"Tools marked{PLANNED_MARK}",
-                "Marked cut in the Tech Debt consolidation plan. Still deployed, so still "
-                "counted toward coverage; this coverage drops when the tool is retired.",
+                "Marked Cut, or Cut, covered by another tool, in the Tech Debt "
+                "consolidation plan. Still deployed, so still counted toward coverage; "
+                "this coverage drops when the tool is retired.",
             ]
         )
     if UNKNOWN_MARK in delivered_marks:
