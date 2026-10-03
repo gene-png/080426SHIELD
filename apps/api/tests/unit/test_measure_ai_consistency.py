@@ -323,6 +323,48 @@ def _answer_rows(db: Session) -> list[tuple]:
     ]
 
 
+def _release_all_zt(TestSession: sessionmaker) -> None:
+    # The demo seed's state: every ZT assessment RELEASED, which the route's
+    # own builder refuses as locked.
+    from app.models.zt_assessment import ZtAssessment, ZtAssessmentStatus
+
+    with TestSession() as db:
+        for a in db.execute(select(ZtAssessment)).scalars():
+            a.status = ZtAssessmentStatus.RELEASED
+        db.commit()
+
+
+def test_a_released_assessment_is_refused_unless_reopening_was_asked_for(world) -> None:
+    c, TestSession, provider = world
+    _zt_assessment(c)
+    _release_all_zt(TestSession)
+    with TestSession() as db, pytest.raises(Refused) as exc:
+        measure_zt(db, LLMClient(provider), framework="cisa", runs=2)
+    assert exc.value.reason == "no_editable_assessment"
+
+
+def test_reopening_a_released_assessment_measures_its_answers_and_says_so(world) -> None:
+    from app.models.zt_assessment import ZtAssessment, ZtAssessmentStatus
+
+    c, TestSession, provider = world
+    code = _zt_assessment(c)
+    _release_all_zt(TestSession)
+    provider.register_static(
+        "zt_score",
+        LLMResponse('{"capabilities": [{"code": "' + code + '", "current": 1, "target": 3}]}'),
+    )
+    with TestSession() as db:
+        before = _answer_rows(db)
+        report = measure_zt(db, LLMClient(provider), framework="cisa", runs=2, reopen_released=True)
+        db.commit()
+    with TestSession() as db:
+        assert _answer_rows(db) == before
+        status_now = db.execute(select(ZtAssessment.status)).scalar_one()
+    assert status_now == ZtAssessmentStatus.DRAFT
+    assert report["input_setup"] == {"reopened_from": "released"}
+    assert report["runs_ok"] == 2
+
+
 def test_measure_zt_runs_the_job_n_times_and_applies_nothing(world) -> None:
     c, TestSession, provider = world
     code = _zt_assessment(c)
@@ -348,4 +390,5 @@ def test_measure_zt_runs_the_job_n_times_and_applies_nothing(world) -> None:
     assert report["pairs"][0]["fields"]["current"]["equal"] == 1
     assert report["tokens"] == {"input": 200, "output": 80}
     assert report["downstream"][0]["gap_codes"] == [code]
+    assert report["input_setup"] == {"reopened_from": None}
     assert report["exit_code"] == 0

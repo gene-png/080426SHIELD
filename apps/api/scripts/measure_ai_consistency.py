@@ -19,7 +19,10 @@ WHAT IT DOES: builds the payload with the route's own builder
 (`routes/zt.py::_zt_ai_request_for`), calls `engine.run_job` inside the route's
 own `ai_call_boundary` -- the one path to the model, so redaction, mode and
 output caps are production's -- and parses with the job's registered parser.
-It APPLIES NOTHING: no answer row is written.
+It APPLIES NOTHING: no answer row is written. The one state change it can make
+is `--reopen-released`, which sets a released assessment back to DRAFT so the
+route's builder will accept it -- the demo seed releases every ZT assessment --
+and which the report records as `input_setup`.
 
 WHAT IT REPORTS, per pair of successful runs: the row set (in both / only in
 one / unreadable / duplicated keys), and per field over rows present in both,
@@ -256,9 +259,38 @@ def _framework_enum(name: str) -> Any:
     return {"cisa": ZtFramework.CISA_ZTMM_2_0, "dod": ZtFramework.DOD_ZTRA}[name]
 
 
-def measure_zt(db: Any, llm: Any, *, framework: str, runs: int) -> dict:
+def _latest_zt(db: Any, framework: str, statuses: Sequence[Any]) -> Any:
+    from sqlalchemy import select
+
+    from app.models.zt_assessment import ZtAssessment
+
+    return (
+        db.execute(
+            select(ZtAssessment)
+            .where(
+                ZtAssessment.framework == _framework_enum(framework),
+                ZtAssessment.status.in_(list(statuses)),
+            )
+            .order_by(ZtAssessment.created_at.desc())
+        )
+        .scalars()
+        .first()
+    )
+
+
+def measure_zt(
+    db: Any, llm: Any, *, framework: str, runs: int, reopen_released: bool = False
+) -> dict:
     """Run zt_score `runs` times on the latest editable assessment for
-    `framework` and summarize. Writes only what `run_job` itself writes."""
+    `framework` and summarize. Writes only what `run_job` itself writes.
+
+    `reopen_released`: the demo seed releases every ZT assessment, and the
+    route's builder refuses a locked one. With this set, and only when there is
+    no editable assessment, the latest released (or approved) one is set back to
+    DRAFT first -- a state every assessment passed through before release -- so
+    the measure runs on the seed's real answers instead of an empty new version.
+    It is recorded in the report as `input_setup`. Never needed outside the
+    throwaway database `preflight` insists on."""
     from fastapi import HTTPException
     from sqlalchemy import select
 
@@ -267,25 +299,31 @@ def measure_zt(db: Any, llm: Any, *, framework: str, runs: int) -> dict:
     from app.models.client import Client
     from app.models.service import Service
     from app.models.user import User, UserRole
-    from app.models.zt_assessment import ZtAssessment, ZtAssessmentStatus
+    from app.models.zt_assessment import ZtAssessmentStatus
     from app.routes.zt import _to_catalog_framework, _zt_ai_request_for
     from app.services.engagement_targets import client_target_stage
     from app.zt.scoring import resolve_target_stage
 
-    a = (
-        db.execute(
-            select(ZtAssessment)
-            .where(
-                ZtAssessment.framework == _framework_enum(framework),
-                ZtAssessment.status.in_([ZtAssessmentStatus.DRAFT, ZtAssessmentStatus.SUBMITTED]),
+    a = _latest_zt(db, framework, [ZtAssessmentStatus.DRAFT, ZtAssessmentStatus.SUBMITTED])
+    reopened_from = None
+    if a is None and reopen_released:
+        a = _latest_zt(db, framework, [ZtAssessmentStatus.RELEASED, ZtAssessmentStatus.APPROVED])
+        if a is not None:
+            reopened_from = a.status.value
+            a.status = ZtAssessmentStatus.DRAFT
+            db.commit()
+            _log.info(
+                "measure_ai_consistency.reopened",
+                assessment_id=str(a.id),
+                reopened_from=reopened_from,
             )
-            .order_by(ZtAssessment.created_at.desc())
-        )
-        .scalars()
-        .first()
-    )
     if a is None:
-        raise Refused("no_editable_assessment", f"No draft or submitted {framework} assessment.")
+        raise Refused(
+            "no_editable_assessment",
+            f"No draft or submitted {framework} assessment"
+            + ("" if reopen_released else " (--reopen-released was not given)")
+            + ".",
+        )
     svc = db.get(Service, a.service_id)
     client = db.get(Client, svc.client_id)
     admin = (
@@ -347,6 +385,7 @@ def measure_zt(db: Any, llm: Any, *, framework: str, runs: int) -> dict:
     report = summarize("zt_score", records)
     report["assessment_capabilities"] = len(req.rows)
     report["engagement_stage"] = {"stage": stage, "source": stage_source}
+    report["input_setup"] = {"reopened_from": reopened_from}
     report["provider"] = {"name": llm.provider.name, "model": llm.provider.model}
     report["downstream"] = [
         {"run": i + 1, **zt_downstream(fw, engagement_stage=stage, data=r.data)}
@@ -387,6 +426,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("--framework", choices=("cisa", "dod"), default="cisa")
     p.add_argument("--runs", type=int, default=2)
     p.add_argument("--out", required=True)
+    p.add_argument(
+        "--reopen-released",
+        action="store_true",
+        help="If no assessment is editable, set the latest released one back to DRAFT "
+        "first (the demo seed releases them all). Recorded in the report.",
+    )
     args = p.parse_args(argv)
     if args.runs < 2:
         print("REFUSED (runs_below_two): agreement needs at least two runs.", file=sys.stderr)
@@ -414,7 +459,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         llm = LLMClient.from_db(db, s)
         print(f"provider={llm.provider.name} model={llm.provider.model} runs={args.runs}")
         try:
-            report = measure_zt(db, llm, framework=args.framework, runs=args.runs)
+            report = measure_zt(
+                db,
+                llm,
+                framework=args.framework,
+                runs=args.runs,
+                reopen_released=args.reopen_released,
+            )
         except Refused as exc:
             print(f"REFUSED ({exc.reason}): {exc}", file=sys.stderr)
             return 2
