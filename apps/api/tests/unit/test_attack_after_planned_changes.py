@@ -19,6 +19,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.attack import computed
+from app.attack.after import after_planned_changes
 from app.attack.retirement import PlanEntry, build_index
 
 pytestmark = pytest.mark.unit
@@ -83,12 +84,25 @@ def test_a_cut_removes_coverage_only_where_nothing_else_provides_it() -> None:
     assert (_today(only).status, _after(only).status) == ("covered", "partial")
 
 
-def test_unknown_retirement_is_disclosed_by_the_awaiting_count() -> None:
-    rows = computed.effective_coverage(
-        _DRAFT, [_row([ON_NO_PLAN], [KEPT], [KEPT])], retirement=INDEX
-    )
-    assert computed.awaiting_review_count(rows) == 1
-    assert rows[0].status == "partial"  # the lower bound: D not in place
+def test_unknown_retirement_is_counted_for_a3() -> None:
+    """A tool on no plan: Detect is awaiting review after planned changes, the
+    status takes the lower bound, and A3 counts the technique."""
+    rows = [_row([ON_NO_PLAN], [KEPT], [KEPT])]
+    (eff,) = computed.effective_coverage(_DRAFT, rows, retirement=INDEX)
+    assert eff.status == "partial"  # the lower bound: D not in place
+    fig = after_planned_changes(_DRAFT, rows, INDEX)
+    assert (fig.lower, fig.unknown) == (1, 1)
+
+
+def test_a_pending_citation_beside_a_cut_is_not_an_unknown_retirement() -> None:
+    """Detect lists the cut tool and a kept tool whose citation is pending: after
+    planned changes it is awaiting review because of the citation, and every
+    retirement verdict is known, so A3 counts nothing (#813 review)."""
+    rows = [_row([CUT, KEPT], [CUT], [CUT], pending=[KEPT])]
+    assert _today(rows[0]).status == "covered"
+    assert _after(rows[0]).capabilities.detect is computed.InPlace.AWAITING_REVIEW
+    fig = after_planned_changes(_DRAFT, rows, INDEX)
+    assert (fig.lower, fig.unknown) == (1, 0)
 
 
 def test_no_plan_changes_nothing() -> None:

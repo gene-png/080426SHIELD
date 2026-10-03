@@ -29,7 +29,7 @@ from app.attack.analytics import compute as compute_rollup
 from app.attack.catalog import all_codes
 from app.attack.computed import EffectiveRow, InPlace, effective_coverage
 from app.attack.pending import pending_codes
-from app.attack.retirement import RetirementIndex
+from app.attack.retirement import Retirement, RetirementIndex
 from app.attack.rules import parents_computed, statuses_computed
 
 #: Higher is better; a drop in rank is "would score lower".
@@ -52,8 +52,20 @@ class AfterPlannedChanges:
     #: Techniques whose status after planned changes is below today's (A1).
     lower: int
     #: Computed techniques where a tool whose retirement status is unknown is
-    #: what moved a capability from in place to awaiting review (A3).
+    #: what leaves a capability awaiting review after planned changes (A3).
     unknown: int
+
+
+class _UnknownStays(RetirementIndex):
+    """`retirement` with every UNKNOWN verdict read as not retiring: the
+    counterfactual A3 is measured against, never a figure any surface shows."""
+
+    def __init__(self, retirement: RetirementIndex) -> None:
+        super().__init__(has_plan=retirement.has_plan, by_key=retirement.by_key)
+
+    def state(self, tool: str) -> Retirement | None:
+        s = super().state(tool)
+        return Retirement.NOT_RETIRING if s is Retirement.UNKNOWN else s
 
 
 def _stored(rows: Iterable[Any]) -> list[Any]:
@@ -84,13 +96,21 @@ def after_planned_changes(
         and by_code[r.technique_code].status in _RANK
         and _RANK[r.status] < _RANK[by_code[r.technique_code].status]
     )
+    # A3 counts a technique only where the UNKNOWN retirement is what made the
+    # difference: with those tools treated as staying, a capability awaiting
+    # review would be in place. A pending citation also leaves a capability
+    # awaiting review, and that is not an unknown retirement (#813 review).
+    staying = {
+        r.technique_code: r
+        for r in effective_coverage(assessment, stored, retirement=_UnknownStays(retirement))
+    }
     unknown = 0
     for r in after:
         if r.technique_code not in valid or not r.is_computed:
             continue
-        before = by_code[r.technique_code].capabilities
-        pairs = zip(before.judged(), r.capabilities.judged(), strict=True)
-        if any(b is InPlace.IN_PLACE and a is InPlace.AWAITING_REVIEW for b, a in pairs):
+        if_staying = staying[r.technique_code].capabilities
+        pairs = zip(if_staying.judged(), r.capabilities.judged(), strict=True)
+        if any(s is InPlace.IN_PLACE and a is InPlace.AWAITING_REVIEW for s, a in pairs):
             unknown += 1
     return AfterPlannedChanges(rollup=rollup, lower=lower, unknown=unknown)
 
