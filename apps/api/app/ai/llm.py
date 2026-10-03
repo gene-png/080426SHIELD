@@ -56,6 +56,22 @@ class LLMResponse:
         self.output_tokens = output_tokens
 
 
+class IncompleteResponseError(RuntimeError):
+    """A provider stopped without finishing (a cut-off at the output cap, a
+    content filter, ...). The response is NOT parsed, but it was generated and
+    billed, so the error carries the usage the provider reported and
+    `LLMClient.invoke` records it on the FAILED `llm_calls` row. Without it a
+    truncated call billed up to the cap reads as zero tokens (the N-019 shape).
+    """
+
+    def __init__(
+        self, message: str, *, input_tokens: int | None, output_tokens: int | None
+    ) -> None:
+        super().__init__(message)
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+
+
 class LLMProvider(Protocol):
     name: str
     model: str
@@ -166,17 +182,19 @@ class AnthropicProvider:
         # to the engine's json.loads produces an opaque JSONDecodeError, a 500,
         # and — because the 500 rolls the request transaction back — no
         # llm_calls row at all. Raising here names the real cause instead.
+        input_tokens = getattr(getattr(msg, "usage", None), "input_tokens", None)
+        output_tokens = getattr(getattr(msg, "usage", None), "output_tokens", None)
         stop_reason = getattr(msg, "stop_reason", None)
         if stop_reason is not None and stop_reason not in _ANTHROPIC_CLEAN_STOP_REASONS:
-            raise RuntimeError(
+            raise IncompleteResponseError(
                 f"Anthropic did not finish cleanly (stop_reason={stop_reason}). "
                 "The response is incomplete and was NOT parsed; if this is "
-                "max_tokens, the draft exceeded the output budget."
+                "max_tokens, the draft exceeded the output budget.",
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
             )
         # `msg.content` is a list of blocks; gather the text blocks.
         text = "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
-        input_tokens = getattr(getattr(msg, "usage", None), "input_tokens", None)
-        output_tokens = getattr(getattr(msg, "usage", None), "output_tokens", None)
         return LLMResponse(text, input_tokens, output_tokens)
 
 
@@ -219,8 +237,11 @@ _MAX_OUTPUT_TOKENS = 8192
 # #485. Every live adapter now refuses a truncated response (#484 added
 # OpenAI's).
 #
-# OBSERVED, live, claude-opus-5, largest single call per purpose (thinking
-# included), from the #479 proposal (issuecomment-5970347024):
+# OBSERVED, live, claude-opus-5: the largest COMPLETED single call per purpose
+# (thinking included), from the #479 proposal (issuecomment-5970347024). A
+# completed call is a floor on demand, not the demand: extract.capabilities
+# (2026-09-23) and mitre_map (2026-08-07, before batching) each had a call cut
+# off at 8192, so what those calls wanted is unknown and higher.
 #   mitre_map              15,289 (earlier dev llm_calls); 11,684 on 2026-10-02
 #   zt_score                1,553 (2026-10-02)
 #   extract.capabilities    8,117 (2026-09-23); 687 on 2026-10-02
@@ -383,16 +404,18 @@ def _parse_generate_content(data: dict[str, Any]) -> LLMResponse:
     ``finishReason`` (e.g. hand-built test fixtures) is treated as success.
     """
     candidate = data["candidates"][0]
+    usage = data.get("usageMetadata") or {}
     finish_reason = candidate.get("finishReason")
     if finish_reason is not None and finish_reason != "STOP":
-        raise RuntimeError(
+        raise IncompleteResponseError(
             f"generateContent did not finish cleanly (finishReason={finish_reason}). "
             "The response is incomplete and was NOT parsed; if this is MAX_TOKENS, "
-            "raise maxOutputTokens for this purpose."
+            "raise maxOutputTokens for this purpose.",
+            input_tokens=usage.get("promptTokenCount"),
+            output_tokens=usage.get("candidatesTokenCount"),
         )
     parts = candidate["content"]["parts"]
     text = "".join(p.get("text", "") for p in parts)
-    usage = data.get("usageMetadata") or {}
     return LLMResponse(
         text,
         usage.get("promptTokenCount"),
@@ -449,15 +472,17 @@ class OpenAIProvider:
         # COMPLETED and left the engine's json.loads to fail under the wrong
         # cause. An absent finish_reason is accepted, as both twins accept an
         # absent stop_reason / finishReason.
+        usage = data.get("usage") or {}
         finish_reason = choice.get("finish_reason")
         if finish_reason is not None and finish_reason != "stop":
-            raise RuntimeError(
+            raise IncompleteResponseError(
                 f"OpenAI did not finish cleanly (finish_reason={finish_reason}). "
                 "The response is incomplete and was NOT parsed; if this is "
-                "length, the draft exceeded the output budget."
+                "length, the draft exceeded the output budget.",
+                input_tokens=usage.get("prompt_tokens"),
+                output_tokens=usage.get("completion_tokens"),
             )
         text = choice["message"]["content"]
-        usage = data.get("usage") or {}
         return LLMResponse(
             text,
             usage.get("prompt_tokens"),
@@ -747,6 +772,10 @@ class LLMClient:
         except Exception as exc:  # noqa: BLE001 - boundary; log + record + re-raise
             row.status = LLMCallStatus.FAILED
             row.error_message = f"{type(exc).__name__}: {exc}"
+            if isinstance(exc, IncompleteResponseError):
+                # Generated and billed, though not parsed: record what it cost.
+                row.input_tokens = exc.input_tokens
+                row.output_tokens = exc.output_tokens
             row.duration_ms = int((time.monotonic() - started) * 1000)
             db.flush()
             _log.error(

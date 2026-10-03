@@ -59,14 +59,14 @@ def _invoke(monkeypatch, db_factory, finish_reason: str):  # noqa: F811
             raised = exc
         db.commit()
         row = db.execute(select(LLMCall)).scalar_one()
-        return raised, row.status, row.error_message
+        return raised, row.status, row.error_message, (row.input_tokens, row.output_tokens)
 
 
 @pytest.mark.parametrize("finish_reason", ["length", "content_filter"])
 def test_an_unclean_finish_is_refused_and_recorded_failed(
     monkeypatch, db_factory, finish_reason  # noqa: F811
 ) -> None:
-    raised, status, error = _invoke(monkeypatch, db_factory, finish_reason)
+    raised, status, error, tokens = _invoke(monkeypatch, db_factory, finish_reason)
     expected = (
         f"OpenAI did not finish cleanly (finish_reason={finish_reason}). The response is "
         "incomplete and was NOT parsed; if this is length, the draft exceeded the output "
@@ -74,14 +74,16 @@ def test_an_unclean_finish_is_refused_and_recorded_failed(
     )
     # The ledger first: before #484 this row said COMPLETED.
     assert status == LLMCallStatus.FAILED
-    assert error == f"RuntimeError: {expected}"
+    assert error == f"IncompleteResponseError: {expected}"
+    # Generated and billed, though not parsed: the row records what it cost.
+    assert tokens == (40, 8192)
     assert isinstance(raised, RuntimeError), raised
     assert str(raised) == expected
 
 
 def test_a_cut_off_response_gets_the_cut_off_copy(monkeypatch, db_factory) -> None:  # noqa: F811
     """The admin is told the output was cut off, not that the JSON was bad."""
-    raised, _status, _error = _invoke(monkeypatch, db_factory, "length")
+    raised, _status, _error, _tokens = _invoke(monkeypatch, db_factory, "length")
     assert friendly_reason(raised).startswith(
         "The AI response was cut off before it finished, so nothing was applied."
     )
@@ -90,6 +92,6 @@ def test_a_cut_off_response_gets_the_cut_off_copy(monkeypatch, db_factory) -> No
 def test_a_clean_finish_is_returned_and_recorded_completed(
     monkeypatch, db_factory  # noqa: F811
 ) -> None:
-    raised, status, error = _invoke(monkeypatch, db_factory, "stop")
+    raised, status, error, tokens = _invoke(monkeypatch, db_factory, "stop")
     assert raised is None
-    assert (status, error) == (LLMCallStatus.COMPLETED, None)
+    assert (status, error, tokens) == (LLMCallStatus.COMPLETED, None, (40, 8192))
