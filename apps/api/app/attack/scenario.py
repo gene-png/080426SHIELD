@@ -29,8 +29,10 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.ai.redact import RedactionMode
 from app.attack.analytics import CoverageRollup, compute
 from app.attack.catalog import all_codes
+from app.attack.citations import Candidate, CitationResolver
 from app.attack.computed import effective_coverage
 from app.attack.pending import pending_codes, row_tools
 from app.attack.release_readiness import unreviewed_codes
@@ -64,6 +66,12 @@ class ScenarioShapeError(ValueError):
 
 def _key(name: object) -> str:
     return str(name or "").strip().casefold()
+
+
+def is_removed(name: object, removed: Iterable[str]) -> bool:
+    """Whether `name` is one of the removals, compared as everything here
+    compares tool names: trimmed and case-folded."""
+    return _key(name) in {_key(n) for n in removed}
 
 
 def _cited(rows: Iterable[Any]) -> dict[str, str]:
@@ -113,19 +121,34 @@ class ParsedDelta:
 
 
 def parse_delta(
-    data: Mapping[str, Any], *, asked: Iterable[str], available: Iterable[str]
+    data: Mapping[str, Any],
+    *,
+    asked: Iterable[str],
+    available: Iterable[str | Candidate],
+    client_org_name: str | None = None,
+    redaction_mode: RedactionMode = "strict",
+    name_hints: tuple[str, ...] = (),
 ) -> ParsedDelta:
     """Validate one batch's answer against the contract.
 
     `asked` is the batch's slice of affected techniques; `available` is the
-    client's tools minus the removed ones. A tool is matched case-folded and
-    stored under its catalogue name, never the AI's spelling."""
+    client's tools minus the removed ones. A tool is resolved by `mitre_map`'s
+    own `CitationResolver`, called with the egress's org name, mode and hints,
+    so a client-named tool cited in the redacted form the model was shown
+    resolves to its stored name (#33 finding 5). Only a CONFIRMED resolution is
+    credited: an inference (a word of a name, a vendor) has no review queue
+    here, so it is dropped and counted as `tool_unconfirmed`."""
     rows = data.get("rows") if isinstance(data, Mapping) else None
     if not isinstance(rows, list):
         raise ScenarioShapeError("the answer has no `rows` list")
     asked = list(asked)
     asked_set = set(asked)
-    tools = {_key(t): t for t in available}
+    resolver = CitationResolver(
+        [c if isinstance(c, Candidate) else Candidate(name=c) for c in available],
+        client_org_name=client_org_name,
+        redaction_mode=redaction_mode,
+        name_hints=name_hints,
+    )
     lists = {code: {name: [] for name in _LISTS} for code in asked}
     accepted: list[dict[str, Any]] = []
     dropped: Counter[str] = Counter()
@@ -137,10 +160,14 @@ def parse_delta(
         if code not in asked_set:
             dropped["technique_outside_slice"] += 1
             continue
-        tool = tools.get(_key(row.get("tool")))
-        if tool is None:
+        resolution = resolver.resolve(row.get("tool"))
+        if resolution.name is None:
             dropped["tool_outside_change"] += 1
             continue
+        if not resolution.confirmed:
+            dropped["tool_unconfirmed"] += 1
+            continue
+        tool = resolution.name
         flags = {flag: row.get(flag) for flag, _ in _FLAGS}
         # `bool` only: `1`, "yes" and a missing key are refused, never coerced.
         if not all(isinstance(v, bool) for v in flags.values()):
@@ -218,6 +245,24 @@ def compare(assessment: Any, base_rows: Sequence[Any], what_if_rows: Sequence[An
         if before.get(code) != now.get(code)
     ]
     return Comparison(today=today, after=after, changed=changed)
+
+
+#: The order "higher" means: Gap < Partial < Covered. Not applicable and an
+#: unscored technique are not on it, so a move to or from them is never higher.
+_RANK = {"gap": 0, "partial": 1, "covered": 2}
+
+
+def scored_higher(comparison: Comparison, affected: Iterable[str]) -> list[str]:
+    """The affected techniques whose computed status after the change ranks
+    HIGHER than in the base, sorted. Removing tools cannot add capability, so
+    each one is the AI crediting a remaining tool the last confirmed assessment
+    did not (the advisor's addition, 05:05Z): shown, never hidden."""
+    affected = set(affected)
+    return sorted(
+        code
+        for code, before, after in comparison.changed
+        if code in affected and before in _RANK and after in _RANK and _RANK[after] > _RANK[before]
+    )
 
 
 def confirmed_base(db: Session, service_id: uuid.UUID) -> AttackAssessment | None:

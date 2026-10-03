@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.ai.redact import redact_for_ai
 from app.attack import scenario
 
 pytestmark = pytest.mark.unit
@@ -156,6 +157,43 @@ def test_anything_outside_the_contract_is_dropped_and_counted(row, reason) -> No
         "prevention_tools": [],
         "response_tools": [],
     }
+
+
+def _flags(code: str, tool: str) -> dict:
+    return {
+        "technique_code": code,
+        "tool": tool,
+        "detection": True,
+        "prevention": False,
+        "response": False,
+    }
+
+
+def test_a_client_named_tool_cited_as_the_model_was_shown_it_is_accepted() -> None:
+    """#33 finding 5's shape: the egress redacts a tool named after the client,
+    so an obedient model cites the redacted form. The expected form comes from
+    the egress redactor, not from the resolver under test."""
+    stored = "Northwind SOC Platform"
+    shown, counts = redact_for_ai(stored, mode="strict", client_org_name="Northwind")
+    assert counts and shown != stored  # the world: the model never saw the stored name
+    parsed = scenario.parse_delta(
+        _ai([_flags("T1003", shown)]),
+        asked=["T1003"],
+        available=[*AVAILABLE, stored],
+        client_org_name="Northwind",
+    )
+    assert parsed.dropped == {}
+    assert parsed.lists["T1003"]["detection_tools"] == [stored]
+
+
+def test_an_inferred_tool_match_is_dropped_as_unconfirmed_not_credited() -> None:
+    """A word of a tool's name is an inference about which tool was meant. The
+    what-if has no review queue for it, so it is counted, never credited."""
+    parsed = scenario.parse_delta(
+        _ai([_flags("T1003", "SIEM")]), asked=["T1003"], available=AVAILABLE
+    )
+    assert parsed.dropped == {"tool_unconfirmed": 1}
+    assert parsed.lists["T1003"]["detection_tools"] == []
 
 
 def test_a_missing_rows_list_is_a_shape_error_not_an_empty_answer() -> None:
