@@ -304,5 +304,7 @@ describe("AttackScenarioPanel, the chat box (slice C)", () => {
       (screen.getByLabelText("EDR Tool") as HTMLInputElement).checked,
     ).toBe(false);
     expect(screen.getByLabelText("EDR Tool").matches(":disabled")).toBe(false);
+    // Nor does the new service's chat box claim it filled anything in.
+    expect(screen.queryByTestId("attack-scenario-chat-filled")).toBeNull();
   });
 });
