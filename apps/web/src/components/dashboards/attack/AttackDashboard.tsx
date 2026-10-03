@@ -402,7 +402,9 @@ export function AttackDashboard({
             // #554: beside the percentage on every surface, even at zero.
             (outside === null ? "" : ` ${outside}`) +
             // #554 R3 (Q4): the deliverable's sentence, only when non-zero.
-            awaiting
+            awaiting +
+            // #801: the figure after planned changes, beside today's.
+            (data.after_planned_changes ?? []).map((s) => ` ${s}`).join("")
           }
         >
           <div style={{ position: "relative", height: 340 }}>

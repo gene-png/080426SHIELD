@@ -106,6 +106,15 @@ export function AttackHeatmapCard({
                 </span>
               )}
               {/* #554 R3 (Q4): the renderers' sentence, beside the percentage. */}
+              {/* #801 (H1): the figure after planned changes, beside today's. */}
+              {heatmap.after_planned_changes?.length ? (
+                <span
+                  className="text-xs text-ink-secondary"
+                  data-testid="attack-heatmap-after-planned-changes"
+                >
+                  {heatmap.after_planned_changes.join(" ")}
+                </span>
+              ) : null}
               {heatmap.awaiting_review_sentence ? (
                 <span
                   className="text-xs text-ink-secondary"

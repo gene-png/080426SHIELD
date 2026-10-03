@@ -404,6 +404,9 @@ class AttackHeatmap(BaseModel):
     #: #554 R3 (Q4): the disclosure printed beside `coverage_pct`, or None before
     #: R3 and when nothing awaits review. The renderers' own sentence.
     awaiting_review_sentence: str | None = None
+    #: #801 (H1): the figure after planned changes and its counts, or None where
+    #: there is nothing to recount (`attack/after.py`).
+    after_planned_changes: list[str] | None = None
 
 
 # ---------------------------------------------------------------------------
