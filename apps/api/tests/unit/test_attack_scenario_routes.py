@@ -491,15 +491,21 @@ def test_a_what_if_overtaken_by_a_newer_confirmed_assessment_is_stale_and_not_ru
 
 
 def test_a_discard_landing_while_the_ai_answers_still_wins(
-    app_parts, analysis_job  # noqa: F811
+    app_parts, analysis_job, monkeypatch  # noqa: F811
 ) -> None:
     """The job's second check, after the AI call (D-031's re-read): a discard
-    made while the batches were out is not overwritten by their answers."""
-    w = _world(app_parts)
-    sid = w.create([EDR]).json()["id"]
-    provider = FixtureProvider()
+    made while the batches were out is not overwritten by their answers. The
+    discard lands as the batches return, from another session, as a second
+    request's would."""
+    from app.routes import attack_scenarios
 
-    def respond(payload: dict) -> LLMResponse:
+    w = _world(app_parts)
+    w.answer({w.cc: [_flags(w.cc, SIEM, d=True)]})
+    sid = w.create([EDR]).json()["id"]
+    real = attack_scenarios.run_batches
+
+    def batches_then_discard(*args, **kwargs):
+        out = real(*args, **kwargs)
         with w.sessions() as s:
             s.execute(
                 update(AttackScenario)
@@ -507,18 +513,49 @@ def test_a_discard_landing_while_the_ai_answers_still_wins(
                 .values(state=AttackScenarioState.DISCARDED)
             )
             s.commit()
-        return LLMResponse(json.dumps({"rows": [_flags(w.cc, SIEM, d=True)]}))
+        return out
 
-    provider.register(PURPOSE, respond)
-    from app.routes.attack import _llm_dep
-
-    w.app.dependency_overrides[_llm_dep] = lambda: LLMClient(provider)
+    monkeypatch.setattr(attack_scenarios, "run_batches", batches_then_discard)
     assert w.run(sid).status_code == 202
     body = w.get(sid)
+    run = w.c.get(f"/ai-runs/{body['ai_run_id']}", headers=w.h).json()
+    assert run["error_reason"] == "scenario_discarded", run
     assert body["state"] == "discarded"
     assert body["run_status"] == "failed"
     assert body["techniques"] == []
     assert body["scored_higher"] is None
+
+
+def test_a_discard_landing_as_the_run_starts_is_not_undone(
+    app_parts, analysis_job  # noqa: F811
+) -> None:
+    """Between `start_run` committing the run and the route recording it, a
+    discard from another request lands. The route's own state change must not
+    write CONFIRMED over it."""
+    from app.ai.runs import get_ai_run_runner
+
+    w = _world(app_parts)
+    w.answer({})
+    sid = w.create([EDR]).json()["id"]
+    held: list = []
+
+    def discard_then_hold(job) -> None:
+        with w.sessions() as s:
+            s.execute(
+                update(AttackScenario)
+                .where(AttackScenario.id == uuid.UUID(sid))
+                .values(state=AttackScenarioState.DISCARDED)
+            )
+            s.commit()
+        held.append(job)
+
+    w.app.dependency_overrides[get_ai_run_runner] = lambda: discard_then_hold
+    r = w.run(sid)
+    assert r.status_code == 202, r.text
+    assert len(held) == 1
+    body = w.get(sid)
+    assert body["state"] == "discarded"
+    assert body["ai_run_id"] == r.json()["run_id"]
 
 
 def test_an_analysed_what_if_is_not_run_twice(app_parts, analysis_job) -> None:  # noqa: F811

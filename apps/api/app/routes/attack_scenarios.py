@@ -18,7 +18,7 @@ import uuid
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from app.ai.batching import run_batches
@@ -422,8 +422,25 @@ def run_scenario(
         runner=runner,
         work=functools.partial(_scenario_run_work, scenario_id=s.id),
     )
-    s.ai_run_id = started.run_id
-    s.state = AttackScenarioState.CONFIRMED
+    # Written as UPDATEs, not through `s`: the job may already be running, and
+    # a discard may have landed since `s` was read. Assigning `s.state` would
+    # flush CONFIRMED over that discard. The run id is recorded either way;
+    # the state moves only from DRAFT.
+    db.execute(
+        update(AttackScenario)
+        .where(AttackScenario.id == s.id)
+        .values(ai_run_id=started.run_id)
+        .execution_options(synchronize_session=False)
+    )
+    db.execute(
+        update(AttackScenario)
+        .where(
+            AttackScenario.id == s.id,
+            AttackScenario.state == AttackScenarioState.DRAFT,
+        )
+        .values(state=AttackScenarioState.CONFIRMED)
+        .execution_options(synchronize_session=False)
+    )
     audit(
         db,
         action="attack.scenario.run_started",
