@@ -15,6 +15,7 @@ import {
 
 import type { AiServes } from "@/lib/aiRuns/types";
 import type {
+  AddedTool,
   Scenario,
   ScenarioList as ScenarioListData,
   ScenarioRollup,
@@ -78,6 +79,24 @@ const ADDED_UNCHECKED =
   "Whether tools were added since the last confirmed assessment could not be checked for this client's list.";
 
 /** NEW: the techniques a failed batch left with the removal alone. */
+/** B9 (14:58Z): techniques only an added tool could change. */
+function addedAffectedLine(n: number): string {
+  return n === 1
+    ? "1 technique has a gap an added tool could fill, and will be re-assessed."
+    : `${n} techniques have a gap an added tool could fill, and will be re-assessed.`;
+}
+
+/** B11 (14:58Z): a result, not a warning. */
+function higherWithAddedLine(n: number): string {
+  return n === 1
+    ? "1 technique would score higher with the added tools."
+    : `${n} techniques would score higher with the added tools.`;
+}
+
+/** B14 (14:58Z), always beside the results when tools were added. */
+const ADDED_IN_PLACE =
+  "Tools you added count as in place. The AI judged what they cover from the name and functions you entered; they are not on the client's list.";
+
 function notReassessedLine(n: number): string {
   return n === 1
     ? "1 technique could not be re-assessed because the AI did not answer for it. It shows the removal alone: the removed tools are taken out and nothing else changes."
@@ -90,6 +109,7 @@ function dropLines(dropped: Record<string, number>): string[] {
     (dropped.technique_outside_slice ?? 0) + (dropped.tool_outside_change ?? 0);
   const unconfirmed = dropped.tool_unconfirmed ?? 0;
   const notLost = dropped.function_not_lost ?? 0;
+  const notAdded = dropped.tool_not_added ?? 0;
   const malformed = (dropped.not_boolean ?? 0) + (dropped.not_an_object ?? 0);
   const lines: string[] = [];
   if (outside > 0)
@@ -103,6 +123,11 @@ function dropLines(dropped: Record<string, number>): string[] {
   if (notLost > 0)
     lines.push(
       `${notLost} AI ${plural(notLost, "suggestion was", "suggestions were")} set aside because ${plural(notLost, "it", "they")} credited Detect, Prevent or Respond where these changes took nothing away.`,
+    );
+  // B13 (14:58Z).
+  if (notAdded > 0)
+    lines.push(
+      `${notAdded} AI ${plural(notAdded, "suggestion was", "suggestions were")} set aside because ${plural(notAdded, "it", "they")} credited one of the client's tools where only an added tool was asked about.`,
     );
   if (malformed > 0)
     lines.push(
@@ -170,6 +195,8 @@ export function AttackScenarioPanel({
   /** Bumped after a write, so the list is read again. */
   const [reads, setReads] = React.useState(0);
   const [picked, setPicked] = React.useState<string[]>([]);
+  /** Slice B: the tools to add, as the admin is typing them. */
+  const [adding, setAdding] = React.useState<Draft[]>([]);
   const [current, setCurrent] = React.useState<Scenario | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -246,9 +273,9 @@ export function AttackScenarioPanel({
     }
   }
 
-  function start(removed: string[]): Promise<void> {
+  function start(removed: string[], added: AddedTool[]): Promise<void> {
     return act(async () => {
-      setCurrent(await createScenario(serviceId, removed));
+      setCurrent(await createScenario(serviceId, removed, added));
       setReads((n) => n + 1);
     }, "The what-if could not be started.");
   }
@@ -291,6 +318,7 @@ export function AttackScenarioPanel({
   function startNew(): void {
     setCurrent(null);
     setPicked([]);
+    setAdding([]);
     setError(null);
     setPollError(null);
   }
@@ -363,11 +391,12 @@ export function AttackScenarioPanel({
               </label>
             ))}
           </fieldset>
+          <AddToolsFieldset drafts={adding} onChange={setAdding} />
           <div>
             <button
               type="button"
               disabled={busy}
-              onClick={() => void start(picked)}
+              onClick={() => void start(picked, adding.map(toAddedTool))}
               className="rounded-md border border-line px-3 py-1.5 text-sm font-semibold disabled:opacity-60"
             >
               Continue
@@ -393,7 +422,7 @@ export function AttackScenarioPanel({
             busy={busy}
             onRun={(serves) => void run(serves)}
             onDiscard={() => void discard()}
-            onRunAgain={() => void start(current.removed)}
+            onRunAgain={() => void start(current.removed, current.added ?? [])}
           />
           {/* Always offered: a running what-if stays reachable from the
               list, and its run goes on without this page. */}
@@ -433,6 +462,115 @@ export function AttackScenarioPanel({
   );
 }
 
+/** A tool to add, as typed: every field a string until it is sent. */
+interface Draft {
+  name: string;
+  vendor: string;
+  category: string;
+  functions: AddedTool["security_functions"];
+}
+
+const FUNCTIONS: [AddedTool["security_functions"][number], string][] = [
+  ["detect", "Detect"],
+  ["prevent", "Prevent"],
+  ["respond", "Respond"],
+];
+
+function toAddedTool(d: Draft): AddedTool {
+  return {
+    name: d.name,
+    vendor: d.vendor.trim() ? d.vendor : null,
+    category: d.category.trim() ? d.category : null,
+    security_functions: d.functions,
+  };
+}
+
+/** B1-B3 (14:58Z). The api validates every field and refuses in its own words. */
+function AddToolsFieldset({
+  drafts,
+  onChange,
+}: {
+  drafts: Draft[];
+  onChange: (next: Draft[]) => void;
+}): JSX.Element {
+  function update(i: number, patch: Partial<Draft>): void {
+    onChange(drafts.map((d, k) => (k === i ? { ...d, ...patch } : d)));
+  }
+  return (
+    <fieldset className="flex flex-col gap-2" data-testid="attack-scenario-add">
+      <legend className="text-sm font-semibold">Tools to add</legend>
+      {drafts.map((d, i) => (
+        <div key={i} className="flex flex-wrap items-center gap-2 text-sm">
+          <label className="flex items-center gap-1">
+            Name
+            <input
+              className="rounded border border-line px-1"
+              value={d.name}
+              onChange={(e) => update(i, { name: e.target.value })}
+            />
+          </label>
+          <label className="flex items-center gap-1">
+            Vendor (optional)
+            <input
+              className="rounded border border-line px-1"
+              value={d.vendor}
+              onChange={(e) => update(i, { vendor: e.target.value })}
+            />
+          </label>
+          <label className="flex items-center gap-1">
+            Category (optional)
+            <input
+              className="rounded border border-line px-1"
+              value={d.category}
+              onChange={(e) => update(i, { category: e.target.value })}
+            />
+          </label>
+          <span>What it does:</span>
+          {FUNCTIONS.map(([value, label]) => (
+            <label key={value} className="flex items-center gap-1">
+              <input
+                type="checkbox"
+                checked={d.functions.includes(value)}
+                onChange={() =>
+                  update(i, {
+                    functions: d.functions.includes(value)
+                      ? d.functions.filter((f) => f !== value)
+                      : FUNCTIONS.map(([v]) => v).filter(
+                          (v) => v === value || d.functions.includes(v),
+                        ),
+                  })
+                }
+              />
+              {label}
+            </label>
+          ))}
+          <button
+            type="button"
+            className="rounded-md border border-line px-2 py-0.5"
+            onClick={() => onChange(drafts.filter((_, k) => k !== i))}
+          >
+            Remove this tool
+          </button>
+        </div>
+      ))}
+      <div>
+        <button
+          type="button"
+          className="rounded-md border border-line px-2 py-0.5 text-sm"
+          onClick={() =>
+            onChange([
+              ...drafts,
+              { name: "", vendor: "", category: "", functions: [] },
+            ])
+          }
+        >
+          Add a tool
+        </button>
+      </div>
+    </fieldset>
+  );
+}
+
 /** NEW copy: the heading, each row's line and its control. */
 function ScenarioList({
   scenarios,
@@ -451,7 +589,8 @@ function ScenarioList({
         {scenarios.map((x) => (
           <li key={x.id} className="flex items-center gap-2 text-sm">
             <span>
-              {x.removed.join(", ")} (compared with version {x.base_version})
+              {[...x.removed, ...(x.added ?? [])].join(", ")} (compared with
+              version {x.base_version})
             </span>
             <button
               type="button"
@@ -482,6 +621,8 @@ function ScenarioView({
   onRunAgain: () => void;
 }): JSX.Element {
   const higher = s.scored_higher ?? 0;
+  // Slice B: absent on a what-if read before slice B shipped.
+  const added = s.added ?? [];
   const notReassessed = s.not_reassessed ?? [];
   // (b2): techniques credited to an added tool whose status did not move, so
   // the differences table cannot mark them.
@@ -504,13 +645,36 @@ function ScenarioView({
     (s.run_status === null || s.run_status === "failed");
   return (
     <div className="flex flex-col gap-3" data-testid="attack-scenario">
-      <p className="text-sm">
-        <span className="font-semibold">Tools to remove:</span>{" "}
-        {s.removed.join(", ")}
-      </p>
-      <p className="text-sm" data-testid="attack-scenario-affected">
-        {affectedLine(s.affected_codes.length)}
-      </p>
+      {s.removed.length > 0 ? (
+        <p className="text-sm">
+          <span className="font-semibold">Tools to remove:</span>{" "}
+          {s.removed.join(", ")}
+        </p>
+      ) : null}
+      {added.length > 0 ? (
+        <p className="text-sm" data-testid="attack-scenario-added-tools">
+          <span className="font-semibold">Tools to add:</span>{" "}
+          {added.map((t) => t.name).join(", ")}
+        </p>
+      ) : null}
+      {added.length === 0 ? (
+        <p className="text-sm" data-testid="attack-scenario-affected">
+          {affectedLine(s.affected_codes.length)}
+        </p>
+      ) : (
+        <>
+          {s.affected_by_removal > 0 ? (
+            <p className="text-sm" data-testid="attack-scenario-affected">
+              {affectedLine(s.affected_by_removal)}
+            </p>
+          ) : null}
+          {s.affected_by_addition_only > 0 ? (
+            <p className="text-sm" data-testid="attack-scenario-affected-added">
+              {addedAffectedLine(s.affected_by_addition_only)}
+            </p>
+          ) : null}
+        </>
+      )}
 
       {s.stale ? (
         <div
@@ -585,10 +749,29 @@ function ScenarioView({
 
       {s.after ? (
         <>
-          <p className="text-sm text-ink-secondary">
-            Only the techniques these tools appear on were re-assessed. Every
-            other technique is as the last confirmed assessment has it.
-          </p>
+          {added.length === 0 ? (
+            <p className="text-sm text-ink-secondary">
+              Only the techniques these tools appear on were re-assessed. Every
+              other technique is as the last confirmed assessment has it.
+            </p>
+          ) : (
+            <>
+              <p className="text-sm text-ink-secondary">
+                Only the techniques these changes could affect were re-assessed.
+                Every other technique is as the last confirmed assessment has
+                it.
+              </p>
+              <p
+                className="text-sm"
+                data-testid="attack-scenario-added-in-place"
+              >
+                {ADDED_IN_PLACE}
+              </p>
+              <p className="text-sm" data-testid="attack-scenario-higher-added">
+                {higherWithAddedLine(s.higher_with_added ?? 0)}
+              </p>
+            </>
+          )}
           {higher > 0 ? (
             <p
               role="alert"
@@ -662,6 +845,14 @@ function ScenarioView({
                           data-testid="attack-scenario-diff-higher"
                         >
                           Scores higher
+                        </span>
+                      ) : null}
+                      {d.credited_tool_you_added ? (
+                        <span
+                          className="ml-2 font-semibold"
+                          data-testid="attack-scenario-diff-you-added"
+                        >
+                          Credited to a tool you added
                         </span>
                       ) : null}
                       {d.credited_added_tool ? (
