@@ -34,17 +34,16 @@ pytestmark = pytest.mark.unit
 _LIVE = Settings(shield_llm_mode="live", shield_llm_provider="openai", openai_api_key="sk-test")
 
 
-def _invoke(monkeypatch, db_factory, finish_reason: str):  # noqa: F811
+def _invoke(monkeypatch, db_factory, finish_reason: str | None):  # noqa: F811
+    """`finish_reason` None sends a choice WITHOUT the key."""
+    choice: dict = {"message": {"content": '{"rows": [{"id": 1'}}
+    if finish_reason is not None:
+        choice["finish_reason"] = finish_reason
     _install_fake_httpx(
         monkeypatch,
         _FakeResponse(
             200,
-            {
-                "choices": [
-                    {"message": {"content": '{"rows": [{"id": 1'}, "finish_reason": finish_reason}
-                ],
-                "usage": {"prompt_tokens": 40, "completion_tokens": 8192},
-            },
+            {"choices": [choice], "usage": {"prompt_tokens": 40, "completion_tokens": 8192}},
         ),
     )
     client = LLMClient(OpenAIProvider(model="gpt-4o-mini", api_key="sk-test"), settings=_LIVE)
@@ -95,3 +94,17 @@ def test_a_clean_finish_is_returned_and_recorded_completed(
     raised, status, error, tokens = _invoke(monkeypatch, db_factory, "stop")
     assert raised is None
     assert (status, error, tokens) == (LLMCallStatus.COMPLETED, None, (40, 8192))
+
+
+def test_an_absent_finish_reason_is_refused(monkeypatch, db_factory) -> None:  # noqa: F811
+    """Fail closed (advisor, 2026-10-03, on #820): nothing says the response
+    finished, so it is refused like a cut-off one, with its usage recorded."""
+    raised, status, error, tokens = _invoke(monkeypatch, db_factory, None)
+    expected = (
+        "OpenAI did not finish cleanly (no finish_reason). The response is incomplete and "
+        "was NOT parsed; if this is length, the draft exceeded the output budget."
+    )
+    assert status == LLMCallStatus.FAILED
+    assert error == f"IncompleteResponseError: {expected}"
+    assert tokens == (40, 8192)
+    assert str(raised) == expected

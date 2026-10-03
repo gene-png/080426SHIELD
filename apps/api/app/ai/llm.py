@@ -470,13 +470,17 @@ class OpenAIProvider:
         # generateContent guards (#484). `length` is a draft cut off at the
         # output cap; returning it as a success marked the llm_calls row
         # COMPLETED and left the engine's json.loads to fail under the wrong
-        # cause. An absent finish_reason is accepted, as both twins accept an
-        # absent stop_reason / finishReason.
+        # cause. An ABSENT finish_reason is refused too (advisor, 2026-10-03, on
+        # #820): nothing then says the response finished. The two twins still
+        # accept an absent stop_reason / finishReason; that is theirs to change.
         usage = data.get("usage") or {}
         finish_reason = choice.get("finish_reason")
-        if finish_reason is not None and finish_reason != "stop":
+        if finish_reason != "stop":
+            stated = (
+                "no finish_reason" if finish_reason is None else f"finish_reason={finish_reason}"
+            )
             raise IncompleteResponseError(
-                f"OpenAI did not finish cleanly (finish_reason={finish_reason}). "
+                f"OpenAI did not finish cleanly ({stated}). "
                 "The response is incomplete and was NOT parsed; if this is "
                 "length, the draft exceeded the output budget.",
                 input_tokens=usage.get("prompt_tokens"),
