@@ -436,3 +436,12 @@ def test_a_cited_name_starting_with_a_verb_in_a_shared_list_is_not_a_guess(
     parsed = _parse(text, cited=cited, client=cited)
     assert (parsed.removed, parsed.added) == (["Splunk"], [])
     assert _reasons(parsed) == [(clause, "ambiguous_tool")]
+
+
+def test_a_verb_after_a_removal_still_reads_as_a_verb_when_it_names_no_tool() -> None:
+    """The other half of T2, on the coordinator's ruling: with only "Shield"
+    cited, "Cut Shield" names no tool, and reading it as "cut Shield" is fair."""
+    cited = ("Splunk", "Shield")
+    parsed = _parse("retire Splunk and Cut Shield", cited=cited, client=cited)
+    assert parsed.removed == ["Splunk", "Shield"]
+    assert parsed.not_understood == []
