@@ -59,6 +59,14 @@ def test_a_swap_removes_the_first_and_adds_the_second(text) -> None:
     assert (parsed.removed, parsed.added) == (["EDR Tool"], ["XDR Suite"])
 
 
+def test_a_swap_is_one_unit_if_either_half_fails_neither_is_proposed() -> None:
+    """SIEM Tool is the client's: the swap is not understood, and EDR Tool is
+    not proposed for removal on its own."""
+    parsed = _parse("swap EDR Tool for SIEM Tool")
+    assert (parsed.removed, parsed.added) == ([], [])
+    assert [(n.reason, n.name) for n in parsed.not_understood] == [("already_clients", "SIEM Tool")]
+
+
 def test_a_list_after_a_removal_verb_shares_it() -> None:
     """The plan's own example: "retire X and Y". Sharing is safe for a removal:
     each name must still hit exactly one cited tool."""
