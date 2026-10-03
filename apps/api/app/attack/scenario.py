@@ -657,6 +657,14 @@ def parse_change(
             i += 1
             continue
         kind = _kind(clause)
+        if sharing and kind != "bare" and resolver.named_by(_bare(clause)):
+            # After a removal, "Add Manager" is a cited tool sharing the verb AND
+            # an addition of "Manager": neither reading is chosen (#824 narrow
+            # review, T2).
+            not_understood.append(NotUnderstood(text=clause, reason="ambiguous_tool"))
+            sharing = False
+            i += 1
+            continue
         # An add or swap with bare clauses after it may be one name cut apart.
         j = i + 1
         while kind in ("add", "swap") and j < len(clauses) and _kind(clauses[j]) == "bare":

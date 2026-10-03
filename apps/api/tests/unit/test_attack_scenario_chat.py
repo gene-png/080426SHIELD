@@ -395,3 +395,44 @@ def test_a_swap_with_several_cuts_and_none_plausible_is_unrecognised() -> None:
     parsed = _parse("swap Foo Tool for Bar Tool for Baz Tool")
     assert (parsed.removed, parsed.added) == ([], [])
     assert _reasons(parsed) == [("swap Foo Tool for Bar Tool for Baz Tool", "unrecognised")]
+
+
+# --- #824 narrow review at 91118faa -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("cited", "text", "name"),
+    [
+        (
+            ("Identity and Access Manager",),
+            "add Identity and Access Manager",
+            "Identity and Access Manager",
+        ),
+        (("Acme SIEM and SOAR",), "add [CLIENT] SIEM and SOAR", "[CLIENT] SIEM and SOAR"),
+    ],
+)
+def test_adding_a_client_tool_whose_name_has_a_break_still_names_it(cited, text, name) -> None:
+    """T1: the client's own tool is refused as theirs (B4) before a break in
+    the name is reported, typed as stored or as shown. B4 names the spelling
+    the admin typed, as the create route's refusal does."""
+    parsed = _parse(text, cited=cited, client=cited)
+    assert parsed.added == []
+    assert [(n.reason, n.name) for n in parsed.not_understood] == [("already_clients", name)]
+
+
+@pytest.mark.parametrize(
+    ("cited", "text", "clause"),
+    [
+        (("Splunk", "Add Manager"), "retire Splunk and Add Manager", "Add Manager"),
+        (("Splunk", "Cut Shield", "Shield"), "retire Splunk and Cut Shield", "Cut Shield"),
+    ],
+)
+def test_a_cited_name_starting_with_a_verb_in_a_shared_list_is_not_a_guess(
+    cited, text, clause
+) -> None:
+    """T2: after a removal, "Add Manager" is a cited tool AND an addition of
+    "Manager"; "Cut Shield" is a cited tool AND a removal of "Shield". Neither
+    reading is chosen."""
+    parsed = _parse(text, cited=cited, client=cited)
+    assert (parsed.removed, parsed.added) == (["Splunk"], [])
+    assert _reasons(parsed) == [(clause, "ambiguous_tool")]
