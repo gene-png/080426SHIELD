@@ -189,6 +189,43 @@ def compare_pair(job: str, a: Mapping[str, Any], b: Mapping[str, Any]) -> dict:
     }
 
 
+def _zt_sent_current(inputs: Mapping[str, Any], code: Any) -> Any:
+    answer = (inputs.get("answers") or {}).get(code) if isinstance(code, str) else None
+    return answer.get("current") if isinstance(answer, dict) else None
+
+
+#: Per job, the compared fields whose value the payload already SENDS, and how
+#: to read the sent value for a row. Agreement on such a field can be the model
+#: repeating its input on both runs rather than judging twice; `echo_share`
+#: says how much. zt_score sends each capability's stored `current` and no
+#: target (`routes/zt.py::_zt_ai_request_for`).
+_ECHO_FIELDS: dict[str, dict[str, Any]] = {
+    "zt_score": {"current": _zt_sent_current},
+}
+
+
+def echo_share(job: str, inputs: Mapping[str, Any], data: Mapping[str, Any]) -> dict:
+    """For one run: of the rows where something was sent AND the model answered
+    the field, how many answers equal (same JSON type) what was sent. Rows sent
+    nothing are counted apart, since there was nothing to repeat."""
+    list_key, key_fields, _ = _job_shape(job)
+    out: dict[str, dict[str, int]] = {}
+    for field, sent_value in _ECHO_FIELDS.get(job, {}).items():
+        answered = echoed = nothing_sent = 0
+        for row in data.get(list_key) or []:
+            if not isinstance(row, dict) or field not in row:
+                continue
+            sent = sent_value(inputs, row.get(key_fields[0]))
+            if sent is None:
+                nothing_sent += 1
+                continue
+            answered += 1
+            if _same(sent, row[field]):
+                echoed += 1
+        out[field] = {"sent_and_answered": answered, "echoed": echoed, "nothing_sent": nothing_sent}
+    return out
+
+
 def zt_downstream(framework: Any, *, engagement_stage: int, data: Mapping[str, Any]) -> dict:
     """The gaps a client would see if every value in `data` were applied,
     counted by the engine (`analyze_gaps`) with no truncation.
@@ -387,6 +424,11 @@ def measure_zt(
     report["engagement_stage"] = {"stage": stage, "source": stage_source}
     report["input_setup"] = {"reopened_from": reopened_from}
     report["provider"] = {"name": llm.provider.name, "model": llm.provider.model}
+    report["echo"] = [
+        {"run": i + 1, **echo_share("zt_score", req.preview.inputs, r.data)}
+        for i, r in enumerate(records)
+        if r.ok and r.data is not None
+    ]
     report["downstream"] = [
         {"run": i + 1, **zt_downstream(fw, engagement_stage=stage, data=r.data)}
         for i, r in enumerate(records)
@@ -412,6 +454,13 @@ def _print_table(report: dict) -> None:
                 f"{s['within_one']}/{s['compared']}, mean |diff| {s['mean_abs_diff']}, "
                 f"missing A/B {s['missing_in_a']}/{s['missing_in_b']}"
             )
+    for e in report.get("echo", []):
+        for name, c in e.items():
+            if name != "run":
+                print(
+                    f"run {e['run']} echo {name}: {c['echoed']}/{c['sent_and_answered']} "
+                    f"repeat the sent value ({c['nothing_sent']} rows were sent nothing)"
+                )
     for d in report.get("downstream", []):
         print(
             f"run {d['run']}: client-visible gaps {d['total_gap_count']}, "

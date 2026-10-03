@@ -30,6 +30,7 @@ from scripts.measure_ai_consistency import (
     Refused,
     RunRecord,
     compare_pair,
+    echo_share,
     measure_zt,
     preflight,
     summarize,
@@ -222,6 +223,39 @@ def test_downstream_never_coerces_a_non_integer_stage() -> None:
     assert d["non_integer_values"] == 3
 
 
+# --- echo_share: did the model judge, or repeat what it was sent? ----------
+
+
+def _zt_inputs(answers: dict) -> dict:
+    # The shape `routes/zt.py::_zt_ai_request_for` sends.
+    return {"framework": "cisa_ztmm_2_0", "capabilities": sorted(answers), "answers": answers}
+
+
+def test_echo_share_counts_values_equal_to_what_was_sent() -> None:
+    inputs = _zt_inputs(
+        {
+            "C1": {"notes": "n", "current": 2},
+            "C2": {"notes": "n", "current": 2},
+            "C3": {"notes": "n", "current": None},
+        }
+    )
+    data = _caps(
+        {"code": "C1", "current": 2, "target": 3},  # repeated the input
+        {"code": "C2", "current": 3, "target": 3},  # moved off it
+        {"code": "C3", "current": 1, "target": 3},  # nothing was sent to repeat
+    )
+    e = echo_share("zt_score", inputs, data)
+    assert e == {"current": {"sent_and_answered": 2, "echoed": 1, "nothing_sent": 1}}
+
+
+def test_echo_share_is_type_strict_and_skips_unanswered_rows() -> None:
+    inputs = _zt_inputs({"C1": {"current": 1}, "C2": {"current": 2}})
+    data = _caps({"code": "C1", "current": True, "target": 3}, {"code": "C2", "target": 3})
+    e = echo_share("zt_score", inputs, data)
+    # `true` is not a repeat of 1; C2 answered no `current`, so it is not counted.
+    assert e == {"current": {"sent_and_answered": 1, "echoed": 0, "nothing_sent": 0}}
+
+
 # --- summarize: failed runs ------------------------------------------------
 
 
@@ -391,4 +425,9 @@ def test_measure_zt_runs_the_job_n_times_and_applies_nothing(world) -> None:
     assert report["tokens"] == {"input": 200, "output": 80}
     assert report["downstream"][0]["gap_codes"] == [code]
     assert report["input_setup"] == {"reopened_from": None}
+    # The fixture's `current` (2) differs from the new assessment's (None).
+    assert report["echo"] == [
+        {"run": 1, "current": {"sent_and_answered": 0, "echoed": 0, "nothing_sent": 1}},
+        {"run": 2, "current": {"sent_and_answered": 0, "echoed": 0, "nothing_sent": 1}},
+    ]
     assert report["exit_code"] == 0
