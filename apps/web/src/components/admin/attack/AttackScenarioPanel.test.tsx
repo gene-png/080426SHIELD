@@ -241,7 +241,18 @@ describe("AttackScenarioPanel", () => {
     ).toEqual([
       "2 AI suggestions were set aside because they named a tool or a technique outside these changes.",
       "1 AI suggestion was set aside because the tool it named could not be matched exactly to one of the client's tools.",
-      "3 AI suggestions were set aside because they credited a capability these changes did not take away.",
+      "3 AI suggestions were set aside because they credited Detect, Prevent or Respond where these changes took nothing away.",
+    ]);
+  });
+
+  it("names a single suggestion crediting an unaffected function in the singular", async () => {
+    await startWith({ ...COMPLETED, dropped: { function_not_lost: 1 } });
+    expect(
+      screen
+        .getAllByTestId("attack-scenario-dropped")
+        .map((p) => p.textContent),
+    ).toEqual([
+      "1 AI suggestion was set aside because it credited Detect, Prevent or Respond where these changes took nothing away.",
     ]);
   });
 

@@ -90,7 +90,7 @@ function dropLines(dropped: Record<string, number>): string[] {
     );
   if (notLost > 0)
     lines.push(
-      `${notLost} AI ${plural(notLost, "suggestion was", "suggestions were")} set aside because ${plural(notLost, "it", "they")} credited a capability these changes did not take away.`,
+      `${notLost} AI ${plural(notLost, "suggestion was", "suggestions were")} set aside because ${plural(notLost, "it", "they")} credited Detect, Prevent or Respond where these changes took nothing away.`,
     );
   if (malformed > 0)
     lines.push(
