@@ -99,7 +99,13 @@ def _seed_finalize_release(c: TestClient, bearer: str, *, release: bool) -> str:
         r = c.patch(
             f"/attack/coverage/{cov['id']}",
             headers={"Authorization": f"Bearer {bearer}"},
-            json={"status": "covered"},
+            # #554 R3: all three in place, so it computes to Covered (class B).
+            json={
+                "status": "covered",
+                "detection_tools": ["Tool A"],
+                "prevention_tools": ["Tool A"],
+                "response_tools": ["Tool A"],
+            },
         )
         assert r.status_code == 200, r.text
     c.post(
@@ -306,7 +312,17 @@ def _cut_and_approve_next_version(c: TestClient, bearer: str, svc_id: str, *, co
     assert nxt.status_code == 201, nxt.text
     nxt = nxt.json()
     for cov in standalone_rows(nxt["coverage"], covered) if covered else []:
-        r = c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "covered"})
+        # #554 R3: all three in place, so it computes to Covered (class B).
+        r = c.patch(
+            f"/attack/coverage/{cov['id']}",
+            headers=h,
+            json={
+                "status": "covered",
+                "detection_tools": ["Tool A"],
+                "prevention_tools": ["Tool A"],
+                "response_tools": ["Tool A"],
+            },
+        )
         assert r.status_code == 200, r.text
     r = c.post(f"/attack/assessments/{nxt['id']}/approve", headers=h)
     assert r.status_code == 200, r.text
@@ -385,7 +401,14 @@ def test_a_computed_parent_shows_the_client_no_tools_or_rationale_of_its_own(app
         r = c.patch(
             f"/attack/coverage/{by_code[child]['id']}",
             headers=auth,
-            json={"status": "covered", "detection_tools": ["Tool A"], "rationale": "Child."},
+            # #554 R3: all three in place, so it computes to Covered (class B).
+            json={
+                "status": "covered",
+                "detection_tools": ["Tool A"],
+                "prevention_tools": ["Tool A"],
+                "response_tools": ["Tool A"],
+                "rationale": "Child.",
+            },
         )
         assert r.status_code == 200, r.text
     # A legacy parent: stale model text and tools stored on the row itself.

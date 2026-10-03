@@ -57,7 +57,12 @@ SENTENCE = f"Not verified {NOT_VERIFIED}, Outside control surface {OUTSIDE}"
 
 def _ctx(not_verified: int, outside: int):
     a = AttackAssessment(
-        id=uuid.uuid4(), service_id=uuid.uuid4(), version=1, status=AttackAssessmentStatus.APPROVED
+        id=uuid.uuid4(),
+        service_id=uuid.uuid4(),
+        version=1,
+        status=AttackAssessmentStatus.APPROVED,
+        # #554 R3: models an approved/released pre-R3 assessment, backfilled by 0059.
+        status_rules=1,
     )
     statuses = (
         ["unable_to_determine"] * not_verified
