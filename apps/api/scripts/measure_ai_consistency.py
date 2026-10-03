@@ -334,15 +334,24 @@ def csf_levels(data: Mapping[str, Any], *, has_evidence: Mapping[str, bool]) -> 
 
 
 def run_loop(
-    runs: int, one_run: Callable[[int], RunRecord], *, max_output_tokens: int | None
+    runs: int,
+    one_run: Callable[[int], RunRecord],
+    *,
+    max_output_tokens: int | None,
+    stop_on_failure: bool = False,
 ) -> list[RunRecord]:
     """Call `one_run(n)` for n = 1..runs. Once the output tokens spent exceed
     `max_output_tokens`, no further run STARTS; each one not started is recorded
     as failed (`stopped_output_budget`). A run already under way is never cut
-    off, so the overrun is bounded by one run's output."""
+    off, so the overrun is bounded by one run's output. With `stop_on_failure`,
+    no run starts after a failed one (`stopped_after_failure`): a rate-limited
+    provider is not retried into."""
     records: list[RunRecord] = []
     spent = 0
     for n in range(1, runs + 1):
+        if stop_on_failure and any(not r.ok for r in records):
+            records.append(RunRecord(False, None, "stopped_after_failure", 0, 0))
+            continue
         if max_output_tokens is not None and spent > max_output_tokens:
             _log.warning("measure_ai_consistency.budget_stop", run=n, output_tokens=spent)
             records.append(RunRecord(False, None, "stopped_output_budget", 0, 0))
@@ -373,7 +382,9 @@ def summarize(job: str, runs: Sequence[RunRecord]) -> dict:
     ]
     # A run that called the provider and has no output count is spend nobody
     # can see. A budget-stopped run made no call, so it does not count.
-    called = [r for r in runs if r.failure != "stopped_output_budget"]
+    called = [
+        r for r in runs if r.failure not in ("stopped_output_budget", "stopped_after_failure")
+    ]
     return {
         "job": job,
         "runs_requested": len(runs),
@@ -512,6 +523,7 @@ def measure_zt(
     runs: int,
     reopen_released: bool = False,
     max_output_tokens: int | None = None,
+    stop_on_failure: bool = False,
 ) -> dict:
     """Run zt_score `runs` times on the latest editable assessment for
     `framework` and summarize. Writes only what `run_job` itself writes, plus
@@ -590,7 +602,9 @@ def measure_zt(
         )
         return RunRecord(True, result.data, None, tokens_in, tokens_out)
 
-    records = run_loop(runs, one_run, max_output_tokens=max_output_tokens)
+    records = run_loop(
+        runs, one_run, max_output_tokens=max_output_tokens, stop_on_failure=stop_on_failure
+    )
     report = summarize("zt_score", records)
     report["assessment_id"] = str(a.id)
     report["assessment_capabilities"] = len(req.rows)
@@ -673,6 +687,7 @@ def measure_csf(
     reopen_released: bool = False,
     max_output_tokens: int | None = None,
     seed_profile_tiers: Sequence[str] = (),
+    stop_on_failure: bool = False,
 ) -> dict:
     """Run csf_score `runs` times on the latest editable CSF assessment, batched
     exactly as the route batches it, and summarize.
@@ -763,7 +778,9 @@ def measure_csf(
         )
         return RunRecord(True, data, None, tokens_in, tokens_out)
 
-    records = run_loop(runs, one_run, max_output_tokens=max_output_tokens)
+    records = run_loop(
+        runs, one_run, max_output_tokens=max_output_tokens, stop_on_failure=stop_on_failure
+    )
     report = summarize("csf_score", records)
     levels = {n: csf_levels(data, has_evidence=has_evidence) for n, data in _ok_runs(records)}
     for pair in report["pairs"]:
@@ -845,6 +862,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "Recorded in the report.",
     )
     p.add_argument(
+        "--stop-on-failure",
+        action="store_true",
+        help="Start no further run after a failed one (a rate limit is not retried into).",
+    )
+    p.add_argument(
         "--max-output-tokens",
         type=int,
         default=None,
@@ -885,6 +907,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "runs": args.runs,
                 "reopen_released": args.reopen_released,
                 "max_output_tokens": args.max_output_tokens,
+                "stop_on_failure": args.stop_on_failure,
             }
             if args.job == "csf_score":
                 tiers = [t for t in args.seed_profile_tiers.split(",") if t]

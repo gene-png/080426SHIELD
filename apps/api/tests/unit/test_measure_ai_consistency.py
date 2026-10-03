@@ -851,3 +851,26 @@ def test_the_seed_flag_seeds_the_named_tiers_through_the_route_and_says_so(unsee
     assert report["input_setup"] == {"reopened_from": None, "profile_seeded_tiers": ["high"]}
     assert report["rows"] == 106
     assert report["runs_ok"] == 2
+
+
+def test_stop_on_failure_starts_no_run_after_a_failed_one() -> None:
+    # A rate-limited or failing provider is not retried into: once a run fails,
+    # the rest are recorded as not started.
+    calls: list[int] = []
+
+    def one(n: int) -> RunRecord:
+        calls.append(n)
+        if n == 1:
+            return RunRecord(False, None, "ai_call_failed", 5, None, "RateLimitError", True)
+        return RunRecord(True, {}, None, 5, 5)
+
+    records = run_loop(3, one, max_output_tokens=None, stop_on_failure=True)
+    assert calls == [1]
+    assert [r.failure for r in records] == [
+        "ai_call_failed",
+        "stopped_after_failure",
+        "stopped_after_failure",
+    ]
+    # Runs that never started made no call, so they do not make tokens incomplete;
+    # run 1 did call and reported no output, so the total is incomplete.
+    assert summarize("zt_score", records)["tokens"]["complete"] is False
