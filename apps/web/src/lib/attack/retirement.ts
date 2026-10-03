@@ -1,6 +1,7 @@
 /**
- * #686 (D-105): a Tech Debt tool marked `cut` on an approved or released
- * consolidation plan is a PLANNED RETIREMENT. It still counts toward ATT&CK
+ * #686 (D-105): a Tech Debt tool marked Cut, or (since #810) "Cut, covered by
+ * another tool", on an approved or released consolidation plan is a PLANNED
+ * RETIREMENT; the API's `RETIRING_DISPOSITIONS` decides. It still counts toward ATT&CK
  * coverage, and every surface that shows it says so.
  *
  * The API decides the state (`app/attack/retirement.py`) and sends a map of

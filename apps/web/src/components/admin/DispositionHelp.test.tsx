@@ -6,8 +6,9 @@ import { describe, expect, it } from "vitest";
 import { DispositionHelp } from "./DispositionHelp";
 
 // #642. The expected sentences come from the reader analysis on the issue, not
-// from the component: only `cut` moves a number, `consolidate` counts no
-// savings, and no other service reads a disposition.
+// from the component. Since #804, both kinds of cut move the savings number
+// ("Cut" and "Cut, covered by another tool", stored `consolidate`); Keep and
+// Undecided move nothing.
 function effectOf(label: string): string {
   const term = screen.getByText(label, { selector: "dt" });
   return term.nextElementSibling?.textContent ?? "";

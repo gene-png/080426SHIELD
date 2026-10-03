@@ -1,11 +1,13 @@
 """Estimated annual savings: the ONE derivation every Tech Debt surface calls.
 
-The deliverable (`exporters.build_context`), the admin consolidation-plan card
-(`routes/tech_debt.consolidation_plan_summary`), the client dashboard and the
-home value card (`routes/clients`) each carried their own copy of this loop
-until #804, and the savings what-if needs the same figure for dispositions
-nobody has saved yet. Four copies of "which dispositions count" is four places
-for one decision to land half-made, so it lives here and they call it.
+Five surfaces each carried their own copy of this loop until #804: the
+deliverable (`exporters.build_context`), the admin consolidation-plan card
+(`routes/tech_debt.consolidation_plan_summary`), and in `routes/clients` the
+client dashboard's headline, its per-category redundancy savings and the home
+value card. And
+the savings what-if needs the same figure for dispositions nobody has saved
+yet. Five copies of "which dispositions count" is five places for one decision
+to land half-made, so it lives here and they call it.
 
 Code computes; nothing here reads an AI output.
 """
@@ -16,15 +18,15 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from decimal import Decimal
 
-from app.models.capability import CapabilityDisposition
+from app.models.capability import RETIRING_DISPOSITIONS, CapabilityDisposition
 
-#: The dispositions whose annual cost is counted as savings: "Cut" and "Cut,
-#: covered by another tool" (stored as `consolidate`), each at the tool's FULL
-#: annual cost. Decided by Gene and ruled by the advisor on #736, 2026-10-02
-#: (#804). Keep and Undecided count nothing.
-SAVINGS_DISPOSITIONS: frozenset[CapabilityDisposition] = frozenset(
-    {CapabilityDisposition.CUT, CapabilityDisposition.CONSOLIDATE}
-)
+#: The dispositions whose annual cost is counted as savings: the RETIRING ones,
+#: "Cut" and "Cut, covered by another tool" (stored `consolidate`), each at the
+#: tool's FULL annual cost. The SAME definition ATT&CK's planned-retirement
+#: marks read (`models/capability.py::RETIRING_DISPOSITIONS`), so savings and
+#: retirement cannot disagree. Ruled by the advisor on #736, 2026-10-02/03
+#: (#804, #810). Keep and Undecided count nothing.
+SAVINGS_DISPOSITIONS: frozenset[CapabilityDisposition] = RETIRING_DISPOSITIONS
 
 
 @dataclass(frozen=True)
