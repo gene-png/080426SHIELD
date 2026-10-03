@@ -85,6 +85,11 @@ class ScenarioListResponse(BaseModel):
     scenarios: list[ScenarioSummary]
 
 
+class ScenarioRunError(BaseModel):
+    reason: str | None
+    message: str | None
+
+
 class ScenarioResponse(BaseModel):
     id: uuid.UUID
     service_id: uuid.UUID
@@ -102,6 +107,9 @@ class ScenarioResponse(BaseModel):
     ai_run_id: uuid.UUID | None
     #: The run's status (`running`, `completed`, `failed`), None before a run.
     run_status: str | None
+    #: Why the run failed, as the run records it (`{reason, message}`); None
+    #: unless `run_status` is `failed`. A failed what-if can be run again.
+    run_error: ScenarioRunError | None
     today: ScenarioRollup
     #: None until a run has completed.
     after: ScenarioRollup | None

@@ -61,6 +61,7 @@ from app.schemas.attack_scenario import (
     ScenarioListResponse,
     ScenarioResponse,
     ScenarioRollup,
+    ScenarioRunError,
     ScenarioSummary,
     ScenarioTechnique,
 )
@@ -183,6 +184,11 @@ def _serialize(db: Session, s: AttackScenario) -> ScenarioResponse:
         analysis_available=scenario.analysis_available(),
         ai_run_id=s.ai_run_id,
         run_status=run.status.value if run is not None else None,
+        run_error=(
+            ScenarioRunError(reason=run.error_reason, message=run.error_message)
+            if run is not None and run.status is AiRunStatus.FAILED
+            else None
+        ),
         today=_rollup(comparison.today, states_outside=outside),
         after=_rollup(comparison.after, states_outside=outside) if rows else None,
         differences=[

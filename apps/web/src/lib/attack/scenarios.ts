@@ -46,6 +46,8 @@ export interface Scenario {
   analysis_available: boolean;
   ai_run_id: string | null;
   run_status: "running" | "completed" | "failed" | null;
+  /** Why the run failed, as the run records it; null unless `failed`. */
+  run_error: { reason: string | null; message: string | null } | null;
   today: ScenarioRollup;
   after: ScenarioRollup | null;
   differences: ScenarioDifference[];

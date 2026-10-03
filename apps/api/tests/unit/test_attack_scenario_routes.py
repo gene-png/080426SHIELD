@@ -576,6 +576,10 @@ def test_a_discard_landing_while_the_ai_answers_still_wins(
     body = w.get(sid)
     run = w.c.get(f"/ai-runs/{body['ai_run_id']}", headers=w.h).json()
     assert run["error_reason"] == "scenario_discarded", run
+    assert body["run_error"] == {
+        "reason": "scenario_discarded",
+        "message": "This what-if was set aside before the run finished.",
+    }
     assert body["state"] == "discarded"
     assert body["run_status"] == "failed"
     assert body["techniques"] == []
@@ -612,6 +616,30 @@ def test_a_discard_landing_as_the_run_starts_is_not_undone(
     body = w.get(sid)
     assert body["state"] == "discarded"
     assert body["ai_run_id"] == r.json()["run_id"]
+
+
+def test_a_failed_run_says_why_and_can_be_run_again(app_parts, analysis_job) -> None:  # noqa: F811
+    """A run whose every batch fails ends FAILED, the scenario says why, and
+    the same what-if can be run again: nothing was written for it."""
+    w = _world(app_parts)
+    provider = FixtureProvider()
+    provider.register(PURPOSE, lambda _p: LLMResponse('{"rows": "nothing"}'))
+    from app.routes.attack import _llm_dep
+
+    w.app.dependency_overrides[_llm_dep] = lambda: LLMClient(provider)
+    sid = w.create([EDR]).json()["id"]
+    assert w.run(sid).status_code == 202
+    body = w.get(sid)
+    assert body["run_status"] == "failed"
+    assert body["run_error"]["reason"], body["run_error"]
+    assert body["run_error"]["message"], body["run_error"]
+    assert body["techniques"] == []
+
+    w.answer({w.cc: [_flags(w.cc, SIEM, d=True)]})
+    assert w.run(sid).status_code == 202
+    again = w.get(sid)
+    assert again["run_status"] == "completed"
+    assert again["run_error"] is None
 
 
 def test_an_analysed_what_if_is_not_run_twice(app_parts, analysis_job) -> None:  # noqa: F811

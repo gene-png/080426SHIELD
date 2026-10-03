@@ -52,6 +52,7 @@ function scenario(over: Record<string, unknown> = {}) {
     analysis_available: true,
     ai_run_id: null,
     run_status: null,
+    run_error: null,
     today: ROLLUP,
     after: null,
     differences: [],
@@ -87,7 +88,7 @@ beforeEach(() => {
       const key = `${init?.method ?? "GET"} ${url}`;
       const handler = routes[key];
       if (!handler) throw new Error(`unexpected ${key}`);
-      const body = handler(url, init);
+      const body = await handler(url, init);
       const status =
         typeof body === "object" && body !== null && "__status" in body
           ? (body as { __status: number }).__status
@@ -295,5 +296,200 @@ describe("AttackScenarioPanel", () => {
     expect(
       (await screen.findByTestId("attack-scenario-error")).textContent,
     ).toBe("Choose at least one tool to remove.");
+  });
+
+  // --- review round 1 (web half) -------------------------------------------
+
+  it("says why a run failed and offers to run the same what-if again", async () => {
+    await startWith({
+      state: "confirmed",
+      run_status: "failed",
+      ai_run_id: "r1",
+      run_error: {
+        reason: "scenario_discarded",
+        message: "This what-if was set aside before the run finished.",
+      },
+    });
+    expect(screen.getByTestId("attack-scenario-run-failed").textContent).toBe(
+      "This what-if was set aside before the run finished.",
+    );
+    routes["POST /api/proxy/attack/scenarios/s1/run"] = () => ({
+      run_id: "r2",
+      status: "running",
+    });
+    routes["GET /api/proxy/attack/scenarios/s1"] = () => scenario(COMPLETED);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Run AI analysis on these changes" }),
+    );
+    await screen.findByTestId("scenario-after");
+    expect(screen.queryByTestId("attack-scenario-run-failed")).toBeNull();
+  });
+
+  it("starts another what-if after a discard, without a reload", async () => {
+    await startWith({});
+    routes["POST /api/proxy/attack/scenarios/s1/discard"] = () =>
+      scenario({ state: "discarded" });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Discard this what-if" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Discard this what-if" }),
+      ).toBeNull(),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Start a new what-if" }),
+    );
+    routes[CREATE] = () => scenario({ id: "s2", removed: ["SIEM Tool"] });
+    fireEvent.click(await screen.findByLabelText("SIEM Tool"));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByTestId("attack-scenario");
+    const creates = calls.filter(
+      (c) =>
+        c.init?.method === "POST" &&
+        c.url === "/api/proxy/attack/services/svc/scenarios",
+    );
+    expect(JSON.parse(String(creates.at(-1)?.init?.body))).toEqual({
+      removed: ["SIEM Tool"],
+    });
+  });
+
+  it("after a reload, a running what-if is listed, opens, and is followed to its result", async () => {
+    routes[LIST] = () => ({
+      base: BASE,
+      scenarios: [
+        {
+          id: "s9",
+          state: "confirmed",
+          removed: ["EDR Tool"],
+          affected_count: 2,
+          base_version: 3,
+          created_at: "2026-10-03T06:00:00Z",
+        },
+        {
+          id: "s8",
+          state: "discarded",
+          removed: ["SIEM Tool"],
+          affected_count: 1,
+          base_version: 3,
+          created_at: "2026-10-03T05:00:00Z",
+        },
+      ],
+    });
+    let reads = 0;
+    routes["GET /api/proxy/attack/scenarios/s9"] = () =>
+      ++reads === 1
+        ? scenario({
+            id: "s9",
+            state: "confirmed",
+            run_status: "running",
+            ai_run_id: "r9",
+          })
+        : scenario({ id: "s9", ...COMPLETED });
+    render(<AttackScenarioPanel serviceId="svc" pollMs={5} />);
+    const list = await screen.findByTestId("attack-scenario-list");
+    // The discarded one is not offered.
+    expect(list.textContent).toBe(
+      "What-ifs on this serviceEDR Tool (compared with version 3)Open",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    expect(await screen.findByText("Running…")).toBeTruthy();
+    await screen.findByTestId("scenario-after");
+    expect(screen.queryByText("Running…")).toBeNull();
+  });
+
+  it("a poll still in flight never puts an older what-if back on screen", async () => {
+    routes[LIST] = () => ({
+      base: BASE,
+      scenarios: [
+        {
+          id: "s9",
+          state: "confirmed",
+          removed: ["EDR Tool"],
+          affected_count: 2,
+          base_version: 3,
+          created_at: "2026-10-03T06:00:00Z",
+        },
+      ],
+    });
+    let release: (v: unknown) => void = () => undefined;
+    let reads = 0;
+    routes["GET /api/proxy/attack/scenarios/s9"] = () => {
+      reads += 1;
+      if (reads === 1)
+        return scenario({
+          id: "s9",
+          state: "confirmed",
+          run_status: "running",
+        });
+      // The poll: held until the admin has moved on.
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    };
+    render(<AttackScenarioPanel serviceId="svc" pollMs={5} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open" }));
+    await screen.findByText("Running…");
+    await waitFor(() => expect(reads).toBe(2));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Start a new what-if" }),
+    );
+    await screen.findByRole("button", { name: "Continue" });
+    release(scenario({ id: "s9", state: "confirmed", run_status: "running" }));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(screen.queryByTestId("attack-scenario")).toBeNull();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeTruthy();
+  });
+
+  it("keeps polling after a failed read, and says so until one succeeds", async () => {
+    routes[LIST] = () => ({
+      base: BASE,
+      scenarios: [
+        {
+          id: "s9",
+          state: "confirmed",
+          removed: ["EDR Tool"],
+          affected_count: 2,
+          base_version: 3,
+          created_at: "2026-10-03T06:00:00Z",
+        },
+      ],
+    });
+    let reads = 0;
+    routes["GET /api/proxy/attack/scenarios/s9"] = () => {
+      reads += 1;
+      if (reads === 1)
+        return scenario({
+          id: "s9",
+          state: "confirmed",
+          run_status: "running",
+        });
+      if (reads === 2) return { __status: 502 };
+      return scenario({ id: "s9", ...COMPLETED });
+    };
+    render(<AttackScenarioPanel serviceId="svc" pollMs={5} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open" }));
+    expect(
+      (await screen.findByTestId("attack-scenario-poll-error")).textContent,
+    ).toBe("The what-if's progress could not be read.");
+    await screen.findByTestId("scenario-after");
+    expect(screen.queryByTestId("attack-scenario-poll-error")).toBeNull();
+  });
+
+  it("never says a run that started could not be started", async () => {
+    await startWith({});
+    routes["POST /api/proxy/attack/scenarios/s1/run"] = () => ({
+      run_id: "r1",
+      status: "running",
+    });
+    routes["GET /api/proxy/attack/scenarios/s1"] = () => ({ __status: 502 });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Run AI analysis on these changes" }),
+    );
+    expect(
+      (await screen.findByTestId("attack-scenario-poll-error")).textContent,
+    ).toBe("The AI analysis started, but its progress could not be read.");
+    expect(screen.getByText("Running…")).toBeTruthy();
+    expect(screen.queryByTestId("attack-scenario-error")).toBeNull();
   });
 });

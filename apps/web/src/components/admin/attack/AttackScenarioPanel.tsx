@@ -16,8 +16,9 @@ import {
 import type { AiServes } from "@/lib/aiRuns/types";
 import type {
   Scenario,
-  ScenarioList,
+  ScenarioList as ScenarioListData,
   ScenarioRollup,
+  ScenarioSummary,
 } from "@/lib/attack/scenarios";
 import type { JSX } from "react";
 
@@ -132,12 +133,15 @@ function Rollup({
 type Phase =
   | { kind: "loading" }
   | { kind: "error"; message: string }
-  | { kind: "ready"; list: ScenarioList };
+  | { kind: "ready"; list: ScenarioListData };
 
 export function AttackScenarioPanel({
   serviceId,
+  pollMs = POLL_MS,
 }: {
   serviceId: string;
+  /** How often a running analysis is re-read. Tests shorten it. */
+  pollMs?: number;
 }): JSX.Element {
   // The phase is DERIVED from the id it was loaded for, so a service change
   // shows "loading" in the same render, never the previous service's list.
@@ -153,6 +157,10 @@ export function AttackScenarioPanel({
   const [current, setCurrent] = React.useState<Scenario | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  /** A poll that could not read the run; polling goes on, and this says so. */
+  const [pollError, setPollError] = React.useState<string | null>(null);
+  /** Bumped after a failed poll, so the poll effect schedules another. */
+  const [pollRetries, setPollRetries] = React.useState(0);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -180,21 +188,35 @@ export function AttackScenarioPanel({
     };
   }, [serviceId, reads]);
 
-  // Follow a running analysis until it ends.
+  // Follow a running analysis until it ends. `cancelled` is set when the
+  // effect is torn down -- the admin opened another what-if, started a new
+  // one, or this one changed -- so a read already in flight can never put
+  // an older scenario back on screen. A failed read keeps polling and says
+  // so; it never stops while "Running…" stays up.
   React.useEffect(() => {
     if (current?.run_status !== "running") return;
     const id = current.id;
+    let cancelled = false;
     const timer = setTimeout(() => {
       fetchScenario(id)
-        .then(setCurrent)
-        .catch((err: unknown) =>
-          setError(
+        .then((next) => {
+          if (cancelled) return;
+          setPollError(null);
+          setCurrent((prev) => (prev?.id === id ? next : prev));
+        })
+        .catch((err: unknown) => {
+          if (cancelled) return;
+          setPollError(
             clientFacingError(err, "The what-if's progress could not be read."),
-          ),
-        );
-    }, POLL_MS);
-    return () => clearTimeout(timer);
-  }, [current]);
+          );
+          setPollRetries((n) => n + 1);
+        });
+    }, pollMs);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [current, pollMs, pollRetries]);
 
   async function act(fn: () => Promise<void>, fallback: string): Promise<void> {
     setBusy(true);
@@ -219,9 +241,42 @@ export function AttackScenarioPanel({
     const s = current;
     if (!s) return Promise.resolve();
     return act(async () => {
-      await runScenario(s.id, serves);
-      setCurrent(await fetchScenario(s.id));
+      const started = await runScenario(s.id, serves);
+      // The run HAS started. A failed read from here on is about progress,
+      // never "could not be started": show it running and let the poll
+      // follow it.
+      try {
+        setCurrent(await fetchScenario(s.id));
+      } catch (err) {
+        setCurrent({
+          ...s,
+          ai_run_id: started.run_id,
+          run_status: "running",
+          run_error: null,
+        });
+        setPollError(
+          clientFacingError(
+            err,
+            "The AI analysis started, but its progress could not be read.",
+          ),
+        );
+      }
     }, "The AI analysis could not be started.");
+  }
+
+  function open(id: string): Promise<void> {
+    return act(async () => {
+      setPollError(null);
+      setCurrent(await fetchScenario(id));
+    }, "The what-if could not be opened.");
+  }
+
+  /** Back to the picker: what "Start a new what-if" in the 409 copy names. */
+  function startNew(): void {
+    setCurrent(null);
+    setPicked([]);
+    setError(null);
+    setPollError(null);
   }
 
   function discard(): Promise<void> {
@@ -252,9 +307,9 @@ export function AttackScenarioPanel({
         ATT&amp;CK what-if
       </h3>
       <p className="text-sm text-ink-secondary">
-        Try a change to the client&rsquo;s tools and see how ATT&amp;CK coverage
-        would change. Nothing changes on the assessment or the client&rsquo;s
-        view.
+        {
+          "Try a change to the client's tools and see how ATT&CK coverage would change. Nothing changes on the assessment or the client's view."
+        }
       </p>
 
       {phase.kind === "loading" ? (
@@ -305,14 +360,48 @@ export function AttackScenarioPanel({
         </div>
       ) : null}
 
-      {current ? (
-        <ScenarioView
-          s={current}
+      {phase.kind === "ready" && !current ? (
+        <ScenarioList
+          scenarios={phase.list.scenarios.filter(
+            (x) => x.state !== "discarded",
+          )}
           busy={busy}
-          onRun={(serves) => void run(serves)}
-          onDiscard={() => void discard()}
-          onRunAgain={() => void start(current.removed)}
+          onOpen={(id) => void open(id)}
         />
+      ) : null}
+
+      {current ? (
+        <>
+          <ScenarioView
+            s={current}
+            busy={busy}
+            onRun={(serves) => void run(serves)}
+            onDiscard={() => void discard()}
+            onRunAgain={() => void start(current.removed)}
+          />
+          {/* Always offered: a running what-if stays reachable from the
+              list, and its run goes on without this page. */}
+          <div>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={startNew}
+              className="rounded-md border border-line px-3 py-1.5 text-sm font-semibold disabled:opacity-60"
+            >
+              Start a new what-if
+            </button>
+          </div>
+        </>
+      ) : null}
+
+      {pollError ? (
+        <p
+          role="alert"
+          data-testid="attack-scenario-poll-error"
+          className="text-sm text-status-warning-fg"
+        >
+          {pollError}
+        </p>
       ) : null}
 
       {error ? (
@@ -325,6 +414,41 @@ export function AttackScenarioPanel({
         </p>
       ) : null}
     </section>
+  );
+}
+
+/** NEW copy: the heading, each row's line and its control. */
+function ScenarioList({
+  scenarios,
+  busy,
+  onOpen,
+}: {
+  scenarios: ScenarioSummary[];
+  busy: boolean;
+  onOpen: (id: string) => void;
+}): JSX.Element | null {
+  if (scenarios.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1" data-testid="attack-scenario-list">
+      <h4 className="text-sm font-semibold">What-ifs on this service</h4>
+      <ul className="flex flex-col gap-1">
+        {scenarios.map((x) => (
+          <li key={x.id} className="flex items-center gap-2 text-sm">
+            <span>
+              {x.removed.join(", ")} (compared with version {x.base_version})
+            </span>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onOpen(x.id)}
+              className="rounded-md border border-line px-2 py-0.5 text-sm disabled:opacity-60"
+            >
+              Open
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -343,6 +467,12 @@ function ScenarioView({
 }): JSX.Element {
   const higher = s.scored_higher ?? 0;
   const notReassessed = s.not_reassessed ?? [];
+  // Runnable: not set aside, not stale, and no analysis standing. A FAILED
+  // run wrote nothing, and the api accepts running the same what-if again.
+  const runnable =
+    s.state !== "discarded" &&
+    !s.stale &&
+    (s.run_status === null || s.run_status === "failed");
   return (
     <div className="flex flex-col gap-3" data-testid="attack-scenario">
       <p className="text-sm">
@@ -374,13 +504,23 @@ function ScenarioView({
         </div>
       ) : null}
 
-      {s.state === "draft" && !s.stale && !s.analysis_available ? (
+      {s.run_status === "failed" ? (
+        <p
+          role="alert"
+          className="text-sm text-status-danger-fg"
+          data-testid="attack-scenario-run-failed"
+        >
+          {s.run_error?.message ?? "The AI analysis did not finish."}
+        </p>
+      ) : null}
+
+      {runnable && !s.analysis_available ? (
         <p className="text-sm" data-testid="attack-scenario-unavailable">
           {UNAVAILABLE}
         </p>
       ) : null}
 
-      {s.state === "draft" && !s.stale && s.analysis_available ? (
+      {runnable && s.analysis_available ? (
         <RunAiGuard onProceed={onRun}>
           {({ onClick, statusUnknown }) => (
             <div>
