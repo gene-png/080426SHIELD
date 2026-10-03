@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import functools
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -62,6 +62,7 @@ from app.routes.attack import _capability_payload, _client_capability_membership
 from app.routes.tech_debt import SECURITY_CLASSIFICATION_OVERRIDDEN
 from app.schemas.ai_runs import AiRunStarted, RunAiRequest
 from app.schemas.attack_scenario import (
+    ScenarioAddedTool,
     ScenarioBase,
     ScenarioCreateRequest,
     ScenarioDifference,
@@ -92,11 +93,66 @@ NEEDS_CONFIRMED_MESSAGE = (
     "assessment and review every technique in its review queue, then try again."
 )
 UNAVAILABLE_MESSAGE = "AI analysis for what-ifs is not available yet."
-EMPTY_MESSAGE = "Choose at least one tool to remove."
+# B8 (14:58Z) replaces copy 17: a what-if may only add.
+EMPTY_MESSAGE = "Choose at least one tool to remove or add."
+# NEW copy, for the advisor.
+NOTHING_AFFECTED_MESSAGE = (
+    "Every technique the last confirmed assessment scored already has in place what "
+    "you chose under What it does, so there is nothing to re-assess."
+)
 
 
 def _unknown_tool_message(name: str) -> str:
     return f"{name} is not a tool this assessment cites. Pick it from the list."
+
+
+def _added_refusal(exc: Exception, *, cited: Iterable[str]) -> tuple[str, str]:
+    """An added tool's refusal as (reason, message): B4-B7, approved at
+    14:58Z, and the plan's malformed cases."""
+    if isinstance(exc, scenario.TooMany):
+        return "scenario_too_many_added", f"A what-if can add up to {exc.limit} tools."
+    name = getattr(exc, "name", "")
+    if isinstance(exc, scenario.AlreadyClients):
+        # B4 names "Tools to remove", a control that lists only the tools the
+        # base CITES. A client tool the base does not cite is not there, so it
+        # is refused without that clause (NEW copy, B4b).
+        if scenario.cited_key(name) in {scenario.cited_key(c) for c in cited}:
+            return (
+                "scenario_added_tool_is_clients",
+                f"{name} is already one of the client's tools. Choose it under Tools to "
+                "remove, or give the new tool a different name.",
+            )
+        return (
+            "scenario_added_tool_is_clients",
+            f"{name} is already one of the client's tools. Give the new tool a different name.",
+        )
+    if isinstance(exc, scenario.Indistinct):
+        return (
+            "scenario_added_tool_indistinct",
+            f"The AI would be shown {name} under the same name as another tool, so its "
+            "credit could not be told apart. Give it a different name.",
+        )
+    if isinstance(exc, scenario.NoFunctions):
+        return (
+            "scenario_added_tool_no_functions",
+            f"Choose at least one of Detect, Prevent or Respond for {name}.",
+        )
+    if isinstance(exc, scenario.BadFunction):
+        return (
+            "scenario_added_tool_bad_function",
+            f'What it does for {name} must be Detect, Prevent or Respond, not "{exc.value}".',
+        )
+    if isinstance(exc, scenario.Duplicate):
+        return (
+            "scenario_added_tool_duplicate",
+            f"{name} is listed twice under Tools to add. Remove one with Remove this tool.",
+        )
+    if isinstance(exc, scenario.TooLong):
+        return (
+            "scenario_added_tool_too_long",
+            f"{exc.field} for {name} is longer than {scenario.MAX_TEXT} characters. " "Shorten it.",
+        )
+    return "scenario_added_tool_no_name", "Give each tool under Tools to add a Name."
 
 
 def _refuse(code: int, reason: str, message: str) -> HTTPException:
@@ -161,6 +217,10 @@ def _lists_of(rows: list[AttackScenarioRow]) -> dict[str, dict[str, list[str]]]:
     }
 
 
+def _added_tools(s: AttackScenario) -> list[scenario.AddedTool]:
+    return [scenario.AddedTool.from_stored(e) for e in s.change_list.get("added") or []]
+
+
 def _serialize(db: Session, s: AttackScenario) -> ScenarioResponse:
     base = db.get(AttackAssessment, s.base_assessment_id)
     base_rows = _base_rows(db, base.id)
@@ -176,7 +236,39 @@ def _serialize(db: Session, s: AttackScenario) -> ScenarioResponse:
     # is no "after", and the comparison is today against itself.
     what_if = scenario.scenario_rows(base_rows, _lists_of(rows)) if rows else base_rows
     comparison = scenario.compare(base, base_rows, what_if)
-    higher = set(scenario.scored_higher(comparison, s.affected_codes))
+    tools_you_added = _added_tools(s)
+    you_added = {t.name.casefold() for t in tools_you_added}
+    higher_list, from_added = scenario.split_higher(
+        base,
+        base_rows,
+        _lists_of(rows),
+        comparison,
+        s.affected_codes,
+        added_names=[t.name for t in tools_you_added],
+    )
+    higher = set(higher_list)
+    by_removal = set(
+        scenario.affected_codes(
+            base_rows,
+            scenario.removed_spellings(
+                list(s.change_list.get("removed") or []),
+                client_org_name=db.get(Client, s.client_id).legal_name,
+                redaction_mode=get_settings().shield_redaction_mode,
+            ),
+        )
+    )
+    credited_you_added = {
+        r.technique_code: sorted(
+            {
+                a["tool"]
+                for a in r.ai_rows
+                if str(a.get("tool", "")).casefold() in you_added
+                and any(a.get(f) is True for f in ("detection", "prevention", "response"))
+            },
+            key=str.casefold,
+        )
+        for r in rows
+    }
     added = {t.casefold() for t in (s.tools_added_since_base or [])}
     # A mark needs a CREDIT: an accepted row with every function false names a
     # tool and credits it with nothing (#815 review round 3).
@@ -200,7 +292,18 @@ def _serialize(db: Session, s: AttackScenario) -> ScenarioResponse:
         service_id=s.service_id,
         state=s.state.value,
         removed=list(s.change_list.get("removed") or []),
+        added=[
+            ScenarioAddedTool(
+                name=t.name,
+                vendor=t.vendor,
+                category=t.category,
+                security_functions=list(t.functions),
+            )
+            for t in tools_you_added
+        ],
         affected_codes=list(s.affected_codes),
+        affected_by_removal=len(by_removal & set(s.affected_codes)),
+        affected_by_addition_only=len(set(s.affected_codes) - by_removal),
         base_assessment_id=s.base_assessment_id,
         base_version=s.base_version,
         base_catalog_version=s.base_catalog_version,
@@ -227,6 +330,7 @@ def _serialize(db: Session, s: AttackScenario) -> ScenarioResponse:
                 after=after,
                 scored_higher=code in higher,
                 credited_added_tool=bool(credited_added.get(code)),
+                credited_tool_you_added=bool(credited_you_added.get(code)),
             )
             for code, before, after in comparison.changed
         ],
@@ -238,12 +342,14 @@ def _serialize(db: Session, s: AttackScenario) -> ScenarioResponse:
                 response_tools=list(r.response_tools),
                 ai_rows=list(r.ai_rows),
                 credited_added_tools=credited_added[r.technique_code],
+                credited_tools_you_added=credited_you_added[r.technique_code],
             )
             for r in rows
         ],
         dropped=s.dropped,
         not_reassessed=s.not_reassessed,
         scored_higher=s.scored_higher,
+        higher_with_added=len(from_added) if rows else None,
         tools_added_since_base=(
             len(s.tools_added_since_base) if s.tools_added_since_base is not None else None
         ),
@@ -271,6 +377,8 @@ def create_scenario(
             status.HTTP_409_CONFLICT, "scenario_needs_confirmed_assessment", NEEDS_CONFIRMED_MESSAGE
         )
     base_rows = _base_rows(db, base.id)
+    mode = get_settings().shield_redaction_mode
+    cited = scenario.cited_tools(base_rows)
     try:
         removed = scenario.resolve_removed(base_rows, (body.removed if body else None) or [])
     except scenario.UnknownTool as exc:
@@ -279,16 +387,47 @@ def create_scenario(
             "scenario_unknown_tool",
             _unknown_tool_message(exc.name),
         ) from exc
+    # Slice B. "The client's tools" an added name may not be: every tool on
+    # the client's capability lists, offered or withheld, and every tool the
+    # base cites.
+    membership = _client_capability_membership(db, client.id)
+    client_tools = [
+        *(p.capability.name for p in membership.sent),
+        *(w.name for w in membership.withheld),
+        *cited,
+    ]
+    try:
+        added = scenario.validate_added(
+            (body.added if body else None) or [],
+            client_tools=client_tools,
+            client_org_name=client.legal_name,
+            redaction_mode=mode,
+        )
+    except (scenario.AddedToolRefused, scenario.TooMany) as exc:
+        reason, message = _added_refusal(exc, cited=cited)
+        raise _refuse(status.HTTP_422_UNPROCESSABLE_ENTITY, reason, message) from exc
+    try:
+        scenario.require_change(removed, added)
     except scenario.EmptyChangeList as exc:
         raise _refuse(
             status.HTTP_422_UNPROCESSABLE_ENTITY, "scenario_empty_change", EMPTY_MESSAGE
         ) from exc
     spellings = scenario.removed_spellings(
-        removed,
-        client_org_name=client.legal_name,
-        redaction_mode=get_settings().shield_redaction_mode,
+        removed, client_org_name=client.legal_name, redaction_mode=mode
     )
-    affected = scenario.affected_codes(base_rows, spellings)
+    affected = sorted(
+        set(scenario.affected_codes(base_rows, spellings))
+        | set(scenario.open_functions(base_rows, added, removed=spellings))
+    )
+    if not affected:
+        # Only possible when tools are only ADDED and every technique already
+        # has each declared function in place: nothing to ask, nothing to pay
+        # for. A removal always affects the techniques that cite it.
+        raise _refuse(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "scenario_nothing_affected",
+            NOTHING_AFFECTED_MESSAGE,
+        )
     s = AttackScenario(
         client_id=client.id,
         service_id=svc.id,
@@ -296,7 +435,7 @@ def create_scenario(
         base_version=base.version,
         base_catalog_version=base.catalog_version,
         base_status_rules=base.status_rules,
-        change_list={"removed": removed, "added": []},
+        change_list={"removed": removed, "added": [t.payload() for t in added]},
         affected_codes=affected,
         state=AttackScenarioState.DRAFT,
         created_by=user.id,
@@ -314,6 +453,7 @@ def create_scenario(
             "service_id": str(svc.id),
             "base_assessment_id": str(base.id),
             "removed": len(removed),
+            "added": len(added),
             "affected": len(affected),
         },
     )
@@ -366,6 +506,7 @@ def list_scenarios(
                 service_id=s.service_id,
                 state=s.state.value,
                 removed=list(s.change_list.get("removed") or []),
+                added=[t.name for t in _added_tools(s)],
                 affected_count=len(s.affected_codes),
                 base_assessment_id=s.base_assessment_id,
                 base_version=s.base_version,
@@ -420,6 +561,50 @@ def _llm_builder(db: Annotated[Session, Depends(get_db)]) -> Callable[[], LLMCli
     """The provider, built only when called: mitre_map's `_llm_dep`, deferred
     until the run route has made every refusal (#815 review, F4)."""
     return lambda: _llm_dep(db)
+
+
+def _added_collision(db: Session, s: AttackScenario, client: Client) -> str | None:
+    """The first tool the admin added that can no longer be told apart from
+    the client's CURRENT tools, or None. The client's list can gain a tool
+    after the what-if was created; every credit to either would then be
+    dropped as outside the change, so the run must not happen (#818 review,
+    F4). Decided by the same validation creation ran, against today's tools."""
+    added = _added_tools(s)
+    if not added:
+        return None
+    base_rows = _base_rows(db, s.base_assessment_id)
+    membership = _client_capability_membership(db, client.id)
+    current = [
+        *(p.capability.name for p in membership.sent),
+        *(w.name for w in membership.withheld),
+        *scenario.cited_tools(base_rows),
+    ]
+    try:
+        scenario.validate_added(
+            [t.payload() for t in added],
+            client_tools=current,
+            client_org_name=client.legal_name,
+            redaction_mode=get_settings().shield_redaction_mode,
+        )
+    except scenario.AddedToolRefused as exc:
+        return exc.name
+    return None
+
+
+def _collision_message(name: str) -> str:
+    # NEW copy, for the advisor. "Start a new what-if" is the panel's control.
+    return (
+        f"{name}, a tool you added, can no longer be told apart from one of the client's "
+        "tools, so this what-if cannot be analysed. Start a new what-if."
+    )
+
+
+def _refuse_if_added_collides(db: Session, s: AttackScenario, client: Client) -> None:
+    name = _added_collision(db, s, client)
+    if name is not None:
+        raise _refuse(
+            status.HTTP_409_CONFLICT, "scenario_added_tool_collides", _collision_message(name)
+        )
 
 
 def _refuse_unless_runnable(db: Session, s: AttackScenario) -> None:
@@ -478,6 +663,7 @@ def run_scenario(
         )
     serves = require_serves(body.serves if body else None)
     _refuse_unless_runnable(db, s)
+    _refuse_if_added_collides(db, s, client)
     limiter.enforce_ai(client.id)
     llm = build_llm()
     started = start_run(
@@ -542,6 +728,10 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
         raise RunFailed("scenario_discarded", "This what-if was set aside before the run finished.")
     base = db.get(AttackAssessment, s.base_assessment_id)
     client = db.get(Client, ctx.client_id)
+    # F4 again, in the job: the list can change between the POST and now.
+    collides = _added_collision(db, s, client)
+    if collides is not None:
+        raise RunFailed("scenario_added_tool_collides", _collision_message(collides))
     base_rows = _base_rows(db, base.id)
     removed = list(s.change_list.get("removed") or [])
     affected = list(s.affected_codes)
@@ -583,10 +773,21 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
     added = scenario.tools_added_since(
         kept_offers, membership.lists, created, base.approved_at, overridden
     )
+    # Slice B: the admin's added tools are offered beside the client's and
+    # may be credited, but they are NOT the client's list: the drift check
+    # above judges only `membership`, so they never read as drift.
+    tools_you_added = _added_tools(s)
     inputs = scenario.batch_inputs(
-        base_rows, affected, spellings, _capability_payload(kept), size=scenario.BATCH_SIZE
+        base_rows,
+        affected,
+        spellings,
+        _capability_payload(kept),
+        size=scenario.BATCH_SIZE,
+        added=tools_you_added,
     )
-    remaining = [Candidate(name=c.name, vendor=c.vendor) for c in kept]
+    remaining = [Candidate(name=c.name, vendor=c.vendor) for c in kept] + [
+        Candidate(name=t.name, vendor=t.vendor) for t in tools_you_added
+    ]
     out = run_batches(
         db,
         ctx.llm,
@@ -616,6 +817,8 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
                 asked=codes,
                 available=remaining,
                 lost=inputs[i]["lost_functions"],
+                opened=inputs[i]["open_functions"],
+                added=tools_you_added,
                 indistinct=indistinct,
                 client_org_name=client.legal_name,
                 redaction_mode=mode,
@@ -658,7 +861,16 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
             )
         )
     comparison = scenario.compare(base, base_rows, scenario.scenario_rows(base_rows, merged.lists))
-    higher = scenario.scored_higher(comparison, affected)
+    # Copy 18 counts only rises credited to a REMAINING tool; a rise from a
+    # tool the admin added is B11's result, derived at the GET.
+    higher, _from_added = scenario.split_higher(
+        base,
+        base_rows,
+        merged.lists,
+        comparison,
+        affected,
+        added_names=[t.name for t in tools_you_added],
+    )
     s.dropped = merged.dropped
     s.not_reassessed = merged.not_reassessed
     s.scored_higher = len(higher)

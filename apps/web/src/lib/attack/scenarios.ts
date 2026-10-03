@@ -30,6 +30,8 @@ export interface ScenarioDifference {
   scored_higher: boolean;
   /** The AI credited a tool added since the base was approved (b2). */
   credited_added_tool: boolean;
+  /** Slice B: the AI credited a tool the admin added here (B12). */
+  credited_tool_you_added: boolean;
 }
 
 export interface ScenarioTechnique {
@@ -39,6 +41,8 @@ export interface ScenarioTechnique {
   response_tools: string[];
   /** The tools added since the base that the AI credited here (b2). */
   credited_added_tools: string[];
+  /** Slice B: the tools the admin added that the AI credited here. */
+  credited_tools_you_added: string[];
 }
 
 export interface Scenario {
@@ -46,7 +50,12 @@ export interface Scenario {
   service_id: string;
   state: "draft" | "confirmed" | "discarded";
   removed: string[];
+  /** Slice B: the tools the admin added. */
+  added: AddedTool[];
   affected_codes: string[];
+  /** Of `affected_codes`: a removed tool's (copy 6), and an addition's only (B9). */
+  affected_by_removal: number;
+  affected_by_addition_only: number;
   base_assessment_id: string;
   base_version: number;
   base_approved_at: string | null;
@@ -63,12 +72,22 @@ export interface Scenario {
   dropped: Record<string, number> | null;
   not_reassessed: string[] | null;
   scored_higher: number | null;
+  /** Slice B: would score higher with a tool the admin added (B11); null before a run. */
+  higher_with_added: number | null;
   /**
    * Offered tools added to the client's list after the base was approved
    * (b2). Null before a run AND when it could not be checked; never 0 for
    * "unknown".
    */
   tools_added_since_base: number | null;
+}
+
+/** A tool the admin adds to a what-if (slice B). */
+export interface AddedTool {
+  name: string;
+  vendor: string | null;
+  category: string | null;
+  security_functions: ("detect" | "prevent" | "respond")[];
 }
 
 export interface ScenarioBase {
@@ -82,6 +101,8 @@ export interface ScenarioSummary {
   id: string;
   state: Scenario["state"];
   removed: string[];
+  /** Slice B: the names of the tools the admin added. */
+  added?: string[];
   affected_count: number;
   base_version: number;
   created_at: string;
@@ -139,10 +160,13 @@ export function fetchScenarios(serviceId: string): Promise<ScenarioList> {
 export function createScenario(
   serviceId: string,
   removed: string[],
+  added: AddedTool[] = [],
 ): Promise<Scenario> {
+  // `added` only when there are any: a removal-only what-if posts exactly
+  // what slice A posted.
   return request(`/api/proxy/attack/services/${serviceId}/scenarios`, {
     method: "POST",
-    body: { removed },
+    body: added.length > 0 ? { removed, added } : { removed },
   });
 }
 

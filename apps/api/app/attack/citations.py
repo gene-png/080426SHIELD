@@ -269,6 +269,18 @@ class CitationResolver:
         )
         return redacted if counts and redacted != name else None
 
+    def named_by(self, cited: str) -> frozenset[str]:
+        """Every candidate the NAME tiers map `cited` to -- the real-name tier
+        and the alias (shown-form) tier, the two `resolve` treats as CONFIRMED
+        -- whether one (a confirmation) or several (an ambiguity). Empty when
+        neither tier knows the string. For a caller that must know a string is
+        TAKEN, not merely whether it resolves: an ambiguity is taken too (the
+        ATT&CK what-if's added tools, #818)."""
+        if not isinstance(cited, str) or not cited.strip():
+            return frozenset()
+        key = _norm(cited)
+        return frozenset(self._by_norm.get(key, set()) | self._by_alias_norm.get(key, set()))
+
     def resolve(self, cited: str) -> Resolution:
         if not isinstance(cited, str) or not cited.strip():
             return Resolution(name=None, rejected_reason="unknown")

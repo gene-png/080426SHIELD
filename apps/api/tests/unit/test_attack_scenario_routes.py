@@ -341,14 +341,20 @@ def test_a_tool_the_assessment_does_not_cite_is_refused_by_name(app_parts) -> No
     }
 
 
-@pytest.mark.parametrize("removed", [None, []])
-def test_an_empty_change_list_is_refused(app_parts, removed) -> None:  # noqa: F811
+@pytest.mark.parametrize(
+    "body",
+    [{}, {"removed": []}, {"removed": [], "added": []}],
+    ids=["missing", "empty", "both-empty"],
+)
+def test_an_empty_change_list_is_refused(app_parts, body) -> None:  # noqa: F811
+    """Slice B: B8 (14:58Z) replaces copy 17, because a what-if may only add;
+    the refusal is kept, and reached through the route (approved edit)."""
     w = _world(app_parts)
-    r = w.create(removed)
+    r = w.c.post(f"/attack/services/{w.svc_id}/scenarios", headers=w.h, json=body)
     assert r.status_code == 422, r.text
     assert _error(r) == {
         "reason": "scenario_empty_change",
-        "message": "Choose at least one tool to remove.",
+        "message": "Choose at least one tool to remove or add.",
     }
 
 
