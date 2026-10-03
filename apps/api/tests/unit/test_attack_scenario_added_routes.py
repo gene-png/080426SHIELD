@@ -107,8 +107,8 @@ def test_an_addition_that_could_change_nothing_is_refused_before_anything_is_sto
     assert _error(r) == {
         "reason": "scenario_nothing_affected",
         "message": (
-            "Every technique the last confirmed assessment scored already has what these "
-            "tools do in place, so there is nothing to re-assess."
+            "Every technique the last confirmed assessment scored already has in place what "
+            "you chose under What it does, so there is nothing to re-assess."
         ),
     }
     listed = w.c.get(f"/attack/services/{w.svc_id}/scenarios", headers=w.h).json()
@@ -306,6 +306,61 @@ def test_a_function_that_is_not_a_string_is_a_typed_422(app_parts) -> None:  # n
     r = _create(w, added=[_tool(functions=(["detect"],))])
     assert r.status_code == 422, r.text
     assert _error(r)["reason"] == "scenario_added_tool_bad_function"
+
+
+def test_an_added_tool_credited_beyond_what_it_was_declared_for_is_set_aside(
+    app_parts, analysis_job  # noqa: F811
+) -> None:
+    """The advisor, 16:00Z (#818 F6), through the GET. EDR removed, XDR added
+    for Detect only. A lost Detect and Prevent; the AI credits XDR for A's
+    Prevent too: dropped as `function_not_declared`. Its Detect credit stands."""
+    w = _world(app_parts)
+    _answering(w, {w.a: [_flags(w.a, XDR, d=True), _flags(w.a, XDR, p=True)]})
+    sid = _create(w, removed=[EDR], added=[_tool(functions=("detect",))]).json()["id"]
+    body = _run_to_completion(w, sid)
+    assert body["dropped"] == {"function_not_declared": 1}
+    lists = {t["technique_code"]: t for t in body["techniques"]}
+    assert lists[w.a]["detection_tools"] == [XDR]
+    assert lists[w.a]["prevention_tools"] == []
+
+
+@pytest.mark.parametrize(
+    "tool, reason, message",
+    [
+        (
+            {"name": "  ", "security_functions": ["detect"]},
+            "scenario_added_tool_no_name",
+            "Give each tool under Tools to add a Name.",
+        ),
+        (
+            {"name": "XDR Suite", "vendor": "V" * 201, "security_functions": ["detect"]},
+            "scenario_added_tool_too_long",
+            "Vendor for XDR Suite is longer than 200 characters. Shorten it.",
+        ),
+        (
+            {"name": "XDR Suite", "security_functions": ["recover"]},
+            "scenario_added_tool_bad_function",
+            'What it does for XDR Suite must be Detect, Prevent or Respond, not "recover".',
+        ),
+    ],
+)
+def test_each_malformed_tool_is_refused_naming_its_field(
+    app_parts, tool, reason, message  # noqa: F811
+) -> None:
+    w = _world(app_parts)
+    r = _create(w, added=[tool])
+    assert r.status_code == 422, r.text
+    assert _error(r) == {"reason": reason, "message": message}
+
+
+def test_a_tool_listed_twice_is_refused_naming_the_control(app_parts) -> None:  # noqa: F811
+    w = _world(app_parts)
+    r = _create(w, added=[_tool(), _tool("xdr suite")])
+    assert r.status_code == 422, r.text
+    assert _error(r) == {
+        "reason": "scenario_added_tool_duplicate",
+        "message": "xdr suite is listed twice under Tools to add. Remove one with Remove this tool.",
+    }
 
 
 def test_an_added_tool_is_never_drift(app_parts, analysis_job) -> None:  # noqa: F811

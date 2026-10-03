@@ -131,10 +131,15 @@ def test_a_tool_listed_twice_is_refused() -> None:
 
 
 def test_an_overlong_name_or_vendor_is_refused() -> None:
-    with pytest.raises(scenario.TooLong):
+    with pytest.raises(scenario.TooLong) as exc:
         _validate([_tool("X" * 201)])
-    with pytest.raises(scenario.TooLong):
+    assert exc.value.field == "Name"
+    with pytest.raises(scenario.TooLong) as exc:
         _validate([_tool("XDR Tool", vendor="V" * 201)])
+    assert exc.value.field == "Vendor"
+    with pytest.raises(scenario.TooLong) as exc:
+        _validate([_tool("XDR Tool", category="C" * 201)])
+    assert exc.value.field == "Category"
 
 
 def test_a_change_needs_a_removal_or_an_addition() -> None:
@@ -221,7 +226,7 @@ def _parse(rows, *, lost=None, opened=None):
         available=["SIEM Tool", "XDR Tool"],
         lost=lost or {},
         opened=opened or {},
-        added_names=["XDR Tool"],
+        added=[scenario.AddedTool("XDR Tool", None, None, ("detect", "prevent", "respond"))],
     )
 
 
@@ -246,6 +251,43 @@ def test_a_lost_function_may_be_credited_to_a_client_or_an_added_tool() -> None:
     )
     assert parsed.dropped == {}
     assert parsed.lists[PREVENTABLE]["detection_tools"] == ["SIEM Tool", "XDR Tool"]
+
+
+def _parse_declared(rows, functions, *, lost=None, opened=None):
+    return scenario.parse_delta(
+        {"rows": rows},
+        asked=[PREVENTABLE],
+        available=["SIEM Tool", "XDR Tool"],
+        lost=lost or {},
+        opened=opened or {},
+        added=[scenario.AddedTool("XDR Tool", None, None, tuple(functions))],
+    )
+
+
+def test_an_added_tool_credited_for_a_lost_function_it_was_not_declared_for_is_dropped() -> None:
+    """The advisor, 16:00Z (#818 F6): the admin's choice is the only evidence."""
+    parsed = _parse_declared(
+        [_flags(PREVENTABLE, "XDR Tool", d=True)], ("prevent",), lost={PREVENTABLE: ["detection"]}
+    )
+    assert parsed.dropped == {"function_not_declared": 1}
+    assert parsed.lists[PREVENTABLE]["detection_tools"] == []
+
+
+def test_an_added_tool_credited_for_an_open_function_it_was_not_declared_for_is_dropped() -> None:
+    parsed = _parse_declared(
+        [_flags(PREVENTABLE, "XDR Tool", p=True, r=True)],
+        ("prevent",),
+        opened={PREVENTABLE: ["prevention", "response"]},
+    )
+    assert parsed.dropped == {"function_not_declared": 1}
+
+
+def test_an_added_tool_credited_for_what_it_was_declared_for_is_kept() -> None:
+    parsed = _parse_declared(
+        [_flags(PREVENTABLE, "XDR Tool", d=True)], ("detect",), lost={PREVENTABLE: ["detection"]}
+    )
+    assert parsed.dropped == {}
+    assert parsed.lists[PREVENTABLE]["detection_tools"] == ["XDR Tool"]
 
 
 def test_a_function_neither_lost_nor_open_is_still_dropped_whole() -> None:

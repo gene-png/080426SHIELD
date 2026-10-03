@@ -268,7 +268,12 @@ class Duplicate(AddedToolRefused):
 
 
 class TooLong(AddedToolRefused):
-    """A name, vendor or category longer than `MAX_TEXT`."""
+    """A name, vendor or category longer than `MAX_TEXT`; `field` is the
+    panel's label for it."""
+
+    def __init__(self, name: str, field: str) -> None:
+        super().__init__(name)
+        self.field = field
 
 
 class BadFunction(AddedToolRefused):
@@ -345,8 +350,9 @@ def validate_added(
         if name is None:
             raise BlankName()
         vendor, category = _text(entry.get("vendor")), _text(entry.get("category"))
-        if any(v is not None and len(v) > MAX_TEXT for v in (name, vendor, category)):
-            raise TooLong(name)
+        for label, value in (("Name", name), ("Vendor", vendor), ("Category", category)):
+            if value is not None and len(value) > MAX_TEXT:
+                raise TooLong(name, label)
         functions = entry.get("security_functions")
         functions = list(functions) if isinstance(functions, list) else []
         for value in functions:
@@ -496,7 +502,7 @@ def parse_delta(
     available: Iterable[str | Candidate],
     lost: Mapping[str, Iterable[str]],
     opened: Mapping[str, Iterable[str]] | None = None,
-    added_names: Iterable[str] = (),
+    added: Sequence[AddedTool] = (),
     indistinct: Iterable[str] = (),
     client_org_name: str | None = None,
     redaction_mode: RedactionMode = "strict",
@@ -517,9 +523,14 @@ def parse_delta(
     dropped whole and counted as `function_not_lost` (the advisor, 05:25Z).
 
     `opened` is each technique's `open_functions` (slice B): a function there
-    may be credited only to an ADDED tool (`added_names`). A row crediting one
-    of the client's tools for a function that is open and not lost is dropped
-    whole and counted as `tool_not_added`."""
+    may be credited only to an ADDED tool (`added`). A row crediting one of the
+    client's tools for a function that is open and not lost is dropped whole
+    and counted as `tool_not_added`.
+
+    An added tool may be credited only for the functions DECLARED for it, in a
+    lost function as much as an open one (the advisor, 16:00Z, #818 F6): the
+    admin's choice is the only evidence there is. A row crediting it with any
+    other is dropped whole and counted as `function_not_declared`."""
     rows = data.get("rows") if isinstance(data, Mapping) else None
     if not isinstance(rows, list):
         raise ScenarioShapeError("the answer has no `rows` list")
@@ -527,7 +538,7 @@ def parse_delta(
     asked_set = set(asked)
     indistinct_names = set(indistinct)
     opened = opened or {}
-    added_keys = {_key(n) for n in added_names}
+    declared = {_key(t.name): {_FUNCTION_FLAG[f] for f in t.functions} for t in added}
     resolver = CitationResolver(
         [c if isinstance(c, Candidate) else Candidate(name=c) for c in available],
         client_org_name=client_org_name,
@@ -569,8 +580,11 @@ def parse_delta(
         if claimed - lost_here - open_here:
             dropped["function_not_lost"] += 1
             continue
-        if (claimed - lost_here) and _key(tool) not in added_keys:
+        if (claimed - lost_here) and _key(tool) not in declared:
             dropped["tool_not_added"] += 1
+            continue
+        if _key(tool) in declared and claimed - declared[_key(tool)]:
+            dropped["function_not_declared"] += 1
             continue
         for flag, list_name in _FLAGS:
             if flags[flag] and tool not in lists[code][list_name]:

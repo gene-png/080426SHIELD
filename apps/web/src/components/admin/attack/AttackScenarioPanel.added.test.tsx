@@ -298,6 +298,28 @@ describe("AttackScenarioPanel, tools to add (slice B)", () => {
     ]);
   });
 
+  it("says why a suggestion crediting an added tool beyond its declared functions was set aside", async () => {
+    await show({ ...COMPLETED, dropped: { function_not_declared: 2 } });
+    expect(
+      screen
+        .getAllByTestId("attack-scenario-dropped")
+        .map((p) => p.textContent),
+    ).toEqual([
+      "2 AI suggestions were set aside because they credited an added tool with something you did not choose for it.",
+    ]);
+  });
+
+  it("states the undeclared-function line in the singular", async () => {
+    await show({ ...COMPLETED, dropped: { function_not_declared: 1 } });
+    expect(
+      screen
+        .getAllByTestId("attack-scenario-dropped")
+        .map((p) => p.textContent),
+    ).toEqual([
+      "1 AI suggestion was set aside because it credited an added tool with something you did not choose for it.",
+    ]);
+  });
+
   it("states B13 in the singular", async () => {
     await show({ ...COMPLETED, dropped: { tool_not_added: 1 } });
     expect(

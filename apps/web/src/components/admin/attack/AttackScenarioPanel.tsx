@@ -119,6 +119,7 @@ function dropLines(dropped: Record<string, number>): string[] {
   const unconfirmed = dropped.tool_unconfirmed ?? 0;
   const notLost = dropped.function_not_lost ?? 0;
   const notAdded = dropped.tool_not_added ?? 0;
+  const notDeclared = dropped.function_not_declared ?? 0;
   const malformed = (dropped.not_boolean ?? 0) + (dropped.not_an_object ?? 0);
   const lines: string[] = [];
   if (outside > 0)
@@ -137,6 +138,11 @@ function dropLines(dropped: Record<string, number>): string[] {
   if (notAdded > 0)
     lines.push(
       `${notAdded} AI ${plural(notAdded, "suggestion was", "suggestions were")} set aside because ${plural(notAdded, "it", "they")} credited one of the client's tools where only an added tool was asked about.`,
+    );
+  // The advisor, 16:00Z (#818 F6).
+  if (notDeclared > 0)
+    lines.push(
+      `${notDeclared} AI ${plural(notDeclared, "suggestion was", "suggestions were")} set aside because ${plural(notDeclared, "it", "they")} credited an added tool with something you did not choose for it.`,
     );
   if (malformed > 0)
     lines.push(

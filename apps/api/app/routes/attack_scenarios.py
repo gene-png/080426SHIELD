@@ -97,8 +97,8 @@ UNAVAILABLE_MESSAGE = "AI analysis for what-ifs is not available yet."
 EMPTY_MESSAGE = "Choose at least one tool to remove or add."
 # NEW copy, for the advisor.
 NOTHING_AFFECTED_MESSAGE = (
-    "Every technique the last confirmed assessment scored already has what these "
-    "tools do in place, so there is nothing to re-assess."
+    "Every technique the last confirmed assessment scored already has in place what "
+    "you chose under What it does, so there is nothing to re-assess."
 )
 
 
@@ -140,17 +140,19 @@ def _added_refusal(exc: Exception, *, cited: Iterable[str]) -> tuple[str, str]:
     if isinstance(exc, scenario.BadFunction):
         return (
             "scenario_added_tool_bad_function",
-            f'"{exc.value}" is not one of detect, prevent or respond.',
+            f'What it does for {name} must be Detect, Prevent or Respond, not "{exc.value}".',
         )
     if isinstance(exc, scenario.Duplicate):
-        return "scenario_added_tool_duplicate", f"{name} is listed twice. Add it once."
+        return (
+            "scenario_added_tool_duplicate",
+            f"{name} is listed twice under Tools to add. Remove one with Remove this tool.",
+        )
     if isinstance(exc, scenario.TooLong):
         return (
             "scenario_added_tool_too_long",
-            f"{name} is too long. Use at most {scenario.MAX_TEXT} characters for a name, "
-            "vendor or category.",
+            f"{exc.field} for {name} is longer than {scenario.MAX_TEXT} characters. " "Shorten it.",
         )
-    return "scenario_added_tool_no_name", "Give each tool you add a name."
+    return "scenario_added_tool_no_name", "Give each tool under Tools to add a Name."
 
 
 def _refuse(code: int, reason: str, message: str) -> HTTPException:
@@ -816,7 +818,7 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
                 available=remaining,
                 lost=inputs[i]["lost_functions"],
                 opened=inputs[i]["open_functions"],
-                added_names=[t.name for t in tools_you_added],
+                added=tools_you_added,
                 indistinct=indistinct,
                 client_org_name=client.legal_name,
                 redaction_mode=mode,
