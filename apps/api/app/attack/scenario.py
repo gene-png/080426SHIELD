@@ -251,3 +251,80 @@ def is_stale(db: Session, service_id: uuid.UUID, base_id: uuid.UUID) -> bool:
     scenario is shown as stale, never re-based or recomputed silently."""
     newest = confirmed_base(db, service_id)
     return newest is not None and newest.id != base_id
+
+
+#: Techniques per AI call, as `mitre_map` batches them.
+BATCH_SIZE = 25
+
+
+def _without(tools: Iterable[Any] | None, gone: set[str]) -> list[str]:
+    return [t for t in tools or [] if isinstance(t, str) and _key(t) not in gone]
+
+
+def batch_inputs(
+    base_rows: Sequence[Any],
+    affected: Sequence[str],
+    removed: Sequence[str],
+    capability_payload: Sequence[Mapping[str, Any]],
+    *,
+    size: int = BATCH_SIZE,
+) -> list[dict[str, Any]]:
+    """One input per batch of affected techniques: the slice, those frozen rows
+    with the removed tools taken out, the removals, and the client's tools that
+    remain (the same four fields `mitre_map` sends for a capability)."""
+    gone = {_key(n) for n in removed}
+    by_code = {r.technique_code: r for r in base_rows}
+    remaining = [dict(c) for c in capability_payload if _key(c.get("name")) not in gone]
+    out: list[dict[str, Any]] = []
+    for i in range(0, len(affected), size):
+        codes = list(affected[i : i + size])
+        out.append(
+            {
+                "technique_codes": codes,
+                "frozen_rows": [
+                    {
+                        "technique_code": code,
+                        **{name: _without(getattr(by_code[code], name), gone) for name in _LISTS},
+                    }
+                    for code in codes
+                ],
+                "removed_tools": list(removed),
+                "available_tools": remaining,
+            }
+        )
+    return out
+
+
+@dataclass(frozen=True)
+class Merged:
+    """Every affected technique's new lists, the accepted AI rows, the counted
+    drops, and the techniques no batch re-assessed."""
+
+    lists: dict[str, dict[str, list[str]]]
+    accepted: list[dict[str, Any]]
+    dropped: dict[str, int]
+    not_reassessed: list[str]
+
+
+def merge_batches(inputs: Sequence[Mapping[str, Any]], parsed: Mapping[int, ParsedDelta]) -> Merged:
+    """Join the batches. A batch with no usable answer (`parsed` has no entry
+    for it) is NOT the frozen row passed off as re-assessed: its techniques
+    take the removal alone -- the removed tools stripped by code -- and are
+    named in `not_reassessed`, which the result discloses."""
+    lists: dict[str, dict[str, list[str]]] = {}
+    accepted: list[dict[str, Any]] = []
+    dropped: Counter[str] = Counter()
+    not_reassessed: list[str] = []
+    for i, batch in enumerate(inputs):
+        answer = parsed.get(i)
+        if answer is None:
+            for row in batch["frozen_rows"]:
+                lists[row["technique_code"]] = {name: list(row[name]) for name in _LISTS}
+                not_reassessed.append(row["technique_code"])
+            continue
+        lists.update(answer.lists)
+        accepted.extend(answer.accepted)
+        dropped.update(answer.dropped)
+    return Merged(
+        lists=lists, accepted=accepted, dropped=dict(dropped), not_reassessed=sorted(not_reassessed)
+    )

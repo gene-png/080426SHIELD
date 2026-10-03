@@ -215,3 +215,59 @@ def test_the_comparison_computes_both_sides_and_names_what_moved() -> None:
     assert (result.today.covered, result.today.partial) == (2, 0)
     assert (result.after.covered, result.after.partial) == (1, 1)
     assert result.after.coverage_pct < result.today.coverage_pct
+
+
+# --- the batches and their merge ----------------------------------------------
+
+CAPS = [
+    {"name": "EDR Tool", "vendor": "V1", "category": "EDR", "security_functions": ["detect"]},
+    {"name": "SIEM Tool", "vendor": "V2", "category": "SIEM", "security_functions": ["detect"]},
+    {"name": "SOAR Tool", "vendor": "V3", "category": "SOAR", "security_functions": ["respond"]},
+]
+
+
+def test_each_batch_carries_its_slice_the_frozen_rows_without_the_removed_tools_and_what_remains() -> (
+    None
+):
+    batches = scenario.batch_inputs(BASE, ["T1003", "T1566"], ["EDR Tool"], CAPS, size=1)
+    assert [b["technique_codes"] for b in batches] == [["T1003"], ["T1566"]]
+    assert batches[0]["frozen_rows"] == [
+        {
+            "technique_code": "T1003",
+            "detection_tools": [],
+            "prevention_tools": [],
+            "response_tools": ["SOAR Tool"],
+        }
+    ]
+    assert batches[0]["removed_tools"] == ["EDR Tool"]
+    assert [c["name"] for c in batches[0]["available_tools"]] == ["SIEM Tool", "SOAR Tool"]
+
+
+def test_a_failed_batch_falls_back_to_the_removal_alone_and_says_so() -> None:
+    """A batch that came back with nothing usable is not silently the frozen
+    row: its techniques lose the removed tools by code, and are counted as
+    not re-assessed."""
+    inputs = scenario.batch_inputs(BASE, ["T1003", "T1566"], ["EDR Tool"], CAPS, size=1)
+    answered = scenario.parse_delta(
+        {
+            "rows": [
+                {
+                    "technique_code": "T1003",
+                    "tool": "SIEM Tool",
+                    "detection": True,
+                    "prevention": False,
+                    "response": False,
+                }
+            ]
+        },
+        asked=inputs[0]["technique_codes"],
+        available=[c["name"] for c in inputs[0]["available_tools"]],
+    )
+    merged = scenario.merge_batches(inputs, {0: answered})
+    assert merged.lists["T1003"]["detection_tools"] == ["SIEM Tool"]
+    assert merged.lists["T1566"] == {
+        "detection_tools": ["Mail Gateway"],
+        "prevention_tools": ["Mail Gateway"],
+        "response_tools": [],
+    }
+    assert merged.not_reassessed == ["T1566"]
