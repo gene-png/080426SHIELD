@@ -60,6 +60,17 @@ class CapabilityDisposition(enum.StrEnum):
     CUT = "cut"
 
 
+#: The dispositions that RETIRE a tool: "Cut" and "Cut, covered by another
+#: tool" (stored `consolidate`). ONE definition, read by Tech Debt savings
+#: (`tech_debt/savings.py::SAVINGS_DISPOSITIONS`, each at the tool's full
+#: annual cost) and by ATT&CK's planned-retirement marks (`routes/attack.py`'s
+#: plan entries), so the two cannot disagree about which tools leave. Decided by
+#: Gene and ruled by the advisor on #736, 2026-10-03 (#810).
+RETIRING_DISPOSITIONS: frozenset[CapabilityDisposition] = frozenset(
+    {CapabilityDisposition.CUT, CapabilityDisposition.CONSOLIDATE}
+)
+
+
 class SecurityFunction(enum.StrEnum):
     """What a security-related capability does (migration 0038).
 

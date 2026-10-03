@@ -1222,8 +1222,9 @@ def test_consolidation_plan_summary_counts_dispositions(app_client) -> None:
     assert body["consolidate_count"] == 1
     assert body["cut_count"] == 1
     assert body["undecided_count"] == 0
-    # Splunk was the "cut" item ($480k savings).
-    assert body["estimated_annual_savings"] == 480000.0
+    # Splunk (Cut, 480k) and Lacework (Cut, covered by another tool, 120k) both
+    # count. #804, the advisor's ruling on #736.
+    assert body["estimated_annual_savings"] == 600000.0
     assert body["savings_cost_known"] is True
 
 

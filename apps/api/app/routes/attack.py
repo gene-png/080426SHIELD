@@ -110,7 +110,7 @@ from app.models.attack_assessment import (
     AttackCoverage,
 )
 from app.models.capability import (
-    CapabilityDisposition,
+    RETIRING_DISPOSITIONS,
     CapabilityItem,
     CapabilityList,
     CapabilityListStatus,
@@ -1526,7 +1526,7 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
         withheld=sorted(withheld.values(), key=lambda d: d.name),
         lists=list(lists),
         # #686: from `pairs`, the rows the dedupe chose among, each followed by
-        # its item_id to the LIVE disposition. A gone live row is `cut=None`.
+        # its item_id to the LIVE disposition. A gone live row is `retiring=None`.
         #
         # RETIREMENT DELIBERATELY NARROWS TO THE LATEST PLAN (#787 review, F1).
         # The membership above unions every non-discarded version of every list
@@ -1538,10 +1538,12 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
             PlanEntry(
                 name=p.name,
                 in_plan=p.cap_list.id in plan_ids,
-                cut=(
+                # #810: the SAME retiring set Tech Debt savings counts --
+                # "Cut" and "Cut, covered by another tool" -- never a literal.
+                retiring=(
                     None
                     if (live := live_by_id.get(str(p.item_id or ""))) is None
-                    else live.disposition == CapabilityDisposition.CUT
+                    else live.disposition in RETIRING_DISPOSITIONS
                 ),
             )
             for p in pairs

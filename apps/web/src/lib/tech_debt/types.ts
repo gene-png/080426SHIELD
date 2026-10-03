@@ -119,6 +119,18 @@ export interface ConsolidationPlanSummary {
   savings_cost_known: boolean;
 }
 
+/** #804: what proposed dispositions would make the savings figure. Computed
+ *  by the API with the deliverable's own derivation; nothing is written. */
+export interface SavingsPreview {
+  capability_list_id: string;
+  estimated_annual_savings: number;
+  savings_cost_known: boolean;
+  keep_count: number;
+  consolidate_count: number;
+  cut_count: number;
+  undecided_count: number;
+}
+
 export interface OverlapBucket {
   key: string;
   item_count: number;

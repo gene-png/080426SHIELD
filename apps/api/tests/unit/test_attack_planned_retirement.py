@@ -229,8 +229,9 @@ def test_the_xlsx_legend_explains_both_marks(env) -> None:  # noqa: F811
     fin = _approve_finalize(c, bearer, svc, a)
     labels = _xlsx_summary_labels(_download(c, bearer, fin["xlsx_artifact_id"]))
     assert labels.get("Tools marked (planned retirement)") == (
-        "Marked cut in the Tech Debt consolidation plan. Still deployed, so still "
-        "counted toward coverage; this coverage drops when the tool is retired."
+        "Marked Cut, or Cut, covered by another tool, in the Tech Debt "
+        "consolidation plan. Still deployed, so still counted toward coverage; "
+        "this coverage drops when the tool is retired."
     ), labels
     assert labels.get("Tools marked (retirement status unknown)") == (
         "Could not be matched to one Tech Debt capability, so whether it is planned "
