@@ -41,14 +41,19 @@ describe("DispositionHelp (#642)", () => {
     expect(effectOf("Undecided")).not.toContain("savings");
   });
 
-  it("says a disposition does not reach ATT&CK, CSF, Zero Trust or Risk", () => {
+  it("says how a disposition reaches ATT&CK, and that CSF, Zero Trust and Risk do not read it", () => {
+    // #801, copy approved by the advisor 05:05Z (T1, T2): a cut tool is a
+    // planned retirement in ATT&CK, counted today and not after planned changes.
     render(<DispositionHelp />);
     const help = screen.getByTestId("disposition-help");
     expect(help).toHaveTextContent(
-      "A disposition does not change ATT&CK coverage, and nothing in CSF, Zero Trust or the Risk Register reads it.",
+      "Nothing in CSF, Zero Trust or the Risk Register reads it.",
     );
     expect(help).toHaveTextContent(
-      "A tool marked Cut still counts toward ATT&CK coverage.",
+      "In ATT&CK a tool marked Cut, or Cut, covered by another tool, is labelled a planned retirement: it still counts toward today's coverage, and not toward the coverage after planned changes.",
+    );
+    expect(help).toHaveTextContent(
+      "and, for Cut and Cut, covered by another tool, the ATT&CK coverage after planned changes.",
     );
   });
 });
