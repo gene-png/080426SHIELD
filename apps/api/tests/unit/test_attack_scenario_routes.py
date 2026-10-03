@@ -472,6 +472,23 @@ def test_a_discard_racing_the_run_wins(app_parts, analysis_job) -> None:  # noqa
     assert body["scored_higher"] is None
 
 
+def test_a_what_if_overtaken_by_a_newer_confirmed_assessment_is_stale_and_not_run(
+    app_parts, analysis_job  # noqa: F811
+) -> None:
+    w = _world(app_parts)
+    w.answer({})
+    sid = w.create([EDR]).json()["id"]
+    v2 = w.c.post(f"/attack/services/{w.svc_id}/assessments", headers=w.h)
+    assert v2.status_code == 201, v2.text
+    r = w.c.post(f"/attack/assessments/{v2.json()['id']}/approve", headers=w.h)
+    assert r.status_code == 200, r.text
+    assert w.get(sid)["stale"] is True
+    r = w.run(sid)
+    assert r.status_code == 409, r.text
+    assert _error(r)["reason"] == "scenario_stale"
+    assert _ai_runs(w) == []
+
+
 def test_an_analysed_what_if_is_not_run_twice(app_parts, analysis_job) -> None:  # noqa: F811
     w = _world(app_parts)
     w.answer({})
