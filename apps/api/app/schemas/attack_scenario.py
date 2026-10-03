@@ -15,6 +15,22 @@ class ScenarioCreateRequest(BaseModel):
     route with a typed `{reason, message}` 422, never FastAPI's schema 422."""
 
     removed: list[str] | None = None
+    #: Slice B: tools the client doesn't have, each `{name, vendor, category,
+    #: security_functions}`. Typed loosely for the same reason: the refusals
+    #: `scenario.validate_added` raises (a client tool's spelling, a name the
+    #: model could not tell apart, no or an unknown function, a blank, duplicate
+    #: or over-long field, more than 10) each become a typed 422. A body that is
+    #: not JSON at all is still FastAPI's own 422.
+    added: list[Any] | None = None
+
+
+class ScenarioAddedTool(BaseModel):
+    """A tool the admin added to the what-if (slice B)."""
+
+    name: str
+    vendor: str | None
+    category: str | None
+    security_functions: list[str]
 
 
 class ScenarioRollup(BaseModel):
@@ -47,9 +63,12 @@ class ScenarioDifference(BaseModel):
     technique_code: str
     today: str | None
     after: str | None
-    #: True when `after` ranks above `today`: the AI credited a remaining tool
-    #: the last confirmed assessment did not. Counted in `scored_higher`.
+    #: True when `after` ranks above `today` and no tool the admin ADDED was
+    #: credited here: the AI credited a remaining tool the last confirmed
+    #: assessment did not. Counted in `scored_higher` (copy 18).
     scored_higher: bool
+    #: Slice B: the AI credited a tool the admin added here (B12).
+    credited_tool_you_added: bool
     #: The AI credited a tool added to the client's list after the base was
     #: approved (the advisor's (b2)).
     credited_added_tool: bool
@@ -66,6 +85,8 @@ class ScenarioTechnique(BaseModel):
     ai_rows: list[dict[str, Any]]
     #: The tools added since the base that the AI credited here (b2).
     credited_added_tools: list[str]
+    #: Slice B: the tools the admin added that the AI credited here.
+    credited_tools_you_added: list[str]
 
 
 class ScenarioSummary(BaseModel):
@@ -73,6 +94,8 @@ class ScenarioSummary(BaseModel):
     service_id: uuid.UUID
     state: str
     removed: list[str]
+    #: Slice B: the names of the tools the admin added.
+    added: list[str]
     affected_count: int
     base_assessment_id: uuid.UUID
     base_version: int
@@ -105,7 +128,13 @@ class ScenarioResponse(BaseModel):
     service_id: uuid.UUID
     state: str
     removed: list[str]
+    #: Slice B: the tools the admin added.
+    added: list[ScenarioAddedTool]
     affected_codes: list[str]
+    #: Of `affected_codes`: those a removed tool appears on (copy 6), and those
+    #: only an added tool could change (B9). They sum to the whole.
+    affected_by_removal: int
+    affected_by_addition_only: int
     base_assessment_id: uuid.UUID
     base_version: int
     base_catalog_version: str | None
@@ -129,9 +158,12 @@ class ScenarioResponse(BaseModel):
     dropped: dict[str, int] | None
     #: Affected techniques no batch re-assessed: they take the removal alone.
     not_reassessed: list[str] | None
-    #: How many affected techniques would score HIGHER than today; None before
-    #: a run.
+    #: How many affected techniques would score HIGHER than today because the
+    #: AI credited a REMAINING tool (copy 18); None before a run.
     scored_higher: int | None
+    #: Slice B: how many would score higher with a tool the admin added (B11).
+    #: Derived from the stored rows; None before a run.
+    higher_with_added: int | None
     #: How many offered tools were added to the client's list after the base
     #: was approved (b2). None before a run AND when it could not be checked:
     #: never 0 for "unknown". A client reads "could not be checked" only beside
