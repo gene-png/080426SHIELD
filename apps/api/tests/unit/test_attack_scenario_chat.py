@@ -482,10 +482,54 @@ def test_a_cited_name_starting_with_a_verb_after_any_removal_attempt_is_not_a_gu
     assert _reasons(parsed) == reasons
 
 
-def test_a_cited_name_starting_with_a_verb_outside_a_list_reads_as_the_verb() -> None:
-    """U2: not after any removal, "Add Manager" has only the verb reading the
-    forms allow (a clause with no verb is never a removal on its own), so the
-    refusal above is gated on the list position."""
-    cited = ("Add Manager",)
-    parsed = _parse("Add Manager", cited=cited, client=cited)
-    assert (parsed.removed, parsed.added, parsed.not_understood) == ([], ["Manager"], [])
+@pytest.mark.parametrize(
+    ("cited", "text", "removed", "added", "reasons"),
+    [
+        # U2, REVERSED per the advisor's fallback after round 5: "Add Manager"
+        # alone, cited, is refused; it no longer reads as adding "Manager".
+        (("Add Manager",), "Add Manager", [], [], [("Add Manager", "ambiguous_tool")]),
+        # an unknown verb before it: "deprecate Splunk" is no removal attempt
+        (
+            ("Splunk", "Add Manager"),
+            "what if we deprecate Splunk and Add Manager",
+            [],
+            [],
+            [("deprecate Splunk", "unrecognised"), ("Add Manager", "ambiguous_tool")],
+        ),
+        (
+            ("Splunk", "Add Manager"),
+            "Splunk and Add Manager",
+            [],
+            [],
+            [("Splunk", "unrecognised"), ("Add Manager", "ambiguous_tool")],
+        ),
+        # after a clash
+        (
+            ("Identity and Access", "Identity and Access Manager", "Add Manager"),
+            "retire Identity and Access Manager and Add Manager",
+            [],
+            [],
+            [
+                ("retire Identity and Access Manager", "ambiguous_tool"),
+                ("Add Manager", "ambiguous_tool"),
+            ],
+        ),
+        # after an addition in between
+        (
+            ("Splunk", "Add Manager"),
+            "retire Splunk and add Foo and Add Manager",
+            ["Splunk"],
+            ["Foo"],
+            [("Add Manager", "ambiguous_tool")],
+        ),
+    ],
+)
+def test_a_verb_led_clause_that_is_a_cited_name_is_refused_in_any_position(
+    cited, text, removed, added, reasons
+) -> None:
+    """Per the advisor's fallback after round 5: a clause that parses as a verb
+    AND whose whole text names a cited tool is not understood wherever it
+    stands, and nothing is proposed for it."""
+    parsed = _parse(text, cited=cited, client=cited)
+    assert (parsed.removed, parsed.added) == (removed, added)
+    assert _reasons(parsed) == reasons
