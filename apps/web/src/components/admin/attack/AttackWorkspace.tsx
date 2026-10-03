@@ -95,12 +95,21 @@ const RUN_OUTCOME_UNKNOWN =
  * loading and the click. Approved by the advisor 01:35Z (#808 copy, item 4 and
  * A11).
  */
-function reviewRefreshedMessage(reason: string, codes: string[]): string {
+function reviewRefreshedMessage(
+  reason: string,
+  codes: string[],
+  refreshed: boolean,
+): string {
   const shown = codes.slice(0, 10).join(", ");
   const more = codes.length > 10 ? ` and ${codes.length - 10} more` : "";
-  return reason === "codes_not_in_review_queue"
-    ? `Some techniques are no longer awaiting review (${shown}${more}). The panel has been refreshed; review again.`
-    : `The computed status of some techniques changed after the panel loaded (${shown}${more}). The panel has been refreshed; review again.`;
+  const what =
+    reason === "codes_not_in_review_queue"
+      ? `Some techniques are no longer awaiting review (${shown}${more}).`
+      : `The computed status of some techniques changed after the panel loaded (${shown}${more}).`;
+  // The failed re-read's ending is the coordinator's draft, with the advisor.
+  return refreshed
+    ? `${what} The panel has been refreshed; review again.`
+    : `${what} The panel could not be refreshed; reload the page and review again.`;
 }
 
 /** The machine-readable `reason` on a typed error envelope (D-016), if present. */
@@ -534,10 +543,10 @@ export function AttackWorkspace({
     if (!assessment) return;
     setActionError(null);
     setBusy("review");
-    assessmentSeq.current += 1;
+    const seq = ++assessmentSeq.current;
     try {
       const next = await reviewComputedStatuses(assessment.id, reviews);
-      setAssessment(next);
+      if (seq === assessmentSeq.current) setAssessment(next);
     } catch (err) {
       const reason = errorReason(err);
       if (
@@ -549,9 +558,16 @@ export function AttackWorkspace({
         const codes = (
           (err as AttackProxyError).payload as { error?: { codes?: string[] } }
         ).error?.codes;
-        const latest = await fetchLatestAssessment(serviceId);
-        setAssessment(latest);
-        setActionError(reviewRefreshedMessage(reason, codes ?? []));
+        // The re-read can fail too, and must say so: an unhandled rejection
+        // here would leave stale statuses and an enabled button, every click
+        // silent.
+        try {
+          const latest = await fetchLatestAssessment(serviceId);
+          if (seq === assessmentSeq.current) setAssessment(latest);
+          setActionError(reviewRefreshedMessage(reason, codes ?? [], true));
+        } catch {
+          setActionError(reviewRefreshedMessage(reason, codes ?? [], false));
+        }
       } else {
         setActionError(describeError(err));
       }

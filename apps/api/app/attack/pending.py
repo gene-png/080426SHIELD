@@ -280,20 +280,35 @@ def pending_codes(rows: Iterable[object], *, parents_computed: bool) -> frozense
     return frozenset(leaf | parents)
 
 
-def confirm_all(unconfirmed_citations: list | None, *, at: object) -> list:
-    """Stamp every uncleared entry as vouched for, returning the new list.
+def confirm_all(
+    unconfirmed_citations: list | None,
+    *,
+    at: object,
+    fields: Iterable[str] | None = None,
+) -> list:
+    """Stamp uncleared entries as vouched for, returning the new list.
 
-    Used when a human takes authorship of a row (`patch_coverage`): they set the
-    status or curated the tools themselves, so the model's inferences are no
-    longer what the claim rests on.
+    Used when a human takes authorship of a row (`patch_coverage`). Before #554
+    R3 that is setting the status or curating any tool list, and every entry is
+    stamped (`fields` None). On an assessment whose statuses are computed only a
+    TOOL-LIST edit authors the claim, and only for the lists edited: `fields`
+    names them, and an entry is stamped only when its `field` is one of them --
+    editing Respond says nothing about an inferred Detect tool, and stamping it
+    would raise the computed status as a side effect.
 
     Entries are STAMPED, never deleted. "A human looked at this and accepted it"
     is a different state from "nobody ever cited it", and the difference is
     exactly what an auditor asking why a technique counts needs to see. A NULL
     column becomes `[]` -- resolved, nothing outstanding.
     """
+    scope = None if fields is None else frozenset(fields)
     return [
-        dict(e) if e.get("cleared_at") is not None else {**e, "cleared_at": at}
+        (
+            dict(e)
+            if e.get("cleared_at") is not None
+            or (scope is not None and e.get("field") not in scope)
+            else {**e, "cleared_at": at}
+        )
         for e in _entries(unconfirmed_citations)
     ]
 

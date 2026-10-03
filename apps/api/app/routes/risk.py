@@ -190,6 +190,19 @@ def _latest_register(db: Session, client_id: uuid.UUID) -> RiskRegister | None:
     ).scalar_one_or_none()
 
 
+def _unreviewed_sentence(n: int) -> str:
+    """#554 R3: why a register cannot be generated while the ATT&CK review queue
+    holds rows. ONE sentence for the gate and the refusal (approved by the
+    advisor 01:35Z), so the page never says something generate contradicts."""
+    return (
+        f"The Risk Register cannot be generated yet: {n} ATT&CK "
+        f"{'technique has' if n == 1 else 'techniques have'} a computed status that "
+        "differs from the AI's suggestion and has not been reviewed. "
+        f"Review {'it' if n == 1 else 'them'} in the ATT&CK Computed status review "
+        "panel, then generate again."
+    )
+
+
 def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
     """Whether the Risk Register can be generated, in THREE dimensions (#237).
 
@@ -248,6 +261,18 @@ def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
     # separate field, not `synthesizable_missing`: that list is rendered as
     # "cannot be generated until these are approved", and this input already is.
     attack_catalog_mismatch = catalog_mismatch_message(db, attack) if attack is not None else None
+    # #554 R3, the same precedent: synthesis refuses an assessment whose computed
+    # statuses await review (`_gather_findings`), so the gate asks the SAME
+    # predicate and carries the SAME sentence. Asked only of a current catalog,
+    # because synthesis refuses a stale one first.
+    unreviewed = (
+        attack_unreviewed_codes(db, attack)
+        if attack is not None and attack_catalog_mismatch is None
+        else ()
+    )
+    attack_computed_status_unreviewed = (
+        _unreviewed_sentence(len(unreviewed)) if unreviewed else None
+    )
     finalized_csf = _finalized_for_synthesis(db, CsfAssessment, client_id) is not None
     finalized_zt = _finalized_for_synthesis(db, ZtAssessment, client_id) is not None
     for label, present, finalized in (
@@ -276,6 +301,7 @@ def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
         not_finalized=not_finalized,
         synthesizable_missing=synthesizable_missing,
         attack_catalog_mismatch=attack_catalog_mismatch,
+        attack_computed_status_unreviewed=attack_computed_status_unreviewed,
     )
 
 
@@ -488,19 +514,11 @@ def _gather_findings(
         # excluded: an exclusion would yield a register silently missing ATT&CK.
         unreviewed = attack_unreviewed_codes(db, attack)
         if unreviewed:
-            n = len(unreviewed)
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail={
                     "reason": "attack_computed_status_unreviewed",
-                    "message": (
-                        f"The Risk Register cannot be generated yet: {n} ATT&CK "
-                        f"{'technique has' if n == 1 else 'techniques have'} a computed "
-                        "status that differs from the AI's suggestion and has not been "
-                        f"reviewed. Review {'it' if n == 1 else 'them'} in the ATT&CK Computed "
-                        "status review panel, "
-                        "then generate again."
-                    ),
+                    "message": _unreviewed_sentence(len(unreviewed)),
                     "unreviewed": list(unreviewed),
                 },
             )

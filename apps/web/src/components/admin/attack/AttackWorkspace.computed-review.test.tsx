@@ -20,7 +20,8 @@ import { AttackWorkspace } from "./AttackWorkspace";
  * the review panel loading and the click, the API refuses the stale pair
  * (`computed_status_changed`). The panel re-reads itself and says so, instead
  * of telling the consultant to find a reload control (CLAUDE.md: an imperative
- * names a control that exists). Copy pending the advisor.
+ * names a control that exists). Copy approved by the advisor 01:35Z; the
+ * failed re-read's ending is a draft with the advisor.
  */
 
 vi.mock("@/lib/attack/client", () => ({
@@ -207,5 +208,74 @@ describe("AttackWorkspace, a review whose computed status moved (#554 R3)", () =
         "button",
       ),
     ).toBeNull();
+  });
+
+  it("says so when the re-read itself fails, and records nothing", async () => {
+    vi.mocked(attackClient.fetchLatestAssessment)
+      .mockResolvedValueOnce(draft("covered"))
+      .mockRejectedValueOnce(new Error("down"));
+    vi.mocked(attackClient.reviewComputedStatuses).mockReset();
+    const ProxyError = attackClient.AttackProxyError as unknown as new (
+      m: string,
+    ) => Error;
+    vi.mocked(attackClient.reviewComputedStatuses).mockRejectedValueOnce(
+      Object.assign(new ProxyError("ATT&CK proxy 409"), {
+        status: 409,
+        payload: {
+          error: {
+            code: 409,
+            reason: "computed_status_changed",
+            message: "ignored by the panel",
+            codes: ["T1003.001"],
+          },
+        },
+      }),
+    );
+    render(<AttackWorkspace serviceId="svc-808c" serviceTitle="ATT&CK" />);
+    const panel = await screen.findByTestId("attack-computed-review");
+    fireEvent.click(
+      within(panel).getByRole("button", { name: "Mark 1 as reviewed" }),
+    );
+    expect(
+      await screen.findByText(
+        "The computed status of some techniques changed after the panel loaded (T1003.001). The panel could not be refreshed; reload the page and review again.",
+      ),
+    ).toBeInTheDocument();
+    // Nothing recorded: the one review call was the refused one.
+    expect(attackClient.reviewComputedStatuses).toHaveBeenCalledTimes(1);
+  });
+
+  it("says so when the re-read after a stale row (A11) fails", async () => {
+    vi.mocked(attackClient.fetchLatestAssessment)
+      .mockResolvedValueOnce(draft("covered"))
+      .mockRejectedValueOnce(new Error("down"));
+    vi.mocked(attackClient.reviewComputedStatuses).mockReset();
+    const ProxyError = attackClient.AttackProxyError as unknown as new (
+      m: string,
+    ) => Error;
+    vi.mocked(attackClient.reviewComputedStatuses).mockRejectedValueOnce(
+      Object.assign(new ProxyError("ATT&CK proxy 422"), {
+        status: 422,
+        payload: {
+          error: {
+            code: 422,
+            reason: "codes_not_in_review_queue",
+            message: "ignored by the panel",
+            codes: ["T1003.001"],
+          },
+        },
+      }),
+    );
+    render(<AttackWorkspace serviceId="svc-808d" serviceTitle="ATT&CK" />);
+    const panel = await screen.findByTestId("attack-computed-review");
+    fireEvent.click(
+      within(panel).getByRole("button", { name: "Mark 1 as reviewed" }),
+    );
+    expect(
+      await screen.findByText(
+        "Some techniques are no longer awaiting review (T1003.001). The panel could not be refreshed; reload the page and review again.",
+      ),
+    ).toBeInTheDocument();
+    expect(attackClient.reviewComputedStatuses).toHaveBeenCalledTimes(1);
   });
 });

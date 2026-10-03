@@ -734,7 +734,11 @@ def patch_coverage(
             1 for e in (row.unconfirmed_citations or []) if e.get("cleared_at") is not None
         )
         row.unconfirmed_citations = confirm_attack_citations(
-            row.unconfirmed_citations, at=utcnow().isoformat()
+            row.unconfirmed_citations,
+            at=utcnow().isoformat(),
+            # #554 R3: only the lists this edit touched (the review of #808, F1);
+            # before R3 every entry, as the row's author.
+            fields=authored if statuses_computed(a) else None,
         )
         _log.info(
             "attack.coverage.citations_confirmed_by_hand",
@@ -2520,13 +2524,13 @@ def review_computed_statuses(
     queue = frozenset(review_queue(effective.values()))
     stale = sorted(codes - queue)
     if stale:
-        shown = ", ".join(stale[:10]) + (f" and {len(stale) - 10} more" if len(stale) > 10 else "")
+        listed = ", ".join(stale[:10]) + (f" and {len(stale) - 10} more" if len(stale) > 10 else "")
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={
                 "reason": "codes_not_in_review_queue",
                 "message": (
-                    f"Some techniques are no longer awaiting review ({shown}). Reload the "
+                    f"Some techniques are no longer awaiting review ({listed}). Reload the "
                     "panel and review again."
                 ),
                 "codes": stale,
@@ -2536,16 +2540,14 @@ def review_computed_statuses(
     # between the panel loading and the click is refused, never recorded.
     moved = sorted(c for c in codes if effective[c].status != shown[c])
     if moved:
-        shown_moved = ", ".join(moved[:10]) + (
-            f" and {len(moved) - 10} more" if len(moved) > 10 else ""
-        )
+        listed = ", ".join(moved[:10]) + (f" and {len(moved) - 10} more" if len(moved) > 10 else "")
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
                 "reason": "computed_status_changed",
                 "message": (
                     f"The computed status of some techniques changed after the panel "
-                    f"loaded ({shown_moved}). Reload the panel and review again."
+                    f"loaded ({listed}). Reload the panel and review again."
                 ),
                 "codes": moved,
             },

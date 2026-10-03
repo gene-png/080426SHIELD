@@ -852,7 +852,7 @@ function TriadCard({
   );
 }
 
-/** #554 R3 copy, pending the advisor (the copy draft on #808). */
+/** #554 R3 copy, approved by the advisor 01:35Z (#808 copy, items 1 and 2). */
 const FULLY_COVERED_SUB_R3 =
   "Detection, prevention and response in place, or detection and response where it cannot be prevented";
 const TRIAD_DESC_R3 =

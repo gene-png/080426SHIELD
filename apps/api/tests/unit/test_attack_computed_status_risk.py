@@ -100,3 +100,30 @@ def test_the_refusal_counts_in_the_plural(app_client) -> None:  # noqa: F811
         "status that differs from the AI's suggestion and has not been reviewed. Review "
         "them in the ATT&CK Computed status review panel, then generate again."
     )
+
+
+def test_the_gate_carries_the_same_sentence(app_client) -> None:  # noqa: F811
+    """The review's F3, the #556 precedent: the gate asks the SAME predicate as
+    generate and carries the SAME sentence, or it offers a Generate whose only
+    outcome is the 409."""
+    c, _provider = app_client
+    bearer, cid = _admin(c)
+    world, _capability = _approved_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+
+    gate = c.get(f"/risk/clients/{cid}/gate", headers=bh).json()
+    refused = c.post(f"/risk/clients/{cid}/register/generate", headers=bh).json()
+    refusal = refused.get("error", refused.get("detail", refused))
+    assert gate["attack_computed_status_unreviewed"] == refusal["message"]
+    assert gate["attack_computed_status_unreviewed"].startswith(
+        "The Risk Register cannot be generated yet: 1 ATT&CK technique has"
+    )
+
+    r = c.post(
+        f"/attack/assessments/{world['assessment']['id']}/computed-status-review",
+        headers={**bh, "X-Client-Id": cid},
+        json={"reviews": [{"code": world["code"], "computed_status": "covered"}]},
+    )
+    assert r.status_code == 200, r.text
+    gate = c.get(f"/risk/clients/{cid}/gate", headers=bh).json()
+    assert gate["attack_computed_status_unreviewed"] is None

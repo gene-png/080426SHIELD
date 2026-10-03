@@ -33,6 +33,13 @@ export interface RiskGate {
    * this input already is. Optional so an older client parses a newer response.
    */
   attack_catalog_mismatch?: string | null;
+  /**
+   * #554 R3: the approved ATT&CK input's computed statuses await review, so
+   * generating refuses it. The server's own sentence, which names the remedy;
+   * null when there is nothing to say. Optional so an older client parses a
+   * newer response.
+   */
+  attack_computed_status_unreviewed?: string | null;
 }
 
 export interface RiskEntry {

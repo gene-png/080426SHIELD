@@ -514,7 +514,13 @@ def _inferred_detection(Sess, row_id: str) -> None:
             .where(AttackCoverage.id == uuid.UUID(row_id))
             .values(
                 unconfirmed_citations=[
-                    {"tool": "Tool D", "cited": "Tool D", "reason": "inferred", "cleared_at": None}
+                    {
+                        "tool": "Tool D",
+                        "cited": "Tool D",
+                        "reason": "inferred",
+                        "field": "detection_tools",
+                        "cleared_at": None,
+                    }
                 ]
             )
         )
@@ -602,3 +608,20 @@ def test_a_review_records_only_the_status_the_consultant_saw(env) -> None:  # no
             ).scalar_one()
             is None
         )
+
+
+def test_editing_one_tool_list_confirms_only_that_lists_inferences(env) -> None:  # noqa: F811
+    """The review's F1, API-3's twin. Editing Respond says nothing about an
+    inferred Detect tool: on a computed assessment it stays awaiting review, so
+    the computed status does not rise and the row stays in the queue."""
+    c, Sess = env
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    _svc, a = _service_and_assessment(c, bearer)
+    (row,) = standalone_rows(a["coverage"], 1)
+    _patch(c, bearer, row["id"], {"status": "gap", **ALL_THREE})
+    _inferred_detection(Sess, row["id"])
+
+    out = _patch(c, bearer, row["id"], {"response_tools": ["Tool R2"]})
+    assert out["capabilities"]["detect"] == "awaiting_review"
+    assert [e["cleared_at"] for e in out["unconfirmed_citations"]] == [None]
+    assert (out["computed_status"], out["in_review_queue"]) == ("partial", True)
