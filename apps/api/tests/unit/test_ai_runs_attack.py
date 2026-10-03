@@ -651,6 +651,9 @@ NOT_LOCKED = {
     ("POST", "/attack/scenarios/{scenario_id}/discard"),
     # Joins or refuses its own run through `start_run`, as run-ai does.
     ("POST", "/attack/scenarios/{scenario_id}/run"),
+    # #802 slice C. Pure: proposes a change list from text and writes nothing,
+    # so a run in progress has nothing to protect from it.
+    ("POST", "/attack/services/{service_id}/scenarios/parse"),
 }
 
 
