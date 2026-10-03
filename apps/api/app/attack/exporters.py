@@ -23,6 +23,9 @@ from html import escape as html_escape
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
+from app.attack.after import AFTER_LABEL, AFTER_LEGEND, AfterPlannedChanges, after_planned_changes
+from app.attack.after import counts as after_counts
+from app.attack.after import document_sentence as after_document_sentence
 from app.attack.analytics import CoverageRollup, TacticCoverage
 from app.attack.catalog import TACTICS, TECHNIQUES, all_codes, technique_by_id, technique_url
 from app.attack.computed import (
@@ -98,6 +101,10 @@ class AttackDeliverableContext:
     #: #554 R3: whether `coverage` holds statuses computed from Detect / Prevent /
     #: Respond (`attack/rules.py::statuses_computed`). Derived in `build_context`.
     statuses_computed: bool = False
+    #: #801: coverage after planned changes, from the retirement plan AS OF this
+    #: context (finalize freezes it into the bytes); None where there is nothing
+    #: to recount (`attack/after.py`). Derived in `build_context`.
+    after: AfterPlannedChanges | None = None
 
 
 def build_context(
@@ -135,6 +142,7 @@ def build_context(
         retirement=retirement,
         ai_mode=ai_mode,
         statuses_computed=computed,
+        after=after_planned_changes(assessment, rows, retirement),
     )
 
 
@@ -539,6 +547,12 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
     ws.append(["Assessment version", ctx.assessment.version])
     r = ctx.rollup
     ws.append(["Coverage %", _pct_value(r)])
+    # #801 (X1): the figure after planned changes, beside today's, only where
+    # there is something to recount.
+    if ctx.after is not None:
+        ws.append([AFTER_LABEL, _pct_value(ctx.after.rollup)])
+        for sentence in after_counts(ctx.after):
+            ws.append([sentence])
     # #419: the denominator named, under #620's rules only (option (a)); an
     # assessment approved before #620 renders the row it was delivered with.
     if states_outside_counts(ctx):
@@ -565,6 +579,8 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
         ws.append(["Not verified", ctx.rollup.unable_to_determine])
         ws.append(["Outside control surface", ctx.rollup.outside_control_surface])
     ws.append(["Coverage % means", _definition(ctx)])
+    if ctx.after is not None:
+        ws.append(list(AFTER_LEGEND))  # #801 (X2)
     ws.append(
         [
             f"Tools marked{UNCONFIRMED_MARK}",
@@ -802,6 +818,12 @@ def render_docx(ctx: AttackDeliverableContext) -> bytes:
         doc,
         [
             "Overall coverage: " + coverage_pct_text(ctx.rollup),
+            # #801 (P1): only where there is something to recount.
+            *(
+                [after_document_sentence(_pct_text(ctx.after.rollup)), *after_counts(ctx.after)]
+                if ctx.after is not None
+                else []
+            ),
             _definition(ctx),
             (
                 # #419, under #620's rules only (option (a)).
@@ -994,6 +1016,13 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
             body,
         )
     )
+    # #801 (P1): the DOCX's sentences, and they MUST move together.
+    if ctx.after is not None:
+        for sentence in [
+            after_document_sentence(_pct_text(ctx.after.rollup)),
+            *after_counts(ctx.after),
+        ]:
+            story.append(Paragraph(html_escape(sentence, quote=False), body))
     story.append(Paragraph(_definition(ctx), body))
     # #686: only when non-zero, so nothing changes without a plan.
     for sentence in retirement_sentences(ctx):

@@ -154,6 +154,10 @@ export interface AttackDashboardData {
   /** #554 R3: true when statuses are computed from Detect / Prevent / Respond.
    *  Absent before R3. */
   statuses_computed?: boolean;
+  /** #801: the coverage figure after planned changes (with the current plan)
+   *  and its counts, as the API words them. Absent where there is nothing to
+   *  recount: before R3, or for a client with no consolidation plan. */
+  after_planned_changes?: string[];
 }
 
 /**

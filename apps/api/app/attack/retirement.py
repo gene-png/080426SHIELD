@@ -13,6 +13,10 @@ deployed, and every surface that counts it labels it "planned retirement" so
 the client can see which coverage will drop. Coverage is not recomputed here
 and nothing in `attack/analytics.py` changes: this module only labels.
 
+#801 adds the figure AFTER planned changes beside today's, with retiring tools
+removed. It is not computed here either: `attack/computed.py` takes this
+module's `RetirementIndex`, and `attack/after.py` turns it into the figure.
+
 ## The join, and why each rule is what it is
 
 An ATT&CK row stores tool NAMES (`detection_tools` and its two twins), never an

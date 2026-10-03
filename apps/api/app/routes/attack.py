@@ -43,6 +43,10 @@ from app.ai.runs import (
     start_run,
 )
 from app.attack import release_readiness
+from app.attack.after import after_planned_changes
+from app.attack.after import counts as after_counts
+from app.attack.after import sentences as after_sentences
+from app.attack.after import summary_sentence as after_summary_sentence
 from app.attack.analytics import compute as compute_heatmap
 from app.attack.catalog import (
     SOURCE_VERSION,
@@ -2745,6 +2749,13 @@ def heatmap(
             if statuses_computed(a)
             else None
         ),
+        # #801 (H1): the consultant's own working view, so no current-plan note.
+        after_planned_changes=(
+            after_sentences(after, coverage_pct_text(after.rollup))
+            if (after := after_planned_changes(a, rows, client_retirement_index(db, svc.client_id)))
+            is not None
+            else None
+        ),
         by_tactic=[
             TacticHeatmapEntry(
                 tactic_id=tc.tactic_id,
@@ -3315,6 +3326,18 @@ def finalize_attack_deliverable(
         + "".join(f" {s}" for s in attack_retirement_sentences(ctx))
         # #554 R3 (Q4): the renderers' own sentence, only when non-zero.
         + (f" {awaiting}" if (awaiting := attack_awaiting_review_text(ctx)) else "")
+        # #801 (F1): the figure after planned changes, and its counts.
+        + (
+            "".join(
+                f" {s}"
+                for s in [
+                    after_summary_sentence(coverage_pct_text(ctx.after.rollup)),
+                    *after_counts(ctx.after),
+                ]
+            )
+            if ctx.after is not None
+            else ""
+        )
     )
 
     deliv = Deliverable(
@@ -3351,6 +3374,11 @@ def finalize_attack_deliverable(
             # #489: 0.0 above is "not measured" when this is False.
             "coverage_measured": coverage_measured(rollup),
             "gap_count": rollup.gap,
+            # #801: the figure after planned changes this deliverable carries,
+            # None where it carries none.
+            "coverage_pct_after_planned_changes": (
+                ctx.after.rollup.coverage_pct if ctx.after is not None else None
+            ),
         },
     )
     assessment.documents_stale = False  # Work Order C3
