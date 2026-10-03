@@ -50,6 +50,7 @@ from app.attack.catalog import NOT_PREVENTABLE
 from app.attack.coverage import CoverageStatus
 from app.attack.parents import PARENT_CHILDREN, computed_parent_status
 from app.attack.pending import uncleared_tools
+from app.attack.retirement import Retirement, RetirementIndex
 from app.attack.rules import parents_computed, statuses_computed
 
 #: Stored statuses that mean "assessed": these are recomputed.
@@ -108,32 +109,51 @@ class Capabilities:
         )
 
 
-def capability(tools: Iterable[Any] | None, unconfirmed_citations: list | None) -> InPlace:
-    """One capability from its tool list and the row's citation record."""
+def capability(
+    tools: Iterable[Any] | None,
+    unconfirmed_citations: list | None,
+    retirement: RetirementIndex | None = None,
+) -> InPlace:
+    """One capability from its tool list and the row's citation record.
+
+    `retirement` None is TODAY's figure: retirement is ignored (Q5). With an
+    index it is the figure AFTER planned changes (#801): a tool marked for
+    planned retirement is removed, and one whose retirement status is unknown
+    can be counted neither as staying nor as leaving, so it is awaiting review
+    and scored at the lower bound like a pending citation (Q4)."""
     names = [t for t in tools or [] if isinstance(t, str) and t.strip()]
     if not names:
         return InPlace.NOT_IN_PLACE
     # NULL: the citations were never resolved, so nothing says any tool was
     # checked (migration 0044). Absence of evidence is not confirmation.
-    if unconfirmed_citations is None:
-        return InPlace.AWAITING_REVIEW
-    flagged = uncleared_tools(unconfirmed_citations)
-    if any(t not in flagged for t in names):
+    flagged = None if unconfirmed_citations is None else uncleared_tools(unconfirmed_citations)
+    states = []
+    for t in names:
+        plan = retirement.state(t) if retirement is not None else None
+        if plan is Retirement.PLANNED:
+            states.append(InPlace.NOT_IN_PLACE)
+        elif flagged is None or t in flagged or plan is Retirement.UNKNOWN:
+            states.append(InPlace.AWAITING_REVIEW)
+        else:
+            states.append(InPlace.IN_PLACE)
+    if InPlace.IN_PLACE in states:
         return InPlace.IN_PLACE
+    if all(st is InPlace.NOT_IN_PLACE for st in states):
+        return InPlace.NOT_IN_PLACE
     return InPlace.AWAITING_REVIEW
 
 
-def capabilities(row: Any) -> Capabilities:
+def capabilities(row: Any, retirement: RetirementIndex | None = None) -> Capabilities:
     citations = row.unconfirmed_citations
     prevent = (
         InPlace.CANNOT_BE_PREVENTED
         if row.technique_code in NOT_PREVENTABLE
-        else capability(row.prevention_tools, citations)
+        else capability(row.prevention_tools, citations, retirement)
     )
     return Capabilities(
-        detect=capability(row.detection_tools, citations),
+        detect=capability(row.detection_tools, citations, retirement),
         prevent=prevent,
-        respond=capability(row.response_tools, citations),
+        respond=capability(row.response_tools, citations, retirement),
     )
 
 
@@ -177,8 +197,16 @@ class EffectiveRow:
         return self.capabilities is not None
 
 
-def effective_coverage(assessment: Any, rows: Iterable[Any]) -> list[Any]:
-    """The rows every reader uses: computed under R3, unchanged before it."""
+def effective_coverage(
+    assessment: Any, rows: Iterable[Any], *, retirement: RetirementIndex | None = None
+) -> list[Any]:
+    """The rows every reader uses: computed under R3, unchanged before it.
+
+    `retirement` None gives TODAY's statuses (Q5). An index gives the statuses
+    AFTER planned changes (#801): the same computation with retiring tools
+    removed -- "if these tools are cut and nothing else changes". The after
+    rows are a projection: they are never stored, and the review queue reads
+    today's."""
     rows = list(rows)
     if not statuses_computed(assessment):
         return rows
@@ -191,7 +219,7 @@ def effective_coverage(assessment: Any, rows: Iterable[Any]) -> list[Any]:
                 row, status=row.status, reason_code=row.reason_code, capabilities=None
             )
             continue
-        caps = capabilities(row)
+        caps = capabilities(row, retirement)
         out[code] = EffectiveRow(
             row, status=status_from(caps), reason_code=row.reason_code, capabilities=caps
         )
