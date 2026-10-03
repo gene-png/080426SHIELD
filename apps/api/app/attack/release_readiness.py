@@ -233,7 +233,8 @@ def refuse_release(db: Session, assessment_id: uuid.UUID) -> HTTPException:
                     f"Nothing was released: {n} "
                     f"{'technique has' if n == 1 else 'techniques have'} a computed status "
                     "that differs from the AI's suggestion and has not been reviewed "
-                    f"({_codes(unreviewed)}). Review them in the Computed status review "
+                    f"({_codes(unreviewed)}). Review {'it' if n == 1 else 'them'} in the "
+                    "Computed status review "
                     "panel, then release again."
                 ),
                 "unreviewed": list(unreviewed),

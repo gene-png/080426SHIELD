@@ -497,7 +497,8 @@ def _gather_findings(
                         f"The Risk Register cannot be generated yet: {n} ATT&CK "
                         f"{'technique has' if n == 1 else 'techniques have'} a computed "
                         "status that differs from the AI's suggestion and has not been "
-                        "reviewed. Review them in the ATT&CK Computed status review panel, "
+                        f"reviewed. Review {'it' if n == 1 else 'them'} in the ATT&CK Computed "
+                        "status review panel, "
                         "then generate again."
                     ),
                     "unreviewed": list(unreviewed),

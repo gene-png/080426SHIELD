@@ -128,7 +128,7 @@ def test_release_is_refused_until_the_queue_is_reviewed(env) -> None:  # noqa: F
     assert detail["reason"] == "attack_computed_status_unreviewed", detail
     assert detail["message"] == (
         "Nothing was released: 1 technique has a computed status that differs from the "
-        f"AI's suggestion and has not been reviewed ({code}). Review them in the Computed "
+        f"AI's suggestion and has not been reviewed ({code}). Review it in the Computed "
         "status review panel, then release again."
     )
     assert detail["unreviewed"] == [code]
@@ -171,9 +171,10 @@ def test_the_refusal_counts_in_the_plural(env) -> None:  # noqa: F811
     deliverable = _approve_and_finalize(c, bearer, svc, a["id"])
     detail = _detail(c.post(f"/attack/deliverables/{deliverable}/release", headers=_auth(bearer)))
     codes = ", ".join(sorted(r["technique_code"] for r in rows))
-    assert detail["message"].startswith(
+    assert detail["message"] == (
         "Nothing was released: 2 techniques have a computed status that differs from the "
-        f"AI's suggestion and has not been reviewed ({codes})."
+        f"AI's suggestion and has not been reviewed ({codes}). Review them in the Computed "
+        "status review panel, then release again."
     ), detail
 
 

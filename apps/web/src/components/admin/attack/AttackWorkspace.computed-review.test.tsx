@@ -168,4 +168,44 @@ describe("AttackWorkspace, a review whose computed status moved (#554 R3)", () =
     expect(within(refreshed).getByText("Partial")).toBeInTheDocument();
     expect(within(refreshed).queryByText("Covered")).toBeNull();
   });
+
+  it("does the same when a row left the queue (A11)", async () => {
+    vi.mocked(attackClient.fetchLatestAssessment)
+      .mockResolvedValueOnce(draft("covered"))
+      .mockResolvedValueOnce({
+        ...draft("covered"),
+        coverage: [{ ...row("covered"), in_review_queue: false }],
+      } as unknown as AttackAssessment);
+    const ProxyError = attackClient.AttackProxyError as unknown as new (
+      m: string,
+    ) => Error;
+    vi.mocked(attackClient.reviewComputedStatuses).mockRejectedValueOnce(
+      Object.assign(new ProxyError("ATT&CK proxy 422"), {
+        status: 422,
+        payload: {
+          error: {
+            code: 422,
+            reason: "codes_not_in_review_queue",
+            message: "ignored by the panel",
+            codes: ["T1003.001"],
+          },
+        },
+      }),
+    );
+    render(<AttackWorkspace serviceId="svc-808b" serviceTitle="ATT&CK" />);
+    const panel = await screen.findByTestId("attack-computed-review");
+    fireEvent.click(
+      within(panel).getByRole("button", { name: "Mark 1 as reviewed" }),
+    );
+    expect(
+      await screen.findByText(
+        "Some techniques are no longer awaiting review (T1003.001). The panel has been refreshed; review again.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("attack-computed-review")).queryByRole(
+        "button",
+      ),
+    ).toBeNull();
+  });
 });

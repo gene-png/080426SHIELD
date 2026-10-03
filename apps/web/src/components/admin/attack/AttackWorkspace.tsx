@@ -90,14 +90,17 @@ const RUN_OUTCOME_UNKNOWN =
   "We couldn't confirm whether the AI run finished. It may still complete and fill in technique rows. Reload the page later and check step 2, Review every technique and adjust, before running it again. Run AI stays off on this page until you reload.";
 
 /**
- * #554 R3: what the review panel says after it re-read itself because a
- * computed status moved between loading and the click. Copy pending the
- * advisor (the #808 copy draft, item 4).
+ * #554 R3: what the review panel says after it re-read itself because what it
+ * showed went stale -- a computed status moved, or a row left the queue -- between
+ * loading and the click. Approved by the advisor 01:35Z (#808 copy, item 4 and
+ * A11).
  */
-function reviewRefreshedMessage(codes: string[]): string {
+function reviewRefreshedMessage(reason: string, codes: string[]): string {
   const shown = codes.slice(0, 10).join(", ");
   const more = codes.length > 10 ? ` and ${codes.length - 10} more` : "";
-  return `The computed status of some techniques changed after the panel loaded (${shown}${more}). The panel has been refreshed; review again.`;
+  return reason === "codes_not_in_review_queue"
+    ? `Some techniques are no longer awaiting review (${shown}${more}). The panel has been refreshed; review again.`
+    : `The computed status of some techniques changed after the panel loaded (${shown}${more}). The panel has been refreshed; review again.`;
 }
 
 /** The machine-readable `reason` on a typed error envelope (D-016), if present. */
@@ -536,7 +539,11 @@ export function AttackWorkspace({
       const next = await reviewComputedStatuses(assessment.id, reviews);
       setAssessment(next);
     } catch (err) {
-      if (errorReason(err) === "computed_status_changed") {
+      const reason = errorReason(err);
+      if (
+        reason === "computed_status_changed" ||
+        reason === "codes_not_in_review_queue"
+      ) {
         // What the panel showed is stale, so it re-reads itself rather than
         // telling the consultant to find a reload control.
         const codes = (
@@ -544,7 +551,7 @@ export function AttackWorkspace({
         ).error?.codes;
         const latest = await fetchLatestAssessment(serviceId);
         setAssessment(latest);
-        setActionError(reviewRefreshedMessage(codes ?? []));
+        setActionError(reviewRefreshedMessage(reason, codes ?? []));
       } else {
         setActionError(describeError(err));
       }
