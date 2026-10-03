@@ -370,9 +370,11 @@ export function AttackWorkspace({
   }
 
   /** Re-read the assessment once no write is in flight (#620 round 2,
-   *  finding 7). NEVER throws: it runs after a write that already landed, so
-   *  a failed re-read is reported as that -- a saved change whose parent may
-   *  be stale -- and never as a failed save or an unhandled rejection. */
+   *  finding 7). Asked for after a parent's input is edited, and after every
+   *  review write -- recorded or refused (#554 R3). NEVER throws: a failed
+   *  re-read is reported as exactly that -- what is shown may be out of date --
+   *  and never as a failed save or an unhandled rejection. It claims nothing
+   *  about a save, because after a refused review nothing was saved. */
   async function refetchWhenQuiet(): Promise<void> {
     if (!refetchWanted.current || editsInFlight.current > 0) return;
     refetchWanted.current = false;
@@ -384,9 +386,9 @@ export function AttackWorkspace({
       a = await fetchLatestAssessment(serviceId);
     } catch {
       attempt.note(
-        // Copy for the advisor (#808 round 5): general, because a review now
-        // asks for this re-read too, not only a parent's recompute.
-        "Your change was saved, but the assessment could not be re-read, so what is shown may be out of date. Reload to see it.",
+        // Copy for the advisor (#808 round 6): true after a parent edit, a
+        // recorded review and a refused one alike.
+        "The assessment could not be re-read, so what is shown may be out of date. Reload to see it.",
       );
       return;
     }

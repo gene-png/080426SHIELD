@@ -363,4 +363,63 @@ describe("AttackWorkspace, a row edit during a review (#554 R3)", () => {
     );
     expect(await screen.findByText("notes: x")).toBeInTheDocument();
   });
+
+  it("re-reads quietly when an edit in flight at the click meets a 409", async () => {
+    // Round 6, F2: the 409 branch's re-read must not depend on an edit having
+    // started since the click either.
+    vi.mocked(attackClient.fetchLatestAssessment)
+      .mockResolvedValueOnce(draft(true))
+      .mockResolvedValueOnce(draft(true, "partial"))
+      .mockResolvedValueOnce(draft(true, "partial", "x"));
+    const patch = deferred<AttackCoverageRow>();
+    vi.mocked(attackClient.patchCoverage).mockReturnValueOnce(patch.promise);
+    const review = deferred<AttackAssessment>();
+    vi.mocked(attackClient.reviewComputedStatuses).mockReturnValueOnce(
+      review.promise,
+    );
+    render(<AttackWorkspace serviceId="svc" serviceTitle="ATT&CK" />);
+    const panel = await screen.findByTestId("attack-computed-review");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "select the other row" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "edit the selected row" }),
+    );
+    fireEvent.click(
+      within(panel).getByRole("button", { name: "Mark 1 as reviewed" }),
+    );
+    await act(async () => {
+      patch.resolve(row("T1059.001", "partial", false, "x"));
+    });
+    await act(async () => {
+      review.reject(stale409());
+    });
+    await waitFor(() =>
+      expect(attackClient.fetchLatestAssessment).toHaveBeenCalledTimes(3),
+    );
+    expect(await screen.findByText("notes: x")).toBeInTheDocument();
+  });
+
+  it("says nothing was saved-or-not when the quiet re-read after a refused review fails", async () => {
+    // Round 6: after a REFUSED review nothing was saved, so the note claims no
+    // save -- only that what is shown may be out of date.
+    vi.mocked(attackClient.fetchLatestAssessment)
+      .mockResolvedValueOnce(draft(true))
+      .mockResolvedValueOnce(draft(true, "partial"))
+      .mockRejectedValueOnce(new Error("down"));
+    vi.mocked(attackClient.reviewComputedStatuses).mockRejectedValueOnce(
+      stale409(),
+    );
+    render(<AttackWorkspace serviceId="svc" serviceTitle="ATT&CK" />);
+    const panel = await screen.findByTestId("attack-computed-review");
+    fireEvent.click(
+      within(panel).getByRole("button", { name: "Mark 1 as reviewed" }),
+    );
+    expect(
+      await screen.findByText(
+        "The assessment could not be re-read, so what is shown may be out of date. Reload to see it.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Your change was saved/)).toBeNull();
+  });
 });
