@@ -223,7 +223,11 @@ describe("AttackScenarioPanel", () => {
     await startWith({
       ...COMPLETED,
       not_reassessed: ["T1005"],
-      dropped: { tool_outside_change: 2, tool_unconfirmed: 1 },
+      dropped: {
+        tool_outside_change: 2,
+        tool_unconfirmed: 1,
+        function_not_lost: 3,
+      },
     });
     expect(
       screen.getByTestId("attack-scenario-not-reassessed").textContent,
@@ -236,7 +240,8 @@ describe("AttackScenarioPanel", () => {
         .map((p) => p.textContent),
     ).toEqual([
       "2 AI suggestions were set aside because they named a tool or a technique outside these changes.",
-      "1 AI suggestion was set aside because the tool named could not be matched exactly to one of the client's tools.",
+      "1 AI suggestion was set aside because the tool it named could not be matched exactly to one of the client's tools.",
+      "3 AI suggestions were set aside because they credited a capability these changes did not take away.",
     ]);
   });
 

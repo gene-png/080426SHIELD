@@ -77,6 +77,7 @@ function dropLines(dropped: Record<string, number>): string[] {
   const outside =
     (dropped.technique_outside_slice ?? 0) + (dropped.tool_outside_change ?? 0);
   const unconfirmed = dropped.tool_unconfirmed ?? 0;
+  const notLost = dropped.function_not_lost ?? 0;
   const malformed = (dropped.not_boolean ?? 0) + (dropped.not_an_object ?? 0);
   const lines: string[] = [];
   if (outside > 0)
@@ -85,7 +86,11 @@ function dropLines(dropped: Record<string, number>): string[] {
     );
   if (unconfirmed > 0)
     lines.push(
-      `${unconfirmed} AI ${plural(unconfirmed, "suggestion was", "suggestions were")} set aside because the tool named could not be matched exactly to one of the client's tools.`,
+      `${unconfirmed} AI ${plural(unconfirmed, "suggestion was", "suggestions were")} set aside because the tool ${plural(unconfirmed, "it", "they")} named could not be matched exactly to one of the client's tools.`,
+    );
+  if (notLost > 0)
+    lines.push(
+      `${notLost} AI ${plural(notLost, "suggestion was", "suggestions were")} set aside because ${plural(notLost, "it", "they")} credited a capability these changes did not take away.`,
     );
   if (malformed > 0)
     lines.push(
