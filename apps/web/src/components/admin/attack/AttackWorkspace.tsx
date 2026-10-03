@@ -543,10 +543,14 @@ export function AttackWorkspace({
     if (!assessment) return;
     setActionError(null);
     setBusy("review");
-    const seq = ++assessmentSeq.current;
+    // Bumped so a slow LOAD arriving late cannot overwrite the review's result.
+    // The result itself is applied unconditionally, like approve's: a row edit
+    // made while the review is in flight also bumps the counter, and guarding
+    // on it would drop a review the server recorded (the #808 round-3 review).
+    assessmentSeq.current += 1;
     try {
       const next = await reviewComputedStatuses(assessment.id, reviews);
-      if (seq === assessmentSeq.current) setAssessment(next);
+      setAssessment(next);
     } catch (err) {
       const reason = errorReason(err);
       if (
@@ -563,7 +567,7 @@ export function AttackWorkspace({
         // silent.
         try {
           const latest = await fetchLatestAssessment(serviceId);
-          if (seq === assessmentSeq.current) setAssessment(latest);
+          setAssessment(latest);
           setActionError(reviewRefreshedMessage(reason, codes ?? [], true));
         } catch {
           setActionError(reviewRefreshedMessage(reason, codes ?? [], false));
