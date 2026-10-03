@@ -30,6 +30,7 @@ from app.ai.runs import (
     RunOutcome,
     get_ai_run_runner,
     require_serves,
+    running_run,
     start_run,
 )
 from app.attack import scenario
@@ -40,7 +41,7 @@ from app.config import get_settings
 from app.db.session import get_db
 from app.dependencies import current_client, require_role
 from app.logging import get_logger
-from app.models.ai_run import AiRun
+from app.models.ai_run import AiRun, AiRunStatus
 from app.models.attack_assessment import AttackAssessment, AttackCoverage
 from app.models.attack_scenario import AttackScenario, AttackScenarioRow, AttackScenarioState
 from app.models.client import Client
@@ -153,6 +154,12 @@ def _serialize(db: Session, s: AttackScenario) -> ScenarioResponse:
     base = db.get(AttackAssessment, s.base_assessment_id)
     base_rows = _base_rows(db, base.id)
     run = db.get(AiRun, s.ai_run_id) if s.ai_run_id else None
+    if run is not None and run.status is AiRunStatus.RUNNING:
+        # The panel's own run-status read (the workspace's leaves this purpose
+        # out). Reap first, as every "in progress" read does, so a run no job
+        # will finish is never shown as running.
+        running_run(db, service_id=s.service_id, purpose=scenario.PURPOSE)
+        db.refresh(run)
     rows = _scenario_lists(db, s.id)
     # The scenario's rows exist only once a run completed: before that there
     # is no "after", and the comparison is today against itself.

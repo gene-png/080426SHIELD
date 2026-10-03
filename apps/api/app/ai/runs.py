@@ -287,8 +287,30 @@ def reap(db: Session, *, service_id: uuid.UUID, purpose: str | None = None) -> N
         db.commit()
 
 
-def running_run(db: Session, *, service_id: uuid.UUID, purpose: str | None = None) -> AiRun | None:
+#: Purposes whose runs do NOT hold the service's edit lock and are not the
+#: workspace's run in progress (#802, the coordinator's ruling (b), agreed by
+#: the advisor at 05:25Z). `attack_scenario_delta` is the ATT&CK what-if: it
+#: writes only its own tables, and its base is APPROVED or RELEASED, which is
+#: locked already, so locking the service's real draft would protect nothing.
+#: Spelled here rather than imported from `app.attack.scenario.PURPOSE`, which
+#: imports the AI engine; `test_attack_scenario_lock.py` asserts the two agree.
+#: Adding a purpose here unlocks every edit route for its runs: it needs the
+#: same argument, made for that purpose.
+NON_LOCKING_PURPOSES: frozenset[str] = frozenset({"attack_scenario_delta"})
+
+
+def running_run(
+    db: Session,
+    *,
+    service_id: uuid.UUID,
+    purpose: str | None = None,
+    locking_only: bool = False,
+) -> AiRun | None:
     """The run holding this service's lock, after reaping any that cannot.
+
+    `locking_only` leaves out `NON_LOCKING_PURPOSES`: the edit lock and the
+    workspace's "run in progress" ask that question. `start_run` asks about
+    its own purpose and never sets it.
 
     EVERY surface that shows or acts on "a run is in progress" goes through
     here (the POST, the edit lock, both status reads), so none can report or
@@ -304,6 +326,8 @@ def running_run(db: Session, *, service_id: uuid.UUID, purpose: str | None = Non
     q = select(AiRun).where(AiRun.service_id == service_id, AiRun.status == AiRunStatus.RUNNING)
     if purpose is not None:
         q = q.where(AiRun.purpose == purpose)
+    if locking_only:
+        q = q.where(AiRun.purpose.not_in(NON_LOCKING_PURPOSES))
     return db.execute(q.order_by(AiRun.started_at.desc())).scalars().first()
 
 
@@ -316,7 +340,7 @@ def refuse_while_running(db: Session, service_id: uuid.UUID) -> None:
     `assessment_not_editable`. There is no manual unlock; a hung run is ended
     by its deadline, which the message states.
     """
-    run = running_run(db, service_id=service_id)
+    run = running_run(db, service_id=service_id, locking_only=True)
     if run is None:
         return
     raise HTTPException(

@@ -82,6 +82,8 @@ class World:
             return LLMResponse(json.dumps({"rows": rows}))
 
         provider.register(PURPOSE, respond)
+        # mitre_map answers with nothing, for the tests that hold one running.
+        provider.register("mitre_map", lambda _p: LLMResponse('{"techniques": []}'))
         from app.routes.attack import _llm_dep
 
         self.app.dependency_overrides[_llm_dep] = lambda: LLMClient(provider)
