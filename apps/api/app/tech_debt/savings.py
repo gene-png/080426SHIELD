@@ -18,8 +18,13 @@ from decimal import Decimal
 
 from app.models.capability import CapabilityDisposition
 
-#: The dispositions whose annual cost is counted as savings.
-SAVINGS_DISPOSITIONS: frozenset[CapabilityDisposition] = frozenset({CapabilityDisposition.CUT})
+#: The dispositions whose annual cost is counted as savings: "Cut" and "Cut,
+#: covered by another tool" (stored as `consolidate`), each at the tool's FULL
+#: annual cost. Decided by Gene and ruled by the advisor on #736, 2026-10-02
+#: (#804). Keep and Undecided count nothing.
+SAVINGS_DISPOSITIONS: frozenset[CapabilityDisposition] = frozenset(
+    {CapabilityDisposition.CUT, CapabilityDisposition.CONSOLIDATE}
+)
 
 
 @dataclass(frozen=True)

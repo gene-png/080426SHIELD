@@ -9,7 +9,10 @@ value card and the what-if. Each surface is a separate test, so reverting any
 one surface to a different derivation turns that surface's test red.
 
 The plan, on the seed's three tools (Wiz 350,000 and Lacework 120,000 in
-CNAPP; Splunk 480,000 in SIEM): Wiz KEEP, Lacework CUT, Splunk CUT.
+CNAPP; Splunk 480,000 in SIEM): Wiz KEEP, Lacework "Cut, covered by another
+tool" (stored `consolidate`), Splunk CUT. Since the advisor's ruling on #736
+both cuts count their full annual cost, and Keep counts nothing: before it,
+the same plan made 480,000 and a CNAPP figure of 0.
 """
 
 from __future__ import annotations
@@ -33,10 +36,10 @@ ITEMS = [
     {"name": "Lacework", "category": "CNAPP", "annual_cost_usd": 120000, "source_row_index": 1},
     {"name": "Splunk", "category": "SIEM", "annual_cost_usd": 480000, "source_row_index": 2},
 ]
-PLAN = {"Wiz": "keep", "Lacework": "cut", "Splunk": "cut"}
+PLAN = {"Wiz": "keep", "Lacework": "consolidate", "Splunk": "cut"}
 #: Lacework 120,000 + Splunk 480,000.
 SAVINGS = 600_000.0
-#: CNAPP holds Wiz (kept) and Lacework (cut): the category's own savings.
+#: CNAPP holds Wiz (kept) and Lacework (cut, covered): the category's savings.
 CNAPP_SAVINGS = 120_000.0
 
 

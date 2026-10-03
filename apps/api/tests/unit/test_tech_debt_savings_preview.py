@@ -64,6 +64,20 @@ def test_ticking_a_tool_cut_adds_its_cost_and_writes_nothing(app_client) -> None
         assert s.execute(select(func.count()).select_from(LLMCall)).scalar_one() == 1  # the extract
 
 
+def test_cut_covered_by_another_tool_counts_its_full_cost_and_keep_counts_nothing(
+    app_client,  # noqa: F811
+) -> None:
+    """The advisor's ruling on #736 (2026-10-02): "Cut, covered by another
+    tool" (stored `consolidate`) counts the tool's FULL annual cost, as Cut
+    does. Keep counts nothing."""
+    c, _s, h, _b, _svc, list_id, ids = _world(app_client)
+    body = _preview(
+        c, h, list_id, {ids["Wiz"]: "consolidate", ids["Splunk"]: "cut", ids["Lacework"]: "keep"}
+    ).json()
+    assert body["estimated_annual_savings"] == WIZ + SPLUNK
+    assert (body["consolidate_count"], body["cut_count"], body["keep_count"]) == (1, 1, 1)
+
+
 def test_an_untouched_row_keeps_its_stored_disposition(app_client) -> None:  # noqa: F811
     c, _s, h, _b, _svc, list_id, ids = _world(app_client)
     r = c.patch(f"/tech-debt/capability-items/{ids['Wiz']}", headers=h, json={"disposition": "cut"})
