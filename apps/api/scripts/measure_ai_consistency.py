@@ -356,11 +356,22 @@ def run_loop(
     UNKNOWN (no output count, or a call with none) also stops the rest under a
     budget (`stopped_unknown_spend`): a budget that cannot be counted is not
     being kept. With `stop_on_failure`, no run starts after a failed one
-    (`stopped_after_failure`): a rate-limited provider is not retried into."""
+    (`stopped_after_failure`): a rate-limited provider is not retried into.
+    A run that hit the run deadline stops every later run, whatever else is
+    set (`stopped_after_deadline`)."""
+    from app.ai.runs import RUN_DEADLINE_EXCEEDED
+
     records: list[RunRecord] = []
     spent = 0
     unknown = False
     for n in range(1, runs + 1):
+        if any(r.failure == RUN_DEADLINE_EXCEEDED for r in records):
+            # A batch still inside a provider call after the deadline writes its
+            # `llm_calls` row LATER, into whichever run is counting then. So no
+            # run starts after a deadline, budget or not: its window would hold
+            # a straggler's tokens under `tokens_complete: True`.
+            records.append(RunRecord(False, None, "stopped_after_deadline", 0, 0))
+            continue
         if stop_on_failure and any(not r.ok for r in records):
             records.append(RunRecord(False, None, "stopped_after_failure", 0, 0))
             continue
@@ -380,7 +391,12 @@ def run_loop(
     return records
 
 
-_NOT_STARTED = ("stopped_output_budget", "stopped_after_failure", "stopped_unknown_spend")
+_NOT_STARTED = (
+    "stopped_output_budget",
+    "stopped_after_failure",
+    "stopped_unknown_spend",
+    "stopped_after_deadline",
+)
 
 
 def summarize(

@@ -1087,9 +1087,12 @@ def test_a_csf_deadline_leaves_the_spend_incomplete(csf_world, monkeypatch) -> N
     assert report["failed_runs"][0]["failure"] == RUN_DEADLINE_EXCEEDED
     # The finished batch's tokens ARE counted ...
     assert report["tokens"]["output"] == 11
-    # ... and the total says it is not the whole spend, which stops run 2.
+    # ... and the total says it is not the whole spend.
     assert report["tokens"]["complete"] is False
-    assert report["failed_runs"][1]["failure"] == "stopped_unknown_spend"
+    # Run 2 does not start. Since the deadline stop (round 4), that is the
+    # deadline's doing whatever the budget; it used to be the budget's
+    # `stopped_unknown_spend`, which needed a budget to be set.
+    assert report["failed_runs"][1]["failure"] == "stopped_after_deadline"
     # The budget block says so too: "no overrun" over an incomplete count is no claim.
     assert report["budget"]["complete"] is False
 
@@ -1116,3 +1119,47 @@ def test_a_zt_call_that_failed_without_tokens_leaves_the_spend_incomplete(world)
     assert report["tokens"]["complete"] is False
     # Named per run: the failed run's own count is the incomplete one.
     assert [r["tokens_complete"] for r in report["runs"]] == [True, False, True]
+
+
+def test_a_deadline_stops_every_later_run_even_with_no_budget() -> None:
+    # A batch still inside a provider call after the deadline writes its row
+    # later, into whichever run is counting then. So no later run may start,
+    # with or without a budget, with or without --stop-on-failure.
+    from app.ai.runs import RUN_DEADLINE_EXCEEDED
+
+    calls: list[int] = []
+
+    def one(n: int) -> RunRecord:
+        calls.append(n)
+        return RunRecord(False, None, RUN_DEADLINE_EXCEEDED, 10, 20, tokens_complete=False)
+
+    records = run_loop(3, one, max_output_tokens=None, stop_on_failure=False)
+    assert calls == [1]
+    assert [r.failure for r in records] == [
+        RUN_DEADLINE_EXCEEDED,
+        "stopped_after_deadline",
+        "stopped_after_deadline",
+    ]
+
+
+def test_a_csf_deadline_with_no_budget_starts_no_second_run(csf_world, monkeypatch) -> None:
+    from app.ai.runs import RUN_DEADLINE_EXCEEDED, RunFailed
+
+    c, TestSession, provider, h, _ = csf_world
+    started: list[int] = []
+
+    def deadline(db, llm, job_name, batch_inputs, **kw):
+        started.append(1)
+        raise RunFailed(RUN_DEADLINE_EXCEEDED, kw["deadline_message"])
+
+    monkeypatch.setattr("app.ai.batching.run_batches", deadline)
+    with TestSession() as db:
+        report = measure_csf(db, LLMClient(provider), runs=2)
+        db.commit()
+    assert started == [1]
+    assert [r["failure"] for r in report["failed_runs"]] == [
+        RUN_DEADLINE_EXCEEDED,
+        "stopped_after_deadline",
+    ]
+    # Run 2 never started, so its window holds no straggler's tokens.
+    assert report["runs"][1]["output_tokens"] == 0
