@@ -1094,6 +1094,41 @@ def add_capability_components(
     return _serialize_list_with_items(db, db.get(CapabilityList, item.capability_list_id))
 
 
+def _check_consolidation_target(db: Session, item: CapabilityItem, target_id: uuid.UUID) -> None:
+    """The tool a row is "covered by" must be ANOTHER row on the SAME list (#807).
+
+    Same list is also what makes it live and this tenant's: the PATCH has
+    already refused a row whose list is released, discarded or another
+    tenant's, and a row is never deleted on its own. A row on another tenant's
+    list gets exactly the reply an unknown id gets, so this PATCH cannot tell
+    anyone whether another tenant's id exists.
+    """
+    if target_id == item.id:
+        _log.info("tech_debt.consolidation_target_refused_self", item_id=str(item.id))
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "consolidation_target_self",
+                "message": "A tool cannot be marked as covered by itself.",
+            },
+        )
+    target = db.get(CapabilityItem, target_id)
+    if target is None or target.capability_list_id != item.capability_list_id:
+        _log.info("tech_debt.consolidation_target_refused_not_in_list", item_id=str(item.id))
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "consolidation_target_not_in_list",
+                "message": "The covering tool must be on the same list.",
+            },
+        )
+    _log.info(
+        "tech_debt.consolidation_target_accepted",
+        item_id=str(item.id),
+        target_id=str(target_id),
+    )
+
+
 @router.patch(
     "/capability-items/{item_id}",
     response_model=CapabilityItemResponse,
@@ -1149,6 +1184,8 @@ def patch_capability_item(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Patch body is empty.",
         )
+    if data.get("consolidation_target_id") is not None:
+        _check_consolidation_target(db, item, data["consolidation_target_id"])
     # Lock/unlock is a meta-action handled separately so a NULL never reaches
     # the NOT NULL column and so it doesn't clear AI confidence on its own.
     locked_val = data.pop("locked", None)
