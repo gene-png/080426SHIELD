@@ -313,11 +313,14 @@ def validate_added(
     and indexes the shown forms, and a looser check here let a name through
     that the run then could not credit (#818 review, F1). An added tool is
     refused when any string the model can cite for it -- its name, or the form
-    it is SHOWN as -- already resolves, CONFIRMED, to a client or earlier-added
-    tool. Confirmed resolution is the resolver's real-name and alias tiers, the
-    only tiers that index a name, so a name that clears this check cannot
-    disturb another tool's resolution either. An inference (a word of a name, a
-    vendor) never decides a credit, so it does not refuse.
+    it is SHOWN as -- is a hit in the resolver's real-name or alias tier
+    (`CitationResolver.named_by`), CONFIRMED OR AMBIGUOUS, among the client's
+    and earlier-added tools. Ambiguous counts: when the client's own tools
+    already collide, a name that resolves ambiguously is still their tool, and
+    a confirmed-only check let it through (#818 narrow review). Those two tiers
+    are the only ones that index a name, so a name that clears this check
+    cannot disturb another tool's resolution either. An inference (a word of a
+    name, a vendor) never decides a credit, so it does not refuse.
 
     A refusal names the cause: a spelling of a client tool (B4/B4b), a second
     spelling of an earlier added tool, or a name the model could not tell apart

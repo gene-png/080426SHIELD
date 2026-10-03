@@ -384,6 +384,15 @@ def test_a_spelling_of_client_tools_that_already_collide_is_still_theirs() -> No
         _validate([_tool("Edr Tool")], client=("EDR TOOL", "EDR Tool"))
 
 
+def test_a_client_spelling_after_another_added_tool_is_still_the_clients() -> None:
+    """#818 round 3: with an EARLIER added tool in the list, the classifier
+    still names the cause from the name tiers -- B4, not B5. (The old rule,
+    "ambiguous and no earlier tool", answered Indistinct here.)"""
+    with pytest.raises(scenario.AlreadyClients) as exc:
+        _validate([_tool("XDR Suite"), _tool("Edr Tool")], client=("EDR TOOL", "EDR Tool"))
+    assert exc.value.name == "Edr Tool"
+
+
 def test_a_name_shown_as_two_colliding_client_tools_is_indistinct() -> None:
     """#818 narrow review, 1(a): two client tools already share a placeholder;
     a third name shown as it is refused, not accepted on the ambiguity."""
