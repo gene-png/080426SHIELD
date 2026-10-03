@@ -460,16 +460,20 @@ def split_higher(
     *,
     added_names: Iterable[str],
 ) -> tuple[list[str], list[str]]:
-    """The affected techniques that would score higher, split by cause:
-    (copy 18's warning; B11's result).
+    """The affected techniques that would score higher, by cause: (copy 18's
+    warning; B11's result). A technique can be in BOTH.
 
     COUNTERFACTUAL, not "was an added tool named": the after-status is computed
     again from the what-if's lists WITHOUT the added tools, by the same R3
-    rules. A rise that survives that is owed to the remaining tools alone and
-    is copy 18's anomaly, even when an added tool was credited too; a rise that
-    does not is the added tools' doing, B11's (#818 review, F3). A row naming an
-    added tool with every function false put nothing in the lists, so it
-    explains nothing."""
+    rules (#818 review, F3), and the advisor's option (b) at 16:47Z decides:
+    - a rise the REMAINING tools alone still produce is copy 18's anomaly,
+      even when an added tool was credited too;
+    - a rise where the added tools reach a HIGHER final status than the
+      remaining tools alone (Gap to Partial on a remaining tool, then Covered
+      with an added one; or a rise the remaining tools do not produce at all)
+      is B11's result too.
+    A row naming an added tool with every function false put nothing in the
+    lists, so it explains nothing."""
     affected = list(affected)
     rises = scored_higher(comparison, affected)
     added = {_key(n) for n in added_names}
@@ -481,7 +485,18 @@ def split_higher(
     }
     alone = compare(assessment, base_rows, scenario_rows(base_rows, without))
     survives = set(scored_higher(alone, affected))
-    return [c for c in rises if c in survives], [c for c in rises if c not in survives]
+    with_added = {code: after for code, _before, after in comparison.changed}
+    before = {code: b for code, b, _after in comparison.changed}
+    alone_after = {code: after for code, _before, after in alone.changed}
+
+    def raised_by_added(code: str) -> bool:
+        reached_alone = alone_after.get(code, before[code])
+        return _RANK.get(with_added[code], -1) > _RANK.get(reached_alone, -1)
+
+    return (
+        [c for c in rises if c in survives],
+        [c for c in rises if raised_by_added(c)],
+    )
 
 
 def affected_codes(rows: Iterable[Any], removed: Removed | Iterable[str]) -> list[str]:

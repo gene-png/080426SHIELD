@@ -357,6 +357,16 @@ def test_a_rise_a_remaining_tool_explains_alone_is_copy_18s_even_beside_an_added
     assert (remaining, from_added) == ([PREVENTABLE], [])
 
 
+def test_a_rise_the_remaining_tool_starts_and_an_added_tool_lifts_counts_in_both() -> None:
+    """The advisor's option (b), 16:47Z: SIEM (remaining) alone takes Gap to
+    Partial -- copy 18; XDR (added) then lifts it to Covered -- B11 as well."""
+    base = [_row(PREVENTABLE, status="gap")]
+    remaining, from_added = _split(
+        base, {PREVENTABLE: _lists(d=["SIEM Tool"], p=["XDR Tool"], r=["XDR Tool"])}
+    )
+    assert (remaining, from_added) == ([PREVENTABLE], [PREVENTABLE])
+
+
 def test_an_added_tool_named_with_no_function_explains_no_rise() -> None:
     """A row naming XDR with every function false put nothing in the lists."""
     base = [_row(PREVENTABLE, status="gap")]

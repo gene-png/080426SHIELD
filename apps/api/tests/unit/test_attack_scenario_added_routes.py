@@ -262,6 +262,29 @@ def test_a_rise_owed_to_a_remaining_tool_is_copy_18_even_beside_an_added_credit(
     assert body["higher_with_added"] == 0
 
 
+def test_a_rise_a_remaining_tool_starts_and_an_added_tool_finishes_counts_in_both(
+    app_parts, analysis_job  # noqa: F811
+) -> None:
+    """The advisor's option (b), 16:47Z, through the GET. EDR removed; XDR added
+    for Prevent and Respond. C lost Detect: SIEM (remaining) re-credits it, so
+    C rises Gap to Partial on its own -- copy 18. XDR fills Prevent and Respond
+    and C reaches Covered -- B11 too."""
+    w = _world(app_parts)
+    _answering(
+        w,
+        {w.cc: [_flags(w.cc, SIEM, d=True), _flags(w.cc, XDR, p=True, r=True)]},
+    )
+    sid = _create(w, removed=[EDR], added=[_tool(functions=("prevent", "respond"))]).json()["id"]
+    body = _run_to_completion(w, sid)
+    assert body["dropped"] == {}
+    diffs = {d["technique_code"]: d for d in body["differences"]}
+    assert diffs[w.cc]["today"] == "gap" and diffs[w.cc]["after"] == "covered"
+    assert diffs[w.cc]["scored_higher"] is True
+    assert diffs[w.cc]["credited_tool_you_added"] is True
+    assert body["scored_higher"] == 1
+    assert body["higher_with_added"] == 1
+
+
 def test_a_tool_the_client_now_has_stops_the_run_before_anything_is_spent(
     app_parts, analysis_job  # noqa: F811
 ) -> None:
