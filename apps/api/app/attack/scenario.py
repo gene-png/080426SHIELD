@@ -302,22 +302,44 @@ def validate_added(
 ) -> list[AddedTool]:
     """The admin's added tools, or a typed refusal naming the first bad one.
 
-    A name that is any spelling of a client tool is refused (slice A's
-    cross-tier rule, `Removed.covers`: an admin cannot type a client tool, or
-    its `[CLIENT]` twin, and have it treated as new). A name the model would be
-    SHOWN as the same string as a client tool or another added tool is refused
-    too: its credit could not be told apart (`Removed.shares_shown_form`)."""
+    Whether a name can stand beside the client's tools is decided by CALLING
+    the resolver the run uses (`CitationResolver`, with the egress's org name,
+    mode and hints), never by a second key: it collapses internal whitespace
+    and indexes the shown forms, and a looser check here let a name through
+    that the run then could not credit (#818 review, F1). An added tool is
+    accepted only if, with it among the candidates, every string the model can
+    cite for it (its name, and the form it is SHOWN as) resolves, confirmed, to
+    it alone -- and every client or earlier-added tool that resolved to itself
+    before still does.
+
+    A refusal names the cause: a spelling of a client tool (B4/B4b), a second
+    spelling of an earlier added tool, or a name the model could not tell apart
+    from another tool (B5)."""
     raw = list(raw)
     if len(raw) > limit:
         raise TooMany(limit)
-    client = removed_spellings(
-        client_tools,
-        client_org_name=client_org_name,
-        redaction_mode=redaction_mode,
-        name_hints=name_hints,
-    )
+    hints = tuple(name_hints)
+    client = list(dict.fromkeys(t for t in client_tools if isinstance(t, str) and t.strip()))
+
+    def resolver(names: Sequence[str], mode: RedactionMode = redaction_mode) -> CitationResolver:
+        return CitationResolver(
+            [Candidate(name=n) for n in names],
+            client_org_name=client_org_name,
+            redaction_mode=mode,
+            name_hints=hints,
+        )
+
+    def citable(name: str) -> set[str]:
+        """The strings the model can cite for a tool: as stored and as shown."""
+        shown, _counts = redact_for_ai(
+            name, mode=redaction_mode, client_org_name=client_org_name or None, name_hints=hints
+        )
+        return {name, shown}
+
+    def resolves_to_itself(res: CitationResolver, name: str) -> bool:
+        return all((r := res.resolve(form)).confirmed and r.name == name for form in citable(name))
+
     out: list[AddedTool] = []
-    seen: list[str] = []
     for entry in raw:
         entry = entry if isinstance(entry, Mapping) else {}
         name = _text(entry.get("name"))
@@ -326,30 +348,33 @@ def validate_added(
         vendor, category = _text(entry.get("vendor")), _text(entry.get("category"))
         if any(v is not None and len(v) > MAX_TEXT for v in (name, vendor, category)):
             raise TooLong(name)
-        if _key(name) in {_key(n) for n in seen}:
-            raise Duplicate(name)
         functions = entry.get("security_functions")
         functions = list(functions) if isinstance(functions, list) else []
         for value in functions:
-            if value not in _FUNCTION_FLAG:
+            # `isinstance` first: a list or dict is unhashable and `in` on a
+            # dict would raise -- an untyped 500 (#818 review, F2).
+            if not isinstance(value, str) or value not in _FUNCTION_FLAG:
                 raise BadFunction(name, value)
         if not functions:
             raise NoFunctions(name)
-        if client.covers(name):
-            raise AlreadyClients(name)
-        earlier = removed_spellings(
-            seen,
-            client_org_name=client_org_name,
-            redaction_mode=redaction_mode,
-            name_hints=name_hints,
+
+        earlier = [t.name for t in out]
+        before = resolver([*client, *earlier])
+        after = resolver([*client, *earlier, name])
+        # A string that ALREADY resolves, confirmed, to an existing tool is that
+        # tool, however the candidate sets read afterwards: two identical names
+        # are one entry to the resolver.
+        taken = any(before.resolve(form).confirmed for form in citable(name))
+        broken = (
+            taken
+            or not resolves_to_itself(after, name)
+            or any(
+                resolves_to_itself(before, other) and not resolves_to_itself(after, other)
+                for other in (*client, *earlier)
+            )
         )
-        if (
-            client.shares_shown_form(name)
-            or earlier.covers(name)
-            or earlier.shares_shown_form(name)
-        ):
-            raise Indistinct(name)
-        seen.append(name)
+        if broken:
+            raise _why_refused(name, before, resolver(client, "off"), client, earlier, citable)
         out.append(
             AddedTool(
                 name=name,
@@ -359,6 +384,32 @@ def validate_added(
             )
         )
     return out
+
+
+def _why_refused(
+    name: str,
+    before: CitationResolver,
+    client_real: CitationResolver,
+    client: Sequence[str],
+    earlier: Sequence[str],
+    citable: Callable[[str], set[str]],
+) -> AddedToolRefused:
+    """The cause, for a name the resolver could not keep apart. A spelling of a
+    client tool: the name itself already resolves to one (case, whitespace, or
+    its `[CLIENT]` twin), or the form it is SHOWN as is a client tool's stored
+    name. A second spelling of an earlier added tool, likewise. Anything else
+    -- two tools shown as one placeholder -- cannot be told apart."""
+    own = before.resolve(name)
+    shown_hits = {client_real.resolve(form).name for form in citable(name) - {name}}
+    if (own.confirmed and own.name in client) or (
+        own.rejected_reason == "ambiguous" and not earlier
+    ):
+        return AlreadyClients(name)
+    if shown_hits & set(client):
+        return AlreadyClients(name)
+    if own.confirmed and own.name in earlier:
+        return Duplicate(name)
+    return Indistinct(name)
 
 
 def require_change(removed: Sequence[str], added: Sequence[AddedTool]) -> None:
@@ -403,28 +454,36 @@ def open_functions(
 
 
 def split_higher(
+    assessment: Any,
+    base_rows: Sequence[Any],
+    lists: Mapping[str, Mapping[str, list[str]]],
     comparison: Comparison,
     affected: Iterable[str],
-    accepted: Iterable[Mapping[str, Any]],
     *,
     added_names: Iterable[str],
 ) -> tuple[list[str], list[str]]:
     """The affected techniques that would score higher, split by cause:
-    (credited to a REMAINING tool -- copy 18's warning; credited to an ADDED
-    tool -- B11's result). A rise counts for an added tool only where an
-    accepted row names one WITH a function: a row with every function false
+    (copy 18's warning; B11's result).
+
+    COUNTERFACTUAL, not "was an added tool named": the after-status is computed
+    again from the what-if's lists WITHOUT the added tools, by the same R3
+    rules. A rise that survives that is owed to the remaining tools alone and
+    is copy 18's anomaly, even when an added tool was credited too; a rise that
+    does not is the added tools' doing, B11's (#818 review, F3). A row naming an
+    added tool with every function false put nothing in the lists, so it
     explains nothing."""
-    added = {_key(n) for n in added_names}
-    credited = {
-        a["technique_code"]
-        for a in accepted
-        if _key(a.get("tool")) in added and any(a.get(f) is True for f, _ in _FLAGS)
-    }
+    affected = list(affected)
     rises = scored_higher(comparison, affected)
-    return (
-        [c for c in rises if c not in credited],
-        [c for c in rises if c in credited],
-    )
+    added = {_key(n) for n in added_names}
+    if not added:
+        return rises, []
+    without = {
+        code: {name: [t for t in tools if _key(t) not in added] for name, tools in row.items()}
+        for code, row in lists.items()
+    }
+    alone = compare(assessment, base_rows, scenario_rows(base_rows, without))
+    survives = set(scored_higher(alone, affected))
+    return [c for c in rises if c in survives], [c for c in rises if c not in survives]
 
 
 def affected_codes(rows: Iterable[Any], removed: Removed | Iterable[str]) -> list[str]:

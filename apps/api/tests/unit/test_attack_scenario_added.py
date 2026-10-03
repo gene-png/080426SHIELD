@@ -285,50 +285,63 @@ def test_each_batch_carries_the_added_tools_and_the_open_functions() -> None:
 # --- a rise, attributed -----------------------------------------------------------
 
 
-def test_a_rise_credited_to_an_added_tool_is_a_result_not_the_warning() -> None:
-    comparison = scenario.Comparison(
-        today=None,
-        after=None,
-        changed=[(PREVENTABLE, "partial", "covered"), (OTHER, "gap", "partial")],
+_ASSESSMENT = SimpleNamespace(id="a", status_rules=2, parent_rules=2)
+
+
+def _lists(d=(), p=(), r=()):
+    return {"detection_tools": list(d), "prevention_tools": list(p), "response_tools": list(r)}
+
+
+def _split(base, lists):
+    after = scenario.scenario_rows(base, lists)
+    comparison = scenario.compare(_ASSESSMENT, base, after)
+    return scenario.split_higher(
+        _ASSESSMENT, base, lists, comparison, sorted(lists), added_names=["XDR Tool"]
     )
-    accepted = [
-        {
-            "technique_code": PREVENTABLE,
-            "tool": "XDR Tool",
-            "detection": False,
-            "prevention": True,
-            "response": False,
-        },
-        {
-            "technique_code": OTHER,
-            "tool": "SIEM Tool",
-            "detection": True,
-            "prevention": False,
-            "response": False,
-        },
-    ]
-    remaining, from_added = scenario.split_higher(
-        comparison, [PREVENTABLE, OTHER], accepted, added_names=["XDR Tool"]
-    )
-    assert remaining == [OTHER]
-    assert from_added == [PREVENTABLE]
+
+
+def test_a_rise_only_an_added_tool_explains_is_b11s() -> None:
+    base = [_row(PREVENTABLE, status="gap")]
+    remaining, from_added = _split(base, {PREVENTABLE: _lists(p=["XDR Tool"])})
+    assert (remaining, from_added) == ([], [PREVENTABLE])
+
+
+def test_a_rise_a_remaining_tool_explains_alone_is_copy_18s_even_beside_an_added_credit() -> None:
+    """#818 review, F3: SIEM (remaining) re-credits Detect AND XDR (added)
+    credits Prevent. Without XDR the technique still rises, so the warning
+    stands; attributing it to the added tool would hide it."""
+    base = [_row(PREVENTABLE, status="gap")]
+    remaining, from_added = _split(base, {PREVENTABLE: _lists(d=["SIEM Tool"], p=["XDR Tool"])})
+    assert (remaining, from_added) == ([PREVENTABLE], [])
 
 
 def test_an_added_tool_named_with_no_function_explains_no_rise() -> None:
-    comparison = scenario.Comparison(
-        today=None, after=None, changed=[(PREVENTABLE, "gap", "partial")]
-    )
-    accepted = [
-        {
-            "technique_code": PREVENTABLE,
-            "tool": "XDR Tool",
-            "detection": False,
-            "prevention": False,
-            "response": False,
-        }
-    ]
-    remaining, from_added = scenario.split_higher(
-        comparison, [PREVENTABLE], accepted, added_names=["XDR Tool"]
-    )
-    assert remaining == [PREVENTABLE]
-    assert from_added == []
+    """A row naming XDR with every function false put nothing in the lists."""
+    base = [_row(PREVENTABLE, status="gap")]
+    remaining, from_added = _split(base, {PREVENTABLE: _lists(d=["SIEM Tool"])})
+    assert (remaining, from_added) == ([PREVENTABLE], [])
+
+
+# --- the resolver decides (#818 review, F1, F2) -------------------------------
+
+
+@pytest.mark.parametrize(
+    "name", ["EDR  Tool", "EDR" + chr(9) + "Tool"], ids=["double-space", "tab"]
+)
+def test_a_client_tool_spelled_with_other_whitespace_is_refused(name) -> None:
+    """The resolver collapses internal whitespace; `_key` did not. Such a name
+    passed, then made BOTH it and the client's tool resolve ambiguous."""
+    with pytest.raises(scenario.AlreadyClients):
+        _validate([_tool(name)])
+
+
+def test_two_added_tools_differing_only_in_whitespace_are_refused() -> None:
+    with pytest.raises(scenario.Duplicate):
+        _validate([_tool("Cloud Tool"), _tool("Cloud  Tool")])
+
+
+@pytest.mark.parametrize("value", [["detect"], {"f": "detect"}, 1, None])
+def test_a_function_that_is_not_a_string_is_refused_not_raised(value) -> None:
+    with pytest.raises(scenario.BadFunction) as exc:
+        _validate([_tool("XDR Tool", (value,))])
+    assert exc.value.value == value

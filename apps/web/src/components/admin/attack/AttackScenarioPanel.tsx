@@ -78,7 +78,6 @@ function addedToolsLine(n: number): string {
 const ADDED_UNCHECKED =
   "Whether tools were added since the last confirmed assessment could not be checked for this client's list.";
 
-/** NEW: the techniques a failed batch left with the removal alone. */
 /** B9 (14:58Z): techniques only an added tool could change. */
 function addedAffectedLine(n: number): string {
   return n === 1
@@ -97,7 +96,17 @@ function higherWithAddedLine(n: number): string {
 const ADDED_IN_PLACE =
   "Tools you added count as in place. The AI judged what they cover from the name and functions you entered; they are not on the client's list.";
 
-function notReassessedLine(n: number): string {
+/**
+ * The techniques a failed batch left with the removal alone. With nothing
+ * removed (an addition-only what-if) there is no removal to show, so they show
+ * the last confirmed assessment unchanged (NEW copy, #818 review F9).
+ */
+function notReassessedLine(n: number, anyRemoved: boolean): string {
+  if (!anyRemoved) {
+    return n === 1
+      ? "1 technique could not be re-assessed because the AI did not answer for it. It shows the last confirmed assessment unchanged."
+      : `${n} techniques could not be re-assessed because the AI did not answer for them. They show the last confirmed assessment unchanged.`;
+  }
   return n === 1
     ? "1 technique could not be re-assessed because the AI did not answer for it. It shows the removal alone: the removed tools are taken out and nothing else changes."
     : `${n} techniques could not be re-assessed because the AI did not answer for them. They show the removal alone: the removed tools are taken out and nothing else changes.`;
@@ -476,6 +485,22 @@ const FUNCTIONS: [AddedTool["security_functions"][number], string][] = [
   ["respond", "Respond"],
 ];
 
+/**
+ * A listed what-if's tools. A removal-only what-if reads as slice A's approved
+ * row; one that adds tools labels both halves with the approved change-list
+ * labels, so "EDR Tool, XDR Suite" never leaves the reader guessing which went
+ * and which came (NEW row text, #818 review F5).
+ */
+function rowTools(x: { removed: string[]; added?: string[] }): string {
+  const added = x.added ?? [];
+  if (added.length === 0) return x.removed.join(", ");
+  const parts = [];
+  if (x.removed.length > 0)
+    parts.push(`Tools to remove: ${x.removed.join(", ")}`);
+  parts.push(`Tools to add: ${added.join(", ")}`);
+  return parts.join("; ");
+}
+
 function toAddedTool(d: Draft): AddedTool {
   return {
     name: d.name,
@@ -589,8 +614,7 @@ function ScenarioList({
         {scenarios.map((x) => (
           <li key={x.id} className="flex items-center gap-2 text-sm">
             <span>
-              {[...x.removed, ...(x.added ?? [])].join(", ")} (compared with
-              version {x.base_version})
+              {rowTools(x)} (compared with version {x.base_version})
             </span>
             <button
               type="button"
@@ -767,9 +791,14 @@ function ScenarioView({
               >
                 {ADDED_IN_PLACE}
               </p>
-              <p className="text-sm" data-testid="attack-scenario-higher-added">
-                {higherWithAddedLine(s.higher_with_added ?? 0)}
-              </p>
+              {(s.higher_with_added ?? 0) > 0 ? (
+                <p
+                  className="text-sm"
+                  data-testid="attack-scenario-higher-added"
+                >
+                  {higherWithAddedLine(s.higher_with_added ?? 0)}
+                </p>
+              ) : null}
             </>
           )}
           {higher > 0 ? (
@@ -811,7 +840,7 @@ function ScenarioView({
               className="text-sm text-status-warning-fg"
               data-testid="attack-scenario-not-reassessed"
             >
-              {notReassessedLine(notReassessed.length)}
+              {notReassessedLine(notReassessed.length, s.removed.length > 0)}
             </p>
           ) : null}
           {dropLines(s.dropped ?? {}).map((line) => (

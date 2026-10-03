@@ -16,8 +16,11 @@ class ScenarioCreateRequest(BaseModel):
 
     removed: list[str] | None = None
     #: Slice B: tools the client doesn't have, each `{name, vendor, category,
-    #: security_functions}`. Typed loosely for the same reason: every refusal
-    #: is a typed 422 from `scenario.validate_added`.
+    #: security_functions}`. Typed loosely for the same reason: the refusals
+    #: `scenario.validate_added` raises (a client tool's spelling, a name the
+    #: model could not tell apart, no or an unknown function, a blank, duplicate
+    #: or over-long field, more than 10) each become a typed 422. A body that is
+    #: not JSON at all is still FastAPI's own 422.
     added: list[Any] | None = None
 
 

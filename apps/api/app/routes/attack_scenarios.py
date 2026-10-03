@@ -140,7 +140,7 @@ def _added_refusal(exc: Exception, *, cited: Iterable[str]) -> tuple[str, str]:
     if isinstance(exc, scenario.BadFunction):
         return (
             "scenario_added_tool_bad_function",
-            f"{exc.value} is not Detect, Prevent or Respond.",
+            f'"{exc.value}" is not one of detect, prevent or respond.',
         )
     if isinstance(exc, scenario.Duplicate):
         return "scenario_added_tool_duplicate", f"{name} is listed twice. Add it once."
@@ -236,9 +236,13 @@ def _serialize(db: Session, s: AttackScenario) -> ScenarioResponse:
     comparison = scenario.compare(base, base_rows, what_if)
     tools_you_added = _added_tools(s)
     you_added = {t.name.casefold() for t in tools_you_added}
-    accepted = [a for r in rows for a in r.ai_rows]
     higher_list, from_added = scenario.split_higher(
-        comparison, s.affected_codes, accepted, added_names=[t.name for t in tools_you_added]
+        base,
+        base_rows,
+        _lists_of(rows),
+        comparison,
+        s.affected_codes,
+        added_names=[t.name for t in tools_you_added],
     )
     higher = set(higher_list)
     by_removal = set(
@@ -557,6 +561,50 @@ def _llm_builder(db: Annotated[Session, Depends(get_db)]) -> Callable[[], LLMCli
     return lambda: _llm_dep(db)
 
 
+def _added_collision(db: Session, s: AttackScenario, client: Client) -> str | None:
+    """The first tool the admin added that can no longer be told apart from
+    the client's CURRENT tools, or None. The client's list can gain a tool
+    after the what-if was created; every credit to either would then be
+    dropped as outside the change, so the run must not happen (#818 review,
+    F4). Decided by the same validation creation ran, against today's tools."""
+    added = _added_tools(s)
+    if not added:
+        return None
+    base_rows = _base_rows(db, s.base_assessment_id)
+    membership = _client_capability_membership(db, client.id)
+    current = [
+        *(p.capability.name for p in membership.sent),
+        *(w.name for w in membership.withheld),
+        *scenario.cited_tools(base_rows),
+    ]
+    try:
+        scenario.validate_added(
+            [t.payload() for t in added],
+            client_tools=current,
+            client_org_name=client.legal_name,
+            redaction_mode=get_settings().shield_redaction_mode,
+        )
+    except scenario.AddedToolRefused as exc:
+        return exc.name
+    return None
+
+
+def _collision_message(name: str) -> str:
+    # NEW copy, for the advisor. "Start a new what-if" is the panel's control.
+    return (
+        f"{name}, a tool you added, can no longer be told apart from one of the client's "
+        "tools, so this what-if cannot be analysed. Start a new what-if."
+    )
+
+
+def _refuse_if_added_collides(db: Session, s: AttackScenario, client: Client) -> None:
+    name = _added_collision(db, s, client)
+    if name is not None:
+        raise _refuse(
+            status.HTTP_409_CONFLICT, "scenario_added_tool_collides", _collision_message(name)
+        )
+
+
 def _refuse_unless_runnable(db: Session, s: AttackScenario) -> None:
     if s.state is AttackScenarioState.DISCARDED:
         raise _refuse(
@@ -613,6 +661,7 @@ def run_scenario(
         )
     serves = require_serves(body.serves if body else None)
     _refuse_unless_runnable(db, s)
+    _refuse_if_added_collides(db, s, client)
     limiter.enforce_ai(client.id)
     llm = build_llm()
     started = start_run(
@@ -677,6 +726,10 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
         raise RunFailed("scenario_discarded", "This what-if was set aside before the run finished.")
     base = db.get(AttackAssessment, s.base_assessment_id)
     client = db.get(Client, ctx.client_id)
+    # F4 again, in the job: the list can change between the POST and now.
+    collides = _added_collision(db, s, client)
+    if collides is not None:
+        raise RunFailed("scenario_added_tool_collides", _collision_message(collides))
     base_rows = _base_rows(db, base.id)
     removed = list(s.change_list.get("removed") or [])
     affected = list(s.affected_codes)
@@ -809,7 +862,12 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
     # Copy 18 counts only rises credited to a REMAINING tool; a rise from a
     # tool the admin added is B11's result, derived at the GET.
     higher, _from_added = scenario.split_higher(
-        comparison, affected, merged.accepted, added_names=[t.name for t in tools_you_added]
+        base,
+        base_rows,
+        merged.lists,
+        comparison,
+        affected,
+        added_names=[t.name for t in tools_you_added],
     )
     s.dropped = merged.dropped
     s.not_reassessed = merged.not_reassessed

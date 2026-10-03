@@ -309,6 +309,57 @@ describe("AttackScenarioPanel, tools to add (slice B)", () => {
     ]);
   });
 
+  it("says nothing about added tools' rises when there are none (B11 above 0 only)", async () => {
+    await show({ ...COMPLETED, higher_with_added: 0 });
+    expect(screen.getByTestId("attack-scenario-added-in-place")).toBeTruthy();
+    expect(screen.queryByTestId("attack-scenario-higher-added")).toBeNull();
+  });
+
+  it("an addition-only what-if's unanswered techniques show the assessment unchanged", async () => {
+    await show({ ...COMPLETED, not_reassessed: ["T1005", "T1008"] });
+    expect(
+      screen.getByTestId("attack-scenario-not-reassessed").textContent,
+    ).toBe(
+      "2 techniques could not be re-assessed because the AI did not answer for them. They show the last confirmed assessment unchanged.",
+    );
+  });
+
+  it("lists a what-if that adds tools with both halves labelled", async () => {
+    routes[LIST] = () => ({
+      base: BASE,
+      scenarios: [
+        {
+          id: "s9",
+          state: "draft",
+          removed: ["EDR Tool"],
+          added: ["XDR Suite"],
+          affected_count: 3,
+          base_version: 3,
+          created_at: "2026-10-03T06:00:00Z",
+        },
+        {
+          id: "s8",
+          state: "draft",
+          removed: [],
+          added: ["XDR Suite"],
+          affected_count: 2,
+          base_version: 3,
+          created_at: "2026-10-03T05:00:00Z",
+        },
+      ],
+    });
+    render(<AttackScenarioPanel serviceId="svc" />);
+    const rows = (
+      await screen.findByTestId("attack-scenario-list")
+    ).querySelectorAll("li");
+    expect(
+      [...rows].map((li) => li.querySelector("span")?.textContent),
+    ).toEqual([
+      "Tools to remove: EDR Tool; Tools to add: XDR Suite (compared with version 3)",
+      "Tools to add: XDR Suite (compared with version 3)",
+    ]);
+  });
+
   it("runs a stale what-if again with the same tools to add", async () => {
     await show({ stale: true });
     routes[CREATE] = () => scenario({ id: "s2" });

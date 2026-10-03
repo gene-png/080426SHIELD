@@ -14,6 +14,7 @@ import pytest
 
 from app.ai.llm import FixtureProvider, LLMResponse
 from app.models.capability import CapabilityListStatus
+from tests._ai_runs import defer_runs
 from tests.unit.test_ai_runs_attack import app_parts  # noqa: F401  (fixture)
 from tests.unit.test_attack_scenario_routes import (  # noqa: F401  (fixture)
     EDR,
@@ -21,6 +22,7 @@ from tests.unit.test_attack_scenario_routes import (  # noqa: F401  (fixture)
     SIEM,
     SOAR,
     _add_tool_after_approval,
+    _ai_runs,
     _error,
     _flags,
     _run_to_completion,
@@ -238,6 +240,72 @@ def test_a_rise_from_a_remaining_tool_is_still_copy_18_beside_an_addition(
     diffs = {d["technique_code"]: d for d in body["differences"]}
     assert diffs[w.cc]["scored_higher"] is True
     assert diffs[w.cc]["credited_tool_you_added"] is False
+
+
+def test_a_rise_owed_to_a_remaining_tool_is_copy_18_even_beside_an_added_credit(
+    app_parts, analysis_job  # noqa: F811
+) -> None:
+    """#818 review, F3, through the GET. EDR removed, XDR (Prevent) added. C
+    lost Detect; the AI re-credits it to SIEM (remaining) and credits XDR for
+    Prevent. Without XDR, C still rises from Gap: copy 18 counts it, not B11."""
+    w = _world(app_parts)
+    _answering(w, {w.cc: [_flags(w.cc, SIEM, d=True), _flags(w.cc, XDR, p=True)]})
+    sid = _create(w, removed=[EDR], added=[_tool(functions=("prevent",))]).json()["id"]
+    body = _run_to_completion(w, sid)
+    assert body["dropped"] == {}
+    diffs = {d["technique_code"]: d for d in body["differences"]}
+    assert diffs[w.cc]["today"] == "gap" and diffs[w.cc]["after"] == "partial"
+    assert diffs[w.cc]["credited_tool_you_added"] is True
+    assert diffs[w.cc]["scored_higher"] is True
+    assert body["scored_higher"] == 1
+    assert body["higher_with_added"] == 0
+
+
+def test_a_tool_the_client_now_has_stops_the_run_before_anything_is_spent(
+    app_parts, analysis_job  # noqa: F811
+) -> None:
+    """#818 review, F4. The client's list gains XDR Suite after the what-if
+    added it. Every credit to either would be dropped, so the run is refused,
+    typed, and no run is started."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    _answering(w, {})
+    sid = _create(w, added=[_tool()]).json()["id"]
+    _add_tool_after_approval(w, XDR)
+    r = w.run(sid)
+    assert r.status_code == 409, r.text
+    assert _error(r) == {
+        "reason": "scenario_added_tool_collides",
+        "message": (
+            f"{XDR}, a tool you added, can no longer be told apart from one of the client's "
+            "tools, so this what-if cannot be analysed. Start a new what-if."
+        ),
+    }
+    assert _ai_runs(w) == []
+
+
+def test_a_tool_the_client_gains_while_the_run_waits_fails_it_typed(
+    app_parts, analysis_job  # noqa: F811
+) -> None:
+    """F4, in the job: the list changes between the POST and the job."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    _answering(w, {w.cc: [_flags(w.cc, XDR, d=True)]})
+    runner = defer_runs(w.app)
+    sid = _create(w, added=[_tool()]).json()["id"]
+    assert w.run(sid).status_code == 202
+    _add_tool_after_approval(w, XDR)
+    assert runner.run_all() == 1
+    body = w.get(sid)
+    assert body["run_status"] == "failed"
+    assert body["run_error"]["reason"] == "scenario_added_tool_collides"
+    assert body["techniques"] == []
+
+
+def test_a_function_that_is_not_a_string_is_a_typed_422(app_parts) -> None:  # noqa: F811
+    """#818 review, F2: it used to be an untyped 500."""
+    w = _world(app_parts)
+    r = _create(w, added=[_tool(functions=(["detect"],))])
+    assert r.status_code == 422, r.text
+    assert _error(r)["reason"] == "scenario_added_tool_bad_function"
 
 
 def test_an_added_tool_is_never_drift(app_parts, analysis_job) -> None:  # noqa: F811
