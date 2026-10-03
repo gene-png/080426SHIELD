@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy import func, select
 
 from app.models.ai_run import AiRun
-from app.models.attack_scenario import AttackScenario
+from app.models.attack_scenario import AttackScenario, AttackScenarioRow
 from app.models.audit_entry import AuditEntry
 from app.models.llm_call import LLMCall
 from tests.unit.test_ai_runs_attack import app_parts  # noqa: F401  (fixture)
@@ -33,11 +33,11 @@ def _parse(w, text, *, headers=None):
     )
 
 
-def _counts(w) -> tuple[int, int, int, int]:
+def _counts(w) -> tuple[int, ...]:
     with w.sessions() as db:
         return tuple(
             db.execute(select(func.count()).select_from(model)).scalar_one()
-            for model in (AttackScenario, AiRun, LLMCall, AuditEntry)
+            for model in (AttackScenario, AttackScenarioRow, AiRun, LLMCall, AuditEntry)
         )
 
 
@@ -49,10 +49,14 @@ def test_a_description_becomes_a_proposed_change_list(app_parts) -> None:  # noq
 
 
 def test_a_parse_writes_nothing_and_calls_no_ai(app_parts) -> None:  # noqa: F811
-    """Pure: no what-if, no run, no `llm_calls` row, no audit entry."""
+    """Pure: no what-if, no scenario row, no run, no `llm_calls` row and no
+    audit entry -- on a proposal, on a clause not understood, and on a
+    refusal."""
     w = _world(app_parts)
     before = _counts(w)
     assert _parse(w, "swap EDR Tool for XDR Suite").status_code == 200
+    assert _parse(w, "polish the dashboard").status_code == 200
+    assert _parse(w, "").status_code == 422
     assert _counts(w) == before
 
 
@@ -67,10 +71,9 @@ def test_each_clause_not_understood_is_quoted_back_with_c5(app_parts) -> None:  
             "message": 'Not understood: "remove EDR". Pick the tool from the list instead.',
         },
         {
-            # A bare clause after a removal shares its verb, so it is read as
-            # a removal of an uncited tool.
+            # A failed removal shares nothing (#824 review, B7).
             "text": "polish the dashboard",
-            "reason": "unknown_tool",
+            "reason": "unrecognised",
             "message": 'Not understood: "polish the dashboard". Pick the tool from the list instead.',
         },
     ]

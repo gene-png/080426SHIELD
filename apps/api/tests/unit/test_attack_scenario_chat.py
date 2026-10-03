@@ -74,12 +74,13 @@ def test_a_list_after_a_removal_verb_shares_it() -> None:
     assert parsed.removed == ["EDR Tool", "SIEM Tool"]
 
 
-def test_a_bare_clause_after_an_addition_is_not_understood() -> None:
-    """An addition is never shared: any words would make a "new tool", which
-    is a guess. Each tool to add needs its own verb."""
+def test_a_bare_clause_after_an_addition_makes_the_span_not_understood() -> None:
+    """An addition never shares its verb, and "add X and Y" may be ONE name
+    cut at "and" (#824 review, B1): the whole span is quoted back, and
+    neither part is proposed."""
     parsed = _parse("add XDR Suite and Patch Tool")
-    assert parsed.added == ["XDR Suite"]
-    assert _reasons(parsed) == [("Patch Tool", "unrecognised")]
+    assert parsed.added == []
+    assert _reasons(parsed) == [("add XDR Suite and Patch Tool", "split_name")]
 
 
 def test_what_if_and_a_question_mark_are_ignored() -> None:
@@ -149,11 +150,11 @@ def test_a_clause_with_no_verb_and_nothing_to_share_is_not_understood() -> None:
     assert _reasons(parsed) == [("please make it better", "unrecognised")]
 
 
-def test_a_bare_clause_after_a_swap_is_not_understood() -> None:
-    """Only a removal list shares its verb; "swap X for Y and Z" does not."""
+def test_a_bare_clause_after_a_swap_makes_the_span_not_understood() -> None:
+    """ "swap X for Y and Z": Y may be cut from "Y and Z"; nothing proposed."""
     parsed = _parse("swap EDR Tool for XDR Suite and SIEM Tool")
-    assert (parsed.removed, parsed.added) == (["EDR Tool"], ["XDR Suite"])
-    assert _reasons(parsed) == [("SIEM Tool", "unrecognised")]
+    assert (parsed.removed, parsed.added) == ([], [])
+    assert _reasons(parsed) == [("swap EDR Tool for XDR Suite and SIEM Tool", "split_name")]
 
 
 def test_a_duplicate_is_not_understood_and_the_first_stands() -> None:
@@ -163,9 +164,80 @@ def test_a_duplicate_is_not_understood_and_the_first_stands() -> None:
 
 
 def test_matched_and_not_understood_clauses_are_kept_apart() -> None:
-    parsed = _parse("retire EDR Tool, add SIEM Tool, polish the dashboard")
+    parsed = _parse("retire EDR Tool; add SIEM Tool; remove Firewall Tool")
     assert parsed.removed == ["EDR Tool"]
-    assert [n.reason for n in parsed.not_understood] == ["already_clients", "unrecognised"]
+    assert [n.reason for n in parsed.not_understood] == ["already_clients", "unknown_tool"]
+
+
+# --- never a fragment of a name (#824 review, B1, B4, B7) ----------------------------
+
+
+def test_a_cited_name_containing_and_is_held_whole() -> None:
+    cited = ("Identity and Access Manager", "SIEM Tool")
+    parsed = _parse("retire identity and access manager and SIEM Tool", cited=cited, client=cited)
+    assert parsed.removed == ["Identity and Access Manager", "SIEM Tool"]
+    assert parsed.not_understood == []
+
+
+def test_a_cited_name_containing_a_comma_and_a_full_stop_is_held_whole() -> None:
+    cited = ("Acme, Inc. EDR", "SIEM Tool")
+    parsed = _parse("remove Acme, Inc. EDR, SIEM Tool", cited=cited, client=cited)
+    assert parsed.removed == ["Acme, Inc. EDR", "SIEM Tool"]
+
+
+def test_an_added_name_cut_at_a_full_stop_is_not_proposed() -> None:
+    parsed = _parse("add Example Inc. Scanner")
+    assert parsed.added == []
+    assert _reasons(parsed) == [("add Example Inc. Scanner", "split_name")]
+
+
+def test_an_added_name_cut_at_and_is_not_proposed() -> None:
+    parsed = _parse("add Endpoint Detection and Response Suite")
+    assert parsed.added == []
+    assert [n.reason for n in parsed.not_understood] == ["split_name"]
+
+
+def test_a_swap_with_two_possible_divisions_is_not_a_guess() -> None:
+    """ "Defender Suite" and "Defender Suite for Endpoint" are both cited: the
+    swap divides two ways, both passing, so nothing is proposed."""
+    cited = ("Defender Suite", "Defender Suite for Endpoint")
+    parsed = _parse("swap Defender Suite for Endpoint for XDR Suite", cited=cited, client=cited)
+    assert (parsed.removed, parsed.added) == ([], [])
+    assert _reasons(parsed) == [
+        ("swap Defender Suite for Endpoint for XDR Suite", "ambiguous_split")
+    ]
+
+
+def test_a_swap_with_one_passing_division_is_proposed() -> None:
+    cited = ("Defender Suite for Endpoint",)
+    parsed = _parse("swap Defender Suite for Endpoint for XDR Suite", cited=cited, client=cited)
+    assert (parsed.removed, parsed.added) == (["Defender Suite for Endpoint"], ["XDR Suite"])
+
+
+def test_a_replace_whose_name_contains_with_divides_where_it_passes() -> None:
+    cited = ("Tool with Extras",)
+    parsed = _parse("replace Tool with Extras with XDR Suite", cited=cited, client=cited)
+    assert (parsed.removed, parsed.added) == (["Tool with Extras"], ["XDR Suite"])
+
+
+def test_more_additions_than_a_what_if_takes_are_not_proposed() -> None:
+    """B4: the chat never proposes an 11th added tool (the cap is 10)."""
+    text = "; ".join(f"add Tool {chr(65 + i)}" for i in range(11))
+    parsed = _parse(text)
+    assert len(parsed.added) == 10
+    assert _reasons(parsed) == [("add Tool K", "too_many")]
+
+
+def test_a_failed_removal_shares_nothing() -> None:
+    """B7: "retire Identity and Access Manager" with only "Access Manager"
+    cited: "Identity" fails, and "Access Manager" is NOT read as a removal."""
+    cited = ("Access Manager",)
+    parsed = _parse("retire Identity and Access Manager", cited=cited, client=cited)
+    assert parsed.removed == []
+    assert _reasons(parsed) == [
+        ("retire Identity", "unknown_tool"),
+        ("Access Manager", "unrecognised"),
+    ]
 
 
 @pytest.mark.parametrize("text", ["", "   ", " , ; . ", "?"])

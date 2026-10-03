@@ -422,8 +422,12 @@ _LEAD = re.compile(r"^\s*what\s+if(?:\s+we)?\s+", re.IGNORECASE)
 _SPLIT = re.compile(r"\s*(?:[,;]|\.(?=\s|$)|\band\b)\s*", re.IGNORECASE)
 _REMOVE = re.compile(r"^(?:remove|retire|drop|cut)\s+(?P<a>.+)$", re.IGNORECASE)
 _ADD = re.compile(r"^(?:add|introduce)\s+(?P<a>.+)$", re.IGNORECASE)
-_SWAP = re.compile(r"^swap\s+(?P<a>.+?)\s+for\s+(?P<b>.+)$", re.IGNORECASE)
-_REPLACE = re.compile(r"^replace\s+(?P<a>.+?)\s+with\s+(?P<b>.+)$", re.IGNORECASE)
+_SWAP = re.compile(r"^(?P<verb>swap|replace)\s+(?P<rest>.+)$", re.IGNORECASE)
+#: Where a swap's two names may divide: "swap X for Y", "replace X with Y".
+_SWAP_JOIN = {
+    "swap": re.compile(r"\s+for\s+", re.IGNORECASE),
+    "replace": re.compile(r"\s+with\s+", re.IGNORECASE),
+}
 _QUOTES = "\"'\u201c\u201d\u2018\u2019"
 
 
@@ -454,13 +458,56 @@ class _Refused(Exception):
         self.name = name
 
 
-def _clauses(text: str) -> list[str]:
+def _clauses(text: str, cited: Sequence[str]) -> tuple[list[str], Callable[[int, int], str]]:
+    """The text split into clauses, WITHOUT cutting a cited tool's name: a
+    cited name that itself contains a break ("Identity and Access Manager",
+    "Acme, Inc. EDR") is held whole while the rest is split (#824 review, B1).
+    A name the base does not cite cannot be protected this way; the caller
+    refuses a span that may have been cut instead (see `parse_change`).
+
+    Also returns `span(i, j)`: clauses i..j-1 exactly as typed, separators and
+    all, for quoting a span back."""
     text = _LEAD.sub("", text.strip()).rstrip("?").strip()
-    return [c for c in (part.strip() for part in _SPLIT.split(text)) if c]
+    held: list[str] = []
+    for name in sorted({c for c in cited if _SPLIT.search(c)}, key=len, reverse=True):
+        pattern = re.compile(r"\s+".join(re.escape(w) for w in name.split()), re.IGNORECASE)
+
+        def hold(m: re.Match[str]) -> str:
+            held.append(m.group(0))
+            return f"\x00{len(held) - 1}\x00"
+
+        text = pattern.sub(hold, text)
+
+    def restore(clause: str) -> str:
+        return re.sub("\x00(\\d+)\x00", lambda m: held[int(m.group(1))], clause)
+
+    pieces: list[tuple[str, int, int]] = []
+    at = 0
+    for brk in [*_SPLIT.finditer(text), None]:
+        stop = brk.start() if brk is not None else len(text)
+        if text[at:stop].strip():
+            pieces.append((text[at:stop].strip(), at, stop))
+        if brk is not None:
+            at = brk.end()
+
+    def span(i: int, j: int) -> str:
+        return restore(text[pieces[i][1] : pieces[j - 1][2]].strip())
+
+    return [restore(p) for p, _a, _b in pieces], span
 
 
 def _bare(name: str) -> str:
     return name.strip().strip(_QUOTES).strip()
+
+
+def _kind(clause: str) -> str:
+    if _REMOVE.match(clause):
+        return "remove"
+    if _SWAP.match(clause):
+        return "swap"
+    if _ADD.match(clause):
+        return "add"
+    return "bare"
 
 
 def parse_change(
@@ -476,17 +523,27 @@ def parse_change(
     (#802 slice C, approved 18:32Z; the AI parse is NOT part of it).
 
     The forms, case-insensitive: remove / retire / drop / cut X; add /
-    introduce Y; swap X for Y; replace X with Y. A clause with no verb shares
-    the previous clause's verb only when that was a REMOVAL ("retire X and
-    Y"): a removal must still hit a cited tool, while a shared ADD would turn
-    any words into a "new tool", which is a guess.
+    introduce Y; swap X for Y; replace X with Y.
 
-    Each name is checked by the code the create route uses, so the chat never
-    proposes what Continue would refuse: a removal must hit exactly ONE cited
-    tool in the resolver's name tiers (`CitationResolver.named_by`, so case,
-    whitespace and the `[CLIENT]` twin, never an inference); an addition must
-    pass `validate_added`'s name check. A swap is one unit: if either half
-    fails, neither is proposed. Anything else is not understood, quoted back."""
+    **Never a fragment of a name** (#824 review, B1):
+    - a cited name containing a clause break is held whole while splitting;
+    - an add or a swap followed by a clause with no verb may be ONE name cut
+      at a break ("add Endpoint Detection and Response Suite", "add Acme Inc.
+      Scanner"), so the whole span is not understood rather than guessed;
+    - a swap tries EVERY "for" / "with" in it and proposes only when exactly
+      one division passes both checks.
+
+    A clause with no verb shares the previous verb only after a SUCCESSFUL
+    removal ("retire X and Y"): a failed one shares nothing (B7), and an add
+    never shares, since any words would make a "new tool".
+
+    Each name is checked by the code the create route uses: a removal must hit
+    exactly ONE cited tool in the resolver's name tiers
+    (`CitationResolver.named_by`: case, whitespace, the `[CLIENT]` twin, never
+    an inference); an addition must pass `validate_added`, the cap of
+    `MAX_ADDED` included (B4). So the chat never proposes a name Continue
+    would refuse for its NAME; an added tool's functions are the admin's to
+    choose before Continue. Anything else is not understood, quoted back."""
     hints = tuple(name_hints)
     resolver = CitationResolver(
         [Candidate(name=c) for c in cited],
@@ -519,8 +576,10 @@ def parse_change(
                 client_org_name=client_org_name,
                 redaction_mode=redaction_mode,
                 name_hints=hints,
-                limit=len(entries),
+                limit=MAX_ADDED,
             )
+        except TooMany as exc:
+            raise _Refused("too_many") from exc
         except AlreadyClients as exc:
             raise _Refused("already_clients", exc.name) from exc
         except Indistinct as exc:
@@ -531,26 +590,60 @@ def parse_change(
             raise _Refused("unrecognised") from exc
         return tool.name
 
+    def swap(verb: str, rest: str) -> tuple[str, str]:
+        passed: list[tuple[str, str]] = []
+        failures: list[_Refused] = []
+        for m in _SWAP_JOIN[verb.lower()].finditer(rest):
+            try:
+                passed.append((removal(rest[: m.start()]), addition(rest[m.end() :])))
+            except _Refused as why:
+                failures.append(why)
+        if len(passed) == 1:
+            return passed[0]
+        if passed:
+            raise _Refused("ambiguous_split")
+        if len(failures) == 1:
+            raise failures[0]
+        raise _Refused("unrecognised")
+
+    clauses, span = _clauses(text, cited)
     sharing = False
-    for clause in _clauses(text):
+    i = 0
+    while i < len(clauses):
+        clause = clauses[i]
+        kind = _kind(clause)
+        # An add or swap with bare clauses after it may be one name cut apart.
+        j = i + 1
+        while kind in ("add", "swap") and j < len(clauses) and _kind(clauses[j]) == "bare":
+            j += 1
+        if j > i + 1:
+            not_understood.append(NotUnderstood(text=span(i, j), reason="split_name"))
+            sharing = False
+            i = j
+            continue
         try:
-            if m := _REMOVE.match(clause):
-                sharing = True
-                removed.append(removal(m["a"]))
-            elif m := (_SWAP.match(clause) or _REPLACE.match(clause)):
+            if kind == "remove":
                 sharing = False
-                gone, new = removal(m["a"]), addition(m["b"])
+                removed.append(removal(_REMOVE.match(clause)["a"]))
+                sharing = True
+            elif kind == "swap":
+                sharing = False
+                m = _SWAP.match(clause)
+                gone, new = swap(m["verb"], m["rest"])
                 removed.append(gone)
                 added.append(new)
-            elif m := _ADD.match(clause):
+            elif kind == "add":
                 sharing = False
-                added.append(addition(m["a"]))
+                added.append(addition(_ADD.match(clause)["a"]))
             elif sharing:
+                sharing = False
                 removed.append(removal(clause))
+                sharing = True
             else:
                 raise _Refused("unrecognised")
         except _Refused as why:
             not_understood.append(NotUnderstood(text=clause, reason=why.reason, name=why.name))
+        i += 1
     return ParsedChange(removed=removed, added=added, not_understood=not_understood)
 
 
