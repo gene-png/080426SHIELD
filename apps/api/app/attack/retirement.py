@@ -39,6 +39,11 @@ draft-only cut as "not retiring": "the plan does not list it" cannot support
     `consolidate`: Gene's decision names `cut`, and only `cut` counts. Whether
     a consolidation should read as a retirement is an open question to the
     owner (#787 review, F2), deliberately not answered here.
+    STATED EXEMPTION (#810, the advisor's ruling of 2026-10-03 on #736):
+    `consolidate` is now labelled "Cut, covered by another tool" and counts
+    toward Tech Debt SAVINGS since #810 (`tech_debt/savings.py`), but it is
+    NOT yet a planned retirement for ATT&CK. The two disagree on purpose until
+    #801 decides; see #801. No behaviour changes here.
   * Voting entries that DISAGREE -- two Tech Debt SERVICES whose latest plans
     differ -- or one whose live item is gone  ->  UNKNOWN. Picking either side
     would assert a plan nobody stated.
