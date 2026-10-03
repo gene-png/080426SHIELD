@@ -21,7 +21,7 @@ import { AttackWorkspace } from "./AttackWorkspace";
  * (`computed_status_changed`). The panel re-reads itself and says so, instead
  * of telling the consultant to find a reload control (CLAUDE.md: an imperative
  * names a control that exists). Copy approved by the advisor 01:35Z; the
- * failed re-read's ending is a draft with the advisor.
+ * failed re-read's ending was approved at 02:10Z.
  */
 
 vi.mock("@/lib/attack/client", () => ({

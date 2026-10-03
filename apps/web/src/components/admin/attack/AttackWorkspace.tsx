@@ -106,7 +106,7 @@ function reviewRefreshedMessage(
     reason === "codes_not_in_review_queue"
       ? `Some techniques are no longer awaiting review (${shown}${more}).`
       : `The computed status of some techniques changed after the panel loaded (${shown}${more}).`;
-  // The failed re-read's ending is the coordinator's draft, with the advisor.
+  // The failed re-read's ending: approved by the advisor 02:10Z.
   return refreshed
     ? `${what} The panel has been refreshed; review again.`
     : `${what} The panel could not be refreshed; reload the page and review again.`;
