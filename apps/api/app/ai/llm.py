@@ -427,7 +427,7 @@ def _parse_generate_content(data: dict[str, Any]) -> LLMResponse:
         block = (data.get("promptFeedback") or {}).get("blockReason")
         cause = f": the prompt was blocked (blockReason={block})" if block else ""
         raise NoUsableResponseError(
-            f"generateContent returned no candidates{cause}. " "Nothing was generated or parsed.",
+            f"generateContent returned no candidates{cause}. Nothing was generated or parsed.",
             input_tokens=usage.get("promptTokenCount"),
             output_tokens=usage.get("candidatesTokenCount"),
         )
