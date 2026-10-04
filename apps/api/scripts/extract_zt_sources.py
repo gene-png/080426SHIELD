@@ -40,10 +40,20 @@ import re
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[3]
-CISA_DIR = REPO / "reference-docs" / "cisa"
-CISA_PDF = CISA_DIR / "zero_trust_maturity_model_v2_508.pdf"
-CISA_JSON = CISA_DIR / "cisa_ztmm_v2_rows.json"
+CISA_PDF_NAME = "zero_trust_maturity_model_v2_508.pdf"
+CISA_JSON_NAME = "cisa_ztmm_v2_rows.json"
+
+
+def find_checkout(start: Path) -> Path | None:
+    """The nearest directory at or above `start` holding `reference-docs/`, or
+    None. Walked up, not counted: a fixed `parents[3]` raises IndexError where
+    the script sits shallower, as it does in the api container at
+    /app/scripts (the #314 shape)."""
+    for d in (start, *start.parents):
+        if (d / "reference-docs").is_dir():
+            return d
+    return None
+
 
 CISA_SOURCE = {
     "title": "Zero Trust Maturity Model",
@@ -207,10 +217,10 @@ def _definitions(pdf) -> dict[str, str]:
     return out
 
 
-def extract_cisa() -> dict:
+def extract_cisa(pdf_path: Path) -> dict:
     import pdfplumber
 
-    with pdfplumber.open(str(CISA_PDF)) as pdf:
+    with pdfplumber.open(str(pdf_path)) as pdf:
         pages = _table_pages(pdf)
         table_rows = [r for r in _table_rows(pdf) if r["page"] in pages]
         definitions = _definitions(pdf)
@@ -245,20 +255,26 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("source", choices=("cisa",))
     p.add_argument("--write", action="store_true")
     args = p.parse_args(argv)
-    if not CISA_PDF.is_file():
-        print(f"MISSING: {CISA_PDF}", file=sys.stderr)
+    repo = find_checkout(Path(__file__).resolve().parent)
+    if repo is None:
+        print("NO CHECKOUT: no reference-docs/ at or above this script", file=sys.stderr)
         return 2
-    got = _sha256(CISA_PDF)
+    cisa_pdf = repo / "reference-docs" / "cisa" / CISA_PDF_NAME
+    cisa_json = cisa_pdf.with_name(CISA_JSON_NAME)
+    if not cisa_pdf.is_file():
+        print(f"MISSING: {cisa_pdf}", file=sys.stderr)
+        return 2
+    got = _sha256(cisa_pdf)
     if got != CISA_SOURCE["sha256"]:
         print(f"NOT THE PINNED PDF: sha256 {got}", file=sys.stderr)
         return 2
-    data = extract_cisa()
+    data = extract_cisa(cisa_pdf)
     text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
     if args.write:
-        CISA_JSON.write_text(text, encoding="utf-8", newline="\n")
-        print(f"wrote {CISA_JSON} ({len(data['rows'])} rows)")
+        cisa_json.write_text(text, encoding="utf-8", newline="\n")
+        print(f"wrote {cisa_json} ({len(data['rows'])} rows)")
         return 0
-    committed = CISA_JSON.read_text(encoding="utf-8") if CISA_JSON.is_file() else ""
+    committed = cisa_json.read_text(encoding="utf-8") if cisa_json.is_file() else ""
     if committed != text:
         print("DIFFERS from the committed extraction", file=sys.stderr)
         return 1

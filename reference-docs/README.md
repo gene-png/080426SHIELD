@@ -22,8 +22,8 @@ Model*, Version 2.0, April 2023, downloaded from cisa.gov on 2026-10-04
 (sha256 `4a95fdff55a64e2468b69af075b7f208176b88c751af92aefc3b7dacad26fdb4`).
 `cisa/cisa_ztmm_v2_rows.json` is its extraction (Tables 2-6: 37 rows, each
 pillar's Optimal text and definition) by `apps/api/scripts/extract_zt_sources.py`,
-which also re-derives it from the PDF for review. The catalog is tested against
-this extraction, never against its own constants.
+which also re-derives it from the PDF for review. The catalog will be tested
+against this extraction (#838 PR 2), never against its own constants.
 
 ## `dod/`: DoD's Zero Trust documents, the source for the DoD catalog (#839)
 

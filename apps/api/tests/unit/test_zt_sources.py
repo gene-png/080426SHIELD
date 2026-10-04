@@ -8,9 +8,12 @@ These checks run without the PDF tooling (the api image has no pdfplumber):
 
 * the committed PDF is the pinned one, byte for byte (sha256), so the
   extraction cannot quietly refer to a different file;
-* the extraction has CISA's structure. The literals below are copied from the
-  PDF itself (Section 5.1-5.5 headings and the Tables 2-6 first-column cells),
-  never from SHIELD's catalog, which is what is being corrected.
+* the extraction has CISA's structure and CISA's row names. The literals below
+  are copied from the PDF itself (the Section 5.1-5.5 headings, the
+  cross-cutting row names, and the 22 function names with their "New
+  Function" / "Formerly ..." annotations), never from SHIELD's catalog, which
+  is what is being corrected. The Optimal texts are not pinned here; they are
+  checked against the PDF by the script's compare mode.
 
 Re-deriving the extraction FROM the PDF is the script's own `cisa` mode
 (without `--write`), run with pdfplumber; see the script's docstring.
@@ -46,6 +49,37 @@ _CROSS_CUTTING = (
     "Visibility and Analytics Capability",
     "Automation and Orchestration Capability",
     "Governance Capability",
+)
+#: Tables 2-6's function rows, in order: (pillar, name, annotation). Copied
+#: from the PDF (pp13-27) and checked against `pdftotext` there: each name is
+#: followed by its parenthesised annotation, or by none.
+_FUNCTIONS = (
+    ("Identity", "Authentication", None),
+    ("Identity", "Identity Stores", None),
+    ("Identity", "Risk Assessments", None),
+    ("Identity", "Access Management", "New Function"),
+    ("Devices", "Policy Enforcement & Compliance Monitoring", "New Function"),
+    ("Devices", "Asset & Supply Chain Risk Management", "New Function"),
+    ("Devices", "Resource Access", "Formerly Data Access"),
+    ("Devices", "Device Threat Protection", "New Function"),
+    ("Networks", "Network Segmentation", None),
+    ("Networks", "Network Traffic Management", "New Function"),
+    ("Networks", "Traffic Encryption", "Formerly Encryption"),
+    ("Networks", "Network Resilience", "New Function"),
+    ("Applications and Workloads", "Application Access", "Formerly Access Authorization"),
+    ("Applications and Workloads", "Application Threat Protections", "Formerly Threat Protections"),
+    ("Applications and Workloads", "Accessible Applications", "Formerly Accessibility"),
+    (
+        "Applications and Workloads",
+        "Secure Application Development and Deployment Workflow",
+        "New Function",
+    ),
+    ("Applications and Workloads", "Application Security Testing", "Formerly Application Security"),
+    ("Data", "Data Inventory Management", None),
+    ("Data", "Data Categorization", "New Function"),
+    ("Data", "Data Availability", "New Function"),
+    ("Data", "Data Access", None),
+    ("Data", "Data Encryption", None),
 )
 #: Rows per pillar table: its functions plus the three cross-cutting rows.
 _ROWS_PER_PILLAR = {
@@ -112,3 +146,8 @@ def test_every_row_carries_cisa_text_and_nothing_invisible() -> None:
     text = json.dumps(data, ensure_ascii=False)
     invisible = [c for c in text if unicodedata.category(c) in ("Cc", "Cf") and c != "\n"]
     assert invisible == []
+
+
+def test_the_function_rows_are_cisas_names_and_annotations() -> None:
+    rows = [r for r in _extraction()["rows"] if r["kind"] == "function"]
+    assert [(r["pillar"], r["name"], r["annotation"]) for r in rows] == list(_FUNCTIONS)
