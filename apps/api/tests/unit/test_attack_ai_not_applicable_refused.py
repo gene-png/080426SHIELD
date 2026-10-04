@@ -32,16 +32,31 @@ def test_an_ai_not_applicable_is_refused_whole_and_counted(app_client) -> None: 
     h, svc_id, row_id, code = _one_row_run_with_reason(
         c, TestSession, provider, "not_applicable", "platform_absent"
     )
+    before = next(
+        t
+        for t in c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json()[
+            "coverage"
+        ]
+        if t["id"] == row_id
+    )
     result = attack_run_ai(c, svc_id, h)
     row = next(t for t in result["coverage"] if t["id"] == row_id)
-    # The row keeps what it had (unscored): no status, no tools, no rationale.
+    # The row keeps what it had (unscored): no status, no tools, no rationale,
+    # and nobody recorded as having answered it.
     assert row["status"] is None
+    assert (row["answered_by"], row["answered_at"]) == (
+        before["answered_by"],
+        before["answered_at"],
+    )
     assert not row["detection_tools"]
     assert row["rationale"] != _SUGGESTED_RATIONALE
     # Disclosed on the run (the workspace's N1 line) and in the audit row.
     assert result["not_applicable_refused"] == 1
     # One entry per batch that made the suggestion; every one names this row.
     rejected = _run_audit(TestSession)["statuses_rejected"]
+    # More than one batch made the same suggestion, so the count of 1 above is
+    # the DISTINCT-technique count, not the number of suggestions.
+    assert len(rejected) > 1, rejected
     assert rejected and all(
         e == {"technique_code": code, "status": "not_applicable"} for e in rejected
     )

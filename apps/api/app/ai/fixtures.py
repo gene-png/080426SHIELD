@@ -130,10 +130,11 @@ def _capability_names(value: object) -> list[str]:
     return out
 
 
-#: #841: no `not_applicable`. The AI may not write it (the run refuses it and
-#: counts it), and the approved #806 prompt forbids it, so the fixture no longer
-#: suggests it. The fifth slot is a gap, keeping the cycle's length and so the
-#: Partial reasons' cadence.
+#: #841: no `not_applicable`. #841 refuses an AI N/A (the run refuses it and
+#: counts it); the #806 ATT&CK prompt, not yet in the tree, stops offering it.
+#: Today's `_MITRE_MAP_PROMPT` still offers it, so the fixture no longer
+#: suggesting it is the refusal's world, not the prompt's. The fifth slot is a
+#: gap, keeping the cycle's length and so the Partial reasons' cadence.
 _MITRE_STATUS_CYCLE = ("covered", "partial", "gap", "covered", "gap")
 #: #554: the reason each fixture status carries, copied from what the mitre_map
 #: PROMPT offers (CLAUDE.md: author fixtures from the prompt, never from the

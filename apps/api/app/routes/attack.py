@@ -1596,6 +1596,9 @@ _VALID_STATUSES = {s.value for s in WRITABLE}
 #: technique out of the coverage denominator, so an AI-written one raised the
 #: client's percentage on the model's word with nothing behind it and nothing
 #: reviewing it. A consultant still rules N/A through the PATCH (`WRITABLE`).
+#: Scope: this covers NEW AI writes only. A legacy AI-written N/A row carries the
+#: requester's `answered_by` like a consultant's answer and cannot be told apart,
+#: so it is left as it is (#841 plan, advisor decision 4).
 _NOT_APPLICABLE = CoverageStatus.NOT_APPLICABLE.value
 _AI_WRITABLE_STATUSES = _VALID_STATUSES - {_NOT_APPLICABLE}
 _DIFF_FIELDS = (
