@@ -68,9 +68,9 @@ def test_every_fixture_reason_is_one_the_prompt_offers() -> None:
         seen.add((t["status"], t["reason_code"]))
         if t["status"] == "partial":
             assert t["reason_code"] in offered, t
-        elif t["status"] == "not_applicable":
-            assert t["reason_code"] == "platform_absent", t
         else:
             assert t["reason_code"] is None, t
-    # Both reasoned statuses were actually exercised, or the loop proved nothing.
-    assert {s for s, _ in seen} >= {"partial", "not_applicable"}
+    # The reasoned status was actually exercised, or the loop proved nothing.
+    assert {s for s, _ in seen} >= {"partial"}
+    # #841: the AI may not write N/A, so the fixture must not suggest it.
+    assert "not_applicable" not in {s for s, _ in seen}
