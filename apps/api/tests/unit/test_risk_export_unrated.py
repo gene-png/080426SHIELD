@@ -226,7 +226,7 @@ def test_the_xlsx_carries_the_same_summary_disclosures(app_client) -> None:  # n
     assert "1 of 3 entries has no axis and is not in the line above." in lines
     # And it is the SAME list the PDF prints, not a second copy kept in step.
     # Lines carrying "&" are skipped: the PDF renders "ATT&CK" as "ATT&CK;"
-    # (reportlab markup), a pre-existing defect reported separately.
+    # (reportlab markup), a pre-existing defect filed as #862.
     pdf = _flat(_pdf_text(files["pdf"]))
     for line in lines:
         if "&" not in line:

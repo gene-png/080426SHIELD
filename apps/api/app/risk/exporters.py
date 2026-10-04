@@ -229,8 +229,10 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
         )
 
     # #403, the XLSX half. The PDF and Word carry this in `_summary_lines`;
-    # the spreadsheet has no summary block, so it goes in a sheet of its own
-    # rather than being squeezed into a header row.
+    # it also appears in the XLSX "Summary" sheet above (#854 F6), because that
+    # sheet IS `_summary_lines`. Kept here as well, deliberately: this sheet is
+    # the per-assessment TABLE (scored, total, not citable) the prose line
+    # summarises, and dropping either loses something the other cannot show.
     #
     # A SEPARATE SHEET, not extra columns: the disclosure is per ASSESSMENT and
     # the table is per ENTRY, so a column would repeat one assessment-level fact

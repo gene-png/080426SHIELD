@@ -1550,6 +1550,23 @@ def export(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Generate a Risk Register before exporting.",
         )
+    # #854 review round 2: LOCK THE REGISTER ROW before reading its entries.
+    # Export reads the entries, renders for seconds, then sets `finalized_at`;
+    # a rating edit committed inside that gap would be in the client's
+    # dashboard and not in the file they were sent, permanently. The edit route
+    # takes this row FOR SHARE before its write, so on Postgres the two
+    # serialise: an edit that got in first is in the entries read below, and
+    # one that waits finds the register published and is refused.
+    # `populate_existing`, because `reg` is already in the identity map from
+    # `_latest_register` and a plain re-select would hand back that stale
+    # object. SQLite ignores the lock; the unit suite pins only that this
+    # SELECT carries FOR UPDATE, not the race itself.
+    reg = db.execute(
+        select(RiskRegister)
+        .where(RiskRegister.id == reg.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).scalar_one()
 
     # #240. Refuse to publish a register built from work nobody approved.
     #
@@ -1848,7 +1865,16 @@ def edit_entry_rating(
                 "message": "That Risk Register entry was not found for this client.",
             },
         )
-    reg = db.get(RiskRegister, entry.register_id)
+    # #854 review round 2: FOR SHARE on the register, so this edit and an
+    # export (which takes the row FOR UPDATE) serialise on Postgres -- see
+    # `export`. Two edits both take SHARE and do not block each other; the
+    # compare-and-swap below decides between them. SQLite ignores the lock.
+    reg = db.execute(
+        select(RiskRegister)
+        .where(RiskRegister.id == entry.register_id)
+        .with_for_update(read=True)
+        .execution_options(populate_existing=True)
+    ).scalar_one_or_none()
     if reg is None:  # pragma: no cover - the FK is NOT NULL and CASCADEs
         raise RuntimeError(f"risk entry {entry.id} has no register {entry.register_id}")
     _refuse_if_register_closed(reg)
@@ -1872,13 +1898,16 @@ def edit_entry_rating(
     # uses for refresh rotation (#505). The checks above read the entry and its
     # register BEFORE this write, so two edits naming different halves could
     # each read the pair and the second store a tier derived from a pair that
-    # no longer existed; and an export racing an edit could change numbers
-    # already published. This UPDATE matches only while the pair is STILL the
+    # no longer existed. This UPDATE matches only while the pair is STILL the
     # one read and the register is STILL open -- an EXISTS subquery correlated
     # on `risk_entries.register_id` re-checks `finalized_at IS NULL` and
     # `superseded_by IS NULL` in the same statement. Exactly one writer wins
-    # under Postgres READ COMMITTED and on SQLite, and unlike FOR UPDATE the
-    # unit suite can pin it.
+    # under Postgres READ COMMITTED and on SQLite, and the unit suite pins it.
+    #
+    # WHAT THIS DOES NOT COVER, ON ITS OWN: an export already rendering. The
+    # export sets `finalized_at` only at its end, so this re-check passes
+    # during the render; the register lock above (FOR SHARE here, FOR UPDATE
+    # in `export`) is what serialises the two, and only on Postgres.
     register_open = (
         select(RiskRegister.id)
         .where(

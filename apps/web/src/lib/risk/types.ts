@@ -82,7 +82,9 @@ export interface RiskEntry {
   dropped_links: Record<string, string[]> | null;
   /**
    * #844. Both null: the rating is the model's as generated. Set: a consultant
-   * set likelihood or impact through the edit path, and the row says so.
+   * edited likelihood or impact through the edit path. The row is marked
+   * "Rating set by consultant" only when BOTH halves are then present (#854
+   * F2): a cleared rating is unrated, and is not marked.
    */
   rating_edited_by: string | null;
   rating_edited_at: string | null;

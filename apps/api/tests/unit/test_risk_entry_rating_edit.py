@@ -297,9 +297,14 @@ def test_an_entry_changed_underneath_the_edit_is_refused_and_kept(app_client) ->
 
 
 def test_a_register_published_underneath_the_edit_is_refused(app_client) -> None:  # noqa: F811
-    """The PATCH-versus-export race: the register was published between the
-    PATCH's checks and its write. The compare-and-swap re-checks the register
-    in the same statement, so the published numbers do not change."""
+    """The register was published between the PATCH's checks and its write.
+    The compare-and-swap re-checks the register in the same statement, so the
+    published numbers do not change.
+
+    NOT the whole PATCH-versus-export race: an export that is still RENDERING
+    has not set `finalized_at` yet, so this re-check passes during it. That
+    half is held by the register lock (see the two lock tests below), which
+    SQLite does not enforce."""
     import uuid
     from datetime import UTC, datetime
 
@@ -314,3 +319,80 @@ def test_a_register_published_underneath_the_edit_is_refused(app_client) -> None
     assert r.json()["error"]["reason"] == "risk_register_published"
     [e] = _latest(c, bearer, cid)["entries"]
     assert (e["likelihood"], e["impact"], e["tier"]) == ("high", "catastrophic", "critical")
+
+
+def _locking_selects(c, request) -> dict[str, str]:
+    """Run `request()` and return {table: lock strength} for every SELECT the
+    endpoint issued with a row lock. SQLite ignores row locks, so this pins
+    the STATEMENT; the serialisation itself is Postgres's and is not run."""
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session
+
+    seen: dict[str, str] = {}
+
+    def _spy(state) -> None:
+        arg = getattr(state.statement, "_for_update_arg", None)
+        if state.is_select and arg is not None:
+            for t in state.statement.get_final_froms():
+                seen[t.name] = "share" if arg.read else "update"
+
+    event.listen(Session, "do_orm_execute", _spy)
+    try:
+        r = request()
+    finally:
+        event.remove(Session, "do_orm_execute", _spy)
+    assert r.status_code == 200, r.text
+    return seen
+
+
+def test_export_locks_the_register_before_reading_entries(app_client) -> None:  # noqa: F811
+    """#854 review round 2 (blocking): export read the entries, rendered for
+    seconds and only then set `finalized_at`, so an edit committed in that gap
+    reached the dashboard and not the delivered file. Export now takes the
+    register FOR UPDATE first; the edit takes it FOR SHARE, so they serialise.
+    The race itself is NOT exercised here (SQLite has no row locks)."""
+    c, _, bearer, cid, _ = _setup(app_client, _entry("Exported"))
+    locks = _locking_selects(
+        c,
+        lambda: c.post(
+            f"/risk/clients/{cid}/register/export",
+            headers={"Authorization": f"Bearer {bearer}"},
+        ),
+    )
+    assert locks.get("risk_registers") == "update", locks
+
+
+def test_the_edit_takes_the_register_for_share(app_client) -> None:  # noqa: F811
+    c, _, bearer, cid, body = _setup(app_client, _unrated("Shared"))
+    locks = _locking_selects(
+        c, lambda: _patch(c, bearer, cid, body["entries"][0]["id"], {"likelihood": "low"})
+    )
+    assert locks.get("risk_registers") == "share", locks
+
+
+def test_a_half_set_rating_is_not_marked_PENDING_RULING(app_client) -> None:  # noqa: F811
+    """PINNED TO TODAY'S BEHAVIOUR, PENDING THE ADVISOR'S RULING (#854 review
+    round 2, item 2). A consultant sets only the likelihood on an unrated
+    entry: the row is still unrated, so the F2 rule does not mark it and the
+    XLSX Origin reads plain `ai_generated` -- which credits the model with a
+    half the consultant set. The options (reworded marker, or per-half
+    provenance) are with the advisor. When they rule, this test changes on
+    purpose; until then it holds the current behaviour so it cannot drift
+    silently."""
+    import io
+
+    from openpyxl import load_workbook
+
+    c, _, bearer, cid, body = _setup(app_client, _unrated("Half"))
+    r = _patch(c, bearer, cid, body["entries"][0]["id"], {"likelihood": "medium"})
+    assert r.status_code == 200, r.text
+    bh = {"Authorization": f"Bearer {bearer}"}
+    ex = c.post(f"/risk/clients/{cid}/register/export", headers=bh).json()
+    raw = c.get(
+        f"/artifacts/{ex['xlsx_artifact_id']}/download", headers={**bh, "X-Client-Id": cid}
+    ).content
+    ws = load_workbook(io.BytesIO(raw))["Risk Register"]
+    rows = list(ws.iter_rows(values_only=True))
+    row = dict(zip(rows[0], rows[1], strict=True))
+    assert (row["Likelihood"], row["Impact"], row["Tier"]) == ("Medium", "Not rated", "Not rated")
+    assert row["Origin"] == "ai_generated"
