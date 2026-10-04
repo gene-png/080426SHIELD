@@ -287,3 +287,25 @@ if _ATTACK_SCENARIO_DELTA_PROMPT is not None:
             top_level_key="rows",
         )
     )
+
+
+# --- ATT&CK what-if chat box, the AI reading (#802) ----------------------------
+# Approved plan: #802 comment 5981734020; the advisor at 16:40Z (comment
+# 5982109105). The prompt TEXT is not set here: the job is registered only when
+# this constant is set, and until then the chat box is exactly the slice C
+# matcher (`attack/scenario_intent.py::available`). The answer is an object with
+# three keys and no list key to declare, so the job supplies its own parser;
+# `scenario_intent.read` then checks the keys, the names and the quotes, never
+# trusting the text.
+_ATTACK_SCENARIO_INTENT_PROMPT: str | None = None
+
+if _ATTACK_SCENARIO_INTENT_PROMPT is not None:
+    from app.ai.engine import parse_json_object
+
+    register_job(
+        AIJob(
+            name="attack_scenario_intent",
+            prompt=_ATTACK_SCENARIO_INTENT_PROMPT,
+            parser=parse_json_object,
+        )
+    )

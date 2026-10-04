@@ -353,3 +353,88 @@ describe("AttackScenarioPanel, the chat box (slice C)", () => {
     expect(screen.queryByTestId("attack-scenario-chat-filled")).toBeNull();
   });
 });
+
+describe("AttackScenarioPanel, the chat box's AI reading (#802)", () => {
+  const STATUS = "GET /api/proxy/admin/ai-status";
+
+  function aiStatus(ready: boolean): Record<string, unknown> {
+    return {
+      mode: ready ? "live" : "fixture",
+      provider: "provider",
+      model: "m",
+      ready,
+      detail: "",
+      can_configure: true,
+      key_source: ready ? "database" : "none",
+    };
+  }
+
+  it.each([
+    [true, "live"],
+    [false, "offline"],
+  ])(
+    "acknowledges live only while the AI is ready (ready=%s sends %s)",
+    async (ready, serves) => {
+      routes[STATUS] = () => aiStatus(ready);
+      await describeChange("get rid of the edr thing", {
+        removed: [],
+        added: [],
+        not_understood: [],
+      });
+      await screen.findByTestId("attack-scenario-chat-nothing");
+      const parse = calls.find((c) => c.url.endsWith("/scenarios/parse"));
+      expect(JSON.parse(String(parse?.init?.body))).toEqual({
+        text: "get rid of the edr thing",
+        serves,
+      });
+    },
+  );
+
+  it("sends offline when the AI status cannot be read", async () => {
+    routes[STATUS] = () => ({ __status: 500, error: { message: "x" } });
+    await describeChange("get rid of the edr thing", {
+      removed: [],
+      added: [],
+      not_understood: [],
+    });
+    await screen.findByTestId("attack-scenario-chat-nothing");
+    const parse = calls.find((c) => c.url.endsWith("/scenarios/parse"));
+    expect(JSON.parse(String(parse?.init?.body)).serves).toBe("offline");
+  });
+
+  it("says the AI filled the list in (N1) when the AI read the text", async () => {
+    routes[STATUS] = () => aiStatus(true);
+    await describeChange("get rid of the edr thing", {
+      removed: ["EDR Tool"],
+      added: [],
+      not_understood: [],
+      source: "ai",
+      note: null,
+    });
+    expect(
+      (await screen.findByTestId("attack-scenario-chat-filled")).textContent,
+    ).toBe(
+      "The change list below was filled in by the AI from your description. Check it before you continue.",
+    );
+    expect(screen.queryByTestId("attack-scenario-chat-note")).toBeNull();
+  });
+
+  it("shows N2 when the AI could not be used, beside the matcher's reading", async () => {
+    routes[STATUS] = () => aiStatus(true);
+    const n2 =
+      "The AI could not read your description just now, so only the tools named exactly as listed were filled in.";
+    await describeChange("retire EDR Tool and the other thing", {
+      removed: ["EDR Tool"],
+      added: [],
+      not_understood: [],
+      source: "matcher",
+      note: n2,
+    });
+    expect(
+      (await screen.findByTestId("attack-scenario-chat-note")).textContent,
+    ).toBe(n2);
+    expect(screen.getByTestId("attack-scenario-chat-filled").textContent).toBe(
+      "The change list below was filled in from your description. Check it before you continue.",
+    );
+  });
+});

@@ -23,6 +23,7 @@ from sqlalchemy import exists, func, select, update
 from sqlalchemy.orm import Session
 
 from app.ai.batching import run_batches
+from app.ai.engine import run_job
 from app.ai.llm import LLMClient
 from app.ai.runs import (
     RunContext,
@@ -30,11 +31,12 @@ from app.ai.runs import (
     Runner,
     RunOutcome,
     get_ai_run_runner,
+    provider_serves,
     require_serves,
     running_run,
     start_run,
 )
-from app.attack import scenario
+from app.attack import scenario, scenario_intent
 from app.attack.citations import Candidate
 from app.attack.computed import awaiting_review_sentence
 from app.attack.rules import parents_computed
@@ -489,6 +491,12 @@ def create_scenario(
     return _serialize(db, s)
 
 
+def _llm_builder(db: Annotated[Session, Depends(get_db)]) -> Callable[[], LLMClient]:
+    """The provider, built only when called: mitre_map's `_llm_dep`, deferred
+    until the run route has made every refusal (#815 review, F4)."""
+    return lambda: _llm_dep(db)
+
+
 @router.post(
     "/services/{service_id}/scenarios/parse",
     response_model=ScenarioParseResponse,
@@ -496,17 +504,21 @@ def create_scenario(
 )
 def parse_scenario_text(
     service_id: uuid.UUID,
-    _user: Annotated[User, _admin_required],
+    user: Annotated[User, _admin_required],
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],
+    build_llm: Annotated[Callable[[], LLMClient], Depends(_llm_builder)],
+    limiter: Annotated[RateLimiter, Depends(get_rate_limiter)],
     body: ScenarioParseRequest | None = None,
 ) -> ScenarioParseResponse:
-    """Slice C: the chat box. A deterministic matcher (`scenario.parse_change`)
-    turns the text into a PROPOSED change list that pre-fills the picker.
+    """The chat box. The slice C matcher (`scenario.parse_change`) reads the
+    text first; where it leaves something not understood, the AI may be asked
+    (`_ai_reading`, #802). Either way the result is a PROPOSED change list that
+    pre-fills the picker: nothing is stored or run.
 
-    PURE: it writes no row, no audit entry, no run and no `llm_calls` row,
-    and makes no AI call -- Continue and Run stay the only paths to one. The
-    text itself is never logged; only the counts are."""
+    The matcher path writes nothing. An AI attempt writes only its own
+    `llm_calls` row (in `invoke`) and a counts-only audit entry. The text itself
+    is never logged; only the counts are."""
     svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.ATTACK_COVERAGE)
     base = scenario.confirmed_base(db, svc.id)
     if base is None:
@@ -522,17 +534,39 @@ def parse_scenario_text(
         raise _refuse(
             status.HTTP_422_UNPROCESSABLE_ENTITY, "scenario_chat_too_long", CHAT_TOO_LONG_MESSAGE
         )
+    serves = require_serves(body.serves) if body and body.serves is not None else None
     cited = scenario.cited_tools(_base_rows(db, base.id))
+    client_tools = _client_tools(db, client, cited)
+    mode = get_settings().shield_redaction_mode
     parsed = scenario.parse_change(
         text,
         cited=cited,
-        client_tools=_client_tools(db, client, cited),
+        client_tools=client_tools,
         client_org_name=client.legal_name,
-        redaction_mode=get_settings().shield_redaction_mode,
+        redaction_mode=mode,
     )
+    source, note = "matcher", None
+    understood = not parsed.not_understood and bool(parsed.removed or parsed.added)
+    if not understood and serves == "live" and scenario_intent.available():
+        reading, note = _ai_reading(
+            db,
+            build_llm,
+            limiter,
+            user=user,
+            client=client,
+            service_id=svc.id,
+            text=text,
+            cited=cited,
+            client_tools=client_tools,
+            mode=mode,
+        )
+        if reading is not None:
+            parsed, source = reading, "ai"
     _log.info(
         "attack.scenario.chat_parsed",
         service_id=str(svc.id),
+        source=source,
+        fell_back=note is not None,
         removed=len(parsed.removed),
         added=len(parsed.added),
         not_understood=len(parsed.not_understood),
@@ -546,7 +580,103 @@ def parse_scenario_text(
             )
             for n in parsed.not_understood
         ],
+        source=source,
+        note=note,
     )
+
+
+#: N2, approved by the advisor verbatim (16:40Z, #802 comment 5982109105).
+AI_FALLBACK_NOTE = (
+    "The AI could not read your description just now, so only the tools named exactly "
+    "as listed were filled in."
+)
+
+
+def _ai_reading(
+    db: Session,
+    build_llm: Callable[[], LLMClient],
+    limiter: RateLimiter,
+    *,
+    user: User,
+    client: Client,
+    service_id: uuid.UUID,
+    text: str,
+    cited: list[str],
+    client_tools: list[str],
+    mode: Any,
+) -> tuple[scenario.ParsedChange | None, str | None]:
+    """The AI's reading, checked, or None with N2 when it could not be used.
+
+    Called only when the page acknowledged "live" and the purpose is released.
+    A provider that is not live (the fixture) is not asked and says nothing: a
+    canned answer is no reading of the text. The rate limit is taken here, so a
+    parse the matcher answered spends nothing."""
+    llm = build_llm()
+    if provider_serves(llm) != "live":
+        return None, None
+    try:
+        limiter.enforce_ai(client.id)
+    except HTTPException as exc:
+        if exc.status_code != status.HTTP_429_TOO_MANY_REQUESTS:
+            raise
+        _log.info("attack.scenario.chat_ai_rate_limited", service_id=str(service_id))
+        return None, AI_FALLBACK_NOTE
+    sent = scenario_intent.sent_description(
+        text, cited, redaction_mode=mode, client_org_name=client.legal_name
+    )
+    call_id: str | None = None
+    reading: scenario.ParsedChange | None = None
+    failure: str | None = None
+    try:
+        result = run_job(
+            db,
+            llm,
+            scenario_intent.PURPOSE,
+            inputs=scenario_intent.payload(text, cited),
+            requested_by=user.id,
+            service_id=service_id,
+            client_id=client.id,
+            client_org_name=client.legal_name,
+        )
+        call_id = str(result.llm_call.id)
+        reading = scenario_intent.read(
+            result.data,
+            sent=sent,
+            cited=cited,
+            client_tools=client_tools,
+            client_org_name=client.legal_name,
+            redaction_mode=mode,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 - recorded below and disclosed as N2
+        failure = type(exc).__name__
+        _log.warning(
+            "attack.scenario.chat_ai_unusable",
+            service_id=str(service_id),
+            error=f"{type(exc).__name__}: {exc}",
+        )
+    # Counts only: the text and the tool names are the client's data.
+    audit(
+        db,
+        action="attack.scenario.chat_ai_parse",
+        target_type="service",
+        target_id=service_id,
+        actor_user_id=user.id,
+        details={
+            "llm_call_id": call_id,
+            "fell_back": reading is None,
+            "failure": failure,
+            "removed": len(reading.removed) if reading else 0,
+            "added": len(reading.added) if reading else 0,
+            "not_understood": len(reading.not_understood) if reading else 0,
+        },
+    )
+    # The llm_calls row `invoke` wrote (COMPLETED or FAILED) and this entry are
+    # the evidence of the attempt; a rollback at the end of the request would
+    # lose them.
+    db.commit()
+    return reading, (None if reading is not None else AI_FALLBACK_NOTE)
 
 
 @router.get(
@@ -637,12 +767,6 @@ def discard_scenario(
     db.commit()
     _log.info("attack.scenario.discarded", scenario_id=str(s.id))
     return _serialize(db, s)
-
-
-def _llm_builder(db: Annotated[Session, Depends(get_db)]) -> Callable[[], LLMClient]:
-    """The provider, built only when called: mitre_map's `_llm_dep`, deferred
-    until the run route has made every refusal (#815 review, F4)."""
-    return lambda: _llm_dep(db)
 
 
 def _added_collision(db: Session, s: AttackScenario, client: Client) -> str | None:

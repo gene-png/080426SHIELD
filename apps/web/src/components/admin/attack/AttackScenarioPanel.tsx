@@ -3,6 +3,7 @@
 import * as React from "react";
 
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
+import { fetchAiStatus } from "@/lib/admin/client";
 import { clientFacingError } from "@/lib/describe-save-error";
 import { outsideAssessedText } from "@/lib/attack/outsideAssessed";
 import {
@@ -588,7 +589,15 @@ function ChatBox({
     onBusy(true);
     setError(null);
     try {
-      const proposal = await parseChange(serviceId, text);
+      // #504, as RunAiGuard decides it: the AI may read the text only while
+      // it is ready. Not ready sends "offline", and so does a status that
+      // cannot be read, which acknowledges nothing: the API then answers with
+      // the list matcher alone, and the text is not sent to the AI.
+      const serves: AiServes = await fetchAiStatus().then(
+        (status) => (status.ready ? "live" : "offline"),
+        () => "offline",
+      );
+      const proposal = await parseChange(serviceId, text, serves);
       if (latest.current !== mine) return;
       setResult(proposal);
       onProposal(proposal);
@@ -637,8 +646,18 @@ function ChatBox({
       </div>
       {matched ? (
         <p className="text-sm" data-testid="attack-scenario-chat-filled">
-          The change list below was filled in from your description. Check it
-          before you continue.
+          {result?.source === "ai"
+            ? // N1, approved verbatim (16:40Z, #802 comment 5982109105).
+              "The change list below was filled in by the AI from your description. Check it before you continue."
+            : "The change list below was filled in from your description. Check it before you continue."}
+        </p>
+      ) : null}
+      {result?.note ? (
+        <p
+          className="text-sm text-status-warning-fg"
+          data-testid="attack-scenario-chat-note"
+        >
+          {result.note}
         </p>
       ) : null}
       {result !== null && !matched ? (

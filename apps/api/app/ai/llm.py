@@ -298,6 +298,9 @@ _MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
     # output is billed as generated. To be live-measured once #806 releases
     # the prompt text.
     "attack_scenario_delta": 64000,
+    # #802's chat box: three short lists naming a few tools. Unmeasured; to be
+    # re-derived from the first live call by the 3x rule above.
+    "attack_scenario_intent": 4096,
 }
 
 

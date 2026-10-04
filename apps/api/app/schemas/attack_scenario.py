@@ -29,6 +29,9 @@ class ScenarioParseRequest(BaseModel):
     description is refused with a typed 422 (C7, C8)."""
 
     text: Any = None
+    #: The mode the page acknowledged (#504): only "live" lets the text reach
+    #: the AI. Absent means no AI, so a caller that never asks gets slice C.
+    serves: Any = None
 
 
 class ScenarioNotUnderstood(BaseModel):
@@ -45,6 +48,10 @@ class ScenarioParseResponse(BaseModel):
     removed: list[str]
     added: list[str]
     not_understood: list[ScenarioNotUnderstood]
+    #: Who read the text: "matcher" (slice C) or "ai" (#802, copy N1).
+    source: str = "matcher"
+    #: N2 when the AI was tried, or would have been, and could not be used.
+    note: str | None = None
 
 
 class ScenarioAddedTool(BaseModel):
