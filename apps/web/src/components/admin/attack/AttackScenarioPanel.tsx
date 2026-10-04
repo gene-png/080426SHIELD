@@ -10,12 +10,14 @@ import {
   discardScenario,
   fetchScenario,
   fetchScenarios,
+  parseChange,
   runScenario,
 } from "@/lib/attack/scenarios";
 
 import type { AiServes } from "@/lib/aiRuns/types";
 import type {
   AddedTool,
+  ParsedChange,
   Scenario,
   ScenarioList as ScenarioListData,
   ScenarioRollup,
@@ -209,9 +211,46 @@ export function AttackScenarioPanel({
     loaded?.serviceId === serviceId ? loaded.phase : { kind: "loading" };
   /** Bumped after a write, so the list is read again. */
   const [reads, setReads] = React.useState(0);
-  const [picked, setPicked] = React.useState<string[]>([]);
+  // The picker belongs to the service it was filled for: DERIVED from the
+  // id, so a service change shows an empty picker in the same render and a
+  // late writer for the old service lands nowhere visible (#824 review, B3).
+  const [picker, setPicker] = React.useState<{
+    serviceId: string;
+    picked: string[];
+    adding: Draft[];
+  }>({ serviceId, picked: [], adding: [] });
+  const mine = picker.serviceId === serviceId;
+  const picked = mine ? picker.picked : NONE_PICKED;
   /** Slice B: the tools to add, as the admin is typing them. */
-  const [adding, setAdding] = React.useState<Draft[]>([]);
+  const adding = mine ? picker.adding : NONE_ADDING;
+  const setPicked = React.useCallback(
+    (next: string[] | ((prev: string[]) => string[])) =>
+      setPicker((p) => {
+        const same = p.serviceId === serviceId;
+        const prev = same ? p.picked : NONE_PICKED;
+        return {
+          serviceId,
+          picked: typeof next === "function" ? next(prev) : next,
+          adding: same ? p.adding : NONE_ADDING,
+        };
+      }),
+    [serviceId],
+  );
+  const setAdding = React.useCallback(
+    (next: Draft[] | ((prev: Draft[]) => Draft[])) =>
+      setPicker((p) => {
+        const same = p.serviceId === serviceId;
+        const prev = same ? p.adding : NONE_ADDING;
+        return {
+          serviceId,
+          picked: same ? p.picked : NONE_PICKED,
+          adding: typeof next === "function" ? next(prev) : next,
+        };
+      }),
+    [serviceId],
+  );
+  /** A chat parse is in flight: the picker is held still until it lands. */
+  const [chatBusy, setChatBusy] = React.useState(false);
   const [current, setCurrent] = React.useState<Scenario | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -393,7 +432,38 @@ export function AttackScenarioPanel({
             {phase.list.base.version}, approved{" "}
             {approvedText(phase.list.base.approved_at)}.
           </p>
-          <fieldset className="flex flex-col gap-1">
+          <ChatBox
+            key={serviceId}
+            serviceId={serviceId}
+            onBusy={setChatBusy}
+            onProposal={(proposal) => {
+              // MERGE, never replace (#824 review, B2): what the admin has
+              // ticked or typed stays; an empty proposal changes nothing.
+              setPicked((prev) => [
+                ...prev,
+                ...proposal.removed.filter((t) => !prev.includes(t)),
+              ]);
+              setAdding((prev) => [
+                ...prev,
+                ...proposal.added
+                  .filter(
+                    (name) =>
+                      !prev.some(
+                        (d) =>
+                          d.name.trim().toLowerCase() === name.toLowerCase(),
+                      ),
+                  )
+                  .map((name) => ({
+                    name,
+                    vendor: "",
+                    category: "",
+                    functions: [],
+                    fromChat: true,
+                  })),
+              ]);
+            }}
+          />
+          <fieldset className="flex flex-col gap-1" disabled={chatBusy}>
             <legend className="text-sm font-semibold">Tools to remove</legend>
             {phase.list.base.tools.map((tool) => (
               <label key={tool} className="flex items-center gap-2 text-sm">
@@ -406,11 +476,15 @@ export function AttackScenarioPanel({
               </label>
             ))}
           </fieldset>
-          <AddToolsFieldset drafts={adding} onChange={setAdding} />
+          <AddToolsFieldset
+            drafts={adding}
+            onChange={setAdding}
+            disabled={chatBusy}
+          />
           <div>
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || chatBusy}
               onClick={() => void start(picked, adding.map(toAddedTool))}
               className="rounded-md border border-line px-3 py-1.5 text-sm font-semibold disabled:opacity-60"
             >
@@ -477,12 +551,138 @@ export function AttackScenarioPanel({
   );
 }
 
+/**
+ * Slice C (approved 18:32Z, copy C1-C8): the chat box. The api's matcher, by
+ * code and with no AI, PROPOSES a change list that fills in the picker below;
+ * nothing is created or run until Continue and Run, which stay the only paths.
+ */
+function ChatBox({
+  serviceId,
+  onProposal,
+  onBusy,
+}: {
+  serviceId: string;
+  onProposal: (proposal: ParsedChange) => void;
+  onBusy: (busy: boolean) => void;
+}): JSX.Element {
+  const [text, setText] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [result, setResult] = React.useState<ParsedChange | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  // A response is applied only while this mount is the one that asked: the
+  // panel remounts the box per service, so a parse that lands after a service
+  // change is dropped (#824 review, B3). One parse at a time: Fill is disabled
+  // while one is in flight, and the picker is held still (`onBusy`).
+  const latest = React.useRef(0);
+  React.useEffect(() => {
+    const mounted = latest;
+    return () => {
+      mounted.current = -1;
+      onBusy(false);
+    };
+  }, [onBusy]);
+
+  async function fill(): Promise<void> {
+    const mine = ++latest.current;
+    setBusy(true);
+    onBusy(true);
+    setError(null);
+    try {
+      const proposal = await parseChange(serviceId, text);
+      if (latest.current !== mine) return;
+      setResult(proposal);
+      onProposal(proposal);
+    } catch (err) {
+      if (latest.current !== mine) return;
+      setResult(null);
+      setError(
+        clientFacingError(
+          err,
+          "The description could not be checked. Try again.",
+        ),
+      );
+    } finally {
+      if (latest.current === mine) {
+        setBusy(false);
+        onBusy(false);
+      }
+    }
+  }
+
+  const matched =
+    result !== null && result.removed.length + result.added.length > 0;
+  return (
+    <div className="flex flex-col gap-1" data-testid="attack-scenario-chat">
+      <label className="flex flex-col gap-1 text-sm font-semibold">
+        Describe the change
+        <textarea
+          className="rounded border border-line p-1 font-normal"
+          rows={2}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+        />
+      </label>
+      <p className="text-sm text-ink-secondary">
+        {'For example "retire X and Y" or "swap X for Z".'}
+      </p>
+      <div>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void fill()}
+          className="rounded-md border border-line px-3 py-1.5 text-sm font-semibold disabled:opacity-60"
+        >
+          Fill in the change list
+        </button>
+      </div>
+      {matched ? (
+        <p className="text-sm" data-testid="attack-scenario-chat-filled">
+          The change list below was filled in from your description. Check it
+          before you continue.
+        </p>
+      ) : null}
+      {result !== null && !matched ? (
+        <p
+          className="text-sm text-status-warning-fg"
+          data-testid="attack-scenario-chat-nothing"
+        >
+          Nothing in your description matched a change. Pick the tools from the
+          list instead.
+        </p>
+      ) : null}
+      {(result?.not_understood ?? []).map((n, i) => (
+        <p
+          key={i}
+          className="text-sm text-status-warning-fg"
+          data-testid="attack-scenario-chat-not-understood"
+        >
+          {n.message}
+        </p>
+      ))}
+      {error ? (
+        <p
+          role="alert"
+          className="text-sm text-status-danger-fg"
+          data-testid="attack-scenario-chat-error"
+        >
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+const NONE_PICKED: string[] = [];
+const NONE_ADDING: Draft[] = [];
+
 /** A tool to add, as typed: every field a string until it is sent. */
 interface Draft {
   name: string;
   vendor: string;
   category: string;
   functions: AddedTool["security_functions"];
+  /** Filled in from the chat box (slice C): C9 asks for its functions. */
+  fromChat?: boolean;
 }
 
 const FUNCTIONS: [AddedTool["security_functions"][number], string][] = [
@@ -520,15 +720,22 @@ function toAddedTool(d: Draft): AddedTool {
 function AddToolsFieldset({
   drafts,
   onChange,
+  disabled = false,
 }: {
   drafts: Draft[];
   onChange: (next: Draft[]) => void;
+  /** Held still while a chat parse is in flight (#824 review, B3). */
+  disabled?: boolean;
 }): JSX.Element {
   function update(i: number, patch: Partial<Draft>): void {
     onChange(drafts.map((d, k) => (k === i ? { ...d, ...patch } : d)));
   }
   return (
-    <fieldset className="flex flex-col gap-2" data-testid="attack-scenario-add">
+    <fieldset
+      className="flex flex-col gap-2"
+      data-testid="attack-scenario-add"
+      disabled={disabled}
+    >
       <legend className="text-sm font-semibold">Tools to add</legend>
       {drafts.map((d, i) => (
         <div key={i} className="flex flex-wrap items-center gap-2 text-sm">
@@ -582,6 +789,14 @@ function AddToolsFieldset({
           >
             Remove this tool
           </button>
+          {d.fromChat && d.functions.length === 0 ? (
+            <p
+              className="basis-full text-sm text-status-warning-fg"
+              data-testid="attack-scenario-chat-functions"
+            >
+              {`Choose what ${d.name} does before you continue.`}
+            </p>
+          ) : null}
         </div>
       ))}
       <div>

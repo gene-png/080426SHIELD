@@ -24,6 +24,29 @@ class ScenarioCreateRequest(BaseModel):
     added: list[Any] | None = None
 
 
+class ScenarioParseRequest(BaseModel):
+    """Slice C: the chat box's text. Typed loosely: an empty or over-long
+    description is refused with a typed 422 (C7, C8)."""
+
+    text: Any = None
+
+
+class ScenarioNotUnderstood(BaseModel):
+    """A clause the matcher would not guess at, with the sentence to show."""
+
+    text: str
+    reason: str
+    message: str
+
+
+class ScenarioParseResponse(BaseModel):
+    """A PROPOSED change list, to pre-fill the picker. Nothing was stored."""
+
+    removed: list[str]
+    added: list[str]
+    not_understood: list[ScenarioNotUnderstood]
+
+
 class ScenarioAddedTool(BaseModel):
     """A tool the admin added to the what-if (slice B)."""
 
