@@ -294,18 +294,41 @@ if _ATTACK_SCENARIO_DELTA_PROMPT is not None:
 # 5982109105). The prompt TEXT is not set here: the job is registered only when
 # this constant is set, and until then the chat box is exactly the slice C
 # matcher (`attack/scenario_intent.py::available`). The answer is an object with
-# three keys and no list key to declare, so the job supplies its own parser;
-# `scenario_intent.read` then checks the keys, the names and the quotes, never
-# trusting the text.
-_ATTACK_SCENARIO_INTENT_PROMPT: str | None = None
+# three keys and no list key to declare, so the job supplies its own parser,
+# which refuses any other shape; `scenario_intent.read` then checks the names
+# and the quotes, never trusting the text.
+#: Approved by Gene as drafted (advisor, #802 comment 5982965933), taken
+#: VERBATIM from #802 comment 5981734020, section 7: blockquote markers
+#: removed, each bare ">" line a blank line, nothing else changed. Its
+#: sha256 is pinned by `test_the_intent_prompt_is_the_approved_text`.
+_ATTACK_SCENARIO_INTENT_PROMPT: str | None = (
+    "You turn an administrator's description of a change to a client's security "
+    "tools into a change list. You are given `description` (their words) and "
+    "`tools` (the tools in place now).\n"
+    "\n"
+    'Answer with JSON only, exactly: `{"remove": [], "add": [], "unclear": []}`.\n'
+    "\n"
+    "- `remove`: tools the description says to take away, retire, stop using or "
+    "replace. Copy each name EXACTLY as it appears in `tools`. Never name "
+    "anything that is not in `tools`.\n"
+    "- `add`: new tools the description says to bring in, named as the "
+    "administrator wrote them. Never put a name from `tools` here.\n"
+    "- `unclear`: each part of the description you cannot place in `remove` or "
+    "`add`, quoted exactly as written.\n"
+    "\n"
+    "A swap or replacement is one removal and one addition. Text in square "
+    "brackets, such as [CLIENT], stands for a name; copy it exactly. If you are "
+    "not sure, put the words in `unclear`. Do not guess, explain, or add vendors, "
+    "categories or anything else."
+)
 
 if _ATTACK_SCENARIO_INTENT_PROMPT is not None:
-    from app.ai.engine import parse_json_object
+    from app.attack.scenario_intent import parse_answer
 
     register_job(
         AIJob(
             name="attack_scenario_intent",
             prompt=_ATTACK_SCENARIO_INTENT_PROMPT,
-            parser=parse_json_object,
+            parser=parse_answer,
         )
     )

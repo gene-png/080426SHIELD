@@ -22,6 +22,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from app.ai import redact
+from app.ai.engine import AIResponseShapeError, parse_json_object
 from app.ai.redact import RedactionMode, redact_payload
 from app.attack import scenario
 from app.attack.citations import Candidate, CitationResolver
@@ -40,9 +41,11 @@ _PLACEHOLDERS = tuple(
 )
 
 
-class IntentShapeError(ValueError):
+class IntentShapeError(AIResponseShapeError):
     """The AI's answer is refused WHOLE: out of shape, or quoting words the
-    admin did not write. The route returns the matcher's result with N2."""
+    admin did not write. The route returns the matcher's result with N2. An
+    `AIResponseShapeError`, so it travels the same failure path as every
+    other job's shape refusal."""
 
 
 def available() -> bool:
@@ -51,6 +54,14 @@ def available() -> bool:
     from app.ai.engine import registered_jobs
 
     return PURPOSE in registered_jobs()
+
+
+def parse_answer(content: str) -> dict[str, list[str]]:
+    """The job's parser: JSON, an object, exactly the three keys the prompt
+    names, each a list of strings. The guard sits in the PARSER, where the
+    registry-wide shape tests look for it; `read` checks the names and the
+    quotes after."""
+    return _shape(parse_json_object(content))
 
 
 def payload(description: str, cited: Sequence[str]) -> dict[str, Any]:

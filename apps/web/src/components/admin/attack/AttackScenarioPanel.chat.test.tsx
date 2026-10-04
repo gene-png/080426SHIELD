@@ -101,6 +101,8 @@ describe("AttackScenarioPanel, the chat box (slice C)", () => {
     const parse = calls.find((c) => c.url.endsWith("/scenarios/parse"));
     expect(JSON.parse(String(parse?.init?.body))).toEqual({
       text: "swap EDR Tool for XDR Suite",
+      // #802: the AI status is not mocked here, so it cannot be read: offline.
+      serves: "offline",
     });
     expect(
       (screen.getByLabelText("EDR Tool") as HTMLInputElement).checked,
@@ -202,6 +204,8 @@ describe("AttackScenarioPanel, the chat box (slice C)", () => {
     await screen.findByTestId("attack-scenario-chat-filled");
     expect(calls.map((c) => `${c.init?.method ?? "GET"} ${c.url}`)).toEqual([
       LIST,
+      // #802: Fill reads the AI status first (#504's acknowledgement).
+      "GET /api/proxy/admin/ai-status",
       PARSE,
     ]);
     fireEvent.click(screen.getByLabelText("SIEM Tool")); // the admin unticks one

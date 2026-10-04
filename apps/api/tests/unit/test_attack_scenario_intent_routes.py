@@ -22,14 +22,12 @@ the client is "Acme".
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
 
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import func, select
 
 from app.ai import engine as ai_engine
-from app.ai.engine import AIJob, parse_json_object
 from app.ai.llm import FixtureProvider, LLMResponse
 from app.attack import scenario_intent
 from app.models.ai_run import AiRun
@@ -54,16 +52,11 @@ VAGUE = "get rid of the edr thing"
 
 
 @pytest.fixture
-def intent_job() -> Iterator[None]:
-    """Register a placeholder job for one test: the real prompt text is not
-    set in code, so the purpose ships unregistered."""
-    ai_engine.register_job(
-        AIJob(name=scenario_intent.PURPOSE, prompt="(placeholder)", parser=parse_json_object)
-    )
-    try:
-        yield
-    finally:
-        ai_engine._REGISTRY.pop(scenario_intent.PURPOSE, None)
+def intent_unregistered(monkeypatch) -> None:
+    """The purpose as it was before its prompt was released. `monkeypatch`
+    restores the real job afterwards; a bare pop would delete it for every
+    later test (track4, #846)."""
+    monkeypatch.delitem(ai_engine._REGISTRY, scenario_intent.PURPOSE)
 
 
 class _Limited:
@@ -90,6 +83,32 @@ def _parse(w, text, serves):
 
 
 GOOD = {"remove": [EDR], "add": [], "unclear": []}
+
+
+def test_an_answer_written_as_the_prompt_asks_fills_the_list(app_parts) -> None:  # noqa: F811
+    """The fixture is authored from the PROMPT's words, not from the reader:
+    a removal "copied EXACTLY as it appears in `tools`", an addition "named as
+    the administrator wrote them", and the rest "quoted exactly as written"."""
+    w = _world(app_parts)
+    text = "swap the edr thing for XDR Suite, and tidy the dashboards"
+    w.use(
+        _provider(
+            True,
+            {"remove": [EDR], "add": ["XDR Suite"], "unclear": ["tidy the dashboards"]},
+            [],
+        )
+    )
+    r = _parse(w, text, "live")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert (body["source"], body["removed"], body["added"]) == ("ai", [EDR], ["XDR Suite"])
+    assert [(n["text"], n["reason"], n["message"]) for n in body["not_understood"]] == [
+        (
+            "tidy the dashboards",
+            "ai_unclear",
+            'Not understood: "tidy the dashboards". Pick the tool from the list instead.',
+        )
+    ]
 
 
 @pytest.mark.parametrize(
@@ -123,8 +142,8 @@ def test_the_fallback_table(
     note,
     called,  # noqa: F811
 ) -> None:
-    if registered:
-        request.getfixturevalue("intent_job")
+    if not registered:
+        request.getfixturevalue("intent_unregistered")
     w = _world(app_parts)
     seen: list[dict] = []
     w.use(_provider(live, answer, seen))
@@ -144,7 +163,7 @@ def test_the_fallback_table(
 
 
 def test_a_description_the_matcher_understood_never_asks(
-    app_parts, intent_job  # noqa: F811
+    app_parts,  # noqa: F811
 ) -> None:
     w = _world(app_parts)
     seen: list[dict] = []
@@ -165,7 +184,7 @@ def test_an_acknowledgement_that_is_not_a_mode_is_a_typed_422(app_parts) -> None
 
 
 def test_the_ai_is_sent_the_redacted_description_and_the_cited_tools_only(
-    app_parts, intent_job  # noqa: F811
+    app_parts,  # noqa: F811
 ) -> None:
     w = _world(app_parts)
     seen: list[dict] = []
@@ -211,7 +230,7 @@ def _counts(w) -> dict[str, int]:
     ids=["read", "failed"],
 )
 def test_an_ai_attempt_leaves_one_llm_call_and_one_counts_only_audit_entry(
-    app_parts, intent_job, answer, fell_back  # noqa: F811
+    app_parts, answer, fell_back  # noqa: F811
 ) -> None:
     w = _world(app_parts)
     before = _counts(w)
@@ -242,7 +261,7 @@ def test_an_ai_attempt_leaves_one_llm_call_and_one_counts_only_audit_entry(
     assert "edr thing" not in blob and EDR not in blob
 
 
-def test_a_matcher_only_parse_records_nothing(app_parts, intent_job) -> None:  # noqa: F811
+def test_a_matcher_only_parse_records_nothing(app_parts) -> None:  # noqa: F811
     w = _world(app_parts)
     before = _counts(w)
     w.use(_provider(True, GOOD, []))
