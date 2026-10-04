@@ -44,7 +44,7 @@ from app.audit import audit
 from app.config import get_settings
 from app.db.session import get_db
 from app.dependencies import current_client, require_role
-from app.logging import get_logger
+from app.logging import correlation_id_var, get_logger
 from app.models.ai_run import AiRun, AiRunStatus
 from app.models.attack_assessment import AttackAssessment, AttackCoverage
 from app.models.attack_scenario import AttackScenario, AttackScenarioRow, AttackScenarioState
@@ -596,26 +596,29 @@ def parse_scenario_text(
     )
 
 
-def _attempt_call_id(db: Session, service_id: uuid.UUID) -> str | None:
-    """The id of the `llm_calls` row this attempt wrote, found in the
-    request's own session: `invoke` adds and flushes the row BEFORE calling
-    the provider and marks it FAILED on an error, and nothing else in this
-    request writes one. So the id is known whether the call, the parse or
-    the reading failed (#863 review, F2), and a billed attempt is never
-    recorded without its row."""
-    rows = [
-        o
-        for o in db.identity_map.values()
-        if isinstance(o, LLMCall) and o.purpose == scenario_intent.PURPOSE
-    ]
-    if len(rows) != 1:
-        _log.error(
-            "attack.scenario.chat_ai_call_row_unknown",
-            service_id=str(service_id),
-            rows=len(rows),
-        )
+def _attempt_call_id(db: Session, *, service_id: uuid.UUID, user_id: uuid.UUID) -> str | None:
+    """The id of the `llm_calls` row this attempt wrote, or None.
+
+    QUERIED within this transaction (`invoke` adds and flushes the row before
+    the provider is called, and marks it FAILED on an error), by purpose,
+    service, requester and the request's correlation id: one parse makes at
+    most one attempt. Not read from the session's identity map, which holds a
+    clean row only weakly; on a failure it was gone once the exception was
+    (#863 review, round 2)."""
+    correlation = correlation_id_var.get()
+    if correlation is None:
         return None
-    return str(rows[0].id)
+    ids = list(
+        db.execute(
+            select(LLMCall.id).where(
+                LLMCall.purpose == scenario_intent.PURPOSE,
+                LLMCall.service_id == service_id,
+                LLMCall.requested_by == user_id,
+                LLMCall.correlation_id == correlation,
+            )
+        ).scalars()
+    )
+    return str(ids[0]) if len(ids) == 1 else None
 
 
 #: N2, approved by the advisor verbatim (16:40Z, #802 comment 5982109105).
@@ -698,7 +701,17 @@ def _ai_reading(
             service_id=str(service_id),
             error=f"{type(exc).__name__}: {exc}",
         )
-    call_id = _attempt_call_id(db, service_id)
+    call_id = _attempt_call_id(db, service_id=service_id, user_id=user.id)
+    if call_id is None:
+        # Loud, never a silent null: the attempt's row exists in llm_calls (the
+        # billing evidence) but this entry cannot name it. Not raised: that
+        # would turn a disclosed fallback into a 500 over a bookkeeping gap.
+        _log.error(
+            "attack.scenario.chat_ai_call_row_unknown",
+            service_id=str(service_id),
+            failure=failure,
+        )
+        failure = "call_row_unknown"
     # Counts only: the text and the tool names are the client's data.
     audit(
         db,

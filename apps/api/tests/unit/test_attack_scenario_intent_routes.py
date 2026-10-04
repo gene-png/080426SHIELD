@@ -71,7 +71,10 @@ def _provider(live: bool, answer, seen: list[dict]) -> FixtureProvider:
     def respond(payload: dict) -> LLMResponse:
         seen.append(payload)
         if isinstance(answer, Exception):
-            raise answer
+            # A FRESH exception per call, as a real provider raises: a shared
+            # instance held by the parameters keeps its traceback, and every
+            # object that traceback references, alive (#863 review, round 2).
+            raise type(answer)(*answer.args)
         return LLMResponse(json.dumps(answer))
 
     provider.register(scenario_intent.PURPOSE, respond)
@@ -227,8 +230,8 @@ def _counts(w) -> dict[str, int]:
 
 @pytest.mark.parametrize(
     ("answer", "fell_back"),
-    [(GOOD, False), (RuntimeError("boom"), True)],
-    ids=["read", "failed"],
+    [(GOOD, False), (RuntimeError("boom"), True), ({"remove": [EDR]}, True)],
+    ids=["read", "failed", "refused-by-the-parser"],
 )
 def test_an_ai_attempt_leaves_one_llm_call_and_one_counts_only_audit_entry(
     app_parts, answer, fell_back  # noqa: F811
@@ -310,3 +313,47 @@ def test_a_tenant_users_name_in_the_description_reaches_the_ai_redacted(
     assert [(n["text"], n["reason"]) for n in r.json()["not_understood"]] == [
         ("the edr thing [NAME] runs", "ai_unclear")
     ]
+
+
+def test_an_attempt_whose_call_row_cannot_be_found_says_so(
+    app_parts, monkeypatch  # noqa: F811
+) -> None:
+    """#863 review, round 2: never a silent null. When the attempt's
+    llm_calls row cannot be named, the entry says `call_row_unknown`."""
+    from app.routes import attack_scenarios
+
+    monkeypatch.setattr(attack_scenarios, "_attempt_call_id", lambda *a, **k: None)
+    w = _world(app_parts)
+    w.use(_provider(True, GOOD, []))
+    assert _parse(w, VAGUE, "live").status_code == 200
+    with w.sessions() as db:
+        entry = db.execute(
+            select(AuditEntry).where(AuditEntry.action == "attack.scenario.chat_ai_parse")
+        ).scalar_one()
+    assert (entry.details["llm_call_id"], entry.details["failure"]) == (None, "call_row_unknown")
+
+
+def test_two_attempts_each_record_their_own_call(app_parts) -> None:  # noqa: F811
+    """The row is found by THIS request's correlation id, so a second attempt
+    on the same service, by the same admin, names its own call, not either."""
+    w = _world(app_parts)
+    w.use(_provider(True, RuntimeError("boom"), []))
+    assert _parse(w, VAGUE, "live").status_code == 200
+    assert _parse(w, VAGUE, "live").status_code == 200
+    with w.sessions() as db:
+        calls = set(
+            map(
+                str,
+                db.execute(
+                    select(LLMCall.id).where(LLMCall.purpose == scenario_intent.PURPOSE)
+                ).scalars(),
+            )
+        )
+        named = [
+            e.details["llm_call_id"]
+            for e in db.execute(
+                select(AuditEntry).where(AuditEntry.action == "attack.scenario.chat_ai_parse")
+            ).scalars()
+        ]
+    assert len(calls) == 2
+    assert sorted(named) == sorted(calls)
