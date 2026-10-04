@@ -251,9 +251,11 @@ _MAX_OUTPUT_TOKENS = 8192
 #   csf_score              ~4,200 a batch of 10 (#806 probe 4,213, 2026-10-03;
 #                          the largest single batch was not recorded)
 #   risk_synthesize        not measured live; ~14k a batch is an estimate
-#   attack_scenario_delta   6,991 (2026-10-04; the largest of 3 completed calls,
-#                          batches 1-3 of a 23-batch what-if on the demo seed,
-#                          a batch of 25 techniques, #802; 6,005-6,991)
+#   attack_scenario_delta   8,231 (2026-10-04, on Gene's amended text; the
+#                          largest of 3 completed calls, batches 1-3 of a
+#                          23-batch what-if on the demo seed, a batch of 25
+#                          techniques, #802; 5,603-8,231. The superseded text
+#                          measured 6,005-6,991 the same day.)
 # THE RULE (advisor, 2026-10-03): a cap is at least 3x the largest observed
 # single call. The caps below are NOT re-derived from it yet: they will be,
 # from #806's "after" measurements, which run on the prompts that will ship.
@@ -297,9 +299,9 @@ _MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
     "zt_score": _MAX_OUTPUT_TOKENS,
     # #802's ATT&CK what-if: only contributing (technique, tool) rows come back,
     # far smaller than mitre_map's; sized like it, per batch of 25, because
-    # output is billed as generated. Measured live on the approved text
-    # (2026-10-04, see OBSERVED): 6,991 at most for a batch of 25. 64000 is over
-    # 9x that, so it already meets the 3x rule above and is left as it is.
+    # output is billed as generated. Measured live on the approved, amended
+    # text (2026-10-04, see OBSERVED): 8,231 at most for a batch of 25. 64000 is
+    # over 7x that, so it already meets the 3x rule above and is left as it is.
     "attack_scenario_delta": 64000,
 }
 
