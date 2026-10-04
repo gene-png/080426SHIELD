@@ -229,12 +229,17 @@ def _counts(w) -> dict[str, int]:
 
 
 @pytest.mark.parametrize(
-    ("answer", "fell_back"),
-    [(GOOD, False), (RuntimeError("boom"), True), ({"remove": [EDR]}, True)],
+    ("answer", "fell_back", "failure"),
+    [
+        (GOOD, False, None),
+        (RuntimeError("boom"), True, "RuntimeError"),
+        # The job's parser refuses a shape the prompt does not ask for.
+        ({"remove": [EDR]}, True, "IntentShapeError"),
+    ],
     ids=["read", "failed", "refused-by-the-parser"],
 )
 def test_an_ai_attempt_leaves_one_llm_call_and_one_counts_only_audit_entry(
-    app_parts, answer, fell_back  # noqa: F811
+    app_parts, answer, fell_back, failure  # noqa: F811
 ) -> None:
     w = _world(app_parts)
     before = _counts(w)
@@ -262,6 +267,7 @@ def test_an_ai_attempt_leaves_one_llm_call_and_one_counts_only_audit_entry(
         "not_understood",
     }
     assert details["fell_back"] is fell_back
+    assert details["failure"] == failure
     # #863 review, F2: the attempt's own llm_calls row, on a failure too.
     with w.sessions() as db:
         (call_id,) = db.execute(
