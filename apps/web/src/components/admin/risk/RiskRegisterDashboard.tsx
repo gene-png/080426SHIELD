@@ -35,6 +35,7 @@ import {
   type RiskTier,
 } from "@/lib/risk/matrix";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
+import { targetSentences } from "@/lib/risk/baseline";
 
 import type { RiskEntry, RiskGate, RiskRegister } from "@/lib/risk/types";
 
@@ -964,6 +965,19 @@ export function RiskRegisterDashboard(): JSX.Element {
               counts.
             </div>
           ) : null}
+          {/* #474. The baseline every CSF and ZT finding was measured
+              against. Rendered in every state: "not recorded" is said, never
+              left as silence, because the client's export says it too. */}
+          <div
+            className="rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
+            data-testid="risk-targets-used"
+          >
+            {targetSentences(register.targets, register.targets_recorded).map(
+              (line) => (
+                <p key={line}>{line}</p>
+              ),
+            )}
+          </div>
           <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
             <NumberCard label="Entries" value={register.entries.length} />
             <NumberCard

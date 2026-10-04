@@ -1,3 +1,5 @@
+import type { RiskTargetUsed } from "./baseline";
+
 export interface RiskGate {
   unlocked: boolean;
   has_attack: boolean;
@@ -181,6 +183,9 @@ export interface RiskRegister {
    * parses; absent reads as not recorded.
    */
   findings_recorded?: boolean;
+  /** #474. Optional so an older response parses; absent reads as not recorded. */
+  targets?: RiskTargetUsed[];
+  targets_recorded?: boolean;
   findings_total?: number | null;
   findings_without_entry?: string[];
   findings_with_several_entries?: Record<string, number>;

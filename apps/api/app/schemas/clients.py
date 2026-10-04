@@ -15,6 +15,7 @@ from pydantic import BaseModel, model_serializer, model_validator
 
 from app.models.service import ServiceKind
 from app.schemas.ai_runs import AiSource
+from app.schemas.risk import RiskTargetUsed
 
 __all__ = [
     "AttackDashboardResponse",
@@ -710,6 +711,13 @@ class RiskDashboardResponse(BaseModel):
     action_counts: dict[str, int]
     matrix: list[RiskMatrixCell]
     entries: list[RiskDashboardEntry]
+    #: #474. The target each service's findings were measured against, from
+    #: the register's own record (`app/risk/baseline.py`), so the client can
+    #: compare it with the target their CSF or ZT report states. REQUIRED, for
+    #: `entries_without_tier`'s reason: the one construction site supplies it,
+    #: and `targets_recorded` False means "not recorded", never "none".
+    targets: list[RiskTargetUsed]
+    targets_recorded: bool
 
 
 class ValueSummaryResponse(BaseModel):

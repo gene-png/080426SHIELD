@@ -44,6 +44,7 @@ from app.models.risk_register import RiskEntry, RiskRegister
 from app.models.user import User, UserRole
 from app.models.zt_assessment import ZtAnswer, ZtAssessment
 from app.risk import exporters as risk_exporters
+from app.risk.baseline import targets_used
 from app.risk.engine import (
     Impact,
     Likelihood,
@@ -62,6 +63,7 @@ from app.schemas.risk import (
     RiskEntryResponse,
     RiskGateStatus,
     RiskRegisterResponse,
+    RiskTargetUsed,
 )
 from app.security.rate_limit import RateLimiter, get_rate_limiter
 
@@ -1284,6 +1286,11 @@ def generate(
     # the same absence -- an audit row with no verdict here would read as the
     # former and mean the latter.
     entries_write_check = "agreed" if entries_written == entries_total else "MISMATCH"
+    # #474. `origin` says WHEN the target was read: here, live at generate.
+    targets_record = {
+        service: {**resolved, "origin": "live_at_generate"}
+        for service, resolved in target_sources.items()
+    }
     # #844. Which findings got no entry and which got several. Sorted, so the
     # record does not depend on the order batches finished in. A GENERATE-TIME
     # fact (the findings are not stored anywhere else), so it is persisted with
@@ -1341,6 +1348,11 @@ def generate(
             for service, sc in link_scopes.items()
         }
         _prov_with_count["finding_coverage"] = finding_record
+        # #474. The target each service was measured against reached only the
+        # audit row, so the baseline was invisible on every surface a person
+        # reads. Persisted here, a generate-time fact like the rest of this
+        # block, and read back by `app/risk/baseline.py`.
+        _prov_with_count["targets"] = targets_record
         register.provenance = _prov_with_count
         db.add(register)
     else:
@@ -1357,6 +1369,7 @@ def generate(
                 for service, sc in link_scopes.items()
             },
             finding_coverage=finding_record,
+            targets=targets_record,
             reason="provenance is NULL, which no current writer produces",
         )
     if entries_written != entries_total:
@@ -1676,6 +1689,8 @@ def export(
     _scope_rows = _link_scope_fields(reg.provenance)["excluded_unscored_links"]
     # #844, read through the same single reader `_serialize` uses.
     _findings = _finding_fields(reg.provenance)
+    # #474, likewise.
+    _targets, _targets_recorded = targets_used(reg.provenance)
     ctx = risk_exporters.build_context(
         client_legal_name=org,
         version=reg.version,
@@ -1688,6 +1703,11 @@ def export(
                 len(_findings["findings_with_several_entries"]),
             )
             if _findings["findings_recorded"]
+            else None
+        ),
+        targets=(
+            tuple((t.service, t.target, t.source, t.origin) for t in _targets)
+            if _targets_recorded
             else None
         ),
         # #646: `ai_mode` is left at "not recorded", deliberately -- see
@@ -2138,6 +2158,18 @@ def _finding_fields(stored: object) -> dict:
     return dict(_FINDINGS_NOT_RECORDED)
 
 
+def _target_fields(stored: object) -> dict:
+    """#474, through the one reader of the record (`app/risk/baseline.py`)."""
+    rows, recorded = targets_used(stored)
+    return {
+        "targets": [
+            RiskTargetUsed(service=r.service, target=r.target, source=r.source, origin=r.origin)
+            for r in rows
+        ],
+        "targets_recorded": recorded,
+    }
+
+
 def _serialize(
     db: Session,
     register: RiskRegister,
@@ -2303,6 +2335,7 @@ def _serialize(
         # exists for.
         **_link_scope_fields(stored),
         **_finding_fields(stored),
+        **_target_fields(stored),
         id=register.id,
         client_id=register.client_id,
         version=register.version,

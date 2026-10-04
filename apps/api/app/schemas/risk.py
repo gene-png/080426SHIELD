@@ -113,6 +113,19 @@ class RiskEntryRatingEdit(BaseModel):
     impact: Impact | None = None
 
 
+class RiskTargetUsed(BaseModel):
+    """#474. The target one service's findings were measured against.
+
+    `source` is the resolver's word for whether the client's choice was used;
+    `origin` is when the target was read (`live_at_generate` today).
+    """
+
+    service: str
+    target: int
+    source: str
+    origin: str
+
+
 class LinkScopeDisclosure(BaseModel):
     """How much of one assessment was SCORED, and therefore citable (#403).
 
@@ -244,6 +257,12 @@ class RiskRegisterResponse(BaseModel):
     # was recorded (or a record that could not be read), and its empty list and
     # empty map mean NOTHING, not "every finding had one entry"; True with both
     # empty is that observed fact.
+    # #474. The target each service's findings were measured against, read
+    # back from provenance by `app/risk/baseline.py`. `targets_recorded` False
+    # means a register generated before this was recorded: the empty list then
+    # says nothing, never "no target applied".
+    targets: list[RiskTargetUsed] = []
+    targets_recorded: bool = False
     findings_recorded: bool = False
     findings_total: int | None = None
     findings_without_entry: list[str] = []

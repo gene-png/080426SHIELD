@@ -80,6 +80,10 @@ class RiskExportContext:
     #: "every finding has one entry" over a register nobody counted would be a
     #: claim, where silence is only an absence.
     finding_counts: tuple[int, int, int] | None = None
+    #: #474. `(service, target, source, origin)` per service, or None when the
+    #: register did not record them -- which the summary STATES, because a
+    #: deliverable that silently omits its baseline reads as having none.
+    targets: tuple[tuple[str, int, str, str], ...] | None = None
 
 
 def _enum_list(values, enum_cls):
@@ -101,6 +105,7 @@ def build_context(
     entries: Sequence[Any],
     link_scope: Sequence[tuple[str, int, int]] = (),
     finding_counts: tuple[int, int, int] | None = None,
+    targets: Sequence[tuple[str, int, str, str]] | None = None,
 ) -> RiskExportContext:
     return RiskExportContext(
         client_legal_name=org_display_name(client_legal_name),
@@ -108,6 +113,7 @@ def build_context(
         entries=list(entries),
         link_scope=tuple(link_scope),
         finding_counts=finding_counts,
+        targets=tuple(targets) if targets is not None else None,
     )
 
 
@@ -354,8 +360,39 @@ def _summary_lines(ctx: RiskExportContext) -> list[str]:
         "By recommended action — " + ", ".join(f"{k} {v}" for k, v in acts.items() if v),
         *_missing_line(total, total - len(actions), "no recommended action"),
         *_finding_lines(ctx.finding_counts),
+        *_target_lines(ctx.targets),
         *_link_scope_lines(ctx),
     ]
+
+
+#: #474. How each service's target is named, and which word its unit takes.
+_TARGET_UNITS = {"csf": "tier", "zt": "stage"}
+
+
+def _target_lines(targets: tuple[tuple[str, int, str, str], ...] | None) -> list[str]:
+    """#474. Which target each service's findings were measured against.
+
+    Three states: recorded (one line per service), not recorded (one line
+    saying so), and no CSF or ZT input (nothing, because there is no target to
+    name). ATT&CK has no target and never appears here.
+    """
+    if targets is None:
+        return [
+            "The targets these findings were measured against were not recorded for "
+            "this register."
+        ]
+    lines = []
+    for service, target, source, _origin in targets:
+        label = _SERVICE_LABELS.get(service, service)
+        unit = _TARGET_UNITS.get(service, "level")
+        if source == "client":
+            why = "the engagement target when this register was generated"
+        elif source == "default":
+            why = "SHIELD's default: no engagement target was set"
+        else:
+            why = "SHIELD's default: the engagement target could not be used"
+        lines.append(f"{label} findings are measured against target {unit} {target}, {why}.")
+    return lines
 
 
 def _finding_lines(counts: tuple[int, int, int] | None) -> list[str]:

@@ -1,3 +1,4 @@
+import type { RiskTargetUsed } from "@/lib/risk/baseline";
 import type { AiSource } from "@/lib/aiSource/types";
 
 /**
@@ -68,6 +69,9 @@ export interface RiskDashboardData {
    */
   entries_without_axis: number;
   entries_without_action: number;
+  /** #474. Optional so an older response parses; absent reads as not recorded. */
+  targets?: RiskTargetUsed[];
+  targets_recorded?: boolean;
 }
 
 // Display order. Likelihood is shown high→low down the rows so the most severe
