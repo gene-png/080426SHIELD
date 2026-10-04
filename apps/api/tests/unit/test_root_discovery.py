@@ -148,12 +148,12 @@ def test_the_workspace_search_finds_a_packages_directory(tmp_path: Path) -> None
 
 
 # ---------------------------------------------------------------------------
-# THE THIRD ROOT SEARCH.
+# `extract_csf_questionnaires._find_workspace`.
 #
-# This file opened by saying "the two root searches that replaced `parents[N]`".
-# There are THREE. `extract_csf_questionnaires._find_workspace` took no `start`
+# This file once opened by counting the root searches that replaced
+# `parents[N]`, and the count was short by one: this one. It took no `start`
 # parameter, so neither of its directions could be exercised at all -- and the
-# one thing it does differently from its two siblings, the choice of MARKER, was
+# one thing it does differently from its siblings, the choice of MARKER, was
 # the part pinned least.
 #
 # That choice is the subtle half of #314's fix. `_common` searches for

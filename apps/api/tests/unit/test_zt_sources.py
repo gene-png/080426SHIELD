@@ -151,3 +151,52 @@ def test_every_row_carries_cisa_text_and_nothing_invisible() -> None:
 def test_the_function_rows_are_cisas_names_and_annotations() -> None:
     rows = [r for r in _extraction()["rows"] if r["kind"] == "function"]
     assert [(r["pillar"], r["name"], r["annotation"]) for r in rows] == list(_FUNCTIONS)
+
+
+# --- the script's exit codes: could-not-read (2) is not DIFFERS (1) -----------
+
+
+def _script_world(monkeypatch, tmp_path: Path, extract):
+    """A checkout holding a stand-in PDF the hash check accepts, with
+    `extract_cisa` replaced: the exit code alone is under test, and the api
+    image has no pdfplumber."""
+    import scripts.extract_zt_sources as ez
+
+    cisa = tmp_path / "reference-docs" / "cisa"
+    cisa.mkdir(parents=True)
+    (cisa / ez.CISA_PDF_NAME).write_bytes(b"%PDF-stand-in")
+    (cisa / ez.CISA_JSON_NAME).write_text('{"committed": true}\n', encoding="utf-8")
+    monkeypatch.setattr(ez, "find_checkout", lambda start: tmp_path)
+    monkeypatch.setattr(ez, "_sha256", lambda path: ez.CISA_SOURCE["sha256"])
+    monkeypatch.setattr(ez, "extract_cisa", extract)
+    return ez
+
+
+def test_a_pdf_the_script_cannot_read_exits_2_not_1(monkeypatch, tmp_path: Path, capsys) -> None:
+    def unreadable(path):
+        from scripts.extract_zt_sources import SourceUnreadable
+
+        raise SourceUnreadable("'Table 2: Identity Pillar' not found")
+
+    ez = _script_world(monkeypatch, tmp_path, unreadable)
+    assert ez.main(["cisa"]) == 2
+    err = capsys.readouterr().err
+    assert "COULD NOT READ the PDF" in err and "Table 2: Identity Pillar" in err
+    assert "DIFFERS" not in err
+
+
+def test_any_reader_failure_exits_2(monkeypatch, tmp_path: Path, capsys) -> None:
+    def crashes(path):
+        raise StopIteration
+
+    ez = _script_world(monkeypatch, tmp_path, crashes)
+    assert ez.main(["cisa"]) == 2
+    assert "COULD NOT READ the PDF: StopIteration" in capsys.readouterr().err
+
+
+def test_a_real_difference_still_exits_1(monkeypatch, tmp_path: Path, capsys) -> None:
+    ez = _script_world(monkeypatch, tmp_path, lambda path: {"rows": []})
+    assert ez.main(["cisa"]) == 1
+    err = capsys.readouterr().err
+    assert "DIFFERS from the committed extraction" in err
+    assert "COULD NOT READ" not in err

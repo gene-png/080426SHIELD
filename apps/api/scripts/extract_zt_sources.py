@@ -40,6 +40,14 @@ import re
 import sys
 from pathlib import Path
 
+
+class SourceUnreadable(Exception):
+    """The PDF could not be read as expected: a page or heading this script
+    relies on was not found. `main` reports it as exit 2, never as the exit 1
+    of a real difference, so a wrong pdfplumber version cannot read as "your
+    extraction is wrong"."""
+
+
 CISA_PDF_NAME = "zero_trust_maturity_model_v2_508.pdf"
 CISA_JSON_NAME = "cisa_ztmm_v2_rows.json"
 
@@ -190,13 +198,19 @@ def _table_pages(pdf) -> dict[int, str]:
             if title in (p.extract_text() or "") and p.page_number > 12
         ]
         if not hits:
-            raise SystemExit(f"{title!r} not found")
+            raise SourceUnreadable(f"{title!r} not found")
         starts.append((hits[0], name))
     end = next(
-        p.page_number
-        for p in pdf.pages
-        if "Table 7: Cross-Cutting Capabilities" in (p.extract_text() or "") and p.page_number > 12
+        (
+            p.page_number
+            for p in pdf.pages
+            if "Table 7: Cross-Cutting Capabilities" in (p.extract_text() or "")
+            and p.page_number > 12
+        ),
+        None,
     )
+    if end is None:
+        raise SourceUnreadable("'Table 7: Cross-Cutting Capabilities' not found")
     pages: dict[int, str] = {}
     for i, (start, name) in enumerate(starts):
         stop = starts[i + 1][0] if i + 1 < len(starts) else end
@@ -211,7 +225,7 @@ def _definitions(pdf) -> dict[str, str]:
     for pillar, start in _DEFINITION_STARTS.items():
         i = text.find(start)
         if i < 0:
-            raise SystemExit(f"definition of {pillar!r} not found")
+            raise SourceUnreadable(f"definition of {pillar!r} not found")
         m = re.search(r"\.(?= [A-Z])", text[i:])
         out[pillar] = text[i : i + m.end()]
     return out
@@ -268,7 +282,14 @@ def main(argv: list[str] | None = None) -> int:
     if got != CISA_SOURCE["sha256"]:
         print(f"NOT THE PINNED PDF: sha256 {got}", file=sys.stderr)
         return 2
-    data = extract_cisa(cisa_pdf)
+    try:
+        data = extract_cisa(cisa_pdf)
+    except Exception as exc:  # noqa: BLE001 - reported, never swallowed: exit 2
+        # Could-not-look is exit 2, distinct from DIFFERS (exit 1): a reader
+        # that fails (a moved heading, another pdfplumber, a damaged file) says
+        # nothing about whether the committed extraction is right.
+        print(f"COULD NOT READ the PDF: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 2
     text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
     if args.write:
         cisa_json.write_text(text, encoding="utf-8", newline="\n")
