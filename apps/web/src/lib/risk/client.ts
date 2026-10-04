@@ -107,6 +107,17 @@ export async function exportRiskRegister(cid: string): Promise<RiskRegister> {
 }
 
 /**
+ * #737. Publish the current register to the client. Export no longer does:
+ * this is the one action that puts a register on the client's dashboard.
+ */
+export async function publishRiskRegister(cid: string): Promise<RiskRegister> {
+  return jsonRequest<RiskRegister>(
+    `/api/proxy/risk/clients/${cid}/register/publish`,
+    { method: "POST" },
+  );
+}
+
+/**
  * #844. Set or clear one entry's likelihood and/or impact. A key left out of
  * `change` is unchanged; a key sent as `null` clears that half. Returns the
  * whole register, so every counter and banner re-derives from stored state.

@@ -22,6 +22,7 @@ import {
   fetchRiskRegisterLatest,
   generateRiskRegister,
   getActiveClientId,
+  publishRiskRegister,
   getClientName,
 } from "@/lib/risk/client";
 import {
@@ -312,9 +313,9 @@ export function RiskRegisterDashboard(): JSX.Element {
   // synchronized one merely is not, right now, for reasons that have to keep
   // holding -- and one of those reasons had already stopped holding.
   const [loading, setLoading] = React.useState(true);
-  const [busy, setBusy] = React.useState<"generate" | "export" | "rate" | null>(
-    null,
-  );
+  const [busy, setBusy] = React.useState<
+    "generate" | "export" | "publish" | "rate" | null
+  >(null);
   const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
@@ -384,6 +385,19 @@ export function RiskRegisterDashboard(): JSX.Element {
       // is added. That is the precondition-comment shape CLAUDE.md records,
       // and it has now caught this file twice.
       setRegister(await exportRiskRegister(cid));
+    } catch (err) {
+      setError(describeRiskError(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onPublish(): Promise<void> {
+    if (!cid) return;
+    setBusy("publish");
+    setError(null);
+    try {
+      setRegister(await publishRiskRegister(cid));
     } catch (err) {
       setError(describeRiskError(err));
     } finally {
@@ -585,6 +599,11 @@ export function RiskRegisterDashboard(): JSX.Element {
             {register
               ? ` · version ${register.version}`
               : " · not yet generated"}
+            {register
+              ? register.finalized_at
+                ? " · published to the client"
+                : " · not published to the client"
+              : null}
           </p>
           {/* The IA appendix asks whether the register is global, per-client or
               per-service. It is per-client, synthesized across that client's
@@ -642,6 +661,20 @@ export function RiskRegisterDashboard(): JSX.Element {
               className="rounded-md border border-border px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-sunken disabled:opacity-50"
             >
               {busy === "export" ? "Exporting…" : "Export XLSX / PDF / Word"}
+            </button>
+          ) : null}
+          {/* #737. Export is the consultant's copy; Publish is what puts the
+              register on the client's dashboard. Not offered while an entry is
+              unrated (#844 D1) -- the api refuses it too, and the banner below
+              says why -- nor once this version is published. */}
+          {register && register.finalized_at === null ? (
+            <button
+              type="button"
+              onClick={() => void onPublish()}
+              disabled={busy !== null || register.entries_without_tier > 0}
+              className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:opacity-50"
+            >
+              {busy === "publish" ? "Publishing…" : "Publish to client"}
             </button>
           ) : null}
         </div>
@@ -1044,7 +1077,7 @@ export function RiskRegisterDashboard(): JSX.Element {
                 Tier is always code-derived from likelihood × impact. Governance
                 columns (owner, approval, review) print blank for the client.
                 {register.finalized_at
-                  ? " This version has been exported, so its ratings are fixed. Generate a new version to rate entries again."
+                  ? " This version is published to the client, so its ratings are fixed. Generate a new version to rate entries again."
                   : null}
               </CardDescription>
             </CardHeader>

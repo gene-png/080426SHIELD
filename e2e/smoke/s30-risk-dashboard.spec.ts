@@ -4,9 +4,10 @@ import { CLIENT_EMAIL, CLIENT_PASSWORD, signIn } from "../helpers/auth";
 import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
 
 /**
- * D-035: once the admin generates and finalizes (exports) the Risk Register, the
- * client can open its dashboard (5x5 matrix + tier mix + full register). The
- * register is client-level, reached via a link on /results.
+ * D-035: once the admin generates and PUBLISHES the Risk Register, the client
+ * can open its dashboard (5x5 matrix + tier mix + full register). The register
+ * is client-level, reached via a link on /results. Since #737 exporting no
+ * longer publishes; `publish` is the one action that does.
  */
 
 test("client views the finalized Risk Register dashboard", async ({
@@ -67,17 +68,17 @@ test("client views the finalized Risk Register dashboard", async ({
     },
   );
   expect(gen.ok(), "generate register").toBeTruthy();
-  const exp = await request.post(
-    `${API_BASE}/risk/clients/${cid}/register/export`,
+  const pub = await request.post(
+    `${API_BASE}/risk/clients/${cid}/register/publish`,
     {
       headers: H,
     },
   );
-  expect(exp.ok(), "export (finalize) register").toBeTruthy();
+  expect(pub.ok(), `publish register: ${await pub.text()}`).toBeTruthy();
 
   await signIn(page, CLIENT_EMAIL, CLIENT_PASSWORD);
 
-  // The Risk Register link surfaces on /results once finalized.
+  // The Risk Register link surfaces on /results once published.
   await page.goto("/results");
   await expect(page.getByText("View Risk Register dashboard →")).toBeVisible();
   await page.getByText("View Risk Register dashboard →").click();

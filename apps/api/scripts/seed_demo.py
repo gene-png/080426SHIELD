@@ -1325,8 +1325,10 @@ def _seed_risk_register(
     db.add_all(entries)
     db.flush()
 
-    # Export the register to XLSX/PDF/Word so the admin demo shows downloadable
-    # artifacts, mirroring the /register/export route (which sets finalized_at).
+    # Render the register to XLSX/PDF/Word and PUBLISH it, so the admin demo
+    # shows downloadable artifacts and the client demo shows the dashboard --
+    # what the /register/publish route does (#737). `finalized_at` means
+    # published: export no longer sets it, and publish is its one API writer.
     #
     # #403: `link_scope` is deliberately NOT passed, and the omission is stated
     # here rather than left for whoever next greps `build_context`. These

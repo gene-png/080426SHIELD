@@ -226,7 +226,7 @@ describe("RiskRegisterDashboard consultant rating (#844)", () => {
     expect(screen.getByTestId("risk-tier-not-rated")).toBeInTheDocument();
   });
 
-  it("offers no rating control once the register is exported", async () => {
+  it("offers no rating control once the register is published", async () => {
     fetchRiskRegisterLatest.mockResolvedValue(
       register({ finalized_at: "2026-10-04T02:00:00Z" }),
     );
@@ -234,7 +234,7 @@ describe("RiskRegisterDashboard consultant rating (#844)", () => {
     expect(screen.queryByRole("combobox")).toBeNull();
     expect(
       screen.getByText(
-        /This version has been exported, so its ratings are fixed/,
+        /This version is published to the client, so its ratings are fixed/,
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("Not rated × Not rated")).toBeInTheDocument();

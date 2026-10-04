@@ -6501,3 +6501,17 @@ The shared dev database, read-only: DRAFT 2, RELEASED 2, APPROVED 0, at migratio
 **Freshness.** A deliverable holds the disposition as of its finalize, because it is rendered then. The dashboard and the admin panel read the CURRENT plan and say so beside the labels ("Retirement labels reflect the current consolidation plan."). Freezing the labels for the dashboard is a follow-up, filed by the coordinator.
 
 **Overturnable:** whether `consolidate` should count, and whether a free-text tool should read "unknown" rather than unmarked.
+
+## D-106 — Exporting a Risk Register no longer publishes it; publishing does
+
+**2026-10-04 · risk** (#737, DELIVERY_PLAN item 8; in the MVP by Gene's decision on #736. Reverses the export-is-release behaviour D-035's Risk half was built on.)
+
+**Decision.** `POST .../register/export` renders and stores the XLSX, PDF and Word files and does NOT set `finalized_at`. A new `POST .../register/publish` is the one API writer of `finalized_at`, which is what `clients.py::risk_dashboard` gates the client's dashboard on. Before this, exporting a register to review it internally put it in front of the client.
+
+**Publish re-renders the files at the moment of publication**, so the published files cannot predate the published data: a consultant may export, change a rating (#844), and publish, and the client's copy carries the change.
+
+**Publish refuses**, typed: an already-published version (generate a new one); the input guards export already had (moved into one shared helper, `_require_certifiable_inputs`, so the two cannot drift); and any entry with no tier (#844 D1, pending the advisor: "gate the release, not the click").
+
+**What did not change.** `finalized_at` keeps one meaning, "published", for every reader, so `seed_demo.py` (which writes it directly) and the client dashboard need no change, and no migration is needed. A Risk export artifact was never reachable by a client user through `/artifacts` (it is not a `Deliverable`), so a draft export reaches a client only if a consultant sends it.
+
+**Overturnable:** whether publish must refuse unrated entries (D1), and whether a draft export should carry a "not published" marker.

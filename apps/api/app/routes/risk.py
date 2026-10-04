@@ -6,6 +6,8 @@ the client id is named in the path (like /admin/services/{id}); no X-Client-Id.
   GET  /risk/clients/{cid}/gate
   POST /risk/clients/{cid}/register/generate
   GET  /risk/clients/{cid}/register/latest
+  POST /risk/clients/{cid}/register/export   (renders files; does not publish)
+  POST /risk/clients/{cid}/register/publish  (#737: the client-facing release)
   PATCH /risk/clients/{cid}/register/entries/{entry_id}   (#844: consultant rating)
 """
 
@@ -1644,59 +1646,33 @@ def _write_artifact(
     return art
 
 
-@router.post(
-    "/clients/{cid}/register/export",
-    response_model=RiskRegisterResponse,
-    summary="Render + store the current Risk Register as XLSX/PDF/Word (admin)",
-)
-def export(
-    cid: uuid.UUID,
-    admin: Annotated[User, _admin_required],
-    db: Annotated[Session, Depends(get_db)],
-    storage: Annotated[StorageBackend, Depends(_storage_dep)],
-) -> RiskRegisterResponse:
-    client = _require_client(db, cid)
-    # #237 GUARDS GENERATE, NOT EXPORT, AND THE BLAST RADIUS IS STATED RATHER
-    # THAN ASSUMED. `CLAUDE.md` requires checking it, and the 0044 precedent
-    # worked because the radius was countable ("zero RELEASED assessments").
-    #
-    # Here it is NOT countable, and that is the finding rather than an excuse.
-    # Every register created before this change was synthesized under the old
-    # `_latest`, which read DRAFT assessments. Those rows stay exportable, and
-    # `export` sets `finalized_at` -- the single condition
-    # `clients.py::risk_dashboard` gates the CLIENT dashboard on -- so exporting
-    # one publishes it.
-    #
-    # `models/risk_register.py` records no provenance: no source assessment ids,
-    # no excluded inputs. So NO SINGLE COLUMN answers "was this draft-sourced".
-    #
-    # That is not the same as unanswerable, and an earlier draft of this note
-    # said "INDISTINGUISHABLE ... in any database", which ended the check
-    # `CLAUDE.md` requires instead of performing it. A reconstruction bounds it:
-    # join each register's `created_at` against the assessment `_latest` would
-    # have picked (highest non-discarded version) and ask whether that row's
-    # `approved_at` was null or later. Measured on the dev database 2026-09-09:
-    # **6 of 6 registers were built from an ATT&CK assessment unapproved at
-    # build time, 6 of 6 from an unapproved ZT one, and 5 of the 6 are
-    # finalized** -- so on this database the radius is every register, and
-    # finalizing published five of them.
-    #
-    # The reconstruction is APPROXIMATE and its error direction is stated: it
-    # reads today's discard state and today's version ordering, so a row
-    # discarded or re-versioned since would change which assessment `_latest`
-    # picked. It bounds the radius; it does not settle any individual row.
-    # Persisting provenance at generate is what makes the question answerable
-    # exactly, and that is #240.
-    #
-    # #240, and the reason it is checked HERE against a SNAPSHOT rather than
-    # recomputed: guarding export on TODAY's statuses would re-read statuses
-    # that have moved since the register was built, so an assessment approved
-    # after generation would certify a register that never saw it. D-053.
+#: The refusal when a generate committed while export or publish waited for
+#: the register lock. Export's is approved (#736, advisor 5986057990 item 12);
+#: publish's is a draft for the advisor (#737).
+_SUPERSEDED_WHILE_STARTING = {
+    "exporting": (
+        "A newer version of the Risk Register was generated while this export was "
+        "starting. Reload the page and export the current version."
+    ),
+    "publishing": (
+        "A newer version of the Risk Register was generated while this publish was "
+        "starting. Reload the page and publish the current version."
+    ),
+}
+
+
+def _lock_current_register(db: Session, cid: uuid.UUID, *, action: str) -> RiskRegister:
+    """The current register, row-locked FOR UPDATE, re-checked under the lock.
+
+    Shared by `export` and `publish` (#737): both read the entries and render
+    for seconds, and the rating edit serialises against them on this lock
+    (#854 review rounds 2 and 3). Moved here unchanged from `export`.
+    """
     reg = _latest_register(db, cid)
     if reg is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Generate a Risk Register before exporting.",
+            detail=f"Generate a Risk Register before {action}.",
         )
     # #854 review round 2: LOCK THE REGISTER ROW before reading its entries.
     # Export reads the entries, renders for seconds, then sets `finalized_at`;
@@ -1724,13 +1700,19 @@ def export(
             status_code=status.HTTP_409_CONFLICT,
             detail={
                 "reason": "risk_register_superseded",
-                "message": (
-                    "A newer version of the Risk Register was generated while this "
-                    "export was starting. Reload the page and export the current version."
-                ),
+                "message": _SUPERSEDED_WHILE_STARTING[action],
             },
         )
+    return reg
 
+
+def _require_certifiable_inputs(reg: RiskRegister) -> None:
+    """The #240 input guards, shared by `export` and `publish` (#737).
+
+    Moved here unchanged from `export`, so the two routes cannot come to
+    disagree about which registers may leave the building: the export is the
+    file a consultant may send, and publication is the client's dashboard.
+    """
     # #240. Refuse to publish a register built from work nobody approved.
     #
     # Read from the SNAPSHOT written at generate, never recomputed. The three
@@ -1839,6 +1821,23 @@ def export(
                     "inputs are approved."
                 ),
             )
+
+
+def _render_and_store(
+    db: Session,
+    *,
+    reg: RiskRegister,
+    client: Client,
+    cid: uuid.UUID,
+    admin: User,
+    storage: StorageBackend,
+) -> None:
+    """Render the three files from the register's STORED state and point the
+    register at them. Shared by `export` and `publish` (#737), so the files a
+    client is published are rendered at the moment of publication: a rating a
+    consultant edits after an export can never reach the client in a file that
+    predates it.
+    """
     entries = (
         db.execute(
             select(RiskEntry).where(RiskEntry.register_id == reg.id).order_by(RiskEntry.created_at)
@@ -1916,16 +1915,147 @@ def export(
     reg.xlsx_artifact_id = xlsx.id
     reg.pdf_artifact_id = pdf.id
     reg.docx_artifact_id = docx.id
-    reg.finalized_at = utcnow()
+
+
+@router.post(
+    "/clients/{cid}/register/export",
+    response_model=RiskRegisterResponse,
+    summary="Render + store the current Risk Register as XLSX/PDF/Word (admin)",
+)
+def export(
+    cid: uuid.UUID,
+    admin: Annotated[User, _admin_required],
+    db: Annotated[Session, Depends(get_db)],
+    storage: Annotated[StorageBackend, Depends(_storage_dep)],
+) -> RiskRegisterResponse:
+    client = _require_client(db, cid)
+    # #237 GUARDS GENERATE, NOT EXPORT, AND THE BLAST RADIUS IS STATED RATHER
+    # THAN ASSUMED. `CLAUDE.md` requires checking it, and the 0044 precedent
+    # worked because the radius was countable ("zero RELEASED assessments").
+    #
+    # Here it is NOT countable, and that is the finding rather than an excuse.
+    # Every register created before this change was synthesized under the old
+    # `_latest`, which read DRAFT assessments. Those rows stay exportable, and
+    # UNTIL #737 `export` set `finalized_at` -- the single condition
+    # `clients.py::risk_dashboard` gates the CLIENT dashboard on -- so exporting
+    # one published it. Since #737 only `publish` sets it, and runs the same
+    # input guards (`_require_certifiable_inputs`) before it does.
+    #
+    # `models/risk_register.py` records no provenance: no source assessment ids,
+    # no excluded inputs. So NO SINGLE COLUMN answers "was this draft-sourced".
+    #
+    # That is not the same as unanswerable, and an earlier draft of this note
+    # said "INDISTINGUISHABLE ... in any database", which ended the check
+    # `CLAUDE.md` requires instead of performing it. A reconstruction bounds it:
+    # join each register's `created_at` against the assessment `_latest` would
+    # have picked (highest non-discarded version) and ask whether that row's
+    # `approved_at` was null or later. Measured on the dev database 2026-09-09:
+    # **6 of 6 registers were built from an ATT&CK assessment unapproved at
+    # build time, 6 of 6 from an unapproved ZT one, and 5 of the 6 are
+    # finalized** -- so on this database the radius is every register, and
+    # finalizing published five of them.
+    #
+    # The reconstruction is APPROXIMATE and its error direction is stated: it
+    # reads today's discard state and today's version ordering, so a row
+    # discarded or re-versioned since would change which assessment `_latest`
+    # picked. It bounds the radius; it does not settle any individual row.
+    # Persisting provenance at generate is what makes the question answerable
+    # exactly, and that is #240.
+    #
+    # #240, and the reason it is checked HERE against a SNAPSHOT rather than
+    # recomputed: guarding export on TODAY's statuses would re-read statuses
+    # that have moved since the register was built, so an assessment approved
+    # after generation would certify a register that never saw it. D-053.
+    reg = _lock_current_register(db, cid, action="exporting")
+    _require_certifiable_inputs(reg)
+    # #737. Export renders the files and does NOT publish: `finalized_at` is
+    # what the client dashboard reads, and only `publish` sets it. Before #737
+    # exporting a register to review it internally put it in front of the
+    # client.
+    _render_and_store(db, reg=reg, client=client, cid=cid, admin=admin, storage=storage)
     audit(
         db,
         action="risk_register.exported",
         target_type="risk_register",
         target_id=reg.id,
         actor_user_id=admin.id,
+        details={"version": reg.version, "published": reg.finalized_at is not None},
+    )
+    db.commit()
+    return _serialize(db, reg)
+
+
+@router.post(
+    "/clients/{cid}/register/publish",
+    response_model=RiskRegisterResponse,
+    summary="Publish the current Risk Register to the client (admin)",
+)
+def publish(
+    cid: uuid.UUID,
+    admin: Annotated[User, _admin_required],
+    db: Annotated[Session, Depends(get_db)],
+    storage: Annotated[StorageBackend, Depends(_storage_dep)],
+) -> RiskRegisterResponse:
+    """#737: the one writer of `finalized_at`, which is what
+    `clients.py::risk_dashboard` reads. Re-renders the files at this moment so
+    the published files match the published register, under the same register
+    lock as export.
+
+    Refuses, typed:
+      * nothing generated (404);
+      * a version generated while this waited for the lock (409);
+      * already published (409) -- a published register is fixed; generate a
+        new version to change it;
+      * inputs that cannot be certified (409, the export guards, shared);
+      * any entry without a tier (409, #844 D1): a rating is a judgement the
+        record needs, so it blocks RELEASE rather than the click that drafted
+        it, and the consultant rates it first.
+    """
+    client = _require_client(db, cid)
+    reg = _lock_current_register(db, cid, action="publishing")
+    if reg.finalized_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "risk_register_already_published",
+                "message": (
+                    "This version of the Risk Register is already published. "
+                    "Generate a new version to publish changes."
+                ),
+            },
+        )
+    _require_certifiable_inputs(reg)
+    unrated = db.execute(
+        select(func.count())
+        .select_from(RiskEntry)
+        .where(RiskEntry.register_id == reg.id, RiskEntry.tier.is_(None))
+    ).scalar_one()
+    if unrated:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "risk_register_unrated_entries",
+                "message": (
+                    f"{unrated} {'entry has' if unrated == 1 else 'entries have'} no "
+                    "likelihood or impact. Rate "
+                    f"{'it' if unrated == 1 else 'each'} in the Register table before "
+                    "publishing."
+                ),
+                "unrated": unrated,
+            },
+        )
+    _render_and_store(db, reg=reg, client=client, cid=cid, admin=admin, storage=storage)
+    reg.finalized_at = utcnow()
+    audit(
+        db,
+        action="risk_register.published",
+        target_type="risk_register",
+        target_id=reg.id,
+        actor_user_id=admin.id,
         details={"version": reg.version},
     )
     db.commit()
+    _log.info("risk_register_published", client_id=str(cid), register_id=str(reg.id))
     return _serialize(db, reg)
 
 
@@ -1970,9 +2100,9 @@ def _refuse_if_register_closed(reg: RiskRegister) -> None:
             detail={
                 "reason": "risk_register_published",
                 "message": (
-                    "This Risk Register has been exported, which publishes it to the "
-                    "client, so its ratings can no longer change. Generate a new "
-                    "version to rate entries again."
+                    "This Risk Register has been published to the client, so its "
+                    "ratings can no longer change. Generate a new version to rate "
+                    "entries again."
                 ),
             },
         )
@@ -2002,10 +2132,10 @@ def edit_entry_rating(
     `generate` derives it, and is never read from the body.
 
     Refused on a SUPERSEDED register (a consultant editing a version nobody
-    will export) and on a PUBLISHED one. Until #737 separates them, published
-    means `finalized_at`, which `export` sets and the client dashboard reads, so
-    an edit there would change numbers a client is already reading with nothing
-    re-published.
+    will export) and on a PUBLISHED one: `finalized_at`, which only `publish`
+    sets (#737) and the client dashboard reads, so an edit there would change
+    numbers a client is already reading with nothing re-published. Exporting
+    does not lock ratings.
 
     Returns the whole register rather than the entry, so the screen's counters
     and banners are re-derived from stored state in the same response.
@@ -2067,10 +2197,11 @@ def edit_entry_rating(
     # `superseded_by IS NULL` in the same statement. Exactly one writer wins
     # under Postgres READ COMMITTED and on SQLite, and the unit suite pins it.
     #
-    # WHAT THIS DOES NOT COVER, ON ITS OWN: an export already rendering. The
-    # export sets `finalized_at` only at its end, so this re-check passes
+    # WHAT THIS DOES NOT COVER, ON ITS OWN: a publish already rendering. The
+    # publish sets `finalized_at` only at its end, so this re-check passes
     # during the render; the register lock above (FOR SHARE here, FOR UPDATE
-    # in `export`) is what serialises the two, and only on Postgres.
+    # in `_lock_current_register`, which export and publish both take) is what
+    # serialises them, and only on Postgres.
     register_open = (
         select(RiskRegister.id)
         .where(
