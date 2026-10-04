@@ -28,7 +28,9 @@ const TierMixDonut = dynamic(
 );
 
 function TierChip({ tier }: { tier: string | null }): JSX.Element {
-  if (!tier) return <span style={{ color: C.muted }}>—</span>;
+  // #844: an entry with no tier is UNRATED, and says so. A dash read as a
+  // value nobody filled in; the export prints the same words.
+  if (!tier) return <span style={{ color: C.muted }}>Not rated</span>;
   const col = tierColor(tier);
   return (
     <span
@@ -357,10 +359,10 @@ export function RiskDashboard({
                   </td>
                   <td style={cell(true)}>{e.axis ? titleCase(e.axis) : "—"}</td>
                   <td style={cell(true)}>
-                    {e.likelihood ? titleCase(e.likelihood) : "—"}
+                    {e.likelihood ? titleCase(e.likelihood) : "Not rated"}
                   </td>
                   <td style={cell(true)}>
-                    {e.impact ? titleCase(e.impact) : "—"}
+                    {e.impact ? titleCase(e.impact) : "Not rated"}
                   </td>
                   <td style={cell()}>
                     <TierChip tier={e.tier} />

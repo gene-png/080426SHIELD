@@ -75,6 +75,11 @@ class RiskExportContext:
     #: generated (the population defect #646's review rejected). It becomes a
     #: real answer when Risk runs through the run framework (#504).
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE_REGISTER
+    #: #844. `(findings, without_entry, with_several)` from the register's
+    #: provenance, or None when nothing was recorded. None prints nothing --
+    #: "every finding has one entry" over a register nobody counted would be a
+    #: claim, where silence is only an absence.
+    finding_counts: tuple[int, int, int] | None = None
 
 
 def _enum_list(values, enum_cls):
@@ -95,19 +100,47 @@ def build_context(
     version: int,
     entries: Sequence[Any],
     link_scope: Sequence[tuple[str, int, int]] = (),
+    finding_counts: tuple[int, int, int] | None = None,
 ) -> RiskExportContext:
     return RiskExportContext(
         client_legal_name=org_display_name(client_legal_name),
         version=version,
         entries=list(entries),
         link_scope=tuple(link_scope),
+        finding_counts=finding_counts,
     )
 
 
+#: #844. What an unrated half prints as, in every cell of every format. A blank
+#: cell reads as a value nobody filled in; this says no rating exists.
+NOT_RATED = "Not rated"
+
+
+def _rating(value: str | None) -> str:
+    return value.replace("_", " ").title() if value else NOT_RATED
+
+
 def _li(e: Any) -> str:
-    lk = (e.likelihood or "").replace("_", " ").title()
-    im = (e.impact or "").replace("_", " ").title()
-    return f"{lk} x {im}".strip(" x")
+    return f"{_rating(e.likelihood)} x {_rating(e.impact)}"
+
+
+def _rating_edited(e: Any) -> bool:
+    # `getattr`, because the renderers take duck-typed rows (`entries: list[Any]`)
+    # and a row built before 0061's field existed carries no attribute. Absent
+    # reads as "not edited", which is what every such row is: the edit path is
+    # the field's only writer.
+    return getattr(e, "rating_edited_at", None) is not None
+
+
+def _origin(e: Any) -> str:
+    """#844. `origin` describes who drafted the ENTRY; once a consultant has set
+    the rating, printing `ai_generated` alone credits the model with a rating it
+    never gave."""
+    return f"{e.origin}; rating set by consultant" if _rating_edited(e) else e.origin
+
+
+def _entries_noun(n: int) -> str:
+    return "entry" if n == 1 else "entries"
 
 
 def _joined(v) -> str:
@@ -171,14 +204,14 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
                 _source(e),
                 _joined(e.linked_techniques),
                 _joined(e.linked_controls),
-                (e.likelihood or "").replace("_", " ").title(),
-                (e.impact or "").replace("_", " ").title(),
-                (e.tier or "").title(),
+                _rating(e.likelihood),
+                _rating(e.impact),
+                _rating(e.tier),
                 e.compensating_controls or "",
                 e.residual_risk or "",
                 (e.recommended_action or "").title(),
                 e.rationale or "",
-                e.origin,
+                _origin(e),
                 e.trust or "",
                 # Blank governance columns for the client.
                 *["" for _ in _GOVERNANCE_COLUMNS],
@@ -290,6 +323,7 @@ def _summary_lines(ctx: RiskExportContext) -> list[str]:
     ac = axis_counts(axes)
     acts = action_counts(actions)
     crit_high = tc["critical"] + tc["high"]
+    total = len(ctx.entries)
     return [
         # #330 TWIN, DELIBERATELY NOT FOLLOWED HERE -- and the reason is the ranking,
         # not the effort.
@@ -307,12 +341,72 @@ def _summary_lines(ctx: RiskExportContext) -> list[str]:
         # which inverts this repo's stated priority -- a false assurance delivered to a
         # client is the unrecoverable one. Tracked in #355; an unstated exemption reads
         # as an oversight to whoever runs the twin sweep next.
-        f"Total entries: {len(ctx.entries)}",
+        f"Total entries: {total}",
         f"Critical + High: {crit_high}",
+        # #844. The count `Critical + High` cannot see. Untiered is counted as
+        # `total - len(tiers)`, the SAME filter the tier counts above use, so
+        # the two cannot disagree about which rows were left out.
+        *_unrated_lines(total, total - len(tiers)),
+        *_consultant_rated_lines(ctx),
         f"By axis — detection {ac['detection']}, prevention "
         f"{ac['prevention']}, response {ac['response']}",
+        *_missing_line(total, total - len(axes), "no axis"),
         "By recommended action — " + ", ".join(f"{k} {v}" for k, v in acts.items() if v),
+        *_missing_line(total, total - len(actions), "no recommended action"),
+        *_finding_lines(ctx.finding_counts),
         *_link_scope_lines(ctx),
+    ]
+
+
+def _finding_lines(counts: tuple[int, int, int] | None) -> list[str]:
+    """#844. Printed only when a finding has no entry or several: the register
+    is drafted one entry per finding, so the normal case needs no sentence."""
+    if counts is None:
+        return []
+    total, without, several = counts
+    if without == 0 and several == 0:
+        return []
+    return [
+        f"{total} {'finding' if total == 1 else 'findings'} went into this register; "
+        f"{without} {'has' if without == 1 else 'have'} no entry and "
+        f"{several} {'has' if several == 1 else 'have'} more than one."
+    ]
+
+
+def _unrated_lines(total: int, unrated: int) -> list[str]:
+    """#844, three values: some unrated (stated with its population), none
+    unrated (stated, so it is not the same as nobody counting), and an empty
+    register (nothing to say either way)."""
+    if total == 0:
+        return []
+    if unrated == 0:
+        return ["Every entry is rated."]
+    one = unrated == 1
+    return [
+        f"Not rated: {unrated} of {total} entries "
+        f"{'has' if one else 'have'} no likelihood or impact, so "
+        f"{'it has' if one else 'they have'} no tier and "
+        f"{'is' if one else 'are'} not in the matrix or in Critical + High."
+    ]
+
+
+def _consultant_rated_lines(ctx: RiskExportContext) -> list[str]:
+    edited = sum(1 for e in ctx.entries if _rating_edited(e))
+    if edited == 0:
+        return []
+    return [f"Ratings set by a consultant: {edited} of {len(ctx.entries)} entries."]
+
+
+def _missing_line(total: int, missing: int, phrase: str) -> list[str]:
+    """#313's twin in the deliverable. The axis and action lines filter
+    independently of the tier, so each states its own gap; the client
+    dashboard has said this since #313 and the exports did not."""
+    if missing == 0:
+        return []
+    one = missing == 1
+    return [
+        f"{missing} of {total} entries {'has' if one else 'have'} {phrase} and "
+        f"{'is' if one else 'are'} not in the line above."
     ]
 
 
@@ -398,6 +492,17 @@ def render_pdf(ctx: RiskExportContext) -> bytes:
             row.append(str(cell.count))
         grid.append(row)
     story.append(_grid(grid, [1.1 * inch] + [0.9 * inch] * 5))
+    # #844. Counted from the SAME predicate the matrix filters on, so the note
+    # and the grid cannot disagree about which entries are missing from it.
+    left_out = len(ctx.entries) - sum(c.count for c in matrix)
+    if left_out:
+        story.append(
+            Paragraph(
+                f"{left_out} unrated {_entries_noun(left_out)} "
+                f"{'is' if left_out == 1 else 'are'} not in this matrix.",
+                body,
+            )
+        )
 
     story.append(Paragraph("Tier legend (review cadence)", h2))
     story.append(_grid([["Tier", "Suggested cadence"], *_legend_rows()], [1.2 * inch, 5.0 * inch]))
@@ -412,7 +517,7 @@ def render_pdf(ctx: RiskExportContext) -> bytes:
                 e.title,
                 (e.axis or "").title(),
                 _li(e),
-                (e.tier or "").title(),
+                _rating(e.tier),
                 (e.recommended_action or "").title(),
                 _source(e),
             ]
@@ -459,7 +564,7 @@ def render_docx(ctx: RiskExportContext) -> bytes:
             e.title,
             (e.axis or "").title(),
             _li(e),
-            (e.tier or "").title(),
+            _rating(e.tier),
             (e.recommended_action or "").title(),
             _source(e),
         ]

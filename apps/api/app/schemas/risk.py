@@ -7,6 +7,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
+from app.risk.engine import Impact, Likelihood
+
 
 class RiskGateStatus(BaseModel):
     """Whether the Risk Register can be generated for a client.
@@ -86,6 +88,29 @@ class RiskEntryResponse(BaseModel):
     # nothing was dropped. A renderer that treats the two alike reinstates the
     # defect the column was added for.
     dropped_links: dict | None = None
+    # #844. Both None: the rating is the model's as generated. Set: a consultant
+    # set likelihood or impact through the edit path, and the screen and the
+    # exports say so instead of crediting the model.
+    rating_edited_by: uuid.UUID | None = None
+    rating_edited_at: datetime | None = None
+
+
+class RiskEntryRatingEdit(BaseModel):
+    """#844: the consultant's likelihood and impact for one entry.
+
+    A field left OUT is unchanged; a field sent as `null` clears that half back
+    to unrated, and the route reads `model_fields_set` to tell the two apart.
+    The tier is not a field: code derives it (core principle 1), and
+    `extra="forbid"` refuses a body that sends one rather than ignoring it.
+    Exact engine tokens only -- this is a typed control with a select behind
+    it, not model output, so the case/separator leniency `_coerce_enum` gives
+    the model does not apply.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    likelihood: Likelihood | None = None
+    impact: Impact | None = None
 
 
 class LinkScopeDisclosure(BaseModel):
@@ -212,6 +237,17 @@ class RiskRegisterResponse(BaseModel):
     # to whoever greps these two field names next.
     batches_total: int | None = None
     batches_failed: int | None = None
+
+    # #844. Each finding should have exactly one entry (G2 on #806), and these
+    # say which did not, read back from the register's provenance. Three states
+    # through `findings_recorded`: False is a register generated before this
+    # was recorded (or a record that could not be read), and its empty list and
+    # empty map mean NOTHING, not "every finding had one entry"; True with both
+    # empty is that observed fact.
+    findings_recorded: bool = False
+    findings_total: int | None = None
+    findings_without_entry: list[str] = []
+    findings_with_several_entries: dict[str, int] = {}
 
     # #121's outcome counter, reaching the CALLER and not only the audit blob.
     #
