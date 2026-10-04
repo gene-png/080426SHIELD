@@ -9,11 +9,13 @@ unassessed and is never asked about.
 from __future__ import annotations
 
 import json
+import uuid
 
 import pytest
 from sqlalchemy import select
 
 from app.ai.llm import FixtureProvider, LLMResponse
+from app.models.attack_scenario import AttackScenario
 from app.models.capability import CapabilityItem, CapabilityListStatus
 from tests._ai_runs import defer_runs
 from tests.unit.test_ai_runs_attack import app_parts  # noqa: F401  (fixture)
@@ -307,6 +309,48 @@ def test_a_tool_the_client_now_has_stops_the_run_before_anything_is_spent(
     assert _ai_runs(w) == []
 
 
+def _store_added_names(w, sid, names) -> None:
+    """Rewrite a stored what-if's added names as a row stored before #826
+    would hold them: Postgres stored any character but NUL until then."""
+    with w.sessions() as db:
+        s = db.get(AttackScenario, uuid.UUID(sid))
+        change = dict(s.change_list)
+        change["added"] = [{**t, "name": n} for t, n in zip(change["added"], names, strict=True)]
+        s.change_list = change
+        db.commit()
+
+
+def test_a_stored_name_with_a_control_character_is_not_a_collision(
+    app_parts, analysis_job  # noqa: F811
+) -> None:
+    """#831 review, F1. A draft stored before #826 may hold "XDR<LF>Suite". The
+    run's re-check is for collisions with the client's tools, and a line feed
+    is not one: the run starts, rather than reporting a false collision."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    _answering(w, {})
+    sid = _create(w, added=[_tool()]).json()["id"]
+    _store_added_names(w, sid, ["XDR" + chr(10) + "Suite"])
+    r = w.run(sid)
+    assert r.status_code == 202, r.text
+
+
+def test_a_stored_control_character_does_not_hide_a_later_collision(
+    app_parts, analysis_job  # noqa: F811
+) -> None:
+    """#831 review, F1. The re-check skips the character check, not the tools
+    after it: a later added tool the client now has still stops the run."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    _answering(w, {})
+    sid = _create(w, added=[_tool("Old Suite"), _tool()]).json()["id"]
+    _store_added_names(w, sid, ["Old" + chr(10) + "Suite", XDR])
+    _add_tool_after_approval(w, XDR)
+    r = w.run(sid)
+    assert r.status_code == 409, r.text
+    assert _error(r)["reason"] == "scenario_added_tool_collides"
+    assert _error(r)["message"].startswith(f"{XDR}, a tool you added,")
+    assert _ai_runs(w) == []
+
+
 def test_a_tool_the_client_gains_while_the_run_waits_fails_it_typed(
     app_parts, analysis_job  # noqa: F811
 ) -> None:
@@ -375,6 +419,53 @@ def test_each_malformed_tool_is_refused_naming_its_field(
     r = _create(w, added=[tool])
     assert r.status_code == 422, r.text
     assert _error(r) == {"reason": reason, "message": message}
+
+
+@pytest.mark.parametrize(
+    "tool, message",
+    [
+        (
+            # #826: Postgres cannot store a NUL in the change list (jsonb), so
+            # this was an untyped 500 at insert there; SQLite stored it.
+            {"name": "XDR" + chr(0) + "Suite", "security_functions": ["detect"]},
+            "A Name under Tools to add contains a line break or another character "
+            "that cannot be shown. Retype it.",
+        ),
+        (
+            {"name": XDR, "vendor": "Ven" + chr(0x2028) + "dor", "security_functions": ["detect"]},
+            f"Vendor (optional) for {XDR} contains a line break or another character "
+            "that cannot be shown. Retype it.",
+        ),
+        (
+            # #831 review, F2: a lone surrogate, which Postgres jsonb refuses
+            {"name": "XDR" + chr(0xD800) + "Suite", "security_functions": ["detect"]},
+            "A Name under Tools to add contains a line break or another character "
+            "that cannot be shown. Retype it.",
+        ),
+        (
+            {"name": XDR, "category": "Ca" + chr(0x1F) + "t", "security_functions": ["detect"]},
+            f"Category (optional) for {XDR} contains a line break or another character "
+            "that cannot be shown. Retype it.",
+        ),
+    ],
+)
+def test_a_character_that_cannot_be_shown_is_a_typed_422_and_nothing_is_stored(
+    app_parts, tool, message  # noqa: F811
+) -> None:
+    w = _world(app_parts)
+    # Sent as a browser's JSON.stringify sends it: every non-ASCII character as
+    # an escape, so a lone surrogate travels at all (`json=` would encode it
+    # as UTF-8, which has no lone surrogates, and fail in the client).
+    r = w.c.post(
+        f"/attack/services/{w.svc_id}/scenarios",
+        headers={**w.h, "content-type": "application/json"},
+        content=json.dumps({"added": [tool]}),
+    )
+    assert r.status_code == 422, r.text
+    assert _error(r) == {"reason": "scenario_added_tool_unprintable", "message": message}
+    listed = w.c.get(f"/attack/services/{w.svc_id}/scenarios", headers=w.h)
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["scenarios"] == []
 
 
 def test_a_tool_listed_twice_is_refused_naming_the_control(app_parts) -> None:  # noqa: F811
