@@ -67,6 +67,9 @@ from app.schemas.attack_scenario import (
     ScenarioCreateRequest,
     ScenarioDifference,
     ScenarioListResponse,
+    ScenarioNotUnderstood,
+    ScenarioParseRequest,
+    ScenarioParseResponse,
     ScenarioResponse,
     ScenarioRollup,
     ScenarioRunError,
@@ -104,6 +107,30 @@ NOTHING_AFFECTED_MESSAGE = (
 
 def _unknown_tool_message(name: str) -> str:
     return f"{name} is not a tool this assessment cites. Pick it from the list."
+
+
+# Slice C, approved 18:32Z with copy C1-C9.
+CHAT_EMPTY_MESSAGE = "Describe the change first."
+CHAT_TOO_LONG_MESSAGE = f"Keep the description to {scenario.MAX_CHAT} characters or fewer."
+
+
+def _not_understood_message(item: scenario.NotUnderstood, *, cited: Iterable[str]) -> str:
+    """C5 for a clause the matcher will not guess at; B4 (or B4b) where an add
+    phrase named one of the client's tools, as the plan says."""
+    if item.reason == "already_clients" and item.name is not None:
+        return _added_refusal(scenario.AlreadyClients(item.name), cited=cited)[1]
+    return f'Not understood: "{item.text}". Pick the tool from the list instead.'
+
+
+def _client_tools(db: Session, client: Client, cited: Iterable[str]) -> list[str]:
+    """The client's tools an added name may not be: every tool on the
+    client's capability lists, offered or withheld, and every cited one."""
+    membership = _client_capability_membership(db, client.id)
+    return [
+        *(p.capability.name for p in membership.sent),
+        *(w.name for w in membership.withheld),
+        *cited,
+    ]
 
 
 def _added_refusal(exc: Exception, *, cited: Iterable[str]) -> tuple[str, str]:
@@ -399,12 +426,7 @@ def create_scenario(
     # Slice B. "The client's tools" an added name may not be: every tool on
     # the client's capability lists, offered or withheld, and every tool the
     # base cites.
-    membership = _client_capability_membership(db, client.id)
-    client_tools = [
-        *(p.capability.name for p in membership.sent),
-        *(w.name for w in membership.withheld),
-        *cited,
-    ]
+    client_tools = _client_tools(db, client, cited)
     try:
         added = scenario.validate_added(
             (body.added if body else None) or [],
@@ -474,6 +496,66 @@ def create_scenario(
         affected=len(affected),
     )
     return _serialize(db, s)
+
+
+@router.post(
+    "/services/{service_id}/scenarios/parse",
+    response_model=ScenarioParseResponse,
+    summary="Propose a what-if's change list from a description, by code (admin)",
+)
+def parse_scenario_text(
+    service_id: uuid.UUID,
+    _user: Annotated[User, _admin_required],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+    body: ScenarioParseRequest | None = None,
+) -> ScenarioParseResponse:
+    """Slice C: the chat box. A deterministic matcher (`scenario.parse_change`)
+    turns the text into a PROPOSED change list that pre-fills the picker.
+
+    PURE: it writes no row, no audit entry, no run and no `llm_calls` row,
+    and makes no AI call -- Continue and Run stay the only paths to one. The
+    text itself is never logged; only the counts are."""
+    svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.ATTACK_COVERAGE)
+    base = scenario.confirmed_base(db, svc.id)
+    if base is None:
+        raise _refuse(
+            status.HTTP_409_CONFLICT, "scenario_needs_confirmed_assessment", NEEDS_CONFIRMED_MESSAGE
+        )
+    text = body.text if body else None
+    if not isinstance(text, str) or not text.strip():
+        raise _refuse(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "scenario_chat_empty", CHAT_EMPTY_MESSAGE
+        )
+    if len(text) > scenario.MAX_CHAT:
+        raise _refuse(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "scenario_chat_too_long", CHAT_TOO_LONG_MESSAGE
+        )
+    cited = scenario.cited_tools(_base_rows(db, base.id))
+    parsed = scenario.parse_change(
+        text,
+        cited=cited,
+        client_tools=_client_tools(db, client, cited),
+        client_org_name=client.legal_name,
+        redaction_mode=get_settings().shield_redaction_mode,
+    )
+    _log.info(
+        "attack.scenario.chat_parsed",
+        service_id=str(svc.id),
+        removed=len(parsed.removed),
+        added=len(parsed.added),
+        not_understood=len(parsed.not_understood),
+    )
+    return ScenarioParseResponse(
+        removed=parsed.removed,
+        added=parsed.added,
+        not_understood=[
+            ScenarioNotUnderstood(
+                text=n.text, reason=n.reason, message=_not_understood_message(n, cited=cited)
+            )
+            for n in parsed.not_understood
+        ],
+    )
 
 
 @router.get(

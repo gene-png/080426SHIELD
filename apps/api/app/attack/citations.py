@@ -196,9 +196,13 @@ class CitationResolver:
         #: string, so any vendor-shaped resolution is unverifiable while one of
         #: these is on the list — the nullable-vendor bypass, defect 1.
         self._vendorless: set[str] = set()
+        #: Every string the two NAME tiers index, as written: each name and,
+        #: where redaction changes it, the form the model is shown.
+        self._citable: list[str] = []
         for c in candidates:
             self._by_norm.setdefault(_norm(c.name), set()).add(c.name)
             self._by_fold.setdefault(_fold(c.name), set()).add(c.name)
+            self._citable.append(c.name)
             # The form the MODEL is actually shown, indexed as an alias of the
             # same capability. See the docstring: this is the only string an
             # obedient model can cite for a client-named tool.
@@ -206,6 +210,7 @@ class CitationResolver:
             if redacted is not None:
                 self._by_alias_norm.setdefault(_norm(redacted), set()).add(c.name)
                 self._by_alias_fold.setdefault(_fold(redacted), set()).add(c.name)
+                self._citable.append(redacted)
             if c.vendor and c.vendor.strip():
                 self._by_vendor.setdefault(_fold(c.vendor), set()).add(c.name)
                 # The vendor is redacted on the way out too, and for a
@@ -268,6 +273,13 @@ class CitationResolver:
             name_hints=self._name_hints,
         )
         return redacted if counts and redacted != name else None
+
+    def citable_forms(self) -> tuple[str, ...]:
+        """Every string `named_by` can match, as written: each candidate's
+        name and, where redaction changes it, the form the model is shown. For
+        a caller that must find these strings INSIDE longer text (the ATT&CK
+        what-if's chat matcher, #824), so it uses this tier's own forms."""
+        return tuple(self._citable)
 
     def named_by(self, cited: str) -> frozenset[str]:
         """Every candidate the NAME tiers map `cited` to -- the real-name tier

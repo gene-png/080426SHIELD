@@ -19,6 +19,7 @@ are never mutated.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 import uuid
 from collections import Counter
@@ -432,6 +433,308 @@ def _why_refused(
     if own & set(earlier):
         return Duplicate(name)
     return Indistinct(name)
+
+
+# --- slice C: the chat box's deterministic matcher -------------------------------
+
+#: The longest description the chat box takes (copy C8).
+MAX_CHAT = 500
+
+_LEAD = re.compile(r"^\s*what\s+if(?:\s+we)?\s+", re.IGNORECASE)
+#: Clause breaks: a comma, a semicolon, the word "and", or a full stop that
+#: ends a sentence -- never the one inside a name like `Tenable.io`.
+_SPLIT = re.compile(r"\s*(?:[,;]|\.(?=\s|$)|\band\b)\s*", re.IGNORECASE)
+_REMOVE = re.compile(r"^(?:remove|retire|drop|cut)\s+(?P<a>.+)$", re.IGNORECASE)
+_ADD = re.compile(r"^(?:add|introduce)\s+(?P<a>.+)$", re.IGNORECASE)
+#: The verb is read from WHICH alternative matched: IGNORECASE matches a
+#: long s as "s", and `.lower()` keeps it, so a lookup keyed on the typed
+#: text raised (#824 narrow review, F1).
+_SWAP = re.compile(r"^(?:(?P<swap>swap)|(?P<replace>replace))\s+(?P<rest>.+)$", re.IGNORECASE)
+#: Where a swap's two names may divide: "swap X for Y", "replace X with Y".
+_SWAP_JOIN = {
+    "swap": re.compile(r"\s+for\s+", re.IGNORECASE),
+    "replace": re.compile(r"\s+with\s+", re.IGNORECASE),
+}
+_QUOTES = "\"'\u201c\u201d\u2018\u2019"
+
+
+@dataclass(frozen=True)
+class NotUnderstood:
+    """A clause the matcher will not guess at: the clause as typed, why, and
+    (for `already_clients`) the tool it named."""
+
+    text: str
+    reason: str
+    name: str | None = None
+
+
+@dataclass(frozen=True)
+class ParsedChange:
+    """A PROPOSED change list. It pre-fills the picker; nothing is stored or
+    run from it -- Continue and Run stay the only paths."""
+
+    removed: list[str]
+    added: list[str]
+    not_understood: list[NotUnderstood]
+
+
+class _Refused(Exception):
+    def __init__(self, reason: str, name: str | None = None) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.name = name
+
+
+@dataclass(frozen=True)
+class _Clauses:
+    """A description split into clauses, with what the split could not decide."""
+
+    texts: list[str]
+    #: clauses where two cited names claim overlapping words: neither is chosen
+    clashing: frozenset[int]
+    #: `span(i, j)`: clauses i..j-1 exactly as typed, separators and all
+    span: Callable[[int, int], str]
+
+
+def _clauses(text: str, forms: Sequence[str]) -> _Clauses:
+    """The text split into clauses, WITHOUT cutting a cited tool's name: a
+    cited name that itself contains a break ("Identity and Access Manager",
+    "Acme, Inc. EDR") is held whole while the rest is split (#824 review, B1).
+    A name the base does not cite cannot be protected this way; the caller
+    refuses a span that may have been cut instead (see `parse_change`).
+
+    Held words are found as POSITIONS and the breaks inside them skipped, so
+    nothing is substituted into the text and no typed character can collide
+    with a marker (the earlier NUL-sentinel form raised on a typed NUL, #824
+    narrow review). Two cited names claiming overlapping words are NOT
+    resolved by length or order: the clause is reported as `clashing`."""
+    text = _LEAD.sub("", text.strip()).rstrip("?").strip()
+    found: list[tuple[int, int]] = []
+    for name in {f for f in forms if _SPLIT.search(f)}:
+        pattern = re.compile(
+            r"(?<!\w)" + r"\s+".join(re.escape(w) for w in name.split()) + r"(?!\w)",
+            re.IGNORECASE,
+        )
+        found.extend((m.start(), m.end()) for m in pattern.finditer(text))
+    # [start, end, how many matches]: overlapping matches merge into one.
+    regions: list[list[int]] = []
+    for lo, hi in sorted(found):
+        if regions and lo < regions[-1][1]:
+            regions[-1][1] = max(regions[-1][1], hi)
+            regions[-1][2] += 1
+        else:
+            regions.append([lo, hi, 1])
+
+    def held(lo: int, hi: int, *, clash: bool = False) -> bool:
+        return any(a < hi and lo < b and (n > 1 or not clash) for a, b, n in regions)
+
+    pieces: list[tuple[str, int, int]] = []
+    at = 0
+    breaks = [m for m in _SPLIT.finditer(text) if not held(m.start(), m.end())]
+    for brk in [*breaks, None]:
+        stop = brk.start() if brk is not None else len(text)
+        if text[at:stop].strip():
+            pieces.append((text[at:stop].strip(), at, stop))
+        if brk is not None:
+            at = brk.end()
+
+    def span(i: int, j: int) -> str:
+        return text[pieces[i][1] : pieces[j - 1][2]].strip()
+
+    return _Clauses(
+        texts=[p for p, _a, _b in pieces],
+        clashing=frozenset(i for i, (_p, a, b) in enumerate(pieces) if held(a, b, clash=True)),
+        span=span,
+    )
+
+
+def _bare(name: str) -> str:
+    return name.strip().strip(_QUOTES).strip()
+
+
+def _kind(clause: str) -> str:
+    if _REMOVE.match(clause):
+        return "remove"
+    if _SWAP.match(clause):
+        return "swap"
+    if _ADD.match(clause):
+        return "add"
+    return "bare"
+
+
+def parse_change(
+    text: str,
+    *,
+    cited: Sequence[str],
+    client_tools: Sequence[str],
+    client_org_name: str | None,
+    redaction_mode: RedactionMode,
+    name_hints: Iterable[str] = (),
+) -> ParsedChange:
+    """Turn the admin's description into a proposed change list, by code
+    (#802 slice C, approved 18:32Z; the AI parse is NOT part of it).
+
+    The forms, case-insensitive: remove / retire / drop / cut X; add /
+    introduce Y; swap X for Y; replace X with Y.
+
+    **Never a fragment of a name** (#824 review, B1):
+    - a cited name containing a clause break is held whole while splitting;
+    - an add or a swap followed by a clause with no verb may be ONE name cut
+      at a break ("add Endpoint Detection and Response Suite", "add Acme Inc.
+      Scanner"), so the whole span is not understood rather than guessed;
+    - a swap divides where its REMOVAL half names a cited tool; several such
+      divisions are ambiguous, whatever their added halves do.
+
+    A clause with no verb shares the previous verb only after a SUCCESSFUL
+    removal ("retire X and Y"): a failed one shares nothing (B7), and an add
+    never shares, since any words would make a "new tool".
+
+    A clause that parses as a verb (remove, add or swap) AND whose whole text
+    names a cited tool, through `named_by` with its alias tier ("Add Manager"),
+    is not understood, wherever it stands, and nothing is proposed for it. It
+    is read neither as the verb nor as the tool (the advisor's fallback after
+    #824 round 5). Likewise a held cited name with a verb clause after its
+    first break ("Splunk and Add Manager") is not removed (after round 6).
+
+    Each name is checked by the code the create route uses: a removal must hit
+    exactly ONE cited tool in the resolver's name tiers
+    (`CitationResolver.named_by`: case, whitespace, the `[CLIENT]` twin, never
+    an inference); an addition must pass `validate_added`, the cap of
+    `MAX_ADDED` included (B4). So the chat never proposes a name Continue
+    would refuse for its NAME; an added tool's functions are the admin's to
+    choose before Continue. Anything else is not understood, quoted back."""
+    hints = tuple(name_hints)
+    resolver = CitationResolver(
+        [Candidate(name=c) for c in cited],
+        client_org_name=client_org_name,
+        redaction_mode=redaction_mode,
+        name_hints=hints,
+    )
+    removed: list[str] = []
+    added: list[str] = []
+    not_understood: list[NotUnderstood] = []
+
+    def removal(name: str) -> str:
+        hits = resolver.named_by(_bare(name))
+        if not hits:
+            raise _Refused("unknown_tool")
+        if len(hits) > 1:
+            raise _Refused("ambiguous_tool")
+        (tool,) = hits
+        parts = [p for p in _SPLIT.split(_bare(name)) if p.strip()]
+        if len(parts) > 1 and all(len(resolver.named_by(_bare(p))) == 1 for p in parts):
+            # The words name one cited tool AND several: not a guess either way.
+            raise _Refused("ambiguous_tool")
+        if any(_kind(p.strip()) != "bare" for p in parts[1:]):
+            # "Splunk and Add Manager" is one cited tool AND "Splunk" plus an
+            # addition of "Manager": neither reading is chosen (the advisor's
+            # fallback after #824 round 6).
+            raise _Refused("ambiguous_tool")
+        if tool in removed:
+            raise _Refused("duplicate")
+        return tool
+
+    def addition(name: str) -> str:
+        entries = [{"name": n, "security_functions": ["detect"]} for n in added]
+        entries.append({"name": _bare(name), "security_functions": ["detect"]})
+        try:
+            *_, tool = validate_added(
+                entries,
+                client_tools=client_tools,
+                client_org_name=client_org_name,
+                redaction_mode=redaction_mode,
+                name_hints=hints,
+                limit=MAX_ADDED,
+            )
+        except TooMany as exc:
+            raise _Refused("too_many") from exc
+        except AlreadyClients as exc:
+            raise _Refused("already_clients", exc.name) from exc
+        except Indistinct as exc:
+            raise _Refused("indistinct") from exc
+        except Duplicate as exc:
+            raise _Refused("duplicate") from exc
+        except AddedToolRefused as exc:
+            raise _Refused("unrecognised") from exc
+        if _SPLIT.search(_bare(name)):
+            # A break inside a NEW name means it may be one name cut apart or
+            # several; only a cited name held for removal kept it whole, which
+            # is no evidence about an addition (#824 narrow review, F4). After
+            # the check above, so a client's own tool still names itself (B4).
+            raise _Refused("split_name")
+        return tool.name
+
+    def swap(verb: str, rest: str) -> tuple[str, str]:
+        # A division is PLAUSIBLE when its removal half names a cited tool.
+        # Exactly one plausible division is checked on its own terms; several
+        # are ambiguous whatever their added halves do, so a division is never
+        # chosen because another one failed (#824 narrow review).
+        cuts = list(_SWAP_JOIN[verb].finditer(rest))
+        plausible = [m for m in cuts if resolver.named_by(_bare(rest[: m.start()]))]
+        if len(plausible) > 1:
+            raise _Refused("ambiguous_split")
+        if plausible:
+            (m,) = plausible
+        elif len(cuts) == 1:
+            (m,) = cuts
+        else:
+            raise _Refused("unrecognised")
+        return removal(rest[: m.start()]), addition(rest[m.end() :])
+
+    split = _clauses(text, resolver.citable_forms())
+    clauses, span = split.texts, split.span
+    sharing = False
+    i = 0
+    while i < len(clauses):
+        clause = clauses[i]
+        if i in split.clashing:
+            not_understood.append(NotUnderstood(text=clause, reason="ambiguous_tool"))
+            sharing = False
+            i += 1
+            continue
+        kind = _kind(clause)
+        if kind != "bare" and resolver.named_by(_bare(clause)):
+            # "Add Manager" is a cited tool AND an addition of "Manager". Neither
+            # reading is chosen, in ANY position: a rule keyed on what came
+            # before kept finding a position it missed (#824 rounds 4 and 5, the
+            # advisor's fallback).
+            not_understood.append(NotUnderstood(text=clause, reason="ambiguous_tool"))
+            sharing = False
+            i += 1
+            continue
+        # An add or swap with bare clauses after it may be one name cut apart.
+        j = i + 1
+        while kind in ("add", "swap") and j < len(clauses) and _kind(clauses[j]) == "bare":
+            j += 1
+        if j > i + 1:
+            not_understood.append(NotUnderstood(text=span(i, j), reason="split_name"))
+            sharing = False
+            i = j
+            continue
+        try:
+            if kind == "remove":
+                sharing = False
+                removed.append(removal(_REMOVE.match(clause)["a"]))
+                sharing = True
+            elif kind == "swap":
+                sharing = False
+                m = _SWAP.match(clause)
+                gone, new = swap("swap" if m["swap"] is not None else "replace", m["rest"])
+                removed.append(gone)
+                added.append(new)
+            elif kind == "add":
+                sharing = False
+                added.append(addition(_ADD.match(clause)["a"]))
+            elif sharing:
+                sharing = False
+                removed.append(removal(clause))
+                sharing = True
+            else:
+                raise _Refused("unrecognised")
+        except _Refused as why:
+            not_understood.append(NotUnderstood(text=clause, reason=why.reason, name=why.name))
+        i += 1
+    return ParsedChange(removed=removed, added=added, not_understood=not_understood)
 
 
 def require_change(removed: Sequence[str], added: Sequence[AddedTool]) -> None:

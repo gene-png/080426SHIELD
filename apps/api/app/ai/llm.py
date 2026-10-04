@@ -182,12 +182,15 @@ class AnthropicProvider:
         # to the engine's json.loads produces an opaque JSONDecodeError, a 500,
         # and — because the 500 rolls the request transaction back — no
         # llm_calls row at all. Raising here names the real cause instead.
+        # An ABSENT or null stop_reason is refused too (#823): nothing then
+        # says the response finished, the same rule as the OpenAI adapter.
         input_tokens = getattr(getattr(msg, "usage", None), "input_tokens", None)
         output_tokens = getattr(getattr(msg, "usage", None), "output_tokens", None)
         stop_reason = getattr(msg, "stop_reason", None)
-        if stop_reason is not None and stop_reason not in _ANTHROPIC_CLEAN_STOP_REASONS:
+        if stop_reason not in _ANTHROPIC_CLEAN_STOP_REASONS:
+            stated = "no stop_reason" if stop_reason is None else f"stop_reason={stop_reason}"
             raise IncompleteResponseError(
-                f"Anthropic did not finish cleanly (stop_reason={stop_reason}). "
+                f"Anthropic did not finish cleanly ({stated}). "
                 "The response is incomplete and was NOT parsed; if this is "
                 "max_tokens, the draft exceeded the output budget.",
                 input_tokens=input_tokens,
@@ -401,14 +404,16 @@ def _parse_generate_content(data: dict[str, Any]) -> LLMResponse:
     truncated JSON draft would flow downstream and die as an opaque
     ``JSONDecodeError`` in the engine's response parser, hiding the real cause
     (the 2026-07-15 Vertex live sweep hit exactly this on csf/risk). An absent
-    ``finishReason`` (e.g. hand-built test fixtures) is treated as success.
+    ``finishReason`` is refused too (#823): nothing then says the generation
+    finished, the same rule as the Anthropic and OpenAI adapters.
     """
     candidate = data["candidates"][0]
     usage = data.get("usageMetadata") or {}
     finish_reason = candidate.get("finishReason")
-    if finish_reason is not None and finish_reason != "STOP":
+    if finish_reason != "STOP":
+        stated = "no finishReason" if finish_reason is None else f"finishReason={finish_reason}"
         raise IncompleteResponseError(
-            f"generateContent did not finish cleanly (finishReason={finish_reason}). "
+            f"generateContent did not finish cleanly ({stated}). "
             "The response is incomplete and was NOT parsed; if this is MAX_TOKENS, "
             "raise maxOutputTokens for this purpose.",
             input_tokens=usage.get("promptTokenCount"),
@@ -471,8 +476,8 @@ class OpenAIProvider:
         # output cap; returning it as a success marked the llm_calls row
         # COMPLETED and left the engine's json.loads to fail under the wrong
         # cause. An ABSENT finish_reason is refused too (advisor, 2026-10-03, on
-        # #820): nothing then says the response finished. The two twins still
-        # accept an absent stop_reason / finishReason; that is theirs to change.
+        # #820): nothing then says the response finished. The Anthropic and
+        # generateContent guards refuse an absent stop reason the same way (#823).
         usage = data.get("usage") or {}
         finish_reason = choice.get("finish_reason")
         if finish_reason != "stop":

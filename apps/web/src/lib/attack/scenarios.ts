@@ -184,6 +184,30 @@ export function runScenario(
   });
 }
 
+/** Slice C: a clause the matcher would not guess at, with its sentence. */
+export interface NotUnderstood {
+  text: string;
+  reason: string;
+  message: string;
+}
+
+/** Slice C: a PROPOSED change list. Nothing was stored. */
+export interface ParsedChange {
+  removed: string[];
+  added: string[];
+  not_understood: NotUnderstood[];
+}
+
+export function parseChange(
+  serviceId: string,
+  text: string,
+): Promise<ParsedChange> {
+  return request(`/api/proxy/attack/services/${serviceId}/scenarios/parse`, {
+    method: "POST",
+    body: { text },
+  });
+}
+
 export function discardScenario(scenarioId: string): Promise<Scenario> {
   return request(`/api/proxy/attack/scenarios/${scenarioId}/discard`, {
     method: "POST",
