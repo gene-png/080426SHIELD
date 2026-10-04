@@ -14,7 +14,9 @@ PDF, carrying the PDF's title, version, date, URL, size and sha256.
 writes `reference-docs/cisa/cisa_ztmm_v2_rows.json`. Without `--write` it
 re-extracts and COMPARES with the committed file, exiting 1 on any difference:
 that is how a reviewer re-derives the committed extraction from the PDF.
-Exit 2 when the PDF is missing or is not the pinned one (wrong sha256).
+Exit 2 when the PDF is missing, is not the pinned one (wrong sha256), or
+cannot be read, and when the committed extraction cannot be read: each is
+"could not look", never the exit 1 of a real difference.
 
 How a CISA row is read. The tables (Tables 2-6, one per pillar) are drawn as
 cell rectangles. A ROW is the outermost rectangle in the first ("Function")
@@ -278,7 +280,11 @@ def main(argv: list[str] | None = None) -> int:
     if not cisa_pdf.is_file():
         print(f"MISSING: {cisa_pdf}", file=sys.stderr)
         return 2
-    got = _sha256(cisa_pdf)
+    try:
+        got = _sha256(cisa_pdf)
+    except OSError as exc:
+        print(f"COULD NOT READ the PDF: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 2
     if got != CISA_SOURCE["sha256"]:
         print(f"NOT THE PINNED PDF: sha256 {got}", file=sys.stderr)
         return 2
@@ -295,7 +301,17 @@ def main(argv: list[str] | None = None) -> int:
         cisa_json.write_text(text, encoding="utf-8", newline="\n")
         print(f"wrote {cisa_json} ({len(data['rows'])} rows)")
         return 0
-    committed = cisa_json.read_text(encoding="utf-8") if cisa_json.is_file() else ""
+    if not cisa_json.is_file():
+        print(f"NO COMMITTED EXTRACTION at {cisa_json}", file=sys.stderr)
+        return 1
+    try:
+        committed = cisa_json.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        print(
+            f"COULD NOT READ the committed extraction: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return 2
     if committed != text:
         print("DIFFERS from the committed extraction", file=sys.stderr)
         return 1

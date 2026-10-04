@@ -200,3 +200,38 @@ def test_a_real_difference_still_exits_1(monkeypatch, tmp_path: Path, capsys) ->
     err = capsys.readouterr().err
     assert "DIFFERS from the committed extraction" in err
     assert "COULD NOT READ" not in err
+
+
+def test_a_pdf_that_cannot_be_opened_exits_2(monkeypatch, tmp_path: Path, capsys) -> None:
+    ez = _script_world(monkeypatch, tmp_path, lambda path: {"rows": []})
+
+    def locked(path):
+        raise PermissionError("locked")
+
+    monkeypatch.setattr(ez, "_sha256", locked)
+    assert ez.main(["cisa"]) == 2
+    err = capsys.readouterr().err
+    assert "COULD NOT READ the PDF: PermissionError" in err
+    assert "DIFFERS" not in err
+
+
+def test_a_committed_extraction_that_cannot_be_decoded_exits_2(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    ez = _script_world(monkeypatch, tmp_path, lambda path: {"rows": []})
+    (tmp_path / "reference-docs" / "cisa" / ez.CISA_JSON_NAME).write_bytes(b"\xff\xfe\xfa")
+    assert ez.main(["cisa"]) == 2
+    err = capsys.readouterr().err
+    assert "COULD NOT READ the committed extraction: UnicodeDecodeError" in err
+    assert "DIFFERS" not in err
+
+
+def test_a_missing_committed_extraction_says_so_and_exits_1(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    ez = _script_world(monkeypatch, tmp_path, lambda path: {"rows": []})
+    (tmp_path / "reference-docs" / "cisa" / ez.CISA_JSON_NAME).unlink()
+    assert ez.main(["cisa"]) == 1
+    err = capsys.readouterr().err
+    assert "NO COMMITTED EXTRACTION at" in err
+    assert "DIFFERS" not in err
