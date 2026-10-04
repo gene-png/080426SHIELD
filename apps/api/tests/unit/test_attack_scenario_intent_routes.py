@@ -342,8 +342,16 @@ def test_an_attempt_whose_call_row_cannot_be_named_says_so_and_keeps_its_cause(
     unknown = [e.details for e in entries if e.details["call_row"] == "unknown"]
     assert len(entries) == 2 and len(unknown) == 1
     assert (unknown[0]["llm_call_id"], unknown[0]["failure"]) == (None, "RuntimeError")
-    assert "attack.scenario.chat_ai_call_row_unknown" in logged
-    assert '"level": "error"' in logged
+    # THIS event's own line, parsed: the provider failure logs an error too,
+    # so a level found anywhere in the output would prove nothing.
+    events = []
+    for line in logged.splitlines():
+        try:
+            events.append(json.loads(line))
+        except ValueError:
+            continue
+    (event,) = [e for e in events if e.get("event") == "attack.scenario.chat_ai_call_row_unknown"]
+    assert (event["level"], event["failure"]) == ("error", "RuntimeError")
 
 
 def test_two_attempts_each_record_their_own_call(app_parts) -> None:  # noqa: F811
