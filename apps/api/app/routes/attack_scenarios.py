@@ -599,12 +599,14 @@ def parse_scenario_text(
 def _attempt_call_id(db: Session, *, service_id: uuid.UUID, user_id: uuid.UUID) -> str | None:
     """The id of the `llm_calls` row this attempt wrote, or None.
 
-    QUERIED within this transaction (`invoke` adds and flushes the row before
-    the provider is called, and marks it FAILED on an error), by purpose,
-    service, requester and the request's correlation id: one parse makes at
-    most one attempt. Not read from the session's identity map, which holds a
-    clean row only weakly; on a failure it was gone once the exception was
-    (#863 review, round 2)."""
+    QUERIED by purpose, service, requester and the request's correlation id.
+    The query sees this attempt's row (`invoke` adds and flushes it before the
+    provider is called, and marks it FAILED on an error) and also any earlier
+    COMMITTED row under the same id: a parse makes at most one attempt, but a
+    client may send an `X-Request-ID` again. More than one match is therefore
+    possible, and is reported as unknown rather than guessed. Not read from the
+    session's identity map, which holds a clean row only weakly; on a failure it
+    was gone once the exception was (#863 review, round 2)."""
     correlation = correlation_id_var.get()
     if correlation is None:
         return None
@@ -703,15 +705,17 @@ def _ai_reading(
         )
     call_id = _attempt_call_id(db, service_id=service_id, user_id=user.id)
     if call_id is None:
-        # Loud, never a silent null: the attempt's row exists in llm_calls (the
-        # billing evidence) but this entry cannot name it. Not raised: that
-        # would turn a disclosed fallback into a 500 over a bookkeeping gap.
+        # Loud, never a silent null: this entry cannot name the attempt's
+        # llm_calls row. There may be none (a failure before `invoke` wrote it)
+        # or more than one under this correlation id (a reused X-Request-ID).
+        # Recorded in its own key, so `failure` keeps the attempt's own outcome
+        # (#863 review, round 3). Not raised: that would turn a disclosed
+        # fallback into a 500 over a bookkeeping gap.
         _log.error(
             "attack.scenario.chat_ai_call_row_unknown",
             service_id=str(service_id),
             failure=failure,
         )
-        failure = "call_row_unknown"
     # Counts only: the text and the tool names are the client's data.
     audit(
         db,
@@ -723,6 +727,7 @@ def _ai_reading(
             "llm_call_id": call_id,
             "fell_back": reading is None,
             "failure": failure,
+            "call_row": "found" if call_id is not None else "unknown",
             "removed": len(reading.removed) if reading else 0,
             "added": len(reading.added) if reading else 0,
             "not_understood": len(reading.not_understood) if reading else 0,

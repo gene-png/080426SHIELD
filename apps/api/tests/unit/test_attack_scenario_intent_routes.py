@@ -256,6 +256,7 @@ def test_an_ai_attempt_leaves_one_llm_call_and_one_counts_only_audit_entry(
         "llm_call_id",
         "fell_back",
         "failure",
+        "call_row",
         "removed",
         "added",
         "not_understood",
@@ -267,6 +268,7 @@ def test_an_ai_attempt_leaves_one_llm_call_and_one_counts_only_audit_entry(
             select(LLMCall.id).where(LLMCall.purpose == scenario_intent.PURPOSE)
         ).scalars()
     assert details["llm_call_id"] == str(call_id)
+    assert details["call_row"] == "found"
     blob = json.dumps(details)
     assert "edr thing" not in blob and EDR not in blob
 
@@ -315,22 +317,33 @@ def test_a_tenant_users_name_in_the_description_reaches_the_ai_redacted(
     ]
 
 
-def test_an_attempt_whose_call_row_cannot_be_found_says_so(
-    app_parts, monkeypatch  # noqa: F811
+def test_an_attempt_whose_call_row_cannot_be_named_says_so_and_keeps_its_cause(
+    app_parts, capsys  # noqa: F811
 ) -> None:
-    """#863 review, round 2: never a silent null. When the attempt's
-    llm_calls row cannot be named, the entry says `call_row_unknown`."""
-    from app.routes import attack_scenarios
-
-    monkeypatch.setattr(attack_scenarios, "_attempt_call_id", lambda *a, **k: None)
+    """#863 review, round 3: never a silent null, and never at the cost of the
+    attempt's own outcome. Two parses sent with the SAME X-Request-ID make the
+    second one's row ambiguous, for real: its entry says `call_row: unknown`,
+    keeps `failure` as the provider's error, and an error is logged."""
     w = _world(app_parts)
-    w.use(_provider(True, GOOD, []))
-    assert _parse(w, VAGUE, "live").status_code == 200
+    w.use(_provider(True, RuntimeError("boom"), []))
+    headers = {**w.h, "X-Request-ID": "the-same-request-id"}
+    url = f"/attack/services/{w.svc_id}/scenarios/parse"
+    body = {"text": VAGUE, "serves": "live"}
+    assert w.c.post(url, headers=headers, json=body).status_code == 200
+    capsys.readouterr()
+    assert w.c.post(url, headers=headers, json=body).status_code == 200
+    logged = capsys.readouterr().out
     with w.sessions() as db:
-        entry = db.execute(
-            select(AuditEntry).where(AuditEntry.action == "attack.scenario.chat_ai_parse")
-        ).scalar_one()
-    assert (entry.details["llm_call_id"], entry.details["failure"]) == (None, "call_row_unknown")
+        entries = list(
+            db.execute(
+                select(AuditEntry).where(AuditEntry.action == "attack.scenario.chat_ai_parse")
+            ).scalars()
+        )
+    unknown = [e.details for e in entries if e.details["call_row"] == "unknown"]
+    assert len(entries) == 2 and len(unknown) == 1
+    assert (unknown[0]["llm_call_id"], unknown[0]["failure"]) == (None, "RuntimeError")
+    assert "attack.scenario.chat_ai_call_row_unknown" in logged
+    assert '"level": "error"' in logged
 
 
 def test_two_attempts_each_record_their_own_call(app_parts) -> None:  # noqa: F811
