@@ -23,8 +23,16 @@ Model*, Version 2.0, April 2023, downloaded from cisa.gov on 2026-10-04
 `cisa/cisa_ztmm_v2_rows.json` is its extraction (Tables 2-6: 37 rows, each
 pillar's Optimal text and definition) by `apps/api/scripts/extract_zt_sources.py`,
 which also re-derives it from the PDF for review. The catalog is tested against
-this extraction, never against its own constants. DoD's documents join as
-`dod/` (#839).
+this extraction, never against its own constants.
+
+## `dod/`: DoD's Zero Trust documents, the source for the DoD catalog (#839)
+
+The 2025 DoD CIO *Zero Trust Execution Roadmap (COAs 1-3)*, 25-T-1465, and the
+2022 *DoD ZT Capability Execution Roadmap*, with their hashes, dates and source
+URLs in `dod/README.md`. Pinning (#839 comment 5983310584): the catalog takes
+the 2025 edition's capabilities and activities, with each Advanced level
+cross-checked against the 2022 Roadmap. No extraction yet; that is the DoD
+catalog PR.
 
 ## Known spec discrepancies
 
