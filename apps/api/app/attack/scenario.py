@@ -1145,8 +1145,17 @@ def tools_added_since(
     return sorted(added, key=str.casefold)
 
 
-#: Techniques per AI call, as `mitre_map` batches them.
-BATCH_SIZE = 25
+#: Techniques per AI call. Sized so 3x the largest measured call stays under
+#: the 8,192 output tokens the NON-STREAMED adapters send
+#: (`llm.non_streamed_output_cap`): the advisor's ruling on #846, option (c).
+#: Measured live 2026-10-04 (claude-opus-5, the demo seed, its most-cited tool
+#: removed, the route's first 4 batches each time):
+#:   25 a batch: largest call 8,231 (over 8,192 on its own)
+#:    8 a batch: 1,939-3,052; 3 x 3,052 = 9,156, too big
+#:    6 a batch: 1,173-1,700; 3 x 1,700 = 5,100. The densest technique seen
+#:      (3,052 / 8, about 382) puts a worst batch of 6 near 2,290, 3x = 6,870.
+#: Smaller batches cost more input, since each call repeats the tool list.
+BATCH_SIZE = 6
 
 
 def _without(tools: Iterable[Any] | None, gone: Removed) -> list[str]:

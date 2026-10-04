@@ -276,9 +276,12 @@ register_job(
 # draft (comment 5970337002) with two rules inserted after the `open_functions`
 # rule, verbatim from that comment; they replace the F6 rule of comment
 # 5971086623. It is the exact text of those comments; change it only through
-# Gene. Every rule restates something `attack/scenario.py::parse_delta`
-# enforces, so the CONTRACT holds whatever the model returns, never by trusting
-# it. The backslash after the opening quotes only joins the lines of this file:
+# Gene. The rules on WHICH techniques, functions and tools may be named are
+# enforced again by `attack/scenario.py::parse_delta` (the asked slice, lost and
+# open functions, added tools only for an open one, declared functions, listed
+# names), so those hold whatever the model returns. The rules on what COUNTS as
+# detection, prevention or response are the model's judgement, and nothing in
+# code checks them. The backslash after the opening quotes only joins the lines of this file:
 # the text starts at "You are". The new rules' long lines are the approved
 # text, unwrapped, hence the noqa on the closing quotes.
 _ATTACK_SCENARIO_DELTA_PROMPT = """\

@@ -164,7 +164,8 @@ class ScenarioResponse(BaseModel):
     base_approved_at: datetime | None
     #: A newer assessment is now the confirmed base. Shown, never re-based.
     stale: bool
-    #: True when the run route would refuse with 503 (no prompt text yet).
+    #: True when the what-if job is registered and a run can be accepted. False
+    #: only if the registration is removed; the run route then refuses with 503.
     analysis_available: bool
     ai_run_id: uuid.UUID | None
     #: The run's status (`running`, `completed`, `failed`), None before a run.

@@ -8,8 +8,8 @@ It has shipped once already, recorded in `jobs.py`: the CSF prompt asked for
 `{"subcategories": [...]}` while the parser read `{"scores": [...]}`, so LIVE
 mode discarded every schema-compliant response while fixture mode passed.
 
-**No fixture can catch this.** All five `_fixture_*` builders construct their
-response in Python and always use the correct key, so fixture mode agrees with
+**No fixture can catch this.** Every `_fixture_*` builder constructs its
+response in Python and always uses the correct key, so fixture mode agrees with
 the parser by construction. Only `csf_score` had a contract test; `zt_score`,
 `mitre_map` and `risk_synthesize` were unguarded.
 
