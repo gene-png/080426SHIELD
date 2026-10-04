@@ -38,12 +38,18 @@ import pytest
 
 from app.ai.engine import AIResponseShapeError, get_job, registered_jobs
 
-# The four SUGGESTION jobs. `tech_debt_extract` is excluded deliberately and the
+# The five SUGGESTION jobs. `tech_debt_extract` is excluded deliberately and the
 # exclusion is stated rather than implied: its response is consumed by the
 # extraction path rather than by a `data[key]` suggestion loop, so it declares
 # no top-level list key and there is no contract of this shape to check. If it
 # ever gains one, `test_every_declared_key_is_covered` below fails.
-SUGGESTION_JOBS = ("csf_score", "zt_score", "mitre_map", "risk_synthesize")
+SUGGESTION_JOBS = (
+    "csf_score",
+    "zt_score",
+    "mitre_map",
+    "risk_synthesize",
+    "attack_scenario_delta",
+)
 
 
 def _prompt_top_level_key(prompt: str) -> str:
