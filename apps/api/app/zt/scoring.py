@@ -36,16 +36,19 @@ DEFAULT_TOP_N = 20
 # Pillar weights for gap prioritization. Identity + Data score highest
 # in the typical FedRAMP / DoD risk picture because they sit closest to
 # the protected resources; supporting pillars carry a 1.0 baseline.
+#
+# EVERY pillar of both catalogs has an entry, and nothing else does
+# (`test_zt_pillar_weights.py`). The lookup below is a direct index, so a pillar
+# without a weight fails loudly instead of weighing a silent 1.0 in a client's
+# gap priority (#838). Since #838, CISA's cross-cutting rows sit inside their
+# pillar, as CISA tabulates them, and take that pillar's weight.
 _PILLAR_WEIGHTS: dict[str, float] = {
     # CISA codes
     "ID": 1.20,  # Identity
     "DT": 1.15,  # Data
     "DV": 1.10,  # Devices
     "NW": 1.05,  # Networks
-    "AW": 1.10,  # Applications & Workloads
-    "VA": 1.00,  # Visibility & Analytics (cross-cutting)
-    "AO": 1.00,  # Automation & Orchestration (cross-cutting)
-    "GV": 1.00,  # Governance (cross-cutting)
+    "AW": 1.10,  # Applications and Workloads
     # DoD codes
     "USR": 1.20,
     "DAT": 1.15,
@@ -224,7 +227,7 @@ def _row_for(
     pillar_name: str,
 ) -> Gap:
     gap_size = max(0, target - current)
-    weight = _PILLAR_WEIGHTS.get(cap.pillar_code, 1.0)
+    weight = _PILLAR_WEIGHTS[cap.pillar_code]
     priority = round(gap_size * weight, 2)
     return Gap(
         code=cap.code,

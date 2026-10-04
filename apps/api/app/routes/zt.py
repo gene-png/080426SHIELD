@@ -114,6 +114,7 @@ from app.zt.exporters import render_docx as render_zt_docx
 from app.zt.exporters import render_pdf as render_zt_pdf
 from app.zt.exporters import render_xlsx as render_zt_xlsx
 from app.zt.maturity import ZtFrameworkCode, level_count, stage_definitions
+from app.zt.retired import retired_answer_count, retired_sentence
 from app.zt.scoring import (
     analyze_gaps,
     build_roadmap,
@@ -286,6 +287,8 @@ def _serialize_answers(rows: Iterable[ZtAnswer]) -> list[ZtAnswerResponse]:
 
 def _serialize_assessment(db: Session, a: ZtAssessment) -> ZtAssessmentResponse:
     rows = db.execute(select(ZtAnswer).where(ZtAnswer.assessment_id == a.id)).scalars().all()
+    cat_fw = _to_catalog_framework(a.framework)
+    retired = retired_answer_count(cat_fw, rows)
     return ZtAssessmentResponse(
         id=a.id,
         service_id=a.service_id,
@@ -299,6 +302,8 @@ def _serialize_assessment(db: Session, a: ZtAssessment) -> ZtAssessmentResponse:
         client_target_stage=client_target_stage(db, a.service_id),
         # #646: the ONE derivation every surface calls.
         ai_source=ai_mode_for(db, db.get(Service, a.service_id), a).as_api(),
+        retired_answers=retired,
+        retired_answers_note=retired_sentence(cat_fw, retired),
     )
 
 
@@ -455,6 +460,7 @@ def get_catalog(
                 pillar_code=c.pillar_code,
                 name=c.name,
                 outcome=c.outcome,
+                kind=c.kind,
             )
             for c in capabilities(cat_fw)
             if c.pillar_code == p.code

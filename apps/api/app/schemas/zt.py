@@ -24,6 +24,9 @@ class CatalogCapability(BaseModel):
     pillar_code: str
     name: str
     outcome: str
+    #: "function", or "cross_cutting" for a CISA pillar's Visibility and
+    #: Analytics, Automation and Orchestration and Governance rows (#838).
+    kind: str = "function"
 
 
 class CatalogPillar(BaseModel):
@@ -101,6 +104,11 @@ class ZtAssessmentResponse(BaseModel):
     client_target_stage: int | None = None
     # #646: which mode drafted this assessment's AI suggestions. REQUIRED.
     ai_source: AiSource
+    # #838: answers stored against rows the catalog no longer has, kept rather
+    # than deleted (migration 0061), and therefore not scored. With its
+    # approved sentence, or None when there are none (`zt/retired.py`).
+    retired_answers: int = 0
+    retired_answers_note: str | None = None
 
 
 class ZtAnswerPatch(BaseModel):

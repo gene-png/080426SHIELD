@@ -1017,6 +1017,16 @@ export function ZtWorkspace({
               {assessment ? (
                 <AiSourceNote source={assessment.ai_source} />
               ) : null}
+              {/* #838: the API's own sentence, from the derivation the
+                  deliverables call too (`zt/retired.py`), never rebuilt here. */}
+              {assessment?.retired_answers_note ? (
+                <p
+                  className="text-sm text-ink-secondary"
+                  data-testid="zt-retired-answers"
+                >
+                  {assessment.retired_answers_note}
+                </p>
+              ) : null}
               <LastRunNote run={aiRun.lastCompleted} />
               {/* Keyed by the run, which is LOAD-BEARING for accessibility: a
                   new run's accounting mounts fresh, so the live region is
