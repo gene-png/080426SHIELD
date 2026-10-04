@@ -25,9 +25,14 @@ from app.attack import scenario
 
 pytestmark = pytest.mark.unit
 
-#: A registered job whose purpose has no runtime fixture, and why. Empty: every
-#: job runs in fixture mode.
-EXEMPT: dict[str, str] = {}
+#: A job whose purpose has no runtime fixture, and why. An entry may name a job
+#: another open PR registers: the check below reads only the jobs registered
+#: here, so an exemption ahead of its job is inert until that job lands.
+EXEMPT: dict[str, str] = {
+    # #863 (track2): the route never asks a fixture provider; a canned answer
+    # is no reading of the admin's text.
+    "attack_scenario_intent": "the route never asks a fixture provider",
+}
 
 
 def test_every_registered_job_has_a_runtime_fixture_or_a_stated_exemption() -> None:
