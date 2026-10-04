@@ -21,7 +21,8 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select
 
-from app.ai.llm import GeminiProvider, LLMClient, VertexProvider
+from app.ai.failures import friendly_reason
+from app.ai.llm import GeminiProvider, LLMClient, NoUsableResponseError, VertexProvider
 from app.config import Settings
 from app.models.llm_call import LLMCall, LLMCallStatus
 from tests.unit.test_llm_providers import (  # noqa: F401  (fixture)
@@ -45,6 +46,17 @@ NO_CONTENT = (
     "generateContent returned a candidate with no content (finishReason=STOP). "
     "Nothing was parsed."
 )
+NO_TEXT = (
+    "generateContent returned a candidate with no text (finishReason=STOP). " "Nothing was parsed."
+)
+_STOP_USAGE = {**_USAGE, "candidatesTokenCount": 0}
+
+
+def _stop(parts: list) -> dict:
+    return {
+        "candidates": [{"content": {"role": "model", "parts": parts}, "finishReason": "STOP"}],
+        "usageMetadata": _STOP_USAGE,
+    }
 
 
 def _invoke(monkeypatch, db_factory, body: dict, provider=None):  # noqa: F811
@@ -103,6 +115,37 @@ def test_a_response_with_nothing_to_parse_is_refused_by_cause(
     assert error == f"NoUsableResponseError: {expected}"
     assert recorded == tokens
     assert str(raised) == expected
+
+
+@pytest.mark.parametrize(
+    ("parts", "expected"),
+    [
+        ([], NO_CONTENT),
+        ([{"text": ""}], NO_TEXT),
+        ([{"text": "  \n \t"}], NO_TEXT),
+        ([{"functionCall": {"name": "f", "args": {}}}], NO_TEXT),
+    ],
+    ids=["empty-parts", "empty-text", "whitespace-text", "function-call-only"],
+)
+def test_a_stop_candidate_with_no_text_is_refused(
+    monkeypatch, db_factory, parts, expected  # noqa: F811
+) -> None:
+    """#830 review F1: these passed the `parts is None` guard, joined to "",
+    were recorded COMPLETED and died later in json.loads."""
+    raised, status, error, recorded = _invoke(monkeypatch, db_factory, _stop(parts))
+    assert status == LLMCallStatus.FAILED
+    assert error == f"NoUsableResponseError: {expected}"
+    assert recorded == (3100, 0)
+    assert str(raised) == expected
+
+
+@pytest.mark.parametrize("message", [BLOCKED, NO_CANDIDATES, NO_CONTENT, NO_TEXT])
+def test_none_of_the_messages_reads_as_cut_off(message) -> None:
+    """#830 review F2: the reason these are not IncompleteResponseError is that
+    nothing was cut short, so the admin must not be told it was."""
+    copy = friendly_reason(NoUsableResponseError(message, input_tokens=1, output_tokens=0))
+    assert "cut off" not in copy
+    assert copy.startswith("The AI call failed and nothing was applied.")
 
 
 def test_vertex_shares_the_refusal(monkeypatch, db_factory) -> None:  # noqa: F811

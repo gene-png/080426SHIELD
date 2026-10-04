@@ -443,7 +443,7 @@ def _parse_generate_content(data: dict[str, Any]) -> LLMResponse:
             output_tokens=usage.get("candidatesTokenCount"),
         )
     parts = (candidate.get("content") or {}).get("parts")
-    if parts is None:
+    if not parts:
         raise NoUsableResponseError(
             "generateContent returned a candidate with no content "
             f"(finishReason={finish_reason}). Nothing was parsed.",
@@ -451,6 +451,18 @@ def _parse_generate_content(data: dict[str, Any]) -> LLMResponse:
             output_tokens=usage.get("candidatesTokenCount"),
         )
     text = "".join(p.get("text", "") for p in parts)
+    # Parts can exist and still carry no text: an empty or whitespace-only
+    # string, or only non-text parts such as a functionCall. Each would join to
+    # nothing a parser can read, be recorded COMPLETED, and fail later as a bare
+    # JSONDecodeError (#830 review F1). Whitespace-only counts as no text: no
+    # job's answer can be blank.
+    if not text.strip():
+        raise NoUsableResponseError(
+            "generateContent returned a candidate with no text "
+            f"(finishReason={finish_reason}). Nothing was parsed.",
+            input_tokens=usage.get("promptTokenCount"),
+            output_tokens=usage.get("candidatesTokenCount"),
+        )
     return LLMResponse(
         text,
         usage.get("promptTokenCount"),
