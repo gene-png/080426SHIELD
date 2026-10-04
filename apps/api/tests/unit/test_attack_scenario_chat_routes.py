@@ -78,6 +78,26 @@ def test_a_typed_nul_is_quoted_back_not_a_500(app_parts, text) -> None:  # noqa:
     assert [(n["text"], n["reason"]) for n in body["not_understood"]] == [(text, "unknown_tool")]
 
 
+@pytest.mark.parametrize(
+    "name",
+    ["XDR" + chr(0) + "Suite", "XDR" + chr(0x2028) + "Suite"],
+    ids=["NUL", "line-separator"],
+)
+def test_an_added_name_holding_a_control_character_is_not_proposed(
+    app_parts, name  # noqa: F811
+) -> None:
+    """#826 through the chat: the parse checks an added name with
+    `validate_added`, so a name Continue would refuse for a control character
+    is quoted back as not understood, never proposed, and never a 500."""
+    w = _world(app_parts)
+    text = "add " + name
+    r = _parse(w, text)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert (body["removed"], body["added"]) == ([], [])
+    assert [(n["text"], n["reason"]) for n in body["not_understood"]] == [(text, "unrecognised")]
+
+
 def test_a_parse_writes_nothing_and_calls_no_ai(app_parts) -> None:  # noqa: F811
     """Pure: no what-if, no scenario row, no run, no `llm_calls` row and no
     audit entry -- on a proposal, on a clause not understood, and on a
