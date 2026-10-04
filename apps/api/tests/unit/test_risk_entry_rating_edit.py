@@ -246,33 +246,71 @@ def test_a_client_role_user_is_forbidden(app_client) -> None:  # noqa: F811
     assert e["likelihood"] is None
 
 
-def test_the_edit_locks_the_entry_and_its_register(app_client) -> None:  # noqa: F811
-    """#854 review, F7. Two concurrent PATCHes on one entry each read the pair,
-    each set one half, and the second commit could store a tier derived from a
-    pair that no longer exists; a publish racing an edit could likewise change
-    numbers already published. The edit reads both rows FOR UPDATE, and checks
-    superseded and published AFTER taking the lock.
-
-    SQLite has no row locks, so the race itself cannot be run here. What is
-    pinned is the statement the endpoint issues: both SELECTs carry FOR UPDATE.
-    The serialisation is Postgres's, and is not exercised by this test.
+def _interleave(app_client, change) -> tuple:  # noqa: F811
+    """Run one PATCH with `change(session, entry_id)` applied by ANOTHER session
+    after the PATCH read the row and before its write -- the interleaving two
+    concurrent requests produce. Returns `(response, entry_id, c, bearer, cid)`.
     """
     from sqlalchemy import event
     from sqlalchemy.orm import Session
 
-    c, _, bearer, cid, body = _setup(app_client, _unrated("Locked"))
-    locked: list[str] = []
+    c, _, bearer, cid, body = _setup(app_client, _entry("Raced"))
+    entry_id = body["entries"][0]["id"]
+    fired: list[bool] = []
 
-    def _spy(state) -> None:
-        stmt = state.statement
-        if state.is_select and getattr(stmt, "_for_update_arg", None) is not None:
-            locked.extend(sorted(t.name for t in stmt.get_final_froms()))
+    def _before_write(state) -> None:
+        if state.is_update and not fired:
+            fired.append(True)
+            with _session() as other:
+                change(other, entry_id)
+                other.commit()
 
-    event.listen(Session, "do_orm_execute", _spy)
+    event.listen(Session, "do_orm_execute", _before_write)
     try:
-        r = _patch(c, bearer, cid, body["entries"][0]["id"], {"likelihood": "low"})
+        r = _patch(c, bearer, cid, entry_id, {"likelihood": "low"})
     finally:
-        event.remove(Session, "do_orm_execute", _spy)
-    assert r.status_code == 200, r.text
-    assert "risk_entries" in locked, locked
-    assert "risk_registers" in locked, locked
+        event.remove(Session, "do_orm_execute", _before_write)
+    assert fired, "the interleaving never ran, so this test proves nothing"
+    return r, entry_id, c, bearer, cid
+
+
+def test_an_entry_changed_underneath_the_edit_is_refused_and_kept(app_client) -> None:  # noqa: F811
+    """#854 review, F7. Another edit changed the IMPACT between this PATCH's
+    read and its write. A plain write would store likelihood low with the
+    other's impact under a tier derived from the pair this PATCH read; the
+    compare-and-swap writes nothing, names the cause, and the other edit
+    stands."""
+    import uuid
+
+    from app.models.risk_register import RiskEntry
+
+    def _other_edit(s, entry_id):
+        e = s.get(RiskEntry, uuid.UUID(entry_id))
+        e.impact, e.tier = "minor", "low"  # high x minor: (3+1)*(1+1)=8, Low
+
+    r, entry_id, c, bearer, cid = _interleave(app_client, _other_edit)
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "risk_entry_changed"
+    [e] = _latest(c, bearer, cid)["entries"]
+    assert (e["likelihood"], e["impact"], e["tier"]) == ("high", "minor", "low")
+    assert e["rating_edited_at"] is None
+
+
+def test_a_register_published_underneath_the_edit_is_refused(app_client) -> None:  # noqa: F811
+    """The PATCH-versus-export race: the register was published between the
+    PATCH's checks and its write. The compare-and-swap re-checks the register
+    in the same statement, so the published numbers do not change."""
+    import uuid
+    from datetime import UTC, datetime
+
+    from app.models.risk_register import RiskEntry, RiskRegister
+
+    def _publish(s, entry_id):
+        e = s.get(RiskEntry, uuid.UUID(entry_id))
+        s.get(RiskRegister, e.register_id).finalized_at = datetime.now(UTC)
+
+    r, entry_id, c, bearer, cid = _interleave(app_client, _publish)
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "risk_register_published"
+    [e] = _latest(c, bearer, cid)["entries"]
+    assert (e["likelihood"], e["impact"], e["tier"]) == ("high", "catastrophic", "critical")

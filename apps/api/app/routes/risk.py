@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.ai.engine import get_job, run_job
@@ -1769,6 +1769,35 @@ def latest(
     return _serialize(db, reg)
 
 
+def _refuse_if_register_closed(reg: RiskRegister) -> None:
+    """#844: a superseded or published register's ratings do not change. Asked
+    before the edit and again after a lost compare-and-swap, so the refusal
+    names the cause either way."""
+    if reg.superseded_by is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "risk_register_superseded",
+                "message": (
+                    "This entry belongs to an older version of the Risk Register. "
+                    "Reload the page to edit the current version."
+                ),
+            },
+        )
+    if reg.finalized_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "risk_register_published",
+                "message": (
+                    "This Risk Register has been exported, which publishes it to the "
+                    "client, so its ratings can no longer change. Generate a new "
+                    "version to rate entries again."
+                ),
+            },
+        )
+
+
 @router.patch(
     "/clients/{cid}/register/entries/{entry_id}",
     response_model=RiskRegisterResponse,
@@ -1810,14 +1839,7 @@ def edit_entry_rating(
                 "message": "Send a likelihood, an impact, or both.",
             },
         )
-    # #854 review, F7: FOR UPDATE on the entry and then its register, and every
-    # guard below runs AFTER the lock. Two concurrent edits each read the pair,
-    # set one half and derived a tier from a pair that the other then changed;
-    # a publish racing an edit could change published numbers. Postgres
-    # serialises on these locks; SQLite (the test database) ignores them.
-    entry = db.execute(
-        select(RiskEntry).where(RiskEntry.id == entry_id).with_for_update()
-    ).scalar_one_or_none()
+    entry = db.get(RiskEntry, entry_id)
     if entry is None or entry.client_id != cid:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1826,50 +1848,81 @@ def edit_entry_rating(
                 "message": "That Risk Register entry was not found for this client.",
             },
         )
-    reg = db.execute(
-        select(RiskRegister).where(RiskRegister.id == entry.register_id).with_for_update()
-    ).scalar_one_or_none()
+    reg = db.get(RiskRegister, entry.register_id)
     if reg is None:  # pragma: no cover - the FK is NOT NULL and CASCADEs
         raise RuntimeError(f"risk entry {entry.id} has no register {entry.register_id}")
-    if reg.superseded_by is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "reason": "risk_register_superseded",
-                "message": (
-                    "This entry belongs to an older version of the Risk Register. "
-                    "Reload the page to edit the current version."
-                ),
-            },
-        )
-    if reg.finalized_at is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "reason": "risk_register_published",
-                "message": (
-                    "This Risk Register has been exported, which publishes it to the "
-                    "client, so its ratings can no longer change. Generate a new "
-                    "version to rate entries again."
-                ),
-            },
-        )
+    _refuse_if_register_closed(reg)
 
     before = {"likelihood": entry.likelihood, "impact": entry.impact, "tier": entry.tier}
+    new_lk = entry.likelihood
+    new_im = entry.impact
     if "likelihood" in body.model_fields_set:
-        entry.likelihood = body.likelihood.value if body.likelihood else None
+        new_lk = body.likelihood.value if body.likelihood else None
     if "impact" in body.model_fields_set:
-        entry.impact = body.impact.value if body.impact else None
-    # Code-derived, from the STORED pair, so an edit naming one half re-tiers
-    # against the half already there.
-    entry.tier = (
-        tier_for(Likelihood(entry.likelihood), Impact(entry.impact)).value
-        if entry.likelihood is not None and entry.impact is not None
+        new_im = body.impact.value if body.impact else None
+    # Code-derived from the FULL post-edit pair, so an edit naming one half
+    # re-tiers against the half already there.
+    new_tier = (
+        tier_for(Likelihood(new_lk), Impact(new_im)).value
+        if new_lk is not None and new_im is not None
         else None
     )
-    entry.rating_edited_by = admin.id
-    entry.rating_edited_at = utcnow()
-    after = {"likelihood": entry.likelihood, "impact": entry.impact, "tier": entry.tier}
+
+    # #854 review, F7: THE WRITE IS A COMPARE-AND-SWAP, the shape `routes/auth.py`
+    # uses for refresh rotation (#505). The checks above read the entry and its
+    # register BEFORE this write, so two edits naming different halves could
+    # each read the pair and the second store a tier derived from a pair that
+    # no longer existed; and an export racing an edit could change numbers
+    # already published. This UPDATE matches only while the pair is STILL the
+    # one read and the register is STILL open -- an EXISTS subquery correlated
+    # on `risk_entries.register_id` re-checks `finalized_at IS NULL` and
+    # `superseded_by IS NULL` in the same statement. Exactly one writer wins
+    # under Postgres READ COMMITTED and on SQLite, and unlike FOR UPDATE the
+    # unit suite can pin it.
+    register_open = (
+        select(RiskRegister.id)
+        .where(
+            RiskRegister.id == RiskEntry.register_id,
+            RiskRegister.finalized_at.is_(None),
+            RiskRegister.superseded_by.is_(None),
+        )
+        .exists()
+    )
+    swapped = db.execute(
+        update(RiskEntry)
+        .where(
+            RiskEntry.id == entry.id,
+            RiskEntry.likelihood.is_not_distinct_from(before["likelihood"]),
+            RiskEntry.impact.is_not_distinct_from(before["impact"]),
+            register_open,
+        )
+        .values(
+            likelihood=new_lk,
+            impact=new_im,
+            tier=new_tier,
+            rating_edited_by=admin.id,
+            rating_edited_at=utcnow(),
+        )
+        .execution_options(synchronize_session=False)
+    ).rowcount
+    if swapped != 1:
+        # LOST THE RACE. Nothing was written. Re-read and name the CAUSE: the
+        # register closed underneath the edit, or the entry itself changed.
+        db.rollback()
+        db.refresh(reg)
+        _log.info("risk_entry_rating_edit_race_lost", entry_id=str(entry.id))
+        _refuse_if_register_closed(reg)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "risk_entry_changed",
+                "message": (
+                    "This entry changed while you were editing it. Reload the page "
+                    "and try again."
+                ),
+            },
+        )
+    after = {"likelihood": new_lk, "impact": new_im, "tier": new_tier}
     audit(
         db,
         action="risk_entry.rating_edited",
