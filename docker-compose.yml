@@ -336,6 +336,12 @@ services:
       # local green from a long-running api is not evidence. CI's fresh
       # checkout is; locally, recreate api or `docker compose run --rm api`.
       - ./apps/web/src/lib/assessment-targets.ts:/web-parity/assessment-targets.ts:ro
+      # The CISA ZTMM 2.0 PDF and its extraction, read-only, for the ZT catalog
+      # source tests (#838, `tests/unit/test_zt_sources.py`). At `/zt-sources/`
+      # and NOT at `/reference-docs`: `extract_csf_questionnaires.py` finds a
+      # checkout by walking up for `reference-docs/`, so a root-level mount would
+      # make `/` look like one (`test_root_discovery.py`). Not app runtime.
+      - ./reference-docs/cisa:/zt-sources/cisa:ro
       # Host gcloud config, READ-ONLY, so the Vertex provider can use this box's
       # Application Default Credentials without any API key or committed secret
       # (D-029). Default is the canonical Linux ADC dir ($HOME/.config/gcloud) —

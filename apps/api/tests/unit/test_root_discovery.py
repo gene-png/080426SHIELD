@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._paths import find_workflows_dir
+from tests._paths import find_workflows_dir, find_zt_source
 
 pytestmark = pytest.mark.unit
 
@@ -203,3 +203,32 @@ def test_the_extractor_refuses_a_tree_with_no_reference_docs(tmp_path: Path) -> 
 
     with pytest.raises(RuntimeError, match="reference-docs"):
         _find_workspace(deep / "extract_csf_questionnaires.py")
+
+
+# --- find_zt_source (#838): checkout first, then the container mount ---------
+
+
+@pytest.mark.unit
+def test_a_zt_source_is_found_in_a_checkout(tmp_path: Path) -> None:
+    root = tmp_path / "checkout"
+    (root / "reference-docs" / "cisa").mkdir(parents=True)
+    deep = root / "apps" / "api" / "tests" / "unit"
+    deep.mkdir(parents=True)
+    mount = tmp_path / "no-mount"
+    assert find_zt_source(deep, "cisa", container_root=mount) == root / "reference-docs" / "cisa"
+
+
+@pytest.mark.unit
+def test_a_zt_source_falls_back_to_the_container_mount(tmp_path: Path) -> None:
+    deep = tmp_path / "app" / "tests" / "unit"
+    deep.mkdir(parents=True)
+    mount = tmp_path / "zt-sources"
+    (mount / "cisa").mkdir(parents=True)
+    assert find_zt_source(deep, "cisa", container_root=mount) == mount / "cisa"
+
+
+@pytest.mark.unit
+def test_no_zt_source_anywhere_returns_None(tmp_path: Path) -> None:
+    deep = tmp_path / "app" / "tests" / "unit"
+    deep.mkdir(parents=True)
+    assert find_zt_source(deep, "cisa", container_root=tmp_path / "nothing") is None
