@@ -202,13 +202,16 @@ MAX_ADDED = 10
 #: The longest name, vendor or category an admin may enter.
 MAX_TEXT = 200
 #: Unicode categories a name, vendor or category may not hold (#826): every
-#: control character (Cc: C0, DEL and C1) and the line and paragraph
-#: separators (Zl, Zp). Named by category, so the set is Unicode's, not a
-#: hand list. NUL is the one Postgres cannot store in the change list
-#: (jsonb: "unsupported Unicode escape sequence", an untyped 500); the
-#: rest store, but a name is one line of visible text. Format characters
-#: (Cf, a zero-width joiner) are deliberately NOT refused: scripts use them.
-_UNPRINTABLE = frozenset({"Cc", "Zl", "Zp"})
+#: control character (Cc: C0, DEL and C1), the line and paragraph separators
+#: (Zl, Zp), and a lone surrogate (Cs; a valid pair such as an emoji is ONE
+#: code point here, not Cs). Named by category, so the set is Unicode's, not a
+#: hand list. Two of them Postgres cannot store in the change list (jsonb),
+#: each an untyped 500 at insert, both measured on postgres:16: NUL
+#: ("unsupported Unicode escape sequence") and a lone surrogate ("Unicode low
+#: surrogate must follow a high surrogate", #831 review, F2). The rest store,
+#: but a name is one line of visible text. Format characters (Cf, a zero-width
+#: joiner) are deliberately NOT refused: scripts use them.
+_UNPRINTABLE = frozenset({"Cc", "Zl", "Zp", "Cs"})
 
 #: An added tool's declared functions, as the Tech Debt classification spells
 #: them (`SecurityFunction`), and the coverage flag each maps to, in D/P/R order.
@@ -323,6 +326,7 @@ def validate_added(
     redaction_mode: RedactionMode,
     name_hints: Iterable[str] = (),
     limit: int = MAX_ADDED,
+    check_characters: bool = True,
 ) -> list[AddedTool]:
     """The admin's added tools, or a typed refusal naming the first bad one.
 
@@ -398,8 +402,10 @@ def validate_added(
         if any(before.named_by(form) for form in citable(name)):
             raise _why_refused(name, before, resolver(client, "off"), client, earlier, citable)
         # After the checks above, so a client's own tool spelled with a tab is
-        # still named as theirs (B4), the more useful refusal (#826).
-        for label, value in fields:
+        # still named as theirs (B4), the more useful refusal (#826). Skipped
+        # when re-checking STORED tools for collisions (`check_characters`):
+        # a row stored before #826 is not a collision (#831 review, F1).
+        for label, value in fields if check_characters else ():
             if value is not None and any(unicodedata.category(ch) in _UNPRINTABLE for ch in value):
                 raise Unprintable(name, label)
         out.append(

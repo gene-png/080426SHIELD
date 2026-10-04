@@ -442,6 +442,10 @@ REFUSED = [
     pytest.param(chr(0x9F), id="last-C1"),
     pytest.param(chr(0x2028), id="line-separator"),
     pytest.param(chr(0x2029), id="paragraph-separator"),
+    # #831 review, F2: a lone surrogate (Cs). Postgres refuses it in jsonb
+    # (measured: "Unicode low surrogate must follow a high surrogate").
+    pytest.param(chr(0xD800), id="lone-high-surrogate"),
+    pytest.param(chr(0xDC00), id="lone-low-surrogate"),
 ]
 
 
@@ -465,6 +469,9 @@ def test_a_control_character_or_line_separator_in_any_field_is_refused(ch, field
         "XDR " + chr(0x2014) + " Cloud",  # an em dash
         "XDR" + chr(0xA0) + "Suite",  # a no-break space: a space, not a control
         "Tool" + chr(0x200D) + "X",  # a zero-width joiner: a format character, kept
+        # an emoji: one code point here, a valid surrogate PAIR in JSON, which
+        # Postgres stores (measured); only a LONE surrogate is refused
+        "XDR " + chr(0x1F600),
     ],
 )
 def test_visible_text_outside_ascii_is_not_refused(name) -> None:
