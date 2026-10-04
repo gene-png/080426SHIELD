@@ -155,9 +155,7 @@ def _a_code(*, preventable: bool) -> str:
     from app.attack.catalog import NOT_PREVENTABLE, TECHNIQUES
 
     return next(
-        t.id
-        for t in TECHNIQUES
-        if (t.id not in NOT_PREVENTABLE) is preventable and "." not in t.id
+        t.id for t in TECHNIQUES if (t.id not in NOT_PREVENTABLE) is preventable and "." not in t.id
     )
 
 
@@ -216,7 +214,9 @@ def test_an_inferred_citation_is_awaiting_review_not_in_place() -> None:
     )
     code = _a_code(preventable=False)
     inferred = {
-        "techniques": [_tech(code, detection_tools=["CrowdStrike"], response_tools=["Vault Backup"])]
+        "techniques": [
+            _tech(code, detection_tools=["CrowdStrike"], response_tools=["Vault Backup"])
+        ]
     }
     exact = {
         "techniques": [
@@ -360,13 +360,34 @@ def _llm_call_count(db: Session) -> int:
     return db.execute(select(func.count()).select_from(LLMCall)).scalar_one()
 
 
-def test_measure_attack_runs_every_batch_and_applies_nothing(attack_world) -> None:
-    from app.routes.attack import _MITRE_BATCH_SIZE
+def _recording(asked: list[list[str]]):
+    """The prompt-shaped answer, recording each batch's codes as SENT. The
+    batch sizes are observed from the calls, never read from the route's own
+    batch-size constant."""
 
+    def respond(payload: dict) -> LLMResponse:
+        asked.append(list(payload["technique_codes"]))
+        return _cover_every_asked_technique(payload)
+
+    return respond
+
+
+def _techniques_the_route_sends(db: Session) -> list[str]:
+    # D-094: a computed parent is never sent; everything else is, sorted.
+    from app.attack.parents import is_computed_parent
+    from app.models.attack_assessment import AttackCoverage
+
+    codes = db.execute(select(AttackCoverage.technique_code)).scalars()
+    return sorted(c for c in codes if not is_computed_parent(c))
+
+
+def test_measure_attack_runs_every_batch_and_applies_nothing(attack_world) -> None:
     _, TestSession, provider = attack_world
-    provider.register("mitre_map", _cover_every_asked_technique)
+    asked: list[list[str]] = []
+    provider.register("mitre_map", _recording(asked))
     with TestSession() as db:
         before = _coverage_rows(db)
+        expected_codes = _techniques_the_route_sends(db)
         report = measure_attack(db, LLMClient(provider), runs=2)
         db.commit()
     with TestSession() as db:
@@ -374,11 +395,14 @@ def test_measure_attack_runs_every_batch_and_applies_nothing(attack_world) -> No
         calls = _llm_call_count(db)
 
     sent = report["techniques_sent"]
-    batches = -(-sent // _MITRE_BATCH_SIZE)
-    assert sent > _MITRE_BATCH_SIZE, "precondition: more than one batch"
+    batches = len(asked) // 2
+    assert sent == len(expected_codes)
+    assert batches > 1, "precondition: more than one batch"
+    # Each run asked for every technique exactly once, across its batches.
+    assert sorted(c for b in asked for c in b) == sorted(expected_codes * 2)
     assert report["runs_ok"] == 2
     assert report["batches_per_run"] == batches
-    assert calls == 2 * batches
+    assert calls == len(asked)
     pair = report["pairs"][0]
     assert pair["rows"]["in_both"] == sent
     assert pair["fields"]["status"]["equal"] == sent
@@ -386,7 +410,11 @@ def test_measure_attack_runs_every_batch_and_applies_nothing(attack_world) -> No
     assert pair["computed_status"] == {"compared": sent, "equal": sent}
     # Every tool cited exactly as listed, all three functions present.
     assert report["downstream"][0]["computed_status_counts"] == {"covered": sent}
-    assert report["tokens"] == {"input": 2 * batches * 3, "output": 2 * batches * 5, "complete": True}
+    assert report["tokens"] == {
+        "input": 2 * batches * 3,
+        "output": 2 * batches * 5,
+        "complete": True,
+    }
     assert report["exit_code"] == 0
 
 
@@ -423,16 +451,21 @@ def test_a_mitre_map_run_with_a_failed_batch_is_a_failed_run(attack_world) -> No
 
 
 def test_a_mitre_map_probe_sends_only_the_first_batches(attack_world) -> None:
-    from app.routes.attack import _MITRE_BATCH_SIZE
-
     _, TestSession, provider = attack_world
-    provider.register("mitre_map", _cover_every_asked_technique)
+    asked: list[list[str]] = []
+    provider.register("mitre_map", _recording(asked))
     with TestSession() as db:
+        expected_codes = _techniques_the_route_sends(db)
         report = measure_attack(db, LLMClient(provider), runs=1, probe_batches=2)
         db.commit()
     with TestSession() as db:
         assert _llm_call_count(db) == 2
-    assert report["techniques_sent"] == 2 * _MITRE_BATCH_SIZE
+    probed = sorted(c for b in asked for c in b)
+    assert len(asked) == 2
+    # The FIRST batches: a prefix of what a full run sends, and nothing else.
+    assert probed == expected_codes[: len(probed)]
+    assert len(probed) < len(expected_codes)
+    assert report["techniques_sent"] == len(probed)
     assert report["probe"]["batches"] == 2
     assert report["probe"]["of"] > 2
     assert report["exit_code"] == 0
