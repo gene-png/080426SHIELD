@@ -246,7 +246,7 @@ def test_a_client_role_user_is_forbidden(app_client) -> None:  # noqa: F811
     assert e["likelihood"] is None
 
 
-def _interleave(app_client, change) -> tuple:  # noqa: F811
+def _interleave(app_client, change, *, other_client: bool = False) -> tuple:  # noqa: F811
     """Run one PATCH with `change(session, entry_id)` applied by ANOTHER session
     after the PATCH read the row and before its write -- the interleaving two
     concurrent requests produce. Returns `(response, entry_id, c, bearer, cid)`.
@@ -254,8 +254,19 @@ def _interleave(app_client, change) -> tuple:  # noqa: F811
     from sqlalchemy import event
     from sqlalchemy.orm import Session
 
-    c, _, bearer, cid, body = _setup(app_client, _entry("Raced"))
+    c, provider, bearer, cid, body = _setup(app_client, _entry("Raced"))
     entry_id = body["entries"][0]["id"]
+    if other_client:
+        # A SECOND client with an OPEN register. An EXISTS subquery that is not
+        # correlated on `risk_entries.register_id` would find this row and let
+        # the write through; correlated, it looks only at the raced register.
+        other = c.post(
+            "/admin/clients",
+            headers={"Authorization": f"Bearer {bearer}"},
+            json={"legal_name": "Other"},
+        ).json()["id"]
+        _seed_attack_and_zt(c, bearer, other)
+        _generate(c, provider, bearer, other, _entries_payload(_entry("Other open")))
     fired: list[bool] = []
 
     def _before_write(state) -> None:
@@ -314,27 +325,34 @@ def test_a_register_published_underneath_the_edit_is_refused(app_client) -> None
         e = s.get(RiskEntry, uuid.UUID(entry_id))
         s.get(RiskRegister, e.register_id).finalized_at = datetime.now(UTC)
 
-    r, entry_id, c, bearer, cid = _interleave(app_client, _publish)
+    r, entry_id, c, bearer, cid = _interleave(app_client, _publish, other_client=True)
     assert r.status_code == 409, r.text
     assert r.json()["error"]["reason"] == "risk_register_published"
     [e] = _latest(c, bearer, cid)["entries"]
     assert (e["likelihood"], e["impact"], e["tier"]) == ("high", "catastrophic", "critical")
 
 
-def _locking_selects(c, request) -> dict[str, str]:
-    """Run `request()` and return {table: lock strength} for every SELECT the
-    endpoint issued with a row lock. SQLite ignores row locks, so this pins
-    the STATEMENT; the serialisation itself is Postgres's and is not run."""
+def _statements(request) -> list[tuple[str, str, str]]:
+    """Run `request()` and return, IN ORDER, every ORM SELECT and UPDATE the
+    endpoint issued as `(kind, table, lock)`, lock being "update", "share" or
+    "none". ORDER is the point: a lock taken after the reads it protects is the
+    race it exists to close. SQLite ignores row locks, so this pins the
+    statements and their order; the serialisation itself is Postgres's and is
+    not exercised here."""
     from sqlalchemy import event
     from sqlalchemy.orm import Session
 
-    seen: dict[str, str] = {}
+    seen: list[tuple[str, str, str]] = []
 
     def _spy(state) -> None:
-        arg = getattr(state.statement, "_for_update_arg", None)
-        if state.is_select and arg is not None:
-            for t in state.statement.get_final_froms():
-                seen[t.name] = "share" if arg.read else "update"
+        stmt = state.statement
+        if state.is_select:
+            arg = getattr(stmt, "_for_update_arg", None)
+            lock = "none" if arg is None else ("share" if arg.read else "update")
+            for t in stmt.get_final_froms():
+                seen.append(("select", getattr(t, "name", str(t)), lock))
+        elif state.is_update:
+            seen.append(("update", stmt.table.name, "none"))
 
     event.listen(Session, "do_orm_execute", _spy)
     try:
@@ -345,29 +363,91 @@ def _locking_selects(c, request) -> dict[str, str]:
     return seen
 
 
+def _first(seen: list, pred) -> int:
+    for i, s in enumerate(seen):
+        if pred(s):
+            return i
+    raise AssertionError(f"no matching statement in {seen}")
+
+
 def test_export_locks_the_register_before_reading_entries(app_client) -> None:  # noqa: F811
-    """#854 review round 2 (blocking): export read the entries, rendered for
+    """#854 review rounds 2 and 3. Export read the entries, rendered for
     seconds and only then set `finalized_at`, so an edit committed in that gap
-    reached the dashboard and not the delivered file. Export now takes the
-    register FOR UPDATE first; the edit takes it FOR SHARE, so they serialise.
-    The race itself is NOT exercised here (SQLite has no row locks)."""
+    reached the dashboard and not the delivered file. Export takes the register
+    FOR UPDATE, and it must do so BEFORE its first read of the entries -- a
+    lock taken late is the race again. The race itself is NOT exercised here
+    (SQLite has no row locks); the order of the statements is."""
     c, _, bearer, cid, _ = _setup(app_client, _entry("Exported"))
-    locks = _locking_selects(
-        c,
+    seen = _statements(
         lambda: c.post(
             f"/risk/clients/{cid}/register/export",
             headers={"Authorization": f"Bearer {bearer}"},
-        ),
+        )
     )
-    assert locks.get("risk_registers") == "update", locks
+    locked = _first(seen, lambda s: s == ("select", "risk_registers", "update"))
+    entries = _first(seen, lambda s: s[0] == "select" and s[1] == "risk_entries")
+    assert locked < entries, seen
 
 
-def test_the_edit_takes_the_register_for_share(app_client) -> None:  # noqa: F811
+def test_the_edit_takes_the_register_for_share_before_reading_or_writing(
+    app_client,  # noqa: F811
+) -> None:
+    """The edit's FOR SHARE must be its FIRST read of the register (the checks
+    read that row) and must come before the compare-and-swap UPDATE."""
     c, _, bearer, cid, body = _setup(app_client, _unrated("Shared"))
-    locks = _locking_selects(
-        c, lambda: _patch(c, bearer, cid, body["entries"][0]["id"], {"likelihood": "low"})
+    seen = _statements(
+        lambda: _patch(c, bearer, cid, body["entries"][0]["id"], {"likelihood": "low"})
     )
-    assert locks.get("risk_registers") == "share", locks
+    first_register = _first(seen, lambda s: s[0] == "select" and s[1] == "risk_registers")
+    assert seen[first_register] == ("select", "risk_registers", "share"), seen
+    cas = _first(seen, lambda s: s == ("update", "risk_entries", "none"))
+    assert first_register < cas, seen
+
+
+def test_export_refuses_a_register_superseded_while_it_waited(app_client) -> None:  # noqa: F811
+    """#854 review round 3. A generate that commits while export waits for the
+    register lock supersedes the row export already looked up. Re-checked under
+    the lock, so export refuses rather than finalizing a version the consultant
+    is no longer looking at. The interleaving is real: another session commits
+    the supersession just before export's locking SELECT runs."""
+    import uuid
+
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session
+
+    from app.models.risk_register import RiskRegister
+
+    c, _, bearer, cid, body = _setup(app_client, _entry("Old"))
+    reg_id = uuid.UUID(body["id"])
+    fired: list[bool] = []
+
+    def _supersede_first(state) -> None:
+        arg = getattr(state.statement, "_for_update_arg", None)
+        if state.is_select and arg is not None and not fired:
+            fired.append(True)
+            with _session() as other:
+                old = other.get(RiskRegister, reg_id)
+                newer = RiskRegister(
+                    client_id=old.client_id, version=old.version + 1, provenance={}
+                )
+                other.add(newer)
+                other.flush()
+                old.superseded_by = newer.id
+                other.commit()
+
+    event.listen(Session, "do_orm_execute", _supersede_first)
+    try:
+        r = c.post(
+            f"/risk/clients/{cid}/register/export",
+            headers={"Authorization": f"Bearer {bearer}"},
+        )
+    finally:
+        event.remove(Session, "do_orm_execute", _supersede_first)
+    assert fired, "the interleaving never ran, so this test proves nothing"
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "risk_register_superseded"
+    with _session() as s:
+        assert s.get(RiskRegister, reg_id).finalized_at is None
 
 
 def test_a_half_set_rating_is_not_marked_PENDING_RULING(app_client) -> None:  # noqa: F811

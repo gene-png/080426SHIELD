@@ -1567,6 +1567,21 @@ def export(
         .with_for_update()
         .execution_options(populate_existing=True)
     ).scalar_one()
+    # #854 review round 3: re-checked UNDER the lock. A generate that committed
+    # while this export waited has superseded the row `_latest_register`
+    # returned; finalizing it would publish a version the consultant is no
+    # longer looking at.
+    if reg.superseded_by is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "risk_register_superseded",
+                "message": (
+                    "This entry belongs to an older version of the Risk Register. "
+                    "Reload the page to edit the current version."
+                ),
+            },
+        )
 
     # #240. Refuse to publish a register built from work nobody approved.
     #
