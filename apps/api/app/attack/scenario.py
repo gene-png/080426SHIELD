@@ -1216,14 +1216,15 @@ def merge_batches(inputs: Sequence[Mapping[str, Any]], parsed: Mapping[int, Pars
     )
 
 
-#: The AI purpose. Registered only once #806 releases its prompt text.
+#: The AI purpose. Registered by `app/ai/jobs.py` with Gene's approved prompt.
 PURPOSE = "attack_scenario_delta"
 
 
 def analysis_available() -> bool:
-    """True when the what-if's AI job is registered. False until #806's prompt
-    text lands; the run route refuses with a typed 503 rather than failing
-    inside a background job."""
+    """True when the what-if's AI job is registered, which it always is since
+    #802 shipped the approved prompt. False only if that registration is ever
+    removed; the run route then refuses with a typed 503 rather than failing
+    inside a background job (a ratchet)."""
     from app.ai.engine import registered_jobs
 
     return PURPOSE in registered_jobs()
