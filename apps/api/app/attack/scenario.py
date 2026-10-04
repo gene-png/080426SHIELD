@@ -1149,11 +1149,14 @@ def tools_added_since(
 #: the 8,192 output tokens the NON-STREAMED adapters send
 #: (`llm.non_streamed_output_cap`): the advisor's ruling on #846, option (c).
 #: Measured live 2026-10-04 (claude-opus-5, the demo seed, its most-cited tool
-#: removed, the route's first 4 batches each time):
+#: removed, the route's first 4 batches each time; each probe ran in a
+#: throwaway SQLite container, so no llm_calls ids survive, and the figures are
+#: the probes' own llm_calls rows as printed, recorded on PR #846):
 #:   25 a batch: largest call 8,231 (over 8,192 on its own)
 #:    8 a batch: 1,939-3,052; 3 x 3,052 = 9,156, too big
-#:    6 a batch: 1,173-1,700; 3 x 1,700 = 5,100. The densest technique seen
-#:      (3,052 / 8, about 382) puts a worst batch of 6 near 2,290, 3x = 6,870.
+#:    6 a batch: 1,173-1,700; 3 x 1,700 = 5,100. The densest BATCH seen
+#:      averaged about 382 a technique (3,052 / 8); a batch of 6 at that
+#:      average is about 2,290, 3x = 6,870. A single technique may run higher.
 #: Smaller batches cost more input, since each call repeats the tool list.
 BATCH_SIZE = 6
 

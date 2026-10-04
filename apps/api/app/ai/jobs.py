@@ -277,9 +277,10 @@ register_job(
 # rule, verbatim from that comment; they replace the F6 rule of comment
 # 5971086623. It is the exact text of those comments; change it only through
 # Gene. The rules on WHICH techniques, functions and tools may be named are
-# enforced again by `attack/scenario.py::parse_delta` (the asked slice, lost and
-# open functions, added tools only for an open one, declared functions, listed
-# names), so those hold whatever the model returns. The rules on what COUNTS as
+# enforced again by `attack/scenario.py::parse_delta` (the asked slice; only a
+# lost or open function; only an ADDED tool for an open function, while an added
+# tool may also fill a lost one; an added tool only for its declared functions;
+# listed names), so those hold whatever the model returns. The rules on what COUNTS as
 # detection, prevention or response are the model's judgement, and nothing in
 # code checks them. The backslash after the opening quotes only joins the lines of this file:
 # the text starts at "You are". The new rules' long lines are the approved
