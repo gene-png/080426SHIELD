@@ -84,8 +84,8 @@ export interface RiskEntry {
    * #844. Both null: the rating is the model's as generated. Set: a consultant
    * set likelihood or impact through the edit path, and the row says so.
    */
-  rating_edited_by?: string | null;
-  rating_edited_at?: string | null;
+  rating_edited_by: string | null;
+  rating_edited_at: string | null;
 }
 
 /**
@@ -177,13 +177,12 @@ export interface RiskRegister {
    * #844. Each finding should get exactly one entry. `findings_recorded` false
    * means nothing was recorded (a register generated before this, or a record
    * that could not be read), and the empty list and map then mean NOTHING --
-   * never "every finding had one entry". Optional so an older response
-   * parses; absent reads as not recorded.
+   * never "every finding had one entry".
    */
-  findings_recorded?: boolean;
-  findings_total?: number | null;
-  findings_without_entry?: string[];
-  findings_with_several_entries?: Record<string, number>;
+  findings_recorded: boolean;
+  findings_total: number | null;
+  findings_without_entry: string[];
+  findings_with_several_entries: Record<string, number>;
 
   /**
    * #330. The generate loop's INTENDED tally.

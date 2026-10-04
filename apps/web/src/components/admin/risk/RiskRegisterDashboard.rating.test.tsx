@@ -244,6 +244,34 @@ describe("RiskRegisterDashboard consultant rating (#844)", () => {
     expect(alert.textContent).not.toMatch(/Regenerate/);
   });
 
+  it("names no edit remedy once the selects are gone (#854 review, F5)", async () => {
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({ finalized_at: "2026-10-04T02:00:00Z" }),
+    );
+    await loaded();
+    const alert = screen.getByTestId("risk-entries-without-tier");
+    expect(alert.textContent).toMatch(/1 of 1/);
+    expect(alert.textContent).not.toMatch(/Set a likelihood and impact/);
+  });
+
+  it("shows no consultant marker on a cleared rating (#854 review, F2)", async () => {
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({
+        entries: [
+          entry({
+            likelihood: "high",
+            impact: null,
+            tier: null,
+            rating_edited_by: "u1",
+            rating_edited_at: "2026-10-04T01:00:00Z",
+          }),
+        ],
+      }),
+    );
+    await loaded();
+    expect(screen.queryByText("Rating set by consultant")).toBeNull();
+  });
+
   it("states findings with no entry and with several, in number", async () => {
     fetchRiskRegisterLatest.mockResolvedValue(
       register({

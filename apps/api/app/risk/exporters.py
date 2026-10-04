@@ -124,19 +124,29 @@ def _li(e: Any) -> str:
     return f"{_rating(e.likelihood)} x {_rating(e.impact)}"
 
 
-def _rating_edited(e: Any) -> bool:
+def _consultant_rated(e: Any) -> bool:
+    """A consultant SET this entry's rating: they edited it AND both halves are
+    present. A cleared rating is unrated, not consultant-rated -- counting it
+    as both printed "rating set by consultant" over "Not rated" (#854 review,
+    F2). ONE predicate for the count line and the Origin column, so the two
+    cannot disagree; the admin marker uses the same rule.
+    """
     # `getattr`, because the renderers take duck-typed rows (`entries: list[Any]`)
     # and a row built before 0061's field existed carries no attribute. Absent
     # reads as "not edited", which is what every such row is: the edit path is
     # the field's only writer.
-    return getattr(e, "rating_edited_at", None) is not None
+    return (
+        getattr(e, "rating_edited_at", None) is not None
+        and e.likelihood is not None
+        and e.impact is not None
+    )
 
 
 def _origin(e: Any) -> str:
     """#844. `origin` describes who drafted the ENTRY; once a consultant has set
     the rating, printing `ai_generated` alone credits the model with a rating it
     never gave."""
-    return f"{e.origin}; rating set by consultant" if _rating_edited(e) else e.origin
+    return f"{e.origin}; rating set by consultant" if _consultant_rated(e) else e.origin
 
 
 def _entries_noun(n: int) -> str:
@@ -229,6 +239,17 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
     # Omitted entirely when nothing was recorded -- an empty sheet headed
     # "Scored coverage" with no rows reads as "nothing was scored", which is a
     # false claim rather than an absence.
+    # #854 review, F6. The PDF and Word carry the summary disclosures (unrated,
+    # consultant-rated, axis and action gaps, finding coverage, baseline); the
+    # spreadsheet had none, while the admin copy says "the exported documents"
+    # state them. The SAME `_summary_lines`, one line per row, so the three
+    # formats cannot drift apart.
+    summary = wb.create_sheet("Summary")
+    summary.append(["Summary"])
+    summary.cell(row=1, column=1).font = Font(bold=True)
+    for line in _summary_lines(ctx):
+        summary.append([line])
+
     if ctx.link_scope:
         sheet = wb.create_sheet("Scored coverage")
         sheet.append(["Assessment", "Rows scored", "Rows total", "Not citable"])
@@ -391,7 +412,7 @@ def _unrated_lines(total: int, unrated: int) -> list[str]:
 
 
 def _consultant_rated_lines(ctx: RiskExportContext) -> list[str]:
-    edited = sum(1 for e in ctx.entries if _rating_edited(e))
+    edited = sum(1 for e in ctx.entries if _consultant_rated(e))
     if edited == 0:
         return []
     return [f"Ratings set by a consultant: {edited} of {len(ctx.entries)} entries."]

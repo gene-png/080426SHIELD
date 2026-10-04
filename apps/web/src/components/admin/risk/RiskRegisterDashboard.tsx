@@ -219,7 +219,9 @@ function columnsFor(
               {r.impact ? titleCase(r.impact) : "Not rated"}
             </span>
           )}
-          {r.rating_edited_at ? (
+          {/* Same rule as the export (`_consultant_rated`): a CLEARED rating is
+            unrated, not consultant-set (#854 review, F2). */}
+          {r.rating_edited_at && r.likelihood && r.impact ? (
             <span
               className="text-xs text-ink-tertiary"
               data-testid="risk-rating-set-by-consultant"
@@ -492,12 +494,11 @@ export function RiskRegisterDashboard(): JSX.Element {
   }
 
   const tc = register?.tier_counts ?? {};
-  // #844. `?? []` / `?? {}` only for a response predating the fields, which
-  // `findings_recorded` (absent -> not true) already keeps from rendering.
-  const findingsWithout = register?.findings_without_entry?.length ?? 0;
-  const findingsSeveral = Object.keys(
-    register?.findings_with_several_entries ?? {},
-  ).length;
+  // #844. `?? 0` covers only the no-register-yet case.
+  const findingsWithout = register?.findings_without_entry.length ?? 0;
+  const findingsSeveral = register
+    ? Object.keys(register.findings_with_several_entries).length
+    : 0;
   const ac = register?.axis_counts ?? {};
 
   // #244. Derived per render from whatever response is in hand, rather than
@@ -732,9 +733,14 @@ export function RiskRegisterDashboard(): JSX.Element {
                 entries have no likelihood, impact or tier
               </span>
               , so they are missing from the matrix and the tier counts while
-              still counting toward Entries. Set a likelihood and impact on each
-              in the Register table below; the export states how many are
-              unrated.
+              still counting toward Entries.
+              {/* #854 review, F5: the remedy names the selects, which exist
+                  only while the register is editable. On a published register
+                  they are gone, so the sentence would name a control that is
+                  not there (D-076). */}
+              {register.finalized_at === null
+                ? " Set a likelihood and impact on each in the Register table below; the export states how many are unrated."
+                : null}
             </div>
           ) : null}
           {/* #132. An entry that proposed ATT&CK or control links and kept
@@ -944,7 +950,7 @@ export function RiskRegisterDashboard(): JSX.Element {
               when the record exists AND something is off: an unrecorded
               register says nothing here (its empty list is not a clean
               result), and a clean one needs no sentence. */}
-          {register.findings_recorded === true &&
+          {register.findings_recorded &&
           (findingsWithout > 0 || findingsSeveral > 0) ? (
             <div
               className="rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm text-status-warning-fg"

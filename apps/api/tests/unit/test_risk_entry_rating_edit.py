@@ -244,3 +244,35 @@ def test_a_client_role_user_is_forbidden(app_client) -> None:  # noqa: F811
     assert r.status_code == 403, r.text
     [e] = _latest(c, bearer, cid)["entries"]
     assert e["likelihood"] is None
+
+
+def test_the_edit_locks_the_entry_and_its_register(app_client) -> None:  # noqa: F811
+    """#854 review, F7. Two concurrent PATCHes on one entry each read the pair,
+    each set one half, and the second commit could store a tier derived from a
+    pair that no longer exists; a publish racing an edit could likewise change
+    numbers already published. The edit reads both rows FOR UPDATE, and checks
+    superseded and published AFTER taking the lock.
+
+    SQLite has no row locks, so the race itself cannot be run here. What is
+    pinned is the statement the endpoint issues: both SELECTs carry FOR UPDATE.
+    The serialisation is Postgres's, and is not exercised by this test.
+    """
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session
+
+    c, _, bearer, cid, body = _setup(app_client, _unrated("Locked"))
+    locked: list[str] = []
+
+    def _spy(state) -> None:
+        stmt = state.statement
+        if state.is_select and getattr(stmt, "_for_update_arg", None) is not None:
+            locked.extend(sorted(t.name for t in stmt.get_final_froms()))
+
+    event.listen(Session, "do_orm_execute", _spy)
+    try:
+        r = _patch(c, bearer, cid, body["entries"][0]["id"], {"likelihood": "low"})
+    finally:
+        event.remove(Session, "do_orm_execute", _spy)
+    assert r.status_code == 200, r.text
+    assert "risk_entries" in locked, locked
+    assert "risk_registers" in locked, locked

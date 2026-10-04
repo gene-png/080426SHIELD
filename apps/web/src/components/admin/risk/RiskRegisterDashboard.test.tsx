@@ -100,6 +100,14 @@ function register(over: Partial<RiskRegister> = {}): RiskRegister {
     // recorded generate run, and `0` would have every unrelated test assert
     // "nothing was discarded" — a claim, not an absence.
     dropped_citations: null,
+    // #844. `false` + empties is the NOT-RECORDED state, for the reason the
+    // #403 pair above uses it: these registers are not the product of a
+    // recorded generate run, so claiming a clean finding count for them would
+    // be a claim, not an absence.
+    findings_recorded: false,
+    findings_total: null,
+    findings_without_entry: [],
+    findings_with_several_entries: {},
     id: "r1",
     client_id: "c1",
     version: 1,
@@ -211,8 +219,11 @@ describe("RiskRegisterDashboard tier-less entries disclosure", () => {
     const alert = await screen.findByTestId("risk-entries-without-tier");
     expect(alert.textContent).toMatch(/12 of 40/);
     expect(alert).toHaveAttribute("role", "alert");
-    // Names the remedy, not just the count.
-    expect(alert.textContent).toMatch(/Regenerate before exporting/i);
+    // Names the remedy, not just the count. #844: the remedy is the rating
+    // edit; regenerating can come back unrated again.
+    expect(alert.textContent).toMatch(
+      /Set a likelihood and impact on each in the Register table below/,
+    );
   });
 
   it("stays quiet when every entry has a tier", async () => {

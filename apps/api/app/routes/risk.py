@@ -1810,7 +1810,14 @@ def edit_entry_rating(
                 "message": "Send a likelihood, an impact, or both.",
             },
         )
-    entry = db.get(RiskEntry, entry_id)
+    # #854 review, F7: FOR UPDATE on the entry and then its register, and every
+    # guard below runs AFTER the lock. Two concurrent edits each read the pair,
+    # set one half and derived a tier from a pair that the other then changed;
+    # a publish racing an edit could change published numbers. Postgres
+    # serialises on these locks; SQLite (the test database) ignores them.
+    entry = db.execute(
+        select(RiskEntry).where(RiskEntry.id == entry_id).with_for_update()
+    ).scalar_one_or_none()
     if entry is None or entry.client_id != cid:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1819,7 +1826,9 @@ def edit_entry_rating(
                 "message": "That Risk Register entry was not found for this client.",
             },
         )
-    reg = db.get(RiskRegister, entry.register_id)
+    reg = db.execute(
+        select(RiskRegister).where(RiskRegister.id == entry.register_id).with_for_update()
+    ).scalar_one_or_none()
     if reg is None:  # pragma: no cover - the FK is NOT NULL and CASCADEs
         raise RuntimeError(f"risk entry {entry.id} has no register {entry.register_id}")
     if reg.superseded_by is not None:

@@ -147,8 +147,17 @@ def test_the_pdf_matrix_names_what_it_leaves_out(app_client) -> None:  # noqa: F
 
 
 def test_a_consultant_cleared_rating_is_counted_as_unrated(app_client) -> None:  # noqa: F811
+    """A cleared rating is NOT a consultant-set rating: it is unrated, and is
+    counted once, as unrated. Counting it as consultant-rated too printed
+    "rating set by consultant" over "Not rated" (#854 review, F2)."""
     files = _export(app_client, _entry("A"), _entry("B"), edit=(0, {"impact": None}))
-    assert UNRATED_ONE_OF_TWO in _flat(_pdf_text(files["pdf"]))
+    pdf = _flat(_pdf_text(files["pdf"]))
+    assert UNRATED_ONE_OF_TWO in pdf
+    assert "Ratings set by a consultant" not in pdf
+    assert "Ratings set by a consultant" not in _docx_text(files["docx"])
+    rows = {r["Weakness"]: r for r in _xlsx_register_rows(files["xlsx"])}
+    assert rows["A"]["Tier"] == "Not rated"
+    assert rows["A"]["Origin"] == "ai_generated"
 
 
 def test_a_consultant_set_rating_is_not_credited_to_the_model(app_client) -> None:  # noqa: F811
@@ -188,3 +197,37 @@ def test_complete_axis_and_action_lines_carry_no_note(app_client) -> None:  # no
     assert "has no axis" not in pdf
     assert "have no axis" not in pdf
     assert "no recommended action" not in pdf
+
+
+def _xlsx_summary(raw: bytes) -> list[str]:
+    from openpyxl import load_workbook
+
+    ws = load_workbook(io.BytesIO(raw))["Summary"]
+    return [str(r[0]) for r in ws.iter_rows(values_only=True) if r and r[0] is not None]
+
+
+def test_the_xlsx_carries_the_same_summary_disclosures(app_client) -> None:  # noqa: F811
+    """#854 review, F6: the admin copy says "the exported documents" state the
+    unrated count, and the spreadsheet had no summary at all. It now carries
+    the PDF and Word summary lines, read here from the downloaded bytes."""
+    files = _export(
+        app_client,
+        _unrated("Unrated", axis="detection", recommended_action="remediate"),
+        _entry("No axis", axis="mitigation"),
+        _entry("Model rated"),
+        edit=(2, {"likelihood": "low", "impact": "minor"}),
+    )
+    lines = _xlsx_summary(files["xlsx"])
+    assert (
+        "Not rated: 1 of 3 entries has no likelihood or impact, so it has no tier "
+        "and is not in the matrix or in Critical + High." in lines
+    )
+    assert "Ratings set by a consultant: 1 of 3 entries." in lines
+    assert "1 of 3 entries has no axis and is not in the line above." in lines
+    # And it is the SAME list the PDF prints, not a second copy kept in step.
+    # Lines carrying "&" are skipped: the PDF renders "ATT&CK" as "ATT&CK;"
+    # (reportlab markup), a pre-existing defect reported separately.
+    pdf = _flat(_pdf_text(files["pdf"]))
+    for line in lines:
+        if "&" not in line:
+            assert line in pdf, line
