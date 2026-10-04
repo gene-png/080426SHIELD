@@ -49,13 +49,14 @@ NO_CONTENT = (
 NO_TEXT = (
     "generateContent returned a candidate with no text (finishReason=STOP). " "Nothing was parsed."
 )
-_STOP_USAGE = {**_USAGE, "candidatesTokenCount": 0}
+#: A distinctive output count, so a hardcoded 0 (or None) in a raise is caught.
+_STOP_USAGE = {**_USAGE, "candidatesTokenCount": 7}
 
 
-def _stop(parts: list) -> dict:
+def _stop(parts: list, usage: dict = _STOP_USAGE) -> dict:
     return {
         "candidates": [{"content": {"role": "model", "parts": parts}, "finishReason": "STOP"}],
-        "usageMetadata": _STOP_USAGE,
+        "usageMetadata": usage,
     }
 
 
@@ -135,8 +136,22 @@ def test_a_stop_candidate_with_no_text_is_refused(
     raised, status, error, recorded = _invoke(monkeypatch, db_factory, _stop(parts))
     assert status == LLMCallStatus.FAILED
     assert error == f"NoUsableResponseError: {expected}"
-    assert recorded == (3100, 0)
+    assert recorded == (3100, 7)
     assert str(raised) == expected
+
+
+def test_no_text_without_an_output_count_records_none(
+    monkeypatch, db_factory  # noqa: F811
+) -> None:
+    """No `candidatesTokenCount` reported: the row says unknown, never 0."""
+    body = _stop([{"text": ""}], usage=_USAGE)
+    raised, status, error, recorded = _invoke(monkeypatch, db_factory, body)
+    assert (status, error, recorded) == (
+        LLMCallStatus.FAILED,
+        f"NoUsableResponseError: {NO_TEXT}",
+        (3100, None),
+    )
+    assert str(raised) == NO_TEXT
 
 
 @pytest.mark.parametrize("message", [BLOCKED, NO_CANDIDATES, NO_CONTENT, NO_TEXT])
