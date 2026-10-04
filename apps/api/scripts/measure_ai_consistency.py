@@ -16,23 +16,29 @@ WHAT IT REFUSES (exit 2), before any model call:
   * SHIELD_REDACTION_MODE other than `strict`.
 
 WHAT IT DOES: builds the payload with the route's own builder
-(`routes/zt.py::_zt_ai_request_for`, `routes/csf.py::_csf_ai_request_for`) and
-calls the model the way the route does -- `engine.run_job` inside
-`ai_call_boundary` for zt_score, `run_batches` over `_csf_batch_inputs` for
-csf_score -- so redaction, mode, batching and output caps are production's. It
-parses with the job's registered parser.
-It APPLIES NOTHING: no answer row is written. The one state change it can make
-is `--reopen-released`, which sets a released assessment back to DRAFT so the
-route's builder will accept it -- the demo seed releases every ZT assessment --
-and which the report records as `input_setup`.
+(`routes/zt.py::_zt_ai_request_for`, `routes/csf.py::_csf_ai_request_for`,
+`routes/attack.py::_attack_ai_request_for`; for tech_debt_extract the rows of
+`--inventory`, parsed by the upload's own `parse_inventory`) and calls the
+model the way the route does -- `engine.run_job` inside `ai_call_boundary` for
+zt_score, `run_batches` over `_csf_batch_inputs` for csf_score,
+`_run_mitre_map_batched` for mitre_map, `extract_from_rows` for
+tech_debt_extract -- so redaction, mode, batching and output caps are
+production's. It parses with the job's registered parser.
+It APPLIES NOTHING: no answer, coverage row or capability item is written. The
+one state change it can make is `--reopen-released`, which sets a released
+assessment back to DRAFT so the route's builder will accept it -- the demo seed
+releases every assessment -- and which the report records as `input_setup`.
 
 WHAT IT REPORTS, per pair of successful runs: the row set (in both / only in
 one / unreadable / duplicated keys), and per field over rows present in both,
 how many were compared and how many agreed. Every share carries its
 denominator. It also reports the number the client would see, computed by the
-engines rather than here: zt_score's gap count (`zt.scoring.analyze_gaps`) and
-csf_score's per-row maturity level (`csf.playbook.score_tier`), with
-agreement on the level per pair. For zt_score it reports how often the model
+engines rather than here: zt_score's gap count (`zt.scoring.analyze_gaps`),
+csf_score's per-row maturity level (`csf.playbook.score_tier`), mitre_map's
+per-technique R3 status (`attack.computed.status_from`, over citations resolved
+by the run's own `CitationResolver`), with agreement on the level or status per
+pair, and tech_debt_extract's reconciliation (`reconcile_rows`). List fields
+(tool lists, `security_functions`) are compared as SETS, with a mean Jaccard. For zt_score it reports how often the model
 repeated the `current` stage it was sent (`echo`). Counts and codes only: no
 model text reaches the output or the logs.
 
@@ -42,9 +48,9 @@ EXIT: 0 every run succeeded; 1 a run failed, or fewer than two succeeded -- one,
 for a `--probe-batches` run (the report is still written, and names each
 failure); 2 refused.
 
-`zt_score` and `csf_score` are implemented. `tech_debt_extract` needs an input
-builder of its own (#806 step 5); asking for it now is refused rather than
-approximated.
+`zt_score`, `csf_score`, `mitre_map` and `tech_debt_extract` are implemented
+(#806: the last two so the "before" runs use today's prompts). Any other job is
+refused rather than approximated.
 """
 
 from __future__ import annotations
@@ -63,7 +69,14 @@ _log = get_logger(__name__)
 
 #: Jobs with an input builder here. `_job_shape` names each one's row list, key
 #: and compared fields.
-_IMPLEMENTED_JOBS = ("zt_score", "csf_score")
+_IMPLEMENTED_JOBS = ("zt_score", "csf_score", "mitre_map", "tech_debt_extract")
+
+#: Jobs `--probe-batches` applies to: the batched ones.
+_BATCHED_JOBS = ("csf_score", "mitre_map")
+
+#: Free text, which differs in wording on every run, so never compared.
+_ATTACK_FREE_TEXT = ("rationale",)
+_TECH_DEBT_FREE_TEXT = ("function", "notes")
 
 
 class Refused(Exception):
@@ -135,7 +148,48 @@ def _job_shape(job: str) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
         from app.routes.csf import _ROW_KEY_FIELDS as _CSF_KEY_FIELDS
 
         return "scores", _CSF_KEY_FIELDS, _DIM_FIELDS
+    if job == "mitre_map":
+        # The run's own diff fields (`routes/attack.py::_DIFF_FIELDS`), less the
+        # free text -- imported, so a field the apply path gains is compared.
+        from app.routes.attack import _DIFF_FIELDS
+
+        fields = tuple(f for f in _DIFF_FIELDS if f not in _ATTACK_FREE_TEXT)
+        return "techniques", ("technique_code",), fields
+    if job == "tech_debt_extract":
+        # The parser's own record (`ExtractedCapability`), less the key and the
+        # free text: what the extraction would STORE, after its coercion.
+        from dataclasses import fields as dc_fields
+
+        from app.tech_debt.extract import ExtractedCapability
+
+        names = tuple(
+            f.name
+            for f in dc_fields(ExtractedCapability)
+            if f.name != "source_row_index" and f.name not in _TECH_DEBT_FREE_TEXT
+        )
+        return "items", ("source_row_index",), names
     raise Refused("job_not_implemented", f"{job!r} has no measure yet; see the module docstring.")
+
+
+#: Per job, the compared fields that hold a LIST. Compared as sets: the order a
+#: model lists tools in is not a judgement, so ["A", "B"] and ["B", "A"] agree.
+_LIST_FIELDS: dict[str, tuple[str, ...]] = {
+    "mitre_map": ("detection_tools", "prevention_tools", "response_tools"),
+    "tech_debt_extract": ("security_functions",),
+}
+
+
+def _str_set(v: Any) -> frozenset[str] | None:
+    """`v` as a set of strings, or None when it is not a list of strings."""
+    if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
+        return None
+    return frozenset(v)
+
+
+def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
+    """|a & b| / |a | b|; two empty sets agree completely."""
+    union = a | b
+    return len(a & b) / len(union) if union else 1.0
 
 
 def _is_whole(v: Any) -> bool:
@@ -176,10 +230,12 @@ def compare_pair(job: str, a: Mapping[str, Any], b: Mapping[str, Any]) -> dict:
     ia, unread_a, dup_a = _index(a.get(list_key) or [], key_fields)
     ib, unread_b, dup_b = _index(b.get(list_key) or [], key_fields)
     both = sorted(set(ia) & set(ib))
+    list_fields = _LIST_FIELDS.get(job, ())
     out_fields: dict[str, dict] = {}
     for f in fields:
-        compared = equal = within_one = missing_a = missing_b = 0
+        compared = equal = within_one = missing_a = missing_b = not_a_list = 0
         diffs: list[int] = []
+        jaccards: list[float] = []
         for k in both:
             ra, rb = ia[k], ib[k]
             if f not in ra:
@@ -190,6 +246,18 @@ def compare_pair(job: str, a: Mapping[str, Any], b: Mapping[str, Any]) -> dict:
                 continue
             compared += 1
             va, vb = ra[f], rb[f]
+            if f in list_fields:
+                sa, sb = _str_set(va), _str_set(vb)
+                if sa is None or sb is None:
+                    # A bare string, a null, a list holding a number: not the
+                    # shape asked for. Counted, and judged only by exact
+                    # equality -- never coerced into a set it was not.
+                    not_a_list += 1
+                    equal += int(_same(va, vb))
+                    continue
+                jaccards.append(_jaccard(sa, sb))
+                equal += int(sa == sb)
+                continue
             if _same(va, vb):
                 equal += 1
             if _is_whole(va) and _is_whole(vb):
@@ -204,6 +272,10 @@ def compare_pair(job: str, a: Mapping[str, Any], b: Mapping[str, Any]) -> dict:
             "missing_in_a": missing_a,
             "missing_in_b": missing_b,
         }
+        if f in list_fields:
+            # Only on list fields, so the zt and csf report shapes are unchanged.
+            out_fields[f]["not_a_list"] = not_a_list
+            out_fields[f]["mean_jaccard"] = (sum(jaccards) / len(jaccards)) if jaccards else None
     return {
         "rows": {
             "in_both": len(both),
@@ -487,7 +559,9 @@ def _pick_assessment(
             q = q.where(getattr(model, column) == value)
         return db.execute(q.order_by(model.created_at.desc())).scalars().first()
 
-    a = latest([status.DRAFT, status.SUBMITTED])
+    # ATT&CK has no SUBMITTED state; CSF and ZT do.
+    editable = [s for s in (status.DRAFT, getattr(status, "SUBMITTED", None)) if s is not None]
+    a = latest(editable)
     reopened_from = None
     if a is None and reopen_released:
         a = latest([status.RELEASED, status.APPROVED])
@@ -915,6 +989,382 @@ def measure_csf(
     return report
 
 
+def attack_downstream(data: Mapping[str, Any], resolver: Any) -> dict:
+    """Each technique's R3 status as this run would leave it, computed by the
+    engine (`attack.computed.capabilities` / `status_from`).
+
+    Every tool list is resolved with `resolve_citations` and the run's own
+    `CitationResolver`, as the apply path resolves it: an unknown tool is
+    dropped, and a resolved inference is recorded as an UNCLEARED citation, so
+    it counts as awaiting review rather than in place -- which is what a fresh
+    run writes. A list that is not a list resolves to nothing, as there.
+
+    NOT modelled, deliberately: locked and edited rows, citations a consultant
+    cleared on an earlier run, and planned retirement. This is what the model
+    ASKED for, as `zt_downstream` says of its own figure. Rows are indexed as
+    `compare_pair` indexes them, so a technique answered twice is in neither.
+    `ai_status_differs` counts techniques whose suggested `status` is not the
+    computed one."""
+    from types import SimpleNamespace
+
+    from app.attack.citations import resolve_citations
+    from app.attack.computed import capabilities, status_from
+
+    index, _, _ = _index(data.get("techniques") or [], ("technique_code",))
+    computed: dict[str, str] = {}
+    differs = 0
+    for row in index.values():
+        code = row.get("technique_code")
+        if not isinstance(code, str):
+            continue
+        lists: dict[str, list[str]] = {}
+        uncleared: list[dict] = []
+        for field in _LIST_FIELDS["mitre_map"]:
+            out = resolve_citations(row.get(field), resolver)
+            lists[field] = list(out.tools)
+            uncleared += [
+                {"tool": t, "field": field, "cleared_at": None} for t in out.needs_review_tools
+            ]
+        status = status_from(
+            capabilities(
+                SimpleNamespace(technique_code=code, unconfirmed_citations=uncleared, **lists)
+            )
+        )
+        computed[code] = status
+        differs += int(row.get("status") != status)
+    return {"computed_status": computed, "ai_status_differs": differs}
+
+
+def _count_values(mapping: Mapping[str, str]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for v in mapping.values():
+        out[v] = out.get(v, 0) + 1
+    return dict(sorted(out.items()))
+
+
+def measure_attack(
+    db: Any,
+    llm: Any,
+    *,
+    runs: int,
+    reopen_released: bool = False,
+    max_output_tokens: int | None = None,
+    stop_on_failure: bool = False,
+    probe_batches: int | None = None,
+) -> dict:
+    """Run mitre_map `runs` times on the latest editable ATT&CK assessment,
+    through the route's own batching (`_run_mitre_map_batched`), and summarize.
+
+    As for csf_score, a run in which ANY batch failed is a failed run, and the
+    batches' techniques are concatenated, so a technique answered by two
+    batches is a duplicated key, compared in neither run."""
+    from dataclasses import replace
+    from datetime import timedelta
+
+    from fastapi import HTTPException
+
+    from app.ai.runs import RUN_DEADLINE, RUN_DEADLINE_EXCEEDED, RunFailed
+    from app.attack.citations import CitationResolver
+    from app.config import get_settings
+    from app.models._common import utcnow
+    from app.models.attack_assessment import AttackAssessment, AttackAssessmentStatus
+    from app.routes.attack import (
+        _MITRE_BATCH_SIZE,
+        _attack_ai_request_for,
+        _refuse_without_capabilities,
+        _run_mitre_map_batched,
+    )
+
+    _require_sqlite_bind(db, "a mitre_map measurement")
+    admin = _admin_user(db)
+    a, reopened_from = _pick_assessment(
+        db,
+        AttackAssessment,
+        AttackAssessmentStatus,
+        label="ATT&CK",
+        reopen_released=reopen_released,
+    )
+    client = _client_of(db, a)
+    try:
+        req = _attack_ai_request_for(db, a, client)
+        # The run refuses an empty allow-list before calling anything; so does this.
+        _refuse_without_capabilities(req, svc_id=a.service_id, client_id=client.id)
+    except HTTPException as exc:
+        raise _builder_refusal(exc) from exc
+    codes = list(req.preview.inputs.get("technique_codes") or [])
+    all_batches = -(-len(codes) // _MITRE_BATCH_SIZE)
+    if probe_batches is not None:
+        if probe_batches >= all_batches:
+            raise Refused(
+                "probe_not_smaller",
+                f"--probe-batches {probe_batches} is not fewer than the "
+                f"{all_batches} batches of a full run.",
+            )
+        # The first N of the route's own batches: the route splits
+        # `technique_codes` in order, so its first N * size codes are exactly them.
+        probed = codes[: probe_batches * _MITRE_BATCH_SIZE]
+        req = replace(
+            req,
+            preview=replace(req.preview, inputs={**req.preview.inputs, "technique_codes": probed}),
+        )
+    sent = len(req.preview.inputs["technique_codes"])
+    batches = -(-sent // _MITRE_BATCH_SIZE)
+    # Built as `_attack_run_work` builds it, from the same request.
+    resolver = CitationResolver(
+        req.capabilities,
+        client_org_name=req.preview.client_org_name,
+        redaction_mode=get_settings().shield_redaction_mode,
+        name_hints=tuple(req.preview.name_hints or ()),
+    )
+    _log.info(
+        "measure_ai_consistency.start",
+        job="mitre_map",
+        assessment_id=str(a.id),
+        techniques=sent,
+        batches=batches,
+        tools=len(req.capabilities),
+        provider=llm.provider.name,
+        model=llm.provider.model,
+        runs=runs,
+    )
+
+    def one_run(n: int) -> RunRecord:
+        before = _call_ids(db)
+        try:
+            suggestions, total, failed = _run_mitre_map_batched(
+                db,
+                llm,
+                req,
+                requested_by=admin.id,
+                service_id=a.service_id,
+                client_id=client.id,
+                deadline_at=utcnow() + timedelta(seconds=RUN_DEADLINE.total_seconds()),
+            )
+        except (HTTPException, RunFailed) as exc:
+            reason, cause, charged = _failure(exc)
+            tokens_in, tokens_out, complete = _tokens_since(db, before)
+            if isinstance(exc, RunFailed) and exc.reason == RUN_DEADLINE_EXCEEDED:
+                # As for csf_score: a batch still inside a provider call writes
+                # its row later, so the spend so far is not the run's spend.
+                complete = False
+            _log.error(
+                "measure_ai_consistency.run_failed",
+                run=n,
+                failure=reason,
+                cause=cause,
+                charged_likely=charged,
+            )
+            return RunRecord(False, None, reason, tokens_in, tokens_out, cause, charged, complete)
+        tokens_in, tokens_out, complete = _tokens_since(db, before)
+        if failed:
+            failure = f"batches_failed:{failed}/{total}"
+            _log.error("measure_ai_consistency.run_failed", run=n, failure=failure)
+            return RunRecord(False, None, failure, tokens_in, tokens_out, None, True, complete)
+        _log.info(
+            "measure_ai_consistency.run_ok",
+            run=n,
+            batches=total,
+            input_tokens=tokens_in,
+            output_tokens=tokens_out,
+        )
+        data = {"techniques": suggestions}
+        return RunRecord(True, data, None, tokens_in, tokens_out, tokens_complete=complete)
+
+    records = run_loop(
+        runs, one_run, max_output_tokens=max_output_tokens, stop_on_failure=stop_on_failure
+    )
+    report = summarize(
+        "mitre_map",
+        records,
+        max_output_tokens=max_output_tokens,
+        min_ok_runs=1 if probe_batches is not None else 2,
+    )
+    computed = {n: attack_downstream(data, resolver) for n, data in _ok_runs(records)}
+    for pair in report["pairs"]:
+        sa = computed[pair["pair"][0]]["computed_status"]
+        sb = computed[pair["pair"][1]]["computed_status"]
+        both = set(sa) & set(sb)
+        pair["computed_status"] = {
+            "compared": len(both),
+            "equal": sum(sa[k] == sb[k] for k in both),
+        }
+    report["assessment_id"] = str(a.id)
+    report["techniques_sent"] = sent
+    report["batches_per_run"] = batches
+    report["tools_available"] = len(req.capabilities)
+    report["probe"] = None if probe_batches is None else {"batches": batches, "of": all_batches}
+    report["input_setup"] = {"reopened_from": reopened_from}
+    report["provider"] = {"name": llm.provider.name, "model": llm.provider.model}
+    report["downstream"] = [
+        {
+            "run": n,
+            "computed_status_counts": _count_values(c["computed_status"]),
+            "ai_status_differs": c["ai_status_differs"],
+        }
+        for n, c in computed.items()
+    ]
+    return report
+
+
+#: `--inventory` file suffix -> the MIME type the upload route would record for
+#: it. Only formats `tech_debt/parsers.py::SUPPORTED_MIME` reads.
+_INVENTORY_MIME = {
+    ".csv": "text/csv",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+
+
+def _inventory_rows(path: str) -> tuple[list[dict], str]:
+    """The rows of `path`, parsed by the upload's own `parse_inventory`."""
+    from pathlib import Path
+
+    from app.tech_debt.parsers import UnsupportedInventoryFormat, parse_inventory
+
+    suffix = Path(path).suffix.lower()
+    mime = _INVENTORY_MIME.get(suffix)
+    if mime is None:
+        raise Refused(
+            "inventory_format", f"--inventory must be .csv or .xlsx, not {suffix or 'no suffix'!r}."
+        )
+    try:
+        data = Path(path).read_bytes()
+    except OSError as exc:
+        raise Refused("inventory_unreadable", f"--inventory could not be read: {exc}") from exc
+    try:
+        rows = parse_inventory(data, mime)
+    except UnsupportedInventoryFormat as exc:
+        raise Refused("inventory_format", str(exc)) from exc
+    if not rows:
+        raise Refused("inventory_empty", "--inventory holds no rows.")
+    return rows, mime
+
+
+def _item_record(item: Any) -> dict:
+    """An `ExtractedCapability` as the dict `compare_pair` reads."""
+    from dataclasses import asdict
+
+    record = asdict(item)
+    record["security_functions"] = list(record["security_functions"])
+    return record
+
+
+_TRI_STATE = {True: "true", False: "false", None: "null"}
+
+
+def measure_tech_debt(
+    db: Any,
+    llm: Any,
+    *,
+    runs: int,
+    inventory: str,
+    max_output_tokens: int | None = None,
+    stop_on_failure: bool = False,
+) -> dict:
+    """Run tech_debt_extract `runs` times on the rows of `inventory`, through
+    `extract_from_rows` (the extraction's own call), for the latest Tech Debt
+    service, and summarize. `extract_from_rows` writes only its `llm_calls`
+    row; the capability list and items are the ROUTE's to write, and are not."""
+    from pathlib import Path
+
+    from fastapi import HTTPException
+    from sqlalchemy import select
+
+    from app.models.service import Service, ServiceKind
+    from app.tech_debt.extract import (
+        client_org_name_for_tenant,
+        extract_from_rows,
+        name_hints_for_tenant,
+    )
+
+    _require_sqlite_bind(db, "a tech_debt_extract measurement")
+    admin = _admin_user(db)
+    rows, mime = _inventory_rows(inventory)
+    svc = (
+        db.execute(
+            select(Service)
+            .where(Service.kind == ServiceKind.TECH_DEBT)
+            .order_by(Service.created_at.desc())
+        )
+        .scalars()
+        .first()
+    )
+    if svc is None:
+        raise Refused("no_tech_debt_service", "No Tech Debt service to extract for.")
+    org_name = client_org_name_for_tenant(db, svc.client_id)
+    hints = name_hints_for_tenant(db, svc.client_id)
+    _log.info(
+        "measure_ai_consistency.start",
+        job="tech_debt_extract",
+        service_id=str(svc.id),
+        rows=len(rows),
+        provider=llm.provider.name,
+        model=llm.provider.model,
+        runs=runs,
+    )
+    reconciliations: dict[int, dict] = {}
+
+    def one_run(n: int) -> RunRecord:
+        before = _call_ids(db)
+        try:
+            result = extract_from_rows(
+                db=db,
+                rows=rows,
+                source_filename=Path(inventory).name,
+                source_mime=mime,
+                requested_by_id=admin.id,
+                service_id=svc.id,
+                client_id=svc.client_id,
+                client_org_name=org_name,
+                name_hints=hints,
+                llm=llm,
+            )
+        except (HTTPException, ValueError) as exc:
+            # ValueError is the parser refusing the response, which the route
+            # reports as `ai_extraction_unparseable`. Committed first, as the
+            # route commits, so the call's `llm_calls` row is counted.
+            db.commit()
+            reason, cause, charged = _failure(exc)
+            tokens_in, tokens_out, complete = _tokens_since(db, before)
+            _log.error(
+                "measure_ai_consistency.run_failed",
+                run=n,
+                failure=reason,
+                cause=cause,
+                charged_likely=charged,
+            )
+            return RunRecord(False, None, reason, tokens_in, tokens_out, cause, charged, complete)
+        db.commit()
+        tokens_in, tokens_out, complete = _tokens_since(db, before)
+        rec = result.reconciliation
+        reconciliations[n] = {
+            "excluded_row_indexes": sorted(e.index for e in rec.excluded_rows),
+            "attribution_complete": rec.attribution_complete,
+            "security_related": _count_values(
+                {str(i): _TRI_STATE[item.security_related] for i, item in enumerate(result.items)}
+            ),
+        }
+        _log.info(
+            "measure_ai_consistency.run_ok",
+            run=n,
+            items=len(result.items),
+            input_tokens=tokens_in,
+            output_tokens=tokens_out,
+        )
+        data = {"items": [_item_record(i) for i in result.items]}
+        return RunRecord(True, data, None, tokens_in, tokens_out, tokens_complete=complete)
+
+    records = run_loop(
+        runs, one_run, max_output_tokens=max_output_tokens, stop_on_failure=stop_on_failure
+    )
+    report = summarize("tech_debt_extract", records, max_output_tokens=max_output_tokens)
+    report["service_id"] = str(svc.id)
+    report["rows_sent"] = len(rows)
+    report["input_setup"] = {"inventory": Path(inventory).name, "mime": mime}
+    report["provider"] = {"name": llm.provider.name, "model": llm.provider.model}
+    report["downstream"] = [{"run": n, **r} for n, r in reconciliations.items()]
+    return report
+
+
 def _print_table(report: dict) -> None:
     print(f"job={report['job']} runs_ok={report['runs_ok']}/{report['runs_requested']}")
     for f in report["failed_runs"]:
@@ -927,11 +1377,21 @@ def _print_table(report: dict) -> None:
             f"duplicate keys {r['duplicate_keys_a']}/{r['duplicate_keys_b']}"
         )
         for name, s in p["fields"].items():
+            if "mean_jaccard" in s:
+                print(
+                    f"  {name}: same set {s['equal']}/{s['compared']}, mean Jaccard "
+                    f"{s['mean_jaccard']}, not a list {s['not_a_list']}, "
+                    f"missing A/B {s['missing_in_a']}/{s['missing_in_b']}"
+                )
+                continue
             print(
                 f"  {name}: equal {s['equal']}/{s['compared']}, within one "
                 f"{s['within_one']}/{s['compared']}, mean |diff| {s['mean_abs_diff']}, "
                 f"missing A/B {s['missing_in_a']}/{s['missing_in_b']}"
             )
+        if "computed_status" in p:
+            cs = p["computed_status"]
+            print(f"  computed R3 status: equal {cs['equal']}/{cs['compared']}")
     for e in report.get("echo", []):
         for name, c in e.items():
             if name != "run":
@@ -954,12 +1414,25 @@ def _print_table(report: dict) -> None:
                 f"out-of-range values {d['out_of_range_values']}, "
                 f"unusable targets {len(d['unusable_target_codes'])}"
             )
+        elif "computed_status_counts" in d:
+            print(
+                f"run {d['run']}: computed R3 statuses {d['computed_status_counts']}, "
+                f"AI status differs from computed on {d['ai_status_differs']}"
+            )
+        elif "excluded_row_indexes" in d:
+            print(
+                f"run {d['run']}: excluded rows {d['excluded_row_indexes']}, "
+                f"attribution complete {d['attribution_complete']}, "
+                f"security_related {d['security_related']}"
+            )
         else:
             print(
                 f"run {d['run']}: rows scored {d['scored_rows']}, "
                 f"not scoreable {d['not_scoreable']}, evidence-capped {d['evidence_capped']}"
             )
-    asked = report.get("rows_sent", report.get("assessment_capabilities"))
+    asked = report.get(
+        "rows_sent", report.get("techniques_sent", report.get("assessment_capabilities"))
+    )
     print(f"rows asked per run: {asked}")
     if report.get("probe"):
         print(f"PROBE: {report['probe']['batches']} of {report['probe']['of']} batches")
@@ -1000,8 +1473,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--probe-batches",
         type=int,
         default=None,
-        help="csf_score only: run just the first N of the route's batches, to measure "
-        "per-batch cost before a full run. Allows --runs 1; reports no agreement.",
+        help="csf_score and mitre_map only: run just the first N of the route's batches, "
+        "to measure per-batch cost before a full run. Allows --runs 1; reports no agreement.",
+    )
+    p.add_argument(
+        "--inventory",
+        default=None,
+        help="tech_debt_extract only, and required for it: the .csv or .xlsx whose rows "
+        "are extracted, parsed by the upload's own parser.",
     )
     p.add_argument(
         "--stop-on-failure",
@@ -1016,9 +1495,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         "under way is never cut off, so the overrun is at most one run.",
     )
     args = p.parse_args(argv)
-    if args.probe_batches is not None and (args.job != "csf_score" or args.probe_batches < 1):
+    if args.probe_batches is not None and (args.job not in _BATCHED_JOBS or args.probe_batches < 1):
         print(
-            "REFUSED (probe_not_applicable): --probe-batches is csf_score only, >= 1.",
+            "REFUSED (probe_not_applicable): --probe-batches is for "
+            f"{' and '.join(_BATCHED_JOBS)} only, >= 1.",
+            file=sys.stderr,
+        )
+        return 2
+    if (args.inventory is None) == (args.job == "tech_debt_extract"):
+        # Either way round is a mistake: tech_debt_extract has no other input,
+        # and an inventory given to another job would be silently ignored.
+        print(
+            "REFUSED (inventory_mismatch): --inventory is required for "
+            "tech_debt_extract and accepted for no other job.",
+            file=sys.stderr,
+        )
+        return 2
+    if args.reopen_released and args.job == "tech_debt_extract":
+        print(
+            "REFUSED (reopen_not_applicable): tech_debt_extract measures an inventory "
+            "file, not an assessment, so there is nothing to reopen.",
             file=sys.stderr,
         )
         return 2
@@ -1065,6 +1561,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 report = measure_csf(
                     db, llm, seed_profile_tiers=tiers, probe_batches=args.probe_batches, **common
                 )
+            elif args.job == "mitre_map":
+                report = measure_attack(db, llm, probe_batches=args.probe_batches, **common)
+            elif args.job == "tech_debt_extract":
+                # No assessment to reopen (refused above): the input is the file.
+                common.pop("reopen_released")
+                report = measure_tech_debt(db, llm, inventory=args.inventory, **common)
             else:
                 report = measure_zt(db, llm, framework=args.framework, **common)
         except Refused as exc:

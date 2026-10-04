@@ -749,8 +749,17 @@ def test_main_refuses_a_postgres_database_before_building_a_provider(
 
 
 def test_main_refuses_a_job_with_no_measure_before_building_a_provider(cli, capsys) -> None:
+    from scripts.measure_ai_consistency import _IMPLEMENTED_JOBS
+
+    # The example must be a job that really has no measure. It was
+    # tech_debt_extract until #806 measured it; if risk_synthesize is ever
+    # measured, this says so instead of failing for a confusing reason.
+    assert "risk_synthesize" not in _IMPLEMENTED_JOBS, (
+        "this test's premise has expired: risk_synthesize is now measured -- pick "
+        "another unmeasured job as the example"
+    )
     built, tmp_path = cli
-    code = main(["--job", "tech_debt_extract", "--runs", "2", "--out", str(tmp_path / "o.json")])
+    code = main(["--job", "risk_synthesize", "--runs", "2", "--out", str(tmp_path / "o.json")])
     assert code == 2
     assert built == []
     assert "REFUSED (job_not_implemented)" in capsys.readouterr().err
