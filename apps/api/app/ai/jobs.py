@@ -291,8 +291,8 @@ if _ATTACK_SCENARIO_DELTA_PROMPT is not None:
 
 # --- ATT&CK what-if chat box, the AI reading (#802) ----------------------------
 # Approved plan: #802 comment 5981734020; the advisor at 16:40Z (comment
-# 5982109105). The prompt TEXT is not set here: the job is registered only when
-# this constant is set, and until then the chat box is exactly the slice C
+# 5982109105). The job is registered because its prompt is set below; with the
+# constant None it would not be, and the chat box would be exactly the slice C
 # matcher (`attack/scenario_intent.py::available`). The answer is an object with
 # three keys and no list key to declare, so the job supplies its own parser,
 # which refuses any other shape; `scenario_intent.read` then checks the names

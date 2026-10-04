@@ -51,6 +51,7 @@ from app.models.attack_scenario import AttackScenario, AttackScenarioRow, Attack
 from app.models.audit_entry import AuditEntry
 from app.models.capability import CapabilityItem
 from app.models.client import Client
+from app.models.llm_call import LLMCall
 from app.models.service import ServiceKind
 from app.models.user import User, UserRole
 
@@ -79,6 +80,7 @@ from app.schemas.attack_scenario import (
     ScenarioTechnique,
 )
 from app.security.rate_limit import RateLimiter, get_rate_limiter
+from app.tech_debt.extract import name_hints_for_tenant
 from app.tenant import require_service_in_tenant
 
 _log = get_logger(__name__)
@@ -509,7 +511,7 @@ def _llm_builder(db: Annotated[Session, Depends(get_db)]) -> Callable[[], LLMCli
 @router.post(
     "/services/{service_id}/scenarios/parse",
     response_model=ScenarioParseResponse,
-    summary="Propose a what-if's change list from a description, by code (admin)",
+    summary="Propose a what-if's change list from a description (admin)",
 )
 def parse_scenario_text(
     service_id: uuid.UUID,
@@ -594,6 +596,28 @@ def parse_scenario_text(
     )
 
 
+def _attempt_call_id(db: Session, service_id: uuid.UUID) -> str | None:
+    """The id of the `llm_calls` row this attempt wrote, found in the
+    request's own session: `invoke` adds and flushes the row BEFORE calling
+    the provider and marks it FAILED on an error, and nothing else in this
+    request writes one. So the id is known whether the call, the parse or
+    the reading failed (#863 review, F2), and a billed attempt is never
+    recorded without its row."""
+    rows = [
+        o
+        for o in db.identity_map.values()
+        if isinstance(o, LLMCall) and o.purpose == scenario_intent.PURPOSE
+    ]
+    if len(rows) != 1:
+        _log.error(
+            "attack.scenario.chat_ai_call_row_unknown",
+            service_id=str(service_id),
+            rows=len(rows),
+        )
+        return None
+    return str(rows[0].id)
+
+
 #: N2, approved by the advisor verbatim (16:40Z, #802 comment 5982109105).
 AI_FALLBACK_NOTE = (
     "The AI could not read your description just now, so only the tools named exactly "
@@ -630,10 +654,18 @@ def _ai_reading(
             raise
         _log.info("attack.scenario.chat_ai_rate_limited", service_id=str(service_id))
         return None, AI_FALLBACK_NOTE
+    # The tenant's user names are a name dictionary for the redactor, as Tech
+    # Debt's extraction uses them: a colleague named in the description is
+    # sent as [NAME] (#863 review, F1). The SAME hints go to the sent text,
+    # the call and the reading, so condition 1 checks what was sent.
+    hints = name_hints_for_tenant(db, client.id)
     sent = scenario_intent.sent_description(
-        text, cited, redaction_mode=mode, client_org_name=client.legal_name
+        text,
+        cited,
+        redaction_mode=mode,
+        client_org_name=client.legal_name,
+        name_hints=hints,
     )
-    call_id: str | None = None
     reading: scenario.ParsedChange | None = None
     failure: str | None = None
     try:
@@ -646,8 +678,8 @@ def _ai_reading(
             service_id=service_id,
             client_id=client.id,
             client_org_name=client.legal_name,
+            name_hints=hints,
         )
-        call_id = str(result.llm_call.id)
         reading = scenario_intent.read(
             result.data,
             sent=sent,
@@ -655,6 +687,7 @@ def _ai_reading(
             client_tools=client_tools,
             client_org_name=client.legal_name,
             redaction_mode=mode,
+            name_hints=hints,
         )
     except HTTPException:
         raise
@@ -665,6 +698,7 @@ def _ai_reading(
             service_id=str(service_id),
             error=f"{type(exc).__name__}: {exc}",
         )
+    call_id = _attempt_call_id(db, service_id)
     # Counts only: the text and the tool names are the client's data.
     audit(
         db,

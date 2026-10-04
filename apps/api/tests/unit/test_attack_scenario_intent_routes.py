@@ -34,6 +34,7 @@ from app.models.ai_run import AiRun
 from app.models.attack_scenario import AttackScenario
 from app.models.audit_entry import AuditEntry
 from app.models.llm_call import LLMCall
+from app.models.user import User, UserRole
 from tests.unit.test_ai_runs_attack import (  # noqa: F401  (app_parts: fixture)
     LiveLookingProvider,
     app_parts,
@@ -257,6 +258,12 @@ def test_an_ai_attempt_leaves_one_llm_call_and_one_counts_only_audit_entry(
         "not_understood",
     }
     assert details["fell_back"] is fell_back
+    # #863 review, F2: the attempt's own llm_calls row, on a failure too.
+    with w.sessions() as db:
+        (call_id,) = db.execute(
+            select(LLMCall.id).where(LLMCall.purpose == scenario_intent.PURPOSE)
+        ).scalars()
+    assert details["llm_call_id"] == str(call_id)
     blob = json.dumps(details)
     assert "edr thing" not in blob and EDR not in blob
 
@@ -267,3 +274,39 @@ def test_a_matcher_only_parse_records_nothing(app_parts) -> None:  # noqa: F811
     w.use(_provider(True, GOOD, []))
     assert _parse(w, VAGUE, "offline").status_code == 200
     assert _counts(w) == before
+
+
+def test_a_tenant_users_name_in_the_description_reaches_the_ai_redacted(
+    app_parts,  # noqa: F811
+) -> None:
+    """#863 review, F1: the tenant's user names are a name dictionary for the
+    redactor (`name_hints_for_tenant`, as Tech Debt's extraction uses it), so a
+    colleague named in the description is sent as [NAME], and condition 1 is
+    checked against that same text."""
+    import uuid
+
+    w = _world(app_parts)
+    with w.sessions() as db:
+        db.add(
+            User(
+                email="dana.whitfield@acme.example",
+                password_hash="x" * 64,
+                role=UserRole.CLIENT,
+                display_name="Dana Whitfield",
+                client_id=uuid.UUID(w.cid),
+            )
+        )
+        db.commit()
+    seen: list[dict] = []
+    w.use(
+        _provider(True, {"remove": [], "add": [], "unclear": ["the edr thing [NAME] runs"]}, seen)
+    )
+    r = _parse(w, "drop the edr thing Dana Whitfield runs", "live")
+    assert r.status_code == 200, r.text
+    (sent,) = seen
+    assert "Dana" not in sent["description"] and "Whitfield" not in sent["description"]
+    assert "[NAME]" in sent["description"]
+    assert r.json()["source"] == "ai"
+    assert [(n["text"], n["reason"]) for n in r.json()["not_understood"]] == [
+        ("the edr thing [NAME] runs", "ai_unclear")
+    ]
