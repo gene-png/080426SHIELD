@@ -20,6 +20,7 @@ are never mutated.
 from __future__ import annotations
 
 import re
+import unicodedata
 import uuid
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -200,6 +201,17 @@ def resolve_removed(rows: Sequence[Any], names: Iterable[str]) -> list[str]:
 MAX_ADDED = 10
 #: The longest name, vendor or category an admin may enter.
 MAX_TEXT = 200
+#: Unicode categories a name, vendor or category may not hold (#826): every
+#: control character (Cc: C0, DEL and C1), the line and paragraph separators
+#: (Zl, Zp), and a lone surrogate (Cs; a valid pair such as an emoji is ONE
+#: code point here, not Cs). Named by category, so the set is Unicode's, not a
+#: hand list. Two of them Postgres cannot store in the change list (jsonb),
+#: each an untyped 500 at insert, both measured on postgres:16: NUL
+#: ("unsupported Unicode escape sequence") and a lone surrogate ("Unicode low
+#: surrogate must follow a high surrogate", #831 review, F2). The rest store,
+#: but a name is one line of visible text. Format characters (Cf, a zero-width
+#: joiner) are deliberately NOT refused: scripts use them.
+_UNPRINTABLE = frozenset({"Cc", "Zl", "Zp", "Cs"})
 
 #: An added tool's declared functions, as the Tech Debt classification spells
 #: them (`SecurityFunction`), and the coverage flag each maps to, in D/P/R order.
@@ -277,6 +289,15 @@ class TooLong(AddedToolRefused):
         self.field = field
 
 
+class Unprintable(AddedToolRefused):
+    """A name, vendor or category holding a character in `_UNPRINTABLE`;
+    `field` is the panel's label for it (#826)."""
+
+    def __init__(self, name: str, field: str) -> None:
+        super().__init__(name)
+        self.field = field
+
+
 class BadFunction(AddedToolRefused):
     """A function that is not detect, prevent or respond."""
 
@@ -305,6 +326,7 @@ def validate_added(
     redaction_mode: RedactionMode,
     name_hints: Iterable[str] = (),
     limit: int = MAX_ADDED,
+    check_characters: bool = True,
 ) -> list[AddedTool]:
     """The admin's added tools, or a typed refusal naming the first bad one.
 
@@ -355,11 +377,12 @@ def validate_added(
             raise BlankName()
         vendor, category = _text(entry.get("vendor")), _text(entry.get("category"))
         # The panel's own labels (B2).
-        for label, value in (
+        fields = (
             ("Name", name),
             ("Vendor (optional)", vendor),
             ("Category (optional)", category),
-        ):
+        )
+        for label, value in fields:
             if value is not None and len(value) > MAX_TEXT:
                 raise TooLong(name, label)
         functions = entry.get("security_functions")
@@ -378,6 +401,13 @@ def validate_added(
         # client's own tools is still their tool (#818 narrow review, 1).
         if any(before.named_by(form) for form in citable(name)):
             raise _why_refused(name, before, resolver(client, "off"), client, earlier, citable)
+        # After the checks above, so a client's own tool spelled with a tab is
+        # still named as theirs (B4), the more useful refusal (#826). Skipped
+        # when re-checking STORED tools for collisions (`check_characters`):
+        # a row stored before #826 is not a collision (#831 review, F1).
+        for label, value in fields if check_characters else ():
+            if value is not None and any(unicodedata.category(ch) in _UNPRINTABLE for ch in value):
+                raise Unprintable(name, label)
         out.append(
             AddedTool(
                 name=name,

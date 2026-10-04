@@ -176,6 +176,15 @@ def _added_refusal(exc: Exception, *, cited: Iterable[str]) -> tuple[str, str]:
             "scenario_added_tool_duplicate",
             f"{name} is listed twice under Tools to add. Remove one with Remove this tool.",
         )
+    if isinstance(exc, scenario.Unprintable):
+        # Copy approved by the advisor as written, 00:03Z (#826). The Name case does not echo
+        # the name: it is the text holding the character.
+        what = "A Name under Tools to add" if exc.field == "Name" else f"{exc.field} for {name}"
+        return (
+            "scenario_added_tool_unprintable",
+            f"{what} contains a line break or another character that cannot be "
+            "shown. Retype it.",
+        )
     if isinstance(exc, scenario.TooLong):
         return (
             "scenario_added_tool_too_long",
@@ -669,8 +678,16 @@ def _added_collision(db: Session, s: AttackScenario, client: Client) -> str | No
             client_tools=current,
             client_org_name=client.legal_name,
             redaction_mode=get_settings().shield_redaction_mode,
+            # A stored row's characters are not a collision: a draft stored
+            # before #826 may hold a line feed (only NUL failed to insert),
+            # and calling it one gave a false message (#831 review, F1).
+            check_characters=False,
         )
-    except scenario.AddedToolRefused as exc:
+    except (scenario.AlreadyClients, scenario.Indistinct, scenario.Duplicate) as exc:
+        # ONLY the collision refusals. The others check a field's own
+        # content, which creation already checked and nothing has changed
+        # since; one here would be a new rule meeting an old row, and it
+        # raises rather than being reported as a collision it is not.
         return exc.name
     return None
 
