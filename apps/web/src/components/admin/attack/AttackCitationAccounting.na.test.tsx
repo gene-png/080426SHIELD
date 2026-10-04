@@ -23,21 +23,37 @@ function result(over: Partial<AttackRunAiResponse>): AttackRunAiResponse {
 
 describe("AttackCitationAccounting: AI N/A refused (#841)", () => {
   it("says one technique was suggested as N/A and not applied", () => {
-    render(<AttackCitationAccounting result={result({ not_applicable_refused: 1 })} />);
-    expect(screen.getByTestId("attack-not-applicable-refused").textContent).toBe(
+    render(
+      <AttackCitationAccounting
+        result={result({ not_applicable_refused: 1 })}
+      />,
+    );
+    expect(
+      screen.getByTestId("attack-not-applicable-refused").textContent,
+    ).toBe(
       "1 technique was suggested as N/A and not applied. Only a consultant can mark a technique N/A, in the technique panel.",
     );
   });
 
   it("counts several", () => {
-    render(<AttackCitationAccounting result={result({ not_applicable_refused: 4 })} />);
-    expect(screen.getByTestId("attack-not-applicable-refused").textContent).toBe(
+    render(
+      <AttackCitationAccounting
+        result={result({ not_applicable_refused: 4 })}
+      />,
+    );
+    expect(
+      screen.getByTestId("attack-not-applicable-refused").textContent,
+    ).toBe(
       "4 techniques were suggested as N/A and not applied. Only a consultant can mark a technique N/A, in the technique panel.",
     );
   });
 
   it("says nothing when none was refused", () => {
-    render(<AttackCitationAccounting result={result({ not_applicable_refused: 0 })} />);
+    render(
+      <AttackCitationAccounting
+        result={result({ not_applicable_refused: 0 })}
+      />,
+    );
     // The panel itself rendered (the positive state) before the absence.
     expect(screen.getByTestId("attack-citation-accounting")).toHaveTextContent(
       /4 tool citations checked against/,
