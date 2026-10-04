@@ -609,6 +609,22 @@ def cli(monkeypatch, tmp_path):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-not-a-key")
     monkeypatch.setenv("SHIELD_REDACTION_MODE", "strict")
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'cli.db'}")
+
+    # Every measurement is replaced by a typed refusal naming itself, so a
+    # command line that gets PAST the argument checks ends in a recognisable
+    # "measure_reached" -- never in whatever the empty database would raise.
+    # That is what lets the refusal tests below fail on their assertions,
+    # not on a crash, when a guard is removed.
+    import scripts.measure_ai_consistency as m
+
+    def reached(name: str):
+        def stub(db, llm, **kw):
+            raise Refused("measure_reached", f"{name} probe_batches={kw.get('probe_batches')}")
+
+        return stub
+
+    for name in ("measure_zt", "measure_csf", "measure_attack", "measure_tech_debt"):
+        monkeypatch.setattr(m, name, reached(name))
     get_settings.cache_clear()
     yield built, tmp_path
     get_settings.cache_clear()
@@ -623,35 +639,35 @@ def cli(monkeypatch, tmp_path):
 )
 def test_main_requires_an_inventory_for_tech_debt_and_only_for_it(cli, capsys, argv) -> None:
     built, tmp_path = cli
-    assert main([*argv, "--out", str(tmp_path / "o.json")]) == 2
+    code = main([*argv, "--out", str(tmp_path / "o.json")])
+    err = capsys.readouterr().err
+    # Refused by the argument check itself: no provider was built and no
+    # measurement was reached (`stub_measures` would say so).
+    assert "REFUSED (inventory_mismatch)" in err
+    assert "measure_reached" not in err
     assert built == []
-    assert "REFUSED (inventory_mismatch)" in capsys.readouterr().err
+    assert code == 2
 
 
 def test_main_refuses_to_reopen_for_tech_debt(cli, capsys) -> None:
     built, tmp_path = cli
     argv = ["--job", "tech_debt_extract", "--runs", "2", "--inventory", "x.csv"]
-    assert main([*argv, "--reopen-released", "--out", str(tmp_path / "o.json")]) == 2
+    code = main([*argv, "--reopen-released", "--out", str(tmp_path / "o.json")])
+    err = capsys.readouterr().err
+    assert "REFUSED (reopen_not_applicable)" in err
+    assert "measure_reached" not in err
     assert built == []
-    assert "REFUSED (reopen_not_applicable)" in capsys.readouterr().err
+    assert code == 2
 
 
 def test_main_accepts_a_probe_for_mitre_map(cli, capsys) -> None:
-    # Past the argument checks: a provider was built and the run reached the
-    # database, which holds no ATT&CK assessment it can use -- so the probe flag
-    # itself was accepted. WHICH refusal comes next depends on the database
-    # `SessionLocal` was bound to at import (an earlier test's, in a full run),
-    # so only its being a typed refusal is pinned.
+    # Past the argument checks: a provider was built and `measure_attack` was
+    # called with the probe -- so the probe flag itself was accepted.
     built, tmp_path = cli
-    api_root = Path(__file__).resolve().parents[2]
-    cfg = Config(str(api_root / "alembic.ini"))
-    cfg.set_main_option("script_location", str(api_root / "alembic"))
-    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{tmp_path / 'cli.db'}")
-    command.upgrade(cfg, "head")
     argv = ["--job", "mitre_map", "--runs", "1", "--probe-batches", "1"]
     code = main([*argv, "--out", str(tmp_path / "o.json")])
     err = capsys.readouterr().err
     assert "probe_not_applicable" not in err
-    assert "REFUSED (" in err
-    assert code == 2
+    assert "REFUSED (measure_reached): measure_attack probe_batches=1" in err
     assert built == [1]
+    assert code == 2
