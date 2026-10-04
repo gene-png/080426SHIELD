@@ -236,7 +236,8 @@ export function RiskDashboard({
           Some entries are counted in Open risks and missing from a breakdown
           below.
         </span>{" "}
-        Of {data.total_entries} entries:{" "}
+        Of {data.total_entries} {data.total_entries === 1 ? "entry" : "entries"}
+        :{" "}
         {gaps.map(([label, n], i) => (
           <span key={label}>
             {i > 0 ? "; " : ""}
@@ -245,8 +246,7 @@ export function RiskDashboard({
         ))}
         . Each is counted separately because each breakdown filters
         independently — an entry can carry a valid tier and still be missing
-        from the axis chart. Regenerate before exporting: a client reading this
-        register sees those rows as dashes.
+        from the axis chart. Ask your consultant to complete those entries.
       </span>
     ) : null;
   return (
@@ -325,7 +325,10 @@ export function RiskDashboard({
         <AxisBars counts={data.axis_counts} />
       </Section>
 
-      <Section title="Full register" pill={`${data.entries.length} entries`}>
+      <Section
+        title="Full register"
+        pill={`${data.entries.length} ${data.entries.length === 1 ? "entry" : "entries"}`}
+      >
         <div
           style={{
             maxHeight: 560,

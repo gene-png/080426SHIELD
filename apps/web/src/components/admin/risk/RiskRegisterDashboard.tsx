@@ -57,6 +57,11 @@ import type { JSX } from "react";
  * Change both, or the client's PDF and this screen disagree about which
  * assessment a count belongs to.
  */
+/** #743: the noun agrees with the count beside it ("1 entry", "2 entries"). */
+function entriesNoun(n: number): string {
+  return n === 1 ? "entry" : "entries";
+}
+
 const SERVICE_LABELS: Record<string, string> = {
   attack: "ATT&CK coverage",
   csf: "NIST CSF",
@@ -688,8 +693,8 @@ export function RiskRegisterDashboard(): JSX.Element {
               data-testid="risk-batches-failed"
             >
               <span className="font-semibold">
-                {register.batches_failed} of {register.batches_total} synthesis
-                batches failed
+                {register.batches_failed} of {register.batches_total} synthesis{" "}
+                {register.batches_total === 1 ? "batch" : "batches"} failed
               </span>
               , so this register is INCOMPLETE -- the entries those batches
               would have produced are missing, not merely unscored. Regenerate
@@ -713,7 +718,8 @@ export function RiskRegisterDashboard(): JSX.Element {
             >
               <span className="font-semibold">
                 {register.entries_intended - register.entries_total} of{" "}
-                {register.entries_intended} entries did not reach storage
+                {register.entries_intended}{" "}
+                {entriesNoun(register.entries_intended)} did not reach storage
               </span>
               , so every count below describes the {register.entries_total} that
               were stored, not the {register.entries_intended} the run intended.
@@ -729,12 +735,14 @@ export function RiskRegisterDashboard(): JSX.Element {
             >
               <span className="font-semibold">
                 {register.entries_without_tier} of {register.entries_total}{" "}
-                entries have no likelihood, impact or tier
+                {entriesNoun(register.entries_total)}{" "}
+                {register.entries_without_tier === 1 ? "has" : "have"} no
+                likelihood, impact or tier
               </span>
-              , so they are missing from the matrix and the tier counts while
-              still counting toward Entries. Set a likelihood and impact on each
-              in the Register table below; the export states how many are
-              unrated.
+              , so {register.entries_without_tier === 1 ? "it is" : "they are"}{" "}
+              missing from the matrix and the tier counts while still counting
+              toward Entries. Set a likelihood and impact on each in the
+              Register table below; the export states how many are unrated.
             </div>
           ) : null}
           {/* #132. An entry that proposed ATT&CK or control links and kept
@@ -759,8 +767,8 @@ export function RiskRegisterDashboard(): JSX.Element {
             >
               <span className="font-semibold">
                 {register.entries_unlinked_after_drops} of{" "}
-                {register.entries_total} entries proposed ATT&amp;CK or control
-                links and kept none
+                {register.entries_total} {entriesNoun(register.entries_total)}{" "}
+                proposed ATT&amp;CK or control links and kept none
               </span>
               , so they show no linkage at all — the same as an entry nobody
               linked. Every value the model sent was either misnamed or names a
@@ -802,8 +810,8 @@ export function RiskRegisterDashboard(): JSX.Element {
             >
               <span className="font-semibold">
                 {register.entries_with_dropped_links} of{" "}
-                {register.entries_total} entries lost at least one value the
-                model sent
+                {register.entries_total} {entriesNoun(register.entries_total)}{" "}
+                lost at least one value the model sent
               </span>{" "}
               — the rest of each still resolved, so they show linkage. The
               values are on each entry and on the{" "}
@@ -853,12 +861,25 @@ export function RiskRegisterDashboard(): JSX.Element {
                   across the{" "}
                   {register.entries_total -
                     register.entries_links_not_recorded}{" "}
-                  of {register.entries_total} entries that carry a link record —{" "}
-                  {register.entries_links_not_recorded} predate link recording
-                  and are not in this count.
+                  of {register.entries_total}{" "}
+                  {entriesNoun(register.entries_total)} that{" "}
+                  {register.entries_total -
+                    register.entries_links_not_recorded ===
+                  1
+                    ? "carries"
+                    : "carry"}{" "}
+                  a link record — {register.entries_links_not_recorded}{" "}
+                  {register.entries_links_not_recorded === 1
+                    ? "predates link recording and is"
+                    : "predate link recording and are"}{" "}
+                  not in this count.
                 </>
               ) : (
-                <> across all {register.entries_total} entries.</>
+                <>
+                  {register.entries_total === 1
+                    ? " across the 1 entry."
+                    : ` across all ${register.entries_total} entries.`}
+                </>
               )}{" "}
               This counts VALUES; the entry tallies above count ROWS, so one
               entry that lost three techniques is 1 there and 3 here.
@@ -871,7 +892,11 @@ export function RiskRegisterDashboard(): JSX.Element {
             >
               <span className="font-semibold">
                 {register.entries_links_not_recorded} of{" "}
-                {register.entries_total} entries predate link recording
+                {register.entries_total} {entriesNoun(register.entries_total)}{" "}
+                {register.entries_links_not_recorded === 1
+                  ? "predates"
+                  : "predate"}{" "}
+                link recording
               </span>
               , so nothing on file says whether the model proposed linkage for
               them. That is not the same as nothing having been dropped.
