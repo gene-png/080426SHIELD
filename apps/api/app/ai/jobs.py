@@ -272,13 +272,15 @@ register_job(
 
 # --- ATT&CK what-if (#802) ----------------------------------------------------
 # The scoped re-assessment of removing (and adding) tools. Gene approved this
-# text AS IS on 2026-10-04 (#802 comment 5981768146): the slice B revised draft
-# (comment 5970337002) with the F6 rule (comment 5971086623) inserted after the
-# `open_functions` rule. It is the exact text of those comments; change it only
-# through Gene. Every rule restates something `attack/scenario.py::parse_delta`
+# text on 2026-10-04 as AMENDED in #802 comment 5982780636: the slice B revised
+# draft (comment 5970337002) with two rules inserted after the `open_functions`
+# rule, verbatim from that comment; they replace the F6 rule of comment
+# 5971086623. It is the exact text of those comments; change it only through
+# Gene. Every rule restates something `attack/scenario.py::parse_delta`
 # enforces, so the CONTRACT holds whatever the model returns, never by trusting
 # it. The backslash after the opening quotes only joins the lines of this file:
-# the text starts at "You are".
+# the text starts at "You are". The new rules' long lines are the approved
+# text, unwrapped, hence the noqa on the closing quotes.
 _ATTACK_SCENARIO_DELTA_PROMPT = """\
 You are assisting a Kentro analyst testing a what-if for a client's ATT&CK
 coverage: some tools may be REMOVED, and some tools the client does not have
@@ -316,9 +318,12 @@ Rules:
   true.
 - For a function that is only in `open_functions`, only a tool in
   `added_tools` may be named.
-- An added tool may be credited only for the functions in its
-  `security_functions`. Never set any other function to true for it, in
-  `lost_functions` or in `open_functions`.
+- An added tool may be credited only for the functions its `security_functions` lists (`detect` for `detection`, `prevent` for `prevention`, `respond` for `response`). For an added tool that list is a ceiling: never set any other function to true for it, in `lost_functions` or in `open_functions`.
+- Credit a tool for a function only when it passes these tests for this technique. Judge a kept tool by its well-established core capability. Judge an added tool, which may not be a real product, by its `name`, `category`, and declared `security_functions`, and never refuse it only because you do not recognise it.
+  - detection: it can directly identify, alert on, or meaningfully analyze the technique's behavior, including scanning that identifies the technique's artifacts. Raw log generation, storage, dashboards, generic visibility, a theoretical custom query, or merely containing the affected technology is not detection.
+  - prevention: it can directly block, deny, restrict, neutralize, or materially reduce execution of the technique. Detection without blocking, reporting, a policy document, or a capability the tool lacks by default is not prevention.
+  - response: it supports a concrete action to contain, remediate, reverse, or recover from the technique. Alerting, logging, case tracking, documentation, or generic tickets alone are not response; a backup tool counts only where restoration is relevant to the technique; a feature that needs an optional module or unconfirmed integration does not count.
+  For a kept tool, do not assume optional add-ons, separately licensed modules, premium or preview features, custom integrations, custom detection rules, custom playbooks, configurations not included by default, support for operating systems or cloud or SaaS environments the product does not support, estate-wide deployment, or features of another product from the same vendor.
 - Only tools in `available_tools`, named EXACTLY as their `name` field. Never
   name a removed tool, a vendor, a category, or a tool that is not listed.
 - `security_functions` is evidence, not a verdict: a tool classified
@@ -334,7 +339,7 @@ one asked function; a technique with no row has no replacement:
 "detection": true, "prevention": false, "response": false,
 "rationale": "<one sentence>"}]}
 `detection`, `prevention` and `response` are JSON booleans.
-"""
+"""  # noqa: E501
 
 register_job(
     AIJob(
