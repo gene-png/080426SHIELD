@@ -271,19 +271,75 @@ register_job(
 
 
 # --- ATT&CK what-if (#802) ----------------------------------------------------
-# The scoped re-assessment of removing tools. Its prompt TEXT is held by #806
-# until Gene's drafts arrive, so none ships: the job is registered only when
-# this constant is set. Until then the run route refuses with a typed 503
-# (`attack/scenario.py::analysis_available`), and the tests install a
-# placeholder job of their own. The CONTRACT any text must meet is on #802
-# and enforced by `attack/scenario.py::parse_delta`, never by trusting it.
-_ATTACK_SCENARIO_DELTA_PROMPT: str | None = None
+# The scoped re-assessment of removing (and adding) tools. Gene approved this
+# text AS IS on 2026-10-04 (#802 comment 5981768146): the slice B revised draft
+# (comment 5970337002) with the F6 rule (comment 5971086623) inserted after the
+# `open_functions` rule. It is the exact text of those comments; change it only
+# through Gene. Every rule restates something `attack/scenario.py::parse_delta`
+# enforces, so the CONTRACT holds whatever the model returns, never by trusting
+# it. The backslash after the opening quotes only joins the lines of this file:
+# the text starts at "You are".
+_ATTACK_SCENARIO_DELTA_PROMPT = """\
+You are assisting a Kentro analyst testing a what-if for a client's ATT&CK
+coverage: some tools may be REMOVED, and some tools the client does not have
+may be ADDED. SUGGEST a draft only.
 
-if _ATTACK_SCENARIO_DELTA_PROMPT is not None:
-    register_job(
-        AIJob(
-            name="attack_scenario_delta",
-            prompt=_ATTACK_SCENARIO_DELTA_PROMPT,
-            top_level_key="rows",
-        )
+You are given, for a small set of techniques:
+- `technique_codes`: the techniques to consider. Consider no others;
+- `lost_functions`: for each technique, which of `detection`, `prevention`
+  and `response` lost a tool to the removal (may be empty);
+- `open_functions`: for each technique, which of `detection`, `prevention`
+  and `response` are not in place today and could be filled by an ADDED tool
+  (may be empty);
+- `frozen_rows`: each technique's Detect, Prevent and Respond tool lists as
+  the last confirmed assessment has them, with the removed tools already
+  taken out;
+- `removed_tools`: the tools being removed;
+- `added_tools`: the tools being added, each with `name`, `vendor`,
+  `category` and `security_functions`. They are not the client's; an
+  analyst described them;
+- `available_tools`: every tool the client keeps, and every added tool, each
+  with `name`, `vendor`, `category` and `security_functions`.
+
+For each technique in `technique_codes`:
+- for the functions in its `lost_functions`, say whether any tool in
+  `available_tools` that is not already listed for that function in
+  `frozen_rows` provides it;
+- for the functions in its `open_functions`, say whether any tool in
+  `added_tools` provides it.
+Tools already listed in `frozen_rows` keep their functions; do not repeat
+them.
+
+Rules:
+- Only the techniques in `technique_codes`. For each, only the functions in
+  its `lost_functions` or `open_functions`. Never set any other function to
+  true.
+- For a function that is only in `open_functions`, only a tool in
+  `added_tools` may be named.
+- An added tool may be credited only for the functions in its
+  `security_functions`. Never set any other function to true for it, in
+  `lost_functions` or in `open_functions`.
+- Only tools in `available_tools`, named EXACTLY as their `name` field. Never
+  name a removed tool, a vendor, a category, or a tool that is not listed.
+- `security_functions` is evidence, not a verdict: a tool classified
+  `detect` may still not address this technique; leave it out when it does
+  not.
+- Do not invent capability. If you are not confident a tool provides a
+  function for this technique, leave that function false.
+- Do NOT give a status, a score or a percentage -- code computes those.
+
+Return strictly JSON, one row per (technique, tool) that provides at least
+one asked function; a technique with no row has no replacement:
+{"rows": [{"technique_code": "T1003", "tool": "<an available name>",
+"detection": true, "prevention": false, "response": false,
+"rationale": "<one sentence>"}]}
+`detection`, `prevention` and `response` are JSON booleans.
+"""
+
+register_job(
+    AIJob(
+        name="attack_scenario_delta",
+        prompt=_ATTACK_SCENARIO_DELTA_PROMPT,
+        top_level_key="rows",
     )
+)
