@@ -235,3 +235,22 @@ def test_a_missing_committed_extraction_says_so_and_exits_1(
     err = capsys.readouterr().err
     assert "NO COMMITTED EXTRACTION at" in err
     assert "DIFFERS" not in err
+
+
+def test_a_committed_extraction_that_cannot_be_opened_exits_2(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    ez = _script_world(monkeypatch, tmp_path, lambda path: {"rows": []})
+    committed = tmp_path / "reference-docs" / "cisa" / ez.CISA_JSON_NAME
+    real_read_text = Path.read_text
+
+    def read_text(self, *args, **kwargs):
+        if self == committed:
+            raise PermissionError("locked")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    assert ez.main(["cisa"]) == 2
+    err = capsys.readouterr().err
+    assert "COULD NOT READ the committed extraction: PermissionError" in err
+    assert "DIFFERS" not in err

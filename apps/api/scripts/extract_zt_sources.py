@@ -12,11 +12,17 @@ PDF, carrying the PDF's title, version, date, URL, size and sha256.
 
 `cisa` reads `reference-docs/cisa/zero_trust_maturity_model_v2_508.pdf` and
 writes `reference-docs/cisa/cisa_ztmm_v2_rows.json`. Without `--write` it
-re-extracts and COMPARES with the committed file, exiting 1 on any difference:
-that is how a reviewer re-derives the committed extraction from the PDF.
-Exit 2 when the PDF is missing, is not the pinned one (wrong sha256), or
-cannot be read, and when the committed extraction cannot be read: each is
-"could not look", never the exit 1 of a real difference.
+re-extracts and COMPARES with the committed file: that is how a reviewer
+re-derives the committed extraction from the PDF.
+
+Exit 1 when the re-extraction DIFFERS from the committed file, or when there
+is NO COMMITTED EXTRACTION to compare with. Exit 2 when there is NO CHECKOUT
+(no `reference-docs/` at or above the script), when the PDF is missing, is not
+the pinned one (wrong sha256) or cannot be read, and when the committed
+extraction cannot be read: each is "could not look", never the exit 1 of a
+real difference. Outside that contract: a permission failure on a stat call
+(`is_file`/`is_dir` under a parent that cannot be searched) surfaces as a
+traceback. That case is contrived for a manual tool, and is left unwrapped.
 
 How a CISA row is read. The tables (Tables 2-6, one per pillar) are drawn as
 cell rectangles. A ROW is the outermost rectangle in the first ("Function")
