@@ -17,6 +17,7 @@ import contextvars
 import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -43,6 +44,7 @@ from app.models.attack_assessment import AttackAssessment, AttackCoverage
 from app.models.client import Client
 from app.models.csf_assessment import CsfAnswer, CsfAssessment
 from app.models.risk_register import RiskEntry, RiskRegister
+from app.models.service import Service, ServiceStatus
 from app.models.user import User, UserRole
 from app.models.zt_assessment import ZtAnswer, ZtAssessment
 from app.risk import exporters as risk_exporters
@@ -59,8 +61,9 @@ from app.risk.engine import (
 from app.risk.inputs import (
     INPUT_KINDS,
     Blocker,
+    InputRecord,
     current_inputs,
-    engaged_kinds,
+    engaged_services,
     publish_blockers,
 )
 from app.risk.link_scope import LinkScope, scope_for
@@ -146,11 +149,21 @@ def _exists_for_gate(db: Session, model, client_id: uuid.UUID) -> bool:
 
     Pinned by `test_the_gate_path_must_not_filter_on_finalized`, which fails if
     this ever starts excluding drafts.
+
+    ARCHIVED services do not count (#860 review B2), because synthesis does
+    not read them (`_current_for_synthesis`): an unlock that counted an
+    archived service's assessment would offer a Generate whose register is
+    missing the very input that unlocked it.
     """
     return (
         db.execute(
             select(model.id)
-            .where(model.client_id == client_id, model.status != "discarded")
+            .join(Service, Service.id == model.service_id)
+            .where(
+                model.client_id == client_id,
+                model.status != "discarded",
+                Service.status != ServiceStatus.ARCHIVED,
+            )
             .limit(1)
         ).scalar_one_or_none()
         is not None
@@ -160,20 +173,13 @@ def _exists_for_gate(db: Session, model, client_id: uuid.UUID) -> bool:
 def _finalized_for_synthesis(db: Session, model, client_id: uuid.UUID):
     """The latest APPROVED-or-RELEASED assessment, or None. (#237)
 
-    PROVENANCE, and the reason this is separate from `_exists_for_gate`. What
-    synthesis reads is exported under a client's name, so a DRAFT must not reach
-    it — that is unreviewed content leaving as a deliverable, which is a
-    different and worse failure than a correct number under a wrong label.
-
-    Returning None here does NOT mean "no assessment": it means none that may be
-    synthesized. `_gate` reports that distinction so unlock and synthesis stop
-    disagreeing silently — a consultant walking into a refusal the UI said was
-    not there is worse than a locked gate.
+    Since #737 this feeds ONLY the gate's `not_finalized` report. Synthesis no
+    longer reads it: a draft register synthesizes from in-progress inputs
+    through `_current_for_synthesis`, and what keeps unreviewed work from a
+    client is publish's input gate (`app/risk/inputs.py::publish_blockers`).
+    The name is kept so the #237 history below stays greppable.
 
     See `_exists_for_gate` for why the two are typed differently on purpose.
-
-    Pinned by `test_the_synthesis_path_must_filter_on_finalized`, which fails if
-    this ever stops excluding drafts.
     """
     return db.execute(
         select(model)
@@ -193,15 +199,81 @@ def _current_for_synthesis(db: Session, model, client_id: uuid.UUID):
     register was built from (`app/risk/inputs.py::publish_blockers`). Each
     finding from an unreleased input is labelled with that input's state.
 
-    The same ordering `app/risk/inputs.py::current_inputs` uses, so the input a
-    draft synthesizes from is the one its provenance records and publish checks.
+    The same ordering `app/risk/inputs.py::current_inputs` uses, and the same
+    exclusion of ARCHIVED services (#860 review B2), so the input a draft
+    synthesizes from is always one of the inputs its provenance records and
+    publish checks. An archived service's assessment is not an input.
+
+    ONE assessment per kind, and that is PRE-EXISTING rather than introduced:
+    `_finalized_for_synthesis` read one per kind too. A client with two
+    engaged services of a kind (Zero Trust CISA and DoD) has findings from
+    the latest of them only, while publish requires BOTH released -- the gate
+    is the stricter of the two, so the gap is a missing finding, not an
+    unreleased one reaching the client. Not changed here.
     """
     return db.execute(
         select(model)
-        .where(model.client_id == client_id, model.status != "discarded")
+        .join(Service, Service.id == model.service_id)
+        .where(
+            model.client_id == client_id,
+            model.status != "discarded",
+            Service.status != ServiceStatus.ARCHIVED,
+        )
         .order_by(model.version.desc(), model.created_at.desc())
         .limit(1)
     ).scalar_one_or_none()
+
+
+@dataclass(frozen=True)
+class _InputSnapshot:
+    """What a register is built from, read ONCE, before synthesis (#860 B1).
+
+    Everything generate records about its inputs -- provenance `inputs`,
+    `current_inputs`, each finding's `source_state`, `review_pending` -- comes
+    from this one read, and the findings are gathered from these same
+    assessment objects. Re-reading after the batched model call would record
+    the state the inputs reached DURING the run: an input released mid-run
+    would be recorded released over findings drafted from it unreleased, and
+    the register would publish.
+
+    `statuses` holds the status STRINGS as read, not the ORM objects' live
+    attributes, so nothing later in the request can refresh them.
+    """
+
+    attack: AttackAssessment | None
+    csf: CsfAssessment | None
+    zt: ZtAssessment | None
+    statuses: dict[str, str]
+    review_pending: tuple[str, ...]
+    current: tuple[InputRecord, ...]
+
+
+def _take_input_snapshot(db: Session, client_id: uuid.UUID) -> _InputSnapshot:
+    attack = _current_for_synthesis(db, AttackAssessment, client_id)
+    csf = _current_for_synthesis(db, CsfAssessment, client_id)
+    zt = _current_for_synthesis(db, ZtAssessment, client_id)
+    statuses = {
+        kind: str(getattr(a.status, "value", a.status))
+        for kind, a in (("attack", attack), ("csf", csf), ("zt", zt))
+        if a is not None
+    }
+    pending = tuple(sorted(attack_unreviewed_codes(db, attack))) if attack is not None else ()
+    snap = _InputSnapshot(
+        attack=attack,
+        csf=csf,
+        zt=zt,
+        statuses=statuses,
+        review_pending=pending,
+        current=tuple(current_inputs(db, client_id)),
+    )
+    _log.info(
+        "risk_input_snapshot",
+        client_id=str(client_id),
+        statuses=statuses,
+        review_pending=len(pending),
+        current_inputs=len(snap.current),
+    )
+    return snap
 
 
 def _latest_register(db: Session, client_id: uuid.UUID) -> RiskRegister | None:
@@ -226,19 +298,27 @@ def _latest_register(db: Session, client_id: uuid.UUID) -> RiskRegister | None:
 
 def _input_states(db: Session, client_id: uuid.UUID) -> list[RiskInputState]:
     """#737, the Inputs panel, from the SAME reader publish uses
-    (`app/risk/inputs.py`), so the panel cannot disagree with the refusal."""
-    engaged = set(engaged_kinds(db, client_id))
-    current = current_inputs(db, client_id)
+    (`app/risk/inputs.py`), so the panel cannot disagree with the refusal.
+
+    One row per ENGAGED SERVICE (#860 review B2), and one unengaged row for a
+    kind the client has no live service of. An archived service has no row."""
+    engaged = engaged_services(db, client_id)
+    current = {(r.kind, r.service_id): r for r in current_inputs(db, client_id)}
     rows: list[RiskInputState] = []
     for kind in INPUT_KINDS:
-        records = [r for r in current if r.kind == kind]
-        if records:
-            rows.extend(
-                RiskInputState(kind=kind, engaged=True, status=r.status, version=r.version)
-                for r in records
+        services = [svc for k, svc in engaged if k == kind]
+        if not services:
+            rows.append(RiskInputState(kind=kind, engaged=False))
+        for svc in services:
+            r = current.get((kind, str(svc.id)))
+            rows.append(
+                RiskInputState(
+                    kind=kind,
+                    engaged=True,
+                    status=r.status if r else None,
+                    version=r.version if r else None,
+                )
             )
-        else:
-            rows.append(RiskInputState(kind=kind, engaged=kind in engaged))
     return rows
 
 
@@ -362,25 +442,20 @@ def gate(
     return _gate(db, cid)
 
 
-def _provenance_snapshot(db: Session, client_id: uuid.UUID, excluded: list[str]) -> dict:
-    """What this register is being built FROM, as it stands right now (#240).
+def _provenance_snapshot(snap: _InputSnapshot, excluded: list[str]) -> dict:
+    """What this register is being built FROM, as it stood BEFORE synthesis (#240).
 
     Captured at GENERATE and never revised. Recomputing it at export would read
     TODAY's statuses, so a ZT assessment approved after generation would let the
     export certify coverage over a register that never saw it -- D-053's
     snapshot-versus-live lesson, one table over.
 
-    Reads through `_finalized_for_synthesis`, the SAME resolver `_gather_findings`
-    uses, rather than re-querying. A second query answering the same question is
-    a second place for the answer to differ, and this one exists to be evidence.
+    Built from `snap` and NOT re-queried (#860 review B1): the snapshot is the
+    one read `_gather_findings` drafted from, taken before the model call, and
+    a second read here would record whatever the inputs became during it.
     """
     inputs: list[dict] = []
-    for kind, model in (
-        ("attack", AttackAssessment),
-        ("csf", CsfAssessment),
-        ("zt", ZtAssessment),
-    ):
-        a = _current_for_synthesis(db, model, client_id)
+    for kind, a in (("attack", snap.attack), ("csf", snap.csf), ("zt", snap.zt)):
         if a is None:
             continue
         inputs.append(
@@ -388,19 +463,19 @@ def _provenance_snapshot(db: Session, client_id: uuid.UUID, excluded: list[str])
                 "kind": kind,
                 "assessment_id": str(a.id),
                 "version": a.version,
-                # The status AS IT STOOD. Never re-read.
-                "status": str(getattr(a.status, "value", a.status)),
+                # The status AS IT STOOD before synthesis. Never re-read.
+                "status": snap.statuses[kind],
             }
         )
-    # #737, Gene's all-inputs-final rule: every CURRENT input the client has,
-    # Tech Debt included, with its version and status as they stand at
-    # generate. Publish compares this with the inputs as they stand then
+    # #737, Gene's all-inputs-final rule: every engaged service's current
+    # record, Tech Debt included, as it stood before synthesis. Publish
+    # compares this with the inputs as they stand then
     # (`app/risk/inputs.py::publish_blockers`), so a register built before an
     # input was released, or before a newer version existed, cannot publish.
     return {
         "inputs": inputs,
         "excluded": list(excluded),
-        "current_inputs": [r.as_json() for r in current_inputs(db, client_id)],
+        "current_inputs": [r.as_json() for r in snap.current],
     }
 
 
@@ -481,7 +556,7 @@ def _resolve_links(offered: object, universe: set[str]) -> tuple[list[str], list
 
 
 def _gather_findings(
-    db: Session, client_id: uuid.UUID
+    db: Session, client_id: uuid.UUID, snapshot: _InputSnapshot | None = None
 ) -> tuple[list[dict], set[str], set[str], dict[str, dict], dict[str, LinkScope]]:
     """Findings (one per gap) + the valid link universes + the TARGETS USED.
 
@@ -545,8 +620,11 @@ def _gather_findings(
     valid_controls: set[str] = set()
     target_sources: dict[str, dict] = {}
     link_scopes: dict[str, LinkScope] = {}
+    # #860 B1: generate passes the snapshot its provenance is built from, so
+    # the findings and the record of their inputs come from one read.
+    snap = snapshot if snapshot is not None else _take_input_snapshot(db, client_id)
 
-    attack = _current_for_synthesis(db, AttackAssessment, client_id)
+    attack = snap.attack
     if attack is not None:
         # #556: rows keyed to another catalog would reach the register by ID --
         # "ATT&CK T1649.001" is not a technique, and a T1558 row was answered
@@ -614,7 +692,7 @@ def _gather_findings(
                     }
                 )
 
-    csf = _current_for_synthesis(db, CsfAssessment, client_id)
+    csf = snap.csf
     if csf is not None:
         # #84. This read `r.maturity_tier < 3` -- a HARDCODED tier, so every
         # client's CSF findings were computed against tier 3 no matter what
@@ -648,7 +726,7 @@ def _gather_findings(
                     }
                 )
 
-    zt = _current_for_synthesis(db, ZtAssessment, client_id)
+    zt = snap.zt
     if zt is not None:
         # #84, the ZT half. Framework-aware, because DoD ZTRA has three stages
         # where CISA has four -- a client stage valid under one is out of range
@@ -1080,18 +1158,16 @@ def generate(
             status_code=status.HTTP_409_CONFLICT,
             detail="Risk Register is locked. Missing: " + "; ".join(g.missing) + ".",
         )
-    # REFUSE rather than synthesize from nothing (#237). Without this, moving
-    # `_gather_findings` onto `_finalized_for_synthesis` would turn a
-    # draft-sourced run into an EMPTY register instead of a refusal -- a register
-    # with no entries, generated successfully, which reads as "no risks found".
-    # That is a WORSE failure than the one being fixed: it replaces unreviewed
-    # content with a confident absence, and both go out under the client's name.
     # #737, Gene's ruling (#736 item 13): NO refusal for unapproved inputs here
-    # any more -- this reverses #237. A draft register is generated from
+    # -- this reverses #237's refusal. A draft register is generated from
     # in-progress work, labelled as such, and publish is what refuses it.
 
+    # #860 review B1: the inputs are read ONCE, here, before the findings and
+    # before the model call; the provenance and every label below derive from
+    # this snapshot rather than from a re-read after the run.
+    snap = _take_input_snapshot(db, cid)
     findings, valid_techniques, valid_controls, target_sources, link_scopes = _gather_findings(
-        db, cid
+        db, cid, snap
     )
     client_org = client.legal_name  # NULL when nobody has named the org (D-080)
     # Batched: one request cannot express this job (see _RISK_BATCH_SIZE). A
@@ -1125,7 +1201,7 @@ def generate(
         # #737: nothing present is EXCLUDED any more -- drafts are synthesized
         # -- so the excluded set is recorded empty, and `excluded_inputs` keeps
         # its meaning only for registers generated before this change.
-        provenance=_provenance_snapshot(db, cid, []),
+        provenance=_provenance_snapshot(snap, []),
     )
     # #372. The batch tally is PERSISTED, into the provenance column 0047
     # already added -- no migration, and no new state to keep in step.
@@ -1448,21 +1524,24 @@ def generate(
     # RELEASED at generate carries that input's state, keyed by `source_id`.
     # Released inputs are absent from the map, so an empty map is a register
     # drafted entirely from released work.
-    _state_by_kind = {
-        str(i.get("kind")): str(i.get("status"))
-        for i in (register.provenance or {}).get("inputs", [])
-        if isinstance(i, dict)
-    }
-    # #554 R3, option (b): the ATT&CK codes whose computed status awaited
-    # review at generate. Each finding for one of them is labelled.
-    _attack_now = _current_for_synthesis(db, AttackAssessment, cid)
-    review_pending = sorted(attack_unreviewed_codes(db, _attack_now)) if _attack_now else []
-    source_states = {
-        str(f["source_id"]): _state_by_kind[f["kind"]]
-        for f in findings
-        if f.get("source_id") is not None
-        and _state_by_kind.get(f["kind"], "released") != "released"
-    }
+    # From the pre-synthesis snapshot (#860 review B1), never a re-read.
+    # FAIL CLOSED: a finding whose kind has no recorded status was drafted from
+    # an input the snapshot did not see, which no path produces (every finding
+    # comes from a snapshot assessment) -- so it raises rather than defaulting
+    # to "released", which would let it publish unlabelled.
+    review_pending = list(snap.review_pending)
+    source_states: dict[str, str] = {}
+    for f in findings:
+        if f.get("source_id") is None:
+            continue
+        state = snap.statuses.get(f["kind"])
+        if state is None:
+            raise RuntimeError(
+                f"risk generate: finding kind {f['kind']!r} has no input status in the "
+                "snapshot it was drafted from"
+            )
+        if state != "released":
+            source_states[str(f["source_id"])] = state
     # #854 review F3, Gene's option (c): the consultant's ratings survive a
     # regenerate. Below the flush, because it edits the rows just written.
     ratings_carried = _carry_ratings(db, prior, register)
@@ -1776,7 +1855,7 @@ def _lock_current_register(db: Session, cid: uuid.UUID, *, action: str) -> RiskR
             detail=f"Generate a Risk Register before {action}.",
         )
     # #854 review round 2: LOCK THE REGISTER ROW before reading its entries.
-    # Export reads the entries, renders for seconds, then sets `finalized_at`;
+    # Publish reads the entries, renders for seconds, then sets `finalized_at`;
     # a rating edit committed inside that gap would be in the client's
     # dashboard and not in the file they were sent, permanently. The edit route
     # takes this row FOR SHARE before its write, so on Postgres the two
@@ -1861,20 +1940,12 @@ def _require_certifiable_inputs(reg: RiskRegister) -> None:
         # A RATCHET, and unreachable today. Say so rather than let a reader
         # believe this is what catches the hazard.
         #
-        # `_provenance_snapshot` records only what `_finalized_for_synthesis`
-        # returns, and that resolver filters `status.in_(_FINALIZED)` where
-        # `_FINALIZED = ("approved", "released")`. So every status the snapshot
-        # CAN hold is already approved or released, and this list is empty by
-        # construction for every register generated on or after 0047. The only
-        # way in is mutating stored provenance, which is exactly how the test
-        # for it reaches this branch.
-        #
-        # It is kept because the thing making it unreachable is one resolver's
-        # WHERE clause, and that is a thing a future change can loosen without
-        # noticing what depended on it. `test_the_synthesis_path_must_filter_on_finalized`
-        # is what holds that clause in place; if that test is ever removed or
-        # weakened, this branch stops being decorative and starts being the
-        # last thing between unapproved work and a client's name.
+        # Since #737 `_provenance_snapshot` records DRAFT inputs too, so the
+        # stored statuses can be anything -- but this helper runs only in
+        # `publish`, AFTER the input gate, which already refuses unless every
+        # current input was RELEASED at generate. So no unapproved status
+        # reaches this branch. It is kept as a RATCHET: it becomes the last
+        # guard again if publish ever stops running the input gate first.
         #
         # The pre-0047 DRAFT-input register -- the hazard #240 opens with -- is
         # NOT caught here. It has NULL provenance and is caught by the branch
@@ -2580,10 +2651,12 @@ def _link_scope_fields(stored: object) -> dict:
     `render_xlsx`' own comment calls that state "a false claim rather than an
     absence" and refuses it; the screen took the option the exporter refuses.
 
-    UNREACHABLE from the one writer, measured: `_gate` sets
-    `unlocked = has_attack and (has_csf or has_zt)` from `_finalized_for_synthesis`
-    for all three services, and `generate` 409s unless `synthesizable_missing` is
-    empty, so `link_scopes` always carries at least two services. So this is a
+    UNREACHABLE from the one writer: `_gate` sets
+    `unlocked = has_attack and (has_csf or has_zt)` from `_exists_for_gate`, and
+    since #737 (#860 review B2) that counts the same non-archived population
+    `_current_for_synthesis` reads, so a generate that is allowed at all
+    synthesizes ATT&CK and CSF or ZT and `link_scopes` carries at least two
+    services. So this is a
     ratchet -- and it is the one sibling of a hardened class that was left
     unhandled, which is the unstated-exemption shape rather than a judgement.
 
