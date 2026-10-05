@@ -1,3 +1,4 @@
+import type { RatingNotCarried } from "./carry";
 export interface RiskGate {
   unlocked: boolean;
   has_attack: boolean;
@@ -80,6 +81,14 @@ export interface RiskEntry {
    * it newly validates (#132 review).
    */
   dropped_links: Record<string, string[]> | null;
+  /**
+   * #844. Both null: the rating is the model's as generated. Set: a consultant
+   * edited likelihood or impact through the edit path. The row is marked
+   * "Rating edited by consultant" when at least one half is then present (Gene's
+   * ruling (a)); a FULLY cleared rating is unrated and is not marked (#854 F2).
+   */
+  rating_edited_by: string | null;
+  rating_edited_at: string | null;
 }
 
 /**
@@ -167,6 +176,28 @@ export interface RiskRegister {
    */
   batches_total: number | null;
   batches_failed: number | null;
+  /**
+   * #844. Each finding should get exactly one entry. `findings_recorded` false
+   * means nothing was recorded (a register generated before this, or a record
+   * that could not be read), and the empty list and map then mean NOTHING --
+   * never "every finding had one entry".
+   */
+  findings_recorded: boolean;
+  findings_total: number | null;
+  findings_without_entry: string[];
+  findings_with_several_entries: Record<string, number>;
+  /**
+   * #854 F3. Consultant ratings carried from the previous version when this one
+   * was generated, matched by `source_id`. `ratings_not_carried` lists each
+   * RATING that could not be carried, one item per rating with its reason, so
+   * its length counts ratings, not findings. `ratings_carried_recorded`
+   * false: a register generated before this was recorded; the rest then means
+   * nothing.
+   */
+  ratings_carried_recorded: boolean;
+  ratings_carried: number | null;
+  ratings_carried_from_version: number | null;
+  ratings_not_carried: RatingNotCarried[];
 
   /**
    * #330. The generate loop's INTENDED tally.

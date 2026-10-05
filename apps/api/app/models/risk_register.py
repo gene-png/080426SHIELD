@@ -123,6 +123,14 @@ class RiskEntry(UUIDPKMixin, TimestampMixin, Base):
     likelihood: Mapped[str | None] = mapped_column(String(16))
     impact: Mapped[str | None] = mapped_column(String(16))
     tier: Mapped[str | None] = mapped_column(String(16))  # code-derived, never AI-set
+    # #844 (migration 0061). Set by the consultant edit path and by nothing
+    # else, so NULL in both means "the model's rating as generated" -- true of
+    # every row, including pre-0061 ones. Without them an edited row's
+    # `origin = 'ai_generated'` would describe a rating the model never gave.
+    rating_edited_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    rating_edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     compensating_controls: Mapped[str | None] = mapped_column(Text)
     residual_risk: Mapped[str | None] = mapped_column(Text)
