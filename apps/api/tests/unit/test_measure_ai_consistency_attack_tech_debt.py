@@ -76,6 +76,7 @@ def test_tool_lists_in_another_order_are_the_same_answer() -> None:
     b = {"techniques": [_tech("T1", detection_tools=["B", "A"])]}
     d = compare_pair("mitre_map", a, b)["fields"]["detection_tools"]
     assert d["compared"] == 1
+    assert d["judged"] == 1
     assert d["equal"] == 1
     assert d["mean_jaccard"] == 1.0
     assert d["not_a_list"] == 0
@@ -99,11 +100,64 @@ def test_a_bare_string_for_a_tool_list_is_counted_never_turned_into_a_set() -> N
     assert d["mean_jaccard"] is None
 
 
-def test_two_empty_tool_lists_agree() -> None:
+def test_two_empty_tool_lists_are_counted_apart_never_as_agreement() -> None:
     a = {"techniques": [_tech("T1")]}
     d = compare_pair("mitre_map", a, json.loads(json.dumps(a)))["fields"]["detection_tools"]
-    assert d["equal"] == 1
-    assert d["mean_jaccard"] == 1.0
+    assert d["compared"] == 1
+    assert d["both_empty"] == 1
+    assert d["judged"] == 0
+    assert d["equal"] == 0
+    assert d["mean_jaccard"] is None
+
+
+def test_a_prompt_that_cites_fewer_tools_never_scores_as_more_consistent() -> None:
+    # Prompt X cites tools on both techniques and its runs half-agree on one.
+    x_a = {"techniques": [_tech("T1", detection_tools=["A"]), _tech("T2", detection_tools=["B"])]}
+    x_b = {"techniques": [_tech("T1", detection_tools=["A"]), _tech("T2", detection_tools=["C"])]}
+    # Prompt Y is worse: it cites nothing on T2 in either run, and the same on T1.
+    y_a = {"techniques": [_tech("T1", detection_tools=["A"]), _tech("T2")]}
+    y_b = {"techniques": [_tech("T1", detection_tools=["A"]), _tech("T2")]}
+    x = compare_pair("mitre_map", x_a, x_b)["fields"]["detection_tools"]
+    y = compare_pair("mitre_map", y_a, y_b)["fields"]["detection_tools"]
+    # Y's empty row is disclosed, and adds nothing to Y's agreement.
+    assert (y["judged"], y["equal"], y["both_empty"]) == (1, 1, 1)
+    assert (x["judged"], x["equal"], x["both_empty"]) == (2, 1, 0)
+    # Y agrees on 1 of 1 judged where X agrees on 1 of 2: Y's score comes from
+    # T1 alone, never from the row it stopped citing.
+    assert y["equal"] <= x["equal"]
+    y_one = compare_pair(
+        "mitre_map",
+        {"techniques": [_tech("T1", detection_tools=["A"])]},
+        {"techniques": [_tech("T1", detection_tools=["A"])]},
+    )["fields"]["detection_tools"]
+    assert y["mean_jaccard"] == y_one["mean_jaccard"], "an empty row moved the Jaccard"
+
+
+def test_a_row_with_no_key_is_unkeyable_never_compared_under_null() -> None:
+    def item(name: str, idx) -> dict:
+        return {
+            "name": name,
+            "vendor": None,
+            "category": None,
+            "function": None,
+            "annual_cost_usd": None,
+            "license_count": None,
+            "notes": None,
+            "confidence_pct": 90,
+            "source_row_index": idx,
+            "security_related": None,
+            "security_functions": [],
+        }
+
+    a = {"items": [item("Alpha", 0), item("Beta", None)]}
+    b = {"items": [item("Alpha", 0), item("Gamma", None)]}
+    r = compare_pair("tech_debt_extract", a, b)
+    assert r["rows"]["in_both"] == 1, "two unrelated null-keyed items were paired"
+    assert (r["rows"]["unkeyable_a"], r["rows"]["unkeyable_b"]) == (1, 1)
+    # Non-objects are dropped by the extraction's own parser before this sees
+    # them, so the count is not observable here and says so.
+    assert r["rows"]["unreadable_a"] is None
+    assert r["fields"]["name"]["compared"] == 1
 
 
 def test_mitre_map_compares_status_and_reason_and_never_the_rationale() -> None:
@@ -286,8 +340,9 @@ def _admin_client(c: TestClient) -> tuple[dict, str, str]:
     return {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}, cid, me["id"]
 
 
-def _tech_debt_service(TestSession: sessionmaker, cid: str, uid: str, tools: list[str]) -> None:
-    """A Tech Debt service whose approved list holds `tools`, in security scope."""
+def _tech_debt_service(TestSession: sessionmaker, cid: str, uid: str, tools: list[str]) -> str:
+    """A Tech Debt service whose approved list holds `tools`, in security scope.
+    Returns its id."""
     with TestSession() as db:
         svc = Service(
             kind=ServiceKind.TECH_DEBT,
@@ -304,6 +359,7 @@ def _tech_debt_service(TestSession: sessionmaker, cid: str, uid: str, tools: lis
         for name in tools:
             db.add(CapabilityItem(capability_list_id=cl.id, name=name))
         db.commit()
+        return str(svc.id)
 
 
 @pytest.fixture()
@@ -506,10 +562,10 @@ INVENTORY = (
 def td_world(world, tmp_path):
     c, TestSession, provider = world
     _, cid, uid = _admin_client(c)
-    _tech_debt_service(TestSession, cid, uid, [])
+    sid = _tech_debt_service(TestSession, cid, uid, [])
     inv = tmp_path / "inventory.csv"
     inv.write_text(INVENTORY, encoding="utf-8")
-    yield TestSession, provider, str(inv)
+    yield TestSession, provider, str(inv), sid
 
 
 def _extract(licences: object) -> callable:
@@ -556,11 +612,11 @@ def _item_count(db: Session) -> int:
 
 
 def test_measure_tech_debt_extracts_the_inventory_and_applies_nothing(td_world) -> None:
-    TestSession, provider, inv = td_world
+    TestSession, provider, inv, sid = td_world
     provider.register("extract.capabilities", _extract(50))
     with TestSession() as db:
         before = _item_count(db)
-        report = measure_tech_debt(db, LLMClient(provider), runs=2, inventory=inv)
+        report = measure_tech_debt(db, LLMClient(provider), runs=2, inventory=inv, service_id=sid)
         db.commit()
     with TestSession() as db:
         assert _item_count(db) == before
@@ -571,7 +627,9 @@ def test_measure_tech_debt_extracts_the_inventory_and_applies_nothing(td_world) 
     pair = report["pairs"][0]
     assert pair["rows"]["in_both"] == 2
     assert pair["fields"]["license_count"]["equal"] == 2
-    assert pair["fields"]["security_functions"]["mean_jaccard"] == 1.0
+    # Falcon's functions are judged; Payroll's [] / [] is disclosed, not agreement.
+    sf = pair["fields"]["security_functions"]
+    assert (sf["judged"], sf["equal"], sf["both_empty"], sf["mean_jaccard"]) == (1, 1, 1, 1.0)
     assert report["downstream"][0] == {
         "run": 1,
         "excluded_row_indexes": [2],
@@ -585,41 +643,101 @@ def test_measure_tech_debt_extracts_the_inventory_and_applies_nothing(td_world) 
 def test_tech_debt_compares_what_the_parser_would_store(td_world) -> None:
     # 2.9 and 2 are different answers from the model, but the parser stores
     # both as 2 (`_coerce_item`, #833); the measure compares what is stored.
-    TestSession, provider, inv = td_world
+    TestSession, provider, inv, sid = td_world
     answers = iter([_extract(2.9), _extract(2)])
     provider.register("extract.capabilities", lambda p: next(answers)(p))
     with TestSession() as db:
-        report = measure_tech_debt(db, LLMClient(provider), runs=2, inventory=inv)
+        report = measure_tech_debt(db, LLMClient(provider), runs=2, inventory=inv, service_id=sid)
     assert report["pairs"][0]["fields"]["license_count"]["equal"] == 2
 
 
 def test_an_unparseable_extraction_is_a_failed_run(td_world) -> None:
-    TestSession, provider, inv = td_world
+    TestSession, provider, inv, sid = td_world
     provider.register_static("extract.capabilities", LLMResponse('{"items": "nope"}'))
     with TestSession() as db:
-        report = measure_tech_debt(db, LLMClient(provider), runs=2, inventory=inv)
+        report = measure_tech_debt(db, LLMClient(provider), runs=2, inventory=inv, service_id=sid)
     assert report["runs_ok"] == 0
     assert len(report["failed_runs"]) == 2
     assert report["exit_code"] == 1
 
 
 def test_an_inventory_in_another_format_is_refused(td_world, tmp_path) -> None:
-    TestSession, provider, _ = td_world
+    TestSession, provider, _, sid = td_world
     other = tmp_path / "inventory.pdf"
     other.write_bytes(b"%PDF")
     with TestSession() as db, pytest.raises(Refused) as exc:
-        measure_tech_debt(db, LLMClient(provider), runs=2, inventory=str(other))
+        measure_tech_debt(db, LLMClient(provider), runs=2, inventory=str(other), service_id=sid)
     assert exc.value.reason == "inventory_format"
 
 
-def test_no_tech_debt_service_is_refused(world, tmp_path) -> None:
-    c, TestSession, provider = world
-    _admin_client(c)
+@pytest.mark.parametrize(
+    ("service_id", "reason"),
+    [(str(uuid.uuid4()), "no_tech_debt_service"), ("not-a-uuid", "service_id_invalid")],
+)
+def test_a_service_id_naming_no_tech_debt_service_is_refused(
+    td_world, service_id: str, reason: str
+) -> None:
+    TestSession, provider, inv, _ = td_world
+    with TestSession() as db, pytest.raises(Refused) as exc:
+        measure_tech_debt(db, LLMClient(provider), runs=2, inventory=inv, service_id=service_id)
+    assert exc.value.reason == reason
+    with TestSession() as db:
+        assert _llm_call_count(db) == 0
+
+
+def test_a_service_of_another_kind_is_refused(attack_world, tmp_path) -> None:
+    from app.models.service import Service, ServiceKind
+
+    _, TestSession, provider = attack_world
     inv = tmp_path / "inventory.csv"
     inv.write_text(INVENTORY, encoding="utf-8")
-    with TestSession() as db, pytest.raises(Refused) as exc:
-        measure_tech_debt(db, LLMClient(provider), runs=2, inventory=str(inv))
+    with TestSession() as db:
+        attack_sid = str(
+            db.execute(select(Service.id).where(Service.kind == ServiceKind.ATTACK_COVERAGE))
+            .scalars()
+            .one()
+        )
+        with pytest.raises(Refused) as exc:
+            measure_tech_debt(
+                db, LLMClient(provider), runs=2, inventory=str(inv), service_id=attack_sid
+            )
     assert exc.value.reason == "no_tech_debt_service"
+
+
+def test_the_inventory_is_redacted_with_the_named_clients_names_not_the_newest(
+    world, tmp_path
+) -> None:
+    """#867 review, blocking: the inventory names no client, so the client
+    whose names are redacted must be the one the operator NAMED. Two tenants,
+    the named one created FIRST: picking "the newest Tech Debt service" would
+    redact Globex's export with Acme's names and send "Globex" in clear."""
+    c, TestSession, provider = world
+    h, acme_cid, uid = _admin_client(c)
+    globex_cid = c.post(
+        "/admin/clients",
+        headers={"Authorization": h["Authorization"]},
+        json={"legal_name": "Globex"},
+    ).json()["id"]
+    globex_sid = _tech_debt_service(TestSession, globex_cid, uid, [])
+    _tech_debt_service(TestSession, acme_cid, uid, [])  # newer, and NOT named
+    inv = tmp_path / "inventory.csv"
+    inv.write_text("Product,Vendor\nGlobex Portal,Globex\n", encoding="utf-8")
+    seen: list[str] = []
+
+    def record(payload: dict) -> LLMResponse:
+        seen.append(json.dumps(payload["rows"]))
+        return LLMResponse(json.dumps({"items": []}), input_tokens=1, output_tokens=1)
+
+    provider.register("extract.capabilities", record)
+    with TestSession() as db:
+        report = measure_tech_debt(
+            db, LLMClient(provider), runs=2, inventory=str(inv), service_id=globex_sid
+        )
+    assert seen, "precondition: the provider was called"
+    assert all("Globex" not in s for s in seen), "the named client's name was sent in clear"
+    assert all("[CLIENT]" in s for s in seen)
+    assert report["redaction_client_id"] == globex_cid
+    assert report["service_id"] == globex_sid
 
 
 # --- the command line ----------------------------------------------------------
@@ -652,7 +770,11 @@ def cli(monkeypatch, tmp_path):
 
     def reached(name: str):
         def stub(db, llm, **kw):
-            raise Refused("measure_reached", f"{name} probe_batches={kw.get('probe_batches')}")
+            raise Refused(
+                "measure_reached",
+                f"{name} probe_batches={kw.get('probe_batches')} "
+                f"service_id={kw.get('service_id')}",
+            )
 
         return stub
 
@@ -666,7 +788,7 @@ def cli(monkeypatch, tmp_path):
 @pytest.mark.parametrize(
     "argv",
     [
-        ["--job", "tech_debt_extract", "--runs", "2"],
+        ["--job", "tech_debt_extract", "--runs", "2", "--service-id", "s"],
         ["--job", "zt_score", "--runs", "2", "--inventory", "x.csv"],
     ],
 )
@@ -685,6 +807,7 @@ def test_main_requires_an_inventory_for_tech_debt_and_only_for_it(cli, capsys, a
 def test_main_refuses_to_reopen_for_tech_debt(cli, capsys) -> None:
     built, tmp_path = cli
     argv = ["--job", "tech_debt_extract", "--runs", "2", "--inventory", "x.csv"]
+    argv += ["--service-id", "s"]
     code = main([*argv, "--reopen-released", "--out", str(tmp_path / "o.json")])
     err = capsys.readouterr().err
     assert "REFUSED (reopen_not_applicable)" in err
@@ -701,6 +824,37 @@ def test_main_accepts_a_probe_for_mitre_map(cli, capsys) -> None:
     code = main([*argv, "--out", str(tmp_path / "o.json")])
     err = capsys.readouterr().err
     assert "probe_not_applicable" not in err
-    assert "REFUSED (measure_reached): measure_attack probe_batches=1" in err
+    assert "REFUSED (measure_reached): measure_attack probe_batches=1 " in err
+    assert built == [1]
+    assert code == 2
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--job", "tech_debt_extract", "--runs", "2", "--inventory", "x.csv"],
+        ["--job", "zt_score", "--runs", "2", "--service-id", "s"],
+    ],
+)
+def test_main_requires_a_service_id_for_tech_debt_and_only_for_it(cli, capsys, argv) -> None:
+    # #867 review (security): the inventory names no client, so whose names are
+    # redacted is never guessed.
+    built, tmp_path = cli
+    code = main([*argv, "--out", str(tmp_path / "o.json")])
+    err = capsys.readouterr().err
+    assert "REFUSED (service_id_mismatch)" in err
+    assert "measure_reached" not in err
+    assert built == []
+    assert code == 2
+
+
+def test_main_passes_the_named_service_to_the_tech_debt_measure(cli, capsys) -> None:
+    built, tmp_path = cli
+    argv = ["--job", "tech_debt_extract", "--runs", "2", "--inventory", "x.csv"]
+    code = main([*argv, "--service-id", "svc-42", "--out", str(tmp_path / "o.json")])
+    err = capsys.readouterr().err
+    assert (
+        "REFUSED (measure_reached): measure_tech_debt probe_batches=None service_id=svc-42" in err
+    )
     assert built == [1]
     assert code == 2

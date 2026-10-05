@@ -13,7 +13,10 @@ WHAT IT REFUSES (exit 2), before any model call:
     throwaway file;
   * SHIELD_LLM_MODE other than `live`. Fixture mode echoes canned responses, so
     it would report perfect agreement about nothing;
-  * SHIELD_REDACTION_MODE other than `strict`.
+  * SHIELD_REDACTION_MODE other than `strict`;
+  * for tech_debt_extract, a run without `--service-id`: the inventory file
+    names no client, and redaction replaces the NAMED service's client's names,
+    so whose names those are is never guessed.
 
 WHAT IT DOES: builds the payload with the route's own builder
 (`routes/zt.py::_zt_ai_request_for`, `routes/csf.py::_csf_ai_request_for`,
@@ -187,9 +190,23 @@ def _str_set(v: Any) -> frozenset[str] | None:
 
 
 def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
-    """|a & b| / |a | b|; two empty sets agree completely."""
+    """|a & b| / |a | b|, for a NON-EMPTY union only. Two empty lists are not
+    agreement about anything: counted as `both_empty` by the caller, so a prompt
+    that cites fewer tools cannot score as more consistent."""
     union = a | b
-    return len(a & b) / len(union) if union else 1.0
+    if not union:
+        raise ValueError("the Jaccard of two empty sets is not a measure of agreement")
+    return len(a & b) / len(union)
+
+
+#: Jobs whose route-side merge keeps only JSON objects (`_run_mitre_map_batched`,
+#: and the extraction's `_parse_response`), so a non-object row never reaches
+#: `compare_pair` and an `unreadable` count would be a constant 0. They report
+#: `unreadable` as None ("not observable here") instead, and a row whose key is
+#: null -- `source_row_index` the parser could not convert, or no
+#: `technique_code` -- is `unkeyable`: excluded, counted, never compared with
+#: another run's unkeyable row under the shared key "null".
+_OBJECTS_ONLY_UPSTREAM = ("mitre_map", "tech_debt_extract")
 
 
 def _is_whole(v: Any) -> bool:
@@ -202,16 +219,22 @@ def _same(a: Any, b: Any) -> bool:
     return type(a) is type(b) and a == b
 
 
-def _index(rows: Sequence[Any], key_fields: tuple[str, ...]) -> tuple[dict, int, int]:
+def _index(
+    rows: Sequence[Any], key_fields: tuple[str, ...], *, unkeyable: list[int] | None = None
+) -> tuple[dict, int, int]:
     """Rows by key. A non-object row is unreadable; a key seen twice is ambiguous
     and indexes neither copy. Returns (index, unreadable, extra copies of a
-    repeated key)."""
+    repeated key). With `unkeyable` given, a row whose key fields are all null
+    is excluded and counted into it instead of being indexed under "null"."""
     seen: dict[tuple, Any] = {}
     dupes: set[tuple] = set()
     unreadable = extra_copies = 0
     for row in rows:
         if not isinstance(row, dict):
             unreadable += 1
+            continue
+        if unkeyable is not None and all(row.get(f) is None for f in key_fields):
+            unkeyable.append(1)
             continue
         key = tuple(json.dumps(row.get(f), sort_keys=True) for f in key_fields)
         if key in seen or key in dupes:
@@ -227,13 +250,16 @@ def compare_pair(job: str, a: Mapping[str, Any], b: Mapping[str, Any]) -> dict:
     """Agreement between two parsed responses: row set, then per field over the
     rows present in both. Every count is a denominator or a numerator of one."""
     list_key, key_fields, fields = _job_shape(job)
-    ia, unread_a, dup_a = _index(a.get(list_key) or [], key_fields)
-    ib, unread_b, dup_b = _index(b.get(list_key) or [], key_fields)
+    objects_only = job in _OBJECTS_ONLY_UPSTREAM
+    keyless_a: list[int] | None = [] if objects_only else None
+    keyless_b: list[int] | None = [] if objects_only else None
+    ia, unread_a, dup_a = _index(a.get(list_key) or [], key_fields, unkeyable=keyless_a)
+    ib, unread_b, dup_b = _index(b.get(list_key) or [], key_fields, unkeyable=keyless_b)
     both = sorted(set(ia) & set(ib))
     list_fields = _LIST_FIELDS.get(job, ())
     out_fields: dict[str, dict] = {}
     for f in fields:
-        compared = equal = within_one = missing_a = missing_b = not_a_list = 0
+        compared = equal = within_one = missing_a = missing_b = not_a_list = both_empty = 0
         diffs: list[int] = []
         jaccards: list[float] = []
         for k in both:
@@ -250,10 +276,15 @@ def compare_pair(job: str, a: Mapping[str, Any], b: Mapping[str, Any]) -> dict:
                 sa, sb = _str_set(va), _str_set(vb)
                 if sa is None or sb is None:
                     # A bare string, a null, a list holding a number: not the
-                    # shape asked for. Counted, and judged only by exact
-                    # equality -- never coerced into a set it was not.
+                    # shape asked for. Counted, and never coerced into a set it
+                    # was not -- nor judged as agreement.
                     not_a_list += 1
-                    equal += int(_same(va, vb))
+                    continue
+                if not sa and not sb:
+                    # Both runs cited nothing. Not agreement: counting it as a
+                    # match would let a prompt that cites FEWER tools read as
+                    # MORE consistent (the withheld-from-a-ratio shape).
+                    both_empty += 1
                     continue
                 jaccards.append(_jaccard(sa, sb))
                 equal += int(sa == sb)
@@ -274,20 +305,27 @@ def compare_pair(job: str, a: Mapping[str, Any], b: Mapping[str, Any]) -> dict:
         }
         if f in list_fields:
             # Only on list fields, so the zt and csf report shapes are unchanged.
+            # compared == judged + both_empty + not_a_list; `equal` and
+            # `mean_jaccard` are over `judged` (a non-empty union) only.
+            out_fields[f]["judged"] = len(jaccards)
+            out_fields[f]["both_empty"] = both_empty
             out_fields[f]["not_a_list"] = not_a_list
             out_fields[f]["mean_jaccard"] = (sum(jaccards) / len(jaccards)) if jaccards else None
-    return {
-        "rows": {
-            "in_both": len(both),
-            "only_in_a": len(set(ia) - set(ib)),
-            "only_in_b": len(set(ib) - set(ia)),
-            "unreadable_a": unread_a,
-            "unreadable_b": unread_b,
-            "duplicate_keys_a": dup_a,
-            "duplicate_keys_b": dup_b,
-        },
-        "fields": out_fields,
+    rows: dict[str, Any] = {
+        "in_both": len(both),
+        "only_in_a": len(set(ia) - set(ib)),
+        "only_in_b": len(set(ib) - set(ia)),
+        # None, not 0, where the route's own merge already dropped non-objects:
+        # this count cannot see them (`_OBJECTS_ONLY_UPSTREAM`).
+        "unreadable_a": None if objects_only else unread_a,
+        "unreadable_b": None if objects_only else unread_b,
+        "duplicate_keys_a": dup_a,
+        "duplicate_keys_b": dup_b,
     }
+    if objects_only:
+        rows["unkeyable_a"] = len(keyless_a or [])
+        rows["unkeyable_b"] = len(keyless_b or [])
+    return {"rows": rows, "fields": out_fields}
 
 
 def _zt_sent_current(inputs: Mapping[str, Any], code: Any) -> Any:
@@ -1257,17 +1295,26 @@ def measure_tech_debt(
     *,
     runs: int,
     inventory: str,
+    service_id: str,
     max_output_tokens: int | None = None,
     stop_on_failure: bool = False,
 ) -> dict:
     """Run tech_debt_extract `runs` times on the rows of `inventory`, through
-    `extract_from_rows` (the extraction's own call), for the latest Tech Debt
-    service, and summarize. `extract_from_rows` writes only its `llm_calls`
-    row; the capability list and items are the ROUTE's to write, and are not."""
+    `extract_from_rows` (the extraction's own call), for the Tech Debt service
+    named by `service_id`, and summarize. `extract_from_rows` writes only its
+    `llm_calls` row; the capability list and items are the ROUTE's to write.
+
+    WHY THE SERVICE IS NAMED, NEVER PICKED: the inventory file carries no link
+    to any client, and redaction is per tenant -- the service's client's legal
+    name and its users' names are what the redactor replaces. Picking "the
+    newest Tech Debt service" would redact one client's export with ANOTHER
+    client's names, leaving its own unredacted while every refusal passed. The
+    operator must say whose inventory this is; the report records the client
+    whose names were used."""
+    import uuid as _uuid
     from pathlib import Path
 
     from fastapi import HTTPException
-    from sqlalchemy import select
 
     from app.models.service import Service, ServiceKind
     from app.tech_debt.extract import (
@@ -1279,17 +1326,15 @@ def measure_tech_debt(
     _require_sqlite_bind(db, "a tech_debt_extract measurement")
     admin = _admin_user(db)
     rows, mime = _inventory_rows(inventory)
-    svc = (
-        db.execute(
-            select(Service)
-            .where(Service.kind == ServiceKind.TECH_DEBT)
-            .order_by(Service.created_at.desc())
+    try:
+        svc = db.get(Service, _uuid.UUID(str(service_id)))
+    except ValueError as exc:
+        raise Refused("service_id_invalid", f"--service-id {service_id!r} is not a UUID.") from exc
+    if svc is None or svc.kind != ServiceKind.TECH_DEBT:
+        raise Refused(
+            "no_tech_debt_service",
+            f"--service-id {service_id} names no Tech Debt service in this database.",
         )
-        .scalars()
-        .first()
-    )
-    if svc is None:
-        raise Refused("no_tech_debt_service", "No Tech Debt service to extract for.")
     org_name = client_org_name_for_tenant(db, svc.client_id)
     hints = name_hints_for_tenant(db, svc.client_id)
     _log.info(
@@ -1358,6 +1403,8 @@ def measure_tech_debt(
     )
     report = summarize("tech_debt_extract", records, max_output_tokens=max_output_tokens)
     report["service_id"] = str(svc.id)
+    # Whose names the redactor used: the client the operator named, by id.
+    report["redaction_client_id"] = str(svc.client_id)
     report["rows_sent"] = len(rows)
     report["input_setup"] = {"inventory": Path(inventory).name, "mime": mime}
     report["provider"] = {"name": llm.provider.name, "model": llm.provider.model}
@@ -1373,15 +1420,23 @@ def _print_table(report: dict) -> None:
         r = p["rows"]
         print(
             f"pair {p['pair']}: rows in both {r['in_both']}, only A {r['only_in_a']}, "
-            f"only B {r['only_in_b']}, unreadable {r['unreadable_a']}/{r['unreadable_b']}, "
-            f"duplicate keys {r['duplicate_keys_a']}/{r['duplicate_keys_b']}"
+            f"only B {r['only_in_b']}, "
+            + (
+                f"unreadable n/a (dropped upstream), unkeyable {r['unkeyable_a']}/"
+                f"{r['unkeyable_b']}, "
+                if r["unreadable_a"] is None
+                else f"unreadable {r['unreadable_a']}/{r['unreadable_b']}, "
+            )
+            + f"duplicate keys {r['duplicate_keys_a']}/{r['duplicate_keys_b']}"
         )
         for name, s in p["fields"].items():
             if "mean_jaccard" in s:
                 print(
-                    f"  {name}: same set {s['equal']}/{s['compared']}, mean Jaccard "
-                    f"{s['mean_jaccard']}, not a list {s['not_a_list']}, "
-                    f"missing A/B {s['missing_in_a']}/{s['missing_in_b']}"
+                    f"  {name}: same set {s['equal']}/{s['judged']} judged (of "
+                    f"{s['compared']} compared; both empty {s['both_empty']}, not a list "
+                    f"{s['not_a_list']} -- neither counts as agreement), mean Jaccard over "
+                    f"judged {s['mean_jaccard']}, missing A/B "
+                    f"{s['missing_in_a']}/{s['missing_in_b']}"
                 )
                 continue
             print(
@@ -1483,6 +1538,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         "are extracted, parsed by the upload's own parser.",
     )
     p.add_argument(
+        "--service-id",
+        default=None,
+        help="tech_debt_extract only, and required for it: the Tech Debt service whose "
+        "client the inventory belongs to. Its client's names are what the redactor "
+        "replaces, so it is never guessed.",
+    )
+    p.add_argument(
         "--stop-on-failure",
         action="store_true",
         help="Start no further run after a failed one (a rate limit is not retried into).",
@@ -1508,6 +1570,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             "REFUSED (inventory_mismatch): --inventory is required for "
             "tech_debt_extract and accepted for no other job.",
+            file=sys.stderr,
+        )
+        return 2
+    if (args.service_id is None) == (args.job == "tech_debt_extract"):
+        # The inventory names no client, and redaction is per client: the
+        # operator says whose it is, or the run does not start.
+        print(
+            "REFUSED (service_id_mismatch): --service-id is required for "
+            "tech_debt_extract (it decides whose names are redacted) and accepted "
+            "for no other job.",
             file=sys.stderr,
         )
         return 2
@@ -1566,7 +1638,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             elif args.job == "tech_debt_extract":
                 # No assessment to reopen (refused above): the input is the file.
                 common.pop("reopen_released")
-                report = measure_tech_debt(db, llm, inventory=args.inventory, **common)
+                report = measure_tech_debt(
+                    db, llm, inventory=args.inventory, service_id=args.service_id, **common
+                )
             else:
                 report = measure_zt(db, llm, framework=args.framework, **common)
         except Refused as exc:
