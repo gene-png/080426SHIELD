@@ -542,13 +542,22 @@ def test_a_failed_batch_falls_back_to_the_removal_alone_and_says_so() -> None:
     assert merged.not_reassessed == ["T1566"]
 
 
-def test_no_prompt_text_ships_until_806_releases_it() -> None:
-    """#806 holds all new prompt text. The what-if's job is therefore NOT
-    registered, and the run route refuses with a typed 503 instead of failing
-    in a background job. When #806 releases the text, this test is the one
-    that is meant to change."""
-    # test-integrity: the spec IS that this constant is unset until #806; the assertion reads the value, it derives nothing from it
+def test_the_shipped_prompt_is_the_text_gene_approved() -> None:
+    """#802: the what-if ships Gene's approved text, so its job is registered
+    and a run is no longer refused. This test was "no prompt text ships until
+    #806 releases it", the one that was meant to change when the text landed.
+
+    The digest is the approved text's: the slice B draft (#802 comment
+    5970337002) with the two rules of the amendment (#802 comment 5982780636)
+    inserted after the `open_functions` rule. It was computed from those
+    comments, never from this code, so any change to the text turns it red."""
+    import hashlib
+
+    # test-integrity: the expected value is the literal digest of Gene's approved text (the spec); the constant is only what is hashed against it
     from app.ai.jobs import _ATTACK_SCENARIO_DELTA_PROMPT
 
-    assert _ATTACK_SCENARIO_DELTA_PROMPT is None
-    assert scenario.analysis_available() is False
+    assert (
+        hashlib.sha256(_ATTACK_SCENARIO_DELTA_PROMPT.encode()).hexdigest()
+        == "b678cd2453991677c3be16153f3ace5f8aa06840fc0e8e00fd0771f7be31525b"
+    )
+    assert scenario.analysis_available() is True

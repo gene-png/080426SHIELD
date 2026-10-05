@@ -264,7 +264,11 @@ _MAX_OUTPUT_TOKENS = 8192
 #   csf_score              ~4,200 a batch of 10 (#806 probe 4,213, 2026-10-03;
 #                          the largest single batch was not recorded)
 #   risk_synthesize        not measured live; ~14k a batch is an estimate
-#   attack_scenario_delta  not measured live
+#   attack_scenario_delta   1,700 a batch of 6 (2026-10-04, Gene's amended
+#                          text, the route's first 4 batches on the demo seed,
+#                          1,173-1,700, #846). At the earlier batch of 25 it
+#                          was 8,231, over the non-streamed 8,192 itself, so
+#                          the batch was shrunk (`scenario.BATCH_SIZE`).
 # THE RULE (advisor, 2026-10-03): a cap is at least 3x the largest observed
 # single call. The caps below are NOT re-derived from it yet: they will be,
 # from #806's "after" measurements, which run on the prompts that will ship.
@@ -306,10 +310,11 @@ _MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
     # is CHOSEN, not defaulted: raising it buys nothing for an output this
     # size.
     "zt_score": _MAX_OUTPUT_TOKENS,
-    # #802's ATT&CK what-if: only contributing (technique, tool) rows come back,
-    # far smaller than mitre_map's; sized like it, per batch of 25, because
-    # output is billed as generated. To be live-measured once #806 releases
-    # the prompt text.
+    # #802's ATT&CK what-if, per batch of `scenario.BATCH_SIZE` (6). 64000 is
+    # what the STREAMED adapter sends, billed as generated. The non-streamed
+    # adapters send 8,192 (`non_streamed_output_cap`), and the 3x rule holds for
+    # them only because the batch was shrunk: 3 x 1,700 = 5,100 (see OBSERVED
+    # and the arithmetic beside BATCH_SIZE).
     "attack_scenario_delta": 64000,
     # #802's chat box: three short lists naming a few tools. The shared
     # default, CHOSEN: it keeps the non-streamed adapters sending what main

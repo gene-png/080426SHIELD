@@ -123,8 +123,8 @@ def read(
 
     for name in lists["remove"]:
         hits = resolver.named_by(scenario.bare_name(name))
-        # Exactly one cited tool, not already proposed; anything else
-        # (none, an ambiguity, a repeat) is left out.
+        # Exactly one cited tool, not already proposed. Anything else
+        # (none, or an ambiguity) is left out; a repeat is skipped below.
         if len(hits) == 1 and next(iter(hits)) not in removed:
             removed.append(next(iter(hits)))
         elif len(hits) == 1:

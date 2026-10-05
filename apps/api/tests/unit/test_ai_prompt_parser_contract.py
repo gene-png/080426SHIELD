@@ -8,8 +8,8 @@ It has shipped once already, recorded in `jobs.py`: the CSF prompt asked for
 `{"subcategories": [...]}` while the parser read `{"scores": [...]}`, so LIVE
 mode discarded every schema-compliant response while fixture mode passed.
 
-**No fixture can catch this.** All five `_fixture_*` builders construct their
-response in Python and always use the correct key, so fixture mode agrees with
+**No fixture can catch this.** Every `_fixture_*` builder constructs its
+response in Python and always uses the correct key, so fixture mode agrees with
 the parser by construction. Only `csf_score` had a contract test; `zt_score`,
 `mitre_map` and `risk_synthesize` were unguarded.
 
@@ -39,12 +39,18 @@ import pytest
 
 from app.ai.engine import AIResponseShapeError, get_job, registered_jobs
 
-# The four SUGGESTION jobs. `tech_debt_extract` is excluded deliberately and the
+# The five SUGGESTION jobs. `tech_debt_extract` is excluded deliberately and the
 # exclusion is stated rather than implied: its response is consumed by the
 # extraction path rather than by a `data[key]` suggestion loop, so it declares
 # no top-level list key and there is no contract of this shape to check. If it
 # ever gains one, `test_every_declared_key_is_covered` below fails.
-SUGGESTION_JOBS = ("csf_score", "zt_score", "mitre_map", "risk_synthesize")
+SUGGESTION_JOBS = (
+    "csf_score",
+    "zt_score",
+    "mitre_map",
+    "risk_synthesize",
+    "attack_scenario_delta",
+)
 
 
 def _prompt_top_level_key(prompt: str) -> str:
