@@ -37,6 +37,7 @@ import {
 } from "@/lib/risk/matrix";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
 import { carriedSentences } from "@/lib/risk/carry";
+import { INPUTS_RULE, inputLine, sourceStateNote } from "@/lib/risk/inputs";
 
 import type { RiskEntry, RiskGate, RiskRegister } from "@/lib/risk/types";
 
@@ -251,7 +252,8 @@ function columnsFor(
       // without this the drop reached no surface at all.
       cell: (r) => {
         const dropped = r.dropped_links?.source_id ?? [];
-        if (r.source_id) return r.source_id;
+        if (r.source_id)
+          return `${r.source_id}${sourceStateNote(r.source_state) ?? ""}`;
         if (dropped.length > 0) {
           return (
             <span
@@ -467,8 +469,10 @@ export function RiskRegisterDashboard(): JSX.Element {
   // records: when a heading renders in every state except one, "heading
   // visible" silently becomes a proxy for "the page works", and a spec waiting
   // on it fails as a timeout rather than as an assertion.
-  const blocking = gate?.synthesizable_missing ?? [];
-  const blockedFromGenerating = Boolean(gate?.unlocked) && blocking.length > 0;
+  // #737: an unapproved input no longer blocks generating (Gene's ruling,
+  // reversing #237): it yields a DRAFT register, and the Inputs panel below
+  // says which inputs are not final. The "cannot be generated until these are
+  // approved" banner that stood here would now be false, so it is gone.
   // #556: blocks too, with its own sentence and remedy -- see the type.
   const catalogMismatch = gate?.unlocked
     ? (gate.attack_catalog_mismatch ?? null)
@@ -560,14 +564,18 @@ export function RiskRegisterDashboard(): JSX.Element {
         </p>
       ) : null}
 
-      {blockedFromGenerating ? (
-        <p
-          className="text-sm font-medium text-status-warning-fg"
-          data-testid="risk-register-unapproved-sources"
+      {gate && gate.inputs.length > 0 ? (
+        <div
+          className="rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
+          data-testid="risk-register-inputs"
         >
-          A new register cannot be generated until these are approved:{" "}
-          {blocking.join("; ")}. Anything already generated below is unaffected.
-        </p>
+          <p className="font-semibold">{INPUTS_RULE}</p>
+          <ul className="mt-1 list-disc pl-5">
+            {gate.inputs.map((row, i) => (
+              <li key={`${row.kind}-${i}`}>{inputLine(row)}</li>
+            ))}
+          </ul>
+        </div>
       ) : null}
 
       {catalogMismatch !== null ? (

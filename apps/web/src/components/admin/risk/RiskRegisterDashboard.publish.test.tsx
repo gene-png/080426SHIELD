@@ -52,6 +52,7 @@ function gate(): RiskGate {
     not_finalized: [],
     synthesizable_missing: [],
     attack_catalog_mismatch: null,
+    inputs: [],
   };
 }
 
@@ -75,6 +76,7 @@ function entry(over: Partial<RiskEntry> = {}): RiskEntry {
     origin: "ai_generated",
     trust: "admin_assisted",
     dropped_links: {},
+    source_state: null,
     rating_edited_by: null,
     rating_edited_at: null,
     ...over,
@@ -100,6 +102,10 @@ function register(over: Partial<RiskRegister> = {}): RiskRegister {
     findings_total: null,
     findings_without_entry: [],
     findings_with_several_entries: {},
+    ratings_carried_recorded: false,
+    ratings_carried: null,
+    ratings_carried_from_version: null,
+    ratings_not_carried: [],
     id: "r1",
     client_id: "c1",
     version: 1,
@@ -187,5 +193,44 @@ describe("RiskRegisterDashboard publish (#737)", () => {
       expect(screen.getByText("Error: refused by the api")).toBeInTheDocument(),
     );
     expect(screen.getByText(/not published to the client/)).toBeInTheDocument();
+  });
+});
+
+describe("RiskRegisterDashboard inputs and draft labels (#737)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getActiveClientId.mockResolvedValue("c1");
+    getClientName.mockResolvedValue("Client");
+  });
+
+  it("shows Gene's rule and every input's state", async () => {
+    fetchRiskGate.mockResolvedValue({
+      ...gate(),
+      inputs: [
+        { kind: "attack", engaged: true, status: "approved", version: 1 },
+        { kind: "csf", engaged: false, status: null, version: null },
+      ],
+    });
+    fetchRiskRegisterLatest.mockResolvedValue(register());
+    await loaded();
+    const panel = screen.getByTestId("risk-register-inputs");
+    expect(panel.textContent).toContain(
+      "This register is a draft until every assessment it draws on is final.",
+    );
+    expect(panel.textContent).toContain(
+      "ATT&CK coverage: approved, not yet released",
+    );
+    expect(panel.textContent).toContain("NIST CSF: not engaged");
+  });
+
+  it("labels an entry drafted from an unreleased input", async () => {
+    fetchRiskGate.mockResolvedValue(gate());
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({ entries: [entry({ source_state: "draft" })] }),
+    );
+    await loaded();
+    expect(
+      screen.getByText("T1078 (from a draft assessment)"),
+    ).toBeInTheDocument();
   });
 });

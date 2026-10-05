@@ -136,3 +136,19 @@ def test_a_register_with_no_input_record_blocks(app_client) -> None:  # noqa: F8
     assert _blockers(_publish(c, bearer, cid)) == [
         {"input": "register", "reason": "not_recorded", "status": None}
     ]
+
+
+def test_the_gate_lists_every_input_and_its_state(app_client) -> None:  # noqa: F811
+    """The Inputs panel's data, from the same reader publish uses."""
+    c, _ = app_client
+    bearer, cid = _admin(c)
+    s = seed_attack_and_zt(c, bearer, cid)
+    release(c, bearer, cid, "zt", s.zt_service)
+    g = c.get(f"/risk/clients/{cid}/gate", headers={"Authorization": f"Bearer {bearer}"})
+    assert g.status_code == 200, g.text
+    assert g.json()["inputs"] == [
+        {"kind": "attack", "engaged": True, "status": "approved", "version": 1},
+        {"kind": "csf", "engaged": False, "status": None, "version": None},
+        {"kind": "zt", "engaged": True, "status": "released", "version": 1},
+        {"kind": "tech_debt", "engaged": False, "status": None, "version": None},
+    ]

@@ -56,7 +56,13 @@ from app.risk.engine import (
     tier_counts,
     tier_for,
 )
-from app.risk.inputs import Blocker, current_inputs, publish_blockers
+from app.risk.inputs import (
+    INPUT_KINDS,
+    Blocker,
+    current_inputs,
+    engaged_kinds,
+    publish_blockers,
+)
 from app.risk.link_scope import LinkScope, scope_for
 from app.routes.artifacts import _storage_dep
 from app.schemas.risk import (
@@ -65,6 +71,7 @@ from app.schemas.risk import (
     RiskEntryRatingEdit,
     RiskEntryResponse,
     RiskGateStatus,
+    RiskInputState,
     RiskRegisterResponse,
 )
 from app.security.rate_limit import RateLimiter, get_rate_limiter
@@ -230,6 +237,24 @@ def _unreviewed_sentence(n: int) -> str:
     )
 
 
+def _input_states(db: Session, client_id: uuid.UUID) -> list[RiskInputState]:
+    """#737, the Inputs panel, from the SAME reader publish uses
+    (`app/risk/inputs.py`), so the panel cannot disagree with the refusal."""
+    engaged = set(engaged_kinds(db, client_id))
+    current = current_inputs(db, client_id)
+    rows: list[RiskInputState] = []
+    for kind in INPUT_KINDS:
+        records = [r for r in current if r.kind == kind]
+        if records:
+            rows.extend(
+                RiskInputState(kind=kind, engaged=True, status=r.status, version=r.version)
+                for r in records
+            )
+        else:
+            rows.append(RiskInputState(kind=kind, engaged=kind in engaged))
+    return rows
+
+
 def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
     """Whether the Risk Register can be generated, in THREE dimensions (#237).
 
@@ -322,6 +347,7 @@ def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
         synthesizable_missing.append("an approved CSF or Zero Trust assessment")
 
     return RiskGateStatus(
+        inputs=_input_states(db, client_id),
         unlocked=unlocked,
         has_attack=has_attack,
         has_csf=has_csf,
