@@ -115,7 +115,8 @@ def _generate_and_finalize(c: TestClient, bearer: str, cid: str) -> None:
     _seed_attack_and_zt(c, bearer, cid)
     g = c.post(f"/risk/clients/{cid}/register/generate", headers=h)
     assert g.status_code == 201, g.text
-    ex = c.post(f"/risk/clients/{cid}/register/export", headers=h)
+    # #737: publication, not export, is what opens the client dashboard.
+    ex = c.post(f"/risk/clients/{cid}/register/publish", headers=h)
     assert ex.status_code in (200, 201), ex.text
 
 
@@ -193,8 +194,8 @@ def test_generating_a_new_version_does_not_retract_the_delivered_one(app_client)
     assert still.json()["version"] == delivered_version
     assert still.json()["total_entries"] == delivered_total
 
-    # And exporting v2 hands it over.
-    ex = c.post(f"/risk/clients/{client_id}/register/export", headers=ah)
+    # And publishing v2 hands it over (#737: export no longer does).
+    ex = c.post(f"/risk/clients/{client_id}/register/publish", headers=ah)
     assert ex.status_code in (200, 201), ex.text
     now = c.get(f"/clients/{client_id}/risk/dashboard", headers=ch)
     assert now.status_code == 200, now.text
