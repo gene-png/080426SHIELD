@@ -157,8 +157,8 @@ def test_a_consultant_cleared_rating_is_counted_as_unrated(app_client) -> None: 
     )
     pdf = _flat(_pdf_text(files["pdf"]))
     assert UNRATED_ONE_OF_TWO in pdf
-    assert "Ratings set by a consultant" not in pdf
-    assert "Ratings set by a consultant" not in _docx_text(files["docx"])
+    assert "Ratings edited by a consultant" not in pdf
+    assert "Ratings edited by a consultant" not in _docx_text(files["docx"])
     rows = {r["Weakness"]: r for r in _xlsx_register_rows(files["xlsx"])}
     assert rows["A"]["Tier"] == "Not rated"
     assert rows["A"]["Origin"] == "ai_generated"
@@ -174,7 +174,7 @@ def test_a_consultant_set_rating_is_not_credited_to_the_model(app_client) -> Non
     rows = {r["Weakness"]: r for r in _xlsx_register_rows(files["xlsx"])}
     assert rows["Unrated"]["Origin"] == "ai_generated; rating edited by consultant"
     assert rows["Model rated"]["Origin"] == "ai_generated"
-    expected = "Ratings set by a consultant: 1 of 2 entries."
+    expected = "Ratings edited by a consultant: 1 of 2 entries."
     assert expected in _flat(_pdf_text(files["pdf"]))
     assert expected in _docx_text(files["docx"])
 
@@ -226,7 +226,7 @@ def test_the_xlsx_carries_the_same_summary_disclosures(app_client) -> None:  # n
         "Not rated: 1 of 3 entries has no likelihood or impact, so it has no tier "
         "and is not in the matrix or in Critical + High." in lines
     )
-    assert "Ratings set by a consultant: 1 of 3 entries." in lines
+    assert "Ratings edited by a consultant: 1 of 3 entries." in lines
     assert "1 of 3 entries has no axis and is not in the line above." in lines
     # And it is the SAME list the PDF prints, not a second copy kept in step.
     # Lines carrying "&" are skipped: the PDF renders "ATT&CK" as "ATT&CK;"

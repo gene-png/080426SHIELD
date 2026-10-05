@@ -481,4 +481,4 @@ def test_a_half_set_rating_is_marked_as_edited_by_the_consultant(app_client) -> 
     assert row["Origin"] == "ai_generated; rating edited by consultant"
     summary = [str(r[0]) for r in wb["Summary"].iter_rows(values_only=True) if r and r[0]]
     # The noun's agreement at 1 is a filed advisory, not pinned here.
-    assert any(line.startswith("Ratings set by a consultant: 1 of 1 ") for line in summary)
+    assert any(line.startswith("Ratings edited by a consultant: 1 of 1 ") for line in summary)

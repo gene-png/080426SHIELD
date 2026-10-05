@@ -418,7 +418,7 @@ def _consultant_rated_lines(ctx: RiskExportContext) -> list[str]:
     edited = sum(1 for e in ctx.entries if _consultant_rated(e))
     if edited == 0:
         return []
-    return [f"Ratings set by a consultant: {edited} of {len(ctx.entries)} entries."]
+    return [f"Ratings edited by a consultant: {edited} of {len(ctx.entries)} entries."]
 
 
 def _missing_line(total: int, missing: int, phrase: str) -> list[str]:

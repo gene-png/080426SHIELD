@@ -285,7 +285,7 @@ def test_a_fully_cleared_rating_carries_as_unrated_with_no_credit(app_client) ->
     ex = c.post(f"/risk/clients/{cid}/register/export", headers=bh).json()
     pdf = c.get(f"/artifacts/{ex['pdf_artifact_id']}/download", headers={**bh, "X-Client-Id": cid})
     text = " ".join(_pdf_text(pdf.content).split())
-    assert "Ratings set by a consultant" not in text
+    assert "Ratings edited by a consultant" not in text
 
 
 def test_a_carried_rating_reaches_the_export(app_client) -> None:  # noqa: F811
@@ -308,7 +308,7 @@ def test_a_carried_rating_reaches_the_export(app_client) -> None:  # noqa: F811
     assert (row["Likelihood"], row["Impact"], row["Tier"]) == ("Low", "Minor", "Low")
     assert row["Origin"] == "ai_generated; rating edited by consultant"
     summary = [str(r[0]) for r in wb["Summary"].iter_rows(values_only=True) if r and r[0]]
-    assert any(line.startswith("Ratings set by a consultant: 1 of 1 ") for line in summary)
+    assert any(line.startswith("Ratings edited by a consultant: 1 of 1 ") for line in summary)
 
 
 def test_the_audit_untiered_count_describes_the_stored_register(app_client) -> None:  # noqa: F811
