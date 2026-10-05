@@ -375,8 +375,16 @@ def test_generate_records_what_it_was_built_from(app_client) -> None:
 
 
 @pytest.mark.unit
-def test_export_refuses_a_register_built_from_unapproved_work(app_client) -> None:
-    """The export half of #237, closed against the SNAPSHOT.
+def test_publish_refuses_a_register_built_from_unapproved_work(app_client) -> None:
+    """#737 MOVED THIS GUARD FROM EXPORT TO PUBLISH (advisor, #736 5998764095):
+    export is now the consultant's internal copy and renders drafts; publish is
+    what reaches the client, so the #240 guard runs there. The inputs are
+    released first, so Gene's input gate passes and the #240 guard is the one
+    under test.
+
+    The original rationale, unchanged in substance:
+
+    The export half of #237, closed against the SNAPSHOT.
 
     The status is read from what was recorded at generate, never recomputed --
     recomputing would read TODAY's statuses, so an assessment approved after
@@ -403,9 +411,11 @@ def test_export_refuses_a_register_built_from_unapproved_work(app_client) -> Non
     Two different registers, two different branches, and conflating them was
     the error this docstring now exists to prevent.
     """
+    from tests._risk_inputs import seed_released
+
     c, provider = app_client
     bearer, cid = _admin(c)
-    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    technique = seed_released(c, bearer, cid).technique
     bh = {"Authorization": f"Bearer {bearer}"}
     provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
     assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
@@ -424,7 +434,7 @@ def test_export_refuses_a_register_built_from_unapproved_work(app_client) -> Non
     db.add(reg)
     db.commit()
 
-    r = c.post(f"/risk/clients/{cid}/register/export", headers=bh)
+    r = c.post(f"/risk/clients/{cid}/register/publish", headers=bh)
     assert r.status_code == 409, r.text
     msg = r.json()["error"]["message"]
     assert "not approved" in msg, msg
@@ -1742,7 +1752,11 @@ def test_export_allows_the_seeded_shape_a_finalized_register_with_no_inputs_key(
 def test_export_still_refuses_that_shape_when_it_was_never_finalized(
     app_client,
 ) -> None:
-    """THE OTHER HALF, without which the test above is a hole rather than a fix.
+    """#737: the refusal MOVED TO PUBLISH (export renders drafts now, advisor
+    #736 5998764095), and there the input gate meets this shape first: a
+    provenance with no input record cannot be certified (`not_recorded`).
+
+    THE OTHER HALF, without which the test above is a hole rather than a fix.
 
     The carve-out is for a register that was ALREADY delivered. An UNFINALIZED
     register whose provenance records what was excluded but not what was used
@@ -1770,9 +1784,14 @@ def test_export_still_refuses_that_shape_when_it_was_never_finalized(
     db.add(reg)
     db.commit()
 
-    r = c.post(f"/risk/clients/{cid}/register/export", headers=bh)
+    r = c.post(f"/risk/clients/{cid}/register/publish", headers=bh)
     assert r.status_code == 409, r.text
-    assert r.json()["error"]["reason"] == "register_inputs_not_recorded", r.text
+    assert r.json()["error"]["reason"] == "risk_register_inputs_not_final", r.text
+    assert r.json()["error"]["blockers"] == [
+        {"input": "register", "reason": "not_recorded", "status": None}
+    ]
+    db.refresh(reg)
+    assert reg.finalized_at is None
 
 
 @pytest.mark.unit

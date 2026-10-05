@@ -2095,7 +2095,13 @@ def export(
     # that have moved since the register was built, so an assessment approved
     # after generation would certify a register that never saw it. D-053.
     reg = _lock_current_register(db, cid, action="exporting")
-    _require_certifiable_inputs(reg)
+    # #737, the advisor's ruling (#736, 5998764095): export is the consultant's
+    # INTERNAL copy and no longer runs the input guards -- they moved to
+    # `publish`, which is what reaches the client. A draft export renders, with
+    # "Draft: not published" on its face. What keeps a draft file from a client
+    # user is that a Risk export is not a `Deliverable`, so `/artifacts` serves
+    # it to admins only: `test_a_client_user_cannot_download_an_unpublished_export`
+    # pins that 404, because it is now the guard the client relies on.
     # #737. Export renders the files and does NOT publish: `finalized_at` is
     # what the client dashboard reads, and only `publish` sets it. Before #737
     # exporting a register to review it internally put it in front of the

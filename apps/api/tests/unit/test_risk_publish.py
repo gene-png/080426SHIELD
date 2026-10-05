@@ -194,17 +194,47 @@ def test_a_client_user_cannot_publish(app_client) -> None:  # noqa: F811
 
 
 def test_a_client_user_cannot_download_an_unpublished_export(app_client) -> None:  # noqa: F811
-    """The premise D-106 rests on, measured rather than read off the code: a
-    Risk export is not a `Deliverable`, so `/artifacts` never serves it to a
-    client user, and export not publishing is not undone by another door."""
-    c, _, _, cid, ah, ch, _ = _world(app_client)
-    ex = _post(c, ah, cid, "export").json()
+    """THE GUARD THE CLIENT RELIES ON, since export dropped its input guards
+    (advisor, #736 5998764095). A draft export renders freely -- here from
+    inputs that are approved and NOT released, so the register is a draft --
+    and what keeps it from the client is that a Risk export is not a
+    `Deliverable`: `/artifacts` serves it to an admin and 404s a client user.
+
+    POSITIVE FIRST: the admin download succeeds, so the client's 404 is about
+    the reader, not a missing or unrendered file.
+    """
+    from tests._risk_inputs import seed_attack_and_zt
+
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    ah = {"Authorization": f"Bearer {bearer}"}
+    r = c.post(f"/admin/clients/{cid}/domains", headers=ah, json={"domain": "acme.example"})
+    assert r.status_code in (200, 201), r.text
+    user = c.post(
+        "/auth/register",
+        json={
+            "email": "user@acme.example",
+            "password": "correct horse battery staple!",
+            "display_name": "U",
+        },
+    )
+    assert user.status_code == 201, user.text
+    ch = {"Authorization": f"Bearer {user.json()['tokens']['access_token']}", "X-Client-Id": cid}
+    seed_attack_and_zt(c, bearer, cid)  # approved, NOT released
+    _generate(c, provider, bearer, cid, _entries_payload(_entry("R")))
+    ex = _post(c, ah, cid, "export")
+    assert ex.status_code == 200, ex.text
+    body = ex.json()
+    assert body["finalized_at"] is None
     for kind in ("pdf", "xlsx", "docx"):
-        r = c.get(f"/artifacts/{ex[f'{kind}_artifact_id']}/download", headers=ch)
+        ok = c.get(
+            f"/artifacts/{body[f'{kind}_artifact_id']}/download",
+            headers={**ah, "X-Client-Id": cid},
+        )
+        assert ok.status_code == 200, (kind, ok.text)
+    for kind in ("pdf", "xlsx", "docx"):
+        r = c.get(f"/artifacts/{body[f'{kind}_artifact_id']}/download", headers=ch)
         assert r.status_code == 404, (kind, r.text)
-    # And the admin can, so the 404 is about the reader, not a missing file.
-    ok = c.get(f"/artifacts/{ex['pdf_artifact_id']}/download", headers={**ah, "X-Client-Id": cid})
-    assert ok.status_code == 200, ok.text
 
 
 def _texts(c, ah: dict, cid: str, body: dict) -> dict[str, str]:
