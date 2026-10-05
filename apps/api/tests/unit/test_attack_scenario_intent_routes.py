@@ -420,7 +420,12 @@ def test_a_refused_ai_name_is_counted_and_never_appears_in_the_response(
         sentence,
     )
     assert body["not_understood"] == []
-    assert "Phantom" not in r.text
+    # EVERY name the AI suggested that was not proposed -- removals and
+    # additions alike -- is absent from the whole response JSON.
+    proposed = body["removed"] + body["added"]
+    refused = [n for n in answer["remove"] + answer["add"] if n not in proposed]
+    assert len(refused) == left_out
+    assert [n for n in refused if n in r.text] == []
 
 
 def test_a_matcher_reading_leaves_nothing_out(app_parts) -> None:  # noqa: F811

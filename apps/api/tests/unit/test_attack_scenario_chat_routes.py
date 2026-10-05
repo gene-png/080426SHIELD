@@ -52,6 +52,9 @@ def test_a_description_becomes_a_proposed_change_list(app_parts) -> None:  # noq
         # #802: a parse with no `serves` is the matcher's, with no note.
         "source": "matcher",
         "note": None,
+        # #802, Gene's ruling: the matcher leaves nothing out.
+        "left_out": 0,
+        "left_out_message": None,
     }
 
 
