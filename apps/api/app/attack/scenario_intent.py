@@ -127,6 +127,10 @@ def read(
         # (none, an ambiguity, a repeat) is left out.
         if len(hits) == 1 and next(iter(hits)) not in removed:
             removed.append(next(iter(hits)))
+        elif len(hits) == 1:
+            # A repeat of a tool already proposed is not "left out": the tool
+            # IS in the list (#863 narrow review).
+            continue
         else:
             left_out += 1
 
@@ -147,6 +151,10 @@ def read(
                 name_hints=hints,
                 limit=scenario.MAX_ADDED,
             )
+        except scenario.Duplicate:
+            # A second spelling of a tool already added: in the list, so not
+            # "left out" (#863 narrow review).
+            continue
         except (scenario.TooMany, scenario.AddedToolRefused):
             left_out += 1
             continue

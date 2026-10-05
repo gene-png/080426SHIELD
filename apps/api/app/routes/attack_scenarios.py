@@ -581,6 +581,7 @@ def parse_scenario_text(
         removed=len(parsed.removed),
         added=len(parsed.added),
         not_understood=len(parsed.not_understood),
+        left_out=parsed.left_out,
     )
     return ScenarioParseResponse(
         removed=parsed.removed,

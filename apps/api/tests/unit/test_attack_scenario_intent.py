@@ -80,9 +80,16 @@ def test_a_removal_naming_two_cited_tools_is_not_a_guess() -> None:
 
 
 def test_a_removal_listed_twice_is_proposed_once() -> None:
+    """A repeat is not "left out": the tool IS in the list (#863 narrow review)."""
     parsed = _read(_answer(remove=["EDR Tool", "edr tool"]))
     assert parsed.removed == ["EDR Tool"]
-    assert (parsed.not_understood, parsed.left_out) == ([], 1)
+    assert (parsed.not_understood, parsed.left_out) == ([], 0)
+
+
+def test_an_addition_listed_twice_is_proposed_once() -> None:
+    parsed = _read(_answer(add=["XDR Suite", "xdr suite"]))
+    assert parsed.added == ["XDR Suite"]
+    assert (parsed.not_understood, parsed.left_out) == ([], 0)
 
 
 # --- additions --------------------------------------------------------------------
