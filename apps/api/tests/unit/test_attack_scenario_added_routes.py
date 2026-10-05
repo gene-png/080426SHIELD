@@ -30,7 +30,6 @@ from tests.unit.test_attack_scenario_routes import (  # noqa: F401  (fixture)
     _flags,
     _run_to_completion,
     _world,
-    analysis_job,
 )
 
 pytestmark = pytest.mark.unit
@@ -196,7 +195,7 @@ def _answering(w, rows_by_code, *, seen=None):
 
 
 def test_a_rise_from_an_added_tool_is_counted_marked_and_kept_out_of_copy_18(
-    app_parts, analysis_job  # noqa: F811
+    app_parts,  # noqa: F811
 ) -> None:
     """C's Detect was an uncleared inference; XDR, confirmed, fills it: Gap to
     Partial, credited to the added tool. B11 counts it; copy 18 does not. The
@@ -230,7 +229,7 @@ def test_a_rise_from_an_added_tool_is_counted_marked_and_kept_out_of_copy_18(
 
 
 def test_a_rise_from_a_remaining_tool_is_still_copy_18_beside_an_addition(
-    app_parts, analysis_job  # noqa: F811
+    app_parts,  # noqa: F811
 ) -> None:
     """EDR removed, XDR (Respond) added. C lost Detect; the AI credits SIEM, a
     REMAINING tool, there: Gap to Partial, copy 18's anomaly, not B11's."""
@@ -246,7 +245,7 @@ def test_a_rise_from_a_remaining_tool_is_still_copy_18_beside_an_addition(
 
 
 def test_a_rise_owed_to_a_remaining_tool_is_copy_18_even_beside_an_added_credit(
-    app_parts, analysis_job  # noqa: F811
+    app_parts,  # noqa: F811
 ) -> None:
     """#818 review, F3, through the GET. EDR removed, XDR (Prevent) added. C
     lost Detect; the AI re-credits it to SIEM (remaining) and credits XDR for
@@ -265,7 +264,7 @@ def test_a_rise_owed_to_a_remaining_tool_is_copy_18_even_beside_an_added_credit(
 
 
 def test_a_rise_a_remaining_tool_starts_and_an_added_tool_finishes_counts_in_both(
-    app_parts, analysis_job  # noqa: F811
+    app_parts,  # noqa: F811
 ) -> None:
     """The advisor's option (b), 16:47Z, through the GET. EDR removed; XDR added
     for Prevent and Respond. C lost Detect: SIEM (remaining) re-credits it, so
@@ -288,7 +287,7 @@ def test_a_rise_a_remaining_tool_starts_and_an_added_tool_finishes_counts_in_bot
 
 
 def test_a_tool_the_client_now_has_stops_the_run_before_anything_is_spent(
-    app_parts, analysis_job  # noqa: F811
+    app_parts,  # noqa: F811
 ) -> None:
     """#818 review, F4. The client's list gains XDR Suite after the what-if
     added it. Every credit to either would be dropped, so the run is refused,
@@ -321,7 +320,7 @@ def _store_added_names(w, sid, names) -> None:
 
 
 def test_a_stored_name_with_a_control_character_is_not_a_collision(
-    app_parts, analysis_job  # noqa: F811
+    app_parts,  # noqa: F811
 ) -> None:
     """#831 review, F1. A draft stored before #826 may hold "XDR<LF>Suite". The
     run's re-check is for collisions with the client's tools, and a line feed
@@ -335,7 +334,7 @@ def test_a_stored_name_with_a_control_character_is_not_a_collision(
 
 
 def test_a_stored_control_character_does_not_hide_a_later_collision(
-    app_parts, analysis_job  # noqa: F811
+    app_parts,  # noqa: F811
 ) -> None:
     """#831 review, F1. The re-check skips the character check, not the tools
     after it: a later added tool the client now has still stops the run."""
@@ -352,7 +351,7 @@ def test_a_stored_control_character_does_not_hide_a_later_collision(
 
 
 def test_a_tool_the_client_gains_while_the_run_waits_fails_it_typed(
-    app_parts, analysis_job  # noqa: F811
+    app_parts,  # noqa: F811
 ) -> None:
     """F4, in the job: the list changes between the POST and the job."""
     w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
@@ -377,7 +376,7 @@ def test_a_function_that_is_not_a_string_is_a_typed_422(app_parts) -> None:  # n
 
 
 def test_an_added_tool_credited_beyond_what_it_was_declared_for_is_set_aside(
-    app_parts, analysis_job  # noqa: F811
+    app_parts,  # noqa: F811
 ) -> None:
     """The advisor, 16:00Z (#818 F6), through the GET. EDR removed, XDR added
     for Detect only. A lost Detect and Prevent; the AI credits XDR for A's
@@ -506,7 +505,7 @@ def test_a_client_tool_spelled_two_ways_is_still_the_clients(app_parts) -> None:
 
 
 def test_a_placeholder_collision_the_client_gains_later_stops_the_run(
-    app_parts, analysis_job  # noqa: F811
+    app_parts,  # noqa: F811
 ) -> None:
     """#818 narrow review, 1, in F4's run-time re-check: after the what-if was
     created, the client gains two tools shown as the added tool's placeholder."""
@@ -521,7 +520,7 @@ def test_a_placeholder_collision_the_client_gains_later_stops_the_run(
 
 
 def test_each_added_tool_is_held_to_its_own_functions_not_the_union(
-    app_parts, analysis_job  # noqa: F811
+    app_parts,  # noqa: F811
 ) -> None:
     """#818 narrow review, 2. XDR is chosen for Detect, Patch Tool for
     Prevent, so B's Prevention is open. The AI credits XDR -- not Patch Tool
@@ -537,7 +536,7 @@ def test_each_added_tool_is_held_to_its_own_functions_not_the_union(
     assert lists[w.b]["prevention_tools"] == []
 
 
-def test_an_added_tool_is_never_drift(app_parts, analysis_job) -> None:  # noqa: F811
+def test_an_added_tool_is_never_drift(app_parts) -> None:  # noqa: F811
     """The drift check judges the client's list. The admin's tool has no
     capability item; left in, it would make the check unknowable (None)."""
     w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)

@@ -1,4 +1,4 @@
-"""Runtime fixture-mode AI: all 5 purposes registered, parseable, 503 on miss.
+"""Runtime fixture-mode AI: every purpose registered, parseable, 503 on miss.
 
 T6b: fixture mode must make the demo/dev stack exercisable OFFLINE. These tests
 drive the runtime provider directly (via build_runtime_provider / from_settings)
@@ -51,10 +51,9 @@ def db_session(tmp_path) -> Iterator[Session]:
 
 
 @pytest.mark.unit
-def test_runtime_provider_registers_all_five_purposes() -> None:
+def test_runtime_provider_registers_every_purpose() -> None:
     provider = build_runtime_provider()
     assert set(provider._fixtures) >= set(ALL_PURPOSES)
-    assert len(ALL_PURPOSES) == 5
 
 
 @pytest.mark.unit
