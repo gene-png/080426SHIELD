@@ -6511,6 +6511,7 @@ The shared dev database, read-only: DRAFT 2, RELEASED 2, APPROVED 0, at migratio
 **#237 REVERSED, deliberately (Gene's ruling 13).** #237 refused to synthesize from any input not APPROVED or RELEASED, because at the time exporting was publishing. Generate now reads the latest non-discarded assessment of each kind, drafts included, and the register is a DRAFT: every file rendered while it is unpublished carries "Draft: not published" (Gene's wording, verbatim), and each finding drafted from an input that was not released records that input's state (`provenance.source_states`, `RiskEntryResponse.source_state`, the export's source cell). What protected the client under #237 now sits at publication.
 
 **Publish refuses**, typed, and the input gate runs first:
+
 - `risk_register_inputs_not_final`, with a `blockers` list, unless every input the client has ENGAGED (a non-archived Service of that kind: ATT&CK, CSF, Zero Trust, Tech Debt) is RELEASED and is still the version the register was generated from (`app/risk/inputs.py`, provenance `current_inputs`). A register generated before an input was released is not publishable after it is: its findings were drafted from unreleased work. An input the client has not engaged does not block.
 - the #240 input-shape guards (`_require_certifiable_inputs`), for registers predating the input record;
 - an already-published version;
