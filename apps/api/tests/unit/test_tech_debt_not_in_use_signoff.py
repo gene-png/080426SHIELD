@@ -186,3 +186,20 @@ def test_the_offline_fixture_marks_a_planned_security_tool_as_v3_2_says() -> Non
     assert not (by["Workday HCM"]["notes"] or "").startswith(PREFIX)
     # Rows that say nothing about lifecycle are unchanged.
     assert by["Falcon Insight"]["security_related"] is True
+
+
+def test_the_prefix_is_matched_after_leading_whitespace_in_an_edited_note(
+    app_client,  # noqa: F811
+) -> None:
+    """The parser strips what the model sends, so leading whitespace reaches the
+    store only through a consultant's notes edit, which is kept as typed."""
+    items = [_item("Payroll", 0, related=False, functions=[], notes=None)]
+    c, _S, h, _svc, body = _extract(app_client, items)
+    item_id = _by_name(body)["Payroll"]["id"]
+    assert _by_name(body)["Payroll"]["signoff_kind"] == "not_security"  # APPEAR
+    r = c.patch(
+        f"/tech-debt/capability-items/{item_id}", headers=h, json={"notes": f"  {EXAMPLE_NOTE}"}
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["notes"] == f"  {EXAMPLE_NOTE}"
+    assert r.json()["signoff_kind"] == "not_in_use"
