@@ -6,6 +6,7 @@ the client id is named in the path (like /admin/services/{id}); no X-Client-Id.
   GET  /risk/clients/{cid}/gate
   POST /risk/clients/{cid}/register/generate
   GET  /risk/clients/{cid}/register/latest
+  PATCH /risk/clients/{cid}/register/entries/{entry_id}   (#844: consultant rating)
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.ai.engine import get_job, run_job
@@ -57,6 +58,8 @@ from app.risk.link_scope import LinkScope, scope_for
 from app.routes.artifacts import _storage_dep
 from app.schemas.risk import (
     LinkScopeDisclosure,
+    RatingNotCarried,
+    RiskEntryRatingEdit,
     RiskEntryResponse,
     RiskGateStatus,
     RiskRegisterResponse,
@@ -732,6 +735,132 @@ def _coerce_enum(enum_cls, value) -> tuple[object | None, str | None]:
         return None, raw
 
 
+#: #854 round 4. Why a consultant rating did not carry, one value per RATING
+#: (never de-duplicated by finding, so the count is of ratings).
+NOT_CARRIED_REASONS = ("ambiguous", "no_entry", "no_source_id")
+
+
+def _carry_ratings(db: Session, prior: RiskRegister | None, register: RiskRegister) -> dict:
+    """#854 review F3: carry consultant ratings from `prior` into `register`.
+
+    THE MATCH KEY IS `source_id`, the finding an entry was drafted for. The
+    prompt drafts one entry per finding (G2), so the finding identifies the
+    entry across versions; `source` is derived from it (D5) and adds nothing.
+
+    A rating carries only when the key is UNAMBIGUOUS on both sides: exactly
+    ONE entry of ANY kind for the finding in `prior` (model-rated ones count
+    too -- #854 round 4: counting only edited entries let a consultant's rating
+    land on a different risk when the old version had two entries for one
+    finding), and exactly one entry for it in `register`. Every other
+    consultant rating is recorded in `not_carried`, ONE ITEM PER RATING, with
+    its reason:
+
+      * `ambiguous`    -- more than one entry for the finding, old or new;
+      * `no_entry`     -- the new version drafted nothing for the finding;
+      * `no_source_id` -- the old entry named no finding; listed by title.
+
+    Only CONSULTANT ratings carry (`rating_edited_at` set). A model rating is
+    replaced by the new run's, which is what regenerating asks for. A carried
+    rating REPLACES the new model rating: the consultant's judgement is what
+    the edit path records. The tier is derived again by `tier_for`, never
+    copied; `rating_edited_by` and `rating_edited_at` are copied VERBATIM, so
+    the record still names who rated it and when, not who regenerated.
+
+    Returns the record persisted in provenance:
+    `{"from_version": int | None, "carried": int,
+      "not_carried": [{"key": str, "reason": str}]}`.
+    """
+    if prior is None:
+        return {"from_version": None, "carried": 0, "not_carried": []}
+    old_entries = (
+        db.execute(select(RiskEntry).where(RiskEntry.register_id == prior.id)).scalars().all()
+    )
+    new_entries = (
+        db.execute(select(RiskEntry).where(RiskEntry.register_id == register.id)).scalars().all()
+    )
+    old_count: dict[str, int] = {}
+    for e in old_entries:
+        if e.source_id is not None:
+            old_count[e.source_id] = old_count.get(e.source_id, 0) + 1
+    new_by_sid: dict[str, list[RiskEntry]] = {}
+    for e in new_entries:
+        if e.source_id is not None:
+            new_by_sid.setdefault(e.source_id, []).append(e)
+
+    carried = 0
+    not_carried: list[dict] = []
+    edited = sorted(
+        (e for e in old_entries if e.rating_edited_at is not None),
+        key=lambda e: (e.source_id or "", e.title),
+    )
+    for e in edited:
+        if e.source_id is None:
+            # Capped for the record, and MARKED when cut: the screen quotes this
+            # as a title, and a silently shortened one would read as the whole.
+            title = e.title if len(e.title) <= 64 else e.title[:63] + "\u2026"
+            not_carried.append({"key": title, "reason": "no_source_id"})
+            continue
+        news = new_by_sid.get(e.source_id, [])
+        if not news:
+            not_carried.append({"key": e.source_id, "reason": "no_entry"})
+            continue
+        if old_count[e.source_id] != 1 or len(news) != 1:
+            not_carried.append({"key": e.source_id, "reason": "ambiguous"})
+            continue
+        target = news[0]
+        target.likelihood = e.likelihood
+        target.impact = e.impact
+        target.tier = (
+            tier_for(Likelihood(e.likelihood), Impact(e.impact)).value
+            if e.likelihood is not None and e.impact is not None
+            else None
+        )
+        target.rating_edited_by = e.rating_edited_by
+        target.rating_edited_at = e.rating_edited_at
+        carried += 1
+    db.flush()
+    return {"from_version": prior.version, "carried": carried, "not_carried": not_carried}
+
+
+_CARRIED_NOT_RECORDED = {
+    "ratings_carried_recorded": False,
+    "ratings_carried": None,
+    "ratings_carried_from_version": None,
+    "ratings_not_carried": [],
+}
+
+
+def _carried_fields(stored: object) -> dict:
+    """#854 F3, read back from provenance. No key: a register generated before
+    this was recorded, which says nothing. An unreadable record is reported as
+    not recorded and logged, never as "nothing was carried"."""
+    if not isinstance(stored, dict) or "ratings_carried" not in stored:
+        return dict(_CARRIED_NOT_RECORDED)
+    raw = stored["ratings_carried"]
+    if (
+        isinstance(raw, dict)
+        and _is_plain_int(raw.get("carried"))
+        and (raw.get("from_version") is None or _is_plain_int(raw.get("from_version")))
+        and isinstance(raw.get("not_carried"), list)
+        and all(
+            isinstance(x, dict)
+            and isinstance(x.get("key"), str)
+            and x.get("reason") in NOT_CARRIED_REASONS
+            for x in raw["not_carried"]
+        )
+    ):
+        return {
+            "ratings_carried_recorded": True,
+            "ratings_carried": raw["carried"],
+            "ratings_carried_from_version": raw["from_version"],
+            "ratings_not_carried": [
+                RatingNotCarried(key=x["key"], reason=x["reason"]) for x in raw["not_carried"]
+            ],
+        }
+    _log.error("risk_register_ratings_carried_unreadable", got=repr(raw)[:200])
+    return dict(_CARRIED_NOT_RECORDED)
+
+
 def _run_risk_synthesize_batched(
     db: Session,
     llm: LLMClient,
@@ -1035,6 +1164,29 @@ def generate(
     # source ids ARE the findings' ids, and a second channel for one fact is a
     # second place for it to drift.
     valid_source_ids = {str(f["source_id"]) for f in findings if f.get("source_id") is not None}
+    # #844. The `source` each finding id belongs to, so an entry's stored
+    # `source` is DERIVED from the finding its kept `source_id` names rather
+    # than copied from the model. It was stored verbatim, never checked against
+    # its pair, into a `String(32)` an over-long value would overflow on
+    # Postgres after every batch was paid for. A CSF subcategory, a ZT
+    # capability and an ATT&CK technique code never share a spelling, so one
+    # id maps to one source.
+    finding_sources = {
+        str(f["source_id"]): str(f["source"]) for f in findings if f.get("source_id") is not None
+    }
+    # What the model sent for `source` that disagreed with its finding's. The
+    # count is the outcome, the values (deduped, truncated to the column's 32)
+    # are what to fix -- the pairing every other counter in this loop uses.
+    source_mismatches = 0
+    source_mismatch_values: list[str] = []
+    # #844. Entries per finding, from the KEPT `source_id`. The prompt asks for
+    # exactly one entry per finding (G2, one entry per finding, no
+    # consolidation), and nothing checked it: an omitted finding and a
+    # duplicated one both passed silently. `valid_source_ids` is run-wide, so
+    # an entry citing a finding from ANOTHER batch is accepted -- this count is
+    # what makes that visible rather than impossible, which is the cheaper and
+    # sufficient half.
+    entries_per_finding: dict[str, int] = {}
     entries_total = 0
     entries_without_tier = 0
     # #132. `field -> [values]`, deduped across the whole run, so the audit row
@@ -1149,6 +1301,19 @@ def generate(
             [raw["source_id"]] if raw.get("source_id") is not None else None,
             valid_source_ids,
         )
+        stored_source = finding_sources[source_kept[0]] if source_kept else None
+        offered_source = raw.get("source")
+        if (
+            stored_source is not None
+            and offered_source is not None
+            and str(offered_source) != stored_source
+        ):
+            source_mismatches += 1
+            short = str(offered_source)[:32]
+            if short not in source_mismatch_values:
+                source_mismatch_values.append(short)
+        if source_kept:
+            entries_per_finding[source_kept[0]] = entries_per_finding.get(source_kept[0], 0) + 1
         dropped = {
             field: values
             for field, values in zip(
@@ -1184,7 +1349,7 @@ def generate(
                 title=str(raw["title"])[:512],
                 description=raw.get("description"),
                 axis=axis.value if axis else None,
-                source=raw.get("source"),
+                source=stored_source,
                 source_id=source_kept[0] if source_kept else None,
                 linked_techniques=techs,
                 linked_controls=controls,
@@ -1246,6 +1411,26 @@ def generate(
     # the same absence -- an audit row with no verdict here would read as the
     # former and mean the latter.
     entries_write_check = "agreed" if entries_written == entries_total else "MISMATCH"
+    # #854 review F3, Gene's option (c): the consultant's ratings survive a
+    # regenerate. Below the flush, because it edits the rows just written.
+    ratings_carried = _carry_ratings(db, prior, register)
+    # #854 round 4: the audit row's untiered count must describe the STORED
+    # register, so it is recounted after the carry changed ratings rather than
+    # taken from the loop's pre-carry tally.
+    entries_without_tier = db.execute(
+        select(func.count())
+        .select_from(RiskEntry)
+        .where(RiskEntry.register_id == register.id, RiskEntry.tier.is_(None))
+    ).scalar_one()
+    # #844. Which findings got no entry and which got several. Sorted, so the
+    # record does not depend on the order batches finished in. A GENERATE-TIME
+    # fact (the findings are not stored anywhere else), so it is persisted with
+    # the other run facts below and read back by `_serialize`.
+    finding_record = {
+        "total": len(findings),
+        "without_entry": sorted(i for i in valid_source_ids if i not in entries_per_finding),
+        "several": {i: n for i, n in sorted(entries_per_finding.items()) if n > 1},
+    }
     # #330. The INTENDED tally is a generate-time fact, so `_serialize` -- which
     # reads the table -- cannot recover it a week later. Persisted into the
     # provenance blob rather than a new column: no migration, and provenance is
@@ -1293,6 +1478,8 @@ def generate(
             service: {"scored": len(sc.codes), "total": sc.total}
             for service, sc in link_scopes.items()
         }
+        _prov_with_count["finding_coverage"] = finding_record
+        _prov_with_count["ratings_carried"] = ratings_carried
         register.provenance = _prov_with_count
         db.add(register)
     else:
@@ -1308,6 +1495,7 @@ def generate(
                 service: {"scored": len(sc.codes), "total": sc.total}
                 for service, sc in link_scopes.items()
             },
+            finding_coverage=finding_record,
             reason="provenance is NULL, which no current writer produces",
         )
     if entries_written != entries_total:
@@ -1393,9 +1581,23 @@ def generate(
             "entries_written": entries_written,
             "entries_write_check": entries_write_check,
             "discarded_entries": discarded_entries,
+            # #844. Both always present, so "nothing disagreed" is a recorded
+            # zero rather than a missing key.
+            "source_mismatches": {"count": source_mismatches, "values": source_mismatch_values},
+            # NOT "findings", which this row already carries as the input count.
+            "finding_coverage": finding_record,
+            "ratings_carried": ratings_carried,
         },
     )
     db.commit()
+    # #854 round 4: logged AFTER the commit that makes it true.
+    _log.info(
+        "risk_register_ratings_carried",
+        register_id=str(register.id),
+        from_version=ratings_carried["from_version"],
+        carried=ratings_carried["carried"],
+        not_carried=len(ratings_carried["not_carried"]),
+    )
     # `g.not_finalized` is the full present-but-unapproved set; the refusal
     # above already cleared the ones that block. Whatever remains contributed
     # nothing to this register, and the register says so.
@@ -1495,6 +1697,38 @@ def export(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Generate a Risk Register before exporting.",
+        )
+    # #854 review round 2: LOCK THE REGISTER ROW before reading its entries.
+    # Export reads the entries, renders for seconds, then sets `finalized_at`;
+    # a rating edit committed inside that gap would be in the client's
+    # dashboard and not in the file they were sent, permanently. The edit route
+    # takes this row FOR SHARE before its write, so on Postgres the two
+    # serialise: an edit that got in first is in the entries read below, and
+    # one that waits finds the register published and is refused.
+    # `populate_existing`, because `reg` is already in the identity map from
+    # `_latest_register` and a plain re-select would hand back that stale
+    # object. SQLite ignores the lock; the unit suite pins only that this
+    # SELECT carries FOR UPDATE, not the race itself.
+    reg = db.execute(
+        select(RiskRegister)
+        .where(RiskRegister.id == reg.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).scalar_one()
+    # #854 review round 3: re-checked UNDER the lock. A generate that committed
+    # while this export waited has superseded the row `_latest_register`
+    # returned; finalizing it would publish a version the consultant is no
+    # longer looking at.
+    if reg.superseded_by is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "risk_register_superseded",
+                "message": (
+                    "A newer version of the Risk Register was generated while this "
+                    "export was starting. Reload the page and export the current version."
+                ),
+            },
         )
 
     # #240. Refuse to publish a register built from work nobody approved.
@@ -1620,11 +1854,22 @@ def export(
     # reason this file already gives at its `resolve_target_tier` import: a
     # second parser is how two surfaces come to disagree about one client.
     _scope_rows = _link_scope_fields(reg.provenance)["excluded_unscored_links"]
+    # #844, read through the same single reader `_serialize` uses.
+    _findings = _finding_fields(reg.provenance)
     ctx = risk_exporters.build_context(
         client_legal_name=org,
         version=reg.version,
         entries=entries,
         link_scope=[(r.service, r.scored, r.total) for r in _scope_rows],
+        finding_counts=(
+            (
+                _findings["findings_total"],
+                len(_findings["findings_without_entry"]),
+                len(_findings["findings_with_several_entries"]),
+            )
+            if _findings["findings_recorded"]
+            else None
+        ),
         # #646: `ai_mode` is left at "not recorded", deliberately -- see
         # `RiskExportContext.ai_mode`. Nothing ties a register to the calls
         # that drafted it until Risk runs through the run framework (#504).
@@ -1701,6 +1946,196 @@ def latest(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No Risk Register generated yet.",
         )
+    return _serialize(db, reg)
+
+
+def _refuse_if_register_closed(reg: RiskRegister) -> None:
+    """#844: a superseded or published register's ratings do not change. Asked
+    before the edit and again after a lost compare-and-swap, so the refusal
+    names the cause either way."""
+    if reg.superseded_by is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "risk_register_superseded",
+                "message": (
+                    "This entry belongs to an older version of the Risk Register. "
+                    "Reload the page to edit the current version."
+                ),
+            },
+        )
+    if reg.finalized_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "risk_register_published",
+                "message": (
+                    "This Risk Register has been exported, which publishes it to the "
+                    "client, so its ratings can no longer change. Generate a new "
+                    "version to rate entries again."
+                ),
+            },
+        )
+
+
+@router.patch(
+    "/clients/{cid}/register/entries/{entry_id}",
+    response_model=RiskRegisterResponse,
+    summary="Set or clear one entry's likelihood and impact (admin)",
+)
+def edit_entry_rating(
+    cid: uuid.UUID,
+    entry_id: uuid.UUID,
+    body: RiskEntryRatingEdit,
+    admin: Annotated[User, _admin_required],
+    db: Annotated[Session, Depends(get_db)],
+) -> RiskRegisterResponse:
+    """#844: the consultant rates an entry the model left unrated, or corrects
+    one it rated.
+
+    The approved prompt (#806, G3 option c) returns null wherever the evidence
+    cannot support a rating, so unrated entries are expected; before this the
+    only remedy on offer was to regenerate, which spends another model call and
+    can come back unrated again.
+
+    The tier is derived here by `tier_for` from the stored pair, exactly as
+    `generate` derives it, and is never read from the body.
+
+    Refused on a SUPERSEDED register (a consultant editing a version nobody
+    will export) and on a PUBLISHED one. Until #737 separates them, published
+    means `finalized_at`, which `export` sets and the client dashboard reads, so
+    an edit there would change numbers a client is already reading with nothing
+    re-published.
+
+    Returns the whole register rather than the entry, so the screen's counters
+    and banners are re-derived from stored state in the same response.
+    """
+    _require_client(db, cid)
+    if not body.model_fields_set:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "risk_rating_edit_empty",
+                "message": "Send a likelihood, an impact, or both.",
+            },
+        )
+    entry = db.get(RiskEntry, entry_id)
+    if entry is None or entry.client_id != cid:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "reason": "risk_entry_not_found",
+                "message": "That Risk Register entry was not found for this client.",
+            },
+        )
+    # #854 review round 2: FOR SHARE on the register, so this edit and an
+    # export (which takes the row FOR UPDATE) serialise on Postgres -- see
+    # `export`. Two edits both take SHARE and do not block each other; the
+    # compare-and-swap below decides between them. SQLite ignores the lock.
+    reg = db.execute(
+        select(RiskRegister)
+        .where(RiskRegister.id == entry.register_id)
+        .with_for_update(read=True)
+        .execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+    if reg is None:  # pragma: no cover - the FK is NOT NULL and CASCADEs
+        raise RuntimeError(f"risk entry {entry.id} has no register {entry.register_id}")
+    _refuse_if_register_closed(reg)
+
+    before = {"likelihood": entry.likelihood, "impact": entry.impact, "tier": entry.tier}
+    new_lk = entry.likelihood
+    new_im = entry.impact
+    if "likelihood" in body.model_fields_set:
+        new_lk = body.likelihood.value if body.likelihood else None
+    if "impact" in body.model_fields_set:
+        new_im = body.impact.value if body.impact else None
+    # Code-derived from the FULL post-edit pair, so an edit naming one half
+    # re-tiers against the half already there.
+    new_tier = (
+        tier_for(Likelihood(new_lk), Impact(new_im)).value
+        if new_lk is not None and new_im is not None
+        else None
+    )
+
+    # #854 review, F7: THE WRITE IS A COMPARE-AND-SWAP, the shape `routes/auth.py`
+    # uses for refresh rotation (#505). The checks above read the entry and its
+    # register BEFORE this write, so two edits naming different halves could
+    # each read the pair and the second store a tier derived from a pair that
+    # no longer existed. This UPDATE matches only while the pair is STILL the
+    # one read and the register is STILL open -- an EXISTS subquery correlated
+    # on `risk_entries.register_id` re-checks `finalized_at IS NULL` and
+    # `superseded_by IS NULL` in the same statement. Exactly one writer wins
+    # under Postgres READ COMMITTED and on SQLite, and the unit suite pins it.
+    #
+    # WHAT THIS DOES NOT COVER, ON ITS OWN: an export already rendering. The
+    # export sets `finalized_at` only at its end, so this re-check passes
+    # during the render; the register lock above (FOR SHARE here, FOR UPDATE
+    # in `export`) is what serialises the two, and only on Postgres.
+    register_open = (
+        select(RiskRegister.id)
+        .where(
+            RiskRegister.id == RiskEntry.register_id,
+            RiskRegister.finalized_at.is_(None),
+            RiskRegister.superseded_by.is_(None),
+        )
+        .exists()
+    )
+    swapped = db.execute(
+        update(RiskEntry)
+        .where(
+            RiskEntry.id == entry.id,
+            RiskEntry.likelihood.is_not_distinct_from(before["likelihood"]),
+            RiskEntry.impact.is_not_distinct_from(before["impact"]),
+            register_open,
+        )
+        .values(
+            likelihood=new_lk,
+            impact=new_im,
+            tier=new_tier,
+            rating_edited_by=admin.id,
+            rating_edited_at=utcnow(),
+        )
+        .execution_options(synchronize_session=False)
+    ).rowcount
+    if swapped != 1:
+        # LOST THE RACE. Nothing was written. Re-read and name the CAUSE: the
+        # register closed underneath the edit, or the entry itself changed.
+        db.rollback()
+        db.refresh(reg)
+        _log.info("risk_entry_rating_edit_race_lost", entry_id=str(entry.id))
+        _refuse_if_register_closed(reg)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "risk_entry_changed",
+                "message": (
+                    "This entry changed while you were editing it. Reload the page "
+                    "and try again."
+                ),
+            },
+        )
+    after = {"likelihood": new_lk, "impact": new_im, "tier": new_tier}
+    audit(
+        db,
+        action="risk_entry.rating_edited",
+        target_type="risk_entry",
+        target_id=entry.id,
+        actor_user_id=admin.id,
+        details={
+            "register_id": str(reg.id),
+            "version": reg.version,
+            "before": before,
+            "after": after,
+        },
+    )
+    db.commit()
+    _log.info(
+        "risk_entry_rating_edited",
+        client_id=str(cid),
+        entry_id=str(entry.id),
+        before=before,
+        after=after,
+    )
     return _serialize(db, reg)
 
 
@@ -1912,6 +2347,51 @@ def _link_scope_fields(stored: object) -> dict:
     }
 
 
+_FINDINGS_NOT_RECORDED = {
+    "findings_recorded": False,
+    "findings_total": None,
+    "findings_without_entry": [],
+    "findings_with_several_entries": {},
+}
+
+
+def _is_plain_int(value: object) -> bool:
+    # `bool` is an `int` in Python; `CLAUDE.md`: `int()` is not a validator.
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _finding_fields(stored: object) -> dict:
+    """#844. The per-finding record, read out of a register's provenance.
+
+    Three states, kept apart for the reason `_link_scope_fields` gives: NO KEY
+    is a register generated before this was recorded, and says nothing (silent,
+    because every such register is in it); a READABLE record is the answer; an
+    UNREADABLE one is "could not look", reported as not recorded and logged
+    loudly, never as a clean result. No current writer produces the third --
+    `generate` builds it from a `len`, a sorted list of ids and a dict of
+    counts -- so the validation is a ratchet against a hand-edited blob.
+    """
+    if not isinstance(stored, dict) or "finding_coverage" not in stored:
+        return dict(_FINDINGS_NOT_RECORDED)
+    raw = stored["finding_coverage"]
+    if (
+        isinstance(raw, dict)
+        and _is_plain_int(raw.get("total"))
+        and isinstance(raw.get("without_entry"), list)
+        and all(isinstance(i, str) for i in raw["without_entry"])
+        and isinstance(raw.get("several"), dict)
+        and all(isinstance(k, str) and _is_plain_int(v) for k, v in raw["several"].items())
+    ):
+        return {
+            "findings_recorded": True,
+            "findings_total": raw["total"],
+            "findings_without_entry": list(raw["without_entry"]),
+            "findings_with_several_entries": dict(raw["several"]),
+        }
+    _log.error("risk_register_findings_record_unreadable", got=repr(raw)[:200])
+    return dict(_FINDINGS_NOT_RECORDED)
+
+
 def _serialize(
     db: Session,
     register: RiskRegister,
@@ -2076,6 +2556,8 @@ def _serialize(
         # would be one state, which is the trap `excluded_inputs_recorded`
         # exists for.
         **_link_scope_fields(stored),
+        **_finding_fields(stored),
+        **_carried_fields(stored),
         id=register.id,
         client_id=register.client_id,
         version=register.version,
