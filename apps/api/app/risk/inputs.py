@@ -139,13 +139,19 @@ def publish_blockers(db: Session, client_id: uuid.UUID, recorded: object) -> lis
     """What stops this register being published, per input. Empty = publishable
     as far as its inputs go.
 
-    THREE CHECKS, and none of them may pass by absence:
+    FOUR CHECKS, and none of them may pass by absence:
       * every engaged SERVICE has a current input (else `not_started`);
       * every current input is RELEASED (else `not_released`);
       * every current input is the one the register was generated from, at the
         same version and already released then (else `changed`). A register
         generated from a draft is therefore never publishable, even after the
         draft is released: its findings were drafted from unreleased work.
+      * every input RECORDED at generate is still engaged (else `changed`).
+        A service archived after generate leaves its findings in the register,
+        and walking only today's services would drop it from the check in
+        silence -- an approved assessment's findings would then publish
+        (#860 review F1). Released or not, the register no longer matches
+        what the client has engaged, so it is regenerated.
 
     `recorded` is the register's provenance `current_inputs` list. When it is
     absent or unreadable the register cannot be certified (`not_recorded`):
@@ -157,9 +163,10 @@ def publish_blockers(db: Session, client_id: uuid.UUID, recorded: object) -> lis
         return [Blocker("register", "not_recorded", None)]
     then = {(r.get("kind"), r.get("service_id")): r for r in recorded}
     now = {(r.kind, r.service_id): r for r in current_inputs(db, client_id)}
+    engaged = engaged_services(db, client_id)
     # PER ENGAGED SERVICE, never per kind: a released record of one service
     # must not stand in for a draft (or nothing) in another of the same kind.
-    for kind, svc in engaged_services(db, client_id):
+    for kind, svc in engaged:
         r = now.get((kind, str(svc.id)))
         if r is None:
             blockers.append(Blocker(kind, "not_started", None))
@@ -175,6 +182,12 @@ def publish_blockers(db: Session, client_id: uuid.UUID, recorded: object) -> lis
             or was.get("status") != RELEASED
         ):
             blockers.append(Blocker(kind, "changed", r.status))
+    # And every RECORDED input, so one whose service is no longer engaged
+    # (archived since generate) cannot drop out of the check.
+    engaged_keys = {(kind, str(svc.id)) for kind, svc in engaged}
+    for (kind, service_id), _was in then.items():
+        if (kind, service_id) not in engaged_keys:
+            blockers.append(Blocker(str(kind), "changed", None))
     if blockers:
         _log.info(
             "risk_publish_inputs_blocked",

@@ -438,3 +438,45 @@ def test_a_service_engaged_after_generate_is_changed(app_client) -> None:  # noq
     assert _blockers(_publish(c, bearer, cid)) == [
         {"input": "zt", "reason": "changed", "status": "released"}
     ]
+
+
+# ---------------------------------------------------------------------------
+# #860 review, round 2 (F1, F4)
+# ---------------------------------------------------------------------------
+
+
+def test_a_service_archived_after_generate_blocks(app_client) -> None:  # noqa: F811
+    """F1. ZT is APPROVED at generate, so the register carries ZT findings
+    labelled "approved". The ZT service is then archived. Its findings are
+    still in the register, so publish must refuse -- before the fix the check
+    walked only today's services, and the archived input dropped out."""
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    s = seed_attack_and_zt(c, bearer, cid)
+    release(c, bearer, cid, "attack", s.attack_service)
+    _gen(c, provider, bearer, cid)
+    assert _register_provenance()["source_states"] == {s.capability: "approved"}
+    gone = c.delete(f"/admin/services/{s.zt_service}", headers=_h(bearer, cid))
+    assert gone.status_code == 204, gone.text
+    r = _publish(c, bearer, cid)
+    assert _blockers(r) == [{"input": "zt", "reason": "changed", "status": None}]
+    assert r.json()["error"]["message"] == (
+        "An assessment this register draws on has changed since it was generated: "
+        "Zero Trust. Generate a new version before publishing."
+    )
+
+
+def test_an_archived_approved_assessment_does_not_count_as_finalized(
+    app_client,  # noqa: F811
+) -> None:
+    """F4. The gate's `not_finalized` report counts the same population as
+    unlock and synthesis: an APPROVED assessment on an archived ZT service does
+    not make a live ZT draft read as finalized."""
+    c, _ = app_client
+    bearer, cid = _admin(c)
+    s = seed_attack_and_zt(c, bearer, cid)
+    h = _h(bearer, cid)
+    assert c.delete(f"/admin/services/{s.zt_service}", headers=h).status_code == 204
+    _new_zt_dod(c, bearer, cid)
+    g = c.get(f"/risk/clients/{cid}/gate", headers=h).json()
+    assert "the Zero Trust assessment" in g["not_finalized"], g["not_finalized"]

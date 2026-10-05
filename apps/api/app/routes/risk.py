@@ -177,13 +177,21 @@ def _finalized_for_synthesis(db: Session, model, client_id: uuid.UUID):
     longer reads it: a draft register synthesizes from in-progress inputs
     through `_current_for_synthesis`, and what keeps unreviewed work from a
     client is publish's input gate (`app/risk/inputs.py::publish_blockers`).
-    The name is kept so the #237 history below stays greppable.
+    The name is kept so the #237 history below stays greppable. ARCHIVED
+    services are excluded, as in `_exists_for_gate` and
+    `_current_for_synthesis` (#860 review F4), so the report counts the same
+    population unlock and synthesis do.
 
     See `_exists_for_gate` for why the two are typed differently on purpose.
     """
     return db.execute(
         select(model)
-        .where(model.client_id == client_id, model.status.in_(_FINALIZED))
+        .join(Service, Service.id == model.service_id)
+        .where(
+            model.client_id == client_id,
+            model.status.in_(_FINALIZED),
+            Service.status != ServiceStatus.ARCHIVED,
+        )
         .order_by(model.version.desc(), model.created_at.desc())
         .limit(1)
     ).scalar_one_or_none()
@@ -1942,10 +1950,14 @@ def _require_certifiable_inputs(reg: RiskRegister) -> None:
         #
         # Since #737 `_provenance_snapshot` records DRAFT inputs too, so the
         # stored statuses can be anything -- but this helper runs only in
-        # `publish`, AFTER the input gate, which already refuses unless every
-        # current input was RELEASED at generate. So no unapproved status
-        # reaches this branch. It is kept as a RATCHET: it becomes the last
-        # guard again if publish ever stops running the input gate first.
+        # `publish`, AFTER the input gate, which refuses unless every engaged
+        # service's input was RELEASED at generate and is unchanged, AND every
+        # input recorded at generate is still engaged. That second half is
+        # what covers a service archived after generate (#860 review F1):
+        # without it, an APPROVED input's findings passed this branch, which
+        # only refuses statuses outside approved/released. So no unreleased
+        # status reaches here today. It is kept as a RATCHET: it becomes the
+        # last guard again if publish ever stops running the input gate first.
         #
         # The pre-0047 DRAFT-input register -- the hazard #240 opens with -- is
         # NOT caught here. It has NULL provenance and is caught by the branch
