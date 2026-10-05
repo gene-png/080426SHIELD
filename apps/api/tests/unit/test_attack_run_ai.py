@@ -719,7 +719,10 @@ def test_run_ai_drops_a_reason_the_new_status_does_not_take(app_client) -> None:
     write-back must too, or a consultant's `missing_control_category` survives
     under the AI's N/A -- the exact pairing the vocabulary forbids."""
     c, TestSession, provider = app_client
-    h, svc_id, row_id = _one_row_run(c, TestSession, provider, "not_applicable")
+    # #841: the AI may no longer write N/A, so the status it moves the row to is
+    # a gap -- which takes no reason either, so the consultant's reason is still
+    # the one that must be dropped.
+    h, svc_id, row_id = _one_row_run(c, TestSession, provider, "gap")
     r = c.patch(
         f"/attack/coverage/{row_id}",
         headers=h,
@@ -729,7 +732,7 @@ def test_run_ai_drops_a_reason_the_new_status_does_not_take(app_client) -> None:
 
     r = attack_run_ai(c, svc_id, h)
     row = next(t for t in r["coverage"] if t["id"] == row_id)
-    assert (row["status"], row["reason_code"]) == ("not_applicable", None)
+    assert (row["status"], row["reason_code"]) == ("gap", None)
 
     # DISCLOSED, not only dropped: in the run's own diff and in the audit row.
     code = row["technique_code"]
@@ -829,7 +832,9 @@ def _run_audit(TestSession) -> dict:
 @pytest.mark.unit
 @pytest.mark.parametrize(
     ("status", "reason"),
-    [("partial", "reach_limited"), ("not_applicable", "platform_absent")],
+    # #841: not `not_applicable` -- the AI may no longer write it
+    # (`test_attack_ai_not_applicable_refused.py` pins the refusal).
+    [("partial", "reach_limited")],
 )
 def test_run_ai_stores_a_reason_the_status_takes(app_client, status, reason) -> None:
     """#554 slice 2: the model's reason is stored when it belongs to the status."""
@@ -847,21 +852,36 @@ _PRIOR_GAP = {"status": "gap", "reason_code": None}
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
-    ("status", "reason", "recorded", "prior"),
+    ("status", "reason", "recorded", "prior", "bucket"),
     [
         # The pairing the vocabulary exists to forbid: a missing control is a
         # GAP, never an N/A reason. Applying the N/A would move the row out of
-        # the gap list on the model's word.
-        ("not_applicable", "missing_control_category", "missing_control_category", _PRIOR_PARTIAL),
-        ("partial", "platform_absent", "platform_absent", _PRIOR_GAP),
-        ("gap", "reach_limited", "reach_limited", _PRIOR_PARTIAL),
-        ("partial", "not_a_code", "not_a_code", _PRIOR_GAP),
+        # the gap list on the model's word. Since #841 the AI may not write N/A
+        # at all, so this is refused at the STATUS check, before the reason
+        # check, and recorded in `statuses_rejected`. Kept, so that ordering
+        # cannot drift silently.
+        (
+            "not_applicable",
+            "missing_control_category",
+            None,
+            _PRIOR_PARTIAL,
+            "statuses_rejected",
+        ),
+        ("partial", "platform_absent", "platform_absent", _PRIOR_GAP, "reason_codes_rejected"),
+        ("gap", "reach_limited", "reach_limited", _PRIOR_PARTIAL, "reason_codes_rejected"),
+        ("partial", "not_a_code", "not_a_code", _PRIOR_GAP, "reason_codes_rejected"),
         # Model PROSE never reaches an audit row: a marker stands in for it.
-        ("partial", "Nothing defends this. See notes!", "<not a code>", _PRIOR_GAP),
+        (
+            "partial",
+            "Nothing defends this. See notes!",
+            "<not a code>",
+            _PRIOR_GAP,
+            "reason_codes_rejected",
+        ),
     ],
 )
 def test_run_ai_refuses_a_mispaired_suggestion_whole_and_records_it(
-    app_client, status, reason, recorded, prior
+    app_client, status, reason, recorded, prior, bucket
 ) -> None:
     """As the PATCH refuses the whole request (typed 422), the write-back refuses
     the whole suggestion: the row keeps the consultant's status AND reason, and
@@ -884,12 +904,16 @@ def test_run_ai_refuses_a_mispaired_suggestion_whole_and_records_it(
     # The static answer is replayed to EVERY batch, so the refusal is recorded
     # once per batch that saw it. What is pinned is that it IS recorded, whole,
     # and nothing else is.
-    rejected = _run_audit(TestSession)["reason_codes_rejected"]
+    audit = _run_audit(TestSession)
+    rejected = audit[bucket]
     assert rejected, "a refused suggestion must be recorded, not silently dropped"
-    assert all(
-        entry == {"technique_code": code, "status": status, "reason_code": recorded}
-        for entry in rejected
-    ), rejected
+    expected = {"technique_code": code, "status": status}
+    if bucket == "reason_codes_rejected":
+        expected["reason_code"] = recorded
+    assert all(entry == expected for entry in rejected), rejected
+    # Recorded in exactly one list.
+    other = "statuses_rejected" if bucket == "reason_codes_rejected" else "reason_codes_rejected"
+    assert audit[other] == [], audit[other]
 
 
 @pytest.mark.unit
