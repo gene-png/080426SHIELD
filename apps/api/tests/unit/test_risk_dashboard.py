@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.storage.local import LocalFilesystemStorage
 from tests._attack_rows import first_standalone
+from tests._risk_inputs import release
 
 
 @pytest.fixture()
@@ -108,6 +109,10 @@ def _seed_attack_and_zt(c: TestClient, bearer: str, cid: str) -> None:
     # left them DRAFT and the generate below used to succeed.
     assert c.post(f"/attack/assessments/{a['id']}/approve", headers=h).status_code == 200
     assert c.post(f"/zt/assessments/{za['id']}/approve", headers=h).status_code == 200
+    # RELEASE both -- #737, Gene's rule (#736 item 13): a register is published
+    # only when every engaged input is released, and these tests publish.
+    release(c, bearer, cid, "attack", asvc["id"])
+    release(c, bearer, cid, "zt", zsvc["id"])
 
 
 def _generate_and_finalize(c: TestClient, bearer: str, cid: str) -> None:
