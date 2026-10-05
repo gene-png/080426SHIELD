@@ -1,3 +1,4 @@
+import type { RatingNotCarried } from "./carry";
 export interface RiskGate {
   unlocked: boolean;
   has_attack: boolean;
@@ -195,7 +196,7 @@ export interface RiskRegister {
   ratings_carried_recorded: boolean;
   ratings_carried: number | null;
   ratings_carried_from_version: number | null;
-  ratings_not_carried: string[];
+  ratings_not_carried: RatingNotCarried[];
 
   /**
    * #330. The generate loop's INTENDED tally.

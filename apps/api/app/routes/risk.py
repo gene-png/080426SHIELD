@@ -58,6 +58,7 @@ from app.risk.link_scope import LinkScope, scope_for
 from app.routes.artifacts import _storage_dep
 from app.schemas.risk import (
     LinkScopeDisclosure,
+    RatingNotCarried,
     RiskEntryRatingEdit,
     RiskEntryResponse,
     RiskGateStatus,
@@ -734,61 +735,74 @@ def _coerce_enum(enum_cls, value) -> tuple[object | None, str | None]:
         return None, raw
 
 
+#: #854 round 4. Why a consultant rating did not carry, one value per RATING
+#: (never de-duplicated by finding, so the count is of ratings).
+NOT_CARRIED_REASONS = ("ambiguous", "no_entry", "no_source_id")
+
+
 def _carry_ratings(db: Session, prior: RiskRegister | None, register: RiskRegister) -> dict:
     """#854 review F3: carry consultant ratings from `prior` into `register`.
 
     THE MATCH KEY IS `source_id`, the finding an entry was drafted for. The
     prompt drafts one entry per finding (G2), so the finding identifies the
     entry across versions; `source` is derived from it (D5) and adds nothing.
+
     A rating carries only when the key is UNAMBIGUOUS on both sides: exactly
-    one consultant-edited entry for the finding in `prior`, and exactly one
-    entry for it in `register`. Every other consultant rating is listed in
-    `not_carried` (its `source_id`, or its title when it has none), never
-    dropped in silence.
+    ONE entry of ANY kind for the finding in `prior` (model-rated ones count
+    too -- #854 round 4: counting only edited entries let a consultant's rating
+    land on a different risk when the old version had two entries for one
+    finding), and exactly one entry for it in `register`. Every other
+    consultant rating is recorded in `not_carried`, ONE ITEM PER RATING, with
+    its reason:
+
+      * `ambiguous`    -- more than one entry for the finding, old or new;
+      * `no_entry`     -- the new version drafted nothing for the finding;
+      * `no_source_id` -- the old entry named no finding; listed by title.
 
     Only CONSULTANT ratings carry (`rating_edited_at` set). A model rating is
     replaced by the new run's, which is what regenerating asks for. A carried
     rating REPLACES the new model rating: the consultant's judgement is what
-    the edit path records, and regenerating is not a request to discard it.
-    The tier is derived again by `tier_for`, never copied.
+    the edit path records. The tier is derived again by `tier_for`, never
+    copied; `rating_edited_by` and `rating_edited_at` are copied VERBATIM, so
+    the record still names who rated it and when, not who regenerated.
 
     Returns the record persisted in provenance:
-    `{"from_version": int | None, "carried": int, "not_carried": [str]}`.
+    `{"from_version": int | None, "carried": int,
+      "not_carried": [{"key": str, "reason": str}]}`.
     """
     if prior is None:
         return {"from_version": None, "carried": 0, "not_carried": []}
-    old_edited = (
-        db.execute(
-            select(RiskEntry).where(
-                RiskEntry.register_id == prior.id, RiskEntry.rating_edited_at.is_not(None)
-            )
-        )
-        .scalars()
-        .all()
+    old_entries = (
+        db.execute(select(RiskEntry).where(RiskEntry.register_id == prior.id)).scalars().all()
     )
     new_entries = (
         db.execute(select(RiskEntry).where(RiskEntry.register_id == register.id)).scalars().all()
     )
-    old_by_sid: dict[str, list[RiskEntry]] = {}
-    for e in old_edited:
+    old_count: dict[str, int] = {}
+    for e in old_entries:
         if e.source_id is not None:
-            old_by_sid.setdefault(e.source_id, []).append(e)
+            old_count[e.source_id] = old_count.get(e.source_id, 0) + 1
     new_by_sid: dict[str, list[RiskEntry]] = {}
     for e in new_entries:
         if e.source_id is not None:
             new_by_sid.setdefault(e.source_id, []).append(e)
 
     carried = 0
-    not_carried: list[str] = []
-    for e in old_edited:
+    not_carried: list[dict] = []
+    edited = sorted(
+        (e for e in old_entries if e.rating_edited_at is not None),
+        key=lambda e: (e.source_id or "", e.title),
+    )
+    for e in edited:
         if e.source_id is None:
-            not_carried.append(e.title[:64])
+            not_carried.append({"key": e.title[:64], "reason": "no_source_id"})
             continue
-        olds = old_by_sid[e.source_id]
         news = new_by_sid.get(e.source_id, [])
-        if len(olds) != 1 or len(news) != 1:
-            if e.source_id not in not_carried:
-                not_carried.append(e.source_id)
+        if not news:
+            not_carried.append({"key": e.source_id, "reason": "no_entry"})
+            continue
+        if old_count[e.source_id] != 1 or len(news) != 1:
+            not_carried.append({"key": e.source_id, "reason": "ambiguous"})
             continue
         target = news[0]
         target.likelihood = e.likelihood
@@ -802,14 +816,7 @@ def _carry_ratings(db: Session, prior: RiskRegister | None, register: RiskRegist
         target.rating_edited_at = e.rating_edited_at
         carried += 1
     db.flush()
-    _log.info(
-        "risk_register_ratings_carried",
-        register_id=str(register.id),
-        from_version=prior.version,
-        carried=carried,
-        not_carried=len(not_carried),
-    )
-    return {"from_version": prior.version, "carried": carried, "not_carried": sorted(not_carried)}
+    return {"from_version": prior.version, "carried": carried, "not_carried": not_carried}
 
 
 _CARRIED_NOT_RECORDED = {
@@ -832,13 +839,20 @@ def _carried_fields(stored: object) -> dict:
         and _is_plain_int(raw.get("carried"))
         and (raw.get("from_version") is None or _is_plain_int(raw.get("from_version")))
         and isinstance(raw.get("not_carried"), list)
-        and all(isinstance(x, str) for x in raw["not_carried"])
+        and all(
+            isinstance(x, dict)
+            and isinstance(x.get("key"), str)
+            and x.get("reason") in NOT_CARRIED_REASONS
+            for x in raw["not_carried"]
+        )
     ):
         return {
             "ratings_carried_recorded": True,
             "ratings_carried": raw["carried"],
             "ratings_carried_from_version": raw["from_version"],
-            "ratings_not_carried": list(raw["not_carried"]),
+            "ratings_not_carried": [
+                RatingNotCarried(key=x["key"], reason=x["reason"]) for x in raw["not_carried"]
+            ],
         }
     _log.error("risk_register_ratings_carried_unreadable", got=repr(raw)[:200])
     return dict(_CARRIED_NOT_RECORDED)
@@ -1397,6 +1411,14 @@ def generate(
     # #854 review F3, Gene's option (c): the consultant's ratings survive a
     # regenerate. Below the flush, because it edits the rows just written.
     ratings_carried = _carry_ratings(db, prior, register)
+    # #854 round 4: the audit row's untiered count must describe the STORED
+    # register, so it is recounted after the carry changed ratings rather than
+    # taken from the loop's pre-carry tally.
+    entries_without_tier = db.execute(
+        select(func.count())
+        .select_from(RiskEntry)
+        .where(RiskEntry.register_id == register.id, RiskEntry.tier.is_(None))
+    ).scalar_one()
     # #844. Which findings got no entry and which got several. Sorted, so the
     # record does not depend on the order batches finished in. A GENERATE-TIME
     # fact (the findings are not stored anywhere else), so it is persisted with
@@ -1565,6 +1587,14 @@ def generate(
         },
     )
     db.commit()
+    # #854 round 4: logged AFTER the commit that makes it true.
+    _log.info(
+        "risk_register_ratings_carried",
+        register_id=str(register.id),
+        from_version=ratings_carried["from_version"],
+        carried=ratings_carried["carried"],
+        not_carried=len(ratings_carried["not_carried"]),
+    )
     # `g.not_finalized` is the full present-but-unapproved set; the refusal
     # above already cleared the ones that block. Whatever remains contributed
     # nothing to this register, and the register says so.

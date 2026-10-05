@@ -331,12 +331,13 @@ describe("RiskRegisterDashboard consultant rating (#844)", () => {
         ratings_carried_recorded: true,
         ratings_carried: 2,
         ratings_carried_from_version: 3,
-        ratings_not_carried: ["T1003"],
+        ratings_not_carried: [{ key: "T1003", reason: "ambiguous" }],
       }),
     );
     await loaded();
     expect(screen.getByTestId("risk-ratings-carried").textContent).toBe(
-      "2 consultant ratings were carried over from version 3. 1 could not be matched to an entry in this version and was not carried: T1003. Rate it again in the Register table.",
+      "2 consultant ratings were carried over from version 3." +
+        "1 rating could not be carried because this version or the last has more than one entry for the same finding: T1003. Rate it again in the Register table.",
     );
   });
 

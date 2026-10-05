@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -111,6 +112,18 @@ class RiskEntryRatingEdit(BaseModel):
 
     likelihood: Likelihood | None = None
     impact: Impact | None = None
+
+
+class RatingNotCarried(BaseModel):
+    """#854 F3: one consultant rating a regenerate could not carry, and why.
+
+    `key` is the finding's `source_id`, or the entry's title when `reason` is
+    `no_source_id`. One item per RATING, so the list length is a count of
+    ratings, not of findings.
+    """
+
+    key: str
+    reason: Literal["ambiguous", "no_entry", "no_source_id"]
 
 
 class LinkScopeDisclosure(BaseModel):
@@ -251,7 +264,7 @@ class RiskRegisterResponse(BaseModel):
     ratings_carried_recorded: bool = False
     ratings_carried: int | None = None
     ratings_carried_from_version: int | None = None
-    ratings_not_carried: list[str] = []
+    ratings_not_carried: list[RatingNotCarried] = []
     findings_recorded: bool = False
     findings_total: int | None = None
     findings_without_entry: list[str] = []

@@ -35,6 +35,7 @@ import {
   type RiskTier,
 } from "@/lib/risk/matrix";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
+import { carriedSentences } from "@/lib/risk/carry";
 
 import type { RiskEntry, RiskGate, RiskRegister } from "@/lib/risk/types";
 
@@ -978,16 +979,13 @@ export function RiskRegisterDashboard(): JSX.Element {
               }
               data-testid="risk-ratings-carried"
             >
-              {register.ratings_carried ?? 0} consultant{" "}
-              {register.ratings_carried === 1 ? "rating was" : "ratings were"}{" "}
-              carried over from version {register.ratings_carried_from_version}.
-              {register.ratings_not_carried.length > 0
-                ? ` ${register.ratings_not_carried.length} could not be matched to an entry in this version and ${
-                    register.ratings_not_carried.length === 1 ? "was" : "were"
-                  } not carried: ${register.ratings_not_carried.join(", ")}. Rate ${
-                    register.ratings_not_carried.length === 1 ? "it" : "them"
-                  } again in the Register table.`
-                : null}
+              {carriedSentences(
+                register.ratings_carried ?? 0,
+                register.ratings_carried_from_version,
+                register.ratings_not_carried,
+              ).map((line) => (
+                <p key={line}>{line}</p>
+              ))}
             </div>
           ) : null}
           {/* #844. Each finding should get exactly one entry. Rendered only
