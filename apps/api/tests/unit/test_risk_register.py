@@ -475,9 +475,21 @@ def test_export_refuses_a_pre_provenance_register_that_was_never_delivered(
     db.add(reg)
     db.commit()
 
-    r = c.post(f"/risk/clients/{cid}/register/export", headers=bh)
+    # #737 (declared and approved on #860): export renders it now -- it is the
+    # consultant's internal copy -- and does NOT publish it...
+    ex = c.post(f"/risk/clients/{cid}/register/export", headers=bh)
+    assert ex.status_code == 200, ex.text
+    assert ex.json()["finalized_at"] is None
+    # ...and PUBLISH refuses it. The input gate meets the NULL provenance first:
+    # nothing on file says what it was built from.
+    r = c.post(f"/risk/clients/{cid}/register/publish", headers=bh)
     assert r.status_code == 409, r.text
-    assert "predates provenance recording" in r.json()["error"]["message"]
+    assert r.json()["error"]["reason"] == "risk_register_inputs_not_final", r.text
+    assert r.json()["error"]["blockers"] == [
+        {"input": "register", "reason": "not_recorded", "status": None}
+    ]
+    db.refresh(reg)
+    assert reg.finalized_at is None
 
 
 @pytest.mark.unit

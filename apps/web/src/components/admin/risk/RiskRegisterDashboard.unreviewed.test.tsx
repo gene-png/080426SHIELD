@@ -70,18 +70,21 @@ describe("RiskRegisterDashboard, an unreviewed ATT&CK input (#554 R3)", () => {
     vi.mocked(riskClient.fetchRiskRegisterLatest).mockResolvedValue(null);
   });
 
-  it("says why, in the refusal's own sentence, and offers no Generate", async () => {
+  it("no longer blocks Generate on unreviewed statuses (#737, option (b))", async () => {
+    // DECLARED (#860, accepted). OLD: a banner with the refusal's sentence and
+    // a disabled Generate. NEW: a draft may be generated; each affected entry
+    // is labelled and publish refuses. Even a server still sending the old
+    // sentence must not block the button.
     const sentence =
       "The Risk Register cannot be generated yet: 1 ATT&CK technique has a computed status that differs from the AI's suggestion and has not been reviewed. Review it in the ATT&CK Computed status review panel, then generate again.";
     vi.mocked(riskClient.fetchRiskGate).mockResolvedValue(
       gate({ attack_computed_status_unreviewed: sentence }),
     );
     await loaded();
-    const banner = await screen.findByTestId("risk-register-attack-unreviewed");
-    expect(banner.textContent).toContain(sentence);
     expect(
       screen.getByRole("button", { name: /^(Generate|Regenerate)$/ }),
-    ).toBeDisabled();
+    ).not.toBeDisabled();
+    expect(screen.queryByTestId("risk-register-attack-unreviewed")).toBeNull();
   });
 
   it("offers Generate when nothing awaits review", async () => {

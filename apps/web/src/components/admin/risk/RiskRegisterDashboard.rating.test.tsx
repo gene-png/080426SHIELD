@@ -80,6 +80,7 @@ function entry(over: Partial<RiskEntry> = {}): RiskEntry {
     dropped_links: {},
     // #737: required; null = the finding's input was released.
     source_state: null,
+    source_review_pending: false,
     rating_edited_by: null,
     rating_edited_at: null,
     ...over,
