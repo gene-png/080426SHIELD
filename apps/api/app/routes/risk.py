@@ -1890,6 +1890,7 @@ def _render_and_store(
     cid: uuid.UUID,
     admin: User,
     storage: StorageBackend,
+    draft: bool,
 ) -> None:
     """Render the three files from the register's STORED state and point the
     register at them. Shared by `export` and `publish` (#737), so the files a
@@ -1928,6 +1929,7 @@ def _render_and_store(
             if _findings["findings_recorded"]
             else None
         ),
+        draft=draft,
         # #646: `ai_mode` is left at "not recorded", deliberately -- see
         # `RiskExportContext.ai_mode`. Nothing ties a register to the calls
         # that drafted it until Risk runs through the run framework (#504).
@@ -2031,7 +2033,16 @@ def export(
     # what the client dashboard reads, and only `publish` sets it. Before #737
     # exporting a register to review it internally put it in front of the
     # client.
-    _render_and_store(db, reg=reg, client=client, cid=cid, admin=admin, storage=storage)
+    # #737: an export of an unpublished register is a draft, and its files say so.
+    _render_and_store(
+        db,
+        reg=reg,
+        client=client,
+        cid=cid,
+        admin=admin,
+        storage=storage,
+        draft=reg.finalized_at is None,
+    )
     audit(
         db,
         action="risk_register.exported",
@@ -2116,7 +2127,16 @@ def publish(
                 "unrated": unrated,
             },
         )
-    _render_and_store(db, reg=reg, client=client, cid=cid, admin=admin, storage=storage)
+    # Rendered as PUBLISHED files: no draft marker. `finalized_at` is set below.
+    _render_and_store(
+        db,
+        reg=reg,
+        client=client,
+        cid=cid,
+        admin=admin,
+        storage=storage,
+        draft=False,
+    )
     reg.finalized_at = utcnow()
     audit(
         db,

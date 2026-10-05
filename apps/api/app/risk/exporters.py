@@ -36,6 +36,9 @@ from app.risk.engine import (
     tier_counts,
 )
 
+#: #737, Gene's ruling (#736, 5986057990 item 13), verbatim.
+DRAFT_MARKER = "Draft: not published"
+
 # Blank columns the client uses for governance — SHIELD does not populate these.
 _GOVERNANCE_COLUMNS = [
     "Owner",
@@ -80,6 +83,10 @@ class RiskExportContext:
     #: "every finding has one entry" over a register nobody counted would be a
     #: claim, where silence is only an absence.
     finding_counts: tuple[int, int, int] | None = None
+    #: #737: True for every file rendered while the register is unpublished.
+    #: Such a file is the consultant's copy, and says so on its face, because a
+    #: file that leaves by email otherwise reads as final.
+    draft: bool = False
 
 
 def _enum_list(values, enum_cls):
@@ -101,6 +108,7 @@ def build_context(
     entries: Sequence[Any],
     link_scope: Sequence[tuple[str, int, int]] = (),
     finding_counts: tuple[int, int, int] | None = None,
+    draft: bool = False,
 ) -> RiskExportContext:
     return RiskExportContext(
         client_legal_name=org_display_name(client_legal_name),
@@ -108,6 +116,7 @@ def build_context(
         entries=list(entries),
         link_scope=tuple(link_scope),
         finding_counts=finding_counts,
+        draft=draft,
     )
 
 
@@ -248,6 +257,8 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
     # state them. The SAME `_summary_lines`, one line per row, so the three
     # formats cannot drift apart.
     summary = wb.create_sheet("Summary")
+    if ctx.draft:
+        summary.append([DRAFT_MARKER])
     summary.append(["Summary"])
     summary.cell(row=1, column=1).font = Font(bold=True)
     for line in _summary_lines(ctx):
@@ -492,6 +503,7 @@ def render_pdf(ctx: RiskExportContext) -> bytes:
         Paragraph(f"Risk Register (v{ctx.version})", h1),
         Paragraph(ctx.client_legal_name, body),
         pdf_paragraph(ctx.ai_mode, body),  # #646, under the title
+        *([Paragraph(DRAFT_MARKER, body)] if ctx.draft else []),
         Spacer(1, 0.2 * inch),
         Paragraph("Summary", h2),
     ]
@@ -574,6 +586,8 @@ def render_docx(ctx: RiskExportContext) -> bytes:
     doc = new_document(f"Risk Register — {ctx.client_legal_name}")
     add_title(doc, f"Risk Register (v{ctx.version})", ctx.client_legal_name)
     add_docx_paragraph(doc, ctx.ai_mode)  # #646, under the title
+    if ctx.draft:
+        add_paragraphs(doc, [DRAFT_MARKER])
 
     add_heading(doc, "Summary")
     add_paragraphs(doc, _summary_lines(ctx))

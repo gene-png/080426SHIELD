@@ -205,3 +205,39 @@ def test_a_client_user_cannot_download_an_unpublished_export(app_client) -> None
     # And the admin can, so the 404 is about the reader, not a missing file.
     ok = c.get(f"/artifacts/{ex['pdf_artifact_id']}/download", headers={**ah, "X-Client-Id": cid})
     assert ok.status_code == 200, ok.text
+
+
+def _texts(c, ah: dict, cid: str, body: dict) -> dict[str, str]:
+    import io
+
+    from docx import Document
+    from openpyxl import load_workbook
+
+    dh = {**ah, "X-Client-Id": cid}
+    raw = {
+        k: c.get(f"/artifacts/{body[f'{k}_artifact_id']}/download", headers=dh).content
+        for k in ("pdf", "docx", "xlsx")
+    }
+    wb = load_workbook(io.BytesIO(raw["xlsx"]))
+    return {
+        "pdf": " ".join(_pdf_text(raw["pdf"]).split()),
+        "docx": "\n".join(p.text for p in Document(io.BytesIO(raw["docx"])).paragraphs),
+        "xlsx": "\n".join(
+            str(r[0]) for r in wb["Summary"].iter_rows(values_only=True) if r and r[0]
+        ),
+    }
+
+
+def test_an_export_of_an_unpublished_register_is_marked_draft(app_client) -> None:  # noqa: F811
+    """#737, Gene's marker, verbatim, in all three files."""
+    c, _, _, cid, ah, _, _ = _world(app_client)
+    texts = _texts(c, ah, cid, _post(c, ah, cid, "export").json())
+    for kind, text in texts.items():
+        assert "Draft: not published" in text, kind
+
+
+def test_the_published_files_carry_no_draft_marker(app_client) -> None:  # noqa: F811
+    c, _, _, cid, ah, _, _ = _world(app_client)
+    texts = _texts(c, ah, cid, _post(c, ah, cid, "publish").json())
+    for kind, text in texts.items():
+        assert "Draft: not published" not in text, kind
