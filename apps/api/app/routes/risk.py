@@ -795,7 +795,10 @@ def _carry_ratings(db: Session, prior: RiskRegister | None, register: RiskRegist
     )
     for e in edited:
         if e.source_id is None:
-            not_carried.append({"key": e.title[:64], "reason": "no_source_id"})
+            # Capped for the record, and MARKED when cut: the screen quotes this
+            # as a title, and a silently shortened one would read as the whole.
+            title = e.title if len(e.title) <= 64 else e.title[:63] + "\u2026"
+            not_carried.append({"key": title, "reason": "no_source_id"})
             continue
         news = new_by_sid.get(e.source_id, [])
         if not news:

@@ -258,8 +258,10 @@ class RiskRegisterResponse(BaseModel):
     # empty map mean NOTHING, not "every finding had one entry"; True with both
     # empty is that observed fact.
     # #854 F3: consultant ratings carried from the previous version on
-    # regenerate, matched by `source_id`. `ratings_not_carried` lists the
-    # findings whose rating could not be matched. `..._recorded` False: a
+    # regenerate, matched by `source_id`. `ratings_not_carried` lists each
+    # RATING that could not be carried, one item per rating with its reason
+    # (`RatingNotCarried`), so its length counts ratings, not findings.
+    # `..._recorded` False: a
     # register generated before this was recorded; the rest then means nothing.
     ratings_carried_recorded: bool = False
     ratings_carried: int | None = None

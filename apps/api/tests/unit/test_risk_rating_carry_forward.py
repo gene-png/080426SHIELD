@@ -8,7 +8,7 @@ technique, a CSF subcategory or a ZT capability code). The prompt drafts one
 entry per finding (G2), so a finding identifies its entry across versions.
 `source` is not part of the key because it is derived from `source_id` (D5).
 A rating is carried only when the key is UNAMBIGUOUS on both sides: exactly
-one consultant-edited entry for that finding in the old version, and exactly
+one entry of ANY kind for that finding in the old version, and exactly
 one entry for it in the new one. Anything else is not carried, and is listed.
 
 Only CONSULTANT-edited ratings carry (`rating_edited_at` set); a model rating
@@ -190,6 +190,44 @@ def test_an_entry_with_no_source_id_is_listed_by_title(app_client) -> None:  # n
     _patch(c, bearer, cid, orphan["id"], {"likelihood": "low", "impact": "minor"})
     v2 = _generate(c, provider, bearer, cid, _entries_payload(_unrated("A", technique)))
     assert v2["ratings_not_carried"] == [{"key": "Orphan", "reason": "no_source_id"}]
+
+
+def test_a_long_title_is_marked_as_cut_and_a_short_one_is_whole(app_client) -> None:  # noqa: F811
+    """#854 closing check. The key is capped at 64 characters, and a cut one
+    ends in an ellipsis, because the screen quotes it as a title."""
+    c, provider, bearer, cid, technique, _ = _world(app_client)
+    long_title = "L" * 80
+    v1 = _generate(
+        c,
+        provider,
+        bearer,
+        cid,
+        _entries_payload(_unrated(long_title, "T0000"), _unrated("Short", "T0001")),
+    )
+    for e in v1["entries"]:
+        _patch(c, bearer, cid, e["id"], {"likelihood": "low"})
+    v2 = _generate(c, provider, bearer, cid, _entries_payload(_unrated("A", technique)))
+    keys = sorted(x["key"] for x in v2["ratings_not_carried"])
+    assert keys == sorted(["L" * 63 + "\u2026", "Short"])
+    assert all(x["reason"] == "no_source_id" for x in v2["ratings_not_carried"])
+
+
+def test_two_old_entries_and_none_new_is_no_entry_for_each(app_client) -> None:  # noqa: F811
+    c, provider, bearer, cid, technique, capability = _world(app_client)
+    v1 = _generate(
+        c,
+        provider,
+        bearer,
+        cid,
+        _entries_payload(_unrated("A1", technique), _unrated("A2", technique)),
+    )
+    for e in v1["entries"]:
+        _patch(c, bearer, cid, e["id"], {"likelihood": "low"})
+    v2 = _generate(c, provider, bearer, cid, _entries_payload(_unrated("Z", capability)))
+    assert v2["ratings_not_carried"] == [
+        {"key": technique, "reason": "no_entry"},
+        {"key": technique, "reason": "no_entry"},
+    ]
 
 
 def test_who_rated_and_when_are_copied_verbatim(app_client) -> None:  # noqa: F811

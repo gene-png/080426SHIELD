@@ -188,8 +188,9 @@ export interface RiskRegister {
   findings_with_several_entries: Record<string, number>;
   /**
    * #854 F3. Consultant ratings carried from the previous version when this one
-   * was generated, matched by `source_id`. `ratings_not_carried` lists the
-   * findings whose rating could not be matched. `ratings_carried_recorded`
+   * was generated, matched by `source_id`. `ratings_not_carried` lists each
+   * RATING that could not be carried, one item per rating with its reason, so
+   * its length counts ratings, not findings. `ratings_carried_recorded`
    * false: a register generated before this was recorded; the rest then means
    * nothing.
    */
