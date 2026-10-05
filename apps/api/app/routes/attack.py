@@ -1592,6 +1592,15 @@ def _audit_safe_code(value: object) -> str:
 # Pinned to what the prompt offers and every surface renders (#554), not to the
 # whole enum: a status the reports cannot show must not arrive through the AI.
 _VALID_STATUSES = {s.value for s in WRITABLE}
+#: #841: what the AI may write. Not N/A: it is a scoping RULING that takes the
+#: technique out of the coverage denominator, so an AI-written one raised the
+#: client's percentage on the model's word with nothing behind it and nothing
+#: reviewing it. A consultant still rules N/A through the PATCH (`WRITABLE`).
+#: Scope: this covers NEW AI writes only. A legacy AI-written N/A row carries the
+#: requester's `answered_by` like a consultant's answer and cannot be told apart,
+#: so it is left as it is (#841 plan, advisor decision 4).
+_NOT_APPLICABLE = CoverageStatus.NOT_APPLICABLE.value
+_AI_WRITABLE_STATUSES = _VALID_STATUSES - {_NOT_APPLICABLE}
 _DIFF_FIELDS = (
     "status",
     # #554: a consultant's reason the AI's new status does not take is dropped
@@ -2112,8 +2121,8 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
     # dropping the reason would move the row out of the gap list on the model's
     # word -- the direction that flatters the client.
     reason_codes_rejected: list[dict[str, str]] = []
-    # A status the run may not write -- anything outside `_VALID_STATUSES`, which
-    # since #569 includes the product's own two new statuses -- refuses the
+    # A status the run may not write -- anything outside `_AI_WRITABLE_STATUSES`:
+    # since #569 the product's own two new statuses, and since #841 N/A -- refuses the
     # suggestion WHOLE too. It used to skip the status and still write the tools
     # and rationale, so a row could carry a rationale arguing for a status it
     # does not have, with no trace. Recorded here, code-shaped values only.
@@ -2149,7 +2158,7 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
                 }
             )
             continue
-        if not (isinstance(st, str) and st in _VALID_STATUSES):
+        if not (isinstance(st, str) and st in _AI_WRITABLE_STATUSES):
             # No status, or one the run may not write: refused WHOLE. A
             # rationale without a status argues for nothing, and tools cited
             # for no status attach to no claim (#590 round 3, the coordinator's
@@ -2400,6 +2409,11 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
         unresolved_fields=list(unresolved_fields_seen),
         pending_review_rows=len(pending),
         rows_skipped_edited=len(skipped_codes),
+        # TECHNIQUES, not suggestions: one technique can be suggested by more
+        # than one batch, and the copy counts techniques.
+        not_applicable_refused=len(
+            {e["technique_code"] for e in statuses_rejected if e["status"] == _NOT_APPLICABLE}
+        ),
     )
     return RunOutcome(
         result=result_payload.model_dump(mode="json"),

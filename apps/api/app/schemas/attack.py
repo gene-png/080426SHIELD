@@ -310,6 +310,10 @@ class AttackRunAiResponse(BaseModel):
     # checked the lock before the run existed). Kept as edited, never
     # overwritten, and counted so the workspace can say which run left them.
     rows_skipped_edited: int = 0
+    # #841. Techniques the AI suggested as N/A, refused because only a
+    # consultant may rule a technique N/A. The codes are in the audit row's
+    # `statuses_rejected`; the count is what the workspace says.
+    not_applicable_refused: int = 0
 
 
 class AttackCoveragePatch(BaseModel):
