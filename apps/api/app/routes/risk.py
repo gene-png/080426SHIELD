@@ -176,6 +176,27 @@ def _finalized_for_synthesis(db: Session, model, client_id: uuid.UUID):
     ).scalar_one_or_none()
 
 
+def _current_for_synthesis(db: Session, model, client_id: uuid.UUID):
+    """The latest NON-DISCARDED assessment of this kind, drafts included, or None.
+
+    #737, Gene's ruling (#736, 5986057990 item 13), which REVERSES #237's
+    approved-only rule deliberately: a register may be DRAFTED from in-progress
+    work. What protects the client is no longer this resolver but publication,
+    which refuses unless every engaged input is released and still the one the
+    register was built from (`app/risk/inputs.py::publish_blockers`). Each
+    finding from an unreleased input is labelled with that input's state.
+
+    The same ordering `app/risk/inputs.py::current_inputs` uses, so the input a
+    draft synthesizes from is the one its provenance records and publish checks.
+    """
+    return db.execute(
+        select(model)
+        .where(model.client_id == client_id, model.status != "discarded")
+        .order_by(model.version.desc(), model.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
 def _latest_register(db: Session, client_id: uuid.UUID) -> RiskRegister | None:
     """The client's current Risk Register version.
 
@@ -259,8 +280,10 @@ def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
     # What BLOCKS is `synthesizable_missing` below, which mirrors unlock exactly.
     # What is merely listed here is disclosed on the register instead.
     not_finalized: list[str] = []
-    attack = _finalized_for_synthesis(db, AttackAssessment, client_id)
-    finalized_attack = attack is not None
+    # #737: the gate asks about the input synthesis will READ, drafts included,
+    # so its catalog and review refusals predict generate's exactly.
+    attack = _current_for_synthesis(db, AttackAssessment, client_id)
+    finalized_attack = _finalized_for_synthesis(db, AttackAssessment, client_id) is not None
     # #556: synthesis refuses an ATT&CK input scored against another catalog
     # (`require_current_catalog`). The gate asks the SAME predicate and carries
     # the SAME sentence, or it offers a Generate whose only outcome is a 409. A
@@ -350,7 +373,7 @@ def _provenance_snapshot(db: Session, client_id: uuid.UUID, excluded: list[str])
         ("csf", CsfAssessment),
         ("zt", ZtAssessment),
     ):
-        a = _finalized_for_synthesis(db, model, client_id)
+        a = _current_for_synthesis(db, model, client_id)
         if a is None:
             continue
         inputs.append(
@@ -516,7 +539,7 @@ def _gather_findings(
     target_sources: dict[str, dict] = {}
     link_scopes: dict[str, LinkScope] = {}
 
-    attack = _finalized_for_synthesis(db, AttackAssessment, client_id)
+    attack = _current_for_synthesis(db, AttackAssessment, client_id)
     if attack is not None:
         # #556: rows keyed to another catalog would reach the register by ID --
         # "ATT&CK T1649.001" is not a technique, and a T1558 row was answered
@@ -591,7 +614,7 @@ def _gather_findings(
                     }
                 )
 
-    csf = _finalized_for_synthesis(db, CsfAssessment, client_id)
+    csf = _current_for_synthesis(db, CsfAssessment, client_id)
     if csf is not None:
         # #84. This read `r.maturity_tier < 3` -- a HARDCODED tier, so every
         # client's CSF findings were computed against tier 3 no matter what
@@ -625,7 +648,7 @@ def _gather_findings(
                     }
                 )
 
-    zt = _finalized_for_synthesis(db, ZtAssessment, client_id)
+    zt = _current_for_synthesis(db, ZtAssessment, client_id)
     if zt is not None:
         # #84, the ZT half. Framework-aware, because DoD ZTRA has three stages
         # where CISA has four -- a client stage valid under one is out of range
@@ -1063,14 +1086,9 @@ def generate(
     # with no entries, generated successfully, which reads as "no risks found".
     # That is a WORSE failure than the one being fixed: it replaces unreviewed
     # content with a confident absence, and both go out under the client's name.
-    if g.synthesizable_missing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "Risk Register cannot be generated from unapproved work. "
-                "Approve first: " + "; ".join(g.synthesizable_missing) + "."
-            ),
-        )
+    # #737, Gene's ruling (#736 item 13): NO refusal for unapproved inputs here
+    # any more -- this reverses #237. A draft register is generated from
+    # in-progress work, labelled as such, and publish is what refuses it.
 
     findings, valid_techniques, valid_controls, target_sources, link_scopes = _gather_findings(
         db, cid
@@ -1104,7 +1122,10 @@ def generate(
         # already cleared the ones that block, so whatever remains contributed
         # nothing and the register now records that permanently rather than only
         # in the response.
-        provenance=_provenance_snapshot(db, cid, g.not_finalized),
+        # #737: nothing present is EXCLUDED any more -- drafts are synthesized
+        # -- so the excluded set is recorded empty, and `excluded_inputs` keeps
+        # its meaning only for registers generated before this change.
+        provenance=_provenance_snapshot(db, cid, []),
     )
     # #372. The batch tally is PERSISTED, into the provenance column 0047
     # already added -- no migration, and no new state to keep in step.
@@ -1423,6 +1444,21 @@ def generate(
     # the same absence -- an audit row with no verdict here would read as the
     # former and mean the latter.
     entries_write_check = "agreed" if entries_written == entries_total else "MISMATCH"
+    # #737, Gene's ruling: each finding drafted from an input that was not
+    # RELEASED at generate carries that input's state, keyed by `source_id`.
+    # Released inputs are absent from the map, so an empty map is a register
+    # drafted entirely from released work.
+    _state_by_kind = {
+        str(i.get("kind")): str(i.get("status"))
+        for i in (register.provenance or {}).get("inputs", [])
+        if isinstance(i, dict)
+    }
+    source_states = {
+        str(f["source_id"]): _state_by_kind[f["kind"]]
+        for f in findings
+        if f.get("source_id") is not None
+        and _state_by_kind.get(f["kind"], "released") != "released"
+    }
     # #854 review F3, Gene's option (c): the consultant's ratings survive a
     # regenerate. Below the flush, because it edits the rows just written.
     ratings_carried = _carry_ratings(db, prior, register)
@@ -1491,6 +1527,7 @@ def generate(
             for service, sc in link_scopes.items()
         }
         _prov_with_count["finding_coverage"] = finding_record
+        _prov_with_count["source_states"] = source_states
         _prov_with_count["ratings_carried"] = ratings_carried
         register.provenance = _prov_with_count
         db.add(register)
@@ -1915,7 +1952,11 @@ def _render_and_store(
     _scope_rows = _link_scope_fields(reg.provenance)["excluded_unscored_links"]
     # #844, read through the same single reader `_serialize` uses.
     _findings = _finding_fields(reg.provenance)
+    _states = (reg.provenance or {}).get("source_states")
     ctx = risk_exporters.build_context(
+        source_states=(
+            {str(k): str(v) for k, v in _states.items()} if isinstance(_states, dict) else {}
+        ),
         client_legal_name=org,
         version=reg.version,
         entries=entries,
@@ -2094,8 +2135,10 @@ def publish(
                 ),
             },
         )
-    _require_certifiable_inputs(reg)
-    # #737, Gene's rule: nothing final until every engaged input is final.
+    # #737, Gene's rule: nothing final until every engaged input is final. FIRST,
+    # so a draft input is refused with the typed per-input reason rather than
+    # by the older #240 guard's untyped sentence, which still runs below for the
+    # shapes only it knows (pre-0047 provenance, a missing `inputs` key).
     blockers = publish_blockers(db, cid, (reg.provenance or {}).get("current_inputs"))
     if blockers:
         raise HTTPException(
@@ -2108,6 +2151,7 @@ def publish(
                 ],
             },
         )
+    _require_certifiable_inputs(reg)
     unrated = db.execute(
         select(func.count())
         .select_from(RiskEntry)
@@ -2727,6 +2771,11 @@ def _serialize(
     else:
         resolved_excluded, excluded_recorded = [], False
 
+    # #737: per-entry source state, read from the generate-time record.
+    _raw_states = stored.get("source_states") if isinstance(stored, dict) else None
+    _source_states: dict[str, str] = (
+        {str(k): str(v) for k, v in _raw_states.items()} if isinstance(_raw_states, dict) else {}
+    )
     return RiskRegisterResponse(
         excluded_inputs=resolved_excluded,
         excluded_inputs_recorded=excluded_recorded,
@@ -2793,7 +2842,12 @@ def _serialize(
         xlsx_filename=_fn(register.xlsx_artifact_id),
         pdf_filename=_fn(register.pdf_artifact_id),
         docx_filename=_fn(register.docx_artifact_id),
-        entries=[RiskEntryResponse.model_validate(e, from_attributes=True) for e in entries],
+        entries=[
+            RiskEntryResponse.model_validate(e, from_attributes=True).model_copy(
+                update={"source_state": _source_states.get(e.source_id or "")}
+            )
+            for e in entries
+        ],
         tier_counts=tier_counts(tiers),
         axis_counts=axis_counts(axes),
         action_counts=action_counts(actions),

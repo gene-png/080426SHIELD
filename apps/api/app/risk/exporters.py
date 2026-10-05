@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import io
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from app.client_naming import org_display_name
@@ -87,6 +87,9 @@ class RiskExportContext:
     #: Such a file is the consultant's copy, and says so on its face, because a
     #: file that leaves by email otherwise reads as final.
     draft: bool = False
+    #: #737: `source_id -> state` for findings drafted from an input that was
+    #: not released at generate; the source cell names it.
+    source_states: dict[str, str] = field(default_factory=dict)
 
 
 def _enum_list(values, enum_cls):
@@ -109,6 +112,7 @@ def build_context(
     link_scope: Sequence[tuple[str, int, int]] = (),
     finding_counts: tuple[int, int, int] | None = None,
     draft: bool = False,
+    source_states: dict[str, str] | None = None,
 ) -> RiskExportContext:
     return RiskExportContext(
         client_legal_name=org_display_name(client_legal_name),
@@ -117,6 +121,7 @@ def build_context(
         link_scope=tuple(link_scope),
         finding_counts=finding_counts,
         draft=draft,
+        source_states=dict(source_states or {}),
     )
 
 
@@ -167,10 +172,15 @@ def _joined(v) -> str:
     return ", ".join(v) if isinstance(v, list) else ""
 
 
-def _source(e: Any) -> str:
+def _source(e: Any, states: dict[str, str] | None = None) -> str:
     if e.source and e.source_id:
-        return f"{e.source}:{e.source_id}"
-    return e.source_id or e.source or ""
+        cell = f"{e.source}:{e.source_id}"
+    else:
+        cell = e.source_id or e.source or ""
+    # #737, Gene's ruling: a finding drafted from an unreleased input says so.
+    # DRAFT copy, with the advisor.
+    state = (states or {}).get(e.source_id or "")
+    return f"{cell} (from a {state} assessment)" if state else cell
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +231,7 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
                 e.title,
                 e.description or "",
                 (e.axis or "").title(),
-                _source(e),
+                _source(e, ctx.source_states),
                 _joined(e.linked_techniques),
                 _joined(e.linked_controls),
                 _rating(e.likelihood),
@@ -555,7 +565,7 @@ def render_pdf(ctx: RiskExportContext) -> bytes:
                 _li(e),
                 _rating(e.tier),
                 (e.recommended_action or "").title(),
-                _source(e),
+                _source(e, ctx.source_states),
             ]
         )
     story.append(
@@ -604,7 +614,7 @@ def render_docx(ctx: RiskExportContext) -> bytes:
             _li(e),
             _rating(e.tier),
             (e.recommended_action or "").title(),
-            _source(e),
+            _source(e, ctx.source_states),
         ]
         for i, e in enumerate(ctx.entries, start=1)
     ]

@@ -6502,16 +6502,20 @@ The shared dev database, read-only: DRAFT 2, RELEASED 2, APPROVED 0, at migratio
 
 **Overturnable:** whether `consolidate` should count, and whether a free-text tool should read "unknown" rather than unmarked.
 
-## D-106 — Exporting a Risk Register no longer publishes it; publishing does
+## D-106 — A Risk Register is drafted any time and published only from final inputs; export no longer publishes
 
-**2026-10-04 · risk** (#737, DELIVERY_PLAN item 8; in the MVP by Gene's decision on #736. Reverses the export-is-release behaviour D-035's Risk half was built on.)
+**2026-10-05 · risk** (#737, DELIVERY_PLAN item 8; in the MVP by Gene's decision on #736. Gene's rule: #736 comments 5984159954 and 5986057990 item 13. Reverses the export-is-release behaviour D-035's Risk half was built on, AND reverses #237's approved-only synthesis.)
 
-**Decision.** `POST .../register/export` renders and stores the XLSX, PDF and Word files and does NOT set `finalized_at`. A new `POST .../register/publish` is the one API writer of `finalized_at`, which is what `clients.py::risk_dashboard` gates the client's dashboard on. Before this, exporting a register to review it internally put it in front of the client.
+**Export no longer publishes.** `POST .../register/export` renders and stores the XLSX, PDF and Word files and does NOT set `finalized_at`. `POST .../register/publish` is the one API writer of `finalized_at`, which is what `clients.py::risk_dashboard` gates the client's dashboard on. Publish re-renders the files at the moment of publication, under the register row lock export also takes, so the published files cannot predate the published data.
 
-**Publish re-renders the files at the moment of publication**, so the published files cannot predate the published data: a consultant may export, change a rating (#844), and publish, and the client's copy carries the change.
+**#237 REVERSED, deliberately (Gene's ruling 13).** #237 refused to synthesize from any input not APPROVED or RELEASED, because at the time exporting was publishing. Generate now reads the latest non-discarded assessment of each kind, drafts included, and the register is a DRAFT: every file rendered while it is unpublished carries "Draft: not published" (Gene's wording, verbatim), and each finding drafted from an input that was not released records that input's state (`provenance.source_states`, `RiskEntryResponse.source_state`, the export's source cell). What protected the client under #237 now sits at publication.
 
-**Publish refuses**, typed: an already-published version (generate a new one); the input guards export already had (moved into one shared helper, `_require_certifiable_inputs`, so the two cannot drift); and any entry with no tier (#844 D1, pending the advisor: "gate the release, not the click").
+**Publish refuses**, typed, and the input gate runs first:
+- `risk_register_inputs_not_final`, with a `blockers` list, unless every input the client has ENGAGED (a non-archived Service of that kind: ATT&CK, CSF, Zero Trust, Tech Debt) is RELEASED and is still the version the register was generated from (`app/risk/inputs.py`, provenance `current_inputs`). A register generated before an input was released is not publishable after it is: its findings were drafted from unreleased work. An input the client has not engaged does not block.
+- the #240 input-shape guards (`_require_certifiable_inputs`), for registers predating the input record;
+- an already-published version;
+- any entry with no tier (#844 D1).
 
-**What did not change.** `finalized_at` keeps one meaning, "published", for every reader, so `seed_demo.py` (which writes it directly) and the client dashboard need no change, and no migration is needed. A Risk export artifact was never reachable by a client user through `/artifacts` (it is not a `Deliverable`), so a draft export reaches a client only if a consultant sends it.
+**What did not change.** `finalized_at` keeps one meaning, "published", for every reader, so `seed_demo.py` and the client dashboard need no change, and no migration is needed. A Risk export artifact is not a `Deliverable`, so `/artifacts` never serves it to a client user (measured: `test_a_client_user_cannot_download_an_unpublished_export`).
 
-**Overturnable:** whether publish must refuse unrated entries (D1), and whether a draft export should carry a "not published" marker.
+**Held, with the advisor, 2026-10-05:** whether export keeps the #240 guards (refusing a draft-sourced register) once drafts exist, and whether #554 R3's unreviewed-status refusal and the stale-catalog refusal still block a DRAFT. Until ruled, both still refuse.

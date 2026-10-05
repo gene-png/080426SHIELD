@@ -89,6 +89,10 @@ class RiskEntryResponse(BaseModel):
     # nothing was dropped. A renderer that treats the two alike reinstates the
     # defect the column was added for.
     dropped_links: dict | None = None
+    # #737, Gene's ruling: the state of the input this entry's finding came
+    # from, when that input was NOT released at generate ("draft", "submitted",
+    # "approved"); None when it was released, or the register predates this.
+    source_state: str | None = None
     # #844. Both None: the rating is the model's as generated. Set: a consultant
     # set likelihood or impact through the edit path, and the screen and the
     # exports say so instead of crediting the model.
