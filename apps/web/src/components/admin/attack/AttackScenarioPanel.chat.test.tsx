@@ -442,3 +442,31 @@ describe("AttackScenarioPanel, the chat box's AI reading (#802)", () => {
     );
   });
 });
+
+describe("AttackScenarioPanel, the AI's refused names (#863, Gene's ruling)", () => {
+  it("shows the count the API sends, and no name", async () => {
+    routes["GET /api/proxy/admin/ai-status"] = () => ({
+      mode: "live",
+      provider: "provider",
+      model: "m",
+      ready: true,
+      detail: "",
+      can_configure: true,
+      key_source: "database",
+    });
+    const sentence =
+      "2 tools the AI suggested could not be matched to this assessment and were left out.";
+    await describeChange("get rid of the edr thing", {
+      removed: ["EDR Tool"],
+      added: [],
+      not_understood: [],
+      source: "ai",
+      note: null,
+      left_out: 2,
+      left_out_message: sentence,
+    });
+    expect(
+      (await screen.findByTestId("attack-scenario-chat-left-out")).textContent,
+    ).toBe(sentence);
+  });
+});

@@ -482,6 +482,11 @@ class ParsedChange:
     removed: list[str]
     added: list[str]
     not_understood: list[NotUnderstood]
+    #: #802's AI reading: names the AI suggested that failed the checks.
+    #: COUNTED, never quoted: they are the AI's words, not the admin's
+    #: (Gene's ruling, #736 comment 5986057990, item 7). The matcher
+    #: quotes only the admin's own clauses, so it leaves this at 0.
+    left_out: int = 0
 
 
 class _Refused(Exception):

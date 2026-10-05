@@ -116,24 +116,25 @@ def read(
     )
     removed: list[str] = []
     added: list[str] = []
-    not_understood: list[scenario.NotUnderstood] = []
+    # A name the AI suggested that fails a check is LEFT OUT and counted,
+    # never quoted: those are the AI's words, and the screen quotes only
+    # what the admin wrote (Gene's ruling, #736 comment 5986057990, item 7).
+    left_out = 0
 
     for name in lists["remove"]:
         hits = resolver.named_by(scenario.bare_name(name))
-        if not hits:
-            not_understood.append(scenario.NotUnderstood(text=name, reason="unknown_tool"))
-        elif len(hits) > 1:
-            not_understood.append(scenario.NotUnderstood(text=name, reason="ambiguous_tool"))
-        elif next(iter(hits)) in removed:
-            not_understood.append(scenario.NotUnderstood(text=name, reason="duplicate"))
-        else:
+        # Exactly one cited tool, not already proposed; anything else
+        # (none, an ambiguity, a repeat) is left out.
+        if len(hits) == 1 and next(iter(hits)) not in removed:
             removed.append(next(iter(hits)))
+        else:
+            left_out += 1
 
     for name in lists["add"]:
         if any(p.casefold() in name.casefold() for p in _PLACEHOLDERS):
             # The AI saw a placeholder where the admin typed a name, and the
             # name it stands for cannot be recovered for a NEW tool.
-            not_understood.append(scenario.NotUnderstood(text=name, reason="redacted_name"))
+            left_out += 1
             continue
         entries = [{"name": n, "security_functions": ["detect"]} for n in added]
         entries.append({"name": scenario.bare_name(name), "security_functions": ["detect"]})
@@ -146,14 +147,17 @@ def read(
                 name_hints=hints,
                 limit=scenario.MAX_ADDED,
             )
-        except (scenario.TooMany, scenario.AddedToolRefused) as exc:
-            reason, who = scenario.added_reason(exc)
-            not_understood.append(scenario.NotUnderstood(text=name, reason=reason, name=who))
+        except (scenario.TooMany, scenario.AddedToolRefused):
+            left_out += 1
             continue
         added.append(tool.name)
 
-    not_understood.extend(scenario.NotUnderstood(text=q, reason="ai_unclear") for q in quoted)
-    return scenario.ParsedChange(removed=removed, added=added, not_understood=not_understood)
+    return scenario.ParsedChange(
+        removed=removed,
+        added=added,
+        not_understood=[scenario.NotUnderstood(text=q, reason="ai_unclear") for q in quoted],
+        left_out=left_out,
+    )
 
 
 def _shape(data: Any) -> dict[str, list[str]]:

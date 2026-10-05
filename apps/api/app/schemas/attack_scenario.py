@@ -52,6 +52,11 @@ class ScenarioParseResponse(BaseModel):
     source: str = "matcher"
     #: N2 when the AI was tried, or would have been, and could not be used.
     note: str | None = None
+    #: #802: names the AI suggested that failed the checks, counted and never
+    #: quoted (Gene's ruling), and the sentence that says so; 0 and None for
+    #: the matcher.
+    left_out: int = 0
+    left_out_message: str | None = None
 
 
 class ScenarioAddedTool(BaseModel):

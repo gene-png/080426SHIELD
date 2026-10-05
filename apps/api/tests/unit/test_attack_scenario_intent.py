@@ -65,23 +65,24 @@ def test_a_removal_in_its_shown_form_is_the_stored_tool() -> None:
         ("Firewall Tool", "unknown_tool"),  # not cited
     ],
 )
-def test_a_removal_naming_no_cited_tool_is_not_understood(name, reason) -> None:
+def test_a_removal_naming_no_cited_tool_is_left_out_and_counted(name, reason) -> None:
+    """Gene's ruling on #863: a refused AI name is never quoted, only counted."""
     parsed = _read(_answer(remove=[name]))
     assert parsed.removed == []
-    assert _reasons(parsed) == [(name, reason)]
+    assert (parsed.not_understood, parsed.left_out) == ([], 1)
 
 
 def test_a_removal_naming_two_cited_tools_is_not_a_guess() -> None:
     cited = ("EDR Tool", "edr  tool")
     parsed = _read(_answer(remove=["EDR Tool"]), cited=cited, client=cited)
     assert parsed.removed == []
-    assert _reasons(parsed) == [("EDR Tool", "ambiguous_tool")]
+    assert (parsed.not_understood, parsed.left_out) == ([], 1)
 
 
 def test_a_removal_listed_twice_is_proposed_once() -> None:
     parsed = _read(_answer(remove=["EDR Tool", "edr tool"]))
     assert parsed.removed == ["EDR Tool"]
-    assert _reasons(parsed) == [("edr tool", "duplicate")]
+    assert (parsed.not_understood, parsed.left_out) == ([], 1)
 
 
 # --- additions --------------------------------------------------------------------
@@ -92,10 +93,10 @@ def test_an_addition_that_passes_validation_is_proposed() -> None:
     assert (parsed.removed, parsed.added, parsed.not_understood) == ([], ["XDR Suite"], [])
 
 
-def test_an_addition_of_a_client_tool_names_it() -> None:
+def test_an_addition_of_a_client_tool_is_left_out_and_counted() -> None:
     parsed = _read(_answer(add=["SIEM Tool"]))
     assert parsed.added == []
-    assert [(n.reason, n.name) for n in parsed.not_understood] == [("already_clients", "SIEM Tool")]
+    assert (parsed.not_understood, parsed.left_out) == ([], 1)
 
 
 @pytest.mark.parametrize("name", ["[CLIENT] Gateway", "XDR for [NAME]", "[client] gateway"])
@@ -104,14 +105,14 @@ def test_an_addition_holding_a_redaction_placeholder_is_not_proposed(name) -> No
     name it stands for."""
     parsed = _read(_answer(add=[name]))
     assert parsed.added == []
-    assert _reasons(parsed) == [(name, "redacted_name")]
+    assert (parsed.not_understood, parsed.left_out) == ([], 1)
 
 
 def test_more_additions_than_a_what_if_takes_are_not_proposed() -> None:
     names = [f"Tool {chr(65 + i)}" for i in range(11)]
     parsed = _read(_answer(add=names))
     assert parsed.added == names[:10]
-    assert _reasons(parsed) == [("Tool K", "too_many")]
+    assert (parsed.not_understood, parsed.left_out) == ([], 1)
 
 
 # --- unclear: condition 1 (verbatim) and condition 2 (placeholders) ----------------
@@ -178,3 +179,15 @@ def test_the_description_sent_is_the_redacted_one() -> None:
     )
     assert "Acme" not in sent
     assert "[CLIENT]" in sent
+
+
+def test_left_out_counts_every_refused_name_and_quotes_only_the_admins_words() -> None:
+    """Two refused names and one unclear phrase: the count is two, and the only
+    text anywhere in the result is the admin's own phrase."""
+    parsed = _read(
+        _answer(remove=["Phantom Suite"], add=["SIEM Tool"], unclear=["the edr thing"]),
+        sent="retire the edr thing",
+    )
+    assert parsed.left_out == 2
+    assert _reasons(parsed) == [("the edr thing", "ai_unclear")]
+    assert "Phantom" not in repr(parsed) and "SIEM Tool" not in repr(parsed)

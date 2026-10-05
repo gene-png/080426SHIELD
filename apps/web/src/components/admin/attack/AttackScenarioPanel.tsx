@@ -652,6 +652,14 @@ function ChatBox({
             : "The change list below was filled in from your description. Check it before you continue."}
         </p>
       ) : null}
+      {result?.left_out_message ? (
+        <p
+          className="text-sm text-status-warning-fg"
+          data-testid="attack-scenario-chat-left-out"
+        >
+          {result.left_out_message}
+        </p>
+      ) : null}
       {result?.note ? (
         <p
           className="text-sm text-status-warning-fg"

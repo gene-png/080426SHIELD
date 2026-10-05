@@ -593,6 +593,21 @@ def parse_scenario_text(
         ],
         source=source,
         note=note,
+        left_out=parsed.left_out,
+        left_out_message=_left_out_message(parsed.left_out),
+    )
+
+
+def _left_out_message(n: int) -> str | None:
+    """How many names the AI suggested were left out, never which (Gene's
+    ruling, #736 comment 5986057990, item 7: the plural as approved; the
+    singular drafted from it, flagged for the advisor)."""
+    if n == 0:
+        return None
+    if n == 1:
+        return "1 tool the AI suggested could not be matched to this assessment and was left out."
+    return (
+        f"{n} tools the AI suggested could not be matched to this assessment and were " "left out."
     )
 
 
@@ -731,6 +746,7 @@ def _ai_reading(
             "removed": len(reading.removed) if reading else 0,
             "added": len(reading.added) if reading else 0,
             "not_understood": len(reading.not_understood) if reading else 0,
+            "left_out": reading.left_out if reading else 0,
         },
     )
     # The llm_calls row `invoke` wrote (COMPLETED or FAILED) and this entry are

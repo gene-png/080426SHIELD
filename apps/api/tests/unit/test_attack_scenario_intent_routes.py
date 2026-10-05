@@ -262,6 +262,7 @@ def test_an_ai_attempt_leaves_one_llm_call_and_one_counts_only_audit_entry(
         "fell_back",
         "failure",
         "call_row",
+        "left_out",
         "removed",
         "added",
         "not_understood",
@@ -384,3 +385,46 @@ def test_two_attempts_each_record_their_own_call(app_parts) -> None:  # noqa: F8
         ]
     assert len(calls) == 2
     assert sorted(named) == sorted(calls)
+
+
+@pytest.mark.parametrize(
+    ("answer", "left_out", "sentence"),
+    [
+        (
+            {"remove": ["Phantom Suite"], "add": [], "unclear": []},
+            1,
+            # Drafted singular, flagged for the advisor in the PR body.
+            "1 tool the AI suggested could not be matched to this assessment and was left out.",
+        ),
+        (
+            {"remove": ["Phantom Suite", EDR], "add": [SIEM], "unclear": []},
+            2,
+            "2 tools the AI suggested could not be matched to this assessment and were left out.",
+        ),
+    ],
+    ids=["one", "two"],
+)
+def test_a_refused_ai_name_is_counted_and_never_appears_in_the_response(
+    app_parts, answer, left_out, sentence  # noqa: F811
+) -> None:
+    """Gene's ruling on #863 (#736 comment 5986057990, item 7): the AI's
+    refused names are left out and COUNTED, never quoted."""
+    w = _world(app_parts)
+    w.use(_provider(True, answer, []))
+    r = _parse(w, VAGUE, "live")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert (body["source"], body["left_out"], body["left_out_message"]) == (
+        "ai",
+        left_out,
+        sentence,
+    )
+    assert body["not_understood"] == []
+    assert "Phantom" not in r.text
+
+
+def test_a_matcher_reading_leaves_nothing_out(app_parts) -> None:  # noqa: F811
+    w = _world(app_parts)
+    r = _parse(w, VAGUE, None)
+    assert r.status_code == 200, r.text
+    assert (r.json()["left_out"], r.json()["left_out_message"]) == (0, None)

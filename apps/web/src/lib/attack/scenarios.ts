@@ -200,6 +200,10 @@ export interface ParsedChange {
   source?: "matcher" | "ai";
   /** #802: N2, when the AI could not be used. */
   note?: string | null;
+  /** #802: names the AI suggested that were left out, counted and never
+   * quoted, and the API's sentence for it. */
+  left_out?: number;
+  left_out_message?: string | null;
 }
 
 /** `serves` is the mode acknowledged at Fill (#504): only "live" lets the
