@@ -28,7 +28,9 @@ const TierMixDonut = dynamic(
 );
 
 function TierChip({ tier }: { tier: string | null }): JSX.Element {
-  if (!tier) return <span style={{ color: C.muted }}>—</span>;
+  // #844: an entry with no tier is UNRATED, and says so. A dash read as a
+  // value nobody filled in; the export prints the same words.
+  if (!tier) return <span style={{ color: C.muted }}>Not rated</span>;
   const col = tierColor(tier);
   return (
     <span
@@ -227,6 +229,15 @@ export function RiskDashboard({
       ["the action breakdown", data.entries_without_action],
     ] as Array<[string, number]>
   ).filter(([, n]) => n > 0);
+  // #854 F4 (Gene's ruling, #736 item 9). The remedy names something the
+  // CLIENT can do; "Regenerate before exporting" named an admin control, and
+  // "as dashes" became false when unrated cells began to read "Not rated".
+  //
+  // A RATCHET UNDER D1: once #737 lands, publish refuses while any entry is
+  // unrated, so a published register can carry no untiered entry and the tier
+  // half of this banner cannot fire from any current writer. It stays, because
+  // a register published before that gate, or a future path that loosens it,
+  // would otherwise reach the client with nothing said.
   const withheldNote =
     gaps.length > 0 ? (
       <span>
@@ -243,8 +254,7 @@ export function RiskDashboard({
         ))}
         . Each is counted separately because each breakdown filters
         independently — an entry can carry a valid tier and still be missing
-        from the axis chart. Regenerate before exporting: a client reading this
-        register sees those rows as dashes.
+        from the axis chart. Ask your consultant to complete those entries.
       </span>
     ) : null;
   return (
@@ -357,10 +367,10 @@ export function RiskDashboard({
                   </td>
                   <td style={cell(true)}>{e.axis ? titleCase(e.axis) : "—"}</td>
                   <td style={cell(true)}>
-                    {e.likelihood ? titleCase(e.likelihood) : "—"}
+                    {e.likelihood ? titleCase(e.likelihood) : "Not rated"}
                   </td>
                   <td style={cell(true)}>
-                    {e.impact ? titleCase(e.impact) : "—"}
+                    {e.impact ? titleCase(e.impact) : "Not rated"}
                   </td>
                   <td style={cell()}>
                     <TierChip tier={e.tier} />
