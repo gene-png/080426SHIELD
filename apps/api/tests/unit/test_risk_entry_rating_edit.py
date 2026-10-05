@@ -302,6 +302,9 @@ def test_an_entry_changed_underneath_the_edit_is_refused_and_kept(app_client) ->
     r, entry_id, c, bearer, cid = _interleave(app_client, _other_edit)
     assert r.status_code == 409, r.text
     assert r.json()["error"]["reason"] == "risk_entry_changed"
+    assert r.json()["error"]["message"] == (
+        "This entry changed while you were editing it. Reload the page and try again."
+    )
     [e] = _latest(c, bearer, cid)["entries"]
     assert (e["likelihood"], e["impact"], e["tier"]) == ("high", "minor", "low")
     assert e["rating_edited_at"] is None
@@ -446,19 +449,19 @@ def test_export_refuses_a_register_superseded_while_it_waited(app_client) -> Non
     assert fired, "the interleaving never ran, so this test proves nothing"
     assert r.status_code == 409, r.text
     assert r.json()["error"]["reason"] == "risk_register_superseded"
+    assert r.json()["error"]["message"] == (
+        "A newer version of the Risk Register was generated while this export was "
+        "starting. Reload the page and export the current version."
+    )
     with _session() as s:
         assert s.get(RiskRegister, reg_id).finalized_at is None
 
 
-def test_a_half_set_rating_is_not_marked_PENDING_RULING(app_client) -> None:  # noqa: F811
-    """PINNED TO TODAY'S BEHAVIOUR, PENDING THE ADVISOR'S RULING (#854 review
-    round 2, item 2). A consultant sets only the likelihood on an unrated
-    entry: the row is still unrated, so the F2 rule does not mark it and the
-    XLSX Origin reads plain `ai_generated` -- which credits the model with a
-    half the consultant set. The options (reworded marker, or per-half
-    provenance) are with the advisor. When they rule, this test changes on
-    purpose; until then it holds the current behaviour so it cannot drift
-    silently."""
+def test_a_half_set_rating_is_marked_as_edited_by_the_consultant(app_client) -> None:  # noqa: F811
+    """Gene's ruling (a) (#736, 5986057990 item 10). A consultant sets only the
+    likelihood on an unrated entry: the row is still unrated, AND the half they
+    set is theirs, so the XLSX Origin reads "rating edited by consultant" and
+    the summary counts it. Before the ruling this was pinned the other way."""
     import io
 
     from openpyxl import load_workbook
@@ -471,8 +474,11 @@ def test_a_half_set_rating_is_not_marked_PENDING_RULING(app_client) -> None:  # 
     raw = c.get(
         f"/artifacts/{ex['xlsx_artifact_id']}/download", headers={**bh, "X-Client-Id": cid}
     ).content
-    ws = load_workbook(io.BytesIO(raw))["Risk Register"]
-    rows = list(ws.iter_rows(values_only=True))
+    wb = load_workbook(io.BytesIO(raw))
+    rows = list(wb["Risk Register"].iter_rows(values_only=True))
     row = dict(zip(rows[0], rows[1], strict=True))
     assert (row["Likelihood"], row["Impact"], row["Tier"]) == ("Medium", "Not rated", "Not rated")
-    assert row["Origin"] == "ai_generated"
+    assert row["Origin"] == "ai_generated; rating edited by consultant"
+    summary = [str(r[0]) for r in wb["Summary"].iter_rows(values_only=True) if r and r[0]]
+    # The noun's agreement at 1 is a filed advisory, not pinned here.
+    assert any(line.startswith("Ratings set by a consultant: 1 of 1 ") for line in summary)

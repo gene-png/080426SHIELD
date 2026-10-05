@@ -734,6 +734,116 @@ def _coerce_enum(enum_cls, value) -> tuple[object | None, str | None]:
         return None, raw
 
 
+def _carry_ratings(db: Session, prior: RiskRegister | None, register: RiskRegister) -> dict:
+    """#854 review F3: carry consultant ratings from `prior` into `register`.
+
+    THE MATCH KEY IS `source_id`, the finding an entry was drafted for. The
+    prompt drafts one entry per finding (G2), so the finding identifies the
+    entry across versions; `source` is derived from it (D5) and adds nothing.
+    A rating carries only when the key is UNAMBIGUOUS on both sides: exactly
+    one consultant-edited entry for the finding in `prior`, and exactly one
+    entry for it in `register`. Every other consultant rating is listed in
+    `not_carried` (its `source_id`, or its title when it has none), never
+    dropped in silence.
+
+    Only CONSULTANT ratings carry (`rating_edited_at` set). A model rating is
+    replaced by the new run's, which is what regenerating asks for. A carried
+    rating REPLACES the new model rating: the consultant's judgement is what
+    the edit path records, and regenerating is not a request to discard it.
+    The tier is derived again by `tier_for`, never copied.
+
+    Returns the record persisted in provenance:
+    `{"from_version": int | None, "carried": int, "not_carried": [str]}`.
+    """
+    if prior is None:
+        return {"from_version": None, "carried": 0, "not_carried": []}
+    old_edited = (
+        db.execute(
+            select(RiskEntry).where(
+                RiskEntry.register_id == prior.id, RiskEntry.rating_edited_at.is_not(None)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    new_entries = (
+        db.execute(select(RiskEntry).where(RiskEntry.register_id == register.id)).scalars().all()
+    )
+    old_by_sid: dict[str, list[RiskEntry]] = {}
+    for e in old_edited:
+        if e.source_id is not None:
+            old_by_sid.setdefault(e.source_id, []).append(e)
+    new_by_sid: dict[str, list[RiskEntry]] = {}
+    for e in new_entries:
+        if e.source_id is not None:
+            new_by_sid.setdefault(e.source_id, []).append(e)
+
+    carried = 0
+    not_carried: list[str] = []
+    for e in old_edited:
+        if e.source_id is None:
+            not_carried.append(e.title[:64])
+            continue
+        olds = old_by_sid[e.source_id]
+        news = new_by_sid.get(e.source_id, [])
+        if len(olds) != 1 or len(news) != 1:
+            if e.source_id not in not_carried:
+                not_carried.append(e.source_id)
+            continue
+        target = news[0]
+        target.likelihood = e.likelihood
+        target.impact = e.impact
+        target.tier = (
+            tier_for(Likelihood(e.likelihood), Impact(e.impact)).value
+            if e.likelihood is not None and e.impact is not None
+            else None
+        )
+        target.rating_edited_by = e.rating_edited_by
+        target.rating_edited_at = e.rating_edited_at
+        carried += 1
+    db.flush()
+    _log.info(
+        "risk_register_ratings_carried",
+        register_id=str(register.id),
+        from_version=prior.version,
+        carried=carried,
+        not_carried=len(not_carried),
+    )
+    return {"from_version": prior.version, "carried": carried, "not_carried": sorted(not_carried)}
+
+
+_CARRIED_NOT_RECORDED = {
+    "ratings_carried_recorded": False,
+    "ratings_carried": None,
+    "ratings_carried_from_version": None,
+    "ratings_not_carried": [],
+}
+
+
+def _carried_fields(stored: object) -> dict:
+    """#854 F3, read back from provenance. No key: a register generated before
+    this was recorded, which says nothing. An unreadable record is reported as
+    not recorded and logged, never as "nothing was carried"."""
+    if not isinstance(stored, dict) or "ratings_carried" not in stored:
+        return dict(_CARRIED_NOT_RECORDED)
+    raw = stored["ratings_carried"]
+    if (
+        isinstance(raw, dict)
+        and _is_plain_int(raw.get("carried"))
+        and (raw.get("from_version") is None or _is_plain_int(raw.get("from_version")))
+        and isinstance(raw.get("not_carried"), list)
+        and all(isinstance(x, str) for x in raw["not_carried"])
+    ):
+        return {
+            "ratings_carried_recorded": True,
+            "ratings_carried": raw["carried"],
+            "ratings_carried_from_version": raw["from_version"],
+            "ratings_not_carried": list(raw["not_carried"]),
+        }
+    _log.error("risk_register_ratings_carried_unreadable", got=repr(raw)[:200])
+    return dict(_CARRIED_NOT_RECORDED)
+
+
 def _run_risk_synthesize_batched(
     db: Session,
     llm: LLMClient,
@@ -1284,6 +1394,9 @@ def generate(
     # the same absence -- an audit row with no verdict here would read as the
     # former and mean the latter.
     entries_write_check = "agreed" if entries_written == entries_total else "MISMATCH"
+    # #854 review F3, Gene's option (c): the consultant's ratings survive a
+    # regenerate. Below the flush, because it edits the rows just written.
+    ratings_carried = _carry_ratings(db, prior, register)
     # #844. Which findings got no entry and which got several. Sorted, so the
     # record does not depend on the order batches finished in. A GENERATE-TIME
     # fact (the findings are not stored anywhere else), so it is persisted with
@@ -1341,6 +1454,7 @@ def generate(
             for service, sc in link_scopes.items()
         }
         _prov_with_count["finding_coverage"] = finding_record
+        _prov_with_count["ratings_carried"] = ratings_carried
         register.provenance = _prov_with_count
         db.add(register)
     else:
@@ -1447,6 +1561,7 @@ def generate(
             "source_mismatches": {"count": source_mismatches, "values": source_mismatch_values},
             # NOT "findings", which this row already carries as the input count.
             "finding_coverage": finding_record,
+            "ratings_carried": ratings_carried,
         },
     )
     db.commit()
@@ -1577,8 +1692,8 @@ def export(
             detail={
                 "reason": "risk_register_superseded",
                 "message": (
-                    "This entry belongs to an older version of the Risk Register. "
-                    "Reload the page to edit the current version."
+                    "A newer version of the Risk Register was generated while this "
+                    "export was starting. Reload the page and export the current version."
                 ),
             },
         )
@@ -2409,6 +2524,7 @@ def _serialize(
         # exists for.
         **_link_scope_fields(stored),
         **_finding_fields(stored),
+        **_carried_fields(stored),
         id=register.id,
         client_id=register.client_id,
         version=register.version,

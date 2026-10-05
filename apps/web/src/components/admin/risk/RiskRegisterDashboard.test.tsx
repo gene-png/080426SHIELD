@@ -108,6 +108,11 @@ function register(over: Partial<RiskRegister> = {}): RiskRegister {
     findings_total: null,
     findings_without_entry: [],
     findings_with_several_entries: {},
+    // #854 F3: not recorded, for the same reason as the findings fields.
+    ratings_carried_recorded: false,
+    ratings_carried: null,
+    ratings_carried_from_version: null,
+    ratings_not_carried: [],
     id: "r1",
     client_id: "c1",
     version: 1,

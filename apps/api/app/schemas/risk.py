@@ -244,6 +244,14 @@ class RiskRegisterResponse(BaseModel):
     # was recorded (or a record that could not be read), and its empty list and
     # empty map mean NOTHING, not "every finding had one entry"; True with both
     # empty is that observed fact.
+    # #854 F3: consultant ratings carried from the previous version on
+    # regenerate, matched by `source_id`. `ratings_not_carried` lists the
+    # findings whose rating could not be matched. `..._recorded` False: a
+    # register generated before this was recorded; the rest then means nothing.
+    ratings_carried_recorded: bool = False
+    ratings_carried: int | None = None
+    ratings_carried_from_version: int | None = None
+    ratings_not_carried: list[str] = []
     findings_recorded: bool = False
     findings_total: int | None = None
     findings_without_entry: list[str] = []

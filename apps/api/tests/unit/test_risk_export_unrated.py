@@ -147,10 +147,14 @@ def test_the_pdf_matrix_names_what_it_leaves_out(app_client) -> None:  # noqa: F
 
 
 def test_a_consultant_cleared_rating_is_counted_as_unrated(app_client) -> None:  # noqa: F811
-    """A cleared rating is NOT a consultant-set rating: it is unrated, and is
-    counted once, as unrated. Counting it as consultant-rated too printed
-    "rating set by consultant" over "Not rated" (#854 review, F2)."""
-    files = _export(app_client, _entry("A"), _entry("B"), edit=(0, {"impact": None}))
+    """A FULLY cleared rating is NOT a consultant rating: it is unrated, and is
+    counted once, as unrated. Counting it as consultant-rated too printed the
+    consultant marker over "Not rated" (#854 review, F2). Both halves cleared:
+    a half-cleared row keeps a consultant-edited half and IS marked (ruling (a),
+    `test_a_half_set_rating_is_marked_as_edited_by_the_consultant`)."""
+    files = _export(
+        app_client, _entry("A"), _entry("B"), edit=(0, {"likelihood": None, "impact": None})
+    )
     pdf = _flat(_pdf_text(files["pdf"]))
     assert UNRATED_ONE_OF_TWO in pdf
     assert "Ratings set by a consultant" not in pdf
@@ -168,7 +172,7 @@ def test_a_consultant_set_rating_is_not_credited_to_the_model(app_client) -> Non
         edit=(0, {"likelihood": "low", "impact": "minor"}),
     )
     rows = {r["Weakness"]: r for r in _xlsx_register_rows(files["xlsx"])}
-    assert rows["Unrated"]["Origin"] == "ai_generated; rating set by consultant"
+    assert rows["Unrated"]["Origin"] == "ai_generated; rating edited by consultant"
     assert rows["Model rated"]["Origin"] == "ai_generated"
     expected = "Ratings set by a consultant: 1 of 2 entries."
     assert expected in _flat(_pdf_text(files["pdf"]))

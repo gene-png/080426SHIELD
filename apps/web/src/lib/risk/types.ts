@@ -83,8 +83,8 @@ export interface RiskEntry {
   /**
    * #844. Both null: the rating is the model's as generated. Set: a consultant
    * edited likelihood or impact through the edit path. The row is marked
-   * "Rating set by consultant" only when BOTH halves are then present (#854
-   * F2): a cleared rating is unrated, and is not marked.
+   * "Rating edited by consultant" when at least one half is then present (Gene's
+   * ruling (a)); a FULLY cleared rating is unrated and is not marked (#854 F2).
    */
   rating_edited_by: string | null;
   rating_edited_at: string | null;
@@ -185,6 +185,17 @@ export interface RiskRegister {
   findings_total: number | null;
   findings_without_entry: string[];
   findings_with_several_entries: Record<string, number>;
+  /**
+   * #854 F3. Consultant ratings carried from the previous version when this one
+   * was generated, matched by `source_id`. `ratings_not_carried` lists the
+   * findings whose rating could not be matched. `ratings_carried_recorded`
+   * false: a register generated before this was recorded; the rest then means
+   * nothing.
+   */
+  ratings_carried_recorded: boolean;
+  ratings_carried: number | null;
+  ratings_carried_from_version: number | null;
+  ratings_not_carried: string[];
 
   /**
    * #330. The generate loop's INTENDED tally.

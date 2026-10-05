@@ -101,6 +101,11 @@ function register(over: Partial<RiskRegister> = {}): RiskRegister {
     findings_total: null,
     findings_without_entry: [],
     findings_with_several_entries: {},
+    // #854 F3: not recorded, for the same reason as the findings fields.
+    ratings_carried_recorded: false,
+    ratings_carried: null,
+    ratings_carried_from_version: null,
+    ratings_not_carried: [],
     id: "r1",
     client_id: "c1",
     version: 1,
@@ -170,7 +175,9 @@ describe("RiskRegisterDashboard consultant rating (#844)", () => {
     );
 
     await waitFor(() =>
-      expect(screen.getByText("Rating set by consultant")).toBeInTheDocument(),
+      expect(
+        screen.getByText("Rating edited by consultant"),
+      ).toBeInTheDocument(),
     );
     expect(editRiskEntryRating).toHaveBeenCalledWith("c1", "e1", {
       likelihood: "high",
@@ -254,12 +261,12 @@ describe("RiskRegisterDashboard consultant rating (#844)", () => {
     expect(alert.textContent).not.toMatch(/Set a likelihood and impact/);
   });
 
-  it("shows no consultant marker on a cleared rating (#854 review, F2)", async () => {
+  it("shows no consultant marker on a fully cleared rating (#854 review, F2)", async () => {
     fetchRiskRegisterLatest.mockResolvedValue(
       register({
         entries: [
           entry({
-            likelihood: "high",
+            likelihood: null,
             impact: null,
             tier: null,
             rating_edited_by: "u1",
@@ -269,7 +276,68 @@ describe("RiskRegisterDashboard consultant rating (#844)", () => {
       }),
     );
     await loaded();
-    expect(screen.queryByText("Rating set by consultant")).toBeNull();
+    expect(screen.queryByText("Rating edited by consultant")).toBeNull();
+  });
+
+  it("marks a half-set rating as edited by the consultant (ruling (a))", async () => {
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({
+        entries: [
+          entry({
+            likelihood: "medium",
+            impact: null,
+            tier: null,
+            rating_edited_by: "u1",
+            rating_edited_at: "2026-10-04T01:00:00Z",
+          }),
+        ],
+      }),
+    );
+    await loaded();
+    expect(screen.getByText("Rating edited by consultant")).toBeInTheDocument();
+  });
+
+  it("warns before regenerating when the version holds consultant ratings (#854 F3)", async () => {
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({
+        entries: [
+          entry({
+            likelihood: "low",
+            impact: "minor",
+            tier: "negligible",
+            rating_edited_by: "u1",
+            rating_edited_at: "2026-10-04T01:00:00Z",
+          }),
+        ],
+      }),
+    );
+    await loaded();
+    expect(
+      screen.getByTestId("risk-regenerate-carries-ratings").textContent,
+    ).toBe(
+      "Regenerating drafts a new version. Consultant ratings carry over to the entry for the same finding; any that cannot be matched are listed after, to rate again.",
+    );
+  });
+
+  it("does not warn when no rating was edited", async () => {
+    fetchRiskRegisterLatest.mockResolvedValue(register());
+    await loaded();
+    expect(screen.queryByTestId("risk-regenerate-carries-ratings")).toBeNull();
+  });
+
+  it("says what a regenerate carried over and what it could not (#854 F3)", async () => {
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({
+        ratings_carried_recorded: true,
+        ratings_carried: 2,
+        ratings_carried_from_version: 3,
+        ratings_not_carried: ["T1003"],
+      }),
+    );
+    await loaded();
+    expect(screen.getByTestId("risk-ratings-carried").textContent).toBe(
+      "2 consultant ratings were carried over from version 3. 1 could not be matched to an entry in this version and was not carried: T1003. Rate it again in the Register table.",
+    );
   });
 
   it("states findings with no entry and with several, in number", async () => {

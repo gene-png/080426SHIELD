@@ -219,14 +219,15 @@ function columnsFor(
               {r.impact ? titleCase(r.impact) : "Not rated"}
             </span>
           )}
-          {/* Same rule as the export (`_consultant_rated`): a CLEARED rating is
-            unrated, not consultant-set (#854 review, F2). */}
-          {r.rating_edited_at && r.likelihood && r.impact ? (
+          {/* Same rule as the export (`_consultant_rated`): any edited row with
+            at least one half set (Gene's ruling (a)); a FULLY cleared rating
+            is unrated and carries no consultant credit (#854 review, F2). */}
+          {r.rating_edited_at && (r.likelihood || r.impact) ? (
             <span
               className="text-xs text-ink-tertiary"
               data-testid="risk-rating-set-by-consultant"
             >
-              Rating set by consultant
+              Rating edited by consultant
             </span>
           ) : null}
         </div>
@@ -494,6 +495,10 @@ export function RiskRegisterDashboard(): JSX.Element {
   }
 
   const tc = register?.tier_counts ?? {};
+  // #854 F3: ratings a consultant edited in the version on screen, which a
+  // regenerate would carry over -- the warning beside the button keys on it.
+  const consultantEdited =
+    register?.entries.filter((e) => e.rating_edited_at !== null).length ?? 0;
   // #844. `?? 0` covers only the no-register-yet case.
   const findingsWithout = register?.findings_without_entry.length ?? 0;
   const findingsSeveral = register
@@ -591,6 +596,18 @@ export function RiskRegisterDashboard(): JSX.Element {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {/* #854 F3: the warning BEFORE regenerating, beside the button, while
+              the current version holds consultant ratings. */}
+          {consultantEdited > 0 ? (
+            <p
+              className="w-full text-sm text-status-warning-fg"
+              data-testid="risk-regenerate-carries-ratings"
+            >
+              Regenerating drafts a new version. Consultant ratings carry over
+              to the entry for the same finding; any that cannot be matched are
+              listed after, to rate again.
+            </p>
+          ) : null}
           {/* Issue 2: risk_synthesize is an AI job — warn before producing
               canned output when no key is loaded. */}
           <RunAiGuard onProceed={() => void onGenerate()}>
@@ -944,6 +961,33 @@ export function RiskRegisterDashboard(): JSX.Element {
                 Score the outstanding rows first if this register should link
                 more widely.
               </p>
+            </div>
+          ) : null}
+          {/* #854 F3: what the regenerate that produced this version carried
+              over, and what it could not. Rendered only when recorded and
+              when there is something to say. */}
+          {register.ratings_carried_recorded &&
+          register.ratings_carried_from_version !== null &&
+          ((register.ratings_carried ?? 0) > 0 ||
+            register.ratings_not_carried.length > 0) ? (
+            <div
+              className={
+                register.ratings_not_carried.length > 0
+                  ? "rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm text-status-warning-fg"
+                  : "rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
+              }
+              data-testid="risk-ratings-carried"
+            >
+              {register.ratings_carried ?? 0} consultant{" "}
+              {register.ratings_carried === 1 ? "rating was" : "ratings were"}{" "}
+              carried over from version {register.ratings_carried_from_version}.
+              {register.ratings_not_carried.length > 0
+                ? ` ${register.ratings_not_carried.length} could not be matched to an entry in this version and ${
+                    register.ratings_not_carried.length === 1 ? "was" : "were"
+                  } not carried: ${register.ratings_not_carried.join(", ")}. Rate ${
+                    register.ratings_not_carried.length === 1 ? "it" : "them"
+                  } again in the Register table.`
+                : null}
             </div>
           ) : null}
           {/* #844. Each finding should get exactly one entry. Rendered only

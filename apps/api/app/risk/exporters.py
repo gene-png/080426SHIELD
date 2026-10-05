@@ -125,9 +125,12 @@ def _li(e: Any) -> str:
 
 
 def _consultant_rated(e: Any) -> bool:
-    """A consultant SET this entry's rating: they edited it AND both halves are
-    present. A cleared rating is unrated, not consultant-rated -- counting it
-    as both printed "rating set by consultant" over "Not rated" (#854 review,
+    """A consultant EDITED this entry's rating and at least one half is present.
+
+    Gene's ruling (a) on the half-set case (#736, 5986057990 item 10): an entry
+    whose likelihood a consultant set, impact still unrated, is marked -- the
+    half they set must not read as the model's. A FULLY cleared rating (both
+    halves null) is unrated and carries no consultant credit (#854 review,
     F2). ONE predicate for the count line and the Origin column, so the two
     cannot disagree; the admin marker uses the same rule.
     """
@@ -135,10 +138,8 @@ def _consultant_rated(e: Any) -> bool:
     # and a row built before 0061's field existed carries no attribute. Absent
     # reads as "not edited", which is what every such row is: the edit path is
     # the field's only writer.
-    return (
-        getattr(e, "rating_edited_at", None) is not None
-        and e.likelihood is not None
-        and e.impact is not None
+    return getattr(e, "rating_edited_at", None) is not None and (
+        e.likelihood is not None or e.impact is not None
     )
 
 
@@ -146,7 +147,7 @@ def _origin(e: Any) -> str:
     """#844. `origin` describes who drafted the ENTRY; once a consultant has set
     the rating, printing `ai_generated` alone credits the model with a rating it
     never gave."""
-    return f"{e.origin}; rating set by consultant" if _consultant_rated(e) else e.origin
+    return f"{e.origin}; rating edited by consultant" if _consultant_rated(e) else e.origin
 
 
 def _entries_noun(n: int) -> str:
