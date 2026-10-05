@@ -228,6 +228,11 @@ export interface AttackRunAiResponse {
    * as edited rather than overwrite.
    */
   rows_skipped_edited?: number;
+  /**
+   * #841. Techniques the AI suggested as N/A, refused because only a consultant
+   * may rule a technique N/A.
+   */
+  not_applicable_refused?: number;
 }
 
 export interface TacticHeatmapEntry {

@@ -133,14 +133,16 @@ def _capability_names(value: object) -> list[str]:
     return out
 
 
-_MITRE_STATUS_CYCLE = ("covered", "partial", "gap", "covered", "not_applicable")
+#: #841: no `not_applicable`. #841 refuses an AI N/A (the run refuses it and
+#: counts it); the #806 ATT&CK prompt, not yet in the tree, stops offering it.
+#: Today's `_MITRE_MAP_PROMPT` still offers it, so the fixture no longer
+#: suggesting it is the refusal's world, not the prompt's. The fifth slot is a
+#: gap, keeping the cycle's length and so the Partial reasons' cadence.
+_MITRE_STATUS_CYCLE = ("covered", "partial", "gap", "covered", "gap")
 #: #554: the reason each fixture status carries, copied from what the mitre_map
 #: PROMPT offers (CLAUDE.md: author fixtures from the prompt, never from the
-#: parser). A Partial cycles through three of the prompt's seven codes; N/A takes
-#: the only one it may. `test_attack_ai_reason_codes.py` pins that every one
-#: appears in the prompt text.
+#: parser). A Partial cycles through three of the prompt's seven codes.
 _MITRE_PARTIAL_REASONS = ("reach_limited", "detection_weak", "missing_control_category")
-_MITRE_NA_REASON = "platform_absent"
 
 
 def _fixture_mitre_map(payload: dict[str, Any]) -> LLMResponse:
@@ -160,7 +162,7 @@ def _fixture_mitre_map(payload: dict[str, Any]) -> LLMResponse:
         reason = (
             _MITRE_PARTIAL_REASONS[(i // len(_MITRE_STATUS_CYCLE)) % len(_MITRE_PARTIAL_REASONS)]
             if status == "partial"
-            else _MITRE_NA_REASON if status == "not_applicable" else None
+            else None
         )
         techniques.append(
             {
