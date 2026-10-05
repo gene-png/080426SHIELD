@@ -19,7 +19,6 @@ from tests.unit.test_ai_runs_attack import app_parts  # noqa: F401  (fixture)
 from tests.unit.test_attack_scenario_routes import (  # noqa: F401  (fixture)
     EDR,
     _world,
-    analysis_job,
 )
 
 pytestmark = pytest.mark.unit
@@ -47,7 +46,7 @@ def test_the_what_if_purpose_is_the_one_excluded() -> None:
 
 
 def test_a_what_if_run_in_progress_neither_locks_the_draft_nor_shows_as_its_run(
-    app_parts, analysis_job  # noqa: F811
+    app_parts,  # noqa: F811
 ) -> None:
     w = _world(app_parts)
     w.answer({})
