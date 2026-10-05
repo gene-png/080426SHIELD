@@ -18,9 +18,11 @@ llm_calls row records the version that ran.
 from __future__ import annotations
 
 import json
+import math
+import re
 import uuid
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -107,6 +109,11 @@ class ExtractedCapability:
     # keeps unclassified rows in the ATT&CK subset for exactly that reason.
     security_related: bool | None = None
     security_functions: tuple[str, ...] = ()
+    # #833 / #834: what this item's values could not be stored as given, each
+    # `{source_row_index, item_name, field, reason, value}`. The value itself
+    # is stored as NULL (a number) or cut to its column (a string); the record
+    # is what says so.
+    findings: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass
@@ -118,6 +125,10 @@ class ExtractionResult:
     # duplicates rather than whole categories of software. The reconciliation
     # stays because "rare" is not "never" (UX finding 4 / E2E F-5).
     reconciliation: Reconciliation
+    # #833 / #834: every value the extraction could not store as given, in item
+    # order. [] means checked and nothing to record. Stored on the list as
+    # `extraction_findings`.
+    findings: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _load_artifact_bytes(storage: StorageBackend, artifact: Artifact) -> bytes:
@@ -199,6 +210,59 @@ def _security_functions(raw: Any) -> tuple[str, ...]:
     return tuple(f.value for f in SecurityFunction if f.value in seen)
 
 
+#: Column widths (`models/capability.py`). A longer string is cut to the width
+#: and recorded (#834): left alone it crashed the insert on Postgres after the
+#: provider call was paid, losing the whole list. Cut rather than refused,
+#: because refusing would drop a capability the client pays for.
+_STRING_WIDTHS = {"name": 255, "vendor": 255, "function": 255, "category": 128}
+#: `annual_cost_usd` is Numeric(14, 2): below 10**12.
+_COST_LIMIT = 10**12
+#: `license_count`, `confidence_pct`: Integer (32-bit) columns.
+_INT_MAX = 2**31 - 1
+_INT_RANGES = {"license_count": (0, _INT_MAX), "confidence_pct": (0, 100)}
+#: "1,000" or "1,200.50": comma thousands separators, nothing else.
+_THOUSANDS = re.compile(r"^\d{1,3}(,\d{3})+(\.\d+)?$")
+
+
+def _shown(raw: Any) -> str:
+    """The value as an admin reads it in a finding: a string as written (its
+    unprintable characters escaped), anything else as `repr`, bounded."""
+    if isinstance(raw, str):
+        return "".join(c if c.isprintable() else repr(c)[1:-1] for c in raw)[:120]
+    return repr(raw)[:120]
+
+
+def _number(raw: Any, *, money: bool = False) -> float | None:
+    """`raw` as a number, or None when it is not one (#833).
+
+    `int(float(v))` was doing this job and is not a validator: `int(True)` is 1
+    and `int(2.9)` is 2, each stored as if the model had said it. A bool is
+    refused. A whole number written differently ("2", 2.0, "1,000") is accepted.
+    `money` also accepts a leading "$" (v3.2: "Accept a dollar sign as USD");
+    any other symbol or text ("€1,200", "1200/month") is not a number.
+    """
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, (int, float)):
+        try:
+            n = float(raw)
+        except OverflowError:
+            return None
+    elif isinstance(raw, str):
+        text = raw.strip()
+        if money and text.startswith("$"):
+            text = text[1:].strip()
+        if _THOUSANDS.match(text):
+            text = text.replace(",", "")
+        try:
+            n = float(text)
+        except ValueError:
+            return None
+    else:
+        return None
+    return n if math.isfinite(n) else None
+
+
 def _coerce_item(item: dict[str, Any]) -> ExtractedCapability:
     def _opt_str(key: str) -> str | None:
         v = item.get(key)
@@ -207,23 +271,60 @@ def _coerce_item(item: dict[str, Any]) -> ExtractedCapability:
         s = str(v).strip()
         return s or None
 
-    def _opt_int(key: str) -> int | None:
-        v = item.get(key)
-        if v is None or v == "":
-            return None
-        try:
-            return int(float(v))
-        except (TypeError, ValueError):
-            return None
+    findings: list[dict[str, Any]] = []
+    name_for_record = _opt_str("name") or "Unknown capability"
 
-    def _opt_float(key: str) -> float | None:
+    def _record(key: str, reason: str, raw: Any, **extra: Any) -> None:
+        findings.append(
+            {
+                "source_row_index": item.get("source_row_index"),
+                "item_name": name_for_record[:255],
+                "field": key,
+                "reason": reason,
+                "value": _shown(raw),
+                **extra,
+            }
+        )
+
+    def _bounded_str(key: str) -> str | None:
+        s = _opt_str(key)
+        width = _STRING_WIDTHS[key]
+        if s is not None and len(s) > width:
+            # `width` travels with the finding, so the screen states the cut
+            # from the one table that sets it rather than a copy of it.
+            _record(key, "truncated", s, width=width)
+            return s[:width]
+        return s
+
+    def _opt_int(key: str, low: int, high: int) -> int | None:
+        """Range first, then wholeness: `3.9` reports as out of range."""
         v = item.get(key)
         if v is None or v == "":
             return None
-        try:
-            return float(v)
-        except (TypeError, ValueError):
+        n = _number(v)
+        if n is None:
+            _record(key, "unparseable", v)
             return None
+        if not low <= n <= high:
+            _record(key, "out_of_range", v)
+            return None
+        if n != int(n):
+            _record(key, "not_whole", v)
+            return None
+        return int(n)
+
+    def _opt_cost(key: str) -> float | None:
+        v = item.get(key)
+        if v is None or v == "":
+            return None
+        n = _number(v, money=True)
+        if n is None:
+            _record(key, "unparseable", v)
+            return None
+        if not 0 <= n < _COST_LIMIT:
+            _record(key, "out_of_range", v)
+            return None
+        return n
 
     def _opt_bool(key: str) -> bool | None:
         """Tri-state: an absent or unrecognised value stays None, never False.
@@ -251,19 +352,54 @@ def _coerce_item(item: dict[str, Any]) -> ExtractedCapability:
     if functions and related is False:
         related = True
 
+    name = _bounded_str("name") or "Unknown capability"
+    vendor = _bounded_str("vendor")
+    category = _bounded_str("category")
+    function = _bounded_str("function")
+    cost = _opt_cost("annual_cost_usd")
+    licenses = _opt_int("license_count", *_INT_RANGES["license_count"])
+    confidence = _opt_int("confidence_pct", *_INT_RANGES["confidence_pct"])
+    # The upper bound needs the number of uploaded rows, which the parser does
+    # not have: `with_row_bounds` checks it once the rows are known.
+    row = _opt_int("source_row_index", 0, _INT_MAX)
     return ExtractedCapability(
-        name=(_opt_str("name") or "Unknown capability"),
-        vendor=_opt_str("vendor"),
-        category=_opt_str("category"),
-        function=_opt_str("function"),
-        annual_cost_usd=_opt_float("annual_cost_usd"),
-        license_count=_opt_int("license_count"),
+        name=name,
+        vendor=vendor,
+        category=category,
+        function=function,
+        annual_cost_usd=cost,
+        license_count=licenses,
         notes=_opt_str("notes"),
-        confidence_pct=_opt_int("confidence_pct"),
-        source_row_index=_opt_int("source_row_index"),
+        confidence_pct=confidence,
+        source_row_index=row,
         security_related=related,
         security_functions=functions,
+        findings=tuple(findings),
     )
+
+
+def with_row_bounds(items: list[ExtractedCapability], row_count: int) -> list[ExtractedCapability]:
+    """A `source_row_index` that names no uploaded row is refused (#833).
+
+    Stored, it attributed the item to a row it did not come from, and the
+    reconciliation then named the wrong rows as excluded. Refused, the item is
+    unattributed, which the reconciliation already reports.
+    """
+    out: list[ExtractedCapability] = []
+    for it in items:
+        i = it.source_row_index
+        if i is None or i < row_count:
+            out.append(it)
+            continue
+        finding = {
+            "source_row_index": i,
+            "item_name": it.name,
+            "field": "source_row_index",
+            "reason": "out_of_range",
+            "value": _shown(i),
+        }
+        out.append(replace(it, source_row_index=None, findings=(*it.findings, finding)))
+    return out
 
 
 def read_inventory(storage: StorageBackend, artifact: Artifact) -> list[dict]:
@@ -317,11 +453,12 @@ def extract_from_rows(
             client_org_name=client_org_name,
             name_hints=tuple(name_hints),
         )
-    items = result.data
+    items = with_row_bounds(result.data, len(rows))
     return ExtractionResult(
         items=items,
         llm_call=result.llm_call,
         reconciliation=reconcile_rows(rows, [i.source_row_index for i in items]),
+        findings=[f for i in items for f in i.findings],
     )
 
 
