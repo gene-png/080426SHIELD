@@ -35,7 +35,6 @@ from typing import Any
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.ai.llm import FixtureProvider, LLMResponse
-from app.tech_debt.security_scope import NOT_IN_USE_PREFIX
 
 # Job purposes (== FixtureProvider keys). Tech Debt keeps its historical
 # "extract.capabilities" purpose for llm_calls + fixture compatibility.
@@ -285,19 +284,6 @@ _TECH_DEBT_NAME_KEYS = ("name", "product", "tool", "capability", "vendor_product
 _TECH_DEBT_FUNCTION_CYCLE = ("prevent", "detect", "respond")
 
 
-#: #845: Tech Debt v3.2 section 7's lifecycle words. A SECURITY row whose cells
-#: say one of these comes back `security_related: false`, no functions, and a
-#: note beginning with v3.2's exact prefix -- what the prompt tells the model to
-#: do, so the not-in-use sign-off group is reachable offline.
-_TECH_DEBT_NOT_IN_USE_WORDS = ("not yet deployed", "no longer used", "inactive", "planned")
-
-
-def _not_in_use_phrase(row: dict[str, Any]) -> str | None:
-    """The first lifecycle phrase any cell of `row` carries, or None."""
-    cells = " ".join(v for v in row.values() if isinstance(v, str)).lower()
-    return next((w for w in _TECH_DEBT_NOT_IN_USE_WORDS if w in cells), None)
-
-
 def _fixture_tech_debt(payload: dict[str, Any]) -> LLMResponse:
     rows = payload.get("rows")
     if isinstance(rows, list) and rows:
@@ -331,9 +317,6 @@ def _fixture_tech_debt(payload: dict[str, Any]) -> LLMResponse:
             # untested one (the excluded-rows queue had exactly this problem:
             # the fixture echoed every row, so no exclusion could ever exist).
             security_related = i % 4 != 3
-            not_in_use = _not_in_use_phrase(row) if security_related else None
-            if not_in_use is not None:
-                security_related = False
             items.append(
                 {
                     "name": name or f"Capability {i + 1}",
@@ -341,16 +324,12 @@ def _fixture_tech_debt(payload: dict[str, Any]) -> LLMResponse:
                     "category": None,
                     "function": (
                         "Security capability (fixture-mode draft)."
-                        if security_related or not_in_use is not None
+                        if security_related
                         else "Business capability (fixture-mode draft)."
                     ),
                     "annual_cost_usd": None,
                     "license_count": None,
-                    "notes": (
-                        f"{NOT_IN_USE_PREFIX} {not_in_use}."
-                        if not_in_use is not None
-                        else "Drafted offline in fixture mode; confirm before approving."
-                    ),
+                    "notes": "Drafted offline in fixture mode; confirm before approving.",
                     "confidence_pct": 60 + (i % 4) * 10,  # 60..90
                     "source_row_index": i,
                     "security_related": security_related,

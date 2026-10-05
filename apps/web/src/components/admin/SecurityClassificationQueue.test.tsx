@@ -65,6 +65,7 @@ const PLANNED = item({
 const PAYROLL = item({
   id: "w",
   name: "Workday HCM",
+  notes: "HR system; no security purpose.",
   signoff_kind: "not_security",
 });
 
@@ -99,7 +100,8 @@ describe("SecurityClassificationQueue (#845)", () => {
     expect(ordinary).toHaveTextContent(
       "Marking it security-related keeps it in the ATT&CK assessment.",
     );
-    expect(ordinary).not.toHaveTextContent("Workday HCMNote:");
+    // Every row shows its note, in the ordinary group too.
+    expect(ordinary).toHaveTextContent("Note: HR system; no security purpose.");
 
     expect(screen.getByTestId("security-signoff-procedure").textContent).toBe(
       "Clear this queue before you approve the list. If the list is already approved, choose Approve again after confirming, then use Run AI on the ATT&CK service so its mapping stops crediting these tools.",
@@ -150,6 +152,22 @@ describe("SecurityClassificationQueue (#845)", () => {
       "2 tools were described as not in use but also given security functions, so they stay in the ATT&CK assessment.",
     );
     expect(screen.queryByTestId("security-signoff-procedure")).toBeNull();
+  });
+
+  it("gives no procedure on a locked list, whose controls are gone", () => {
+    render(
+      <SecurityClassificationQueue
+        list={list([PLANNED, PAYROLL])}
+        onUpdated={() => {}}
+        editable={false}
+      />,
+    );
+    // The groups still render (the positive state) before the absence.
+    expect(screen.getByTestId("security-signoff-not-in-use")).toBeTruthy();
+    expect(screen.queryByTestId("security-signoff-procedure")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Not in use: remove from ATT&CK" }),
+    ).toBeNull();
   });
 
   it("says nothing at all when there is nothing to show", () => {

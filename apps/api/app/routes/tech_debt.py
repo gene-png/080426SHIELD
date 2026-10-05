@@ -118,6 +118,7 @@ from app.tech_debt.parsers import SUPPORTED_MIME, UnsupportedInventoryFormat
 from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.savings import estimated_savings
 from app.tech_debt.security_scope import (
+    PROMPT_VERSIONS_WITH_PREFIX,
     not_in_use_contradiction,
     not_in_use_security_tool,
     security_scope_filter,
@@ -624,9 +625,14 @@ def _extract_run_work(
             "version": next_version,
             "artifact_id": str(artifact_id),
             "item_count": len(result.items),
-            # #845: at extraction, before any consultant could override one.
-            "not_in_use_contradictions": sum(
-                1 for i in result.items if not_in_use_contradiction(i)
+            # #845: at extraction, before any consultant could override one --
+            # and only from a prompt that asks for the prefix. Under an earlier
+            # prompt the count is structurally 0, so it is recorded as None
+            # ("not measured"), never as a measured 0.
+            "not_in_use_contradictions": (
+                sum(1 for i in result.items if not_in_use_contradiction(i))
+                if result.llm_call.prompt_version in PROMPT_VERSIONS_WITH_PREFIX
+                else None
             ),
             "llm_call_id": str(result.llm_call.id),
             "run_id": str(ctx.run_id),

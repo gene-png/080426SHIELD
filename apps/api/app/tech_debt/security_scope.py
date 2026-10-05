@@ -67,6 +67,12 @@ def awaiting_security_signoff(item: CapabilityItem) -> bool:
 #: The ONE constant every reader matches; tests copy the string from the prompt.
 NOT_IN_USE_PREFIX = "Security tool not in use:"
 
+#: The extraction prompt versions that ask for the prefix. Until the #806 Tech
+#: Debt prompt PR ships v3.2 the in-tree prompt is v2, so the not-in-use group
+#: fills only from a consultant's own note and the extraction's contradiction
+#: count is not measured. Add a version here only when its prompt asks for it.
+PROMPT_VERSIONS_WITH_PREFIX: frozenset[str] = frozenset({"v3.2"})
+
 
 def _notes_carry_the_prefix(notes: object) -> bool:
     """Exact and case-sensitive, after leading whitespace: the prompt names one

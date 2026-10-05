@@ -263,7 +263,9 @@ export function SecurityClassificationQueue({
         </Card>
       ) : null}
 
-      {pending.length > 0 ? (
+      {/* Only where the controls it names exist: a locked (released) list
+          offers neither the sign-off buttons nor approval (D-076). */}
+      {pending.length > 0 && editable ? (
         <p
           className="max-w-prose text-sm text-ink-secondary"
           data-testid="security-signoff-procedure"
