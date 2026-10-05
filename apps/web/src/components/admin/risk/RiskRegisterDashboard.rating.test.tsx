@@ -53,6 +53,8 @@ function gate(): RiskGate {
     not_finalized: [],
     synthesizable_missing: [],
     attack_catalog_mismatch: null,
+    // #737: required; the Inputs panel's rows.
+    inputs: [],
   };
 }
 
@@ -76,6 +78,8 @@ function entry(over: Partial<RiskEntry> = {}): RiskEntry {
     origin: "ai_generated",
     trust: "admin_assisted",
     dropped_links: {},
+    // #737: required; null = the finding's input was released.
+    source_state: null,
     rating_edited_by: null,
     rating_edited_at: null,
     ...over,

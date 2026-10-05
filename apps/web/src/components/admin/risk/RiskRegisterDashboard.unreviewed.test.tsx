@@ -46,6 +46,8 @@ function gate(over: Partial<RiskGate> = {}): RiskGate {
     not_finalized: [],
     synthesizable_missing: [],
     attack_catalog_mismatch: null,
+    // #737: required; the Inputs panel's rows.
+    inputs: [],
     attack_computed_status_unreviewed: null,
     ...over,
   };
