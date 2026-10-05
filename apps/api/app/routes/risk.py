@@ -56,6 +56,7 @@ from app.risk.engine import (
     tier_counts,
     tier_for,
 )
+from app.risk.inputs import Blocker, current_inputs, publish_blockers
 from app.risk.link_scope import LinkScope, scope_for
 from app.routes.artifacts import _storage_dep
 from app.schemas.risk import (
@@ -361,7 +362,16 @@ def _provenance_snapshot(db: Session, client_id: uuid.UUID, excluded: list[str])
                 "status": str(getattr(a.status, "value", a.status)),
             }
         )
-    return {"inputs": inputs, "excluded": list(excluded)}
+    # #737, Gene's all-inputs-final rule: every CURRENT input the client has,
+    # Tech Debt included, with its version and status as they stand at
+    # generate. Publish compares this with the inputs as they stand then
+    # (`app/risk/inputs.py::publish_blockers`), so a register built before an
+    # input was released, or before a newer version existed, cannot publish.
+    return {
+        "inputs": inputs,
+        "excluded": list(excluded),
+        "current_inputs": [r.as_json() for r in current_inputs(db, client_id)],
+    }
 
 
 #: Fields whose model-supplied values are checked against the client's own
@@ -1661,6 +1671,55 @@ _SUPERSEDED_WHILE_STARTING = {
 }
 
 
+#: #737. How each input is named in the publish refusal. DRAFT copy, with the
+#: advisor (the Inputs panel strings, coordinator thread 2026-10-05).
+_INPUT_LABELS = {
+    "attack": "ATT&CK coverage",
+    "csf": "NIST CSF",
+    "zt": "Zero Trust",
+    "tech_debt": "Technology debt list",
+}
+_STATE_WORDS = {
+    "draft": "in progress (draft)",
+    "submitted": "submitted, not yet released",
+    "approved": "approved, not yet released",
+}
+
+
+def _inputs_not_final_message(blockers: list[Blocker]) -> str:
+    """#737. One sentence per cause, naming each input. DRAFT copy."""
+    if any(b.reason == "not_recorded" for b in blockers):
+        return (
+            "This register predates input recording, so what it was built from cannot "
+            "be certified. Generate a new version before publishing."
+        )
+    parts: list[str] = []
+    waiting = [
+        f"{_INPUT_LABELS.get(b.kind, b.kind)} ("
+        + (
+            "not started"
+            if b.reason == "not_started"
+            else _STATE_WORDS.get(b.status or "", b.status or "")
+        )
+        + ")"
+        for b in blockers
+        if b.reason in ("not_started", "not_released")
+    ]
+    if waiting:
+        parts.append(
+            "This register cannot be published until every assessment it draws on is "
+            "released: " + "; ".join(waiting) + "."
+        )
+    changed = [_INPUT_LABELS.get(b.kind, b.kind) for b in blockers if b.reason == "changed"]
+    if changed:
+        parts.append(
+            "An assessment this register draws on has changed since it was generated: "
+            + "; ".join(changed)
+            + ". Generate a new version before publishing."
+        )
+    return " ".join(parts)
+
+
 def _lock_current_register(db: Session, cid: uuid.UUID, *, action: str) -> RiskRegister:
     """The current register, row-locked FOR UPDATE, re-checked under the lock.
 
@@ -2025,6 +2084,19 @@ def publish(
             },
         )
     _require_certifiable_inputs(reg)
+    # #737, Gene's rule: nothing final until every engaged input is final.
+    blockers = publish_blockers(db, cid, (reg.provenance or {}).get("current_inputs"))
+    if blockers:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "risk_register_inputs_not_final",
+                "message": _inputs_not_final_message(blockers),
+                "blockers": [
+                    {"input": b.kind, "reason": b.reason, "status": b.status} for b in blockers
+                ],
+            },
+        )
     unrated = db.execute(
         select(func.count())
         .select_from(RiskEntry)

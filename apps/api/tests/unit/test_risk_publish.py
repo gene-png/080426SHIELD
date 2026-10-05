@@ -15,13 +15,13 @@ from __future__ import annotations
 
 import pytest
 
+from tests._risk_inputs import seed_released
 from tests.unit.test_risk_register import (  # noqa: F401  (app_client is a fixture)
     _admin,
     _entries_payload,
     _entry,
     _generate,
     _pdf_text,
-    _seed_attack_and_zt,
     _session,
     app_client,
 )
@@ -50,7 +50,9 @@ def _world(app_client, *entries: str):  # noqa: F811
     )
     assert user.status_code == 201, user.text
     ch = {"Authorization": f"Bearer {user.json()['tokens']['access_token']}", "X-Client-Id": cid}
-    _seed_attack_and_zt(c, bearer, cid)
+    # RELEASED, not only approved: publish needs every engaged input final
+    # (Gene's rule, #737). The input refusals are in test_risk_publish_inputs.
+    seed_released(c, bearer, cid)
     body = _generate(c, provider, bearer, cid, _entries_payload(*(entries or (_entry("R"),))))
     return c, provider, bearer, cid, ah, ch, body
 
