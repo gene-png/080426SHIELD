@@ -136,6 +136,22 @@ describe("SecurityClassificationQueue (#845)", () => {
     expect(screen.queryByTestId("security-signoff-not-in-use")).toBeNull();
   });
 
+  it("counts the contradiction even when nothing is awaiting sign-off", () => {
+    render(
+      <SecurityClassificationQueue
+        list={list([], 2)}
+        onUpdated={() => {}}
+        editable
+      />,
+    );
+    expect(
+      screen.getByTestId("security-signoff-contradictions").textContent,
+    ).toBe(
+      "2 tools were described as not in use but also given security functions, so they stay in the ATT&CK assessment.",
+    );
+    expect(screen.queryByTestId("security-signoff-procedure")).toBeNull();
+  });
+
   it("says nothing at all when there is nothing to show", () => {
     const { container } = render(
       <SecurityClassificationQueue

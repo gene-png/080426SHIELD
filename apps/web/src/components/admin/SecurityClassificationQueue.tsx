@@ -201,6 +201,17 @@ export function SecurityClassificationQueue({
 
   return (
     <>
+      {contradictions > 0 ? (
+        <p
+          className="text-sm text-ink-secondary"
+          data-testid="security-signoff-contradictions"
+        >
+          {contradictions === 1
+            ? "1 tool was described as not in use but also given security functions, so it stays in the ATT&CK assessment."
+            : `${contradictions} tools were described as not in use but also given security functions, so they stay in the ATT&CK assessment.`}
+        </p>
+      ) : null}
+
       {error ? (
         <p
           role="alert"
