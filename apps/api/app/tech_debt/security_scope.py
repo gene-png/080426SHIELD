@@ -59,3 +59,50 @@ def awaiting_security_signoff(item: CapabilityItem) -> bool:
     is visible and finite, not so it can be ignored.
     """
     return item.security_related is False and not item.security_class_confirmed
+
+
+#: #845: Tech Debt v3.2 (issue 806, comment 5983838515) tells the model to
+#: "Begin `notes` with exactly `Security tool not in use:`" for a security tool
+#: the row describes as planned, not yet deployed, inactive or no longer used.
+#: The ONE constant every reader matches; tests copy the string from the prompt.
+NOT_IN_USE_PREFIX = "Security tool not in use:"
+
+
+def _notes_carry_the_prefix(notes: object) -> bool:
+    """Exact and case-sensitive, after leading whitespace: the prompt names one
+    literal, so anything else is the ordinary wording, never a guess."""
+    return isinstance(notes, str) and notes.lstrip().startswith(NOT_IN_USE_PREFIX)
+
+
+def not_in_use_security_tool(item: object) -> bool:
+    """A negative carrying the prefix: what confirming takes out of ATT&CK scope
+    as "not in use" rather than as "not security-related"."""
+    return getattr(item, "security_related", None) is False and _notes_carry_the_prefix(
+        getattr(item, "notes", None)
+    )
+
+
+def signoff_kind(item: object) -> str | None:
+    """How the sign-off queue words this row, or None when it is not queued.
+
+    "not_in_use": a security tool the extraction marked not in use (the prefix).
+    "not_security": any other negative awaiting sign-off -- today's wording. A
+    row the prefix misses falls back here, and scope is the same either way:
+    confirming removes it from the ATT&CK subset whichever kind it is.
+    """
+    if not awaiting_security_signoff(item):  # type: ignore[arg-type]
+        return None
+    return "not_in_use" if not_in_use_security_tool(item) else "not_security"
+
+
+def not_in_use_contradiction(item: object) -> bool:
+    """The prefix on a row that is security-related.
+
+    v3.2 pairs the prefix with `security_related: false` and no functions. A row
+    that also lists functions is kept security-related by the parser (the safe
+    direction, `extract._coerce_item`), so it is stored this way. A consultant's
+    override of a not-in-use row stores the same shape; the caller excludes those.
+    """
+    return getattr(item, "security_related", None) is True and _notes_carry_the_prefix(
+        getattr(item, "notes", None)
+    )
