@@ -144,7 +144,7 @@ def test_the_export_labels_a_finding_awaiting_review(app_client) -> None:  # noq
     rows = list(load_workbook(io.BytesIO(raw))["Risk Register"].iter_rows(values_only=True))
     sources = sorted(dict(zip(rows[0], r, strict=True))["Source"] for r in rows[1:])
     assert sources == sorted(
-        f"coverage_finding:{code} (from a approved assessment) (computed status awaiting review)"
+        f"coverage_finding:{code} (from an approved assessment) (computed status awaiting review)"
         for code in world["codes"]
     )
 

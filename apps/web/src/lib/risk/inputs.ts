@@ -36,5 +36,10 @@ export function inputLine(row: RiskInputState): string {
 export const REVIEW_PENDING_NOTE = " (computed status awaiting review)";
 
 export function sourceStateNote(state: string | null): string | null {
-  return state ? ` (from a ${state} assessment)` : null;
+  if (!state) return null;
+  // "an" before a vowel ("from an approved assessment"); the export's source
+  // cell applies the same rule. {state} is the stored status: draft,
+  // submitted or approved.
+  const article = /^[aeiou]/i.test(state) ? "an" : "a";
+  return ` (from ${article} ${state} assessment)`;
 }

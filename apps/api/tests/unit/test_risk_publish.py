@@ -271,3 +271,23 @@ def test_the_published_files_carry_no_draft_marker(app_client) -> None:  # noqa:
     texts = _texts(c, ah, cid, _post(c, ah, cid, "publish").json())
     for kind, text in texts.items():
         assert "Draft: not published" not in text, kind
+
+
+@pytest.mark.parametrize(
+    "state, label",
+    [
+        ("draft", " (from a draft assessment)"),
+        ("submitted", " (from a submitted assessment)"),
+        ("approved", " (from an approved assessment)"),
+    ],
+)
+def test_every_source_state_label_reads_correctly(state: str, label: str) -> None:
+    """#737: every label the export's source cell can render, as literals --
+    "an" before a vowel. A released input carries none."""
+    from types import SimpleNamespace
+
+    from app.risk.exporters import _source
+
+    e = SimpleNamespace(source="coverage_finding", source_id="T1078")
+    assert _source(e, {"T1078": state}) == f"coverage_finding:T1078{label}"
+    assert _source(e, {}) == "coverage_finding:T1078"

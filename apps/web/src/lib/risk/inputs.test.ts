@@ -43,7 +43,10 @@ describe("Inputs panel words (#737)", () => {
   });
 
   it("labels a finding from an unreleased input, and says nothing otherwise", () => {
+    // Every state the label can render, as literals.
     expect(sourceStateNote("draft")).toBe(" (from a draft assessment)");
+    expect(sourceStateNote("submitted")).toBe(" (from a submitted assessment)");
+    expect(sourceStateNote("approved")).toBe(" (from an approved assessment)");
     expect(sourceStateNote(null)).toBeNull();
   });
 

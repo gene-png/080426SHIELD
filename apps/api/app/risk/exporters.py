@@ -188,7 +188,11 @@ def _source(
     # DRAFT copy, with the advisor.
     state = (states or {}).get(e.source_id or "")
     if state:
-        cell = f"{cell} (from a {state} assessment)"
+        # "an" before a vowel: "from an approved assessment" (coordinator,
+        # #860). {state} is the input's stored status -- draft, submitted or
+        # approved; a released input carries no label.
+        article = "an" if state[:1].lower() in "aeiou" else "a"
+        cell = f"{cell} (from {article} {state} assessment)"
     # #554 R3, option (b). DRAFT copy, with the advisor.
     if (e.source_id or "") in pending:
         cell = f"{cell} (computed status awaiting review)"
