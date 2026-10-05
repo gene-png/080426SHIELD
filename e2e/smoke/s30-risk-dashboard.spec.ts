@@ -1,24 +1,103 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type APIRequestContext } from "@playwright/test";
 
-import { CLIENT_EMAIL, CLIENT_PASSWORD, signIn } from "../helpers/auth";
-import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
+import { signIn, uniqueEmail } from "../helpers/auth";
+import { adminApiToken, API_BASE } from "../helpers/ids";
 
 /**
- * D-035: once the admin generates and PUBLISHES the Risk Register, the client
- * can open its dashboard (5x5 matrix + tier mix + full register). The register
- * is client-level, reached via a link on /results. Since #737 exporting no
- * longer publishes; `publish` is the one action that does.
+ * D-035 / D-106: once the admin generates and PUBLISHES the Risk Register, the
+ * client can open its dashboard (5x5 matrix + tier mix + full register),
+ * reached via a link on /results.
+ *
+ * #737 REWRITE, and why it no longer uses the seeded Atlas tenant. Publication
+ * now needs every input the client has engaged to be RELEASED (Gene's ruling,
+ * #736 item 13). Atlas is seeded with its CSF at v2 APPROVED-not-released on
+ * purpose (the CSF dashboard specs depend on it), and this spec used to leave
+ * draft ATT&CK and ZT assessments on Atlas too, so Atlas cannot be published
+ * from here without mutating shared seed state. So the spec seeds its own
+ * precondition (the s34 pattern): a fresh tenant, a mapped domain, a client
+ * user, and that tenant's ATT&CK and ZT inputs, released through the real
+ * finalize -> release endpoints.
+ *
+ * It also asserts that publish REFUSES before the release step: the cheapest
+ * proof that this spec runs Gene's gate rather than walking around it.
  */
 
-test("client views the finalized Risk Register dashboard", async ({
+const PASSWORD = "correct horse battery staple!";
+
+function tenantHeaders(
+  token: string,
+  clientId: string,
+): Record<string, string> {
+  return { Authorization: `Bearer ${token}`, "X-Client-Id": clientId };
+}
+
+async function createTenant(
+  request: APIRequestContext,
+  token: string,
+): Promise<{ clientId: string; domain: string }> {
+  const auth = { Authorization: `Bearer ${token}` };
+  const stamp = Date.now();
+  const created = await request.post(`${API_BASE}/admin/clients`, {
+    headers: auth,
+    data: { legal_name: `Risk QA ${stamp}` },
+  });
+  expect(created.ok(), `create tenant (${created.status()})`).toBeTruthy();
+  const clientId = ((await created.json()) as { id: string }).id;
+  const domain = `riskqa-${stamp}.example`;
+  const mapped = await request.post(
+    `${API_BASE}/admin/clients/${clientId}/domains`,
+    {
+      headers: auth,
+      data: { domain },
+    },
+  );
+  expect(mapped.status(), `approve ${domain}`).toBe(201);
+  return { clientId, domain };
+}
+
+/** Finalize then release one service's deliverable (prefix: attack | zt). */
+async function release(
+  request: APIRequestContext,
+  headers: Record<string, string>,
+  prefix: "attack" | "zt",
+  serviceId: string,
+): Promise<void> {
+  const fin = await request.post(
+    `${API_BASE}/${prefix}/services/${serviceId}/deliverables/finalize`,
+    { headers },
+  );
+  expect(fin.ok(), `finalize ${prefix}: ${await fin.text()}`).toBeTruthy();
+  const deliverableId = ((await fin.json()) as { id: string }).id;
+  const rel = await request.post(
+    `${API_BASE}/${prefix}/deliverables/${deliverableId}/release`,
+    {
+      headers,
+    },
+  );
+  expect(rel.ok(), `release ${prefix}: ${await rel.text()}`).toBeTruthy();
+}
+
+test("client views the published Risk Register dashboard", async ({
   page,
   request,
 }) => {
+  test.slow();
   const token = await adminApiToken(request);
-  const cid = await atlasClientIdViaApi(request, token);
-  const H = { Authorization: `Bearer ${token}`, "X-Client-Id": cid };
+  const { clientId: cid, domain } = await createTenant(request, token);
+  const H = tenantHeaders(token, cid);
 
-  // Seed an ATT&CK gap + a low ZT answer to unlock the risk gate.
+  // The client user, registered under the tenant's approved domain.
+  const clientEmail = uniqueEmail(domain);
+  const reg = await request.post("/api/proxy/auth/register", {
+    data: {
+      email: clientEmail,
+      password: PASSWORD,
+      display_name: "Riley Risk",
+    },
+  });
+  expect(reg.status(), await reg.text()).toBe(201);
+
+  // An ATT&CK gap + a low ZT answer, both APPROVED, to unlock the gate.
   const asvc = await (
     await request.post(`${API_BASE}/attack/services`, {
       headers: H,
@@ -41,9 +120,19 @@ test("client views the finalized Risk Register dashboard", async ({
   expect(standalone, "no standalone ATT&CK technique").toBeTruthy();
   const gapRes = await request.patch(
     `${API_BASE}/attack/coverage/${standalone?.id}`,
-    { headers: H, data: { status: "gap" } },
+    {
+      headers: H,
+      data: { status: "gap" },
+    },
   );
   expect(gapRes.ok(), await gapRes.text()).toBe(true);
+  const aApprove = await request.post(
+    `${API_BASE}/attack/assessments/${aAssess.id}/approve`,
+    {
+      headers: H,
+    },
+  );
+  expect(aApprove.ok(), await aApprove.text()).toBe(true);
 
   const zsvc = await (
     await request.post(`${API_BASE}/zt/services`, {
@@ -56,18 +145,60 @@ test("client views the finalized Risk Register dashboard", async ({
       headers: H,
     })
   ).json();
-  await request.patch(`${API_BASE}/zt/answers/${zAssess.answers[0].id}`, {
-    headers: H,
-    data: { maturity_stage: 1 },
-  });
+  const zAnswer = await request.patch(
+    `${API_BASE}/zt/answers/${zAssess.answers[0].id}`,
+    {
+      headers: H,
+      data: { maturity_stage: 1 },
+    },
+  );
+  expect(zAnswer.ok(), await zAnswer.text()).toBe(true);
+  const zApprove = await request.post(
+    `${API_BASE}/zt/assessments/${zAssess.id}/approve`,
+    {
+      headers: H,
+    },
+  );
+  expect(zApprove.ok(), await zApprove.text()).toBe(true);
 
+  // Generated from APPROVED, not-yet-released inputs: a draft. Publish refuses
+  // it and names the inputs -- Gene's gate, observed rather than assumed.
+  const draftGen = await request.post(
+    `${API_BASE}/risk/clients/${cid}/register/generate`,
+    {
+      headers: H,
+    },
+  );
+  expect(
+    draftGen.ok(),
+    `generate (draft): ${await draftGen.text()}`,
+  ).toBeTruthy();
+  const refused = await request.post(
+    `${API_BASE}/risk/clients/${cid}/register/publish`,
+    {
+      headers: H,
+    },
+  );
+  expect(refused.status(), await refused.text()).toBe(409);
+  const refusal = (await refused.json()) as {
+    error: { reason: string; blockers: { input: string }[] };
+  };
+  expect(refusal.error.reason).toBe("risk_register_inputs_not_final");
+  expect(refusal.error.blockers.map((b) => b.input).sort()).toEqual([
+    "attack",
+    "zt",
+  ]);
+
+  // Release both inputs, generate from the released work, publish.
+  await release(request, H, "attack", asvc.id);
+  await release(request, H, "zt", zsvc.id);
   const gen = await request.post(
     `${API_BASE}/risk/clients/${cid}/register/generate`,
     {
       headers: H,
     },
   );
-  expect(gen.ok(), "generate register").toBeTruthy();
+  expect(gen.ok(), `generate: ${await gen.text()}`).toBeTruthy();
   const pub = await request.post(
     `${API_BASE}/risk/clients/${cid}/register/publish`,
     {
@@ -76,7 +207,7 @@ test("client views the finalized Risk Register dashboard", async ({
   );
   expect(pub.ok(), `publish register: ${await pub.text()}`).toBeTruthy();
 
-  await signIn(page, CLIENT_EMAIL, CLIENT_PASSWORD);
+  await signIn(page, clientEmail, PASSWORD);
 
   // The Risk Register link surfaces on /results once published.
   await page.goto("/results");
