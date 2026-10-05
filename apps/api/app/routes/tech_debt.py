@@ -62,6 +62,7 @@ from app.logging import get_logger
 from app.mode_stamp import ai_mode_for
 from app.models._common import utcnow
 from app.models.artifact import Artifact, ArtifactOrigin
+from app.models.audit_entry import AuditEntry
 from app.models.capability import (
     CapabilityDisposition,
     CapabilityItem,
@@ -116,7 +117,12 @@ from app.tech_debt.overlap import analyze_overlap
 from app.tech_debt.parsers import SUPPORTED_MIME, UnsupportedInventoryFormat
 from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.savings import estimated_savings
-from app.tech_debt.security_scope import security_scope_filter
+from app.tech_debt.security_scope import (
+    PROMPT_VERSIONS_WITH_PREFIX,
+    not_in_use_contradiction,
+    not_in_use_security_tool,
+    security_scope_filter,
+)
 from app.tenant import (
     require_artifact_in_tenant,
     require_deliverable_in_tenant,
@@ -327,6 +333,28 @@ def approved_membership_stale(db: Session, cap_list: CapabilityList) -> bool:
     return approved != current
 
 
+def _not_in_use_contradictions(db: Session, items: list[CapabilityItem]) -> int:
+    """#845: rows the model marked "Security tool not in use:" while also giving
+    them security functions -- kept in ATT&CK scope by the parser, and counted.
+
+    A consultant's override of a not-in-use row stores the same shape (security
+    related, the note unchanged), and it is their ruling rather than the model
+    contradicting itself, so a row with an override on record is not counted.
+    """
+    candidates = [i.id for i in items if not_in_use_contradiction(i)]
+    if not candidates:
+        return 0
+    overridden = set(
+        db.execute(
+            select(AuditEntry.target_id).where(
+                AuditEntry.action == SECURITY_CLASSIFICATION_OVERRIDDEN,
+                AuditEntry.target_id.in_(candidates),
+            )
+        ).scalars()
+    )
+    return sum(1 for c in candidates if c not in overridden)
+
+
 def _serialize_list_with_items(db: Session, cap_list: CapabilityList) -> CapabilityListResponse:
     items = (
         db.execute(select(CapabilityItem).where(CapabilityItem.capability_list_id == cap_list.id))
@@ -343,6 +371,7 @@ def _serialize_list_with_items(db: Session, cap_list: CapabilityList) -> Capabil
     resp.approved_membership_stale = approved_membership_stale(db, cap_list)
     # #177/#193: the one reader, as the deliverable and the dashboard call it.
     resp.exclusion_count_state = exclusion_count_state(cap_list)
+    resp.not_in_use_contradictions = _not_in_use_contradictions(db, items)
     # #646: the ONE derivation every surface calls.
     resp.ai_source = AiSource.model_validate(
         ai_mode_for(db, db.get(Service, cap_list.service_id), cap_list).as_api()
@@ -596,6 +625,15 @@ def _extract_run_work(
             "version": next_version,
             "artifact_id": str(artifact_id),
             "item_count": len(result.items),
+            # #845: at extraction, before any consultant could override one --
+            # and only from a prompt that asks for the prefix. Under an earlier
+            # prompt the count is structurally 0, so it is recorded as None
+            # ("not measured"), never as a measured 0.
+            "not_in_use_contradictions": (
+                sum(1 for i in result.items if not_in_use_contradiction(i))
+                if result.llm_call.prompt_version in PROMPT_VERSIONS_WITH_PREFIX
+                else None
+            ),
             "llm_call_id": str(result.llm_call.id),
             "run_id": str(ctx.run_id),
         },
@@ -932,13 +970,20 @@ def confirm_security_classification(
 
     item.security_class_confirmed = True
     _record_edit(db, item.capability_list_id)
+    # #845: a security tool the extraction marked not in use is taken out of
+    # ATT&CK scope, not judged "not security-related", and the record says so.
+    removed = not_in_use_security_tool(item)
     audit(
         db,
-        action="capability_item.security_classification_confirmed",
+        action=(
+            REMOVED_FROM_ATTACK_SCOPE
+            if removed
+            else "capability_item.security_classification_confirmed"
+        ),
         target_type="capability_item",
         target_id=item.id,
         actor_user_id=user.id,
-        details={"name": item.name},
+        details={"name": item.name, "notes": item.notes} if removed else {"name": item.name},
     )
     db.commit()
     db.refresh(cap_list)
@@ -949,6 +994,8 @@ def confirm_security_classification(
 #: ATT&CK what-if counts a row overridden after its base as brought into scope
 #: (`routes/attack_scenarios.py`, #802 (ii)).
 SECURITY_CLASSIFICATION_OVERRIDDEN = "capability_item.security_classification_overridden"
+#: #845: what confirming a not-in-use security tool writes (approved name).
+REMOVED_FROM_ATTACK_SCOPE = "capability_item.removed_from_attack_scope"
 
 
 @router.post(
