@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { INPUTS_RULE, inputLine, sourceStateNote } from "./inputs";
+import {
+  INPUTS_RULE,
+  REVIEW_PENDING_NOTE,
+  inputLine,
+  sourceStateNote,
+} from "./inputs";
 
 describe("Inputs panel words (#737)", () => {
   it("states Gene's rule verbatim", () => {
@@ -40,5 +45,9 @@ describe("Inputs panel words (#737)", () => {
   it("labels a finding from an unreleased input, and says nothing otherwise", () => {
     expect(sourceStateNote("draft")).toBe(" (from a draft assessment)");
     expect(sourceStateNote(null)).toBeNull();
+  });
+
+  it("names a finding awaiting review (DRAFT copy, with the advisor)", () => {
+    expect(REVIEW_PENDING_NOTE).toBe(" (computed status awaiting review)");
   });
 });

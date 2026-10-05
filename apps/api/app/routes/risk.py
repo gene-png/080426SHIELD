@@ -224,19 +224,6 @@ def _latest_register(db: Session, client_id: uuid.UUID) -> RiskRegister | None:
     ).scalar_one_or_none()
 
 
-def _unreviewed_sentence(n: int) -> str:
-    """#554 R3: why a register cannot be generated while the ATT&CK review queue
-    holds rows. ONE sentence for the gate and the refusal (approved by the
-    advisor 01:35Z), so the page never says something generate contradicts."""
-    return (
-        f"The Risk Register cannot be generated yet: {n} ATT&CK "
-        f"{'technique has' if n == 1 else 'techniques have'} a computed status that "
-        "differs from the AI's suggestion and has not been reviewed. "
-        f"Review {'it' if n == 1 else 'them'} in the ATT&CK Computed status review "
-        "panel, then generate again."
-    )
-
-
 def _input_states(db: Session, client_id: uuid.UUID) -> list[RiskInputState]:
     """#737, the Inputs panel, from the SAME reader publish uses
     (`app/risk/inputs.py`), so the panel cannot disagree with the refusal."""
@@ -315,18 +302,12 @@ def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
     # separate field, not `synthesizable_missing`: that list is rendered as
     # "cannot be generated until these are approved", and this input already is.
     attack_catalog_mismatch = catalog_mismatch_message(db, attack) if attack is not None else None
-    # #554 R3, the same precedent: synthesis refuses an assessment whose computed
-    # statuses await review (`_gather_findings`), so the gate asks the SAME
-    # predicate and carries the SAME sentence. Asked only of a current catalog,
-    # because synthesis refuses a stale one first.
-    unreviewed = (
-        attack_unreviewed_codes(db, attack)
-        if attack is not None and attack_catalog_mismatch is None
-        else ()
-    )
-    attack_computed_status_unreviewed = (
-        _unreviewed_sentence(len(unreviewed)) if unreviewed else None
-    )
+    # #554 R3 under the advisor's ruling on #737 (#736 5998764095, option (b)):
+    # unreviewed computed statuses no longer block Generate -- each affected
+    # finding is labelled, and publish refuses (the input cannot be released).
+    # So the gate carries no sentence for them: always None, the field kept so
+    # an older client parses (the coordinator's (a): dropped, not reworded).
+    attack_computed_status_unreviewed = None
     finalized_csf = _finalized_for_synthesis(db, CsfAssessment, client_id) is not None
     finalized_zt = _finalized_for_synthesis(db, ZtAssessment, client_id) is not None
     for label, present, finalized in (
@@ -571,21 +552,14 @@ def _gather_findings(
         # "ATT&CK T1649.001" is not a technique, and a T1558 row was answered
         # against the swapped name. Refused, never relabelled by ID (D-091).
         require_current_catalog(db, attack)
-        # #554 R3, the advisor's ruling (00:35Z): FAIL-CLOSED. An APPROVED
-        # assessment whose computed statuses nobody has reviewed is not released
-        # (`release_readiness`), and synthesis must not carry those statuses into
-        # a register the client can export either. Refused, typed, rather than
-        # excluded: an exclusion would yield a register silently missing ATT&CK.
-        unreviewed = attack_unreviewed_codes(db, attack)
-        if unreviewed:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "reason": "attack_computed_status_unreviewed",
-                    "message": _unreviewed_sentence(len(unreviewed)),
-                    "unreviewed": list(unreviewed),
-                },
-            )
+        # #554 R3 on a DRAFT register, the advisor's ruling (#736 5998764095,
+        # option (b)): NOT refused here any more. A register drafted while the
+        # ATT&CK review queue holds rows is labelled per finding (`generate`
+        # records the codes in provenance `review_pending`), and publish
+        # refuses it: an assessment with unreviewed computed statuses cannot be
+        # released (`release_readiness`), and publish needs every engaged input
+        # released. Only the stale catalog above still refuses at generate,
+        # because a technique ID can name the wrong technique (D-091).
         # #554 R3: computed statuses where they apply, so a finding's status is
         # the one the client's dashboard and deliverable show.
         rows = effective_coverage(
@@ -1479,6 +1453,10 @@ def generate(
         for i in (register.provenance or {}).get("inputs", [])
         if isinstance(i, dict)
     }
+    # #554 R3, option (b): the ATT&CK codes whose computed status awaited
+    # review at generate. Each finding for one of them is labelled.
+    _attack_now = _current_for_synthesis(db, AttackAssessment, cid)
+    review_pending = sorted(attack_unreviewed_codes(db, _attack_now)) if _attack_now else []
     source_states = {
         str(f["source_id"]): _state_by_kind[f["kind"]]
         for f in findings
@@ -1554,6 +1532,7 @@ def generate(
         }
         _prov_with_count["finding_coverage"] = finding_record
         _prov_with_count["source_states"] = source_states
+        _prov_with_count["review_pending"] = review_pending
         _prov_with_count["ratings_carried"] = ratings_carried
         register.provenance = _prov_with_count
         db.add(register)
@@ -1863,6 +1842,12 @@ def _require_certifiable_inputs(reg: RiskRegister) -> None:
     # refusing to re-export it protects nobody while breaking a delivered path.
     _already_delivered = reg.finalized_at is not None
     if _prov is None:
+        # RATCHET since #737. It protects: a register with no provenance at all
+        # (pre-0047) being published. No current writer reaches it: this helper
+        # now runs only in `publish`, AFTER the input gate, which already
+        # refuses a NULL provenance as `not_recorded`. It would become reachable
+        # again if the gate stopped running first, or if export took these
+        # guards back.
         if not _already_delivered:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -1979,7 +1964,11 @@ def _render_and_store(
     # #844, read through the same single reader `_serialize` uses.
     _findings = _finding_fields(reg.provenance)
     _states = (reg.provenance or {}).get("source_states")
+    _pending = (reg.provenance or {}).get("review_pending")
     ctx = risk_exporters.build_context(
+        review_pending=(
+            frozenset(str(x) for x in _pending) if isinstance(_pending, list) else frozenset()
+        ),
         source_states=(
             {str(k): str(v) for k, v in _states.items()} if isinstance(_states, dict) else {}
         ),
@@ -2167,6 +2156,17 @@ def publish(
                 ),
             },
         )
+    # RATCHET, #554 R3 under option (b): a register drafted while the ATT&CK
+    # review queue held rows is refused here by the input gate, not by a
+    # refusal of its own. It protects: a register whose ATT&CK findings carry
+    # computed statuses nobody reviewed. No current writer reaches publish with
+    # one: release refuses while the queue holds a code
+    # (`release_readiness.blocking_condition`; pinned by
+    # test_attack_computed_status_routes.py::test_release_is_refused_until_the_queue_is_reviewed),
+    # and this gate needs every engaged input released. It would become
+    # reachable through a release path that skips that guard, or a computed
+    # status that can change after release.
+    #
     # #737, Gene's rule: nothing final until every engaged input is final. FIRST,
     # so a draft input is refused with the typed per-input reason rather than
     # by the older #240 guard's untyped sentence, which still runs below for the
@@ -2808,6 +2808,10 @@ def _serialize(
     _source_states: dict[str, str] = (
         {str(k): str(v) for k, v in _raw_states.items()} if isinstance(_raw_states, dict) else {}
     )
+    _raw_pending = stored.get("review_pending") if isinstance(stored, dict) else None
+    _review_pending: set[str] = (
+        {str(x) for x in _raw_pending} if isinstance(_raw_pending, list) else set()
+    )
     return RiskRegisterResponse(
         excluded_inputs=resolved_excluded,
         excluded_inputs_recorded=excluded_recorded,
@@ -2876,7 +2880,10 @@ def _serialize(
         docx_filename=_fn(register.docx_artifact_id),
         entries=[
             RiskEntryResponse.model_validate(e, from_attributes=True).model_copy(
-                update={"source_state": _source_states.get(e.source_id or "")}
+                update={
+                    "source_state": _source_states.get(e.source_id or ""),
+                    "source_review_pending": (e.source_id or "") in _review_pending,
+                }
             )
             for e in entries
         ],

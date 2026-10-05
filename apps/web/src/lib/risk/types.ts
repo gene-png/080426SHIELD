@@ -71,6 +71,11 @@ export interface RiskEntry {
    * null when released, or for a register predating this.
    */
   source_state: string | null;
+  /**
+   * #554 R3, option (b): this entry's ATT&CK technique had a computed status
+   * awaiting review when the register was generated.
+   */
+  source_review_pending: boolean;
   linked_techniques: string[] | null;
   linked_controls: string[] | null;
   likelihood: string | null;

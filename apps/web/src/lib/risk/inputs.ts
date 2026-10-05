@@ -28,6 +28,13 @@ export function inputLine(row: RiskInputState): string {
   return `${label}: ${STATES[row.status] ?? row.status}`;
 }
 
+/**
+ * #554 R3, option (b): an entry whose ATT&CK technique's computed status
+ * awaited review when the register was generated. DRAFT copy, with the
+ * advisor; the export's source cell carries the same words.
+ */
+export const REVIEW_PENDING_NOTE = " (computed status awaiting review)";
+
 export function sourceStateNote(state: string | null): string | null {
   return state ? ` (from a ${state} assessment)` : null;
 }

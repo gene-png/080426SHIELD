@@ -90,6 +90,9 @@ class RiskExportContext:
     #: #737: `source_id -> state` for findings drafted from an input that was
     #: not released at generate; the source cell names it.
     source_states: dict[str, str] = field(default_factory=dict)
+    #: #554 R3, option (b): ATT&CK codes whose computed status awaited review
+    #: at generate; the source cell says so.
+    review_pending: frozenset[str] = frozenset()
 
 
 def _enum_list(values, enum_cls):
@@ -113,6 +116,7 @@ def build_context(
     finding_counts: tuple[int, int, int] | None = None,
     draft: bool = False,
     source_states: dict[str, str] | None = None,
+    review_pending: frozenset[str] = frozenset(),
 ) -> RiskExportContext:
     return RiskExportContext(
         client_legal_name=org_display_name(client_legal_name),
@@ -122,6 +126,7 @@ def build_context(
         finding_counts=finding_counts,
         draft=draft,
         source_states=dict(source_states or {}),
+        review_pending=review_pending,
     )
 
 
@@ -172,7 +177,9 @@ def _joined(v) -> str:
     return ", ".join(v) if isinstance(v, list) else ""
 
 
-def _source(e: Any, states: dict[str, str] | None = None) -> str:
+def _source(
+    e: Any, states: dict[str, str] | None = None, pending: frozenset[str] = frozenset()
+) -> str:
     if e.source and e.source_id:
         cell = f"{e.source}:{e.source_id}"
     else:
@@ -180,7 +187,12 @@ def _source(e: Any, states: dict[str, str] | None = None) -> str:
     # #737, Gene's ruling: a finding drafted from an unreleased input says so.
     # DRAFT copy, with the advisor.
     state = (states or {}).get(e.source_id or "")
-    return f"{cell} (from a {state} assessment)" if state else cell
+    if state:
+        cell = f"{cell} (from a {state} assessment)"
+    # #554 R3, option (b). DRAFT copy, with the advisor.
+    if (e.source_id or "") in pending:
+        cell = f"{cell} (computed status awaiting review)"
+    return cell
 
 
 # ---------------------------------------------------------------------------
@@ -231,7 +243,7 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
                 e.title,
                 e.description or "",
                 (e.axis or "").title(),
-                _source(e, ctx.source_states),
+                _source(e, ctx.source_states, ctx.review_pending),
                 _joined(e.linked_techniques),
                 _joined(e.linked_controls),
                 _rating(e.likelihood),
@@ -565,7 +577,7 @@ def render_pdf(ctx: RiskExportContext) -> bytes:
                 _li(e),
                 _rating(e.tier),
                 (e.recommended_action or "").title(),
-                _source(e, ctx.source_states),
+                _source(e, ctx.source_states, ctx.review_pending),
             ]
         )
     story.append(
@@ -614,7 +626,7 @@ def render_docx(ctx: RiskExportContext) -> bytes:
             _li(e),
             _rating(e.tier),
             (e.recommended_action or "").title(),
-            _source(e, ctx.source_states),
+            _source(e, ctx.source_states, ctx.review_pending),
         ]
         for i, e in enumerate(ctx.entries, start=1)
     ]

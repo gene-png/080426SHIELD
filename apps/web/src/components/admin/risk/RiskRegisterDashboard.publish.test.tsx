@@ -77,6 +77,7 @@ function entry(over: Partial<RiskEntry> = {}): RiskEntry {
     trust: "admin_assisted",
     dropped_links: {},
     source_state: null,
+    source_review_pending: false,
     rating_edited_by: null,
     rating_edited_at: null,
     ...over,
@@ -221,6 +222,17 @@ describe("RiskRegisterDashboard inputs and draft labels (#737)", () => {
       "ATT&CK coverage: approved, not yet released",
     );
     expect(panel.textContent).toContain("NIST CSF: not engaged");
+  });
+
+  it("labels an entry whose computed status awaits review (#554 R3, option (b))", async () => {
+    fetchRiskGate.mockResolvedValue(gate());
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({ entries: [entry({ source_review_pending: true })] }),
+    );
+    await loaded();
+    expect(
+      screen.getByText("T1078 (computed status awaiting review)"),
+    ).toBeInTheDocument();
   });
 
   it("labels an entry drafted from an unreleased input", async () => {

@@ -112,6 +112,9 @@ class RiskEntryResponse(BaseModel):
     # from, when that input was NOT released at generate ("draft", "submitted",
     # "approved"); None when it was released, or the register predates this.
     source_state: str | None = None
+    # #554 R3, option (b): this entry's finding is an ATT&CK technique whose
+    # computed status awaited review when the register was generated.
+    source_review_pending: bool = False
     # #844. Both None: the rating is the model's as generated. Set: a consultant
     # set likelihood or impact through the edit path, and the screen and the
     # exports say so instead of crediting the model.
