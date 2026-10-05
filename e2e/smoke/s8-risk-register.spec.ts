@@ -203,20 +203,20 @@ test("register is locked with only ATT&CK and unlocks once a ZT assessment exist
   await expect(page.getByText("Risk Register is locked")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Generate" })).toBeVisible();
 
-  // #237. The gate unlocks on EXISTENCE, so the page is fully rendered — but
-  // both assessments here are DRAFTS, and synthesis reads only approved work.
-  // The page must say so rather than let the consultant discover it by pressing
-  // Generate and meeting a 409.
+  // #737 (Gene's ruling, #736 item 13, reversing #237). The gate still unlocks
+  // on EXISTENCE, and both assessments here are DRAFTS: a register can now be
+  // drafted from them, and it cannot be published until they are released.
+  // The Inputs panel says which inputs are not final, before anyone presses
+  // Publish. These two lines pin DRAFT copy (with the advisor); if the wording
+  // is changed, this spec changes with it.
   //
-  // Asserted POSITIVELY first (the heading above) and only then the notice: a
-  // `toHaveCount(0)` on a page still fetching passes vacuously, and this spec's
-  // whole subject is a page whose state changed.
+  // Asserted POSITIVELY first (the heading above) and only then the panel, so
+  // nothing here passes on a page still fetching.
+  await expect(page.getByTestId("risk-register-inputs")).toBeVisible();
   await expect(
-    page.getByTestId("risk-register-unapproved-sources"),
+    page.getByText("ATT&CK coverage: in progress (draft)"),
   ).toBeVisible();
-  await expect(
-    page.getByText(/an approved MITRE ATT&CK coverage mapping/),
-  ).toBeVisible();
+  await expect(page.getByText("Zero Trust: in progress (draft)")).toBeVisible();
 });
 
 test("Generate derives tiers in code, renders KPIs + 5x5 heatmap, cites only the client's own techniques; Regenerate bumps version; exports download", async ({
