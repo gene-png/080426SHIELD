@@ -6,9 +6,11 @@ deliverable or anything the client sees: a scenario has its own tables
 (migration 0060), and every figure is computed by `app.attack.scenario` from
 the base assessment's rows and the scenario's own.
 
-The AI job (`attack_scenario_delta`) ships UNREGISTERED until #806 releases its
-prompt text; until then the run route refuses with a typed 503 before anything
-is spent.
+The AI job (`attack_scenario_delta`) ships registered with Gene's approved
+prompt (#802). The run route's typed 503 (copy 16) is kept as a RATCHET: it
+fires only if that registration is ever removed, and should normally never
+fire. Its tests remove the registration on purpose to prove it still refuses
+before anything is spent.
 """
 
 from __future__ import annotations
@@ -754,6 +756,9 @@ def run_scenario(
     build a provider (#815 review, F4). `start_run`'s refusals (#504's mode
     change, a run in progress on other input) still come after both."""
     s = _scenario_or_404(db, scenario_id, client)
+    # A ratchet since #802 shipped the prompt: the job is always registered, so
+    # this should never fire. It stays so an unregistered job still refuses
+    # before anything is spent, rather than failing in the background job.
     if not scenario.analysis_available():
         raise _refuse(
             status.HTTP_503_SERVICE_UNAVAILABLE,

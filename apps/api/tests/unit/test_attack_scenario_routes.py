@@ -4,18 +4,14 @@ The world is built the way a consultant builds it: tools typed into the
 matrix, the assessment approved under R3, the deliverable finalized and
 released. The AI is a fixture provider answering the PROMPT's contract
 (`{"rows": [{technique_code, tool, detection, prevention, response,
-rationale}]}`), and the job is a placeholder registered here.
-
-TODO(#806): the placeholder below stands in for the prompt text #806 holds.
-When that text lands in `app/ai/jobs.py`, delete `_PLACEHOLDER_PROMPT` and
-`analysis_job`, and let these tests use the registered job.
+rationale}]}`), and the job is the one `app/ai/jobs.py` registers with
+Gene's approved prompt (#802).
 """
 
 from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -27,7 +23,6 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import sessionmaker
 
 from app.ai import engine as ai_engine
-from app.ai.engine import AIJob
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.attack.catalog import NOT_PREVENTABLE
 from app.models.ai_run import AiRun
@@ -47,20 +42,8 @@ from tests.unit.test_ai_runs_attack import app_parts  # noqa: F401  (fixture)
 pytestmark = pytest.mark.unit
 
 PURPOSE = "attack_scenario_delta"
-_PLACEHOLDER_PROMPT = "TODO(#806): placeholder; the real text is held by #806."
 
 EDR, SIEM, SOAR = "EDR Tool", "SIEM Tool", "SOAR Tool"
-
-
-@pytest.fixture()
-def analysis_job() -> Iterator[None]:
-    """Register the placeholder job for one test, and remove it after, so the
-    unregistered state the other tests rely on is restored."""
-    ai_engine.register_job(AIJob(name=PURPOSE, prompt=_PLACEHOLDER_PROMPT, top_level_key="rows"))
-    try:
-        yield
-    finally:
-        ai_engine._REGISTRY.pop(PURPOSE, None)
 
 
 @dataclass
@@ -396,19 +379,31 @@ def test_another_tenants_scenario_is_not_found(app_parts) -> None:  # noqa: F811
 # --- running it -------------------------------------------------------------
 
 
-def test_until_806_releases_the_prompt_a_run_is_a_typed_503_and_spends_nothing(
-    app_parts,  # noqa: F811
+def _remove_the_job(m: pytest.MonkeyPatch) -> None:
+    """The kept 503 guard (copy 16) is a RATCHET: with the job registered it
+    should never fire. Its tests remove the registration inside a
+    `monkeypatch.context()` only, so the real job is back when the block ends,
+    and each asserts that it is."""
+    ai_engine.registered_jobs()  # registers the defaults before one is removed
+    m.delitem(ai_engine._REGISTRY, PURPOSE)
+
+
+def test_if_the_job_is_ever_unregistered_a_run_is_a_typed_503_and_spends_nothing(
+    app_parts, monkeypatch  # noqa: F811
 ) -> None:
     w = _world(app_parts)
     sid = w.create([EDR]).json()["id"]
-    r = w.run(sid)
-    assert r.status_code == 503, r.text
-    assert _error(r) == {
-        "reason": "scenario_analysis_unavailable",
-        "message": "AI analysis for what-ifs is not available yet.",
-    }
-    assert _ai_runs(w) == []
-    assert w.get(sid)["analysis_available"] is False
+    with monkeypatch.context() as m:
+        _remove_the_job(m)
+        r = w.run(sid)
+        assert r.status_code == 503, r.text
+        assert _error(r) == {
+            "reason": "scenario_analysis_unavailable",
+            "message": "AI analysis for what-ifs is not available yet.",
+        }
+        assert _ai_runs(w) == []
+        assert w.get(sid)["analysis_available"] is False
+    assert PURPOSE in ai_engine.registered_jobs()  # restored, not deleted
 
 
 def _run_to_completion(w: World, sid: str) -> dict:
@@ -418,7 +413,7 @@ def _run_to_completion(w: World, sid: str) -> dict:
 
 
 def test_a_run_reassesses_only_the_affected_techniques_and_compares(
-    app_parts, analysis_job  # noqa: F811
+    app_parts,  # noqa: F811
 ) -> None:
     w = _world(app_parts)
     # A lost Detect and Prevent; SIEM re-credits Detect -> Partial (was
@@ -465,9 +460,7 @@ def test_a_run_reassesses_only_the_affected_techniques_and_compares(
     assert body["not_reassessed"] == []
 
 
-def test_a_technique_that_would_score_higher_is_counted_and_marked(
-    app_parts, analysis_job  # noqa: F811
-) -> None:
+def test_a_technique_that_would_score_higher_is_counted_and_marked(app_parts) -> None:  # noqa: F811
     """The advisor's addition (05:05Z). With base credits kept and only lost
     functions asked about, a technique can end HIGHER only where a lost
     function is re-credited by a confirmed tool and the base's was an uncleared
@@ -487,9 +480,7 @@ def test_a_technique_that_would_score_higher_is_counted_and_marked(
     assert marked == {w.a: False, w.cc: True}
 
 
-def test_the_base_credits_stand_when_the_ai_names_nothing(
-    app_parts, analysis_job  # noqa: F811
-) -> None:
+def test_the_base_credits_stand_when_the_ai_names_nothing(app_parts) -> None:  # noqa: F811
     """The AI may only add (the advisor, 05:25Z): an answer naming nothing
     leaves each affected technique with the removal alone, re-assessed."""
     w = _world(app_parts)
@@ -505,7 +496,7 @@ def test_the_base_credits_stand_when_the_ai_names_nothing(
 
 
 def test_a_row_crediting_a_function_the_removal_did_not_take_is_set_aside(
-    app_parts, analysis_job  # noqa: F811
+    app_parts,  # noqa: F811
 ) -> None:
     """A lost Detect and Prevent; its Respond was untouched. A row crediting
     Respond is dropped whole and counted, so it cannot raise anything."""
@@ -519,7 +510,7 @@ def test_a_row_crediting_a_function_the_removal_did_not_take_is_set_aside(
     assert lists[w.a]["response_tools"] == [SOAR]
 
 
-def test_nothing_scoring_higher_counts_zero_not_none(app_parts, analysis_job) -> None:  # noqa: F811
+def test_nothing_scoring_higher_counts_zero_not_none(app_parts) -> None:  # noqa: F811
     w = _world(app_parts)
     w.answer({})
     sid = w.create([EDR]).json()["id"]
@@ -528,9 +519,7 @@ def test_nothing_scoring_higher_counts_zero_not_none(app_parts, analysis_job) ->
     assert all(d["scored_higher"] is False for d in body["differences"])
 
 
-def test_a_removed_tool_the_ai_names_anyway_is_dropped_and_counted(
-    app_parts, analysis_job  # noqa: F811
-) -> None:
+def test_a_removed_tool_the_ai_names_anyway_is_dropped_and_counted(app_parts) -> None:  # noqa: F811
     w = _world(app_parts)
     w.answer({w.cc: [_flags(w.cc, EDR, d=True, p=True, r=True)]})
     sid = w.create([EDR]).json()["id"]
@@ -542,7 +531,7 @@ def test_a_removed_tool_the_ai_names_anyway_is_dropped_and_counted(
 
 
 def test_a_batch_that_fails_leaves_its_techniques_not_reassessed(
-    app_parts, analysis_job, monkeypatch  # noqa: F811
+    app_parts, monkeypatch  # noqa: F811
 ) -> None:
     """Not the frozen row passed off as re-assessed: the removal alone, and
     named. One technique per batch, so one batch can fail while the other
@@ -571,9 +560,7 @@ def test_a_batch_that_fails_leaves_its_techniques_not_reassessed(
     assert (run["batches_total"], run["batches_failed"]) == (2, 1)
 
 
-def test_a_run_writes_nothing_the_assessment_or_the_client_reads(
-    app_parts, analysis_job  # noqa: F811
-) -> None:
+def test_a_run_writes_nothing_the_assessment_or_the_client_reads(app_parts) -> None:  # noqa: F811
     w = _world(app_parts)
     w.answer({w.cc: [_flags(w.cc, SIEM, d=True, p=True, r=True)]})
     rows_before = w.coverage_snapshot()
@@ -586,7 +573,7 @@ def test_a_run_writes_nothing_the_assessment_or_the_client_reads(
     assert w.c.get(dash_url, headers=w.h).content == dash_before.content
 
 
-def test_a_discarded_what_if_cannot_be_run(app_parts, analysis_job) -> None:  # noqa: F811
+def test_a_discarded_what_if_cannot_be_run(app_parts) -> None:  # noqa: F811
     w = _world(app_parts)
     w.answer({})
     sid = w.create([EDR]).json()["id"]
@@ -599,7 +586,7 @@ def test_a_discarded_what_if_cannot_be_run(app_parts, analysis_job) -> None:  # 
     assert _ai_runs(w) == []
 
 
-def test_a_discard_racing_the_run_wins(app_parts, analysis_job) -> None:  # noqa: F811
+def test_a_discard_racing_the_run_wins(app_parts) -> None:  # noqa: F811
     """Discarded before the job starts: it ends FAILED without calling the AI,
     so nothing is spent on a what-if nobody will read."""
     w = _world(app_parts)
@@ -618,7 +605,7 @@ def test_a_discard_racing_the_run_wins(app_parts, analysis_job) -> None:  # noqa
 
 
 def test_a_what_if_overtaken_by_a_newer_confirmed_assessment_is_stale_and_not_run(
-    app_parts, analysis_job  # noqa: F811
+    app_parts,  # noqa: F811
 ) -> None:
     w = _world(app_parts)
     w.answer({})
@@ -635,7 +622,7 @@ def test_a_what_if_overtaken_by_a_newer_confirmed_assessment_is_stale_and_not_ru
 
 
 def test_a_discard_landing_while_the_ai_answers_still_wins(
-    app_parts, analysis_job, monkeypatch  # noqa: F811
+    app_parts, monkeypatch  # noqa: F811
 ) -> None:
     """The job's second check, after the AI call (D-031's re-read): a discard
     made while the batches were out is not overwritten by their answers. The
@@ -674,9 +661,7 @@ def test_a_discard_landing_while_the_ai_answers_still_wins(
     assert body["scored_higher"] is None
 
 
-def test_a_discard_landing_as_the_run_starts_is_not_undone(
-    app_parts, analysis_job  # noqa: F811
-) -> None:
+def test_a_discard_landing_as_the_run_starts_is_not_undone(app_parts) -> None:  # noqa: F811
     """Between `start_run` committing the run and the route recording it, a
     discard from another request lands. The route's own state change must not
     write CONFIRMED over it."""
@@ -706,7 +691,7 @@ def test_a_discard_landing_as_the_run_starts_is_not_undone(
     assert body["ai_run_id"] == r.json()["run_id"]
 
 
-def test_a_failed_run_says_why_and_can_be_run_again(app_parts, analysis_job) -> None:  # noqa: F811
+def test_a_failed_run_says_why_and_can_be_run_again(app_parts) -> None:  # noqa: F811
     """A run whose every batch fails ends FAILED, the scenario says why, and
     the same what-if can be run again: nothing was written for it."""
     w = _world(app_parts)
@@ -729,7 +714,7 @@ def test_a_failed_run_says_why_and_can_be_run_again(app_parts, analysis_job) -> 
 
 
 def test_a_row_whose_technique_is_not_a_string_is_dropped_and_the_run_completes(
-    app_parts, analysis_job  # noqa: F811
+    app_parts,  # noqa: F811
 ) -> None:
     """F1: a list where a code belongs is unhashable. It is set aside and
     counted; it never takes the batch's other answers, or the run, with it."""
@@ -751,7 +736,7 @@ def test_a_row_whose_technique_is_not_a_string_is_dropped_and_the_run_completes(
 
 
 def test_a_removed_tool_is_not_offered_or_credited_under_its_other_spelling(
-    app_parts, analysis_job  # noqa: F811
+    app_parts,  # noqa: F811
 ) -> None:
     """F2. The list holds the client-named tool AND its placeholder spelling,
     which the egress shows the model identically. Removing one removes both:
@@ -784,7 +769,7 @@ def test_a_removed_tool_is_not_offered_or_credited_under_its_other_spelling(
 
 
 def test_a_distinct_tool_sharing_only_a_placeholder_stays_offered_but_is_not_credited(
-    app_parts, analysis_job  # noqa: F811
+    app_parts,  # noqa: F811
 ) -> None:
     """Round 2, item 2. `Unit 7` is not `Unit 42`, but the model is shown both
     as one placeholder. It stays offered; a citation of the shared string is
@@ -813,7 +798,7 @@ def test_a_distinct_tool_sharing_only_a_placeholder_stays_offered_but_is_not_cre
 
 
 def test_a_completed_what_if_is_never_repointed_at_a_later_run(
-    app_parts, analysis_job, monkeypatch  # noqa: F811
+    app_parts, monkeypatch  # noqa: F811
 ) -> None:
     """Round 2, item 3. A run completing between the route's check and
     `start_run` lets a second run start; the scenario keeps the run that wrote
@@ -849,7 +834,7 @@ def _add_tool_after_approval(w: World, name: str) -> None:
 
 
 def test_a_tool_added_since_the_base_is_counted_and_its_credit_marked(
-    app_parts, analysis_job  # noqa: F811
+    app_parts,  # noqa: F811
 ) -> None:
     """(b2), count above zero: the tool added after approval is offered, the
     count says so, and the technique the AI credited to it is marked."""
@@ -866,7 +851,7 @@ def test_a_tool_added_since_the_base_is_counted_and_its_credit_marked(
     assert marks[w.cc] is True and marks[w.a] is False
 
 
-def test_no_tool_added_since_the_base_counts_zero(app_parts, analysis_job) -> None:  # noqa: F811
+def test_no_tool_added_since_the_base_counts_zero(app_parts) -> None:  # noqa: F811
     """(b2), count zero: checked, and nothing was added. 0, not None."""
     w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
     w.answer({w.cc: [_flags(w.cc, SIEM, d=True)]})
@@ -877,7 +862,7 @@ def test_no_tool_added_since_the_base_counts_zero(app_parts, analysis_job) -> No
 
 
 def test_a_list_approved_before_0043_cannot_be_checked_and_reads_null_never_zero(
-    app_parts, analysis_job  # noqa: F811
+    app_parts,  # noqa: F811
 ) -> None:
     """(b2), could not check: an approved list with no recorded membership.
     Missing data defaults to unconfirmed: None, never 0."""
@@ -889,9 +874,7 @@ def test_a_list_approved_before_0043_cannot_be_checked_and_reads_null_never_zero
     assert body["tools_added_since_base"] is None
 
 
-def test_a_row_naming_an_added_tool_with_no_function_is_not_marked(
-    app_parts, analysis_job  # noqa: F811
-) -> None:
+def test_a_row_naming_an_added_tool_with_no_function_is_not_marked(app_parts) -> None:  # noqa: F811
     """Round 3, item 1: an accepted row whose functions are all false names the
     added tool and credits it with nothing. No mark."""
     w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
@@ -905,9 +888,7 @@ def test_a_row_naming_an_added_tool_with_no_function_is_not_marked(
     assert all(d["credited_added_tool"] is False for d in body["differences"])
 
 
-def test_a_post_0043_snapshot_judges_each_entry_by_its_item(
-    app_parts, analysis_job  # noqa: F811
-) -> None:
+def test_a_post_0043_snapshot_judges_each_entry_by_its_item(app_parts) -> None:  # noqa: F811
     """Round 3, item 2. The list is approved WITH a D-053 snapshot, written by
     the real writer. A tool added and re-approved after the base is counted;
     the snapshot's older entries are not."""
@@ -931,7 +912,7 @@ def test_a_post_0043_snapshot_judges_each_entry_by_its_item(
 
 
 def test_one_scenarios_result_never_stops_anothers_run_being_recorded(
-    app_parts, analysis_job  # noqa: F811
+    app_parts,  # noqa: F811
 ) -> None:
     """Round 3, item 5: the no-repoint guard is correlated to ITS scenario. A
     result written for one what-if does not keep another from recording its
@@ -951,7 +932,7 @@ EARLY = "Early Override Tool"
 
 
 def test_an_old_row_brought_into_scope_after_the_base_is_counted_and_one_before_is_not(
-    app_parts, analysis_job  # noqa: F811
+    app_parts,  # noqa: F811
 ) -> None:
     """The advisor's (ii), 08:57Z. Two rows created BEFORE the base.
 
@@ -1031,7 +1012,7 @@ class _CountingLimiter:
 
 
 def test_a_run_refused_before_any_ai_spends_no_rate_limit_token_and_builds_no_provider(
-    app_parts,  # noqa: F811
+    app_parts, monkeypatch  # noqa: F811
 ) -> None:
     """F4: the 503 comes before the rate limit and the provider."""
     from app.routes.attack_scenarios import _llm_builder
@@ -1043,14 +1024,15 @@ def test_a_run_refused_before_any_ai_spends_no_rate_limit_token_and_builds_no_pr
     w.app.dependency_overrides[get_rate_limiter] = lambda: limiter
     w.app.dependency_overrides[_llm_builder] = lambda: (lambda: built.append(1))
     sid = w.create([EDR]).json()["id"]
-    assert w.run(sid).status_code == 503
+    with monkeypatch.context() as m:
+        _remove_the_job(m)
+        assert w.run(sid).status_code == 503
     assert limiter.charged == 0
     assert built == []
+    assert PURPOSE in ai_engine.registered_jobs()  # restored, not deleted
 
 
-def test_a_run_that_starts_spends_one_rate_limit_token(
-    app_parts, analysis_job  # noqa: F811
-) -> None:
+def test_a_run_that_starts_spends_one_rate_limit_token(app_parts) -> None:  # noqa: F811
     """The other half of F4's test: the counter is the one the route charges."""
     from app.security.rate_limit import get_rate_limiter
 
@@ -1063,9 +1045,7 @@ def test_a_run_that_starts_spends_one_rate_limit_token(
     assert limiter.charged == 1
 
 
-def test_a_second_run_never_replaces_a_result_already_written(
-    app_parts, analysis_job  # noqa: F811
-) -> None:
+def test_a_second_run_never_replaces_a_result_already_written(app_parts) -> None:  # noqa: F811
     """F5: a run that passed the route's check but finds a result already
     written by the time it answers is refused, typed, and deletes nothing."""
     w = _world(app_parts)
@@ -1094,7 +1074,7 @@ def test_a_second_run_never_replaces_a_result_already_written(
     ]
 
 
-def test_an_analysed_what_if_is_not_run_twice(app_parts, analysis_job) -> None:  # noqa: F811
+def test_an_analysed_what_if_is_not_run_twice(app_parts) -> None:  # noqa: F811
     w = _world(app_parts)
     w.answer({})
     sid = w.create([EDR]).json()["id"]
@@ -1125,3 +1105,44 @@ def test_a_non_admin_cannot_reach_a_what_if(app_parts) -> None:  # noqa: F811
     ):
         r = getattr(w.c, method)(url, headers=h)
         assert r.status_code in (401, 403), (url, r.status_code, r.text)
+
+
+class _RecordingProvider(FixtureProvider):
+    """A fixture provider that also records the prompt each call SENDS."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.prompts: list[str] = []
+
+    def complete(self, prompt: str, payload: dict[str, Any]) -> LLMResponse:
+        if payload.get("__purpose__") == PURPOSE:
+            self.prompts.append(prompt)
+        return super().complete(prompt, payload)
+
+
+def test_a_run_with_the_shipped_job_is_accepted_and_sends_the_shipped_prompt(
+    app_parts,  # noqa: F811
+) -> None:
+    """#802: the job ships registered, so a run is accepted (no 503) and every
+    batch sends the approved text. The digest is the approved text's, taken from
+    Gene's comments (#802 comments 5970337002 and 5982780636), not from code."""
+    import hashlib
+
+    # test-integrity: the spec is the literal digest of Gene's approved text; the constant is compared with the prompt the real run SENT, and hashed against that digest
+    from app.ai.jobs import _ATTACK_SCENARIO_DELTA_PROMPT
+
+    w = _world(app_parts)
+    provider = _RecordingProvider()
+    provider.register(PURPOSE, lambda _p: LLMResponse('{"rows": []}'))
+    provider.register("mitre_map", lambda _p: LLMResponse('{"techniques": []}'))
+    w.use(provider)
+    sid = w.create([EDR]).json()["id"]
+    assert w.get(sid)["analysis_available"] is True
+    body = _run_to_completion(w, sid)
+    assert body["run_status"] == "completed"
+    assert provider.prompts, "the run sent no what-if call"
+    assert set(provider.prompts) == {_ATTACK_SCENARIO_DELTA_PROMPT}
+    assert (
+        hashlib.sha256(provider.prompts[0].encode()).hexdigest()
+        == "b678cd2453991677c3be16153f3ace5f8aa06840fc0e8e00fd0771f7be31525b"
+    )
