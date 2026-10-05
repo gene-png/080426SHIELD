@@ -482,6 +482,11 @@ class ParsedChange:
     removed: list[str]
     added: list[str]
     not_understood: list[NotUnderstood]
+    #: #802's AI reading: names the AI suggested that failed the checks.
+    #: COUNTED, never quoted: they are the AI's words, not the admin's
+    #: (Gene's ruling, #736 comment 5986057990, item 7). The matcher
+    #: quotes only the admin's own clauses, so it leaves this at 0.
+    left_out: int = 0
 
 
 class _Refused(Exception):
@@ -556,6 +561,25 @@ def _clauses(text: str, forms: Sequence[str]) -> _Clauses:
 
 def _bare(name: str) -> str:
     return name.strip().strip(_QUOTES).strip()
+
+
+#: The chat box's AI reading trims a name the same way (`scenario_intent`).
+bare_name = _bare
+
+
+def added_reason(exc: Exception) -> tuple[str, str | None]:
+    """The not-understood reason, and for `already_clients` the tool, for an
+    addition `validate_added` refused. One mapping for the matcher and the
+    AI reading, so the two cannot disagree about a refusal."""
+    if isinstance(exc, TooMany):
+        return "too_many", None
+    if isinstance(exc, AlreadyClients):
+        return "already_clients", exc.name
+    if isinstance(exc, Indistinct):
+        return "indistinct", None
+    if isinstance(exc, Duplicate):
+        return "duplicate", None
+    return "unrecognised", None
 
 
 def _kind(clause: str) -> str:
@@ -652,16 +676,8 @@ def parse_change(
                 name_hints=hints,
                 limit=MAX_ADDED,
             )
-        except TooMany as exc:
-            raise _Refused("too_many") from exc
-        except AlreadyClients as exc:
-            raise _Refused("already_clients", exc.name) from exc
-        except Indistinct as exc:
-            raise _Refused("indistinct") from exc
-        except Duplicate as exc:
-            raise _Refused("duplicate") from exc
-        except AddedToolRefused as exc:
-            raise _Refused("unrecognised") from exc
+        except (TooMany, AddedToolRefused) as exc:
+            raise _Refused(*added_reason(exc)) from exc
         if _SPLIT.search(_bare(name)):
             # A break inside a NEW name means it may be one name cut apart or
             # several; only a cited name held for removal kept it whole, which

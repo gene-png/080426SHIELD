@@ -316,6 +316,10 @@ _MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
     # them only because the batch was shrunk: 3 x 1,700 = 5,100 (see OBSERVED
     # and the arithmetic beside BATCH_SIZE).
     "attack_scenario_delta": 64000,
+    # #802's chat box: three short lists naming a few tools. The shared
+    # default, CHOSEN: it keeps the non-streamed adapters sending what main
+    # sent. Unmeasured; re-derived from the first live call by the 3x rule.
+    "attack_scenario_intent": _MAX_OUTPUT_TOKENS,
 }
 
 
