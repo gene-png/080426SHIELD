@@ -11,12 +11,13 @@ Each fixture is payload-aware: it reads the redacted job payload (technique
 codes, capability codes, tiers/subcategories, findings) so the drafted
 suggestions line up with the live assessment and Run AI actually changes rows.
 
-All five job purposes are registered:
+All six job purposes are registered:
   mitre_map            -> ATT&CK coverage status + validated D/P/R tool citations
   zt_score             -> Zero Trust current/target (DoD respects the <=3 clamp)
   csf_score            -> NIST CSF five dimension scores (0-2) + narrative
   extract.capabilities -> Tech Debt capability extraction (with confidence_pct)
   risk_synthesize      -> Risk Register candidate entries (catalog-valid links)
+  attack_scenario_delta -> the ATT&CK what-if's replacement credits
 
 A missing fixture at runtime is an operator-actionable configuration error, not
 a crash: ``RuntimeFixtureProvider`` raises ``MissingFixtureError``, mapped to
@@ -42,6 +43,7 @@ PURPOSE_ZT_SCORE = "zt_score"
 PURPOSE_CSF_SCORE = "csf_score"
 PURPOSE_TECH_DEBT = "extract.capabilities"
 PURPOSE_RISK_SYNTHESIZE = "risk_synthesize"
+PURPOSE_ATTACK_SCENARIO_DELTA = "attack_scenario_delta"
 
 ALL_PURPOSES: tuple[str, ...] = (
     PURPOSE_MITRE_MAP,
@@ -49,6 +51,7 @@ ALL_PURPOSES: tuple[str, ...] = (
     PURPOSE_CSF_SCORE,
     PURPOSE_TECH_DEBT,
     PURPOSE_RISK_SYNTHESIZE,
+    PURPOSE_ATTACK_SCENARIO_DELTA,
 )
 
 
@@ -404,6 +407,77 @@ def _fixture_risk_synthesize(payload: dict[str, Any]) -> LLMResponse:
 
 
 # ---------------------------------------------------------------------------
+# attack_scenario_delta: the ATT&CK what-if's replacement credits (#802)
+# ---------------------------------------------------------------------------
+
+#: The prompt's function names, and the `security_functions` value that
+#: declares each (the prompt: "`detect` for `detection`, ...").
+_SCENARIO_FUNCTIONS = (
+    ("detection", "detect"),
+    ("prevention", "prevent"),
+    ("response", "respond"),
+)
+
+
+def _tool_entries(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [t for t in value if isinstance(t, dict) and isinstance(t.get("name"), str)]
+
+
+def _tool_entries_by_code(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [r for r in value if isinstance(r, dict) and isinstance(r.get("technique_code"), str)]
+
+
+def _declares(tool: dict[str, Any], short: str) -> bool:
+    return short in _strs(tool.get("security_functions"))
+
+
+def _fixture_attack_scenario_delta(payload: dict[str, Any]) -> LLMResponse:
+    """Authored from the prompt's contract, not from `parse_delta`: for each of
+    `technique_codes`, a function in its `lost_functions` goes to the first
+    tool in `available_tools` that declares it and is not already listed for it
+    in `frozen_rows`; a function only in its `open_functions` goes to the first
+    tool in `added_tools` that declares it. One row per (technique, tool)."""
+    available = _tool_entries(payload.get("available_tools"))
+    added = _tool_entries(payload.get("added_tools"))
+    frozen = {r.get("technique_code"): r for r in _tool_entries_by_code(payload.get("frozen_rows"))}
+    lost = payload.get("lost_functions") if isinstance(payload.get("lost_functions"), dict) else {}
+    opened = (
+        payload.get("open_functions") if isinstance(payload.get("open_functions"), dict) else {}
+    )
+    rows: list[dict[str, Any]] = []
+    for code in _strs(payload.get("technique_codes")):
+        credits: dict[str, set[str]] = {}
+        listed = frozen.get(code, {})
+        lost_here = _strs(lost.get(code))
+        for function, short in _SCENARIO_FUNCTIONS:
+            if function in lost_here:
+                pool = [
+                    t for t in available if t["name"] not in _strs(listed.get(f"{function}_tools"))
+                ]
+            elif function in _strs(opened.get(code)):
+                pool = added
+            else:
+                continue
+            tool = next((t["name"] for t in pool if _declares(t, short)), None)
+            if tool is not None:
+                credits.setdefault(tool, set()).add(function)
+        for tool, functions in credits.items():
+            rows.append(
+                {
+                    "technique_code": code,
+                    "tool": tool,
+                    **{f: f in functions for f, _ in _SCENARIO_FUNCTIONS},
+                    "rationale": f"Fixture-mode draft replacement credit for {code}.",
+                }
+            )
+    return _resp({"rows": rows})
+
+
+# ---------------------------------------------------------------------------
 # Runtime provider
 # ---------------------------------------------------------------------------
 
@@ -413,6 +487,7 @@ _RUNTIME_FIXTURES: dict[str, Any] = {
     PURPOSE_CSF_SCORE: _fixture_csf_score,
     PURPOSE_TECH_DEBT: _fixture_tech_debt,
     PURPOSE_RISK_SYNTHESIZE: _fixture_risk_synthesize,
+    PURPOSE_ATTACK_SCENARIO_DELTA: _fixture_attack_scenario_delta,
 }
 
 
@@ -432,7 +507,7 @@ class RuntimeFixtureProvider(FixtureProvider):
 
 
 def build_runtime_provider(model: str = "fixture-model-1") -> RuntimeFixtureProvider:
-    """Build a fixture provider with a deterministic response for all 5 purposes."""
+    """Build a fixture provider with a deterministic response for every purpose."""
     provider = RuntimeFixtureProvider(model=model)
     for purpose, fn in _RUNTIME_FIXTURES.items():
         provider.register(purpose, fn)
