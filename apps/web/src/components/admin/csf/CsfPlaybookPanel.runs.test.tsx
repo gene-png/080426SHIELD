@@ -360,3 +360,99 @@ describe("CsfPlaybookPanel, a batched run that lost batches (#479)", () => {
     expect(screen.queryByTestId("csf-run-incomplete")).toBeNull();
   });
 });
+
+describe("CsfPlaybookPanel, rows a batch left out (#836)", () => {
+  function showsLastRun(r: CsfRunAiResponse) {
+    const done = run({ status: "completed", result: r });
+    m.summary.mockResolvedValue({
+      running: null,
+      latest: done,
+      last_completed: done,
+    });
+    render(<CsfPlaybookPanel serviceId="svc-1" />);
+  }
+
+  const O1_PLURAL =
+    "3 rows got no answer from the AI, so they keep the scores they had. On a Playbook that was not scored before, that is all zeros, which reads as Level 1. Re-run before relying on this draft:";
+  const O1_SINGULAR =
+    "1 row got no answer from the AI, so it keeps the scores it had. On a Playbook that was not scored before, that is all zeros, which reads as Level 1. Re-run before relying on this draft:";
+
+  it("says how many rows got no answer, and names them", async () => {
+    showsLastRun(
+      result({
+        rows_omitted: 3,
+        omitted_rows: [
+          { tier: "high", subcategory_code: "GV.OC-01" },
+          { tier: "high", subcategory_code: "GV.OC-02" },
+          { tier: "moderate", subcategory_code: "PR.AA-01" },
+        ],
+      }),
+    );
+    const block = await screen.findByTestId("csf-run-omitted");
+    expect(block).toHaveAttribute("role", "alert");
+    expect(block.querySelector("p")?.textContent).toBe(O1_PLURAL);
+    const items = [...block.querySelectorAll("li")].map((li) => li.textContent);
+    expect(items).toEqual([
+      "High tier, GV.OC-01",
+      "High tier, GV.OC-02",
+      "Moderate tier, PR.AA-01",
+    ]);
+  });
+
+  it("uses the singular for one row", async () => {
+    showsLastRun(
+      result({
+        rows_omitted: 1,
+        omitted_rows: [{ tier: "low", subcategory_code: "DE.CM-01" }],
+      }),
+    );
+    const block = await screen.findByTestId("csf-run-omitted");
+    expect(block.querySelector("p")?.textContent).toBe(O1_SINGULAR);
+    expect(block).toHaveTextContent("Low tier, DE.CM-01");
+  });
+
+  it("lists ten rows and counts the rest", async () => {
+    const rows = Array.from({ length: 12 }, (_, i) => ({
+      tier: "high",
+      subcategory_code: `GV.OC-${String(i + 1).padStart(2, "0")}`,
+    }));
+    showsLastRun(result({ rows_omitted: 12, omitted_rows: rows }));
+    const block = await screen.findByTestId("csf-run-omitted");
+    const items = [...block.querySelectorAll("li")].map((li) => li.textContent);
+    expect(items).toHaveLength(11);
+    expect(items[10]).toBe("and 2 more");
+  });
+
+  it("says so even when the run received no suggestions at all", async () => {
+    // A batch that answered nothing left every row out, and that branch
+    // returns before the main body.
+    showsLastRun(
+      result({
+        suggestions_received: 0,
+        suggestions_applied: 0,
+        dropped: [],
+        rows_omitted: 1,
+        omitted_rows: [{ tier: "high", subcategory_code: "GV.OC-01" }],
+      }),
+    );
+    expect(
+      await screen.findByText(/The AI returned no suggestions at all/),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("csf-run-omitted")).toHaveTextContent(
+      "High tier, GV.OC-01",
+    );
+  });
+
+  it("says nothing for a run that left none out", async () => {
+    showsLastRun(result({ rows_omitted: 0, omitted_rows: [] }));
+    // The positive state first: the accounting has rendered.
+    expect(await screen.findByText(/AI applied/)).toBeInTheDocument();
+    expect(screen.queryByTestId("csf-run-omitted")).toBeNull();
+  });
+
+  it("says nothing for a stored result with no such field", async () => {
+    showsLastRun(result());
+    expect(await screen.findByText(/AI applied/)).toBeInTheDocument();
+    expect(screen.queryByTestId("csf-run-omitted")).toBeNull();
+  });
+});
