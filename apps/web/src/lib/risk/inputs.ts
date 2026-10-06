@@ -22,7 +22,10 @@ const STATES: Record<string, string> = {
 };
 
 export function inputLine(row: RiskInputState): string {
-  const label = LABELS[row.kind] ?? row.kind;
+  // #876: the framework (or service title) only when a kind has more than
+  // one row; the server decides, so the screen and the refusal agree.
+  const base = LABELS[row.kind] ?? row.kind;
+  const label = row.qualifier ? `${base} (${row.qualifier})` : base;
   if (!row.engaged) return `${label}: not engaged`;
   if (row.status === null) return `${label}: not started`;
   return `${label}: ${STATES[row.status] ?? row.status}`;
