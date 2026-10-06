@@ -482,6 +482,11 @@ class ParsedChange:
     removed: list[str]
     added: list[str]
     not_understood: list[NotUnderstood]
+    #: #802's AI reading: names the AI suggested that failed the checks.
+    #: COUNTED, never quoted: they are the AI's words, not the admin's
+    #: (Gene's ruling, #736 comment 5986057990, item 7). The matcher
+    #: quotes only the admin's own clauses, so it leaves this at 0.
+    left_out: int = 0
 
 
 class _Refused(Exception):
@@ -556,6 +561,25 @@ def _clauses(text: str, forms: Sequence[str]) -> _Clauses:
 
 def _bare(name: str) -> str:
     return name.strip().strip(_QUOTES).strip()
+
+
+#: The chat box's AI reading trims a name the same way (`scenario_intent`).
+bare_name = _bare
+
+
+def added_reason(exc: Exception) -> tuple[str, str | None]:
+    """The not-understood reason, and for `already_clients` the tool, for an
+    addition `validate_added` refused. One mapping for the matcher and the
+    AI reading, so the two cannot disagree about a refusal."""
+    if isinstance(exc, TooMany):
+        return "too_many", None
+    if isinstance(exc, AlreadyClients):
+        return "already_clients", exc.name
+    if isinstance(exc, Indistinct):
+        return "indistinct", None
+    if isinstance(exc, Duplicate):
+        return "duplicate", None
+    return "unrecognised", None
 
 
 def _kind(clause: str) -> str:
@@ -652,16 +676,8 @@ def parse_change(
                 name_hints=hints,
                 limit=MAX_ADDED,
             )
-        except TooMany as exc:
-            raise _Refused("too_many") from exc
-        except AlreadyClients as exc:
-            raise _Refused("already_clients", exc.name) from exc
-        except Indistinct as exc:
-            raise _Refused("indistinct") from exc
-        except Duplicate as exc:
-            raise _Refused("duplicate") from exc
-        except AddedToolRefused as exc:
-            raise _Refused("unrecognised") from exc
+        except (TooMany, AddedToolRefused) as exc:
+            raise _Refused(*added_reason(exc)) from exc
         if _SPLIT.search(_bare(name)):
             # A break inside a NEW name means it may be one name cut apart or
             # several; only a cited name held for removal kept it whole, which
@@ -1145,8 +1161,20 @@ def tools_added_since(
     return sorted(added, key=str.casefold)
 
 
-#: Techniques per AI call, as `mitre_map` batches them.
-BATCH_SIZE = 25
+#: Techniques per AI call. Sized so 3x the largest measured call stays under
+#: the 8,192 output tokens the NON-STREAMED adapters send
+#: (`llm.non_streamed_output_cap`): the advisor's ruling on #846, option (c).
+#: Measured live 2026-10-04 (claude-opus-5, the demo seed, its most-cited tool
+#: removed, the route's first 4 batches each time; each probe ran in a
+#: throwaway SQLite container, so no llm_calls ids survive, and the figures are
+#: the probes' own llm_calls rows as printed, recorded on PR #846):
+#:   25 a batch: largest call 8,231 (over 8,192 on its own)
+#:    8 a batch: 1,939-3,052; 3 x 3,052 = 9,156, too big
+#:    6 a batch: 1,173-1,700; 3 x 1,700 = 5,100. The densest BATCH seen
+#:      averaged about 382 a technique (3,052 / 8); a batch of 6 at that
+#:      average is about 2,290, 3x = 6,870. A single technique may run higher.
+#: Smaller batches cost more input, since each call repeats the tool list.
+BATCH_SIZE = 6
 
 
 def _without(tools: Iterable[Any] | None, gone: Removed) -> list[str]:
@@ -1246,14 +1274,15 @@ def merge_batches(inputs: Sequence[Mapping[str, Any]], parsed: Mapping[int, Pars
     )
 
 
-#: The AI purpose. Registered only once #806 releases its prompt text.
+#: The AI purpose. Registered by `app/ai/jobs.py` with Gene's approved prompt.
 PURPOSE = "attack_scenario_delta"
 
 
 def analysis_available() -> bool:
-    """True when the what-if's AI job is registered. False until #806's prompt
-    text lands; the run route refuses with a typed 503 rather than failing
-    inside a background job."""
+    """True when the what-if's AI job is registered, which it always is since
+    #802 shipped the approved prompt. False only if that registration is ever
+    removed; the run route then refuses with a typed 503 rather than failing
+    inside a background job (a ratchet)."""
     from app.ai.engine import registered_jobs
 
     return PURPOSE in registered_jobs()

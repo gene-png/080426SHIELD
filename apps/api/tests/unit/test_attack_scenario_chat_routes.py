@@ -45,7 +45,17 @@ def test_a_description_becomes_a_proposed_change_list(app_parts) -> None:  # noq
     w = _world(app_parts)
     r = _parse(w, "What if we retire edr tool and SIEM Tool, add XDR Suite?")
     assert r.status_code == 200, r.text
-    assert r.json() == {"removed": [EDR, SIEM], "added": ["XDR Suite"], "not_understood": []}
+    assert r.json() == {
+        "removed": [EDR, SIEM],
+        "added": ["XDR Suite"],
+        "not_understood": [],
+        # #802: a parse with no `serves` is the matcher's, with no note.
+        "source": "matcher",
+        "note": None,
+        # #802, Gene's ruling: the matcher leaves nothing out.
+        "left_out": 0,
+        "left_out_message": None,
+    }
 
 
 def test_a_verb_matched_through_case_folding_is_a_proposal_not_a_500(

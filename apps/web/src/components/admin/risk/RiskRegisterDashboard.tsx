@@ -16,6 +16,7 @@ import {
 
 import {
   describeRiskError,
+  editRiskEntryRating,
   exportRiskRegister,
   fetchRiskGate,
   fetchRiskRegisterLatest,
@@ -34,6 +35,7 @@ import {
   type RiskTier,
 } from "@/lib/risk/matrix";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
+import { carriedSentences } from "@/lib/risk/carry";
 
 import type { RiskEntry, RiskGate, RiskRegister } from "@/lib/risk/types";
 
@@ -63,7 +65,20 @@ const SERVICE_LABELS: Record<string, string> = {
 };
 
 function TierChip({ tier }: { tier: string | null }): JSX.Element {
-  const t = (tier ?? "negligible") as RiskTier;
+  // #844. An unrated entry has NO tier, and it used to be painted in the
+  // Negligible colour with a dash -- one glance away from "rated negligible",
+  // the most reassuring tier there is. A neutral chip that says so instead.
+  if (tier === null) {
+    return (
+      <span
+        className="inline-block rounded-full border border-border px-2 py-0.5 text-xs font-semibold text-ink-secondary"
+        data-testid="risk-tier-not-rated"
+      >
+        Not rated
+      </span>
+    );
+  }
+  const t = tier as RiskTier;
   const color = TIER_COLOR[t] ?? TIER_COLOR.negligible;
   return (
     <span
@@ -128,46 +143,130 @@ function Matrix({ entries }: { entries: RiskEntry[] }): JSX.Element {
   );
 }
 
-const COLUMNS: DataTableColumn<RiskEntry>[] = [
-  { key: "title", header: "Weakness", cell: (r) => r.title },
-  { key: "axis", header: "Axis", cell: (r) => titleCase(r.axis) },
-  {
-    key: "li",
-    header: "Likelihood × Impact",
-    cell: (r) => `${titleCase(r.likelihood)} × ${titleCase(r.impact)}`,
-  },
-  { key: "tier", header: "Tier", cell: (r) => <TierChip tier={r.tier} /> },
-  {
-    key: "action",
-    header: "Recommended",
-    cell: (r) => titleCase(r.recommended_action),
-  },
-  {
-    key: "source",
-    header: "Source",
-    // #132 review. `r.source_id ?? "—"` made a DROPPED source identical to an
-    // absent one -- this issue's own harm, in the field the same PR newly
-    // started validating. The unlinked banner deliberately excludes source_id
-    // (a dropped source changes no linkage the consultant sees on the row), so
-    // without this the drop reached no surface at all.
-    cell: (r) => {
-      const dropped = r.dropped_links?.source_id ?? [];
-      if (r.source_id) return r.source_id;
-      if (dropped.length > 0) {
-        return (
-          <span
-            className="text-status-warning-fg"
-            title={`The model sent ${dropped.map((d) => `"${d}"`).join(", ")}, which names no finding in this client's assessments, so it was not stored.`}
-            data-testid="risk-source-dropped"
-          >
-            not recognised
-          </span>
-        );
-      }
-      return "—";
+type RatingField = "likelihood" | "impact";
+
+/**
+ * #844. The consultant's rating control: one select per half, "Not rated"
+ * first. Choosing "Not rated" sends `null`, which clears that half -- the only
+ * way back to unrated, and a real choice when the evidence does not support a
+ * rating. The tier beside it is never chosen here: the api derives it.
+ */
+function RatingSelect({
+  entry,
+  field,
+  options,
+  disabled,
+  onRate,
+}: {
+  entry: RiskEntry;
+  field: RatingField;
+  options: readonly string[];
+  disabled: boolean;
+  onRate: (entry: RiskEntry, field: RatingField, value: string | null) => void;
+}): JSX.Element {
+  const label = field === "likelihood" ? "Likelihood" : "Impact";
+  return (
+    <select
+      aria-label={`${label} for ${entry.title}`}
+      className="rounded-md border border-border bg-surface-card px-1 py-0.5 text-sm"
+      value={entry[field] ?? ""}
+      disabled={disabled}
+      onChange={(ev) => onRate(entry, field, ev.target.value || null)}
+    >
+      <option value="">Not rated</option>
+      {options.map((o) => (
+        <option key={o} value={o}>
+          {titleCase(o)}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function columnsFor(
+  editable: boolean,
+  busy: boolean,
+  onRate: (entry: RiskEntry, field: RatingField, value: string | null) => void,
+): DataTableColumn<RiskEntry>[] {
+  return [
+    { key: "title", header: "Weakness", cell: (r) => r.title },
+    { key: "axis", header: "Axis", cell: (r) => titleCase(r.axis) },
+    {
+      key: "li",
+      header: "Likelihood × Impact",
+      cell: (r) => (
+        <div className="flex flex-col gap-1">
+          {editable ? (
+            <div className="flex items-center gap-1">
+              <RatingSelect
+                entry={r}
+                field="likelihood"
+                options={LIKELIHOODS}
+                disabled={busy}
+                onRate={onRate}
+              />
+              <span aria-hidden="true">×</span>
+              <RatingSelect
+                entry={r}
+                field="impact"
+                options={IMPACTS}
+                disabled={busy}
+                onRate={onRate}
+              />
+            </div>
+          ) : (
+            <span>
+              {r.likelihood ? titleCase(r.likelihood) : "Not rated"} ×{" "}
+              {r.impact ? titleCase(r.impact) : "Not rated"}
+            </span>
+          )}
+          {/* Same rule as the export (`_consultant_rated`): any edited row with
+            at least one half set (Gene's ruling (a)); a FULLY cleared rating
+            is unrated and carries no consultant credit (#854 review, F2). */}
+          {r.rating_edited_at && (r.likelihood || r.impact) ? (
+            <span
+              className="text-xs text-ink-tertiary"
+              data-testid="risk-rating-set-by-consultant"
+            >
+              Rating edited by consultant
+            </span>
+          ) : null}
+        </div>
+      ),
     },
-  },
-];
+    { key: "tier", header: "Tier", cell: (r) => <TierChip tier={r.tier} /> },
+    {
+      key: "action",
+      header: "Recommended",
+      cell: (r) => titleCase(r.recommended_action),
+    },
+    {
+      key: "source",
+      header: "Source",
+      // #132 review. `r.source_id ?? "—"` made a DROPPED source identical to an
+      // absent one -- this issue's own harm, in the field the same PR newly
+      // started validating. The unlinked banner deliberately excludes source_id
+      // (a dropped source changes no linkage the consultant sees on the row), so
+      // without this the drop reached no surface at all.
+      cell: (r) => {
+        const dropped = r.dropped_links?.source_id ?? [];
+        if (r.source_id) return r.source_id;
+        if (dropped.length > 0) {
+          return (
+            <span
+              className="text-status-warning-fg"
+              title={`The model sent ${dropped.map((d) => `"${d}"`).join(", ")}, which names no finding in this client's assessments, so it was not stored.`}
+              data-testid="risk-source-dropped"
+            >
+              not recognised
+            </span>
+          );
+        }
+        return "—";
+      },
+    },
+  ];
+}
 
 function DownloadLink({
   id,
@@ -213,7 +312,9 @@ export function RiskRegisterDashboard(): JSX.Element {
   // synchronized one merely is not, right now, for reasons that have to keep
   // holding -- and one of those reasons had already stopped holding.
   const [loading, setLoading] = React.useState(true);
-  const [busy, setBusy] = React.useState<"generate" | "export" | null>(null);
+  const [busy, setBusy] = React.useState<"generate" | "export" | "rate" | null>(
+    null,
+  );
   const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
@@ -283,6 +384,25 @@ export function RiskRegisterDashboard(): JSX.Element {
       // is added. That is the precondition-comment shape CLAUDE.md records,
       // and it has now caught this file twice.
       setRegister(await exportRiskRegister(cid));
+    } catch (err) {
+      setError(describeRiskError(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onRate(
+    entry: RiskEntry,
+    field: RatingField,
+    value: string | null,
+  ): Promise<void> {
+    if (!cid) return;
+    setBusy("rate");
+    setError(null);
+    try {
+      // The whole register comes back, so every counter and banner on the
+      // page is re-derived from what was stored -- never patched locally.
+      setRegister(await editRiskEntryRating(cid, entry.id, { [field]: value }));
     } catch (err) {
       setError(describeRiskError(err));
     } finally {
@@ -376,6 +496,15 @@ export function RiskRegisterDashboard(): JSX.Element {
   }
 
   const tc = register?.tier_counts ?? {};
+  // #854 F3: ratings a consultant edited in the version on screen, which a
+  // regenerate would carry over -- the warning beside the button keys on it.
+  const consultantEdited =
+    register?.entries.filter((e) => e.rating_edited_at !== null).length ?? 0;
+  // #844. `?? 0` covers only the no-register-yet case.
+  const findingsWithout = register?.findings_without_entry.length ?? 0;
+  const findingsSeveral = register
+    ? Object.keys(register.findings_with_several_entries).length
+    : 0;
   const ac = register?.axis_counts ?? {};
 
   // #244. Derived per render from whatever response is in hand, rather than
@@ -468,6 +597,18 @@ export function RiskRegisterDashboard(): JSX.Element {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {/* #854 F3: the warning BEFORE regenerating, beside the button, while
+              the current version holds consultant ratings. */}
+          {consultantEdited > 0 ? (
+            <p
+              className="w-full text-sm text-status-warning-fg"
+              data-testid="risk-regenerate-carries-ratings"
+            >
+              Regenerating drafts a new version. Consultant ratings carry over
+              to the entry for the same finding; any that cannot be matched are
+              listed after, to rate again.
+            </p>
+          ) : null}
           {/* Issue 2: risk_synthesize is an AI job — warn before producing
               canned output when no key is loaded. */}
           <RunAiGuard onProceed={() => void onGenerate()}>
@@ -610,12 +751,14 @@ export function RiskRegisterDashboard(): JSX.Element {
                 entries have no likelihood, impact or tier
               </span>
               , so they are missing from the matrix and the tier counts while
-              still counting toward Entries. The model either sent a value that
-              is not one of the accepted tokens, or sent none at all. The
-              rejected values, if any, are on the{" "}
-              <code>risk_register.generated</code> audit row. Regenerate before
-              exporting: a client reading this register sees those rows as
-              dashes.
+              still counting toward Entries.
+              {/* #854 review, F5: the remedy names the selects, which exist
+                  only while the register is editable. On a published register
+                  they are gone, so the sentence would name a control that is
+                  not there (D-076). */}
+              {register.finalized_at === null
+                ? " Set a likelihood and impact on each in the Register table below; the export states how many are unrated."
+                : null}
             </div>
           ) : null}
           {/* #132. An entry that proposed ATT&CK or control links and kept
@@ -821,6 +964,54 @@ export function RiskRegisterDashboard(): JSX.Element {
               </p>
             </div>
           ) : null}
+          {/* #854 F3: what the regenerate that produced this version carried
+              over, and what it could not. Rendered only when recorded and
+              when there is something to say. */}
+          {register.ratings_carried_recorded &&
+          register.ratings_carried_from_version !== null &&
+          ((register.ratings_carried ?? 0) > 0 ||
+            register.ratings_not_carried.length > 0) ? (
+            <div
+              className={
+                register.ratings_not_carried.length > 0
+                  ? "rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm text-status-warning-fg"
+                  : "rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
+              }
+              data-testid="risk-ratings-carried"
+            >
+              {carriedSentences(
+                register.ratings_carried ?? 0,
+                register.ratings_carried_from_version,
+                register.ratings_not_carried,
+              ).map((line) => (
+                <p key={line}>{line}</p>
+              ))}
+            </div>
+          ) : null}
+          {/* #844. Each finding should get exactly one entry. Rendered only
+              when the record exists AND something is off: an unrecorded
+              register says nothing here (its empty list is not a clean
+              result), and a clean one needs no sentence. */}
+          {register.findings_recorded &&
+          (findingsWithout > 0 || findingsSeveral > 0) ? (
+            <div
+              className="rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm text-status-warning-fg"
+              role="alert"
+              data-testid="risk-findings-coverage"
+            >
+              <span className="font-semibold">
+                Of {register.findings_total}{" "}
+                {register.findings_total === 1 ? "finding" : "findings"},{" "}
+                {findingsWithout} {findingsWithout === 1 ? "has" : "have"} no
+                entry and {findingsSeveral}{" "}
+                {findingsSeveral === 1 ? "has" : "have"} more than one
+              </span>
+              . The register is drafted one entry per finding, so a finding with
+              no entry is a risk this register does not cover. Regenerating
+              drafts every finding again. The exported documents state both
+              counts.
+            </div>
+          ) : null}
           <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
             <NumberCard label="Entries" value={register.entries.length} />
             <NumberCard
@@ -852,11 +1043,18 @@ export function RiskRegisterDashboard(): JSX.Element {
               <CardDescription>
                 Tier is always code-derived from likelihood × impact. Governance
                 columns (owner, approval, review) print blank for the client.
+                {register.finalized_at
+                  ? " This version has been exported, so its ratings are fixed. Generate a new version to rate entries again."
+                  : null}
               </CardDescription>
             </CardHeader>
             <CardBody className="flex flex-col gap-4">
               <DataTable
-                columns={COLUMNS}
+                columns={columnsFor(
+                  register.finalized_at === null,
+                  busy !== null,
+                  (entry, field, value) => void onRate(entry, field, value),
+                )}
                 rows={register.entries}
                 rowKey={(r) => r.id}
                 emptyState={

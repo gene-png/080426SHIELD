@@ -13,12 +13,16 @@ export class RiskProxyError extends Error {
 
 async function jsonRequest<T>(
   url: string,
-  init: { method?: "GET" | "POST" } = {},
+  init: { method?: "GET" | "POST" | "PATCH"; body?: unknown } = {},
 ): Promise<T> {
   const res = await fetch(url, {
     method: init.method ?? "GET",
     cache: "no-store",
-    headers: { Accept: "application/json" },
+    headers:
+      init.body === undefined
+        ? { Accept: "application/json" }
+        : { Accept: "application/json", "Content-Type": "application/json" },
+    body: init.body === undefined ? undefined : JSON.stringify(init.body),
   });
   if (!res.ok) {
     // Read the body ONCE, then try to parse it. Calling res.json() and then
@@ -99,6 +103,22 @@ export async function exportRiskRegister(cid: string): Promise<RiskRegister> {
   return jsonRequest<RiskRegister>(
     `/api/proxy/risk/clients/${cid}/register/export`,
     { method: "POST" },
+  );
+}
+
+/**
+ * #844. Set or clear one entry's likelihood and/or impact. A key left out of
+ * `change` is unchanged; a key sent as `null` clears that half. Returns the
+ * whole register, so every counter and banner re-derives from stored state.
+ */
+export async function editRiskEntryRating(
+  cid: string,
+  entryId: string,
+  change: { likelihood?: string | null; impact?: string | null },
+): Promise<RiskRegister> {
+  return jsonRequest<RiskRegister>(
+    `/api/proxy/risk/clients/${cid}/register/entries/${entryId}`,
+    { method: "PATCH", body: change },
   );
 }
 
