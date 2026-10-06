@@ -763,7 +763,7 @@ def _gather_findings(
             _client_target_stage(db, zt.service_id),
         )
         target_sources["zt"] = {"target": zt_target, "source": zt_target_source}
-        # #838: only the catalog's rows. Migration 0062 KEEPS answers on rows
+        # #838: only the catalog's rows. Migration 0063 KEEPS answers on rows
         # CISA ZTMM 2.0 does not have, and the ZT deliverable says they are not
         # scored, so they feed no finding and are not citable here either.
         zt_codes = all_codes(ZtFrameworkCode(zt.framework.value))

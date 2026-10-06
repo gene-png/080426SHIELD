@@ -10,7 +10,7 @@ import { ZtSelfAssessment } from "./ZtSelfAssessment";
 
 /**
  * #838: the client's own self-assessment page discloses answers migration
- * 0062 kept on rows CISA ZTMM 2.0 does not have, as the consultant's workspace
+ * 0063 kept on rows CISA ZTMM 2.0 does not have, as the consultant's workspace
  * and the exports do. The page reads the same `GET .../self-assessment`
  * response (`ZtAssessmentResponse`), so the sentence is the API's own,
  * written here exactly as `zt/retired.py` builds it for one answer, and

@@ -14,7 +14,7 @@ import type {
 import { ZtWorkspace } from "./ZtWorkspace";
 
 /**
- * #838: answers migration 0062 kept on rows CISA ZTMM 2.0 does not have are
+ * #838: answers migration 0063 kept on rows CISA ZTMM 2.0 does not have are
  * not scored, and the workspace says how many. The sentence is the API's own
  * (`retired_answers_note`, from `zt/retired.py`), written here exactly as that
  * module builds it for one answer, and rendered as given, never rebuilt.

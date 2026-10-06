@@ -1,9 +1,9 @@
 """Answers kept on rows CISA ZTMM 2.0 does not have are disclosed (#838).
 
-Migration 0062 KEEPS the answers on the 13 rows the corrected catalog dropped
+Migration 0063 KEEPS the answers on the 13 rows the corrected catalog dropped
 (decision 4, option B), so an assessment that predates it holds rows the
 catalog no longer has. That migration is the writer of the state seeded here:
-the rows are inserted after the assessment is created, exactly as 0062 leaves
+the rows are inserted after the assessment is created, exactly as 0063 leaves
 them. The expected sentences are the approved copy (#838 comment 5982917066),
 written out literally, and every check goes through the surface a person
 reaches: the workspace's GET and the finalized files.
@@ -41,7 +41,7 @@ def _assessment(c) -> tuple[dict, str, dict]:
 
 
 def _keep(assessment_id: str, rows: list[tuple[str, int | None, str | None]]) -> None:
-    """Rows on retired codes, as migration 0062 leaves them."""
+    """Rows on retired codes, as migration 0063 leaves them."""
     with env_sessions()() as db:
         a = db.get(ZtAssessment, uuid.UUID(assessment_id))
         for code, stage, notes in rows:

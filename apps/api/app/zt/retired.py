@@ -1,6 +1,6 @@
 """Answers recorded against a row the ZT catalog no longer has (#838).
 
-#838 corrected the CISA catalog to CISA ZTMM 2.0, and migration 0062 KEPT the
+#838 corrected the CISA catalog to CISA ZTMM 2.0, and migration 0063 KEPT the
 answers on the 13 rows CISA does not have (decision 4, option B) rather than
 delete them. The ZT scoring and gap engines iterate the catalog, and Risk
 synthesis filters to its codes (`routes/risk.py`), so those rows are not scored.

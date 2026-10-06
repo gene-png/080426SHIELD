@@ -1,13 +1,13 @@
 """A retired ZT row feeds no Risk finding and is not citable (#838 PR 2).
 
-Migration 0062 KEEPS the answers on the rows CISA ZTMM 2.0 does not have, and
+Migration 0063 KEEPS the answers on the rows CISA ZTMM 2.0 does not have, and
 the ZT workspace and deliverables say those answers are not scored. Risk
 synthesis read every stored row, so a retired row below target still became a
 client-facing Risk finding and stayed in the allow-list the model cites from:
 the deliverable said "not scored" while the register scored it.
 
 The world: `_seed_attack_and_zt` (one approved CISA assessment, one scored row)
-plus a row on a retired code at stage 1, exactly as migration 0062 leaves an
+plus a row on a retired code at stage 1, exactly as migration 0063 leaves an
 old answer. Driven through the generate endpoint, read at the egress payload.
 """
 
