@@ -78,3 +78,37 @@ describe("IntakeDocumentsPanel open-draft source (#644)", () => {
     expect(screen.queryByTestId("draft-source-hint")).toBeNull();
   });
 });
+
+describe("IntakeDocumentsPanel when extraction is blocked (#550)", () => {
+  beforeEach(() => {
+    vi.mocked(listArtifacts).mockResolvedValue(DOCS as never);
+  });
+
+  it("disables Extract from this on every inventory", async () => {
+    render(
+      <IntakeDocumentsPanel
+        onExtract={() => undefined}
+        extracting={false}
+        extractBlocked
+      />,
+    );
+    for (const title of ["a.csv", "b.csv"]) {
+      expect(
+        within(await rowFor(title)).getByRole("button", {
+          name: "Extract from this",
+        }),
+      ).toBeDisabled();
+    }
+  });
+
+  it("leaves it enabled otherwise", async () => {
+    render(
+      <IntakeDocumentsPanel onExtract={() => undefined} extracting={false} />,
+    );
+    expect(
+      within(await rowFor("a.csv")).getByRole("button", {
+        name: "Extract from this",
+      }),
+    ).toBeEnabled();
+  });
+});

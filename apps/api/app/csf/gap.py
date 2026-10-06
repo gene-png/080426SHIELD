@@ -28,6 +28,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from app.assessment_targets import BELOW_FLOOR, MIN_TARGET_TIER
 from app.csf.catalog import (
     FUNCTIONS,
     SUBCATEGORIES,
@@ -125,6 +126,8 @@ def resolve_target_tier(chosen: object) -> tuple[int, str]:
       "default"              the client chose nothing; the engine default applies
       "client_out_of_range"  the stored choice is not a tier CSF has
       "client_unparseable"   the stored value is not a whole number at all
+      "client_below_floor"   a real tier below `MIN_TARGET_TIER` (#85): Tier 1
+                             is where an organization starts, not a target
 
     The last two are the point of this function. "The client chose nothing" and
     "the client's choice could not be used" are different facts, and the second
@@ -164,6 +167,10 @@ def resolve_target_tier(chosen: object) -> tuple[int, str]:
         return (DEFAULT_TARGET_TIER, "client_out_of_range")
     if n != int(n):
         return (DEFAULT_TARGET_TIER, "client_unparseable")
+    # #85: after wholeness, so only a real tier reaches it. A stored 1 used to
+    # resolve as the client's choice and made every gap list vacuously empty.
+    if n < MIN_TARGET_TIER:
+        return (DEFAULT_TARGET_TIER, BELOW_FLOOR)
     return (int(n), "client")
 
 

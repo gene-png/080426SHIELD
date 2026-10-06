@@ -9,6 +9,7 @@ import { NextResponse } from "next/server";
 
 import { ApiError, apiFetch } from "@/lib/api";
 import { auth } from "@/lib/auth/options";
+import { upstreamOutcomeUnknown } from "@/lib/upstream-outcome-unknown";
 
 async function bearer(): Promise<string | null> {
   const session = await auth();
@@ -28,10 +29,7 @@ function fail(err: unknown): NextResponse {
       status: err.status,
     });
   }
-  return NextResponse.json(
-    { error: { message: "Upstream messages call failed." } },
-    { status: 502 },
-  );
+  return upstreamOutcomeUnknown(err, "Upstream messages call");
 }
 
 export async function GET(

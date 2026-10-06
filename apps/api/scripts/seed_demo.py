@@ -38,9 +38,12 @@ from alembic.config import Config  # noqa: E402
 from sqlalchemy import create_engine, select  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
+from app.assessment_targets import target_source_sentence  # noqa: E402
 from app.attack.analytics import compute as compute_attack  # noqa: E402
 from app.attack.catalog import SOURCE_VERSION as ATTACK_SOURCE_VERSION  # noqa: E402
 from app.attack.catalog import TECHNIQUES, parent_techniques  # noqa: E402
+from app.attack.computed import effective_coverage as attack_effective_coverage  # noqa: E402
+from app.attack.computed import review_queue as attack_review_queue  # noqa: E402
 from app.attack.coverage import CoverageStatus  # noqa: E402
 from app.attack.exporters import (  # noqa: E402
     build_context as build_attack_context,
@@ -55,6 +58,7 @@ from app.attack.parents import recompute_parents  # noqa: E402
 from app.attack.pending import CLAIMS_SUPPORT  # noqa: E402
 from app.attack.pending import pending_codes as attack_pending_codes  # noqa: E402
 from app.attack.pending import row_tools as attack_row_tools  # noqa: E402
+from app.attack.rules import COMPUTED_STATUSES as ATTACK_COMPUTED_STATUSES  # noqa: E402
 from app.attack.rules import NEW_RULES as ATTACK_NEW_RULES  # noqa: E402
 from app.attack.rules import parents_computed as attack_parents_computed  # noqa: E402
 from app.audit import audit  # noqa: E402
@@ -103,7 +107,8 @@ from app.risk.engine import (  # noqa: E402
     RiskAxis,
     tier_for,
 )
-from app.routes.risk import _provenance_snapshot  # noqa: E402
+from app.risk.inputs import publish_blockers  # noqa: E402
+from app.routes.risk import _provenance_snapshot, _take_input_snapshot  # noqa: E402
 from app.security.email_domains import domain_of  # noqa: E402
 from app.security.password import hash_password  # noqa: E402
 from app.storage import StorageBackend, get_storage  # noqa: E402
@@ -534,6 +539,15 @@ def _seed_tech_debt(db: Session, storage: StorageBackend, admin: User, org: Clie
         status=CapabilityListStatus.RELEASED,
         approved_at=utcnow(),
         approved_by=admin.id,
+        # #640 (D-102): an approval records the revision it approved. The seed
+        # runs after every migration, so 0056's backfill never reaches this row;
+        # without it Re-finalize then Release on the demo is refused as
+        # "generated before the list was last approved", which is false.
+        revision=0,
+        approved_revision=0,
+        # #177: `attribution_complete` is left NULL ("not recorded"), and that is
+        # the truth here -- this list was built by hand, not by an extraction,
+        # so no reconciliation exists (`source_rows_total` is NULL too).
     )
     db.add(cap_list)
     db.flush()
@@ -606,7 +620,9 @@ def _csf_tier_for(index: int) -> int:
     return pattern[index % len(pattern)]
 
 
-def _seed_csf(db: Session, storage: StorageBackend, admin: User, org: Client) -> Service:
+def _seed_csf(
+    db: Session, storage: StorageBackend, admin: User, org: Client
+) -> tuple[Service, dict[str, int]]:
     svc = Service(
         kind=ServiceKind.NIST_CSF,
         status=ServiceStatus.RELEASED,
@@ -669,6 +685,9 @@ def _seed_csf(db: Session, storage: StorageBackend, admin: User, org: Client) ->
         answers=answers,
         score=score,
         gap=gap,
+        # #783: this service has no intake request, so the engine default above
+        # is what the resolver would report as "default". Said, not implied.
+        target_source="default",
     )
     _release(
         db,
@@ -682,13 +701,15 @@ def _seed_csf(db: Session, storage: StorageBackend, admin: User, org: Client) ->
         summary=(
             f"Overall maturity: {score.overall_maturity_label}. "
             f"{score.answered_subcategories}/{score.total_subcategories} scored; "
-            f"{gap.total_gap_count} gaps at target T{gap.target_tier}."
+            f"{gap.total_gap_count} gaps at target T{gap.target_tier}. "
+            f"{target_source_sentence('tier', ctx.target_source)}"
         ),
         stage="csf.deliverable",
     )
 
-    _seed_csf_v2_approved(db, admin, org, svc, tier_map)
-    return svc
+    # v2 is NOT seeded here: `main` seeds it after the Risk Register, so the
+    # published register is generated from v1 released (#860 review B4).
+    return svc, tier_map
 
 
 def _seed_csf_v2_approved(
@@ -860,6 +881,9 @@ def _seed_zt(
         answers=answers,
         score=score,
         gap=gap,
+        # #783: no intake request and no per-capability targets, so the engine
+        # default above decided every row and the resolver would say "default".
+        target_source="default",
     )
     _release(
         db,
@@ -873,7 +897,8 @@ def _seed_zt(
         summary=(
             f"Overall stage: {score.overall_stage_label}. "
             f"{score.answered_capabilities}/{score.total_capabilities} scored; "
-            f"{gap.total_gap_count} gaps at target S{gap.target_stage}."
+            f"{gap.total_gap_count} gaps at target S{gap.target_stage}. "
+            f"{target_source_sentence('stage', ctx.target_source)}"
         ),
         stage="zt.deliverable",
     )
@@ -899,17 +924,28 @@ def _attack_status_for(index: int, is_sub: bool) -> str | None:
     return None
 
 
-def _attack_tools_for(status_value: str | None) -> tuple[list[str] | None, list[str] | None]:
-    """(detection_tools, response_tools) for a seeded coverage status.
+def _attack_tools_for(
+    status_value: str | None,
+) -> tuple[list[str] | None, list[str] | None, list[str] | None]:
+    """(detection_tools, prevention_tools, response_tools) for a seeded status.
 
     Only the POSITIVE statuses get tools. A `gap` naming a control would
     contradict itself, and `not_applicable` makes no claim to support.
+
+    #554 R3: a status is computed from which of the three are in place, so the
+    tools are what MAKE each status: all three for `covered`, detection alone for
+    `partial`. Without prevention lists every seeded Covered row computed to
+    Partial (measured on the dev seed, 2026-10-02: prevention on 0 of 633 rows).
     """
     if status_value == CoverageStatus.COVERED.value:
-        return ["CrowdStrike Falcon", "Splunk Enterprise"], ["Splunk Enterprise"]
+        return (
+            ["CrowdStrike Falcon", "Splunk Enterprise"],
+            ["CrowdStrike Falcon"],
+            ["Splunk Enterprise"],
+        )
     if status_value == CoverageStatus.PARTIAL.value:
-        return ["Splunk Enterprise"], None
-    return None, None
+        return ["Splunk Enterprise"], None, None
+    return None, None, None
 
 
 def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client) -> Service:
@@ -936,6 +972,9 @@ def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client)
         # #620 (D-094): the rows below are recomputed under D-094's rules, so
         # the demo renders under them -- as approve would have recorded.
         parent_rules=ATTACK_NEW_RULES,
+        # #554 R3 (migration 0059): statuses computed from Detect / Prevent /
+        # Respond, as approve records it.
+        status_rules=ATTACK_COMPUTED_STATUSES,
     )
     db.add(assessment)
     db.flush()
@@ -950,7 +989,7 @@ def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client)
         # was modelling the defect. The names are drawn from `_TD_ITEMS` above,
         # so they resolve against this client's own approved capability list
         # exactly as a real run's citations would.
-        detection, response = _attack_tools_for(status_value)
+        detection, prevention, response = _attack_tools_for(status_value)
         coverage_rows.append(
             AttackCoverage(
                 assessment_id=assessment.id,
@@ -963,6 +1002,7 @@ def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client)
                     else None
                 ),
                 detection_tools=detection,
+                prevention_tools=prevention,
                 response_tools=response,
                 # `[]`, never NULL. A deliberate single-place assertion that
                 # seeded demo data is CONFIRMED, rather than every seeded row
@@ -982,10 +1022,24 @@ def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client)
     # claim guard below still holds for it.
     for code in recompute_parents({r.technique_code: r for r in coverage_rows}).changed:
         parent = next(r for r in coverage_rows if r.technique_code == code)
-        parent.detection_tools, parent.response_tools = _attack_tools_for(parent.status)
+        (
+            parent.detection_tools,
+            parent.prevention_tools,
+            parent.response_tools,
+        ) = _attack_tools_for(parent.status)
     db.flush()
 
-    coverage_map = {r.technique_code: r.status for r in coverage_rows}
+    # #554 R3: what every surface counts. The seeded tools make each computed
+    # status equal the stored one, so the release gate's review queue is empty --
+    # a released demo holding a state the gate refuses would be #732's defect.
+    effective_rows = attack_effective_coverage(assessment, coverage_rows)
+    differ = attack_review_queue(effective_rows)
+    if differ:
+        raise RuntimeError(
+            f"seed_demo wrote {len(differ)} ATT&CK rows whose computed status differs from "
+            f"the seeded one (e.g. {list(differ)[:3]}); the release gate would refuse them."
+        )
+    coverage_map = {r.technique_code: r.status for r in effective_rows}
     # Asserted on the PROPERTY, not through `is_pending_review`. The first
     # version of this guard called the predicate -- and could never fire, because
     # every row here is written with `unconfirmed_citations=[]`, which is case 3
@@ -1006,7 +1060,7 @@ def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client)
             "tool or drop the status."
         )
     pending = attack_pending_codes(
-        coverage_rows, parents_computed=attack_parents_computed(assessment)
+        effective_rows, parents_computed=attack_parents_computed(assessment)
     )
     assert not pending, f"seeded rows the scoring rule would withhold: {sorted(pending)[:3]}"
     rollup = compute_attack(coverage_map, pending)
@@ -1028,7 +1082,7 @@ def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client)
         client_legal_name=org.legal_name,
         service_title=svc.title,
         assessment=assessment,
-        coverage=coverage_rows,
+        coverage=effective_rows,
         rollup=rollup,
     )
     _release(
@@ -1227,7 +1281,10 @@ def _seed_risk_register(
         # It used to be left out, and since #556 that is not neutral: a register
         # naming no ATT&CK input is withheld from the client
         # (`is_stale_risk_register`), which would have withheld the demo's own.
-        provenance=_provenance_snapshot(db, org.id, []),
+        #
+        # #737: through `_take_input_snapshot`, the read generate uses, so the
+        # provenance carries the `current_inputs` record publish checks.
+        provenance=_provenance_snapshot(_take_input_snapshot(db, org.id), []),
     )
     db.add(register)
     db.flush()
@@ -1275,8 +1332,10 @@ def _seed_risk_register(
     db.add_all(entries)
     db.flush()
 
-    # Export the register to XLSX/PDF/Word so the admin demo shows downloadable
-    # artifacts, mirroring the /register/export route (which sets finalized_at).
+    # Render the register to XLSX/PDF/Word and PUBLISH it, so the admin demo
+    # shows downloadable artifacts and the client demo shows the dashboard --
+    # what the /register/publish route does (#737). `finalized_at` means
+    # published: export no longer sets it, and publish is its one API writer.
     #
     # #403: `link_scope` is deliberately NOT passed, and the omission is stated
     # here rather than left for whoever next greps `build_context`. These
@@ -1332,6 +1391,17 @@ def _seed_risk_register(
     register.xlsx_artifact_id = xlsx_art.id
     register.pdf_artifact_id = pdf_art.id
     register.docx_artifact_id = docx_art.id
+    # #860 review B4 (the #130 shape): the seed sets `finalized_at` itself, so
+    # it asks the REAL publish gate first and refuses to seed a published
+    # register the product would have refused to publish. `main` seeds CSF v2
+    # AFTER this, so the gate sees CSF v1 released; v2 approved arriving later
+    # is the ordinary "published, then an input moved on" state.
+    blockers = publish_blockers(db, org.id, (register.provenance or {}).get("current_inputs"))
+    if blockers:
+        raise RuntimeError(
+            "seed_demo: the demo Risk Register would be refused by publish: "
+            + "; ".join(f"{b.kind} {b.reason} ({b.status})" for b in blockers)
+        )
     register.finalized_at = utcnow()
     db.flush()
 
@@ -1388,7 +1458,7 @@ def main() -> None:
         seeded.append("Tech Debt")
 
         print("Seeding CSF service...")
-        csf = _seed_csf(db, storage, admin, org)
+        csf, csf_v1_tiers = _seed_csf(db, storage, admin, org)
         print(f"  -> {csf.id}")
         seeded.append("CSF")
 
@@ -1430,6 +1500,11 @@ def main() -> None:
         print("Seeding synthesized Risk Register...")
         register = _seed_risk_register(db, storage, admin, org)
         print(f"  -> {register.id} (v{register.version}, {len(_RISK_ENTRIES)} entries)")
+
+        # AFTER the register (#860 review B4): it is published from CSF v1
+        # released, and v2 approved then arrives as the next re-assessment.
+        print("Seeding CSF v2 (approved, not released)...")
+        _seed_csf_v2_approved(db, admin, org, csf, csf_v1_tiers)
 
         db.commit()
 

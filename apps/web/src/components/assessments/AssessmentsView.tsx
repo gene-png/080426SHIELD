@@ -47,6 +47,9 @@ function statusTone(
 }
 
 function statusLabel(e: AssessmentResponse): string {
+  // #588: checked FIRST, as the home page's `phaseFor` does. A withheld report
+  // was released, so every "released" label below would call it readable.
+  if (e.withheld) return "Report withheld";
   switch (e.assessment_status) {
     case "draft":
       return "In progress — not submitted";
@@ -323,7 +326,11 @@ export function AssessmentsView(): JSX.Element {
                     </div>
                     <div className="flex items-center gap-3">
                       <StatusPill
-                        tone={statusTone(e.assessment_status, e.status)}
+                        tone={
+                          e.withheld
+                            ? "warning"
+                            : statusTone(e.assessment_status, e.status)
+                        }
                         withDot
                       >
                         {statusLabel(e)}

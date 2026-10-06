@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.storage.local import LocalFilesystemStorage
+from tests._ai_runs import tech_debt_extract
 
 
 @pytest.fixture()
@@ -184,11 +185,7 @@ def _seed_release(c: TestClient, provider: FixtureProvider, bearer: str, *, rele
             )
         },
     ).json()["id"]
-    ext = c.post(
-        f"/tech-debt/services/{svc_id}/capability-lists/extract",
-        headers=h,
-        json={"artifact_id": artifact_id},
-    ).json()
+    ext = tech_debt_extract(c, svc_id, h, artifact_id)
     list_id = ext["id"]
     # Cut the two duplicate-category tools; keep the rest.
     for item in ext["items"]:
@@ -517,13 +514,8 @@ def test_tech_debt_dashboard_numbers_come_from_the_version_the_header_claims(app
         headers=h,
         files={"file": ("inv2.csv", io.BytesIO(_inventory_csv()), "text/csv")},
     ).json()["id"]
-    v2 = c.post(
-        f"/tech-debt/services/{svc_id}/capability-lists/extract",
-        headers=h,
-        json={"artifact_id": artifact_id},
-    )
-    assert v2.status_code == 201, v2.text
-    v2 = v2.json()
+    v2 = tech_debt_extract(c, svc_id, h, artifact_id)
+    v2 = v2
     assert v2["version"] == 2, "the preamble did not actually cut a second list version"
     for item in v2["items"]:
         c.patch(

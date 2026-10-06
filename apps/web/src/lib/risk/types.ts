@@ -1,3 +1,13 @@
+import type { RatingNotCarried } from "./carry";
+export interface RiskInputState {
+  kind: string;
+  /** False: the client has no service of this kind, so it does not block. */
+  engaged: boolean;
+  /** null with `engaged`: a service exists and nothing is started. */
+  status: string | null;
+  version: number | null;
+}
+
 export interface RiskGate {
   unlocked: boolean;
   has_attack: boolean;
@@ -33,6 +43,19 @@ export interface RiskGate {
    * this input already is. Optional so an older client parses a newer response.
    */
   attack_catalog_mismatch?: string | null;
+  /**
+   * #554 R3: the approved ATT&CK input's computed statuses await review, so
+   * generating refuses it. The server's own sentence, which names the remedy;
+   * null when there is nothing to say. Optional so an older client parses a
+   * newer response.
+   */
+  attack_computed_status_unreviewed?: string | null;
+  /**
+   * #737, the Inputs panel: one row per input kind (one per service for Tech
+   * Debt), read by the same server code publish uses. Required: the server
+   * always sends it.
+   */
+  inputs: RiskInputState[];
 }
 
 export interface RiskEntry {
@@ -42,6 +65,17 @@ export interface RiskEntry {
   axis: string | null;
   source: string | null;
   source_id: string | null;
+  /**
+   * #737, Gene's ruling: the state of the input this entry's finding came from
+   * when it was NOT released at generate ("draft", "submitted", "approved");
+   * null when released, or for a register predating this.
+   */
+  source_state: string | null;
+  /**
+   * #554 R3, option (b): this entry's ATT&CK technique had a computed status
+   * awaiting review when the register was generated.
+   */
+  source_review_pending: boolean;
   linked_techniques: string[] | null;
   linked_controls: string[] | null;
   likelihood: string | null;
@@ -73,6 +107,14 @@ export interface RiskEntry {
    * it newly validates (#132 review).
    */
   dropped_links: Record<string, string[]> | null;
+  /**
+   * #844. Both null: the rating is the model's as generated. Set: a consultant
+   * edited likelihood or impact through the edit path. The row is marked
+   * "Rating edited by consultant" when at least one half is then present (Gene's
+   * ruling (a)); a FULLY cleared rating is unrated and is not marked (#854 F2).
+   */
+  rating_edited_by: string | null;
+  rating_edited_at: string | null;
 }
 
 /**
@@ -160,6 +202,28 @@ export interface RiskRegister {
    */
   batches_total: number | null;
   batches_failed: number | null;
+  /**
+   * #844. Each finding should get exactly one entry. `findings_recorded` false
+   * means nothing was recorded (a register generated before this, or a record
+   * that could not be read), and the empty list and map then mean NOTHING --
+   * never "every finding had one entry".
+   */
+  findings_recorded: boolean;
+  findings_total: number | null;
+  findings_without_entry: string[];
+  findings_with_several_entries: Record<string, number>;
+  /**
+   * #854 F3. Consultant ratings carried from the previous version when this one
+   * was generated, matched by `source_id`. `ratings_not_carried` lists each
+   * RATING that could not be carried, one item per rating with its reason, so
+   * its length counts ratings, not findings. `ratings_carried_recorded`
+   * false: a register generated before this was recorded; the rest then means
+   * nothing.
+   */
+  ratings_carried_recorded: boolean;
+  ratings_carried: number | null;
+  ratings_carried_from_version: number | null;
+  ratings_not_carried: RatingNotCarried[];
 
   /**
    * #330. The generate loop's INTENDED tally.

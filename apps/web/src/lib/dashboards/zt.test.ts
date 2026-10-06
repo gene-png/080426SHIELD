@@ -55,6 +55,13 @@ describe("zt dashboard transforms", () => {
 
 function data(p: Partial<ZtDashboardData>): ZtDashboardData {
   return {
+    // #646 (Batch F): required since; not under test here.
+    ai_source: {
+      state: "live",
+      sentence: "AI suggestions in this assessment came from a live AI model.",
+      live_runs: 1,
+      fixture_runs: 0,
+    },
     service_id: "s",
     unusable_target_codes: [],
     service_title: "Atlas — Zero Trust",
@@ -90,15 +97,15 @@ describe("zt target provenance", () => {
     const note = (src: string): string =>
       targetNote(data({ target_stage_source: src }));
 
-    expect(note("client")).toBe("Your target, chosen at intake");
-    expect(note("default")).toBe("Default target — no stage chosen at intake");
+    expect(note("client")).toBe("Your target, chosen at intake.");
+    expect(note("default")).toBe("Default target — no stage chosen at intake.");
     // The two failure sources must NOT collapse into the "chose nothing"
     // wording: the client did choose, and a consultant can re-ask them.
     expect(note("client_out_of_range")).toBe(
-      "Default target — the stage on file is not one this framework has",
+      "Default target — the stage on file is not one this framework has.",
     );
     expect(note("client_unparseable")).toBe(
-      "Default target — the stage on file could not be read",
+      "Default target — the stage on file could not be read.",
     );
 
     const notes = [
@@ -114,7 +121,7 @@ describe("zt target provenance", () => {
     // Fails safe toward "assumed". #124's whole failure mode was a fallback
     // that read like a decision.
     expect(targetNote(data({ target_stage_source: "something_new" }))).toBe(
-      "Default target — the stage on file was not usable",
+      "Default target — the stage on file was not usable.",
     );
   });
 
@@ -128,7 +135,7 @@ describe("zt target provenance", () => {
           engagement_target_capability_count: 0,
         }),
       ),
-    ).toBe("Per-capability targets from your assessment");
+    ).toBe("Per-capability targets from your assessment.");
   });
 
   it("targetNote: a fully overridden target still reports a FAILED choice", () => {
@@ -165,7 +172,7 @@ describe("zt target provenance", () => {
           engagement_target_capability_count: 0,
         }),
       ),
-    ).toBe("Per-capability targets from your assessment");
+    ).toBe("Per-capability targets from your assessment.");
   });
 
   it("targetNote: one capability on the engagement target still credits it", () => {
@@ -178,7 +185,7 @@ describe("zt target provenance", () => {
           engagement_target_capability_count: 1,
         }),
       ),
-    ).toBe("Your target, chosen at intake");
+    ).toBe("Your target, chosen at intake.");
   });
 });
 
@@ -205,7 +212,7 @@ describe("targetNote — a discarded per-capability target reaches the screen (#
     // base`), and a doubled append. One equality kills all three, and it is
     // also the only assertion that can see a stray space or a missing one.
     expect(note).toBe(
-      "Your target, chosen at intake A per-capability target was recorded for" +
+      "Your target, chosen at intake. A per-capability target was recorded for" +
         " CISA.ID.01, CISA.DE.02 but could not be used, so the engagement" +
         " target was applied to those rows instead.",
     );
@@ -240,7 +247,7 @@ describe("targetNote — a discarded per-capability target reaches the screen (#
     expect(note).toBe(
       // One code, so ONE row (#452): this expected string said "those rows"
       // and pinned the grammar defect the issue is about.
-      "Per-capability targets from your assessment A per-capability target was" +
+      "Per-capability targets from your assessment. A per-capability target was" +
         " recorded for CISA.ID.01 but could not be used, so the engagement" +
         " target was applied to that row instead.",
     );
@@ -300,6 +307,59 @@ describe("targetNote — a discarded per-capability target reaches the screen (#
 // here would pass under an implementation that appends the sentence to one
 // branch only, which is the defect, not a variant of it.
 // ---------------------------------------------------------------------------
+
+describe("targetNote ends its lead-in with a period on every branch (#741)", () => {
+  // The client dashboard read "Your target, chosen at intake A per-capability
+  // target was recorded ...": the lead-in had no full stop, so every appended
+  // clause ran on from it. Pinned as WHOLE strings with every clause at once,
+  // on both branches, so a period missing between ANY two sentences is red.
+  const LIVE =
+    " These figures use your target as it stands today. Your released report" +
+    " was rendered against the target on file at the time, so the two can" +
+    " differ.";
+
+  it("the ordinary branch, with a fault, a discarded target and a live read", () => {
+    expect(
+      targetNote(
+        data({
+          target_stage_source: "client_unparseable",
+          unusable_target_codes: ["CISA.ID.01"],
+          target_frozen_at: null,
+        }),
+      ),
+    ).toBe(
+      "Default target — the stage on file could not be read. A per-capability" +
+        " target was recorded for CISA.ID.01 but could not be used, so the" +
+        " engagement target was applied to that row instead." +
+        LIVE,
+    );
+  });
+
+  it("the fully-overridden branch, with a fault, a discarded target and a live read", () => {
+    expect(
+      targetNote(
+        data({
+          target_stage_source: "client_out_of_range",
+          engagement_target_capability_count: 0,
+          unusable_target_codes: ["CISA.ID.01"],
+          target_frozen_at: null,
+        }),
+      ),
+    ).toBe(
+      "Per-capability targets from your assessment — the stage on file is not" +
+        " one this framework has. A per-capability target was recorded for" +
+        " CISA.ID.01 but could not be used, so the engagement target was" +
+        " applied to that row instead." +
+        LIVE,
+    );
+  });
+
+  it("a client-chosen target followed only by the live read", () => {
+    expect(targetNote(data({ target_frozen_at: null }))).toBe(
+      "Your target, chosen at intake." + LIVE,
+    );
+  });
+});
 
 describe("targetNote discloses a live-read target (#209)", () => {
   const LIVE =

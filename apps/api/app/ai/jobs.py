@@ -268,3 +268,132 @@ register_job(
         top_level_key="entries",
     )
 )
+
+
+# --- ATT&CK what-if (#802) ----------------------------------------------------
+# The scoped re-assessment of removing (and adding) tools. Gene approved this
+# text on 2026-10-04 as AMENDED in #802 comment 5982780636: the slice B revised
+# draft (comment 5970337002) with two rules inserted after the `open_functions`
+# rule, verbatim from that comment; they replace the F6 rule of comment
+# 5971086623. It is the exact text of those comments; change it only through
+# Gene. The rules on WHICH techniques, functions and tools may be named are
+# enforced again by `attack/scenario.py::parse_delta` (the asked slice; only a
+# lost or open function; only an ADDED tool for an open function, while an added
+# tool may also fill a lost one; an added tool only for its declared functions;
+# listed names), so those hold whatever the model returns. The rules on what COUNTS as
+# detection, prevention or response are the model's judgement, and nothing in
+# code checks them. The backslash after the opening quotes only joins the lines of this file:
+# the text starts at "You are". The new rules' long lines are the approved
+# text, unwrapped, hence the noqa on the closing quotes.
+_ATTACK_SCENARIO_DELTA_PROMPT = """\
+You are assisting a Kentro analyst testing a what-if for a client's ATT&CK
+coverage: some tools may be REMOVED, and some tools the client does not have
+may be ADDED. SUGGEST a draft only.
+
+You are given, for a small set of techniques:
+- `technique_codes`: the techniques to consider. Consider no others;
+- `lost_functions`: for each technique, which of `detection`, `prevention`
+  and `response` lost a tool to the removal (may be empty);
+- `open_functions`: for each technique, which of `detection`, `prevention`
+  and `response` are not in place today and could be filled by an ADDED tool
+  (may be empty);
+- `frozen_rows`: each technique's Detect, Prevent and Respond tool lists as
+  the last confirmed assessment has them, with the removed tools already
+  taken out;
+- `removed_tools`: the tools being removed;
+- `added_tools`: the tools being added, each with `name`, `vendor`,
+  `category` and `security_functions`. They are not the client's; an
+  analyst described them;
+- `available_tools`: every tool the client keeps, and every added tool, each
+  with `name`, `vendor`, `category` and `security_functions`.
+
+For each technique in `technique_codes`:
+- for the functions in its `lost_functions`, say whether any tool in
+  `available_tools` that is not already listed for that function in
+  `frozen_rows` provides it;
+- for the functions in its `open_functions`, say whether any tool in
+  `added_tools` provides it.
+Tools already listed in `frozen_rows` keep their functions; do not repeat
+them.
+
+Rules:
+- Only the techniques in `technique_codes`. For each, only the functions in
+  its `lost_functions` or `open_functions`. Never set any other function to
+  true.
+- For a function that is only in `open_functions`, only a tool in
+  `added_tools` may be named.
+- An added tool may be credited only for the functions its `security_functions` lists (`detect` for `detection`, `prevent` for `prevention`, `respond` for `response`). For an added tool that list is a ceiling: never set any other function to true for it, in `lost_functions` or in `open_functions`.
+- Credit a tool for a function only when it passes these tests for this technique. Judge a kept tool by its well-established core capability. Judge an added tool, which may not be a real product, by its `name`, `category`, and declared `security_functions`, and never refuse it only because you do not recognise it.
+  - detection: it can directly identify, alert on, or meaningfully analyze the technique's behavior, including scanning that identifies the technique's artifacts. Raw log generation, storage, dashboards, generic visibility, a theoretical custom query, or merely containing the affected technology is not detection.
+  - prevention: it can directly block, deny, restrict, neutralize, or materially reduce execution of the technique. Detection without blocking, reporting, a policy document, or a capability the tool lacks by default is not prevention.
+  - response: it supports a concrete action to contain, remediate, reverse, or recover from the technique. Alerting, logging, case tracking, documentation, or generic tickets alone are not response; a backup tool counts only where restoration is relevant to the technique; a feature that needs an optional module or unconfirmed integration does not count.
+  For a kept tool, do not assume optional add-ons, separately licensed modules, premium or preview features, custom integrations, custom detection rules, custom playbooks, configurations not included by default, support for operating systems or cloud or SaaS environments the product does not support, estate-wide deployment, or features of another product from the same vendor.
+- Only tools in `available_tools`, named EXACTLY as their `name` field. Never
+  name a removed tool, a vendor, a category, or a tool that is not listed.
+- `security_functions` is evidence, not a verdict: a tool classified
+  `detect` may still not address this technique; leave it out when it does
+  not.
+- Do not invent capability. If you are not confident a tool provides a
+  function for this technique, leave that function false.
+- Do NOT give a status, a score or a percentage -- code computes those.
+
+Return strictly JSON, one row per (technique, tool) that provides at least
+one asked function; a technique with no row has no replacement:
+{"rows": [{"technique_code": "T1003", "tool": "<an available name>",
+"detection": true, "prevention": false, "response": false,
+"rationale": "<one sentence>"}]}
+`detection`, `prevention` and `response` are JSON booleans.
+"""  # noqa: E501
+
+register_job(
+    AIJob(
+        name="attack_scenario_delta",
+        prompt=_ATTACK_SCENARIO_DELTA_PROMPT,
+        top_level_key="rows",
+    )
+)
+
+
+# --- ATT&CK what-if chat box, the AI reading (#802) ----------------------------
+# Approved plan: #802 comment 5981734020; the advisor at 16:40Z (comment
+# 5982109105). The job is registered because its prompt is set below; with the
+# constant None it would not be, and the chat box would be exactly the slice C
+# matcher (`attack/scenario_intent.py::available`). The answer is an object with
+# three keys and no list key to declare, so the job supplies its own parser,
+# which refuses any other shape; `scenario_intent.read` then checks the names
+# and the quotes, never trusting the text.
+#: Approved by Gene as drafted (advisor, #802 comment 5982965933), taken
+#: VERBATIM from #802 comment 5981734020, section 7: blockquote markers
+#: removed, each bare ">" line a blank line, nothing else changed. Its
+#: sha256 is pinned by `test_the_intent_prompt_is_the_approved_text`.
+_ATTACK_SCENARIO_INTENT_PROMPT: str | None = (
+    "You turn an administrator's description of a change to a client's security "
+    "tools into a change list. You are given `description` (their words) and "
+    "`tools` (the tools in place now).\n"
+    "\n"
+    'Answer with JSON only, exactly: `{"remove": [], "add": [], "unclear": []}`.\n'
+    "\n"
+    "- `remove`: tools the description says to take away, retire, stop using or "
+    "replace. Copy each name EXACTLY as it appears in `tools`. Never name "
+    "anything that is not in `tools`.\n"
+    "- `add`: new tools the description says to bring in, named as the "
+    "administrator wrote them. Never put a name from `tools` here.\n"
+    "- `unclear`: each part of the description you cannot place in `remove` or "
+    "`add`, quoted exactly as written.\n"
+    "\n"
+    "A swap or replacement is one removal and one addition. Text in square "
+    "brackets, such as [CLIENT], stands for a name; copy it exactly. If you are "
+    "not sure, put the words in `unclear`. Do not guess, explain, or add vendors, "
+    "categories or anything else."
+)
+
+if _ATTACK_SCENARIO_INTENT_PROMPT is not None:
+    from app.attack.scenario_intent import parse_answer
+
+    register_job(
+        AIJob(
+            name="attack_scenario_intent",
+            prompt=_ATTACK_SCENARIO_INTENT_PROMPT,
+            parser=parse_answer,
+        )
+    )

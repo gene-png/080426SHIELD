@@ -1,6 +1,13 @@
 "use client";
 
 import type {
+  AiRun,
+  AiRunStarted,
+  AiRunSummary,
+  AiServes,
+} from "@/lib/aiRuns/types";
+
+import type {
   AttackAiInputs,
   AttackAssessment,
   AttackCatalog,
@@ -120,6 +127,28 @@ export async function approveAssessment(
   );
 }
 
+/** #554 R3: one technique as the review panel showed it. */
+export interface ComputedStatusReview {
+  code: string;
+  computed_status: string;
+}
+
+/**
+ * #554 R3: record a review of the computed statuses that differ from the AI's.
+ * `reviews` are the techniques the panel showed, each with the computed status
+ * on screen, so the API refuses any that entered the queue or changed after the
+ * page loaded rather than record a status nobody saw.
+ */
+export async function reviewComputedStatuses(
+  assessmentId: string,
+  reviews: ComputedStatusReview[],
+): Promise<AttackAssessment> {
+  return jsonRequest<AttackAssessment>(
+    `/api/proxy/attack/assessments/${assessmentId}/computed-status-review`,
+    { method: "POST", body: { reviews } },
+  );
+}
+
 export async function discardAssessment(
   assessmentId: string,
 ): Promise<AttackAssessment> {
@@ -129,12 +158,40 @@ export async function discardAssessment(
   );
 }
 
+/**
+ * Start a Run-AI (#645). Answers with the run to follow, not its results: the
+ * work happens in the background and the results arrive on the run.
+ *
+ * `serves` is the AI status the consultant acknowledged. The api refuses a run
+ * that would now go live after offline was acknowledged (#504).
+ */
 export async function runAttackAi(
   serviceId: string,
-): Promise<AttackRunAiResponse> {
-  return jsonRequest<AttackRunAiResponse>(
+  serves: AiServes,
+): Promise<AiRunStarted> {
+  return jsonRequest<AiRunStarted>(
     `/api/proxy/attack/services/${serviceId}/run-ai`,
-    { method: "POST" },
+    { method: "POST", body: { serves } },
+  );
+}
+
+export type AttackRun = AiRun<AttackRunAiResponse>;
+
+export async function fetchAttackRun(runId: string): Promise<AttackRun> {
+  return jsonRequest<AttackRun>(`/api/proxy/ai/runs/${runId}`);
+}
+
+/**
+ * The service's runs. `subjectId` scopes the newest and last completed runs
+ * to one assessment (#271); the run holding the lock is always the service's.
+ */
+export async function fetchAttackRunSummary(
+  serviceId: string,
+  subjectId?: string,
+): Promise<AiRunSummary<AttackRunAiResponse>> {
+  const scope = subjectId ? `?subject_id=${encodeURIComponent(subjectId)}` : "";
+  return jsonRequest<AiRunSummary<AttackRunAiResponse>>(
+    `/api/proxy/ai/runs/services/${serviceId}${scope}`,
   );
 }
 

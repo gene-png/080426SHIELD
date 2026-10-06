@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.csf.catalog import SUBCATEGORIES
+from tests._ai_runs import csf_run_ai, csf_scores_by_batch, run_ai_expecting_failure
 
 
 @pytest.fixture()
@@ -89,9 +90,8 @@ def test_csf_run_ai_applies_dimensions_and_clamps(app_client) -> None:
             ' "improvement": 5, "what_we_found": "Mature IAM."}]}'  # improvement=5 invalid
         ),
     )
-    r = c.post(f"/csf/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    body = r.json()
+    r = csf_run_ai(c, svc_id, h)
+    body = r
     row = next(x for x in body["rows"] if x["subcategory_code"] == code and x["tier"] == "high")
     assert row["governance"] == 2
     assert row["policy"] == 1
@@ -116,10 +116,10 @@ def test_csf_run_ai_skips_locked(app_client) -> None:
             '{"scores": [{"tier": "high", "subcategory_code": "' + code + '", "governance": 2}]}'
         ),
     )
-    r = c.post(f"/csf/services/{svc_id}/run-ai", headers=h)
-    row = next(x for x in r.json()["rows"] if x["subcategory_code"] == code and x["tier"] == "high")
+    r = csf_run_ai(c, svc_id, h)
+    row = next(x for x in r["rows"] if x["subcategory_code"] == code and x["tier"] == "high")
     assert row["governance"] == 0
-    assert all(ch["subcategory_code"] != code for ch in r.json()["changed"])
+    assert all(ch["subcategory_code"] != code for ch in r["changed"])
 
 
 @pytest.mark.unit
@@ -149,7 +149,7 @@ def test_csf_run_ai_payload_carries_interview_answers(app_client) -> None:
     )
     assert r.status_code == 200, r.text
 
-    assert c.post(f"/csf/services/{svc_id}/run-ai", headers=h).status_code == 200
+    csf_run_ai(c, svc_id, h)
     assert "answers" in captured, "run-ai payload omitted interview answers"
     assert code in captured["answers"], "the answered subcategory is missing from the payload"
     ans = captured["answers"][code]
@@ -180,7 +180,10 @@ def test_csf_run_ai_requires_seeded_profile(app_client) -> None:
     c.post(f"/csf/services/{svc_id}/assessments", headers=h)
     provider.register_static("csf_score", LLMResponse('{"scores": []}'))
     # No profile seeded -> 409.
-    assert c.post(f"/csf/services/{svc_id}/run-ai", headers=h).status_code == 409
+    assert (
+        c.post(f"/csf/services/{svc_id}/run-ai", headers=h, json={"serves": "offline"}).status_code
+        == 409
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -205,14 +208,14 @@ def test_run_ai_provider_failure_returns_typed_error(app_client) -> None:
     h, svc_id = _bootstrap(c)
     provider.register("csf_score", _raise_provider_error)
 
-    r = c.post(f"/csf/services/{svc_id}/run-ai", headers=h)
+    # #645: the run is a background job, so the typed 502 it answered with is
+    # now the FAILED run's reason, message and charged_likely.
+    run = run_ai_expecting_failure(c, f"/csf/services/{svc_id}/run-ai", h)
 
-    assert r.status_code == 502, r.text
-    err = r.json()["error"]
-    assert err["reason"] == "ai_call_failed"
-    assert "cut off" in err["message"], err["message"]
+    assert run["error_reason"] == "ai_call_failed"
+    assert "cut off" in run["error_message"], run["error_message"]
     # The UI has to be able to say whether money may have been spent.
-    assert err["charged_likely"] is False  # fixture provider — no egress
+    assert run["charged_likely"] is False  # fixture provider — no egress
 
 
 @pytest.mark.unit
@@ -227,8 +230,9 @@ def test_run_ai_provider_failure_persists_the_llm_call_row(app_client) -> None:
     h, svc_id = _bootstrap(c)
     provider.register("csf_score", _raise_provider_error)
 
-    r = c.post(f"/csf/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 502
+    # #645: the 502 is now the FAILED run's reason.
+    run = run_ai_expecting_failure(c, f"/csf/services/{svc_id}/run-ai", h)
+    assert run["error_reason"] == "ai_call_failed"
 
     from app.models.llm_call import LLMCall, LLMCallStatus
 
@@ -257,15 +261,14 @@ def test_run_ai_unwrapped_list_response_fails_loudly_not_silently(app_client) ->
         LLMResponse('[{"tier": "high", "subcategory_code": "GV.OC-01", "governance": 2}]'),
     )
 
-    r = c.post(f"/csf/services/{svc_id}/run-ai", headers=h)
+    # #645: the typed 502 is now the FAILED run's reason and message.
+    run = run_ai_expecting_failure(c, f"/csf/services/{svc_id}/run-ai", h)
 
-    assert r.status_code == 502, r.text
-    err = r.json()["error"]
-    assert err["reason"] == "ai_call_failed"
+    assert run["error_reason"] == "ai_call_failed"
     # Assert on wording only the new `friendly_reason` branch supplies. The
     # generic fallback embeds the raw exception, which already contains
     # "object" — so asserting that would pass with the branch deleted.
-    assert "drifted apart" in err["message"], err["message"]
+    assert "drifted apart" in run["error_message"], run["error_message"]
 
 
 # --------------------------------------------------------------------------
@@ -286,10 +289,29 @@ _ROW_VALUE_SLOTS = 6
 
 
 def _run_ai(c, provider, h, svc_id, scores: list) -> dict:
-    provider.register_static("csf_score", LLMResponse(json.dumps({"scores": scores})))
-    r = c.post(f"/csf/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    return r.json()
+    # #479: the run is batched, so each canned entry is delivered to the batch
+    # that asked for its row (unknown rows to the first), exactly once.
+    provider.register(
+        "csf_score",
+        csf_scores_by_batch(scores, tiers=["high"], codes=[s.code for s in SUBCATEGORIES]),
+    )
+    # #645 / #504: the run carries what the consultant acknowledged, which is
+    # what the provider serves. A test that makes the provider look live
+    # acknowledged live; acknowledging offline over it is refused.
+    serves = "offline" if provider.name == "fixture" else "live"
+    r = csf_run_ai(c, svc_id, h, serves=serves)
+    return r
+
+
+def _register_routed(provider, raw: str) -> None:
+    """A raw JSON response, delivered through the batch routing `_run_ai`
+    uses (#479), so its entries reach the run once."""
+    provider.register(
+        "csf_score",
+        csf_scores_by_batch(
+            json.loads(raw)["scores"], tiers=["high"], codes=[s.code for s in SUBCATEGORIES]
+        ),
+    )
 
 
 def _assert_invariant(body: dict) -> None:
@@ -816,11 +838,11 @@ def test_csf_run_ai_non_list_scores_is_an_error_not_a_pile_of_drops(app_client) 
     h, svc_id = _bootstrap(c)
     provider.register_static("csf_score", LLMResponse('{"scores": "GV.OC-01 looks fine"}'))
 
-    r = c.post(f"/csf/services/{svc_id}/run-ai", headers=h)
+    # #645: the typed 502 is now the FAILED run's reason and message.
+    run = run_ai_expecting_failure(c, f"/csf/services/{svc_id}/run-ai", h)
 
-    assert r.status_code == 502, r.text
-    assert r.json()["error"]["reason"] == "ai_call_failed"
-    assert "drifted apart" in r.json()["error"]["message"]
+    assert run["error_reason"] == "ai_call_failed"
+    assert "drifted apart" in run["error_message"]
 
 
 @pytest.mark.unit
@@ -1206,17 +1228,16 @@ def test_csf_run_ai_unencodable_key_does_not_500_after_committing(app_client) ->
     h, svc_id = _bootstrap(c)
 
     lone_surrogate = "\\u" + "d800"
-    provider.register_static(
-        "csf_score",
-        LLMResponse(
+    _register_routed(
+        provider,
+        (
             '{"scores": [{"tier": "high", "subcategory_code": "'
             + lone_surrogate
             + '", "governance": 1}]}'
         ),
     )
-    r = c.post(f"/csf/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    body = r.json()
+    r = csf_run_ai(c, svc_id, h)
+    body = r
     d = _only_dropped(body)
     assert d["reason"] == "unknown_key", d
     assert d["key"] is not None
@@ -1232,17 +1253,16 @@ def test_csf_run_ai_control_characters_in_a_key_are_escaped(app_client) -> None:
     h, svc_id = _bootstrap(c)
 
     bidi = "\\u" + "202e"
-    provider.register_static(
-        "csf_score",
-        LLMResponse(
+    _register_routed(
+        provider,
+        (
             '{"scores": [{"tier": "high", "subcategory_code": "'
             + bidi
             + 'DEILPPA", "governance": 1}]}'
         ),
     )
-    r = c.post(f"/csf/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    d = _only_dropped(r.json())
+    r = csf_run_ai(c, svc_id, h)
+    d = _only_dropped(r)
     assert "\\u202e" in d["key"], d
     assert d["key"].isprintable(), d
 
@@ -1253,14 +1273,12 @@ def test_csf_run_ai_ordinary_key_is_not_mangled_by_the_escaping(app_client) -> N
     c, provider = app_client
     h, svc_id = _bootstrap(c)
 
-    provider.register_static(
-        "csf_score",
-        LLMResponse(
-            '{"scores": [{"tier": "high", "subcategory_code": "GV.OC-1", "governance": 1}]}'
-        ),
+    _register_routed(
+        provider,
+        ('{"scores": [{"tier": "high", "subcategory_code": "GV.OC-1", "governance": 1}]}'),
     )
-    r = c.post(f"/csf/services/{svc_id}/run-ai", headers=h)
-    d = _only_dropped(r.json())
+    r = csf_run_ai(c, svc_id, h)
+    d = _only_dropped(r)
     assert d["key"] == "high|GV.OC-1", d
 
 
