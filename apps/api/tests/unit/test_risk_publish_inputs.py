@@ -480,3 +480,60 @@ def test_an_archived_approved_assessment_does_not_count_as_finalized(
     _new_zt_dod(c, bearer, cid)
     g = c.get(f"/risk/clients/{cid}/gate", headers=h).json()
     assert "the Zero Trust assessment" in g["not_finalized"], g["not_finalized"]
+
+
+# ---------------------------------------------------------------------------
+# Archived scope, case (a) (advisor, #736 6003941445): an archived engagement
+# is not an engaged service, for unlock AND for synthesis.
+# ---------------------------------------------------------------------------
+
+
+def _seed_csf_low(c, bearer: str, cid: str) -> str:
+    """A CSF service with one subcategory at tier 1 (a finding at any target)."""
+    h = _h(bearer, cid)
+    svc = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "CSF"})
+    assert svc.status_code in (200, 201), svc.text
+    sid = svc.json()["id"]
+    assert c.post(f"/csf/services/{sid}/assessments", headers=h).status_code in (200, 201)
+    ans = c.get(f"/csf/services/{sid}/assessments/latest", headers=h).json()["answers"][0]
+    r = c.patch(f"/csf/answers/{ans['id']}", headers=h, json={"maturity_tier": 1})
+    assert r.status_code == 200, r.text
+    return ans["subcategory_code"]
+
+
+def test_an_archived_only_zero_trust_locks_the_register(app_client) -> None:  # noqa: F811
+    """Case (a), no CSF. ATT&CK is engaged and the client's only Zero Trust
+    service is archived: there is no CSF or ZT engagement left, so the gate is
+    locked and Generate refuses. On main the archived ZT unlocked it."""
+    c, _ = app_client
+    bearer, cid = _admin(c)
+    s = seed_attack_and_zt(c, bearer, cid)
+    h = _h(bearer, cid)
+    before = c.get(f"/risk/clients/{cid}/gate", headers=h).json()
+    assert before["unlocked"] is True, before  # the positive state first
+    assert c.delete(f"/admin/services/{s.zt_service}", headers=h).status_code == 204
+    after = c.get(f"/risk/clients/{cid}/gate", headers=h).json()
+    assert after["unlocked"] is False, after
+    assert after["missing"] == ["a CSF or Zero Trust assessment"], after["missing"]
+    r = c.post(f"/risk/clients/{cid}/register/generate", headers=h)
+    assert r.status_code == 409, r.text
+    assert "a CSF or Zero Trust assessment" in r.text, r.text
+
+
+def test_an_archived_zero_trust_contributes_no_findings(app_client) -> None:  # noqa: F811
+    """Case (a), CSF present. Generate still works, from ATT&CK and CSF, and
+    the archived Zero Trust service's findings are not in the register."""
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    s = seed_attack_and_zt(c, bearer, cid)
+    csf_code = _seed_csf_low(c, bearer, cid)
+    assert c.delete(f"/admin/services/{s.zt_service}", headers=_h(bearer, cid)).status_code == 204
+    _gen(c, provider, bearer, cid)
+    prov = _register_provenance()
+    # The single static entry names no finding, so every finding is listed
+    # here: the run's whole finding set, read from the stored register.
+    findings = prov["finding_coverage"]["without_entry"]
+    assert csf_code in findings and s.technique in findings, findings  # positive first
+    assert s.capability not in findings, findings
+    assert not [f for f in findings if f.startswith(("CISA.", "DOD."))], findings
+    assert sorted(i["kind"] for i in prov["inputs"]) == ["attack", "csf"], prov["inputs"]
