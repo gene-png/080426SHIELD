@@ -154,6 +154,8 @@ def _join_lines(lines: list[str]) -> str:
             continue
         if not out:
             out = line
+        elif out.endswith(" -"):
+            out += " " + line  # a spaced dash ending the line, not a word break
         elif out.endswith("-") and not re.match(r"(or|and) ", line):
             out += line  # a hyphenated word broken across lines
         elif out.endswith("-"):
