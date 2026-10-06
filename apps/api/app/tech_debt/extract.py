@@ -221,6 +221,10 @@ _STRING_WIDTHS = {
     key: CapabilityItem.__table__.c[key].type.length
     for key in ("name", "vendor", "function", "category")
 }
+# An unbounded column would give None and fail only after a paid call; refuse
+# that at import instead (#878 narrow review).
+if not all(isinstance(w, int) for w in _STRING_WIDTHS.values()):
+    raise RuntimeError(f"capability item columns need a fixed width: {_STRING_WIDTHS}")
 #: `annual_cost_usd` is Numeric(14, 2): at most 999,999,999,999.99, judged on
 #: the value as stored -- quantized to cents (#878 review A3).
 _COST_LIMIT = Decimal(10**12)
@@ -337,8 +341,15 @@ def _coerce_item(item: dict[str, Any]) -> ExtractedCapability:
             _record(key, "unparseable", v)
             return None
         exact = Decimal(repr(n))
+        # Range and sign on the EXACT value first (#878 narrow review): quantizing
+        # 1e30 needs more than the default 28 digits and raises InvalidOperation,
+        # and -0.004 would quantize to -0.00 and pass `0 <=`.
+        if not 0 <= exact < _COST_LIMIT:
+            _record(key, "out_of_range", v)
+            return None
         cents = exact.quantize(_CENT, rounding=ROUND_HALF_UP)
-        if not 0 <= cents < _COST_LIMIT:
+        if cents >= _COST_LIMIT:
+            # 999999999999.995 is below the limit exactly and rounds up onto it.
             _record(key, "out_of_range", v)
             return None
         if cents != exact:

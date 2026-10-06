@@ -82,6 +82,12 @@ COST = [
     # #878 review A3: quantized to cents first, then judged; 999999999999.995
     # rounds to 13 integer digits, which Numeric(14, 2) cannot hold.
     (999999999999.995, None, "out_of_range"),
+    # #878 narrow review: judged BEFORE quantizing. Quantizing 1e30 to cents
+    # needs more than the default 28 digits and raised InvalidOperation, losing
+    # the whole list after the paid call; -0.004 quantized to -0.00 and passed.
+    (1e30, None, "out_of_range"),
+    ("1e30", None, "out_of_range"),
+    (-0.004, None, "out_of_range"),
 ]
 LICENSES = [
     (2, 2, None),
