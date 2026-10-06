@@ -199,20 +199,28 @@ def test_an_entry_on_a_superseded_register_is_refused(app_client) -> None:  # no
 
 
 def test_an_entry_on_a_published_register_is_refused(app_client) -> None:  # noqa: F811
-    """Until #737 separates them, export IS publication: it sets `finalized_at`,
-    which is what the client dashboard reads. A rating changed after that would
-    change numbers a client is already reading, with nothing re-published."""
-    c, _, bearer, cid, body = _setup(app_client, _unrated("Published"))
-    ex = c.post(
-        f"/risk/clients/{cid}/register/export",
+    """Publishing sets `finalized_at`, which is what the client dashboard reads
+    (#737). A rating changed after that would change numbers a client is
+    already reading, with nothing re-published.
+
+    The inputs are RELEASED first: publication needs every engaged input
+    final (Gene's rule, #737; seed edit declared and approved on #860)."""
+    from tests._risk_inputs import seed_released
+
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    seed_released(c, bearer, cid)
+    body = _generate(c, provider, bearer, cid, _entries_payload(_entry("Published")))
+    pub = c.post(
+        f"/risk/clients/{cid}/register/publish",
         headers={"Authorization": f"Bearer {bearer}"},
     )
-    assert ex.status_code == 200, ex.text
+    assert pub.status_code == 200, pub.text
     r = _patch(c, bearer, cid, body["entries"][0]["id"], {"likelihood": "low"})
     assert r.status_code == 409, r.text
     assert r.json()["error"]["reason"] == "risk_register_published"
     [e] = _latest(c, bearer, cid)["entries"]
-    assert e["likelihood"] is None
+    assert e["likelihood"] == "high"
 
 
 def test_a_client_user_cannot_edit(app_client) -> None:  # noqa: F811

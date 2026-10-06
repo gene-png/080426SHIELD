@@ -22,6 +22,7 @@ import {
   fetchRiskRegisterLatest,
   generateRiskRegister,
   getActiveClientId,
+  publishRiskRegister,
   getClientName,
 } from "@/lib/risk/client";
 import {
@@ -36,6 +37,12 @@ import {
 } from "@/lib/risk/matrix";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
 import { carriedSentences } from "@/lib/risk/carry";
+import {
+  INPUTS_RULE,
+  REVIEW_PENDING_NOTE,
+  inputLine,
+  sourceStateNote,
+} from "@/lib/risk/inputs";
 
 import type { RiskEntry, RiskGate, RiskRegister } from "@/lib/risk/types";
 
@@ -250,7 +257,10 @@ function columnsFor(
       // without this the drop reached no surface at all.
       cell: (r) => {
         const dropped = r.dropped_links?.source_id ?? [];
-        if (r.source_id) return r.source_id;
+        if (r.source_id)
+          return `${r.source_id}${sourceStateNote(r.source_state) ?? ""}${
+            r.source_review_pending ? REVIEW_PENDING_NOTE : ""
+          }`;
         if (dropped.length > 0) {
           return (
             <span
@@ -312,9 +322,9 @@ export function RiskRegisterDashboard(): JSX.Element {
   // synchronized one merely is not, right now, for reasons that have to keep
   // holding -- and one of those reasons had already stopped holding.
   const [loading, setLoading] = React.useState(true);
-  const [busy, setBusy] = React.useState<"generate" | "export" | "rate" | null>(
-    null,
-  );
+  const [busy, setBusy] = React.useState<
+    "generate" | "export" | "publish" | "rate" | null
+  >(null);
   const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
@@ -391,6 +401,19 @@ export function RiskRegisterDashboard(): JSX.Element {
     }
   }
 
+  async function onPublish(): Promise<void> {
+    if (!cid) return;
+    setBusy("publish");
+    setError(null);
+    try {
+      setRegister(await publishRiskRegister(cid));
+    } catch (err) {
+      setError(describeRiskError(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function onRate(
     entry: RiskEntry,
     field: RatingField,
@@ -453,16 +476,18 @@ export function RiskRegisterDashboard(): JSX.Element {
   // records: when a heading renders in every state except one, "heading
   // visible" silently becomes a proxy for "the page works", and a spec waiting
   // on it fails as a timeout rather than as an assertion.
-  const blocking = gate?.synthesizable_missing ?? [];
-  const blockedFromGenerating = Boolean(gate?.unlocked) && blocking.length > 0;
+  // #737: an unapproved input no longer blocks generating (Gene's ruling,
+  // reversing #237): it yields a DRAFT register, and the Inputs panel below
+  // says which inputs are not final. The "cannot be generated until these are
+  // approved" banner that stood here would now be false, so it is gone.
   // #556: blocks too, with its own sentence and remedy -- see the type.
   const catalogMismatch = gate?.unlocked
     ? (gate.attack_catalog_mismatch ?? null)
     : null;
-  // #554 R3: blocks the same way, with the server's own sentence.
-  const unreviewedAttack = gate?.unlocked
-    ? (gate.attack_computed_status_unreviewed ?? null)
-    : null;
+  // #554 R3 no longer blocks Generate (advisor, #736 5998764095, option (b)):
+  // a draft is generated, each affected entry says its computed status awaits
+  // review, and publish refuses. The banner and the disabled Generate that sat
+  // on `attack_computed_status_unreviewed` are gone; the server sends null.
   // Inputs that existed, were not approved, did not BLOCK (the unlock rule was
   // satisfied without them) and therefore contributed nothing. The `??` guards
   // `register` being null before anything is generated -- not an absent field,
@@ -546,14 +571,18 @@ export function RiskRegisterDashboard(): JSX.Element {
         </p>
       ) : null}
 
-      {blockedFromGenerating ? (
-        <p
-          className="text-sm font-medium text-status-warning-fg"
-          data-testid="risk-register-unapproved-sources"
+      {gate && gate.inputs.length > 0 ? (
+        <div
+          className="rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
+          data-testid="risk-register-inputs"
         >
-          A new register cannot be generated until these are approved:{" "}
-          {blocking.join("; ")}. Anything already generated below is unaffected.
-        </p>
+          <p className="font-semibold">{INPUTS_RULE}</p>
+          <ul className="mt-1 list-disc pl-5">
+            {gate.inputs.map((row, i) => (
+              <li key={`${row.kind}-${i}`}>{inputLine(row)}</li>
+            ))}
+          </ul>
+        </div>
       ) : null}
 
       {catalogMismatch !== null ? (
@@ -563,15 +592,6 @@ export function RiskRegisterDashboard(): JSX.Element {
         >
           A new register cannot be generated from the ATT&amp;CK mapping.{" "}
           {catalogMismatch} Anything already generated below is unaffected.
-        </p>
-      ) : null}
-
-      {unreviewedAttack !== null ? (
-        <p
-          className="text-sm font-medium text-status-warning-fg"
-          data-testid="risk-register-attack-unreviewed"
-        >
-          {unreviewedAttack} Anything already generated below is unaffected.
         </p>
       ) : null}
 
@@ -585,6 +605,11 @@ export function RiskRegisterDashboard(): JSX.Element {
             {register
               ? ` · version ${register.version}`
               : " · not yet generated"}
+            {register
+              ? register.finalized_at
+                ? " · published to the client"
+                : " · not published to the client"
+              : null}
           </p>
           {/* The IA appendix asks whether the register is global, per-client or
               per-service. It is per-client, synthesized across that client's
@@ -619,10 +644,7 @@ export function RiskRegisterDashboard(): JSX.Element {
                 // #556: a stale ATT&CK input's only outcome is the 409 the
                 // banner above already explains, so the button is not offered.
                 disabled={
-                  busy !== null ||
-                  catalogMismatch !== null ||
-                  unreviewedAttack !== null ||
-                  statusUnknown
+                  busy !== null || catalogMismatch !== null || statusUnknown
                 }
                 className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:opacity-50"
               >
@@ -642,6 +664,20 @@ export function RiskRegisterDashboard(): JSX.Element {
               className="rounded-md border border-border px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-sunken disabled:opacity-50"
             >
               {busy === "export" ? "Exporting…" : "Export XLSX / PDF / Word"}
+            </button>
+          ) : null}
+          {/* #737. Export is the consultant's copy; Publish is what puts the
+              register on the client's dashboard. Not offered while an entry is
+              unrated (#844 D1) -- the api refuses it too, and the banner below
+              says why -- nor once this version is published. */}
+          {register && register.finalized_at === null ? (
+            <button
+              type="button"
+              onClick={() => void onPublish()}
+              disabled={busy !== null || register.entries_without_tier > 0}
+              className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:opacity-50"
+            >
+              {busy === "publish" ? "Publishing…" : "Publish to client"}
             </button>
           ) : null}
         </div>
@@ -1044,7 +1080,7 @@ export function RiskRegisterDashboard(): JSX.Element {
                 Tier is always code-derived from likelihood × impact. Governance
                 columns (owner, approval, review) print blank for the client.
                 {register.finalized_at
-                  ? " This version has been exported, so its ratings are fixed. Generate a new version to rate entries again."
+                  ? " This version is published to the client, so its ratings are fixed. Generate a new version to rate entries again."
                   : null}
               </CardDescription>
             </CardHeader>

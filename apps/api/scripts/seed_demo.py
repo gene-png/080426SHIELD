@@ -107,7 +107,8 @@ from app.risk.engine import (  # noqa: E402
     RiskAxis,
     tier_for,
 )
-from app.routes.risk import _provenance_snapshot  # noqa: E402
+from app.risk.inputs import publish_blockers  # noqa: E402
+from app.routes.risk import _provenance_snapshot, _take_input_snapshot  # noqa: E402
 from app.security.email_domains import domain_of  # noqa: E402
 from app.security.password import hash_password  # noqa: E402
 from app.storage import StorageBackend, get_storage  # noqa: E402
@@ -619,7 +620,9 @@ def _csf_tier_for(index: int) -> int:
     return pattern[index % len(pattern)]
 
 
-def _seed_csf(db: Session, storage: StorageBackend, admin: User, org: Client) -> Service:
+def _seed_csf(
+    db: Session, storage: StorageBackend, admin: User, org: Client
+) -> tuple[Service, dict[str, int]]:
     svc = Service(
         kind=ServiceKind.NIST_CSF,
         status=ServiceStatus.RELEASED,
@@ -704,8 +707,9 @@ def _seed_csf(db: Session, storage: StorageBackend, admin: User, org: Client) ->
         stage="csf.deliverable",
     )
 
-    _seed_csf_v2_approved(db, admin, org, svc, tier_map)
-    return svc
+    # v2 is NOT seeded here: `main` seeds it after the Risk Register, so the
+    # published register is generated from v1 released (#860 review B4).
+    return svc, tier_map
 
 
 def _seed_csf_v2_approved(
@@ -1277,7 +1281,10 @@ def _seed_risk_register(
         # It used to be left out, and since #556 that is not neutral: a register
         # naming no ATT&CK input is withheld from the client
         # (`is_stale_risk_register`), which would have withheld the demo's own.
-        provenance=_provenance_snapshot(db, org.id, []),
+        #
+        # #737: through `_take_input_snapshot`, the read generate uses, so the
+        # provenance carries the `current_inputs` record publish checks.
+        provenance=_provenance_snapshot(_take_input_snapshot(db, org.id), []),
     )
     db.add(register)
     db.flush()
@@ -1325,8 +1332,10 @@ def _seed_risk_register(
     db.add_all(entries)
     db.flush()
 
-    # Export the register to XLSX/PDF/Word so the admin demo shows downloadable
-    # artifacts, mirroring the /register/export route (which sets finalized_at).
+    # Render the register to XLSX/PDF/Word and PUBLISH it, so the admin demo
+    # shows downloadable artifacts and the client demo shows the dashboard --
+    # what the /register/publish route does (#737). `finalized_at` means
+    # published: export no longer sets it, and publish is its one API writer.
     #
     # #403: `link_scope` is deliberately NOT passed, and the omission is stated
     # here rather than left for whoever next greps `build_context`. These
@@ -1382,6 +1391,17 @@ def _seed_risk_register(
     register.xlsx_artifact_id = xlsx_art.id
     register.pdf_artifact_id = pdf_art.id
     register.docx_artifact_id = docx_art.id
+    # #860 review B4 (the #130 shape): the seed sets `finalized_at` itself, so
+    # it asks the REAL publish gate first and refuses to seed a published
+    # register the product would have refused to publish. `main` seeds CSF v2
+    # AFTER this, so the gate sees CSF v1 released; v2 approved arriving later
+    # is the ordinary "published, then an input moved on" state.
+    blockers = publish_blockers(db, org.id, (register.provenance or {}).get("current_inputs"))
+    if blockers:
+        raise RuntimeError(
+            "seed_demo: the demo Risk Register would be refused by publish: "
+            + "; ".join(f"{b.kind} {b.reason} ({b.status})" for b in blockers)
+        )
     register.finalized_at = utcnow()
     db.flush()
 
@@ -1438,7 +1458,7 @@ def main() -> None:
         seeded.append("Tech Debt")
 
         print("Seeding CSF service...")
-        csf = _seed_csf(db, storage, admin, org)
+        csf, csf_v1_tiers = _seed_csf(db, storage, admin, org)
         print(f"  -> {csf.id}")
         seeded.append("CSF")
 
@@ -1480,6 +1500,11 @@ def main() -> None:
         print("Seeding synthesized Risk Register...")
         register = _seed_risk_register(db, storage, admin, org)
         print(f"  -> {register.id} (v{register.version}, {len(_RISK_ENTRIES)} entries)")
+
+        # AFTER the register (#860 review B4): it is published from CSF v1
+        # released, and v2 approved then arrives as the next re-assessment.
+        print("Seeding CSF v2 (approved, not released)...")
+        _seed_csf_v2_approved(db, admin, org, csf, csf_v1_tiers)
 
         db.commit()
 
