@@ -116,6 +116,8 @@ describe("ExtractionFindings (#833)", () => {
       <ExtractionFindings readOnly={false} findings={[]} />,
     );
     expect(empty.textContent).toBe("");
+    // No empty box either: a rendered-but-blank block reads as a finding.
+    expect(screen.queryByTestId("extraction-findings")).toBeNull();
     const { container: unrecorded } = render(
       <ExtractionFindings readOnly={false} findings={null} />,
     );
