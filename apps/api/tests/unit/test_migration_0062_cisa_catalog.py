@@ -1,6 +1,6 @@
-"""Migration 0061 (#838): stored CISA answers survive the catalog change.
+"""Migration 0062 (#838): stored CISA answers survive the catalog change.
 
-The world is built through the ORM at revision 0060 (0061 changes no schema,
+The world is built through the ORM at revision 0061 (0062 changes no schema,
 so the models fit both), then upgraded. What the migration must do comes from
 the approved plan (#838 comment 5982917066), not from the migration: the two
 mapped rows move, the 15 cross-cutting rows exist, retired rows are KEPT, an
@@ -45,10 +45,10 @@ def world(tmp_path):
         ZtFramework,
     )
 
-    url = f"sqlite:///{tmp_path / 'm0061.db'}"
+    url = f"sqlite:///{tmp_path / 'm0062.db'}"
     os.environ["DATABASE_URL"] = url
     cfg = _cfg(url)
-    command.upgrade(cfg, "0060")
+    command.upgrade(cfg, "0061")
     engine = create_engine(url, future=True)
     ids: dict[str, object] = {}
     with Session(engine) as db:
@@ -131,7 +131,7 @@ def _risk_ids(engine) -> list[str]:
 
 def test_upgrade_maps_inserts_and_keeps_everything(world) -> None:
     cfg, engine, ids = world
-    command.upgrade(cfg, "0061")
+    command.upgrade(cfg, "0062")
     live = _codes(engine, ids["live"])
     # Mapped, answer and notes carried with it.
     assert "CISA.ID.05" not in live
@@ -156,7 +156,7 @@ def test_downgrade_reverses_the_mapping_and_deletes_only_empty_inserted_rows(wor
     from app.models.zt_assessment import ZtAnswer
 
     cfg, engine, ids = world
-    command.upgrade(cfg, "0061")
+    command.upgrade(cfg, "0062")
     with Session(engine) as db:  # someone answers a new cross-cutting row
         row = db.execute(
             select(ZtAnswer).where(
@@ -165,7 +165,7 @@ def test_downgrade_reverses_the_mapping_and_deletes_only_empty_inserted_rows(wor
         ).scalar_one()
         row.maturity_stage = 2
         db.commit()
-    command.downgrade(cfg, "0060")
+    command.downgrade(cfg, "0061")
     live = _codes(engine, ids["live"])
     assert live["CISA.ID.05"] == (2, "visibility for identity")
     assert "CISA.ID.VA" not in live

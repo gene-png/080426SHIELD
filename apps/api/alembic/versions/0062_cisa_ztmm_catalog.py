@@ -1,7 +1,7 @@
 """The CISA ZT catalog becomes CISA ZTMM 2.0's 37 rows (#838): data only.
 
-Revision ID: 0061
-Revises: 0060
+Revision ID: 0062
+Revises: 0061
 Create Date: 2026-10-04
 
 #838 replaced 8 pillars (with 13 rows CISA does not have) by CISA's 5 pillars,
@@ -34,8 +34,8 @@ from datetime import UTC, datetime
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0061"
-down_revision: str | Sequence[str] | None = "0060"
+revision: str = "0062"
+down_revision: str | Sequence[str] | None = "0061"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -126,7 +126,7 @@ def upgrade() -> None:
             _risk.update().where(_risk.c.source_id == old).values(source_id=new)
         ).rowcount
     print(
-        f"[0061] mapped {mapped} row(s); kept {kept_old} old row(s) whose target "
+        f"[0062] mapped {mapped} row(s); kept {kept_old} old row(s) whose target "
         f"existed; inserted {inserted} empty cross-cutting row(s); re-keyed {risk} "
         "risk link(s). Retired rows are kept, not deleted."
     )

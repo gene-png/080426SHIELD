@@ -105,7 +105,7 @@ class ZtAssessmentResponse(BaseModel):
     # #646: which mode drafted this assessment's AI suggestions. REQUIRED.
     ai_source: AiSource
     # #838: answers stored against rows the catalog no longer has, kept rather
-    # than deleted (migration 0061), and therefore not scored. With its
+    # than deleted (migration 0062), and therefore not scored. With its
     # approved sentence, or None when there are none (`zt/retired.py`).
     retired_answers: int = 0
     retired_answers_note: str | None = None

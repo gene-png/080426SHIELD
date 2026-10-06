@@ -1,6 +1,6 @@
 """Answers recorded against a row the ZT catalog no longer has (#838).
 
-#838 corrected the CISA catalog to CISA ZTMM 2.0, and migration 0061 KEPT the
+#838 corrected the CISA catalog to CISA ZTMM 2.0, and migration 0062 KEPT the
 answers on the 13 rows CISA does not have (decision 4, option B) rather than
 delete them. Every reader iterates the catalog, so those rows are not scored.
 This module is the ONE derivation of how many of them hold an answer, and of
