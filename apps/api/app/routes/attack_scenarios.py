@@ -63,7 +63,12 @@ from app.models.user import User, UserRole
 # way. It reads the client's CURRENT Tech Debt membership, NOT the set the
 # base assessment was offered when it ran: a tool added to or dropped from
 # the capability list since then is offered, or not, accordingly.
-from app.routes.attack import _capability_payload, _client_capability_membership, _llm_dep
+from app.routes.attack import (
+    _capability_payload,
+    _client_capability_membership,
+    _llm_dep,
+    outside_subset_citations,
+)
 from app.routes.tech_debt import SECURITY_CLASSIFICATION_OVERRIDDEN
 from app.schemas.ai_runs import AiRunStarted, RunAiRequest
 from app.schemas.attack_scenario import (
@@ -790,6 +795,11 @@ def list_scenarios(
                 version=base.version,
                 approved_at=base.approved_at,
                 tools=scenario.cited_tools(_base_rows(db, base.id)),
+                # #851: the same count the workspace discloses, by the same
+                # function. Today's figure is not recomputed.
+                citations_outside_subset=len(
+                    outside_subset_citations(db, client.id, _base_rows(db, base.id))
+                ),
             )
         ),
         scenarios=[
