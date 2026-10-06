@@ -100,7 +100,10 @@ def engaged_services(db: Session, client_id: uuid.UUID) -> list[tuple[str, Servi
     return [(k, svc) for k in INPUT_KINDS for svc in _engaged_services(db, client_id, k)]
 
 
-def _latest_record(db: Session, kind: str, service_id: uuid.UUID):
+def latest_record(db: Session, kind: str, service_id: uuid.UUID):
+    """One engaged service's current record: its latest non-discarded
+    assessment (or Tech Debt list), or None. Synthesis reads THIS too
+    (#876), so the record publish checks is the one findings came from."""
     model = CapabilityList if kind == "tech_debt" else _ASSESSMENTS[kind]
     return db.execute(
         select(model)
@@ -118,7 +121,7 @@ def current_inputs(db: Session, client_id: uuid.UUID) -> list[InputRecord]:
     """
     out: list[InputRecord] = []
     for kind, svc in engaged_services(db, client_id):
-        rec = _latest_record(db, kind, svc.id)
+        rec = latest_record(db, kind, svc.id)
         if rec is not None:
             out.append(
                 InputRecord(kind, str(svc.id), str(rec.id), rec.version, _status(rec.status))
