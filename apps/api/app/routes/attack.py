@@ -649,7 +649,7 @@ def _remove_tool(db: Session, row: AttackCoverage, remove: dict, user: User) -> 
     """#851 (D2): take ONE name off one tool list, with that name's citation
     record in that list, and nothing else. A PATCH of the whole list would mark
     every other citation in it confirmed by hand (#102); a removal reviews
-    nothing, so it must not. The refusals' copy is NEW and pending the advisor.
+    nothing, so it must not. The refusals' copy is approved (#736, 6024072042).
     """
     field, name = remove["field"], remove["name"]
     if field not in _TOOL_FIELD_LABEL:

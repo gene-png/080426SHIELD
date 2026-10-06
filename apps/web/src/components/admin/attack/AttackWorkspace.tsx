@@ -54,6 +54,7 @@ import { AttackComputedReviewPanel } from "./AttackComputedReviewPanel";
 import { AttackDeliverableCard } from "./AttackDeliverableCard";
 import { AttackHeatmapCard } from "./AttackHeatmapCard";
 import { AttackMatrix } from "./AttackMatrix";
+import { AttackOutsideSubsetAlert } from "./AttackOutsideSubsetAlert";
 import { AttackScenarioPanel } from "./AttackScenarioPanel";
 import { AttackTechniquePanel } from "./AttackTechniquePanel";
 
@@ -957,6 +958,7 @@ export function AttackWorkspace({
               </p>
             ) : (
               <div className="flex flex-col gap-4">
+                <AttackOutsideSubsetAlert assessment={assessment} phase="draft" />
                 <AttackTechniquePanel
                   technique={selectedTechnique}
                   subTechniqueCount={selectedSubTechniqueCount}
@@ -1048,6 +1050,7 @@ export function AttackWorkspace({
                 onReview={onReview}
               />
               <StaleDocsNudge stale={assessment.documents_stale} />
+              <AttackOutsideSubsetAlert assessment={assessment} phase="approved" />
               <AttackDeliverableCard
                 serviceId={serviceId}
                 assessmentStatus={assessment.status}

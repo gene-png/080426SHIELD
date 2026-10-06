@@ -208,7 +208,8 @@ def refuse_approve(found: BlockingRows, outside: Sequence[OutsideCitation] = ())
     there is no reopen. It is NOT part of `BlockingRows`: that predicate is
     also the release flip's, and the ruling discloses at release rather than
     blocking (advisor, #736 comment 5984022081). Its remedy is S3b, approved;
-    its clause is S4 in the "not in" wording, PENDING the advisor (D1)."""
+    its clause is S4 in the "not in" wording, singular and plural, approved
+    (#736 comments of 18:56Z and 6024072042)."""
     parts = [_what(found)] if found else []
     if outside:
         n = len({o.technique_code for o in outside})

@@ -45,8 +45,8 @@ class OutsideCitation:
 
 
 def is_outside_subset(name: str, subset: CitationResolver) -> bool:
-    """THE ONE PREDICATE for "outside the subset" (D1 on #851, recommended and
-    pending the advisor): any cited name the subset's name tiers do not know,
+    """THE ONE PREDICATE for "outside the subset" (D1 on #851, approved by the
+    advisor, #736): any cited name the subset's name tiers do not know,
     whether it LEFT the subset (a confirmed "not security" or "not in use"
     sign-off, or a list approved again without it) or was typed by hand and
     was never on the list.

@@ -797,8 +797,12 @@ def list_scenarios(
                 tools=scenario.cited_tools(_base_rows(db, base.id)),
                 # #851: the same count the workspace discloses, by the same
                 # function. Today's figure is not recomputed.
+                # ROWS, as the workspace's S1 counts them, not tool citations.
                 citations_outside_subset=len(
-                    outside_subset_citations(db, client.id, _base_rows(db, base.id))
+                    {
+                        o.technique_code
+                        for o in outside_subset_citations(db, client.id, _base_rows(db, base.id))
+                    }
                 ),
             )
         ),
