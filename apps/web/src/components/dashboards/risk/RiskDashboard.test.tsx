@@ -30,6 +30,13 @@ import type { RiskDashboardData } from "@/lib/dashboards/risk";
 
 function data(overrides: Partial<RiskDashboardData> = {}): RiskDashboardData {
   return {
+    // #646 (Batch F): required since; not under test here.
+    ai_source: {
+      state: "live",
+      sentence: "AI suggestions in this assessment came from a live AI model.",
+      live_runs: 1,
+      fixture_runs: 0,
+    },
     client_id: "00000000-0000-0000-0000-0000000000aa",
     released_at: "2026-09-20T00:00:00Z",
     version: 3,
@@ -151,8 +158,11 @@ describe("RiskDashboard withheld-entry disclosure (#313)", () => {
         data={data({ total_entries: 10, entries_without_axis: 1 })}
       />,
     );
-    expect(screen.getByTestId("risk-entries-without-tier")).toHaveTextContent(
-      /Regenerate before exporting/,
+    // #854 F4: a remedy the CLIENT can take; regenerating is an admin control.
+    const note = screen.getByTestId("risk-entries-without-tier");
+    expect(note).toHaveTextContent(
+      /Ask your consultant to complete those entries\./,
     );
+    expect(note.textContent).not.toMatch(/Regenerate/);
   });
 });

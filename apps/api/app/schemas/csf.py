@@ -12,6 +12,7 @@ from pydantic_core import PydanticCustomError
 from app.models.csf_assessment import CsfAssessmentStatus
 from app.models.service import ServiceKind, ServiceStatus
 from app.schemas._numeric import IntNotBool
+from app.schemas.ai_runs import AiSource
 
 # ---------------------------------------------------------------------------
 # Catalog
@@ -142,6 +143,8 @@ class CsfAssessmentResponse(BaseModel):
     # Impact profile the client picked at intake (LOW/MOD/HIGH), or null. Drives
     # which subcategories the client self-assessment shows.
     client_profile: str | None = None
+    # #646: which mode drafted this assessment's AI suggestions. REQUIRED.
+    ai_source: AiSource
 
 
 class CsfAnswerPatch(BaseModel):
@@ -227,9 +230,14 @@ class CsfSelfAssessmentSubmit(BaseModel):
 
     `target_tier` lets the client confirm/adjust the maturity goal the gap
     engine measures against; persisted on the source request.
+
+    NO `ge`/`le` bound, deliberately (#85, as #406 did at intake): both ends are
+    refused in `routes/csf.py::submit_self_assessment` with a typed
+    `{reason, message}`. A schema bound arrives as a `schema_*` reason the web
+    layer withholds by design, so the client would read a generic fallback.
     """
 
-    target_tier: IntNotBool | None = Field(default=None, ge=1, le=4)
+    target_tier: IntNotBool | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -388,6 +396,8 @@ class CsfDroppedSuggestion(BaseModel):
     | `superseded`   | a later entry in the same response overwrote this value  |
     | `locked`       | a human locked the row — a by-design skip, not a defect  |
     | `protected`    | an offline run declined to overwrite a hand-typed score  |
+    | `edited`       | a consultant edited the row after the run started (#645) |
+    | `not_in_batch` | answered a real row its batch was not asked for (#479)   |
 
     `locked` renders separately from the rest. Folding a by-design skip into one
     "N dropped" number rebuilds the alert-fatigue problem issue #31 rejected.
@@ -407,6 +417,8 @@ class CsfDroppedSuggestion(BaseModel):
         "superseded",
         "locked",
         "protected",
+        "edited",
+        "not_in_batch",
     ]
     # "tier|subcategory_code" exactly as the model wrote it, or None when the
     # model omitted them. Never the literal "None|None" — that fabricates a row
@@ -427,7 +439,9 @@ class CsfDroppedSuggestion(BaseModel):
 
 
 class CsfRunAiResponse(BaseModel):
-    """Result of a csf_score Run-AI: what changed + the refreshed rows.
+    """What a csf_score Run-AI did, with the refreshed rows. Stored as
+    `ai_runs.result` (#645), every field the synchronous response carried, so
+    it survives a reload.
 
     The counts are in units of ONE SUGGESTED VALUE — one field the model asked
     to set on one row — and satisfy, for every response that parsed:
@@ -444,6 +458,11 @@ class CsfRunAiResponse(BaseModel):
     suggestions_received: int = 0
     suggestions_applied: int = 0
     dropped: list[CsfDroppedSuggestion] = []
+    # #479: csf_score runs in batches. A failed batch's rows were never
+    # answered, so they are in neither count above; `batches_failed` of
+    # `batches_total` is what says the run is partial.
+    batches_total: int = 0
+    batches_failed: int = 0
 
 
 class ExportedArtifact(BaseModel):

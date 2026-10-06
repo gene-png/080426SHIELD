@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.attack.coverage import CoverageStatus
 from app.models.attack_assessment import AttackAssessmentStatus
 from app.models.service import ServiceKind, ServiceStatus
+from app.schemas.ai_runs import AiSource
 
 # ---------------------------------------------------------------------------
 # Catalog
@@ -115,6 +116,19 @@ class UnconfirmedCitation(BaseModel):
     cleared_at: datetime | None = None
 
 
+class AttackCapabilities(BaseModel):
+    """#554 R3: which of Detect / Prevent / Respond are in place on a row whose
+    status is computed. Each is `in_place`, `not_in_place`, `awaiting_review` or
+    (Prevent only) `cannot_be_prevented`; `line` is the approved client line."""
+
+    detect: str
+    prevent: str
+    respond: str
+    line: str
+    awaiting_review: bool
+    cannot_be_prevented: bool
+
+
 class AttackCoverageResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -154,6 +168,22 @@ class AttackCoverageResponse(BaseModel):
     #: which one row cannot see. Required, with no default, so a response built
     #: without deriving it fails loudly instead of guessing.
     pending_review: bool
+    #: #554 R3, all REQUIRED for the same reason as `pending_review`: derived by
+    #: the route over the whole assessment (`attack/computed.py`).
+    #: The status every surface counts for this row, or None when the assessment
+    #: was approved before R3 and its stored `status` is what renders. On an R3
+    #: assessment `status` stays the stored suggestion (the AI's, or a
+    #: consultant's), which the review queue compares this against.
+    computed_status: CoverageStatus | None
+    #: What is in place, for a row whose status was computed; None otherwise.
+    capabilities: AttackCapabilities | None
+    #: True while this row's computed status awaits a consultant's review, which
+    #: holds back release (the advisor's Q1, 2026-10-02).
+    in_review_queue: bool
+    #: The computed status a consultant accepted, and who and when (0059).
+    reviewed_status: str | None = None
+    reviewed_by: uuid.UUID | None = None
+    reviewed_at: datetime | None = None
 
 
 class AttackAssessmentResponse(BaseModel):
@@ -174,7 +204,34 @@ class AttackAssessmentResponse(BaseModel):
     # unconfirmed, never to confirmed.
     catalog_version: str | None
     catalog_current: bool
+    # #646: which mode drafted this assessment's AI suggestions. REQUIRED.
+    ai_source: AiSource
+    #: #554 R3: whether statuses are computed from Detect / Prevent / Respond.
+    #: REQUIRED.
+    statuses_computed: bool
     coverage: list[AttackCoverageResponse]
+    #: #686: cited tool -> "planned_retirement" | "unknown", for the tools the
+    #: client's Tech Debt consolidation plan retires or cannot answer for. A tool
+    #: absent here is not retiring. None: the client has no approved or released
+    #: Tech Debt list, so there is no plan and nothing is marked.
+    tool_retirement: dict[str, str] | None = None
+
+
+class ComputedStatusReviewItem(BaseModel):
+    """One technique as the review panel SHOWED it: its code and the computed
+    status on screen. The API refuses the pair if the status has since moved,
+    so a review never records a status the consultant did not see."""
+
+    code: str
+    computed_status: str
+
+
+class ComputedStatusReviewRequest(BaseModel):
+    """#554 R3: the techniques a consultant reviewed, exactly as the panel showed
+    them. A row that entered the queue, or whose computed status changed, after
+    the page loaded is never accepted unseen. Bulk accept passes them all."""
+
+    reviews: list[ComputedStatusReviewItem]
 
 
 class CoverageChange(BaseModel):
@@ -187,7 +244,14 @@ class CoverageChange(BaseModel):
 
 
 class AttackRunAiResponse(BaseModel):
-    """Result of a mitre_map Run-AI: what changed + the refreshed coverage."""
+    """What a mitre_map Run-AI did, with the refreshed coverage.
+
+    #645: the run finishes in a background job, so this is no longer an HTTP
+    response body. The job persists it as `ai_runs.result`, every field the
+    synchronous response carried, and the workspace reads it from the run it
+    polls -- which is what lets every disclosure here survive a reload (#271).
+    `test_ai_runs_result_schema.py` holds the stored keys to this model.
+    """
 
     tools_available: int
     changed: list[CoverageChange]
@@ -242,6 +306,14 @@ class AttackRunAiResponse(BaseModel):
     # consultant acts on TECHNIQUES; one flagged tool cited by forty techniques
     # is one number and forty pieces of work.
     pending_review_rows: int = 0
+    # #645. Rows a consultant edited after this run started (an edit that
+    # checked the lock before the run existed). Kept as edited, never
+    # overwritten, and counted so the workspace can say which run left them.
+    rows_skipped_edited: int = 0
+    # #841. Techniques the AI suggested as N/A, refused because only a
+    # consultant may rule a technique N/A. The codes are in the audit row's
+    # `statuses_rejected`; the count is what the workspace says.
+    not_applicable_refused: int = 0
 
 
 class AttackCoveragePatch(BaseModel):
@@ -293,6 +365,11 @@ class TacticHeatmapEntry(BaseModel):
     outside_control_surface: int | None
     unable_to_determine: int | None
     coverage_pct: float
+    # #489: False where nothing here is Covered, Partial, Gap or pending review,
+    # so `coverage_pct` (0.0 there) is "not measured", as the deliverable says.
+    # The exporter's own rule (`attack.exporters.coverage_measured`). REQUIRED:
+    # a default would turn missing wiring into a confident percentage.
+    coverage_measured: bool
 
 
 class AttackHeatmap(BaseModel):
@@ -325,7 +402,15 @@ class AttackHeatmap(BaseModel):
     outside_control_surface: int | None
     unable_to_determine: int | None
     coverage_pct: float
+    # #489, as on each tactic above.
+    coverage_measured: bool
     by_tactic: list[TacticHeatmapEntry]
+    #: #554 R3 (Q4): the disclosure printed beside `coverage_pct`, or None before
+    #: R3 and when nothing awaits review. The renderers' own sentence.
+    awaiting_review_sentence: str | None = None
+    #: #801 (H1): the figure after planned changes and its counts, or None where
+    #: there is nothing to recount (`attack/after.py`).
+    after_planned_changes: list[str] | None = None
 
 
 # ---------------------------------------------------------------------------

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from app.models.capability import (
     CapabilityDisposition,
@@ -14,6 +15,8 @@ from app.models.capability import (
 )
 from app.models.service import ServiceKind, ServiceStatus
 from app.schemas._numeric import IntNotBool
+from app.schemas.ai_runs import AiSource
+from app.tech_debt.security_scope import signoff_kind
 
 
 class ServiceCreateRequest(BaseModel):
@@ -37,6 +40,10 @@ class ServiceResponse(BaseModel):
 
 class ExtractRequest(BaseModel):
     artifact_id: uuid.UUID
+    # #645 / #504: the AI status the consultant acknowledged. `str | None` so a
+    # missing or unknown value is refused with the typed `serves_required`
+    # 422 (see `app/schemas/ai_runs.py::RunAiRequest`).
+    serves: str | None = None
 
 
 class CapabilityItemResponse(BaseModel):
@@ -64,6 +71,12 @@ class CapabilityItemResponse(BaseModel):
     security_related: bool | None = None
     security_functions: list[SecurityFunction] = []
     security_class_confirmed: bool = False
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def signoff_kind(self) -> Literal["not_in_use", "not_security"] | None:
+        """#845: how the sign-off queue words this row (`security_scope`)."""
+        return signoff_kind(self)  # type: ignore[return-value]
 
     @field_validator("security_functions", mode="before")
     @classmethod
@@ -121,11 +134,28 @@ class CapabilityListResponse(BaseModel):
     # hard allow-list is the defect #32 records, and silently narrowing it is
     # this one. Re-approval is the deliberate, audited way to change it.
     approved_membership_stale: bool = False
+    # #640: False while the list is a draft, and false again after any step-2
+    # edit to an approved list until step 3 approves it again. Finalize and
+    # release refuse while it is false. Read from the ORM's derived property.
+    approval_current: bool
+    # #646: which mode drafted this list. Filled by the route from a separate
+    # derivation, as `items` is; None only on a response built without it.
+    ai_source: AiSource | None = None
     # Reconciliation of the source upload against what was extracted (0036).
     # NULL on lists created before the column existed — the UI renders no claim
     # rather than implying a complete inventory.
     source_rows_total: int | None = None
     excluded_rows: list[ExcludedRowResponse] = []
+    # #177: whether the extraction attributed every item to one uploaded row.
+    # NULL is "not recorded" (pre-0058, or no extraction), never complete.
+    attribution_complete: bool | None = None
+    # #177/#193: `reconcile.exclusion_count_state` -- whether the excluded count
+    # is exact or only a floor, from the one reader every surface calls.
+    exclusion_count_state: Literal["not_recorded", "exact", "unknown"] | None = None
+    # #845: rows carrying v3.2's "Security tool not in use:" prefix while also
+    # security-related -- the model contradicting itself, kept in ATT&CK scope.
+    # Derived by the route from the stored rows, a consultant's override excluded.
+    not_in_use_contradictions: int = 0
 
     @field_validator("excluded_rows", mode="before")
     @classmethod
@@ -207,6 +237,32 @@ class ConsolidationPlanSummary(BaseModel):
     savings_cost_known: bool
 
 
+class SavingsPreviewRequest(BaseModel):
+    """#804: proposed dispositions, `{item_id: "cut" | "consolidate" | "keep" |
+    null}`. Rows not named keep their stored disposition.
+
+    Typed `object` on purpose: a malformed map is refused by the route with a
+    typed `{reason, message}` 422, the convention the rest of Tech Debt uses,
+    rather than by FastAPI's schema handler (CLAUDE.md, the `Query(ge=...)`
+    entry)."""
+
+    dispositions: object = None
+
+
+class SavingsPreviewResponse(BaseModel):
+    """What the proposed dispositions would make the savings figure. Computed
+    by `tech_debt.savings.estimated_savings`, the deliverable's derivation;
+    nothing is written."""
+
+    capability_list_id: uuid.UUID
+    estimated_annual_savings: float
+    savings_cost_known: bool
+    keep_count: int
+    consolidate_count: int
+    cut_count: int
+    undecided_count: int
+
+
 class OverlapBucketResponse(BaseModel):
     key: str
     item_count: int
@@ -231,6 +287,12 @@ class OverlapAnalysisResponse(BaseModel):
     by_vendor: list[OverlapBucketResponse]
     top_cost_items: list[TopCostItemResponse]
     total_cost: float
+    #: #781: what `total_cost` may honestly be called -- "Total annual cost",
+    #: "Included annual cost" or "Annual cost (may not be complete)". The
+    #: deliverable's own `cost_label` over the same list, so the admin card and
+    #: the released document cannot disagree. Required: a response built
+    #: without deciding it must fail, never default to "Total".
+    total_cost_label: str
     total_items: int
     uncategorized_count: int
     no_vendor_count: int

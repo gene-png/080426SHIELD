@@ -236,11 +236,17 @@ land after the SHA it reviewed.**
 - **#85** — NOT new. Open for weeks carrying only a `bug` label, so it was in
   no board query; **labelled `mvp-blocking` + `tier-2`**. The two
   self-assessment submit routes write the same target columns and accept a
-  target of 1 (`routes/csf.py` with no range check at all). **Its stated
+  target of 1 (`routes/csf.py` with no range check at all). **(History,
+  date-qualified 2026-10-02: #85 LANDED in #782; both submit routes now refuse
+  a below-floor target.)** **Its stated
   remedy is now backwards** — it says "raise both submit schemas to `ge=2`",
   which is the construct #406 removes; commented to that effect. #427 does not
   fix it, and says so at the site.
-- **#422** (tier-3) — no cross-language parity gate. **My first reason for it
+- **#422** (tier-3) — no cross-language parity gate. **(History,
+  date-qualified 2026-10-02: part 1 LANDED in #794, a read-only one-file mount
+  of `assessment-targets.ts` plus a parity test; part 2 is in #795, one
+  default-target table the dashboards derive from and the api asserts equal.
+  #422 is now mvp-blocking tier-2.)** **My first reason for it
   was FALSE** and the reviewer caught it: I wrote that neither container can
   read the other tree, when `docker-compose.yml` already mounts
   `./packages/zt-data:/packages/zt-data:ro` on the api service for exactly that

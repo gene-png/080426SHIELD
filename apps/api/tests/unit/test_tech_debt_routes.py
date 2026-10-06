@@ -26,6 +26,7 @@ from app.models.capability import CapabilityItem, CapabilityList
 from app.models.llm_call import LLMCall
 from app.models.service import Service
 from app.storage.local import LocalFilesystemStorage
+from tests._ai_runs import run_ai_expecting_failure, tech_debt_extract
 
 
 @pytest.fixture()
@@ -196,13 +197,8 @@ def test_extract_runs_redacted_call_and_writes_capability_list(app_client) -> No
     artifact_id = _upload_csv(c, bearer, "inventory.csv", csv)
 
     # Extract.
-    r = c.post(
-        f"/tech-debt/services/{svc_id}/capability-lists/extract",
-        headers={"Authorization": f"Bearer {bearer}"},
-        json={"artifact_id": artifact_id},
-    )
-    assert r.status_code == 201, r.text
-    body = r.json()
+    r = tech_debt_extract(c, svc_id, {"Authorization": f"Bearer {bearer}"}, artifact_id)
+    body = r
     assert body["version"] == 1
     assert len(body["items"]) == 2
     names = sorted(i["name"] for i in body["items"])
@@ -243,7 +239,7 @@ def test_extract_rejects_unknown_service(app_client) -> None:
     r = c.post(
         f"/tech-debt/services/{_uuid.uuid4()}/capability-lists/extract",
         headers={"Authorization": f"Bearer {bearer}"},
-        json={"artifact_id": artifact_id},
+        json={"artifact_id": artifact_id, "serves": "offline"},
     )
     assert r.status_code == 404
 
@@ -273,7 +269,7 @@ def test_extract_rejects_unsupported_artifact_mime(app_client) -> None:
     r = c.post(
         f"/tech-debt/services/{svc_id}/capability-lists/extract",
         headers={"Authorization": f"Bearer {bearer}"},
-        json={"artifact_id": artifact_id},
+        json={"artifact_id": artifact_id, "serves": "offline"},
     )
     assert r.status_code == 415
 
@@ -307,31 +303,21 @@ def test_extract_versions_across_approved_boundary(app_client) -> None:
     svc_id = sr.json()["id"]
     artifact_id = _upload_csv(c, bearer, "x.csv", b"A\n1\n")
 
-    r1 = c.post(
-        f"/tech-debt/services/{svc_id}/capability-lists/extract",
-        headers={"Authorization": f"Bearer {bearer}"},
-        json={"artifact_id": artifact_id},
-    )
-    assert r1.status_code == 201, r1.text
-    assert r1.json()["version"] == 1
+    r1 = tech_debt_extract(c, svc_id, {"Authorization": f"Bearer {bearer}"}, artifact_id)
+    assert r1["version"] == 1
     # #639: approval refuses undecided rows, so decide the one row first.
-    _decide(c, bearer, [i["id"] for i in r1.json()["items"]])
+    _decide(c, bearer, [i["id"] for i in r1["items"]])
 
     # Move the v1 draft on by approving it: the guard no longer applies.
     ar = c.post(
-        f"/tech-debt/capability-lists/{r1.json()['id']}/approve",
+        f"/tech-debt/capability-lists/{r1['id']}/approve",
         headers={"Authorization": f"Bearer {bearer}"},
     )
     assert ar.status_code == 200, ar.text
 
     # A fresh extraction now mints v2 with a 201.
-    r2 = c.post(
-        f"/tech-debt/services/{svc_id}/capability-lists/extract",
-        headers={"Authorization": f"Bearer {bearer}"},
-        json={"artifact_id": artifact_id},
-    )
-    assert r2.status_code == 201, r2.text
-    assert r2.json()["version"] == 2
+    r2 = tech_debt_extract(c, svc_id, {"Authorization": f"Bearer {bearer}"}, artifact_id)
+    assert r2["version"] == 2
 
 
 @pytest.mark.unit
@@ -359,20 +345,15 @@ def test_extract_reuses_open_draft_no_reextract(app_client) -> None:
     svc_id = sr.json()["id"]
     artifact_id = _upload_csv(c, bearer, "x.csv", b"A\n1\n")
 
-    r1 = c.post(
-        f"/tech-debt/services/{svc_id}/capability-lists/extract",
-        headers={"Authorization": f"Bearer {bearer}"},
-        json={"artifact_id": artifact_id},
-    )
-    assert r1.status_code == 201, r1.text
-    first = r1.json()
+    r1 = tech_debt_extract(c, svc_id, {"Authorization": f"Bearer {bearer}"}, artifact_id)
+    first = r1
     assert first["version"] == 1
 
     # Second POST while the draft is still open -> idempotent 200, same list.
     r2 = c.post(
         f"/tech-debt/services/{svc_id}/capability-lists/extract",
         headers={"Authorization": f"Bearer {bearer}"},
-        json={"artifact_id": artifact_id},
+        json={"artifact_id": artifact_id, "serves": "offline"},
     )
     assert r2.status_code == 200, r2.text
     second = r2.json()
@@ -410,13 +391,8 @@ def _open_draft_from(c, bearer: str, provider, calls: dict) -> tuple[str, str, s
     svc_id = sr.json()["id"]
     artifact_a = _upload_csv(c, bearer, "a.csv", b"A\n1\n")
     artifact_b = _upload_csv(c, bearer, "b.csv", b"B\n2\n")
-    r1 = c.post(
-        f"/tech-debt/services/{svc_id}/capability-lists/extract",
-        headers={"Authorization": f"Bearer {bearer}"},
-        json={"artifact_id": artifact_a},
-    )
-    assert r1.status_code == 201, r1.text
-    return svc_id, artifact_a, artifact_b, r1.json()
+    r1 = tech_debt_extract(c, svc_id, {"Authorization": f"Bearer {bearer}"}, artifact_a)
+    return svc_id, artifact_a, artifact_b, r1
 
 
 @pytest.mark.unit
@@ -434,7 +410,7 @@ def test_extract_with_different_artifact_while_a_draft_is_open_is_refused(app_cl
     r2 = c.post(
         f"/tech-debt/services/{svc_id}/capability-lists/extract",
         headers={"Authorization": f"Bearer {bearer}"},
-        json={"artifact_id": artifact_b},
+        json={"artifact_id": artifact_b, "serves": "offline"},
     )
 
     assert r2.status_code == 409, r2.text
@@ -480,7 +456,7 @@ def test_extract_refuses_when_the_open_drafts_source_cannot_be_established(
     r2 = c.post(
         f"/tech-debt/services/{svc_id}/capability-lists/extract",
         headers={"Authorization": f"Bearer {bearer}"},
-        json={"artifact_id": artifact_a},
+        json={"artifact_id": artifact_a, "serves": "offline"},
     )
 
     assert r2.status_code == 409, r2.text
@@ -504,16 +480,10 @@ def test_extract_from_another_document_works_after_discarding_the_draft(app_clie
         headers={"Authorization": f"Bearer {bearer}"},
     )
     assert rd.status_code == 200, rd.text
-    r2 = c.post(
-        f"/tech-debt/services/{svc_id}/capability-lists/extract",
-        headers={"Authorization": f"Bearer {bearer}"},
-        json={"artifact_id": artifact_b},
-    )
-
-    assert r2.status_code == 201, r2.text
-    assert r2.json()["id"] != draft["id"]
+    r2 = tech_debt_extract(c, svc_id, {"Authorization": f"Bearer {bearer}"}, artifact_b)
+    assert r2["id"] != draft["id"]
     assert calls["n"] == 2
-    assert {i["source_artifact_id"] for i in r2.json()["items"]} == {artifact_b}
+    assert {i["source_artifact_id"] for i in r2["items"]} == {artifact_b}
 
 
 @pytest.mark.unit
@@ -536,11 +506,7 @@ def test_latest_capability_list_admin_only(app_client) -> None:
     )
     svc_id = sr.json()["id"]
     artifact_id = _upload_csv(c, a_bearer, "x.csv", b"A\n1\n")
-    c.post(
-        f"/tech-debt/services/{svc_id}/capability-lists/extract",
-        headers={"Authorization": f"Bearer {a_bearer}"},
-        json={"artifact_id": artifact_id},
-    )
+    tech_debt_extract(c, svc_id, {"Authorization": f"Bearer {a_bearer}"}, artifact_id)
 
     r = c.get(
         f"/tech-debt/services/{svc_id}/capability-lists/latest",
@@ -571,12 +537,15 @@ def test_extract_503_when_llm_returns_bad_json(app_client) -> None:
     )
     svc_id = sr.json()["id"]
     artifact_id = _upload_csv(c, bearer, "x.csv", b"A\n1\n")
-    r = c.post(
+    # #645: the extraction is a background job, so the 502 it used to answer
+    # with is now the FAILED run's typed reason.
+    run = run_ai_expecting_failure(
+        c,
         f"/tech-debt/services/{svc_id}/capability-lists/extract",
-        headers={"Authorization": f"Bearer {bearer}"},
-        json={"artifact_id": artifact_id},
+        {"Authorization": f"Bearer {bearer}"},
+        artifact_id=artifact_id,
     )
-    assert r.status_code == 502
+    assert run["error_reason"] == "ai_call_failed"
 
 
 def _create_list_with_item(
@@ -611,12 +580,8 @@ def _create_list_with_item(
     )
     svc_id = sr.json()["id"]
     artifact_id = _upload_csv(c, bearer, "x.csv", b"A\n1\n")
-    er = c.post(
-        f"/tech-debt/services/{svc_id}/capability-lists/extract",
-        headers={"Authorization": f"Bearer {bearer}"},
-        json={"artifact_id": artifact_id},
-    )
-    return svc_id, er.json()["items"][0]["id"]
+    er = tech_debt_extract(c, svc_id, {"Authorization": f"Bearer {bearer}"}, artifact_id)
+    return svc_id, er["items"][0]["id"]
 
 
 @pytest.mark.unit
@@ -1227,12 +1192,8 @@ def _seed_three_item_list(
     )
     svc_id = sr.json()["id"]
     artifact_id = _upload_csv(c, bearer, "x.csv", b"A\n1\n")
-    er = c.post(
-        f"/tech-debt/services/{svc_id}/capability-lists/extract",
-        headers={"Authorization": f"Bearer {bearer}"},
-        json={"artifact_id": artifact_id},
-    )
-    return svc_id, [i["id"] for i in er.json()["items"]]
+    er = tech_debt_extract(c, svc_id, {"Authorization": f"Bearer {bearer}"}, artifact_id)
+    return svc_id, [i["id"] for i in er["items"]]
 
 
 @pytest.mark.unit
@@ -1261,8 +1222,9 @@ def test_consolidation_plan_summary_counts_dispositions(app_client) -> None:
     assert body["consolidate_count"] == 1
     assert body["cut_count"] == 1
     assert body["undecided_count"] == 0
-    # Splunk was the "cut" item ($480k savings).
-    assert body["estimated_annual_savings"] == 480000.0
+    # Splunk (Cut, 480k) and Lacework (Cut, covered by another tool, 120k) both
+    # count. #804, the advisor's ruling on #736.
+    assert body["estimated_annual_savings"] == 600000.0
     assert body["savings_cost_known"] is True
 
 
@@ -1747,13 +1709,8 @@ def test_extract_response_discloses_excluded_rows(app_client) -> None:
     )
     artifact_id = _upload_csv(c, bearer, "inventory.csv", csv)
 
-    r = c.post(
-        f"/tech-debt/services/{svc_id}/capability-lists/extract",
-        headers={"Authorization": f"Bearer {bearer}"},
-        json={"artifact_id": artifact_id},
-    )
-    assert r.status_code == 201, r.text
-    body = r.json()
+    r = tech_debt_extract(c, svc_id, {"Authorization": f"Bearer {bearer}"}, artifact_id)
+    body = r
 
     assert body["source_rows_total"] == 4
     assert len(body["items"]) == 2
@@ -1819,13 +1776,8 @@ def _list_with_one_item(c, bearer: str, provider, name: str, cost: float) -> tup
     )
     svc_id = sr.json()["id"]
     artifact_id = _upload_csv(c, bearer, "inv.csv", b"Tool,Cost\nMicrosoft 365 E5,294120\n")
-    r = c.post(
-        f"/tech-debt/services/{svc_id}/capability-lists/extract",
-        headers={"Authorization": f"Bearer {bearer}"},
-        json={"artifact_id": artifact_id},
-    )
-    assert r.status_code == 201, r.text
-    return svc_id, r.json()["items"][0]["id"]
+    r = tech_debt_extract(c, svc_id, {"Authorization": f"Bearer {bearer}"}, artifact_id)
+    return svc_id, r["items"][0]["id"]
 
 
 @pytest.mark.unit
@@ -1963,13 +1915,8 @@ def _list_with_exclusions(c, bearer: str, provider) -> tuple[str, str]:
         b"Workday HCM,Workday,81700\n"
     )
     artifact_id = _upload_csv(c, bearer, "inv.csv", csv)
-    r = c.post(
-        f"/tech-debt/services/{svc_id}/capability-lists/extract",
-        headers={"Authorization": f"Bearer {bearer}"},
-        json={"artifact_id": artifact_id},
-    )
-    assert r.status_code == 201, r.text
-    body = r.json()
+    r = tech_debt_extract(c, svc_id, {"Authorization": f"Bearer {bearer}"}, artifact_id)
+    body = r
     assert [e["index"] for e in body["excluded_rows"]] == [1, 3]
     return svc_id, body["id"]
 
@@ -2137,7 +2084,7 @@ def test_same_document_reextract_still_reuses_a_draft_with_a_manually_included_r
     r = c.post(
         f"/tech-debt/services/{svc_id}/capability-lists/extract",
         headers={"Authorization": f"Bearer {bearer}"},
-        json={"artifact_id": artifact_id},
+        json={"artifact_id": artifact_id, "serves": "offline"},
     )
 
     assert r.status_code == 200, r.text

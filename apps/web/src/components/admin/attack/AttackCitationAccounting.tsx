@@ -242,6 +242,37 @@ export function AttackCitationAccounting({
           with nothing — re-run before relying on this draft.
         </p>
       ) : null}
+
+      {/* #645. An edit that checked the run's lock before the run existed can
+          land after it started. The run keeps that edit rather than overwrite
+          it, and says how many it kept, so a row the run "skipped" is not
+          mistaken for one it looked at and agreed with. */}
+      {(result.rows_skipped_edited ?? 0) > 0 ? (
+        <p
+          className="text-ink-secondary"
+          data-testid="attack-rows-skipped-edited"
+        >
+          {result.rows_skipped_edited === 1
+            ? "1 technique was edited after this run started, so the run left it as edited"
+            : `${result.rows_skipped_edited} techniques were edited after this run started, so the run left them as edited`}
+          .
+        </p>
+      ) : null}
+
+      {/* #841. Only a consultant may rule a technique N/A, so the run refused
+          every N/A the AI suggested. Said here so a refusal is not mistaken for
+          the AI having no view on that technique. Copy approved verbatim
+          (issue 841, comment 5983735013). */}
+      {(result.not_applicable_refused ?? 0) > 0 ? (
+        <p
+          className="text-ink-secondary"
+          data-testid="attack-not-applicable-refused"
+        >
+          {result.not_applicable_refused === 1
+            ? "1 technique was suggested as N/A and not applied. Only a consultant can mark a technique N/A, in the technique panel."
+            : `${result.not_applicable_refused} techniques were suggested as N/A and not applied. Only a consultant can mark a technique N/A, in the technique panel.`}
+        </p>
+      ) : null}
     </div>
   );
 }

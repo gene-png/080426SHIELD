@@ -1,3 +1,5 @@
+import type { AiSource } from "@/lib/aiSource/types";
+
 /** Wire types mirroring apps/api/app/schemas/zt.py. */
 
 export type ZtFramework = "cisa_ztmm_2_0" | "dod_ztra";
@@ -45,6 +47,8 @@ export interface ZtAnswer {
 }
 
 export interface ZtAssessment {
+  /** #646: which mode drafted the AI suggestions, as the API states it. */
+  ai_source: AiSource;
   id: string;
   service_id: string;
   framework: ZtFramework;
@@ -109,7 +113,8 @@ export interface ZtDroppedSuggestion {
     | "out_of_range"
     | "superseded"
     | "locked"
-    | "protected";
+    | "protected"
+    | "edited";
   /** The capability code exactly as the model wrote it, or null. */
   key: string | null;
   /** "current" or "target", for drops attributable to one value. */
@@ -120,6 +125,11 @@ export interface ZtDroppedSuggestion {
   value?: unknown;
 }
 
+/**
+ * What a zt_score Run-AI did: the run's stored `result` since #645, every
+ * field the synchronous response carried, read from the run so it survives a
+ * reload.
+ */
 export interface ZtRunAiResponse {
   changed: ZtCapabilityChange[];
   answers: ZtAnswer[];

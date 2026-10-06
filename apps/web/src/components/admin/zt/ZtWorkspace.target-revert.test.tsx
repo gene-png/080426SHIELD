@@ -58,6 +58,12 @@ vi.mock("@/lib/zt/client", () => ({
   discardAssessment: vi.fn(),
   patchAnswer: vi.fn(),
   runZtAi: vi.fn(),
+  // #645: the workspace reads the service's runs on load and polls one it
+  // follows. No run, by default.
+  fetchZtRun: vi.fn(),
+  fetchZtRunSummary: vi.fn(() =>
+    Promise.resolve({ running: null, latest: null, last_completed: null }),
+  ),
   finalizeZtDeliverable: vi.fn(),
   releaseZtDeliverable: vi.fn(),
 }));
@@ -184,6 +190,14 @@ function draftAtStage2(): ZtAssessment {
     answers: [],
     client_target_stage: 2,
     documents_stale: false,
+    // #646 (Batch F): required since; not under test here. A fresh
+    // draft with no completed run on load: "none", its true state.
+    ai_source: {
+      state: "none",
+      sentence: "No AI suggestions were used in this assessment.",
+      live_runs: 0,
+      fixture_runs: 0,
+    },
   } as unknown as ZtAssessment;
 }
 
@@ -239,6 +253,26 @@ function deferredGap(): {
 }
 
 /** The same tap, for the ACTION a refresh hangs off (`runZtAi`). */
+/** #645: what a Run-AI POST answers, and the run it starts, completed. */
+const STARTED = {
+  run_id: "run-zt",
+  status: "running" as const,
+  serves: "offline" as const,
+  deadline_at: "2026-10-01T12:45:00Z",
+  lock_until: "2026-10-01T12:50:00Z",
+  joined: false,
+};
+const COMPLETED = {
+  id: "run-zt",
+  status: "completed",
+  result: {
+    changed: [],
+    suggestions_received: 0,
+    suggestions_applied: 0,
+    dropped: [],
+  },
+} as unknown as Awaited<ReturnType<typeof ztClient.fetchZtRun>>;
+
 function deferredRun(): {
   promise: Promise<unknown>;
   settled: Promise<string>;
@@ -505,9 +539,9 @@ describe("ZtWorkspace target stage is derived from the rows (#385)", () => {
       }
       return gapAt(t);
     });
-    vi.mocked(ztClient.runZtAi).mockResolvedValue(
-      {} as unknown as Awaited<ReturnType<typeof ztClient.runZtAi>>,
-    );
+    // #645: the POST starts a run; the refresh follows its completion.
+    vi.mocked(ztClient.runZtAi).mockResolvedValue(STARTED);
+    vi.mocked(ztClient.fetchZtRun).mockResolvedValue(COMPLETED);
 
     renderWorkspace("svc-385-zt-stale-refresh");
     await screen.findByText("rows-computed-for-stage-2");
@@ -561,6 +595,8 @@ describe("ZtWorkspace target stage is derived from the rows (#385)", () => {
     vi.mocked(ztClient.runZtAi).mockImplementation(
       () => slowRun.promise as never,
     );
+    // #645: the POST starts a run; the refresh follows its completion.
+    vi.mocked(ztClient.fetchZtRun).mockResolvedValue(COMPLETED);
 
     renderWorkspace("svc-385-zt-live-ref");
     await screen.findByText("rows-computed-for-stage-2");
@@ -578,7 +614,7 @@ describe("ZtWorkspace target stage is derived from the rows (#385)", () => {
     //    its closure began with.
     fetchGapAnalysis.mockClear();
     await act(async () => {
-      slowRun.resolve({});
+      slowRun.resolve(STARTED);
       expect(await slowRun.settled).toBe("resolved");
     });
 
@@ -588,5 +624,43 @@ describe("ZtWorkspace target stage is derived from the rows (#385)", () => {
     expect(refreshed.length).toBeGreaterThan(0);
     expect(refreshed).toContain(4);
     expect(refreshed).not.toContain(2);
+  });
+});
+
+describe("ZtWorkspace says why a stored Stage 1 is not the selected target (#85)", () => {
+  // The coercion of a stored 1 to the default 3 is KEPT on purpose (#85): the
+  // API resolves a stored 1 to the same default, so screen and document agree.
+  // It must not be silent. Copy approved on #85, written out, not imported.
+  const NOTE =
+    "Client's target not used — the stage on file is a starting point, not a target.";
+
+  it("shows the reason beside the select, with the default selected", async () => {
+    baseMocks();
+    fetchLatestAssessment.mockResolvedValue({
+      ...draftAtStage2(),
+      client_target_stage: 1,
+    } as unknown as ZtAssessment);
+    fetchGapAnalysis.mockImplementation(async (_id, opts) =>
+      gapAt(requestedStage(opts)),
+    );
+
+    renderWorkspace("svc-85-zt-floor");
+
+    await screen.findByText("rows-computed-for-stage-3");
+    expect(picker()).toHaveValue("3");
+    // By its TEXT: the workspace carries other role="note" elements.
+    expect(screen.getByText(NOTE)).toBeInTheDocument();
+  });
+
+  it("says nothing when the stored stage is a real target", async () => {
+    baseMocks();
+    fetchGapAnalysis.mockImplementation(async (_id, opts) =>
+      gapAt(requestedStage(opts)),
+    );
+
+    renderWorkspace("svc-85-zt-ok");
+
+    await screen.findByText("rows-computed-for-stage-2");
+    expect(screen.queryByText(/starting point, not a target/)).toBeNull();
   });
 });

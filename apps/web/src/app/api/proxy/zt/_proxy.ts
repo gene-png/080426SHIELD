@@ -6,6 +6,7 @@ import { NextResponse } from "next/server";
 
 import { ApiError, apiFetch } from "@/lib/api";
 import { auth } from "@/lib/auth/options";
+import { upstreamOutcomeUnknown } from "@/lib/upstream-outcome-unknown";
 
 export async function proxyJson<T = unknown>(
   upstream: string,
@@ -60,10 +61,7 @@ export async function proxyJson<T = unknown>(
         status: err.status,
       });
     }
-    return NextResponse.json(
-      { error: { message: "Upstream ZT call failed." } },
-      { status: 502 },
-    );
+    return upstreamOutcomeUnknown(err, "Upstream ZT call");
   }
 }
 

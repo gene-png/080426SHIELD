@@ -44,6 +44,13 @@ function dashboard(
   source = "client",
 ): ZtDashboardData {
   return {
+    // #646 (Batch F): required since; not under test here.
+    ai_source: {
+      state: "live",
+      sentence: "AI suggestions in this assessment came from a live AI model.",
+      live_runs: 1,
+      fixture_runs: 0,
+    },
     service_id: "11111111-1111-4111-8111-111111111111",
     unusable_target_codes: unusable,
     service_title: "Zero Trust Assessment",
@@ -171,7 +178,7 @@ describe("ZtDashboard discarded-target disclosure (wiring)", () => {
     // `display: none`. In jsdom it is a style check and not a layout one, so
     // it is NOT evidence about clipping; that was settled by reading
     // `KpiCard`'s styles instead.
-    expect(screen.getByText("Your target, chosen at intake")).toBeVisible();
+    expect(screen.getByText("Your target, chosen at intake.")).toBeVisible();
     expect(screen.queryByText(SENTENCE)).not.toBeInTheDocument();
   });
 

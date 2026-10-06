@@ -296,7 +296,10 @@ describe("AttackCitationAccounting", () => {
     expect(el).not.toHaveTextContent(/can still read as covered/);
   });
 
-  it("uses role=alert only for the outcome that loses evidence", () => {
+  // #271: two outcomes lose evidence and each raises its own alert -- a
+  // dropped citation here, a partial run in `attack-run-incomplete` -- so both
+  // render together on a partial run with rejections. Named for what it pins.
+  it("raises role=alert when a citation is dropped (a partial run raises the other)", () => {
     render(
       <AttackCitationAccounting result={result({ citations_rejected: 1 })} />,
     );

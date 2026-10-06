@@ -19,6 +19,7 @@ Endpoint surface:
 
 from __future__ import annotations
 
+import functools
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -28,12 +29,22 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
+from app.ai.batching import run_batches
 from app.ai.diff import diff_keyed_rows
-from app.ai.engine import run_job
-from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
 from app.ai.provenance import SOURCE_CONSULTANT, protected_keys
+from app.ai.runs import (
+    RunContext,
+    RunFailed,
+    Runner,
+    RunOutcome,
+    get_ai_run_runner,
+    refuse_while_running,
+    require_serves,
+    start_run,
+)
+from app.assessment_targets import MIN_TARGET_TIER, floor_refusal, target_source_sentence
 from app.audit import audit
 from app.client_naming import org_display_name
 from app.csf import playbook_export as csf_playbook_export
@@ -69,6 +80,7 @@ from app.db.session import get_db
 from app.deliverable_release import release_deliverable
 from app.dependencies import current_client, current_user, require_role
 from app.logging import get_logger
+from app.mode_stamp import ai_mode_for
 from app.models._common import utcnow
 from app.models.artifact import Artifact, ArtifactOrigin
 from app.models.client import Client
@@ -84,6 +96,7 @@ from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.service_request import ServiceRequest
 from app.models.user import User, UserRole
 from app.routes.artifacts import _storage_dep
+from app.schemas.ai_runs import AiRunStarted, RunAiRequest
 from app.schemas.csf import (
     GAP_CHARACTERIZATIONS,
     GAP_PRIORITY_OVERRIDES,
@@ -122,6 +135,7 @@ from app.schemas.csf import (
 )
 from app.schemas.tech_debt import DeliverableResponse
 from app.security.rate_limit import enforce_ai_rate_limit
+from app.services.engagement_targets import client_target_tier
 from app.storage import StorageBackend
 from app.tech_debt.filename import (
     SERVICE_SLUG_CSF_PLAYBOOK,
@@ -151,19 +165,6 @@ def _serialize_answers(rows: Iterable[CsfAnswer]) -> list[CsfAnswerResponse]:
     return [CsfAnswerResponse.model_validate(r, from_attributes=True) for r in ordered]
 
 
-def _client_target_tier(db: Session, service_id: uuid.UUID) -> int | None:
-    """The CSF target tier the client chose at intake, via the source request.
-
-    Lets the admin workspace default its gap target to the client's goal
-    instead of a hardcoded tier.
-    """
-    svc = db.get(Service, service_id)
-    if svc is None or svc.source_request_id is None:
-        return None
-    sr = db.get(ServiceRequest, svc.source_request_id)
-    return sr.csf_target_tier if sr is not None else None
-
-
 def _client_profile(db: Session, service_id: uuid.UUID) -> str | None:
     """The CSF impact profile the client chose at intake (LOW/MOD/HIGH)."""
     svc = db.get(Service, service_id)
@@ -184,8 +185,10 @@ def _serialize_assessment(db: Session, a: CsfAssessment) -> CsfAssessmentRespons
         approved_by=a.approved_by,
         documents_stale=a.documents_stale,
         answers=_serialize_answers(rows),
-        client_target_tier=_client_target_tier(db, a.service_id),
+        client_target_tier=client_target_tier(db, a.service_id),
         client_profile=_client_profile(db, a.service_id),
+        # #646: the ONE derivation every surface calls.
+        ai_source=ai_mode_for(db, db.get(Service, a.service_id), a).as_api(),
     )
 
 
@@ -472,6 +475,7 @@ def create_assessment(
     db: Annotated[Session, Depends(get_db)],
 ) -> CsfAssessmentResponse:
     svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.NIST_CSF)
+    refuse_while_running(db, svc.id)  # #645: the edit lock
     prior = _latest_assessment(db, svc.id)
     # Draft-exists guard (SPRINT_2 T7): this route used to mint a new version on
     # EVERY call, so a client hammering "start assessment" produced unbounded
@@ -714,6 +718,27 @@ def patch_self_assessment_answer(
     return CsfAnswerResponse.model_validate(row, from_attributes=True)
 
 
+def _refuse_submitted_target_tier(tier: int) -> None:
+    """Refuse a client's submitted target tier, naming the CAUSE (#85).
+
+    Below the floor and off the ladder are different mistakes -- Tier 1 exists
+    and is not a target; Tier 0 and Tier 5 are not tiers -- so each gets its own
+    sentence. The floor sentence is intake's, CALLED from
+    `assessment_targets.floor_refusal`; the reason is this module's, the one
+    the gap-analysis route already uses for the same field.
+    """
+    if 1 <= tier < MIN_TARGET_TIER:
+        message = floor_refusal("Tier", tier, MIN_TARGET_TIER)
+    elif not 1 <= tier <= CSF_MAX_TIER:
+        message = f"NIST CSF 2.0 has tiers 1-{CSF_MAX_TIER}; {tier} is not one of them."
+    else:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={"reason": "target_tier_out_of_range", "message": message},
+    )
+
+
 @router.post(
     "/services/{service_id}/self-assessment/submit",
     response_model=CsfAssessmentResponse,
@@ -739,7 +764,11 @@ def submit_self_assessment(
             detail="This self-assessment has already been submitted.",
         )
     # Persist the (possibly adjusted) maturity target so the gap engine measures
-    # against the client's goal.
+    # against the client's goal. RANGE first (#85): this route had no check at
+    # all, so a direct call stored a 1 that every gap list then measured
+    # against -- "0 gap(s) at target T1".
+    if body.target_tier is not None:
+        _refuse_submitted_target_tier(body.target_tier)
     if body.target_tier is not None and svc.source_request_id is not None:
         sr = db.get(ServiceRequest, svc.source_request_id)
         if sr is not None:
@@ -784,6 +813,8 @@ def approve_assessment(
     db: Annotated[Session, Depends(get_db)],
 ) -> CsfAssessmentResponse:
     a = require_csf_assessment_in_tenant(db, assessment_id, client.id)
+    # #645: approving mid-run would approve rows about to change.
+    refuse_while_running(db, a.service_id)
     if a.status == CsfAssessmentStatus.APPROVED:
         return _serialize_assessment(db, a)
     if a.status == CsfAssessmentStatus.RELEASED:
@@ -1111,6 +1142,7 @@ def seed_profiles(
     db: Annotated[Session, Depends(get_db)],
 ) -> list[str]:
     svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.NIST_CSF)
+    refuse_while_running(db, svc.id)  # #645: the edit lock
     a = _latest_assessment(db, svc.id)
     if a is None:
         raise HTTPException(
@@ -1204,6 +1236,9 @@ def patch_dimension_score(
     row = db.get(CsfDimensionScore, score_id)
     if row is None or row.client_id != client.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Score row not found.")
+    owner = db.get(CsfAssessment, row.assessment_id)
+    if owner is not None:
+        refuse_while_running(db, owner.service_id)  # #645: the edit lock
     data = body.model_dump(exclude_unset=True)
     for f in (
         "governance",
@@ -1715,6 +1750,8 @@ def _apply_suggestions(
     data: dict,
     rows: dict[str, CsfDimensionScore],
     protected: frozenset[str] | set[str] = frozenset(),
+    edited: frozenset[str] | set[str] = frozenset(),
+    strays: list[Any] | None = None,
 ) -> tuple[int, int, list[CsfDroppedSuggestion]]:
     """Apply the csf_score suggestions, accounting for every one of them (W1).
 
@@ -1746,6 +1783,11 @@ def _apply_suggestions(
     not exist and a row a human locked. Only the recognized values are charged
     to `unknown_key` / `locked`, so nothing is counted twice.
 
+    `strays` (#479) are entries a batch returned for a real row that batch
+    was NOT asked for. They are counted and itemized exactly like the rest, then
+    dropped as `not_in_batch`: the batch that asked for the row answers it, and
+    a stray must neither apply twice nor overwrite that answer from outside.
+
     Returns ``(received, applied, dropped)`` satisfying
     ``received == applied + sum(d.values for d in dropped)``.
     """
@@ -1755,7 +1797,9 @@ def _apply_suggestions(
     # (row key, field) already written by an earlier entry in this response.
     written: set[tuple[str, str]] = set()
 
-    for sugg in data.get("scores", []):
+    entries = [(s, False) for s in data.get("scores", [])]
+    entries += [(s, True) for s in strays or []]
+    for sugg, stray in entries:
         if not isinstance(sugg, dict):
             received += _ROW_VALUE_SLOTS
             dropped.append(
@@ -1830,6 +1874,11 @@ def _apply_suggestions(
                 CsfDroppedSuggestion(reason="unknown_key", key=key, values=recognized_values)
             )
             continue
+        if stray:
+            dropped.append(
+                CsfDroppedSuggestion(reason="not_in_batch", key=key, values=recognized_values)
+            )
+            continue
         if row.locked:
             # A by-design skip, NOT a defect. Kept distinct from unknown_key so
             # the two never render as one number (#31 alert fatigue).
@@ -1843,6 +1892,12 @@ def _apply_suggestions(
             dropped.append(
                 CsfDroppedSuggestion(reason="protected", key=key, values=recognized_values)
             )
+            continue
+        if row_key in edited:
+            # #645: a consultant edited this row after the run started (an edit
+            # that checked the lock before the run existed). Kept, never
+            # overwritten, and itemized like the other by-design skips.
+            dropped.append(CsfDroppedSuggestion(reason="edited", key=key, values=recognized_values))
             continue
 
         for field in fields:
@@ -1953,6 +2008,12 @@ def build_csf_ai_request(db: Session, svc: Service, client: Client) -> CsfAiRequ
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Create an assessment first."
         )
+    return _csf_ai_request_for(db, a, client)
+
+
+def _csf_ai_request_for(db: Session, a: CsfAssessment, client: Client) -> CsfAiRequest:
+    """The request for ONE assessment, named by id: the background job (#645)
+    re-loads the assessment its POST validated, never "the latest"."""
     if a.status in (CsfAssessmentStatus.APPROVED, CsfAssessmentStatus.RELEASED):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="This assessment is locked."
@@ -2006,10 +2067,50 @@ def build_csf_ai_request(db: Session, svc: Service, client: Client) -> CsfAiRequ
     )
 
 
+# csf_score is asked for in batches of at most this many (tier, subcategory)
+# rows (#479). A full Working Profile is 106 subcategories x 3 tiers = 318
+# rows, and one call over all of them could not fit any provider's output cap.
+#
+# Sized for the WORST provider, by a fixed row count:
+#   * the non-streamed adapters (OpenAI, Gemini, Vertex) cap csf_score at 8192
+#     output tokens (`non_streamed_output_cap`, app/ai/llm.py);
+#   * on Gemini and Vertex, gemini-2.5+ spends up to 2048 of those on thinking
+#     (`_THINKING_BUDGET_TOKENS`, the same file), leaving ~6.1k;
+#   * a row's output is ESTIMATED at up to ~575 tokens: a mitre_map row as
+#     measured live on 2026-08-07 (the comment above `_MITRE_BATCH_SIZE`,
+#     routes/attack.py), the high end of the range the llm.py comment gives
+#     for csf_score. No live csf_score has been measured.
+# (8192 - 2048) / 575 = 10.7, so 10 rows: ~5.75k tokens, leaving ~400 for the
+# JSON wrapper and the prompt's `executive_summary`. A tier's subcategories are
+# split in tens, so the 318-row profile is 3 x 11 = 33 batches, 6 short ones.
+# The streamed Anthropic adapter (64000) has room to spare at this size.
+_CSF_BATCH_ROWS = 10
+# The same modest concurrency as mitre_map: the provider rate limit is shared
+# with every other job in the deployment.
+_CSF_MAX_WORKERS = 5
+
+
+def _csf_batch_inputs(inputs: dict[str, Any]) -> list[dict[str, Any]]:
+    """The payload split into batches of at most `_CSF_BATCH_ROWS` rows: one
+    tier per batch, that tier's subcategories in order, each batch carrying
+    every interview answer (input tokens are the cheap side, and a batch must
+    not lose the grounding the prompt asks it to use). Every (tier,
+    subcategory) row the single-call payload asked for is asked for once."""
+    tiers = list(inputs.get("tiers") or [])
+    codes = list(inputs.get("subcategories") or [])
+    batches = [
+        {**inputs, "tiers": [tier], "subcategories": codes[i : i + _CSF_BATCH_ROWS]}
+        for tier in tiers
+        for i in range(0, len(codes), _CSF_BATCH_ROWS)
+    ]
+    return batches or [inputs]
+
+
 @router.post(
     "/services/{service_id}/run-ai",
-    response_model=CsfRunAiResponse,
-    summary="Run the csf_score AI job: suggest dimension scores + narrative (admin)",
+    response_model=AiRunStarted,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Start the csf_score AI job in the background; poll the run it returns (admin)",
 )
 def run_ai(
     service_id: uuid.UUID,
@@ -2017,38 +2118,110 @@ def run_ai(
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],
     llm: Annotated[LLMClient, Depends(_llm_dep)],
+    runner: Annotated[Runner, Depends(get_ai_run_runner)],
     _rl: Annotated[None, Depends(enforce_ai_rate_limit)],
-) -> CsfRunAiResponse:
+    body: RunAiRequest | None = None,
+) -> AiRunStarted:
     """The CSF full-Playbook 'Run AI'. Suggests the five dimension scores (0-2)
     + a 'what we found' narrative per (tier, subcategory). AI suggests; locked
     rows are untouched; code does the total/level/cap + Enterprise roll-up.
-    Returns a 'what changed' list.
+
+    #645: answers 202 with a run to poll. The refusals that need no AI (no
+    assessment, locked, not seeded) are made here, synchronously; the work is
+    `_csf_run_work`, in the background.
     """
+    serves = require_serves(body.serves if body else None)
     svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.NIST_CSF)
     req = build_csf_ai_request(db, svc, client)
-    a, rows, locked_keys = req.assessment, req.rows, req.locked_keys
+    return start_run(
+        db,
+        llm=llm,
+        serves=serves,
+        service_id=svc.id,
+        client_id=client.id,
+        purpose=req.preview.job_name,
+        subject_id=req.assessment.id,
+        requested_by=user.id,
+        runner=runner,
+        work=functools.partial(_csf_run_work, assessment_id=req.assessment.id),
+    )
+
+
+def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID) -> RunOutcome:
+    """The csf_score run, in the background job's own session (#645). Re-loads
+    by id; a refusal becomes the run's FAILED state with the same reason."""
+    db = session
+    a = db.get(CsfAssessment, assessment_id)
+    if a is None or a.status in (
+        CsfAssessmentStatus.DISCARDED,
+        CsfAssessmentStatus.APPROVED,
+        CsfAssessmentStatus.RELEASED,
+    ):
+        raise RunFailed(
+            "assessment_not_editable",
+            "This assessment was discarded or locked before the run started.",
+        )
+    req = _csf_ai_request_for(db, a, db.get(Client, ctx.client_id))
+    rows = req.rows
+    llm = ctx.llm
 
     def _snap() -> dict[str, dict]:
         return {k: {f: getattr(r, f) for f in _RUN_FIELDS} for k, r in rows.items()}
 
+    # #479: in batches (`_CSF_BATCH_ROWS`). Each batch writes its own
+    # `llm_calls` row in its own session; a failed batch leaves its rows as
+    # they were and is counted, and only a total failure fails the run, typed,
+    # through `ai_call_boundary`.
+    batched = run_batches(
+        db,
+        llm,
+        req.preview.job_name,
+        _csf_batch_inputs(req.preview.inputs),
+        requested_by=ctx.requested_by,
+        service_id=ctx.service_id,
+        client_id=ctx.client_id,
+        client_org_name=req.preview.client_org_name,
+        name_hints=req.preview.name_hints,
+        deadline_at=ctx.deadline_at,
+        max_workers=_CSF_MAX_WORKERS,
+        deadline_message=(
+            "This run did not finish within its time limit, so it was stopped and "
+            "nothing from it was applied. Run it again; if it repeats, the AI "
+            "provider is answering too slowly for a full CSF run."
+        ),
+    )
+    # The provider calls are over, in the batches' own sessions. Read the rows
+    # as they are NOW -- an edit that landed while the model answered must be
+    # seen -- and take the PRE-WRITE stamps: `onupdate=utcnow` stamps every row
+    # this job writes.
+    db.expire_all()
+    edited = frozenset(k for k, r in rows.items() if ctx.edited_since_start(r.updated_at))
+    locked_keys = frozenset(k for k, r in rows.items() if r.locked)
     before = _snap()
-    # A provider failure here must stay typed and leave an llm_calls row.
-    with ai_call_boundary(db, llm, purpose=req.preview.job_name):
-        result = run_job(
-            db,
-            llm,
-            req.preview.job_name,
-            inputs=req.preview.inputs,
-            requested_by=user.id,
-            service_id=svc.id,
-            client_id=client.id,
-            client_org_name=req.preview.client_org_name,
-            name_hints=req.preview.name_hints,
-        )
-    # `parse_json_object` guarantees a dict or raises (issue #41). The old
-    # `else {}` here discarded a whole unwrapped response and reported zero
-    # changes, which read as the model agreeing with everything.
-    data = result.data
+    # `parse_json_object` guarantees each batch a dict with a `scores` list or
+    # raises (issue #41), which counts that batch failed. The old `else {}`
+    # here discarded a whole unwrapped response and reported zero changes,
+    # which read as the model agreeing with everything. The batches' scores
+    # are applied as one response, in batch order.
+    #
+    # An entry naming a real row its batch was not asked for is a STRAY: kept
+    # out of the applied set and itemized as `not_in_batch`, so a row is only
+    # ever written from the batch that asked for it.
+    scores: list[Any] = []
+    strays: list[Any] = []
+    for inputs, answer in zip(batched.inputs, batched.answers, strict=True):
+        asked = {f"{t}|{c}" for t in inputs["tiers"] for c in inputs["subcategories"]}
+        for entry in answer["scores"]:
+            named = (
+                f"{entry.get('tier')}|{entry.get('subcategory_code')}"
+                if isinstance(entry, dict)
+                else None
+            )
+            if named is not None and named in rows and named not in asked:
+                strays.append(entry)
+            else:
+                scores.append(entry)
+    data = {"scores": scores}
 
     # Offline output must never overwrite what a human typed (#67, migration
     # 0042). `protected_keys` returns an empty set off-fixture, so a LIVE run may
@@ -2062,7 +2235,7 @@ def run_ai(
         ((k, r.answer_source, r.answer_source is not None) for k, r in rows.items()),
         is_fixture=llm.provider.name == "fixture",
     )
-    received, applied, dropped = _apply_suggestions(data, rows, protected)
+    received, applied, dropped = _apply_suggestions(data, rows, protected, edited, strays)
 
     db.flush()
     after = _snap()
@@ -2095,7 +2268,7 @@ def run_ai(
         # trips this, which is still worth a "did this do anything?" signal.
         _log.warning(
             "csf_run_ai_no_changes",
-            service_id=str(svc.id),
+            service_id=str(ctx.service_id),
             assessment_id=str(a.id),
             suggestions=len(data.get("scores", [])),
             unlocked_rows=len(rows) - len(locked_keys),
@@ -2139,17 +2312,22 @@ def run_ai(
     # 1, Master Spec §12.1). Emitted on every run: a reader should never have to
     # wonder whether the accounting ran.
     #
-    # BELOW the D-031 re-read on purpose. Above it, a run that lost the discard
-    # race logged "applied=1908" for a transaction that then rolled back and
-    # wrote no audit row — logs and audit disagreeing about whether anything
-    # happened is precisely the confusion this accounting exists to remove.
-    _log.info(
+    # NOT logged here. A run that lost the discard race once logged
+    # "applied=1908" for a transaction that then rolled back. Since #645 the
+    # apply commits with the run's completion compare-and-swap, which can
+    # still miss, so the framework emits this line only after that commit
+    # (or as `.voided` when it misses). See `RunOutcome.accounting`.
+    accounting = (
         "csf_run_ai_suggestions_accounted",
-        service_id=str(svc.id),
-        assessment_id=str(a.id),
-        received=received,
-        applied=applied,
-        dropped_by_reason=dropped_by_reason,
+        {
+            "service_id": str(ctx.service_id),
+            "assessment_id": str(a.id),
+            "received": received,
+            "applied": applied,
+            "dropped_by_reason": dropped_by_reason,
+            "batches_total": batched.total,
+            "batches_failed": batched.failed,
+        },
     )
 
     a.documents_stale = True  # Work Order C3
@@ -2158,27 +2336,38 @@ def run_ai(
         action="csf.run_ai",
         target_type="csf_assessment",
         target_id=a.id,
-        actor_user_id=user.id,
+        actor_user_id=ctx.requested_by,
         details={
+            "run_id": str(ctx.run_id),
             "changed_rows": len(diffs),
             "suggestions_received": received,
             "suggestions_applied": applied,
             # Values, not records, so the durable row can check its own
             # arithmetic: received == applied + sum(dropped_by_reason.values()).
             "dropped_by_reason": dropped_by_reason,
+            "batches_total": batched.total,
+            "batches_failed": batched.failed,
         },
     )
-    db.commit()
-    out_rows = [
-        _score_response(r)
-        for r in sorted(rows.values(), key=lambda r: (r.tier, r.subcategory_code))
-    ]
-    return CsfRunAiResponse(
+    # No commit: the framework commits this apply with the run's completion.
+    payload = CsfRunAiResponse(
         changed=changes,
-        rows=out_rows,
+        rows=[
+            _score_response(r)
+            for r in sorted(rows.values(), key=lambda r: (r.tier, r.subcategory_code))
+        ],
         suggestions_received=received,
         suggestions_applied=applied,
         dropped=dropped,
+        batches_total=batched.total,
+        batches_failed=batched.failed,
+    )
+    return RunOutcome(
+        result=payload.model_dump(mode="json"),
+        applied_count=applied,
+        batches_total=batched.total,
+        batches_failed=batched.failed,
+        accounting=accounting,
     )
 
 
@@ -2197,6 +2386,7 @@ def export_playbook(
     """An Enterprise Profile sheet (weighted-floor roll-up) + one sheet per tier
     with the five dimension scores and computed total/level/cap."""
     svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.NIST_CSF)
+    refuse_while_running(db, svc.id)  # #645: the edit lock
     a = _latest_assessment(db, svc.id)
     if a is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No assessment yet.")
@@ -2256,6 +2446,8 @@ def export_playbook(
     # and the artifact is deliverable-grade, so the label keeps meaning
     # something rather than becoming furniture that gets read past.
     _approved = a.status in (CsfAssessmentStatus.APPROVED, CsfAssessmentStatus.RELEASED)
+    # #646: the ONE derivation every surface calls; every file of the export.
+    _ai_mode = ai_mode_for(db, svc, a)
 
     def _pb_name(extension: str, variant: str | None = None) -> str:
         # §15.5: {Company}_CSF_Playbook{MMDDYY}[_v{n}][_variant].ext
@@ -2282,6 +2474,7 @@ def export_playbook(
                 tier_profiles=tier_profiles,
                 gap_actions=gap_actions,
                 approved=_approved,
+                ai_mode=_ai_mode,
             ),
         ),
         (
@@ -2295,6 +2488,7 @@ def export_playbook(
                 enterprise_rows=enterprise_rows,
                 generated_on=on,
                 approved=_approved,
+                ai_mode=_ai_mode,
             ),
         ),
         (
@@ -2308,6 +2502,7 @@ def export_playbook(
                 enterprise_rows=enterprise_rows,
                 generated_on=on,
                 approved=_approved,
+                ai_mode=_ai_mode,
             ),
         ),
         (
@@ -2321,6 +2516,7 @@ def export_playbook(
                 enterprise_rows=enterprise_rows,
                 generated_on=on,
                 approved=_approved,
+                ai_mode=_ai_mode,
             ),
         ),
         (
@@ -2334,6 +2530,7 @@ def export_playbook(
                 enterprise_rows=enterprise_rows,
                 generated_on=on,
                 approved=_approved,
+                ai_mode=_ai_mode,
             ),
         ),
     ]
@@ -2447,6 +2644,7 @@ def finalize_csf_deliverable(
     storage: Annotated[StorageBackend, Depends(_storage_dep)],
 ) -> DeliverableResponse:
     svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.NIST_CSF)
+    refuse_while_running(db, svc.id)  # #645: the edit lock
     assessment = _latest_assessment(db, svc.id)
     if assessment is None:
         raise HTTPException(
@@ -2482,7 +2680,7 @@ def finalize_csf_deliverable(
     # Same scope note as the ZT twin: this follows the CONTRACTED tier, not the
     # `/gap-analysis` selector, which finalize never receives. The audit row
     # below records which tier was used and whether the client chose it.
-    engagement_tier = _client_target_tier(db, svc.id)
+    engagement_tier = client_target_tier(db, svc.id)
     # #184: resolve, do not branch on `is not None`. The conditional kwarg let
     # an unusable stored tier reach the engine, which clamped it; the audit row
     # below then recorded the clamp as the client's own choice.
@@ -2525,6 +2723,10 @@ def finalize_csf_deliverable(
         answers=answers,
         score=score,
         gap=gap,
+        # #646: the ONE derivation every surface calls.
+        ai_mode=ai_mode_for(db, svc, assessment),
+        # #783: the resolver's verdict travels with the number it produced.
+        target_source=target_tier_source,
     )
     pdf_bytes = render_csf_pdf(ctx)
     xlsx_bytes = render_csf_xlsx(ctx)
@@ -2565,6 +2767,11 @@ def finalize_csf_deliverable(
         f"{score.answered_subcategories}/{score.total_subcategories} subcategories scored; "
         f"{gap.total_gap_count} gap(s) at target T{gap.target_tier}."
     )
+    # #783: `/results` shows this line to the client, so it says what the
+    # document says when the target is a default.
+    target_note = target_source_sentence("tier", target_tier_source)
+    if target_note:
+        summary_line += f" {target_note}"
 
     deliv = Deliverable(
         service_id=svc.id,

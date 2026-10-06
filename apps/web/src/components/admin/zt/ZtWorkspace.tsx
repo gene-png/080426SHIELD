@@ -20,9 +20,15 @@ import {
   fetchLatestDeliverable,
   fetchScore,
   patchAnswer,
+  fetchZtRun,
+  fetchZtRunSummary,
   runZtAi,
   ZtProxyError,
 } from "@/lib/zt/client";
+import type { ZtRun } from "@/lib/zt/client";
+import type { AiServes } from "@/lib/aiRuns/types";
+import { useAiRun } from "@/lib/aiRuns/useAiRun";
+import { AiRunStatus, LastRunNote } from "@/components/admin/AiRunStatus";
 import type {
   GapAnalysis,
   ZtAnswer,
@@ -55,8 +61,16 @@ import type { JSX } from "react";
 import { ProgressStages } from "../ProgressStages";
 import { useServiceStages } from "@/lib/stages/client";
 import { useRefreshFailures } from "@/components/admin/useRefreshFailures";
-import { serverReason } from "@/lib/describe-save-error";
-import { MIN_TARGET_STAGE } from "@/lib/assessment-targets";
+import {
+  isUpstreamOutcomeUnknown,
+  serverReason,
+} from "@/lib/describe-save-error";
+import {
+  MIN_TARGET_STAGE,
+  STAGE_BELOW_FLOOR_NOTE,
+  isBelowTargetFloor,
+} from "@/lib/assessment-targets";
+import { AiSourceNote } from "@/components/AiSourceNote";
 
 export interface ZtWorkspaceProps {
   serviceId: string;
@@ -151,6 +165,14 @@ function describeError(err: unknown): string {
   return err instanceof Error ? err.message : "Request failed.";
 }
 
+/**
+ * #550: what to say when the proxy never saw Run AI's answer. Not a failure
+ * and not a page that "couldn't load": the api may have finished and written
+ * the rows, and a retry sends the client's data out again.
+ */
+const RUN_OUTCOME_UNKNOWN =
+  "We couldn't confirm whether the AI run finished. It may still complete and fill in capability rows. Reload the page later and check step 2, Review every capability and adjust, before running it again. Run AI stays off on this page until you reload.";
+
 const FRAMEWORK_NAME: Record<ZtFramework, string> = {
   cisa_ztmm_2_0: "CISA ZTMM 2.0",
   dod_ztra: "DoD ZT Reference Architecture",
@@ -196,9 +218,9 @@ export function ZtWorkspace({
   const [busy, setBusy] = React.useState<
     "create" | "approve" | "run" | "discard" | null
   >(null);
-  const [runResult, setRunResult] = React.useState<ZtRunAiResponse | null>(
-    null,
-  );
+  // #550: set once a run's outcome is unknown and never cleared; a reload
+  // clears it, which the copy says.
+  const [runOutcomeUnknown, setRunOutcomeUnknown] = React.useState(false);
   /**
    * THE TARGET THE CONTROL SHOWS IS DERIVED, NOT REMEMBERED (#385).
    *
@@ -306,6 +328,18 @@ export function ZtWorkspace({
    * before the first fetch lands.
    */
   const shownTarget = pendingTarget ?? gap?.target_stage ?? targetStage;
+  // #85, and the reason the coercion above stays: `normalizeTarget` selects
+  // the default for a stored target below the floor, which is what the API's
+  // resolver does too, so this screen and the document agree. It must not do
+  // so SILENTLY, so the consultant is told why. DERIVED from the stored value
+  // on every render, never synchronised, and worded from the same string the
+  // client dashboard renders for `client_below_floor`.
+  const targetNote = isBelowTargetFloor(
+    assessment?.client_target_stage,
+    MIN_TARGET_STAGE,
+  )
+    ? `Client's target not used — ${STAGE_BELOW_FLOOR_NOTE}.`
+    : null;
 
   /**
    * The live `shownTarget`, for callers that read it AFTER an await.
@@ -698,27 +732,70 @@ export function ZtWorkspace({
     }
   }
 
-  async function onRunAi(): Promise<void> {
-    setBusy("run");
-    // LOAD-BEARING for accessibility, not just for clearing the panel.
-    // This unmounts the accounting subtree, so the next render creates the
-    // live region fresh. `ZtRunAiAccounting`'s headline switches between
-    // role="alert" and aria-live="polite"; swapping that attribute on a
-    // PERSISTENT node is the least reliable live-region transition there is.
-    // Keeping the panel mounted across a re-run would silently break the
-    // announcement without breaking a single test.
-    setRunResult(null);
+  // #645. A run this page did not start -- found in progress on load -- ends
+  // here: re-read what it applied, as `onRunAi` does for its own.
+  async function reloadAfterRun(): Promise<void> {
     const seq = ++assessmentSeq.current;
     try {
-      const result = await runZtAi(serviceId);
-      setRunResult(result);
-      // Re-pull so the questionnaire + score reflect the AI's suggestions,
-      // guarded so a concurrent edit that started meanwhile still wins.
       const a = await fetchLatestAssessment(serviceId);
       if (seq === assessmentSeq.current) setAssessment(a);
       await refreshScoreAndGap(shownTargetRef.current);
     } catch (err) {
       setLoadError(describeError(err));
+    }
+  }
+  const aiRun = useAiRun<ZtRunAiResponse>({
+    serviceId,
+    // #271: only this assessment's runs describe it. `null` until it loads.
+    subjectId: assessment?.id ?? null,
+    fetchSummary: fetchZtRunSummary,
+    fetchRun: fetchZtRun,
+    onFinished: (run: ZtRun) => {
+      if (run.status === "completed") void reloadAfterRun();
+    },
+  });
+  /**
+   * What the last COMPLETED run did, read from the run, so it survives a
+   * reload (#271) -- and a later failed run does not hide it.
+   */
+  const runResult = aiRun.lastCompleted?.result ?? null;
+
+  async function onRunAi(serves: AiServes): Promise<void> {
+    setBusy("run");
+    const seq = ++assessmentSeq.current;
+    try {
+      // #550 review, finding 1: two tries, not one. Only the POST's own
+      // rejection can mean "the run's outcome is unknown"; a re-read that
+      // fails after the run answered is that re-read's error and must not
+      // lock Run AI.
+      let started: Awaited<ReturnType<typeof runZtAi>>;
+      try {
+        started = await runZtAi(serviceId, serves);
+      } catch (err) {
+        if (isUpstreamOutcomeUnknown(err)) {
+          // Its own alert beside the button: `loadError`'s card is headed
+          // "Couldn't load the assessment", which is not what happened.
+          setRunOutcomeUnknown(true);
+          // #645: a run may have started. Look once, and follow it if so; the
+          // lock and the copy above stand either way.
+          void aiRun.reconcile();
+        } else {
+          setLoadError(describeError(err));
+        }
+        return;
+      }
+      // #645: the POST started the run; the results arrive when it completes.
+      const finished = await aiRun.follow(started);
+      if (finished.status !== "completed") return; // `AiRunStatus` says why
+      try {
+        // Re-pull so the questionnaire + score reflect the AI's suggestions,
+        // guarded so a concurrent edit that started meanwhile still wins.
+        const a = await fetchLatestAssessment(serviceId);
+        if (seq === assessmentSeq.current) setAssessment(a);
+        await refreshScoreAndGap(shownTargetRef.current);
+      } catch (err) {
+        setLoadError(describeError(err));
+      }
     } finally {
       setBusy(null);
     }
@@ -726,6 +803,8 @@ export function ZtWorkspace({
 
   const readOnly =
     assessment?.status === "approved" || assessment?.status === "released";
+  /** #645: a run holds the edit lock; the api refuses edits until it ends. */
+  const runInProgress = aiRun.running !== null;
 
   const answeredCount =
     assessment?.answers.filter(
@@ -795,7 +874,9 @@ export function ZtWorkspace({
               status={assessment.status}
               destructionSummary={discardSummary}
               onConfirm={onDiscard}
-              disabled={busy !== null}
+              // #645: NOT locked by a run. D-031: a discard racing a run
+              // wins, and the run then ends without applying anything.
+              disabled={busy !== null && busy !== "run"}
             />
           ) : null}
         </div>
@@ -898,27 +979,58 @@ export function ZtWorkspace({
                   loaded. The guard shipped on the ATT&CK workspace only, so a
                   fixture run here silently overwrote a real client
                   self-assessment in the 2026-08-04 review. */}
-              <RunAiGuard onProceed={() => void onRunAi()}>
-                {({ onClick }) => (
+              <RunAiGuard onProceed={(serves) => void onRunAi(serves)}>
+                {({ onClick, statusUnknown }) => (
                   <div>
                     <button
                       type="button"
                       onClick={onClick}
-                      disabled={busy !== null || readOnly}
+                      disabled={
+                        // #645: an unreadable AI status fails closed.
+                        statusUnknown ||
+                        busy !== null ||
+                        readOnly ||
+                        runInProgress ||
+                        runOutcomeUnknown
+                      }
                       className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      {busy === "run" ? "Running…" : "Run AI"}
+                      {busy === "run" || runInProgress ? "Running…" : "Run AI"}
                     </button>
                   </div>
                 )}
               </RunAiGuard>
+              {runOutcomeUnknown ? (
+                <p className="text-sm text-status-warning-fg" role="alert">
+                  {RUN_OUTCOME_UNKNOWN}
+                </p>
+              ) : null}
               <AiPreviewButton serviceId={serviceId} disabled={busy !== null} />
               {/* Replaces the old "Updated N fields across M capabilities"
                   line, which reported only what LANDED — a run that lost every
                   suggestion rendered identically to one the model had nothing
                   to say about (W1, issue #44). The accounting states the same
                   change counts and the shortfall alongside them. */}
-              {runResult ? <ZtRunAiAccounting result={runResult} /> : null}
+              <AiRunStatus run={aiRun} />
+              {/* #646: the assessment's AI source, from the derivation the
+                  deliverable and the client dashboard call. */}
+              {assessment ? (
+                <AiSourceNote source={assessment.ai_source} />
+              ) : null}
+              <LastRunNote run={aiRun.lastCompleted} />
+              {/* Keyed by the run, which is LOAD-BEARING for accessibility: a
+                  new run's accounting mounts fresh, so the live region is
+                  created anew. Its headline switches between role="alert" and
+                  aria-live="polite", and swapping that attribute on a
+                  PERSISTENT node is the least reliable live-region transition
+                  there is. (This used to be done by clearing the result at the
+                  start of a run; the result now lives on the run itself.) */}
+              {runResult && aiRun.lastCompleted ? (
+                <ZtRunAiAccounting
+                  key={aiRun.lastCompleted.id}
+                  result={runResult}
+                />
+              ) : null}
               {/* Sibling, not a child: the accounting component's severity
                   logic stays untouched (#68). */}
               {runResult ? <AiDraftProvenanceNotice /> : null}
@@ -959,7 +1071,7 @@ export function ZtWorkspace({
             <ZtQuestionnaire
               catalog={catalog}
               answersByCode={answersByCode}
-              readOnly={readOnly}
+              readOnly={readOnly || runInProgress}
               onAnswerUpdate={onAnswerUpdate}
             />
           </WorkflowStep>
@@ -982,6 +1094,7 @@ export function ZtWorkspace({
               onClick={() => void onApprove()}
               disabled={
                 busy !== null ||
+                runInProgress ||
                 (assessment.status !== "draft" &&
                   assessment.status !== "submitted")
               }
@@ -1028,6 +1141,7 @@ export function ZtWorkspace({
             targetStage={shownTarget}
             onChangeTargetStage={(s) => void onChangeTargetStage(s)}
             stages={catalog.stages}
+            targetNote={targetNote}
           />
           <ZtRoadmapCard analysis={gap} />
           <MessageThread serviceId={serviceId} />

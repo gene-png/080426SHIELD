@@ -36,27 +36,45 @@ of what it will have does.
 
 from __future__ import annotations
 
+import functools
 import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.orm import Session
 
 from app.ai.llm import LLMClient
+from app.ai.runs import (
+    RunContext,
+    RunFailed,
+    Runner,
+    RunOutcome,
+    get_ai_run_runner,
+    require_serves,
+    start_run,
+)
 from app.audit import audit
 from app.db.session import get_db
 from app.deliverable_release import ParentGuard, release_deliverable
 from app.dependencies import current_client, current_user, require_role
 from app.logging import get_logger
+from app.mode_stamp import ai_mode_for
 from app.models._common import utcnow
 from app.models.artifact import Artifact, ArtifactOrigin
-from app.models.capability import CapabilityItem, CapabilityList, CapabilityListStatus
+from app.models.audit_entry import AuditEntry
+from app.models.capability import (
+    CapabilityDisposition,
+    CapabilityItem,
+    CapabilityList,
+    CapabilityListStatus,
+)
 from app.models.client import Client
 from app.models.deliverable import Deliverable
 from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.user import User, UserRole
 from app.routes.artifacts import _storage_dep
+from app.schemas.ai_runs import AiRunStarted, AiSource
 from app.schemas.tech_debt import (
     CapabilityComponentsRequest,
     CapabilityDispositionBulkSet,
@@ -69,6 +87,8 @@ from app.schemas.tech_debt import (
     IncludeExcludedRowRequest,
     OverlapAnalysisResponse,
     OverlapBucketResponse,
+    SavingsPreviewRequest,
+    SavingsPreviewResponse,
     SecurityClassificationOverride,
     ServiceCreateRequest,
     ServiceResponse,
@@ -76,11 +96,18 @@ from app.schemas.tech_debt import (
 )
 from app.security.rate_limit import enforce_ai_rate_limit
 from app.storage import StorageBackend
-from app.tech_debt.exporters import build_context, render_docx, render_pdf, render_xlsx
+from app.tech_debt.exporters import (
+    build_context,
+    cost_label,
+    render_docx,
+    render_pdf,
+    render_xlsx,
+)
 from app.tech_debt.extract import (
     client_org_name_for_tenant,
-    extract_capabilities,
+    extract_from_rows,
     name_hints_for_tenant,
+    read_inventory,
 )
 from app.tech_debt.filename import (
     SERVICE_SLUG_BY_KIND,
@@ -88,9 +115,17 @@ from app.tech_debt.filename import (
 )
 from app.tech_debt.overlap import analyze_overlap
 from app.tech_debt.parsers import SUPPORTED_MIME, UnsupportedInventoryFormat
-from app.tech_debt.security_scope import security_scope_filter
+from app.tech_debt.reconcile import exclusion_count_state
+from app.tech_debt.savings import estimated_savings
+from app.tech_debt.security_scope import (
+    PROMPT_VERSIONS_WITH_PREFIX,
+    not_in_use_contradiction,
+    not_in_use_security_tool,
+    security_scope_filter,
+)
 from app.tenant import (
     require_artifact_in_tenant,
+    require_deliverable_in_tenant,
     require_service_in_tenant,
 )
 
@@ -298,6 +333,28 @@ def approved_membership_stale(db: Session, cap_list: CapabilityList) -> bool:
     return approved != current
 
 
+def _not_in_use_contradictions(db: Session, items: list[CapabilityItem]) -> int:
+    """#845: rows the model marked "Security tool not in use:" while also giving
+    them security functions -- kept in ATT&CK scope by the parser, and counted.
+
+    A consultant's override of a not-in-use row stores the same shape (security
+    related, the note unchanged), and it is their ruling rather than the model
+    contradicting itself, so a row with an override on record is not counted.
+    """
+    candidates = [i.id for i in items if not_in_use_contradiction(i)]
+    if not candidates:
+        return 0
+    overridden = set(
+        db.execute(
+            select(AuditEntry.target_id).where(
+                AuditEntry.action == SECURITY_CLASSIFICATION_OVERRIDDEN,
+                AuditEntry.target_id.in_(candidates),
+            )
+        ).scalars()
+    )
+    return sum(1 for c in candidates if c not in overridden)
+
+
 def _serialize_list_with_items(db: Session, cap_list: CapabilityList) -> CapabilityListResponse:
     items = (
         db.execute(select(CapabilityItem).where(CapabilityItem.capability_list_id == cap_list.id))
@@ -312,6 +369,13 @@ def _serialize_list_with_items(db: Session, cap_list: CapabilityList) -> Capabil
     resp = CapabilityListResponse.model_validate(cap_list, from_attributes=True)
     resp.items = [CapabilityItemResponse.model_validate(i, from_attributes=True) for i in items]
     resp.approved_membership_stale = approved_membership_stale(db, cap_list)
+    # #177/#193: the one reader, as the deliverable and the dashboard call it.
+    resp.exclusion_count_state = exclusion_count_state(cap_list)
+    resp.not_in_use_contradictions = _not_in_use_contradictions(db, items)
+    # #646: the ONE derivation every surface calls.
+    resp.ai_source = AiSource.model_validate(
+        ai_mode_for(db, db.get(Service, cap_list.service_id), cap_list).as_api()
+    )
     return resp
 
 
@@ -371,9 +435,9 @@ def _refuse_draft_from_other_document(
 
 @router.post(
     "/services/{service_id}/capability-lists/extract",
-    response_model=CapabilityListResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Extract capability list from an inventory artifact (admin)",
+    response_model=CapabilityListResponse | AiRunStarted,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Extract a capability list from an inventory artifact in the background (admin)",
 )
 def extract_capability_list(
     service_id: uuid.UUID,
@@ -384,8 +448,17 @@ def extract_capability_list(
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[StorageBackend, Depends(_storage_dep)],
     llm: Annotated[LLMClient, Depends(_llm_dep)],
+    runner: Annotated[Runner, Depends(get_ai_run_runner)],
     _rl: Annotated[None, Depends(enforce_ai_rate_limit)],
-) -> CapabilityListResponse:
+) -> CapabilityListResponse | AiRunStarted:
+    """Start an extraction (#645): a 202 with a run to poll, whose job writes
+    the new list version. Two answers are NOT a run, and keep their status:
+
+    * an open draft from the SAME document is returned as it stands (200),
+      exactly as before -- no extraction, no AI call;
+    * every refusal (404, 415, the #644 409) is made here, synchronously.
+    """
+    serves = require_serves(body.serves)
     svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.TECH_DEBT)
     artifact = require_artifact_in_tenant(db, body.artifact_id, client.id)
     if artifact.mime_type not in SUPPORTED_MIME:
@@ -398,8 +471,8 @@ def extract_capability_list(
     # this route used to mint a new version and fire a fresh LLM extraction on
     # EVERY call, so a double-click on "extract" produced unbounded v2, v3, v4…
     # drafts and burned an AI call per click. The guard sits AFTER service/
-    # artifact validation but BEFORE extract_capabilities() so a second POST
-    # while a draft is open does NOT invoke the LLM. If an unsubmitted draft is
+    # artifact validation but BEFORE any extraction so a second POST while a
+    # draft is open does NOT invoke the LLM. If an unsubmitted draft is
     # already open, return it idempotently (HTTP 200) untouched — NO
     # re-extraction, NO clear-and-repopulate, so consultant edits/locks on the
     # open draft survive. A new version is only cut once the prior list has
@@ -418,37 +491,94 @@ def extract_capability_list(
         response.status_code = status.HTTP_200_OK
         return _serialize_list_with_items(db, existing)
 
+    # Parsed HERE so an unreadable document is the request's 415, not a failed
+    # run. The rows are plain data and travel to the job as they are.
     try:
-        result = extract_capabilities(
-            db=db,
-            storage=storage,
-            artifact=artifact,
-            requested_by=user,
-            service_id=svc.id,
-            client_id=client.id,
-            client_org_name=client_org_name_for_tenant(db, client.id),
-            name_hints=name_hints_for_tenant(db, client.id),
-            llm=llm,
-        )
+        rows = read_inventory(storage, artifact)
     except UnsupportedInventoryFormat as exc:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             detail=str(exc),
         ) from exc
+
+    return start_run(
+        db,
+        llm=llm,
+        serves=serves,
+        service_id=svc.id,
+        client_id=client.id,
+        purpose=_EXTRACT_PURPOSE,
+        subject_id=artifact.id,
+        requested_by=user.id,
+        runner=runner,
+        work=functools.partial(
+            _extract_run_work,
+            artifact_id=artifact.id,
+            source_filename=artifact.title,
+            source_mime=artifact.mime_type,
+            rows=rows,
+        ),
+    )
+
+
+#: The Run-AI purpose of an extraction: the AI job's name, as ATT&CK's runs use
+#: theirs (`mitre_map`). The `llm_calls` purpose stays "extract.capabilities".
+_EXTRACT_PURPOSE = "tech_debt_extract"
+
+
+def _extract_run_work(
+    session: Session,
+    ctx: RunContext,
+    *,
+    artifact_id: uuid.UUID,
+    source_filename: str | None,
+    source_mime: str,
+    rows: list[dict],
+) -> RunOutcome:
+    """The extraction, in the background job's own session (#645). Writes a NEW
+    list version; it never touches an existing list's rows, which is why no
+    edit route is locked while it runs (see `test_ai_runs_tech_debt.py`)."""
+    db = session
+    # Re-checked: the POST found no open draft, and this run is the only
+    # thing that mints one -- a second extract POST joins or is refused. Kept
+    # so that if something else ever mints a draft, this run says so rather
+    # than putting a second draft beside it.
+    existing = _latest_list_or_none(db, ctx.service_id)
+    if existing is not None and existing.status == CapabilityListStatus.DRAFT:
+        raise RunFailed(
+            "capability_list_draft_exists",
+            "A draft capability list was opened while this extraction ran, so it "
+            "was not added beside it. Nothing was applied.",
+        )
+    try:
+        result = extract_from_rows(
+            db=db,
+            rows=rows,
+            source_filename=source_filename,
+            source_mime=source_mime,
+            requested_by_id=ctx.requested_by,
+            service_id=ctx.service_id,
+            client_id=ctx.client_id,
+            client_org_name=client_org_name_for_tenant(db, ctx.client_id),
+            name_hints=name_hints_for_tenant(db, ctx.client_id),
+            llm=ctx.llm,
+        )
     except ValueError as exc:
-        # LLM returned unparseable JSON. The llm_calls row is already
-        # written; surface a 502 so the admin sees this is upstream, not
-        # client error.
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"AI extraction failed to parse: {exc}",
+        # LLM returned unparseable JSON. The llm_calls row is already written;
+        # the synchronous route answered a 502 here.
+        db.commit()
+        raise RunFailed(
+            "ai_extraction_unparseable", f"AI extraction failed to parse: {exc}"
         ) from exc
+    # The provider call is over and recorded: keep its `llm_calls` row whatever
+    # happens to the apply below.
+    db.commit()
 
     # Determine next version off the true max (discarded rows still hold their
     # version under the unique constraint - D-031 version trap).
-    next_version = _max_list_version(db, svc.id) + 1
+    next_version = _max_list_version(db, ctx.service_id) + 1
     cap_list = CapabilityList(
-        service_id=svc.id,
+        service_id=ctx.service_id,
         version=next_version,
         # Persisted so the disclosure survives a page reload: the workspace
         # re-fetches the list on every load, and a warning that vanishes on
@@ -457,6 +587,9 @@ def extract_capability_list(
         excluded_rows=[
             {"index": e.index, "summary": e.summary} for e in result.reconciliation.excluded_rows
         ],
+        # #177: persisted, so an empty `excluded_rows` can say which of its two
+        # meanings it carries -- nothing excluded, or attribution failed.
+        attribution_complete=result.reconciliation.attribution_complete,
     )
     db.add(cap_list)
     db.flush()
@@ -473,7 +606,7 @@ def extract_capability_list(
                 license_count=item.license_count,
                 notes=item.notes,
                 confidence_pct=item.confidence_pct,
-                source_artifact_id=artifact.id,
+                source_artifact_id=artifact_id,
                 # Prompt v2 classifies rather than filters. None stays None: an
                 # unclassified row is not a negative one.
                 security_related=item.security_related,
@@ -486,18 +619,40 @@ def extract_capability_list(
         action="capability_list.extracted",
         target_type="capability_list",
         target_id=cap_list.id,
-        actor_user_id=user.id,
+        actor_user_id=ctx.requested_by,
         details={
-            "service_id": str(svc.id),
+            "service_id": str(ctx.service_id),
             "version": next_version,
-            "artifact_id": str(artifact.id),
+            "artifact_id": str(artifact_id),
             "item_count": len(result.items),
+            # #845: at extraction, before any consultant could override one --
+            # and only from a prompt that asks for the prefix. Under an earlier
+            # prompt the count is structurally 0, so it is recorded as None
+            # ("not measured"), never as a measured 0.
+            "not_in_use_contradictions": (
+                sum(1 for i in result.items if not_in_use_contradiction(i))
+                if result.llm_call.prompt_version in PROMPT_VERSIONS_WITH_PREFIX
+                else None
+            ),
             "llm_call_id": str(result.llm_call.id),
+            "run_id": str(ctx.run_id),
         },
     )
-    db.commit()
-    db.refresh(cap_list)
-    return _serialize_list_with_items(db, cap_list)
+    db.flush()
+    # No commit: the framework commits the list with the run's completion.
+    return RunOutcome(
+        result={
+            "capability_list_id": str(cap_list.id),
+            "version": next_version,
+            "item_count": len(result.items),
+            "source_rows_total": result.reconciliation.received,
+            # The NAMED excluded rows, which `reconcile_rows` fills only when
+            # attribution was complete: 0 when it failed, so this is NOT the
+            # excluded count (#193). No surface renders it.
+            "excluded_rows": len(result.reconciliation.excluded_rows),
+        },
+        applied_count=len(result.items),
+    )
 
 
 @router.get(
@@ -561,21 +716,29 @@ def _editable_list_or_404(db: Session, list_id: uuid.UUID, client: Client) -> Ca
         CapabilityListStatus.RELEASED,
         CapabilityListStatus.DISCARDED,
     ):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                {
-                    "reason": "capability_list_released",
-                    "message": "This capability list has been released and is locked.",
-                }
-                if cap_list.status == CapabilityListStatus.RELEASED
-                else {
-                    "reason": "capability_list_discarded",
-                    "message": "This capability list has been discarded.",
-                }
-            ),
-        )
+        raise _refuse_closed_list(cap_list)
     return cap_list
+
+
+def _refuse_closed_list(cap_list: CapabilityList) -> HTTPException:
+    """A list no longer open to edits: released (locked) or discarded. Shared by
+    the read-time check above and `_record_edit`'s write-time one, so an edit
+    refused by either says the same thing."""
+    if cap_list.status == CapabilityListStatus.DISCARDED:
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "capability_list_discarded",
+                "message": "This capability list has been discarded.",
+            },
+        )
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "reason": "capability_list_released",
+            "message": "This capability list has been released and is locked.",
+        },
+    )
 
 
 def _excluded_entry_or_404(cap_list: CapabilityList, row_index: int) -> dict:
@@ -611,6 +774,13 @@ def include_excluded_row(
     """
     cap_list = _editable_list_or_404(db, list_id, client)
     entry = _excluded_entry_or_404(cap_list, row_index)
+    if cap_list.attribution_complete is None:
+        # #193: a pre-0058 list proves its count exact only by its NAMED rows
+        # (`exclusion_count_state`), and this route consumes them -- including
+        # the last one would leave NULL with [] and read as unknown. The entry
+        # just found proves the list non-empty, so stamp the proof first.
+        # `confirm_excluded_row` needs nothing: it never removes an entry.
+        cap_list.attribution_complete = True
 
     item = CapabilityItem(
         capability_list_id=cap_list.id,
@@ -630,6 +800,7 @@ def include_excluded_row(
     cap_list.excluded_rows = [
         e for e in (cap_list.excluded_rows or []) if int(e.get("index", -1)) != row_index
     ]
+    _record_edit(db, cap_list.id)
     audit(
         db,
         action="capability_list.excluded_row_included",
@@ -657,6 +828,9 @@ def confirm_excluded_row(
 ) -> CapabilityListResponse:
     """Acknowledge an exclusion as correct.
 
+    Unlike include, it needs no #193 stamp: the row stays in `excluded_rows`,
+    so a pre-0058 list keeps the named rows that prove its count exact.
+
     The row STAYS listed — the reconciliation has to keep telling the truth
     about what was uploaded — but the workspace can stop flagging it as
     outstanding.
@@ -673,6 +847,7 @@ def confirm_excluded_row(
         )
         for e in (cap_list.excluded_rows or [])
     ]
+    _record_edit(db, cap_list.id)
     audit(
         db,
         action="capability_list.excluded_row_confirmed",
@@ -684,6 +859,63 @@ def confirm_excluded_row(
     db.commit()
     db.refresh(cap_list)
     return _serialize_list_with_items(db, cap_list)
+
+
+def _record_edit(db: Session, list_id: uuid.UUID) -> None:
+    """#640: a step-2 edit moves the list's `revision`, so an approval can go stale.
+
+    Called by every route that edits a list's rows, in the same transaction as
+    that edit's audit row. The increment is SQL (`revision = revision + 1`), so
+    two concurrent edits both count, and it takes the list row's write lock,
+    which is what makes approve's compare-and-swap on `revision` see it.
+    `test_capability_list_revision.py` derives the edit routes from the router
+    and requires each one to call this, so a new edit route cannot skip it.
+
+    The increment matches only a list still open to edits, and a miss refuses
+    the whole edit (the caller has not committed, so its row change goes too).
+    Each route checked the status when it READ the list; a release flip that
+    commits after that read would otherwise let the edit land on a RELEASED
+    list, leaving `revision > approved_revision` on a list no step can approve
+    again, so every later release of it is refused with a remedy that loops
+    (independent review of #730 at 2a35fa1b, finding 3). The check is in this
+    UPDATE rather than in the release flip because this is the statement that
+    takes the list row's write lock on the edit side: whichever of the two
+    commits second re-reads the row and misses, under SQLite and Postgres alike.
+    """
+    bumped = db.execute(
+        update(CapabilityList)
+        .where(
+            CapabilityList.id == list_id,
+            CapabilityList.status.not_in(
+                (CapabilityListStatus.RELEASED, CapabilityListStatus.DISCARDED)
+            ),
+        )
+        .values(revision=CapabilityList.revision + 1)
+        .execution_options(synchronize_session=False)
+    ).rowcount
+    if bumped != 1:
+        cap_list = db.get(CapabilityList, list_id)
+        if cap_list is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Capability list not found.",
+            )
+        db.refresh(cap_list, attribute_names=["status"])
+        if cap_list.status not in (
+            CapabilityListStatus.RELEASED,
+            CapabilityListStatus.DISCARDED,
+        ):
+            raise RuntimeError(
+                f"capability list {list_id} is {cap_list.status.value} yet its "
+                f"revision bump matched {bumped} rows"
+            )
+        _log.warning(
+            "tech_debt.capability_list_edit_refused_list_closed",
+            capability_list_id=str(list_id),
+            status=cap_list.status.value,
+        )
+        raise _refuse_closed_list(cap_list)
+    _log.info("tech_debt.capability_list_edited", capability_list_id=str(list_id))
 
 
 def _editable_item_or_404(
@@ -737,17 +969,33 @@ def confirm_security_classification(
         )
 
     item.security_class_confirmed = True
+    _record_edit(db, item.capability_list_id)
+    # #845: a security tool the extraction marked not in use is taken out of
+    # ATT&CK scope, not judged "not security-related", and the record says so.
+    removed = not_in_use_security_tool(item)
     audit(
         db,
-        action="capability_item.security_classification_confirmed",
+        action=(
+            REMOVED_FROM_ATTACK_SCOPE
+            if removed
+            else "capability_item.security_classification_confirmed"
+        ),
         target_type="capability_item",
         target_id=item.id,
         actor_user_id=user.id,
-        details={"name": item.name},
+        details={"name": item.name, "notes": item.notes} if removed else {"name": item.name},
     )
     db.commit()
     db.refresh(cap_list)
     return _serialize_list_with_items(db, cap_list)
+
+
+#: The audit action an override writes. Named so its readers import it: the
+#: ATT&CK what-if counts a row overridden after its base as brought into scope
+#: (`routes/attack_scenarios.py`, #802 (ii)).
+SECURITY_CLASSIFICATION_OVERRIDDEN = "capability_item.security_classification_overridden"
+#: #845: what confirming a not-in-use security tool writes (approved name).
+REMOVED_FROM_ATTACK_SCOPE = "capability_item.removed_from_attack_scope"
 
 
 @router.post(
@@ -774,9 +1022,10 @@ def override_security_classification(
     item.security_related = True
     item.security_functions = [f.value for f in body.security_functions]
     item.security_class_confirmed = False
+    _record_edit(db, item.capability_list_id)
     audit(
         db,
-        action="capability_item.security_classification_overridden",
+        action=SECURITY_CLASSIFICATION_OVERRIDDEN,
         target_type="capability_item",
         target_id=item.id,
         actor_user_id=user.id,
@@ -878,6 +1127,7 @@ def add_capability_components(
                 source_artifact_id=item.source_artifact_id,
             )
         )
+    _record_edit(db, item.capability_list_id)
     audit(
         db,
         action="capability_item.components_added",
@@ -889,6 +1139,41 @@ def add_capability_components(
     db.commit()
     db.refresh(item)
     return _serialize_list_with_items(db, db.get(CapabilityList, item.capability_list_id))
+
+
+def _check_consolidation_target(db: Session, item: CapabilityItem, target_id: uuid.UUID) -> None:
+    """The tool a row is "covered by" must be ANOTHER row on the SAME list (#807).
+
+    Same list is also what makes it live and this tenant's: the PATCH has
+    already refused a row whose list is released, discarded or another
+    tenant's, and a row is never deleted on its own. A row on another tenant's
+    list gets exactly the reply an unknown id gets, so this PATCH cannot tell
+    anyone whether another tenant's id exists.
+    """
+    if target_id == item.id:
+        _log.info("tech_debt.consolidation_target_refused_self", item_id=str(item.id))
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "consolidation_target_self",
+                "message": "A tool cannot be marked as covered by itself.",
+            },
+        )
+    target = db.get(CapabilityItem, target_id)
+    if target is None or target.capability_list_id != item.capability_list_id:
+        _log.info("tech_debt.consolidation_target_refused_not_in_list", item_id=str(item.id))
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "consolidation_target_not_in_list",
+                "message": "The covering tool must be on the same list.",
+            },
+        )
+    _log.info(
+        "tech_debt.consolidation_target_accepted",
+        item_id=str(item.id),
+        target_id=str(target_id),
+    )
 
 
 @router.patch(
@@ -946,6 +1231,8 @@ def patch_capability_item(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Patch body is empty.",
         )
+    if data.get("consolidation_target_id") is not None:
+        _check_consolidation_target(db, item, data["consolidation_target_id"])
     # Lock/unlock is a meta-action handled separately so a NULL never reaches
     # the NOT NULL column and so it doesn't clear AI confidence on its own.
     locked_val = data.pop("locked", None)
@@ -956,6 +1243,10 @@ def patch_capability_item(
         item.confidence_pct = None
     if locked_val is not None:
         item.locked = bool(locked_val)
+    if data:
+        # Lock/unlock alone is not an edit of the review: it changes what an AI
+        # rerun may touch, not what the list says.
+        _record_edit(db, item.capability_list_id)
 
     audit(
         db,
@@ -1037,6 +1328,7 @@ def bulk_set_disposition(
         item.disposition = body.disposition
         item.confidence_pct = None
     item_ids = sorted(str(i.id) for i in items)
+    _record_edit(db, cap_list.id)
     audit(
         db,
         action="capability_items.disposition_set",
@@ -1124,8 +1416,25 @@ def _refuse_undecided(count: int, *, then: str = "approve again") -> HTTPExcepti
         detail={
             "reason": "capability_list_undecided_rows",
             "message": (
-                f"{rows} still undecided. Give every row a keep, consolidate or cut "
-                f"decision in step 2, Review and correct the extracted list, then {then}."
+                f"{rows} still undecided. Give every row a decision (Keep, Cut, or Cut, "
+                f"covered by another tool) in step 2, Review and correct the extracted "
+                f"list, then {then}."
+            ),
+        },
+    )
+
+
+def _refuse_edited_since_approval(*, then: str) -> HTTPException:
+    """#640: the list was edited after step 3 approved it. Typed (D-016), naming
+    step 3 by the title the workspace shows, whose Approve button is enabled
+    again for exactly this state."""
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "reason": "capability_list_edited_since_approval",
+            "message": (
+                "The capability list was edited after it was approved. Approve it "
+                f"again in step 3, Approve the capability list, then {then}."
             ),
         },
     )
@@ -1274,6 +1583,12 @@ def approve_capability_list(
     undecided = undecided_row_count(db, cap_list.id)
     if undecided:
         raise _refuse_undecided(undecided)
+    # #640: the revision this approval covers, read BEFORE the membership is
+    # built from the rows. The UPDATE below matches only while the list is
+    # still at it, so an edit landing between the read and the write refuses
+    # the approval instead of stamping the new rows with an approval that was
+    # computed from the old ones.
+    observed_revision = cap_list.revision
     membership = build_approved_membership(db, cap_list.id)
     previous = cap_list.approved_membership
     no_undecided_rows = ~(
@@ -1287,12 +1602,14 @@ def approve_capability_list(
             CapabilityList.id == cap_list.id,
             CapabilityList.status.in_((CapabilityListStatus.DRAFT, CapabilityListStatus.APPROVED)),
             no_undecided_rows,
+            CapabilityList.revision == observed_revision,
         )
         .values(
             status=CapabilityListStatus.APPROVED,
             approved_at=utcnow(),
             approved_by=user.id,
             approved_membership=membership,
+            approved_revision=observed_revision,
         )
         .execution_options(synchronize_session=False)
     )
@@ -1336,6 +1653,8 @@ def approve_capability_list(
             # earlier membership (D-049's lesson, applied here).
             "approved_membership_count": len(membership),
             "replaced_membership_count": len(previous) if previous is not None else None,
+            # #640: the revision this approval covers.
+            "approved_revision": observed_revision,
         },
     )
     db.commit()
@@ -1479,10 +1798,109 @@ def overlap_analysis(
             for i in analysis.top_cost_items
         ],
         total_cost=analysis.total_cost,
+        # #781: CALLED, not re-derived. `cost_label` reads the exclusion state
+        # (#177/#193), the reconciliation and whether every item is costed, and
+        # it is what the deliverable prints for this list.
+        total_cost_label=cost_label(
+            build_context(
+                client_legal_name=None,
+                service_title=svc.title,
+                cap_list=cap_list,
+                items=items,
+            )
+        ),
         total_items=analysis.total_items,
         uncategorized_count=analysis.uncategorized_count,
         no_vendor_count=analysis.no_vendor_count,
         no_cost_count=analysis.no_cost_count,
+    )
+
+
+def _preview_refusal(reason: str, message: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={"reason": reason, "message": message},
+    )
+
+
+@router.post(
+    "/capability-lists/{list_id}/savings-preview",
+    response_model=SavingsPreviewResponse,
+    summary="What the estimated annual savings would be for proposed dispositions (admin)",
+)
+def savings_preview(
+    list_id: uuid.UUID,
+    body: SavingsPreviewRequest,
+    _user: Annotated[User, _admin_required],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> SavingsPreviewResponse:
+    """#804: the savings what-if. Overlays the proposed dispositions on the
+    stored items IN MEMORY and computes the figure with the deliverable's own
+    derivation. Writes nothing, calls no AI; "Apply to plan" goes through the
+    disposition routes and their guards."""
+    cap_list = db.get(CapabilityList, list_id)
+    svc = db.get(Service, cap_list.service_id) if cap_list is not None else None
+    if cap_list is None or svc is None or svc.client_id != client.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Capability list not found.",
+        )
+    proposed = body.dispositions
+    if not isinstance(proposed, dict):
+        raise _preview_refusal(
+            "savings_preview_bad_request",
+            "Send the proposed dispositions as a map of capability id to disposition.",
+        )
+    items = (
+        db.execute(select(CapabilityItem).where(CapabilityItem.capability_list_id == cap_list.id))
+        .scalars()
+        .all()
+    )
+    by_id = {str(it.id): it for it in items}
+    overlay: dict[str, CapabilityDisposition | None] = {}
+    for item_id, value in proposed.items():
+        if str(item_id) not in by_id:
+            raise _preview_refusal(
+                "savings_preview_unknown_item",
+                "A proposed disposition names a capability that is not in this list. "
+                "Reload the list and try again.",
+            )
+        if value is None:
+            overlay[str(item_id)] = None
+            continue
+        try:
+            overlay[str(item_id)] = CapabilityDisposition(value)
+        except ValueError:
+            raise _preview_refusal(
+                "savings_preview_unknown_disposition",
+                "A proposed disposition is not one of Keep, Cut, or Cut, covered by another tool.",
+            ) from None
+    # `.get` keeps an explicit None: unticking a row in the what-if is a choice.
+    rows = [(overlay.get(key, it.disposition), it.annual_cost_usd) for key, it in by_id.items()]
+    savings = estimated_savings(rows)
+    counts = dict.fromkeys(CapabilityDisposition, 0)
+    undecided = 0
+    for disposition, _cost in rows:
+        if disposition is None:
+            undecided += 1
+        else:
+            counts[disposition] += 1
+    _log.info(
+        "tech_debt.savings_preview",
+        capability_list_id=str(cap_list.id),
+        proposed=len(overlay),
+        estimated_annual_savings=savings.amount,
+        savings_cost_known=savings.known,
+    )
+    return SavingsPreviewResponse(
+        capability_list_id=cap_list.id,
+        estimated_annual_savings=savings.amount,
+        savings_cost_known=savings.known,
+        keep_count=counts[CapabilityDisposition.KEEP],
+        consolidate_count=counts[CapabilityDisposition.CONSOLIDATE],
+        cut_count=counts[CapabilityDisposition.CUT],
+        undecided_count=undecided,
     )
 
 
@@ -1518,8 +1936,6 @@ def consolidation_plan_summary(
     # The approve guard's own count (#639), so the plan and the refusal cannot
     # disagree about how many rows are undecided.
     undecided = undecided_row_count(db, cap_list.id)
-    cut_savings = 0.0
-    savings_cost_known = True
     for it in items:
         if it.disposition is None:
             continue
@@ -1529,10 +1945,8 @@ def consolidation_plan_summary(
             consolidate += 1
         elif it.disposition == CapabilityDisposition.CUT:
             cut += 1
-            if it.annual_cost_usd is None:
-                savings_cost_known = False
-            else:
-                cut_savings += float(it.annual_cost_usd)
+    # #804: the deliverable's own derivation, not a copy of it.
+    savings = estimated_savings((it.disposition, it.annual_cost_usd) for it in items)
 
     return ConsolidationPlanSummary(
         capability_list_id=cap_list.id,
@@ -1542,8 +1956,8 @@ def consolidation_plan_summary(
         consolidate_count=consolidate,
         cut_count=cut,
         undecided_count=undecided,
-        estimated_annual_savings=cut_savings,
-        savings_cost_known=savings_cost_known,
+        estimated_annual_savings=savings.amount,
+        savings_cost_known=savings.known,
     )
 
 
@@ -1698,6 +2112,14 @@ def finalize_deliverable(
         undecided = sum(1 for it in items if it.disposition is None)
         if undecided:
             raise _refuse_undecided(undecided, then="generate the deliverable again")
+        # #640: step 3 must run again after any edit. Judged on a revision read
+        # AFTER `items` was loaded: if the list is still at its approved revision
+        # now, no edit had committed before the rows were read, so the render
+        # below is of approved rows. Reading it first would leave a window for
+        # an edit to land between the check and the load.
+        db.refresh(cap_list, attribute_names=["revision", "approved_revision"])
+        if not cap_list.approval_current:
+            raise _refuse_edited_since_approval(then="generate the deliverable again")
 
     client_name = client.legal_name  # NULL when nobody has named the org (D-080)
 
@@ -1734,6 +2156,8 @@ def finalize_deliverable(
         service_title=svc.title,
         cap_list=cap_list,
         items=items,
+        # #646: the ONE derivation every surface calls.
+        ai_mode=ai_mode_for(db, svc, cap_list),
     )
     pdf_bytes = render_pdf(ctx)
     xlsx_bytes = render_xlsx(ctx)
@@ -1785,6 +2209,11 @@ def finalize_deliverable(
         # parent and where that parent is already required to be APPROVED.
         # Release reads it to flip exactly this row (migration 0041).
         parent_version=cap_list.version,
+        # #640: the revision these rows are at. For an APPROVED list it was
+        # re-read after the items and equals `approved_revision` (checked
+        # above); release refuses this deliverable once the list is approved
+        # at any other revision.
+        capability_list_revision=cap_list.revision,
         pdf_artifact_id=pdf_artifact.id,
         xlsx_artifact_id=xlsx_artifact.id,
         docx_artifact_id=docx_artifact.id,
@@ -1855,6 +2284,8 @@ def release_tech_debt_deliverable(
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],
 ) -> DeliverableResponse:
+    guard = _release_guard_for(require_deliverable_in_tenant(db, deliverable_id, client.id))
+    _refuse_a_deliverable_the_flip_guard_cannot_reach(db, deliverable_id, client.id)
     deliv = release_deliverable(
         db,
         deliverable_id=deliverable_id,
@@ -1862,9 +2293,127 @@ def release_tech_debt_deliverable(
         user=user,
         kinds=(ServiceKind.TECH_DEBT,),
         action="tech_debt.deliverable.released",
-        parent_guard=_NO_UNDECIDED_ROWS,
+        parent_guard=guard,
     )
     return _serialize_deliverable(db, deliv)
+
+
+def _release_guard_for(deliv: Deliverable) -> ParentGuard:
+    """The flip guard for releasing `deliv`. Read through the tenant check, so a
+    foreign id raises the same 404 `release_deliverable` would.
+
+    A deliverable the client ALREADY HAS that recorded no list revision
+    (released before 0056) gets `_LIST_STILL_RELEASABLE` without the revision
+    match. Its re-release is the W4 repair of a list a pre-W4 release left
+    APPROVED, and 0056 backfilled that list's `approved_revision` to 0, so
+    `_releasable_with(None)`'s `approved_revision IS NULL` could never match:
+    the repair was refused for a report already delivered (independent review
+    of #730 at 2a35fa1b, finding 1). Nothing is re-judged about the report
+    itself; the list is still refused if it has an undecided row or was edited
+    since its approval, because the flip freezes the LIST. An UNRELEASED
+    deliverable with no revision keeps the revision match and is refused: the
+    plan's "finalized but not released before 0056 must be re-finalized once"."""
+    if deliv.released_at is not None and deliv.capability_list_revision is None:
+        return _LIST_STILL_RELEASABLE
+    return _releasable_with(deliv.capability_list_revision)
+
+
+def _refuse_a_deliverable_the_flip_guard_cannot_reach(
+    db: Session, deliverable_id: uuid.UUID, client_id: uuid.UUID
+) -> None:
+    """#640, advisor review of #730 (F1). `_releasable_with` runs inside
+    `deliverable_release._release_parent`, which returns BEFORE applying any
+    guard in two cases: the list is already RELEASED (a newer deliverable was
+    released first), and the deliverable recorded no `parent_version`
+    (finalized before 0041). Both would otherwise release a deliverable built
+    from rows that are not the approved ones. This check covers exactly those
+    two; the APPROVED case stays in the flip's own WHERE, where a re-approval
+    racing the release is still caught.
+
+    Scoped to a finalized, unreleased Tech Debt deliverable, so it adds nothing
+    to `release_deliverable`'s other refusals (wrong kind, not finalized) or to
+    its idempotent re-release of an already-released deliverable. That re-release
+    still runs the flip guard `_release_guard_for` picks, which is where a
+    released deliverable from before 0056 is handled."""
+    deliv = require_deliverable_in_tenant(db, deliverable_id, client_id)
+    if deliv.finalized_at is None or deliv.released_at is not None:
+        return
+    svc = db.get(Service, deliv.service_id)
+    if svc is None or svc.kind != ServiceKind.TECH_DEBT:
+        return
+    rendered_revision = deliv.capability_list_revision
+    if deliv.parent_version is None:
+        # No parent to guard: nothing can confirm which rows it shows.
+        _log.info(
+            "tech_debt.release_refused_no_parent_version",
+            deliverable_id=str(deliv.id),
+        )
+        raise _refuse_deliverable_predates_approval(rendered_revision)
+    cap_list = (
+        db.execute(
+            select(CapabilityList).where(
+                CapabilityList.service_id == deliv.service_id,
+                CapabilityList.version == deliv.parent_version,
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if cap_list is None or cap_list.status != CapabilityListStatus.RELEASED:
+        return
+    if rendered_revision is None or cap_list.approved_revision != rendered_revision:
+        _log.info(
+            "tech_debt.release_refused_list_already_released",
+            deliverable_id=str(deliv.id),
+            rendered_revision=rendered_revision,
+            approved_revision=cap_list.approved_revision,
+        )
+        raise _refuse_deliverable_predates_approval(rendered_revision)
+
+
+def _releasable_with(rendered_revision: int | None) -> ParentGuard:
+    """#640: `_LIST_STILL_RELEASABLE`, plus the deliverable being released was
+    rendered at the revision the list is approved at. In the flip's own WHERE,
+    so a re-approval landing between this read and the flip still refuses.
+    With `rendered_revision` None this compiles to `approved_revision IS NULL`,
+    which is true for a draft; the refusal still holds because the flip's own
+    WHERE requires `status == APPROVED` and `_LIST_STILL_RELEASABLE` requires
+    `approved_revision == revision`, and an approved list always has a
+    non-NULL `approved_revision`. Do not drop either conjunct. So a None here
+    always refuses, which is right only for a deliverable not yet released;
+    `_release_guard_for` keeps an already-released one away from it. The flip never
+    runs for a RELEASED list or a deliverable with no `parent_version`; those
+    are refused before it by `_refuse_a_deliverable_the_flip_guard_cannot_reach`.
+    Residual, not closed here: two releases of different deliverables of one
+    list racing each other, where the second's pre-check reads APPROVED and its
+    flip then misses because the first flipped the list; `_release_parent`
+    treats that miss as "changed concurrently" and proceeds."""
+    return ParentGuard(
+        condition=lambda list_id: and_(
+            _LIST_STILL_RELEASABLE.condition(list_id),
+            CapabilityList.approved_revision == rendered_revision,
+        ),
+        refusal=lambda db, list_id: _refuse_release_miss(db, list_id, rendered_revision),
+    )
+
+
+def _refuse_release_miss(
+    db: Session, list_id: uuid.UUID, rendered_revision: int | None
+) -> HTTPException:
+    """Why `_releasable_with`'s flip missed, judged on what is TRUE now rather
+    than inferred from which checks passed: the list-level causes first, then
+    the deliverable's own revision, and only when all of those hold, a list that
+    moved under the flip."""
+    cap_list = db.get(CapabilityList, list_id)
+    if cap_list is not None:
+        db.refresh(cap_list, attribute_names=["revision", "approved_revision"])
+        if (
+            undecided_row_count(db, list_id) == 0
+            and cap_list.approval_current
+            and cap_list.approved_revision != rendered_revision
+        ):
+            return _refuse_deliverable_predates_approval(rendered_revision)
+    return _refuse_release_over_undecided(db, list_id)
 
 
 #: #657 round 3. Release freezes the list, so it must not freeze an unfinished
@@ -1895,17 +2444,63 @@ def _refuse_changed_during_release() -> HTTPException:
 
 
 def _refuse_release_over_undecided(db: Session, list_id: uuid.UUID) -> HTTPException:
+    """Why the guarded flip missed: an undecided row, an edit since approval
+    (#640), or -- neither true any more -- a list that moved under the flip."""
     undecided = undecided_row_count(db, list_id)
-    if not undecided:
-        return _refuse_changed_during_release()
-    return _refuse_undecided(undecided, then="generate the deliverable again before releasing")
+    if undecided:
+        return _refuse_undecided(undecided, then="generate the deliverable again before releasing")
+    cap_list = db.get(CapabilityList, list_id)
+    if cap_list is not None:
+        db.refresh(cap_list, attribute_names=["revision", "approved_revision"])
+        if not cap_list.approval_current:
+            return _refuse_edited_since_approval(
+                then="generate the deliverable again before releasing"
+            )
+    return _refuse_changed_during_release()
 
 
-_NO_UNDECIDED_ROWS = ParentGuard(
-    condition=lambda list_id: ~(
-        select(CapabilityItem.id)
-        .where(CapabilityItem.capability_list_id == list_id, _UNDECIDED)
-        .exists()
+def _refuse_deliverable_predates_approval(rendered_revision: int | None) -> HTTPException:
+    """#640: this deliverable was not rendered from the rows as last approved.
+    Typed (D-016). The remedy names the step-4 button `DeliverableCard` shows
+    once a deliverable exists ("Re-finalize"); finalize accepts an APPROVED
+    list, so it works in exactly the state this refusal is raised in.
+
+    A deliverable finalized before migration 0056 recorded no revision, so
+    nothing says WHEN it was rendered relative to the approval: finalize needed
+    an approved list, so "generated before the list was last approved" is
+    probably false for it. Its message says only what is known."""
+    if rendered_revision is None:
+        why = (
+            "This deliverable was generated before deliverables recorded which approval "
+            "they were built from, so nothing confirms it shows the approved rows."
+        )
+    else:
+        why = (
+            "This deliverable was generated before the capability list was last "
+            "approved, so it may not show the approved rows."
+        )
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "reason": "deliverable_predates_approval",
+            "message": (
+                f"{why} Generate the deliverable again with Re-finalize in step 4, "
+                "Generate and release the deliverable, then release the new version."
+            ),
+        },
+    )
+
+
+_LIST_STILL_RELEASABLE = ParentGuard(
+    condition=lambda list_id: and_(
+        ~(
+            select(CapabilityItem.id)
+            .where(CapabilityItem.capability_list_id == list_id, _UNDECIDED)
+            .exists()
+        ),
+        # #640: release freezes the list, so it must not freeze one edited
+        # since step 3 approved it. In the flip's own WHERE, like the row check.
+        CapabilityList.approved_revision == CapabilityList.revision,
     ),
     refusal=_refuse_release_over_undecided,
 )
