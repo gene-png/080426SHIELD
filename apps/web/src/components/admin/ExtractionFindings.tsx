@@ -37,6 +37,9 @@ function line(f: ExtractionFinding): string {
       return `${f.item_name}, ${field}: ${f.value} is outside the allowed range, so it was left blank.`;
     case "truncated":
       return `${f.item_name}, ${field}: shortened to ${f.width} characters.`;
+    case "rounded":
+      // #878 review A3. Copy PENDING approval (asked on #736).
+      return `${f.item_name}, ${field}: ${f.value} was rounded to whole cents.`;
     default:
       // A reason this screen does not know yet: said plainly, never dropped.
       return `${f.item_name}, ${field}: ${f.reason}.`;

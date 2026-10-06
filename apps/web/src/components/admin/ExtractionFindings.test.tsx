@@ -111,6 +111,57 @@ describe("ExtractionFindings (#833)", () => {
     );
   });
 
+  it("states a rounded cost (copy pending approval)", () => {
+    render(
+      <ExtractionFindings
+        readOnly={false}
+        findings={[f({ reason: "rounded", value: "12.345" })]}
+      />,
+    );
+    expect(screen.getByTestId("extraction-findings")).toHaveTextContent(
+      "Tool, Annual cost USD: 12.345 was rounded to whole cents.",
+    );
+  });
+
+  it("says a reason it does not know rather than dropping it", () => {
+    render(
+      <ExtractionFindings
+        readOnly={false}
+        findings={[f({ reason: "source_row_duplicated", field: "name" })]}
+      />,
+    );
+    expect(screen.getByTestId("extraction-findings")).toHaveTextContent(
+      "Tool, Name: source_row_duplicated.",
+    );
+  });
+
+  it("shows editable and not-editable findings together, each in its place", () => {
+    render(
+      <ExtractionFindings
+        readOnly={false}
+        findings={[
+          f({}),
+          f({ field: "confidence_pct", reason: "out_of_range", value: "101" }),
+        ]}
+      />,
+    );
+    const box = screen.getByTestId("extraction-findings");
+    expect(box).toHaveTextContent(
+      "1 value from the AI could not be stored as given:",
+    );
+    expect(box).toHaveTextContent(
+      'Tool, Annual cost USD: "1200/month" is not a number, so it was left blank.',
+    );
+    expect(box).toHaveTextContent("Correct these in the table below.");
+    expect(
+      screen.getByTestId("extraction-findings-not-editable").textContent,
+    ).toBe(
+      "1 value about the AI's confidence or the source row could not be stored as given and was left blank.",
+    );
+    // The not-editable finding is counted in its own line, never in R1's.
+    expect(box).not.toHaveTextContent("2 values from the AI");
+  });
+
   it("says nothing for an empty or unrecorded list", () => {
     const { container: empty } = render(
       <ExtractionFindings readOnly={false} findings={[]} />,

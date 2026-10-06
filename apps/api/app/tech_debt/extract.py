@@ -23,6 +23,7 @@ import re
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -30,7 +31,7 @@ from sqlalchemy.orm import Session
 from app.ai.engine import require_json_object, require_list_at
 from app.ai.llm import LLMClient
 from app.models.artifact import Artifact
-from app.models.capability import SecurityFunction
+from app.models.capability import CapabilityItem, SecurityFunction
 from app.models.client import Client
 from app.models.llm_call import LLMCall
 from app.models.user import User
@@ -210,13 +211,20 @@ def _security_functions(raw: Any) -> tuple[str, ...]:
     return tuple(f.value for f in SecurityFunction if f.value in seen)
 
 
-#: Column widths (`models/capability.py`). A longer string is cut to the width
-#: and recorded (#834): left alone it crashed the insert on Postgres after the
-#: provider call was paid, losing the whole list. Cut rather than refused,
-#: because refusing would drop a capability the client pays for.
-_STRING_WIDTHS = {"name": 255, "vendor": 255, "function": 255, "category": 128}
-#: `annual_cost_usd` is Numeric(14, 2): below 10**12.
-_COST_LIMIT = 10**12
+#: Column widths, READ from the model (`models/capability.py`) rather than
+#: copied, so a migration that widens a column cannot leave a stale limit here.
+#: A longer string is cut to the width and recorded (#834): left alone it crashed
+#: the insert on Postgres after the provider call was paid, losing the whole
+#: list. Cut rather than refused, because refusing would drop a capability the
+#: client pays for.
+_STRING_WIDTHS = {
+    key: CapabilityItem.__table__.c[key].type.length
+    for key in ("name", "vendor", "function", "category")
+}
+#: `annual_cost_usd` is Numeric(14, 2): at most 999,999,999,999.99, judged on
+#: the value as stored -- quantized to cents (#878 review A3).
+_COST_LIMIT = Decimal(10**12)
+_CENT = Decimal("0.01")
 #: `license_count`, `confidence_pct`: Integer (32-bit) columns.
 _INT_MAX = 2**31 - 1
 _INT_RANGES = {"license_count": (0, _INT_MAX), "confidence_pct": (0, 100)}
@@ -273,11 +281,15 @@ def _coerce_item(item: dict[str, Any]) -> ExtractedCapability:
 
     findings: list[dict[str, Any]] = []
     name_for_record = _opt_str("name") or "Unknown capability"
+    # The VALIDATED row index, set below before any other field is read. The raw
+    # one can be a NaN or an infinity (json.loads accepts both), which Postgres
+    # json rejects at commit -- after the call is paid (#878 review B1).
+    row_for_record: int | None = None
 
     def _record(key: str, reason: str, raw: Any, **extra: Any) -> None:
         findings.append(
             {
-                "source_row_index": item.get("source_row_index"),
+                "source_row_index": row_for_record,
                 "item_name": name_for_record[:255],
                 "field": key,
                 "reason": reason,
@@ -314,6 +326,9 @@ def _coerce_item(item: dict[str, Any]) -> ExtractedCapability:
         return int(n)
 
     def _opt_cost(key: str) -> float | None:
+        """Quantized to cents FIRST, then judged: the column rounds a fractional
+        cent anyway, so the range is judged on what it would store, and the
+        rounding is recorded rather than left to the database (#878 review A3)."""
         v = item.get(key)
         if v is None or v == "":
             return None
@@ -321,10 +336,14 @@ def _coerce_item(item: dict[str, Any]) -> ExtractedCapability:
         if n is None:
             _record(key, "unparseable", v)
             return None
-        if not 0 <= n < _COST_LIMIT:
+        exact = Decimal(repr(n))
+        cents = exact.quantize(_CENT, rounding=ROUND_HALF_UP)
+        if not 0 <= cents < _COST_LIMIT:
             _record(key, "out_of_range", v)
             return None
-        return n
+        if cents != exact:
+            _record(key, "rounded", v)
+        return float(cents)
 
     def _opt_bool(key: str) -> bool | None:
         """Tri-state: an absent or unrecognised value stays None, never False.
@@ -352,6 +371,11 @@ def _coerce_item(item: dict[str, Any]) -> ExtractedCapability:
     if functions and related is False:
         related = True
 
+    # The row first, so every finding below carries the validated index. The
+    # upper bound needs the number of uploaded rows, which the parser does not
+    # have: `with_row_bounds` checks it once the rows are known.
+    row = _opt_int("source_row_index", 0, _INT_MAX)
+    row_for_record = row
     name = _bounded_str("name") or "Unknown capability"
     vendor = _bounded_str("vendor")
     category = _bounded_str("category")
@@ -359,9 +383,6 @@ def _coerce_item(item: dict[str, Any]) -> ExtractedCapability:
     cost = _opt_cost("annual_cost_usd")
     licenses = _opt_int("license_count", *_INT_RANGES["license_count"])
     confidence = _opt_int("confidence_pct", *_INT_RANGES["confidence_pct"])
-    # The upper bound needs the number of uploaded rows, which the parser does
-    # not have: `with_row_bounds` checks it once the rows are known.
-    row = _opt_int("source_row_index", 0, _INT_MAX)
     return ExtractedCapability(
         name=name,
         vendor=vendor,

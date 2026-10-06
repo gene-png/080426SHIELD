@@ -79,6 +79,9 @@ COST = [
     ("1200/month", None, "unparseable"),
     (-5, None, "out_of_range"),
     (10**12, None, "out_of_range"),
+    # #878 review A3: quantized to cents first, then judged; 999999999999.995
+    # rounds to 13 integer digits, which Numeric(14, 2) cannot hold.
+    (999999999999.995, None, "out_of_range"),
 ]
 LICENSES = [
     (2, 2, None),
@@ -90,6 +93,8 @@ LICENSES = [
     ("enterprise", None, "unparseable"),
     (-1, None, "out_of_range"),
     (2**31, None, "out_of_range"),
+    # #878 review B3: "$" is accepted for a cost only.
+    ("$2", None, "unparseable"),
 ]
 CONFIDENCE = [
     (60, 60, None),
@@ -97,6 +102,7 @@ CONFIDENCE = [
     (2.5, None, "not_whole"),
     (101, None, "out_of_range"),
     (True, None, "unparseable"),
+    ("$90", None, "unparseable"),
 ]
 
 
@@ -153,13 +159,82 @@ def test_a_bad_source_row_index_is_left_unattributed(app_client, raw, reason) ->
 
 
 def test_an_over_long_string_is_cut_to_its_column_and_recorded(app_client) -> None:  # noqa: F811
-    long_name = "N" * 300
-    long_category = "C" * 200
-    body = _extract(app_client, [_item(long_name, 0, category=long_category)])
+    """Widths from `models/capability.py`, written out: 255, 255, 255, 128."""
+    body = _extract(
+        app_client,
+        [_item("N" * 300, 0, vendor="V" * 300, function="F" * 300, category="C" * 200)],
+    )
     (item,) = body["items"]
-    assert (len(item["name"]), len(item["category"])) == (255, 128)
+    lengths = tuple(len(item[k]) for k in ("name", "vendor", "function", "category"))
+    assert lengths == (255, 255, 255, 128)
     found = {(f["field"], f["reason"], f["width"]) for f in body["extraction_findings"]}
-    assert found == {("name", "truncated", 255), ("category", "truncated", 128)}
+    assert found == {
+        ("name", "truncated", 255),
+        ("vendor", "truncated", 255),
+        ("function", "truncated", 255),
+        ("category", "truncated", 128),
+    }
+
+
+def test_a_fractional_cent_is_rounded_and_recorded(app_client) -> None:  # noqa: F811
+    """#878 review A3: the stored cost is the value quantized to cents, and the
+    change is recorded rather than left to the database to round in silence."""
+    body = _extract(app_client, [_item("Tool", 0, annual_cost_usd=12.345)])
+    (item,) = body["items"]
+    assert item["annual_cost_usd"] == 12.35
+    assert [(f["field"], f["reason"], f["value"]) for f in body["extraction_findings"]] == [
+        ("annual_cost_usd", "rounded", "12.345")
+    ]
+
+
+def test_a_nan_source_row_never_reaches_the_record(app_client) -> None:  # noqa: F811
+    """#878 review B1: json.loads accepts NaN, and a finding that carried the raw
+    row index stored a float nan that Postgres json rejects at commit -- after
+    the call was paid. Read from the STORED column: the API would show a nan as
+    null and hide it."""
+    import uuid
+
+    from app.models.capability import CapabilityList
+
+    body = _extract(
+        app_client,
+        [_item("Tool", float("nan"), license_count="enterprise", annual_cost_usd=float("inf"))],
+    )
+    _c, Sess, _p = app_client
+    with Sess() as s:
+        stored = s.get(CapabilityList, uuid.UUID(body["id"])).extraction_findings
+    assert {(f["field"], f["reason"]) for f in stored} == {
+        ("source_row_index", "unparseable"),
+        ("license_count", "unparseable"),
+        ("annual_cost_usd", "unparseable"),
+    }
+    json.dumps(stored, allow_nan=False)  # raises on any nan / inf left in
+    assert all(f["source_row_index"] is None for f in stored)
+
+
+def test_the_audit_counts_findings_by_reason(app_client) -> None:  # noqa: F811
+    """#878 review B2: the extraction's audit row carries the counts."""
+    from sqlalchemy import select
+
+    from app.models.audit_entry import AuditEntry
+
+    _extract(
+        app_client,
+        [
+            _item("A", 0, license_count=2.9, confidence_pct=101),
+            _item("B", 1, annual_cost_usd="1200/month", license_count=-1),
+        ],
+    )
+    _c, Sess, _p = app_client
+    with Sess() as s:
+        details = (
+            s.execute(
+                select(AuditEntry.details).where(AuditEntry.action == "capability_list.extracted")
+            )
+            .scalars()
+            .one()
+        )
+    assert details["findings_by_reason"] == {"not_whole": 1, "out_of_range": 2, "unparseable": 1}
 
 
 def test_a_clean_extraction_records_an_empty_list(app_client) -> None:  # noqa: F811
