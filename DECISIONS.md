@@ -6520,3 +6520,20 @@ The shared dev database, read-only: DRAFT 2, RELEASED 2, APPROVED 0, at migratio
 **What did not change.** `finalized_at` keeps one meaning, "published", for every reader, so the client dashboard needs no change and no migration is needed. `seed_demo.py` DID change (#860 review B4): it sets `finalized_at` itself, so it now asks `publish_blockers` first and refuses to seed a register publish would refuse, and it seeds CSF v2 APPROVED after the register rather than before, so the published demo register is built from CSF v1 released. A Risk export artifact is not a `Deliverable`, so `/artifacts` never serves it to a client user (measured: `test_a_client_user_cannot_download_an_unpublished_export`).
 
 **Ruled by the advisor, 2026-10-05 (#736 5998764095):** export drops the #240 input guards, which now run only in publish, and the client 404 on an unpublished export through `/artifacts` is the pinned guard. #554 R3's unreviewed computed statuses no longer refuse a DRAFT: each affected finding is labelled, and publish refuses through the input gate, because an assessment with unreviewed codes cannot be released. The stale-catalog refusal still blocks at generate (D-091).
+
+## D-108 — A Risk Register draws findings from every engaged service, not one per kind
+
+**2026-10-06 · risk** (#876, mvp-blocking tier-1. Gene's ruling: #736 6018510340. Advisor's answers to track6's plan: 6019425290 (Q1 to Q4), 6020214342 (the refusal's wording). Amends D-106, which read one assessment per kind.)
+
+**Every engaged service is read.** Synthesis reads the current assessment of each non-archived ATT&CK, CSF and Zero Trust service (`_synthesis_sources`), drafts included as D-106 ruled. A client engaged for both CISA ZTMM 2.0 and DoD ZT Reference Architecture now gets both frameworks' findings. Until now it got the latest one's only, and the other framework was dropped in silence. Each Zero Trust finding already names its framework in its code (`CISA.ID.01`, `DOD.USR.01`), so no source naming changed.
+
+**Per service, everything that was per kind.**
+
+- Each source is held to its own target: a CISA engagement target is never applied to DoD's three-stage ladder.
+- Each finding's draft label comes from its own service's status.
+- The provenance `inputs` list has one row per service, naming its service and framework.
+- The scored-coverage disclosure and the Inputs panel name the framework ("Zero Trust (CISA ZTMM 2.0)", "Zero Trust (DoD ZT Reference Architecture)", the names the ZT deliverable already prints), but only when a kind has more than one row. A single-service client's records and wording are unchanged.
+
+**Batching.** No batch holds findings from two services of one kind. Different kinds still share a batch as before, so only a client with a second service of a kind (the two-Zero-Trust client) pays an extra model request.
+
+**Two services of one kind AND framework are refused** (Q2, option (a)). They would produce the same finding codes, and `source_id` is the key the per-finding count, the rating carry-forward and the draft labels join on, so their findings would merge in silence. Generate refuses with a typed 409 (`risk_register_duplicate_inputs`), and the gate carries the same sentence so Generate is not offered: "Two engaged services of the same kind would produce the same findings: {titles}. The register cannot be generated while both are engaged." It names no remedy, because no screen can archive a service today (D-076). Keying findings by service, and a screen control to archive a service, are filed post-MVP.
