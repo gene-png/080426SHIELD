@@ -633,7 +633,7 @@ def test_measure_tech_debt_extracts_the_inventory_and_applies_nothing(td_world) 
     # Falcon's functions are judged; Payroll's [] / [] is disclosed, not agreement.
     sf = pair["fields"]["security_functions"]
     assert (sf["judged"], sf["equal"], sf["both_empty"], sf["compared"]) == (1, 1, 1, 2)
-    assert sf["mean_jaccard"] == 0.5, "the empty row adds no agreement" 
+    assert sf["mean_jaccard"] == 0.5, "the empty row adds no agreement"
     assert report["downstream"][0] == {
         "run": 1,
         "excluded_row_indexes": [2],
