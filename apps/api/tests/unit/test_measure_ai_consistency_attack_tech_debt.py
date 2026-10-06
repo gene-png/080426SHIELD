@@ -104,7 +104,7 @@ def test_two_empty_tool_lists_are_counted_apart_never_as_agreement() -> None:
     a = {"techniques": [_tech("T1")]}
     d = compare_pair("mitre_map", a, json.loads(json.dumps(a)))["fields"]["detection_tools"]
     assert d["compared"] == 1
-    assert d["both_empty"] == 1
+    assert d["both_absent"] == 1
     assert d["judged"] == 0
     assert d["equal"] == 0
     assert d["mean_jaccard"] == 0.0, "two empty lists add no agreement"
@@ -124,7 +124,7 @@ def test_a_prompt_that_cites_fewer_tools_never_scores_as_more_consistent() -> No
     assert y["equal"] / y["compared"] <= x["equal"] / x["compared"], "same-set share rose"
     assert y["mean_jaccard"] <= x["mean_jaccard"], "the Jaccard rose for citing less"
     # And Y's empty row is disclosed.
-    assert (y["both_empty"], y["judged"]) == (1, 1)
+    assert (y["both_absent"], y["judged"]) == (1, 1)
 
 
 def test_citing_nothing_at_all_scores_zero_not_perfect() -> None:
@@ -168,7 +168,8 @@ def test_mitre_map_compares_status_and_reason_and_never_the_rationale() -> None:
     fields = compare_pair("mitre_map", a, b)["fields"]
     assert fields["status"]["equal"] == 0
     assert fields["reason_code"]["equal"] == 0
-    assert fields["reason_code"]["both_null"] == 0
+    assert fields["reason_code"]["both_absent"] == 0
+    assert fields["reason_code"]["one_absent"] == 0
     assert "rationale" not in fields
 
 
@@ -632,7 +633,7 @@ def test_measure_tech_debt_extracts_the_inventory_and_applies_nothing(td_world) 
     assert pair["fields"]["license_count"]["equal"] == 2
     # Falcon's functions are judged; Payroll's [] / [] is disclosed, not agreement.
     sf = pair["fields"]["security_functions"]
-    assert (sf["judged"], sf["equal"], sf["both_empty"], sf["compared"]) == (1, 1, 1, 2)
+    assert (sf["judged"], sf["equal"], sf["both_absent"], sf["compared"]) == (1, 1, 1, 2)
     assert sf["mean_jaccard"] == 0.5, "the empty row adds no agreement"
     assert report["downstream"][0] == {
         "run": 1,
@@ -900,7 +901,7 @@ def test_two_nulls_on_a_scalar_field_are_counted_apart_never_as_agreement() -> N
     fields = compare_pair("tech_debt_extract", nothing, json.loads(json.dumps(nothing)))["fields"]
     for f in ("vendor", "category", "annual_cost_usd", "license_count", "confidence_pct"):
         assert fields[f]["compared"] == 3
-        assert fields[f]["both_null"] == 3, f
+        assert fields[f]["both_absent"] == 3, f
         assert fields[f]["equal"] == 0, f"{f}: null/null counted as agreement"
 
 
@@ -923,12 +924,12 @@ def test_extracting_less_never_scores_as_more_consistent() -> None:
     y_b = {"items": [_td_item(source_row_index=0, vendor="A"), _td_item(source_row_index=1)]}
     x = compare_pair("tech_debt_extract", x_a, x_b)["fields"]["vendor"]
     y = compare_pair("tech_debt_extract", y_a, y_b)["fields"]["vendor"]
-    assert (x["equal"], x["both_null"]) == (1, 0)
+    assert (x["equal"], x["both_absent"]) == (1, 0)
     # Y's null row is disclosed, and adds nothing to Y's agreement.
-    assert (y["equal"], y["both_null"]) == (1, 1)
+    assert (y["equal"], y["both_absent"]) == (1, 1)
 
 
-def test_a_null_reason_code_is_counted_as_both_null_for_mitre_map() -> None:
+def test_a_null_reason_code_is_counted_as_absent_for_mitre_map() -> None:
     # Covered and gap take reason_code null, which IS an answer; it is still
     # reported apart, so the reader sees how much agreement is null/null.
     a = {
@@ -938,7 +939,7 @@ def test_a_null_reason_code_is_counted_as_both_null_for_mitre_map() -> None:
         ]
     }
     r = compare_pair("mitre_map", a, json.loads(json.dumps(a)))["fields"]["reason_code"]
-    assert (r["compared"], r["equal"], r["both_null"]) == (2, 1, 1)
+    assert (r["compared"], r["equal"], r["both_absent"]) == (2, 1, 1)
 
 
 def test_items_as_the_parser_emits_them_carry_no_unearned_agreement() -> None:
@@ -959,3 +960,110 @@ def test_items_as_the_parser_emits_them_carry_no_unearned_agreement() -> None:
         if name == "name":
             continue  # the one field the model did supply
         assert f["equal"] == 0, f"{name}: agreement on nothing"
+
+
+# --- #867 narrow review at b544311b: the absence matrix ---------------------------
+# Every form a value takes when a run gave no answer, for every job's compared
+# fields, under ONE rule: compared, no agreement, counted. The forms come from
+# the parsers' and prompts' behaviour (a key the model omits, null, an empty
+# list, the extraction's invented name), never from the measure's own table.
+
+
+def _nameless_sentinel() -> str:
+    # What the extraction's parser stores for an item sent with no name.
+    from app.tech_debt.extract import _parse_response
+
+    return _parse_response('{"items": [{"source_row_index": 0}]}')[0].name
+
+
+_JOB_KEYS = {
+    "zt_score": ("capabilities", {"code": "K1"}),
+    "csf_score": ("scores", {"tier": "high", "subcategory_code": "K1"}),
+    "mitre_map": ("techniques", {"technique_code": "K1"}),
+    "tech_debt_extract": ("items", {"source_row_index": 0}),
+}
+_LISTS = {
+    "mitre_map": {"detection_tools", "prevention_tools", "response_tools"},
+    "tech_debt_extract": {"security_functions"},
+}
+
+
+def _matrix_cases():
+    from scripts.measure_ai_consistency import _job_shape  # test-integrity: field list only
+
+    for job in _JOB_KEYS:
+        for field in _job_shape(job)[2]:
+            forms = ["missing", "null"]
+            if field in _LISTS.get(job, ()):
+                forms.append("empty")
+            if (job, field) == ("tech_debt_extract", "name"):
+                forms.append("sentinel")
+            for form in forms:
+                for where in ("both", "one"):
+                    yield job, field, form, where
+
+
+def _row(job: str, field: str, value) -> dict:
+    list_key, keys = _JOB_KEYS[job]
+    row = dict(keys)
+    if value is not _MISSING:
+        row[field] = value
+    return {list_key: [row]}
+
+
+_MISSING = object()
+
+
+def _absent_value(form: str):
+    return {"missing": _MISSING, "null": None, "empty": [], "sentinel": _nameless_sentinel()}[form]
+
+
+@pytest.mark.parametrize(("job", "field", "form", "where"), list(_matrix_cases()))
+def test_every_absence_form_is_compared_and_never_agreement(job, field, form, where) -> None:
+    present = ["v"] if field in _LISTS.get(job, ()) else "v"
+    absent = _absent_value(form)
+    a = _row(job, field, absent)
+    b = _row(job, field, absent if where == "both" else present)
+    f = compare_pair(job, a, b)["fields"][field]
+    assert f["compared"] == 1, "an absent value left the denominator"
+    assert f["equal"] == 0 and f["within_one"] == 0, "absence counted as agreement"
+    assert f["mean_abs_diff"] is None
+    if "mean_jaccard" in f:
+        assert f["mean_jaccard"] == 0.0
+    assert (f["both_absent"], f["one_absent"]) == ((1, 0) if where == "both" else (0, 1))
+
+
+@pytest.mark.parametrize("job", list(_JOB_KEYS))
+def test_the_matrix_control_a_present_answer_in_both_runs_agrees(job) -> None:
+    from scripts.measure_ai_consistency import _job_shape  # test-integrity: field list only
+
+    for field in _job_shape(job)[2]:
+        present = ["v"] if field in _LISTS.get(job, ()) else "v"
+        f = compare_pair(job, _row(job, field, present), _row(job, field, present))["fields"][field]
+        assert (f["compared"], f["equal"], f["both_absent"], f["one_absent"]) == (1, 1, 0, 0)
+
+
+def test_a_nameless_item_in_both_runs_does_not_agree_on_its_invented_name() -> None:
+    from scripts.measure_ai_consistency import _item_record
+
+    from app.tech_debt.extract import _parse_response
+
+    raw = json.dumps({"items": [{"source_row_index": 0}]})
+    items = [_item_record(i) for i in _parse_response(raw)]
+    f = compare_pair("tech_debt_extract", {"items": items}, {"items": items})["fields"]["name"]
+    assert (f["equal"], f["both_absent"]) == (0, 1)
+
+
+def test_omitting_a_tool_list_never_scores_as_more_consistent() -> None:
+    x_a = {"techniques": [_tech("T1", detection_tools=["A"]), _tech("T2", detection_tools=["B"])]}
+    x_b = {"techniques": [_tech("T1", detection_tools=["A"]), _tech("T2", detection_tools=["C"])]}
+    t2_a = _tech("T2")
+    del t2_a["detection_tools"]
+    y_a = {"techniques": [_tech("T1", detection_tools=["A"]), t2_a]}
+    y_b = {"techniques": [_tech("T1", detection_tools=["A"]), _tech("T2", detection_tools=["C"])]}
+    x = compare_pair("mitre_map", x_a, x_b)["fields"]["detection_tools"]
+    y = compare_pair("mitre_map", y_a, y_b)["fields"]["detection_tools"]
+    assert y["compared"] == x["compared"] == 2, "the omitted key left the denominator"
+    assert y["equal"] / y["compared"] <= x["equal"] / x["compared"], "same-set share rose"
+    assert y["mean_jaccard"] <= x["mean_jaccard"], "the Jaccard rose for omitting a key"
+    assert (y["one_absent"], y["missing_in_a"]) == (1, 1)

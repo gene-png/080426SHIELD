@@ -59,6 +59,7 @@ refused rather than approximated.
 from __future__ import annotations
 
 import argparse
+import functools
 import itertools
 import json
 import sys
@@ -197,7 +198,7 @@ def _str_set(v: Any) -> frozenset[str] | None:
 
 def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
     """|a & b| / |a | b|, for a NON-EMPTY union only. Two empty lists are not
-    agreement about anything: counted as `both_empty` by the caller, so a prompt
+    agreement about anything: counted as absent by the caller, so a prompt
     that cites fewer tools cannot score as more consistent."""
     union = a | b
     if not union:
@@ -252,9 +253,62 @@ def _index(
     return seen, unreadable, extra_copies
 
 
+@functools.lru_cache(maxsize=1)
+def _tech_debt_name_sentinel() -> str:
+    """The name the extraction's parser INVENTS for an item the model sent no
+    name for -- read from the parser by parsing exactly that, never restated
+    here, so a change to the sentinel cannot leave this behind."""
+    from app.tech_debt.extract import _parse_response
+
+    return _parse_response('{"items": [{"source_row_index": 0}]}')[0].name
+
+
+#: Per job, field -> a value the PARSER puts there when the model gave nothing.
+_PARSER_SENTINELS: dict[str, dict[str, Callable[[], Any]]] = {
+    "tech_debt_extract": {"name": _tech_debt_name_sentinel},
+}
+
+
+def _absence(job: str, field: str, row: Mapping[str, Any]) -> str | None:
+    """How `field` is ABSENT from `row`, or None when it holds an answer.
+
+    THE ABSENCE MATRIX (#867, after three rounds of "less extracted reads as
+    more consistent" found one form at a time). Every form a value can take
+    when a run gave no answer, for every job's compared fields:
+
+    | form       | where it arises                                              |
+    | ---------- | ------------------------------------------------------------ |
+    | missing    | any job, any field: the model omitted the key                |
+    | null       | any scalar; the extraction's refused values become null (#878) |
+    | empty      | list fields: the tool lists, `security_functions`            |
+    | sentinel   | tech_debt `name`: the parser invents one when none was sent  |
+
+    ONE rule for all of them, in `compare_pair`: the pair is COMPARED, adds
+    NOTHING to any agreement figure, and is counted in `both_absent` /
+    `one_absent`. A list field holding a non-list is not an absence but a
+    malformed answer, counted as `not_a_list` under the same rule.
+    """
+    if field not in row:
+        return "missing"
+    value = row[field]
+    if value is None:
+        return "null"
+    if field in _LIST_FIELDS.get(job, ()) and isinstance(value, list) and not value:
+        return "empty"
+    sentinel = _PARSER_SENTINELS.get(job, {}).get(field)
+    if sentinel is not None and value == sentinel():
+        return "sentinel"
+    return None
+
+
 def compare_pair(job: str, a: Mapping[str, Any], b: Mapping[str, Any]) -> dict:
     """Agreement between two parsed responses: row set, then per field over the
-    rows present in both. Every count is a denominator or a numerator of one."""
+    rows present in both. Every count is a denominator or a numerator of one.
+
+    `compared` is EVERY row in both runs, for every field. A pair where either
+    side is absent (`_absence`) or a list field is malformed is compared and
+    adds nothing to `equal`, `within_one`, `mean_abs_diff` or the Jaccard -- so
+    a run that answers LESS can never read as more consistent."""
     list_key, key_fields, fields = _job_shape(job)
     objects_only = job in _OBJECTS_ONLY_UPSTREAM
     keyless_a: list[int] | None = [] if objects_only else None
@@ -265,48 +319,36 @@ def compare_pair(job: str, a: Mapping[str, Any], b: Mapping[str, Any]) -> dict:
     list_fields = _LIST_FIELDS.get(job, ())
     out_fields: dict[str, dict] = {}
     for f in fields:
-        compared = equal = within_one = missing_a = missing_b = not_a_list = both_empty = 0
-        both_null = 0
+        compared = equal = within_one = missing_a = missing_b = not_a_list = 0
+        both_absent = one_absent = 0
         diffs: list[int] = []
         jaccards: list[float] = []
         for k in both:
             ra, rb = ia[k], ib[k]
-            if f not in ra:
-                missing_a += 1
-            if f not in rb:
-                missing_b += 1
-            if f not in ra or f not in rb:
-                continue
+            # Every row in both runs is compared, for every field: a key one
+            # run omitted is a disagreement, never a row taken out of the
+            # denominator (#867 narrow review at b544311b, B2).
             compared += 1
+            missing_a += int(f not in ra)
+            missing_b += int(f not in rb)
+            gone_a, gone_b = _absence(job, f, ra), _absence(job, f, rb)
+            if gone_a and gone_b:
+                both_absent += 1
+                continue
+            if gone_a or gone_b:
+                one_absent += 1
+                continue
             va, vb = ra[f], rb[f]
             if f in list_fields:
                 sa, sb = _str_set(va), _str_set(vb)
                 if sa is None or sb is None:
-                    # A bare string, a null, a list holding a number: not the
-                    # shape asked for. Counted, and never coerced into a set it
-                    # was not -- nor judged as agreement.
+                    # A bare string, a list holding a number: not the shape
+                    # asked for. Counted, never coerced into a set it was not,
+                    # and no agreement.
                     not_a_list += 1
-                    continue
-                if not sa and not sb:
-                    # Both runs cited nothing. Not agreement: counting it as a
-                    # match would let a prompt that cites FEWER tools read as
-                    # MORE consistent (the withheld-from-a-ratio shape). It
-                    # stays in the denominator (`compared`) of both figures.
-                    both_empty += 1
                     continue
                 jaccards.append(_jaccard(sa, sb))
                 equal += int(sa == sb)
-                continue
-            if va is None and vb is None:
-                # Both runs null. Not agreement, for the same reason two empty
-                # lists are not (#867 review F1): the parsers turn garbage into
-                # None, so a prompt that extracts NOTHING would otherwise read
-                # as perfectly consistent. Counted apart, for every job and
-                # every scalar field. For mitre_map's `reason_code` a null is a
-                # real answer (covered and gap take none), so there `both_null`
-                # is agreement a reader adds back -- deliberately not done here,
-                # so one rule covers every field and the number is visible.
-                both_null += 1
                 continue
             if _same(va, vb):
                 equal += 1
@@ -318,24 +360,19 @@ def compare_pair(job: str, a: Mapping[str, Any], b: Mapping[str, Any]) -> dict:
             "compared": compared,
             "equal": equal,
             "within_one": within_one,
+            # Over the pairs where both runs gave a whole number (P1, filed):
+            # a distance between an answer and no answer is not defined.
             "mean_abs_diff": (sum(diffs) / len(diffs)) if diffs else None,
             "missing_in_a": missing_a,
             "missing_in_b": missing_b,
+            # The absence matrix (`_absence`): compared, no agreement.
+            "both_absent": both_absent,
+            "one_absent": one_absent,
         }
-        if f not in list_fields:
-            # Every scalar field, zt and csf included (#867 F1): compared ==
-            # both_null + the rows `equal` / `within_one` judge.
-            out_fields[f]["both_null"] = both_null
         if f in list_fields:
-            # List fields only: compared == judged + both_empty + not_a_list.
-            # CONSERVATIVE, like the scalar fields (#867 narrow review B2): the
-            # denominator of both figures is `compared`, and a pair that is
-            # both empty or not a list contributes NOTHING to either -- 0 to
-            # `equal` and 0 to the Jaccard sum. Dividing by `judged` instead
-            # let a prompt that cites fewer tools score HIGHER: the rows it
-            # stopped citing left the denominator, taking their disagreement.
+            # compared == judged + both_absent + one_absent + not_a_list, and
+            # the Jaccard divides by `compared`: only `judged` pairs add to it.
             out_fields[f]["judged"] = len(jaccards)
-            out_fields[f]["both_empty"] = both_empty
             out_fields[f]["not_a_list"] = not_a_list
             out_fields[f]["mean_jaccard"] = (sum(jaccards) / compared) if compared else None
     rows: dict[str, Any] = {
@@ -1460,16 +1497,16 @@ def _print_table(report: dict) -> None:
             if "mean_jaccard" in s:
                 print(
                     f"  {name}: same set {s['equal']}/{s['compared']}, mean Jaccard "
-                    f"{s['mean_jaccard']} over all {s['compared']} compared (both empty "
-                    f"{s['both_empty']} and not a list {s['not_a_list']} count as NO "
-                    f"agreement; {s['judged']} judged), missing A/B "
+                    f"{s['mean_jaccard']} over all {s['compared']} compared (absent in "
+                    f"both {s['both_absent']}, in one {s['one_absent']}, not a list "
+                    f"{s['not_a_list']}: NO agreement; {s['judged']} judged), missing A/B "
                     f"{s['missing_in_a']}/{s['missing_in_b']}"
                 )
                 continue
             print(
                 f"  {name}: equal {s['equal']}/{s['compared']}, within one "
-                f"{s['within_one']}/{s['compared']}, both null {s['both_null']} (not "
-                f"counted as equal), mean |diff| {s['mean_abs_diff']}, "
+                f"{s['within_one']}/{s['compared']}, absent in both {s['both_absent']}, "
+                f"in one {s['one_absent']} (no agreement), mean |diff| {s['mean_abs_diff']}, "
                 f"missing A/B {s['missing_in_a']}/{s['missing_in_b']}"
             )
         if "computed_status" in p:

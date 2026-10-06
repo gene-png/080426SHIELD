@@ -111,7 +111,8 @@ def test_identical_runs_agree_fully_with_denominators() -> None:
         "mean_abs_diff": 0.0,
         "missing_in_a": 0,
         "missing_in_b": 0,
-        "both_null": 0,
+        "both_absent": 0,
+        "one_absent": 0,
     }
     assert r["fields"]["target"]["equal"] == 2
 
@@ -142,7 +143,9 @@ def test_a_field_one_run_omitted_is_counted_as_missing() -> None:
     a = _caps({"code": "C1", "current": 2, "target": 3})
     b = _caps({"code": "C1", "current": 2})
     r = compare_pair("zt_score", a, b)
-    assert r["fields"]["target"]["compared"] == 0
+    assert r["fields"]["target"]["compared"] == 1
+    assert r["fields"]["target"]["one_absent"] == 1
+    assert r["fields"]["target"]["equal"] == 0
     assert r["fields"]["target"]["missing_in_b"] == 1
     assert r["fields"]["target"]["missing_in_a"] == 0
     assert r["fields"]["current"]["equal"] == 1
