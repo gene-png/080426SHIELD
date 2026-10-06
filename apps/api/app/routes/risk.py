@@ -61,6 +61,7 @@ from app.risk.engine import (
 )
 from app.risk.inputs import (
     INPUT_KINDS,
+    SYNTHESIS_KINDS,
     Blocker,
     InputRecord,
     current_inputs,
@@ -207,7 +208,7 @@ _ZT_FRAMEWORK_BY_SERVICE_KIND = {
 }
 #: The kinds synthesis reads findings from. Tech Debt feeds ATT&CK's tool
 #: membership and publication, never findings of its own.
-_SYNTHESIS_KINDS = ("attack", "csf", "zt")
+_SYNTHESIS_KINDS = SYNTHESIS_KINDS
 
 
 def _framework_of(record: object) -> str:
@@ -2438,7 +2439,12 @@ def publish(
     # so a draft input is refused with the typed per-input reason rather than
     # by the older #240 guard's untyped sentence, which still runs below for the
     # shapes only it knows (pre-0047 provenance, a missing `inputs` key).
-    blockers = publish_blockers(db, cid, (reg.provenance or {}).get("current_inputs"))
+    blockers = publish_blockers(
+        db,
+        cid,
+        (reg.provenance or {}).get("current_inputs"),
+        (reg.provenance or {}).get("inputs"),
+    )
     if blockers:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

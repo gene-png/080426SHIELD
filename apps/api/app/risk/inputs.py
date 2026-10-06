@@ -54,6 +54,9 @@ _ASSESSMENTS = {"attack": AttackAssessment, "csf": CsfAssessment, "zt": ZtAssess
 
 RELEASED = "released"
 
+#: The kinds findings are drawn from; Tech Debt feeds ATT&CK and publication only.
+SYNTHESIS_KINDS = ("attack", "csf", "zt")
+
 
 @dataclass(frozen=True)
 class InputRecord:
@@ -138,11 +141,13 @@ class Blocker:
     status: str | None
 
 
-def publish_blockers(db: Session, client_id: uuid.UUID, recorded: object) -> list[Blocker]:
+def publish_blockers(
+    db: Session, client_id: uuid.UUID, recorded: object, synthesized: object
+) -> list[Blocker]:
     """What stops this register being published, per input. Empty = publishable
     as far as its inputs go.
 
-    FOUR CHECKS, and none of them may pass by absence:
+    FIVE CHECKS, and none of them may pass by absence:
       * every engaged SERVICE has a current input (else `not_started`);
       * every current input is RELEASED (else `not_released`);
       * every current input is the one the register was generated from, at the
@@ -155,8 +160,16 @@ def publish_blockers(db: Session, client_id: uuid.UUID, recorded: object) -> lis
         silence -- an approved assessment's findings would then publish
         (#860 review F1). Released or not, the register no longer matches
         what the client has engaged, so it is regenerated.
+      * every recorded ATT&CK, CSF or ZT input was SYNTHESIZED, by service
+        (else `not_recorded`; #891 review B1). A register generated before
+        #876 read one assessment per kind, so a client with CISA and DoD both
+        released recorded both in `current_inputs` but drew findings from one
+        -- and every check above passes for it. Its `inputs` rows carry no
+        `service_id`, so the match fails closed and the consultant
+        regenerates; publishing it would deliver #876's own gap after its fix.
 
-    `recorded` is the register's provenance `current_inputs` list. When it is
+    `recorded` is the register's provenance `current_inputs` list and
+    `synthesized` its `inputs` list (what findings were drawn from). When it is
     absent or unreadable the register cannot be certified (`not_recorded`):
     missing data defaults to UNCONFIRMED.
     """
@@ -191,6 +204,18 @@ def publish_blockers(db: Session, client_id: uuid.UUID, recorded: object) -> lis
     for (kind, service_id), _was in then.items():
         if (kind, service_id) not in engaged_keys:
             blockers.append(Blocker(str(kind), "changed", None))
+    drawn_from = (
+        {
+            str(i.get("service_id"))
+            for i in synthesized
+            if isinstance(i, dict) and i.get("service_id")
+        }
+        if isinstance(synthesized, list)
+        else set()
+    )
+    for (kind, service_id), _was in then.items():
+        if kind in SYNTHESIS_KINDS and str(service_id) not in drawn_from:
+            blockers.append(Blocker(str(kind), "not_recorded", None))
     if blockers:
         _log.info(
             "risk_publish_inputs_blocked",

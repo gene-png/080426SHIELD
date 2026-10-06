@@ -289,3 +289,129 @@ def test_one_service_per_kind_is_not_a_duplicate(app_client) -> None:  # noqa: F
     _both_frameworks(c, bearer, cid)
     g = c.get(f"/risk/clients/{cid}/gate", headers=_h(bearer, cid)).json()
     assert g["unlocked"] is True and g["duplicate_inputs"] is None, g
+
+
+# ---------------------------------------------------------------------------
+# #891 review round 1
+# ---------------------------------------------------------------------------
+
+_NOT_RECORDED = (
+    "This register predates input recording, so what it was built from cannot "
+    "be certified. Generate a new version before publishing."
+)
+
+
+def _publish(c, bearer: str, cid: str):
+    return c.post(f"/risk/clients/{cid}/register/publish", headers=_h(bearer, cid))
+
+
+def _released_both(c, bearer: str, cid: str):
+    s, dod_svc, dod_code = _both_frameworks(c, bearer, cid)
+    release(c, bearer, cid, "attack", s.attack_service)
+    release(c, bearer, cid, "zt", s.zt_service)
+    release(c, bearer, cid, "zt", dod_svc)
+    return s, dod_svc, dod_code
+
+
+def test_a_per_service_register_with_both_frameworks_publishes(app_client) -> None:  # noqa: F811
+    """The positive half of B1: generated under #876 from CISA and DoD, both
+    released, the register publishes."""
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    _released_both(c, bearer, cid)
+    seen: list[dict] = []
+    assert _generate(c, provider, bearer, cid, seen).status_code == 201
+    r = _publish(c, bearer, cid)
+    assert r.status_code == 200, r.text
+
+
+def test_a_register_from_before_per_service_reading_is_refused(app_client) -> None:  # noqa: F811
+    """B1. A register generated BEFORE #876 for a CISA-and-DoD client recorded
+    both services in `current_inputs` but drew findings from ONE, and its
+    `inputs` rows carry no `service_id`. Every other check passes for it, so
+    publishing it would deliver the gap #876 closes. Refused at PUBLISH,
+    typed, and the consultant regenerates.
+
+    The legacy shape is written into the stored provenance: that is exactly
+    what the pre-#876 writer stored (one `inputs` row per kind, no service),
+    and no current writer can produce it."""
+    from sqlalchemy import select
+
+    from app.models.risk_register import RiskRegister
+
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    _released_both(c, bearer, cid)
+    seen: list[dict] = []
+    assert _generate(c, provider, bearer, cid, seen).status_code == 201
+    with _session() as db:
+        reg = db.execute(select(RiskRegister)).scalar_one()
+        prov = dict(reg.provenance)
+        zt_rows = [i for i in prov["inputs"] if i["kind"] == "zt"]
+        assert len(zt_rows) == 2, prov["inputs"]  # the per-service shape first
+        legacy = []
+        for kind in ("attack", "zt"):
+            row = dict(next(i for i in prov["inputs"] if i["kind"] == kind))
+            row.pop("service_id")
+            row.pop("framework")
+            legacy.append(row)
+        prov["inputs"] = legacy
+        reg.provenance = prov
+        db.commit()
+    r = _publish(c, bearer, cid)
+    assert r.status_code == 409, r.text
+    err = r.json()["error"]
+    assert err["reason"] == "risk_register_inputs_not_final", err
+    assert sorted(b["input"] for b in err["blockers"]) == ["attack", "zt", "zt"], err
+    assert {b["reason"] for b in err["blockers"]} == {"not_recorded"}, err
+    assert err["message"] == _NOT_RECORDED
+
+
+def test_a_single_service_client_sends_what_it_always_sent(app_client) -> None:  # noqa: F811
+    """A4. One service per kind: one request, as before #876 (kinds still
+    share a batch), and every finding carries exactly the four keys it always
+    carried -- no service or source key reaches the model."""
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    s = seed_attack_and_zt(c, bearer, cid)
+    seen: list[dict] = []
+    assert _generate(c, provider, bearer, cid, seen).status_code == 201
+    assert len(seen) == 1, len(seen)
+    findings = seen[0]["findings"]
+    assert {f["source_id"] for f in findings} >= {s.technique, s.capability}, findings
+    for f in findings:
+        assert set(f) == {"source", "source_id", "kind", "label"}, f
+
+
+def test_a_second_service_not_started_is_listed_on_the_draft(app_client) -> None:  # noqa: F811
+    """A2, the advisor's condition (#736 6024072042): a second engaged ZT
+    service with no assessment does not stop a draft, and the Inputs panel
+    lists it, named, as not started; publish refuses it."""
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    seed_attack_and_zt(c, bearer, cid)
+    h = _h(bearer, cid)
+    dod = c.post("/zt/services", headers=h, json={"kind": "zero_trust_dod", "title": "ZT DoD"})
+    assert dod.status_code in (200, 201), dod.text
+    seen: list[dict] = []
+    assert _generate(c, provider, bearer, cid, seen).status_code == 201
+    g = c.get(f"/risk/clients/{cid}/gate", headers=h).json()
+    zt_rows = [r for r in g["inputs"] if r["kind"] == "zt"]
+    assert zt_rows == [
+        {
+            "kind": "zt",
+            "engaged": True,
+            "status": "approved",
+            "version": 1,
+            "qualifier": "CISA ZTMM 2.0",
+        },
+        {
+            "kind": "zt",
+            "engaged": True,
+            "status": None,
+            "version": None,
+            "qualifier": "DoD ZT Reference Architecture",
+        },
+    ]
+    blockers = _publish(c, bearer, cid).json()["error"]["blockers"]
+    assert {"input": "zt", "reason": "not_started", "status": None} in blockers, blockers
