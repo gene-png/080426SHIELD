@@ -38,7 +38,7 @@ function line(f: ExtractionFinding): string {
     case "truncated":
       return `${f.item_name}, ${field}: shortened to ${f.width} characters.`;
     case "rounded":
-      // #878 review A3. Copy PENDING approval (asked on #736).
+      // #878 review A3. Copy approved by the advisor (#736 comment 6020214342).
       return `${f.item_name}, ${field}: ${f.value} was rounded to whole cents.`;
     default:
       // A reason this screen does not know yet: said plainly, never dropped.

@@ -111,7 +111,7 @@ describe("ExtractionFindings (#833)", () => {
     );
   });
 
-  it("states a rounded cost (copy pending approval)", () => {
+  it("states a rounded cost, in the approved copy", () => {
     render(
       <ExtractionFindings
         readOnly={false}
