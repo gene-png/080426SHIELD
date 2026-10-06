@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import io
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from app.client_naming import org_display_name
@@ -35,6 +35,9 @@ from app.risk.engine import (
     matrix_counts,
     tier_counts,
 )
+
+#: #737, Gene's ruling (#736, 5986057990 item 13), verbatim.
+DRAFT_MARKER = "Draft: not published"
 
 # Blank columns the client uses for governance — SHIELD does not populate these.
 _GOVERNANCE_COLUMNS = [
@@ -80,6 +83,16 @@ class RiskExportContext:
     #: "every finding has one entry" over a register nobody counted would be a
     #: claim, where silence is only an absence.
     finding_counts: tuple[int, int, int] | None = None
+    #: #737: True for every file rendered while the register is unpublished.
+    #: Such a file is the consultant's copy, and says so on its face, because a
+    #: file that leaves by email otherwise reads as final.
+    draft: bool = False
+    #: #737: `source_id -> state` for findings drafted from an input that was
+    #: not released at generate; the source cell names it.
+    source_states: dict[str, str] = field(default_factory=dict)
+    #: #554 R3, option (b): ATT&CK codes whose computed status awaited review
+    #: at generate; the source cell says so.
+    review_pending: frozenset[str] = frozenset()
 
 
 def _enum_list(values, enum_cls):
@@ -101,6 +114,9 @@ def build_context(
     entries: Sequence[Any],
     link_scope: Sequence[tuple[str, int, int]] = (),
     finding_counts: tuple[int, int, int] | None = None,
+    draft: bool = False,
+    source_states: dict[str, str] | None = None,
+    review_pending: frozenset[str] = frozenset(),
 ) -> RiskExportContext:
     return RiskExportContext(
         client_legal_name=org_display_name(client_legal_name),
@@ -108,6 +124,9 @@ def build_context(
         entries=list(entries),
         link_scope=tuple(link_scope),
         finding_counts=finding_counts,
+        draft=draft,
+        source_states=dict(source_states or {}),
+        review_pending=review_pending,
     )
 
 
@@ -158,10 +177,26 @@ def _joined(v) -> str:
     return ", ".join(v) if isinstance(v, list) else ""
 
 
-def _source(e: Any) -> str:
+def _source(
+    e: Any, states: dict[str, str] | None = None, pending: frozenset[str] = frozenset()
+) -> str:
     if e.source and e.source_id:
-        return f"{e.source}:{e.source_id}"
-    return e.source_id or e.source or ""
+        cell = f"{e.source}:{e.source_id}"
+    else:
+        cell = e.source_id or e.source or ""
+    # #737, Gene's ruling: a finding drafted from an unreleased input says so.
+    # DRAFT copy, with the advisor.
+    state = (states or {}).get(e.source_id or "")
+    if state:
+        # "an" before a vowel: "from an approved assessment" (coordinator,
+        # #860). {state} is the input's stored status -- draft, submitted or
+        # approved; a released input carries no label.
+        article = "an" if state[:1].lower() in "aeiou" else "a"
+        cell = f"{cell} (from {article} {state} assessment)"
+    # #554 R3, option (b). DRAFT copy, with the advisor.
+    if (e.source_id or "") in pending:
+        cell = f"{cell} (computed status awaiting review)"
+    return cell
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +247,7 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
                 e.title,
                 e.description or "",
                 (e.axis or "").title(),
-                _source(e),
+                _source(e, ctx.source_states, ctx.review_pending),
                 _joined(e.linked_techniques),
                 _joined(e.linked_controls),
                 _rating(e.likelihood),
@@ -248,6 +283,8 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
     # state them. The SAME `_summary_lines`, one line per row, so the three
     # formats cannot drift apart.
     summary = wb.create_sheet("Summary")
+    if ctx.draft:
+        summary.append([DRAFT_MARKER])
     summary.append(["Summary"])
     summary.cell(row=1, column=1).font = Font(bold=True)
     for line in _summary_lines(ctx):
@@ -492,6 +529,7 @@ def render_pdf(ctx: RiskExportContext) -> bytes:
         Paragraph(f"Risk Register (v{ctx.version})", h1),
         Paragraph(ctx.client_legal_name, body),
         pdf_paragraph(ctx.ai_mode, body),  # #646, under the title
+        *([Paragraph(DRAFT_MARKER, body)] if ctx.draft else []),
         Spacer(1, 0.2 * inch),
         Paragraph("Summary", h2),
     ]
@@ -543,7 +581,7 @@ def render_pdf(ctx: RiskExportContext) -> bytes:
                 _li(e),
                 _rating(e.tier),
                 (e.recommended_action or "").title(),
-                _source(e),
+                _source(e, ctx.source_states, ctx.review_pending),
             ]
         )
     story.append(
@@ -574,6 +612,8 @@ def render_docx(ctx: RiskExportContext) -> bytes:
     doc = new_document(f"Risk Register — {ctx.client_legal_name}")
     add_title(doc, f"Risk Register (v{ctx.version})", ctx.client_legal_name)
     add_docx_paragraph(doc, ctx.ai_mode)  # #646, under the title
+    if ctx.draft:
+        add_paragraphs(doc, [DRAFT_MARKER])
 
     add_heading(doc, "Summary")
     add_paragraphs(doc, _summary_lines(ctx))
@@ -590,7 +630,7 @@ def render_docx(ctx: RiskExportContext) -> bytes:
             _li(e),
             _rating(e.tier),
             (e.recommended_action or "").title(),
-            _source(e),
+            _source(e, ctx.source_states, ctx.review_pending),
         ]
         for i, e in enumerate(ctx.entries, start=1)
     ]

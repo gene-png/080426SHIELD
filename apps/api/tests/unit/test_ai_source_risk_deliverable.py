@@ -48,7 +48,8 @@ def test_the_risk_register_states_it_is_not_recorded(app_client) -> None:  # noq
     h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
     _seed_attack_and_zt(c, bearer, cid)
     assert c.post(f"/risk/clients/{cid}/register/generate", headers=h).status_code == 201
-    ex = c.post(f"/risk/clients/{cid}/register/export", headers=h)
+    # #737: publish renders the files AND opens the client dashboard read below.
+    ex = c.post(f"/risk/clients/{cid}/register/publish", headers=h)
     assert ex.status_code in (200, 201), ex.text
     pdf, docx, sheet = _files(c, h, ex.json())
     assert REGISTER in pdf

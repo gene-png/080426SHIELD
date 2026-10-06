@@ -1,4 +1,13 @@
 import type { RatingNotCarried } from "./carry";
+export interface RiskInputState {
+  kind: string;
+  /** False: the client has no service of this kind, so it does not block. */
+  engaged: boolean;
+  /** null with `engaged`: a service exists and nothing is started. */
+  status: string | null;
+  version: number | null;
+}
+
 export interface RiskGate {
   unlocked: boolean;
   has_attack: boolean;
@@ -41,6 +50,12 @@ export interface RiskGate {
    * newer response.
    */
   attack_computed_status_unreviewed?: string | null;
+  /**
+   * #737, the Inputs panel: one row per input kind (one per service for Tech
+   * Debt), read by the same server code publish uses. Required: the server
+   * always sends it.
+   */
+  inputs: RiskInputState[];
 }
 
 export interface RiskEntry {
@@ -50,6 +65,17 @@ export interface RiskEntry {
   axis: string | null;
   source: string | null;
   source_id: string | null;
+  /**
+   * #737, Gene's ruling: the state of the input this entry's finding came from
+   * when it was NOT released at generate ("draft", "submitted", "approved");
+   * null when released, or for a register predating this.
+   */
+  source_state: string | null;
+  /**
+   * #554 R3, option (b): this entry's ATT&CK technique had a computed status
+   * awaiting review when the register was generated.
+   */
+  source_review_pending: boolean;
   linked_techniques: string[] | null;
   linked_controls: string[] | null;
   likelihood: string | null;
