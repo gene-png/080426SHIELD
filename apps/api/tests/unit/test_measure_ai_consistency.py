@@ -111,6 +111,7 @@ def test_identical_runs_agree_fully_with_denominators() -> None:
         "mean_abs_diff": 0.0,
         "missing_in_a": 0,
         "missing_in_b": 0,
+        "both_null": 0,
     }
     assert r["fields"]["target"]["equal"] == 2
 

@@ -858,3 +858,71 @@ def test_main_passes_the_named_service_to_the_tech_debt_measure(cli, capsys) -> 
     )
     assert built == [1]
     assert code == 2
+
+
+# --- #867 narrow review F1: two nulls are not agreement -------------------------
+
+
+def _td_item(**kw) -> dict:
+    base = {
+        "name": "Alpha",
+        "vendor": None,
+        "category": None,
+        "function": None,
+        "annual_cost_usd": None,
+        "license_count": None,
+        "notes": None,
+        "confidence_pct": None,
+        "source_row_index": 0,
+        "security_related": None,
+        "security_functions": [],
+    }
+    base.update(kw)
+    return base
+
+
+def test_two_nulls_on_a_scalar_field_are_counted_apart_never_as_agreement() -> None:
+    # A prompt that extracts nothing: every scalar null in both runs.
+    nothing = {"items": [_td_item(source_row_index=i) for i in range(3)]}
+    fields = compare_pair("tech_debt_extract", nothing, json.loads(json.dumps(nothing)))["fields"]
+    for f in ("vendor", "category", "annual_cost_usd", "license_count", "confidence_pct"):
+        assert fields[f]["compared"] == 3
+        assert fields[f]["both_null"] == 3, f
+        assert fields[f]["equal"] == 0, f"{f}: null/null counted as agreement"
+
+
+def test_extracting_less_never_scores_as_more_consistent() -> None:
+    # Prompt X extracts a vendor on both rows and its runs agree on one.
+    x_a = {
+        "items": [
+            _td_item(source_row_index=0, vendor="A"),
+            _td_item(source_row_index=1, vendor="B"),
+        ]
+    }
+    x_b = {
+        "items": [
+            _td_item(source_row_index=0, vendor="A"),
+            _td_item(source_row_index=1, vendor="C"),
+        ]
+    }
+    # Prompt Y extracts nothing for row 1 in either run.
+    y_a = {"items": [_td_item(source_row_index=0, vendor="A"), _td_item(source_row_index=1)]}
+    y_b = {"items": [_td_item(source_row_index=0, vendor="A"), _td_item(source_row_index=1)]}
+    x = compare_pair("tech_debt_extract", x_a, x_b)["fields"]["vendor"]
+    y = compare_pair("tech_debt_extract", y_a, y_b)["fields"]["vendor"]
+    assert (x["equal"], x["both_null"]) == (1, 0)
+    # Y's null row is disclosed, and adds nothing to Y's agreement.
+    assert (y["equal"], y["both_null"]) == (1, 1)
+
+
+def test_a_null_reason_code_is_counted_as_both_null_for_mitre_map() -> None:
+    # Covered and gap take reason_code null, which IS an answer; it is still
+    # reported apart, so the reader sees how much agreement is null/null.
+    a = {
+        "techniques": [
+            _tech("T1", status="covered"),
+            _tech("T2", status="partial", reason_code="detection_weak"),
+        ]
+    }
+    r = compare_pair("mitre_map", a, json.loads(json.dumps(a)))["fields"]["reason_code"]
+    assert (r["compared"], r["equal"], r["both_null"]) == (2, 1, 1)

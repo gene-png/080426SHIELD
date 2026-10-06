@@ -260,6 +260,7 @@ def compare_pair(job: str, a: Mapping[str, Any], b: Mapping[str, Any]) -> dict:
     out_fields: dict[str, dict] = {}
     for f in fields:
         compared = equal = within_one = missing_a = missing_b = not_a_list = both_empty = 0
+        both_null = 0
         diffs: list[int] = []
         jaccards: list[float] = []
         for k in both:
@@ -289,6 +290,17 @@ def compare_pair(job: str, a: Mapping[str, Any], b: Mapping[str, Any]) -> dict:
                 jaccards.append(_jaccard(sa, sb))
                 equal += int(sa == sb)
                 continue
+            if va is None and vb is None:
+                # Both runs null. Not agreement, for the same reason two empty
+                # lists are not (#867 review F1): the parsers turn garbage into
+                # None, so a prompt that extracts NOTHING would otherwise read
+                # as perfectly consistent. Counted apart, for every job and
+                # every scalar field. For mitre_map's `reason_code` a null is a
+                # real answer (covered and gap take none), so there `both_null`
+                # is agreement a reader adds back -- deliberately not done here,
+                # so one rule covers every field and the number is visible.
+                both_null += 1
+                continue
             if _same(va, vb):
                 equal += 1
             if _is_whole(va) and _is_whole(vb):
@@ -303,9 +315,12 @@ def compare_pair(job: str, a: Mapping[str, Any], b: Mapping[str, Any]) -> dict:
             "missing_in_a": missing_a,
             "missing_in_b": missing_b,
         }
+        if f not in list_fields:
+            # Every scalar field, zt and csf included (#867 F1): compared ==
+            # both_null + the rows `equal` / `within_one` judge.
+            out_fields[f]["both_null"] = both_null
         if f in list_fields:
-            # Only on list fields, so the zt and csf report shapes are unchanged.
-            # compared == judged + both_empty + not_a_list; `equal` and
+            # List fields only: compared == judged + both_empty + not_a_list; `equal` and
             # `mean_jaccard` are over `judged` (a non-empty union) only.
             out_fields[f]["judged"] = len(jaccards)
             out_fields[f]["both_empty"] = both_empty
@@ -1441,7 +1456,8 @@ def _print_table(report: dict) -> None:
                 continue
             print(
                 f"  {name}: equal {s['equal']}/{s['compared']}, within one "
-                f"{s['within_one']}/{s['compared']}, mean |diff| {s['mean_abs_diff']}, "
+                f"{s['within_one']}/{s['compared']}, both null {s['both_null']} (not "
+                f"counted as equal), mean |diff| {s['mean_abs_diff']}, "
                 f"missing A/B {s['missing_in_a']}/{s['missing_in_b']}"
             )
         if "computed_status" in p:
