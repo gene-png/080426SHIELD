@@ -15,10 +15,14 @@ codes are unchanged. What moves, per non-discarded CISA assessment:
 * **Inserted:** an empty row for every one of the 15 cross-cutting codes the
   assessment does not have, so a new row reads "unscored", never "missing".
 * **Retired (13, plus any unmapped):** `CISA.VA.*`, `CISA.AO.*`, `CISA.GV.*`
-  rows are KEPT, untouched (decision 4, option B). Every reader iterates the
-  catalog, so they are not scored; the workspace and the exports disclose how
-  many hold a recorded answer. Nothing is deleted.
-* `risk_entries.source_id` holding a mapped code is re-keyed the same way.
+  rows are KEPT, untouched (decision 4, option B). The ZT scoring and gap
+  engines iterate the catalog, and Risk synthesis filters to its codes
+  (`routes/risk.py`), so they are not scored; the workspace, the client's
+  self-assessment and the exports disclose how many hold a recorded answer.
+  Nothing is deleted. A reader that reads stored rows without either is a
+  defect this note does not cover.
+* `risk_entries.source_id` and `risk_entries.linked_controls` holding a mapped
+  code are re-keyed the same way.
 
 The codes are written here, not imported from `app.zt.catalog`: a migration
 records what it did at the time, and must not change when the catalog does.
@@ -33,6 +37,7 @@ from datetime import UTC, datetime
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects import postgresql
 
 revision: str = "0062"
 down_revision: str | Sequence[str] | None = "0061"
@@ -66,7 +71,31 @@ _answers = sa.table(
     sa.column("created_at", sa.DateTime(timezone=True)),
     sa.column("updated_at", sa.DateTime(timezone=True)),
 )
-_risk = sa.table("risk_entries", sa.column("source_id", sa.String()))
+_JSON = sa.JSON().with_variant(postgresql.JSONB(), "postgresql")
+_risk = sa.table(
+    "risk_entries",
+    sa.column("id", sa.Uuid()),
+    sa.column("source_id", sa.String()),
+    sa.column("linked_controls", _JSON),
+)
+
+
+def _rekey_linked_controls(conn, mapping: dict[str, str]) -> int:
+    """Re-key every risk entry's `linked_controls` (the codes the exported
+    register prints) by `mapping`, in place and in order. Returns how many
+    entries changed."""
+    changed = 0
+    rows = conn.execute(
+        sa.select(_risk.c.id, _risk.c.linked_controls).where(_risk.c.linked_controls.is_not(None))
+    ).all()
+    for rid, controls in rows:
+        if not isinstance(controls, list):
+            continue  # not a list of codes: nothing this mapping can name
+        rekeyed = [mapping.get(c, c) for c in controls]
+        if rekeyed != controls:
+            conn.execute(_risk.update().where(_risk.c.id == rid).values(linked_controls=rekeyed))
+            changed += 1
+    return changed
 
 
 def _cisa_assessments(conn) -> list:
@@ -125,10 +154,12 @@ def upgrade() -> None:
         risk += conn.execute(
             _risk.update().where(_risk.c.source_id == old).values(source_id=new)
         ).rowcount
+    linked = _rekey_linked_controls(conn, MAPPED)
     print(
         f"[0062] mapped {mapped} row(s); kept {kept_old} old row(s) whose target "
         f"existed; inserted {inserted} empty cross-cutting row(s); re-keyed {risk} "
-        "risk link(s). Retired rows are kept, not deleted."
+        f"risk source(s) and the linked controls of {linked} risk entr(ies). Retired rows are "
+        "kept, not deleted."
     )
 
 
@@ -162,3 +193,4 @@ def downgrade() -> None:
         )
     for old, new in MAPPED.items():
         conn.execute(_risk.update().where(_risk.c.source_id == new).values(source_id=old))
+    _rekey_linked_controls(conn, {new: old for old, new in MAPPED.items()})

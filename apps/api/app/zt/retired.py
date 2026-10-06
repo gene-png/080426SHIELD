@@ -2,11 +2,14 @@
 
 #838 corrected the CISA catalog to CISA ZTMM 2.0, and migration 0062 KEPT the
 answers on the 13 rows CISA does not have (decision 4, option B) rather than
-delete them. Every reader iterates the catalog, so those rows are not scored.
+delete them. The ZT scoring and gap engines iterate the catalog, and Risk
+synthesis filters to its codes (`routes/risk.py`), so those rows are not scored.
 This module is the ONE derivation of how many of them hold an answer, and of
 the sentence that discloses it, for the workspace (`routes/zt.py`) and the
 three exporters (`zt/exporters.py`) alike. It is derived from the catalog and
-the stored rows on every read, so it can never disagree with what is scored.
+the stored rows on every read, so it agrees with the engines that iterate the
+catalog; a reader that reads stored rows directly must filter to the catalog's
+codes itself, as `routes/risk.py` does.
 """
 
 from __future__ import annotations

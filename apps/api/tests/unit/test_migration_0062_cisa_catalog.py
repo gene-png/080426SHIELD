@@ -107,6 +107,7 @@ def world(tmp_path):
                 title="t",
                 source="questionnaire_response",
                 source_id="CISA.ID.05",
+                linked_controls=["CISA.ID.01", "CISA.DV.05", "CISA.VA.01"],
             )
         )
         db.commit()
@@ -129,6 +130,13 @@ def _risk_ids(engine) -> list[str]:
         return list(db.execute(select(RiskEntry.source_id)).scalars())
 
 
+def _risk_controls(engine) -> list[list[str]]:
+    from app.models.risk_register import RiskEntry
+
+    with Session(engine) as db:
+        return list(db.execute(select(RiskEntry.linked_controls)).scalars())
+
+
 def test_upgrade_maps_inserts_and_keeps_everything(world) -> None:
     cfg, engine, ids = world
     command.upgrade(cfg, "0062")
@@ -148,8 +156,10 @@ def test_upgrade_maps_inserts_and_keeps_everything(world) -> None:
     # A discarded assessment and a DoD one are not touched.
     assert _codes(engine, ids["gone"]) == {"CISA.ID.05": (2, None)}
     assert _codes(engine, ids["dod"]) == {"DOD.USR.01": (2, None)}
-    # The risk link follows the mapped row.
+    # The risk link follows the mapped row, in `source_id` and in the linked
+    # controls the exported register prints; a retired code is left as it is.
     assert _risk_ids(engine) == ["CISA.ID.VA"]
+    assert _risk_controls(engine) == [["CISA.ID.01", "CISA.DV.VA", "CISA.VA.01"]]
 
 
 def test_downgrade_reverses_the_mapping_and_deletes_only_empty_inserted_rows(world) -> None:
@@ -173,3 +183,4 @@ def test_downgrade_reverses_the_mapping_and_deletes_only_empty_inserted_rows(wor
     assert "CISA.AW.AO" not in live  # inserted and empty: removed
     assert live["CISA.DV.VA"] == (3, "already answered")  # pre-existing: kept
     assert _risk_ids(engine) == ["CISA.ID.05"]
+    assert _risk_controls(engine) == [["CISA.ID.01", "CISA.DV.05", "CISA.VA.01"]]

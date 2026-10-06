@@ -295,6 +295,16 @@ export function ZtSelfAssessment({
 
   return (
     <div className="flex flex-col gap-6">
+      {/* #838: the API's own sentence, from the derivation the workspace and
+          the deliverables call too (`zt/retired.py`), never rebuilt here. */}
+      {assessment.retired_answers_note ? (
+        <p
+          className="text-sm text-ink-secondary"
+          data-testid="zt-retired-answers"
+        >
+          {assessment.retired_answers_note}
+        </p>
+      ) : null}
       <Card>
         <CardHeader>
           <CardTitle>1. Your maturity target</CardTitle>
