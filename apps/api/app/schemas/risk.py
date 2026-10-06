@@ -11,6 +11,22 @@ from pydantic import BaseModel, ConfigDict
 from app.risk.engine import Impact, Likelihood
 
 
+class RiskInputState(BaseModel):
+    """#737, the admin Inputs panel: one row per input kind.
+
+    `engaged` False: the client has no service of this kind, so it does not
+    hold publication up. Engaged with `status` None: a service exists and no
+    assessment (or Tech Debt list) has been started. Otherwise `status` is the
+    current record's status and `version` its version; publication needs
+    "released". For Tech Debt, one row per engaged service.
+    """
+
+    kind: str
+    engaged: bool
+    status: str | None = None
+    version: int | None = None
+
+
 class RiskGateStatus(BaseModel):
     """Whether the Risk Register can be generated for a client.
 
@@ -62,6 +78,9 @@ class RiskGateStatus(BaseModel):
     # catalog mismatch does, and is the refusal's own sentence. Required, for
     # the same reason.
     attack_computed_status_unreviewed: str | None
+    # #737: what the register would be drafted from, and whether each input is
+    # final. Defaulted so an older client parses a newer response.
+    inputs: list[RiskInputState] = []
 
 
 class RiskEntryResponse(BaseModel):
@@ -89,6 +108,13 @@ class RiskEntryResponse(BaseModel):
     # nothing was dropped. A renderer that treats the two alike reinstates the
     # defect the column was added for.
     dropped_links: dict | None = None
+    # #737, Gene's ruling: the state of the input this entry's finding came
+    # from, when that input was NOT released at generate ("draft", "submitted",
+    # "approved"); None when it was released, or the register predates this.
+    source_state: str | None = None
+    # #554 R3, option (b): this entry's finding is an ATT&CK technique whose
+    # computed status awaited review when the register was generated.
+    source_review_pending: bool = False
     # #844. Both None: the rating is the model's as generated. Set: a consultant
     # set likelihood or impact through the edit path, and the screen and the
     # exports say so instead of crediting the model.

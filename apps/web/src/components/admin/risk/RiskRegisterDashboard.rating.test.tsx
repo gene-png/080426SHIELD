@@ -53,6 +53,8 @@ function gate(): RiskGate {
     not_finalized: [],
     synthesizable_missing: [],
     attack_catalog_mismatch: null,
+    // #737: required; the Inputs panel's rows.
+    inputs: [],
   };
 }
 
@@ -76,6 +78,9 @@ function entry(over: Partial<RiskEntry> = {}): RiskEntry {
     origin: "ai_generated",
     trust: "admin_assisted",
     dropped_links: {},
+    // #737: required; null = the finding's input was released.
+    source_state: null,
+    source_review_pending: false,
     rating_edited_by: null,
     rating_edited_at: null,
     ...over,
@@ -226,7 +231,7 @@ describe("RiskRegisterDashboard consultant rating (#844)", () => {
     expect(screen.getByTestId("risk-tier-not-rated")).toBeInTheDocument();
   });
 
-  it("offers no rating control once the register is exported", async () => {
+  it("offers no rating control once the register is published", async () => {
     fetchRiskRegisterLatest.mockResolvedValue(
       register({ finalized_at: "2026-10-04T02:00:00Z" }),
     );
@@ -234,7 +239,7 @@ describe("RiskRegisterDashboard consultant rating (#844)", () => {
     expect(screen.queryByRole("combobox")).toBeNull();
     expect(
       screen.getByText(
-        /This version has been exported, so its ratings are fixed/,
+        /This version is published to the client, so its ratings are fixed/,
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("Not rated × Not rated")).toBeInTheDocument();
