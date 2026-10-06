@@ -149,6 +149,9 @@ class CapabilityListResponse(BaseModel):
     # #177: whether the extraction attributed every item to one uploaded row.
     # NULL is "not recorded" (pre-0058, or no extraction), never complete.
     attribution_complete: bool | None = None
+    # #833 / #834: what the extraction could not store as given. None is "not
+    # recorded" (a list from before 0062); [] is "checked, nothing to record".
+    extraction_findings: list[dict] | None = None
     # #177/#193: `reconcile.exclusion_count_state` -- whether the excluded count
     # is exact or only a floor, from the one reader every surface calls.
     exclusion_count_state: Literal["not_recorded", "exact", "unknown"] | None = None
