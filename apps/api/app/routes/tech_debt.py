@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import functools
 import uuid
+from collections import Counter
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -590,6 +591,8 @@ def _extract_run_work(
         # #177: persisted, so an empty `excluded_rows` can say which of its two
         # meanings it carries -- nothing excluded, or attribution failed.
         attribution_complete=result.reconciliation.attribution_complete,
+        # #833 / #834: [] when checked and nothing to record, never NULL here.
+        extraction_findings=list(result.findings),
     )
     db.add(cap_list)
     db.flush()
@@ -634,6 +637,8 @@ def _extract_run_work(
                 if result.llm_call.prompt_version in PROMPT_VERSIONS_WITH_PREFIX
                 else None
             ),
+            # #833 / #834: counts only; the entries are on the list.
+            "findings_by_reason": dict(Counter(f["reason"] for f in result.findings)),
             "llm_call_id": str(result.llm_call.id),
             "run_id": str(ctx.run_id),
         },
