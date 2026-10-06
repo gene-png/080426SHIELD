@@ -641,10 +641,11 @@ def test_measure_tech_debt_extracts_the_inventory_and_applies_nothing(td_world) 
 
 
 def test_tech_debt_compares_what_the_parser_would_store(td_world) -> None:
-    # 2.9 and 2 are different answers from the model, but the parser stores
-    # both as 2 (`_coerce_item`, #833); the measure compares what is stored.
+    # "1,000" and 1000 are different answers from the model, but the parser
+    # stores both as 1000 (`_coerce_item` accepts a whole number written
+    # differently, #833); the measure compares what is stored, not what was sent.
     TestSession, provider, inv, sid = td_world
-    answers = iter([_extract(2.9), _extract(2)])
+    answers = iter([_extract("1,000"), _extract(1000)])
     provider.register("extract.capabilities", lambda p: next(answers)(p))
     with TestSession() as db:
         report = measure_tech_debt(db, LLMClient(provider), runs=2, inventory=inv, service_id=sid)
