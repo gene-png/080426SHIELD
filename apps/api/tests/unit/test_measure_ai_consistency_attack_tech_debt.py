@@ -97,7 +97,7 @@ def test_a_bare_string_for_a_tool_list_is_counted_never_turned_into_a_set() -> N
     assert d["compared"] == 1
     assert d["not_a_list"] == 1
     assert d["equal"] == 0
-    assert d["mean_jaccard"] is None
+    assert d["mean_jaccard"] == 0.0, "a non-list pair adds no agreement"
 
 
 def test_two_empty_tool_lists_are_counted_apart_never_as_agreement() -> None:
@@ -107,30 +107,32 @@ def test_two_empty_tool_lists_are_counted_apart_never_as_agreement() -> None:
     assert d["both_empty"] == 1
     assert d["judged"] == 0
     assert d["equal"] == 0
-    assert d["mean_jaccard"] is None
+    assert d["mean_jaccard"] == 0.0, "two empty lists add no agreement"
 
 
 def test_a_prompt_that_cites_fewer_tools_never_scores_as_more_consistent() -> None:
-    # Prompt X cites tools on both techniques and its runs half-agree on one.
+    """#867 narrow review B2: the HEADLINE figures -- same-set share over
+    `compared` and the mean Jaccard -- must not rise for a prompt that stops
+    citing tools. Y is X with T2's disagreement replaced by citing nothing."""
     x_a = {"techniques": [_tech("T1", detection_tools=["A"]), _tech("T2", detection_tools=["B"])]}
     x_b = {"techniques": [_tech("T1", detection_tools=["A"]), _tech("T2", detection_tools=["C"])]}
-    # Prompt Y is worse: it cites nothing on T2 in either run, and the same on T1.
     y_a = {"techniques": [_tech("T1", detection_tools=["A"]), _tech("T2")]}
     y_b = {"techniques": [_tech("T1", detection_tools=["A"]), _tech("T2")]}
     x = compare_pair("mitre_map", x_a, x_b)["fields"]["detection_tools"]
     y = compare_pair("mitre_map", y_a, y_b)["fields"]["detection_tools"]
-    # Y's empty row is disclosed, and adds nothing to Y's agreement.
-    assert (y["judged"], y["equal"], y["both_empty"]) == (1, 1, 1)
-    assert (x["judged"], x["equal"], x["both_empty"]) == (2, 1, 0)
-    # Y agrees on 1 of 1 judged where X agrees on 1 of 2: Y's score comes from
-    # T1 alone, never from the row it stopped citing.
-    assert y["equal"] <= x["equal"]
-    y_one = compare_pair(
-        "mitre_map",
-        {"techniques": [_tech("T1", detection_tools=["A"])]},
-        {"techniques": [_tech("T1", detection_tools=["A"])]},
-    )["fields"]["detection_tools"]
-    assert y["mean_jaccard"] == y_one["mean_jaccard"], "an empty row moved the Jaccard"
+    assert x["compared"] == y["compared"] == 2
+    assert y["equal"] / y["compared"] <= x["equal"] / x["compared"], "same-set share rose"
+    assert y["mean_jaccard"] <= x["mean_jaccard"], "the Jaccard rose for citing less"
+    # And Y's empty row is disclosed.
+    assert (y["both_empty"], y["judged"]) == (1, 1)
+
+
+def test_citing_nothing_at_all_scores_zero_not_perfect() -> None:
+    nothing = {"techniques": [_tech("T1"), _tech("T2")]}
+    d = compare_pair("mitre_map", nothing, json.loads(json.dumps(nothing)))["fields"][
+        "detection_tools"
+    ]
+    assert (d["equal"], d["compared"], d["mean_jaccard"]) == (0, 2, 0.0)
 
 
 def test_a_row_with_no_key_is_unkeyable_never_compared_under_null() -> None:
@@ -166,6 +168,7 @@ def test_mitre_map_compares_status_and_reason_and_never_the_rationale() -> None:
     fields = compare_pair("mitre_map", a, b)["fields"]
     assert fields["status"]["equal"] == 0
     assert fields["reason_code"]["equal"] == 0
+    assert fields["reason_code"]["both_null"] == 0
     assert "rationale" not in fields
 
 
@@ -629,7 +632,8 @@ def test_measure_tech_debt_extracts_the_inventory_and_applies_nothing(td_world) 
     assert pair["fields"]["license_count"]["equal"] == 2
     # Falcon's functions are judged; Payroll's [] / [] is disclosed, not agreement.
     sf = pair["fields"]["security_functions"]
-    assert (sf["judged"], sf["equal"], sf["both_empty"], sf["mean_jaccard"]) == (1, 1, 1, 1.0)
+    assert (sf["judged"], sf["equal"], sf["both_empty"], sf["compared"]) == (1, 1, 1, 2)
+    assert sf["mean_jaccard"] == 0.5, "the empty row adds no agreement" 
     assert report["downstream"][0] == {
         "run": 1,
         "excluded_row_indexes": [2],
@@ -650,6 +654,14 @@ def test_tech_debt_compares_what_the_parser_would_store(td_world) -> None:
     with TestSession() as db:
         report = measure_tech_debt(db, LLMClient(provider), runs=2, inventory=inv, service_id=sid)
     assert report["pairs"][0]["fields"]["license_count"]["equal"] == 2
+    # The RAW answers disagree: compared as sent, "1,000" vs 1000 is not equal.
+    # So the 2 above can only come from comparing the parser's record.
+    raw = compare_pair(
+        "tech_debt_extract",
+        {"items": [_td_item(source_row_index=0, license_count="1,000")]},
+        {"items": [_td_item(source_row_index=0, license_count=1000)]},
+    )
+    assert raw["fields"]["license_count"]["equal"] == 0
 
 
 def test_an_unparseable_extraction_is_a_failed_run(td_world) -> None:
@@ -927,3 +939,23 @@ def test_a_null_reason_code_is_counted_as_both_null_for_mitre_map() -> None:
     }
     r = compare_pair("mitre_map", a, json.loads(json.dumps(a)))["fields"]["reason_code"]
     assert (r["compared"], r["equal"], r["both_null"]) == (2, 1, 1)
+
+
+def test_items_as_the_parser_emits_them_carry_no_unearned_agreement() -> None:
+    """#867 narrow review B1: items built by `_item_record` from the PARSER's
+    output (not hand-written dicts) carry `findings`, which is the parser's own
+    record and not a model judgement. A prompt that extracts nothing for every
+    field must score 0 equal everywhere, `findings` included or excluded."""
+    from scripts.measure_ai_consistency import _item_record
+
+    from app.tech_debt.extract import _parse_response
+
+    raw = json.dumps({"items": [{"name": "Alpha", "source_row_index": 0}]})
+    items = [_item_record(i) for i in _parse_response(raw)]
+    assert "findings" in items[0], "precondition: the parser's record carries findings"
+    fields = compare_pair("tech_debt_extract", {"items": items}, {"items": items})["fields"]
+    assert "findings" not in fields, "the parser's own output is not compared"
+    for name, f in fields.items():
+        if name == "name":
+            continue  # the one field the model did supply
+        assert f["equal"] == 0, f"{name}: agreement on nothing"

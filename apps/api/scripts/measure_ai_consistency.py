@@ -80,6 +80,10 @@ _BATCHED_JOBS = ("csf_score", "mitre_map")
 #: Free text, which differs in wording on every run, so never compared.
 _ATTACK_FREE_TEXT = ("rationale",)
 _TECH_DEBT_FREE_TEXT = ("function", "notes")
+#: The PARSER's own output on an item (#878's refusal records), not a judgement
+#: the model made: two runs agree on it trivially when nothing was refused, so
+#: comparing it would add agreement nobody earned (#867 narrow review B1).
+_TECH_DEBT_NOT_JUDGEMENTS = ("findings",)
 
 
 class Refused(Exception):
@@ -168,7 +172,9 @@ def _job_shape(job: str) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
         names = tuple(
             f.name
             for f in dc_fields(ExtractedCapability)
-            if f.name != "source_row_index" and f.name not in _TECH_DEBT_FREE_TEXT
+            if f.name != "source_row_index"
+            and f.name not in _TECH_DEBT_FREE_TEXT
+            and f.name not in _TECH_DEBT_NOT_JUDGEMENTS
         )
         return "items", ("source_row_index",), names
     raise Refused("job_not_implemented", f"{job!r} has no measure yet; see the module docstring.")
@@ -284,7 +290,8 @@ def compare_pair(job: str, a: Mapping[str, Any], b: Mapping[str, Any]) -> dict:
                 if not sa and not sb:
                     # Both runs cited nothing. Not agreement: counting it as a
                     # match would let a prompt that cites FEWER tools read as
-                    # MORE consistent (the withheld-from-a-ratio shape).
+                    # MORE consistent (the withheld-from-a-ratio shape). It
+                    # stays in the denominator (`compared`) of both figures.
                     both_empty += 1
                     continue
                 jaccards.append(_jaccard(sa, sb))
@@ -320,12 +327,17 @@ def compare_pair(job: str, a: Mapping[str, Any], b: Mapping[str, Any]) -> dict:
             # both_null + the rows `equal` / `within_one` judge.
             out_fields[f]["both_null"] = both_null
         if f in list_fields:
-            # List fields only: compared == judged + both_empty + not_a_list; `equal` and
-            # `mean_jaccard` are over `judged` (a non-empty union) only.
+            # List fields only: compared == judged + both_empty + not_a_list.
+            # CONSERVATIVE, like the scalar fields (#867 narrow review B2): the
+            # denominator of both figures is `compared`, and a pair that is
+            # both empty or not a list contributes NOTHING to either -- 0 to
+            # `equal` and 0 to the Jaccard sum. Dividing by `judged` instead
+            # let a prompt that cites fewer tools score HIGHER: the rows it
+            # stopped citing left the denominator, taking their disagreement.
             out_fields[f]["judged"] = len(jaccards)
             out_fields[f]["both_empty"] = both_empty
             out_fields[f]["not_a_list"] = not_a_list
-            out_fields[f]["mean_jaccard"] = (sum(jaccards) / len(jaccards)) if jaccards else None
+            out_fields[f]["mean_jaccard"] = (sum(jaccards) / compared) if compared else None
     rows: dict[str, Any] = {
         "in_both": len(both),
         "only_in_a": len(set(ia) - set(ib)),
@@ -1447,10 +1459,10 @@ def _print_table(report: dict) -> None:
         for name, s in p["fields"].items():
             if "mean_jaccard" in s:
                 print(
-                    f"  {name}: same set {s['equal']}/{s['judged']} judged (of "
-                    f"{s['compared']} compared; both empty {s['both_empty']}, not a list "
-                    f"{s['not_a_list']} -- neither counts as agreement), mean Jaccard over "
-                    f"judged {s['mean_jaccard']}, missing A/B "
+                    f"  {name}: same set {s['equal']}/{s['compared']}, mean Jaccard "
+                    f"{s['mean_jaccard']} over all {s['compared']} compared (both empty "
+                    f"{s['both_empty']} and not a list {s['not_a_list']} count as NO "
+                    f"agreement; {s['judged']} judged), missing A/B "
                     f"{s['missing_in_a']}/{s['missing_in_b']}"
                 )
                 continue
