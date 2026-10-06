@@ -6,6 +6,8 @@ the client id is named in the path (like /admin/services/{id}); no X-Client-Id.
   GET  /risk/clients/{cid}/gate
   POST /risk/clients/{cid}/register/generate
   GET  /risk/clients/{cid}/register/latest
+  POST /risk/clients/{cid}/register/export   (renders files; does not publish)
+  POST /risk/clients/{cid}/register/publish  (#737: the client-facing release)
   PATCH /risk/clients/{cid}/register/entries/{entry_id}   (#844: consultant rating)
 """
 
@@ -15,6 +17,7 @@ import contextvars
 import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -41,6 +44,7 @@ from app.models.attack_assessment import AttackAssessment, AttackCoverage
 from app.models.client import Client
 from app.models.csf_assessment import CsfAnswer, CsfAssessment
 from app.models.risk_register import RiskEntry, RiskRegister
+from app.models.service import Service, ServiceStatus
 from app.models.user import User, UserRole
 from app.models.zt_assessment import ZtAnswer, ZtAssessment
 from app.risk import exporters as risk_exporters
@@ -54,6 +58,14 @@ from app.risk.engine import (
     tier_counts,
     tier_for,
 )
+from app.risk.inputs import (
+    INPUT_KINDS,
+    Blocker,
+    InputRecord,
+    current_inputs,
+    engaged_services,
+    publish_blockers,
+)
 from app.risk.link_scope import LinkScope, scope_for
 from app.routes.artifacts import _storage_dep
 from app.schemas.risk import (
@@ -62,6 +74,7 @@ from app.schemas.risk import (
     RiskEntryRatingEdit,
     RiskEntryResponse,
     RiskGateStatus,
+    RiskInputState,
     RiskRegisterResponse,
 )
 from app.security.rate_limit import RateLimiter, get_rate_limiter
@@ -136,11 +149,21 @@ def _exists_for_gate(db: Session, model, client_id: uuid.UUID) -> bool:
 
     Pinned by `test_the_gate_path_must_not_filter_on_finalized`, which fails if
     this ever starts excluding drafts.
+
+    ARCHIVED services do not count (#860 review B2), because synthesis does
+    not read them (`_current_for_synthesis`): an unlock that counted an
+    archived service's assessment would offer a Generate whose register is
+    missing the very input that unlocked it.
     """
     return (
         db.execute(
             select(model.id)
-            .where(model.client_id == client_id, model.status != "discarded")
+            .join(Service, Service.id == model.service_id)
+            .where(
+                model.client_id == client_id,
+                model.status != "discarded",
+                Service.status != ServiceStatus.ARCHIVED,
+            )
             .limit(1)
         ).scalar_one_or_none()
         is not None
@@ -150,27 +173,115 @@ def _exists_for_gate(db: Session, model, client_id: uuid.UUID) -> bool:
 def _finalized_for_synthesis(db: Session, model, client_id: uuid.UUID):
     """The latest APPROVED-or-RELEASED assessment, or None. (#237)
 
-    PROVENANCE, and the reason this is separate from `_exists_for_gate`. What
-    synthesis reads is exported under a client's name, so a DRAFT must not reach
-    it — that is unreviewed content leaving as a deliverable, which is a
-    different and worse failure than a correct number under a wrong label.
-
-    Returning None here does NOT mean "no assessment": it means none that may be
-    synthesized. `_gate` reports that distinction so unlock and synthesis stop
-    disagreeing silently — a consultant walking into a refusal the UI said was
-    not there is worse than a locked gate.
+    Since #737 this feeds ONLY the gate's `not_finalized` report. Synthesis no
+    longer reads it: a draft register synthesizes from in-progress inputs
+    through `_current_for_synthesis`, and what keeps unreviewed work from a
+    client is publish's input gate (`app/risk/inputs.py::publish_blockers`).
+    The name is kept so the #237 history below stays greppable. ARCHIVED
+    services are excluded, as in `_exists_for_gate` and
+    `_current_for_synthesis` (#860 review F4), so the report counts the same
+    population unlock and synthesis do.
 
     See `_exists_for_gate` for why the two are typed differently on purpose.
-
-    Pinned by `test_the_synthesis_path_must_filter_on_finalized`, which fails if
-    this ever stops excluding drafts.
     """
     return db.execute(
         select(model)
-        .where(model.client_id == client_id, model.status.in_(_FINALIZED))
+        .join(Service, Service.id == model.service_id)
+        .where(
+            model.client_id == client_id,
+            model.status.in_(_FINALIZED),
+            Service.status != ServiceStatus.ARCHIVED,
+        )
         .order_by(model.version.desc(), model.created_at.desc())
         .limit(1)
     ).scalar_one_or_none()
+
+
+def _current_for_synthesis(db: Session, model, client_id: uuid.UUID):
+    """The latest NON-DISCARDED assessment of this kind, drafts included, or None.
+
+    #737, Gene's ruling (#736, 5986057990 item 13), which REVERSES #237's
+    approved-only rule deliberately: a register may be DRAFTED from in-progress
+    work. What protects the client is no longer this resolver but publication,
+    which refuses unless every engaged input is released and still the one the
+    register was built from (`app/risk/inputs.py::publish_blockers`). Each
+    finding from an unreleased input is labelled with that input's state.
+
+    The same ordering `app/risk/inputs.py::current_inputs` uses, and the same
+    exclusion of ARCHIVED services (#860 review B2), so the input a draft
+    synthesizes from is always one of the inputs its provenance records and
+    publish checks. An archived service's assessment is not an input.
+
+    ONE assessment per kind, and that is PRE-EXISTING rather than introduced:
+    `_finalized_for_synthesis` read one per kind too. A client with two
+    engaged services of a kind (Zero Trust CISA and DoD) has findings from
+    the latest of them only, while publish requires BOTH released -- the gate
+    is the stricter of the two, so the gap is a missing finding, not an
+    unreleased one reaching the client. Not changed here.
+    """
+    return db.execute(
+        select(model)
+        .join(Service, Service.id == model.service_id)
+        .where(
+            model.client_id == client_id,
+            model.status != "discarded",
+            Service.status != ServiceStatus.ARCHIVED,
+        )
+        .order_by(model.version.desc(), model.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+@dataclass(frozen=True)
+class _InputSnapshot:
+    """What a register is built from, read ONCE, before synthesis (#860 B1).
+
+    Everything generate records about its inputs -- provenance `inputs`,
+    `current_inputs`, each finding's `source_state`, `review_pending` -- comes
+    from this one read, and the findings are gathered from these same
+    assessment objects. Re-reading after the batched model call would record
+    the state the inputs reached DURING the run: an input released mid-run
+    would be recorded released over findings drafted from it unreleased, and
+    the register would publish.
+
+    `statuses` holds the status STRINGS as read, not the ORM objects' live
+    attributes, so nothing later in the request can refresh them.
+    """
+
+    attack: AttackAssessment | None
+    csf: CsfAssessment | None
+    zt: ZtAssessment | None
+    statuses: dict[str, str]
+    review_pending: tuple[str, ...]
+    current: tuple[InputRecord, ...]
+
+
+def _take_input_snapshot(db: Session, client_id: uuid.UUID) -> _InputSnapshot:
+    attack = _current_for_synthesis(db, AttackAssessment, client_id)
+    csf = _current_for_synthesis(db, CsfAssessment, client_id)
+    zt = _current_for_synthesis(db, ZtAssessment, client_id)
+    statuses = {
+        kind: str(getattr(a.status, "value", a.status))
+        for kind, a in (("attack", attack), ("csf", csf), ("zt", zt))
+        if a is not None
+    }
+    pending = tuple(sorted(attack_unreviewed_codes(db, attack))) if attack is not None else ()
+    snap = _InputSnapshot(
+        attack=attack,
+        csf=csf,
+        zt=zt,
+        statuses=statuses,
+        review_pending=pending,
+        current=tuple(current_inputs(db, client_id)),
+    )
+    _log.info(
+        "risk_input_snapshot",
+        client_id=str(client_id),
+        statuses=statuses,
+        review_pending=len(pending),
+        current_inputs=len(snap.current),
+    )
+    return snap
 
 
 def _latest_register(db: Session, client_id: uuid.UUID) -> RiskRegister | None:
@@ -193,17 +304,30 @@ def _latest_register(db: Session, client_id: uuid.UUID) -> RiskRegister | None:
     ).scalar_one_or_none()
 
 
-def _unreviewed_sentence(n: int) -> str:
-    """#554 R3: why a register cannot be generated while the ATT&CK review queue
-    holds rows. ONE sentence for the gate and the refusal (approved by the
-    advisor 01:35Z), so the page never says something generate contradicts."""
-    return (
-        f"The Risk Register cannot be generated yet: {n} ATT&CK "
-        f"{'technique has' if n == 1 else 'techniques have'} a computed status that "
-        "differs from the AI's suggestion and has not been reviewed. "
-        f"Review {'it' if n == 1 else 'them'} in the ATT&CK Computed status review "
-        "panel, then generate again."
-    )
+def _input_states(db: Session, client_id: uuid.UUID) -> list[RiskInputState]:
+    """#737, the Inputs panel, from the SAME reader publish uses
+    (`app/risk/inputs.py`), so the panel cannot disagree with the refusal.
+
+    One row per ENGAGED SERVICE (#860 review B2), and one unengaged row for a
+    kind the client has no live service of. An archived service has no row."""
+    engaged = engaged_services(db, client_id)
+    current = {(r.kind, r.service_id): r for r in current_inputs(db, client_id)}
+    rows: list[RiskInputState] = []
+    for kind in INPUT_KINDS:
+        services = [svc for k, svc in engaged if k == kind]
+        if not services:
+            rows.append(RiskInputState(kind=kind, engaged=False))
+        for svc in services:
+            r = current.get((kind, str(svc.id)))
+            rows.append(
+                RiskInputState(
+                    kind=kind,
+                    engaged=True,
+                    status=r.status if r else None,
+                    version=r.version if r else None,
+                )
+            )
+    return rows
 
 
 def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
@@ -256,26 +380,22 @@ def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
     # What BLOCKS is `synthesizable_missing` below, which mirrors unlock exactly.
     # What is merely listed here is disclosed on the register instead.
     not_finalized: list[str] = []
-    attack = _finalized_for_synthesis(db, AttackAssessment, client_id)
-    finalized_attack = attack is not None
+    # #737: the gate asks about the input synthesis will READ, drafts included,
+    # so its catalog and review refusals predict generate's exactly.
+    attack = _current_for_synthesis(db, AttackAssessment, client_id)
+    finalized_attack = _finalized_for_synthesis(db, AttackAssessment, client_id) is not None
     # #556: synthesis refuses an ATT&CK input scored against another catalog
     # (`require_current_catalog`). The gate asks the SAME predicate and carries
     # the SAME sentence, or it offers a Generate whose only outcome is a 409. A
     # separate field, not `synthesizable_missing`: that list is rendered as
     # "cannot be generated until these are approved", and this input already is.
     attack_catalog_mismatch = catalog_mismatch_message(db, attack) if attack is not None else None
-    # #554 R3, the same precedent: synthesis refuses an assessment whose computed
-    # statuses await review (`_gather_findings`), so the gate asks the SAME
-    # predicate and carries the SAME sentence. Asked only of a current catalog,
-    # because synthesis refuses a stale one first.
-    unreviewed = (
-        attack_unreviewed_codes(db, attack)
-        if attack is not None and attack_catalog_mismatch is None
-        else ()
-    )
-    attack_computed_status_unreviewed = (
-        _unreviewed_sentence(len(unreviewed)) if unreviewed else None
-    )
+    # #554 R3 under the advisor's ruling on #737 (#736 5998764095, option (b)):
+    # unreviewed computed statuses no longer block Generate -- each affected
+    # finding is labelled, and publish refuses (the input cannot be released).
+    # So the gate carries no sentence for them: always None, the field kept so
+    # an older client parses (the coordinator's (a): dropped, not reworded).
+    attack_computed_status_unreviewed = None
     finalized_csf = _finalized_for_synthesis(db, CsfAssessment, client_id) is not None
     finalized_zt = _finalized_for_synthesis(db, ZtAssessment, client_id) is not None
     for label, present, finalized in (
@@ -296,6 +416,7 @@ def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
         synthesizable_missing.append("an approved CSF or Zero Trust assessment")
 
     return RiskGateStatus(
+        inputs=_input_states(db, client_id),
         unlocked=unlocked,
         has_attack=has_attack,
         has_csf=has_csf,
@@ -329,25 +450,20 @@ def gate(
     return _gate(db, cid)
 
 
-def _provenance_snapshot(db: Session, client_id: uuid.UUID, excluded: list[str]) -> dict:
-    """What this register is being built FROM, as it stands right now (#240).
+def _provenance_snapshot(snap: _InputSnapshot, excluded: list[str]) -> dict:
+    """What this register is being built FROM, as it stood BEFORE synthesis (#240).
 
     Captured at GENERATE and never revised. Recomputing it at export would read
     TODAY's statuses, so a ZT assessment approved after generation would let the
     export certify coverage over a register that never saw it -- D-053's
     snapshot-versus-live lesson, one table over.
 
-    Reads through `_finalized_for_synthesis`, the SAME resolver `_gather_findings`
-    uses, rather than re-querying. A second query answering the same question is
-    a second place for the answer to differ, and this one exists to be evidence.
+    Built from `snap` and NOT re-queried (#860 review B1): the snapshot is the
+    one read `_gather_findings` drafted from, taken before the model call, and
+    a second read here would record whatever the inputs became during it.
     """
     inputs: list[dict] = []
-    for kind, model in (
-        ("attack", AttackAssessment),
-        ("csf", CsfAssessment),
-        ("zt", ZtAssessment),
-    ):
-        a = _finalized_for_synthesis(db, model, client_id)
+    for kind, a in (("attack", snap.attack), ("csf", snap.csf), ("zt", snap.zt)):
         if a is None:
             continue
         inputs.append(
@@ -355,11 +471,20 @@ def _provenance_snapshot(db: Session, client_id: uuid.UUID, excluded: list[str])
                 "kind": kind,
                 "assessment_id": str(a.id),
                 "version": a.version,
-                # The status AS IT STOOD. Never re-read.
-                "status": str(getattr(a.status, "value", a.status)),
+                # The status AS IT STOOD before synthesis. Never re-read.
+                "status": snap.statuses[kind],
             }
         )
-    return {"inputs": inputs, "excluded": list(excluded)}
+    # #737, Gene's all-inputs-final rule: every engaged service's current
+    # record, Tech Debt included, as it stood before synthesis. Publish
+    # compares this with the inputs as they stand then
+    # (`app/risk/inputs.py::publish_blockers`), so a register built before an
+    # input was released, or before a newer version existed, cannot publish.
+    return {
+        "inputs": inputs,
+        "excluded": list(excluded),
+        "current_inputs": [r.as_json() for r in snap.current],
+    }
 
 
 #: Fields whose model-supplied values are checked against the client's own
@@ -439,7 +564,7 @@ def _resolve_links(offered: object, universe: set[str]) -> tuple[list[str], list
 
 
 def _gather_findings(
-    db: Session, client_id: uuid.UUID
+    db: Session, client_id: uuid.UUID, snapshot: _InputSnapshot | None = None
 ) -> tuple[list[dict], set[str], set[str], dict[str, dict], dict[str, LinkScope]]:
     """Findings (one per gap) + the valid link universes + the TARGETS USED.
 
@@ -503,28 +628,24 @@ def _gather_findings(
     valid_controls: set[str] = set()
     target_sources: dict[str, dict] = {}
     link_scopes: dict[str, LinkScope] = {}
+    # #860 B1: generate passes the snapshot its provenance is built from, so
+    # the findings and the record of their inputs come from one read.
+    snap = snapshot if snapshot is not None else _take_input_snapshot(db, client_id)
 
-    attack = _finalized_for_synthesis(db, AttackAssessment, client_id)
+    attack = snap.attack
     if attack is not None:
         # #556: rows keyed to another catalog would reach the register by ID --
         # "ATT&CK T1649.001" is not a technique, and a T1558 row was answered
         # against the swapped name. Refused, never relabelled by ID (D-091).
         require_current_catalog(db, attack)
-        # #554 R3, the advisor's ruling (00:35Z): FAIL-CLOSED. An APPROVED
-        # assessment whose computed statuses nobody has reviewed is not released
-        # (`release_readiness`), and synthesis must not carry those statuses into
-        # a register the client can export either. Refused, typed, rather than
-        # excluded: an exclusion would yield a register silently missing ATT&CK.
-        unreviewed = attack_unreviewed_codes(db, attack)
-        if unreviewed:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "reason": "attack_computed_status_unreviewed",
-                    "message": _unreviewed_sentence(len(unreviewed)),
-                    "unreviewed": list(unreviewed),
-                },
-            )
+        # #554 R3 on a DRAFT register, the advisor's ruling (#736 5998764095,
+        # option (b)): NOT refused here any more. A register drafted while the
+        # ATT&CK review queue holds rows is labelled per finding (`generate`
+        # records the codes in provenance `review_pending`), and publish
+        # refuses it: an assessment with unreviewed computed statuses cannot be
+        # released (`release_readiness`), and publish needs every engaged input
+        # released. Only the stale catalog above still refuses at generate,
+        # because a technique ID can name the wrong technique (D-091).
         # #554 R3: computed statuses where they apply, so a finding's status is
         # the one the client's dashboard and deliverable show.
         rows = effective_coverage(
@@ -579,7 +700,7 @@ def _gather_findings(
                     }
                 )
 
-    csf = _finalized_for_synthesis(db, CsfAssessment, client_id)
+    csf = snap.csf
     if csf is not None:
         # #84. This read `r.maturity_tier < 3` -- a HARDCODED tier, so every
         # client's CSF findings were computed against tier 3 no matter what
@@ -613,7 +734,7 @@ def _gather_findings(
                     }
                 )
 
-    zt = _finalized_for_synthesis(db, ZtAssessment, client_id)
+    zt = snap.zt
     if zt is not None:
         # #84, the ZT half. Framework-aware, because DoD ZTRA has three stages
         # where CISA has four -- a client stage valid under one is out of range
@@ -1045,23 +1166,16 @@ def generate(
             status_code=status.HTTP_409_CONFLICT,
             detail="Risk Register is locked. Missing: " + "; ".join(g.missing) + ".",
         )
-    # REFUSE rather than synthesize from nothing (#237). Without this, moving
-    # `_gather_findings` onto `_finalized_for_synthesis` would turn a
-    # draft-sourced run into an EMPTY register instead of a refusal -- a register
-    # with no entries, generated successfully, which reads as "no risks found".
-    # That is a WORSE failure than the one being fixed: it replaces unreviewed
-    # content with a confident absence, and both go out under the client's name.
-    if g.synthesizable_missing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "Risk Register cannot be generated from unapproved work. "
-                "Approve first: " + "; ".join(g.synthesizable_missing) + "."
-            ),
-        )
+    # #737, Gene's ruling (#736 item 13): NO refusal for unapproved inputs here
+    # -- this reverses #237's refusal. A draft register is generated from
+    # in-progress work, labelled as such, and publish is what refuses it.
 
+    # #860 review B1: the inputs are read ONCE, here, before the findings and
+    # before the model call; the provenance and every label below derive from
+    # this snapshot rather than from a re-read after the run.
+    snap = _take_input_snapshot(db, cid)
     findings, valid_techniques, valid_controls, target_sources, link_scopes = _gather_findings(
-        db, cid
+        db, cid, snap
     )
     client_org = client.legal_name  # NULL when nobody has named the org (D-080)
     # Batched: one request cannot express this job (see _RISK_BATCH_SIZE). A
@@ -1092,7 +1206,10 @@ def generate(
         # already cleared the ones that block, so whatever remains contributed
         # nothing and the register now records that permanently rather than only
         # in the response.
-        provenance=_provenance_snapshot(db, cid, g.not_finalized),
+        # #737: nothing present is EXCLUDED any more -- drafts are synthesized
+        # -- so the excluded set is recorded empty, and `excluded_inputs` keeps
+        # its meaning only for registers generated before this change.
+        provenance=_provenance_snapshot(snap, []),
     )
     # #372. The batch tally is PERSISTED, into the provenance column 0047
     # already added -- no migration, and no new state to keep in step.
@@ -1411,6 +1528,28 @@ def generate(
     # the same absence -- an audit row with no verdict here would read as the
     # former and mean the latter.
     entries_write_check = "agreed" if entries_written == entries_total else "MISMATCH"
+    # #737, Gene's ruling: each finding drafted from an input that was not
+    # RELEASED at generate carries that input's state, keyed by `source_id`.
+    # Released inputs are absent from the map, so an empty map is a register
+    # drafted entirely from released work.
+    # From the pre-synthesis snapshot (#860 review B1), never a re-read.
+    # FAIL CLOSED: a finding whose kind has no recorded status was drafted from
+    # an input the snapshot did not see, which no path produces (every finding
+    # comes from a snapshot assessment) -- so it raises rather than defaulting
+    # to "released", which would let it publish unlabelled.
+    review_pending = list(snap.review_pending)
+    source_states: dict[str, str] = {}
+    for f in findings:
+        if f.get("source_id") is None:
+            continue
+        state = snap.statuses.get(f["kind"])
+        if state is None:
+            raise RuntimeError(
+                f"risk generate: finding kind {f['kind']!r} has no input status in the "
+                "snapshot it was drafted from"
+            )
+        if state != "released":
+            source_states[str(f["source_id"])] = state
     # #854 review F3, Gene's option (c): the consultant's ratings survive a
     # regenerate. Below the flush, because it edits the rows just written.
     ratings_carried = _carry_ratings(db, prior, register)
@@ -1479,6 +1618,8 @@ def generate(
             for service, sc in link_scopes.items()
         }
         _prov_with_count["finding_coverage"] = finding_record
+        _prov_with_count["source_states"] = source_states
+        _prov_with_count["review_pending"] = review_pending
         _prov_with_count["ratings_carried"] = ratings_carried
         register.provenance = _prov_with_count
         db.add(register)
@@ -1644,62 +1785,85 @@ def _write_artifact(
     return art
 
 
-@router.post(
-    "/clients/{cid}/register/export",
-    response_model=RiskRegisterResponse,
-    summary="Render + store the current Risk Register as XLSX/PDF/Word (admin)",
-)
-def export(
-    cid: uuid.UUID,
-    admin: Annotated[User, _admin_required],
-    db: Annotated[Session, Depends(get_db)],
-    storage: Annotated[StorageBackend, Depends(_storage_dep)],
-) -> RiskRegisterResponse:
-    client = _require_client(db, cid)
-    # #237 GUARDS GENERATE, NOT EXPORT, AND THE BLAST RADIUS IS STATED RATHER
-    # THAN ASSUMED. `CLAUDE.md` requires checking it, and the 0044 precedent
-    # worked because the radius was countable ("zero RELEASED assessments").
-    #
-    # Here it is NOT countable, and that is the finding rather than an excuse.
-    # Every register created before this change was synthesized under the old
-    # `_latest`, which read DRAFT assessments. Those rows stay exportable, and
-    # `export` sets `finalized_at` -- the single condition
-    # `clients.py::risk_dashboard` gates the CLIENT dashboard on -- so exporting
-    # one publishes it.
-    #
-    # `models/risk_register.py` records no provenance: no source assessment ids,
-    # no excluded inputs. So NO SINGLE COLUMN answers "was this draft-sourced".
-    #
-    # That is not the same as unanswerable, and an earlier draft of this note
-    # said "INDISTINGUISHABLE ... in any database", which ended the check
-    # `CLAUDE.md` requires instead of performing it. A reconstruction bounds it:
-    # join each register's `created_at` against the assessment `_latest` would
-    # have picked (highest non-discarded version) and ask whether that row's
-    # `approved_at` was null or later. Measured on the dev database 2026-09-09:
-    # **6 of 6 registers were built from an ATT&CK assessment unapproved at
-    # build time, 6 of 6 from an unapproved ZT one, and 5 of the 6 are
-    # finalized** -- so on this database the radius is every register, and
-    # finalizing published five of them.
-    #
-    # The reconstruction is APPROXIMATE and its error direction is stated: it
-    # reads today's discard state and today's version ordering, so a row
-    # discarded or re-versioned since would change which assessment `_latest`
-    # picked. It bounds the radius; it does not settle any individual row.
-    # Persisting provenance at generate is what makes the question answerable
-    # exactly, and that is #240.
-    #
-    # #240, and the reason it is checked HERE against a SNAPSHOT rather than
-    # recomputed: guarding export on TODAY's statuses would re-read statuses
-    # that have moved since the register was built, so an assessment approved
-    # after generation would certify a register that never saw it. D-053.
+#: The refusal when a generate committed while export or publish waited for
+#: the register lock. Export's is approved (#736, advisor 5986057990 item 12);
+#: publish's is a draft for the advisor (#737).
+_SUPERSEDED_WHILE_STARTING = {
+    "exporting": (
+        "A newer version of the Risk Register was generated while this export was "
+        "starting. Reload the page and export the current version."
+    ),
+    "publishing": (
+        "A newer version of the Risk Register was generated while this publish was "
+        "starting. Reload the page and publish the current version."
+    ),
+}
+
+
+#: #737. How each input is named in the publish refusal. DRAFT copy, with the
+#: advisor (the Inputs panel strings, coordinator thread 2026-10-05).
+_INPUT_LABELS = {
+    "attack": "ATT&CK coverage",
+    "csf": "NIST CSF",
+    "zt": "Zero Trust",
+    "tech_debt": "Technology debt list",
+}
+_STATE_WORDS = {
+    "draft": "in progress (draft)",
+    "submitted": "submitted, not yet released",
+    "approved": "approved, not yet released",
+}
+
+
+def _inputs_not_final_message(blockers: list[Blocker]) -> str:
+    """#737. One sentence per cause, naming each input. DRAFT copy."""
+    if any(b.reason == "not_recorded" for b in blockers):
+        return (
+            "This register predates input recording, so what it was built from cannot "
+            "be certified. Generate a new version before publishing."
+        )
+    parts: list[str] = []
+    waiting = [
+        f"{_INPUT_LABELS.get(b.kind, b.kind)} ("
+        + (
+            "not started"
+            if b.reason == "not_started"
+            else _STATE_WORDS.get(b.status or "", b.status or "")
+        )
+        + ")"
+        for b in blockers
+        if b.reason in ("not_started", "not_released")
+    ]
+    if waiting:
+        parts.append(
+            "This register cannot be published until every assessment it draws on is "
+            "released: " + "; ".join(waiting) + "."
+        )
+    changed = [_INPUT_LABELS.get(b.kind, b.kind) for b in blockers if b.reason == "changed"]
+    if changed:
+        parts.append(
+            "An assessment this register draws on has changed since it was generated: "
+            + "; ".join(changed)
+            + ". Generate a new version before publishing."
+        )
+    return " ".join(parts)
+
+
+def _lock_current_register(db: Session, cid: uuid.UUID, *, action: str) -> RiskRegister:
+    """The current register, row-locked FOR UPDATE, re-checked under the lock.
+
+    Shared by `export` and `publish` (#737): both read the entries and render
+    for seconds, and the rating edit serialises against them on this lock
+    (#854 review rounds 2 and 3). Moved here unchanged from `export`.
+    """
     reg = _latest_register(db, cid)
     if reg is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Generate a Risk Register before exporting.",
+            detail=f"Generate a Risk Register before {action}.",
         )
     # #854 review round 2: LOCK THE REGISTER ROW before reading its entries.
-    # Export reads the entries, renders for seconds, then sets `finalized_at`;
+    # Publish reads the entries, renders for seconds, then sets `finalized_at`;
     # a rating edit committed inside that gap would be in the client's
     # dashboard and not in the file they were sent, permanently. The edit route
     # takes this row FOR SHARE before its write, so on Postgres the two
@@ -1724,13 +1888,19 @@ def export(
             status_code=status.HTTP_409_CONFLICT,
             detail={
                 "reason": "risk_register_superseded",
-                "message": (
-                    "A newer version of the Risk Register was generated while this "
-                    "export was starting. Reload the page and export the current version."
-                ),
+                "message": _SUPERSEDED_WHILE_STARTING[action],
             },
         )
+    return reg
 
+
+def _require_certifiable_inputs(reg: RiskRegister) -> None:
+    """The #240 input guards, shared by `export` and `publish` (#737).
+
+    Moved here unchanged from `export`, so the two routes cannot come to
+    disagree about which registers may leave the building: the export is the
+    file a consultant may send, and publication is the client's dashboard.
+    """
     # #240. Refuse to publish a register built from work nobody approved.
     #
     # Read from the SNAPSHOT written at generate, never recomputed. The three
@@ -1759,6 +1929,12 @@ def export(
     # refusing to re-export it protects nobody while breaking a delivered path.
     _already_delivered = reg.finalized_at is not None
     if _prov is None:
+        # RATCHET since #737. It protects: a register with no provenance at all
+        # (pre-0047) being published. No current writer reaches it: this helper
+        # now runs only in `publish`, AFTER the input gate, which already
+        # refuses a NULL provenance as `not_recorded`. It would become reachable
+        # again if the gate stopped running first, or if export took these
+        # guards back.
         if not _already_delivered:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -1772,20 +1948,16 @@ def export(
         # A RATCHET, and unreachable today. Say so rather than let a reader
         # believe this is what catches the hazard.
         #
-        # `_provenance_snapshot` records only what `_finalized_for_synthesis`
-        # returns, and that resolver filters `status.in_(_FINALIZED)` where
-        # `_FINALIZED = ("approved", "released")`. So every status the snapshot
-        # CAN hold is already approved or released, and this list is empty by
-        # construction for every register generated on or after 0047. The only
-        # way in is mutating stored provenance, which is exactly how the test
-        # for it reaches this branch.
-        #
-        # It is kept because the thing making it unreachable is one resolver's
-        # WHERE clause, and that is a thing a future change can loosen without
-        # noticing what depended on it. `test_the_synthesis_path_must_filter_on_finalized`
-        # is what holds that clause in place; if that test is ever removed or
-        # weakened, this branch stops being decorative and starts being the
-        # last thing between unapproved work and a client's name.
+        # Since #737 `_provenance_snapshot` records DRAFT inputs too, so the
+        # stored statuses can be anything -- but this helper runs only in
+        # `publish`, AFTER the input gate, which refuses unless every engaged
+        # service's input was RELEASED at generate and is unchanged, AND every
+        # input recorded at generate is still engaged. That second half is
+        # what covers a service archived after generate (#860 review F1):
+        # without it, an APPROVED input's findings passed this branch, which
+        # only refuses statuses outside approved/released. So no unreleased
+        # status reaches here today. It is kept as a RATCHET: it becomes the
+        # last guard again if publish ever stops running the input gate first.
         #
         # The pre-0047 DRAFT-input register -- the hazard #240 opens with -- is
         # NOT caught here. It has NULL provenance and is caught by the branch
@@ -1839,6 +2011,24 @@ def export(
                     "inputs are approved."
                 ),
             )
+
+
+def _render_and_store(
+    db: Session,
+    *,
+    reg: RiskRegister,
+    client: Client,
+    cid: uuid.UUID,
+    admin: User,
+    storage: StorageBackend,
+    draft: bool,
+) -> None:
+    """Render the three files from the register's STORED state and point the
+    register at them. Shared by `export` and `publish` (#737), so the files a
+    client is published are rendered at the moment of publication: a rating a
+    consultant edits after an export can never reach the client in a file that
+    predates it.
+    """
     entries = (
         db.execute(
             select(RiskEntry).where(RiskEntry.register_id == reg.id).order_by(RiskEntry.created_at)
@@ -1856,7 +2046,15 @@ def export(
     _scope_rows = _link_scope_fields(reg.provenance)["excluded_unscored_links"]
     # #844, read through the same single reader `_serialize` uses.
     _findings = _finding_fields(reg.provenance)
+    _states = (reg.provenance or {}).get("source_states")
+    _pending = (reg.provenance or {}).get("review_pending")
     ctx = risk_exporters.build_context(
+        review_pending=(
+            frozenset(str(x) for x in _pending) if isinstance(_pending, list) else frozenset()
+        ),
+        source_states=(
+            {str(k): str(v) for k, v in _states.items()} if isinstance(_states, dict) else {}
+        ),
         client_legal_name=org,
         version=reg.version,
         entries=entries,
@@ -1870,6 +2068,7 @@ def export(
             if _findings["findings_recorded"]
             else None
         ),
+        draft=draft,
         # #646: `ai_mode` is left at "not recorded", deliberately -- see
         # `RiskExportContext.ai_mode`. Nothing ties a register to the calls
         # that drafted it until Risk runs through the run framework (#504).
@@ -1916,16 +2115,198 @@ def export(
     reg.xlsx_artifact_id = xlsx.id
     reg.pdf_artifact_id = pdf.id
     reg.docx_artifact_id = docx.id
-    reg.finalized_at = utcnow()
+
+
+@router.post(
+    "/clients/{cid}/register/export",
+    response_model=RiskRegisterResponse,
+    summary="Render + store the current Risk Register as XLSX/PDF/Word (admin)",
+)
+def export(
+    cid: uuid.UUID,
+    admin: Annotated[User, _admin_required],
+    db: Annotated[Session, Depends(get_db)],
+    storage: Annotated[StorageBackend, Depends(_storage_dep)],
+) -> RiskRegisterResponse:
+    client = _require_client(db, cid)
+    # #237 GUARDS GENERATE, NOT EXPORT, AND THE BLAST RADIUS IS STATED RATHER
+    # THAN ASSUMED. `CLAUDE.md` requires checking it, and the 0044 precedent
+    # worked because the radius was countable ("zero RELEASED assessments").
+    #
+    # Here it is NOT countable, and that is the finding rather than an excuse.
+    # Every register created before this change was synthesized under the old
+    # `_latest`, which read DRAFT assessments. Those rows stay exportable, and
+    # UNTIL #737 `export` set `finalized_at` -- the single condition
+    # `clients.py::risk_dashboard` gates the CLIENT dashboard on -- so exporting
+    # one published it. Since #737 only `publish` sets it, and runs the same
+    # input guards (`_require_certifiable_inputs`) before it does.
+    #
+    # `models/risk_register.py` records no provenance: no source assessment ids,
+    # no excluded inputs. So NO SINGLE COLUMN answers "was this draft-sourced".
+    #
+    # That is not the same as unanswerable, and an earlier draft of this note
+    # said "INDISTINGUISHABLE ... in any database", which ended the check
+    # `CLAUDE.md` requires instead of performing it. A reconstruction bounds it:
+    # join each register's `created_at` against the assessment `_latest` would
+    # have picked (highest non-discarded version) and ask whether that row's
+    # `approved_at` was null or later. Measured on the dev database 2026-09-09:
+    # **6 of 6 registers were built from an ATT&CK assessment unapproved at
+    # build time, 6 of 6 from an unapproved ZT one, and 5 of the 6 are
+    # finalized** -- so on this database the radius is every register, and
+    # finalizing published five of them.
+    #
+    # The reconstruction is APPROXIMATE and its error direction is stated: it
+    # reads today's discard state and today's version ordering, so a row
+    # discarded or re-versioned since would change which assessment `_latest`
+    # picked. It bounds the radius; it does not settle any individual row.
+    # Persisting provenance at generate is what makes the question answerable
+    # exactly, and that is #240.
+    #
+    # #240, and the reason it is checked HERE against a SNAPSHOT rather than
+    # recomputed: guarding export on TODAY's statuses would re-read statuses
+    # that have moved since the register was built, so an assessment approved
+    # after generation would certify a register that never saw it. D-053.
+    reg = _lock_current_register(db, cid, action="exporting")
+    # #737, the advisor's ruling (#736, 5998764095): export is the consultant's
+    # INTERNAL copy and no longer runs the input guards -- they moved to
+    # `publish`, which is what reaches the client. A draft export renders, with
+    # "Draft: not published" on its face. What keeps a draft file from a client
+    # user is that a Risk export is not a `Deliverable`, so `/artifacts` serves
+    # it to admins only: `test_a_client_user_cannot_download_an_unpublished_export`
+    # pins that 404, because it is now the guard the client relies on.
+    # #737. Export renders the files and does NOT publish: `finalized_at` is
+    # what the client dashboard reads, and only `publish` sets it. Before #737
+    # exporting a register to review it internally put it in front of the
+    # client.
+    # #737: an export of an unpublished register is a draft, and its files say so.
+    _render_and_store(
+        db,
+        reg=reg,
+        client=client,
+        cid=cid,
+        admin=admin,
+        storage=storage,
+        draft=reg.finalized_at is None,
+    )
     audit(
         db,
         action="risk_register.exported",
         target_type="risk_register",
         target_id=reg.id,
         actor_user_id=admin.id,
+        details={"version": reg.version, "published": reg.finalized_at is not None},
+    )
+    db.commit()
+    return _serialize(db, reg)
+
+
+@router.post(
+    "/clients/{cid}/register/publish",
+    response_model=RiskRegisterResponse,
+    summary="Publish the current Risk Register to the client (admin)",
+)
+def publish(
+    cid: uuid.UUID,
+    admin: Annotated[User, _admin_required],
+    db: Annotated[Session, Depends(get_db)],
+    storage: Annotated[StorageBackend, Depends(_storage_dep)],
+) -> RiskRegisterResponse:
+    """#737: the one writer of `finalized_at`, which is what
+    `clients.py::risk_dashboard` reads. Re-renders the files at this moment so
+    the published files match the published register, under the same register
+    lock as export.
+
+    Refuses, typed:
+      * nothing generated (404);
+      * a version generated while this waited for the lock (409);
+      * already published (409) -- a published register is fixed; generate a
+        new version to change it;
+      * inputs that cannot be certified (409, the export guards, shared);
+      * any entry without a tier (409, #844 D1): a rating is a judgement the
+        record needs, so it blocks RELEASE rather than the click that drafted
+        it, and the consultant rates it first.
+    """
+    client = _require_client(db, cid)
+    reg = _lock_current_register(db, cid, action="publishing")
+    if reg.finalized_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "risk_register_already_published",
+                "message": (
+                    "This version of the Risk Register is already published. "
+                    "Generate a new version to publish changes."
+                ),
+            },
+        )
+    # RATCHET, #554 R3 under option (b): a register drafted while the ATT&CK
+    # review queue held rows is refused here by the input gate, not by a
+    # refusal of its own. It protects: a register whose ATT&CK findings carry
+    # computed statuses nobody reviewed. No current writer reaches publish with
+    # one: release refuses while the queue holds a code
+    # (`release_readiness.blocking_condition`; pinned by
+    # test_attack_computed_status_routes.py::test_release_is_refused_until_the_queue_is_reviewed),
+    # and this gate needs every engaged input released. It would become
+    # reachable through a release path that skips that guard, or a computed
+    # status that can change after release.
+    #
+    # #737, Gene's rule: nothing final until every engaged input is final. FIRST,
+    # so a draft input is refused with the typed per-input reason rather than
+    # by the older #240 guard's untyped sentence, which still runs below for the
+    # shapes only it knows (pre-0047 provenance, a missing `inputs` key).
+    blockers = publish_blockers(db, cid, (reg.provenance or {}).get("current_inputs"))
+    if blockers:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "risk_register_inputs_not_final",
+                "message": _inputs_not_final_message(blockers),
+                "blockers": [
+                    {"input": b.kind, "reason": b.reason, "status": b.status} for b in blockers
+                ],
+            },
+        )
+    _require_certifiable_inputs(reg)
+    unrated = db.execute(
+        select(func.count())
+        .select_from(RiskEntry)
+        .where(RiskEntry.register_id == reg.id, RiskEntry.tier.is_(None))
+    ).scalar_one()
+    if unrated:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "risk_register_unrated_entries",
+                "message": (
+                    f"{unrated} {'entry has' if unrated == 1 else 'entries have'} no "
+                    "likelihood or impact. Rate "
+                    f"{'it' if unrated == 1 else 'each'} in the Register table before "
+                    "publishing."
+                ),
+                "unrated": unrated,
+            },
+        )
+    # Rendered as PUBLISHED files: no draft marker. `finalized_at` is set below.
+    _render_and_store(
+        db,
+        reg=reg,
+        client=client,
+        cid=cid,
+        admin=admin,
+        storage=storage,
+        draft=False,
+    )
+    reg.finalized_at = utcnow()
+    audit(
+        db,
+        action="risk_register.published",
+        target_type="risk_register",
+        target_id=reg.id,
+        actor_user_id=admin.id,
         details={"version": reg.version},
     )
     db.commit()
+    _log.info("risk_register_published", client_id=str(cid), register_id=str(reg.id))
     return _serialize(db, reg)
 
 
@@ -1970,9 +2351,9 @@ def _refuse_if_register_closed(reg: RiskRegister) -> None:
             detail={
                 "reason": "risk_register_published",
                 "message": (
-                    "This Risk Register has been exported, which publishes it to the "
-                    "client, so its ratings can no longer change. Generate a new "
-                    "version to rate entries again."
+                    "This Risk Register has been published to the client, so its "
+                    "ratings can no longer change. Generate a new version to rate "
+                    "entries again."
                 ),
             },
         )
@@ -2002,10 +2383,10 @@ def edit_entry_rating(
     `generate` derives it, and is never read from the body.
 
     Refused on a SUPERSEDED register (a consultant editing a version nobody
-    will export) and on a PUBLISHED one. Until #737 separates them, published
-    means `finalized_at`, which `export` sets and the client dashboard reads, so
-    an edit there would change numbers a client is already reading with nothing
-    re-published.
+    will export) and on a PUBLISHED one: `finalized_at`, which only `publish`
+    sets (#737) and the client dashboard reads, so an edit there would change
+    numbers a client is already reading with nothing re-published. Exporting
+    does not lock ratings.
 
     Returns the whole register rather than the entry, so the screen's counters
     and banners are re-derived from stored state in the same response.
@@ -2067,10 +2448,11 @@ def edit_entry_rating(
     # `superseded_by IS NULL` in the same statement. Exactly one writer wins
     # under Postgres READ COMMITTED and on SQLite, and the unit suite pins it.
     #
-    # WHAT THIS DOES NOT COVER, ON ITS OWN: an export already rendering. The
-    # export sets `finalized_at` only at its end, so this re-check passes
+    # WHAT THIS DOES NOT COVER, ON ITS OWN: a publish already rendering. The
+    # publish sets `finalized_at` only at its end, so this re-check passes
     # during the render; the register lock above (FOR SHARE here, FOR UPDATE
-    # in `export`) is what serialises the two, and only on Postgres.
+    # in `_lock_current_register`, which export and publish both take) is what
+    # serialises them, and only on Postgres.
     register_open = (
         select(RiskRegister.id)
         .where(
@@ -2281,10 +2663,12 @@ def _link_scope_fields(stored: object) -> dict:
     `render_xlsx`' own comment calls that state "a false claim rather than an
     absence" and refuses it; the screen took the option the exporter refuses.
 
-    UNREACHABLE from the one writer, measured: `_gate` sets
-    `unlocked = has_attack and (has_csf or has_zt)` from `_finalized_for_synthesis`
-    for all three services, and `generate` 409s unless `synthesizable_missing` is
-    empty, so `link_scopes` always carries at least two services. So this is a
+    UNREACHABLE from the one writer: `_gate` sets
+    `unlocked = has_attack and (has_csf or has_zt)` from `_exists_for_gate`, and
+    since #737 (#860 review B2) that counts the same non-archived population
+    `_current_for_synthesis` reads, so a generate that is allowed at all
+    synthesizes ATT&CK and CSF or ZT and `link_scopes` carries at least two
+    services. So this is a
     ratchet -- and it is the one sibling of a hardened class that was left
     unhandled, which is the unstated-exemption shape rather than a judgement.
 
@@ -2504,6 +2888,15 @@ def _serialize(
     else:
         resolved_excluded, excluded_recorded = [], False
 
+    # #737: per-entry source state, read from the generate-time record.
+    _raw_states = stored.get("source_states") if isinstance(stored, dict) else None
+    _source_states: dict[str, str] = (
+        {str(k): str(v) for k, v in _raw_states.items()} if isinstance(_raw_states, dict) else {}
+    )
+    _raw_pending = stored.get("review_pending") if isinstance(stored, dict) else None
+    _review_pending: set[str] = (
+        {str(x) for x in _raw_pending} if isinstance(_raw_pending, list) else set()
+    )
     return RiskRegisterResponse(
         excluded_inputs=resolved_excluded,
         excluded_inputs_recorded=excluded_recorded,
@@ -2570,7 +2963,15 @@ def _serialize(
         xlsx_filename=_fn(register.xlsx_artifact_id),
         pdf_filename=_fn(register.pdf_artifact_id),
         docx_filename=_fn(register.docx_artifact_id),
-        entries=[RiskEntryResponse.model_validate(e, from_attributes=True) for e in entries],
+        entries=[
+            RiskEntryResponse.model_validate(e, from_attributes=True).model_copy(
+                update={
+                    "source_state": _source_states.get(e.source_id or ""),
+                    "source_review_pending": (e.source_id or "") in _review_pending,
+                }
+            )
+            for e in entries
+        ],
         tier_counts=tier_counts(tiers),
         axis_counts=axis_counts(axes),
         action_counts=action_counts(actions),

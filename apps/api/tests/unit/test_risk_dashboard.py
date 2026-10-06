@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.storage.local import LocalFilesystemStorage
 from tests._attack_rows import first_standalone
+from tests._risk_inputs import release
 
 
 @pytest.fixture()
@@ -108,6 +109,10 @@ def _seed_attack_and_zt(c: TestClient, bearer: str, cid: str) -> None:
     # left them DRAFT and the generate below used to succeed.
     assert c.post(f"/attack/assessments/{a['id']}/approve", headers=h).status_code == 200
     assert c.post(f"/zt/assessments/{za['id']}/approve", headers=h).status_code == 200
+    # RELEASE both -- #737, Gene's rule (#736 item 13): a register is published
+    # only when every engaged input is released, and these tests publish.
+    release(c, bearer, cid, "attack", asvc["id"])
+    release(c, bearer, cid, "zt", zsvc["id"])
 
 
 def _generate_and_finalize(c: TestClient, bearer: str, cid: str) -> None:
@@ -115,7 +120,8 @@ def _generate_and_finalize(c: TestClient, bearer: str, cid: str) -> None:
     _seed_attack_and_zt(c, bearer, cid)
     g = c.post(f"/risk/clients/{cid}/register/generate", headers=h)
     assert g.status_code == 201, g.text
-    ex = c.post(f"/risk/clients/{cid}/register/export", headers=h)
+    # #737: publication, not export, is what opens the client dashboard.
+    ex = c.post(f"/risk/clients/{cid}/register/publish", headers=h)
     assert ex.status_code in (200, 201), ex.text
 
 
@@ -193,8 +199,8 @@ def test_generating_a_new_version_does_not_retract_the_delivered_one(app_client)
     assert still.json()["version"] == delivered_version
     assert still.json()["total_entries"] == delivered_total
 
-    # And exporting v2 hands it over.
-    ex = c.post(f"/risk/clients/{client_id}/register/export", headers=ah)
+    # And publishing v2 hands it over (#737: export no longer does).
+    ex = c.post(f"/risk/clients/{client_id}/register/publish", headers=ah)
     assert ex.status_code in (200, 201), ex.text
     now = c.get(f"/clients/{client_id}/risk/dashboard", headers=ch)
     assert now.status_code == 200, now.text
