@@ -71,10 +71,24 @@ export interface ExcludedRow {
   confirmed?: boolean;
 }
 
+/** #833 / #834: one value the extraction could not store as given. */
+export interface ExtractionFinding {
+  source_row_index: number | null;
+  item_name: string;
+  field: string;
+  reason: string;
+  value: string;
+  /** The column width a string was shortened to (reason "truncated"). */
+  width?: number;
+}
+
 export interface CapabilityList {
   /** #177: whether the extraction attributed every item to one uploaded row;
    *  null is "not recorded". */
   attribution_complete?: boolean | null;
+  /** #833 / #834: null is "not recorded" (a list from before the check);
+   *  [] is "checked, nothing to record". */
+  extraction_findings?: ExtractionFinding[] | null;
   /** #177/#193: from the api's one reader. "exact" licenses the excluded count
    *  as the count; "unknown" makes it a floor. Absent reads as unknown. */
   exclusion_count_state?: "not_recorded" | "exact" | "unknown" | null;
