@@ -169,7 +169,7 @@ def test_mitre_map_compares_status_and_reason_and_never_the_rationale() -> None:
     assert fields["status"]["equal"] == 0
     assert fields["reason_code"]["equal"] == 0
     assert fields["reason_code"]["both_absent"] == 0
-    assert fields["reason_code"]["one_absent"] == 0
+    assert fields["reason_code"]["one_absent"] == 1  # run b gave no reason: absent in one
     assert "rationale" not in fields
 
 
