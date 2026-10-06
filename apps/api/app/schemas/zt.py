@@ -12,6 +12,7 @@ from pydantic_core import PydanticCustomError
 from app.models.service import ServiceKind, ServiceStatus
 from app.models.zt_assessment import ZtAssessmentStatus, ZtFramework
 from app.schemas._numeric import IntNotBool
+from app.schemas.ai_runs import AiSource
 
 # ---------------------------------------------------------------------------
 # Catalog
@@ -98,6 +99,8 @@ class ZtAssessmentResponse(BaseModel):
     answers: list[ZtAnswerResponse]
     # Target stage the client picked at intake (2-4), or null if not set.
     client_target_stage: int | None = None
+    # #646: which mode drafted this assessment's AI suggestions. REQUIRED.
+    ai_source: AiSource
 
 
 class ZtAnswerPatch(BaseModel):
@@ -207,9 +210,13 @@ class ZtSelfAssessmentSubmit(BaseModel):
 
     `target_stage` lets the client confirm/adjust the maturity goal the gap
     engine measures against; persisted on the source request.
+
+    NO `ge`/`le` bound, deliberately (#85, as #406 did at intake): both ends are
+    refused in `routes/zt.py::submit_self_assessment` with a typed
+    `{reason, message}`, against the ladder of the assessment's own framework.
     """
 
-    target_stage: IntNotBool | None = Field(default=None, ge=1, le=4)
+    target_stage: IntNotBool | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +276,7 @@ class ZtDroppedSuggestion(BaseModel):
     | `superseded`   | a later entry in the same response overwrote this value  |
     | `locked`       | a human locked the row — a by-design skip, not a defect  |
     | `protected`    | an offline run declined to overwrite a non-AI answer     |
+    | `edited`       | the answer was edited after the run started (#645)       |
 
     `locked` and `protected` render separately from the rest. Both are by-design
     skips; folding them into one "N dropped" number rebuilds the alert-fatigue
@@ -291,6 +299,7 @@ class ZtDroppedSuggestion(BaseModel):
         "superseded",
         "locked",
         "protected",
+        "edited",
     ]
     # The capability code as the model wrote it (escaped and bounded), or None
     # when the model omitted it — never the literal "None", which fabricates a
@@ -318,7 +327,9 @@ class ZtDroppedSuggestion(BaseModel):
 
 
 class ZtRunAiResponse(BaseModel):
-    """Result of a zt_score Run-AI: what changed + the refreshed answers.
+    """What a zt_score Run-AI did, with the refreshed answers. Stored as
+    `ai_runs.result` (#645), every field the synchronous response carried, so
+    it survives a reload.
 
     `pillar_narratives`, `executive_summary` and `roadmap_summary` were removed
     in W1's ZT step (issue #64): all three were returned and none was ever

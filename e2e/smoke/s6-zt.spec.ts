@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
 import { atlasServiceId } from "../helpers/ids";
-import { acknowledgeOfflineAi } from "../helpers/ai";
+import { acknowledgeOfflineAi, waitForRun } from "../helpers/ai";
 
 /**
  * SMOKE_TEST.md section 6 (T6): the Zero Trust (DoD ZTRA) admin workspace.
@@ -178,13 +178,17 @@ test("Run AI clamps DoD suggestions to <= 3 and the roadmap groups gaps by month
   );
   await page.getByRole("button", { name: "Run AI" }).click();
   await acknowledgeOfflineAi(page);
-  const runBody = (await (await runDone).json()) as {
+  // #645: the POST starts a run; what it changed is on the completed run.
+  const started = (await (await runDone).json()) as { run_id: string };
+  const run = await waitForRun<{
     changed: Array<{
       capability_code: string;
       field: string;
       new: number | null;
     }>;
-  };
+  }>(page, started.run_id);
+  expect(run.status, `run ${run.id}: ${run.error_message}`).toBe("completed");
+  const runBody = run.result as NonNullable<typeof run.result>;
 
   // Suggestions were applied...
   expect(runBody.changed.length).toBeGreaterThan(0);

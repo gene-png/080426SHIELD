@@ -19,6 +19,12 @@ export interface CsfGapListProps {
   loading?: boolean;
   targetTier: number;
   onChangeTargetTier: (next: number) => void;
+  /**
+   * #85: why the select shows what it shows, when the target on file could not
+   * be used (a stored 1 is a starting point, not a target). Null renders
+   * nothing.
+   */
+  targetNote?: string | null;
 }
 
 function severityTone(gapSize: number): "warning" | "info" | "success" {
@@ -33,6 +39,7 @@ export function CsfGapList({
   loading,
   targetTier,
   onChangeTargetTier,
+  targetNote = null,
 }: CsfGapListProps): JSX.Element {
   return (
     <Card>
@@ -66,6 +73,11 @@ export function CsfGapList({
               {analysis.total_gap_count === 1 ? "" : "s"} ·{" "}
               {analysis.unscored_count} unscored
             </span>
+          ) : null}
+          {targetNote ? (
+            <p className="w-full text-xs text-ink-secondary" role="note">
+              {targetNote}
+            </p>
           ) : null}
         </div>
 

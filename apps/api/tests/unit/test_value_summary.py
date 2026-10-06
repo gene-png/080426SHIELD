@@ -264,6 +264,8 @@ def _make_released_attack(
         # fixture predates that column; `None` is the pre-0052 (stale) state.
         catalog_version=SOURCE_VERSION if catalog_version == "current" else catalog_version,
         parent_rules=2,  # what approve writes (#620, migration 0054)
+        # #554 R3: models an approved/released pre-R3 assessment, backfilled by 0059.
+        status_rules=1,
     )
     db.add(a)
     db.flush()

@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
 import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
+import { apiExtract } from "../helpers/ai";
 
 /**
  * The derived six-stage progress bar.
@@ -81,12 +82,7 @@ test("stage evidence is scoped to the version that produced it", async ({
   ).json();
 
   // v1: extract, so an analysis run exists and is attributable to THIS version.
-  const v1 = await (
-    await request.post(
-      `${API_BASE}/tech-debt/services/${serviceId}/capability-lists/extract`,
-      { headers: H, data: { artifact_id: artifact.id } },
-    )
-  ).json();
+  const v1 = await apiExtract(request, H, serviceId, artifact.id);
 
   const afterExtract = await stagesFor(request, H, serviceId);
   expect(afterExtract.prepare).toBe("complete");
@@ -105,12 +101,7 @@ test("stage evidence is scoped to the version that produced it", async ({
 
   // A new draft with no extraction: created by uploading, not by running AI.
   // The version row exists; the analysis that produced v1 predates it.
-  const v2 = await (
-    await request.post(
-      `${API_BASE}/tech-debt/services/${serviceId}/capability-lists/extract`,
-      { headers: H, data: { artifact_id: artifact.id } },
-    )
-  ).json();
+  const v2 = await apiExtract(request, H, serviceId, artifact.id);
   expect(v2.version, "a fresh version was minted").toBeGreaterThan(v1.version);
 
   // v2 ran its own extraction, so it is legitimately analysed — the point here

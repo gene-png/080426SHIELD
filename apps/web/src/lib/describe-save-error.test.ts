@@ -222,6 +222,25 @@ describe("describeSaveError", () => {
     expect(text).toContain("was not saved");
   });
 
+  it("says the outcome is unknown, not 'not saved', when the proxy never saw the answer (#550)", () => {
+    // Before the re-fetch: no restore claim, no failure claim. The server's
+    // generic sentence is not appended; this one already says it.
+    const unknown = {
+      status: 504,
+      payload: {
+        error: {
+          code: 504,
+          reason: "upstream_outcome_unknown",
+          message:
+            "We couldn't confirm whether this finished. It may still complete; check before trying again.",
+        },
+      },
+    };
+    expect(describeSaveError(unknown, "CISA.ID.01")).toBe(
+      "CISA.ID.01: we couldn't confirm whether it was saved. Your consultant can help if this keeps happening.",
+    );
+  });
+
   it("does not tell the client to try again", () => {
     // The likeliest failure is a 409 — the consultant approved the assessment
     // while the client was typing — and retrying can never succeed for a

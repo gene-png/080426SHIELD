@@ -120,7 +120,7 @@ function buildMetrics(summary: ValueSummary): Metric[] {
       hint:
         savings !== null && !summary.tech_debt_savings_cost_known
           ? "A floor — some retired tools had no cost on file."
-          : "Annual spend on tooling marked for consolidation.",
+          : "Annual spend on tools marked to cut.",
       unresolved: summary.tech_debt_savings_unresolved,
     },
     {

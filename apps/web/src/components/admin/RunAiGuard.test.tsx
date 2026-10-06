@@ -32,11 +32,17 @@ function statusBody(over: Record<string, unknown> = {}) {
 }
 
 function mockStatus(body: Record<string, unknown>) {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    new Response(JSON.stringify(body), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    }),
+  // A FRESH Response per call (#645). A body can be read once, and one shared
+  // Response made every read after the first fail -- which the guard used to
+  // treat as an outage and fail OPEN on, so tests rendering it twice passed
+  // through the outage path rather than the one they name. It now fails
+  // closed, which exposed that.
+  vi.spyOn(globalThis, "fetch").mockImplementation(
+    async () =>
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
   );
 }
 
@@ -216,14 +222,22 @@ describe("RunAiGuard (issue 2)", () => {
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 
-  it("fails open when the status endpoint is unavailable — never blocks work", async () => {
+  // CHANGED, AND NOT WEAKENED (#645, the coordinator's verdict): this was
+  // "fails open when the status endpoint is unavailable -- never blocks work",
+  // asserting `onProceed` ran. An unreadable status acknowledges nothing, so
+  // there is no truthful `serves` to send; the guard now fails CLOSED. The
+  // fail-closed tests below pin the new behaviour in both directions.
+  it("fails CLOSED when the status endpoint is unavailable -- nothing was acknowledged", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
     const onProceed = vi.fn();
     renderGuard(onProceed);
 
     fireEvent.click(screen.getByRole("button", { name: "Run AI" }));
 
-    await waitFor(() => expect(onProceed).toHaveBeenCalledTimes(1));
+    expect(
+      await screen.findByTestId("run-ai-status-unknown"),
+    ).toBeInTheDocument();
+    expect(onProceed).not.toHaveBeenCalled();
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 });
@@ -564,5 +578,117 @@ describe("the dialog's accessible description (#471)", () => {
       dialog.querySelector(`#${id}`),
       "the described element is not inside the dialog",
     ).not.toBeNull();
+  });
+});
+
+describe("RunAiGuard tells the run what the admin acknowledged (#504, #645)", () => {
+  it("passes 'live' when AI is live", async () => {
+    mockStatus(
+      statusBody({ ready: true, key_source: "database", serves: "live" }),
+    );
+    const onProceed = vi.fn();
+    renderGuard(onProceed);
+    fireEvent.click(screen.getByRole("button", { name: "Run AI" }));
+    await waitFor(() => expect(onProceed).toHaveBeenCalledWith("live"));
+  });
+
+  it("passes 'offline' when the admin chose to continue offline", async () => {
+    mockStatus(statusBody());
+    const onProceed = vi.fn();
+    renderGuard(onProceed);
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Run AI" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Continue offline" }),
+    );
+    expect(onProceed).toHaveBeenCalledWith("offline");
+  });
+
+  it("passes 'offline' on a later run the earlier acknowledgement covers", async () => {
+    // A FRESH Response per call: a body can be read once, and `mockStatus`
+    // hands the same one to every fetch, so the second render's status read
+    // would fail and the guard would fail CLOSED (statusUnknown) -- the
+    // outage path, not this.
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () =>
+        new Response(JSON.stringify(statusBody()), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+    const first = vi.fn();
+    const { unmount } = renderGuard(first);
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Run AI" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Continue offline" }),
+    );
+    unmount();
+    const reads = vi.mocked(globalThis.fetch).mock.calls.length;
+    const second = vi.fn();
+    renderGuard(second);
+    await waitFor(() =>
+      expect(vi.mocked(globalThis.fetch).mock.calls.length).toBeGreaterThan(
+        reads,
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Run AI" }));
+    await waitFor(() => expect(second).toHaveBeenCalledWith("offline"));
+  });
+});
+
+describe("RunAiGuard fails closed on an unreadable AI status (#645)", () => {
+  function renderWithDisabled(onProceed: (serves: string) => void) {
+    return render(
+      <RunAiGuard onProceed={onProceed}>
+        {({ onClick, statusUnknown }) => (
+          <button type="button" onClick={onClick} disabled={statusUnknown}>
+            Run AI
+          </button>
+        )}
+      </RunAiGuard>,
+    );
+  }
+
+  it("disables Run AI and says why when the status cannot be read", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
+    const onProceed = vi.fn();
+    renderWithDisabled(onProceed);
+    const notice = await screen.findByTestId("run-ai-status-unknown");
+    expect(notice).toHaveTextContent(
+      /Couldn.t check whether AI is ready to run live, so this AI action is off\. Reload the page/,
+    );
+    expect(screen.getByRole("button", { name: "Run AI" })).toBeDisabled();
+    expect(onProceed).not.toHaveBeenCalled();
+  });
+
+  it("enables Run AI again once a later read succeeds", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockImplementation(
+        async () =>
+          new Response(
+            JSON.stringify(
+              statusBody({
+                ready: true,
+                key_source: "database",
+                serves: "live",
+              }),
+            ),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+      );
+    const onProceed = vi.fn();
+    renderWithDisabled(onProceed);
+    await screen.findByTestId("run-ai-status-unknown");
+    fireEvent.click(screen.getByRole("button", { name: "check again" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Run AI" })).toBeEnabled(),
+    );
+    expect(screen.queryByTestId("run-ai-status-unknown")).toBeNull();
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+    fireEvent.click(screen.getByRole("button", { name: "Run AI" }));
+    await waitFor(() => expect(onProceed).toHaveBeenCalledWith("live"));
   });
 });

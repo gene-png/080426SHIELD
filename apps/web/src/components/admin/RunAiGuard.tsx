@@ -9,6 +9,7 @@ import {
 } from "@/lib/admin/aiStatus";
 
 import type { AiStatus } from "@/lib/admin/client";
+import type { AiServes } from "@/lib/aiRuns/types";
 import type { JSX } from "react";
 
 /**
@@ -33,29 +34,58 @@ import type { JSX } from "react";
  * through. The first cut failed open on `status === null`, which conflates
  * "still loading" with "endpoint down" — so under load the guard silently ran
  * and wrote 1646 fields of canned output (caught by the full-suite s34 run,
- * pinned by RunAiGuard.test.tsx). A genuine status outage still fails open:
- * an outage must not stop an admin working, but not-asked-yet is not an
- * outage.
+ * pinned by RunAiGuard.test.tsx).
+ *
+ * A status that CANNOT BE READ FAILS CLOSED (#645, the coordinator's verdict;
+ * it used to fail open). Nothing was acknowledged, so there is no truthful
+ * `serves` to send, and "missing data defaults to unconfirmed": the control
+ * is disabled, the guard says the status could not be checked, and offers a
+ * re-check. A failed read is not the same as "still loading", which holds the
+ * click as before.
  */
 export function RunAiGuard({
   onProceed,
   children,
 }: {
-  /** Runs when AI is ready, already acknowledged, or the admin chooses to continue offline. */
-  onProceed: () => void;
-  /** The Run-AI control. Receives the click handler to attach. */
-  children: (props: { onClick: () => void }) => React.ReactNode;
+  /**
+   * Runs when AI is ready, already acknowledged, or the admin chooses to
+   * continue offline. Told WHAT the admin acknowledged (#504): the Run-AI
+   * request carries it, and the api refuses a run that would now go live
+   * after offline was acknowledged, closing the window between this page's
+   * status read and the click.
+   */
+  onProceed: (serves: AiServes) => void;
+  /**
+   * The Run-AI control. Receives the click handler to attach, and
+   * `statusUnknown`, which the control must add to its `disabled`: true while
+   * the AI status could not be read.
+   */
+  children: (props: {
+    onClick: () => void;
+    statusUnknown: boolean;
+  }) => React.ReactNode;
 }): JSX.Element {
-  const { status, phase, settled } = useAiStatus();
+  const { status, phase, settled, refresh } = useAiStatus();
   /** The status the open warning describes; non-null exactly while prompting. */
   const [promptFor, setPromptFor] = React.useState<AiStatus | null>(null);
   const [awaitingStatus, setAwaitingStatus] = React.useState(false);
+  /** A held click whose own status read came back unreadable. */
+  const [clickFoundNoStatus, setClickFoundNoStatus] = React.useState(false);
+  const statusUnknown = phase === "error" || clickFoundNoStatus;
 
   /** Decide what a click means, given a SETTLED status. */
   function decide(s: AiStatus | null): void {
-    // A status OUTAGE fails open — it must not block work.
-    if (!s || s.ready || hasAcknowledgedOffline(s)) {
-      onProceed();
+    if (!s) {
+      // FAILS CLOSED: nothing was acknowledged, so nothing may be sent.
+      setClickFoundNoStatus(true);
+      return;
+    }
+    if (s.ready) {
+      onProceed("live");
+      return;
+    }
+    if (hasAcknowledgedOffline(s)) {
+      onProceed("offline");
       return;
     }
     setPromptFor(s);
@@ -74,15 +104,41 @@ export function RunAiGuard({
     decide(resolved);
   }
 
+  function checkAgain(): void {
+    setClickFoundNoStatus(false);
+    refresh();
+  }
+
   function continueOffline(): void {
     if (promptFor) acknowledgeOffline(promptFor);
     setPromptFor(null);
-    onProceed();
+    onProceed("offline");
   }
 
   return (
     <>
-      {children({ onClick: handleClick })}
+      {children({ onClick: handleClick, statusUnknown })}
+      {statusUnknown ? (
+        <p
+          className="mt-2 text-sm text-status-warning-fg"
+          role="alert"
+          data-testid="run-ai-status-unknown"
+        >
+          {/* The remedies name controls that exist today: the browser's own
+              reload, and the button below, which calls `useAiStatus`'s
+              `refresh()` and so re-reads `/api/proxy/admin/ai-status`. */}
+          Couldn&apos;t check whether AI is ready to run live, so this AI action
+          is off. Reload the page, or{" "}
+          <button
+            type="button"
+            onClick={checkAgain}
+            className="font-semibold underline"
+          >
+            check again
+          </button>
+          .
+        </p>
+      ) : null}
       {awaitingStatus ? (
         // Deliberately not role="status": /admin/health already owns that
         // landmark and a second one breaks its locator. aria-live announces it

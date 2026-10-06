@@ -25,6 +25,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     ForeignKey,
     Integer,
@@ -57,6 +58,17 @@ class CapabilityDisposition(enum.StrEnum):
     KEEP = "keep"
     CONSOLIDATE = "consolidate"
     CUT = "cut"
+
+
+#: The dispositions that RETIRE a tool: "Cut" and "Cut, covered by another
+#: tool" (stored `consolidate`). ONE definition, read by Tech Debt savings
+#: (`tech_debt/savings.py::SAVINGS_DISPOSITIONS`, each at the tool's full
+#: annual cost) and by ATT&CK's planned-retirement marks (`routes/attack.py`'s
+#: plan entries), so the two cannot disagree about which tools leave. Decided by
+#: Gene and ruled by the advisor on #736, 2026-10-03 (#810).
+RETIRING_DISPOSITIONS: frozenset[CapabilityDisposition] = frozenset(
+    {CapabilityDisposition.CUT, CapabilityDisposition.CONSOLIDATE}
+)
 
 
 class SecurityFunction(enum.StrEnum):
@@ -104,6 +116,11 @@ class CapabilityList(UUIDPKMixin, TimestampMixin, Base):
     # "nothing was excluded" from "a row was excluded and another row produced
     # two items" — see `tech_debt/exporters.py`.
     excluded_rows: Mapped[list | None] = mapped_column(JSON)
+    # #177 (migration 0058): whether the extraction attributed every item to
+    # one uploaded row, so the exclusion count above is exact. NULL means NOT
+    # RECORDED -- a list written before 0058, or one no extraction wrote --
+    # and is never read as complete (`reconcile.exclusion_count_state`).
+    attribution_complete: Mapped[bool | None] = mapped_column(Boolean)
 
     # [{item_id, name}] — the security-scope membership as it stood at approval
     # (migration 0043, W3). An APPROVED list stays editable through five doors
@@ -114,6 +131,19 @@ class CapabilityList(UUIDPKMixin, TimestampMixin, Base):
     # NULL on pre-0043 lists, which keep reading live rows rather than having a
     # membership invented for them.
     approved_membership: Mapped[list | None] = mapped_column(JSON)
+
+    # #640 (migration 0056). Every step-2 edit increments `revision` in SQL;
+    # approve's compare-and-swap copies it into `approved_revision`. The
+    # approval is current iff the two are equal, so an APPROVED list that was
+    # edited afterwards is refused at finalize and release until step 3 runs
+    # again. NULL `approved_revision` (a draft) never equals a revision.
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    approved_revision: Mapped[int | None] = mapped_column(Integer)
+
+    @property
+    def approval_current(self) -> bool:
+        """The approval covers the list as it stands now."""
+        return self.approved_revision is not None and self.approved_revision == self.revision
 
 
 class CapabilityItem(UUIDPKMixin, TimestampMixin, Base):

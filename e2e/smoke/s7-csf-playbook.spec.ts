@@ -5,7 +5,7 @@ import { expect, test, type APIResponse, type Page } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
 import { atlasServiceId } from "../helpers/ids";
-import { acknowledgeOfflineAi } from "../helpers/ai";
+import { acknowledgeOfflineAi, waitForRun } from "../helpers/ai";
 
 /**
  * SMOKE_TEST.md section 7 (T7): the NIST CSF 2.0 full Playbook (Work Order D4).
@@ -261,9 +261,13 @@ test("Seed Working Profiles (~106 subcats), Run AI drafts dimensions + narrative
   await runBtn.click();
   // The offline guard intercepts the first click when no key is loaded.
   await acknowledgeOfflineAi(page);
-  const runBody = (await (await runDone).json()) as {
+  // #645: the POST starts a run; what it changed is on the completed run.
+  const started = (await (await runDone).json()) as { run_id: string };
+  const run = await waitForRun<{
     changed: Array<{ tier: string; subcategory_code: string; field: string }>;
-  };
+  }>(page, started.run_id);
+  expect(run.status, `run ${run.id}: ${run.error_message}`).toBe("completed");
+  const runBody = run.result as NonNullable<typeof run.result>;
   expect(runBody.changed.length).toBeGreaterThan(0);
   // Dimensions were drafted...
   const dimFields = new Set([

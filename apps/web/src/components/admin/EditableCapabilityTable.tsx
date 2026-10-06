@@ -4,6 +4,7 @@ import * as React from "react";
 import { cn, StatusPill } from "@shield/design-system";
 
 import { patchCapabilityItem, proxyMessage } from "@/lib/tech_debt/client";
+import { DISPOSITION_LABEL } from "@/lib/tech_debt/dispositionLabels";
 import type {
   CapabilityDisposition,
   CapabilityItem,
@@ -69,12 +70,6 @@ const COLUMNS: ReadonlyArray<{
 ];
 /** Row checkboxes (#641), shown only when a bulk action is available. */
 const SELECT_COLUMN = { label: "Select", rem: 2.75 };
-
-const DISPOSITION_LABEL: Record<CapabilityDisposition, string> = {
-  keep: "Keep",
-  consolidate: "Consolidate",
-  cut: "Cut",
-};
 
 /** The bulk bar's "Undecided" choice; sent to the API as null. */
 const UNDECIDED = "undecided";
@@ -338,17 +333,15 @@ export function EditableCapabilityTable({
                         aria-label="Disposition"
                       >
                         <option value="">Undecided…</option>
-                        <option value="keep">Keep</option>
-                        <option value="consolidate">Consolidate</option>
-                        <option value="cut">Cut</option>
+                        <option value="keep">{DISPOSITION_LABEL.keep}</option>
+                        <option value="consolidate">
+                          {DISPOSITION_LABEL.consolidate}
+                        </option>
+                        <option value="cut">{DISPOSITION_LABEL.cut}</option>
                       </select>
                       {item.disposition ? (
                         <StatusPill tone={dispositionTone(item.disposition)}>
-                          {item.disposition === "keep"
-                            ? "Keep"
-                            : item.disposition === "consolidate"
-                              ? "Consolidate"
-                              : "Cut"}
+                          {DISPOSITION_LABEL[item.disposition]}
                         </StatusPill>
                       ) : null}
                     </div>
@@ -489,9 +482,9 @@ export function EditableCapabilityTable({
           aria-label="Disposition for selected rows"
         >
           <option value="">Choose a disposition…</option>
-          <option value="keep">Keep</option>
-          <option value="consolidate">Consolidate</option>
-          <option value="cut">Cut</option>
+          <option value="keep">{DISPOSITION_LABEL.keep}</option>
+          <option value="consolidate">{DISPOSITION_LABEL.consolidate}</option>
+          <option value="cut">{DISPOSITION_LABEL.cut}</option>
           <option value={UNDECIDED}>Undecided</option>
         </select>
         <button

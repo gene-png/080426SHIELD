@@ -43,6 +43,12 @@ vi.mock("@/lib/zt/client", () => ({
   discardAssessment: vi.fn(),
   patchAnswer: vi.fn(),
   runZtAi: vi.fn(),
+  // #645: the workspace reads the service's runs on load and polls one it
+  // follows. No run, by default.
+  fetchZtRun: vi.fn(),
+  fetchZtRunSummary: vi.fn(() =>
+    Promise.resolve({ running: null, latest: null, last_completed: null }),
+  ),
   finalizeZtDeliverable: vi.fn(),
   releaseZtDeliverable: vi.fn(),
 }));
@@ -105,6 +111,14 @@ function draft(): ZtAssessment {
     answers: [],
     client_target_stage: 3,
     documents_stale: false,
+    // #646 (Batch F): required since; not under test here. A fresh
+    // draft with no completed run on load: "none", its true state.
+    ai_source: {
+      state: "none",
+      sentence: "No AI suggestions were used in this assessment.",
+      live_runs: 0,
+      fixture_runs: 0,
+    },
   } as unknown as ZtAssessment;
 }
 

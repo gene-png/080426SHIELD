@@ -14,6 +14,7 @@ from typing import Any, ClassVar, Literal
 from pydantic import BaseModel, model_serializer, model_validator
 
 from app.models.service import ServiceKind
+from app.schemas.ai_runs import AiSource
 
 __all__ = [
     "AttackDashboardResponse",
@@ -89,6 +90,12 @@ class AttackTacticCoverage(BaseModel):
     outside_control_surface: int | None
     unable_to_determine: int | None
     coverage_pct: float
+    # #489: False where nothing here is Covered, Partial, Gap or pending review,
+    # so `coverage_pct` (0.0 there) is "not measured", as the deliverable says.
+    # The exporter's own rule (`attack.exporters.coverage_measured`). Under BOTH
+    # rule sets: a dashboard is a live render, and showing 0.0% where the
+    # delivered document says "not measured" is #489 itself. REQUIRED.
+    coverage_measured: bool
 
     @model_serializer(mode="wrap")
     def _drop_counts_not_shown(self, handler: Any) -> dict[str, Any]:
@@ -103,6 +110,46 @@ _OUTSIDE_COUNT_KEYS = frozenset({"outside_control_surface", "unable_to_determine
 def _without_none(data: dict[str, Any], keys: frozenset[str]) -> dict[str, Any]:
     """`data` without those of `keys` whose value is None (#620, D-094)."""
     return {k: v for k, v in data.items() if not (k in keys and v is None)}
+
+
+class AttackPartialReason(BaseModel):
+    """#554 R1: why a Partial technique is partial, in the client's words: a
+    short label and one sentence, from `attack/partial_reasons.py`."""
+
+    label: str
+    sentence: str
+
+
+class AttackPartialReasonCount(BaseModel):
+    """#554 R1: one row of the dashboard's "Partial coverage, by reason" table,
+    the same row the deliverable's table prints."""
+
+    label: str
+    sentence: str
+    count: int
+
+
+class AttackInPlaceState(BaseModel):
+    """#554 R3: the machine value of each capability (`computed.InPlace`):
+    in_place, not_in_place, awaiting_review or cannot_be_prevented. What the
+    web branches on; the words beside it are only for display."""
+
+    detect: str
+    prevent: str
+    respond: str
+
+
+class AttackInPlace(BaseModel):
+    """#554 R3: which of Detect / Prevent / Respond are in place, in the
+    client's words (`attack/computed.py::IN_PLACE_TEXT`), the approved line, and
+    the machine values (`state`) any logic must read instead of the words."""
+
+    detect: str
+    prevent: str
+    respond: str
+    line: str
+    cannot_be_prevented: bool
+    state: AttackInPlaceState
 
 
 class AttackDashboardTechnique(BaseModel):
@@ -137,8 +184,16 @@ class AttackDashboardTechnique(BaseModel):
     #: #620 (Gene's condition, D-094): its dashboard must be byte-identical to
     #: what was delivered, and main never sent them. ONLY these two are dropped;
     #: every other null (a missing rationale) is still sent as null.
+    #: #554 R1: why this technique is Partial, on a Partial row only, under
+    #: both rule sets (the coordinator's option (a)). OMITTED on every other
+    #: row, so a Covered or Gap row's JSON is unchanged.
+    partial_reason: AttackPartialReason | None = None
+    #: #554 R3: what is in place, on a row whose status was computed. OMITTED on
+    #: every other row and for an assessment approved before R3, whose JSON is
+    #: unchanged.
+    in_place: AttackInPlace | None = None
     _omit_when_none: ClassVar[frozenset[str]] = frozenset(
-        {"computed_parent", "sub_technique_count"}
+        {"computed_parent", "sub_technique_count", "partial_reason", "in_place"}
     )
 
     @model_serializer(mode="wrap")
@@ -172,6 +227,8 @@ class AttackDashboardRollup(BaseModel):
     outside_control_surface: int | None
     unable_to_determine: int | None
     coverage_pct: float
+    # #489, as on each tactic above.
+    coverage_measured: bool
     by_tactic: list[AttackTacticCoverage]
 
     @model_serializer(mode="wrap")
@@ -200,12 +257,48 @@ class AttackDashboardResponse(BaseModel):
     #: byte-identical to what was delivered (Gene's condition, D-094). The web
     #: shows the triad's population sentence only when this is true.
     parents_computed: bool | None = None
+    # #646: which mode drafted the released assessment's AI suggestions, as the
+    # deliverable states it. REQUIRED.
+    ai_source: AiSource
     rollup: AttackDashboardRollup
     techniques: list[AttackDashboardTechnique]
+    #: #686 (D-105): cited tool -> "planned_retirement" | "unknown", from the
+    #: client's CURRENT Tech Debt consolidation plan. A tool absent here is not
+    #: retiring. OMITTED, with `retirement_notes`, when the client has no
+    #: approved or released Tech Debt list, so such a response is unchanged.
+    tool_retirement: dict[str, str] | None = None
+    #: The count sentences the deliverable prints, each only when non-zero.
+    retirement_notes: list[str] | None = None
+    #: #554 R1 (the advisor's ruling (i), #736 18:34Z): the "Partial coverage,
+    #: by reason" table, from the deliverable's own `partial_reason_counts`, so
+    #: its rows add up to `rollup.partial`. OMITTED when there is no Partial.
+    partial_reasons: list[AttackPartialReasonCount] | None = None
+    #: #554 R3 (Q4): the deliverable's sentence beside the percentage. OMITTED
+    #: before R3 and when nothing awaits review.
+    awaiting_review_sentence: str | None = None
+    #: #554 R3: True when this assessment's statuses are computed from Detect /
+    #: Prevent / Respond. OMITTED before R3, whose JSON is unchanged.
+    statuses_computed: bool | None = None
+    #: #801: the figure after planned changes with the current plan, and its
+    #: counts. OMITTED where there is nothing to recount.
+    after_planned_changes: list[str] | None = None
 
     @model_serializer(mode="wrap")
     def _drop_unset_rule_key(self, handler: Any) -> dict[str, Any]:
-        return _without_none(handler(self), frozenset({"parents_computed"}))
+        return _without_none(
+            handler(self),
+            frozenset(
+                {
+                    "parents_computed",
+                    "tool_retirement",
+                    "retirement_notes",
+                    "partial_reasons",
+                    "awaiting_review_sentence",
+                    "statuses_computed",
+                    "after_planned_changes",
+                }
+            ),
+        )
 
     @model_validator(mode="after")
     def _counts_travel_with_the_rule(self) -> AttackDashboardResponse:
@@ -304,6 +397,9 @@ class CsfDashboardResponse(BaseModel):
     # only ever receive True. Same contract as the other four (issue 4).
     released: bool = True
     deliverable_version: int
+    # #646: which mode drafted the AI suggestions behind these figures, as the
+    # deliverable states it. REQUIRED.
+    ai_source: AiSource
 
     overall_label: str
     current_tier: float | None
@@ -314,7 +410,9 @@ class CsfDashboardResponse(BaseModel):
     target_label: str
     target_pct: float
     # "client" when the tier came from the intake choice, "default" when the
-    # client never set one. Never silently conflated — see the docstring.
+    # client never set one; "client_out_of_range", "client_unparseable" and
+    # "client_below_floor" (#85) when they set one that could not be used.
+    # Never silently conflated — see the docstring.
     target_tier_source: str
     #: #209: the moment the engagement target behind every figure above was
     #: FROZEN -- the finalize timestamp of the deliverable this dashboard
@@ -364,12 +462,13 @@ class ZtDashboardResponse(BaseModel):
     reads as good news, which is why this shipped unnoticed.
 
     `target_stage_source` states which target was used, so a fallback is never
-    mistaken for a decision. It carries FOUR values, not the CSF twin's two,
-    because `zt/scoring.py::resolve_target_stage` distinguishes "the client
-    chose nothing" from "the client's choice could not be used" — and the
-    latter is answerable by re-asking them, so flattening the two would throw
-    away the more actionable fact. See `targetNote` in `lib/dashboards/zt.ts`,
-    which renders all four.
+    mistaken for a decision. It carries more than two values, because
+    `zt/scoring.py::resolve_target_stage` distinguishes "the client chose
+    nothing" from "the client's choice could not be used" (out of range,
+    unparseable, or, since #85, below the floor) — and the latter is
+    answerable by re-asking them, so flattening the two would throw away the
+    more actionable fact. See `targetNote` in `lib/dashboards/zt.ts`, which
+    renders every one, and the resolver's docstring for the list.
     """
 
     service_id: uuid.UUID
@@ -380,6 +479,9 @@ class ZtDashboardResponse(BaseModel):
     # the default keeps every existing consumer working.
     released: bool = True
     deliverable_version: int
+    # #646: which mode drafted the AI suggestions behind these figures, as the
+    # deliverable states it. REQUIRED.
+    ai_source: AiSource
     framework: str  # "cisa_ztmm_2_0" | "dod_ztra"
     framework_label: str
     current_label: str
@@ -389,7 +491,8 @@ class ZtDashboardResponse(BaseModel):
 
     # The engagement-level target the gaps were computed against, and where it
     # came from: "client" | "default" | "client_out_of_range" |
-    # "client_unparseable". Never silently conflated — see the docstring.
+    # "client_unparseable" | "client_below_floor" (#85). Never silently
+    # conflated — see the docstring.
     target_stage: int
     target_stage_source: str
     #: The ZT twin of `CsfDashboardResponse.target_frozen_at`; see there for
@@ -477,7 +580,7 @@ class TechDebtRedundancy(BaseModel):
 
     category: str
     count: int
-    savings_usd: float  # sum of annual cost of items marked CUT in this category
+    savings_usd: float  # tech_debt.savings.estimated_savings over this category (#804)
     items: list[TechDebtItem]
 
 
@@ -496,10 +599,13 @@ class TechDebtDashboardResponse(BaseModel):
     # the default keeps every existing consumer working.
     released: bool = True
     deliverable_version: int
+    # #646: which mode drafted the AI suggestions behind these figures, as the
+    # deliverable states it. REQUIRED.
+    ai_source: AiSource
     total_applications: int
     annual_spend_usd: float
     identified_savings_usd: float
-    savings_cost_known: bool  # False when a CUT item lacked a cost (savings is a floor)
+    savings_cost_known: bool  # False when a counted (cut) item lacked a cost (savings is a floor)
     # #126. THREE states, not a bool mirroring `savings_cost_known`.
     #
     #   "complete" every source row is accounted for and every item is costed
@@ -525,6 +631,10 @@ class TechDebtDashboardResponse(BaseModel):
     source_rows_total: int | None = None
     included_count: int = 0
     excluded_count: int = 0
+    # #177/#193: True only when the extraction attributed every item to one
+    # uploaded row, so `excluded_count` is the count. False makes it a FLOOR
+    # (the true count may be higher, and is unknown); the client is told so.
+    excluded_count_exact: bool
     redundant_category_count: int
     spend_by_category: list[TechDebtCategorySpend]
     sprawl_by_category: list[TechDebtCategorySpend]
@@ -562,6 +672,9 @@ class RiskDashboardResponse(BaseModel):
     # the default keeps every existing consumer working.
     released: bool = True
     version: int
+    # #646: "not recorded" until Risk runs through the run framework (#504);
+    # see `RiskExportContext.ai_mode`. REQUIRED, so the client is told.
+    ai_source: AiSource
     total_entries: int
     #: #313. How many entries are in `total_entries` and in NO breakdown.
     #:
@@ -605,7 +718,7 @@ class ValueSummaryResponse(BaseModel):
     A DETERMINISTIC synthesis of already-computed engine outputs — no LLM, no new
     scoring. Each slot is `None` until the service has a RELEASED deliverable
     (§12 visibility): the card renders "pending" for a null, never a fake number.
-    `tech_debt_savings_cost_known` is False when a cut capability lacked a cost,
+    `tech_debt_savings_cost_known` is False when a counted (cut) capability lacked a cost,
     so the UI can flag the savings figure as a floor.
 
     **A null slot carries TWO facts and needs a companion flag to tell them

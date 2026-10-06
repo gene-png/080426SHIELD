@@ -1,3 +1,5 @@
+import type { AiSource } from "@/lib/aiSource/types";
+
 export type SecurityFunction = "prevent" | "detect" | "respond";
 
 /** Wire types mirroring apps/api/app/schemas/tech_debt.py. */
@@ -50,6 +52,12 @@ export interface CapabilityItem {
   security_functions?: SecurityFunction[];
   /** A consultant has agreed with a NEGATIVE classification. */
   security_class_confirmed?: boolean;
+  /**
+   * #845: how the sign-off queue words this row. "not_in_use" is a security
+   * tool the extraction marked "Security tool not in use:" (v3.2); null when
+   * the row is not awaiting sign-off.
+   */
+  signoff_kind?: "not_in_use" | "not_security" | null;
   source_artifact_id: string | null;
   disposition: CapabilityDisposition | null;
   disposition_rationale: string | null;
@@ -64,12 +72,30 @@ export interface ExcludedRow {
 }
 
 export interface CapabilityList {
+  /** #177: whether the extraction attributed every item to one uploaded row;
+   *  null is "not recorded". */
+  attribution_complete?: boolean | null;
+  /** #177/#193: from the api's one reader. "exact" licenses the excluded count
+   *  as the count; "unknown" makes it a floor. Absent reads as unknown. */
+  exclusion_count_state?: "not_recorded" | "exact" | "unknown" | null;
+  /** #845: rows marked "Security tool not in use:" that were also given
+   *  security functions, so they stay in the ATT&CK assessment. */
+  not_in_use_contradictions?: number;
+  /** #646: which mode drafted this list, as the API states it. Null only on
+   *  a response built without it. */
+  ai_source?: AiSource | null;
   id: string;
   service_id: string;
   version: number;
   status: CapabilityListStatus;
   items: CapabilityItem[];
   approved_at: string | null;
+  /**
+   * #640: the approval covers the list as it stands. False for a draft, and
+   * false again after any step-2 edit to an approved list until step 3
+   * approves it again; finalize and release refuse while it is false.
+   */
+  approval_current: boolean;
   approved_by: string | null;
   /** Rows in the source upload. Null on lists extracted before 0036. */
   source_rows_total?: number | null;
@@ -102,6 +128,18 @@ export interface ConsolidationPlanSummary {
   savings_cost_known: boolean;
 }
 
+/** #804: what proposed dispositions would make the savings figure. Computed
+ *  by the API with the deliverable's own derivation; nothing is written. */
+export interface SavingsPreview {
+  capability_list_id: string;
+  estimated_annual_savings: number;
+  savings_cost_known: boolean;
+  keep_count: number;
+  consolidate_count: number;
+  cut_count: number;
+  undecided_count: number;
+}
+
 export interface OverlapBucket {
   key: string;
   item_count: number;
@@ -126,6 +164,10 @@ export interface OverlapAnalysis {
   by_vendor: OverlapBucket[];
   top_cost_items: TopCostItem[];
   total_cost: number;
+  /** #781: what `total_cost` may honestly be called -- the deliverable's own
+   *  `cost_label` for this list: "Total annual cost", "Included annual cost"
+   *  or "Annual cost (may not be complete)". */
+  total_cost_label: string;
   total_items: number;
   uncategorized_count: number;
   no_vendor_count: number;

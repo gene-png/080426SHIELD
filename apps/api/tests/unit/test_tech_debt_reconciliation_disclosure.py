@@ -6,9 +6,10 @@
   came back than rows went in, which is the normal case. NOT when items
   outnumber source rows: the arithmetic then cannot distinguish "nothing was
   excluded" from "a row was excluded and another row produced two items". See
-  the KNOWN_GAP test at the bottom of this file — an earlier version of this
-  docstring said "trustworthy in every case" and was contradicted by its own
-  test 150 lines below it.
+  `test_more_items_than_source_rows_reports_the_count_unknown` — an earlier
+  version of this docstring said "trustworthy in every case" and was
+  contradicted by its own test. Since migration 0058 (#177, #193) the
+  persisted `attribution_complete` flag says which of the two it is.
 - `excluded_rows` — the NAMED rows, populated **only** when every extracted item
   attributed itself to a valid source row. The naming is "withheld rather than
   guessed".
@@ -70,13 +71,23 @@ class _Item:
 class _List:
     source_rows_total: int | None
     excluded_rows: list | None
+    # #177 / migration 0058. None is the pre-0058 truth: not recorded.
+    attribution_complete: bool | None = None
 
 
-def _ctx(*, received: int | None, named: list | None, items: list[_Item]):
+def _ctx(
+    *,
+    received: int | None,
+    named: list | None,
+    items: list[_Item],
+    attributed: bool | None = None,
+):
     return build_context(
         client_legal_name="Atlas",
         service_title="Tech Debt",
-        cap_list=_List(source_rows_total=received, excluded_rows=named),
+        cap_list=_List(
+            source_rows_total=received, excluded_rows=named, attribution_complete=attributed
+        ),
         items=items,
     )
 
@@ -115,7 +126,7 @@ def test_a_fully_costed_reconciled_list_still_reads_total() -> None:
     """POSITIVE CONTROL. A guard that qualified every label would pass the test
     above on its own, and would be the #102 shape: a caution that withholds the
     good answer from everything."""
-    ctx = _ctx(received=12, named=[], items=[_Item(f"cap{i}") for i in range(12)])
+    ctx = _ctx(received=12, named=[], items=[_Item(f"cap{i}") for i in range(12)], attributed=True)
     assert ctx.spend_cost_known is True
     assert cost_label(ctx) == "Total annual cost"
 
@@ -130,7 +141,9 @@ def test_an_uncosted_item_outranks_the_excluded_row_label() -> None:
     separately, so naming the exclusion is not lost.
     """
     items = [_Item(f"cap{i}") for i in range(11)] + [_Item("uncosted", annual_cost_usd=None)]
-    ctx = _ctx(received=21, named=[], items=items)
+    # Nine NAMED rows, as the real writer stores them when it can count nine.
+    named = [{"index": i, "summary": f"row {i + 1}"} for i in range(12, 21)]
+    ctx = _ctx(received=21, named=named, items=items, attributed=True)
     assert ctx.excluded_count == 9
     assert cost_label(ctx) == "Annual cost (may not be complete)"
     # The exclusion is still disclosed, just not by this label.
@@ -148,14 +161,15 @@ def test_the_count_survives_when_the_rows_cannot_be_named() -> None:
     line = reconciliation_line(ctx)
     assert line is not None, "the disclosure vanished exactly when it was needed"
     assert "21 rows received" in line
-    assert "9 excluded" in line
+    # #193: nine is only a FLOOR when the rows cannot be named.
+    assert "excluded count unknown (at least 9)" in line
 
 
 @pytest.mark.unit
 def test_a_partial_figure_is_never_called_a_total_when_rows_are_unnamed() -> None:
     """`cost_label` keyed on the named list, so it printed 'Total annual cost'."""
     ctx = _ctx(received=21, named=[], items=[_Item(f"cap{i}") for i in range(12)])
-    assert cost_label(ctx) == "Included annual cost"
+    assert cost_label(ctx) == "Annual cost (may not be complete)"
 
 
 @pytest.mark.unit
@@ -163,7 +177,7 @@ def test_the_line_says_the_rows_could_not_be_named() -> None:
     """A count with no list must explain itself, or it reads as a rendering bug."""
     ctx = _ctx(received=21, named=[], items=[_Item(f"cap{i}") for i in range(12)])
     line = reconciliation_line(ctx)
-    assert "not attributed" in line or "could not be" in line, line
+    assert "the AI could not match every extracted capability to one uploaded row" in line, line
 
 
 # --- what must not change ---------------------------------------------------
@@ -183,7 +197,7 @@ def test_named_rows_still_drive_the_count_when_attribution_is_complete() -> None
 
 @pytest.mark.unit
 def test_nothing_excluded_still_reports_nothing() -> None:
-    ctx = _ctx(received=12, named=[], items=[_Item(f"cap{i}") for i in range(12)])
+    ctx = _ctx(received=12, named=[], items=[_Item(f"cap{i}") for i in range(12)], attributed=True)
     assert ctx.excluded_count == 0
     assert reconciliation_line(ctx) is None
     assert cost_label(ctx) == "Total annual cost"
@@ -218,31 +232,22 @@ def test_decomposed_children_do_not_move_the_arithmetic() -> None:
 
 
 @pytest.mark.unit
-def test_more_items_than_source_rows_reports_zero_and_that_is_a_KNOWN_GAP() -> None:
-    """Pins current behaviour, and names it as incomplete rather than correct.
+def test_more_items_than_source_rows_reports_the_count_unknown() -> None:
+    """When the model emits more items than there were source rows (two items
+    sharing one `source_row_index`), a genuinely excluded row can hide behind
+    the subtraction, which floors to 0.
 
-    The first version of this test was called "never reports a negative
-    exclusion" — true, and it read as though zero were the right answer. It is
-    not. When the model emits at least as many items as there were source rows
-    (two items sharing one `source_row_index`), a genuinely excluded row goes
-    undisclosed.
-
-    WHAT REMAINS, stated precisely because half of this docstring described a
-    defect that has since been fixed and the stale half is what a reader
-    picking up #193 would land on. `cost_label` no longer prints "Total annual
-    cost" here — it returns "Annual cost (may not be complete)", and
-    `test_the_unbalanced_case_does_not_claim_a_total` in this same file pins
-    that. The COUNT is still 0 and still cannot distinguish "nothing was
-    excluded" from "the reconciliation does not balance", which is what
-    `attribution_complete` buys and what #193 tracks.
-
-    So: the overstatement is closed; naming the cause is not. This test pins
-    the count, not the label. Named here so the next reader does not mistake a
-    pinned gap for a guarantee, nor a closed one for open.
+    The COUNT is still 0, and still cannot distinguish "nothing was excluded"
+    from "the reconciliation does not balance". This test was the KNOWN_GAP pin
+    for that. Migration 0058 persists `attribution_complete`, so #193 closed it:
+    the line now says the count is unknown, with no floor because the floor is
+    0, rather than staying silent.
     """
     ctx = _ctx(received=5, named=[], items=[_Item(f"cap{i}") for i in range(9)])
     assert ctx.excluded_count == 0
-    assert reconciliation_line(ctx) is None
+    line = reconciliation_line(ctx) or ""
+    assert "excluded count unknown:" in line, line
+    assert "(at least" not in line, line
 
 
 # --- #126 / the second hole: "not recorded" is not "nothing excluded" -------
@@ -281,7 +286,7 @@ def test_not_recorded_and_nothing_excluded_do_not_render_identically() -> None:
     """
     items = [_Item(f"cap{i}") for i in range(12)]
     not_recorded = _ctx(received=None, named=None, items=items)
-    genuinely_clean = _ctx(received=12, named=[], items=items)
+    genuinely_clean = _ctx(received=12, named=[], items=items, attributed=True)
 
     assert reconciliation_line(not_recorded) is None
     assert reconciliation_line(genuinely_clean) is None
@@ -319,8 +324,7 @@ def test_the_unbalanced_case_does_not_claim_a_total() -> None:
     assert ctx.spend_cost_known is True, "every item is costed; only the count is impossible"
     assert cost_label(ctx) == "Annual cost (may not be complete)"
 
-    # And it still says nothing about WHY. That half is #193 and does need the
-    # migration; asserted so the remaining gap stays visible rather than being
-    # assumed closed along with this one.
+    # And WHY: the half that needed the migration, closed by 0058 (#193). The
+    # cost label stays short; the reconciliation line carries the cause.
     assert "balance" not in cost_label(ctx)
-    assert reconciliation_line(ctx) is None
+    assert "excluded count unknown" in (reconciliation_line(ctx) or "")

@@ -370,7 +370,13 @@ def test_heatmap_reflects_coverage_after_patches(app_client) -> None:
         r = c.patch(
             f"/attack/coverage/{cov['id']}",
             headers={"Authorization": f"Bearer {bearer}"},
-            json={"status": "covered"},
+            # #554 R3: all three in place, so it computes to Covered (class B).
+            json={
+                "status": "covered",
+                "detection_tools": ["Tool A"],
+                "prevention_tools": ["Tool A"],
+                "response_tools": ["Tool A"],
+            },
         )
         assert r.status_code == 200, r.text
     r = c.get(
