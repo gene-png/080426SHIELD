@@ -6523,7 +6523,7 @@ The shared dev database, read-only: DRAFT 2, RELEASED 2, APPROVED 0, at migratio
 
 ## D-107 — The MVP's catalog corrections all land before the first real client
 
-**2026-10-06 · zero trust, csf** (#838 PR 2, #881 review item 1; the advisor's ruling, #736 comment 6021049361. Filed as #885 for after the MVP.)
+**2026-10-06 · zero trust, csf** (#838 PR 2, #881 review item 1; the advisor's ruling, #736 comment 6021049361. The general defect is #885, mvp-blocking tier-2.)
 
 **The fact this rests on.** Every client view of a RELEASED assessment recomputes against the LIVE catalog: the ZT dashboard (`clients.py::zt_dashboard`) and the client home's ZT gap total (`_zt_gap_total`) read the stored answers and iterate the current catalog, and CSF, ATT&CK and Tech Debt do the same. The stored PDF, DOCX and XLSX do not change. So when a catalog changes, a released client view changes under the client, still stamped released. Migration 0062 (#838 PR 2) does exactly that to a released CISA assessment: 8 pillars become 5, and the retired rows stop being scored.
 
