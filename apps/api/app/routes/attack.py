@@ -16,24 +16,37 @@ analytics endpoint in place of scoring/gap.
 
 from __future__ import annotations
 
-import contextvars
+import functools
 import re
 import uuid
 from collections.abc import Iterable
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Annotated, Any, NamedTuple
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
+from app.ai.batching import run_batches
 from app.ai.diff import diff_keyed_rows
-from app.ai.engine import get_job, run_job
-from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
+from app.ai.runs import (
+    RunContext,
+    RunFailed,
+    Runner,
+    RunOutcome,
+    get_ai_run_runner,
+    refuse_while_running,
+    require_serves,
+    start_run,
+)
 from app.attack import release_readiness
+from app.attack.after import after_planned_changes
+from app.attack.after import counts as after_counts
+from app.attack.after import sentences as after_sentences
+from app.attack.after import summary_sentence as after_summary_sentence
 from app.attack.analytics import compute as compute_heatmap
 from app.attack.catalog import (
     SOURCE_VERSION,
@@ -53,6 +66,9 @@ from app.attack.citations import (
     CitationResolver,
     resolve_citations,
 )
+from app.attack.computed import EffectiveRow, effective_coverage, review_queue
+from app.attack.computed import awaiting_review_count as attack_awaiting_review_count
+from app.attack.computed import awaiting_review_sentence as attack_awaiting_review_sentence
 from app.attack.coverage import (
     COVERAGE_DEFINITIONS,
     REASON_CODES,
@@ -61,8 +77,10 @@ from app.attack.coverage import (
     is_valid_reason,
     reason_codes_for,
 )
+from app.attack.exporters import awaiting_review_text as attack_awaiting_review_text
 from app.attack.exporters import build_context as build_attack_context
 from app.attack.exporters import (
+    coverage_measured,
     coverage_pct_text,
     outside_assessed_text,
     states_outside_counts,
@@ -70,6 +88,7 @@ from app.attack.exporters import (
 from app.attack.exporters import render_docx as render_attack_docx
 from app.attack.exporters import render_pdf as render_attack_pdf
 from app.attack.exporters import render_xlsx as render_attack_xlsx
+from app.attack.exporters import retirement_sentences as attack_retirement_sentences
 from app.attack.parents import PARENT_CHILDREN, is_computed_parent, recompute_parents
 from app.attack.pending import CLAIMS_SUPPORT as _STATUS_CLAIMS_SUPPORT
 from app.attack.pending import NO_CITATION as _NO_CITATION
@@ -77,13 +96,16 @@ from app.attack.pending import TOOL_FIELDS as _TOOL_FIELDS
 from app.attack.pending import confirm_all as confirm_attack_citations
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.pending import row_tools as attack_row_tools
-from app.attack.rules import NEW_RULES, parents_computed
+from app.attack.retirement import PlanEntry, RetirementIndex
+from app.attack.retirement import build_index as build_retirement_index
+from app.attack.rules import COMPUTED_STATUSES, NEW_RULES, parents_computed, statuses_computed
 from app.audit import audit
 from app.config import get_settings
 from app.db.session import get_db
 from app.deliverable_release import ParentGuard, release_deliverable
 from app.dependencies import current_client, current_user, require_role
 from app.logging import get_logger
+from app.mode_stamp import ai_mode_for
 from app.models._common import utcnow
 from app.models.artifact import Artifact, ArtifactOrigin
 from app.models.attack_assessment import (
@@ -91,13 +113,19 @@ from app.models.attack_assessment import (
     AttackAssessmentStatus,
     AttackCoverage,
 )
-from app.models.capability import CapabilityItem, CapabilityList, CapabilityListStatus
+from app.models.capability import (
+    RETIRING_DISPOSITIONS,
+    CapabilityItem,
+    CapabilityList,
+    CapabilityListStatus,
+)
 from app.models.client import Client
 from app.models.deliverable import Deliverable
 from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.user import User, UserRole
 from app.routes.artifacts import _storage_dep
 from app.routes.tech_debt import approved_membership_stale
+from app.schemas.ai_runs import AiRunStarted, RunAiRequest
 from app.schemas.attack import (
     AttackAiInputCapability,
     AttackAiInputDocument,
@@ -118,6 +146,7 @@ from app.schemas.attack import (
     CatalogResponse,
     CatalogTactic,
     CatalogTechnique,
+    ComputedStatusReviewRequest,
     CoverageChange,
     TacticHeatmapEntry,
 )
@@ -125,6 +154,7 @@ from app.schemas.tech_debt import DeliverableResponse
 from app.security.rate_limit import enforce_ai_rate_limit
 from app.storage import StorageBackend
 from app.tech_debt.filename import SERVICE_SLUG_ATTACK, deliverable_filename
+from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.security_scope import awaiting_security_signoff, in_security_scope
 from app.tenant import (
     require_attack_assessment_in_tenant,
@@ -144,7 +174,7 @@ _log = get_logger(__name__)
 
 
 def _serialize_coverage(
-    rows: Iterable[AttackCoverage], *, parents_computed: bool
+    a: AttackAssessment, rows: Iterable[AttackCoverage]
 ) -> list[AttackCoverageResponse]:
     """Every coverage row on the wire goes through here.
 
@@ -160,13 +190,33 @@ def _serialize_coverage(
     forget.
     """
     rows = list(rows)
+    # #554 R3: every derived field below is read off the SAME effective rows the
+    # heatmap counts, so a badge and the percentage cannot disagree.
+    effective = {e.technique_code: e for e in effective_coverage(a, rows)}
+    computed = statuses_computed(a)
+    queue = frozenset(review_queue(effective.values()))
     # `pending_review` is derived over the WHOLE assessment, because a computed
     # parent's claim rests on its children's evidence (#554, D-094). Set on each
     # row as a plain attribute for `model_validate` to read; the schema field is
     # required, so a site that skips this fails loudly rather than guessing.
-    pending = attack_pending_codes(rows, parents_computed=parents_computed)
+    pending = attack_pending_codes(effective.values(), parents_computed=parents_computed(a))
     for r in rows:
+        e = effective[r.technique_code]
         r.pending_review = r.technique_code in pending
+        r.computed_status = e.status if computed else None
+        r.capabilities = (
+            {
+                "detect": e.capabilities.detect.value,
+                "prevent": e.capabilities.prevent.value,
+                "respond": e.capabilities.respond.value,
+                "line": e.capabilities.line(),
+                "awaiting_review": e.capabilities.awaiting,
+                "cannot_be_prevented": e.capabilities.cannot_be_prevented,
+            }
+            if isinstance(e, EffectiveRow) and e.is_computed
+            else None
+        )
+        r.in_review_queue = r.technique_code in queue
     return [
         AttackCoverageResponse.model_validate(r, from_attributes=True)
         for r in sorted(rows, key=lambda r: r.technique_code)
@@ -181,8 +231,7 @@ def _serialize_one(db: Session, row: AttackCoverage) -> AttackCoverageResponse:
         .all()
     )
     a = db.get(AttackAssessment, row.assessment_id)
-    rule = parents_computed(a)
-    return next(c for c in _serialize_coverage(siblings, parents_computed=rule) if c.id == row.id)
+    return next(c for c in _serialize_coverage(a, siblings) if c.id == row.id)
 
 
 def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentResponse:
@@ -203,8 +252,34 @@ def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentR
         # The ONE definition of current (`catalog_version.is_current`), never a
         # second inline comparison that could disagree with the guards.
         catalog_current=attack_catalog_is_current(a),
-        coverage=_serialize_coverage(rows, parents_computed=parents_computed(a)),
+        # #646: the ONE derivation every surface calls.
+        ai_source=ai_mode_for(db, db.get(Service, a.service_id), a).as_api(),
+        statuses_computed=statuses_computed(a),
+        coverage=_serialize_coverage(a, rows),
+        tool_retirement=_tool_retirement_marks(db, a.service_id, rows),
     )
+
+
+def _tool_retirement_marks(
+    db: Session, service_id: uuid.UUID, rows: Iterable[AttackCoverage]
+) -> dict[str, str] | None:
+    """#686: the cited tools the consolidation plan retires or cannot answer
+    for, keyed by the exact cited string; None when the client has no plan.
+    The client dashboard calls this too, so the two read one join."""
+    svc = db.get(Service, service_id)
+    if svc is None:
+        raise ValueError(f"assessment's service {service_id} does not exist")
+    index = client_retirement_index(db, svc.client_id)
+    if not index.has_plan:
+        return None
+    return index.marks(t for r in rows for t in attack_row_tools(r))
+
+
+def client_retirement_index(db: Session, client_id: uuid.UUID) -> RetirementIndex:
+    """#686: the ONE join every ATT&CK surface labels planned retirements from
+    -- the admin assessment, finalize and the client dashboard -- over the same
+    membership the citations were checked against. Rules: `attack/retirement.py`."""
+    return _client_capability_membership(db, client_id).retirement()
 
 
 def _latest_assessment(db: Session, service_id: uuid.UUID) -> AttackAssessment | None:
@@ -408,6 +483,7 @@ def create_assessment(
     db: Annotated[Session, Depends(get_db)],
 ) -> AttackAssessmentResponse:
     svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.ATTACK_COVERAGE)
+    refuse_while_running(db, svc.id)  # #645: the edit lock
     prior = _latest_assessment(db, svc.id)
     # Draft-exists guard (SPRINT_3 T1, ported from CSF T7): this route used to
     # mint a new version on EVERY call and pre-seed ~600 coverage rows per mint,
@@ -535,6 +611,8 @@ def patch_coverage(
             detail="Coverage row not found.",
         )
     a = db.get(AttackAssessment, row.assessment_id)
+    if a is not None:
+        refuse_while_running(db, a.service_id)  # #645: the edit lock
     if a is None or a.status in (
         AttackAssessmentStatus.APPROVED,
         AttackAssessmentStatus.RELEASED,
@@ -643,20 +721,42 @@ def patch_coverage(
     #
     # Entries are stamped, never deleted: "a human accepted this" and "nobody
     # ever cited it" are different answers to why a technique counts.
-    authored = {"status", "detection_tools", "prevention_tools", "response_tools"} & set(data)
+    #
+    # #554 R3: on an assessment whose statuses are COMPUTED, the stored status is
+    # a suggestion that scores nothing, so setting it authors no claim -- only the
+    # tool lists do. Confirming every inferred tool on a status-only edit would
+    # raise the computed status (Gap to Covered) as a side effect, and the review
+    # queue would then label the consultant's entry "AI suggested".
+    authoring = (
+        {"detection_tools", "prevention_tools", "response_tools"}
+        if statuses_computed(a)
+        else {"status", "detection_tools", "prevention_tools", "response_tools"}
+    )
+    authored = authoring & set(data)
+    # #554 R3: what this edit actually stamped, for the audit row below. On a
+    # computed assessment that is only the edited lists' entries (F1), so the
+    # row must not claim the whole record was confirmed.
+    stamped = 0
     if authored:
         before_uncleared = len(row.unconfirmed_citations or []) - sum(
             1 for e in (row.unconfirmed_citations or []) if e.get("cleared_at") is not None
         )
         row.unconfirmed_citations = confirm_attack_citations(
-            row.unconfirmed_citations, at=utcnow().isoformat()
+            row.unconfirmed_citations,
+            at=utcnow().isoformat(),
+            # #554 R3: only the lists this edit touched (the review of #808, F1);
+            # before R3 every entry, as the row's author.
+            fields=authored if statuses_computed(a) else None,
+        )
+        stamped = before_uncleared - sum(
+            1 for e in row.unconfirmed_citations if e.get("cleared_at") is None
         )
         _log.info(
             "attack.coverage.citations_confirmed_by_hand",
             coverage_id=str(row.id),
             technique_code=row.technique_code,
             fields=sorted(authored),
-            cleared=before_uncleared,
+            cleared=stamped,
         )
     row.answered_by = user.id
     row.answered_at = utcnow()
@@ -696,7 +796,13 @@ def patch_coverage(
             # Recorded because this is the one path that CLEARS a review queue,
             # and "why does this technique count now" has to be answerable later
             # from the audit trail rather than from the row's current state.
-            "citations_confirmed_by_hand": len(row.unconfirmed_citations or []) if authored else 0,
+            "citations_confirmed_by_hand": (
+                # #554 R3: the entries this edit stamped. Before R3, unchanged:
+                # the whole record, which a status or tool edit confirmed.
+                stamped
+                if statuses_computed(a)
+                else (len(row.unconfirmed_citations or []) if authored else 0)
+            ),
         },
     )
     db.commit()
@@ -770,6 +876,10 @@ class CapabilityProvenance:
     # own name (#96), but with no description available — and "we cannot look"
     # is not "uncategorised".
     live_row_missing: bool = False
+    # The capability item the offer came from (the live row, or the snapshot
+    # entry's `item_id`); None when the entry names none. Read by the ATT&CK
+    # what-if to tell a tool added since its base (#802, the advisor's (b2)).
+    item_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -812,9 +922,38 @@ class CapabilityMembership:
     sent: list[CapabilityProvenance]
     withheld: list[WithheldCapability]
     lists: list[CapabilityList]
+    #: #686: EVERY contributing entry, before the de-duplication above keeps one
+    #: per name -- the disposition may differ on the list the dedupe dropped.
+    #: Read by `attack/retirement.py`; see there for the rules.
+    plan_entries: list[PlanEntry] = field(default_factory=list)
 
     def inputs(self) -> list[CapabilityInput]:
         return [p.capability for p in self.sent]
+
+    def has_consolidation_plan(self) -> bool:
+        """#686: an APPROVED or RELEASED Tech Debt list exists. Without one no
+        tool can be a planned retirement, and nothing is marked."""
+        return any(cl.status in _PLAN_STATUSES for cl in self.lists)
+
+    def retirement(self) -> RetirementIndex:
+        return build_retirement_index(self.plan_entries, has_plan=self.has_consolidation_plan())
+
+
+#: #686, Q1: only these lists' dispositions are "the consolidation plan".
+_PLAN_STATUSES = frozenset({CapabilityListStatus.APPROVED, CapabilityListStatus.RELEASED})
+
+
+def _latest_plan_ids(lists: Iterable[CapabilityList]) -> frozenset[uuid.UUID]:
+    """#787 review, F1: per Tech Debt SERVICE, the highest-version APPROVED or
+    RELEASED list -- "the consolidation plan". Older versions do not vote."""
+    latest: dict[uuid.UUID, CapabilityList] = {}
+    for cl in lists:
+        if cl.status not in _PLAN_STATUSES:
+            continue
+        held = latest.get(cl.service_id)
+        if held is None or cl.version > held.version:
+            latest[cl.service_id] = cl
+    return frozenset(cl.id for cl in latest.values())
 
 
 def _client_capabilities(db: Session, client_id: uuid.UUID) -> list[Candidate]:
@@ -1315,6 +1454,7 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
                 list_version=cap_list.version,
                 source_artifact_id=item.source_artifact_id if item is not None else None,
                 live_row_missing=item is None,
+                item_id=item_id or None,
             )
         )
 
@@ -1389,10 +1529,34 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
             # re-approving.
             withheld[key] = drop
 
+    plan_ids = _latest_plan_ids(lists)
     return CapabilityMembership(
         sent=sent,
         withheld=sorted(withheld.values(), key=lambda d: d.name),
         lists=list(lists),
+        # #686: from `pairs`, the rows the dedupe chose among, each followed by
+        # its item_id to the LIVE disposition. A gone live row is `retiring=None`.
+        #
+        # RETIREMENT DELIBERATELY NARROWS TO THE LATEST PLAN (#787 review, F1).
+        # The membership above unions every non-discarded version of every list
+        # -- pre-existing, "arguably wrong", and left alone here because it
+        # decides what may be CITED. "The consolidation plan" is narrower: only
+        # each Tech Debt service's latest APPROVED or RELEASED list votes, so an
+        # older version's `cut` cannot outvote, or outlive, the current one.
+        plan_entries=[
+            PlanEntry(
+                name=p.name,
+                in_plan=p.cap_list.id in plan_ids,
+                # #810: the SAME retiring set Tech Debt savings counts --
+                # "Cut" and "Cut, covered by another tool" -- never a literal.
+                retiring=(
+                    None
+                    if (live := live_by_id.get(str(p.item_id or ""))) is None
+                    else live.disposition in RETIRING_DISPOSITIONS
+                ),
+            )
+            for p in pairs
+        ],
     )
 
 
@@ -1428,6 +1592,15 @@ def _audit_safe_code(value: object) -> str:
 # Pinned to what the prompt offers and every surface renders (#554), not to the
 # whole enum: a status the reports cannot show must not arrive through the AI.
 _VALID_STATUSES = {s.value for s in WRITABLE}
+#: #841: what the AI may write. Not N/A: it is a scoping RULING that takes the
+#: technique out of the coverage denominator, so an AI-written one raised the
+#: client's percentage on the model's word with nothing behind it and nothing
+#: reviewing it. A consultant still rules N/A through the PATCH (`WRITABLE`).
+#: Scope: this covers NEW AI writes only. A legacy AI-written N/A row carries the
+#: requester's `answered_by` like a consultant's answer and cannot be told apart,
+#: so it is left as it is (#841 plan, advisor decision 4).
+_NOT_APPLICABLE = CoverageStatus.NOT_APPLICABLE.value
+_AI_WRITABLE_STATUSES = _VALID_STATUSES - {_NOT_APPLICABLE}
 _DIFF_FIELDS = (
     "status",
     # #554: a consultant's reason the AI's new status does not take is dropped
@@ -1472,6 +1645,13 @@ def build_attack_ai_request(db: Session, svc: Service, client: Client) -> Attack
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Create an assessment first."
         )
+    return _attack_ai_request_for(db, a, client)
+
+
+def _attack_ai_request_for(db: Session, a: AttackAssessment, client: Client) -> AttackAiRequest:
+    """The request for ONE assessment, named by id. The background job (#645)
+    re-loads the assessment its POST validated rather than "the latest": a
+    discard in between retires that one, and "latest" would then be another."""
     if a.status in (AttackAssessmentStatus.APPROVED, AttackAssessmentStatus.RELEASED):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="This assessment is locked."
@@ -1547,99 +1727,37 @@ def _run_mitre_map_batched(
     requested_by: uuid.UUID,
     service_id: uuid.UUID,
     client_id: uuid.UUID,
+    deadline_at: datetime,
 ) -> tuple[list[dict], int, int]:
-    """Run mitre_map as concurrent batches. Returns (suggestions, total, failed).
-
-    Each batch is a real `run_job` call and therefore writes its own `llm_calls`
-    row — N rows per run instead of one. That is the honest accounting: N
-    provider calls were made and each is separately billable.
-
-    Each worker gets its OWN Session. A SQLAlchemy Session is not thread-safe,
-    and the request-scoped `db` belongs to the endpoint; sharing it across
-    threads corrupts state. Each worker commits its own audit row so evidence of
-    a call survives independently of whether its siblings — or the request —
-    succeed.
-
-    A partial failure does NOT discard the run. Losing 1 batch of 26 should cost
-    the consultant 25 techniques, not all 633 and the money already spent on
-    them. Only a total failure raises, and it raises through `ai_call_boundary`
-    so the error stays typed and carries `charged_likely`.
-    """
+    """Run mitre_map as concurrent batches of `_MITRE_BATCH_SIZE` techniques.
+    Returns (suggestions, total, failed). How batches run, fail and are
+    accounted for is `app.ai.batching.run_batches`, shared with csf_score."""
     codes = [c for c in (req.preview.inputs.get("technique_codes") or []) if isinstance(c, str)]
     batches = [
         codes[i : i + _MITRE_BATCH_SIZE] for i in range(0, len(codes), _MITRE_BATCH_SIZE)
     ] or [[]]
-
-    def _one(batch: list[str]) -> dict:
-        # Bind to the REQUEST session's engine, not the module-level
-        # SessionLocal. A Session is not thread-safe so each worker needs its
-        # own, but reaching for SessionLocal opens a connection outside whatever
-        # the caller is bound to — which silently bypassed the test suite's
-        # dependency-injected engine and broke isolation across test files.
-        # get_bind() keeps workers on the same database the request is using.
-        session = Session(bind=db.get_bind())
-        try:
-            out = run_job(
-                session,
-                llm,
-                req.preview.job_name,
-                inputs={**req.preview.inputs, "technique_codes": batch},
-                requested_by=requested_by,
-                service_id=service_id,
-                client_id=client_id,
-                client_org_name=req.preview.client_org_name,
-                name_hints=req.preview.name_hints,
-            )
-            session.commit()
-            # Guaranteed a dict by `parse_json_object`; a wrong shape raises
-            # and is counted as a failed batch rather than a silent empty one.
-            return out.data
-        except Exception:
-            # Mirror ai_call_boundary: commit so the FAILED row survives the
-            # exception, then let it propagate to be counted.
-            session.commit()
-            raise
-        finally:
-            session.close()
-
-    # Warm the job registry on THIS thread before any worker touches it. Lazy
-    # registration behind a module flag is not something a worker should be the
-    # first to trigger, even now that the flag ordering is fixed.
-    get_job(req.preview.job_name)
-
-    suggestions: list[dict] = []
-    failed = 0
-    first_error: Exception | None = None
-
-    with ThreadPoolExecutor(max_workers=_MITRE_MAX_WORKERS) as pool:
-        # Each worker runs inside a COPY of the request's context. A pool thread
-        # starts with an empty one, so `correlation_id_var` read None there and
-        # every `llm_calls` row a batch wrote lost the request's correlation id
-        # -- measured 2026-09-23, 0 of 52 live mitre_map rows carried one. A
-        # fresh copy per submit, because one Context cannot be entered by two
-        # threads at once. `routes/risk.py` has the same runner and the same fix.
-        futures = [pool.submit(contextvars.copy_context().run, _one, b) for b in batches]
-        for fut in as_completed(futures):
-            try:
-                data = fut.result()
-            except Exception as exc:  # noqa: BLE001 - counted, not swallowed
-                failed += 1
-                first_error = first_error or exc
-                _log.error(
-                    "mitre_map_batch_failed",
-                    service_id=str(service_id),
-                    error=f"{type(exc).__name__}: {exc}",
-                )
-                continue
-            suggestions.extend(t for t in (data.get("techniques") or []) if isinstance(t, dict))
-
-    if failed == len(batches) and first_error is not None:
-        # Nothing usable came back. Re-raise inside the boundary so the caller
-        # gets the same typed 502 + charged_likely it always did.
-        with ai_call_boundary(db, llm, purpose=req.preview.job_name):
-            raise first_error
-
-    return suggestions, len(batches), failed
+    out = run_batches(
+        db,
+        llm,
+        req.preview.job_name,
+        [{**req.preview.inputs, "technique_codes": b} for b in batches],
+        requested_by=requested_by,
+        service_id=service_id,
+        client_id=client_id,
+        client_org_name=req.preview.client_org_name,
+        name_hints=req.preview.name_hints,
+        deadline_at=deadline_at,
+        max_workers=_MITRE_MAX_WORKERS,
+        deadline_message=(
+            "This run did not finish within its time limit, so it was stopped and "
+            "nothing from it was applied. Run it again; if it repeats, the AI "
+            "provider is answering too slowly for a full ATT&CK run."
+        ),
+    )
+    suggestions = [
+        t for data in out.answers for t in (data.get("techniques") or []) if isinstance(t, dict)
+    ]
+    return suggestions, out.total, out.failed
 
 
 @router.post(
@@ -1675,6 +1793,8 @@ def confirm_coverage_citations(
             detail="Coverage row not found.",
         )
     a = db.get(AttackAssessment, row.assessment_id)
+    if a is not None:
+        refuse_while_running(db, a.service_id)  # #645: the edit lock
     if a is None or a.status in (
         AttackAssessmentStatus.APPROVED,
         AttackAssessmentStatus.RELEASED,
@@ -1750,8 +1870,9 @@ def confirm_coverage_citations(
 
 @router.post(
     "/services/{service_id}/run-ai",
-    response_model=AttackRunAiResponse,
-    summary="Run the mitre_map AI job: suggest coverage + D/P/R per technique (admin)",
+    response_model=AiRunStarted,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Start the mitre_map AI job in the background; poll the run it returns (admin)",
 )
 def run_ai(
     service_id: uuid.UUID,
@@ -1759,20 +1880,101 @@ def run_ai(
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],
     llm: Annotated[LLMClient, Depends(_llm_dep)],
+    runner: Annotated[Runner, Depends(get_ai_run_runner)],
     _rl: Annotated[None, Depends(enforce_ai_rate_limit)],
-) -> AttackRunAiResponse:
+    body: RunAiRequest | None = None,
+) -> AiRunStarted:
     """The ATT&CK 'Run AI'. Suggests coverage status + which listed tools provide
     Detection / Prevention / Response per technique, validating every cited tool
     against the client's capability list. AI suggests; locked rows are left
-    untouched; code computes coverage % elsewhere. Returns a 'what changed' list.
+    untouched; code computes coverage % elsewhere.
+
+    #645: answers 202 with a run to poll. Every refusal that needs no AI is made
+    HERE, synchronously, with the status and reason it always had; the work is
+    `_attack_run_work`, in the background (`app/ai/runs.py`).
     """
+    serves = require_serves(body.serves if body else None)
     svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.ATTACK_COVERAGE)
     req = build_attack_ai_request(db, svc, client)
-    a, rows, locked_keys = (
-        req.assessment,
-        req.rows,
-        req.locked_keys,
+    _refuse_without_capabilities(req, svc_id=svc.id, client_id=client.id)
+    return start_run(
+        db,
+        llm=llm,
+        serves=serves,
+        service_id=svc.id,
+        client_id=client.id,
+        purpose=req.preview.job_name,
+        subject_id=req.assessment.id,
+        requested_by=user.id,
+        runner=runner,
+        work=functools.partial(_attack_run_work, assessment_id=req.assessment.id),
     )
+
+
+def _refuse_without_capabilities(
+    req: AttackAiRequest, *, svc_id: uuid.UUID, client_id: uuid.UUID
+) -> None:
+    """An empty allow-list cannot produce an assessment -- only a fabricated one.
+
+    `valid_tools` is a HARD allow-list (see `_client_tool_names`): a tool that
+    is not in it cannot be cited, so with zero tools every technique can only
+    come back uncovered no matter what the client actually runs.
+
+    This is not hypothetical. A live run on 2026-08-07 with tools_available=0
+    wrote 607 `gap` + 26 `not_applicable` across all 633 techniques, billed for
+    the call, and left a releasable assessment stating a catastrophic security
+    posture that was an artifact of missing input. The audit row recorded
+    `tools_available: 0`, so the system knew; the only disclosure was a
+    post-run sentence, after the money was spent and the rows were written.
+
+    Refuse before spending anything, and name the actual remedy -- the usual
+    cause is that the Tech Debt work was done under a DIFFERENT client, and
+    tenant isolation (correctly) will not reach across for it.
+    """
+    if req.preview.inputs["capability_list"]:
+        return
+    _log.warning(
+        "attack.run_ai.refused_no_capabilities",
+        service_id=str(svc_id),
+        client_id=str(client_id),
+    )
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "reason": "no_security_capabilities",
+            "message": (
+                "This client has no security capabilities to map against, so "
+                "every technique would be reported as a gap regardless of what "
+                "the client actually runs. Complete this client's Tech Debt "
+                "capability list first — if you already did, check it was done "
+                "under this client and not another one."
+            ),
+        },
+    )
+
+
+def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID) -> RunOutcome:
+    """The mitre_map run, in the background job's own session (#645).
+
+    Re-loads everything by id: the request's ORM objects belong to a session
+    that closed when the 202 was sent. A refusal here is not an HTTP answer to
+    anyone -- the framework turns it into the run's FAILED state with the same
+    typed reason.
+    """
+    db = session
+    a = db.get(AttackAssessment, assessment_id)
+    if a is None or a.status in (
+        AttackAssessmentStatus.DISCARDED,
+        AttackAssessmentStatus.APPROVED,
+        AttackAssessmentStatus.RELEASED,
+    ):
+        raise RunFailed(
+            "assessment_not_editable",
+            "This assessment was discarded or locked before the run started.",
+        )
+    client = db.get(Client, ctx.client_id)
+    req = _attack_ai_request_for(db, a, client)
+    rows = req.rows
     # `req.valid_tools` is no longer consulted: the resolver owns matching now,
     # and an exact-match frozenset beside it would be a second, laxer answer to
     # the same question. The field stays on the request because the preview
@@ -1803,40 +2005,7 @@ def run_ai(
     unresolved_fields_seen: list[str] = []
     tools = req.preview.inputs["capability_list"]
 
-    # An empty allow-list cannot produce an assessment — only a fabricated one.
-    # `valid_tools` is a HARD allow-list (see `_client_tool_names`): a tool that
-    # is not in it cannot be cited, so with zero tools every technique can only
-    # come back uncovered no matter what the client actually runs.
-    #
-    # This is not hypothetical. A live run on 2026-08-07 with tools_available=0
-    # wrote 607 `gap` + 26 `not_applicable` across all 633 techniques, billed for
-    # the call, and left a releasable assessment stating a catastrophic security
-    # posture that was an artifact of missing input. The audit row recorded
-    # `tools_available: 0`, so the system knew; the only disclosure was a
-    # post-run sentence, after the money was spent and the rows were written.
-    #
-    # Refuse before spending anything, and name the actual remedy — the usual
-    # cause is that the Tech Debt work was done under a DIFFERENT client, and
-    # tenant isolation (correctly) will not reach across for it.
-    if not tools:
-        _log.warning(
-            "attack.run_ai.refused_no_capabilities",
-            service_id=str(svc.id),
-            client_id=str(client.id),
-        )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "reason": "no_security_capabilities",
-                "message": (
-                    "This client has no security capabilities to map against, so "
-                    "every technique would be reported as a gap regardless of what "
-                    "the client actually runs. Complete this client's Tech Debt "
-                    "capability list first — if you already did, check it was done "
-                    "under this client and not another one."
-                ),
-            },
-        )
+    _refuse_without_capabilities(req, svc_id=ctx.service_id, client_id=ctx.client_id)
 
     def _snap() -> dict[str, dict]:
         return {
@@ -1851,16 +2020,31 @@ def run_ai(
             for code, r in rows.items()
         }
 
-    before = _snap()
     suggestions, batches_total, batches_failed = _run_mitre_map_batched(
         db,
-        llm,
+        ctx.llm,
         req,
-        requested_by=user.id,
-        service_id=svc.id,
-        client_id=client.id,
+        requested_by=ctx.requested_by,
+        service_id=ctx.service_id,
+        client_id=ctx.client_id,
+        deadline_at=ctx.deadline_at,
     )
     result = _BatchedResult(data={"techniques": suggestions})
+    # The snapshot is taken AFTER the provider calls, from the database as it
+    # is now: a row edited while the batches ran (an edit that checked the lock
+    # before this run existed) must be seen as edited, and the rows above were
+    # loaded before the calls. `expire_all` makes the next read go to the
+    # database. Nothing is pending: the batches wrote in their own sessions.
+    db.expire_all()
+    # The PRE-WRITE stamps. `onupdate=utcnow` stamps every row this job writes,
+    # so read after its own flush every row would look edited.
+    edited_since_start = {code for code, r in rows.items() if ctx.edited_since_start(r.updated_at)}
+    locked_keys = frozenset(code for code, r in rows.items() if r.locked)
+    before = _snap()
+    # Distinct ROWS, not suggestions: a model may suggest one technique twice.
+    skipped_codes: set[str] = set()
+    # Distinct rows written. A set, because a model may suggest one technique twice.
+    applied_codes: set[str] = set()
 
     def _validate_tools(names: object, field: str, row_flags: list[dict]) -> list[str]:
         """Resolve the cited names against the allow-list, and ACCOUNT for each.
@@ -1937,8 +2121,8 @@ def run_ai(
     # dropping the reason would move the row out of the gap list on the model's
     # word -- the direction that flatters the client.
     reason_codes_rejected: list[dict[str, str]] = []
-    # A status the run may not write -- anything outside `_VALID_STATUSES`, which
-    # since #569 includes the product's own two new statuses -- refuses the
+    # A status the run may not write -- anything outside `_AI_WRITABLE_STATUSES`:
+    # since #569 the product's own two new statuses, and since #841 N/A -- refuses the
     # suggestion WHOLE too. It used to skip the status and still write the tools
     # and rationale, so a row could carry a rationale arguing for a status it
     # does not have, with no trace. Recorded here, code-shaped values only.
@@ -1959,6 +2143,11 @@ def run_ai(
         row = rows.get(sugg.get("technique_code"))
         if row is None or row.locked:
             continue
+        if row.technique_code in edited_since_start:
+            # #645: a consultant's edit that landed after this run started is
+            # kept, never overwritten, and counted so the workspace says so.
+            skipped_codes.add(row.technique_code)
+            continue
         st = sugg.get("status")
         offered = sugg.get("reason_code")
         if is_computed_parent(row.technique_code):
@@ -1969,7 +2158,7 @@ def run_ai(
                 }
             )
             continue
-        if not (isinstance(st, str) and st in _VALID_STATUSES):
+        if not (isinstance(st, str) and st in _AI_WRITABLE_STATUSES):
             # No status, or one the run may not write: refused WHOLE. A
             # rationale without a status argues for nothing, and tools cited
             # for no status attach to no claim (#590 round 3, the coordinator's
@@ -2103,8 +2292,9 @@ def run_ai(
             row.unconfirmed_citations = merged
         if isinstance(sugg.get("rationale"), str):
             row.rationale = sugg["rationale"]
-        row.answered_by = user.id
+        row.answered_by = ctx.requested_by
         row.answered_at = utcnow()
+        applied_codes.add(row.technique_code)
 
     # #554 (D-094): every parent recomputed from the children this run wrote,
     # before the snapshot, so the run's own diff shows what the rule changed. A
@@ -2147,23 +2337,32 @@ def run_ai(
     # database does not contain -- W1's accounting log claimed `applied=N` above
     # this same re-read and reported values applied for transactions that then
     # rolled back.
-    pending = attack_pending_codes(rows.values(), parents_computed=parents_computed(a))
-    _log.info(
+    # #554 R3: over the rows every surface counts, so the audit's number is the
+    # badge's number.
+    pending = attack_pending_codes(
+        effective_coverage(a, rows.values()), parents_computed=parents_computed(a)
+    )
+    # Emitted by the framework only after the completion commit (#645), or as
+    # `.voided` when the compare-and-swap misses. See `RunOutcome.accounting`.
+    accounting = (
         "attack.run_ai.citations_resolved",
-        service_id=str(svc.id),
-        confirmed=citations.confirmed,
-        needs_review=citations.needs_review,
-        rejected=citations.rejected,
-        unusable=citations.unusable,
-        pending_review_rows=len(pending),
+        {
+            "service_id": str(ctx.service_id),
+            "confirmed": citations.confirmed,
+            "needs_review": citations.needs_review,
+            "rejected": citations.rejected,
+            "unusable": citations.unusable,
+            "pending_review_rows": len(pending),
+        },
     )
     audit(
         db,
         action="attack.run_ai",
         target_type="attack_assessment",
         target_id=a.id,
-        actor_user_id=user.id,
+        actor_user_id=ctx.requested_by,
         details={
+            "run_id": str(ctx.run_id),
             "tools_available": len(tools),
             "changed_rows": len(diffs),
             # #102. The audit row is where "why did coverage drop" gets answered
@@ -2186,15 +2385,15 @@ def run_ai(
             "parent_suggestions_refused": parent_suggestions_refused,
             "parents_recomputed": parents_recomputed,
             "parents_unlocked": parents_unlocked,
+            "rows_skipped_edited": len(skipped_codes),
         },
     )
-    db.commit()
-
-    coverage = _serialize_coverage(rows.values(), parents_computed=parents_computed(a))
-    return AttackRunAiResponse(
+    # No commit: the framework commits this apply together with the
+    # compare-and-swap that marks the run COMPLETED, or rolls both back.
+    result_payload = AttackRunAiResponse(
         tools_available=len(tools),
         changed=changes,
-        coverage=coverage,
+        coverage=_serialize_coverage(a, rows.values()),
         batches_total=batches_total,
         batches_failed=batches_failed,
         citations_confirmed=citations.confirmed,
@@ -2209,6 +2408,19 @@ def run_ai(
         rows_left_unresolved=rows_left_unresolved,
         unresolved_fields=list(unresolved_fields_seen),
         pending_review_rows=len(pending),
+        rows_skipped_edited=len(skipped_codes),
+        # TECHNIQUES, not suggestions: one technique can be suggested by more
+        # than one batch, and the copy counts techniques.
+        not_applicable_refused=len(
+            {e["technique_code"] for e in statuses_rejected if e["status"] == _NOT_APPLICABLE}
+        ),
+    )
+    return RunOutcome(
+        result=result_payload.model_dump(mode="json"),
+        applied_count=len(applied_codes),
+        batches_total=batches_total,
+        batches_failed=batches_failed,
+        accounting=accounting,
     )
 
 
@@ -2224,6 +2436,8 @@ def approve_assessment(
     db: Annotated[Session, Depends(get_db)],
 ) -> AttackAssessmentResponse:
     a = require_attack_assessment_in_tenant(db, assessment_id, client.id)
+    # #645: approving mid-run would approve rows about to change.
+    refuse_while_running(db, a.service_id)
     if a.status == AttackAssessmentStatus.APPROVED:
         return _serialize_assessment(db, a)
     if a.status == AttackAssessmentStatus.RELEASED:
@@ -2258,6 +2472,10 @@ def approve_assessment(
     # #620 (migration 0054, D-094): this assessment was approved under D-094's
     # rules for computed parents, and every client surface renders it so.
     a.parent_rules = NEW_RULES
+    # #554 R3 (migration 0059): its statuses are computed from Detect / Prevent /
+    # Respond on every surface. The review queue is gated at RELEASE, not here
+    # (the advisor's Q1: "gated at release, not at the click").
+    a.status_rules = COMPUTED_STATUSES
     audit(
         db,
         action="attack.assessment.approved",
@@ -2271,6 +2489,132 @@ def approve_assessment(
         },
     )
     db.commit()
+    db.refresh(a)
+    return _serialize_assessment(db, a)
+
+
+@router.post(
+    "/assessments/{assessment_id}/computed-status-review",
+    response_model=AttackAssessmentResponse,
+    summary="Record a review of computed statuses that differ from the AI's (admin, #554 R3)",
+)
+def review_computed_statuses(
+    assessment_id: uuid.UUID,
+    body: ComputedStatusReviewRequest,
+    user: Annotated[User, _admin_required],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> AttackAssessmentResponse:
+    """The advisor's Q1 (2026-10-02, 22:20Z): on an assessment whose statuses
+    are computed, each technique whose computed status differs from the AI's
+    stored suggestion is reviewed before release. This records it: the computed
+    status accepted, who, and when, on each row, plus one audit event.
+
+    Allowed on DRAFT and APPROVED. It changes no status, tool or rationale, so
+    the lock on an approved assessment is untouched; the release gate is what
+    reads it (`release_readiness.unreviewed_codes`)."""
+    a = require_attack_assessment_in_tenant(db, assessment_id, client.id)
+    # #645: a run would change the stored suggestions under the review.
+    refuse_while_running(db, a.service_id)
+    if a.status == AttackAssessmentStatus.RELEASED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "attack_assessment_released",
+                "message": "This assessment has been released, so its review is closed.",
+            },
+        )
+    if a.status == AttackAssessmentStatus.DISCARDED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "attack_assessment_discarded",
+                "message": "This assessment was discarded, so there is nothing to review.",
+            },
+        )
+    if not statuses_computed(a):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "attack_computed_status_not_used",
+                "message": (
+                    "This assessment's statuses were set before computed status existed, "
+                    "so there is nothing to review."
+                ),
+            },
+        )
+    shown = {item.code: item.computed_status for item in body.reviews}
+    codes = frozenset(shown)
+    if not codes:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "no_codes",
+                "message": "No techniques were given to review.",
+            },
+        )
+    rows = (
+        db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
+        .scalars()
+        .all()
+    )
+    effective = {e.technique_code: e for e in effective_coverage(a, rows)}
+    queue = frozenset(review_queue(effective.values()))
+    stale = sorted(codes - queue)
+    if stale:
+        listed = ", ".join(stale[:10]) + (f" and {len(stale) - 10} more" if len(stale) > 10 else "")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "codes_not_in_review_queue",
+                "message": (
+                    f"Some techniques are no longer awaiting review ({listed}). Reload the "
+                    "panel and review again."
+                ),
+                "codes": stale,
+            },
+        )
+    # The review records what the consultant SAW: a computed status that moved
+    # between the panel loading and the click is refused, never recorded.
+    moved = sorted(c for c in codes if effective[c].status != shown[c])
+    if moved:
+        listed = ", ".join(moved[:10]) + (f" and {len(moved) - 10} more" if len(moved) > 10 else "")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "computed_status_changed",
+                "message": (
+                    f"The computed status of some techniques changed after the panel "
+                    f"loaded ({listed}). Reload the panel and review again."
+                ),
+                "codes": moved,
+            },
+        )
+    now = utcnow()
+    for row in rows:
+        if row.technique_code in codes:
+            row.reviewed_status = effective[row.technique_code].status
+            row.reviewed_by = user.id
+            row.reviewed_at = now
+    audit(
+        db,
+        action="attack.computed_status.reviewed",
+        target_type="attack_assessment",
+        target_id=a.id,
+        actor_user_id=user.id,
+        details={
+            "rows": len(codes),
+            "codes": sorted(codes),
+            "remaining": len(queue) - len(codes),
+        },
+    )
+    db.commit()
+    _log.info(
+        "attack.computed_status.reviewed",
+        assessment_id=str(a.id),
+        rows=len(codes),
+        remaining=len(queue) - len(codes),
+    )
     db.refresh(a)
     return _serialize_assessment(db, a)
 
@@ -2380,10 +2724,12 @@ def heatmap(
     # silently. A stale assessment is refused before any number is computed.
     require_current_catalog(db, a)
     valid = attack_all_codes()
-    rows = (
+    # #554 R3: computed statuses where they apply; the stored rows otherwise.
+    rows = effective_coverage(
+        a,
         db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
         .scalars()
-        .all()
+        .all(),
     )
     coverage_map: dict[str, str | None] = {
         r.technique_code: r.status for r in rows if r.technique_code in valid
@@ -2411,6 +2757,19 @@ def heatmap(
         outside_control_surface=outside(rollup.outside_control_surface),
         unable_to_determine=outside(rollup.unable_to_determine),
         coverage_pct=rollup.coverage_pct,
+        coverage_measured=coverage_measured(rollup),
+        awaiting_review_sentence=(
+            attack_awaiting_review_sentence(attack_awaiting_review_count(rows))
+            if statuses_computed(a)
+            else None
+        ),
+        # #801 (H1): the consultant's own working view, so no current-plan note.
+        after_planned_changes=(
+            after_sentences(after, coverage_pct_text(after.rollup))
+            if (after := after_planned_changes(a, rows, client_retirement_index(db, svc.client_id)))
+            is not None
+            else None
+        ),
         by_tactic=[
             TacticHeatmapEntry(
                 tactic_id=tc.tactic_id,
@@ -2426,6 +2785,7 @@ def heatmap(
                 outside_control_surface=outside(tc.outside_control_surface),
                 unable_to_determine=outside(tc.unable_to_determine),
                 coverage_pct=tc.coverage_pct,
+                coverage_measured=coverage_measured(tc),
             )
             for tc in rollup.by_tactic
         ],
@@ -2471,35 +2831,21 @@ def _excluded_source_rows(cap_list: CapabilityList) -> list[AttackAiInputExclude
 def _excluded_attribution(cap_list: CapabilityList) -> str:
     """How much this endpoint may honestly say about extraction-time drops.
 
-    `Reconciliation.attribution_complete` is NOT persisted (see
-    `app/tech_debt/reconcile.py`), and the writer stores an empty `excluded_rows`
-    in BOTH of the cases that matter: when nothing was excluded, and when the
-    model did not attribute every item to a source row so the rows could not be
-    named. Those are the same stored bytes.
+    #177: from `tech_debt.reconcile.exclusion_count_state`, the one reader every
+    surface calls, which reads the persisted `attribution_complete` (migration
+    0058). A clean extraction that excluded nothing now reads `complete` with
+    a true zero; before 0058 its empty `excluded_rows` was the same bytes as a
+    failed attribution, and read `unknown`. A list written before 0058 keeps
+    that reading -- a named drop proves completeness, an empty list proves
+    nothing -- and is never read as complete by default.
 
-    So the two are not collapsed into a zero. A non-empty list is proof the
-    reconciliation balanced — the writer only fills it under
-    `if attribution_complete` — and an empty one is proof of nothing. Reporting
-    "0 excluded" for the empty case would be the silent under-report this whole
-    endpoint exists to end, and it would be the persuasive kind: a number, in a
-    provenance view, that a consultant would reasonably act on.
-
-    Persisting the flag is the real fix and it needs `tech_debt/reconcile.py`
-    and a migration. Until then this reports `unknown` and the panel says so.
+    `not_recorded` (no reconciliation stored) is distinct from `unknown` (a
+    reconciliation happened and its per-row half is unrecoverable). Its cause is
+    not named: NULL is usually a pre-0036 list, but `seed_demo.py` builds lists
+    without one too.
     """
-    if cap_list.source_rows_total is None:
-        # NULL means no reconciliation was stored, so there is no claim to make
-        # either way. Distinct from `unknown`, which means a reconciliation
-        # happened and its per-row half is unrecoverable.
-        #
-        # Do NOT name the cause here. NULL is usually a pre-0036 list, but
-        # `seed_demo.py` builds lists without either field too, so every demo and
-        # e2e run would be told a list created minutes earlier "predates the
-        # extraction record". The condition observes ABSENCE; it cannot see WHY.
-        return "not_recorded"
-    if cap_list.excluded_rows:
-        return "complete"
-    return "unknown"
+    state = exclusion_count_state(cap_list)
+    return {"not_recorded": "not_recorded", "exact": "complete", "unknown": "unknown"}[state]
 
 
 @router.get(
@@ -2867,6 +3213,7 @@ def finalize_attack_deliverable(
     storage: Annotated[StorageBackend, Depends(_storage_dep)],
 ) -> DeliverableResponse:
     svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.ATTACK_COVERAGE)
+    refuse_while_running(db, svc.id)  # #645: the edit lock
     assessment = _latest_assessment(db, svc.id)
     if assessment is None:
         raise HTTPException(
@@ -2883,10 +3230,13 @@ def finalize_attack_deliverable(
         )
     require_current_catalog(db, assessment)  # #556: never render a stale denominator
     valid = attack_all_codes()
-    coverage = (
+    # #554 R3: computed statuses where they apply; the stored rows otherwise.
+    # `build_attack_context` refuses stored rows for a computed assessment.
+    coverage = effective_coverage(
+        assessment,
         db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == assessment.id))
         .scalars()
-        .all()
+        .all(),
     )
     coverage_map: dict[str, str | None] = {
         r.technique_code: r.status for r in coverage if r.technique_code in valid
@@ -2933,6 +3283,10 @@ def finalize_attack_deliverable(
         assessment=assessment,
         coverage=coverage,
         rollup=rollup,
+        # #686: the disposition AS OF this finalize; the rendered bytes keep it.
+        retirement=client_retirement_index(db, svc.client_id),
+        # #646: the ONE derivation every surface calls.
+        ai_mode=ai_mode_for(db, svc, assessment),
     )
     pdf_bytes = render_attack_pdf(ctx)
     xlsx_bytes = render_attack_xlsx(ctx)
@@ -2982,6 +3336,22 @@ def finalize_attack_deliverable(
         # sentence every renderer prints, never dropped even at zero -- where the
         # renderers print it, which is under #620's rules only (option (a)).
         + (f" {outside_assessed_text(rollup)}." if states_outside_counts(ctx) else "")
+        # #686: the renderers' own sentences, only when non-zero.
+        + "".join(f" {s}" for s in attack_retirement_sentences(ctx))
+        # #554 R3 (Q4): the renderers' own sentence, only when non-zero.
+        + (f" {awaiting}" if (awaiting := attack_awaiting_review_text(ctx)) else "")
+        # #801 (F1): the figure after planned changes, and its counts.
+        + (
+            "".join(
+                f" {s}"
+                for s in [
+                    after_summary_sentence(coverage_pct_text(ctx.after.rollup)),
+                    *after_counts(ctx.after),
+                ]
+            )
+            if ctx.after is not None
+            else ""
+        )
     )
 
     deliv = Deliverable(
@@ -3015,7 +3385,14 @@ def finalize_attack_deliverable(
             "assessment_version": assessment.version,
             "version": next_version,
             "coverage_pct": rollup.coverage_pct,
+            # #489: 0.0 above is "not measured" when this is False.
+            "coverage_measured": coverage_measured(rollup),
             "gap_count": rollup.gap,
+            # #801: the figure after planned changes this deliverable carries,
+            # None where it carries none.
+            "coverage_pct_after_planned_changes": (
+                ctx.after.rollup.coverage_pct if ctx.after is not None else None
+            ),
         },
     )
     assessment.documents_stale = False  # Work Order C3

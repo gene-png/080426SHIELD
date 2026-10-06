@@ -116,8 +116,11 @@ export function OverlapDashboard({
       </header>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {/* #781: the api's label, never a hard-coded "Total" -- the figure is
+            a total only when every row is accounted for and costed, and the
+            released document says the same thing about this list. */}
         <NumberCard
-          label="Total annual cost"
+          label={analysis.total_cost_label}
           value={fmtUsd(analysis.total_cost)}
         />
         <NumberCard

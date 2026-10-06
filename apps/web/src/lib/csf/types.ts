@@ -1,3 +1,5 @@
+import type { AiSource } from "@/lib/aiSource/types";
+
 /** Wire types mirroring apps/api/app/schemas/csf.py. */
 
 export type CsfAssessmentStatus =
@@ -52,6 +54,8 @@ export interface CsfAnswer {
 }
 
 export interface CsfAssessment {
+  /** #646: which mode drafted the AI suggestions, as the API states it. */
+  ai_source: AiSource;
   id: string;
   service_id: string;
   version: number;
@@ -262,7 +266,9 @@ export interface CsfDroppedSuggestion {
     | "wrong_type"
     | "superseded"
     | "locked"
-    | "protected";
+    | "protected"
+    | "edited"
+    | "not_in_batch";
   /** "tier|subcategory_code" as the model wrote it; null if it wrote neither. */
   key: string | null;
   field: string | null;
@@ -271,6 +277,11 @@ export interface CsfDroppedSuggestion {
   value: unknown;
 }
 
+/**
+ * What a csf_score Run-AI did: the run's stored `result` since #645, every
+ * field the synchronous response carried, read from the run so it survives a
+ * reload.
+ */
 export interface CsfRunAiResponse {
   changed: CsfDimensionChange[];
   rows: CsfDimensionScore[];
@@ -278,6 +289,13 @@ export interface CsfRunAiResponse {
   suggestions_received: number;
   suggestions_applied: number;
   dropped: CsfDroppedSuggestion[];
+  /**
+   * #479: csf_score runs in batches. A failed batch's rows were never
+   * answered, so they are in neither count above. Optional: a result stored
+   * before batching carries neither, and that is not "no batch failed".
+   */
+  batches_total?: number;
+  batches_failed?: number;
 }
 
 export interface ExportedArtifact {

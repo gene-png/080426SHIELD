@@ -14,6 +14,7 @@ import {
 import { type ArtifactSummary, listArtifacts } from "@/lib/intake/artifacts";
 
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
+import type { AiServes } from "@/lib/aiRuns/types";
 
 import type { JSX } from "react";
 
@@ -31,8 +32,11 @@ function isInventory(a: ArtifactSummary): boolean {
 }
 
 export interface IntakeDocumentsPanelProps {
-  /** Run AI extraction directly on a client-uploaded inventory. */
-  onExtract: (artifactId: string) => void;
+  /**
+   * Run AI extraction directly on a client-uploaded inventory, with what the
+   * admin acknowledged the run would do (#504).
+   */
+  onExtract: (artifactId: string, serves: AiServes) => void;
   extracting: boolean;
   /** Bumping this re-fetches the list (e.g. after a workspace upload). */
   reloadKey?: number;
@@ -42,6 +46,11 @@ export interface IntakeDocumentsPanelProps {
    * says which one it is and what clears the way.
    */
   draftSourceId?: string | null;
+  /**
+   * #550: an earlier extraction's outcome is unknown, so no extraction starts
+   * from this page until it is reloaded. The workspace says why.
+   */
+  extractBlocked?: boolean;
 }
 
 /**
@@ -56,6 +65,7 @@ export function IntakeDocumentsPanel({
   extracting,
   reloadKey = 0,
   draftSourceId = null,
+  extractBlocked = false,
 }: IntakeDocumentsPanelProps): JSX.Element {
   const [docs, setDocs] = React.useState<ArtifactSummary[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -150,12 +160,16 @@ export function IntakeDocumentsPanel({
                     {isInventory(a) ? (
                       /* Issue 2: extraction is an AI job — warn before canned
                        output when no key is loaded. */
-                      <RunAiGuard onProceed={() => onExtract(a.id)}>
-                        {({ onClick }) => (
+                      <RunAiGuard
+                        onProceed={(serves) => onExtract(a.id, serves)}
+                      >
+                        {({ onClick, statusUnknown }) => (
                           <button
                             type="button"
                             onClick={onClick}
-                            disabled={extracting}
+                            disabled={
+                              extracting || extractBlocked || statusUnknown
+                            }
                             className="rounded-md bg-brand-500 px-3 py-1.5 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             {extracting ? "Extracting…" : "Extract from this"}

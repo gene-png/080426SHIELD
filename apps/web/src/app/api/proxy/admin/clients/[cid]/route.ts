@@ -10,6 +10,7 @@ import { NextResponse } from "next/server";
 
 import { ApiError, apiFetch } from "@/lib/api";
 import { auth } from "@/lib/auth/options";
+import { upstreamOutcomeUnknown } from "@/lib/upstream-outcome-unknown";
 
 export async function DELETE(
   _request: Request,
@@ -37,9 +38,6 @@ export async function DELETE(
         status: err.status,
       });
     }
-    return NextResponse.json(
-      { error: { message: "Upstream admin/clients archive call failed." } },
-      { status: 502 },
-    );
+    return upstreamOutcomeUnknown(err, "Upstream admin/clients archive call");
   }
 }

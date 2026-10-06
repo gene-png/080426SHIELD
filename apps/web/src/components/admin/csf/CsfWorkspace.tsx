@@ -40,7 +40,11 @@ import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
 import { useRefreshFailures } from "@/components/admin/useRefreshFailures";
 import { serverReason } from "@/lib/describe-save-error";
-import { MIN_TARGET_TIER } from "@/lib/assessment-targets";
+import {
+  MIN_TARGET_TIER,
+  TIER_BELOW_FLOOR_NOTE,
+  isBelowTargetFloor,
+} from "@/lib/assessment-targets";
 
 import { CsfDeliverableCard } from "./CsfDeliverableCard";
 import { CsfGapList } from "./CsfGapList";
@@ -51,6 +55,7 @@ import { CsfScoreCard } from "./CsfScoreCard";
 import type { JSX } from "react";
 import { ProgressStages } from "../ProgressStages";
 import { useServiceStages } from "@/lib/stages/client";
+import { AiSourceNote } from "@/components/AiSourceNote";
 
 export interface CsfWorkspaceProps {
   serviceId: string;
@@ -160,6 +165,14 @@ export function CsfWorkspace({
    */
   const { messages: refreshMessages, begin: beginRefresh } =
     useRefreshFailures();
+  // #550: set once a Run AI's outcome is unknown and never cleared; a reload
+  // clears it, which the copy says. Held HERE rather than in the playbook
+  // panel, because this page unmounts the panel whenever there is no
+  // assessment (review of #752, finding 2).
+  const [runOutcomeUnknown, setRunOutcomeUnknown] = React.useState(false);
+  // #645: a Run AI in progress, as the Playbook panel (which follows it)
+  // reports. Approve is rendered here, outside the panel, and must lock too.
+  const [runInProgress, setRunInProgress] = React.useState(false);
   const [busy, setBusy] = React.useState<
     "create" | "approve" | "discard" | null
   >(null);
@@ -189,6 +202,18 @@ export function CsfWorkspace({
 
   /** What the picker shows: a pure function of `(pendingTarget, gap)`. */
   const shownTier = pendingTarget ?? gap?.target_tier ?? targetTier;
+  // #85, and the reason the coercion above stays: `normalizeTarget` selects
+  // the default for a stored target below the floor, which is what the API's
+  // resolver does too, so this screen and the document agree. It must not do
+  // so SILENTLY, so the consultant is told why. DERIVED from the stored value
+  // on every render, never synchronised, and worded from the same string the
+  // client dashboard renders for `client_below_floor`.
+  const targetNote = isBelowTargetFloor(
+    assessment?.client_target_tier,
+    MIN_TARGET_TIER,
+  )
+    ? `Client's target not used — ${TIER_BELOW_FLOOR_NOTE}.`
+    : null;
 
   /**
    * The live `shownTier`, for callers that read it after an await --
@@ -215,6 +240,27 @@ export function CsfWorkspace({
   // (the T8 stale-fetch race). Every mutation bumps the sequence before it
   // writes, so any in-flight load is discarded on arrival.
   const assessmentSeq = React.useRef(0);
+
+  // #646: a completed run may have changed the assessment's AI source, and
+  // the run is followed by the Playbook panel, which re-reads only its own
+  // rows. So the panel says when one completes, and the assessment is re-read,
+  // under the same sequence guard every assessment write takes. A failed
+  // re-read is said, as the other side reads here are.
+  const onRunCompleted = React.useCallback(() => {
+    const seq = ++assessmentSeq.current;
+    const attempt = beginRefresh("assessment");
+    void fetchLatestAssessment(serviceId).then(
+      (a) => {
+        attempt.clear();
+        if (seq === assessmentSeq.current) setAssessment(a);
+      },
+      () => {
+        attempt.note(
+          "The AI run ended, but the assessment could not be re-read, so its AI source may be out of date. Reload to see it.",
+        );
+      },
+    );
+  }, [serviceId, beginRefresh]);
 
   const answersByCode = React.useMemo(() => {
     const out: Record<string, CsfAnswer> = {};
@@ -682,7 +728,18 @@ export function CsfWorkspace({
             title="Work the Playbook and draft with AI"
             description="The 10-step CSF 2.0 Playbook builds the working profiles, and Run AI drafts a tier per subcategory from them. It drafts; you decide."
           >
-            <CsfPlaybookPanel serviceId={serviceId} readOnly={readOnly} />
+            {/* #646: the assessment's AI source, from the derivation the
+                deliverable and the client dashboard call. */}
+            <AiSourceNote source={assessment.ai_source} className="mb-3" />
+            <CsfPlaybookPanel
+              serviceId={serviceId}
+              readOnly={readOnly}
+              runOutcomeUnknown={runOutcomeUnknown}
+              onRunOutcomeUnknown={() => setRunOutcomeUnknown(true)}
+              assessmentId={assessment.id}
+              onRunInProgressChange={setRunInProgress}
+              onRunCompleted={onRunCompleted}
+            />
           </WorkflowStep>
 
           <WorkflowStep
@@ -720,6 +777,8 @@ export function CsfWorkspace({
               onClick={() => void onApprove()}
               disabled={
                 busy !== null ||
+                // #645: approving mid-run would approve rows about to change.
+                runInProgress ||
                 (assessment.status !== "draft" &&
                   assessment.status !== "submitted")
               }
@@ -764,6 +823,7 @@ export function CsfWorkspace({
             analysis={gap}
             targetTier={shownTier}
             onChangeTargetTier={(t) => void onChangeTargetTier(t)}
+            targetNote={targetNote}
           />
           <MessageThread serviceId={serviceId} />
         </>

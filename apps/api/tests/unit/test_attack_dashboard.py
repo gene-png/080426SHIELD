@@ -99,7 +99,13 @@ def _seed_finalize_release(c: TestClient, bearer: str, *, release: bool) -> str:
         r = c.patch(
             f"/attack/coverage/{cov['id']}",
             headers={"Authorization": f"Bearer {bearer}"},
-            json={"status": "covered"},
+            # #554 R3: all three in place, so it computes to Covered (class B).
+            json={
+                "status": "covered",
+                "detection_tools": ["Tool A"],
+                "prevention_tools": ["Tool A"],
+                "response_tools": ["Tool A"],
+            },
         )
         assert r.status_code == 200, r.text
     c.post(
@@ -244,6 +250,24 @@ def test_client_dashboard_withholds_the_same_rows_the_released_pdf_does(app_clie
     svc_id = _seed_finalize_release(c, bearer_admin, release=True)
 
     engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    # #554 R3 (C1, ruled by the advisor 01:05Z): #102's withholding renders only
+    # for an assessment approved before R3, so this one is stamped
+    # status_rules=1, the state 0059's backfill gives a released pre-R3
+    # assessment. Under R3 an unconfirmed tool is scored at the lower bound
+    # instead (test_attack_computed_status.py).
+    import uuid as _uuid
+
+    from sqlalchemy import update as _update
+
+    from app.models.attack_assessment import AttackAssessment as _Assessment
+
+    with _Session(engine) as db:
+        db.execute(
+            _update(_Assessment)
+            .where(_Assessment.service_id == _uuid.UUID(svc_id))
+            .values(status_rules=1)
+        )
+        db.commit()
     with _Session(engine) as db:
         rows = db.query(AttackCoverage).filter(AttackCoverage.status == "covered").all()
         assert rows, "fixture produced no covered rows"
@@ -251,6 +275,11 @@ def test_client_dashboard_withholds_the_same_rows_the_released_pdf_does(app_clie
         # tool is applied, and nobody has vouched for it.
         for r in rows:
             r.detection_tools = ["CrowdStrike Falcon"]
+            # #554 R3: the seed helper now names a confirmed tool in all three
+            # lists (class B); "every citation had to be inferred" means the
+            # other two lists carry nothing confirmed either.
+            r.prevention_tools = []
+            r.response_tools = []
             r.unconfirmed_citations = [
                 {
                     "tool": "CrowdStrike Falcon",
@@ -306,7 +335,17 @@ def _cut_and_approve_next_version(c: TestClient, bearer: str, svc_id: str, *, co
     assert nxt.status_code == 201, nxt.text
     nxt = nxt.json()
     for cov in standalone_rows(nxt["coverage"], covered) if covered else []:
-        r = c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "covered"})
+        # #554 R3: all three in place, so it computes to Covered (class B).
+        r = c.patch(
+            f"/attack/coverage/{cov['id']}",
+            headers=h,
+            json={
+                "status": "covered",
+                "detection_tools": ["Tool A"],
+                "prevention_tools": ["Tool A"],
+                "response_tools": ["Tool A"],
+            },
+        )
         assert r.status_code == 200, r.text
     r = c.post(f"/attack/assessments/{nxt['id']}/approve", headers=h)
     assert r.status_code == 200, r.text
@@ -385,7 +424,14 @@ def test_a_computed_parent_shows_the_client_no_tools_or_rationale_of_its_own(app
         r = c.patch(
             f"/attack/coverage/{by_code[child]['id']}",
             headers=auth,
-            json={"status": "covered", "detection_tools": ["Tool A"], "rationale": "Child."},
+            # #554 R3: all three in place, so it computes to Covered (class B).
+            json={
+                "status": "covered",
+                "detection_tools": ["Tool A"],
+                "prevention_tools": ["Tool A"],
+                "response_tools": ["Tool A"],
+                "rationale": "Child.",
+            },
         )
         assert r.status_code == 200, r.text
     # A legacy parent: stale model text and tools stored on the row itself.

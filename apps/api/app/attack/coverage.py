@@ -21,6 +21,10 @@ reporting surface renders them as of #621 (the client and admin dashboards, the
 exporters and finalize summary, the home value card, the risk link scope), and
 the release-readiness gate (#622) refuses approve and release over a Not
 verified row. What remains before the widening slice may add them to `WRITABLE`:
+  * decide whether the AI may write it. The AI writes `WRITABLE` minus
+    `not_applicable` (`routes/attack.py` `_AI_WRITABLE_STATUSES`, #841), so a
+    status added to `WRITABLE` becomes AI-writable unless it is subtracted
+    there too;
   * the owner's call on how the Risk Register treats an unverified technique
     (#621 keeps it uncitable and names it "Not verified"; not yet confirmed).
 The PATCH refuses them typed, and the AI write-back refuses a suggestion carrying
@@ -53,7 +57,8 @@ class CoverageStatus(enum.StrEnum):
     UNABLE_TO_DETERMINE = "unable_to_determine"
 
 
-#: What a consultant or the AI may write today. See "NOT YET WRITABLE" above.
+#: What a consultant may write today. The AI writes this minus `not_applicable`
+#: (`routes/attack.py` `_AI_WRITABLE_STATUSES`, #841). See "NOT YET WRITABLE" above.
 WRITABLE: frozenset[CoverageStatus] = frozenset(
     {
         CoverageStatus.COVERED,

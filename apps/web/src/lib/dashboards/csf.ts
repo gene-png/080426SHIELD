@@ -1,3 +1,5 @@
+import type { AiSource } from "@/lib/aiSource/types";
+
 /**
  * Client NIST CSF 2.0 dashboard — types + pure transforms.
  * Mirrors the backend `CsfDashboardResponse` (apps/api/app/schemas/clients.py).
@@ -6,6 +8,8 @@
  * returned null for `nist_csf`, so a client could see a CSF gap count on their
  * home page and had no way to open the results.
  */
+
+import { targetSourceNote } from "@/lib/assessment-targets";
 
 export interface CsfFunction {
   code: string;
@@ -35,6 +39,8 @@ export interface CsfGap {
 }
 
 export interface CsfDashboardData {
+  /** #646: which mode drafted the AI suggestions, as the API states it. */
+  ai_source: AiSource;
   service_id: string;
   service_title: string;
   released_at: string;
@@ -50,10 +56,11 @@ export interface CsfDashboardData {
   target_label: string;
   target_pct: number;
   /**
-   * FOUR values, not two (#184): "client", "default", "client_out_of_range",
-   * "client_unparseable". The last two mean the client DID choose and the
-   * choice could not be used — a different fact from choosing nothing, and the
-   * only one a consultant can act on by re-asking them.
+   * Not two values (#184): "client", "default", "client_out_of_range",
+   * "client_unparseable", and since #85 "client_below_floor". The last three
+   * mean the client DID choose and the choice could not be used — a different
+   * fact from choosing nothing, and the only one a consultant can act on by
+   * re-asking them.
    *
    * Rendered, not just carried — see `targetIsAssumed` and `targetFaultNote`.
    */
@@ -124,21 +131,15 @@ export function targetIsAssumed(data: CsfDashboardData): boolean {
  * Mirrored from `dashboards/zt.ts::targetFault` rather than worded again, so
  * two services cannot describe one fault differently.
  *
- * The default arm is deliberate and not dead: the API is the source of this
- * string, so an unrecognised value must still say SOMETHING true rather than
- * fall through to the "chose nothing" copy.
+ * An unrecognised value still says SOMETHING true rather than falling through
+ * to the "chose nothing" copy: the API is the source of this string.
+ *
+ * #783 / #422: the words are the `tier` rows of `TARGET_SOURCE_NOTES` in
+ * `lib/assessment-targets.ts`, the ONE table. The client's documents state the
+ * same rows from the api's copy (`assessment_targets.py::target_source_sentence`),
+ * which the api's `test_target_floor_parity.py` asserts equal to that table.
+ * Reword the table, never here.
  */
 export function targetFaultNote(source: string): string | null {
-  switch (source) {
-    case "client":
-      return null;
-    case "default":
-      return "no tier chosen at intake";
-    case "client_out_of_range":
-      return "the tier on file is not one CSF has";
-    case "client_unparseable":
-      return "the tier on file could not be read";
-    default:
-      return "the tier on file was not usable";
-  }
+  return targetSourceNote("tier", source);
 }

@@ -7,7 +7,7 @@ import {
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
 import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
-import { acknowledgeOfflineAi } from "../helpers/ai";
+import { acknowledgeOfflineAi, waitForRun } from "../helpers/ai";
 
 /**
  * SMOKE_TEST.md section 11 (T8): the C3 "documents are stale" nudge.
@@ -77,9 +77,9 @@ async function openFreshDraft(
   return attackServiceId;
 }
 
-/** Click Run AI and wait for the run-ai POST to resolve. */
+/** Click Run AI and wait for the run it starts to complete (#645). */
 async function runAi(page: Page): Promise<void> {
-  const runDone = page.waitForResponse(
+  const runStarted = page.waitForResponse(
     (r) =>
       r.url().includes("/attack/services/") &&
       r.url().includes("/run-ai") &&
@@ -90,7 +90,9 @@ async function runAi(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Run AI" }).click();
   // The offline guard intercepts the first click when no key is loaded.
   await acknowledgeOfflineAi(page);
-  await runDone;
+  const started = (await (await runStarted).json()) as { run_id: string };
+  const run = await waitForRun(page, started.run_id);
+  expect(run.status, `run ${run.id}: ${run.error_message}`).toBe("completed");
 }
 
 test("Run AI raises the stale-documents nudge; finalising the deliverable clears it", async ({
@@ -133,6 +135,37 @@ test("Run AI raises the stale-documents nudge; finalising the deliverable clears
     `/api/proxy/attack/services/${attackServiceId}/deliverables/finalize`,
   );
   expect(finalized.ok()).toBeTruthy();
+
+  // #554 R3: the approved assessment this spec leaves on the shared client
+  // computes its statuses, and any that differ from the AI's suggestion wait
+  // for a consultant's review. Risk synthesis refuses until they are reviewed,
+  // so review them here: the spec leaves nothing that blocks s8 or s30, in
+  // whatever order they run.
+  const approvedNow = await page.request.get(
+    `/api/proxy/attack/services/${attackServiceId}/assessments/latest`,
+  );
+  expect(approvedNow.ok()).toBeTruthy();
+  const reviews = (
+    (await approvedNow.json()) as {
+      coverage: {
+        technique_code: string;
+        computed_status: string | null;
+        in_review_queue?: boolean;
+      }[];
+    }
+  ).coverage
+    .filter((row) => row.in_review_queue === true)
+    .map((row) => ({
+      code: row.technique_code,
+      computed_status: row.computed_status,
+    }));
+  if (reviews.length > 0) {
+    const reviewed = await page.request.post(
+      `/api/proxy/attack/assessments/${assessmentId}/computed-status-review`,
+      { data: { reviews } },
+    );
+    expect(reviewed.ok(), await reviewed.text()).toBeTruthy();
+  }
 
   // On reload the flag is cleared, so the nudge is gone.
   await page.reload();

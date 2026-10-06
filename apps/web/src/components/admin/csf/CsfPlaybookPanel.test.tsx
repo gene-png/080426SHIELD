@@ -17,6 +17,12 @@ vi.mock("@/lib/csf/client", () => ({
   seedProfiles: vi.fn(),
   runCsfAi: vi.fn(),
   exportPlaybook: vi.fn(),
+  // #645: the panel reads the service's runs on load and polls one it
+  // follows. No run, by default.
+  fetchCsfRun: vi.fn(),
+  fetchCsfRunSummary: vi.fn(() =>
+    Promise.resolve({ running: null, latest: null, last_completed: null }),
+  ),
 }));
 vi.mock("../AiPreviewButton", () => ({ AiPreviewButton: () => null }));
 vi.mock("./CsfDimensionEditor", () => ({ CsfDimensionEditor: () => null }));
@@ -133,7 +139,20 @@ describe("CsfPlaybookPanel run-AI accounting (W1, issue #44)", () => {
 
   async function runAi(res: CsfRunAiResponse): Promise<void> {
     fetchEnterpriseProfile.mockResolvedValue(ent("GV.OC-01"));
-    runCsfAi.mockResolvedValue(res);
+    // #645: the POST starts a run; the result arrives on the completed run.
+    runCsfAi.mockResolvedValue({
+      run_id: "run-csf",
+      status: "running",
+      serves: "offline",
+      deadline_at: "2026-10-01T12:45:00Z",
+      lock_until: "2026-10-01T12:50:00Z",
+      joined: false,
+    });
+    vi.mocked(csfClient.fetchCsfRun).mockResolvedValue({
+      id: "run-csf",
+      status: "completed",
+      result: res,
+    } as unknown as Awaited<ReturnType<typeof csfClient.fetchCsfRun>>);
     render(<CsfPlaybookPanel serviceId="svc-run" />);
     fireEvent.click(
       await screen.findByRole("button", { name: "Run AI (csf_score)" }),

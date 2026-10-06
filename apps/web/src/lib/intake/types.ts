@@ -83,6 +83,11 @@ export interface AssessmentResponse {
   title: string;
   status: string;
   assessment_status: string | null;
+  /**
+   * #588: every report released for this service is withheld from the client
+   * (#556), so a "released" status must not read as readable.
+   */
+  withheld: boolean;
   created_at: string;
 }
 

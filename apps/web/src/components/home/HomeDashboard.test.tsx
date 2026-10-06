@@ -33,6 +33,7 @@ function engagement(over: Partial<AssessmentResponse>): AssessmentResponse {
     title: "Untitled",
     status: "active",
     assessment_status: "draft",
+    withheld: false,
     created_at: "2026-01-01T00:00:00Z",
     ...over,
   };

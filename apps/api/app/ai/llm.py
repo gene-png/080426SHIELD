@@ -31,6 +31,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.ai.redact import RedactionMode, redact_payload
+from app.ai.run_context import ai_run_id_var
 from app.config import Settings, get_settings
 from app.logging import correlation_id_var, get_logger
 from app.models.llm_call import LLMCall, LLMCallMode, LLMCallStatus
@@ -53,6 +54,35 @@ class LLMResponse:
         self.content = content
         self.input_tokens = input_tokens
         self.output_tokens = output_tokens
+
+
+class UnparsedResponseError(RuntimeError):
+    """The provider answered, but nothing in the answer may be parsed. The call
+    was still sent and counted, so the error carries the usage the provider
+    reported and `LLMClient.invoke` records it on the FAILED `llm_calls` row.
+    Without it the spend reads as zero tokens (the N-019 shape). Raise one of
+    the two subclasses, which name what was wrong with the answer.
+    """
+
+    def __init__(
+        self, message: str, *, input_tokens: int | None, output_tokens: int | None
+    ) -> None:
+        super().__init__(message)
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+
+
+class IncompleteResponseError(UnparsedResponseError):
+    """A provider stopped without finishing (a cut-off at the output cap, a
+    content filter, no stop signal, ...): something was generated, and it is
+    not the whole answer."""
+
+
+class NoUsableResponseError(UnparsedResponseError):
+    """A provider returned nothing to parse: the prompt was blocked, no
+    candidate came back, or the one that did has no content (#828). Nothing
+    was cut short, so this is not an `IncompleteResponseError`, whose message
+    `failures.friendly_reason` reads as "cut off"."""
 
 
 class LLMProvider(Protocol):
@@ -165,17 +195,22 @@ class AnthropicProvider:
         # to the engine's json.loads produces an opaque JSONDecodeError, a 500,
         # and — because the 500 rolls the request transaction back — no
         # llm_calls row at all. Raising here names the real cause instead.
+        # An ABSENT or null stop_reason is refused too (#823): nothing then
+        # says the response finished, the same rule as the OpenAI adapter.
+        input_tokens = getattr(getattr(msg, "usage", None), "input_tokens", None)
+        output_tokens = getattr(getattr(msg, "usage", None), "output_tokens", None)
         stop_reason = getattr(msg, "stop_reason", None)
-        if stop_reason is not None and stop_reason not in _ANTHROPIC_CLEAN_STOP_REASONS:
-            raise RuntimeError(
-                f"Anthropic did not finish cleanly (stop_reason={stop_reason}). "
+        if stop_reason not in _ANTHROPIC_CLEAN_STOP_REASONS:
+            stated = "no stop_reason" if stop_reason is None else f"stop_reason={stop_reason}"
+            raise IncompleteResponseError(
+                f"Anthropic did not finish cleanly ({stated}). "
                 "The response is incomplete and was NOT parsed; if this is "
-                "max_tokens, the draft exceeded the output budget."
+                "max_tokens, the draft exceeded the output budget.",
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
             )
         # `msg.content` is a list of blocks; gather the text blocks.
         text = "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
-        input_tokens = getattr(getattr(msg, "usage", None), "input_tokens", None)
-        output_tokens = getattr(getattr(msg, "usage", None), "output_tokens", None)
         return LLMResponse(text, input_tokens, output_tokens)
 
 
@@ -215,7 +250,29 @@ _MAX_OUTPUT_TOKENS = 8192
 # The raises made on 2026-09-23 apply to the streamed (Anthropic) adapter
 # only; the non-streamed adapters send what they sent before -- see
 # `non_streamed_output_cap` below. Provider ceilings and the 60 s timeout are
-# #485, and the OpenAI adapter has no truncation guard at all (#484).
+# #485. Every live adapter now refuses a truncated response (#484 added
+# OpenAI's).
+#
+# OBSERVED, live, claude-opus-5: the largest COMPLETED single call per purpose
+# (thinking included), from the #479 proposal (issuecomment-5970347024). A
+# completed call is a floor on demand, not the demand: extract.capabilities
+# (2026-09-23) and mitre_map (2026-08-07, before batching) each had a call cut
+# off at 8192, so what those calls wanted is unknown and higher.
+#   mitre_map              15,289 (earlier dev llm_calls); 11,684 on 2026-10-02
+#   zt_score                1,553 (2026-10-02)
+#   extract.capabilities    8,117 (2026-09-23); 687 on 2026-10-02
+#   csf_score              ~4,200 a batch of 10 (#806 probe 4,213, 2026-10-03;
+#                          the largest single batch was not recorded)
+#   risk_synthesize        not measured live; ~14k a batch is an estimate
+#   attack_scenario_delta   1,700 a batch of 6 (2026-10-04, Gene's amended
+#                          text, the route's first 4 batches on the demo seed,
+#                          1,173-1,700, #846). At the earlier batch of 25 it
+#                          was 8,231, over the non-streamed 8,192 itself, so
+#                          the batch was shrunk (`scenario.BATCH_SIZE`).
+# THE RULE (advisor, 2026-10-03): a cap is at least 3x the largest observed
+# single call. The caps below are NOT re-derived from it yet: they will be,
+# from #806's "after" measurements, which run on the prompts that will ship.
+# Until then every cap stays as it is.
 _MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
     "mitre_map": 64000,
     # risk_synthesize drafts one entry per finding and is batched at 20 (see
@@ -229,16 +286,16 @@ _MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
     # The three below ran on the shared 8192 until 2026-09-23 because nobody
     # had listed them (#479).
     #
-    # csf_score is ONE unbatched call over the whole assessment: a full Working
-    # Profile is 106 subcategories x 3 tiers = 318 rows, each five integers and
-    # a narrative. That per-row cost is an ESTIMATE -- no live csf_score has run
-    # on the dev stack -- and it spans a wide range: at ~100 tokens a row the
-    # JSON is ~32k, at the ~575 a mitre_map row was measured at (routes/attack.py)
-    # it is ~183k. So 8192 could not fit even one tier, and 64000 -- the largest
-    # cap the dev stack's Anthropic model has accepted (mitre_map) -- fits only
-    # the low end. The real fix is batching per tier, as risk_synthesize and
-    # mitre_map already are. Until then an overrun fails loudly on Anthropic
-    # (stop_reason, streamed). The non-streamed adapters keep the shared 8192
+    # csf_score is BATCHED since #479: at most `_CSF_BATCH_ROWS` (10) of a full
+    # Working Profile's 318 (tier, subcategory) rows a call, sized so a batch
+    # fits the non-streamed adapters' 8192 even after Gemini/Vertex thinking
+    # (the arithmetic is beside the constant, routes/csf.py). A row was first
+    # ESTIMATED at ~100 to ~575 tokens; #806 measured ~420 a row live on
+    # 2026-10-03 (see OBSERVED above). 64000 is per batch and generous on the
+    # streamed Anthropic path, where output is billed as generated. An overrun
+    # still fails loudly (stop_reason, streamed; finishReason or finish_reason,
+    # non-streamed) and costs that batch,
+    # which the run discloses. The non-streamed adapters keep the shared 8192
     # for this purpose (`non_streamed_output_cap`).
     "csf_score": 64000,
     # extract.capabilities output scales with the uploaded inventory, which the
@@ -253,6 +310,16 @@ _MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
     # is CHOSEN, not defaulted: raising it buys nothing for an output this
     # size.
     "zt_score": _MAX_OUTPUT_TOKENS,
+    # #802's ATT&CK what-if, per batch of `scenario.BATCH_SIZE` (6). 64000 is
+    # what the STREAMED adapter sends, billed as generated. The non-streamed
+    # adapters send 8,192 (`non_streamed_output_cap`), and the 3x rule holds for
+    # them only because the batch was shrunk: 3 x 1,700 = 5,100 (see OBSERVED
+    # and the arithmetic beside BATCH_SIZE).
+    "attack_scenario_delta": 64000,
+    # #802's chat box: three short lists naming a few tools. The shared
+    # default, CHOSEN: it keeps the non-streamed adapters sending what main
+    # sent. Unmeasured; re-derived from the first live call by the 3x rule.
+    "attack_scenario_intent": _MAX_OUTPUT_TOKENS,
 }
 
 
@@ -282,7 +349,9 @@ def max_output_tokens_for(purpose: str | None) -> int:
 # a configuration that worked at 8192. A list of provider limits cannot be
 # complete; "these adapters are unchanged" can be, and a test pins it. Raising
 # them is its own change, with #485's ceilings and 60 s timeout.
-_RAISED_FOR_THE_STREAMED_ADAPTER_ONLY = frozenset({"csf_score", "extract.capabilities"})
+_RAISED_FOR_THE_STREAMED_ADAPTER_ONLY = frozenset(
+    {"csf_score", "extract.capabilities", "attack_scenario_delta"}
+)
 
 
 def non_streamed_output_cap(purpose: str | None) -> int:
@@ -357,19 +426,52 @@ def _parse_generate_content(data: dict[str, Any]) -> LLMResponse:
     truncated JSON draft would flow downstream and die as an opaque
     ``JSONDecodeError`` in the engine's response parser, hiding the real cause
     (the 2026-07-15 Vertex live sweep hit exactly this on csf/risk). An absent
-    ``finishReason`` (e.g. hand-built test fixtures) is treated as success.
+    ``finishReason`` is refused too (#823): nothing then says the generation
+    finished, the same rule as the Anthropic and OpenAI adapters.
     """
-    candidate = data["candidates"][0]
-    finish_reason = candidate.get("finishReason")
-    if finish_reason is not None and finish_reason != "STOP":
-        raise RuntimeError(
-            f"generateContent did not finish cleanly (finishReason={finish_reason}). "
-            "The response is incomplete and was NOT parsed; if this is MAX_TOKENS, "
-            "raise maxOutputTokens for this purpose."
-        )
-    parts = candidate["content"]["parts"]
-    text = "".join(p.get("text", "") for p in parts)
     usage = data.get("usageMetadata") or {}
+    candidates = data.get("candidates") or []
+    if not candidates:
+        # A blocked PROMPT returns promptFeedback.blockReason and no candidate.
+        block = (data.get("promptFeedback") or {}).get("blockReason")
+        cause = f": the prompt was blocked (blockReason={block})" if block else ""
+        raise NoUsableResponseError(
+            f"generateContent returned no candidates{cause}. Nothing was generated or parsed.",
+            input_tokens=usage.get("promptTokenCount"),
+            output_tokens=usage.get("candidatesTokenCount"),
+        )
+    candidate = candidates[0]
+    finish_reason = candidate.get("finishReason")
+    if finish_reason != "STOP":
+        stated = "no finishReason" if finish_reason is None else f"finishReason={finish_reason}"
+        raise IncompleteResponseError(
+            f"generateContent did not finish cleanly ({stated}). "
+            "The response is incomplete and was NOT parsed; if this is MAX_TOKENS, "
+            "raise maxOutputTokens for this purpose.",
+            input_tokens=usage.get("promptTokenCount"),
+            output_tokens=usage.get("candidatesTokenCount"),
+        )
+    parts = (candidate.get("content") or {}).get("parts")
+    if not parts:
+        raise NoUsableResponseError(
+            "generateContent returned a candidate with no content "
+            f"(finishReason={finish_reason}). Nothing was parsed.",
+            input_tokens=usage.get("promptTokenCount"),
+            output_tokens=usage.get("candidatesTokenCount"),
+        )
+    text = "".join(p.get("text", "") for p in parts)
+    # Parts can exist and still carry no text: an empty or whitespace-only
+    # string, or only non-text parts such as a functionCall. Each would join to
+    # nothing a parser can read, be recorded COMPLETED, and fail later as a bare
+    # JSONDecodeError (#830 review F1). Whitespace-only counts as no text: no
+    # job's answer can be blank.
+    if not text.strip():
+        raise NoUsableResponseError(
+            "generateContent returned a candidate with no text "
+            f"(finishReason={finish_reason}). Nothing was parsed.",
+            input_tokens=usage.get("promptTokenCount"),
+            output_tokens=usage.get("candidatesTokenCount"),
+        )
     return LLMResponse(
         text,
         usage.get("promptTokenCount"),
@@ -419,8 +521,28 @@ class OpenAIProvider:
             )
         resp.raise_for_status()
         data = resp.json()
-        text = data["choices"][0]["message"]["content"]
+        choice = data["choices"][0]
+        # FAIL LOUDLY on a non-clean finish, the twin of the Anthropic and
+        # generateContent guards (#484). `length` is a draft cut off at the
+        # output cap; returning it as a success marked the llm_calls row
+        # COMPLETED and left the engine's json.loads to fail under the wrong
+        # cause. An ABSENT finish_reason is refused too (advisor, 2026-10-03, on
+        # #820): nothing then says the response finished. The Anthropic and
+        # generateContent guards refuse an absent stop reason the same way (#823).
         usage = data.get("usage") or {}
+        finish_reason = choice.get("finish_reason")
+        if finish_reason != "stop":
+            stated = (
+                "no finish_reason" if finish_reason is None else f"finish_reason={finish_reason}"
+            )
+            raise IncompleteResponseError(
+                f"OpenAI did not finish cleanly ({stated}). "
+                "The response is incomplete and was NOT parsed; if this is "
+                "length, the draft exceeded the output budget.",
+                input_tokens=usage.get("prompt_tokens"),
+                output_tokens=usage.get("completion_tokens"),
+            )
+        text = choice["message"]["content"]
         return LLMResponse(
             text,
             usage.get("prompt_tokens"),
@@ -693,6 +815,8 @@ class LLMClient:
             redaction_mode=mode,
             redacted_counts=removed_counts or None,
             correlation_id=correlation_id_var.get(),
+            # #645: NULL outside a Run-AI (the preview, Risk synthesis).
+            ai_run_id=ai_run_id_var.get(),
         )
         db.add(row)
         db.flush()
@@ -708,6 +832,10 @@ class LLMClient:
         except Exception as exc:  # noqa: BLE001 - boundary; log + record + re-raise
             row.status = LLMCallStatus.FAILED
             row.error_message = f"{type(exc).__name__}: {exc}"
+            if isinstance(exc, UnparsedResponseError):
+                # Generated and billed, though not parsed: record what it cost.
+                row.input_tokens = exc.input_tokens
+                row.output_tokens = exc.output_tokens
             row.duration_ms = int((time.monotonic() - started) * 1000)
             db.flush()
             _log.error(

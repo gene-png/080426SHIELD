@@ -134,6 +134,14 @@ function draftAtTier2(): CsfAssessment {
     answers: [],
     client_target_tier: 2,
     documents_stale: false,
+    // #646 (Batch F): required since; not under test here. A fresh
+    // draft with no completed run on load: "none", its true state.
+    ai_source: {
+      state: "none",
+      sentence: "No AI suggestions were used in this assessment.",
+      live_runs: 0,
+      fixture_runs: 0,
+    },
   } as unknown as CsfAssessment;
 }
 
@@ -463,5 +471,44 @@ describe("CsfWorkspace target tier is derived from the rows (#385)", () => {
     expect(refreshed.length).toBeGreaterThan(0);
     expect(refreshed).toContain(4);
     expect(refreshed).not.toContain(2);
+  });
+});
+
+describe("CsfWorkspace says why a stored Tier 1 is not the selected target (#85)", () => {
+  // The coercion of a stored 1 to the default 3 is KEPT on purpose (#85): the
+  // API resolves a stored 1 to the same default, so screen and document agree.
+  // It must not be silent. Copy approved on #85, written out, not imported.
+  const NOTE =
+    "Client's target not used — the tier on file is a starting point, not a target.";
+
+  it("shows the reason beside the select, with the default selected", async () => {
+    baseMocks();
+    fetchLatestAssessment.mockResolvedValue({
+      ...draftAtTier2(),
+      client_target_tier: 1,
+    } as unknown as CsfAssessment);
+    fetchGapAnalysis.mockImplementation(async (_id, opts) =>
+      gapAt(requestedTier(opts)),
+    );
+
+    renderWorkspace("svc-85-csf-floor");
+
+    await screen.findByText("rows-computed-for-tier-3");
+    expect(picker()).toHaveValue("3");
+    // By its TEXT: the workspace carries other role="note" elements.
+    expect(screen.getByText(NOTE)).toBeInTheDocument();
+  });
+
+  it("says nothing when the stored tier is a real target", async () => {
+    baseMocks();
+    fetchGapAnalysis.mockImplementation(async (_id, opts) =>
+      gapAt(requestedTier(opts)),
+    );
+
+    renderWorkspace("svc-85-csf-ok");
+
+    // APPEAR before ABSENT: the rows prove the page settled.
+    await screen.findByText("rows-computed-for-tier-2");
+    expect(screen.queryByText(/starting point, not a target/)).toBeNull();
   });
 });

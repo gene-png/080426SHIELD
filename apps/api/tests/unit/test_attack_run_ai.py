@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.models.capability import CapabilityItem, CapabilityList, CapabilityListStatus
 from app.models.service import Service, ServiceKind, ServiceStatus
+from tests._ai_runs import attack_run_ai, get_run, run_ai_expecting_failure
 from tests._attack_rows import first_standalone
 
 
@@ -136,9 +137,8 @@ def test_run_ai_applies_validated_dpr_and_reports_changes(app_client) -> None:
         ),
     )
 
-    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    body = r.json()
+    r = attack_run_ai(c, svc_id, h)
+    body = r
     assert body["tools_available"] == 2
     row = next(t for t in body["coverage"] if t["technique_code"] == code)
     assert row["status"] == "covered"
@@ -184,7 +184,7 @@ def test_run_ai_refuses_when_the_client_has_no_security_capabilities(app_client)
 
     provider.register("mitre_map", _spy)
 
-    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h, json={"serves": "offline"})
     assert r.status_code == 409, r.text
     err = r.json()["error"]
     assert err["reason"] == "no_security_capabilities"
@@ -219,7 +219,7 @@ def test_run_ai_allows_a_client_whose_only_capabilities_are_non_security(app_cli
     svc_id = svc.json()["id"]
     c.post(f"/attack/services/{svc_id}/assessments", headers=h)
 
-    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h, json={"serves": "offline"})
     assert r.status_code == 409, r.text
     assert r.json()["error"]["reason"] == "no_security_capabilities"
 
@@ -246,9 +246,8 @@ def test_run_ai_skips_locked_rows(app_client) -> None:
         "mitre_map",
         LLMResponse('{"techniques": [{"technique_code": "' + code + '", "status": "covered"}]}'),
     )
-    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    body = r.json()
+    r = attack_run_ai(c, svc_id, h)
+    body = r
     # Locked row untouched + absent from the change list.
     row = next(t for t in body["coverage"] if t["technique_code"] == code)
     assert row["status"] is None
@@ -274,7 +273,7 @@ def test_run_ai_marks_documents_stale(app_client) -> None:
         "mitre_map",
         LLMResponse('{"techniques": [{"technique_code": "' + code + '", "status": "covered"}]}'),
     )
-    c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    attack_run_ai(c, svc_id, h)
 
     latest = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h)
     assert latest.status_code == 200, latest.text
@@ -312,10 +311,11 @@ def test_run_ai_non_list_techniques_is_an_error_not_a_silent_empty_run(app_clien
     c.post(f"/attack/services/{svc_id}/assessments", headers=h)
 
     provider.register_static("mitre_map", LLMResponse('{"techniques": 0}'))
-    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 502, r.text
-    assert r.json()["error"]["reason"] == "ai_call_failed"
-    assert "drifted apart" in r.json()["error"]["message"]
+    # #645: the run is a background job, so the typed 502 it used to answer
+    # with is now the FAILED run's reason and message.
+    run = run_ai_expecting_failure(c, f"/attack/services/{svc_id}/run-ai", h)
+    assert run["error_reason"] == "ai_call_failed"
+    assert "drifted apart" in run["error_message"]
 
 
 @pytest.mark.unit
@@ -339,9 +339,9 @@ def test_run_ai_object_techniques_is_refused_not_iterated_as_keys(app_client) ->
     provider.register_static(
         "mitre_map", LLMResponse('{"techniques": {"T1003": {"status": "covered"}}}')
     )
-    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 502, r.text
-    assert r.json()["error"]["reason"] == "ai_call_failed"
+    # #645: the typed 502 is now the FAILED run's reason.
+    run = run_ai_expecting_failure(c, f"/attack/services/{svc_id}/run-ai", h)
+    assert run["error_reason"] == "ai_call_failed"
 
 
 # --- W2: citations are resolved and ACCOUNTED FOR, not silently dropped -----
@@ -398,7 +398,7 @@ def test_a_near_miss_citation_is_resolved_and_flagged_not_dropped(app_client) ->
     )
     provider.register_static("mitre_map", LLMResponse(payload))
 
-    body = c.post(f"/attack/services/{svc_id}/run-ai", headers=h).json()
+    body = attack_run_ai(c, svc_id, h)
     row = next(t for t in body["coverage"] if t["technique_code"] == code)
     assert row["detection_tools"] == ["CrowdStrike Falcon Enterprise"], "the citation was dropped"
     # `mitre_map` runs concurrent BATCHES and the fixture answers each one with
@@ -420,7 +420,7 @@ def test_an_exact_citation_is_confirmed_not_flagged(app_client) -> None:
     code, svc_id, h, payload = _run_with_citations(c, TestSession, ["Tenable.io"], ["Tenable.io"])
     provider.register_static("mitre_map", LLMResponse(payload))
 
-    body = c.post(f"/attack/services/{svc_id}/run-ai", headers=h).json()
+    body = attack_run_ai(c, svc_id, h)
     assert body["citations_confirmed"] == body["batches_total"]
     assert body["citations_needs_review"] == 0, "a verbatim citation was called an inference"
 
@@ -433,7 +433,7 @@ def test_an_unknown_citation_is_counted_and_quoted_verbatim(app_client) -> None:
     )
     provider.register_static("mitre_map", LLMResponse(payload))
 
-    body = c.post(f"/attack/services/{svc_id}/run-ai", headers=h).json()
+    body = attack_run_ai(c, svc_id, h)
     row = next(t for t in body["coverage"] if t["technique_code"] == code)
     assert row["detection_tools"] == []
     assert body["citations_rejected"] == body["batches_total"]
@@ -451,7 +451,7 @@ def test_an_ambiguous_citation_is_refused_rather_than_attributed(app_client) -> 
     )
     provider.register_static("mitre_map", LLMResponse(payload))
 
-    body = c.post(f"/attack/services/{svc_id}/run-ai", headers=h).json()
+    body = attack_run_ai(c, svc_id, h)
     row = next(t for t in body["coverage"] if t["technique_code"] == code)
     assert row["detection_tools"] == []
     assert body["citations_rejected"] == body["batches_total"]
@@ -478,7 +478,7 @@ def test_a_rejected_citation_leaves_the_status_the_model_gave_it(app_client) -> 
     )
     provider.register_static("mitre_map", LLMResponse(payload))
 
-    body = c.post(f"/attack/services/{svc_id}/run-ai", headers=h).json()
+    body = attack_run_ai(c, svc_id, h)
     row = next(t for t in body["coverage"] if t["technique_code"] == code)
     assert row["detection_tools"] == []
     assert row["status"] == "covered", (
@@ -522,7 +522,7 @@ def test_a_wrong_shaped_tool_list_is_counted_not_silently_dropped(app_client) ->
             )
         ),
     )
-    body = c.post(f"/attack/services/{svc_id}/run-ai", headers=h).json()
+    body = attack_run_ai(c, svc_id, h)
     assert body["citations_unusable"] > 0, "a wrong-shaped tool list vanished uncounted"
 
     # #109. The COUNTER above was green before the per-row record existed -- it
@@ -551,6 +551,26 @@ def test_a_wrong_shaped_tool_list_is_counted_not_silently_dropped(app_client) ->
     # `pending.py` names. That is a real behaviour change and it is pinned so it
     # reads as a decision rather than as something nobody noticed.
     assert not any(e["reason"] == "no_citation" for e in row["unconfirmed_citations"])
+    # #554 R3 (C2, option (iii), ruled by the advisor 01:05Z): the RECORD above
+    # is asserted on the R3 draft. Withholding renders only where statuses are
+    # stored (an assessment approved before R3, status_rules=1), so the draft is
+    # stamped to model a released pre-R3 assessment's render path, and the flag
+    # is read there.
+    import uuid as _uuid
+
+    from sqlalchemy import update
+
+    from app.models.attack_assessment import AttackAssessment
+
+    with TestSession() as db:
+        db.execute(
+            update(AttackAssessment)
+            .where(AttackAssessment.service_id == _uuid.UUID(svc_id))
+            .values(status_rules=1)
+        )
+        db.commit()
+    latest = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json()
+    row = next(r for r in latest["coverage"] if r["technique_code"] == code)
     assert row["pending_review"] is True
 
 
@@ -616,7 +636,7 @@ def test_the_same_tool_spelled_two_ways_across_lists_is_not_made_ambiguous(app_c
             )
         ),
     )
-    body = c.post(f"/attack/services/{svc_id}/run-ai", headers=h).json()
+    body = attack_run_ai(c, svc_id, h)
     row = next(t for t in body["coverage"] if t["technique_code"] == code)
     assert row["detection_tools"] != [], "a citation main would have kept was rejected"
     assert body["citations_rejected"] == 0
@@ -651,9 +671,11 @@ def test_every_batched_mitre_map_call_carries_the_requests_correlation_id(app_cl
     r = c.post(
         f"/attack/services/{svc_id}/run-ai",
         headers={**h, "X-Request-ID": "corr-mitre-batches"},
+        json={"serves": "offline"},
     )
-    assert r.status_code == 200, r.text
+    assert r.status_code == 202, r.text
     assert r.headers["X-Request-ID"] == "corr-mitre-batches"
+    assert get_run(c, r.json()["run_id"], h)["status"] == "completed"
 
     with TestSession() as db:
         ids = (
@@ -697,7 +719,10 @@ def test_run_ai_drops_a_reason_the_new_status_does_not_take(app_client) -> None:
     write-back must too, or a consultant's `missing_control_category` survives
     under the AI's N/A -- the exact pairing the vocabulary forbids."""
     c, TestSession, provider = app_client
-    h, svc_id, row_id = _one_row_run(c, TestSession, provider, "not_applicable")
+    # #841: the AI may no longer write N/A, so the status it moves the row to is
+    # a gap -- which takes no reason either, so the consultant's reason is still
+    # the one that must be dropped.
+    h, svc_id, row_id = _one_row_run(c, TestSession, provider, "gap")
     r = c.patch(
         f"/attack/coverage/{row_id}",
         headers=h,
@@ -705,17 +730,14 @@ def test_run_ai_drops_a_reason_the_new_status_does_not_take(app_client) -> None:
     )
     assert r.status_code == 200, r.text
 
-    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    row = next(t for t in r.json()["coverage"] if t["id"] == row_id)
-    assert (row["status"], row["reason_code"]) == ("not_applicable", None)
+    r = attack_run_ai(c, svc_id, h)
+    row = next(t for t in r["coverage"] if t["id"] == row_id)
+    assert (row["status"], row["reason_code"]) == ("gap", None)
 
     # DISCLOSED, not only dropped: in the run's own diff and in the audit row.
     code = row["technique_code"]
     changed = {
-        ch["field"]: (ch["old"], ch["new"])
-        for ch in r.json()["changed"]
-        if ch["technique_code"] == code
+        ch["field"]: (ch["old"], ch["new"]) for ch in r["changed"] if ch["technique_code"] == code
     }
     assert changed["reason_code"] == ("missing_control_category", None), changed
 
@@ -741,9 +763,8 @@ def test_run_ai_does_not_write_a_status_no_surface_reports(app_client, status) -
     enum, so a model answer outside it leaves the row as it was."""
     c, TestSession, provider = app_client
     h, svc_id, row_id, code = _one_row_run_with_reason(c, TestSession, provider, status, None)
-    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    row = next(t for t in r.json()["coverage"] if t["id"] == row_id)
+    r = attack_run_ai(c, svc_id, h)
+    row = next(t for t in r["coverage"] if t["id"] == row_id)
     # Refused WHOLE (#590 round 2): no status, and none of the suggestion's
     # tools or rationale -- a rationale arguing for a status the row does not
     # have is what the old skip left behind.
@@ -811,15 +832,16 @@ def _run_audit(TestSession) -> dict:
 @pytest.mark.unit
 @pytest.mark.parametrize(
     ("status", "reason"),
-    [("partial", "reach_limited"), ("not_applicable", "platform_absent")],
+    # #841: not `not_applicable` -- the AI may no longer write it
+    # (`test_attack_ai_not_applicable_refused.py` pins the refusal).
+    [("partial", "reach_limited")],
 )
 def test_run_ai_stores_a_reason_the_status_takes(app_client, status, reason) -> None:
     """#554 slice 2: the model's reason is stored when it belongs to the status."""
     c, TestSession, provider = app_client
     h, svc_id, row_id, _ = _one_row_run_with_reason(c, TestSession, provider, status, reason)
-    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    row = next(t for t in r.json()["coverage"] if t["id"] == row_id)
+    r = attack_run_ai(c, svc_id, h)
+    row = next(t for t in r["coverage"] if t["id"] == row_id)
     assert (row["status"], row["reason_code"]) == (status, reason)
     assert _run_audit(TestSession)["reason_codes_rejected"] == []
 
@@ -830,21 +852,36 @@ _PRIOR_GAP = {"status": "gap", "reason_code": None}
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
-    ("status", "reason", "recorded", "prior"),
+    ("status", "reason", "recorded", "prior", "bucket"),
     [
         # The pairing the vocabulary exists to forbid: a missing control is a
         # GAP, never an N/A reason. Applying the N/A would move the row out of
-        # the gap list on the model's word.
-        ("not_applicable", "missing_control_category", "missing_control_category", _PRIOR_PARTIAL),
-        ("partial", "platform_absent", "platform_absent", _PRIOR_GAP),
-        ("gap", "reach_limited", "reach_limited", _PRIOR_PARTIAL),
-        ("partial", "not_a_code", "not_a_code", _PRIOR_GAP),
+        # the gap list on the model's word. Since #841 the AI may not write N/A
+        # at all, so this is refused at the STATUS check, before the reason
+        # check, and recorded in `statuses_rejected`. Kept, so that ordering
+        # cannot drift silently.
+        (
+            "not_applicable",
+            "missing_control_category",
+            None,
+            _PRIOR_PARTIAL,
+            "statuses_rejected",
+        ),
+        ("partial", "platform_absent", "platform_absent", _PRIOR_GAP, "reason_codes_rejected"),
+        ("gap", "reach_limited", "reach_limited", _PRIOR_PARTIAL, "reason_codes_rejected"),
+        ("partial", "not_a_code", "not_a_code", _PRIOR_GAP, "reason_codes_rejected"),
         # Model PROSE never reaches an audit row: a marker stands in for it.
-        ("partial", "Nothing defends this. See notes!", "<not a code>", _PRIOR_GAP),
+        (
+            "partial",
+            "Nothing defends this. See notes!",
+            "<not a code>",
+            _PRIOR_GAP,
+            "reason_codes_rejected",
+        ),
     ],
 )
 def test_run_ai_refuses_a_mispaired_suggestion_whole_and_records_it(
-    app_client, status, reason, recorded, prior
+    app_client, status, reason, recorded, prior, bucket
 ) -> None:
     """As the PATCH refuses the whole request (typed 422), the write-back refuses
     the whole suggestion: the row keeps the consultant's status AND reason, and
@@ -858,9 +895,8 @@ def test_run_ai_refuses_a_mispaired_suggestion_whole_and_records_it(
     assert before.status_code == 200, before.text
     kept = {k: before.json()[k] for k in ("detection_tools", "rationale")}
 
-    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    row = next(t for t in r.json()["coverage"] if t["id"] == row_id)
+    r = attack_run_ai(c, svc_id, h)
+    row = next(t for t in r["coverage"] if t["id"] == row_id)
     assert (row["status"], row["reason_code"]) == (prior["status"], prior["reason_code"])
     # WHOLE: the suggestion's tools and rationale did not land either.
     assert {k: row[k] for k in kept} == kept
@@ -868,12 +904,16 @@ def test_run_ai_refuses_a_mispaired_suggestion_whole_and_records_it(
     # The static answer is replayed to EVERY batch, so the refusal is recorded
     # once per batch that saw it. What is pinned is that it IS recorded, whole,
     # and nothing else is.
-    rejected = _run_audit(TestSession)["reason_codes_rejected"]
+    audit = _run_audit(TestSession)
+    rejected = audit[bucket]
     assert rejected, "a refused suggestion must be recorded, not silently dropped"
-    assert all(
-        entry == {"technique_code": code, "status": status, "reason_code": recorded}
-        for entry in rejected
-    ), rejected
+    expected = {"technique_code": code, "status": status}
+    if bucket == "reason_codes_rejected":
+        expected["reason_code"] = recorded
+    assert all(entry == expected for entry in rejected), rejected
+    # Recorded in exactly one list.
+    other = "statuses_rejected" if bucket == "reason_codes_rejected" else "reason_codes_rejected"
+    assert audit[other] == [], audit[other]
 
 
 @pytest.mark.unit
@@ -905,9 +945,8 @@ def test_run_ai_refuses_a_suggestion_without_a_writable_status_whole(
     assert before.status_code == 200, before.text
     kept = {k: before.json()[k] for k in ("detection_tools", "rationale", "reason_code")}
 
-    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    row = next(t for t in r.json()["coverage"] if t["id"] == row_id)
+    r = attack_run_ai(c, svc_id, h)
+    row = next(t for t in r["coverage"] if t["id"] == row_id)
     assert row["status"] == "gap"
     assert {k: row[k] for k in kept} == kept
     rejected = _run_audit(TestSession)["statuses_rejected"]
@@ -946,9 +985,8 @@ def test_run_ai_refuses_a_computed_parents_suggestion_and_computes_it(app_client
         for child in children
     ]
     provider.register_static("mitre_map", LLMResponse(json.dumps({"techniques": suggestion})))
-    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    row = next(t for t in r.json()["coverage"] if t["technique_code"] == parent)
+    r = attack_run_ai(c, svc_id, h)
+    row = next(t for t in r["coverage"] if t["technique_code"] == parent)
     # Computed from its children -- all gap -- not the model's "covered".
     assert row["status"] == "gap"
     assert row["rationale"] != "PARENT-RATIONALE-that-must-not-land"
@@ -995,13 +1033,10 @@ def test_run_ai_shows_a_legacy_locked_parents_recompute_in_its_diff(app_client) 
         for child in children
     ]
     provider.register_static("mitre_map", LLMResponse(json.dumps({"techniques": suggestion})))
-    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-    row = next(t for t in r.json()["coverage"] if t["technique_code"] == parent)
+    r = attack_run_ai(c, svc_id, h)
+    row = next(t for t in r["coverage"] if t["technique_code"] == parent)
     assert (row["status"], row["locked"]) == ("gap", False)
-    assert {ch["field"] for ch in r.json()["changed"] if ch["technique_code"] == parent} >= {
-        "status"
-    }
+    assert {ch["field"] for ch in r["changed"] if ch["technique_code"] == parent} >= {"status"}
     assert parent in _run_audit(TestSession)["parents_unlocked"]
 
 
@@ -1021,8 +1056,7 @@ def test_run_ai_never_sends_a_computed_parent_to_the_model(app_client) -> None:
         return LLMResponse('{"techniques": []}')
 
     provider.register("mitre_map", _spy)
-    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
+    attack_run_ai(c, svc_id, h)
     # Derived from the catalog's parent links, not from `app.attack.parents`,
     # so this does not read the predicate it is checking.
     has_children = {t.parent_id for t in TECHNIQUES if t.parent_id is not None}

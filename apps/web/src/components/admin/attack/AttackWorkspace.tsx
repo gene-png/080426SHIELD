@@ -12,6 +12,7 @@ import {
 
 import {
   approveAssessment,
+  reviewComputedStatuses,
   AttackProxyError,
   createAssessment,
   discardAssessment,
@@ -20,9 +21,14 @@ import {
   fetchLatestAssessment,
   fetchLatestDeliverable,
   confirmCoverageCitations,
+  fetchAttackRun,
+  fetchAttackRunSummary,
   patchCoverage,
   runAttackAi,
 } from "@/lib/attack/client";
+import type { AttackRun, ComputedStatusReview } from "@/lib/attack/client";
+import type { AiServes } from "@/lib/aiRuns/types";
+import { useAiRun } from "@/lib/aiRuns/useAiRun";
 import type {
   AttackAssessment,
   AttackCatalog,
@@ -30,7 +36,6 @@ import type {
   AttackCoverageRow,
   AttackDeliverable,
   AttackHeatmap,
-  AttackRunAiResponse,
   CatalogTechnique,
   TacticHeatmapEntry,
 } from "@/lib/attack/types";
@@ -39,20 +44,25 @@ import { MessageThread } from "@/components/messages/MessageThread";
 import { StaleDocsNudge } from "@/components/admin/StaleDocsNudge";
 import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { AiPreviewButton } from "@/components/admin/AiPreviewButton";
+import { AiRunStatus, LastRunNote } from "@/components/admin/AiRunStatus";
 import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
 
 import { AttackAiInputsPanel } from "./AttackAiInputsPanel";
 import { AttackCitationAccounting } from "./AttackCitationAccounting";
+import { AttackComputedReviewPanel } from "./AttackComputedReviewPanel";
 import { AttackDeliverableCard } from "./AttackDeliverableCard";
 import { AttackHeatmapCard } from "./AttackHeatmapCard";
 import { AttackMatrix } from "./AttackMatrix";
+import { AttackScenarioPanel } from "./AttackScenarioPanel";
 import { AttackTechniquePanel } from "./AttackTechniquePanel";
 
 import type { JSX } from "react";
 import { ProgressStages } from "../ProgressStages";
 import { useServiceStages } from "@/lib/stages/client";
 import { useRefreshFailures } from "@/components/admin/useRefreshFailures";
+import { isUpstreamOutcomeUnknown } from "@/lib/describe-save-error";
+import { AiSourceNote } from "@/components/AiSourceNote";
 
 export interface AttackWorkspaceProps {
   serviceId: string;
@@ -70,6 +80,37 @@ function describeError(err: unknown): string {
     );
   }
   return err instanceof Error ? err.message : "Request failed.";
+}
+
+/**
+ * #550: what to say when the proxy never saw Run AI's answer. Not "failed":
+ * the api may have finished and written the rows. It names where to look and
+ * that the button stays off, because a retry sends the client's data out again.
+ */
+const RUN_OUTCOME_UNKNOWN =
+  "We couldn't confirm whether the AI run finished. It may still complete and fill in technique rows. Reload the page later and check step 2, Review every technique and adjust, before running it again. Run AI stays off on this page until you reload.";
+
+/**
+ * #554 R3: what the review panel says after it re-read itself because what it
+ * showed went stale -- a computed status moved, or a row left the queue -- between
+ * loading and the click. Approved by the advisor 01:35Z (#808 copy, item 4 and
+ * A11).
+ */
+function reviewRefreshedMessage(
+  reason: string,
+  codes: string[],
+  refreshed: boolean,
+): string {
+  const shown = codes.slice(0, 10).join(", ");
+  const more = codes.length > 10 ? ` and ${codes.length - 10} more` : "";
+  const what =
+    reason === "codes_not_in_review_queue"
+      ? `Some techniques are no longer awaiting review (${shown}${more}).`
+      : `The computed status of some techniques changed after the panel loaded (${shown}${more}).`;
+  // The failed re-read's ending: approved by the advisor 02:10Z.
+  return refreshed
+    ? `${what} The panel has been refreshed; review again.`
+    : `${what} The panel could not be refreshed; reload the page and review again.`;
 }
 
 /** The machine-readable `reason` on a typed error envelope (D-016), if present. */
@@ -136,14 +177,14 @@ export function AttackWorkspace({
   const { messages: refreshMessages, begin: beginRefresh } =
     useRefreshFailures();
   const [busy, setBusy] = React.useState<
-    "create" | "approve" | "run" | "discard" | null
+    "create" | "approve" | "review" | "run" | "discard" | null
   >(null);
-  const [runResult, setRunResult] = React.useState<AttackRunAiResponse | null>(
-    null,
-  );
   // Set when the API REFUSES a run (typed 409). Distinct from loadError: the
   // page is fine, the prerequisite is not.
   const [runBlocked, setRunBlocked] = React.useState<string | null>(null);
+  // #550: set once a run's outcome is unknown, never cleared. A reload clears
+  // it, which the copy says; nothing on this page can know the run finished.
+  const [runOutcomeUnknown, setRunOutcomeUnknown] = React.useState(false);
   const [selectedCode, setSelectedCode] = React.useState<string | null>(null);
   const [showSubs, setShowSubs] = React.useState(false);
 
@@ -278,6 +319,30 @@ export function AttackWorkspace({
     })();
   }, [initialLoad]);
 
+  // #645. A run this page did not start -- found in progress on load -- ends
+  // here: re-read what it applied, as `onRunAiWrite` does for its own.
+  const onRunFinishedElsewhere = React.useCallback(
+    (run: AttackRun) => {
+      if (run.status !== "completed") return;
+      const seq = ++assessmentSeq.current;
+      void fetchLatestAssessment(serviceId)
+        .then((a) => {
+          if (seq === assessmentSeq.current) setAssessment(a);
+          return refreshHeatmap();
+        })
+        .catch((err: unknown) => setActionError(describeError(err)));
+    },
+    [serviceId, refreshHeatmap],
+  );
+  const aiRun = useAiRun({
+    serviceId,
+    // #271: only this assessment's runs describe it. `null` until it loads.
+    subjectId: assessment?.id ?? null,
+    fetchSummary: fetchAttackRunSummary,
+    fetchRun: fetchAttackRun,
+    onFinished: onRunFinishedElsewhere,
+  });
+
   function onCreateAssessment(): Promise<void> {
     return trackWrite(() => onCreateAssessmentWrite());
   }
@@ -306,9 +371,11 @@ export function AttackWorkspace({
   }
 
   /** Re-read the assessment once no write is in flight (#620 round 2,
-   *  finding 7). NEVER throws: it runs after a write that already landed, so
-   *  a failed re-read is reported as that -- a saved change whose parent may
-   *  be stale -- and never as a failed save or an unhandled rejection. */
+   *  finding 7). Asked for after a parent's input is edited, and after every
+   *  review write -- recorded or refused (#554 R3). NEVER throws: a failed
+   *  re-read is reported as exactly that -- what is shown may be out of date --
+   *  and never as a failed save or an unhandled rejection. It claims nothing
+   *  about a save, because after a refused review nothing was saved. */
   async function refetchWhenQuiet(): Promise<void> {
     if (!refetchWanted.current || editsInFlight.current > 0) return;
     refetchWanted.current = false;
@@ -320,7 +387,9 @@ export function AttackWorkspace({
       a = await fetchLatestAssessment(serviceId);
     } catch {
       attempt.note(
-        "Your change was saved, but the assessment could not be re-read, so a parent technique's status may be out of date. Reload to see it.",
+        // Copy for the advisor (#808 round 6): true after a parent edit, a
+        // recorded review and a refused one alike.
+        "The assessment could not be re-read, so what is shown may be out of date. Reload to see it.",
       );
       return;
     }
@@ -459,12 +528,71 @@ export function AttackWorkspace({
     if (!assessment) return;
     setActionError(null);
     setBusy("approve");
+    // Same shape as the review's snapshot (a concurrent edit can be reverted on
+    // screen); filed as #809.
     assessmentSeq.current += 1;
     try {
       const next = await approveAssessment(assessment.id);
       setAssessment(next);
     } catch (err) {
       setActionError(describeError(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function onReview(reviews: ComputedStatusReview[]): Promise<void> {
+    return trackWrite(() => onReviewWrite(reviews));
+  }
+
+  /** #554 R3: record the review of what the panel showed. */
+  async function onReviewWrite(reviews: ComputedStatusReview[]): Promise<void> {
+    if (!assessment) return;
+    setActionError(null);
+    setBusy("review");
+    // Bumped so a load already in flight (the page's own, or one started by
+    // `onRunFinishedElsewhere`) cannot overwrite the review's result when it
+    // lands late. The result itself is applied unconditionally, like approve's:
+    // a row edit made while the review is in flight also bumps the counter, and
+    // guarding on it would drop a review the server recorded (#808 round 3).
+    assessmentSeq.current += 1;
+    // The snapshot applied below may predate a row edit -- one in flight when
+    // the review was clicked, or one made since -- and would then revert it on
+    // screen. So after ANY review write, ask for one quiet re-read once every
+    // write is done (`trackWrite`'s trailing `refetchWhenQuiet`): one extra GET
+    // per review, correct in every interleaving (#808 rounds 4 and 5).
+    const rereadAfter = () => {
+      refetchWanted.current = true;
+    };
+    try {
+      const next = await reviewComputedStatuses(assessment.id, reviews);
+      setAssessment(next);
+      rereadAfter();
+    } catch (err) {
+      const reason = errorReason(err);
+      if (
+        reason === "computed_status_changed" ||
+        reason === "codes_not_in_review_queue"
+      ) {
+        // What the panel showed is stale, so it re-reads itself rather than
+        // telling the consultant to find a reload control.
+        const codes = (
+          (err as AttackProxyError).payload as { error?: { codes?: string[] } }
+        ).error?.codes;
+        // The re-read can fail too, and must say so: an unhandled rejection
+        // here would leave stale statuses and an enabled button, every click
+        // silent.
+        try {
+          const latest = await fetchLatestAssessment(serviceId);
+          setAssessment(latest);
+          rereadAfter();
+          setActionError(reviewRefreshedMessage(reason, codes ?? [], true));
+        } catch {
+          setActionError(reviewRefreshedMessage(reason, codes ?? [], false));
+        }
+      } else {
+        setActionError(describeError(err));
+      }
     } finally {
       setBusy(null);
     }
@@ -501,32 +629,54 @@ export function AttackWorkspace({
     }
   }
 
-  function onRunAi(): Promise<void> {
-    return trackWrite(() => onRunAiWrite());
+  function onRunAi(serves: AiServes): Promise<void> {
+    return trackWrite(() => onRunAiWrite(serves));
   }
 
-  async function onRunAiWrite(): Promise<void> {
+  async function onRunAiWrite(serves: AiServes): Promise<void> {
     setActionError(null);
     setBusy("run");
-    setRunResult(null);
     const seq = ++assessmentSeq.current;
     try {
-      const result = await runAttackAi(serviceId);
-      setRunResult(result);
+      // #550 review, finding 1: two tries, not one. Only the POST's own
+      // rejection can mean "the run's outcome is unknown"; a re-read that
+      // fails after the run answered is that re-read's error and must not
+      // lock Run AI.
+      let started: Awaited<ReturnType<typeof runAttackAi>>;
+      try {
+        started = await runAttackAi(serviceId, serves);
+      } catch (err) {
+        // A refused run is guidance, not a broken page. Mapping with an empty
+        // capability list would report every technique as a gap, so the API
+        // blocks it — render that as something to act on rather than as a red
+        // "failed to load" banner that reads like an outage.
+        if (errorReason(err) === "no_security_capabilities") {
+          setRunBlocked(describeError(err));
+        } else if (isUpstreamOutcomeUnknown(err)) {
+          // Its own alert beside the button, not `actionError`: that card is
+          // headed "That didn't go through", which is the claim this is not
+          // allowed to make, and any later action clears it.
+          setRunOutcomeUnknown(true);
+          // #645: a run may have started. Look once, and follow it if so; the
+          // lock and the copy above stand either way.
+          void aiRun.reconcile();
+        } else {
+          setActionError(describeError(err));
+        }
+        return;
+      }
       setRunBlocked(null);
-      // Re-pull the assessment so the matrix reflects the AI's suggestions,
-      // guarded so a concurrent patch that started meanwhile still wins.
-      const a = await fetchLatestAssessment(serviceId);
-      if (seq === assessmentSeq.current) setAssessment(a);
-      await refreshHeatmap();
-    } catch (err) {
-      // A refused run is guidance, not a broken page. Mapping with an empty
-      // capability list would report every technique as a gap, so the API
-      // blocks it — render that as something to act on rather than as a red
-      // "failed to load" banner that reads like an outage.
-      if (errorReason(err) === "no_security_capabilities") {
-        setRunBlocked(describeError(err));
-      } else {
+      // #645: the POST started the run; the write lasts until the run ends, so
+      // the re-read guard in `trackWrite` still counts it as one write.
+      const finished = await aiRun.follow(started);
+      if (finished.status !== "completed") return; // `AiRunStatus` says why
+      try {
+        // Re-pull the assessment so the matrix reflects the AI's suggestions,
+        // guarded so a concurrent patch that started meanwhile still wins.
+        const a = await fetchLatestAssessment(serviceId);
+        if (seq === assessmentSeq.current) setAssessment(a);
+        await refreshHeatmap();
+      } catch (err) {
         setActionError(describeError(err));
       }
     } finally {
@@ -536,6 +686,14 @@ export function AttackWorkspace({
 
   const readOnly =
     assessment?.status === "approved" || assessment?.status === "released";
+  /** #645: a run holds the edit lock; the api refuses edits until it ends. */
+  const runInProgress = aiRun.running !== null;
+  /**
+   * What the last COMPLETED run did, read from the run itself, so it survives
+   * a reload (#271). It used to live only in this component's state, and a
+   * refresh left a partial run looking complete.
+   */
+  const runResult = aiRun.lastCompleted?.result ?? null;
 
   const scoredCount =
     assessment?.coverage.filter((c) => c.status !== null).length ?? 0;
@@ -609,7 +767,9 @@ export function AttackWorkspace({
               status={assessment.status}
               destructionSummary={discardSummary}
               onConfirm={onDiscard}
-              disabled={busy !== null}
+              // #645: NOT locked by a run. D-031: a discard racing a run
+              // wins, and the run then ends without applying anything.
+              disabled={busy !== null && busy !== "run"}
             />
           ) : null}
         </div>
@@ -696,25 +856,34 @@ export function AttackWorkspace({
             <div className="flex flex-col gap-3">
               {/* Issue 2: warn before producing canned output when no key is
                   loaded. Passes straight through when AI is live. */}
-              <RunAiGuard onProceed={() => void onRunAi()}>
-                {({ onClick }) => (
+              <RunAiGuard onProceed={(serves) => void onRunAi(serves)}>
+                {({ onClick, statusUnknown }) => (
                   <div>
                     <button
                       type="button"
                       onClick={onClick}
                       disabled={
+                        // #645: an unreadable AI status fails closed.
+                        statusUnknown ||
                         busy !== null ||
+                        runInProgress ||
                         readOnly ||
+                        runOutcomeUnknown ||
                         // #556: the API refuses it; the step says why.
                         assessment.catalog_current !== true
                       }
                       className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      {busy === "run" ? "Running…" : "Run AI"}
+                      {busy === "run" || runInProgress ? "Running…" : "Run AI"}
                     </button>
                   </div>
                 )}
               </RunAiGuard>
+              {runOutcomeUnknown ? (
+                <p className="text-sm text-status-warning-fg" role="alert">
+                  {RUN_OUTCOME_UNKNOWN}
+                </p>
+              ) : null}
               <AiPreviewButton serviceId={serviceId} disabled={busy !== null} />
               {/* Beside the preview, not a second surface. The preview
                   answers "what will be sent?" (redacted); this answers
@@ -723,6 +892,13 @@ export function AttackWorkspace({
                   the one behind a run that reports a filtered-out tool as a
                   gap. Read-only and not rate-limited, so it loads on mount. */}
               <AttackAiInputsPanel serviceId={serviceId} />
+              <AiRunStatus run={aiRun} />
+              {/* #646: the assessment's AI source, from the derivation the
+                  deliverable and the client dashboard call. */}
+              {assessment ? (
+                <AiSourceNote source={assessment.ai_source} />
+              ) : null}
+              <LastRunNote run={aiRun.lastCompleted} />
               {runResult ? (
                 <p className="text-sm text-ink-secondary" aria-live="polite">
                   Updated{" "}
@@ -787,7 +963,8 @@ export function AttackWorkspace({
                   coverage={selectedCoverage}
                   coverageDefinitions={catalog.coverage_definitions}
                   reasonCodes={catalog.reason_codes}
-                  readOnly={readOnly}
+                  toolRetirement={assessment.tool_retirement}
+                  readOnly={readOnly || runInProgress}
                   onPatch={(patch) => {
                     if (!selectedCoverage) return;
                     return onPatch(selectedCoverage.id, patch);
@@ -833,6 +1010,7 @@ export function AttackWorkspace({
               onClick={() => void onApprove()}
               disabled={
                 busy !== null ||
+                runInProgress ||
                 assessment.status !== "draft" ||
                 scoredCount === 0 ||
                 assessment.catalog_current !== true
@@ -862,6 +1040,13 @@ export function AttackWorkspace({
             }
           >
             <div className="flex flex-col gap-3">
+              {/* #554 R3: the release gate's review queue, named by the release
+                  refusal, so it sits in the step where that refusal is met. */}
+              <AttackComputedReviewPanel
+                assessment={assessment}
+                busy={busy !== null || runInProgress}
+                onReview={onReview}
+              />
               <StaleDocsNudge stale={assessment.documents_stale} />
               <AttackDeliverableCard
                 serviceId={serviceId}
@@ -876,6 +1061,9 @@ export function AttackWorkspace({
           {/* Reference, not steps: useful throughout, required at no particular
               point. Kept below the flow so the numbered path stays unbroken. */}
           <AttackHeatmapCard heatmap={heatmap} />
+          {/* #802: a what-if against the last confirmed assessment. Reads and
+              writes only its own records, so it sits outside the flow. */}
+          <AttackScenarioPanel serviceId={serviceId} />
           <MessageThread serviceId={serviceId} />
         </>
       )}

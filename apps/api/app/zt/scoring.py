@@ -16,6 +16,7 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
+from app.assessment_targets import BELOW_FLOOR, MIN_TARGET_STAGE
 from app.zt.catalog import (
     Capability,
     capabilities,
@@ -248,8 +249,10 @@ def resolve_target_stage(framework: ZtFrameworkCode, chosen: object) -> tuple[in
       "default"              the client chose nothing; the engine default applies
       "client_out_of_range"  the stored choice is not a stage this framework has
       "client_unparseable"   the stored value is not a whole number at all
+      "client_below_floor"   a real stage below `MIN_TARGET_STAGE` (#85): Stage 1
+                             is where an organization starts, not a target
 
-    The last two are the point of this function (#125). DoD ZTRA has three
+    The last three are the point of this function (#125, #85). DoD ZTRA has three
     stages and the intake UI offers a fourth, so a stored 4 is not a target at
     all. `analyze_gaps` used to clamp it to 3 and the finalize audit row called
     that 3 the client's choice -- the false value and the false attribution of
@@ -314,6 +317,10 @@ def resolve_target_stage(framework: ZtFrameworkCode, chosen: object) -> tuple[in
         return (fallback, "client_out_of_range")
     if n != int(n):
         return (fallback, "client_unparseable")
+    # #85: after wholeness, so only a real stage reaches it. A stored 1 used to
+    # resolve as the client's choice and made every gap list vacuously empty.
+    if n < MIN_TARGET_STAGE:
+        return (fallback, BELOW_FLOOR)
     return (int(n), "client")
 
 

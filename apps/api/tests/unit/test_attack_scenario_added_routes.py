@@ -1,0 +1,554 @@
+"""#802 slice B, through the routes: a what-if that ADDS tools.
+
+The world is slice A's (`test_attack_scenario_routes._world`): technique A is
+covered by EDR/EDR/SOAR, B is partial on SIEM's Detect alone, and C is a gap
+whose Detect rests on an uncleared inference of EDR. Every other technique is
+unassessed and is never asked about.
+"""
+
+from __future__ import annotations
+
+import json
+import uuid
+
+import pytest
+from sqlalchemy import select
+
+from app.ai.llm import FixtureProvider, LLMResponse
+from app.models.attack_scenario import AttackScenario
+from app.models.capability import CapabilityItem, CapabilityListStatus
+from tests._ai_runs import defer_runs
+from tests.unit.test_ai_runs_attack import app_parts  # noqa: F401  (fixture)
+from tests.unit.test_attack_scenario_routes import (  # noqa: F401  (fixture)
+    EDR,
+    PURPOSE,
+    SIEM,
+    SOAR,
+    _add_tool_after_approval,
+    _ai_runs,
+    _error,
+    _flags,
+    _run_to_completion,
+    _world,
+)
+
+pytestmark = pytest.mark.unit
+
+XDR = "XDR Suite"
+
+
+def _tool(name=XDR, functions=("detect", "prevent"), **kw):
+    return {"name": name, "security_functions": list(functions), **kw}
+
+
+def _create(w, removed=None, added=None):
+    body = {}
+    if removed is not None:
+        body["removed"] = removed
+    if added is not None:
+        body["added"] = added
+    return w.c.post(f"/attack/services/{w.svc_id}/scenarios", headers=w.h, json=body)
+
+
+# --- creating ----------------------------------------------------------------------
+
+
+def test_a_what_if_may_only_add_and_names_the_gaps_an_added_tool_could_fill(
+    app_parts,  # noqa: F811
+) -> None:
+    """XDR declares Detect and Prevent. A is covered: nothing open. B lacks
+    Prevent. C's Detect awaits review (not in place) and it lacks Prevent."""
+    w = _world(app_parts)
+    r = _create(w, added=[_tool(vendor="  Vendor X ", category="XDR")])
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["removed"] == []
+    assert body["added"] == [
+        {
+            "name": XDR,
+            "vendor": "Vendor X",
+            "category": "XDR",
+            "security_functions": ["detect", "prevent"],
+        }
+    ]
+    assert body["affected_codes"] == sorted([w.b, w.cc])
+    assert (body["affected_by_removal"], body["affected_by_addition_only"]) == (0, 2)
+    listed = w.c.get(f"/attack/services/{w.svc_id}/scenarios", headers=w.h).json()
+    assert listed["scenarios"][0]["added"] == [XDR]
+
+
+def test_removals_and_additions_split_the_affected_count(app_parts) -> None:  # noqa: F811
+    """Removing EDR affects A and C; with EDR gone A's Detect and Prevent are
+    open too, and B is opened by the addition alone."""
+    w = _world(app_parts)
+    body = _create(w, removed=[EDR], added=[_tool()]).json()
+    assert body["affected_codes"] == sorted([w.a, w.b, w.cc])
+    assert (body["affected_by_removal"], body["affected_by_addition_only"]) == (2, 1)
+
+
+@pytest.mark.parametrize("removed, added", [(None, None), ([], []), ([], None), (None, [])])
+def test_a_change_of_nothing_is_refused_with_b8(app_parts, removed, added) -> None:  # noqa: F811
+    w = _world(app_parts)
+    r = _create(w, removed=removed, added=added)
+    assert r.status_code == 422, r.text
+    assert _error(r) == {
+        "reason": "scenario_empty_change",
+        "message": "Choose at least one tool to remove or add.",
+    }
+
+
+def test_an_addition_that_could_change_nothing_is_refused_before_anything_is_stored(
+    app_parts, monkeypatch  # noqa: F811
+) -> None:
+    """Every technique already has the declared functions in place: nothing is
+    asked, nothing paid for, and no what-if is stored."""
+    w = _world(app_parts)
+    monkeypatch.setattr("app.attack.scenario.open_functions", lambda *a, **k: {})
+    r = _create(w, added=[_tool()])
+    assert r.status_code == 422, r.text
+    assert _error(r) == {
+        "reason": "scenario_nothing_affected",
+        "message": (
+            "Every technique the last confirmed assessment scored already has in place what "
+            "you chose under What it does, so there is nothing to re-assess."
+        ),
+    }
+    listed = w.c.get(f"/attack/services/{w.svc_id}/scenarios", headers=w.h).json()
+    assert listed["scenarios"] == []
+
+
+def test_adding_a_tool_the_base_cites_is_refused_with_b4(app_parts) -> None:  # noqa: F811
+    w = _world(app_parts)
+    r = _create(w, added=[_tool("edr tool")])
+    assert r.status_code == 422, r.text
+    assert _error(r) == {
+        "reason": "scenario_added_tool_is_clients",
+        "message": (
+            "edr tool is already one of the client's tools. Choose it under Tools to "
+            "remove, or give the new tool a different name."
+        ),
+    }
+
+
+def test_adding_a_client_tool_the_base_does_not_cite_is_refused_without_the_picker_clause(
+    app_parts,  # noqa: F811
+) -> None:
+    """B4 names "Tools to remove", which lists only cited tools. A tool on the
+    client's list that the base never cited is not there."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    _add_tool_after_approval(w, "Backup Tool")
+    r = _create(w, added=[_tool("Backup Tool")])
+    assert r.status_code == 422, r.text
+    assert _error(r) == {
+        "reason": "scenario_added_tool_is_clients",
+        "message": "Backup Tool is already one of the client's tools. Give the new tool a different name.",
+    }
+
+
+def test_a_name_shown_as_another_added_tool_is_refused_with_b5(app_parts) -> None:  # noqa: F811
+    w = _world(app_parts)
+    r = _create(w, added=[_tool("Suite 100 Scanner"), _tool("Suite 200 Scanner")])
+    assert r.status_code == 422, r.text
+    assert _error(r) == {
+        "reason": "scenario_added_tool_indistinct",
+        "message": (
+            "The AI would be shown Suite 200 Scanner under the same name as another tool, "
+            "so its credit could not be told apart. Give it a different name."
+        ),
+    }
+
+
+def test_a_tool_with_no_function_is_refused_with_b6(app_parts) -> None:  # noqa: F811
+    w = _world(app_parts)
+    r = _create(w, added=[_tool(functions=())])
+    assert r.status_code == 422, r.text
+    assert _error(r) == {
+        "reason": "scenario_added_tool_no_functions",
+        "message": f"Choose at least one of Detect, Prevent or Respond for {XDR}.",
+    }
+
+
+def test_more_than_ten_tools_is_refused_with_b7(app_parts) -> None:  # noqa: F811
+    w = _world(app_parts)
+    r = _create(w, added=[_tool(f"Tool {chr(65 + i)}") for i in range(11)])
+    assert r.status_code == 422, r.text
+    assert _error(r) == {
+        "reason": "scenario_too_many_added",
+        "message": "A what-if can add up to 10 tools.",
+    }
+
+
+# --- running ------------------------------------------------------------------------
+
+
+def _answering(w, rows_by_code, *, seen=None):
+    provider = FixtureProvider()
+
+    def respond(payload: dict) -> LLMResponse:
+        if seen is not None:
+            seen.append(payload)
+        sent = payload.get("technique_codes") or []
+        return LLMResponse(json.dumps({"rows": [r for c in sent for r in rows_by_code.get(c, [])]}))
+
+    provider.register(PURPOSE, respond)
+    w.use(provider)
+
+
+def test_a_rise_from_an_added_tool_is_counted_marked_and_kept_out_of_copy_18(
+    app_parts,  # noqa: F811
+) -> None:
+    """C's Detect was an uncleared inference; XDR, confirmed, fills it: Gap to
+    Partial, credited to the added tool. B11 counts it; copy 18 does not. The
+    AI also credits SIEM for C's Prevent, which only an added tool may fill:
+    set aside as `tool_not_added`."""
+    w = _world(app_parts)
+    seen: list[dict] = []
+    _answering(
+        w,
+        {w.cc: [_flags(w.cc, XDR, d=True), _flags(w.cc, SIEM, p=True)]},
+        seen=seen,
+    )
+    sid = _create(w, added=[_tool()]).json()["id"]
+    body = _run_to_completion(w, sid)
+    assert body["run_status"] == "completed", body["run_error"]
+    assert body["higher_with_added"] == 1
+    assert body["scored_higher"] == 0
+    assert body["dropped"] == {"tool_not_added": 1}
+    diffs = {d["technique_code"]: d for d in body["differences"]}
+    assert diffs[w.cc]["today"] == "gap" and diffs[w.cc]["after"] == "partial"
+    assert diffs[w.cc]["credited_tool_you_added"] is True
+    assert diffs[w.cc]["scored_higher"] is False
+    lists = {t["technique_code"]: t for t in body["techniques"]}
+    assert lists[w.cc]["credited_tools_you_added"] == [XDR]
+    # What the model was given: the added tool beside the client's, and the
+    # functions it may be asked about.
+    (payload,) = seen
+    assert [t["name"] for t in payload["added_tools"]] == [XDR]
+    assert XDR in [t["name"] for t in payload["available_tools"]]
+    assert payload["open_functions"][w.cc] == ["detection", "prevention"]
+
+
+def test_a_rise_from_a_remaining_tool_is_still_copy_18_beside_an_addition(
+    app_parts,  # noqa: F811
+) -> None:
+    """EDR removed, XDR (Respond) added. C lost Detect; the AI credits SIEM, a
+    REMAINING tool, there: Gap to Partial, copy 18's anomaly, not B11's."""
+    w = _world(app_parts)
+    _answering(w, {w.cc: [_flags(w.cc, SIEM, d=True)]})
+    sid = _create(w, removed=[EDR], added=[_tool(functions=("respond",))]).json()["id"]
+    body = _run_to_completion(w, sid)
+    assert body["scored_higher"] == 1
+    assert body["higher_with_added"] == 0
+    diffs = {d["technique_code"]: d for d in body["differences"]}
+    assert diffs[w.cc]["scored_higher"] is True
+    assert diffs[w.cc]["credited_tool_you_added"] is False
+
+
+def test_a_rise_owed_to_a_remaining_tool_is_copy_18_even_beside_an_added_credit(
+    app_parts,  # noqa: F811
+) -> None:
+    """#818 review, F3, through the GET. EDR removed, XDR (Prevent) added. C
+    lost Detect; the AI re-credits it to SIEM (remaining) and credits XDR for
+    Prevent. Without XDR, C still rises from Gap: copy 18 counts it, not B11."""
+    w = _world(app_parts)
+    _answering(w, {w.cc: [_flags(w.cc, SIEM, d=True), _flags(w.cc, XDR, p=True)]})
+    sid = _create(w, removed=[EDR], added=[_tool(functions=("prevent",))]).json()["id"]
+    body = _run_to_completion(w, sid)
+    assert body["dropped"] == {}
+    diffs = {d["technique_code"]: d for d in body["differences"]}
+    assert diffs[w.cc]["today"] == "gap" and diffs[w.cc]["after"] == "partial"
+    assert diffs[w.cc]["credited_tool_you_added"] is True
+    assert diffs[w.cc]["scored_higher"] is True
+    assert body["scored_higher"] == 1
+    assert body["higher_with_added"] == 0
+
+
+def test_a_rise_a_remaining_tool_starts_and_an_added_tool_finishes_counts_in_both(
+    app_parts,  # noqa: F811
+) -> None:
+    """The advisor's option (b), 16:47Z, through the GET. EDR removed; XDR added
+    for Prevent and Respond. C lost Detect: SIEM (remaining) re-credits it, so
+    C rises Gap to Partial on its own -- copy 18. XDR fills Prevent and Respond
+    and C reaches Covered -- B11 too."""
+    w = _world(app_parts)
+    _answering(
+        w,
+        {w.cc: [_flags(w.cc, SIEM, d=True), _flags(w.cc, XDR, p=True, r=True)]},
+    )
+    sid = _create(w, removed=[EDR], added=[_tool(functions=("prevent", "respond"))]).json()["id"]
+    body = _run_to_completion(w, sid)
+    assert body["dropped"] == {}
+    diffs = {d["technique_code"]: d for d in body["differences"]}
+    assert diffs[w.cc]["today"] == "gap" and diffs[w.cc]["after"] == "covered"
+    assert diffs[w.cc]["scored_higher"] is True
+    assert diffs[w.cc]["credited_tool_you_added"] is True
+    assert body["scored_higher"] == 1
+    assert body["higher_with_added"] == 1
+
+
+def test_a_tool_the_client_now_has_stops_the_run_before_anything_is_spent(
+    app_parts,  # noqa: F811
+) -> None:
+    """#818 review, F4. The client's list gains XDR Suite after the what-if
+    added it. Every credit to either would be dropped, so the run is refused,
+    typed, and no run is started."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    _answering(w, {})
+    sid = _create(w, added=[_tool()]).json()["id"]
+    _add_tool_after_approval(w, XDR)
+    r = w.run(sid)
+    assert r.status_code == 409, r.text
+    assert _error(r) == {
+        "reason": "scenario_added_tool_collides",
+        "message": (
+            f"{XDR}, a tool you added, can no longer be told apart from one of the client's "
+            "tools, so this what-if cannot be analysed. Start a new what-if."
+        ),
+    }
+    assert _ai_runs(w) == []
+
+
+def _store_added_names(w, sid, names) -> None:
+    """Rewrite a stored what-if's added names as a row stored before #826
+    would hold them: Postgres stored any character but NUL until then."""
+    with w.sessions() as db:
+        s = db.get(AttackScenario, uuid.UUID(sid))
+        change = dict(s.change_list)
+        change["added"] = [{**t, "name": n} for t, n in zip(change["added"], names, strict=True)]
+        s.change_list = change
+        db.commit()
+
+
+def test_a_stored_name_with_a_control_character_is_not_a_collision(
+    app_parts,  # noqa: F811
+) -> None:
+    """#831 review, F1. A draft stored before #826 may hold "XDR<LF>Suite". The
+    run's re-check is for collisions with the client's tools, and a line feed
+    is not one: the run starts, rather than reporting a false collision."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    _answering(w, {})
+    sid = _create(w, added=[_tool()]).json()["id"]
+    _store_added_names(w, sid, ["XDR" + chr(10) + "Suite"])
+    r = w.run(sid)
+    assert r.status_code == 202, r.text
+
+
+def test_a_stored_control_character_does_not_hide_a_later_collision(
+    app_parts,  # noqa: F811
+) -> None:
+    """#831 review, F1. The re-check skips the character check, not the tools
+    after it: a later added tool the client now has still stops the run."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    _answering(w, {})
+    sid = _create(w, added=[_tool("Old Suite"), _tool()]).json()["id"]
+    _store_added_names(w, sid, ["Old" + chr(10) + "Suite", XDR])
+    _add_tool_after_approval(w, XDR)
+    r = w.run(sid)
+    assert r.status_code == 409, r.text
+    assert _error(r)["reason"] == "scenario_added_tool_collides"
+    assert _error(r)["message"].startswith(f"{XDR}, a tool you added,")
+    assert _ai_runs(w) == []
+
+
+def test_a_tool_the_client_gains_while_the_run_waits_fails_it_typed(
+    app_parts,  # noqa: F811
+) -> None:
+    """F4, in the job: the list changes between the POST and the job."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    _answering(w, {w.cc: [_flags(w.cc, XDR, d=True)]})
+    runner = defer_runs(w.app)
+    sid = _create(w, added=[_tool()]).json()["id"]
+    assert w.run(sid).status_code == 202
+    _add_tool_after_approval(w, XDR)
+    assert runner.run_all() == 1
+    body = w.get(sid)
+    assert body["run_status"] == "failed"
+    assert body["run_error"]["reason"] == "scenario_added_tool_collides"
+    assert body["techniques"] == []
+
+
+def test_a_function_that_is_not_a_string_is_a_typed_422(app_parts) -> None:  # noqa: F811
+    """#818 review, F2: it used to be an untyped 500."""
+    w = _world(app_parts)
+    r = _create(w, added=[_tool(functions=(["detect"],))])
+    assert r.status_code == 422, r.text
+    assert _error(r)["reason"] == "scenario_added_tool_bad_function"
+
+
+def test_an_added_tool_credited_beyond_what_it_was_declared_for_is_set_aside(
+    app_parts,  # noqa: F811
+) -> None:
+    """The advisor, 16:00Z (#818 F6), through the GET. EDR removed, XDR added
+    for Detect only. A lost Detect and Prevent; the AI credits XDR for A's
+    Prevent too: dropped as `function_not_declared`. Its Detect credit stands."""
+    w = _world(app_parts)
+    _answering(w, {w.a: [_flags(w.a, XDR, d=True), _flags(w.a, XDR, p=True)]})
+    sid = _create(w, removed=[EDR], added=[_tool(functions=("detect",))]).json()["id"]
+    body = _run_to_completion(w, sid)
+    assert body["dropped"] == {"function_not_declared": 1}
+    lists = {t["technique_code"]: t for t in body["techniques"]}
+    assert lists[w.a]["detection_tools"] == [XDR]
+    assert lists[w.a]["prevention_tools"] == []
+
+
+@pytest.mark.parametrize(
+    "tool, reason, message",
+    [
+        (
+            {"name": "  ", "security_functions": ["detect"]},
+            "scenario_added_tool_no_name",
+            "Give each tool under Tools to add a Name.",
+        ),
+        (
+            {"name": "XDR Suite", "vendor": "V" * 201, "security_functions": ["detect"]},
+            "scenario_added_tool_too_long",
+            "Vendor (optional) for XDR Suite is longer than 200 characters. Shorten it.",
+        ),
+        (
+            {"name": "XDR Suite", "security_functions": ["recover"]},
+            "scenario_added_tool_bad_function",
+            'What it does for XDR Suite must be Detect, Prevent or Respond, not "recover".',
+        ),
+    ],
+)
+def test_each_malformed_tool_is_refused_naming_its_field(
+    app_parts, tool, reason, message  # noqa: F811
+) -> None:
+    w = _world(app_parts)
+    r = _create(w, added=[tool])
+    assert r.status_code == 422, r.text
+    assert _error(r) == {"reason": reason, "message": message}
+
+
+@pytest.mark.parametrize(
+    "tool, message",
+    [
+        (
+            # #826: Postgres cannot store a NUL in the change list (jsonb), so
+            # this was an untyped 500 at insert there; SQLite stored it.
+            {"name": "XDR" + chr(0) + "Suite", "security_functions": ["detect"]},
+            "A Name under Tools to add contains a line break or another character "
+            "that cannot be shown. Retype it.",
+        ),
+        (
+            {"name": XDR, "vendor": "Ven" + chr(0x2028) + "dor", "security_functions": ["detect"]},
+            f"Vendor (optional) for {XDR} contains a line break or another character "
+            "that cannot be shown. Retype it.",
+        ),
+        (
+            # #831 review, F2: a lone surrogate, which Postgres jsonb refuses
+            {"name": "XDR" + chr(0xD800) + "Suite", "security_functions": ["detect"]},
+            "A Name under Tools to add contains a line break or another character "
+            "that cannot be shown. Retype it.",
+        ),
+        (
+            {"name": XDR, "category": "Ca" + chr(0x1F) + "t", "security_functions": ["detect"]},
+            f"Category (optional) for {XDR} contains a line break or another character "
+            "that cannot be shown. Retype it.",
+        ),
+    ],
+)
+def test_a_character_that_cannot_be_shown_is_a_typed_422_and_nothing_is_stored(
+    app_parts, tool, message  # noqa: F811
+) -> None:
+    w = _world(app_parts)
+    # Sent as a browser's JSON.stringify sends it: every non-ASCII character as
+    # an escape, so a lone surrogate travels at all (`json=` would encode it
+    # as UTF-8, which has no lone surrogates, and fail in the client).
+    r = w.c.post(
+        f"/attack/services/{w.svc_id}/scenarios",
+        headers={**w.h, "content-type": "application/json"},
+        content=json.dumps({"added": [tool]}),
+    )
+    assert r.status_code == 422, r.text
+    assert _error(r) == {"reason": "scenario_added_tool_unprintable", "message": message}
+    listed = w.c.get(f"/attack/services/{w.svc_id}/scenarios", headers=w.h)
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["scenarios"] == []
+
+
+def test_a_tool_listed_twice_is_refused_naming_the_control(app_parts) -> None:  # noqa: F811
+    w = _world(app_parts)
+    r = _create(w, added=[_tool(), _tool("xdr suite")])
+    assert r.status_code == 422, r.text
+    assert _error(r) == {
+        "reason": "scenario_added_tool_duplicate",
+        "message": "xdr suite is listed twice under Tools to add. Remove one with Remove this tool.",
+    }
+
+
+def test_two_client_tools_sharing_a_placeholder_still_refuse_a_third(
+    app_parts,  # noqa: F811
+) -> None:
+    """#818 narrow review, 1(a), through the route."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    _add_tool_after_approval(w, "Suite 100 Scanner")
+    _add_tool_after_approval(w, "Suite 200 Scanner")
+    r = _create(w, added=[_tool("Suite 300 Scanner")])
+    assert r.status_code == 422, r.text
+    assert _error(r)["reason"] == "scenario_added_tool_indistinct"
+
+
+def test_a_client_tool_spelled_two_ways_is_still_the_clients(app_parts) -> None:  # noqa: F811
+    """#818 narrow review, 1(b), through the route. The client's list sends
+    `EDR TOOL` while the base cites `EDR Tool`: the two collide in the
+    resolver, ambiguously. `Edr Tool` is still the client's tool -- accepting
+    it would credit the client's own tool as the added one."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    with w.sessions() as db:
+        item = db.execute(select(CapabilityItem).where(CapabilityItem.name == EDR)).scalar_one()
+        item.name = "EDR TOOL"
+        db.commit()
+    r = _create(w, added=[_tool("Edr Tool")])
+    assert r.status_code == 422, r.text
+    assert _error(r)["reason"] == "scenario_added_tool_is_clients"
+
+
+def test_a_placeholder_collision_the_client_gains_later_stops_the_run(
+    app_parts,  # noqa: F811
+) -> None:
+    """#818 narrow review, 1, in F4's run-time re-check: after the what-if was
+    created, the client gains two tools shown as the added tool's placeholder."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    _answering(w, {})
+    sid = _create(w, added=[_tool("Suite 300 Scanner")]).json()["id"]
+    _add_tool_after_approval(w, "Suite 100 Scanner")
+    _add_tool_after_approval(w, "Suite 200 Scanner")
+    r = w.run(sid)
+    assert r.status_code == 409, r.text
+    assert _error(r)["reason"] == "scenario_added_tool_collides"
+
+
+def test_each_added_tool_is_held_to_its_own_functions_not_the_union(
+    app_parts,  # noqa: F811
+) -> None:
+    """#818 narrow review, 2. XDR is chosen for Detect, Patch Tool for
+    Prevent, so B's Prevention is open. The AI credits XDR -- not Patch Tool
+    -- for it: dropped, though Prevent is declared for SOME added tool."""
+    w = _world(app_parts)
+    _answering(w, {w.b: [_flags(w.b, XDR, p=True)]})
+    sid = _create(
+        w, added=[_tool(functions=("detect",)), _tool("Patch Tool", functions=("prevent",))]
+    ).json()["id"]
+    body = _run_to_completion(w, sid)
+    assert body["dropped"] == {"function_not_declared": 1}
+    lists = {t["technique_code"]: t for t in body["techniques"]}
+    assert lists[w.b]["prevention_tools"] == []
+
+
+def test_an_added_tool_is_never_drift(app_parts) -> None:  # noqa: F811
+    """The drift check judges the client's list. The admin's tool has no
+    capability item; left in, it would make the check unknowable (None)."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    _answering(w, {w.cc: [_flags(w.cc, XDR, d=True)]})
+    sid = _create(w, added=[_tool()]).json()["id"]
+    body = _run_to_completion(w, sid)
+    assert body["tools_added_since_base"] == 0
+    assert all(d["credited_added_tool"] is False for d in body["differences"])
+
+
+def test_before_a_run_the_added_tools_result_is_none(app_parts) -> None:  # noqa: F811
+    w = _world(app_parts)
+    body = _create(w, added=[_tool()]).json()
+    assert body["higher_with_added"] is None
+    assert body["after"] is None
