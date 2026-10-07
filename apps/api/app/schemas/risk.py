@@ -41,6 +41,14 @@ class RiskDuplicateService(BaseModel):
 
     service_id: str
     title: str
+    # Review B1 (advisor, #736 6046491381): what tells two rows with the SAME
+    # title apart. When the service was opened (its created_at, UTC), and the
+    # status and version the Inputs panel shows for it. Every member of a
+    # duplicate group has a current record (a group is built from synthesis
+    # sources, which exist only for a record), so both are required.
+    started_at: datetime
+    status: str
+    version: int
 
 
 class RiskGateStatus(BaseModel):
