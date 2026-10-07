@@ -26,7 +26,11 @@ test("client views a released software-portfolio dashboard", async ({
   ).json();
   const serviceId = svc.id as string;
 
-  // Upload a tiny inventory CSV, then extract (fixture-mode canned items).
+  // Upload a tiny inventory CSV, then extract. The header is lowercase on
+  // purpose: fixture mode names an item from a lowercase `tool`/`name` column
+  // only, so a "Tool" header yields no items and one excluded row, a dashboard
+  // with nothing on it. One item and no exclusions is the world this spec is
+  // about.
   const artifact = await (
     await request.post(`${API_BASE}/artifacts`, {
       headers: H,
@@ -34,7 +38,7 @@ test("client views a released software-portfolio dashboard", async ({
         file: {
           name: "inventory.csv",
           mimeType: "text/csv",
-          buffer: Buffer.from("Tool,Vendor,Annual Cost\nWiz,Wiz,$100000\n"),
+          buffer: Buffer.from("tool,vendor,annual_cost_usd\nWiz,Wiz,100000\n"),
         },
       },
     })
@@ -42,16 +46,23 @@ test("client views a released software-portfolio dashboard", async ({
 
   const ext = await apiExtract(request, H, serviceId, artifact.id);
   const listId = ext.id as string;
-  for (const item of ext.items as { id: string }[]) {
-    await request.patch(`${API_BASE}/tech-debt/capability-items/${item.id}`, {
-      headers: H,
-      data: { disposition: "keep" },
-    });
+  // The fixture's output for that CSV: one item, Wiz, and nothing excluded.
+  expect(ext.items.map((i) => i.name)).toEqual(["Wiz"]);
+  expect(ext.excluded_rows).toHaveLength(0);
+
+  // Fixture mode drafts no cost, so the consultant enters the inventory's
+  // $100,000 while keeping the row, as the review step does.
+  for (const item of ext.items) {
+    const kept = await request.patch(
+      `${API_BASE}/tech-debt/capability-items/${item.id}`,
+      { headers: H, data: { disposition: "keep", annual_cost_usd: 100000 } },
+    );
+    expect(kept.ok(), `keep item: ${await kept.text()}`).toBe(true);
   }
 
-  // #850: approve refuses while a row the AI excluded is unconfirmed. Review
-  // them as a consultant does ("Correctly excluded"), so the world is one the
-  // product lets reach release. A confirmed row stays listed and counted.
+  // #850: approve refuses while a row the AI excluded is unconfirmed. A no-op
+  // for this CSV (asserted above); kept so a fixture change that starts
+  // excluding the row is confirmed here rather than refused at approve.
   for (const row of ext.excluded_rows) {
     if (row.confirmed === true) continue;
     const confirmed = await request.post(
@@ -98,6 +109,22 @@ test("client views a released software-portfolio dashboard", async ({
   await expect(page.getByText("Annual spend by category")).toBeVisible();
   await expect(page.getByText("Full software inventory")).toBeVisible();
   await expect(page.getByPlaceholder(/Search product/i)).toBeVisible();
+
+  // Data, not chrome: the released item reaches the client. Wait on the
+  // positive state (the Wiz row) before counting; toHaveText reads
+  // textContent, so a CSS uppercase label cannot change it.
+  const inventoryRows = page
+    .locator("table")
+    .filter({ has: page.getByRole("columnheader", { name: "Product" }) })
+    .locator("tbody tr");
+  await expect(inventoryRows.first().locator("td").first()).toHaveText("Wiz");
+  await expect(inventoryRows).toHaveCount(1);
+  const kpiValue = (label: string) =>
+    page
+      .getByText(label, { exact: true })
+      .locator("xpath=following-sibling::div[1]");
+  await expect(kpiValue("Applications")).toHaveText("1");
+  await expect(kpiValue("Annual license spend")).toHaveText("$100,000");
 
   // The two charts (spend bar + sprawl donut) mount client-side.
   await expect(page.locator("canvas")).toHaveCount(2);
