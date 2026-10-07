@@ -152,7 +152,25 @@ export interface AttackAssessment {
   /** #686 (D-105): cited tool -> "planned_retirement" | "unknown"; a tool
    *  absent here is not retiring. Null: the client has no consolidation plan. */
   tool_retirement?: Record<string, string> | null;
+  /** #851: every tool a row credits outside the client's CURRENT security
+   *  tool list. Absent on an older payload: nothing is shown. */
+  citations_outside_subset?: AttackOutsideCitation[];
+  /** #851: false when the client has no security tool list, so nothing
+   *  could be checked (a third state, never a pass). */
+  subset_checked?: boolean;
 }
+
+/** #851: one tool one row credits outside the security tool list. */
+export interface AttackOutsideCitation {
+  technique_code: string;
+  field: AttackToolField;
+  tool: string;
+  /** Run AI will not change this row. */
+  locked: boolean;
+}
+
+export type AttackToolField =
+  "detection_tools" | "prevention_tools" | "response_tools";
 
 export interface AttackCoveragePatch {
   status?: CoverageStatus | null;
@@ -165,6 +183,8 @@ export interface AttackCoveragePatch {
   prevention_tools?: string[] | null;
   response_tools?: string[] | null;
   rationale?: string | null;
+  /** #851 (D2): remove ONE name from one list; it confirms nothing else. */
+  remove_tool?: { field: AttackToolField; name: string };
 }
 
 export interface CoverageChange {
