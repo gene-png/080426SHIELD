@@ -415,3 +415,44 @@ def test_a_second_service_not_started_is_listed_on_the_draft(app_client) -> None
     ]
     blockers = _publish(c, bearer, cid).json()["error"]["blockers"]
     assert {"input": "zt", "reason": "not_started", "status": None} in blockers, blockers
+
+
+def _add_cisa(c, bearer: str, cid: str, title: str) -> None:
+    h = _h(bearer, cid)
+    svc = c.post("/zt/services", headers=h, json={"kind": "zero_trust_cisa", "title": title})
+    assert svc.status_code in (200, 201), svc.text
+    a = c.post(f"/zt/services/{svc.json()['id']}/assessments", headers=h)
+    assert a.status_code in (200, 201), a.text
+
+
+def test_three_services_of_one_framework_are_counted(app_client) -> None:  # noqa: F811
+    """A1 (wording pending the advisor): "Two ... both" is false of three."""
+    c, _ = app_client
+    bearer, cid = _admin(c)
+    seed_attack_and_zt(c, bearer, cid)
+    _add_cisa(c, bearer, cid, "ZT 2")
+    _add_cisa(c, bearer, cid, "ZT 3")
+    g = c.get(f"/risk/clients/{cid}/gate", headers=_h(bearer, cid)).json()
+    assert g["duplicate_inputs"] == (
+        "3 engaged services of the same kind would produce the same findings: "
+        "ZT, ZT 2 and ZT 3. The register cannot be generated while more than one is engaged."
+    )
+
+
+def test_two_duplicate_groups_get_a_sentence_each(app_client) -> None:  # noqa: F811
+    """A1: two CISA services and two ATT&CK services are two pairs, not one
+    group of four, so each pair gets the approved sentence."""
+    c, _ = app_client
+    bearer, cid = _admin(c)
+    seed_attack_and_zt(c, bearer, cid)
+    h = _h(bearer, cid)
+    _add_cisa(c, bearer, cid, "ZT 2")
+    a2 = c.post("/attack/services", headers=h, json={"kind": "attack_coverage", "title": "A 2"})
+    assert c.post(f"/attack/services/{a2.json()['id']}/assessments", headers=h).status_code in (
+        200,
+        201,
+    )
+    g = c.get(f"/risk/clients/{cid}/gate", headers=h).json()
+    assert g["duplicate_inputs"] == (
+        _DUPLICATE.format(titles="A and A 2") + " " + _DUPLICATE.format(titles="ZT and ZT 2")
+    )

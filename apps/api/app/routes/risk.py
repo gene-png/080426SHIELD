@@ -306,13 +306,28 @@ def _duplicate_inputs_message(sources: list[_Source]) -> str | None:
     groups: dict[tuple[str, str | None], list[str]] = {}
     for src in sources:
         groups.setdefault((src.kind, src.framework), []).append(src.title)
-    titles = [t for group in groups.values() if len(group) > 1 for t in group]
-    if not titles:
-        return None
+    sentences = [_duplicate_sentence(titles) for titles in groups.values() if len(titles) > 1]
+    return " ".join(sentences) or None
+
+
+def _duplicate_sentence(titles: list[str]) -> str:
+    """One duplicate group's sentence (#891 review A1).
+
+    Two services: the advisor's approved sentence (#736 6020214342), exactly.
+    Three or more: count-aware wording, PENDING the advisor -- the approved
+    sentence says "Two" and "both", which is false of three. One sentence per
+    group, so two CISA services and two CSF services are not read as one
+    group of four.
+    """
     named = ", ".join(titles[:-1]) + " and " + titles[-1]
+    if len(titles) == 2:
+        return (
+            f"Two engaged services of the same kind would produce the same findings: {named}. "
+            "The register cannot be generated while both are engaged."
+        )
     return (
-        f"Two engaged services of the same kind would produce the same findings: {named}. "
-        "The register cannot be generated while both are engaged."
+        f"{len(titles)} engaged services of the same kind would produce the same findings: "
+        f"{named}. The register cannot be generated while more than one is engaged."
     )
 
 
