@@ -264,4 +264,66 @@ describe("ArchiveServiceDialog (#896)", () => {
     );
     expect(within(dialog).queryByRole("alert")).toBeNull();
   });
+
+  // Round 3, R3-2: a failure belongs to ONE attempt. Closing the dialog ends
+  // it, so reopening the SAME service shows no line before confirming.
+  it("forgets a failure once closed, when reopened for the same service", async () => {
+    archive.mockRejectedValue(REFUSAL);
+    const { dialog, onClose, onSettled, rerender } = setup(SVC, false);
+    await confirm(dialog);
+    expect(within(dialog).getByRole("alert")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    const again = (service: RiskDuplicateService | null) => (
+      <ArchiveServiceDialog
+        clientId="c1"
+        service={service}
+        onClose={onClose}
+        onSettled={onSettled}
+      />
+    );
+    rerender(again(null));
+    rerender(again(SVC));
+    expect(dialog.open).toBe(true);
+    expect(within(dialog).queryByRole("alert")).toBeNull();
+  });
+
+  // Round 3, R3-1: while "Archiving…", nothing dismisses the dialog -- not a
+  // backdrop click, not Esc, not a close the browser forces -- so the result
+  // lands in a dialog that is open, and the parent is never told it closed.
+  it("cannot be dismissed while archiving, and then shows the failure", async () => {
+    let fail: (e: unknown) => void = () => {};
+    archive.mockReturnValue(
+      new Promise<void>((_resolve, reject) => {
+        fail = reject;
+      }),
+    );
+    const { dialog, onClose } = setup(SVC, true);
+    await confirm(dialog);
+    expect(
+      within(dialog).getByRole("button", { name: "Archiving…" }),
+    ).toBeDisabled();
+
+    fireEvent.click(dialog); // the backdrop
+    const cancel = new Event("cancel", { cancelable: true });
+    dialog.dispatchEvent(cancel); // Esc
+    expect(cancel.defaultPrevented).toBe(true);
+    dialog.close(); // a close the browser forces anyway
+    expect(dialog.open).toBe(true);
+    expect(onClose).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fail({ status: 502, payload: null });
+    });
+    expect(dialog.open).toBe(true);
+    expect(within(dialog).getByRole("alert").textContent).toBe(FALLBACK);
+  });
+
+  it("is dismissible again once the attempt is over, and says so to the parent", async () => {
+    archive.mockRejectedValue({ status: 502, payload: null });
+    const { dialog, onClose } = setup(SVC, true);
+    await confirm(dialog);
+    fireEvent.click(dialog); // the backdrop
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });

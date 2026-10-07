@@ -138,6 +138,15 @@ export function ArchiveServiceDialog({
       ? failure
       : null;
 
+  // Every way the dialog closes comes through here (round 3): Cancel, Esc, a
+  // backdrop click, and the parent's own close after a success. A failure
+  // belongs to one attempt, so closing ends it (R3-2); the parent is always
+  // told, so its target and what is on screen cannot disagree (R3-1).
+  function dismiss(): void {
+    setFailure(null);
+    onClose();
+  }
+
   async function handleConfirm(target: RiskDuplicateService): Promise<void> {
     setBusy(true);
     setFailure(null);
@@ -181,10 +190,11 @@ export function ArchiveServiceDialog({
   return (
     <Modal
       open={service !== null}
-      onClose={() => {
-        // An archive in flight must not be dismissed out from under itself.
-        if (!busy) onClose();
-      }}
+      onClose={dismiss}
+      // R3-1: an archive in flight must not be dismissed out from under
+      // itself. Not by a busy check here, which ran AFTER the native dialog
+      // had already closed: the Modal keeps itself open instead.
+      dismissible={!busy}
       title={service ? `Archive ${service.title}?` : ""}
       // B1: the same line as under the button, directly under the title.
       description={service ? startedLine(service) : undefined}
@@ -193,7 +203,7 @@ export function ArchiveServiceDialog({
         <>
           <button
             type="button"
-            onClick={onClose}
+            onClick={dismiss}
             disabled={busy}
             className="rounded-md border border-border px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-60"
           >

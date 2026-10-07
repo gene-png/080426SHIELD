@@ -290,4 +290,54 @@ describe("RiskRegisterDashboard archive control (#896)", () => {
       screen.getByTestId("risk-register-duplicate-archive"),
     ).toBeInTheDocument();
   });
+
+  it("R3-1/R3-2: a dismiss attempt while archiving changes nothing, and the buttons keep working", async () => {
+    // Round 3. While "Archiving…" a backdrop click, Esc and a forced close
+    // used to close the native dialog while the dashboard still held its
+    // target, so no button could open it again until a page reload.
+    fetchRiskGate.mockResolvedValue(DUPLICATE_GATE);
+    let fail: (e: unknown) => void = () => {};
+    archive.mockReturnValue(
+      new Promise<void>((_resolve, reject) => {
+        fail = reject;
+      }),
+    );
+    await loaded();
+    fireEvent.click(screen.getByRole("button", { name: "Archive ZT 2" }));
+    const dialog = screen.getByRole("dialog", {
+      name: "Archive ZT 2?",
+    }) as HTMLDialogElement;
+    await confirmIn(dialog);
+
+    fireEvent.click(dialog); // the backdrop
+    dialog.dispatchEvent(new Event("cancel", { cancelable: true })); // Esc
+    dialog.close(); // a close the browser forces anyway
+    expect(dialog.open).toBe(true);
+
+    await act(async () => {
+      fail({ status: 502, payload: null });
+    });
+    await waitFor(() =>
+      expect(within(dialog).getByRole("alert").textContent).toBe(
+        "The service could not be archived. Nothing was changed.",
+      ),
+    );
+    expect(dialog.open).toBe(true);
+
+    // Closed the ordinary way, the buttons open it again...
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(dialog.open).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Archive ZT" }));
+    expect(
+      screen.getByRole("dialog", { name: "Archive ZT?" }),
+    ).toBeInTheDocument();
+    // ...and (R3-2) for the SAME service, with no line left from before.
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Archive ZT 2" }));
+    const reopened = screen.getByRole("dialog", {
+      name: "Archive ZT 2?",
+    }) as HTMLDialogElement;
+    expect(reopened.open).toBe(true);
+    expect(within(reopened).queryByRole("alert")).toBeNull();
+  });
 });
