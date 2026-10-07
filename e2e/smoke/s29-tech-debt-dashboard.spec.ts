@@ -49,21 +49,44 @@ test("client views a released software-portfolio dashboard", async ({
     });
   }
 
-  await request.post(
+  // #850: approve refuses while a row the AI excluded is unconfirmed. Review
+  // them as a consultant does ("Correctly excluded"), so the world is one the
+  // product lets reach release. A confirmed row stays listed and counted.
+  for (const row of ext.excluded_rows) {
+    if (row.confirmed === true) continue;
+    const confirmed = await request.post(
+      `${API_BASE}/tech-debt/capability-lists/${listId}/excluded-rows/${row.index}/confirm`,
+      { headers: H },
+    );
+    expect(
+      confirmed.ok(),
+      `confirm excluded row: ${await confirmed.text()}`,
+    ).toBe(true);
+  }
+
+  // Each step asserts its own status, so a refusal names the step that refused
+  // instead of surfacing later as a release of an undefined deliverable id.
+  const approved = await request.post(
     `${API_BASE}/tech-debt/capability-lists/${listId}/approve`,
     { headers: H },
   );
-  const fin = await (
-    await request.post(
-      `${API_BASE}/tech-debt/services/${serviceId}/deliverables/finalize`,
-      { headers: H },
-    )
-  ).json();
+  expect(approved.ok(), `approve list: ${await approved.text()}`).toBe(true);
+  const finalized = await request.post(
+    `${API_BASE}/tech-debt/services/${serviceId}/deliverables/finalize`,
+    { headers: H },
+  );
+  expect(
+    finalized.ok(),
+    `finalize deliverable: ${await finalized.text()}`,
+  ).toBe(true);
+  const fin = (await finalized.json()) as { id: string };
   const released = await request.post(
     `${API_BASE}/tech-debt/deliverables/${fin.id}/release`,
     { headers: H },
   );
-  expect(released.ok(), "release deliverable").toBeTruthy();
+  expect(released.ok(), `release deliverable: ${await released.text()}`).toBe(
+    true,
+  );
 
   await signIn(page, CLIENT_EMAIL, CLIENT_PASSWORD);
   await page.goto(`/dashboards/tech-debt/${serviceId}`);
