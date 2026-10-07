@@ -122,7 +122,11 @@ from app.zt.scoring import (
     resolve_target_stage,
 )
 from app.zt.scoring import compute as compute_score
-from app.zt.target_caps import target_cap_sentences
+from app.zt.target_caps import (
+    STAGE_ABOVE_CAPABILITY_MAX,
+    stage_above_max_message,
+    target_cap_sentences,
+)
 
 router = APIRouter(prefix="/zt", tags=["zt"])
 
@@ -266,6 +270,19 @@ def _framework_for_kind(kind: ServiceKind) -> ZtFramework:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Service kind must be zero_trust_cisa or zero_trust_dod.",
         ) from exc
+
+
+def _refuse_stage_above_capability_max(fw: ZtFramework, code: str, stage: int) -> None:
+    """#839 F1 (#736 comment 6048561596): a maturity stage above the
+    capability's own maximum is refused with a typed 422 and stores nothing.
+    Called by BOTH stage-writing PATCH routes, after the framework range check;
+    `_zt_run_work` drops the same value as `stage_above_capability_max`."""
+    message = stage_above_max_message(_to_catalog_framework(fw), code, stage)
+    if message is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"reason": STAGE_ABOVE_CAPABILITY_MAX, "message": message},
+        )
 
 
 def _to_catalog_framework(fw: ZtFramework) -> ZtFrameworkCode:
@@ -891,6 +908,24 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
                     )
                 )
                 continue
+            # #839 F1: the PATCH routes refuse a maturity stage above the
+            # capability's own maximum (`_refuse_stage_above_capability_max`),
+            # so a suggestion of one is refused the same way, never stored.
+            if (
+                field == "current"
+                and stage_above_max_message(_to_catalog_framework(a.framework), raw_code, int(n))
+                is not None
+            ):
+                dropped.append(
+                    ZtDroppedSuggestion(
+                        reason=STAGE_ABOVE_CAPABILITY_MAX,
+                        key=key,
+                        field=field,
+                        value=_bounded(raw),
+                        values=field_values[field],
+                    )
+                )
+                continue
 
             slot = (raw_code, field)
             if slot in written:
@@ -1175,6 +1210,7 @@ def patch_answer(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"maturity_stage must be 1-{max_stage}.",
             )
+        _refuse_stage_above_capability_max(a.framework, row.capability_code, s)
         row.maturity_stage = s
     elif "maturity_stage" in data:
         row.maturity_stage = None
@@ -1290,6 +1326,7 @@ def patch_self_assessment_answer(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"maturity_stage must be 1-{max_stage}.",
             )
+        _refuse_stage_above_capability_max(a.framework, row.capability_code, s)
         row.maturity_stage = s
     elif "maturity_stage" in data:
         row.maturity_stage = None

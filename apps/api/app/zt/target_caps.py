@@ -8,8 +8,66 @@ verbatim; the web renders the API's sentences and never rebuilds them.
 
 from __future__ import annotations
 
-from app.zt.catalog import capability_by_code
-from app.zt.scoring import GapAnalysis
+from collections.abc import Mapping
+
+from app.zt.catalog import all_codes, capabilities, capability_by_code
+from app.zt.maturity import ZtFrameworkCode, level_count, stage_label
+from app.zt.scoring import GapAnalysis, capability_max_stage
+
+#: The typed reason for a stage above the capability's own maximum (#839, F1).
+STAGE_ABOVE_CAPABILITY_MAX = "stage_above_capability_max"
+
+
+def max_stage_for(framework: ZtFrameworkCode, code: str) -> int:
+    """The highest stage this capability may be stored at, for every write path.
+
+    The capability's own maximum (`capability_max_stage`) when the catalog has
+    the row. A retired row the catalog no longer has (kept by 0063/0064, not
+    scored) is held only to the framework's ladder, as before.
+
+    #867 extracts `_validated_stage(raw, max_stage)` in `routes/zt.py`.
+    Whichever of #839 and #867 merges second passes this function's value as
+    that `max_stage`.
+    """
+    if code not in all_codes(framework):
+        return level_count(framework)
+    return capability_max_stage(framework, capability_by_code(code))
+
+
+def stages_above_capability_max(
+    framework: ZtFrameworkCode, answers: Mapping[str, int | None]
+) -> tuple[str, ...]:
+    """Catalog rows whose STORED maturity stage is above their own maximum, in
+    catalog order (#839, F1).
+
+    The write paths refuse such a stage now, so these rows predate the guard.
+    They are left as stored and counted at the maximum (`scoring._validated`
+    callers clamp them), and this is what their disclosure reads. A retired row
+    is not here: it is not scored at all, and `zt/retired.py` discloses it. A
+    stage outside the framework's ladder is not here either: the engine already
+    treats it as unscored."""
+    out = []
+    for cap in capabilities(framework):
+        stage = answers.get(cap.code)
+        if stage is None or not 1 <= stage <= level_count(framework):
+            continue
+        if stage > capability_max_stage(framework, cap):
+            out.append(cap.code)
+    return tuple(out)
+
+
+def stage_above_max_message(framework: ZtFrameworkCode, code: str, stage: int) -> str | None:
+    """The approved refusal (#736 comment 6048561596), or None when `stage` is
+    within this capability's maximum. Only a catalog row can be over its own
+    maximum, so `code` is in the catalog whenever this returns a sentence."""
+    if stage <= max_stage_for(framework, code):
+        return None
+    cap = capability_by_code(code)
+    level = stage_label(stage, framework)
+    return (
+        f"{cap.dod_number} {cap.name} has no DoD {level} activities, "
+        f"so it cannot be scored {stage}."
+    )
 
 
 def target_cap_sentences(gap: GapAnalysis) -> list[str]:

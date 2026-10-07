@@ -20,6 +20,7 @@ from app.assessment_targets import BELOW_FLOOR, MIN_TARGET_STAGE
 from app.zt.catalog import (
     Capability,
     capabilities,
+    capability_by_code,
     pillars,
 )
 from app.zt.maturity import (
@@ -123,9 +124,10 @@ class GapAnalysis:
     unusable_target_codes: tuple[str, ...]
     # #839, Gene and the advisor's ruling 15. DoD capabilities whose applied
     # target was LOWERED to their highest defined level (no Advanced activity,
-    # so 3 cannot be reached and the target is 2), and DoD capabilities with no
-    # Target activity whose applied target is 2, a level they cannot score
-    # (disclosed only: the client's target is not changed). Both are disclosed
+    # so the maximum is 2 and the write paths refuse a maturity stage of 3),
+    # and DoD capabilities with no Target activity whose applied target is 2, a
+    # level they define no activities for (disclosed only: the client's target
+    # is not changed). Both are disclosed
     # per capability (`zt/target_caps.py`). Required, as above.
     capped_target_codes: tuple[str, ...]
     no_target_level_codes: tuple[str, ...]
@@ -155,6 +157,17 @@ def _validated(stage: int | None, framework: ZtFrameworkCode) -> int | None:
     if 1 <= value <= level_count(framework):
         return value
     return None
+
+
+def _capped(stage: int | None, framework: ZtFrameworkCode, code: str) -> int | None:
+    """A valid stored stage, counted at no more than its capability's maximum
+    (#839, F1; #736 comment 6048561596). The stored value is never rewritten;
+    `target_caps.stages_above_capability_max` names the rows this lowers, for
+    their disclosure. `compute` goes through here; `analyze_gaps` does not
+    need to, and says why at its loop."""
+    if stage is None:
+        return None
+    return min(stage, capability_max_stage(framework, capability_by_code(code)))
 
 
 def _maturity_pct(avg: float | None, framework: ZtFrameworkCode) -> float | None:
@@ -190,7 +203,7 @@ def compute(framework: ZtFrameworkCode, answers: Mapping[str, int | None]) -> Sc
 
         scored_pairs: list[tuple[str, int]] = []
         for code in codes:
-            s = _validated(answers.get(code), framework)
+            s = _capped(_validated(answers.get(code), framework), framework, code)
             if s is not None:
                 scored_pairs.append((code, s))
 
@@ -582,11 +595,15 @@ def _resolve_one(framework: ZtFrameworkCode, stored: object, target_stage: int) 
 
 
 def capability_max_stage(framework: ZtFrameworkCode, cap: Capability) -> int:
-    """The highest stage this capability can score.
+    """The highest stage this capability may be scored and targeted at.
 
-    A DoD capability with activities but no Advanced one can never score 3
-    under the approved scoring rule (C4), so its highest is 2 (#839). Every
-    other capability, and every CISA row, reaches the framework's top."""
+    A DoD capability with activities but no Advanced one defines no level above
+    Target, so its maximum is 2 (#839, the cap at the highest level it
+    defines). This is a RULE the write paths enforce, not a fact about stored
+    data: both PATCH routes refuse a higher maturity stage, and Run-AI drops one
+    (`target_caps.max_stage_for`). A row stored before that guard existed may
+    still hold more. Every other capability, and every CISA row, reaches the
+    framework's top."""
     if cap.activities and not any(a.level == "advanced" for a in cap.activities):
         return 2
     return level_count(framework)
@@ -678,6 +695,10 @@ def analyze_gaps(
     rows: list[Gap] = []
     unscored: list[str] = []
     for cap in capabilities(framework):
+        # Deliberately NOT `_capped` (#839, F1): a row stored above its maximum
+        # also has its effective target capped at that maximum, so it is at or
+        # above target either way and the result cannot differ. Clamping here
+        # would be code no test can observe.
         s = _validated(answers.get(cap.code), framework)
         if s is None:
             unscored.append(cap.code)

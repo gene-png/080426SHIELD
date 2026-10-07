@@ -354,6 +354,11 @@ class _InputSnapshot:
     review_pending: tuple[str, ...]
     current: tuple[InputRecord, ...]
     drafted_from: dict[str, _Source] = dataclasses.field(default_factory=dict)
+    #: #915: per ZT source (`scope_key`), the capabilities whose target the
+    #: #839 cap lowered, in row order; filled by `_gather_findings`. A sibling
+    #: of the audit row's `targets`, not a key inside its entries, whose exact
+    #: shape tests pin.
+    cap_lowered: dict[str, list[str]] = dataclasses.field(default_factory=dict)
 
     def of_kind(self, kind: str) -> list[_Source]:
         return [src for src in self.sources if src.kind == kind]
@@ -909,6 +914,9 @@ def _gather_findings(
         zt_scope = scope_for(ZtAnswer, zt_rows)
         valid_controls |= zt_scope.codes
         link_scopes[src.scope_key] = zt_scope
+        # #915: the rows whose target the #839 cap lowered, in row order, kept
+        # beside this source's target in the audit row. Empty when none were.
+        lowered: list[str] = []
         for r in zt_rows:
             # Per-capability target first, then the ENGAGEMENT target. The
             # fallback was a hardcoded 3 (#84); it is now the client's
@@ -935,10 +943,13 @@ def _gather_findings(
             # same function the gap engine applies (`capability_max_stage`), so
             # a DoD capability the deliverable shows at its target is no
             # finding here either.
+            asked = r.target_stage if r.target_stage is not None else zt_target
             tgt = min(
-                r.target_stage if r.target_stage is not None else zt_target,
+                asked,
                 capability_max_stage(zt_fw, zt_capability_by_code(r.capability_code)),
             )
+            if tgt < asked:
+                lowered.append(r.capability_code)  # #915: what the disclosure reads
             if r.maturity_stage is not None and r.maturity_stage < tgt:
                 findings.append(
                     {
@@ -948,6 +959,7 @@ def _gather_findings(
                         "label": f"ZT {r.capability_code}: stage {r.maturity_stage}",
                     }
                 )
+        snap.cap_lowered[src.scope_key] = lowered
         _record_drafted_from(snap, findings[start:], src)
 
     return findings, valid_techniques, valid_controls, target_sources, link_scopes
@@ -1888,6 +1900,10 @@ def generate(
             # the next one falsifiable, and `source` keeps "the client chose
             # nothing" apart from "the client's choice could not be used".
             "targets": target_sources,
+            # #915: per ZT source, the capabilities whose target the #839 cap
+            # lowered (an empty list when none were), so a register's missing
+            # DoD findings can be told from findings never looked for.
+            "capped_target_codes": snap.cap_lowered,
             "batches_total": batches_total,
             "batches_failed": batches_failed,
             # Both present rather than omitted, so a reader can tell

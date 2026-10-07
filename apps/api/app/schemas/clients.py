@@ -527,6 +527,12 @@ class ZtDashboardResponse(BaseModel):
     # #839: the approved C1/C2 sentences for the DoD target caps, the API's own
     # (`zt/target_caps.py`), rendered as given.
     target_cap_notes: list[str] = []
+    #: #914 (in #839): answers kept on rows the catalog no longer has (0063,
+    #: 0064), and the approved sentence saying they are not scored, from the
+    #: one derivation the workspace and the three files call (`zt/retired.py`).
+    #: 0 and None when there are none.
+    retired_answers: int = 0
+    retired_answers_note: str | None = None
 
     # The real total: every gap the engine found, not a rendered subset. The ZT
     # dashboard shows no truncated gap list today, and this is in the payload

@@ -1,7 +1,7 @@
 """Risk synthesis applies the DoD target cap (#839), through the shared resolver.
 
-A DoD capability with no Advanced activity can never score 3, so under the cap
-its target is 2 and a stage-2 answer is at target: the ZT deliverable lists no
+A DoD capability with no Advanced activity defines no level above Target, so
+under the cap its target is 2 and a stage-2 answer is at target: the ZT deliverable lists no
 gap for it, and Risk must not raise a finding for it either. Risk applied a
 per-capability target raw and the engagement target unchecked, so it would
 have kept a finding the deliverable says does not exist.
@@ -76,3 +76,40 @@ def test_a_capped_capability_at_target_is_no_risk_finding(app_client) -> None:  
     finding_ids = {f["source_id"] for f in seen[0]["findings"]}
     assert HAS_ADVANCED in finding_ids  # below its target of 3: what must appear, first
     assert NO_ADVANCED not in finding_ids  # at its capped target of 2
+
+
+def test_the_register_records_which_targets_the_cap_lowered(app_client) -> None:  # noqa: F811
+    """#915's data: the generate audit row's `targets` names, per ZT source,
+    the capabilities whose target the cap lowered, so a disclosure can say so. Only
+    rows the cap changed: 1.2 keeps its target of 3. Against an engagement
+    target of 3 every no-Advanced capability is lowered, whether answered or
+    not (the extraction's count is pinned in `test_zt_dod_target_caps.py`)."""
+    import os
+
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import Session
+
+    from app.models.audit_entry import AuditEntry
+
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    _seed(c, bearer, cid)
+    provider.register("risk_synthesize", lambda _p: LLMResponse(json.dumps({"entries": []})))
+    r = c.post(
+        f"/risk/clients/{cid}/register/generate",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    assert r.status_code == 201, r.text
+
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with Session(engine) as db:
+        details = db.execute(
+            select(AuditEntry.details).where(AuditEntry.action == "risk_register.generated")
+        ).scalar_one()
+    engine.dispose()
+    by_source = details["capped_target_codes"]
+    assert set(by_source) == set(details["targets"]) - {"attack"}, details
+    (capped,) = by_source.values()
+    assert NO_ADVANCED in capped  # the positive state first
+    assert HAS_ADVANCED not in capped
+    assert len(capped) == 15

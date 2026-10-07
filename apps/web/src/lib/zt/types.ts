@@ -120,7 +120,9 @@ export interface ZtDroppedSuggestion {
     | "superseded"
     | "locked"
     | "protected"
-    | "edited";
+    | "edited"
+    // #839 F1: a current stage above the capability's own maximum.
+    | "stage_above_capability_max";
   /** The capability code exactly as the model wrote it, or null. */
   key: string | null;
   /** "current" or "target", for drops attributable to one value. */

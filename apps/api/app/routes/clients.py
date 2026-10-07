@@ -122,6 +122,8 @@ from app.tech_debt.savings import estimated_savings
 from app.zt.catalog import capability_by_code as zt_capability_by_code
 from app.zt.maturity import ZtFrameworkCode
 from app.zt.maturity import stage_label as zt_stage_label
+from app.zt.retired import retired_answer_count as zt_retired_answer_count
+from app.zt.retired import retired_sentence as zt_retired_sentence
 from app.zt.scoring import analyze_gaps as zt_analyze_gaps
 from app.zt.scoring import compute as zt_compute
 from app.zt.scoring import effective_target_stages as zt_effective_target_stages
@@ -1582,6 +1584,9 @@ def zt_dashboard(
         unusable_target_codes=list(gap_analysis.unusable_target_codes),
         # #839: off the same GapAnalysis, as #188's field above.
         target_cap_notes=zt_target_cap_sentences(gap_analysis),
+        # #914: the same derivation the workspace and the three files call.
+        retired_answers=zt_retired_answer_count(fw, rows),
+        retired_answers_note=zt_retired_sentence(fw, zt_retired_answer_count(fw, rows)),
         total_gap_count=gap_analysis.total_gap_count,
         largest_gap_pillar=largest.name if largest else None,
         largest_gap_pct=largest.gap_pct if largest else 0.0,
