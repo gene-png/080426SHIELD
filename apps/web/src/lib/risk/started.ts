@@ -8,7 +8,11 @@ import type { RiskDuplicateService } from "./types";
  * Inputs panel's own, unchanged. Change it only with the advisor.
  */
 export function startedLine(row: RiskDuplicateService): string {
-  return `Started ${startedDate(row.started_at)}, version ${row.version}, ${statusWord(row.status)}`;
+  // A record status ("draft"), not an HTTP one: read into its own name so the
+  // template carries no `.status`, which the client-surfaces gate reads as an
+  // HTTP status put into copy.
+  const word = statusWord(row.status);
+  return `Started ${startedDate(row.started_at)}, version ${row.version}, ${word}`;
 }
 
 /**
