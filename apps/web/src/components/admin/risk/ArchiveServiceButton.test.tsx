@@ -42,8 +42,15 @@ beforeAll(() => {
 const BODY =
   "The Risk Register will stop drawing on ZT 2: the next version you generate leaves out its findings, and publishing no longer waits for it. Nothing else changes: its assessments, its deliverables and the client's view of it stay as they are. Archiving cannot be undone.";
 const FALLBACK = "The service could not be archived. Nothing was changed.";
+// The server's sentence and the screen's two lines, from the advisor's
+// rulings (#736 6046491381 as amended by 6047873969), written out by hand.
 const NOT_IN_GROUP =
-  "ZT 2 is no longer one of several engaged services of the same kind, so it was not archived. The list has been refreshed.";
+  "ZT 2 is no longer one of several engaged services of the same kind, so it was not archived.";
+const REFRESHED = "The list has been refreshed.";
+const NOT_REFRESHED =
+  "The list could not be refreshed. Reload the page before trying again.";
+const UNKNOWN =
+  "We couldn't confirm whether this finished. It may still complete; check before trying again.";
 
 // The advisor's line (#736 6046898402) for SVC below, written out by hand.
 const LINE = "Started 3 Oct 2026, version 1, in progress (draft)";
@@ -152,50 +159,77 @@ describe("ArchiveServiceDialog (#896)", () => {
     ).toBeDisabled();
   });
 
-  it("on the server's refusal shows its sentence, reloads the gate, and stays open", async () => {
-    archive.mockRejectedValue({
-      status: 409,
-      payload: {
-        error: {
-          code: 409,
-          reason: "service_not_in_duplicate_group",
-          message: NOT_IN_GROUP,
-        },
+  // Review round 2, F1 (advisor, #736 6047873969): the server's refusal no
+  // longer claims a refresh; the SCREEN appends one line, chosen by whether
+  // the gate reload after the failure succeeded. Same for the 504.
+  const REFUSAL = {
+    status: 409,
+    payload: {
+      error: {
+        code: 409,
+        reason: "service_not_in_duplicate_group",
+        message: NOT_IN_GROUP,
       },
-    });
-    const { dialog, onClose, onSettled } = setup();
+    },
+  };
+  const UNKNOWN_504 = {
+    status: 504,
+    payload: {
+      error: {
+        code: 504,
+        reason: "upstream_outcome_unknown",
+        message: UNKNOWN,
+      },
+    },
+  };
+
+  it("on the server's refusal, after a successful reload, says the list was refreshed", async () => {
+    archive.mockRejectedValue(REFUSAL);
+    const { dialog, onClose, onSettled } = setup(SVC, true);
     await confirm(dialog);
-    expect(within(dialog).getByRole("alert")).toHaveTextContent(NOT_IN_GROUP);
+    expect(within(dialog).getByRole("alert").textContent).toBe(
+      `${NOT_IN_GROUP} ${REFRESHED}`,
+    );
     expect(onSettled).toHaveBeenCalledTimes(1);
     expect(onClose).not.toHaveBeenCalled();
     expect(dialog.open).toBe(true);
   });
 
-  it("on an unknown outcome shows the API's sentence and reloads the gate", async () => {
-    const unknown =
-      "We couldn't confirm whether this finished. It may still complete; check before trying again.";
-    archive.mockRejectedValue({
-      status: 504,
-      payload: {
-        error: {
-          code: 504,
-          reason: "upstream_outcome_unknown",
-          message: unknown,
-        },
-      },
-    });
-    const { dialog, onSettled } = setup();
+  it("on the server's refusal, after a FAILED reload, says to reload the page", async () => {
+    archive.mockRejectedValue(REFUSAL);
+    const { dialog } = setup(SVC, false);
     await confirm(dialog);
-    expect(within(dialog).getByRole("alert")).toHaveTextContent(unknown);
-    expect(within(dialog).getByRole("alert")).not.toHaveTextContent(FALLBACK);
+    expect(within(dialog).getByRole("alert").textContent).toBe(
+      `${NOT_IN_GROUP} ${NOT_REFRESHED}`,
+    );
+  });
+
+  it("on an unknown outcome, after a successful reload, says the list was refreshed", async () => {
+    archive.mockRejectedValue(UNKNOWN_504);
+    const { dialog, onSettled } = setup(SVC, true);
+    await confirm(dialog);
+    expect(within(dialog).getByRole("alert").textContent).toBe(
+      `${UNKNOWN} ${REFRESHED}`,
+    );
     expect(onSettled).toHaveBeenCalledTimes(1);
   });
 
+  it("on an unknown outcome, after a FAILED reload, says to reload the page", async () => {
+    archive.mockRejectedValue(UNKNOWN_504);
+    const { dialog } = setup(SVC, false);
+    await confirm(dialog);
+    expect(within(dialog).getByRole("alert").textContent).toBe(
+      `${UNKNOWN} ${NOT_REFRESHED}`,
+    );
+  });
+
   it("falls back to the approved sentence when the API sent none, and reloads", async () => {
+    // The ruling covers the refusal and the 504; the fallback says "Nothing
+    // was changed." and gets no line about the list.
     archive.mockRejectedValue({ status: 502, payload: null });
     const { dialog, onSettled } = setup();
     await confirm(dialog);
-    expect(within(dialog).getByRole("alert")).toHaveTextContent(FALLBACK);
+    expect(within(dialog).getByRole("alert").textContent).toBe(FALLBACK);
     expect(onSettled).toHaveBeenCalledTimes(1);
   });
 
@@ -213,30 +247,6 @@ describe("ArchiveServiceDialog (#896)", () => {
     const { dialog } = setup();
     await confirm(dialog);
     expect(within(dialog).getByRole("alert")).toHaveTextContent(FALLBACK);
-  });
-
-  // Review round 2, F1 (PLUMBING; the copy is with the advisor): the dialog
-  // must know whether the reload after a failure SUCCEEDED, so it never says
-  // the list was refreshed when it was not. Pinned on a data attribute until
-  // the approved sentences exist.
-  it("knows the reload after a failure succeeded", async () => {
-    archive.mockRejectedValue({ status: 502, payload: null });
-    const { dialog } = setup(SVC, true);
-    await confirm(dialog);
-    expect(within(dialog).getByRole("alert")).toHaveAttribute(
-      "data-gate-reloaded",
-      "true",
-    );
-  });
-
-  it("knows the reload after a failure FAILED", async () => {
-    archive.mockRejectedValue({ status: 502, payload: null });
-    const { dialog } = setup(SVC, false);
-    await confirm(dialog);
-    expect(within(dialog).getByRole("alert")).toHaveAttribute(
-      "data-gate-reloaded",
-      "false",
-    );
   });
 
   it("forgets an earlier failure when opened for another service", async () => {

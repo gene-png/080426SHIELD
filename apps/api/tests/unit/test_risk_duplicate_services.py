@@ -39,10 +39,11 @@ from tests.unit.test_risk_register import (  # noqa: F401  (app_client is a fixt
 
 pytestmark = pytest.mark.unit
 
-# Spelled out from the advisor's approval (#736 6046491381), not imported.
+# Spelled out from the advisor's approval, not imported: #736 6046491381, with
+# its last sentence moved to the screen by 6047873969 (review round 2, F1).
 _NOT_IN_GROUP = (
     "{title} is no longer one of several engaged services of the same kind, so it "
-    "was not archived. The list has been refreshed."
+    "was not archived."
 )
 
 

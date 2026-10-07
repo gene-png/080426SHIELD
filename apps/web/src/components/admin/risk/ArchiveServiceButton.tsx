@@ -3,7 +3,8 @@ import * as React from "react";
 
 import { Modal } from "@shield/design-system";
 
-import { clientFacingError } from "@/lib/describe-save-error";
+import { clientFacingError, serverReasonCode } from "@/lib/describe-save-error";
+import { UPSTREAM_OUTCOME_UNKNOWN } from "@/lib/upstream-outcome";
 import { archiveDuplicateService } from "@/lib/risk/client";
 import { startedLine } from "@/lib/risk/started";
 import type { RiskDuplicateService } from "@/lib/risk/types";
@@ -32,6 +33,30 @@ import type { JSX } from "react";
 
 /** Shown when the API sent no sentence fit for a person. */
 const FALLBACK = "The service could not be archived. Nothing was changed.";
+
+/**
+ * Review round 2, F1 (advisor, #736 6047873969): after the server's refusal
+ * or an outcome-unknown 504, the screen says what its own reload did -- and
+ * only the screen can, because only it knows whether the reload worked.
+ */
+const REFRESHED = "The list has been refreshed.";
+const NOT_REFRESHED =
+  "The list could not be refreshed. Reload the page before trying again.";
+
+/** The failures the ruling appends a line about the list to. */
+const SAYS_WHAT_THE_LIST_DID = new Set([
+  "service_not_in_duplicate_group",
+  UPSTREAM_OUTCOME_UNKNOWN,
+]);
+
+function failureText(
+  message: string,
+  code: string | null,
+  reloaded: boolean,
+): string {
+  if (code === null || !SAYS_WHAT_THE_LIST_DID.has(code)) return message;
+  return `${message} ${reloaded ? REFRESHED : NOT_REFRESHED}`;
+}
 
 function dialogBody(title: string): string {
   return (
@@ -92,8 +117,8 @@ export interface ArchiveServiceDialogProps {
 /** A failed attempt, and whether the reload after it re-read the gate. */
 interface Failure {
   serviceId: string;
-  message: string;
-  reloaded: boolean;
+  /** The whole alert: the API's sentence and, where ruled, the list line. */
+  text: string;
 }
 
 export function ArchiveServiceDialog({
@@ -117,6 +142,7 @@ export function ArchiveServiceDialog({
     setBusy(true);
     setFailure(null);
     let message: string | null = null;
+    let code: string | null = null;
     try {
       await archiveDuplicateService(clientId, target.service_id);
       console.info("[risk] service archived", { serviceId: target.service_id });
@@ -129,6 +155,7 @@ export function ArchiveServiceDialog({
         err,
       });
       message = clientFacingError(err, FALLBACK);
+      code = serverReasonCode(err);
     }
     // B2: on ANY outcome, re-read the gate, so the banner shows what the
     // server now holds -- which is also the "check" a 504 asks for. F1: the
@@ -145,7 +172,10 @@ export function ArchiveServiceDialog({
       return;
     }
     console.info("[risk] gate reload after a failed archive", { reloaded });
-    setFailure({ serviceId: target.service_id, message, reloaded });
+    setFailure({
+      serviceId: target.service_id,
+      text: failureText(message, code, reloaded),
+    });
   }
 
   return (
@@ -190,12 +220,9 @@ export function ArchiveServiceDialog({
       {shown !== null ? (
         <p
           role="alert"
-          // F1 plumbing: whether the list on screen was re-read after this
-          // failure. The sentence that says so is with the advisor.
-          data-gate-reloaded={shown.reloaded ? "true" : "false"}
           className="mt-3 text-sm font-medium text-status-danger-fg"
         >
-          {shown.message}
+          {shown.text}
         </p>
       ) : null}
     </Modal>

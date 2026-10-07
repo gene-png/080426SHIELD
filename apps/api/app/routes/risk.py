@@ -678,10 +678,13 @@ def archive_duplicate_service(
             status_code=status.HTTP_409_CONFLICT,
             detail={
                 "reason": "service_not_in_duplicate_group",
-                # The advisor's sentence, exactly (#736 6046491381).
+                # The advisor's sentence, exactly (#736 6046491381). Its old
+                # last sentence, "The list has been refreshed.", is the
+                # screen's to say, and only once its reload has succeeded
+                # (review round 2, F1; 6047873969): the API cannot know.
                 "message": (
                     f"{svc.title} is no longer one of several engaged services of the same "
-                    "kind, so it was not archived. The list has been refreshed."
+                    "kind, so it was not archived."
                 ),
             },
         )

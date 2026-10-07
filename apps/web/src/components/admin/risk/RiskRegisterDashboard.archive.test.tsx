@@ -67,8 +67,10 @@ beforeAll(() => {
 const DUPLICATE =
   "Two engaged services of the same kind would produce the same findings: ZT and ZT 2. The register cannot be generated while both are engaged.";
 const LEAD = "Archive the one this register should not draw on:";
+// The server's sentence (#736 6046491381, last sentence moved to the screen by
+// 6047873969); the screen's lines are written out at each assertion.
 const NOT_IN_GROUP =
-  "ZT 2 is no longer one of several engaged services of the same kind, so it was not archived. The list has been refreshed.";
+  "ZT 2 is no longer one of several engaged services of the same kind, so it was not archived.";
 
 function svc(
   service_id: string,
@@ -249,18 +251,16 @@ describe("RiskRegisterDashboard archive control (#896)", () => {
     // still open with the server's sentence.
     expect(screen.queryByTestId("risk-register-duplicate-archive")).toBeNull();
     const still = screen.getByRole("dialog", { name: "Archive ZT 2?" });
-    expect(within(still).getByRole("alert")).toHaveTextContent(NOT_IN_GROUP);
-    // F1 plumbing: the dashboard reported its reload as successful.
-    expect(within(still).getByRole("alert")).toHaveAttribute(
-      "data-gate-reloaded",
-      "true",
+    // F1: the reload succeeded, so the screen says the list was refreshed.
+    expect(within(still).getByRole("alert").textContent).toBe(
+      `${NOT_IN_GROUP} The list has been refreshed.`,
     );
   });
 
-  it("F1: when the reload after a refusal fails, the dialog is told so", async () => {
-    // Review round 2, F1 (PLUMBING; copy with the advisor). The archive is
-    // refused AND the gate cannot be re-read: the banner still shows the old
-    // list, so nothing may claim the list was refreshed.
+  it("F1: when the reload after a refusal fails, it says to reload the page", async () => {
+    // Review round 2, F1 (advisor, #736 6047873969). The archive is refused
+    // AND the gate cannot be re-read: the banner still shows the old list, so
+    // nothing may claim the list was refreshed.
     fetchRiskGate
       .mockResolvedValueOnce(DUPLICATE_GATE)
       .mockRejectedValueOnce(new Error("gate down"));
@@ -281,9 +281,8 @@ describe("RiskRegisterDashboard archive control (#896)", () => {
 
     await waitFor(() => expect(fetchRiskGate).toHaveBeenCalledTimes(2));
     await waitFor(() =>
-      expect(within(dialog).getByRole("alert")).toHaveAttribute(
-        "data-gate-reloaded",
-        "false",
+      expect(within(dialog).getByRole("alert").textContent).toBe(
+        `${NOT_IN_GROUP} The list could not be refreshed. Reload the page before trying again.`,
       ),
     );
     // The old list is still on screen: the reload did not replace it.
