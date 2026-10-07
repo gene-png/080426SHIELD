@@ -132,6 +132,18 @@ const PARENT_INPUTS: readonly (keyof AttackCoveragePatch)[] = [
   "response_tools",
 ];
 
+/** #851 (F2): the patch keys that can change `citations_outside_subset`, an
+ *  ASSESSMENT-level list the server derives from every row's tools. The PATCH
+ *  returns only the row, so a write to a tool list -- a Remove included --
+ *  re-reads the assessment rather than re-deriving the list here: the rule
+ *  lives once, in `app/attack/subset_drift.py`. */
+const SUBSET_INPUTS: readonly (keyof AttackCoveragePatch)[] = [
+  "remove_tool",
+  "detection_tools",
+  "prevention_tools",
+  "response_tools",
+];
+
 export function AttackWorkspace({
   serviceId,
   serviceTitle,
@@ -463,6 +475,7 @@ export function AttackWorkspace({
       ) {
         refetchWanted.current = true;
       }
+      if (SUBSET_INPUTS.some((k) => k in patch)) refetchWanted.current = true;
       ok = true;
     } catch (err) {
       setActionError(describeError(err));
