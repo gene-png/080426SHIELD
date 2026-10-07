@@ -958,7 +958,10 @@ export function AttackWorkspace({
               </p>
             ) : (
               <div className="flex flex-col gap-4">
-                <AttackOutsideSubsetAlert assessment={assessment} phase="draft" />
+                <AttackOutsideSubsetAlert
+                  assessment={assessment}
+                  phase="draft"
+                />
                 <AttackTechniquePanel
                   technique={selectedTechnique}
                   subTechniqueCount={selectedSubTechniqueCount}
@@ -1050,7 +1053,10 @@ export function AttackWorkspace({
                 onReview={onReview}
               />
               <StaleDocsNudge stale={assessment.documents_stale} />
-              <AttackOutsideSubsetAlert assessment={assessment} phase="approved" />
+              <AttackOutsideSubsetAlert
+                assessment={assessment}
+                phase="approved"
+              />
               <AttackDeliverableCard
                 serviceId={serviceId}
                 assessmentStatus={assessment.status}

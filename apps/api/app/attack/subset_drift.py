@@ -31,6 +31,7 @@ from typing import Any
 
 from app.attack.citations import CitationResolver
 from app.attack.pending import TOOL_FIELDS
+from app.models.capability import CapabilityListStatus
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,27 @@ def is_outside_subset(name: str, subset: CitationResolver) -> bool:
     kept out of the subset) would add one condition here: that the name hits
     a resolver over `CapabilityMembership.withheld`. Nothing else changes."""
     return not subset.named_by(name)
+
+
+#: The third state, said where the check could not run (advisor, #736
+#: comment 6039558116: "not checked" is not a pass). The WORDING is pending the advisor.
+NOT_CHECKED_SENTENCE = (
+    "The tools cited here were not checked against a security tool list, because "
+    "the client has none."
+)
+
+
+def subset_applies(list_statuses: Iterable[Any]) -> bool:
+    """Whether there is a security tool list to judge a citation against: at
+    least one Tech Debt list that is not DISCARDED feeds the subset.
+
+    With none, NOTHING is outside it: an ATT&CK-only client's tools are all
+    typed by a consultant (Run AI can cite nothing without a list), and
+    flagging every one would refuse every approve that cites a tool. The
+    same rule as #686's retirement labels: "no consolidation plan is not
+    could not determine" (`attack/retirement.py`). Approved by the advisor
+    (#736 comment 6039558116), with "not checked" said as a third state."""
+    return any(s != CapabilityListStatus.DISCARDED for s in list_statuses)
 
 
 def citations_outside_subset(

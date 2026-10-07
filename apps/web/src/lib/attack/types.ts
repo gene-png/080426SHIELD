@@ -155,6 +155,9 @@ export interface AttackAssessment {
   /** #851: every tool a row credits outside the client's CURRENT security
    *  tool list. Absent on an older payload: nothing is shown. */
   citations_outside_subset?: AttackOutsideCitation[];
+  /** #851: false when the client has no security tool list, so nothing
+   *  could be checked (a third state, never a pass). */
+  subset_checked?: boolean;
 }
 
 /** #851: one tool one row credits outside the security tool list. */
@@ -167,9 +170,7 @@ export interface AttackOutsideCitation {
 }
 
 export type AttackToolField =
-  | "detection_tools"
-  | "prevention_tools"
-  | "response_tools";
+  "detection_tools" | "prevention_tools" | "response_tools";
 
 export interface AttackCoveragePatch {
   status?: CoverageStatus | null;

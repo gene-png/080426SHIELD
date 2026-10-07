@@ -238,6 +238,10 @@ class AttackAssessmentResponse(BaseModel):
     #: tool list (`attack/subset_drift.py`). REQUIRED: a default would turn
     #: missing wiring into a confident "none".
     citations_outside_subset: list[AttackOutsideCitation]
+    #: #851: False when the client has no security tool list to check against,
+    #: so `citations_outside_subset` is empty because nothing was checked,
+    #: never because nothing was found (advisor: a third state). REQUIRED.
+    subset_checked: bool
 
 
 class ComputedStatusReviewItem(BaseModel):

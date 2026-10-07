@@ -156,7 +156,7 @@ def test_a_tool_confirmed_not_security_is_disclosed_and_blocks_approve(
     assert detail["cites_outside_subset"] == [
         {"technique_code": code, "field": "detection_tools", "tool": LEGACY, "locked": False}
     ]
-    # S4 (the "not in" variant, PENDING the advisor) and S3b (approved).
+    # S4 (the "not in" variant) and S3b, both approved by the advisor (#736).
     assert (
         "1 technique row credits a tool that is not in the client's security tool list"
         in detail["message"]
@@ -336,3 +336,127 @@ def test_a_remove_that_cannot_apply_is_a_typed_422(app_parts, remove, reason) ->
         from app.models.attack_assessment import AttackCoverage
 
         assert db.get(AttackCoverage, uuid.UUID(w.rows[code])).detection_tools == [EDR]
+
+
+# --- no list to judge against: the check does not apply (advisor, #736 6039558116) ---
+
+
+def _no_list_world(app_parts) -> World:  # noqa: F811
+    """The same world with its Tech Debt list removed: an ATT&CK-only client."""
+    w = _world(app_parts)
+    with w.sessions() as db:
+        for it in db.execute(select(CapabilityItem)).scalars().all():
+            db.delete(it)
+        db.delete(db.get(CapabilityList, uuid.UUID(w.list_id)))
+        db.commit()
+    return w
+
+
+def test_with_no_tech_debt_list_nothing_is_flagged_and_approve_proceeds(
+    app_parts,  # noqa: F811
+) -> None:
+    w = _no_list_world(app_parts)
+    code = _codes(w)[0]
+    assert w.patch(code, {"detection_tools": ["Tool A"]}).status_code == 200
+    assert w.get()["coverage"]  # the assessment is there
+    assert _outside(w) == []
+    assert w.approve().status_code == 200
+
+
+# --- "not checked" is a THIRD state, not a pass (advisor, #736 6039558116) -------------
+# The sentence is copied from the drafted wording sent for approval, never from
+# the module that renders it.
+NOT_CHECKED = (
+    "The tools cited here were not checked against a security tool list, because "
+    "the client has none."
+)
+
+
+def test_the_assessment_says_whether_the_tools_were_checked(app_parts) -> None:  # noqa: F811
+    w = _world(app_parts)
+    assert w.get()["subset_checked"] is True  # a live list: checked (positive first)
+    r = w.c.post(f"/tech-debt/capability-lists/{w.list_id}/discard", headers=w.h)
+    assert r.status_code == 200, r.text
+    assert w.get()["subset_checked"] is False
+
+
+def test_an_attack_only_client_reads_not_checked(app_parts) -> None:  # noqa: F811
+    assert _no_list_world(app_parts).get()["subset_checked"] is False
+
+
+def _with_storage(app_parts, tmp_path) -> None:  # noqa: F811
+    """Finalize writes the artifacts: a local store, as the deliverable tests use."""
+    from app.routes.artifacts import _storage_dep
+    from app.storage.local import LocalFilesystemStorage
+
+    storage = LocalFilesystemStorage(tmp_path / "storage")
+    app_parts[1].dependency_overrides[_storage_dep] = lambda: storage
+
+
+def _finalize(w: World) -> dict:
+    assert w.approve().status_code == 200
+    fin = w.c.post(f"/attack/services/{w.svc_id}/deliverables/finalize", headers=w.h)
+    assert fin.status_code in (200, 201), fin.text
+    return fin.json()
+
+
+def _format_text(w: World, fin: dict, fmt: str) -> str:
+    import io
+
+    if fmt == "summary":
+        return fin["summary"]
+    r = w.c.get(f"/artifacts/{fin[f'{fmt}_artifact_id']}/download", headers=w.h)
+    assert r.status_code == 200, r.text
+    raw = io.BytesIO(r.content)
+    if fmt == "pdf":
+        from pypdf import PdfReader
+
+        text = " ".join((p.extract_text() or "") for p in PdfReader(raw).pages)
+    elif fmt == "docx":
+        from docx import Document
+
+        text = " ".join(p.text for p in Document(raw).paragraphs)
+    else:
+        from openpyxl import load_workbook
+
+        ws = load_workbook(raw)["Heatmap Summary"]
+        text = " ".join(str(c.value) for row in ws.iter_rows() for c in row if c.value)
+    return " ".join(text.split())
+
+
+FORMATS = ["pdf", "docx", "xlsx", "summary"]
+
+
+@pytest.mark.parametrize("fmt", FORMATS)
+def test_each_format_says_not_checked_when_the_client_has_no_list(
+    app_parts, tmp_path, fmt: str  # noqa: F811
+) -> None:
+    _with_storage(app_parts, tmp_path)
+    w = _no_list_world(app_parts)
+    w.patch(_codes(w)[0], {"detection_tools": ["Tool A"]})
+    text = _format_text(w, _finalize(w), fmt)
+    assert NOT_CHECKED in text, text[:3000]
+
+
+@pytest.mark.parametrize("fmt", FORMATS)
+def test_each_format_is_silent_when_the_tools_were_checked(
+    app_parts, tmp_path, fmt: str  # noqa: F811
+) -> None:
+    _with_storage(app_parts, tmp_path)
+    w = _world(app_parts)
+    w.patch(_codes(w)[0], {"detection_tools": [EDR]})
+    text = _format_text(w, _finalize(w), fmt)
+    # Positive first: the surface rendered.
+    assert ("Coverage:" if fmt == "summary" else "ATT&CK") in text, text[:3000]
+    assert "not checked against a security tool list" not in text, text[:3000]
+
+
+def test_with_only_a_discarded_list_nothing_is_flagged(app_parts) -> None:  # noqa: F811
+    w = _world(app_parts)
+    code = _codes(w)[0]
+    w.patch(code, {"detection_tools": ["Shadow Scanner"]})
+    assert _outside(w) != []  # a live list: the check applies (positive first)
+    r = w.c.post(f"/tech-debt/capability-lists/{w.list_id}/discard", headers=w.h)
+    assert r.status_code == 200, r.text
+    assert _outside(w) == []
+    assert w.approve().status_code == 200

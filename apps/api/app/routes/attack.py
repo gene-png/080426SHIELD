@@ -89,6 +89,7 @@ from app.attack.exporters import render_docx as render_attack_docx
 from app.attack.exporters import render_pdf as render_attack_pdf
 from app.attack.exporters import render_xlsx as render_attack_xlsx
 from app.attack.exporters import retirement_sentences as attack_retirement_sentences
+from app.attack.exporters import subset_sentences as attack_subset_sentences
 from app.attack.parents import PARENT_CHILDREN, is_computed_parent, recompute_parents
 from app.attack.pending import CLAIMS_SUPPORT as _STATUS_CLAIMS_SUPPORT
 from app.attack.pending import NO_CITATION as _NO_CITATION
@@ -99,7 +100,11 @@ from app.attack.pending import row_tools as attack_row_tools
 from app.attack.retirement import PlanEntry, RetirementIndex
 from app.attack.retirement import build_index as build_retirement_index
 from app.attack.rules import COMPUTED_STATUSES, NEW_RULES, parents_computed, statuses_computed
-from app.attack.subset_drift import OutsideCitation, citations_outside_subset
+from app.attack.subset_drift import (
+    OutsideCitation,
+    citations_outside_subset,
+    subset_applies,
+)
 from app.audit import audit
 from app.config import get_settings
 from app.db.session import get_db
@@ -242,6 +247,7 @@ def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentR
         .scalars()
         .all()
     )
+    checked, outside = subset_state(db, _client_id_of(db, a.service_id), rows)
     return AttackAssessmentResponse(
         id=a.id,
         service_id=a.service_id,
@@ -263,8 +269,9 @@ def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentR
             AttackOutsideCitation(
                 technique_code=o.technique_code, field=o.field, tool=o.tool, locked=o.locked
             )
-            for o in outside_subset_citations(db, _client_id_of(db, a.service_id), rows)
+            for o in outside
         ],
+        subset_checked=checked,
     )
 
 
@@ -297,6 +304,14 @@ def citation_resolver_for(
 def outside_subset_citations(
     db: Session, client_id: uuid.UUID, rows: Iterable[AttackCoverage]
 ) -> list[OutsideCitation]:
+    """#851: the rows' tools outside the client's CURRENT security tool list;
+    [] when there is no list to check against (see `subset_state`)."""
+    return subset_state(db, client_id, rows)[1]
+
+
+def subset_state(
+    db: Session, client_id: uuid.UUID, rows: Iterable[AttackCoverage]
+) -> tuple[bool, list[OutsideCitation]]:
     """#851: the rows' tools outside the client's CURRENT security tool list,
     checked by the resolver built from the SAME inputs Run AI's request uses
     (`_attack_ai_request_for`: `_client_capability_inputs`, the client's
@@ -304,11 +319,18 @@ def outside_subset_citations(
     client = db.get(Client, client_id)
     if client is None:
         raise ValueError(f"client {client_id} does not exist")
+    # ONE membership read: its `inputs()` IS `_client_capability_inputs`, and
+    # its lists decide whether there is a subset to judge against at all.
+    membership = _client_capability_membership(db, client_id)
+    if not subset_applies(cl.status for cl in membership.lists):
+        # NOT CHECKED, the third state: nothing is flagged because nothing
+        # could be, never because nothing was found.
+        return False, []
     subset = citation_resolver_for(
-        [Candidate(name=c.name, vendor=c.vendor) for c in _client_capability_inputs(db, client_id)],
+        [Candidate(name=c.name, vendor=c.vendor) for c in membership.inputs()],
         client_org_name=client.legal_name,
     )
-    return citations_outside_subset(rows, subset)
+    return True, citations_outside_subset(rows, subset)
 
 
 def _tool_retirement_marks(
@@ -3402,6 +3424,9 @@ def finalize_attack_deliverable(
         retirement=client_retirement_index(db, svc.client_id),
         # #646: the ONE derivation every surface calls.
         ai_mode=ai_mode_for(db, svc, assessment),
+        # #851: whether the cited tools could be checked at all, AS OF this
+        # finalize; the rendered bytes keep it.
+        subset_checked=subset_state(db, svc.client_id, coverage)[0],
     )
     pdf_bytes = render_attack_pdf(ctx)
     xlsx_bytes = render_attack_xlsx(ctx)
@@ -3453,6 +3478,8 @@ def finalize_attack_deliverable(
         + (f" {outside_assessed_text(rollup)}." if states_outside_counts(ctx) else "")
         # #686: the renderers' own sentences, only when non-zero.
         + "".join(f" {s}" for s in attack_retirement_sentences(ctx))
+        # #851: the renderers' own "not checked" sentence, only when it applies.
+        + "".join(f" {s}" for s in attack_subset_sentences(ctx))
         # #554 R3 (Q4): the renderers' own sentence, only when non-zero.
         + (f" {awaiting}" if (awaiting := attack_awaiting_review_text(ctx)) else "")
         # #801 (F1): the figure after planned changes, and its counts.

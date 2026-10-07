@@ -40,7 +40,12 @@ describe("AttackOutsideSubsetAlert (#851)", () => {
       <AttackOutsideSubsetAlert
         assessment={assessment("draft", [
           LEGACY,
-          { ...LEGACY, technique_code: "T1059", field: "response_tools", locked: true },
+          {
+            ...LEGACY,
+            technique_code: "T1059",
+            field: "response_tools",
+            locked: true,
+          },
         ])}
         phase="draft"
       />,
@@ -49,7 +54,9 @@ describe("AttackOutsideSubsetAlert (#851)", () => {
     expect(alert.querySelector("p")?.textContent).toBe(
       "2 technique rows credit a tool that is not in the client's security tool list, so their status may count a tool the client does not use:",
     );
-    expect([...alert.querySelectorAll("li")].map((li) => li.textContent)).toEqual([
+    expect(
+      [...alert.querySelectorAll("li")].map((li) => li.textContent),
+    ).toEqual([
       "T1003, Detection: Legacy AV",
       "T1059, Response: Legacy AV (locked, so Run AI will not change it)",
     ]);
@@ -69,7 +76,8 @@ describe("AttackOutsideSubsetAlert (#851)", () => {
       />,
     );
     expect(
-      screen.getByTestId("attack-outside-subset").querySelector("p")?.textContent,
+      screen.getByTestId("attack-outside-subset").querySelector("p")
+        ?.textContent,
     ).toBe(
       "1 technique row credits a tool that is not in the client's security tool list, so its status may count a tool the client does not use:",
     );
@@ -94,13 +102,47 @@ describe("AttackOutsideSubsetAlert (#851)", () => {
 
   it("renders nothing when no row credits such a tool", () => {
     const { rerender } = render(
-      <AttackOutsideSubsetAlert assessment={assessment("draft", [LEGACY])} phase="draft" />,
+      <AttackOutsideSubsetAlert
+        assessment={assessment("draft", [LEGACY])}
+        phase="draft"
+      />,
     );
     expect(screen.getByTestId("attack-outside-subset")).toBeTruthy(); // positive first
     rerender(
-      <AttackOutsideSubsetAlert assessment={assessment("draft", [])} phase="draft" />,
+      <AttackOutsideSubsetAlert
+        assessment={assessment("draft", [])}
+        phase="draft"
+      />,
     );
     expect(screen.queryByTestId("attack-outside-subset")).toBeNull();
+  });
+
+  it("says the tools were not checked when the client has no list (the third state)", () => {
+    const NOT_CHECKED =
+      "The tools cited here were not checked against a security tool list, because the client has none.";
+    for (const status of ["draft", "approved"] as const) {
+      const checked = render(
+        <AttackOutsideSubsetAlert
+          assessment={{ ...assessment(status, []), subset_checked: true }}
+          phase={status}
+        />,
+      );
+      expect(
+        screen.queryByTestId("attack-outside-subset-not-checked"),
+      ).toBeNull();
+      checked.unmount();
+      const unchecked = render(
+        <AttackOutsideSubsetAlert
+          assessment={{ ...assessment(status, []), subset_checked: false }}
+          phase={status}
+        />,
+      );
+      expect(
+        screen.getByTestId("attack-outside-subset-not-checked").textContent,
+      ).toBe(NOT_CHECKED);
+      expect(screen.queryByTestId("attack-outside-subset")).toBeNull();
+      unchecked.unmount();
+    }
   });
 });
 

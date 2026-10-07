@@ -44,7 +44,21 @@ export function AttackOutsideSubsetAlert({
 }): JSX.Element | null {
   const items = assessment.citations_outside_subset ?? [];
   const approved = assessment.status !== "draft";
-  if (items.length === 0 || approved !== (phase === "approved")) return null;
+  if (approved !== (phase === "approved")) return null;
+  if (assessment.subset_checked === false) {
+    // The third state: nothing is listed because nothing could be checked.
+    return (
+      <p
+        role="status"
+        data-testid="attack-outside-subset-not-checked"
+        className="rounded-md border border-line bg-surface-sunken p-3 text-sm text-ink-secondary"
+      >
+        The tools cited here were not checked against a security tool list,
+        because the client has none.
+      </p>
+    );
+  }
+  if (items.length === 0) return null;
   return (
     <div
       role="status"
@@ -62,8 +76,8 @@ export function AttackOutsideSubsetAlert({
       </ul>
       {approved ? null : (
         <p>
-          Remove the tool in the technique&apos;s panel, or unlock the row and use
-          Run AI.
+          Remove the tool in the technique&apos;s panel, or unlock the row and
+          use Run AI.
         </p>
       )}
     </div>
