@@ -199,6 +199,8 @@ export interface GapAnalysis {
   gap_count_by_pillar: Record<string, number>;
   gaps: GapItem[];
   roadmap?: RoadmapEntry[];
+  /** #839: the API's own C1/C2 sentences for the DoD target caps. */
+  target_cap_notes?: string[];
 }
 
 export interface RoadmapEntry {

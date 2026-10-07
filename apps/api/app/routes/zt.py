@@ -115,6 +115,7 @@ from app.zt.exporters import render_pdf as render_zt_pdf
 from app.zt.exporters import render_xlsx as render_zt_xlsx
 from app.zt.maturity import ZtFrameworkCode, level_count, stage_definitions
 from app.zt.retired import retired_answer_count, retired_sentence
+from app.zt.target_caps import target_cap_sentences
 from app.zt.scoring import (
     analyze_gaps,
     build_roadmap,
@@ -1706,6 +1707,8 @@ def gap_analysis(
         unscored_count=len(analysis.unscored_codes),
         # Off the same GapAnalysis the deliverable and the dashboard read.
         unusable_target_codes=list(analysis.unusable_target_codes),
+        # #839: from the same GapAnalysis the deliverable and dashboard read.
+        target_cap_notes=target_cap_sentences(analysis),
         gap_count_by_pillar=analysis.gap_count_by_pillar,
         gaps=[
             GapItem(

@@ -61,6 +61,12 @@ export interface ZtDashboardData {
    */
   unusable_target_codes: string[];
   /**
+   * #839: the API's own sentences (approved copy C1/C2) for each DoD
+   * capability whose target was capped at its highest level, or that cannot
+   * score the target level. Rendered as given, never rebuilt here.
+   */
+  target_cap_notes?: string[];
+  /**
    * How many capabilities the engagement stage actually decided. Zero means
    * every capability carried its own target and the intake choice contributed
    * nothing to the percentage shown.

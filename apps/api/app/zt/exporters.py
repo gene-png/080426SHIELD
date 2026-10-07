@@ -27,6 +27,7 @@ from app.zt.catalog import capabilities, pillars
 from app.zt.maturity import ZtFrameworkCode, stage_label
 from app.zt.retired import retired_answer_count, retired_sentence
 from app.zt.scoring import GapAnalysis, ScoreResult
+from app.zt.target_caps import target_cap_sentences
 
 if TYPE_CHECKING:
     from reportlab.platypus import TableStyle
@@ -335,6 +336,12 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
         # the "Name" HEADER italic and dropped its bold, because assigning
         # `.font` replaces the whole Font object rather than merging into it.
         ws3.cell(row=3, column=3).font = italic
+    # #839: below the plan, so the header stays row 2. One row per capability.
+    caps = target_cap_sentences(ctx.gap)
+    if caps:
+        ws3.append([])
+        for sentence in caps:
+            ws3.append([sentence])
     for w, col in zip([18, 10, 36, 14, 14, 12, 12, 50], range(1, 9), strict=True):
         ws3.column_dimensions[get_column_letter(col)].width = w
 
@@ -399,6 +406,8 @@ def render_docx(ctx: ZtDeliverableContext) -> bytes:
 
     add_heading(doc, f"Top remediation gaps (target S{ctx.gap.target_stage})")
     doc.add_paragraph(_gap_plan_caption(ctx.gap, _target_note(ctx)))
+    for sentence in target_cap_sentences(ctx.gap):  # #839, per capability
+        doc.add_paragraph(sentence)
     if not ctx.gap.gaps:
         add_paragraphs(
             doc,
@@ -495,6 +504,8 @@ def render_pdf(ctx: ZtDeliverableContext) -> bytes:
 
     story.append(Paragraph(f"Top remediation gaps (target S{ctx.gap.target_stage})", h2))
     story.append(Paragraph(_gap_plan_caption(ctx.gap, _target_note(ctx)), styles["BodyText"]))
+    for sentence in target_cap_sentences(ctx.gap):  # #839, per capability
+        story.append(Paragraph(sentence, styles["BodyText"]))
     if not ctx.gap.gaps:
         story.append(
             Paragraph(

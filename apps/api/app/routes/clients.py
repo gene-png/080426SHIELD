@@ -129,6 +129,7 @@ from app.zt.scoring import (
     engagement_target_capability_count as zt_engagement_target_capability_count,
 )
 from app.zt.scoring import resolve_target_stage as zt_resolve_target_stage
+from app.zt.target_caps import target_cap_sentences as zt_target_cap_sentences
 
 router = APIRouter(prefix="/clients", tags=["clients"])
 
@@ -1579,6 +1580,8 @@ def zt_dashboard(
         # would be worse than most -- the screen and the PDF would be stating
         # different facts about one assessment.
         unusable_target_codes=list(gap_analysis.unusable_target_codes),
+        # #839: off the same GapAnalysis, as #188's field above.
+        target_cap_notes=zt_target_cap_sentences(gap_analysis),
         total_gap_count=gap_analysis.total_gap_count,
         largest_gap_pillar=largest.name if largest else None,
         largest_gap_pct=largest.gap_pct if largest else 0.0,

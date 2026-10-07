@@ -27,7 +27,7 @@ function toneFor(label: string): "info" | "warning" | "success" | "neutral" {
   if (label === "Optimal") return "success";
   if (label === "Advanced") return "info";
   if (label === "Target" || label === "Initial") return "warning";
-  if (label === "Traditional" || label === "Not Started") return "warning";
+  if (label === "Traditional" || label === "Below Target") return "warning";
   return "neutral";
 }
 

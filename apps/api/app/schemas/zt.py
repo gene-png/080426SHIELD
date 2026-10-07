@@ -428,6 +428,9 @@ class GapAnalysisResponse(BaseModel):
     # client's dashboard but hidden from the person who can FIX it would be the
     # worst of the three places to leave silent.
     unusable_target_codes: list[str] = []
+    # #839: the approved C1/C2 sentences, one per capped DoD capability or per
+    # capability that cannot score the target level (`zt/target_caps.py`).
+    target_cap_notes: list[str] = []
     gap_count_by_pillar: dict[str, int]
     gaps: list[GapItem]
     roadmap: list[RoadmapEntry] = []

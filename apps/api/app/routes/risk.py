@@ -88,8 +88,9 @@ from app.services.engagement_targets import client_target_tier as _client_target
 from app.storage import StorageBackend
 from app.tech_debt.filename import SERVICE_SLUG_RISK_REGISTER, deliverable_filename
 from app.zt.catalog import all_codes
+from app.zt.catalog import capability_by_code as zt_capability_by_code
 from app.zt.maturity import ZtFrameworkCode
-from app.zt.scoring import resolve_target_stage
+from app.zt.scoring import capability_max_stage, resolve_target_stage
 
 router = APIRouter(prefix="/risk", tags=["risk-register"])
 
@@ -766,7 +767,8 @@ def _gather_findings(
         # #838: only the catalog's rows. Migration 0063 KEEPS answers on rows
         # CISA ZTMM 2.0 does not have, and the ZT deliverable says they are not
         # scored, so they feed no finding and are not citable here either.
-        zt_codes = all_codes(ZtFrameworkCode(zt.framework.value))
+        zt_fw = ZtFrameworkCode(zt.framework.value)
+        zt_codes = all_codes(zt_fw)
         zt_rows = [
             r
             for r in db.execute(select(ZtAnswer).where(ZtAnswer.assessment_id == zt.id)).scalars()
@@ -796,7 +798,15 @@ def _gather_findings(
             # Closing it means calling `capability_target_override`; that
             # changes what the feed reports and wants its own both-states
             # evidence, so it is tracked rather than done here.
-            tgt = r.target_stage if r.target_stage is not None else zt_target
+            #
+            # #839: never above what the capability can score. The cap is the
+            # same function the gap engine applies (`capability_max_stage`), so
+            # a DoD capability the deliverable shows at its target is no
+            # finding here either.
+            tgt = min(
+                r.target_stage if r.target_stage is not None else zt_target,
+                capability_max_stage(zt_fw, zt_capability_by_code(r.capability_code)),
+            )
             if r.maturity_stage is not None and r.maturity_stage < tgt:
                 findings.append(
                     {

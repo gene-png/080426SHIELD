@@ -13,7 +13,7 @@ import { register, uniqueEmail } from "../helpers/auth";
  *   2. CSF answers auto-save and persist across a save-and-exit + reopen.
  *   3. Submitting a CSF self-assessment moves its status to submitted.
  *   4. DoD ZTRA maturity scale shows exactly 3 levels (A4) — the DoD ladder is
- *      Not Started / Target / Advanced, versus CISA's 4.
+ *      Below Target / Target / Advanced, versus CISA's 4.
  */
 
 const PASSWORD = "correct horse battery staple!";
@@ -246,7 +246,7 @@ test("DoD Zero Trust self-assessment maturity scale shows exactly 3 levels", asy
   });
 
   // Each capability's maturity picker is a radiogroup ("Maturity stage for
-  // <code>"). For DoD ZTRA the ladder is exactly 3 stages (Not Started /
+  // <code>"). For DoD ZTRA the ladder is exactly 3 stages (Below Target /
   // Target / Advanced) — CISA would show 4.
   const stagePicker = page
     .getByRole("radiogroup", { name: /Maturity stage for/i })

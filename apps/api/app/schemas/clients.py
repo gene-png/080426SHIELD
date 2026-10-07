@@ -524,6 +524,9 @@ class ZtDashboardResponse(BaseModel):
     # Empty on an ordinary engagement. Codes rather than a count, so the UI can
     # name the rows and the count stays derivable.
     unusable_target_codes: list[str] = []
+    # #839: the approved C1/C2 sentences for the DoD target caps, the API's own
+    # (`zt/target_caps.py`), rendered as given.
+    target_cap_notes: list[str] = []
 
     # The real total: every gap the engine found, not a rendered subset. The ZT
     # dashboard shows no truncated gap list today, and this is in the payload

@@ -187,6 +187,24 @@ export function ZtDashboard({ data }: { data: ZtDashboardData }): JSX.Element {
         />
       </KpiRow>
 
+      {/* #839: the API's own sentences (`zt/target_caps.py`), one per DoD
+          capability whose target was capped, rendered as given. */}
+      {data.target_cap_notes?.length ? (
+        <ul
+          data-testid="zt-target-caps"
+          style={{
+            margin: "0 0 16px",
+            paddingLeft: 20,
+            fontSize: 13,
+            lineHeight: 1.5,
+          }}
+        >
+          {data.target_cap_notes.map((s) => (
+            <li key={s}>{s}</li>
+          ))}
+        </ul>
+      ) : null}
+
       <Section
         title="Maturity across the model"
         pill={`${data.pillars.length} dimensions`}
