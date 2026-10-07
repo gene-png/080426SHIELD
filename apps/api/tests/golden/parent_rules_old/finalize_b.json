@@ -1,5 +1,5 @@
 {
- "summary": "Coverage: 33.3%. 1 covered, 0 partial, 2 gaps, 0 pending review, 0 N/A across 3 scored techniques.",
+ "summary": "Coverage: 33.3%. 1 covered, 0 partial, 2 gaps, 0 pending review, 0 N/A across 3 scored techniques. The tools cited here were not checked against a security tool list, because the client has none.",
  "xlsx": {
   "AI source": [
    [
@@ -9924,6 +9924,19 @@
    [
     "Why partial",
     "The reason a Partial technique is only partly covered.",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "The tools cited here were not checked against a security tool list, because the client has none.",
+    null,
     null,
     null,
     null,

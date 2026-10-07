@@ -79,3 +79,24 @@ above before replacing it: deleting `,"partial_reasons":[...]` from the new
 bytes gives the file as the R1 amendment above left it EXACTLY, byte for
 byte. One key was removed, carrying one row: "Reason not recorded", count 1,
 Golden A's one Partial.
+
+## Amendment, 2026-10-07: the #851 "not checked" sentence (RATIFICATION PENDING)
+
+The advisor's rulings on #851 (#736 comments 6039558116 and 6040458893,
+verbatim copy): when the client has no security tool list, every ATT&CK
+deliverable and the finalize summary say "The tools cited here were not checked
+against a security tool list, because the client has none." This world holds
+no Tech Debt list, so finalizing Golden B now says it. It is an ADDED
+disclosure, not a reworded number. Unlike the amendments above, no verdict
+names THIS golden: the amendment is the track's, made on PR #897, and comes
+back to the human with that PR.
+
+Re-rendered from this world by the current code and checked against the file
+above before replacing it, by a throwaway script that asserted each difference:
+
+- `finalize_b.json`: the summary is the recorded summary followed by one space
+  and that sentence, and nothing else. The Heatmap Summary gains one row, that
+  sentence alone in the first column. With it removed, the sheet is identical.
+  The other four sheets are unchanged.
+- `dashboard.json` is unchanged: the client dashboard does not ask whether the
+  tools were checked (#889), so it says nothing either way.
