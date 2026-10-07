@@ -14,7 +14,7 @@ from app.models.capability import (
     SecurityFunction,
 )
 from app.models.service import ServiceKind, ServiceStatus
-from app.schemas._numeric import IntNotBool
+from app.schemas._numeric import FloatNotBool, IntNotBool
 from app.schemas.ai_runs import AiSource
 from app.tech_debt.security_scope import signoff_kind
 
@@ -109,7 +109,7 @@ class IncludeExcludedRowRequest(BaseModel):
     vendor: str | None = Field(default=None, max_length=255)
     category: str | None = Field(default=None, max_length=128)
     function: str | None = Field(default=None, max_length=255)
-    annual_cost_usd: float | None = None
+    annual_cost_usd: FloatNotBool | None = None
     license_count: IntNotBool | None = None
     notes: str | None = None
 
@@ -206,7 +206,7 @@ class CapabilityItemPatch(BaseModel):
     vendor: str | None = Field(default=None, max_length=255)
     category: str | None = Field(default=None, max_length=128)
     function: str | None = Field(default=None, max_length=255)
-    annual_cost_usd: float | None = None
+    annual_cost_usd: FloatNotBool | None = None
     license_count: IntNotBool | None = None
     notes: str | None = None
     disposition: CapabilityDisposition | None = None
