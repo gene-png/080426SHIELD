@@ -36,7 +36,9 @@ from alembic.config import Config
 from fastapi.testclient import TestClient
 from scripts.measure_ai_consistency import (
     AttackScope,
+    CsfScope,
     Refused,
+    ZtScope,
     attack_downstream,
     compare_pair,
     main,
@@ -1088,14 +1090,29 @@ _LISTS = {
     "mitre_map": {"detection_tools", "prevention_tools", "response_tools"},
     "tech_debt_extract": {"security_functions"},
 }
+
+
+def _a_real_zt_code() -> str:
+    from app.zt.catalog import all_codes
+    from app.zt.maturity import ZtFrameworkCode
+
+    return sorted(all_codes(ZtFrameworkCode.CISA_ZTMM_2_0))[0]
+
+
+#: Real keys, held by the scope `_context` builds (#867 re-review F1: the
+#: control used "K1" for zt, a code the apply path drops as `unknown_key`).
+_ZT_CODE = _a_real_zt_code()
+_CSF_KEY = ("high", "GV.OC-01")
+
 # A row every field of which is a VALID answer the apply path would write:
 # CISA stages within 1..4, CSF dimensions within 0..2, a writable ATT&CK status
-# with a reason that status takes and tools the resolver places.
+# with a reason that status takes and tools the resolver places -- on a key the
+# assessment holds.
 _VALID = {
-    "zt_score": {"code": "K1", "current": 2, "target": 3},
+    "zt_score": {"code": _ZT_CODE, "current": 2, "target": 3},
     "csf_score": {
-        "tier": "high",
-        "subcategory_code": "K1",
+        "tier": _CSF_KEY[0],
+        "subcategory_code": _CSF_KEY[1],
         "governance": 1,
         "policy": 1,
         "implementation": 1,
@@ -1144,16 +1161,44 @@ def _attack_resolver():
     return CitationResolver([Candidate(name="Tool A")])
 
 
-#: zt_score's context is the framework's top stage: CISA's ladder is 1..4.
-_ZT_CISA_MAX = 4
-
-
 def _context(job: str):
+    """What each job's apply path checks an answer against: the assessment's
+    keys, plus CISA's 1..4 ladder for zt and the resolver for mitre_map."""
     if job == "mitre_map":
         return _scope("K1", resolver=_attack_resolver())
     if job == "zt_score":
-        return _ZT_CISA_MAX
+        return ZtScope(max_stage=4, codes=frozenset({_ZT_CODE}))
+    if job == "csf_score":
+        return CsfScope(row_keys=frozenset({"|".join(_CSF_KEY)}))
     return None
+
+
+def _with_key(job: str, key: str) -> dict:
+    """`_VALID[job]` under another key: for csf a subcategory code, else the code."""
+    if job == "csf_score":
+        return dict(_VALID[job], subcategory_code=key)
+    field = {"zt_score": "code", "mitre_map": "technique_code"}[job]
+    return dict(_VALID[job], **{field: key})
+
+
+@pytest.mark.parametrize("job", ["zt_score", "csf_score", "mitre_map"])
+@pytest.mark.parametrize("both_runs", [True, False], ids=["both", "one-run-only"])
+def test_an_answer_on_a_key_the_assessment_lacks_is_never_agreement(job, both_runs) -> None:
+    """#867 re-review F1, B-1's twin: the zt apply path drops an unknown code
+    (`unknown_key`), csf an unknown row key (`unknown_key`), mitre_map a code it
+    holds no row for. Two runs answering the same invented key, identically,
+    are compared and agree on nothing; every field is absent in both."""
+    stray = {"zt_score": "ZZ.NOT.A.CODE", "csf_score": "ZZ.ZZ-99", "mitre_map": "K2"}[job]
+    a = {_LIST_KEY[job]: [_with_key(job, stray)]}
+    b = json.loads(json.dumps(a)) if both_runs else {_LIST_KEY[job]: []}
+    fields = compare_pair(job, a, b, context=_context(job))["fields"]
+    for field in FIELDS[job]:
+        f = fields[field]
+        if both_runs:
+            assert (f["compared"], f["equal"], f["both_absent"]) == (1, 0, 1), field
+            assert f["missing_in_a"] == 0, "a refused row is not a missing field"
+        else:
+            assert f["compared"] == 0, "a key in one run only is only_in_a, not compared"
 
 
 def test_the_matrix_field_sets_are_the_measures() -> None:
@@ -1293,17 +1338,99 @@ def test_mitre_map_without_a_scope_is_refused_never_guessed() -> None:
         compare_pair("mitre_map", a, a)
 
 
-def test_zt_score_without_a_ladder_is_refused_never_guessed() -> None:
-    a = {"capabilities": [dict(_VALID["zt_score"])]}
-    with pytest.raises(TypeError, match="max_stage"):
-        compare_pair("zt_score", a, a)
+@pytest.mark.parametrize(
+    ("job", "context", "match"),
+    [
+        ("zt_score", None, "ZtScope"),
+        ("zt_score", 4, "ZtScope"),  # a bare ladder knows no codes
+        ("csf_score", None, "CsfScope"),
+    ],
+)
+def test_zt_and_csf_without_a_scope_are_refused_never_guessed(job, context, match) -> None:
+    # Whether a key is unknown is a question about the ASSESSMENT (#867
+    # re-review F1); without its keys the measure cannot look.
+    a = {_LIST_KEY[job]: [dict(_VALID[job])]}
+    with pytest.raises(TypeError, match=match):
+        compare_pair(job, a, a, context=context)
+
+
+def test_a_csf_row_answered_only_by_a_batch_that_did_not_ask_is_no_agreement() -> None:
+    """#867 re-review F1: `routes/csf.py` drops an entry naming a real row its
+    batch was not asked for (`not_in_batch`). Answered only that way, in both
+    runs, the row is compared and agrees on nothing -- dimensions and level.
+    Answered ALSO by the batch that asked, the stray is dropped and the asked
+    answer is the one compared, as the route applies it."""
+    from scripts.measure_ai_consistency import csf_level_agreement, csf_levels, csf_run_data
+
+    asked = {"tiers": ["high"], "subcategories": ["GV.OC-01"]}
+    other = {"tiers": ["high"], "subcategories": ["GV.OC-02"]}
+    rows = {"high|GV.OC-01": object(), "high|GV.OC-02": object()}
+    scope = CsfScope(row_keys=frozenset(rows))
+    has_evidence = dict.fromkeys(rows, True)
+    stray = dict(_VALID["csf_score"], subcategory_code="GV.OC-02")
+
+    # Batch 1 answers its own row and, unasked, GV.OC-02; batch 2 answers nothing.
+    only_stray = csf_run_data(
+        [asked, other], [{"scores": [dict(_VALID["csf_score"]), stray]}, {"scores": []}], rows
+    )
+    assert only_stray["not_in_batch"] == 1
+    f = compare_pair("csf_score", only_stray, json.loads(json.dumps(only_stray)), context=scope)
+    assert f["rows"]["in_both"] == 2
+    for name in FIELDS["csf_score"]:
+        d = f["fields"][name]
+        assert (d["compared"], d["equal"], d["both_absent"]) == (2, 1, 1), name
+        # The run SENT these values; the apply path dropped them. Reporting
+        # them as fields the model omitted would misstate what it did.
+        assert (d["missing_in_a"], d["missing_in_b"]) == (0, 0), name
+    lv = csf_levels(only_stray, has_evidence=has_evidence)
+    assert "high|GV.OC-02" not in lv["levels"], "a stray was scored"
+    agree = csf_level_agreement(lv, lv, has_evidence)
+    assert (agree["compared"], agree["equal"], agree["both_unscoreable"]) == (2, 1, 1)
+
+    # The control: batch 2 answers its own row as well, so the route applies
+    # that answer and drops the stray; the row agrees and is not a duplicate.
+    asked_too = csf_run_data(
+        [asked, other], [{"scores": [dict(_VALID["csf_score"]), stray]}, {"scores": [stray]}], rows
+    )
+    g = compare_pair("csf_score", asked_too, json.loads(json.dumps(asked_too)), context=scope)
+    assert g["rows"]["duplicate_keys_a"] == 0
+    assert all(g["fields"][n]["equal"] == 2 for n in FIELDS["csf_score"])
+
+
+def test_an_all_null_run_is_never_read_as_not_an_echo() -> None:
+    """#867 re-review F2: `echo_share` counted a null answer as answered, so a
+    run answering null for every capability read as "never just an echo".
+    Under the absence rule a null, refused or missing answer is counted as
+    `absent`, never as an answer that moved off what was sent."""
+    from scripts.measure_ai_consistency import echo_share
+
+    codes = [f"C{i}" for i in range(30)]
+    inputs = {"answers": {c: {"current": 2} for c in codes}}
+    scope = ZtScope(max_stage=4, codes=frozenset(codes))
+    nulls = {"capabilities": [{"code": c, "current": None, "target": None} for c in codes]}
+    assert echo_share("zt_score", inputs, nulls, context=scope) == {
+        "current": {"sent_and_answered": 0, "echoed": 0, "nothing_sent": 0, "absent": 30}
+    }
+    # Refused (off the ladder, unknown key) and missing answers are absent too.
+    mixed = {
+        "capabilities": [
+            {"code": "C0", "current": 9},
+            {"code": "ZZ", "current": 2},
+            {"code": "C1"},
+            {"code": "C2", "current": 2},  # the one real answer: an echo
+            {"code": "C3", "current": 3},  # the one real answer that moved
+        ]
+    }
+    assert echo_share("zt_score", inputs, mixed, context=scope) == {
+        "current": {"sent_and_answered": 2, "echoed": 1, "nothing_sent": 0, "absent": 3}
+    }
 
 
 def test_a_zt_stage_is_compared_as_the_apply_path_stores_it() -> None:
     # #867 review B-5: "2" and 2 are the same applied stage, as for csf_score.
     a = {"capabilities": [dict(_VALID["zt_score"], current="2")]}
     b = {"capabilities": [dict(_VALID["zt_score"], current=2)]}
-    f = compare_pair("zt_score", a, b, context=_ZT_CISA_MAX)["fields"]["current"]
+    f = compare_pair("zt_score", a, b, context=_context("zt_score"))["fields"]["current"]
     assert (f["equal"], f["within_one"], f["one_absent"]) == (1, 1, 0)
     assert f["mean_abs_diff"] == 0.0
 
@@ -1457,5 +1584,5 @@ def test_tool_lists_are_compared_as_the_run_would_store_them() -> None:
 def test_a_csf_score_is_compared_as_the_apply_path_stores_it() -> None:
     a = {"scores": [dict(_VALID["csf_score"], governance="2")]}
     b = {"scores": [dict(_VALID["csf_score"], governance=2)]}
-    f = compare_pair("csf_score", a, b)["fields"]["governance"]
+    f = compare_pair("csf_score", a, b, context=_context("csf_score"))["fields"]["governance"]
     assert (f["equal"], f["one_absent"]) == (1, 0), '"2" and 2 are the same applied score'

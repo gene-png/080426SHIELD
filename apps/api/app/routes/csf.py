@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import functools
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any
 
@@ -2140,6 +2140,38 @@ def run_ai(
     )
 
 
+def _split_strays(
+    batch_inputs: Sequence[dict[str, Any]],
+    answers: Sequence[dict[str, Any]],
+    rows: Mapping[str, Any],
+) -> tuple[list[Any], list[Any]]:
+    """The batches' `scores`, in batch order, split into (entries to apply,
+    STRAYS). A stray is an entry naming a real row (`rows`) that its own batch
+    was not asked for; `_apply_suggestions` drops it as `not_in_batch`, so a
+    row is only ever written from the batch that asked for it (#479). Every
+    other entry, an unknown key included, goes to the first list.
+
+    ONE statement of the rule, called by `_csf_run_work` and by
+    `scripts/measure_ai_consistency.py` (#867 re-review F1), extracted
+    unchanged from the inline loop `_csf_run_work` carried.
+    """
+    scores: list[Any] = []
+    strays: list[Any] = []
+    for inputs, answer in zip(batch_inputs, answers, strict=True):
+        asked = {f"{t}|{c}" for t in inputs["tiers"] for c in inputs["subcategories"]}
+        for entry in answer["scores"]:
+            named = (
+                f"{entry.get('tier')}|{entry.get('subcategory_code')}"
+                if isinstance(entry, dict)
+                else None
+            )
+            if named is not None and named in rows and named not in asked:
+                strays.append(entry)
+            else:
+                scores.append(entry)
+    return scores, strays
+
+
 def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID) -> RunOutcome:
     """The csf_score run, in the background job's own session (#645). Re-loads
     by id; a refusal becomes the run's FAILED state with the same reason."""
@@ -2200,20 +2232,7 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
     # An entry naming a real row its batch was not asked for is a STRAY: kept
     # out of the applied set and itemized as `not_in_batch`, so a row is only
     # ever written from the batch that asked for it.
-    scores: list[Any] = []
-    strays: list[Any] = []
-    for inputs, answer in zip(batched.inputs, batched.answers, strict=True):
-        asked = {f"{t}|{c}" for t in inputs["tiers"] for c in inputs["subcategories"]}
-        for entry in answer["scores"]:
-            named = (
-                f"{entry.get('tier')}|{entry.get('subcategory_code')}"
-                if isinstance(entry, dict)
-                else None
-            )
-            if named is not None and named in rows and named not in asked:
-                strays.append(entry)
-            else:
-                scores.append(entry)
+    scores, strays = _split_strays(batched.inputs, batched.answers, rows)
     data = {"scores": scores}
 
     # Offline output must never overwrite what a human typed (#67, migration

@@ -241,6 +241,28 @@ class AttackScope:
     assessment_codes: frozenset[str]
 
 
+@dataclass(frozen=True)
+class ZtScope:
+    """What the zt_score APPLY path (`routes/zt.py::_zt_run_work`) checks a
+    suggestion against: the framework's top stage (`_validated_stage`'s range)
+    and the assessment's capability codes -- a code outside them finds no row
+    and is dropped as `unknown_key` (#867 re-review F1)."""
+
+    max_stage: int
+    codes: frozenset[str]
+
+
+@dataclass(frozen=True)
+class CsfScope:
+    """What the csf_score APPLY path (`routes/csf.py::_apply_suggestions`)
+    checks an entry against: the assessment's "tier|subcategory_code" row keys
+    -- a key outside them is dropped as `unknown_key` (#867 re-review F1). An
+    entry its batch was not asked for (`not_in_batch`) is split out before the
+    comparison, by the route's own `_split_strays` (`csf_run_data`)."""
+
+    row_keys: frozenset[str]
+
+
 def _require_context(job: str, context: Any) -> None:
     """Refuse a comparison the apply path's refusals cannot be judged in. A
     missing context is "could not look", and must never share a branch with
@@ -250,10 +272,15 @@ def _require_context(job: str, context: Any) -> None:
             "mitre_map needs an AttackScope: whether a suggestion is refused depends "
             f"on the assessment's codes; got {type(context).__name__}."
         )
-    if job == "zt_score" and not _is_whole(context):
+    if job == "zt_score" and not isinstance(context, ZtScope):
         raise TypeError(
-            "zt_score needs the framework's max_stage (an int): the apply path "
-            f"refuses a stage off the ladder; got {type(context).__name__}."
+            "zt_score needs a ZtScope: the apply path refuses a stage off the ladder "
+            f"and a code the assessment lacks; got {type(context).__name__}."
+        )
+    if job == "csf_score" and not isinstance(context, CsfScope):
+        raise TypeError(
+            "csf_score needs a CsfScope: the apply path refuses a row key the "
+            f"assessment lacks; got {type(context).__name__}."
         )
 
 
@@ -309,25 +336,61 @@ def _attack_row_refused(row: Mapping[str, Any], scope: AttackScope) -> bool:
     3. a status outside `_AI_WRITABLE_STATUSES`: `statuses_rejected`;
     4. an offered reason `is_valid_reason` rejects for it: `reason_codes_rejected`.
 
-    Steps 2-4 CALL the route's set and the catalog's and vocabulary's
-    predicates; step 1 is membership in the codes the apply path indexes
-    (`AttackScope.assessment_codes`, built from the same `req.rows`). Locked and
+    Steps 1-2 are `_key_refused`, shared with the other jobs. Steps 2-4 CALL
+    the catalog's, the route's and the vocabulary's predicates; step 1 is
+    membership in the codes the apply path indexes (`AttackScope.
+    assessment_codes`, built from the same `req.rows`). Locked and
     concurrently edited rows are skipped too, and are NOT modelled here: they
     are consultant state, not the model's answer (`attack_downstream`)."""
     from app.attack.coverage import is_valid_reason
-    from app.attack.parents import is_computed_parent
     from app.routes.attack import _AI_WRITABLE_STATUSES
 
-    code = row.get("technique_code")
-    if not (isinstance(code, str) and code in scope.assessment_codes):
-        return True
-    if is_computed_parent(code):
+    if _key_refused("mitre_map", row, scope):
         return True
     st = row.get("status")
     if not (isinstance(st, str) and st in _AI_WRITABLE_STATUSES):
         return True
     offered = row.get("reason_code")
     return offered is not None and not (isinstance(offered, str) and is_valid_reason(st, offered))
+
+
+#: The key the measure gives an entry `routes/csf.py::_split_strays` drops
+#: as `not_in_batch` when no batch that asked for the row answered it: the run
+#: named the row and the apply path writes nothing to it (`csf_run_data`).
+_NOT_IN_BATCH = "__measure_not_in_batch__"
+
+
+def _csf_key(row: Mapping[str, Any]) -> str:
+    """The row key as `routes/csf.py::_apply_suggestions` builds it."""
+    return f"{row.get('tier')}|{row.get('subcategory_code')}"
+
+
+def _key_refused(job: str, row: Mapping[str, Any], context: Any) -> bool:
+    """Would the apply path drop this answer by its KEY, before reading any
+    value? The FIRST refusal on each path (#867 re-review F1, B-1's twin):
+
+    * zt_score: `rows.get(code)` is None (`unknown_key`);
+    * csf_score: `rows.get("tier|subcategory_code")` is None (`unknown_key`),
+      or the entry was answered only out of its batch (`not_in_batch`);
+    * mitre_map: no row for the code, or a computed parent
+      (`_attack_row_refused` steps 1-2).
+
+    Membership in the keys the apply path indexes (the scope, built from the
+    same `req.rows`); `is_computed_parent` is called. Locked, protected and
+    concurrently edited rows are consultant state and are not modelled."""
+    if job == "zt_score":
+        code = row.get("code")
+        return not (isinstance(code, str) and code in context.codes)
+    if job == "csf_score":
+        return bool(row.get(_NOT_IN_BATCH)) or _csf_key(row) not in context.row_keys
+    if job == "mitre_map":
+        from app.attack.parents import is_computed_parent
+
+        code = row.get("technique_code")
+        if not (isinstance(code, str) and code in context.assessment_codes):
+            return True
+        return is_computed_parent(code)
+    return False
 
 
 def _resolved_tools(value: Any, resolver: Any) -> list[str] | None:
@@ -353,7 +416,11 @@ def _absence(job: str, field: str, row: Mapping[str, Any], context: Any = None) 
     | null       | any scalar; the extraction's refused values become null (#878) |
     | empty      | list fields: the tool lists, `security_functions`            |
     | sentinel   | tech_debt `name`: the parser invents one when none was sent  |
-    | refused    | mitre_map: the apply path writes nothing from the suggestion |
+    | refused    | any keyed job, FIRST: the apply path drops the answer by its |
+    |            | key (`_key_refused`: an unknown zt code or csf row key, a    |
+    |            | csf entry answered only out of its batch, a mitre_map code   |
+    |            | with no row or a computed parent), whatever the field holds. |
+    |            | mitre_map: the apply path writes nothing from the suggestion |
     |            | (`_attack_row_refused`: a code the assessment lacks, a       |
     |            | computed parent, a status it may not write, a mispaired      |
     |            | reason), and a tool list none of whose names the run's       |
@@ -363,8 +430,10 @@ def _absence(job: str, field: str, row: Mapping[str, Any], context: Any = None) 
     |            | refuses it (unparseable, off the 1..max_stage ladder, not    |
     |            | whole). The tech_debt extraction's refusals arrive as null.  |
 
-    Every refusal above is the apply path's own function, CALLED (#867 review
-    B-1, B-4); none is restated here.
+    Every value refusal above is the apply path's own function, CALLED (#867
+    review B-1, B-4); a key refusal is membership in the keys the apply path
+    indexes (#867 re-review F1). Key refusal comes first, so a refused row's
+    omitted field is `refused`, not `missing`.
 
     ONE rule for all of them, in `compare_pair`: the pair is COMPARED, adds
     NOTHING to any agreement figure, and is counted in `both_absent` /
@@ -372,8 +441,10 @@ def _absence(job: str, field: str, row: Mapping[str, Any], context: Any = None) 
     malformed answer, counted as `not_a_list` under the same rule.
 
     `context` is the job's `_require_context`: an `AttackScope` for mitre_map,
-    the framework's max stage for zt_score.
+    a `ZtScope` for zt_score, a `CsfScope` for csf_score.
     """
+    if _key_refused(job, row, context):
+        return "refused"
     if field not in row:
         return "missing"
     value = row[field]
@@ -393,7 +464,7 @@ def _absence(job: str, field: str, row: Mapping[str, Any], context: Any = None) 
         # range 1..max_stage, wholeness, as `_zt_run_work` judges them.
         from app.routes.zt import _validated_stage
 
-        if _validated_stage(value, context)[1] is not None:
+        if _validated_stage(value, context.max_stage)[1] is not None:
             return "refused"
     if field in _LIST_FIELDS.get(job, ()) and isinstance(value, list):
         if not value:
@@ -442,10 +513,11 @@ def compare_pair(
             # run omitted is a disagreement, never a row taken out of the
             # denominator (#867 narrow review at b544311b, B2).
             compared += 1
-            missing_a += int(f not in ra)
-            missing_b += int(f not in rb)
             gone_a = _absence(job, f, ra, context)
             gone_b = _absence(job, f, rb, context)
+            # A key the apply path refuses is `refused`, not a missing field.
+            missing_a += int(gone_a == "missing")
+            missing_b += int(gone_b == "missing")
             if gone_a and gone_b:
                 both_absent += 1
                 continue
@@ -466,7 +538,8 @@ def compare_pair(
                 # review B-5): "2" and 2 are the same applied stage.
                 from app.routes.zt import _validated_stage
 
-                va, vb = _validated_stage(va, context)[0], _validated_stage(vb, context)[0]
+                va = _validated_stage(va, context.max_stage)[0]
+                vb = _validated_stage(vb, context.max_stage)[0]
             if f in list_fields:
                 sa, sb = _str_set(va), _str_set(vb)
                 if sa is None or sb is None:
@@ -535,16 +608,29 @@ _ECHO_FIELDS: dict[str, dict[str, Any]] = {
 }
 
 
-def echo_share(job: str, inputs: Mapping[str, Any], data: Mapping[str, Any]) -> dict:
-    """For one run: of the rows where something was sent AND the model answered
-    the field, how many answers equal (same JSON type) what was sent. Rows sent
-    nothing are counted apart, since there was nothing to repeat."""
+def echo_share(
+    job: str, inputs: Mapping[str, Any], data: Mapping[str, Any], *, context: Any
+) -> dict:
+    """For one run: of the rows where something was sent AND the model gave a
+    USABLE answer, how many answers equal (same JSON type) what was sent. A row
+    with no usable answer -- the field omitted, null, or refused by the apply
+    path, its key included (`_absence`, the one rule `compare_pair` uses) -- is
+    `absent`, never an answer that moved off what was sent: before #867
+    re-review F2 a run answering null everywhere read as "never just an echo".
+    A usable answer for a row sent nothing is `nothing_sent`, since there was
+    nothing to repeat."""
+    _require_context(job, context)
     list_key, key_fields, _ = _job_shape(job)
     out: dict[str, dict[str, int]] = {}
     for field, sent_value in _ECHO_FIELDS.get(job, {}).items():
-        answered = echoed = nothing_sent = 0
+        answered = echoed = nothing_sent = absent = 0
         for row in data.get(list_key) or []:
-            if not isinstance(row, dict) or field not in row:
+            if not isinstance(row, dict):
+                continue
+            # Absence FIRST: a row the apply path refuses (an unknown code
+            # included, which was sent nothing) is no answer at all.
+            if _absence(job, field, row, context) is not None:
+                absent += 1
                 continue
             sent = sent_value(inputs, row.get(key_fields[0]))
             if sent is None:
@@ -557,7 +643,12 @@ def echo_share(job: str, inputs: Mapping[str, Any], data: Mapping[str, Any]) -> 
             # stored values (`compare_pair`); this one does not.
             if _same(sent, row[field]):
                 echoed += 1
-        out[field] = {"sent_and_answered": answered, "echoed": echoed, "nothing_sent": nothing_sent}
+        out[field] = {
+            "sent_and_answered": answered,
+            "echoed": echoed,
+            "nothing_sent": nothing_sent,
+            "absent": absent,
+        }
     return out
 
 
@@ -669,6 +760,44 @@ def csf_levels(data: Mapping[str, Any], *, has_evidence: Mapping[str, bool]) -> 
         "not_scoreable": not_scoreable,
         "evidence_capped": evidence_capped,
     }
+
+
+def csf_run_data(
+    batch_inputs: Sequence[Mapping[str, Any]],
+    answers: Sequence[Mapping[str, Any]],
+    rows: Mapping[str, Any],
+) -> dict:
+    """One csf_score run's batches as the apply path would SEE them, split by
+    the route's own `routes/csf.py::_split_strays` (#867 re-review F1):
+
+    * entries to apply, in batch order, as `scores`;
+    * an entry naming a real row its batch was not asked for is DROPPED there
+      (`not_in_batch`). When a batch that asked for the row also answered it,
+      that answer is the one applied, so the stray is simply left out here.
+      When none did, the apply path writes nothing to a row the run named, so
+      the row is kept as a key-only entry `_absence` reads as refused --
+      compared, never agreement -- rather than vanishing from the denominator.
+
+    `not_in_batch` counts every stray the route would drop."""
+    from app.routes.csf import _split_strays
+
+    scores, strays = _split_strays(list(batch_inputs), list(answers), rows)
+    applied = {_csf_key(e) for e in scores if isinstance(e, dict)}
+    marked: set[str] = set()
+    for entry in strays:
+        key = _csf_key(entry)
+        if key in applied or key in marked:
+            continue
+        marked.add(key)
+        # Key fields only: the stray's values are never compared or logged.
+        scores.append(
+            {
+                "tier": entry.get("tier"),
+                "subcategory_code": entry.get("subcategory_code"),
+                _NOT_IN_BATCH: True,
+            }
+        )
+    return {"scores": scores, "not_in_batch": len(strays)}
 
 
 def csf_level_agreement(
@@ -1030,16 +1159,15 @@ def measure_zt(
     records = run_loop(
         runs, one_run, max_output_tokens=max_output_tokens, stop_on_failure=stop_on_failure
     )
-    report = summarize(
-        "zt_score", records, max_output_tokens=max_output_tokens, context=req.max_stage
-    )
+    scope = ZtScope(max_stage=req.max_stage, codes=frozenset(req.rows))
+    report = summarize("zt_score", records, max_output_tokens=max_output_tokens, context=scope)
     report["assessment_id"] = str(a.id)
     report["assessment_capabilities"] = len(req.rows)
     report["engagement_stage"] = {"stage": stage, "source": stage_source}
     report["input_setup"] = {"reopened_from": reopened_from}
     report["provider"] = {"name": llm.provider.name, "model": llm.provider.model}
     report["echo"] = [
-        {"run": n, **echo_share("zt_score", req.preview.inputs, data)}
+        {"run": n, **echo_share("zt_score", req.preview.inputs, data, context=scope)}
         for n, data in _ok_runs(records)
     ]
     report["downstream"] = [
@@ -1129,9 +1257,10 @@ def measure_csf(
 
     A run in which ANY batch failed is a failed run: its missing rows would
     otherwise read as rows the model chose to leave out. The batches' scores are
-    concatenated in batch order; an entry naming a row its batch was not asked
-    for therefore shows up as a duplicated key, counted and compared in neither
-    run, rather than being filtered here by a copy of the route's stray rule."""
+    split as the route splits them, by its own `_split_strays` (`csf_run_data`):
+    an entry naming a row its batch was not asked for is dropped as the route
+    drops it (`not_in_batch`, counted per run), and a row answered ONLY that
+    way is compared with no agreement."""
     from datetime import timedelta
 
     from fastapi import HTTPException
@@ -1222,7 +1351,7 @@ def measure_csf(
             failure = f"batches_failed:{batched.failed}/{batched.total}"
             _log.error("measure_ai_consistency.run_failed", run=n, failure=failure)
             return RunRecord(False, None, failure, tokens_in, tokens_out, None, True, complete)
-        data = {"scores": [entry for answer in batched.answers for entry in answer["scores"]]}
+        data = csf_run_data(batched.inputs, batched.answers, req.rows)
         _log.info(
             "measure_ai_consistency.run_ok",
             run=n,
@@ -1240,8 +1369,10 @@ def measure_csf(
         records,
         max_output_tokens=max_output_tokens,
         min_ok_runs=1 if probe_batches is not None else 2,
+        context=CsfScope(row_keys=frozenset(req.rows)),
     )
-    levels = {n: csf_levels(data, has_evidence=has_evidence) for n, data in _ok_runs(records)}
+    data_by_run = dict(_ok_runs(records))
+    levels = {n: csf_levels(data, has_evidence=has_evidence) for n, data in data_by_run.items()}
     for pair in report["pairs"]:
         pair["level"] = csf_level_agreement(
             levels[pair["pair"][0]], levels[pair["pair"][1]], has_evidence
@@ -1264,6 +1395,7 @@ def measure_csf(
             "not_scoreable": lv["not_scoreable"],
             "scored_rows": len(lv["levels"]),
             "evidence_capped": lv["evidence_capped"],
+            "not_in_batch": data_by_run[n]["not_in_batch"],
         }
         for n, lv in levels.items()
     ]
