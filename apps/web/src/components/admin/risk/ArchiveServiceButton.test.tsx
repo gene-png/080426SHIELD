@@ -257,6 +257,26 @@ describe("ArchiveServiceDialog (#896)", () => {
     );
   });
 
+  // Round 4, F1: `lib/api.ts` keeps an unparseable body as its raw STRING,
+  // and the Risk proxy re-sends that as JSON, so an HTML or empty gateway
+  // 502/504 from behind Next reaches the browser as a string payload. A
+  // string is not an answer from the API.
+  it.each([
+    ["an HTML gateway page", "<html><body>502 Bad Gateway</body></html>"],
+    ["an empty body", ""],
+    ["an array", []],
+  ])(
+    "with %s as the payload, says it could not be confirmed",
+    async (_label, payload) => {
+      archive.mockRejectedValue({ status: 502, payload });
+      const { dialog } = setup(SVC, true);
+      await confirm(dialog);
+      expect(within(dialog).getByRole("alert").textContent).toBe(
+        `${UNCONFIRMED} ${REFRESHED}`,
+      );
+    },
+  );
+
   // The API answered, but with no sentence fit for a person: the approved
   // fallback stands, and also gets the list line (same ruling).
   it("with a payload but no typed message, after a successful reload, gives the fallback and the line", async () => {
@@ -379,5 +399,14 @@ describe("ArchiveServiceDialog (#896)", () => {
     await confirm(dialog);
     fireEvent.click(dialog); // the backdrop
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets Esc through again once the attempt is over", async () => {
+    archive.mockRejectedValue({ status: 502, payload: null });
+    const { dialog } = setup(SVC, true);
+    await confirm(dialog);
+    const cancel = new Event("cancel", { cancelable: true });
+    dialog.dispatchEvent(cancel);
+    expect(cancel.defaultPrevented).toBe(false);
   });
 });

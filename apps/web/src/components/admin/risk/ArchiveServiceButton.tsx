@@ -51,13 +51,21 @@ const REFRESHED = "The list has been refreshed.";
 const NOT_REFRESHED =
   "The list could not be refreshed. Reload the page before trying again.";
 
-/** Whether the failure carried an answer from the API at all. */
+/**
+ * Whether the failure carried an answer from the API at all: a JSON OBJECT.
+ * Round 4, F1: `lib/api.ts` keeps an unparseable body as its raw string (""
+ * for an empty one) and the Risk proxy re-sends that as JSON, so an HTML or
+ * empty gateway 502/504 arrives here as a string payload. A string, an array
+ * or nothing is not an answer.
+ */
 function hasAnswer(err: unknown): boolean {
   if (typeof err !== "object" || err === null || !("payload" in err)) {
     return false;
   }
   const payload = (err as { payload: unknown }).payload;
-  return payload !== null && payload !== undefined;
+  return (
+    typeof payload === "object" && payload !== null && !Array.isArray(payload)
+  );
 }
 
 /** The whole alert for a failed attempt: what happened, then the list line. */

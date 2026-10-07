@@ -5,8 +5,10 @@ import { archiveDuplicateService, RiskProxyError } from "./client";
 /**
  * #896 review B2: the banner archives through the Risk-scoped route, which
  * re-checks on the server that the service is still one of a duplicate group.
- * The helper rejects with the status and the parsed body, so the screen can
- * show the API's own sentence where there is one and its fallback otherwise.
+ * The helper rejects with the status and the parsed body. The screen shows the
+ * API's own sentence where there is one, its fallback when the API answered
+ * without one, and reports the outcome as unconfirmed when there was no
+ * answer at all -- a null (non-JSON) body among them (#896 R3-3).
  */
 
 const fetchMock = vi.fn();
