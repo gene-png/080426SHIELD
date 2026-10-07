@@ -292,7 +292,12 @@ def test_an_inferred_citation_is_awaiting_review_not_in_place() -> None:
 def test_no_tools_computes_a_gap() -> None:
     code = _a_code(preventable=True)
     out = attack_downstream({"techniques": [_tech(code, status="gap")]}, _resolver())
-    assert out == {"computed_status": {code: "gap"}, "ai_status_differs": 0}
+    assert out == {
+        "computed_status": {code: "gap"},
+        "ai_status_differs": 0,
+        "no_tools": [code],
+        "refused": [],
+    }
 
 
 # --- the real paths ----------------------------------------------------------
