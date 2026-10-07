@@ -23,7 +23,6 @@ import re
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
-from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -36,6 +35,13 @@ from app.models.client import Client
 from app.models.llm_call import LLMCall
 from app.models.user import User
 from app.storage import StorageBackend
+from app.tech_debt.bounds import (
+    INT_MAX,
+    NOT_WHOLE_CENTS,
+    OUT_OF_RANGE,
+    cost_in_cents,
+    cost_problem,
+)
 from app.tech_debt.parsers import parse_inventory
 from app.tech_debt.reconcile import Reconciliation, reconcile_rows
 
@@ -225,13 +231,10 @@ _STRING_WIDTHS = {
 # that at import instead (#878 narrow review).
 if not all(isinstance(w, int) for w in _STRING_WIDTHS.values()):
     raise RuntimeError(f"capability item columns need a fixed width: {_STRING_WIDTHS}")
-#: `annual_cost_usd` is Numeric(14, 2): at most 999,999,999,999.99, judged on
-#: the value as stored -- quantized to cents (#878 review A3).
-_COST_LIMIT = Decimal(10**12)
-_CENT = Decimal("0.01")
-#: `license_count`, `confidence_pct`: Integer (32-bit) columns.
-_INT_MAX = 2**31 - 1
-_INT_RANGES = {"license_count": (0, _INT_MAX), "confidence_pct": (0, 100)}
+#: `license_count`, `confidence_pct`: Integer (32-bit) columns. The licence and
+#: cost bounds are `tech_debt/bounds.py`'s, shared with the item PATCH and the
+#: include-row route (#879).
+_INT_RANGES = {"license_count": (0, INT_MAX), "confidence_pct": (0, 100)}
 #: "1,000" or "1,200.50": comma thousands separators, nothing else.
 _THOUSANDS = re.compile(r"^\d{1,3}(,\d{3})+(\.\d+)?$")
 
@@ -340,21 +343,15 @@ def _coerce_item(item: dict[str, Any]) -> ExtractedCapability:
         if n is None:
             _record(key, "unparseable", v)
             return None
-        exact = Decimal(repr(n))
-        # Range and sign on the EXACT value first (#878 narrow review): quantizing
-        # 1e30 needs more than the default 28 digits and raises InvalidOperation,
-        # and -0.004 would quantize to -0.00 and pass `0 <=`.
-        if not 0 <= exact < _COST_LIMIT:
+        # The bounds are `tech_debt/bounds.py`'s, which judges range and sign on
+        # the exact value before quantizing (#878 narrow review).
+        problem = cost_problem(n)
+        if problem == OUT_OF_RANGE:
             _record(key, "out_of_range", v)
             return None
-        cents = exact.quantize(_CENT, rounding=ROUND_HALF_UP)
-        if cents >= _COST_LIMIT:
-            # 999999999999.995 is below the limit exactly and rounds up onto it.
-            _record(key, "out_of_range", v)
-            return None
-        if cents != exact:
+        if problem == NOT_WHOLE_CENTS:
             _record(key, "rounded", v)
-        return float(cents)
+        return cost_in_cents(n)
 
     def _opt_bool(key: str) -> bool | None:
         """Tri-state: an absent or unrecognised value stays None, never False.
@@ -385,7 +382,7 @@ def _coerce_item(item: dict[str, Any]) -> ExtractedCapability:
     # The row first, so every finding below carries the validated index. The
     # upper bound needs the number of uploaded rows, which the parser does not
     # have: `with_row_bounds` checks it once the rows are known.
-    row = _opt_int("source_row_index", 0, _INT_MAX)
+    row = _opt_int("source_row_index", 0, INT_MAX)
     row_for_record = row
     name = _bounded_str("name") or "Unknown capability"
     vendor = _bounded_str("vendor")
