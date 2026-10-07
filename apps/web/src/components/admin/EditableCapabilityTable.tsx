@@ -38,7 +38,13 @@ export interface EditableCapabilityTableProps {
   ) => Promise<void>;
 }
 
-type SaveStateById = Record<string, "idle" | "saving" | "saved" | "error">;
+type SaveStateById = Record<
+  string,
+  "idle" | "saving" | "saved" | "error" | "invalid"
+>;
+
+/** #879: copy V4 (pending the advisor's approval on #736). */
+const NOT_A_NUMBER = "Not a number, so it was not saved.";
 
 // #643: an input or select with no width keeps its intrinsic ~20-character
 // width, so seven of them overflowed the content column. Sized to the cell
@@ -82,18 +88,29 @@ function fmtCurrency(value: number | null): string {
   return value.toLocaleString();
 }
 
+/**
+ * #879: a number or nothing, never a guess. These used to strip every character
+ * that was not a digit, so "1200/month" saved as 1200 and "2.9" licences as 29,
+ * in silence. Now an empty cell is null (clears the value), and anything that
+ * is not a plain number -- a cost may carry a leading "$" and comma thousands
+ * separators, a count commas -- is NaN, which the cell refuses without sending.
+ * A minus sign is a number and is sent: the API bounds the range (`tech_debt/bounds.py`) and says why if it refuses.
+ */
+const COST_SHAPE = /^-?\$?\s*(\d{1,3}(,\d{3})+|\d+)(\.\d+)?$/;
+const COUNT_SHAPE = /^-?(\d{1,3}(,\d{3})+|\d+)$/;
+
 function parseCurrency(raw: string): number | null {
-  const cleaned = raw.replace(/[^0-9.\-]/g, "").trim();
-  if (cleaned === "" || cleaned === "-") return null;
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : null;
+  const text = raw.trim();
+  if (text === "") return null;
+  if (!COST_SHAPE.test(text)) return Number.NaN;
+  return Number(text.replace(/[$,\s]/g, ""));
 }
 
 function parseInt32(raw: string): number | null {
-  const cleaned = raw.replace(/[^0-9\-]/g, "").trim();
-  if (cleaned === "" || cleaned === "-") return null;
-  const n = parseInt(cleaned, 10);
-  return Number.isFinite(n) ? n : null;
+  const text = raw.trim();
+  if (text === "") return null;
+  if (!COUNT_SHAPE.test(text)) return Number.NaN;
+  return Number(text.replace(/,/g, ""));
 }
 
 /** AI Prompt §6.2: AI output renders as a real editable table, NOT as raw JSON. */
@@ -105,6 +122,8 @@ export function EditableCapabilityTable({
   onBulkDisposition,
 }: EditableCapabilityTableProps): JSX.Element {
   const [saveState, setSaveState] = React.useState<SaveStateById>({});
+  /** #879: the API's reason for the last refused save, per row. */
+  const [saveError, setSaveError] = React.useState<Record<string, string>>({});
   const selectable = Boolean(onBulkDisposition) && !readOnly;
   const columns: ReadonlyArray<{
     label: string;
@@ -178,7 +197,13 @@ export function EditableCapabilityTable({
       const next = await patchCapabilityItem(item.id, patch);
       onItemUpdate(next);
       setSaveState((s) => ({ ...s, [item.id]: "saved" }));
-    } catch {
+    } catch (err) {
+      // #879: the API refuses an unstorable value with a typed reason; say it
+      // rather than a bare "Save failed".
+      setSaveError((m) => ({
+        ...m,
+        [item.id]: proxyMessage(err, "The change was not saved."),
+      }));
       setSaveState((s) => ({ ...s, [item.id]: "error" }));
     }
   }
@@ -297,6 +322,13 @@ export function EditableCapabilityTable({
                       ) : state === "error" ? (
                         <span className="text-xs text-status-danger-fg">
                           Save failed
+                          {saveError[item.id] ? (
+                            <span className="block">{saveError[item.id]}</span>
+                          ) : null}
+                        </span>
+                      ) : state === "invalid" ? (
+                        <span className="text-xs text-status-danger-fg">
+                          {NOT_A_NUMBER}
                         </span>
                       ) : null}
                       {isComponent ? (
@@ -417,6 +449,10 @@ export function EditableCapabilityTable({
                       readOnly={readOnly}
                       onBlur={(e) => {
                         const next = parseCurrency(e.target.value);
+                        if (Number.isNaN(next)) {
+                          setSaveState((s) => ({ ...s, [item.id]: "invalid" }));
+                          return;
+                        }
                         if (next !== item.annual_cost_usd) {
                           void save(item, { annual_cost_usd: next });
                         }
@@ -432,6 +468,10 @@ export function EditableCapabilityTable({
                       readOnly={readOnly}
                       onBlur={(e) => {
                         const next = parseInt32(e.target.value);
+                        if (Number.isNaN(next)) {
+                          setSaveState((s) => ({ ...s, [item.id]: "invalid" }));
+                          return;
+                        }
                         if (next !== item.license_count) {
                           void save(item, { license_count: next });
                         }
