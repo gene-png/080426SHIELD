@@ -395,13 +395,24 @@ export function RiskRegisterDashboard(): JSX.Element {
   // #896: after any archive attempt from the duplicate banner (review B2:
   // success OR failure), read the gate again -- the refusal, the banner and
   // Generate all derive from it.
-  async function reloadGate(): Promise<void> {
-    if (!cid) return;
+  //
+  // Returns whether the gate was re-read (review round 2, F1): the archive
+  // dialog must not say the list was refreshed when it was not. The failure is
+  // still shown on the page, as before.
+  async function reloadGate(): Promise<boolean> {
+    if (!cid) {
+      // The dialog is only rendered with a client id, so this cannot be hit
+      // from it; if it is, nothing was re-read, and that is what we say.
+      console.error("[risk] gate reload without an active client");
+      return false;
+    }
     setError(null);
     try {
       setGate(await fetchRiskGate(cid));
+      return true;
     } catch (err) {
       setError(describeRiskError(err));
+      return false;
     }
   }
 

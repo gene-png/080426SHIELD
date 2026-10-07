@@ -250,5 +250,45 @@ describe("RiskRegisterDashboard archive control (#896)", () => {
     expect(screen.queryByTestId("risk-register-duplicate-archive")).toBeNull();
     const still = screen.getByRole("dialog", { name: "Archive ZT 2?" });
     expect(within(still).getByRole("alert")).toHaveTextContent(NOT_IN_GROUP);
+    // F1 plumbing: the dashboard reported its reload as successful.
+    expect(within(still).getByRole("alert")).toHaveAttribute(
+      "data-gate-reloaded",
+      "true",
+    );
+  });
+
+  it("F1: when the reload after a refusal fails, the dialog is told so", async () => {
+    // Review round 2, F1 (PLUMBING; copy with the advisor). The archive is
+    // refused AND the gate cannot be re-read: the banner still shows the old
+    // list, so nothing may claim the list was refreshed.
+    fetchRiskGate
+      .mockResolvedValueOnce(DUPLICATE_GATE)
+      .mockRejectedValueOnce(new Error("gate down"));
+    archive.mockRejectedValue({
+      status: 409,
+      payload: {
+        error: {
+          code: 409,
+          reason: "service_not_in_duplicate_group",
+          message: NOT_IN_GROUP,
+        },
+      },
+    });
+    await loaded();
+    fireEvent.click(screen.getByRole("button", { name: "Archive ZT 2" }));
+    const dialog = screen.getByRole("dialog", { name: "Archive ZT 2?" });
+    await confirmIn(dialog);
+
+    await waitFor(() => expect(fetchRiskGate).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(within(dialog).getByRole("alert")).toHaveAttribute(
+        "data-gate-reloaded",
+        "false",
+      ),
+    );
+    // The old list is still on screen: the reload did not replace it.
+    expect(
+      screen.getByTestId("risk-register-duplicate-archive"),
+    ).toBeInTheDocument();
   });
 });

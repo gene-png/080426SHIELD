@@ -56,9 +56,12 @@ const SVC: RiskDuplicateService = {
   version: 1,
 };
 
-function setup(service: RiskDuplicateService | null = SVC) {
+function setup(
+  service: RiskDuplicateService | null = SVC,
+  reloaded: boolean = true,
+) {
   const onClose = vi.fn();
-  const onSettled = vi.fn().mockResolvedValue(undefined);
+  const onSettled = vi.fn().mockResolvedValue(reloaded);
   const { container, rerender } = render(
     <ArchiveServiceDialog
       clientId="c1"
@@ -210,6 +213,30 @@ describe("ArchiveServiceDialog (#896)", () => {
     const { dialog } = setup();
     await confirm(dialog);
     expect(within(dialog).getByRole("alert")).toHaveTextContent(FALLBACK);
+  });
+
+  // Review round 2, F1 (PLUMBING; the copy is with the advisor): the dialog
+  // must know whether the reload after a failure SUCCEEDED, so it never says
+  // the list was refreshed when it was not. Pinned on a data attribute until
+  // the approved sentences exist.
+  it("knows the reload after a failure succeeded", async () => {
+    archive.mockRejectedValue({ status: 502, payload: null });
+    const { dialog } = setup(SVC, true);
+    await confirm(dialog);
+    expect(within(dialog).getByRole("alert")).toHaveAttribute(
+      "data-gate-reloaded",
+      "true",
+    );
+  });
+
+  it("knows the reload after a failure FAILED", async () => {
+    archive.mockRejectedValue({ status: 502, payload: null });
+    const { dialog } = setup(SVC, false);
+    await confirm(dialog);
+    expect(within(dialog).getByRole("alert")).toHaveAttribute(
+      "data-gate-reloaded",
+      "false",
+    );
   });
 
   it("forgets an earlier failure when opened for another service", async () => {

@@ -82,8 +82,18 @@ export interface ArchiveServiceDialogProps {
   /** The service being confirmed; null while the dialog is closed. */
   service: RiskDuplicateService | null;
   onClose: () => void;
-  /** Reloads the gate. Called after EVERY attempt, success or failure (B2). */
-  onSettled: () => Promise<void>;
+  /**
+   * Reloads the gate. Called after EVERY attempt, success or failure (B2).
+   * Resolves to whether the gate was actually re-read (review round 2, F1).
+   */
+  onSettled: () => Promise<boolean>;
+}
+
+/** A failed attempt, and whether the reload after it re-read the gate. */
+interface Failure {
+  serviceId: string;
+  message: string;
+  reloaded: boolean;
 }
 
 export function ArchiveServiceDialog({
@@ -93,46 +103,49 @@ export function ArchiveServiceDialog({
   onSettled,
 }: ArchiveServiceDialogProps): JSX.Element {
   const [busy, setBusy] = React.useState(false);
-  const [error, setError] = React.useState<{
-    serviceId: string;
-    message: string;
-  } | null>(null);
-  // DERIVED, not reset: an error belongs to the service it was raised for, so
-  // opening the dialog for another one shows none.
-  const shownError =
-    error !== null && service !== null && error.serviceId === service.service_id
-      ? error.message
+  const [failure, setFailure] = React.useState<Failure | null>(null);
+  // DERIVED, not reset: a failure belongs to the service it was raised for,
+  // so opening the dialog for another one shows none.
+  const shown =
+    failure !== null &&
+    service !== null &&
+    failure.serviceId === service.service_id
+      ? failure
       : null;
 
   async function handleConfirm(target: RiskDuplicateService): Promise<void> {
     setBusy(true);
-    setError(null);
-    let failed = false;
+    setFailure(null);
+    let message: string | null = null;
     try {
       await archiveDuplicateService(clientId, target.service_id);
       console.info("[risk] service archived", { serviceId: target.service_id });
     } catch (err) {
-      // The API's own sentence where it sent one (the 409 says the list was
-      // refreshed; an outcome-unknown 504 says the archive may have landed,
-      // which the fallback would deny), else the approved fallback.
-      failed = true;
+      // The API's own sentence where it sent one (an outcome-unknown 504 says
+      // the archive may have landed, which the fallback would deny), else the
+      // approved fallback.
       console.error("[risk] archive service failed", {
         serviceId: target.service_id,
         err,
       });
-      setError({
-        serviceId: target.service_id,
-        message: clientFacingError(err, FALLBACK),
-      });
+      message = clientFacingError(err, FALLBACK);
     }
     // B2: on ANY outcome, re-read the gate, so the banner shows what the
-    // server now holds -- which is also the "check" a 504 asks for.
+    // server now holds -- which is also the "check" a 504 asks for. F1: the
+    // failure is recorded only AFTER the reload, with whether it re-read the
+    // gate, so nothing can claim a refresh that did not happen.
+    let reloaded = false;
     try {
-      await onSettled();
+      reloaded = await onSettled();
     } finally {
       setBusy(false);
     }
-    if (!failed) onClose();
+    if (message === null) {
+      onClose();
+      return;
+    }
+    console.info("[risk] gate reload after a failed archive", { reloaded });
+    setFailure({ serviceId: target.service_id, message, reloaded });
   }
 
   return (
@@ -174,12 +187,15 @@ export function ArchiveServiceDialog({
           {dialogBody(service.title)}
         </p>
       ) : null}
-      {shownError !== null ? (
+      {shown !== null ? (
         <p
           role="alert"
+          // F1 plumbing: whether the list on screen was re-read after this
+          // failure. The sentence that says so is with the advisor.
+          data-gate-reloaded={shown.reloaded ? "true" : "false"}
           className="mt-3 text-sm font-medium text-status-danger-fg"
         >
-          {shownError}
+          {shown.message}
         </p>
       ) : null}
     </Modal>
