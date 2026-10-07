@@ -269,12 +269,37 @@ _PARSER_SENTINELS: dict[str, dict[str, Callable[[], Any]]] = {
 }
 
 
-def _absence(job: str, field: str, row: Mapping[str, Any]) -> str | None:
+def _attack_row_refused(row: Mapping[str, Any]) -> bool:
+    """Would the mitre_map APPLY path refuse this suggestion WHOLE? Decided by
+    the route's own set and the vocabulary's own predicate, called, never
+    restated (`routes/attack.py`: a status outside `_AI_WRITABLE_STATUSES`, or
+    an offered reason `is_valid_reason` rejects for that status)."""
+    from app.attack.coverage import is_valid_reason
+    from app.routes.attack import _AI_WRITABLE_STATUSES
+
+    st = row.get("status")
+    if not (isinstance(st, str) and st in _AI_WRITABLE_STATUSES):
+        return True
+    offered = row.get("reason_code")
+    return offered is not None and not (isinstance(offered, str) and is_valid_reason(st, offered))
+
+
+def _resolved_tools(value: Any, resolver: Any) -> list[str] | None:
+    """A cited tool list as the run would STORE it: resolved by the run's own
+    `CitationResolver`, unknown names dropped. None when it is not a list."""
+    from app.attack.citations import resolve_citations
+
+    if not isinstance(value, list):
+        return None
+    return list(resolve_citations(value, resolver).tools)
+
+
+def _absence(job: str, field: str, row: Mapping[str, Any], context: Any = None) -> str | None:
     """How `field` is ABSENT from `row`, or None when it holds an answer.
 
-    THE ABSENCE MATRIX (#867, after three rounds of "less extracted reads as
-    more consistent" found one form at a time). Every form a value can take
-    when a run gave no answer, for every job's compared fields:
+    THE ABSENCE MATRIX (#867, after rounds of "less extracted reads as more
+    consistent" found one form at a time). The forms a value takes when a run
+    gave no USABLE answer:
 
     | form       | where it arises                                              |
     | ---------- | ------------------------------------------------------------ |
@@ -282,33 +307,55 @@ def _absence(job: str, field: str, row: Mapping[str, Any]) -> str | None:
     | null       | any scalar; the extraction's refused values become null (#878) |
     | empty      | list fields: the tool lists, `security_functions`            |
     | sentinel   | tech_debt `name`: the parser invents one when none was sent  |
+    | refused    | mitre_map: the apply path refuses the whole suggestion (a    |
+    |            | status it may not write, a mispaired reason), and a tool     |
+    |            | list none of whose names the run's resolver can place        |
+
+    SCOPE, stated because the table reads as complete and is not:
+    zt_score and csf_score values the APPLY path would refuse for range or
+    wholeness (a stage of 0, "unknown", a dimension of "N/A") are NOT yet in it:
+    those checks are inline in the apply loops rather than callable functions,
+    and are not copied here. Tracked on #867. The tech_debt extraction's own
+    refusals are covered, since they arrive as null.
 
     ONE rule for all of them, in `compare_pair`: the pair is COMPARED, adds
     NOTHING to any agreement figure, and is counted in `both_absent` /
     `one_absent`. A list field holding a non-list is not an absence but a
     malformed answer, counted as `not_a_list` under the same rule.
+
+    `context` is the run's `CitationResolver` for mitre_map; without one, tool
+    lists are compared as sent.
     """
     if field not in row:
         return "missing"
     value = row[field]
     if value is None:
         return "null"
-    if field in _LIST_FIELDS.get(job, ()) and isinstance(value, list) and not value:
-        return "empty"
+    if job == "mitre_map" and _attack_row_refused(row):
+        return "refused"
+    if field in _LIST_FIELDS.get(job, ()) and isinstance(value, list):
+        if not value:
+            return "empty"
+        if job == "mitre_map" and context is not None and not _resolved_tools(value, context):
+            return "refused"
     sentinel = _PARSER_SENTINELS.get(job, {}).get(field)
     if sentinel is not None and value == sentinel():
         return "sentinel"
     return None
 
 
-def compare_pair(job: str, a: Mapping[str, Any], b: Mapping[str, Any]) -> dict:
+def compare_pair(
+    job: str, a: Mapping[str, Any], b: Mapping[str, Any], *, context: Any = None
+) -> dict:
     """Agreement between two parsed responses: row set, then per field over the
     rows present in both. Every count is a denominator or a numerator of one.
 
     `compared` is EVERY row in both runs, for every field. A pair where either
     side is absent (`_absence`) or a list field is malformed is compared and
     adds nothing to `equal`, `within_one`, `mean_abs_diff` or the Jaccard -- so
-    a run that answers LESS can never read as more consistent."""
+    a run that answers LESS can never read as more consistent. With `context`
+    (mitre_map's resolver), tool lists are compared as the run would STORE
+    them: resolved names only."""
     list_key, key_fields, fields = _job_shape(job)
     objects_only = job in _OBJECTS_ONLY_UPSTREAM
     keyless_a: list[int] | None = [] if objects_only else None
@@ -331,7 +378,8 @@ def compare_pair(job: str, a: Mapping[str, Any], b: Mapping[str, Any]) -> dict:
             compared += 1
             missing_a += int(f not in ra)
             missing_b += int(f not in rb)
-            gone_a, gone_b = _absence(job, f, ra), _absence(job, f, rb)
+            gone_a = _absence(job, f, ra, context)
+            gone_b = _absence(job, f, rb, context)
             if gone_a and gone_b:
                 both_absent += 1
                 continue
@@ -339,6 +387,8 @@ def compare_pair(job: str, a: Mapping[str, Any], b: Mapping[str, Any]) -> dict:
                 one_absent += 1
                 continue
             va, vb = ra[f], rb[f]
+            if f in list_fields and job == "mitre_map" and context is not None:
+                va, vb = _resolved_tools(va, context), _resolved_tools(vb, context)
             if f in list_fields:
                 sa, sb = _str_set(va), _str_set(vb)
                 if sa is None or sb is None:
@@ -579,13 +629,14 @@ def summarize(
     *,
     max_output_tokens: int | None = None,
     min_ok_runs: int = 2,
+    context: Any = None,
 ) -> dict:
     """Every pair of successful runs, plus the failed runs by number (1-based).
     Fewer than `min_ok_runs` successes is a failure: 2 for a measurement, since
     there is nothing to compare below that, and 1 for a cost probe."""
     ok = [(i + 1, r) for i, r in enumerate(runs) if r.ok]
     pairs = [
-        {"pair": [i, j], **compare_pair(job, ra.data or {}, rb.data or {})}
+        {"pair": [i, j], **compare_pair(job, ra.data or {}, rb.data or {}, context=context)}
         for (i, ra), (j, rb) in itertools.combinations(ok, 2)
     ]
     failed = [
@@ -1115,6 +1166,8 @@ def attack_downstream(data: Mapping[str, Any], resolver: Any) -> dict:
     index, _, _ = _index(data.get("techniques") or [], ("technique_code",))
     computed: dict[str, str] = {}
     differs = 0
+    no_tools: set[str] = set()
+    refused: set[str] = set()
     for row in index.values():
         code = row.get("technique_code")
         if not isinstance(code, str):
@@ -1134,7 +1187,39 @@ def attack_downstream(data: Mapping[str, Any], resolver: Any) -> dict:
         )
         computed[code] = status
         differs += int(row.get("status") != status)
-    return {"computed_status": computed, "ai_status_differs": differs}
+        if not any(lists.values()):
+            no_tools.add(code)
+        if _attack_row_refused(row):
+            refused.add(code)
+    return {
+        "computed_status": computed,
+        "ai_status_differs": differs,
+        # #867 narrow review at ba31e13f, B2: a technique with NO resolvable
+        # tool computes "gap" in every run that cites nothing, and a suggestion
+        # the apply path refuses whole writes nothing at all. Neither is an
+        # answer the two runs can agree on (`computed_status_agreement`).
+        "no_tools": sorted(no_tools),
+        "refused": sorted(refused),
+    }
+
+
+def computed_status_agreement(da: Mapping[str, Any], db: Mapping[str, Any]) -> dict:
+    """The R3 status agreement between two runs' `attack_downstream`, under the
+    absence rule: every technique in both is COMPARED; one with no tool in
+    BOTH runs (`both_no_tools`) or refused in EITHER (`refused`) adds nothing
+    to `equal`, so a prompt that cites fewer tools cannot score higher."""
+    sa, sb = da["computed_status"], db["computed_status"]
+    both = set(sa) & set(sb)
+    no_a, no_b = set(da["no_tools"]), set(db["no_tools"])
+    ref = set(da["refused"]) | set(db["refused"])
+    both_no_tools = {k for k in both if k in no_a and k in no_b} - ref
+    judged = both - both_no_tools - ref
+    return {
+        "compared": len(both),
+        "equal": sum(sa[k] == sb[k] for k in judged),
+        "both_no_tools": len(both_no_tools),
+        "refused": len(both & ref),
+    }
 
 
 def _count_values(mapping: Mapping[str, str]) -> dict[str, int]:
@@ -1280,16 +1365,13 @@ def measure_attack(
         records,
         max_output_tokens=max_output_tokens,
         min_ok_runs=1 if probe_batches is not None else 2,
+        context=resolver,
     )
     computed = {n: attack_downstream(data, resolver) for n, data in _ok_runs(records)}
     for pair in report["pairs"]:
-        sa = computed[pair["pair"][0]]["computed_status"]
-        sb = computed[pair["pair"][1]]["computed_status"]
-        both = set(sa) & set(sb)
-        pair["computed_status"] = {
-            "compared": len(both),
-            "equal": sum(sa[k] == sb[k] for k in both),
-        }
+        pair["computed_status"] = computed_status_agreement(
+            computed[pair["pair"][0]], computed[pair["pair"][1]]
+        )
     report["assessment_id"] = str(a.id)
     report["techniques_sent"] = sent
     report["batches_per_run"] = batches
@@ -1511,7 +1593,11 @@ def _print_table(report: dict) -> None:
             )
         if "computed_status" in p:
             cs = p["computed_status"]
-            print(f"  computed R3 status: equal {cs['equal']}/{cs['compared']}")
+            print(
+                f"  computed R3 status: equal {cs['equal']}/{cs['compared']} (no tool in "
+                f"both runs {cs['both_no_tools']}, refused in either {cs['refused']}: "
+                "no agreement)"
+            )
     for e in report.get("echo", []):
         for name, c in e.items():
             if name != "run":
@@ -1679,6 +1765,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Refused as exc:
         print(f"REFUSED ({exc.reason}): {exc}", file=sys.stderr)
         return 2
+    for sentinel in _PARSER_SENTINELS.get(args.job, {}).values():
+        # Read BEFORE any provider exists (#867 review A1): a parser that can no
+        # longer produce its sentinel fails here, not after the paid runs.
+        sentinel()
 
     from app.ai.llm import LLMClient
     from app.db.session import SessionLocal

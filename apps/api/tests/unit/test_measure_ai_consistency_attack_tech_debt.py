@@ -467,7 +467,12 @@ def test_measure_attack_runs_every_batch_and_applies_nothing(attack_world) -> No
     assert pair["rows"]["in_both"] == sent
     assert pair["fields"]["status"]["equal"] == sent
     assert pair["fields"]["detection_tools"]["mean_jaccard"] == 1.0
-    assert pair["computed_status"] == {"compared": sent, "equal": sent}
+    assert pair["computed_status"] == {
+        "compared": sent,
+        "equal": sent,
+        "both_no_tools": 0,
+        "refused": 0,
+    }
     # Every tool cited exactly as listed, all three functions present.
     assert report["downstream"][0]["computed_status_counts"] == {"covered": sent}
     assert report["tokens"] == {
@@ -962,11 +967,77 @@ def test_items_as_the_parser_emits_them_carry_no_unearned_agreement() -> None:
         assert f["equal"] == 0, f"{name}: agreement on nothing"
 
 
-# --- #867 narrow review at b544311b: the absence matrix ---------------------------
-# Every form a value takes when a run gave no answer, for every job's compared
-# fields, under ONE rule: compared, no agreement, counted. The forms come from
-# the parsers' and prompts' behaviour (a key the model omits, null, an empty
-# list, the extraction's invented name), never from the measure's own table.
+# --- #867: the absence matrix -----------------------------------------------------
+# Every form a value takes when a run gave no USABLE answer, for every job's
+# compared fields, under ONE rule: compared, no agreement, counted. The forms
+# come from the parsers', the prompts' and the APPLY paths' behaviour (a key
+# the model omits, null, an empty list, the extraction's invented name, a
+# mitre_map suggestion the apply path refuses whole or whose tools resolve to
+# nothing), never from the measure's own table.
+#
+# The per-job field sets are LITERALS (#867 review A4): read from `_job_shape`,
+# a field the measure dropped would silently leave the matrix with it.
+
+FIELDS = {
+    "zt_score": ("current", "target"),
+    "csf_score": ("governance", "policy", "implementation", "monitoring", "improvement"),
+    "mitre_map": ("status", "reason_code", "detection_tools", "prevention_tools", "response_tools"),
+    "tech_debt_extract": (
+        "name",
+        "vendor",
+        "category",
+        "annual_cost_usd",
+        "license_count",
+        "confidence_pct",
+        "security_related",
+        "security_functions",
+    ),
+}
+_LISTS = {
+    "mitre_map": {"detection_tools", "prevention_tools", "response_tools"},
+    "tech_debt_extract": {"security_functions"},
+}
+# A row every field of which is a VALID answer the apply path would write:
+# CISA stages within 1..4, CSF dimensions within 0..2, a writable ATT&CK status
+# with a reason that status takes and tools the resolver places.
+_VALID = {
+    "zt_score": {"code": "K1", "current": 2, "target": 3},
+    "csf_score": {
+        "tier": "high",
+        "subcategory_code": "K1",
+        "governance": 1,
+        "policy": 1,
+        "implementation": 1,
+        "monitoring": 1,
+        "improvement": 1,
+    },
+    "mitre_map": {
+        "technique_code": "K1",
+        "status": "partial",
+        "reason_code": "missing_control_category",
+        "detection_tools": ["Tool A"],
+        "prevention_tools": ["Tool A"],
+        "response_tools": ["Tool A"],
+    },
+    "tech_debt_extract": {
+        "source_row_index": 0,
+        "name": "Alpha",
+        "vendor": "Vendor",
+        "category": "EDR/XDR",
+        "annual_cost_usd": 100.0,
+        "license_count": 5,
+        "confidence_pct": 90,
+        "security_related": True,
+        "security_functions": ["detect"],
+    },
+}
+_LIST_KEY = {
+    "zt_score": "capabilities",
+    "csf_score": "scores",
+    "mitre_map": "techniques",
+    "tech_debt_extract": "items",
+}
+_MISSING = object()
 
 
 def _nameless_sentinel() -> str:
@@ -976,55 +1047,64 @@ def _nameless_sentinel() -> str:
     return _parse_response('{"items": [{"source_row_index": 0}]}')[0].name
 
 
-_JOB_KEYS = {
-    "zt_score": ("capabilities", {"code": "K1"}),
-    "csf_score": ("scores", {"tier": "high", "subcategory_code": "K1"}),
-    "mitre_map": ("techniques", {"technique_code": "K1"}),
-    "tech_debt_extract": ("items", {"source_row_index": 0}),
-}
-_LISTS = {
-    "mitre_map": {"detection_tools", "prevention_tools", "response_tools"},
-    "tech_debt_extract": {"security_functions"},
-}
+def _attack_resolver():
+    from app.attack.citations import Candidate, CitationResolver
+
+    return CitationResolver([Candidate(name="Tool A")])
+
+
+def _context(job: str):
+    return _attack_resolver() if job == "mitre_map" else None
+
+
+def test_the_matrix_field_sets_are_the_measures() -> None:
+    from scripts.measure_ai_consistency import _job_shape  # test-integrity: pinned to literals
+
+    for job, fields in FIELDS.items():
+        assert _job_shape(job)[2] == fields, f"{job}: the compared fields changed"
+
+
+def _forms(job: str, field: str) -> list[tuple[str, object]]:
+    forms: list[tuple[str, object]] = [("missing", _MISSING), ("null", None)]
+    if field in _LISTS.get(job, ()):
+        forms.append(("empty", []))
+    if (job, field) == ("tech_debt_extract", "name"):
+        forms.append(("sentinel", _nameless_sentinel()))
+    if job == "mitre_map":
+        # The apply path refuses these whole: a status it may not write
+        # (`not_applicable` since #841), an unknown one, a reason the status
+        # does not take; and a tool list the resolver places none of.
+        if field == "status":
+            forms += [("refused-unknown", "unknown"), ("refused-na", "not_applicable")]
+        if field == "reason_code":
+            forms.append(("refused-mispaired", "platform_absent"))
+        if field in _LISTS["mitre_map"]:
+            forms.append(("refused-unresolvable", ["None"]))
+    return forms
 
 
 def _matrix_cases():
-    from scripts.measure_ai_consistency import _job_shape  # test-integrity: field list only
-
-    for job in _JOB_KEYS:
-        for field in _job_shape(job)[2]:
-            forms = ["missing", "null"]
-            if field in _LISTS.get(job, ()):
-                forms.append("empty")
-            if (job, field) == ("tech_debt_extract", "name"):
-                forms.append("sentinel")
-            for form in forms:
+    for job, fields in FIELDS.items():
+        for field in fields:
+            for form, value in _forms(job, field):
                 for where in ("both", "one"):
-                    yield job, field, form, where
+                    yield pytest.param(job, field, value, where, id=f"{job}-{field}-{form}-{where}")
 
 
 def _row(job: str, field: str, value) -> dict:
-    list_key, keys = _JOB_KEYS[job]
-    row = dict(keys)
-    if value is not _MISSING:
+    row = dict(_VALID[job])
+    if value is _MISSING:
+        del row[field]
+    else:
         row[field] = value
-    return {list_key: [row]}
+    return {_LIST_KEY[job]: [row]}
 
 
-_MISSING = object()
-
-
-def _absent_value(form: str):
-    return {"missing": _MISSING, "null": None, "empty": [], "sentinel": _nameless_sentinel()}[form]
-
-
-@pytest.mark.parametrize(("job", "field", "form", "where"), list(_matrix_cases()))
-def test_every_absence_form_is_compared_and_never_agreement(job, field, form, where) -> None:
-    present = ["v"] if field in _LISTS.get(job, ()) else "v"
-    absent = _absent_value(form)
-    a = _row(job, field, absent)
-    b = _row(job, field, absent if where == "both" else present)
-    f = compare_pair(job, a, b)["fields"][field]
+@pytest.mark.parametrize(("job", "field", "value", "where"), list(_matrix_cases()))
+def test_every_absence_form_is_compared_and_never_agreement(job, field, value, where) -> None:
+    a = _row(job, field, value)
+    b = _row(job, field, value) if where == "both" else {_LIST_KEY[job]: [dict(_VALID[job])]}
+    f = compare_pair(job, a, b, context=_context(job))["fields"][field]
     assert f["compared"] == 1, "an absent value left the denominator"
     assert f["equal"] == 0 and f["within_one"] == 0, "absence counted as agreement"
     assert f["mean_abs_diff"] is None
@@ -1033,14 +1113,13 @@ def test_every_absence_form_is_compared_and_never_agreement(job, field, form, wh
     assert (f["both_absent"], f["one_absent"]) == ((1, 0) if where == "both" else (0, 1))
 
 
-@pytest.mark.parametrize("job", list(_JOB_KEYS))
-def test_the_matrix_control_a_present_answer_in_both_runs_agrees(job) -> None:
-    from scripts.measure_ai_consistency import _job_shape  # test-integrity: field list only
-
-    for field in _job_shape(job)[2]:
-        present = ["v"] if field in _LISTS.get(job, ()) else "v"
-        f = compare_pair(job, _row(job, field, present), _row(job, field, present))["fields"][field]
-        assert (f["compared"], f["equal"], f["both_absent"], f["one_absent"]) == (1, 1, 0, 0)
+@pytest.mark.parametrize("job", list(FIELDS))
+def test_the_matrix_control_a_valid_answer_in_both_runs_agrees(job) -> None:
+    row = {_LIST_KEY[job]: [dict(_VALID[job])]}
+    fields = compare_pair(job, row, json.loads(json.dumps(row)), context=_context(job))["fields"]
+    for field in FIELDS[job]:
+        f = fields[field]
+        assert (f["compared"], f["equal"], f["both_absent"], f["one_absent"]) == (1, 1, 0, 0), field
 
 
 def test_a_nameless_item_in_both_runs_does_not_agree_on_its_invented_name() -> None:
@@ -1067,3 +1146,56 @@ def test_omitting_a_tool_list_never_scores_as_more_consistent() -> None:
     assert y["equal"] / y["compared"] <= x["equal"] / x["compared"], "same-set share rose"
     assert y["mean_jaccard"] <= x["mean_jaccard"], "the Jaccard rose for omitting a key"
     assert (y["one_absent"], y["missing_in_a"]) == (1, 1)
+
+
+def test_citing_no_tool_never_raises_the_computed_status_agreement() -> None:
+    """#867 narrow review at ba31e13f, B2: with no resolvable tool every
+    technique computes "gap" in every run, which must not read as agreement."""
+    from scripts.measure_ai_consistency import attack_downstream, computed_status_agreement
+
+    code_x, code_y = _a_code(preventable=True), _a_code(preventable=False)
+    x_a = {
+        "techniques": [
+            _tech(code_x, detection_tools=["Sentinel Hub"]),
+            _tech(code_y, detection_tools=["Sentinel Hub"]),
+        ]
+    }
+    x_b = {
+        "techniques": [
+            _tech(code_x, detection_tools=["Sentinel Hub"]),
+            _tech(code_y, detection_tools=["Sentinel Hub"], response_tools=["Vault Backup"]),
+        ]
+    }
+    y = {"techniques": [_tech(code_x, detection_tools=["Sentinel Hub"]), _tech(code_y)]}
+    r = _resolver()
+    x = computed_status_agreement(attack_downstream(x_a, r), attack_downstream(x_b, r))
+    yy = computed_status_agreement(
+        attack_downstream(y, r), attack_downstream(json.loads(json.dumps(y)), r)
+    )
+    assert x["compared"] == yy["compared"] == 2
+    assert x["equal"] == 1, "precondition: X's runs disagree on one technique"
+    assert (
+        yy["equal"] / yy["compared"] <= x["equal"] / x["compared"]
+    ), "citing nothing scored higher"
+    assert yy["both_no_tools"] == 1
+
+
+def test_a_refused_suggestion_is_no_computed_status_agreement() -> None:
+    from scripts.measure_ai_consistency import attack_downstream, computed_status_agreement
+
+    code = _a_code(preventable=True)
+    row = {"techniques": [_tech(code, status="not_applicable", detection_tools=["Sentinel Hub"])]}
+    r = _resolver()
+    d = computed_status_agreement(attack_downstream(row, r), attack_downstream(row, r))
+    assert (d["compared"], d["equal"], d["refused"]) == (1, 0, 1)
+
+
+def test_tool_lists_are_compared_as_the_run_would_store_them() -> None:
+    # A name the resolver cannot place is dropped by the run, so two runs that
+    # differ only by it agree on what is stored.
+    a = {"techniques": [dict(_VALID["mitre_map"], detection_tools=["Tool A", "Not A Tool"])]}
+    b = {"techniques": [dict(_VALID["mitre_map"])]}
+    resolved = compare_pair("mitre_map", a, b, context=_attack_resolver())["fields"]
+    raw = compare_pair("mitre_map", a, b)["fields"]
+    assert resolved["detection_tools"]["equal"] == 1
+    assert raw["detection_tools"]["equal"] == 0, "precondition: the raw lists differ"
