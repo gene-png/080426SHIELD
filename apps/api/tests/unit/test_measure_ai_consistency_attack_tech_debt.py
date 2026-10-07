@@ -1070,6 +1070,14 @@ def _forms(job: str, field: str) -> list[tuple[str, object]]:
         forms.append(("empty", []))
     if (job, field) == ("tech_debt_extract", "name"):
         forms.append(("sentinel", _nameless_sentinel()))
+    if job == "csf_score":
+        # `_validated_dimension` refuses these: not a number, outside 0-2, a
+        # fraction (CsfDroppedSuggestion's documented reasons).
+        forms += [("refused-text", "N/A"), ("refused-range", 3), ("refused-fraction", 1.5)]
+    if job == "zt_score":
+        # The apply path's `_as_number` cannot parse these. Range and
+        # wholeness are NOT in the measure yet (its docstring's SCOPE).
+        forms += [("refused-text", "unknown"), ("refused-empty", ""), ("refused-list", [2])]
     if job == "mitre_map":
         # The apply path refuses these whole: a status it may not write
         # (`not_applicable` since #841), an unknown one, a reason the status
@@ -1199,3 +1207,10 @@ def test_tool_lists_are_compared_as_the_run_would_store_them() -> None:
     raw = compare_pair("mitre_map", a, b)["fields"]
     assert resolved["detection_tools"]["equal"] == 1
     assert raw["detection_tools"]["equal"] == 0, "precondition: the raw lists differ"
+
+
+def test_a_csf_score_is_compared_as_the_apply_path_stores_it() -> None:
+    a = {"scores": [dict(_VALID["csf_score"], governance="2")]}
+    b = {"scores": [dict(_VALID["csf_score"], governance=2)]}
+    f = compare_pair("csf_score", a, b)["fields"]["governance"]
+    assert (f["equal"], f["one_absent"]) == (1, 0), '"2" and 2 are the same applied score'

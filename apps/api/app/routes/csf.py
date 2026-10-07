@@ -1729,6 +1729,30 @@ def _as_number(raw: Any) -> float | None:
     return None
 
 
+def _validated_dimension(raw: Any) -> tuple[int | None, str | None]:
+    """A suggested dimension score as the apply path would STORE it: `(value,
+    None)`, or `(None, reason)` with the `CsfDroppedSuggestion` reason it is
+    refused for. ONE statement of the rule, called by `_apply_suggestions` and
+    by `scripts/measure_ai_consistency.py` (#867), so the measure counts as
+    refused exactly what a run refuses.
+
+    Parse, then range 0-2, then wholeness. Range BEFORE wholeness: `3.9` is
+    both, and the range is what a reader needs to hear; it also runs before any
+    `int()`, which is what keeps `inf` and `nan` from raising. In range but not
+    whole (`1.9`) used to be applied as 1 with nothing recorded -- the only
+    place in this path where a suggested value changed silently.
+    """
+    n = _as_number(raw)
+    if n is None:
+        # Not a score at all: text, a bool, a container.
+        return None, "unparseable"
+    if not 0 <= n <= 2:
+        return None, "out_of_range"
+    if n != int(n):
+        return None, "unparseable"
+    return int(n), None
+
+
 def _verbatim_key(sugg: dict) -> str | None:
     """The row key as the model wrote it, with a missing half NAMED as missing.
 
@@ -1927,12 +1951,11 @@ def _apply_suggestions(
                         )
                     )
                 continue
-            n = _as_number(raw)
-            if n is None:
-                # Not a score at all: text, a bool, a container.
+            v, refusal = _validated_dimension(raw)
+            if refusal is not None:
                 dropped.append(
                     CsfDroppedSuggestion(
-                        reason="unparseable",
+                        reason=refusal,
                         key=key,
                         field=field,
                         value=_bounded(raw),
@@ -1940,36 +1963,6 @@ def _apply_suggestions(
                     )
                 )
                 continue
-            if not 0 <= n <= 2:
-                # Range BEFORE wholeness: `3.9` is both, and the range is what a
-                # reader needs to hear. This also runs before any `int()`, which
-                # is what keeps `inf` and `nan` from raising.
-                dropped.append(
-                    CsfDroppedSuggestion(
-                        reason="out_of_range",
-                        key=key,
-                        field=field,
-                        value=_bounded(raw),
-                        values=field_values[field],
-                    )
-                )
-                continue
-            if n != int(n):
-                # In range but not whole. `1.9` used to be applied as 1 with
-                # nothing recorded — the only place in this path where a
-                # suggested value changed silently, inside the mechanism built
-                # to end exactly that.
-                dropped.append(
-                    CsfDroppedSuggestion(
-                        reason="unparseable",
-                        key=key,
-                        field=field,
-                        value=_bounded(raw),
-                        values=field_values[field],
-                    )
-                )
-                continue
-            v = int(n)
             if (row_key, field) in written:
                 dropped.append(CsfDroppedSuggestion(reason="superseded", key=key, field=field))
                 applied -= 1

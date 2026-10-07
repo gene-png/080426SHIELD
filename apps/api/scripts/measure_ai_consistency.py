@@ -309,14 +309,18 @@ def _absence(job: str, field: str, row: Mapping[str, Any], context: Any = None) 
     | sentinel   | tech_debt `name`: the parser invents one when none was sent  |
     | refused    | mitre_map: the apply path refuses the whole suggestion (a    |
     |            | status it may not write, a mispaired reason), and a tool     |
-    |            | list none of whose names the run's resolver can place        |
+    |            | list none of whose names the run's resolver can place.       |
+    |            | csf_score: `routes/csf.py::_validated_dimension` refuses it  |
+    |            | (unparseable, outside 0-2, not whole). zt_score: the apply   |
+    |            | path's `_as_number` cannot parse it ("unknown", "", a list). |
 
-    SCOPE, stated because the table reads as complete and is not:
-    zt_score and csf_score values the APPLY path would refuse for range or
-    wholeness (a stage of 0, "unknown", a dimension of "N/A") are NOT yet in it:
-    those checks are inline in the apply loops rather than callable functions,
-    and are not copied here. Tracked on #867. The tech_debt extraction's own
-    refusals are covered, since they arrive as null.
+    SCOPE, stated because the table reads as complete and is not: a zt_score
+    stage the apply path refuses for RANGE or WHOLENESS (0, 5 on CISA, 2.5) is
+    NOT in it. Those checks are inline in `routes/zt.py::_zt_run_work`, not a
+    callable function, and are not copied here; the follow-up extracts a
+    `_validated_stage` there and switches this to it. Until then a run that
+    answers 0 twice reads as agreeing on that field. The tech_debt extraction's
+    own refusals are covered, since they arrive as null.
 
     ONE rule for all of them, in `compare_pair`: the pair is COMPARED, adds
     NOTHING to any agreement figure, and is counted in `both_absent` /
@@ -333,6 +337,21 @@ def _absence(job: str, field: str, row: Mapping[str, Any], context: Any = None) 
         return "null"
     if job == "mitre_map" and _attack_row_refused(row):
         return "refused"
+    if job == "csf_score":
+        # The apply path's own validator, called (#867): unparseable, outside
+        # 0-2, or not whole is refused there, so it is no answer here.
+        from app.routes.csf import _validated_dimension
+
+        if _validated_dimension(value)[1] is not None:
+            return "refused"
+    if job == "zt_score":
+        # ONLY the apply path's number parser is a callable function for ZT;
+        # its range and wholeness checks are inline in `_zt_run_work` and are
+        # NOT copied here (see SCOPE above).
+        from app.routes.zt import _as_number as _zt_as_number
+
+        if _zt_as_number(value) is None:
+            return "refused"
     if field in _LIST_FIELDS.get(job, ()) and isinstance(value, list):
         if not value:
             return "empty"
@@ -389,6 +408,11 @@ def compare_pair(
             va, vb = ra[f], rb[f]
             if f in list_fields and job == "mitre_map" and context is not None:
                 va, vb = _resolved_tools(va, context), _resolved_tools(vb, context)
+            if job == "csf_score":
+                # Compared as stored: "2" and 2 are the same applied score.
+                from app.routes.csf import _validated_dimension
+
+                va, vb = _validated_dimension(va)[0], _validated_dimension(vb)[0]
             if f in list_fields:
                 sa, sb = _str_set(va), _str_set(vb)
                 if sa is None or sb is None:
