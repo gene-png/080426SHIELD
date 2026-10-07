@@ -128,11 +128,11 @@ def test_catalog_returns_dod_when_requested(app_client) -> None:
     )
     body = r.json()
     assert body["framework"] == "dod_ztra"
-    assert body["total_capabilities"] == 50
+    assert body["total_capabilities"] == 45  # #839
     assert len(body["pillars"]) == 7
     # DoD label vocabulary: 3 levels (Work Order A4).
     labels = {s["label"] for s in body["stages"]}
-    assert labels == {"Not Started", "Target", "Advanced"}
+    assert labels == {"Below Target", "Target", "Advanced"}
     assert len(body["stages"]) == 3
 
 
@@ -210,14 +210,14 @@ def test_create_assessment_seeds_cisa_with_37_empty_answers(app_client) -> None:
 
 
 @pytest.mark.unit
-def test_create_assessment_seeds_dod_with_50_empty_answers(app_client) -> None:
+def test_create_assessment_seeds_dod_with_45_empty_answers(app_client) -> None:
     c = app_client
     admin = _register(c, "admin@example.com")
     bearer = admin["tokens"]["access_token"]
     svc_id = _open_service(c, bearer, "zero_trust_dod")
     body = _new_assessment(c, bearer, svc_id)
     assert body["framework"] == "dod_ztra"
-    assert len(body["answers"]) == 50
+    assert len(body["answers"]) == 45  # #839
 
 
 @pytest.mark.unit
@@ -384,7 +384,7 @@ def test_score_endpoint_rolls_up_dod(app_client) -> None:
         headers={"Authorization": f"Bearer {bearer}"},
     )
     body = r.json()
-    assert body["total_capabilities"] == 50
+    assert body["total_capabilities"] == 45  # #839
     assert body["average_stage"] == 3.0
     # DoD stage 3 ("Advanced") is the top of the 3-level scale -> 100%.
     assert body["overall_stage_label"] == "Advanced"
