@@ -92,9 +92,14 @@ def _caps(*rows: dict) -> dict:
     return {"capabilities": list(rows)}
 
 
+#: zt_score's measure context: the framework's top stage, which the apply
+#: path's `_validated_stage` judges range against. CISA ZTMM 2.0 has four.
+CISA_MAX = 4
+
+
 def test_identical_runs_agree_fully_with_denominators() -> None:
     a = _caps({"code": "C1", "current": 2, "target": 3}, {"code": "C2", "current": 1, "target": 3})
-    r = compare_pair("zt_score", a, json.loads(json.dumps(a)))
+    r = compare_pair("zt_score", a, json.loads(json.dumps(a)), context=CISA_MAX)
     assert r["rows"] == {
         "in_both": 2,
         "only_in_a": 0,
@@ -120,7 +125,7 @@ def test_identical_runs_agree_fully_with_denominators() -> None:
 def test_a_moved_value_counts_against_that_field_only() -> None:
     a = _caps({"code": "C1", "current": 2, "target": 3}, {"code": "C2", "current": 1, "target": 3})
     b = _caps({"code": "C1", "current": 3, "target": 3}, {"code": "C2", "current": 1, "target": 3})
-    r = compare_pair("zt_score", a, b)
+    r = compare_pair("zt_score", a, b, context=CISA_MAX)
     assert r["fields"]["current"]["compared"] == 2
     assert r["fields"]["current"]["equal"] == 1
     assert r["fields"]["current"]["within_one"] == 2
@@ -131,7 +136,7 @@ def test_a_moved_value_counts_against_that_field_only() -> None:
 def test_a_row_in_one_run_only_is_counted_not_dropped() -> None:
     a = _caps({"code": "C1", "current": 2, "target": 3}, {"code": "C2", "current": 1, "target": 3})
     b = _caps({"code": "C1", "current": 2, "target": 3}, {"code": "C3", "current": 1, "target": 3})
-    r = compare_pair("zt_score", a, b)
+    r = compare_pair("zt_score", a, b, context=CISA_MAX)
     assert r["rows"]["in_both"] == 1
     assert r["rows"]["only_in_a"] == 1
     assert r["rows"]["only_in_b"] == 1
@@ -142,7 +147,7 @@ def test_a_row_in_one_run_only_is_counted_not_dropped() -> None:
 def test_a_field_one_run_omitted_is_counted_as_missing() -> None:
     a = _caps({"code": "C1", "current": 2, "target": 3})
     b = _caps({"code": "C1", "current": 2})
-    r = compare_pair("zt_score", a, b)
+    r = compare_pair("zt_score", a, b, context=CISA_MAX)
     assert r["fields"]["target"]["compared"] == 1
     assert r["fields"]["target"]["one_absent"] == 1
     assert r["fields"]["target"]["equal"] == 0
@@ -156,7 +161,7 @@ def test_true_and_one_are_not_the_same_answer() -> None:
     # given the same answer as one that writes 1.
     a = _caps({"code": "C1", "current": True, "target": 3})
     b = _caps({"code": "C1", "current": 1, "target": 3})
-    r = compare_pair("zt_score", a, b)
+    r = compare_pair("zt_score", a, b, context=CISA_MAX)
     assert r["fields"]["current"]["compared"] == 1
     assert r["fields"]["current"]["equal"] == 0
     # Not a whole-number stage on one side, so it cannot be "within one".
@@ -170,7 +175,7 @@ def test_unreadable_and_duplicate_rows_are_counted() -> None:
         {"code": "C1", "current": 1, "target": 3},
     )
     b = _caps({"code": "C1", "current": 2, "target": 3})
-    r = compare_pair("zt_score", a, b)
+    r = compare_pair("zt_score", a, b, context=CISA_MAX)
     assert r["rows"]["unreadable_a"] == 1
     assert r["rows"]["duplicate_keys_a"] == 1
     # A duplicated key is ambiguous, so it is compared in neither run.
@@ -274,7 +279,7 @@ def _ok(data: dict) -> RunRecord:
 
 def test_all_runs_ok_exits_zero_and_pairs_every_combination() -> None:
     good = _caps({"code": "C1", "current": 2, "target": 3})
-    s = summarize("zt_score", [_ok(good), _ok(good), _ok(good)])
+    s = summarize("zt_score", [_ok(good), _ok(good), _ok(good)], context=CISA_MAX)
     assert [p["pair"] for p in s["pairs"]] == [[1, 2], [1, 3], [2, 3]]
     assert s["exit_code"] == 0
     assert s["tokens"] == {"input": 30, "output": 60, "complete": True}
@@ -481,6 +486,7 @@ def test_csf_levels_go_through_the_engine_and_apply_the_evidence_cap() -> None:
     levels = csf_levels(data, has_evidence={"high|A": True, "high|B": False, "high|C": True})
     assert levels == {
         "levels": {"high|A": 5, "high|B": 2, "high|C": 1},
+        "unscoreable_keys": [],
         "not_scoreable": 0,
         # B scored a total of 10 and was capped to Level 2 for want of evidence.
         "evidence_capped": 1,
@@ -488,7 +494,13 @@ def test_csf_levels_go_through_the_engine_and_apply_the_evidence_cap() -> None:
 
 
 def test_csf_levels_never_clamp_or_coerce_a_bad_dimension() -> None:
-    # The engine's `clamped()` would read 3 as 2, `true` as 1 and "2" as 2.
+    # The engine's `clamped()` would read 3 as 2 and `true` as 1; the apply
+    # path (`_validated_dimension`) refuses both, so neither row is scored.
+    #
+    # This test used to put "2" among the refused values. That was WRONG
+    # against the apply path, which stores "2" as 2 (#867 narrow review B-3):
+    # the measure restated the rule and disagreed with it. "2" now scores
+    # exactly as 2 does (row C against row F below).
     data = {
         "scores": [
             _csf_row("high", "A", (3, 1, 1, 1, 1)),
@@ -496,10 +508,43 @@ def test_csf_levels_never_clamp_or_coerce_a_bad_dimension() -> None:
             _csf_row("high", "C", ("2", 1, 1, 1, 1)),
             {"tier": "high", "subcategory_code": "D", "governance": 1},  # four missing
             _csf_row("high", "E", (1, 1, 1, 1, 1)),
+            _csf_row("high", "F", (2, 1, 1, 1, 1)),
+            _csf_row("high", "G", (2.0, 1, 1, 1, 1)),
+            _csf_row("high", "H", (1.5, 1, 1, 1, 1)),
         ]
     }
-    levels = csf_levels(data, has_evidence={f"high|{k}": True for k in "ABCDE"})
-    assert levels == {"levels": {"high|E": 2}, "not_scoreable": 4, "evidence_capped": 0}
+    levels = csf_levels(data, has_evidence={f"high|{k}": True for k in "ABCDEFGH"})
+    assert sorted(levels["levels"]) == ["high|C", "high|E", "high|F", "high|G"]
+    assert levels["levels"]["high|E"] == 2
+    assert levels["levels"]["high|C"] == levels["levels"]["high|F"], '"2" scores as 2'
+    assert levels["levels"]["high|G"] == levels["levels"]["high|F"], "2.0 scores as 2"
+    assert levels["unscoreable_keys"] == ["high|A", "high|B", "high|D", "high|H"]
+    assert (levels["not_scoreable"], levels["evidence_capped"]) == (4, 0)
+
+
+def test_a_row_unscoreable_in_either_run_is_compared_without_agreement() -> None:
+    """#867 narrow review B-3: 100 rows; run B leaves 90 of them unscoreable.
+    Intersecting the two runs' SCORED rows read that as 10 of 10 agreeing --
+    a run that scored less looked perfectly consistent."""
+    from scripts.measure_ai_consistency import csf_level_agreement
+
+    has_evidence = {f"high|R{i}": True for i in range(100)}
+    a = {"scores": [_csf_row("high", f"R{i}", (1, 1, 1, 1, 1)) for i in range(100)]}
+    b = {
+        "scores": [
+            _csf_row("high", f"R{i}", (1, 1, 1, 1, 1) if i < 10 else ("N/A", 1, 1, 1, 1))
+            for i in range(100)
+        ]
+    }
+    la, lb = csf_levels(a, has_evidence=has_evidence), csf_levels(b, has_evidence=has_evidence)
+    assert (len(la["levels"]), len(lb["levels"])) == (100, 10), "precondition"
+    d = csf_level_agreement(la, lb, has_evidence)
+    assert d["compared"] == 100, "the unscoreable rows left the denominator"
+    assert d["equal"] == 10
+    assert (d["one_unscoreable"], d["both_unscoreable"]) == (90, 0)
+    # And the same unscoreable rows in both runs: still no agreement.
+    both = csf_level_agreement(lb, lb, has_evidence)
+    assert (both["compared"], both["equal"], both["both_unscoreable"]) == (100, 10, 90)
 
 
 # --- run_loop: the output-token budget ---------------------------------------
@@ -516,7 +561,7 @@ def test_run_loop_stops_starting_runs_once_the_output_budget_is_spent() -> None:
     # Run 2 takes the total to 1200 > 1000, so run 3 never starts.
     assert calls == [1, 2]
     assert [r.failure for r in records] == [None, None, "stopped_output_budget"]
-    assert summarize("zt_score", records)["exit_code"] == 1
+    assert summarize("zt_score", records, context=CISA_MAX)["exit_code"] == 1
 
 
 def test_run_loop_without_a_budget_runs_them_all() -> None:
@@ -602,7 +647,13 @@ def test_measure_csf_runs_every_batch_and_applies_nothing(csf_world) -> None:
     # Tokens are every batch's, read from the llm_calls rows each batch wrote.
     assert report["tokens"] == {"input": 2 * 11 * 7, "output": 2 * 11 * 11, "complete": True}
     # Seeded rows carry no evidence, so every compared level is capped at L2.
-    assert report["pairs"][0]["level"] == {"compared": 106, "equal": 106, "no_evidence_rows": 106}
+    assert report["pairs"][0]["level"] == {
+        "compared": 106,
+        "equal": 106,
+        "one_unscoreable": 0,
+        "both_unscoreable": 0,
+        "no_evidence_rows": 106,
+    }
 
 
 def test_a_csf_run_with_a_failed_batch_is_a_failed_run(csf_world) -> None:
@@ -647,7 +698,13 @@ def test_measure_csf_reports_level_disagreement_between_runs(csf_world) -> None:
         report = measure_csf(db, LLMClient(provider), runs=2)
         db.commit()
     # Total 5 is Level 2 and total 0 is Level 1: every row's level moved.
-    assert report["pairs"][0]["level"] == {"compared": 106, "equal": 0, "no_evidence_rows": 106}
+    assert report["pairs"][0]["level"] == {
+        "compared": 106,
+        "equal": 0,
+        "one_unscoreable": 0,
+        "both_unscoreable": 0,
+        "no_evidence_rows": 106,
+    }
     assert report["pairs"][0]["fields"]["governance"]["equal"] == 0
 
 
@@ -711,6 +768,25 @@ def test_a_non_json_response_is_a_failed_run_through_the_real_path(world) -> Non
     # The failed call's tokens are read from its llm_calls row, not zeroed.
     assert report["tokens"] == {"input": 15, "output": 18, "complete": True}
     assert report["exit_code"] == 1
+
+
+def test_measure_zt_counts_a_stage_the_run_refuses_as_no_agreement(world) -> None:
+    """#867 narrow review B-4, through `measure_zt`: a stage off CISA's 1..4
+    ladder, answered identically twice, is refused by the apply path both
+    times -- no agreement -- while its in-range sibling agrees."""
+    c, TestSession, provider = world
+    code = _zt_assessment(c)
+    provider.register_static(
+        "zt_score",
+        LLMResponse('{"capabilities": [{"code": "' + code + '", "current": 9, "target": 3}]}'),
+    )
+    with TestSession() as db:
+        report = measure_zt(db, LLMClient(provider), framework="cisa", runs=2)
+        db.commit()
+    fields = report["pairs"][0]["fields"]
+    assert (fields["current"]["compared"], fields["current"]["equal"]) == (1, 0)
+    assert fields["current"]["both_absent"] == 1
+    assert (fields["target"]["compared"], fields["target"]["equal"]) == (1, 1)
 
 
 # --- B1: main() refuses before it builds a provider -------------------------
@@ -909,7 +985,7 @@ def test_stop_on_failure_starts_no_run_after_a_failed_one() -> None:
     ]
     # Runs that never started made no call, so they do not make tokens incomplete;
     # run 1 did call and reported no output, so the total is incomplete.
-    assert summarize("zt_score", records)["tokens"]["complete"] is False
+    assert summarize("zt_score", records, context=CISA_MAX)["tokens"]["complete"] is False
 
 
 # --- review 2: the budget fails closed, and says what it spent ----------------
@@ -943,7 +1019,7 @@ def test_a_run_with_an_uncounted_call_also_stops_the_budget() -> None:
 def test_the_report_carries_the_budget_and_an_overrun_on_the_last_run() -> None:
     records = run_loop(2, lambda n: RunRecord(True, {}, None, 1, 600), max_output_tokens=1000)
     # Run 2 started at 600 <= 1000 and finished at 1200: an overrun, reported.
-    s = summarize("zt_score", records, max_output_tokens=1000)
+    s = summarize("zt_score", records, max_output_tokens=1000, context=CISA_MAX)
     assert s["budget"] == {
         "max_output_tokens": 1000,
         "spent_output_tokens": 1200,

@@ -40,7 +40,11 @@ engines rather than here: zt_score's gap count (`zt.scoring.analyze_gaps`),
 csf_score's per-row maturity level (`csf.playbook.score_tier`), mitre_map's
 per-technique R3 status (`attack.computed.status_from`, over citations resolved
 by the run's own `CitationResolver`), with agreement on the level or status per
-pair, and tech_debt_extract's reconciliation (`reconcile_rows`). List fields
+pair, and tech_debt_extract's reconciliation (`reconcile_rows`). A value the
+APPLY path would refuse is compared and never agreement (`_absence`); deciding
+that needs, for zt_score, the framework's top stage, and for mitre_map, the
+assessment's codes and the run's resolver (`AttackScope`), and a comparison
+without them is refused rather than guessed (`_require_context`). List fields
 (tool lists, `security_functions`) are compared as SETS, with a mean Jaccard. For zt_score it reports how often the model
 repeated the `current` stage it was sent (`echo`). Counts and codes only: no
 model text reaches the output or the logs.
@@ -226,6 +230,33 @@ def _same(a: Any, b: Any) -> bool:
     return type(a) is type(b) and a == b
 
 
+@dataclass(frozen=True)
+class AttackScope:
+    """What the mitre_map APPLY path checks a suggestion against
+    (`routes/attack.py`): the assessment's technique codes -- a code outside
+    them finds no row and is skipped (`row is None`) -- and the run's
+    `CitationResolver`. `resolver=None` compares tool lists as sent."""
+
+    resolver: Any
+    assessment_codes: frozenset[str]
+
+
+def _require_context(job: str, context: Any) -> None:
+    """Refuse a comparison the apply path's refusals cannot be judged in. A
+    missing context is "could not look", and must never share a branch with
+    "nothing refused" (CLAUDE.md: the silent-success branch)."""
+    if job == "mitre_map" and not isinstance(context, AttackScope):
+        raise TypeError(
+            "mitre_map needs an AttackScope: whether a suggestion is refused depends "
+            f"on the assessment's codes; got {type(context).__name__}."
+        )
+    if job == "zt_score" and not _is_whole(context):
+        raise TypeError(
+            "zt_score needs the framework's max_stage (an int): the apply path "
+            f"refuses a stage off the ladder; got {type(context).__name__}."
+        )
+
+
 def _index(
     rows: Sequence[Any], key_fields: tuple[str, ...], *, unkeyable: list[int] | None = None
 ) -> tuple[dict, int, int]:
@@ -269,14 +300,29 @@ _PARSER_SENTINELS: dict[str, dict[str, Callable[[], Any]]] = {
 }
 
 
-def _attack_row_refused(row: Mapping[str, Any]) -> bool:
-    """Would the mitre_map APPLY path refuse this suggestion WHOLE? Decided by
-    the route's own set and the vocabulary's own predicate, called, never
-    restated (`routes/attack.py`: a status outside `_AI_WRITABLE_STATUSES`, or
-    an offered reason `is_valid_reason` rejects for that status)."""
+def _attack_row_refused(row: Mapping[str, Any], scope: AttackScope) -> bool:
+    """Would the mitre_map APPLY path write NOTHING from this suggestion? In the
+    route's own order (`routes/attack.py`, the run's apply loop):
+
+    1. a code the assessment does not hold: `rows.get(code)` is None, skipped;
+    2. a computed parent: `is_computed_parent`, `parent_suggestions_refused`;
+    3. a status outside `_AI_WRITABLE_STATUSES`: `statuses_rejected`;
+    4. an offered reason `is_valid_reason` rejects for it: `reason_codes_rejected`.
+
+    Steps 2-4 CALL the route's set and the catalog's and vocabulary's
+    predicates; step 1 is membership in the codes the apply path indexes
+    (`AttackScope.assessment_codes`, built from the same `req.rows`). Locked and
+    concurrently edited rows are skipped too, and are NOT modelled here: they
+    are consultant state, not the model's answer (`attack_downstream`)."""
     from app.attack.coverage import is_valid_reason
+    from app.attack.parents import is_computed_parent
     from app.routes.attack import _AI_WRITABLE_STATUSES
 
+    code = row.get("technique_code")
+    if not (isinstance(code, str) and code in scope.assessment_codes):
+        return True
+    if is_computed_parent(code):
+        return True
     st = row.get("status")
     if not (isinstance(st, str) and st in _AI_WRITABLE_STATUSES):
         return True
@@ -307,35 +353,33 @@ def _absence(job: str, field: str, row: Mapping[str, Any], context: Any = None) 
     | null       | any scalar; the extraction's refused values become null (#878) |
     | empty      | list fields: the tool lists, `security_functions`            |
     | sentinel   | tech_debt `name`: the parser invents one when none was sent  |
-    | refused    | mitre_map: the apply path refuses the whole suggestion (a    |
-    |            | status it may not write, a mispaired reason), and a tool     |
-    |            | list none of whose names the run's resolver can place.       |
-    |            | csf_score: `routes/csf.py::_validated_dimension` refuses it  |
-    |            | (unparseable, outside 0-2, not whole). zt_score: the apply   |
-    |            | path's `_as_number` cannot parse it ("unknown", "", a list). |
+    | refused    | mitre_map: the apply path writes nothing from the suggestion |
+    |            | (`_attack_row_refused`: a code the assessment lacks, a       |
+    |            | computed parent, a status it may not write, a mispaired      |
+    |            | reason), and a tool list none of whose names the run's       |
+    |            | resolver can place. csf_score: `routes/csf.py::              |
+    |            | _validated_dimension` refuses it (unparseable, outside 0-2,  |
+    |            | not whole). zt_score: `routes/zt.py::_validated_stage`       |
+    |            | refuses it (unparseable, off the 1..max_stage ladder, not    |
+    |            | whole). The tech_debt extraction's refusals arrive as null.  |
 
-    SCOPE, stated because the table reads as complete and is not: a zt_score
-    stage the apply path refuses for RANGE or WHOLENESS (0, 5 on CISA, 2.5) is
-    NOT in it. Those checks are inline in `routes/zt.py::_zt_run_work`, not a
-    callable function, and are not copied here; the follow-up extracts a
-    `_validated_stage` there and switches this to it. Until then a run that
-    answers 0 twice reads as agreeing on that field. The tech_debt extraction's
-    own refusals are covered, since they arrive as null.
+    Every refusal above is the apply path's own function, CALLED (#867 review
+    B-1, B-4); none is restated here.
 
     ONE rule for all of them, in `compare_pair`: the pair is COMPARED, adds
     NOTHING to any agreement figure, and is counted in `both_absent` /
     `one_absent`. A list field holding a non-list is not an absence but a
     malformed answer, counted as `not_a_list` under the same rule.
 
-    `context` is the run's `CitationResolver` for mitre_map; without one, tool
-    lists are compared as sent.
+    `context` is the job's `_require_context`: an `AttackScope` for mitre_map,
+    the framework's max stage for zt_score.
     """
     if field not in row:
         return "missing"
     value = row[field]
     if value is None:
         return "null"
-    if job == "mitre_map" and _attack_row_refused(row):
+    if job == "mitre_map" and _attack_row_refused(row, context):
         return "refused"
     if job == "csf_score":
         # The apply path's own validator, called (#867): unparseable, outside
@@ -345,17 +389,17 @@ def _absence(job: str, field: str, row: Mapping[str, Any], context: Any = None) 
         if _validated_dimension(value)[1] is not None:
             return "refused"
     if job == "zt_score":
-        # ONLY the apply path's number parser is a callable function for ZT;
-        # its range and wholeness checks are inline in `_zt_run_work` and are
-        # NOT copied here (see SCOPE above).
-        from app.routes.zt import _as_number as _zt_as_number
+        # The apply path's own validator, called (#867 review B-4): parse,
+        # range 1..max_stage, wholeness, as `_zt_run_work` judges them.
+        from app.routes.zt import _validated_stage
 
-        if _zt_as_number(value) is None:
+        if _validated_stage(value, context)[1] is not None:
             return "refused"
     if field in _LIST_FIELDS.get(job, ()) and isinstance(value, list):
         if not value:
             return "empty"
-        if job == "mitre_map" and context is not None and not _resolved_tools(value, context):
+        resolver = context.resolver if job == "mitre_map" else None
+        if resolver is not None and not _resolved_tools(value, resolver):
             return "refused"
     sentinel = _PARSER_SENTINELS.get(job, {}).get(field)
     if sentinel is not None and value == sentinel():
@@ -372,9 +416,12 @@ def compare_pair(
     `compared` is EVERY row in both runs, for every field. A pair where either
     side is absent (`_absence`) or a list field is malformed is compared and
     adds nothing to `equal`, `within_one`, `mean_abs_diff` or the Jaccard -- so
-    a run that answers LESS can never read as more consistent. With `context`
-    (mitre_map's resolver), tool lists are compared as the run would STORE
-    them: resolved names only."""
+    a run that answers LESS can never read as more consistent. Values are
+    compared as the apply path would STORE them: csf_score's dimensions through
+    `_validated_dimension`, zt_score's stages through `_validated_stage`, so "2"
+    and 2 agree; mitre_map's tool lists resolved by `context.resolver` when it
+    has one. `context` is required where `_require_context` says so."""
+    _require_context(job, context)
     list_key, key_fields, fields = _job_shape(job)
     objects_only = job in _OBJECTS_ONLY_UPSTREAM
     keyless_a: list[int] | None = [] if objects_only else None
@@ -406,13 +453,20 @@ def compare_pair(
                 one_absent += 1
                 continue
             va, vb = ra[f], rb[f]
-            if f in list_fields and job == "mitre_map" and context is not None:
-                va, vb = _resolved_tools(va, context), _resolved_tools(vb, context)
+            if f in list_fields and job == "mitre_map" and context.resolver is not None:
+                va = _resolved_tools(va, context.resolver)
+                vb = _resolved_tools(vb, context.resolver)
             if job == "csf_score":
                 # Compared as stored: "2" and 2 are the same applied score.
                 from app.routes.csf import _validated_dimension
 
                 va, vb = _validated_dimension(va)[0], _validated_dimension(vb)[0]
+            if job == "zt_score":
+                # Compared as stored, the twin of csf_score's line above (#867
+                # review B-5): "2" and 2 are the same applied stage.
+                from app.routes.zt import _validated_stage
+
+                va, vb = _validated_stage(va, context)[0], _validated_stage(vb, context)[0]
             if f in list_fields:
                 sa, sb = _str_set(va), _str_set(vb)
                 if sa is None or sb is None:
@@ -497,6 +551,10 @@ def echo_share(job: str, inputs: Mapping[str, Any], data: Mapping[str, Any]) -> 
                 nothing_sent += 1
                 continue
             answered += 1
+            # Raw, NOT through `_validated_stage`, deliberately: this asks
+            # whether the model REPEATED its input, and "2" for a sent 2 is a
+            # different string than it was sent. The agreement figures compare
+            # stored values (`compare_pair`); this one does not.
             if _same(sent, row[field]):
                 echoed += 1
         out[field] = {"sent_and_answered": answered, "echoed": echoed, "nothing_sent": nothing_sent}
@@ -516,6 +574,13 @@ def zt_downstream(framework: Any, *, engagement_stage: int, data: Mapping[str, A
     simply left rows blank. `unusable_target_codes` is the engine's own list.
     Rows the real apply path would skip (locked, protected, edited) are not
     modelled: this is what the model ASKED for, not what a run would write.
+
+    A TWIN LEFT ALONE, on purpose (#867 review B-4/B-5): unlike `compare_pair`
+    and `csf_levels`, this does NOT go through `routes/zt.py::_validated_stage`.
+    It passes out-of-range whole numbers ON so the engine names unusable
+    targets, which the validator would hide; and it reads "2" as non-integer
+    where the apply path stores 2. The second is a known disagreement with the
+    apply path, recorded on #867 for a decision rather than changed here.
     """
     from app.zt.catalog import capabilities
     from app.zt.maturity import level_count
@@ -561,23 +626,32 @@ def csf_levels(data: Mapping[str, Any], *, has_evidence: Mapping[str, bool]) -> 
     client sees per (tier, subcategory) -- keyed "tier|subcategory_code" as the
     route keys its rows.
 
-    Only a row whose five dimensions are all whole numbers 0-2 is scored. The
-    engine's `clamped()` calls `int()` and clamps, so it would read 3 as 2,
-    `true` as 1 and "2" as 2; such a row is counted in `not_scoreable` instead.
-    `has_evidence` is the stored row's flag, as the route passes it."""
+    A row is scored only when the apply path would store all five of its
+    dimensions: each goes through `routes/csf.py::_validated_dimension`, CALLED
+    (#867 review B-3), so "2" and 2.0 score as 2, and 3, `true` or 1.5 make the
+    row unscoreable rather than reaching the engine's `clamped()`, which would
+    read them as 2, 1 and 1. `unscoreable_keys` names the assessment's rows the
+    run ANSWERED and left unscoreable, so a pair can count them
+    (`csf_level_agreement`); `not_scoreable` also counts entries naming no row
+    of the assessment. `has_evidence` is the stored row's flag, as the route
+    passes it."""
     from app.csf.playbook import DimensionScores, score_tier
-    from app.routes.csf import _DIM_FIELDS
+    from app.routes.csf import _DIM_FIELDS, _validated_dimension
 
     levels: dict[str, int] = {}
+    unscoreable: set[str] = set()
     not_scoreable = evidence_capped = 0
     for row in data.get("scores") or []:
         if not isinstance(row, dict):
             continue
         key = f"{row.get('tier')}|{row.get('subcategory_code')}"
-        dims = [row.get(f) for f in _DIM_FIELDS]
-        if key not in has_evidence or not all(_is_whole(d) and 0 <= d <= 2 for d in dims):
+        checked = [_validated_dimension(row.get(f)) for f in _DIM_FIELDS]
+        if key not in has_evidence or any(reason is not None for _, reason in checked):
             not_scoreable += 1
+            if key in has_evidence:
+                unscoreable.add(key)
             continue
+        dims = [value for value, _ in checked]
         result = score_tier(
             DimensionScores(**dict(zip(_DIM_FIELDS, dims, strict=True))),
             has_evidence=has_evidence[key],
@@ -587,7 +661,41 @@ def csf_levels(data: Mapping[str, Any], *, has_evidence: Mapping[str, bool]) -> 
     # `evidence_capped` counts the rows whose level the engine CAPPED for want of
     # evidence (CSF_Flow_Spec section 8: at most Level 2). Without it, a run that
     # scored every row L4 and one that scored every row L2 read as agreeing.
-    return {"levels": levels, "not_scoreable": not_scoreable, "evidence_capped": evidence_capped}
+    return {
+        "levels": levels,
+        # A key answered twice, once scoreable, is in both: the pair rule below
+        # then counts it as unscoreable, never as agreement.
+        "unscoreable_keys": sorted(unscoreable),
+        "not_scoreable": not_scoreable,
+        "evidence_capped": evidence_capped,
+    }
+
+
+def csf_level_agreement(
+    la: Mapping[str, Any], lb: Mapping[str, Any], has_evidence: Mapping[str, bool]
+) -> dict:
+    """Level agreement between two runs' `csf_levels`, under the absence rule
+    (#867 review B-3): every row ANSWERED in both runs is compared; a row left
+    unscoreable in EITHER adds nothing to `equal` and is counted in
+    `one_unscoreable` / `both_unscoreable`, as `compare_pair` counts
+    `one_absent` / `both_absent`. Intersecting the SCORED rows instead let a
+    run that scored 10 of 100 rows read as 10 of 10 agreeing."""
+    scored_a, scored_b = la["levels"], lb["levels"]
+    gone_a = set(la["unscoreable_keys"])
+    gone_b = set(lb["unscoreable_keys"])
+    both = (set(scored_a) | gone_a) & (set(scored_b) | gone_b)
+    lost_a = {k for k in both if k in gone_a or k not in scored_a}
+    lost_b = {k for k in both if k in gone_b or k not in scored_b}
+    judged = both - lost_a - lost_b
+    return {
+        "compared": len(both),
+        "equal": sum(scored_a[k] == scored_b[k] for k in judged),
+        "one_unscoreable": len(lost_a ^ lost_b),
+        "both_unscoreable": len(lost_a & lost_b),
+        # Rows with no evidence can never score above Level 2, so their
+        # level agreement is agreement within a capped range.
+        "no_evidence_rows": sum(1 for k in both if not has_evidence[k]),
+    }
 
 
 def run_loop(
@@ -922,7 +1030,9 @@ def measure_zt(
     records = run_loop(
         runs, one_run, max_output_tokens=max_output_tokens, stop_on_failure=stop_on_failure
     )
-    report = summarize("zt_score", records, max_output_tokens=max_output_tokens)
+    report = summarize(
+        "zt_score", records, max_output_tokens=max_output_tokens, context=req.max_stage
+    )
     report["assessment_id"] = str(a.id)
     report["assessment_capabilities"] = len(req.rows)
     report["engagement_stage"] = {"stage": stage, "source": stage_source}
@@ -1133,15 +1243,9 @@ def measure_csf(
     )
     levels = {n: csf_levels(data, has_evidence=has_evidence) for n, data in _ok_runs(records)}
     for pair in report["pairs"]:
-        la, lb = levels[pair["pair"][0]]["levels"], levels[pair["pair"][1]]["levels"]
-        both = set(la) & set(lb)
-        pair["level"] = {
-            "compared": len(both),
-            "equal": sum(la[k] == lb[k] for k in both),
-            # Rows with no evidence can never score above Level 2, so their
-            # level agreement is agreement within a capped range.
-            "no_evidence_rows": sum(1 for k in both if not has_evidence[k]),
-        }
+        pair["level"] = csf_level_agreement(
+            levels[pair["pair"][0]], levels[pair["pair"][1]], has_evidence
+        )
     report["assessment_id"] = str(a.id)
     report["rows"] = len(req.rows)
     report["batches_per_run"] = len(batches)
@@ -1166,12 +1270,12 @@ def measure_csf(
     return report
 
 
-def attack_downstream(data: Mapping[str, Any], resolver: Any) -> dict:
+def attack_downstream(data: Mapping[str, Any], scope: AttackScope) -> dict:
     """Each technique's R3 status as this run would leave it, computed by the
     engine (`attack.computed.capabilities` / `status_from`).
 
     Every tool list is resolved with `resolve_citations` and the run's own
-    `CitationResolver`, as the apply path resolves it: an unknown tool is
+    `CitationResolver` (`scope.resolver`), as the apply path resolves it: an unknown tool is
     dropped, and a resolved inference is recorded as an UNCLEARED citation, so
     it counts as awaiting review rather than in place -- which is what a fresh
     run writes. A list that is not a list resolves to nothing, as there.
@@ -1187,6 +1291,8 @@ def attack_downstream(data: Mapping[str, Any], resolver: Any) -> dict:
     from app.attack.citations import resolve_citations
     from app.attack.computed import capabilities, status_from
 
+    _require_context("mitre_map", scope)
+    resolver = scope.resolver
     index, _, _ = _index(data.get("techniques") or [], ("technique_code",))
     computed: dict[str, str] = {}
     differs = 0
@@ -1213,7 +1319,7 @@ def attack_downstream(data: Mapping[str, Any], resolver: Any) -> dict:
         differs += int(row.get("status") != status)
         if not any(lists.values()):
             no_tools.add(code)
-        if _attack_row_refused(row):
+        if _attack_row_refused(row, scope):
             refused.add(code)
     return {
         "computed_status": computed,
@@ -1229,20 +1335,34 @@ def attack_downstream(data: Mapping[str, Any], resolver: Any) -> dict:
 
 def computed_status_agreement(da: Mapping[str, Any], db: Mapping[str, Any]) -> dict:
     """The R3 status agreement between two runs' `attack_downstream`, under the
-    absence rule: every technique in both is COMPARED; one with no tool in
-    BOTH runs (`both_no_tools`) or refused in EITHER (`refused`) adds nothing
-    to `equal`, so a prompt that cites fewer tools cannot score higher."""
+    absence rule `compare_pair` applies per field: every technique in both is
+    COMPARED, and only one where BOTH runs gave a usable answer is `judged`
+    and may add to `equal`. The rest are counted, each in exactly one bucket:
+
+    * `refused` -- the apply path writes nothing from it in EITHER run;
+    * `both_no_tools` -- no resolvable tool in either run (the field rule's
+      `both_absent`);
+    * `one_no_tools` -- no resolvable tool in ONE run (`one_absent`; #867
+      review B-2). Its computed gap equals the other run's only by accident --
+      a run citing only inferred tools computes gap too -- so it is never
+      agreement.
+
+    So a prompt that cites fewer tools, in one run or both, cannot score
+    higher."""
     sa, sb = da["computed_status"], db["computed_status"]
     both = set(sa) & set(sb)
     no_a, no_b = set(da["no_tools"]), set(db["no_tools"])
-    ref = set(da["refused"]) | set(db["refused"])
-    both_no_tools = {k for k in both if k in no_a and k in no_b} - ref
-    judged = both - both_no_tools - ref
+    ref = both & (set(da["refused"]) | set(db["refused"]))
+    both_no_tools = (both & no_a & no_b) - ref
+    one_no_tools = (both & (no_a ^ no_b)) - ref
+    judged = both - ref - both_no_tools - one_no_tools
     return {
         "compared": len(both),
+        "judged": len(judged),
         "equal": sum(sa[k] == sb[k] for k in judged),
         "both_no_tools": len(both_no_tools),
-        "refused": len(both & ref),
+        "one_no_tools": len(one_no_tools),
+        "refused": len(ref),
     }
 
 
@@ -1327,6 +1447,9 @@ def measure_attack(
         redaction_mode=get_settings().shield_redaction_mode,
         name_hints=tuple(req.preview.name_hints or ()),
     )
+    # What the apply path checks each suggestion against: the assessment's
+    # rows (`req.rows`, the dict `_attack_run_work` indexes) and the resolver.
+    scope = AttackScope(resolver=resolver, assessment_codes=frozenset(req.rows))
     _log.info(
         "measure_ai_consistency.start",
         job="mitre_map",
@@ -1389,9 +1512,9 @@ def measure_attack(
         records,
         max_output_tokens=max_output_tokens,
         min_ok_runs=1 if probe_batches is not None else 2,
-        context=resolver,
+        context=scope,
     )
-    computed = {n: attack_downstream(data, resolver) for n, data in _ok_runs(records)}
+    computed = {n: attack_downstream(data, scope) for n, data in _ok_runs(records)}
     for pair in report["pairs"]:
         pair["computed_status"] = computed_status_agreement(
             computed[pair["pair"][0]], computed[pair["pair"][1]]

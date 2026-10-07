@@ -35,6 +35,7 @@ from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
 from scripts.measure_ai_consistency import (
+    AttackScope,
     Refused,
     attack_downstream,
     compare_pair,
@@ -74,7 +75,7 @@ def _tech(code: str, **fields) -> dict:
 def test_tool_lists_in_another_order_are_the_same_answer() -> None:
     a = {"techniques": [_tech("T1", detection_tools=["A", "B"])]}
     b = {"techniques": [_tech("T1", detection_tools=["B", "A"])]}
-    d = compare_pair("mitre_map", a, b)["fields"]["detection_tools"]
+    d = compare_pair("mitre_map", a, b, context=_T)["fields"]["detection_tools"]
     assert d["compared"] == 1
     assert d["judged"] == 1
     assert d["equal"] == 1
@@ -85,7 +86,7 @@ def test_tool_lists_in_another_order_are_the_same_answer() -> None:
 def test_a_dropped_tool_is_a_partial_overlap_not_a_match() -> None:
     a = {"techniques": [_tech("T1", response_tools=["A"])]}
     b = {"techniques": [_tech("T1", response_tools=["A", "B"])]}
-    d = compare_pair("mitre_map", a, b)["fields"]["response_tools"]
+    d = compare_pair("mitre_map", a, b, context=_T)["fields"]["response_tools"]
     assert d["equal"] == 0
     assert d["mean_jaccard"] == 0.5
 
@@ -93,7 +94,7 @@ def test_a_dropped_tool_is_a_partial_overlap_not_a_match() -> None:
 def test_a_bare_string_for_a_tool_list_is_counted_never_turned_into_a_set() -> None:
     a = {"techniques": [_tech("T1", prevention_tools="A")]}
     b = {"techniques": [_tech("T1", prevention_tools=["A"])]}
-    d = compare_pair("mitre_map", a, b)["fields"]["prevention_tools"]
+    d = compare_pair("mitre_map", a, b, context=_T)["fields"]["prevention_tools"]
     assert d["compared"] == 1
     assert d["not_a_list"] == 1
     assert d["equal"] == 0
@@ -102,7 +103,9 @@ def test_a_bare_string_for_a_tool_list_is_counted_never_turned_into_a_set() -> N
 
 def test_two_empty_tool_lists_are_counted_apart_never_as_agreement() -> None:
     a = {"techniques": [_tech("T1")]}
-    d = compare_pair("mitre_map", a, json.loads(json.dumps(a)))["fields"]["detection_tools"]
+    d = compare_pair("mitre_map", a, json.loads(json.dumps(a)), context=_T)["fields"][
+        "detection_tools"
+    ]
     assert d["compared"] == 1
     assert d["both_absent"] == 1
     assert d["judged"] == 0
@@ -118,8 +121,8 @@ def test_a_prompt_that_cites_fewer_tools_never_scores_as_more_consistent() -> No
     x_b = {"techniques": [_tech("T1", detection_tools=["A"]), _tech("T2", detection_tools=["C"])]}
     y_a = {"techniques": [_tech("T1", detection_tools=["A"]), _tech("T2")]}
     y_b = {"techniques": [_tech("T1", detection_tools=["A"]), _tech("T2")]}
-    x = compare_pair("mitre_map", x_a, x_b)["fields"]["detection_tools"]
-    y = compare_pair("mitre_map", y_a, y_b)["fields"]["detection_tools"]
+    x = compare_pair("mitre_map", x_a, x_b, context=_T)["fields"]["detection_tools"]
+    y = compare_pair("mitre_map", y_a, y_b, context=_T)["fields"]["detection_tools"]
     assert x["compared"] == y["compared"] == 2
     assert y["equal"] / y["compared"] <= x["equal"] / x["compared"], "same-set share rose"
     assert y["mean_jaccard"] <= x["mean_jaccard"], "the Jaccard rose for citing less"
@@ -129,7 +132,7 @@ def test_a_prompt_that_cites_fewer_tools_never_scores_as_more_consistent() -> No
 
 def test_citing_nothing_at_all_scores_zero_not_perfect() -> None:
     nothing = {"techniques": [_tech("T1"), _tech("T2")]}
-    d = compare_pair("mitre_map", nothing, json.loads(json.dumps(nothing)))["fields"][
+    d = compare_pair("mitre_map", nothing, json.loads(json.dumps(nothing)), context=_T)["fields"][
         "detection_tools"
     ]
     assert (d["equal"], d["compared"], d["mean_jaccard"]) == (0, 2, 0.0)
@@ -165,7 +168,7 @@ def test_a_row_with_no_key_is_unkeyable_never_compared_under_null() -> None:
 def test_mitre_map_compares_status_and_reason_and_never_the_rationale() -> None:
     a = {"techniques": [_tech("T1", status="partial", reason_code="detection_weak")]}
     b = {"techniques": [_tech("T1", status="gap", rationale="different words")]}
-    fields = compare_pair("mitre_map", a, b)["fields"]
+    fields = compare_pair("mitre_map", a, b, context=_T)["fields"]
     assert fields["status"]["equal"] == 0
     assert fields["reason_code"]["equal"] == 0
     assert fields["reason_code"]["both_absent"] == 0
@@ -210,11 +213,31 @@ def _resolver():
 
 
 def _a_code(*, preventable: bool) -> str:
+    """A technique the apply path SCORES: never a computed parent (#554, D-094),
+    whose suggestion `routes/attack.py` refuses whole (#867 review B-1). Before
+    B-1 the measure did not model that refusal, so a parent here read as an
+    ordinary row; it is now the `refused` state, tested on its own below."""
     from app.attack.catalog import NOT_PREVENTABLE, TECHNIQUES
+    from app.attack.parents import is_computed_parent
 
     return next(
-        t.id for t in TECHNIQUES if (t.id not in NOT_PREVENTABLE) is preventable and "." not in t.id
+        t.id
+        for t in TECHNIQUES
+        if (t.id not in NOT_PREVENTABLE) is preventable
+        and "." not in t.id
+        and not is_computed_parent(t.id)
     )
+
+
+def _scope(*codes: str, resolver=None) -> AttackScope:
+    """What the mitre_map apply path checks a suggestion against: the
+    assessment's technique codes (a code outside them is skipped there) and the
+    run's citation resolver (None: tool lists compared as sent)."""
+    return AttackScope(resolver=resolver, assessment_codes=frozenset(codes))
+
+
+#: The generic codes the set-comparison tests in this file use.
+_T = _scope("T1", "T2")
 
 
 def test_all_three_functions_from_listed_tools_compute_covered() -> None:
@@ -230,7 +253,7 @@ def test_all_three_functions_from_listed_tools_compute_covered() -> None:
             )
         ]
     }
-    out = attack_downstream(data, _resolver())
+    out = attack_downstream(data, _scope(code, resolver=_resolver()))
     assert out["computed_status"] == {code: "covered"}
     # The AI said partial; the arrays say covered.
     assert out["ai_status_differs"] == 1
@@ -248,7 +271,9 @@ def test_a_tool_not_on_the_list_provides_nothing() -> None:
             )
         ]
     }
-    assert attack_downstream(data, _resolver())["computed_status"] == {code: "partial"}
+    assert attack_downstream(data, _scope(code, resolver=_resolver()))["computed_status"] == {
+        code: "partial"
+    }
 
 
 def test_a_technique_that_cannot_be_prevented_is_judged_on_detect_and_respond() -> None:
@@ -258,7 +283,9 @@ def test_a_technique_that_cannot_be_prevented_is_judged_on_detect_and_respond() 
             _tech(code, detection_tools=["Sentinel Hub"], response_tools=["Vault Backup"])
         ]
     }
-    assert attack_downstream(data, _resolver())["computed_status"] == {code: "covered"}
+    assert attack_downstream(data, _scope(code, resolver=_resolver()))["computed_status"] == {
+        code: "covered"
+    }
 
 
 def test_an_inferred_citation_is_awaiting_review_not_in_place() -> None:
@@ -285,13 +312,19 @@ def test_an_inferred_citation_is_awaiting_review_not_in_place() -> None:
             )
         ]
     }
-    assert attack_downstream(exact, resolver)["computed_status"] == {code: "covered"}
-    assert attack_downstream(inferred, resolver)["computed_status"] == {code: "partial"}
+    assert attack_downstream(exact, _scope(code, resolver=resolver))["computed_status"] == {
+        code: "covered"
+    }
+    assert attack_downstream(inferred, _scope(code, resolver=resolver))["computed_status"] == {
+        code: "partial"
+    }
 
 
 def test_no_tools_computes_a_gap() -> None:
     code = _a_code(preventable=True)
-    out = attack_downstream({"techniques": [_tech(code, status="gap")]}, _resolver())
+    out = attack_downstream(
+        {"techniques": [_tech(code, status="gap")]}, _scope(code, resolver=_resolver())
+    )
     assert out == {
         "computed_status": {code: "gap"},
         "ai_status_differs": 0,
@@ -474,8 +507,10 @@ def test_measure_attack_runs_every_batch_and_applies_nothing(attack_world) -> No
     assert pair["fields"]["detection_tools"]["mean_jaccard"] == 1.0
     assert pair["computed_status"] == {
         "compared": sent,
+        "judged": sent,
         "equal": sent,
         "both_no_tools": 0,
+        "one_no_tools": 0,
         "refused": 0,
     }
     # Every tool cited exactly as listed, all three functions present.
@@ -486,6 +521,57 @@ def test_measure_attack_runs_every_batch_and_applies_nothing(attack_world) -> No
         "complete": True,
     }
     assert report["exit_code"] == 0
+
+
+def test_measure_attack_counts_parent_and_stray_answers_as_refused(attack_world) -> None:
+    """#867 narrow review B-1, through `measure_attack`: the route never SENDS a
+    computed parent, but `_run_mitre_map_batched` keeps every object the model
+    returns. A parent the assessment holds and a code it does not, answered
+    identically in both runs, are refused by the apply path -- never agreement."""
+    from app.attack.parents import PARENT_CHILDREN
+    from app.models.attack_assessment import AttackCoverage
+
+    _, TestSession, provider = attack_world
+    with TestSession() as db:
+        held = set(db.execute(select(AttackCoverage.technique_code)).scalars())
+    parent = sorted(c for c in PARENT_CHILDREN if c in held)[0]
+    stray = "T9999.999"
+    assert stray not in held, "precondition: the stray code is not in the assessment"
+    extra = [
+        {
+            "technique_code": code,
+            "status": "covered",
+            "reason_code": None,
+            "detection_tools": ["Sentinel Hub"],
+            "prevention_tools": ["Falcon Sensor"],
+            "response_tools": ["Vault Backup"],
+            "rationale": "r",
+        }
+        for code in (parent, stray)
+    ]
+
+    with TestSession() as db:
+        first_code = _techniques_the_route_sends(db)[0]
+
+    def with_extras(payload: dict) -> LLMResponse:
+        # The extras ride on ONE batch per run (the one asked for the first
+        # code), so neither becomes a duplicated key within a run.
+        body = json.loads(_cover_every_asked_technique(payload).content)
+        if first_code in payload["technique_codes"]:
+            body["techniques"] += extra
+        return LLMResponse(json.dumps(body), input_tokens=3, output_tokens=5)
+
+    provider.register("mitre_map", with_extras)
+    with TestSession() as db:
+        report = measure_attack(db, LLMClient(provider), runs=2)
+        db.commit()
+    sent = report["techniques_sent"]
+    pair = report["pairs"][0]
+    assert pair["rows"]["in_both"] == sent + 2, "precondition: both extras answered twice"
+    assert pair["fields"]["status"]["equal"] == sent, "a refused suggestion agreed"
+    assert pair["fields"]["status"]["both_absent"] == 2
+    assert pair["computed_status"]["refused"] == 2
+    assert pair["computed_status"]["equal"] == sent
 
 
 def test_a_mitre_map_run_with_a_failed_batch_is_a_failed_run(attack_world) -> None:
@@ -948,7 +1034,7 @@ def test_a_null_reason_code_is_counted_as_absent_for_mitre_map() -> None:
             _tech("T2", status="partial", reason_code="detection_weak"),
         ]
     }
-    r = compare_pair("mitre_map", a, json.loads(json.dumps(a)))["fields"]["reason_code"]
+    r = compare_pair("mitre_map", a, json.loads(json.dumps(a)), context=_T)["fields"]["reason_code"]
     assert (r["compared"], r["equal"], r["both_absent"]) == (2, 1, 1)
 
 
@@ -1058,8 +1144,16 @@ def _attack_resolver():
     return CitationResolver([Candidate(name="Tool A")])
 
 
+#: zt_score's context is the framework's top stage: CISA's ladder is 1..4.
+_ZT_CISA_MAX = 4
+
+
 def _context(job: str):
-    return _attack_resolver() if job == "mitre_map" else None
+    if job == "mitre_map":
+        return _scope("K1", resolver=_attack_resolver())
+    if job == "zt_score":
+        return _ZT_CISA_MAX
+    return None
 
 
 def test_the_matrix_field_sets_are_the_measures() -> None:
@@ -1080,9 +1174,17 @@ def _forms(job: str, field: str) -> list[tuple[str, object]]:
         # fraction (CsfDroppedSuggestion's documented reasons).
         forms += [("refused-text", "N/A"), ("refused-range", 3), ("refused-fraction", 1.5)]
     if job == "zt_score":
-        # The apply path's `_as_number` cannot parse these. Range and
-        # wholeness are NOT in the measure yet (its docstring's SCOPE).
-        forms += [("refused-text", "unknown"), ("refused-empty", ""), ("refused-list", [2])]
+        # The apply path refuses these (`ZtDroppedSuggestion`'s reasons): not a
+        # number, off CISA's 1..4 ladder at either end, not whole (#867 B-4).
+        forms += [
+            ("refused-text", "unknown"),
+            ("refused-empty", ""),
+            ("refused-list", [2]),
+            ("refused-bool", True),
+            ("refused-range-low", 0),
+            ("refused-range-high", 5),
+            ("refused-fraction", 2.5),
+        ]
     if job == "mitre_map":
         # The apply path refuses these whole: a status it may not write
         # (`not_applicable` since #841), an unknown one, a reason the status
@@ -1126,6 +1228,144 @@ def test_every_absence_form_is_compared_and_never_agreement(job, field, value, w
     assert (f["both_absent"], f["one_absent"]) == ((1, 0) if where == "both" else (0, 1))
 
 
+def _a_computed_parent() -> str:
+    from app.attack.parents import PARENT_CHILDREN
+
+    return sorted(PARENT_CHILDREN)[0]
+
+
+#: ROW-level refusals: the apply path refuses the suggestion by its KEY, so the
+#: refusal is the same in both runs whenever the key is (`routes/attack.py`: a
+#: code not in the assessment, `row is None`, is skipped; a computed parent is
+#: `parent_suggestions_refused`). Only the "both" side exists for these: a
+#: one-sided version would be two different keys, i.e. `only_in_a`/`only_in_b`.
+def _row_level_refusals() -> list:
+    parent = _a_computed_parent()
+    return [
+        # A parent the assessment holds, answered validly: refused as a parent.
+        pytest.param(parent, _scope(parent, resolver=_attack_resolver()), id="computed-parent"),
+        # A code the assessment does not hold: skipped as stray.
+        pytest.param("K2", _scope("K1", resolver=_attack_resolver()), id="stray-code"),
+    ]
+
+
+@pytest.mark.parametrize(("code", "scope"), _row_level_refusals())
+@pytest.mark.parametrize("field", FIELDS["mitre_map"])
+def test_a_suggestion_refused_by_its_key_is_never_agreement(code, scope, field) -> None:
+    """#867 review B-1: `_run_mitre_map_batched` keeps every object the model
+    returns, so a parent or stray suggestion answered identically in both runs
+    used to count as agreement on every field."""
+    row = dict(_VALID["mitre_map"], technique_code=code)
+    a = {"techniques": [row]}
+    f = compare_pair("mitre_map", a, json.loads(json.dumps(a)), context=scope)["fields"][field]
+    assert f["compared"] == 1, "a refused suggestion left the denominator"
+    assert f["equal"] == 0, "a suggestion the apply path refuses counted as agreement"
+    assert (f["both_absent"], f["one_absent"]) == (1, 0)
+
+
+@pytest.mark.parametrize(("code", "scope"), _row_level_refusals())
+def test_a_suggestion_refused_by_its_key_is_no_computed_status_agreement(code, scope) -> None:
+    from scripts.measure_ai_consistency import computed_status_agreement
+
+    a = {"techniques": [dict(_VALID["mitre_map"], technique_code=code)]}
+    da = attack_downstream(a, scope)
+    db = attack_downstream(json.loads(json.dumps(a)), scope)
+    assert da["refused"] == [code]
+    d = computed_status_agreement(da, db)
+    assert (d["compared"], d["equal"], d["refused"]) == (1, 0, 1)
+
+
+def test_the_row_level_control_the_same_row_under_a_scoring_code_agrees() -> None:
+    # The control for the two above: the same valid row, keyed by a code the
+    # assessment holds and the apply path scores, agrees on every field.
+    a = {"techniques": [dict(_VALID["mitre_map"])]}
+    fields = compare_pair("mitre_map", a, json.loads(json.dumps(a)), context=_context("mitre_map"))[
+        "fields"
+    ]
+    assert all(fields[f]["equal"] == 1 for f in FIELDS["mitre_map"])
+
+
+def test_mitre_map_without_a_scope_is_refused_never_guessed() -> None:
+    # Whether a code is stray is a question about the ASSESSMENT; with no scope
+    # the measure cannot look, and "could not look" must not read as "agreed".
+    a = {"techniques": [dict(_VALID["mitre_map"])]}
+    with pytest.raises(TypeError, match="AttackScope"):
+        compare_pair("mitre_map", a, a)
+
+
+def test_zt_score_without_a_ladder_is_refused_never_guessed() -> None:
+    a = {"capabilities": [dict(_VALID["zt_score"])]}
+    with pytest.raises(TypeError, match="max_stage"):
+        compare_pair("zt_score", a, a)
+
+
+def test_a_zt_stage_is_compared_as_the_apply_path_stores_it() -> None:
+    # #867 review B-5: "2" and 2 are the same applied stage, as for csf_score.
+    a = {"capabilities": [dict(_VALID["zt_score"], current="2")]}
+    b = {"capabilities": [dict(_VALID["zt_score"], current=2)]}
+    f = compare_pair("zt_score", a, b, context=_ZT_CISA_MAX)["fields"]["current"]
+    assert (f["equal"], f["within_one"], f["one_absent"]) == (1, 1, 0)
+    assert f["mean_abs_diff"] == 0.0
+
+
+def test_one_run_citing_no_tool_is_compared_without_agreement() -> None:
+    """#867 review B-2: run A cites nothing (computed gap); run B cites only an
+    INFERRED tool for each function, which a fresh run records uncleared, so R3
+    computes gap too. Equal statuses, but run A gave no answer: compared, no
+    agreement, counted as `one_no_tools` -- the field rule's `one_absent`."""
+    from scripts.measure_ai_consistency import computed_status_agreement
+
+    from app.attack.citations import Candidate, CitationResolver
+
+    resolver = CitationResolver(
+        [Candidate(name="CrowdStrike Falcon Enterprise"), Candidate(name="Vault Backup")]
+    )
+    code = _a_code(preventable=False)
+    scope = _scope(code, resolver=resolver)
+    nothing = attack_downstream({"techniques": [_tech(code)]}, scope)
+    inferred = attack_downstream(
+        {
+            "techniques": [
+                _tech(code, detection_tools=["CrowdStrike"], response_tools=["CrowdStrike"])
+            ]
+        },
+        scope,
+    )
+    # Preconditions: both compute gap, and only run A is tool-less.
+    assert nothing["computed_status"] == inferred["computed_status"] == {code: "gap"}
+    assert (nothing["no_tools"], inferred["no_tools"]) == ([code], [])
+    d = computed_status_agreement(nothing, inferred)
+    assert (d["compared"], d["equal"], d["one_no_tools"], d["both_no_tools"]) == (1, 0, 1, 0)
+    # Symmetric: which run cited nothing does not matter.
+    assert computed_status_agreement(inferred, nothing) == d
+
+
+def test_computed_status_buckets_partition_the_compared_techniques() -> None:
+    # Every compared technique is in exactly one of judged / refused /
+    # both_no_tools / one_no_tools.
+    from scripts.measure_ai_consistency import computed_status_agreement
+
+    da = {
+        "computed_status": {"A": "gap", "B": "gap", "C": "gap", "D": "covered", "E": "gap"},
+        "no_tools": ["A", "B", "E"],
+        "refused": ["E"],
+    }
+    db = {
+        "computed_status": {"A": "gap", "B": "gap", "C": "gap", "D": "covered", "E": "gap"},
+        "no_tools": ["A", "E"],
+        "refused": [],
+    }
+    d = computed_status_agreement(da, db)
+    assert d == {
+        "compared": 5,
+        "judged": 2,  # C and D
+        "equal": 2,
+        "both_no_tools": 1,  # A
+        "one_no_tools": 1,  # B
+        "refused": 1,  # E, refused in one run, tool-less in both: counted once
+    }
+
+
 @pytest.mark.parametrize("job", list(FIELDS))
 def test_the_matrix_control_a_valid_answer_in_both_runs_agrees(job) -> None:
     row = {_LIST_KEY[job]: [dict(_VALID[job])]}
@@ -1153,8 +1393,8 @@ def test_omitting_a_tool_list_never_scores_as_more_consistent() -> None:
     del t2_a["detection_tools"]
     y_a = {"techniques": [_tech("T1", detection_tools=["A"]), t2_a]}
     y_b = {"techniques": [_tech("T1", detection_tools=["A"]), _tech("T2", detection_tools=["C"])]}
-    x = compare_pair("mitre_map", x_a, x_b)["fields"]["detection_tools"]
-    y = compare_pair("mitre_map", y_a, y_b)["fields"]["detection_tools"]
+    x = compare_pair("mitre_map", x_a, x_b, context=_T)["fields"]["detection_tools"]
+    y = compare_pair("mitre_map", y_a, y_b, context=_T)["fields"]["detection_tools"]
     assert y["compared"] == x["compared"] == 2, "the omitted key left the denominator"
     assert y["equal"] / y["compared"] <= x["equal"] / x["compared"], "same-set share rose"
     assert y["mean_jaccard"] <= x["mean_jaccard"], "the Jaccard rose for omitting a key"
@@ -1180,7 +1420,7 @@ def test_citing_no_tool_never_raises_the_computed_status_agreement() -> None:
         ]
     }
     y = {"techniques": [_tech(code_x, detection_tools=["Sentinel Hub"]), _tech(code_y)]}
-    r = _resolver()
+    r = _scope(code_x, code_y, resolver=_resolver())
     x = computed_status_agreement(attack_downstream(x_a, r), attack_downstream(x_b, r))
     yy = computed_status_agreement(
         attack_downstream(y, r), attack_downstream(json.loads(json.dumps(y)), r)
@@ -1198,7 +1438,7 @@ def test_a_refused_suggestion_is_no_computed_status_agreement() -> None:
 
     code = _a_code(preventable=True)
     row = {"techniques": [_tech(code, status="not_applicable", detection_tools=["Sentinel Hub"])]}
-    r = _resolver()
+    r = _scope(code, resolver=_resolver())
     d = computed_status_agreement(attack_downstream(row, r), attack_downstream(row, r))
     assert (d["compared"], d["equal"], d["refused"]) == (1, 0, 1)
 
@@ -1208,8 +1448,8 @@ def test_tool_lists_are_compared_as_the_run_would_store_them() -> None:
     # differ only by it agree on what is stored.
     a = {"techniques": [dict(_VALID["mitre_map"], detection_tools=["Tool A", "Not A Tool"])]}
     b = {"techniques": [dict(_VALID["mitre_map"])]}
-    resolved = compare_pair("mitre_map", a, b, context=_attack_resolver())["fields"]
-    raw = compare_pair("mitre_map", a, b)["fields"]
+    resolved = compare_pair("mitre_map", a, b, context=_context("mitre_map"))["fields"]
+    raw = compare_pair("mitre_map", a, b, context=_scope("K1"))["fields"]
     assert resolved["detection_tools"]["equal"] == 1
     assert raw["detection_tools"]["equal"] == 0, "precondition: the raw lists differ"
 
