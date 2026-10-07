@@ -396,7 +396,7 @@ def test_with_no_tech_debt_list_nothing_is_flagged_and_approve_proceeds(
 
 
 # --- "not checked" is a THIRD state, not a pass (advisor, #736 6039558116) -------------
-# The sentence is copied from the drafted wording sent for approval, never from
+# The sentence is copied from the approved wording (#736 6040458893), never from
 # the module that renders it.
 NOT_CHECKED = (
     "The tools cited here were not checked against a security tool list, because "

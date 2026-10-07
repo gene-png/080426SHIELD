@@ -59,7 +59,8 @@ def is_outside_subset(name: str, subset: CitationResolver) -> bool:
 
 
 #: The third state, said where the check could not run (advisor, #736
-#: comment 6039558116: "not checked" is not a pass). The WORDING is pending the advisor.
+#: comment 6039558116: "not checked" is not a pass). Wording approved verbatim
+#: (#736 comment 6040458893).
 NOT_CHECKED_SENTENCE = (
     "The tools cited here were not checked against a security tool list, because "
     "the client has none."
