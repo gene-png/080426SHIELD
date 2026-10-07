@@ -142,7 +142,11 @@ def _world(env, *, with_plan: bool = True):  # noqa: F811
             client_id,
             admin["user"]["id"],
             status=CapabilityListStatus.DRAFT,
-            items=[("Tenable", CUT)],
+            # #851: "Homegrown Script" sits on the DRAFT list too. A DRAFT list
+            # feeds the citable subset (`_client_capability_membership`), so
+            # approve accepts the row; a draft does not vote on retirement, so the
+            # tool stays UNKNOWN, which is what this file tests.
+            items=[("Tenable", CUT), ("Homegrown Script", None)],
         )
     svc, a = _service_and_assessment(c, bearer)
     rows = standalone_rows(a["coverage"], len(ROWS))
