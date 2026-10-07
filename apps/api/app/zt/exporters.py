@@ -211,6 +211,12 @@ _DOD_SOURCE_NOTE = (
 )
 
 
+#: #839, ruling 4's line, approved verbatim (#736 comment 6047873969). 1.2.1's
+#: description is word for word 1.1.1's in the published roadmap and is kept so.
+#: It renders directly after `_DOD_SOURCE_NOTE`, wherever that renders.
+_DOD_AS_PUBLISHED = "Activity descriptions are reproduced as published."
+
+
 def _source_note(framework: ZtFrameworkCode) -> str | None:
     return _DOD_SOURCE_NOTE if framework == ZtFrameworkCode.DOD_ZTRA else None
 
@@ -249,6 +255,7 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
     source_note = _source_note(ctx.framework)
     if source_note:
         ws.append(["Source", source_note])  # #839
+        ws.append(["", _DOD_AS_PUBLISHED])  # #839, ruling 4
     ws.append(["Assessment version", ctx.assessment.version])
     ws.append(["Overall stage", ctx.score.overall_stage_label])
     ws.append(["Average stage", _fmt(ctx.score.average_stage)])
@@ -395,6 +402,7 @@ def render_docx(ctx: ZtDeliverableContext) -> bytes:
     source_note = _source_note(ctx.framework)
     if source_note:
         add_paragraphs(doc, [source_note])  # #839, under the framework line
+        add_paragraphs(doc, [_DOD_AS_PUBLISHED])  # #839, ruling 4
     retired = _retired_note(ctx)
     if retired:
         add_paragraphs(doc, [retired])  # #838, beside the mode stamp
@@ -488,6 +496,7 @@ def render_pdf(ctx: ZtDeliverableContext) -> bytes:
     source_note = _source_note(ctx.framework)
     if source_note:
         story.append(Paragraph(source_note, body))  # #839, under the framework line
+        story.append(Paragraph(_DOD_AS_PUBLISHED, body))  # #839, ruling 4
     retired = _retired_note(ctx)
     if retired:
         story.append(Paragraph(retired, body))  # #838, beside the mode stamp

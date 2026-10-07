@@ -31,6 +31,10 @@ NOTE = (
     "and they agree."
 )
 
+#: Ruling 4's line, approved verbatim at #736 comment 6047873969 (Oct 7 22:15Z):
+#: copied from that comment, never from the code under test.
+AS_PUBLISHED = "Activity descriptions are reproduced as published."
+
 
 def _files(c, kind: str) -> tuple[str, str, list[str]]:
     bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
@@ -64,10 +68,22 @@ def test_every_dod_file_carries_the_source_note(app_client) -> None:  # noqa: F8
     assert NOTE in cells
 
 
+def test_every_dod_file_says_the_activity_text_is_as_published(app_client) -> None:  # noqa: F811
+    pdf, docx, cells = _files(app_client, "zero_trust_dod")
+    assert AS_PUBLISHED in _flat(pdf)
+    assert AS_PUBLISHED in _flat(docx)
+    assert AS_PUBLISHED in cells
+    # Next to the source note, not somewhere else in the file.
+    assert _flat(pdf).index(AS_PUBLISHED) > _flat(pdf).index(NOTE)
+    assert _flat(docx).index(AS_PUBLISHED) > _flat(docx).index(NOTE)
+    assert cells.index(AS_PUBLISHED) == cells.index(NOTE) + 1
+
+
 def test_a_cisa_file_does_not(app_client) -> None:  # noqa: F811
     pdf, docx, cells = _files(app_client, "zero_trust_cisa")
     # The positive state first: these are real deliverables with content.
     assert "CISA ZTMM 2.0" in _flat(pdf)
-    assert "25-T-1465" not in _flat(pdf)
-    assert "25-T-1465" not in _flat(docx)
-    assert not any("25-T-1465" in v for v in cells)
+    for text in ("25-T-1465", AS_PUBLISHED):
+        assert text not in _flat(pdf)
+        assert text not in _flat(docx)
+        assert not any(text in v for v in cells)
