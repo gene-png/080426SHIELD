@@ -43,7 +43,7 @@ type SaveStateById = Record<
   "idle" | "saving" | "saved" | "error" | "invalid"
 >;
 
-/** #879: copy V4 (pending the advisor's approval on #736). */
+/** #879: copy V4, approved by the advisor (#736, 18:56Z). */
 const NOT_A_NUMBER = "Not a number, so it was not saved.";
 
 // #643: an input or select with no width keeps its intrinsic ~20-character
@@ -103,14 +103,18 @@ function parseCurrency(raw: string): number | null {
   const text = raw.trim();
   if (text === "") return null;
   if (!COST_SHAPE.test(text)) return Number.NaN;
-  return Number(text.replace(/[$,\s]/g, ""));
+  // A digit run too long for a double is Infinity, which JSON sends as null and
+  // would CLEAR the stored cost (#898 review): not a number either.
+  const n = Number(text.replace(/[$,\s]/g, ""));
+  return Number.isFinite(n) ? n : Number.NaN;
 }
 
 function parseInt32(raw: string): number | null {
   const text = raw.trim();
   if (text === "") return null;
   if (!COUNT_SHAPE.test(text)) return Number.NaN;
-  return Number(text.replace(/,/g, ""));
+  const n = Number(text.replace(/,/g, ""));
+  return Number.isFinite(n) ? n : Number.NaN;
 }
 
 /** AI Prompt §6.2: AI output renders as a real editable table, NOT as raw JSON. */
@@ -188,9 +192,16 @@ export function EditableCapabilityTable({
     }
   }
 
+  /**
+   * `input` is the cell that changed. Status is per ROW and the cells are
+   * uncontrolled, so a refused value left in its cell would read as saved the
+   * moment another cell on the row saved (#898 review). A refusal therefore
+   * puts the cell back to what is stored, and the row says why.
+   */
   async function save(
     item: CapabilityItem,
     patch: CapabilityItemPatch,
+    input?: HTMLInputElement | HTMLTextAreaElement,
   ): Promise<void> {
     setSaveState((s) => ({ ...s, [item.id]: "saving" }));
     try {
@@ -204,6 +215,7 @@ export function EditableCapabilityTable({
         ...m,
         [item.id]: proxyMessage(err, "The change was not saved."),
       }));
+      if (input) input.value = input.defaultValue;
       setSaveState((s) => ({ ...s, [item.id]: "error" }));
     }
   }
@@ -387,7 +399,7 @@ export function EditableCapabilityTable({
                       onBlur={(e) => {
                         const v = e.target.value;
                         if (v && v !== item.name) {
-                          void save(item, { name: v });
+                          void save(item, { name: v }, e.currentTarget);
                         }
                       }}
                       className={cellInputClasses}
@@ -403,7 +415,7 @@ export function EditableCapabilityTable({
                       onBlur={(e) => {
                         const v = e.target.value || undefined;
                         if (v !== item.vendor) {
-                          void save(item, { vendor: v });
+                          void save(item, { vendor: v }, e.currentTarget);
                         }
                       }}
                       className={cellInputClasses}
@@ -419,7 +431,7 @@ export function EditableCapabilityTable({
                       onBlur={(e) => {
                         const v = e.target.value || undefined;
                         if (v !== item.category) {
-                          void save(item, { category: v });
+                          void save(item, { category: v }, e.currentTarget);
                         }
                       }}
                       className={cellInputClasses}
@@ -435,7 +447,7 @@ export function EditableCapabilityTable({
                       onBlur={(e) => {
                         const v = e.target.value || undefined;
                         if (v !== item.function) {
-                          void save(item, { function: v });
+                          void save(item, { function: v }, e.currentTarget);
                         }
                       }}
                       className={cellInputClasses}
@@ -450,11 +462,17 @@ export function EditableCapabilityTable({
                       onBlur={(e) => {
                         const next = parseCurrency(e.target.value);
                         if (Number.isNaN(next)) {
+                          // Not sent: the cell goes back to what is stored.
+                          e.currentTarget.value = e.currentTarget.defaultValue;
                           setSaveState((s) => ({ ...s, [item.id]: "invalid" }));
                           return;
                         }
                         if (next !== item.annual_cost_usd) {
-                          void save(item, { annual_cost_usd: next });
+                          void save(
+                            item,
+                            { annual_cost_usd: next },
+                            e.currentTarget,
+                          );
                         }
                       }}
                       className={cn(cellInputClasses, "text-right")}
@@ -469,11 +487,17 @@ export function EditableCapabilityTable({
                       onBlur={(e) => {
                         const next = parseInt32(e.target.value);
                         if (Number.isNaN(next)) {
+                          // Not sent: the cell goes back to what is stored.
+                          e.currentTarget.value = e.currentTarget.defaultValue;
                           setSaveState((s) => ({ ...s, [item.id]: "invalid" }));
                           return;
                         }
                         if (next !== item.license_count) {
-                          void save(item, { license_count: next });
+                          void save(
+                            item,
+                            { license_count: next },
+                            e.currentTarget,
+                          );
                         }
                       }}
                       className={cn(cellInputClasses, "text-right")}
@@ -489,7 +513,7 @@ export function EditableCapabilityTable({
                       onBlur={(e) => {
                         const v = e.target.value || undefined;
                         if (v !== item.notes) {
-                          void save(item, { notes: v });
+                          void save(item, { notes: v }, e.currentTarget);
                         }
                       }}
                       className={cellInputClasses}

@@ -6,8 +6,8 @@
 SQLite never shows -- and a negative was stored. Both routes now refuse with a
 typed 422, using the SAME bounds the extraction uses (`tech_debt/bounds.py`).
 
-The copy (V1-V3) is the plan's, pending the advisor's approval on #736; every
-expected string is written out here.
+The copy (V1-V3) is approved (advisor 18:56Z on #736); every expected string is
+written out here.
 """
 
 from __future__ import annotations
@@ -130,6 +130,29 @@ def test_including_a_row_refuses_a_value_the_column_cannot_hold(
     latest = _latest(c, h, svc)
     assert [i["name"] for i in latest["items"]] == ["Tool"]  # nothing written
     assert [e["index"] for e in latest["excluded_rows"]] == [1]
+
+
+@pytest.mark.parametrize("route", ["patch", "include"])
+def test_a_boolean_cost_is_refused_not_stored_as_one_dollar(
+    app_client, route  # noqa: F811
+) -> None:
+    """#898 review: Pydantic read JSON `true` as 1.0 for a float. `FloatNotBool`
+    refuses it before the route runs, and nothing is written."""
+    c, h, list_id, item_id, svc = _world(app_client)
+    if route == "patch":
+        r = c.patch(
+            f"/tech-debt/capability-items/{item_id}", headers=h, json={"annual_cost_usd": True}
+        )
+    else:
+        r = c.post(
+            f"/tech-debt/capability-lists/{list_id}/excluded-rows/1/include",
+            headers=h,
+            json={"name": "Included", "annual_cost_usd": True},
+        )
+    assert r.status_code == 422, r.text
+    assert "is a boolean, not a number" in r.text
+    latest = _latest(c, h, svc)
+    assert [(i["name"], i["annual_cost_usd"]) for i in latest["items"]] == [("Tool", 100.0)]
 
 
 def test_including_a_row_accepts_the_boundary(app_client) -> None:  # noqa: F811

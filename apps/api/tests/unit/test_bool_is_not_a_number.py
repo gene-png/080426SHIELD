@@ -116,8 +116,9 @@ def _parts(annotation: Any) -> tuple[Any, ...]:
     return tuple(p for arg in args for p in _parts(arg))
 
 
-def _int_fields() -> list[tuple[type[BaseModel], str, Any]]:
-    """Every int-typed field on every model reachable from a request body."""
+def _int_fields(kind: type = int) -> list[tuple[type[BaseModel], str, Any]]:
+    """Every `kind`-typed field (int by default; float for #898's review) on
+    every model reachable from a request body."""
     models: set[type[BaseModel]] = set()
     for route in _bodied_routes():
         _walk(route.body_field.field_info.annotation, models)
@@ -127,7 +128,7 @@ def _int_fields() -> list[tuple[type[BaseModel], str, Any]]:
         for name, field in model.model_fields.items():
             # Identity, not `issubclass`: `bool is int` is False, so a declared
             # `bool` field drops out here rather than needing an exemption.
-            if not any(p is int for p in _parts(field.annotation)):
+            if not any(p is kind for p in _parts(field.annotation)):
                 continue
             annotation = (
                 Annotated[(field.annotation, *field.metadata)]
@@ -255,3 +256,44 @@ def test_the_values_a_client_plainly_meant_still_work(
             f"{admissible} written another way. The guard is refusing more "
             f"than bools."
         )
+
+
+# --- float fields (#898 review, for #879) -----------------------------------
+# Pydantic's lax mode reads `true` as 1.0 for a float exactly as it reads it as
+# 1 for an int, so the same sweep runs over every float field in a request body
+# (`FloatNotBool`). The derivation is the same walk; only the type differs.
+_FLOAT_FIELDS = _int_fields(float)
+_FLOAT_CASES = [pytest.param(m, n, a, id=f"{m.__name__}.{n}") for m, n, a in _FLOAT_FIELDS]
+
+
+@pytest.mark.unit
+def test_the_float_derivation_finds_the_cost_fields() -> None:
+    """Fail closed: an empty derivation would skip both sweeps below silently."""
+    names = {f"{m.__name__}.{n}" for m, n, _a in _FLOAT_FIELDS}
+    assert {
+        "CapabilityItemPatch.annual_cost_usd",
+        "IncludeExcludedRowRequest.annual_cost_usd",
+    } <= names, names
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("model, field, adapter", _FLOAT_CASES)
+def test_a_bool_is_refused_by_a_float_field_because_it_is_a_bool(
+    model: type[BaseModel], field: str, adapter: TypeAdapter
+) -> None:
+    for probe in (True, False):
+        with pytest.raises(Exception) as caught:
+            adapter.validate_python(probe)
+        assert BOOL_REFUSAL_MARKER in str(caught.value), (
+            f"{model.__name__}.{field} took or refused {probe!r} not for being a "
+            f"bool: {str(caught.value)!r}. Annotate it `FloatNotBool`."
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("model, field, adapter", _FLOAT_CASES)
+def test_a_float_field_still_takes_what_a_client_plainly_meant(
+    model: type[BaseModel], field: str, adapter: TypeAdapter
+) -> None:
+    for spelling, value in ((2, 2.0), (2.5, 2.5), ("2.5", 2.5)):
+        assert adapter.validate_python(spelling) == value, (model.__name__, field, spelling)

@@ -19,8 +19,8 @@ import { EditableCapabilityTable } from "./EditableCapabilityTable";
  * #879, web half: a cost or licence count typed into the table is read as a
  * number or not at all. The parsers stripped characters in silence -- "2.9"
  * licences saved as 29, "1200/month" as 1200 -- and a refused save showed a bare
- * "Save failed" without the API's reason. Copy V4 is the plan's, pending the
- * advisor's approval on #736.
+ * "Save failed" without the API's reason. Copy V4 is approved (advisor 18:56Z on
+ * #736).
  */
 
 const V4 = "Not a number, so it was not saved.";
@@ -78,6 +78,54 @@ describe("EditableCapabilityTable values (#879)", () => {
       expect(patchCapabilityItem).toHaveBeenCalledWith("item-1", patch),
     );
     expect(screen.queryByText(V4)).toBeNull();
+  });
+
+  it.each([
+    ["Annual cost USD", "9".repeat(400)],
+    ["License count", "9".repeat(400)],
+  ])(
+    "%s too long for a number is refused, never sent as null",
+    (label, value) => {
+      // #898 review: Number("9" x 400) is Infinity, and JSON sends Infinity as
+      // null, which cleared the stored value and showed "Saved".
+      render(
+        <EditableCapabilityTable items={[ITEM]} onItemUpdate={() => {}} />,
+      );
+      typeInto(label, value);
+      expect(screen.getByText(V4)).toBeInTheDocument();
+      expect(patchCapabilityItem).not.toHaveBeenCalled();
+    },
+  );
+
+  it("puts a cell refused as not a number back to the stored value", () => {
+    render(<EditableCapabilityTable items={[ITEM]} onItemUpdate={() => {}} />);
+    typeInto("License count", "2.9");
+    expect(screen.getByRole("textbox", { name: "License count" })).toHaveValue(
+      "10",
+    );
+  });
+
+  it("a refused cell stays refused after another cell on the row saves", async () => {
+    // #898 review: status is per row and the cells are uncontrolled, so the
+    // refused cost used to sit in its cell under "Saved" once the vendor saved.
+    vi.mocked(patchCapabilityItem)
+      .mockRejectedValueOnce(
+        new Error("Annual cost can have at most two decimal places."),
+      )
+      .mockResolvedValueOnce({ ...ITEM, vendor: "Other" });
+    render(<EditableCapabilityTable items={[ITEM]} onItemUpdate={() => {}} />);
+    typeInto("Annual cost USD", "12.345");
+    expect(
+      await screen.findByText(
+        "Annual cost can have at most two decimal places.",
+      ),
+    ).toBeInTheDocument();
+    const cost = screen.getByRole("textbox", { name: "Annual cost USD" });
+    expect(cost).toHaveValue((1000).toLocaleString());
+    typeInto("Vendor", "Other");
+    expect(await screen.findByText("Saved")).toBeInTheDocument();
+    // The cell shows what is stored, never the refused 12.345.
+    expect(cost).toHaveValue((1000).toLocaleString());
   });
 
   it("shows the API's reason when it refuses a save", async () => {
