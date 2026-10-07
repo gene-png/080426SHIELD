@@ -82,6 +82,21 @@ sizes marked coarse.
 
 Track work outside that list is paused.
 
+**2026-10-07: #839 is implemented (`mvp-blocking`, `tier-2`) and lands with the #838 PR 3 PR.** The status here is as written before it merged.
+The DoD Zero Trust catalog follows the DoD CIO's 2025 roadmap (25-T-1465), with
+migration 0064 and per-capability target caps that the gap engine and Risk
+synthesis both apply. Every DoD deliverable carries the approved source note.
+The decision record is **D-109**; the narrative is in
+`context/entries/2026-10-07-839-dod-catalog.md`. The PR goes to Gene: it trips
+merge-rule conditions 4 (migration 0064), 5 and 6.
+
+**#838 stays open** for its PR 4. **#839 is closed by hand** when this PR
+merges; the body carries no closing keyword. Still owed under #839, outside this
+PR: ruling 4's "reproduced as published" source-note line, which has no
+approved wording yet (#736, comment 6023235322). No estimate row changes and no
+total moves, because #839 owns no item in the table below. The board is the
+list.
+
 **2026-09-22 — #209 implemented (`tier-1`, `client-reaching`); LANDED 2026-09-23 as PR #476 (`c4d3cc2`).** The status below is as written before it merged.
 The last open `tier-1`. Four client-facing surfaces resolved the engagement
 target LIVE on every request while the released document held the number it was
