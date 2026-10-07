@@ -213,9 +213,16 @@ def publish_blockers(
         if isinstance(synthesized, list)
         else set()
     )
-    for (kind, service_id), _was in then.items():
-        if kind in SYNTHESIS_KINDS and str(service_id) not in drawn_from:
-            blockers.append(Blocker(str(kind), "not_recorded", None))
+    # A register with NO `inputs` key at all (pre-0047, or the old seed shape)
+    # is refused by publish's next guard, `_require_certifiable_inputs`, with
+    # its own reason (`register_inputs_not_recorded`), which
+    # `test_publish_refuses_inputs_that_cannot_be_certified` pins. So this
+    # check runs only over a recorded `inputs` value; anything recorded that
+    # is not a list counts as naming no service and fails closed above.
+    if synthesized is not None:
+        for (kind, service_id), _was in then.items():
+            if kind in SYNTHESIS_KINDS and str(service_id) not in drawn_from:
+                blockers.append(Blocker(str(kind), "not_recorded", None))
     if blockers:
         _log.info(
             "risk_publish_inputs_blocked",
