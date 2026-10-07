@@ -90,6 +90,7 @@ from app.services.engagement_targets import client_target_stage as _client_targe
 from app.services.engagement_targets import client_target_tier as _client_target_tier
 from app.storage import StorageBackend
 from app.tech_debt.filename import SERVICE_SLUG_RISK_REGISTER, deliverable_filename
+from app.zt.catalog import all_codes
 from app.zt.maturity import ZtFrameworkCode
 from app.zt.scoring import resolve_target_stage
 
@@ -892,9 +893,17 @@ def _gather_findings(
             _client_target_stage(db, zt.service_id),
         )
         target_sources[src.scope_key] = {"target": zt_target, "source": zt_target_source}
-        zt_rows = (
-            db.execute(select(ZtAnswer).where(ZtAnswer.assessment_id == zt.id)).scalars().all()
-        )
+        # #838: only the catalog's rows. Migration 0063 KEEPS answers on rows
+        # CISA ZTMM 2.0 does not have, and the ZT deliverable says they are not
+        # scored, so they feed no finding and are not citable here either.
+        # Per SOURCE since #876: each ZT service is filtered by its own
+        # framework's catalog.
+        zt_codes = all_codes(ZtFrameworkCode(zt.framework.value))
+        zt_rows = [
+            r
+            for r in db.execute(select(ZtAnswer).where(ZtAnswer.assessment_id == zt.id)).scalars()
+            if r.capability_code in zt_codes
+        ]
         zt_scope = scope_for(ZtAnswer, zt_rows)
         valid_controls |= zt_scope.codes
         link_scopes[src.scope_key] = zt_scope

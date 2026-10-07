@@ -11,6 +11,8 @@ export interface CatalogCapability {
   pillar_code: string;
   name: string;
   outcome: string;
+  /** #838: a CISA pillar's cross-cutting rows. Absent reads as "function". */
+  kind?: "function" | "cross_cutting";
 }
 
 export interface CatalogPillar {
@@ -59,6 +61,10 @@ export interface ZtAssessment {
   documents_stale?: boolean;
   answers: ZtAnswer[];
   client_target_stage: number | null;
+  /** #838: answers kept on rows the catalog no longer has, so not scored,
+   *  with the approved sentence that says so (null when there are none). */
+  retired_answers?: number;
+  retired_answers_note?: string | null;
 }
 
 /** What an ADMIN may change on a ZT answer, via `PATCH /zt/answers/{id}`. */
