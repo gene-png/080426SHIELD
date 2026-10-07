@@ -14,6 +14,7 @@ the client id is named in the path (like /admin/services/{id}); no X-Client-Id.
 from __future__ import annotations
 
 import contextvars
+import dataclasses
 import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -44,7 +45,7 @@ from app.models.attack_assessment import AttackAssessment, AttackCoverage
 from app.models.client import Client
 from app.models.csf_assessment import CsfAnswer, CsfAssessment
 from app.models.risk_register import RiskEntry, RiskRegister
-from app.models.service import Service, ServiceStatus
+from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.user import User, UserRole
 from app.models.zt_assessment import ZtAnswer, ZtAssessment
 from app.risk import exporters as risk_exporters
@@ -60,10 +61,12 @@ from app.risk.engine import (
 )
 from app.risk.inputs import (
     INPUT_KINDS,
+    SYNTHESIS_KINDS,
     Blocker,
     InputRecord,
     current_inputs,
     engaged_services,
+    latest_record,
     publish_blockers,
 )
 from app.risk.link_scope import LinkScope, scope_for
@@ -152,7 +155,7 @@ def _exists_for_gate(db: Session, model, client_id: uuid.UUID) -> bool:
     this ever starts excluding drafts.
 
     ARCHIVED services do not count (#860 review B2), because synthesis does
-    not read them (`_current_for_synthesis`): an unlock that counted an
+    not read them (`_synthesis_sources`): an unlock that counted an
     archived service's assessment would offer a Generate whose register is
     missing the very input that unlocked it.
     """
@@ -176,11 +179,11 @@ def _finalized_for_synthesis(db: Session, model, client_id: uuid.UUID):
 
     Since #737 this feeds ONLY the gate's `not_finalized` report. Synthesis no
     longer reads it: a draft register synthesizes from in-progress inputs
-    through `_current_for_synthesis`, and what keeps unreviewed work from a
+    through `_synthesis_sources`, and what keeps unreviewed work from a
     client is publish's input gate (`app/risk/inputs.py::publish_blockers`).
     The name is kept so the #237 history below stays greppable. ARCHIVED
     services are excluded, as in `_exists_for_gate` and
-    `_current_for_synthesis` (#860 review F4), so the report counts the same
+    `_synthesis_sources` (#860 review F4), so the report counts the same
     population unlock and synthesis do.
 
     See `_exists_for_gate` for why the two are typed differently on purpose.
@@ -198,39 +201,135 @@ def _finalized_for_synthesis(db: Session, model, client_id: uuid.UUID):
     ).scalar_one_or_none()
 
 
-def _current_for_synthesis(db: Session, model, client_id: uuid.UUID):
-    """The latest NON-DISCARDED assessment of this kind, drafts included, or None.
+#: One map for the screen's Inputs rows and the export's coverage rows.
+_ZT_FRAMEWORK_NAMES = risk_exporters.ZT_FRAMEWORK_NAMES
+_ZT_FRAMEWORK_BY_SERVICE_KIND = {
+    ServiceKind.ZERO_TRUST_CISA: "cisa_ztmm_2_0",
+    ServiceKind.ZERO_TRUST_DOD: "dod_ztra",
+}
+#: The kinds synthesis reads findings from. Tech Debt feeds ATT&CK's tool
+#: membership and publication, never findings of its own.
+_SYNTHESIS_KINDS = SYNTHESIS_KINDS
 
-    #737, Gene's ruling (#736, 5986057990 item 13), which REVERSES #237's
-    approved-only rule deliberately: a register may be DRAFTED from in-progress
-    work. What protects the client is no longer this resolver but publication,
-    which refuses unless every engaged input is released and still the one the
-    register was built from (`app/risk/inputs.py::publish_blockers`). Each
-    finding from an unreleased input is labelled with that input's state.
 
-    The same ordering `app/risk/inputs.py::current_inputs` uses, and the same
-    exclusion of ARCHIVED services (#860 review B2), so the input a draft
-    synthesizes from is always one of the inputs its provenance records and
-    publish checks. An archived service's assessment is not an input.
+def _framework_of(record: object) -> str:
+    return str(getattr(record.framework, "value", record.framework))  # type: ignore[attr-defined]
 
-    ONE assessment per kind, and that is PRE-EXISTING rather than introduced:
-    `_finalized_for_synthesis` read one per kind too. A client with two
-    engaged services of a kind (Zero Trust CISA and DoD) has findings from
-    the latest of them only, while publish requires BOTH released -- the gate
-    is the stricter of the two, so the gap is a missing finding, not an
-    unreleased one reaching the client. Not changed here.
+
+@dataclass(frozen=True)
+class _Source:
+    """One engaged service a register draws findings from, as read (#876).
+
+    `scope_key` names this source on every per-source record -- the scored
+    coverage, the targets, the batching -- and is the bare kind ("zt") while a
+    kind has one source, so a single-service client's records are unchanged.
+    With two Zero Trust services it is "zt:<framework>" (Q3: the framework is
+    named only when a kind has more than one row).
+
+    `status` is the status STRING as read, not the ORM object's live
+    attribute, so nothing later in the request can refresh it (#860 B1).
     """
-    return db.execute(
-        select(model)
-        .join(Service, Service.id == model.service_id)
-        .where(
-            model.client_id == client_id,
-            model.status != "discarded",
-            Service.status != ServiceStatus.ARCHIVED,
+
+    kind: str
+    service_id: str
+    title: str
+    framework: str | None
+    assessment: object
+    status: str
+    scope_key: str
+
+
+def _synthesis_sources(db: Session, client_id: uuid.UUID) -> list[_Source]:
+    """The current assessment of EVERY engaged service, drafts included (#876).
+
+    Gene's ruling (#736 6018510340; advisor 6019425290, Q1): findings come from
+    every engaged service the client selected -- both CISA and DoD Zero Trust
+    when both are engaged -- not one assessment per kind. Until #876 this read
+    the latest assessment of each KIND, so one framework was dropped in
+    silence.
+
+    Drafts are read, per ruling 13 (#737): a register is drafted from
+    in-progress work, each finding from an unreleased input is labelled, and
+    publish refuses. Archived services are not engaged and are not read (#860,
+    advisor 6003051981). The record is `latest_record`, the one
+    `app/risk/inputs.py` hands the publish gate, so a draft synthesizes from
+    exactly the records publish checks.
+    """
+    raw: list[tuple[str, Service, object]] = []
+    for kind, svc in engaged_services(db, client_id):
+        if kind not in _SYNTHESIS_KINDS:
+            continue
+        rec = latest_record(db, kind, svc.id)
+        if rec is not None:
+            raw.append((kind, svc, rec))
+    per_kind: dict[str, int] = {}
+    per_framework: dict[tuple[str, str], int] = {}
+    for kind, _svc, rec in raw:
+        per_kind[kind] = per_kind.get(kind, 0) + 1
+        if kind == "zt":
+            fw_key = (kind, _framework_of(rec))
+            per_framework[fw_key] = per_framework.get(fw_key, 0) + 1
+    out: list[_Source] = []
+    for kind, svc, rec in raw:
+        framework = _framework_of(rec) if kind == "zt" else None
+        if per_kind[kind] == 1:
+            key = kind
+        elif framework is not None and per_framework[(kind, framework)] == 1:
+            key = f"{kind}:{framework}"
+        else:
+            # Same kind AND framework twice: generate refuses this
+            # (`_duplicate_inputs_message`), so the key only has to be unique.
+            key = f"{kind}:{svc.id}"
+        out.append(
+            _Source(
+                kind=kind,
+                service_id=str(svc.id),
+                title=svc.title,
+                framework=framework,
+                assessment=rec,
+                status=str(getattr(rec.status, "value", rec.status)),  # type: ignore[attr-defined]
+                scope_key=key,
+            )
         )
-        .order_by(model.version.desc(), model.created_at.desc())
-        .limit(1)
-    ).scalar_one_or_none()
+    return out
+
+
+def _duplicate_inputs_message(sources: list[_Source]) -> str | None:
+    """#876 Q2, option (a): two engaged services of one kind AND framework.
+
+    They would produce the same finding codes, and `source_id` is the key the
+    per-finding count, the rating carry-forward and the draft labels all join
+    on, so their findings would merge in silence. Refused until a register can
+    key a finding by service (filed post-MVP, with a screen control to archive
+    a service). The advisor's sentence (#736 6020214342) names no remedy,
+    because no screen can archive a service today (D-076).
+    """
+    groups: dict[tuple[str, str | None], list[str]] = {}
+    for src in sources:
+        groups.setdefault((src.kind, src.framework), []).append(src.title)
+    sentences = [_duplicate_sentence(titles) for titles in groups.values() if len(titles) > 1]
+    return " ".join(sentences) or None
+
+
+def _duplicate_sentence(titles: list[str]) -> str:
+    """One duplicate group's sentence (#891 review A1).
+
+    Two services: the advisor's approved sentence (#736 6020214342), exactly.
+    Three or more: count-aware wording, PENDING the advisor -- the approved
+    sentence says "Two" and "both", which is false of three. One sentence per
+    group, so two CISA services and two CSF services are not read as one
+    group of four.
+    """
+    named = ", ".join(titles[:-1]) + " and " + titles[-1]
+    if len(titles) == 2:
+        return (
+            f"Two engaged services of the same kind would produce the same findings: {named}. "
+            "The register cannot be generated while both are engaged."
+        )
+    return (
+        f"{len(titles)} engaged services of the same kind would produce the same findings: "
+        f"{named}. The register cannot be generated while more than one is engaged."
+    )
 
 
 @dataclass(frozen=True)
@@ -245,40 +344,35 @@ class _InputSnapshot:
     would be recorded released over findings drafted from it unreleased, and
     the register would publish.
 
-    `statuses` holds the status STRINGS as read, not the ORM objects' live
-    attributes, so nothing later in the request can refresh them.
+    `drafted_from` maps each finding's `source_id` to the source it was
+    drafted from, filled by `_gather_findings` (#876): a finding's label and
+    its batch come from ITS service, never from its kind.
     """
 
-    attack: AttackAssessment | None
-    csf: CsfAssessment | None
-    zt: ZtAssessment | None
-    statuses: dict[str, str]
+    sources: tuple[_Source, ...]
     review_pending: tuple[str, ...]
     current: tuple[InputRecord, ...]
+    drafted_from: dict[str, _Source] = dataclasses.field(default_factory=dict)
+
+    def of_kind(self, kind: str) -> list[_Source]:
+        return [src for src in self.sources if src.kind == kind]
 
 
 def _take_input_snapshot(db: Session, client_id: uuid.UUID) -> _InputSnapshot:
-    attack = _current_for_synthesis(db, AttackAssessment, client_id)
-    csf = _current_for_synthesis(db, CsfAssessment, client_id)
-    zt = _current_for_synthesis(db, ZtAssessment, client_id)
-    statuses = {
-        kind: str(getattr(a.status, "value", a.status))
-        for kind, a in (("attack", attack), ("csf", csf), ("zt", zt))
-        if a is not None
-    }
-    pending = tuple(sorted(attack_unreviewed_codes(db, attack))) if attack is not None else ()
+    sources = _synthesis_sources(db, client_id)
+    pending: set[str] = set()
+    for src in sources:
+        if src.kind == "attack":
+            pending |= set(attack_unreviewed_codes(db, src.assessment))
     snap = _InputSnapshot(
-        attack=attack,
-        csf=csf,
-        zt=zt,
-        statuses=statuses,
-        review_pending=pending,
+        sources=tuple(sources),
+        review_pending=tuple(sorted(pending)),
         current=tuple(current_inputs(db, client_id)),
     )
     _log.info(
         "risk_input_snapshot",
         client_id=str(client_id),
-        statuses=statuses,
+        sources=[(src.scope_key, src.status) for src in sources],
         review_pending=len(pending),
         current_inputs=len(snap.current),
     )
@@ -318,7 +412,8 @@ def _input_states(db: Session, client_id: uuid.UUID) -> list[RiskInputState]:
         services = [svc for k, svc in engaged if k == kind]
         if not services:
             rows.append(RiskInputState(kind=kind, engaged=False))
-        for svc in services:
+        qualifiers = _row_qualifiers(services)
+        for svc, qualifier in zip(services, qualifiers, strict=True):
             r = current.get((kind, str(svc.id)))
             rows.append(
                 RiskInputState(
@@ -326,9 +421,27 @@ def _input_states(db: Session, client_id: uuid.UUID) -> list[RiskInputState]:
                     engaged=True,
                     status=r.status if r else None,
                     version=r.version if r else None,
+                    qualifier=qualifier,
                 )
             )
     return rows
+
+
+def _row_qualifiers(services: list[Service]) -> list[str | None]:
+    """What tells one row of a kind from another (advisor, #736 6003051981 and
+    6019425290 Q3): nothing while a kind has one row; otherwise the ZT
+    framework's name, or the service title where the framework does not tell
+    them apart (two services of one framework, or a kind with none)."""
+    if len(services) < 2:
+        return [None] * len(services)
+    names = [
+        _ZT_FRAMEWORK_NAMES.get(_ZT_FRAMEWORK_BY_SERVICE_KIND.get(svc.kind, ""), "")
+        for svc in services
+    ]
+    return [
+        name if name and names.count(name) == 1 else svc.title
+        for svc, name in zip(services, names, strict=True)
+    ]
 
 
 def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
@@ -383,7 +496,9 @@ def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
     not_finalized: list[str] = []
     # #737: the gate asks about the input synthesis will READ, drafts included,
     # so its catalog and review refusals predict generate's exactly.
-    attack = _current_for_synthesis(db, AttackAssessment, client_id)
+    sources = _synthesis_sources(db, client_id)
+    attack_sources = [src.assessment for src in sources if src.kind == "attack"]
+    attack = attack_sources[0] if attack_sources else None
     finalized_attack = _finalized_for_synthesis(db, AttackAssessment, client_id) is not None
     # #556: synthesis refuses an ATT&CK input scored against another catalog
     # (`require_current_catalog`). The gate asks the SAME predicate and carries
@@ -427,6 +542,9 @@ def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
         synthesizable_missing=synthesizable_missing,
         attack_catalog_mismatch=attack_catalog_mismatch,
         attack_computed_status_unreviewed=attack_computed_status_unreviewed,
+        # #876 Q2 (a): the same sentence generate refuses with, so the gate
+        # never offers a Generate whose only outcome is a 409.
+        duplicate_inputs=_duplicate_inputs_message(sources),
     )
 
 
@@ -464,16 +582,21 @@ def _provenance_snapshot(snap: _InputSnapshot, excluded: list[str]) -> dict:
     a second read here would record whatever the inputs became during it.
     """
     inputs: list[dict] = []
-    for kind, a in (("attack", snap.attack), ("csf", snap.csf), ("zt", snap.zt)):
-        if a is None:
-            continue
+    # One row per SOURCE (#876): two Zero Trust services are two rows, each
+    # naming its service and framework. `kind`, `assessment_id`, `version` and
+    # `status` keep their meaning, so a reader of the older one-per-kind shape
+    # (`is_stale_risk_register`) reads these unchanged.
+    for src in snap.sources:
+        a = src.assessment
         inputs.append(
             {
-                "kind": kind,
-                "assessment_id": str(a.id),
-                "version": a.version,
+                "kind": src.kind,
+                "service_id": src.service_id,
+                "framework": src.framework,
+                "assessment_id": str(a.id),  # type: ignore[attr-defined]
+                "version": a.version,  # type: ignore[attr-defined]
                 # The status AS IT STOOD before synthesis. Never re-read.
-                "status": snap.statuses[kind],
+                "status": src.status,
             }
         )
     # #737, Gene's all-inputs-final rule: every engaged service's current
@@ -633,8 +756,9 @@ def _gather_findings(
     # the findings and the record of their inputs come from one read.
     snap = snapshot if snapshot is not None else _take_input_snapshot(db, client_id)
 
-    attack = snap.attack
-    if attack is not None:
+    for src in snap.of_kind("attack"):
+        start = len(findings)
+        attack = src.assessment
         # #556: rows keyed to another catalog would reach the register by ID --
         # "ATT&CK T1649.001" is not a technique, and a T1558 row was answered
         # against the swapped name. Refused, never relabelled by ID (D-091).
@@ -675,8 +799,8 @@ def _gather_findings(
         # technique in the catalog was citable, pending or not. Narrowing to
         # scored rows is a subset of that, so nothing got worse. Tracked in #415.
         attack_scope = scope_for(AttackCoverage, rows)
-        valid_techniques = set(attack_scope.codes)
-        link_scopes["attack"] = attack_scope
+        valid_techniques |= set(attack_scope.codes)
+        link_scopes[src.scope_key] = attack_scope
         # Gene's condition (D-094): only an assessment approved under D-094
         # takes its findings through sub-techniques; one approved before #620
         # keeps the findings it would always have produced.
@@ -701,8 +825,11 @@ def _gather_findings(
                     }
                 )
 
-    csf = snap.csf
-    if csf is not None:
+        _record_drafted_from(snap, findings[start:], src)
+
+    for src in snap.of_kind("csf"):
+        start = len(findings)
+        csf = src.assessment
         # #84. This read `r.maturity_tier < 3` -- a HARDCODED tier, so every
         # client's CSF findings were computed against tier 3 no matter what
         # they engaged for. A client targeting tier 2 was handed findings for
@@ -717,13 +844,13 @@ def _gather_findings(
         # target. It returns the source too, so "the client chose nothing" and
         # "the client's choice could not be used" stay separate facts.
         csf_target, csf_target_source = resolve_target_tier(_client_target_tier(db, csf.service_id))
-        target_sources["csf"] = {"target": csf_target, "source": csf_target_source}
+        target_sources[src.scope_key] = {"target": csf_target, "source": csf_target_source}
         csf_rows = (
             db.execute(select(CsfAnswer).where(CsfAnswer.assessment_id == csf.id)).scalars().all()
         )
         csf_scope = scope_for(CsfAnswer, csf_rows)
         valid_controls |= csf_scope.codes
-        link_scopes["csf"] = csf_scope
+        link_scopes[src.scope_key] = csf_scope
         for r in csf_rows:
             if r.maturity_tier is not None and r.maturity_tier < csf_target:
                 findings.append(
@@ -735,8 +862,11 @@ def _gather_findings(
                     }
                 )
 
-    zt = snap.zt
-    if zt is not None:
+        _record_drafted_from(snap, findings[start:], src)
+
+    for src in snap.of_kind("zt"):
+        start = len(findings)
+        zt = src.assessment
         # #84, the ZT half. Framework-aware, because DoD ZTRA has three stages
         # where CISA has four -- a client stage valid under one is out of range
         # under the other, and `resolve_target_stage` is what knows that.
@@ -762,10 +892,12 @@ def _gather_findings(
             ZtFrameworkCode(zt.framework.value),
             _client_target_stage(db, zt.service_id),
         )
-        target_sources["zt"] = {"target": zt_target, "source": zt_target_source}
+        target_sources[src.scope_key] = {"target": zt_target, "source": zt_target_source}
         # #838: only the catalog's rows. Migration 0063 KEEPS answers on rows
         # CISA ZTMM 2.0 does not have, and the ZT deliverable says they are not
         # scored, so they feed no finding and are not citable here either.
+        # Per SOURCE since #876: each ZT service is filtered by its own
+        # framework's catalog.
         zt_codes = all_codes(ZtFrameworkCode(zt.framework.value))
         zt_rows = [
             r
@@ -774,7 +906,7 @@ def _gather_findings(
         ]
         zt_scope = scope_for(ZtAnswer, zt_rows)
         valid_controls |= zt_scope.codes
-        link_scopes["zt"] = zt_scope
+        link_scopes[src.scope_key] = zt_scope
         for r in zt_rows:
             # Per-capability target first, then the ENGAGEMENT target. The
             # fallback was a hardcoded 3 (#84); it is now the client's
@@ -806,8 +938,25 @@ def _gather_findings(
                         "label": f"ZT {r.capability_code}: stage {r.maturity_stage}",
                     }
                 )
+        _record_drafted_from(snap, findings[start:], src)
 
     return findings, valid_techniques, valid_controls, target_sources, link_scopes
+
+
+def _record_drafted_from(snap: _InputSnapshot, findings: list[dict], src: _Source) -> None:
+    """Note which source each finding came from (#876). A `source_id` drafted
+    from two sources would merge two findings into one, so it raises: generate
+    refuses that case up front (`_duplicate_inputs_message`), and reaching here
+    with one means that refusal was bypassed."""
+    for f in findings:
+        sid = str(f["source_id"])
+        was = snap.drafted_from.get(sid)
+        if was is not None and was.service_id != src.service_id:
+            raise RuntimeError(
+                f"risk synthesis: finding {sid!r} drafted from two services "
+                f"({was.service_id}, {src.service_id})"
+            )
+        snap.drafted_from[sid] = src
 
 
 def _coerce_enum(enum_cls, value) -> tuple[object | None, str | None]:
@@ -989,6 +1138,38 @@ def _carried_fields(stored: object) -> dict:
     return dict(_CARRIED_NOT_RECORDED)
 
 
+def _batches(findings: list[dict], keys: list[str] | None) -> list[list[dict]]:
+    """Chunks of at most `_RISK_BATCH_SIZE`, and no chunk holds findings from
+    two sources of ONE kind (#876, Gene's ruling; advisor 6019425290 Q4).
+
+    `keys` are the findings' source scope keys ("zt:cisa_ztmm_2_0"), parallel
+    to `findings`. Different kinds may still share a chunk, as before #876, so
+    a client with one service per kind makes the requests it always made;
+    only a second service of a kind -- the two-ZT client -- pays an extra one.
+    With no keys (a caller that has no sources) the chunking is unchanged.
+    """
+    if keys is None:
+        return [
+            findings[i : i + _RISK_BATCH_SIZE] for i in range(0, len(findings), _RISK_BATCH_SIZE)
+        ]
+    if len(keys) != len(findings):
+        raise ValueError(f"risk batching: {len(keys)} keys for {len(findings)} findings")
+    out: list[list[dict]] = []
+    batch: list[dict] = []
+    in_batch: dict[str, str] = {}  # kind -> the one source key of that kind
+    for f, key in zip(findings, keys, strict=True):
+        kind = key.split(":", 1)[0]
+        clash = in_batch.get(kind, key) != key
+        if batch and (len(batch) >= _RISK_BATCH_SIZE or clash):
+            out.append(batch)
+            batch, in_batch = [], {}
+        batch.append(f)
+        in_batch[kind] = key
+    if batch:
+        out.append(batch)
+    return out
+
+
 def _run_risk_synthesize_batched(
     db: Session,
     llm: LLMClient,
@@ -999,6 +1180,7 @@ def _run_risk_synthesize_batched(
     requested_by: uuid.UUID,
     client_id: uuid.UUID,
     client_org_name: str | None,
+    batch_keys: list[str] | None = None,
 ) -> tuple[list[dict], int, int, dict[str, int]]:
     """Run risk_synthesize as concurrent batches.
 
@@ -1042,9 +1224,7 @@ def _run_risk_synthesize_batched(
     Only a total failure raises, and it raises through `ai_call_boundary` so the
     error stays typed and carries `charged_likely`.
     """
-    batches = [
-        findings[i : i + _RISK_BATCH_SIZE] for i in range(0, len(findings), _RISK_BATCH_SIZE)
-    ] or [[]]
+    batches = _batches(findings, batch_keys) or [[]]
 
     def _one(batch: list[dict]) -> dict:
         session = Session(bind=db.get_bind())
@@ -1181,9 +1361,28 @@ def generate(
     # before the model call; the provenance and every label below derive from
     # this snapshot rather than from a re-read after the run.
     snap = _take_input_snapshot(db, cid)
+    duplicate = _duplicate_inputs_message(list(snap.sources))
+    if duplicate is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"reason": "risk_register_duplicate_inputs", "message": duplicate},
+        )
     findings, valid_techniques, valid_controls, target_sources, link_scopes = _gather_findings(
         db, cid, snap
     )
+    # FAIL CLOSED, and BEFORE the model is paid for: every finding must name the
+    # source it was drafted from, because its label and its batch both come
+    # from that source (#876). No path produces one that does not -- every
+    # finding is gathered from a snapshot source -- so this raises rather than
+    # defaulting a label to "released" (#860 B1) or a batch to some kind.
+    unsourced = [
+        str(f["source_id"]) for f in findings if str(f["source_id"]) not in snap.drafted_from
+    ]
+    if unsourced:
+        raise RuntimeError(
+            f"risk generate: findings {unsourced!r} have no input status in the "
+            "snapshot they were drafted from"
+        )
     client_org = client.legal_name  # NULL when nobody has named the org (D-080)
     # Batched: one request cannot express this job (see _RISK_BATCH_SIZE). A
     # total failure still raises typed, through ai_call_boundary.
@@ -1197,6 +1396,7 @@ def generate(
             requested_by=admin.id,
             client_id=cid,
             client_org_name=client_org,
+            batch_keys=[snap.drafted_from[str(f["source_id"])].scope_key for f in findings],
         )
     )
     data = {"entries": entries_draft}
@@ -1549,7 +1749,9 @@ def generate(
     for f in findings:
         if f.get("source_id") is None:
             continue
-        state = snap.statuses.get(f["kind"])
+        # #876: from the finding's OWN source, never its kind's.
+        src = snap.drafted_from.get(str(f["source_id"]))
+        state = src.status if src is not None else None
         if state is None:
             raise RuntimeError(
                 f"risk generate: finding kind {f['kind']!r} has no input status in the "
@@ -2261,7 +2463,12 @@ def publish(
     # so a draft input is refused with the typed per-input reason rather than
     # by the older #240 guard's untyped sentence, which still runs below for the
     # shapes only it knows (pre-0047 provenance, a missing `inputs` key).
-    blockers = publish_blockers(db, cid, (reg.provenance or {}).get("current_inputs"))
+    blockers = publish_blockers(
+        db,
+        cid,
+        (reg.provenance or {}).get("current_inputs"),
+        (reg.provenance or {}).get("inputs"),
+    )
     if blockers:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -2673,7 +2880,7 @@ def _link_scope_fields(stored: object) -> dict:
     UNREACHABLE from the one writer: `_gate` sets
     `unlocked = has_attack and (has_csf or has_zt)` from `_exists_for_gate`, and
     since #737 (#860 review B2) that counts the same non-archived population
-    `_current_for_synthesis` reads, so a generate that is allowed at all
+    `_synthesis_sources` reads, so a generate that is allowed at all
     synthesizes ATT&CK and CSF or ZT and `link_scopes` carries at least two
     services. So this is a
     ratchet -- and it is the one sibling of a hardened class that was left
