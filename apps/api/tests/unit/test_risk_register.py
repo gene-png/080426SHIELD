@@ -2193,12 +2193,14 @@ def _zt_finding_codes(cid: str) -> list[str]:
     return [f["source_id"] for f in findings if f["kind"] == "zt"]
 
 
-def _zt_targets(cid: str) -> dict:
+def _zt_targets(cid: str, key: str = "zt") -> dict:
+    """The ZT target a run compared against. `key` is the source's scope key:
+    "zt" while the client has one ZT service, "zt:<framework>" with two (#876)."""
     from app.routes.risk import _gather_findings
 
     db = _session()
     _f, _t, _c, targets, _scopes = _gather_findings(db, uuid.UUID(cid))
-    return targets.get("zt", {})
+    return targets.get(key, {})
 
 
 @pytest.mark.unit
@@ -2278,7 +2280,10 @@ def test_a_stored_stage_the_framework_does_not_have_is_named_not_used(app_client
     assert c.post(f"/zt/assessments/{da.json()['id']}/approve", headers=h).status_code == 200
 
     _set_zt_target(cid, 4, kind="zero_trust_dod")
-    resolved = _zt_targets(cid)
+    # #876: CISA and DoD are both engaged, so each has its own target record;
+    # this test is about DoD's. Before #876 the bare "zt" key held whichever ONE
+    # assessment per-kind synthesis picked (DoD, as the latest).
+    resolved = _zt_targets(cid, "zt:dod_ztra")
     assert resolved["source"] == "client_out_of_range", (
         "stage 4 is not a stage DoD ZTRA has, so it must be NAMED as unusable "
         f"rather than silently applied. got {resolved}"
