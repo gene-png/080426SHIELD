@@ -10,22 +10,23 @@ import {
 } from "@testing-library/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import * as adminClient from "@/lib/admin/client";
 import * as riskClient from "@/lib/risk/client";
-import type { RiskGate } from "@/lib/risk/types";
+import type { RiskDuplicateService, RiskGate } from "@/lib/risk/types";
 
 import { RiskRegisterDashboard } from "./RiskRegisterDashboard";
 
 /**
  * #896: the duplicate banner offers one archive button per service behind
- * the refusal, and confirming one reloads the gate. Copy from the advisor's
- * approval (#736 6042801745), never from the component.
+ * the refusal, and the dialog reloads the gate whatever the outcome (review
+ * B2). Copy from the advisor's approvals (#736 6042801745, 6046491381), never
+ * from the component.
  *
  * The refusal sentence itself is unchanged (advisor: the API message reaches
  * callers that are not this screen, so the remedy sits beneath it).
  */
 
 vi.mock("@/lib/risk/client", () => ({
+  archiveDuplicateService: vi.fn(),
   describeRiskError: (e: unknown) => String(e),
   editRiskEntryRating: vi.fn(),
   publishRiskRegister: vi.fn(),
@@ -36,7 +37,6 @@ vi.mock("@/lib/risk/client", () => ({
   getActiveClientId: vi.fn(),
   getClientName: vi.fn(),
 }));
-vi.mock("@/lib/admin/client", () => ({ archiveService: vi.fn() }));
 
 vi.mock("@/components/admin/RunAiGuard", () => ({
   RunAiGuard: ({
@@ -52,7 +52,7 @@ const fetchRiskGate = vi.mocked(riskClient.fetchRiskGate);
 const fetchRiskRegisterLatest = vi.mocked(riskClient.fetchRiskRegisterLatest);
 const getActiveClientId = vi.mocked(riskClient.getActiveClientId);
 const getClientName = vi.mocked(riskClient.getClientName);
-const archiveService = vi.mocked(adminClient.archiveService);
+const archive = vi.mocked(riskClient.archiveDuplicateService);
 
 beforeAll(() => {
   HTMLDialogElement.prototype.showModal = function showModal(): void {
@@ -67,6 +67,23 @@ beforeAll(() => {
 const DUPLICATE =
   "Two engaged services of the same kind would produce the same findings: ZT and ZT 2. The register cannot be generated while both are engaged.";
 const LEAD = "Archive the one this register should not draw on:";
+const NOT_IN_GROUP =
+  "ZT 2 is no longer one of several engaged services of the same kind, so it was not archived. The list has been refreshed.";
+
+function svc(
+  service_id: string,
+  title: string,
+  over: Partial<RiskDuplicateService> = {},
+): RiskDuplicateService {
+  return {
+    service_id,
+    title,
+    started_at: "2026-10-03T12:00:00Z",
+    status: "draft",
+    version: 1,
+    ...over,
+  };
+}
 
 function gate(over: Partial<RiskGate> = {}): RiskGate {
   return {
@@ -87,10 +104,7 @@ function gate(over: Partial<RiskGate> = {}): RiskGate {
 
 const DUPLICATE_GATE = gate({
   duplicate_inputs: DUPLICATE,
-  duplicate_services: [
-    { service_id: "svc-1", title: "ZT" },
-    { service_id: "svc-2", title: "ZT 2" },
-  ],
+  duplicate_services: [svc("svc-1", "ZT"), svc("svc-2", "ZT 2")],
 });
 
 async function loaded(): Promise<void> {
@@ -100,6 +114,14 @@ async function loaded(): Promise<void> {
       screen.getByRole("heading", { name: "Risk Register" }),
     ).toBeInTheDocument(),
   );
+}
+
+async function confirmIn(dialog: HTMLElement): Promise<void> {
+  await act(async () => {
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Yes, archive" }),
+    );
+  });
 }
 
 describe("RiskRegisterDashboard archive control (#896)", () => {
@@ -116,13 +138,13 @@ describe("RiskRegisterDashboard archive control (#896)", () => {
     expect(
       screen.getByTestId("risk-register-duplicate-inputs"),
     ).toHaveTextContent(DUPLICATE);
-    const archive = screen.getByTestId("risk-register-duplicate-archive");
-    expect(archive).toHaveTextContent(LEAD);
+    const banner = screen.getByTestId("risk-register-duplicate-archive");
+    expect(banner).toHaveTextContent(LEAD);
     expect(
-      within(archive).getByRole("button", { name: "Archive ZT" }),
+      within(banner).getByRole("button", { name: "Archive ZT" }),
     ).toBeInTheDocument();
     expect(
-      within(archive).getByRole("button", { name: "Archive ZT 2" }),
+      within(banner).getByRole("button", { name: "Archive ZT 2" }),
     ).toBeInTheDocument();
   });
 
@@ -134,23 +156,59 @@ describe("RiskRegisterDashboard archive control (#896)", () => {
     expect(screen.queryByText(LEAD)).toBeNull();
   });
 
+  it("with two EQUAL titles, archives the service whose button was pressed", async () => {
+    // B1: both default title paths give a second service the first one's
+    // title. The second button must reach the second service's id.
+    fetchRiskGate.mockResolvedValue(
+      gate({
+        duplicate_inputs: DUPLICATE,
+        duplicate_services: [
+          svc("svc-released", "Acme — Zero Trust", {
+            status: "released",
+            version: 2,
+          }),
+          svc("svc-draft", "Acme — Zero Trust"),
+        ],
+      }),
+    );
+    archive.mockResolvedValue(undefined);
+    await loaded();
+    const buttons = within(
+      screen.getByTestId("risk-register-duplicate-archive"),
+    ).getAllByRole("button", { name: "Archive Acme — Zero Trust" });
+    expect(buttons).toHaveLength(2);
+    // What tells them apart (advisor, #736 6046898402), written out by hand.
+    expect(buttons[0]).toHaveAccessibleDescription(
+      "Started 3 Oct 2026, version 2, released",
+    );
+    expect(buttons[1]).toHaveAccessibleDescription(
+      "Started 3 Oct 2026, version 1, in progress (draft)",
+    );
+    fireEvent.click(buttons[1]);
+    const dialog = screen.getByRole("dialog", {
+      name: "Archive Acme — Zero Trust?",
+    });
+    expect(
+      within(dialog).getByText(
+        "Started 3 Oct 2026, version 1, in progress (draft)",
+      ),
+    ).toBeInTheDocument();
+    await confirmIn(dialog);
+    expect(archive).toHaveBeenCalledWith("c1", "svc-draft");
+  });
+
   it("reloads the gate after an archive, which clears the refusal", async () => {
     fetchRiskGate
       .mockResolvedValueOnce(DUPLICATE_GATE)
       .mockResolvedValueOnce(gate());
-    archiveService.mockResolvedValue(undefined);
+    archive.mockResolvedValue(undefined);
     await loaded();
     expect(screen.getByRole("button", { name: "Generate" })).toBeDisabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Archive ZT 2" }));
-    const dialog = screen.getByRole("dialog", { name: "Archive ZT 2?" });
-    await act(async () => {
-      fireEvent.click(
-        within(dialog).getByRole("button", { name: "Yes, archive" }),
-      );
-    });
+    await confirmIn(screen.getByRole("dialog", { name: "Archive ZT 2?" }));
 
-    expect(archiveService).toHaveBeenCalledWith("svc-2");
+    expect(archive).toHaveBeenCalledWith("c1", "svc-2");
     await waitFor(() => expect(fetchRiskGate).toHaveBeenCalledTimes(2));
     expect(fetchRiskGate).toHaveBeenLastCalledWith("c1");
     await waitFor(() =>
@@ -158,5 +216,39 @@ describe("RiskRegisterDashboard archive control (#896)", () => {
     );
     expect(screen.queryByTestId("risk-register-duplicate-inputs")).toBeNull();
     expect(screen.queryByTestId("risk-register-duplicate-archive")).toBeNull();
+  });
+
+  it("two tabs: the stale archive is refused, the list refreshes, and the message stays", async () => {
+    // Another tab archived ZT already. This tab still shows both, presses
+    // Archive ZT 2, and the server refuses: ZT 2 is now the only one.
+    fetchRiskGate
+      .mockResolvedValueOnce(DUPLICATE_GATE)
+      .mockResolvedValueOnce(gate());
+    archive.mockRejectedValue({
+      status: 409,
+      payload: {
+        error: {
+          code: 409,
+          reason: "service_not_in_duplicate_group",
+          message: NOT_IN_GROUP,
+        },
+      },
+    });
+    await loaded();
+
+    fireEvent.click(screen.getByRole("button", { name: "Archive ZT 2" }));
+    const dialog = screen.getByRole("dialog", { name: "Archive ZT 2?" });
+    await confirmIn(dialog);
+
+    await waitFor(() => expect(fetchRiskGate).toHaveBeenCalledTimes(2));
+    // Positive first: the refreshed page offers Generate...
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Generate" })).toBeEnabled(),
+    );
+    // ...the banner and its buttons are gone, and the dialog that said so is
+    // still open with the server's sentence.
+    expect(screen.queryByTestId("risk-register-duplicate-archive")).toBeNull();
+    const still = screen.getByRole("dialog", { name: "Archive ZT 2?" });
+    expect(within(still).getByRole("alert")).toHaveTextContent(NOT_IN_GROUP);
   });
 });

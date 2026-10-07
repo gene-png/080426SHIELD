@@ -36,7 +36,10 @@ import {
   type RiskTier,
 } from "@/lib/risk/matrix";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
-import { ArchiveServiceButton } from "@/components/admin/risk/ArchiveServiceButton";
+import {
+  ArchiveServiceButton,
+  ArchiveServiceDialog,
+} from "@/components/admin/risk/ArchiveServiceButton";
 import { carriedSentences } from "@/lib/risk/carry";
 import {
   INPUTS_RULE,
@@ -45,7 +48,12 @@ import {
   sourceStateNote,
 } from "@/lib/risk/inputs";
 
-import type { RiskEntry, RiskGate, RiskRegister } from "@/lib/risk/types";
+import type {
+  RiskDuplicateService,
+  RiskEntry,
+  RiskGate,
+  RiskRegister,
+} from "@/lib/risk/types";
 
 import type { JSX } from "react";
 
@@ -349,6 +357,9 @@ export function RiskRegisterDashboard(): JSX.Element {
     "generate" | "export" | "publish" | "rate" | null
   >(null);
   const [error, setError] = React.useState<string | null>(null);
+  // #896: the duplicate service whose archive dialog is open, if any.
+  const [archiveTarget, setArchiveTarget] =
+    React.useState<RiskDuplicateService | null>(null);
 
   React.useEffect(() => {
     let active = true;
@@ -381,9 +392,10 @@ export function RiskRegisterDashboard(): JSX.Element {
     };
   }, []);
 
-  // #896: after a service is archived from the duplicate banner, read the
-  // gate again -- the refusal, the banner and Generate all derive from it.
-  async function onServiceArchived(): Promise<void> {
+  // #896: after any archive attempt from the duplicate banner (review B2:
+  // success OR failure), read the gate again -- the refusal, the banner and
+  // Generate all derive from it.
+  async function reloadGate(): Promise<void> {
     if (!cid) return;
     setError(null);
     try {
@@ -654,14 +666,23 @@ export function RiskRegisterDashboard(): JSX.Element {
             {duplicateServices.map((svc) => (
               <ArchiveServiceButton
                 key={svc.service_id}
-                serviceId={svc.service_id}
-                title={svc.title}
-                onArchived={onServiceArchived}
+                service={svc}
+                onOpen={setArchiveTarget}
                 disabled={busy !== null}
               />
             ))}
           </div>
         </div>
+      ) : null}
+      {/* Hosted here, not by a button: the reload after an attempt can remove
+          the button that opened it (#896 review B2). */}
+      {cid ? (
+        <ArchiveServiceDialog
+          clientId={cid}
+          service={archiveTarget}
+          onClose={() => setArchiveTarget(null)}
+          onSettled={reloadGate}
+        />
       ) : null}
 
       {catalogMismatch !== null ? (

@@ -83,6 +83,15 @@ export interface RiskGate {
 export interface RiskDuplicateService {
   service_id: string;
   title: string;
+  /**
+   * Review B1: what tells two rows with the SAME title apart. When the
+   * service was opened (ISO, UTC), and the status and version the Inputs
+   * panel shows for it. Required: a server that sends `duplicate_services`
+   * at all sends these.
+   */
+  started_at: string;
+  status: string;
+  version: number;
 }
 
 export interface RiskEntry {

@@ -3,22 +3,29 @@ import "@testing-library/jest-dom/vitest";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import * as adminClient from "@/lib/admin/client";
+import * as riskClient from "@/lib/risk/client";
+import type { RiskDuplicateService } from "@/lib/risk/types";
 
-import { ArchiveServiceButton } from "./ArchiveServiceButton";
+import {
+  ArchiveServiceButton,
+  ArchiveServiceDialog,
+} from "./ArchiveServiceButton";
 
 /**
  * #896: one archive button per duplicate service on the Risk Register's
- * duplicate banner, with a confirm dialog in the `DiscardDraftButton` pattern.
+ * duplicate banner, and one confirm dialog in the `DiscardDraftButton`
+ * pattern. Review B2 (advisor, #736 6046491381): the dialog archives through
+ * the Risk-scoped route and reloads the gate on ANY outcome; on failure it
+ * stays open with the message, because the reload may remove the very button
+ * that opened it.
  *
- * Every string is copied from the advisor's approval (#736 6042801745, on the
- * plan in 6042306149), never from the component: a test reading the
- * component's own constants agrees with it by construction.
+ * Every string is copied from the advisor's approvals (#736 6042801745 and
+ * 6046491381), never from the component.
  */
 
-vi.mock("@/lib/admin/client", () => ({ archiveService: vi.fn() }));
+vi.mock("@/lib/risk/client", () => ({ archiveDuplicateService: vi.fn() }));
 
-const archiveService = vi.mocked(adminClient.archiveService);
+const archive = vi.mocked(riskClient.archiveDuplicateService);
 
 // jsdom does not implement <dialog>.showModal()/.close() (see
 // DiscardDraftButton.test.tsx).
@@ -35,22 +42,33 @@ beforeAll(() => {
 const BODY =
   "The Risk Register will stop drawing on ZT 2: the next version you generate leaves out its findings, and publishing no longer waits for it. Nothing else changes: its assessments, its deliverables and the client's view of it stay as they are. Archiving cannot be undone.";
 const FALLBACK = "The service could not be archived. Nothing was changed.";
+const NOT_IN_GROUP =
+  "ZT 2 is no longer one of several engaged services of the same kind, so it was not archived. The list has been refreshed.";
 
-function setup(onArchived = vi.fn()) {
-  const { container } = render(
-    <ArchiveServiceButton
-      serviceId="svc-2"
-      title="ZT 2"
-      onArchived={onArchived}
+// The advisor's line (#736 6046898402) for SVC below, written out by hand.
+const LINE = "Started 3 Oct 2026, version 1, in progress (draft)";
+
+const SVC: RiskDuplicateService = {
+  service_id: "svc-2",
+  title: "ZT 2",
+  started_at: "2026-10-03T12:00:00Z",
+  status: "draft",
+  version: 1,
+};
+
+function setup(service: RiskDuplicateService | null = SVC) {
+  const onClose = vi.fn();
+  const onSettled = vi.fn().mockResolvedValue(undefined);
+  const { container, rerender } = render(
+    <ArchiveServiceDialog
+      clientId="c1"
+      service={service}
+      onClose={onClose}
+      onSettled={onSettled}
     />,
   );
   const dialog = container.querySelector("dialog") as HTMLDialogElement;
-  return { dialog, onArchived };
-}
-
-function open(dialog: HTMLDialogElement): void {
-  fireEvent.click(screen.getByRole("button", { name: "Archive ZT 2" }));
-  expect(dialog.open).toBe(true);
+  return { dialog, onClose, onSettled, rerender };
 }
 
 async function confirm(dialog: HTMLDialogElement): Promise<void> {
@@ -62,44 +80,66 @@ async function confirm(dialog: HTMLDialogElement): Promise<void> {
 }
 
 describe("ArchiveServiceButton (#896)", () => {
-  beforeEach(() => {
-    archiveService.mockReset();
+  it("names the service and reports which one was asked for", () => {
+    const onOpen = vi.fn();
+    render(<ArchiveServiceButton service={SVC} onOpen={onOpen} />);
+    fireEvent.click(screen.getByRole("button", { name: "Archive ZT 2" }));
+    expect(onOpen).toHaveBeenCalledWith(SVC);
   });
 
-  it("opens a confirm dialog naming the service, with the approved body", () => {
-    const { dialog } = setup();
+  it("carries the approved line beneath it, describing the button", () => {
+    render(<ArchiveServiceButton service={SVC} onOpen={vi.fn()} />);
+    const button = screen.getByRole("button", { name: "Archive ZT 2" });
+    expect(screen.getByText(LINE)).toBeInTheDocument();
+    expect(button).toHaveAccessibleDescription(LINE);
+  });
+});
+
+describe("ArchiveServiceDialog (#896)", () => {
+  beforeEach(() => {
+    archive.mockReset();
+  });
+
+  it("is closed while no service is chosen", () => {
+    const { dialog } = setup(null);
     expect(dialog.open).toBe(false);
-    open(dialog);
+  });
+
+  it("names the service, with the approved body", () => {
+    const { dialog } = setup();
+    expect(dialog.open).toBe(true);
     expect(
       within(dialog).getByRole("heading", { name: "Archive ZT 2?" }),
     ).toBeInTheDocument();
     expect(within(dialog).getByText(BODY)).toBeInTheDocument();
-    expect(archiveService).not.toHaveBeenCalled();
+    expect(archive).not.toHaveBeenCalled();
+  });
+
+  it("shows the approved line under its title", () => {
+    const { dialog } = setup();
+    expect(within(dialog).getByText(LINE)).toBeInTheDocument();
   });
 
   it("archives nothing when cancelled", () => {
-    const { dialog, onArchived } = setup();
-    open(dialog);
+    const { dialog, onClose, onSettled } = setup();
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-    expect(dialog.open).toBe(false);
-    expect(archiveService).not.toHaveBeenCalled();
-    expect(onArchived).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(archive).not.toHaveBeenCalled();
+    expect(onSettled).not.toHaveBeenCalled();
   });
 
-  it("archives that service on confirm, closes, and reports it", async () => {
-    archiveService.mockResolvedValue(undefined);
-    const { dialog, onArchived } = setup();
-    open(dialog);
+  it("archives that service through the client's route, reloads, and closes", async () => {
+    archive.mockResolvedValue(undefined);
+    const { dialog, onClose, onSettled } = setup();
     await confirm(dialog);
-    expect(archiveService).toHaveBeenCalledWith("svc-2");
-    expect(onArchived).toHaveBeenCalledTimes(1);
-    expect(dialog.open).toBe(false);
+    expect(archive).toHaveBeenCalledWith("c1", "svc-2");
+    expect(onSettled).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("says Archiving… while the archive is in flight", async () => {
-    archiveService.mockReturnValue(new Promise(() => {}));
+    archive.mockReturnValue(new Promise(() => {}));
     const { dialog } = setup();
-    open(dialog);
     await confirm(dialog);
     expect(
       within(dialog).getByRole("button", { name: "Archiving…" }),
@@ -109,40 +149,55 @@ describe("ArchiveServiceButton (#896)", () => {
     ).toBeDisabled();
   });
 
-  it("shows the API's typed message on failure and stays open", async () => {
-    archiveService.mockRejectedValue({
+  it("on the server's refusal shows its sentence, reloads the gate, and stays open", async () => {
+    archive.mockRejectedValue({
+      status: 409,
+      payload: {
+        error: {
+          code: 409,
+          reason: "service_not_in_duplicate_group",
+          message: NOT_IN_GROUP,
+        },
+      },
+    });
+    const { dialog, onClose, onSettled } = setup();
+    await confirm(dialog);
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(NOT_IN_GROUP);
+    expect(onSettled).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(dialog.open).toBe(true);
+  });
+
+  it("on an unknown outcome shows the API's sentence and reloads the gate", async () => {
+    const unknown =
+      "We couldn't confirm whether this finished. It may still complete; check before trying again.";
+    archive.mockRejectedValue({
       status: 504,
       payload: {
         error: {
           code: 504,
           reason: "upstream_outcome_unknown",
-          message:
-            "We couldn't confirm whether this finished. It may still complete; check before trying again.",
+          message: unknown,
         },
       },
     });
-    const { dialog, onArchived } = setup();
-    open(dialog);
+    const { dialog, onSettled } = setup();
     await confirm(dialog);
-    expect(within(dialog).getByRole("alert")).toHaveTextContent(
-      "We couldn't confirm whether this finished. It may still complete; check before trying again.",
-    );
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(unknown);
     expect(within(dialog).getByRole("alert")).not.toHaveTextContent(FALLBACK);
-    expect(dialog.open).toBe(true);
-    expect(onArchived).not.toHaveBeenCalled();
+    expect(onSettled).toHaveBeenCalledTimes(1);
   });
 
-  it("falls back to the approved sentence when the API sent none", async () => {
-    archiveService.mockRejectedValue({ status: 502, payload: null });
-    const { dialog, onArchived } = setup();
-    open(dialog);
+  it("falls back to the approved sentence when the API sent none, and reloads", async () => {
+    archive.mockRejectedValue({ status: 502, payload: null });
+    const { dialog, onSettled } = setup();
     await confirm(dialog);
     expect(within(dialog).getByRole("alert")).toHaveTextContent(FALLBACK);
-    expect(onArchived).not.toHaveBeenCalled();
+    expect(onSettled).toHaveBeenCalledTimes(1);
   });
 
   it("does not show the internal schema sentence as the API's message", async () => {
-    archiveService.mockRejectedValue({
+    archive.mockRejectedValue({
       status: 422,
       payload: {
         error: {
@@ -153,8 +208,23 @@ describe("ArchiveServiceButton (#896)", () => {
       },
     });
     const { dialog } = setup();
-    open(dialog);
     await confirm(dialog);
     expect(within(dialog).getByRole("alert")).toHaveTextContent(FALLBACK);
+  });
+
+  it("forgets an earlier failure when opened for another service", async () => {
+    archive.mockRejectedValue({ status: 502, payload: null });
+    const { dialog, onClose, onSettled, rerender } = setup();
+    await confirm(dialog);
+    expect(within(dialog).getByRole("alert")).toBeInTheDocument();
+    rerender(
+      <ArchiveServiceDialog
+        clientId="c1"
+        service={{ ...SVC, service_id: "svc-1", title: "ZT" }}
+        onClose={onClose}
+        onSettled={onSettled}
+      />,
+    );
+    expect(within(dialog).queryByRole("alert")).toBeNull();
   });
 });

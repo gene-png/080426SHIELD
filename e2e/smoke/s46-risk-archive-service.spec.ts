@@ -108,13 +108,18 @@ test("archiving one of two same-kind services from the duplicate banner clears t
     .getByRole("button", { name: "Archive QA Archive ZT Two" })
     .click();
   await expect(dialog).toBeVisible();
-  const deleted = page.waitForResponse(
+  // Review B2: through the Risk-scoped route, which re-checks on the server.
+  const archived = page.waitForResponse(
     (r) =>
-      r.request().method() === "DELETE" &&
-      r.url().endsWith(`/api/proxy/admin/services/${drop}`),
+      r.request().method() === "POST" &&
+      r
+        .url()
+        .endsWith(
+          `/api/proxy/risk/clients/${clientId}/services/${drop}/archive`,
+        ),
   );
   await dialog.getByRole("button", { name: "Yes, archive" }).click();
-  expect((await deleted).status()).toBe(204);
+  expect((await archived).status()).toBe(204);
 
   // Positive state first (Generate offered), then the absences.
   await expect(page.getByRole("button", { name: "Generate" })).toBeEnabled({
@@ -133,6 +138,20 @@ test("archiving one of two same-kind services from the duplicate banner clears t
   );
   const kept = await page.request.get(`/api/proxy/admin/services/${keep}`);
   expect(((await kept.json()) as { status: string }).status).not.toBe(
+    "archived",
+  );
+
+  // The second tab: it still shows the old list and archives the other one.
+  // The server refuses, typed, and the kind stays engaged.
+  const stale = await page.request.post(
+    `/api/proxy/risk/clients/${clientId}/services/${keep}/archive`,
+  );
+  expect(stale.status()).toBe(409);
+  expect(
+    ((await stale.json()) as { error: { reason: string } }).error.reason,
+  ).toBe("service_not_in_duplicate_group");
+  const stillKept = await page.request.get(`/api/proxy/admin/services/${keep}`);
+  expect(((await stillKept.json()) as { status: string }).status).not.toBe(
     "archived",
   );
 });

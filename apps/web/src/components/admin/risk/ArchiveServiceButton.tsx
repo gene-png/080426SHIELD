@@ -3,21 +3,31 @@ import * as React from "react";
 
 import { Modal } from "@shield/design-system";
 
-import { archiveService } from "@/lib/admin/client";
 import { clientFacingError } from "@/lib/describe-save-error";
+import { archiveDuplicateService } from "@/lib/risk/client";
+import { startedLine } from "@/lib/risk/started";
+import type { RiskDuplicateService } from "@/lib/risk/types";
 
 import type { JSX } from "react";
 
 /**
  * #896: archive one service from the Risk Register's duplicate banner, the
- * remedy for its two-of-a-kind refusal. A danger-styled trigger and a confirm
- * dialog in the `DiscardDraftButton` pattern; nothing is archived until the
- * explicit confirm.
+ * remedy for its two-of-a-kind refusal. A danger-styled button per service
+ * and ONE confirm dialog in the `DiscardDraftButton` pattern; nothing is
+ * archived until the explicit confirm.
  *
- * Every string here was approved by the advisor (#736 6042801745, on the plan
- * in 6042306149), the dialog body with its last sentence changed to
- * "Archiving cannot be undone.": there is no unarchive route, through the API
- * either. Change none of them without the advisor.
+ * Review B2 (advisor, #736 6046491381): the dialog archives through the
+ * Risk-scoped route, which re-checks on the server, and reloads the gate on
+ * ANY outcome so the buttons reflect the server. The dialog is hosted by the
+ * dashboard, not by a button, because that reload can remove the very button
+ * that opened it -- and a failure message inside an unmounted dialog is a
+ * message nobody reads.
+ *
+ * Every string here was approved by the advisor (#736 6042801745), the dialog
+ * body with its last sentence "Archiving cannot be undone.": there is no
+ * unarchive route, through the API either. The line under each button and
+ * under the dialog's title is `startedLine` (review B1, 6046898402). Change
+ * none of them without the advisor.
  */
 
 /** Shown when the API sent no sentence fit for a person. */
@@ -33,96 +43,145 @@ function dialogBody(title: string): string {
 }
 
 export interface ArchiveServiceButtonProps {
-  serviceId: string;
-  title: string;
-  /** Called once the archive has succeeded; the dashboard reloads its gate. */
-  onArchived: () => void | Promise<void>;
+  service: RiskDuplicateService;
+  /** Opens the dashboard's dialog for this service. */
+  onOpen: (service: RiskDuplicateService) => void;
   /** Disables the trigger while another dashboard action is in flight. */
   disabled?: boolean;
 }
 
 export function ArchiveServiceButton({
-  serviceId,
-  title,
-  onArchived,
+  service,
+  onOpen,
   disabled = false,
 }: ArchiveServiceButtonProps): JSX.Element {
-  const [open, setOpen] = React.useState(false);
-  const [busy, setBusy] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
+  // B1: two services can share a title, so the line beneath says which this
+  // is. Outside the button, so its accessible NAME stays "Archive {title}";
+  // linked as its description, so a screen reader hears the line too.
+  const lineId = React.useId();
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <button
+        type="button"
+        onClick={() => onOpen(service)}
+        disabled={disabled}
+        aria-describedby={lineId}
+        className="rounded-md border border-status-danger-border px-3 py-1.5 text-sm font-semibold text-status-danger-fg hover:bg-status-danger-bg disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        Archive {service.title}
+      </button>
+      <span id={lineId} className="text-xs text-ink-secondary">
+        {startedLine(service)}
+      </span>
+    </div>
+  );
+}
 
-  async function handleConfirm(): Promise<void> {
+export interface ArchiveServiceDialogProps {
+  clientId: string;
+  /** The service being confirmed; null while the dialog is closed. */
+  service: RiskDuplicateService | null;
+  onClose: () => void;
+  /** Reloads the gate. Called after EVERY attempt, success or failure (B2). */
+  onSettled: () => Promise<void>;
+}
+
+export function ArchiveServiceDialog({
+  clientId,
+  service,
+  onClose,
+  onSettled,
+}: ArchiveServiceDialogProps): JSX.Element {
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<{
+    serviceId: string;
+    message: string;
+  } | null>(null);
+  // DERIVED, not reset: an error belongs to the service it was raised for, so
+  // opening the dialog for another one shows none.
+  const shownError =
+    error !== null && service !== null && error.serviceId === service.service_id
+      ? error.message
+      : null;
+
+  async function handleConfirm(target: RiskDuplicateService): Promise<void> {
     setBusy(true);
     setError(null);
+    let failed = false;
     try {
-      await archiveService(serviceId);
+      await archiveDuplicateService(clientId, target.service_id);
+      console.info("[risk] service archived", { serviceId: target.service_id });
     } catch (err) {
-      // The API's own sentence where it sent one (an outcome-unknown 504 says
-      // the archive may have landed, which the fallback would deny), else the
-      // approved fallback. The dialog stays open so the reader sees it.
-      console.error("[risk] archive service failed", { serviceId, err });
-      setError(clientFacingError(err, FALLBACK));
-      setBusy(false);
-      return;
+      // The API's own sentence where it sent one (the 409 says the list was
+      // refreshed; an outcome-unknown 504 says the archive may have landed,
+      // which the fallback would deny), else the approved fallback.
+      failed = true;
+      console.error("[risk] archive service failed", {
+        serviceId: target.service_id,
+        err,
+      });
+      setError({
+        serviceId: target.service_id,
+        message: clientFacingError(err, FALLBACK),
+      });
     }
-    console.info("[risk] service archived", { serviceId });
-    setBusy(false);
-    setOpen(false);
-    await onArchived();
+    // B2: on ANY outcome, re-read the gate, so the banner shows what the
+    // server now holds -- which is also the "check" a 504 asks for.
+    try {
+      await onSettled();
+    } finally {
+      setBusy(false);
+    }
+    if (!failed) onClose();
   }
 
   return (
-    <>
-      <button
-        type="button"
-        onClick={() => {
-          setError(null);
-          setOpen(true);
-        }}
-        disabled={disabled}
-        className="rounded-md border border-status-danger-border px-3 py-1.5 text-sm font-semibold text-status-danger-fg hover:bg-status-danger-bg disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        Archive {title}
-      </button>
-      <Modal
-        open={open}
-        onClose={() => {
-          // An archive in flight must not be dismissed out from under itself.
-          if (!busy) setOpen(false);
-        }}
-        title={`Archive ${title}?`}
-        size="sm"
-        footer={
-          <>
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              disabled={busy}
-              className="rounded-md border border-border px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleConfirm()}
-              disabled={busy}
-              className="rounded-md bg-status-danger-fg px-4 py-2 text-sm font-semibold text-ink-on-accent hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {busy ? "Archiving…" : "Yes, archive"}
-            </button>
-          </>
-        }
-      >
-        <p className="text-sm text-ink-secondary">{dialogBody(title)}</p>
-        {error !== null ? (
-          <p
-            role="alert"
-            className="mt-3 text-sm font-medium text-status-danger-fg"
+    <Modal
+      open={service !== null}
+      onClose={() => {
+        // An archive in flight must not be dismissed out from under itself.
+        if (!busy) onClose();
+      }}
+      title={service ? `Archive ${service.title}?` : ""}
+      // B1: the same line as under the button, directly under the title.
+      description={service ? startedLine(service) : undefined}
+      size="sm"
+      footer={
+        <>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="rounded-md border border-border px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {error}
-          </p>
-        ) : null}
-      </Modal>
-    </>
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (service) void handleConfirm(service);
+            }}
+            disabled={busy}
+            className="rounded-md bg-status-danger-fg px-4 py-2 text-sm font-semibold text-ink-on-accent hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {busy ? "Archiving…" : "Yes, archive"}
+          </button>
+        </>
+      }
+    >
+      {service ? (
+        <p className="text-sm text-ink-secondary">
+          {dialogBody(service.title)}
+        </p>
+      ) : null}
+      {shownError !== null ? (
+        <p
+          role="alert"
+          className="mt-3 text-sm font-medium text-status-danger-fg"
+        >
+          {shownError}
+        </p>
+      ) : null}
+    </Modal>
   );
 }
