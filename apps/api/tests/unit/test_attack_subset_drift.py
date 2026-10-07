@@ -199,11 +199,31 @@ def test_every_field_and_row_is_read(app_parts) -> None:  # noqa: F811
     )
 
 
+def test_the_approve_refusal_counts_rows_not_tools(app_parts) -> None:  # noqa: F811
+    """S4 counts technique ROWS: two outside tools on one row are one row, and
+    the same tool on two rows is two (the approved singular and plural)."""
+    w = _world(app_parts)
+    a, b = _codes(w)[:2]
+    w.patch(a, {"detection_tools": [LEGACY], "prevention_tools": ["Shadow Scanner"]})
+    w.confirm_not_security(LEGACY)
+    one = w.approve().json()["error"]["message"]
+    assert (
+        "This assessment cannot be approved: 1 technique row credits a tool that is not in "
+        "the client's security tool list." in one
+    ), one
+    w.patch(b, {"response_tools": [LEGACY]})
+    two = w.approve().json()["error"]["message"]
+    assert (
+        "This assessment cannot be approved: 2 technique rows credit a tool that is not in "
+        "the client's security tool list." in two
+    ), two
+
+
 # --- which names are "outside": D1(a), behind one predicate ---------------------------
 
 
 def test_a_free_text_tool_never_on_the_list_is_listed(app_parts) -> None:  # noqa: F811
-    """D1(a), recommended and pending the advisor: a name the subset does not
+    """D1(a), approved by the advisor (#736): a name the subset does not
     know is outside it, however it got onto the row."""
     w = _world(app_parts)
     code = _codes(w)[0]
@@ -278,7 +298,7 @@ def test_removing_one_tool_leaves_the_others_review_state_as_it_was(
 
     w = _world(app_parts)
     code = _codes(w)[0]
-    w.patch(code, {"detection_tools": [EDR, LEGACY]})
+    w.patch(code, {"detection_tools": [EDR, LEGACY], "prevention_tools": [LEGACY]})
     with w.sessions() as db:
         row = db.get(AttackCoverage, uuid.UUID(w.rows[code]))
         row.unconfirmed_citations = [
@@ -296,6 +316,14 @@ def test_removing_one_tool_leaves_the_others_review_state_as_it_was(
                 "field": "detection_tools",
                 "cleared_at": None,
             },
+            # The same name in ANOTHER list: a removal is one list, so it stays.
+            {
+                "tool": LEGACY,
+                "cited": "Legacy",
+                "reason": "substring",
+                "field": "prevention_tools",
+                "cleared_at": None,
+            },
         ]
         db.commit()
     r = w.patch(code, {"remove_tool": {"field": "detection_tools", "name": LEGACY}})
@@ -303,7 +331,11 @@ def test_removing_one_tool_leaves_the_others_review_state_as_it_was(
     with w.sessions() as db:
         row = db.get(AttackCoverage, uuid.UUID(w.rows[code]))
         assert row.detection_tools == [EDR]
-        assert [(e["tool"], e["cleared_at"]) for e in row.unconfirmed_citations] == [(EDR, None)]
+        assert row.prevention_tools == [LEGACY]
+        assert [(e["tool"], e["field"], e["cleared_at"]) for e in row.unconfirmed_citations] == [
+            (EDR, "detection_tools", None),
+            (LEGACY, "prevention_tools", None),
+        ]
         audited = (
             db.execute(
                 select(AuditEntry).where(AuditEntry.action == "attack.coverage.tool_removed")
