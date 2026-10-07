@@ -280,6 +280,39 @@ def test_another_clients_service_is_not_found(app_client) -> None:  # noqa: F811
     assert _service_status(s2.zt_service) != "archived"
 
 
+def test_a_client_role_user_cannot_archive(app_client) -> None:  # noqa: F811
+    """Review round 2, F2: the route is admin-only. A client-role user of the
+    same client gets 403, and nothing is archived or audited."""
+    c, _ = app_client
+    bearer, cid = _admin(c)
+    s = seed_attack_and_zt(c, bearer, cid)
+    b = _add_cisa(c, bearer, cid, "ZT 2")
+    dom = c.post(
+        f"/admin/clients/{cid}/domains",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"domain": "acme.example"},
+    )
+    assert dom.status_code in (200, 201), dom.text
+    user = c.post(
+        "/auth/register",
+        json={
+            "email": "user@acme.example",
+            "password": "correct horse battery staple!",
+            "display_name": "U",
+        },
+    )
+    assert user.status_code in (200, 201), user.text
+    assert user.json()["user"]["role"] == "client", user.json()
+    cbearer = user.json()["tokens"]["access_token"]
+
+    r = _archive(c, cbearer, cid, b)
+    assert r.status_code == 403, r.text
+    assert _service_status(b) != "archived"
+    assert _archive_audits(b) == 0
+    # Still a pair, as the admin sees it: the refusal changed nothing.
+    assert [sid for sid, _t in _named(_gate(c, bearer, cid))] == [s.zt_service, b]
+
+
 def test_an_unknown_service_is_not_found(app_client) -> None:  # noqa: F811
     c, _ = app_client
     bearer, cid = _admin(c)
