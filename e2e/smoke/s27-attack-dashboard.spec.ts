@@ -52,9 +52,12 @@ test("client views a released MITRE ATT&CK coverage dashboard", async ({
     const body: Record<string, unknown> = { status };
     if (status === "covered") {
       Object.assign(body, {
+        // #851: approve refuses a tool that is not in the client's security
+        // tool list, so every tool here is on the seeded Atlas Tech Debt list
+        // (`scripts/seed_demo.py::_TD_ITEMS`, RELEASED, so no spec edits it).
         detection_tools: ["CrowdStrike Falcon"],
-        prevention_tools: ["STIG baselines"],
-        response_tools: ["Cortex XSOAR"],
+        prevention_tools: ["Okta Workforce Identity"],
+        response_tools: ["Splunk Enterprise"],
         rationale: "Full detect/prevent/respond triad in place.",
       });
     } else if (status === "partial") {
