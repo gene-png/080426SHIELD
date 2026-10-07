@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
   AttackAssessment,
@@ -9,6 +9,7 @@ import type {
 } from "@/lib/attack/types";
 
 import { AttackOutsideSubsetAlert } from "./AttackOutsideSubsetAlert";
+import { AttackScenarioPanel } from "./AttackScenarioPanel";
 import { AttackTechniquePanel } from "./AttackTechniquePanel";
 
 /**
@@ -207,6 +208,61 @@ describe("AttackTechniquePanel, the Remove control (#851, D2)", () => {
     expect(screen.getByText("Legacy AV")).toBeTruthy(); // the tool is shown
     expect(
       screen.queryByRole("button", { name: "Remove Legacy AV from Detection" }),
+    ).toBeNull();
+  });
+});
+
+describe("the what-if base line (#851)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function withBase(n: number | undefined): void {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const key = `${init?.method ?? "GET"} ${url}`;
+        if (key !== "GET /api/proxy/attack/services/svc/scenarios") {
+          throw new Error(`unexpected ${key}`);
+        }
+        const base = {
+          assessment_id: "a1",
+          version: 3,
+          approved_at: "2026-10-01T12:00:00Z",
+          tools: ["EDR Tool"],
+          citations_outside_subset: n,
+        };
+        return new Response(JSON.stringify({ base, scenarios: [] }));
+      }),
+    );
+    render(<AttackScenarioPanel serviceId="svc" />);
+  }
+
+  it("says how many rows of the base credit such a tool, singular and plural", async () => {
+    withBase(1);
+    expect(
+      (await screen.findByTestId("attack-scenario-base-outside-subset"))
+        .textContent,
+    ).toBe(
+      "1 technique row in this assessment credits a tool that is not in the client's security tool list, so today's figure may count a tool the client does not use.",
+    );
+  });
+
+  it("uses the plural above one", async () => {
+    withBase(2);
+    expect(
+      (await screen.findByTestId("attack-scenario-base-outside-subset"))
+        .textContent,
+    ).toBe(
+      "2 technique rows in this assessment credit a tool that is not in the client's security tool list, so today's figure may count tools the client does not use.",
+    );
+  });
+
+  it("says nothing at zero", async () => {
+    withBase(0);
+    await screen.findByLabelText("EDR Tool"); // positive first: the base rendered
+    expect(
+      screen.queryByTestId("attack-scenario-base-outside-subset"),
     ).toBeNull();
   });
 });
