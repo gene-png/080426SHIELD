@@ -71,6 +71,28 @@ const SERVICE_LABELS: Record<string, string> = {
   zt: "Zero Trust",
 };
 
+/**
+ * #876: with two Zero Trust services the scope key is "zt:<framework>", and
+ * the row names the framework (advisor, #736 6019425290 Q3). The same two
+ * names as `ZT_FRAMEWORK_NAMES` in `app/risk/exporters.py`; change both.
+ */
+const ZT_FRAMEWORK_NAMES: Record<string, string> = {
+  cisa_ztmm_2_0: "CISA ZTMM 2.0",
+  dod_ztra: "DoD ZT Reference Architecture",
+};
+
+function scopeLabel(key: string): string {
+  const known = SERVICE_LABELS[key];
+  if (known !== undefined) return known;
+  const [kind, qualifier] = key.split(":", 2);
+  const kindLabel = SERVICE_LABELS[kind];
+  const fw =
+    qualifier === undefined ? undefined : ZT_FRAMEWORK_NAMES[qualifier];
+  return kindLabel !== undefined && fw !== undefined
+    ? `${kindLabel} (${fw})`
+    : key;
+}
+
 function TierChip({ tier }: { tier: string | null }): JSX.Element {
   // #844. An unrated entry has NO tier, and it used to be painted in the
   // Negligible colour with a dash -- one glance away from "rated negligible",
@@ -484,6 +506,12 @@ export function RiskRegisterDashboard(): JSX.Element {
   const catalogMismatch = gate?.unlocked
     ? (gate.attack_catalog_mismatch ?? null)
     : null;
+  // #876 Q2 (a): two services of one kind and framework would produce the
+  // same findings, so generate refuses -- the gate carries the same sentence,
+  // and Generate is not offered over a refusal it already knows about.
+  const duplicateInputs = gate?.unlocked
+    ? (gate.duplicate_inputs ?? null)
+    : null;
   // #554 R3 no longer blocks Generate (advisor, #736 5998764095, option (b)):
   // a draft is generated, each affected entry says its computed status awaits
   // review, and publish refuses. The banner and the disabled Generate that sat
@@ -585,6 +613,15 @@ export function RiskRegisterDashboard(): JSX.Element {
         </div>
       ) : null}
 
+      {duplicateInputs !== null ? (
+        <p
+          className="text-sm font-medium text-status-warning-fg"
+          data-testid="risk-register-duplicate-inputs"
+        >
+          {duplicateInputs} Anything already generated below is unaffected.
+        </p>
+      ) : null}
+
       {catalogMismatch !== null ? (
         <p
           className="text-sm font-medium text-status-warning-fg"
@@ -644,7 +681,10 @@ export function RiskRegisterDashboard(): JSX.Element {
                 // #556: a stale ATT&CK input's only outcome is the 409 the
                 // banner above already explains, so the button is not offered.
                 disabled={
-                  busy !== null || catalogMismatch !== null || statusUnknown
+                  busy !== null ||
+                  catalogMismatch !== null ||
+                  duplicateInputs !== null ||
+                  statusUnknown
                 }
                 className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:opacity-50"
               >
@@ -984,8 +1024,7 @@ export function RiskRegisterDashboard(): JSX.Element {
               <ul className="mt-1 list-disc pl-5">
                 {register.excluded_unscored_links.map((s) => (
                   <li key={s.service}>
-                    {SERVICE_LABELS[s.service] ?? s.service}: {s.scored} of{" "}
-                    {s.total} scored
+                    {scopeLabel(s.service)}: {s.scored} of {s.total} scored
                     {s.total > s.scored
                       ? `, ${s.total - s.scored} not yet judged and therefore not citable`
                       : " — every row judged"}

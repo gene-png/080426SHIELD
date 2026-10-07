@@ -25,6 +25,11 @@ class RiskInputState(BaseModel):
     engaged: bool
     status: str | None = None
     version: int | None = None
+    # #876: what tells this row from another of the same kind -- the ZT
+    # framework's name ("CISA ZTMM 2.0"), or the service title where that does
+    # not separate them. None while a kind has one row (advisor, #736
+    # 6019425290 Q3). Defaulted so an older client parses a newer response.
+    qualifier: str | None = None
 
 
 class RiskGateStatus(BaseModel):
@@ -81,6 +86,10 @@ class RiskGateStatus(BaseModel):
     # #737: what the register would be drafted from, and whether each input is
     # final. Defaulted so an older client parses a newer response.
     inputs: list[RiskInputState] = []
+    # #876 Q2 (a): two engaged services of one kind and framework, which would
+    # produce the same findings. The sentence generate refuses with; None when
+    # there is no such pair. Defaulted so an older client parses.
+    duplicate_inputs: str | None = None
 
 
 class RiskEntryResponse(BaseModel):

@@ -54,6 +54,9 @@ _ASSESSMENTS = {"attack": AttackAssessment, "csf": CsfAssessment, "zt": ZtAssess
 
 RELEASED = "released"
 
+#: The kinds findings are drawn from; Tech Debt feeds ATT&CK and publication only.
+SYNTHESIS_KINDS = ("attack", "csf", "zt")
+
 
 @dataclass(frozen=True)
 class InputRecord:
@@ -100,7 +103,10 @@ def engaged_services(db: Session, client_id: uuid.UUID) -> list[tuple[str, Servi
     return [(k, svc) for k in INPUT_KINDS for svc in _engaged_services(db, client_id, k)]
 
 
-def _latest_record(db: Session, kind: str, service_id: uuid.UUID):
+def latest_record(db: Session, kind: str, service_id: uuid.UUID):
+    """One engaged service's current record: its latest non-discarded
+    assessment (or Tech Debt list), or None. Synthesis reads THIS too
+    (#876), so the record publish checks is the one findings came from."""
     model = CapabilityList if kind == "tech_debt" else _ASSESSMENTS[kind]
     return db.execute(
         select(model)
@@ -118,7 +124,7 @@ def current_inputs(db: Session, client_id: uuid.UUID) -> list[InputRecord]:
     """
     out: list[InputRecord] = []
     for kind, svc in engaged_services(db, client_id):
-        rec = _latest_record(db, kind, svc.id)
+        rec = latest_record(db, kind, svc.id)
         if rec is not None:
             out.append(
                 InputRecord(kind, str(svc.id), str(rec.id), rec.version, _status(rec.status))
@@ -135,11 +141,13 @@ class Blocker:
     status: str | None
 
 
-def publish_blockers(db: Session, client_id: uuid.UUID, recorded: object) -> list[Blocker]:
+def publish_blockers(
+    db: Session, client_id: uuid.UUID, recorded: object, synthesized: object
+) -> list[Blocker]:
     """What stops this register being published, per input. Empty = publishable
     as far as its inputs go.
 
-    FOUR CHECKS, and none of them may pass by absence:
+    FIVE CHECKS, and none of them may pass by absence:
       * every engaged SERVICE has a current input (else `not_started`);
       * every current input is RELEASED (else `not_released`);
       * every current input is the one the register was generated from, at the
@@ -152,8 +160,16 @@ def publish_blockers(db: Session, client_id: uuid.UUID, recorded: object) -> lis
         silence -- an approved assessment's findings would then publish
         (#860 review F1). Released or not, the register no longer matches
         what the client has engaged, so it is regenerated.
+      * every recorded ATT&CK, CSF or ZT input was SYNTHESIZED, by service
+        (else `not_recorded`; #891 review B1). A register generated before
+        #876 read one assessment per kind, so a client with CISA and DoD both
+        released recorded both in `current_inputs` but drew findings from one
+        -- and every check above passes for it. Its `inputs` rows carry no
+        `service_id`, so the match fails closed and the consultant
+        regenerates; publishing it would deliver #876's own gap after its fix.
 
-    `recorded` is the register's provenance `current_inputs` list. When it is
+    `recorded` is the register's provenance `current_inputs` list and
+    `synthesized` its `inputs` list (what findings were drawn from). When it is
     absent or unreadable the register cannot be certified (`not_recorded`):
     missing data defaults to UNCONFIRMED.
     """
@@ -188,6 +204,25 @@ def publish_blockers(db: Session, client_id: uuid.UUID, recorded: object) -> lis
     for (kind, service_id), _was in then.items():
         if (kind, service_id) not in engaged_keys:
             blockers.append(Blocker(str(kind), "changed", None))
+    drawn_from = (
+        {
+            str(i.get("service_id"))
+            for i in synthesized
+            if isinstance(i, dict) and i.get("service_id")
+        }
+        if isinstance(synthesized, list)
+        else set()
+    )
+    # A register with NO `inputs` key at all (pre-0047, or the old seed shape)
+    # is refused by publish's next guard, `_require_certifiable_inputs`, with
+    # its own reason (`register_inputs_not_recorded`), which
+    # `test_publish_refuses_inputs_that_cannot_be_certified` pins. So this
+    # check runs only over a recorded `inputs` value; anything recorded that
+    # is not a list counts as naming no service and fails closed above.
+    if synthesized is not None:
+        for (kind, service_id), _was in then.items():
+            if kind in SYNTHESIS_KINDS and str(service_id) not in drawn_from:
+                blockers.append(Blocker(str(kind), "not_recorded", None))
     if blockers:
         _log.info(
             "risk_publish_inputs_blocked",
