@@ -149,10 +149,10 @@ def test_the_gate_lists_every_input_and_its_state(app_client) -> None:  # noqa: 
     g = c.get(f"/risk/clients/{cid}/gate", headers={"Authorization": f"Bearer {bearer}"})
     assert g.status_code == 200, g.text
     assert g.json()["inputs"] == [
-        {"kind": "attack", "engaged": True, "status": "approved", "version": 1},
-        {"kind": "csf", "engaged": False, "status": None, "version": None},
-        {"kind": "zt", "engaged": True, "status": "released", "version": 1},
-        {"kind": "tech_debt", "engaged": False, "status": None, "version": None},
+        {"kind": "attack", "engaged": True, "status": "approved", "version": 1, "qualifier": None},
+        {"kind": "csf", "engaged": False, "status": None, "version": None, "qualifier": None},
+        {"kind": "zt", "engaged": True, "status": "released", "version": 1, "qualifier": None},
+        {"kind": "tech_debt", "engaged": False, "status": None, "version": None, "qualifier": None},
     ]
 
 
@@ -313,7 +313,7 @@ def test_an_archived_service_is_not_an_input(app_client) -> None:  # noqa: F811
 
     g = c.get(f"/risk/clients/{cid}/gate", headers=h).json()
     assert [r for r in g["inputs"] if r["kind"] == "attack"] == [
-        {"kind": "attack", "engaged": True, "status": "draft", "version": 1}
+        {"kind": "attack", "engaged": True, "status": "draft", "version": 1, "qualifier": None}
     ]
     _gen(c, provider, bearer, cid)
     prov = _register_provenance()
@@ -335,8 +335,20 @@ def test_every_engaged_zero_trust_service_must_be_released(app_client) -> None: 
     _new_zt_dod(c, bearer, cid)
     g = c.get(f"/risk/clients/{cid}/gate", headers=_h(bearer, cid)).json()
     assert [r for r in g["inputs"] if r["kind"] == "zt"] == [
-        {"kind": "zt", "engaged": True, "status": "released", "version": 2},
-        {"kind": "zt", "engaged": True, "status": "draft", "version": 1},
+        {
+            "kind": "zt",
+            "engaged": True,
+            "status": "released",
+            "version": 2,
+            "qualifier": "CISA ZTMM 2.0",
+        },
+        {
+            "kind": "zt",
+            "engaged": True,
+            "status": "draft",
+            "version": 1,
+            "qualifier": "DoD ZT Reference Architecture",
+        },
     ]
     _gen(c, provider, bearer, cid)
     assert _blockers(_publish(c, bearer, cid)) == [
@@ -372,8 +384,14 @@ def test_a_second_tech_debt_service_with_no_list_blocks(app_client) -> None:  # 
         db.commit()
     g = c.get(f"/risk/clients/{cid}/gate", headers=h).json()
     assert [r for r in g["inputs"] if r["kind"] == "tech_debt"] == [
-        {"kind": "tech_debt", "engaged": True, "status": "released", "version": 1},
-        {"kind": "tech_debt", "engaged": True, "status": None, "version": None},
+        {
+            "kind": "tech_debt",
+            "engaged": True,
+            "status": "released",
+            "version": 1,
+            "qualifier": "TD1",
+        },
+        {"kind": "tech_debt", "engaged": True, "status": None, "version": None, "qualifier": "TD2"},
     ]
     _gen(c, provider, bearer, cid)
     assert _blockers(_publish(c, bearer, cid)) == [

@@ -6,6 +6,13 @@ export interface RiskInputState {
   /** null with `engaged`: a service exists and nothing is started. */
   status: string | null;
   version: number | null;
+  /**
+   * #876: what tells this row from another of its kind -- the ZT
+   * framework's name, or the service title. null/absent while the kind
+   * has one row (advisor, #736 6019425290 Q3). Optional so an older
+   * server's response parses.
+   */
+  qualifier?: string | null;
 }
 
 export interface RiskGate {
@@ -56,6 +63,13 @@ export interface RiskGate {
    * always sends it.
    */
   inputs: RiskInputState[];
+  /**
+   * #876 Q2 (a): two engaged services of one kind and framework would
+   * produce the same findings, so generating is refused. The server's
+   * own sentence; null when there is no such pair. Optional so an
+   * older server's response parses.
+   */
+  duplicate_inputs?: string | null;
 }
 
 export interface RiskEntry {

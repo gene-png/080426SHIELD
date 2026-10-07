@@ -146,10 +146,18 @@ def test_the_risk_register_takes_the_findings_main_took(world) -> None:
         return LLMResponse(json.dumps({"entries": []}))
 
     provider.register("risk_synthesize", spy)
-    c.post(
-        f"/risk/clients/{ids['cid']}/register/generate",
-        headers=_login(c, "admin@example.com", ids["cid"]),
-    )
+    h = _login(c, "admin@example.com", ids["cid"])
+    # #876 (advisor, #736 6039558116, option (1)): this world engages TWO
+    # ATT&CK services, and since #876 two services of one kind refuse generate
+    # (their findings would share codes). `main` synthesized Golden B -- the
+    # latest -- so Golden A is archived through the real route first, leaving
+    # exactly the assessment main read. The world and the golden files are
+    # unchanged; the status is asserted so a refusal can no longer read as an
+    # empty finding list.
+    archived = c.delete(f"/admin/services/{ids['Golden A']}", headers=h)
+    assert archived.status_code == 204, archived.text
+    r = c.post(f"/risk/clients/{ids['cid']}/register/generate", headers=h)
+    assert r.status_code == 201, r.text
     assert sorted(sent) == json.loads((GOLDEN / "risk_findings.json").read_text(encoding="utf-8"))
 
 

@@ -1396,7 +1396,12 @@ def _seed_risk_register(
     # register the product would have refused to publish. `main` seeds CSF v2
     # AFTER this, so the gate sees CSF v1 released; v2 approved arriving later
     # is the ordinary "published, then an input moved on" state.
-    blockers = publish_blockers(db, org.id, (register.provenance or {}).get("current_inputs"))
+    blockers = publish_blockers(
+        db,
+        org.id,
+        (register.provenance or {}).get("current_inputs"),
+        (register.provenance or {}).get("inputs"),
+    )
     if blockers:
         raise RuntimeError(
             "seed_demo: the demo Risk Register would be refused by publish: "
