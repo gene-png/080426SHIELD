@@ -66,3 +66,10 @@ def _refuse_bool(value: Any) -> Any:
 #: still refused. Use it for any inbound int, and pair it with the `ge`/`le`
 #: bounds the field already needs: this type says nothing about range.
 IntNotBool = Annotated[int, BeforeValidator(_refuse_bool)]
+
+
+#: A `float` that refuses a boolean (#898 review, for #879): Pydantic's lax mode
+#: reads JSON `true` as 1.0 for a float exactly as it reads it as 1 for an int,
+#: so `PATCH {"annual_cost_usd": true}` stored a cost of $1. Everything else a
+#: float accepts -- `2`, `2.5`, `"2.5"` -- is still accepted.
+FloatNotBool = Annotated[float, BeforeValidator(_refuse_bool)]
