@@ -74,6 +74,7 @@ from app.routes.artifacts import _storage_dep
 from app.schemas.risk import (
     LinkScopeDisclosure,
     RatingNotCarried,
+    RiskDuplicateService,
     RiskEntryRatingEdit,
     RiskEntryResponse,
     RiskGateStatus,
@@ -300,15 +301,35 @@ def _duplicate_inputs_message(sources: list[_Source]) -> str | None:
     They would produce the same finding codes, and `source_id` is the key the
     per-finding count, the rating carry-forward and the draft labels all join
     on, so their findings would merge in silence. Refused until a register can
-    key a finding by service (filed post-MVP, with a screen control to archive
-    a service). The advisor's sentence (#736 6020214342) names no remedy,
-    because no screen can archive a service today (D-076).
+    key a finding by service (filed post-MVP). The advisor's sentence (#736
+    6020214342) names no remedy, and still does now that the Risk Register's
+    banner offers an archive button per service (#896): this message also
+    reaches callers that are not that screen, so the remedy sits on screen
+    beneath it instead (advisor, #736 6042801745, D-076).
     """
-    groups: dict[tuple[str, str | None], list[str]] = {}
-    for src in sources:
-        groups.setdefault((src.kind, src.framework), []).append(src.title)
-    sentences = [_duplicate_sentence(titles) for titles in groups.values() if len(titles) > 1]
+    sentences = [_duplicate_sentence([s.title for s in g]) for g in _duplicate_groups(sources)]
     return " ".join(sentences) or None
+
+
+def _duplicate_groups(sources: list[_Source]) -> list[list[_Source]]:
+    """Each group of two or more sources of one kind AND framework, in source
+    order. The one grouping both the refusal's sentence and the banner's
+    archive buttons (#896) are read from, so the buttons name exactly the
+    services the sentence names."""
+    groups: dict[tuple[str, str | None], list[_Source]] = {}
+    for src in sources:
+        groups.setdefault((src.kind, src.framework), []).append(src)
+    return [g for g in groups.values() if len(g) > 1]
+
+
+def _duplicate_services(sources: list[_Source]) -> list[RiskDuplicateService]:
+    """#896: the services behind the duplicate refusal, one row per archive
+    button on the Risk Register's duplicate banner."""
+    return [
+        RiskDuplicateService(service_id=src.service_id, title=src.title)
+        for group in _duplicate_groups(sources)
+        for src in group
+    ]
 
 
 def _duplicate_sentence(titles: list[str]) -> str:
@@ -545,6 +566,8 @@ def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
         # #876 Q2 (a): the same sentence generate refuses with, so the gate
         # never offers a Generate whose only outcome is a 409.
         duplicate_inputs=_duplicate_inputs_message(sources),
+        # #896: who the banner's archive buttons name -- the same groups.
+        duplicate_services=_duplicate_services(sources),
     )
 
 

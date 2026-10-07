@@ -32,6 +32,17 @@ class RiskInputState(BaseModel):
     qualifier: str | None = None
 
 
+class RiskDuplicateService(BaseModel):
+    """#896: one service behind the duplicate refusal (`duplicate_inputs`).
+
+    The Risk Register's duplicate banner offers one archive button per row, so
+    it needs the id the archive route takes and the title the button names.
+    """
+
+    service_id: str
+    title: str
+
+
 class RiskGateStatus(BaseModel):
     """Whether the Risk Register can be generated for a client.
 
@@ -90,6 +101,11 @@ class RiskGateStatus(BaseModel):
     # produce the same findings. The sentence generate refuses with; None when
     # there is no such pair. Defaulted so an older client parses.
     duplicate_inputs: str | None = None
+    # #896: the services behind `duplicate_inputs`, read off the same groups
+    # the sentence is built from, in the order it names them; [] when there is
+    # no such pair. The banner offers one archive button per row (advisor, #736
+    # 6042801745). Defaulted so an older client parses.
+    duplicate_services: list[RiskDuplicateService] = []
 
 
 class RiskEntryResponse(BaseModel):
