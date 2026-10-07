@@ -3,9 +3,8 @@
 _2026-10-07 (track4): #839, the DoD catalog (#838 PR 3), is pushed on
 `track4/zt-dod-catalog` and is waiting for a full adversarial review before its
 PR opens. It comes back to you under conditions 4, 5 and 6. The nine
-existing-test edits were approved in #736 comment 6046898402. Still open for
-the advisor: ruling 4's "reproduced as published" source-note line has no
-approved wording. D-109 records the decisions._
+existing-test edits were approved in #736 comment 6046898402, and ruling 4's
+source-note line in 6047873969. D-109 records the decisions._
 
 _2026-09-22 — #254 merged as #444 (`d5f97eb`); a FOLLOW-UP is open for what
 round 4 found after the merge._
