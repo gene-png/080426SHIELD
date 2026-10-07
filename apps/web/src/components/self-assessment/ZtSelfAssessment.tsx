@@ -20,6 +20,10 @@ import { MIN_TARGET_STAGE } from "@/lib/assessment-targets";
 
 import { SelfAssessmentSubmitted } from "@/components/self-assessment/SelfAssessmentSubmitted";
 import { ZtStagePicker } from "@/components/admin/zt/ZtStagePicker";
+import {
+  CrossCuttingHeading,
+  startsCrossCutting,
+} from "@/components/admin/zt/CrossCuttingHeading";
 import { ZtMaturityReference } from "@/components/zt/ZtMaturityReference";
 import {
   fetchCatalog,
@@ -291,6 +295,16 @@ export function ZtSelfAssessment({
 
   return (
     <div className="flex flex-col gap-6">
+      {/* #838: the API's own sentence, from the derivation the workspace and
+          the deliverables call too (`zt/retired.py`), never rebuilt here. */}
+      {assessment.retired_answers_note ? (
+        <p
+          className="text-sm text-ink-secondary"
+          data-testid="zt-retired-answers"
+        >
+          {assessment.retired_answers_note}
+        </p>
+      ) : null}
       <Card>
         <CardHeader>
           <CardTitle>1. Your maturity target</CardTitle>
@@ -463,80 +477,82 @@ export function ZtSelfAssessment({
               </header>
 
               <ul className="flex flex-col gap-3">
-                {pillar.capabilities.map((cap) => {
+                {pillar.capabilities.map((cap, i, all) => {
                   const ans = answersByCode[cap.code];
                   if (!ans) return null;
                   return (
-                    <li
-                      key={cap.code}
-                      className="rounded-md border border-border-subtle bg-surface-sunken p-3"
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs font-mono text-ink-tertiary">
-                            {cap.code}
-                          </p>
-                          <p className="text-sm font-medium text-ink-primary">
-                            {cap.name}
-                          </p>
-                          <p className="mt-1 text-sm text-ink-secondary">
-                            {cap.outcome}
-                          </p>
+                    <React.Fragment key={cap.code}>
+                      {startsCrossCutting(all, i) ? (
+                        <CrossCuttingHeading />
+                      ) : null}
+                      <li className="rounded-md border border-border-subtle bg-surface-sunken p-3">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-mono text-ink-tertiary">
+                              {cap.code}
+                            </p>
+                            <p className="text-sm font-medium text-ink-primary">
+                              {cap.name}
+                            </p>
+                            <p className="mt-1 text-sm text-ink-secondary">
+                              {cap.outcome}
+                            </p>
+                          </div>
+                          <ZtStagePicker
+                            value={ans.maturity_stage}
+                            stages={catalog.stages}
+                            ariaLabel={`Maturity stage for ${cap.code}`}
+                            // #758 review: read-only while Submit is out. Submit
+                            // cannot start while a save is out, but a save
+                            // started DURING Submit went after the assessment
+                            // left draft, and its 409 landed after the page had
+                            // become `SelfAssessmentSubmitted`.
+                            disabled={submitting}
+                            onChange={(next) => {
+                              void onAnswerUpdate(ans.id, {
+                                maturity_stage: next,
+                              });
+                            }}
+                          />
                         </div>
-                        <ZtStagePicker
-                          value={ans.maturity_stage}
-                          stages={catalog.stages}
-                          ariaLabel={`Maturity stage for ${cap.code}`}
-                          // #758 review: read-only while Submit is out. Submit
-                          // cannot start while a save is out, but a save
-                          // started DURING Submit went after the assessment
-                          // left draft, and its 409 landed after the page had
-                          // become `SelfAssessmentSubmitted`.
-                          disabled={submitting}
-                          onChange={(next) => {
-                            void onAnswerUpdate(ans.id, {
-                              maturity_stage: next,
-                            });
-                          }}
-                        />
-                      </div>
-                      <details className="mt-2">
-                        <summary className="cursor-pointer text-xs font-medium text-ink-tertiary hover:text-ink-secondary">
-                          Notes {ans.notes ? "·" : ""}{" "}
-                          {ans.notes ? (
-                            <span className="font-normal text-ink-secondary">
-                              {ans.notes.length > 60
-                                ? `${ans.notes.slice(0, 60)}…`
-                                : ans.notes}
-                            </span>
-                          ) : null}
-                        </summary>
-                        <textarea
-                          aria-label={`Notes for ${cap.code}`}
-                          // KEYED ON THE CONFIRMED VALUE. `defaultValue` makes
-                          // this an uncontrolled input, and React does not
-                          // reset a user-dirtied textarea when that prop
-                          // changes -- so reverting state left the REFUSED text
-                          // on screen under an alert saying it had been
-                          // restored. #283's own symptom, surviving its fix, on
-                          // the one field most likely to trip `max_length`.
-                          // Changing the key remounts the box, which is what
-                          // actually puts the server's value back in front of
-                          // the client.
-                          key={`${ans.id}:${ans.notes ?? ""}`}
-                          defaultValue={ans.notes ?? ""}
-                          disabled={submitting}
-                          rows={3}
-                          onBlur={(e) => {
-                            const v = e.currentTarget.value.trim();
-                            if (v === (ans.notes ?? "")) return;
-                            void onAnswerUpdate(ans.id, { notes: v });
-                          }}
-                          className="mt-2 w-full rounded-md border border-border bg-surface-card p-2 text-sm text-ink-primary focus:border-brand-500 focus:outline-hidden"
-                          placeholder="Evidence, references, exceptions…"
-                        />
-                      </details>
-                    </li>
+                        <details className="mt-2">
+                          <summary className="cursor-pointer text-xs font-medium text-ink-tertiary hover:text-ink-secondary">
+                            Notes {ans.notes ? "·" : ""}{" "}
+                            {ans.notes ? (
+                              <span className="font-normal text-ink-secondary">
+                                {ans.notes.length > 60
+                                  ? `${ans.notes.slice(0, 60)}…`
+                                  : ans.notes}
+                              </span>
+                            ) : null}
+                          </summary>
+                          <textarea
+                            aria-label={`Notes for ${cap.code}`}
+                            // KEYED ON THE CONFIRMED VALUE. `defaultValue` makes
+                            // this an uncontrolled input, and React does not
+                            // reset a user-dirtied textarea when that prop
+                            // changes -- so reverting state left the REFUSED text
+                            // on screen under an alert saying it had been
+                            // restored. #283's own symptom, surviving its fix, on
+                            // the one field most likely to trip `max_length`.
+                            // Changing the key remounts the box, which is what
+                            // actually puts the server's value back in front of
+                            // the client.
+                            key={`${ans.id}:${ans.notes ?? ""}`}
+                            defaultValue={ans.notes ?? ""}
+                            disabled={submitting}
+                            rows={3}
+                            onBlur={(e) => {
+                              const v = e.currentTarget.value.trim();
+                              if (v === (ans.notes ?? "")) return;
+                              void onAnswerUpdate(ans.id, { notes: v });
+                            }}
+                            className="mt-2 w-full rounded-md border border-border bg-surface-card p-2 text-sm text-ink-primary focus:border-brand-500 focus:outline-hidden"
+                            placeholder="Evidence, references, exceptions…"
+                          />
+                        </details>
+                      </li>
+                    </React.Fragment>
                   );
                 })}
               </ul>

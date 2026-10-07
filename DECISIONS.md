@@ -6520,3 +6520,19 @@ The shared dev database, read-only: DRAFT 2, RELEASED 2, APPROVED 0, at migratio
 **What did not change.** `finalized_at` keeps one meaning, "published", for every reader, so the client dashboard needs no change and no migration is needed. `seed_demo.py` DID change (#860 review B4): it sets `finalized_at` itself, so it now asks `publish_blockers` first and refuses to seed a register publish would refuse, and it seeds CSF v2 APPROVED after the register rather than before, so the published demo register is built from CSF v1 released. A Risk export artifact is not a `Deliverable`, so `/artifacts` never serves it to a client user (measured: `test_a_client_user_cannot_download_an_unpublished_export`).
 
 **Ruled by the advisor, 2026-10-05 (#736 5998764095):** export drops the #240 input guards, which now run only in publish, and the client 404 on an unpublished export through `/artifacts` is the pinned guard. #554 R3's unreviewed computed statuses no longer refuse a DRAFT: each affected finding is labelled, and publish refuses through the input gate, because an assessment with unreviewed codes cannot be released. The stale-catalog refusal still blocks at generate (D-091).
+
+## D-107 — The MVP's catalog corrections all land before the first real client
+
+**2026-10-06 · zero trust, csf** (#838 PR 2, #881 review item 1; the advisor's ruling, #736 comment 6021049361. The general defect is #885, mvp-blocking tier-2.)
+
+**The fact this rests on.** Every client view of a RELEASED assessment recomputes against the LIVE catalog: the ZT dashboard (`clients.py::zt_dashboard`) and the client home's ZT gap total (`_zt_gap_total`) read the stored answers and iterate the current catalog, and CSF, ATT&CK and Tech Debt do the same. The stored PDF, DOCX and XLSX do not change. So when a catalog changes, a released client view changes under the client, still stamped released. Migration 0063 (#838 PR 2) does exactly that to a released CISA assessment: 8 pillars become 5, and the retired rows stop being scored.
+
+**The ruling, for the MVP: accept it (option iv).** SHIELD has no real client yet: it runs only on Gene's development machine, so no client population is affected today. The catalog corrections in this MVP all land before the first real client:
+
+- the CISA catalog to CISA ZTMM 2.0 (#838 PR 2, #881);
+- the DoD catalog to the DoD Zero Trust Execution Roadmap (#839, #838 PR 3);
+- the CSF catalog correction.
+
+**What this does NOT license.** A catalog change after the first real client must not ship under this record. The general defect is #885 (mvp-blocking, tier-2): option (i), a snapshot taken at release that client views render from, is the fix, and option (ii), disclosing on the client surfaces that the view reflects the current catalog, is the interim. Gene decides its timing with the post-MVP plan.
+
+**Overturnable:** if a real client is onboarded before any of the three corrections lands, that correction needs (ii) at least, before it merges.
