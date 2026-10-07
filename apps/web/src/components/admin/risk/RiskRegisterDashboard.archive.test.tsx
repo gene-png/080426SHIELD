@@ -319,7 +319,8 @@ describe("RiskRegisterDashboard archive control (#896)", () => {
     });
     await waitFor(() =>
       expect(within(dialog).getByRole("alert").textContent).toBe(
-        "The service could not be archived. Nothing was changed.",
+        // R3-3 (#736 6048561596): a non-JSON answer confirms nothing.
+        "The archive could not be confirmed. It may or may not have gone through. The list has been refreshed.",
       ),
     );
     expect(dialog.open).toBe(true);

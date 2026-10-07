@@ -3,8 +3,7 @@ import * as React from "react";
 
 import { Modal } from "@shield/design-system";
 
-import { clientFacingError, serverReasonCode } from "@/lib/describe-save-error";
-import { UPSTREAM_OUTCOME_UNKNOWN } from "@/lib/upstream-outcome";
+import { clientFacingError } from "@/lib/describe-save-error";
 import { archiveDuplicateService } from "@/lib/risk/client";
 import { startedLine } from "@/lib/risk/started";
 import type { RiskDuplicateService } from "@/lib/risk/types";
@@ -31,30 +30,41 @@ import type { JSX } from "react";
  * none of them without the advisor.
  */
 
-/** Shown when the API sent no sentence fit for a person. */
+/** The API answered, but with no sentence fit for a person. */
 const FALLBACK = "The service could not be archived. Nothing was changed.";
 
 /**
- * Review round 2, F1 (advisor, #736 6047873969): after the server's refusal
- * or an outcome-unknown 504, the screen says what its own reload did -- and
- * only the screen can, because only it knows whether the reload worked.
+ * Review round 3, R3-3 (advisor, #736 6048561596): there was NO answer to
+ * read -- the request was rejected, or the body was not JSON -- so whether
+ * the archive happened is unknown, and "Nothing was changed." would be a
+ * guess.
+ */
+const UNCONFIRMED =
+  "The archive could not be confirmed. It may or may not have gone through.";
+
+/**
+ * Review round 2, F1 (advisor, #736 6047873969), extended by 6048561596 to
+ * the fallback and the no-answer case: after any failure the dialog reloads
+ * the gate, and says what that reload did -- which only the screen knows.
  */
 const REFRESHED = "The list has been refreshed.";
 const NOT_REFRESHED =
   "The list could not be refreshed. Reload the page before trying again.";
 
-/** The failures the ruling appends a line about the list to. */
-const SAYS_WHAT_THE_LIST_DID = new Set([
-  "service_not_in_duplicate_group",
-  UPSTREAM_OUTCOME_UNKNOWN,
-]);
+/** Whether the failure carried an answer from the API at all. */
+function hasAnswer(err: unknown): boolean {
+  if (typeof err !== "object" || err === null || !("payload" in err)) {
+    return false;
+  }
+  const payload = (err as { payload: unknown }).payload;
+  return payload !== null && payload !== undefined;
+}
 
-function failureText(
-  message: string,
-  code: string | null,
-  reloaded: boolean,
-): string {
-  if (code === null || !SAYS_WHAT_THE_LIST_DID.has(code)) return message;
+/** The whole alert for a failed attempt: what happened, then the list line. */
+function failureText(err: unknown, reloaded: boolean): string {
+  const message = hasAnswer(err)
+    ? clientFacingError(err, FALLBACK)
+    : UNCONFIRMED;
   return `${message} ${reloaded ? REFRESHED : NOT_REFRESHED}`;
 }
 
@@ -150,21 +160,18 @@ export function ArchiveServiceDialog({
   async function handleConfirm(target: RiskDuplicateService): Promise<void> {
     setBusy(true);
     setFailure(null);
-    let message: string | null = null;
-    let code: string | null = null;
+    // `failed` holds the error itself: what the alert says depends on whether
+    // the API answered at all (R3-3), decided in `failureText`.
+    let failed: { err: unknown } | null = null;
     try {
       await archiveDuplicateService(clientId, target.service_id);
       console.info("[risk] service archived", { serviceId: target.service_id });
     } catch (err) {
-      // The API's own sentence where it sent one (an outcome-unknown 504 says
-      // the archive may have landed, which the fallback would deny), else the
-      // approved fallback.
       console.error("[risk] archive service failed", {
         serviceId: target.service_id,
         err,
       });
-      message = clientFacingError(err, FALLBACK);
-      code = serverReasonCode(err);
+      failed = { err };
     }
     // B2: on ANY outcome, re-read the gate, so the banner shows what the
     // server now holds -- which is also the "check" a 504 asks for. F1: the
@@ -176,14 +183,14 @@ export function ArchiveServiceDialog({
     } finally {
       setBusy(false);
     }
-    if (message === null) {
+    if (failed === null) {
       onClose();
       return;
     }
     console.info("[risk] gate reload after a failed archive", { reloaded });
     setFailure({
       serviceId: target.service_id,
-      text: failureText(message, code, reloaded),
+      text: failureText(failed.err, reloaded),
     });
   }
 

@@ -42,6 +42,9 @@ beforeAll(() => {
 const BODY =
   "The Risk Register will stop drawing on ZT 2: the next version you generate leaves out its findings, and publishing no longer waits for it. Nothing else changes: its assessments, its deliverables and the client's view of it stay as they are. Archiving cannot be undone.";
 const FALLBACK = "The service could not be archived. Nothing was changed.";
+// #736 6048561596 (R3-3), written out by hand.
+const UNCONFIRMED =
+  "The archive could not be confirmed. It may or may not have gone through.";
 // The server's sentence and the screen's two lines, from the advisor's
 // rulings (#736 6046491381 as amended by 6047873969), written out by hand.
 const NOT_IN_GROUP =
@@ -223,14 +226,61 @@ describe("ArchiveServiceDialog (#896)", () => {
     );
   });
 
-  it("falls back to the approved sentence when the API sent none, and reloads", async () => {
-    // The ruling covers the refusal and the 504; the fallback says "Nothing
-    // was changed." and gets no line about the list.
-    archive.mockRejectedValue({ status: 502, payload: null });
-    const { dialog, onSettled } = setup();
+  // Round 3, R3-3 (advisor, #736 6048561596). With NO payload -- the request
+  // never got an answer, or the answer was not JSON -- nobody knows whether
+  // the archive happened, so "Nothing was changed." would be a guess.
+  it("with no payload (a network rejection), after a successful reload, says it could not be confirmed", async () => {
+    archive.mockRejectedValue(new TypeError("Failed to fetch"));
+    const { dialog, onSettled } = setup(SVC, true);
     await confirm(dialog);
-    expect(within(dialog).getByRole("alert").textContent).toBe(FALLBACK);
+    expect(within(dialog).getByRole("alert").textContent).toBe(
+      `${UNCONFIRMED} ${REFRESHED}`,
+    );
     expect(onSettled).toHaveBeenCalledTimes(1);
+  });
+
+  it("with no payload (a network rejection), after a FAILED reload, says to reload the page", async () => {
+    archive.mockRejectedValue(new TypeError("Failed to fetch"));
+    const { dialog } = setup(SVC, false);
+    await confirm(dialog);
+    expect(within(dialog).getByRole("alert").textContent).toBe(
+      `${UNCONFIRMED} ${NOT_REFRESHED}`,
+    );
+  });
+
+  it("with a body that was not JSON, says it could not be confirmed", async () => {
+    archive.mockRejectedValue({ status: 502, payload: null });
+    const { dialog } = setup(SVC, true);
+    await confirm(dialog);
+    expect(within(dialog).getByRole("alert").textContent).toBe(
+      `${UNCONFIRMED} ${REFRESHED}`,
+    );
+  });
+
+  // The API answered, but with no sentence fit for a person: the approved
+  // fallback stands, and also gets the list line (same ruling).
+  it("with a payload but no typed message, after a successful reload, gives the fallback and the line", async () => {
+    archive.mockRejectedValue({
+      status: 500,
+      payload: { error: { code: 500 } },
+    });
+    const { dialog } = setup(SVC, true);
+    await confirm(dialog);
+    expect(within(dialog).getByRole("alert").textContent).toBe(
+      `${FALLBACK} ${REFRESHED}`,
+    );
+  });
+
+  it("with a payload but no typed message, after a FAILED reload, gives the fallback and the line", async () => {
+    archive.mockRejectedValue({
+      status: 500,
+      payload: { error: { code: 500 } },
+    });
+    const { dialog } = setup(SVC, false);
+    await confirm(dialog);
+    expect(within(dialog).getByRole("alert").textContent).toBe(
+      `${FALLBACK} ${NOT_REFRESHED}`,
+    );
   });
 
   it("does not show the internal schema sentence as the API's message", async () => {
@@ -246,7 +296,9 @@ describe("ArchiveServiceDialog (#896)", () => {
     });
     const { dialog } = setup();
     await confirm(dialog);
-    expect(within(dialog).getByRole("alert")).toHaveTextContent(FALLBACK);
+    expect(within(dialog).getByRole("alert").textContent).toBe(
+      `${FALLBACK} ${REFRESHED}`,
+    );
   });
 
   it("forgets an earlier failure when opened for another service", async () => {
@@ -316,7 +368,9 @@ describe("ArchiveServiceDialog (#896)", () => {
       fail({ status: 502, payload: null });
     });
     expect(dialog.open).toBe(true);
-    expect(within(dialog).getByRole("alert").textContent).toBe(FALLBACK);
+    expect(within(dialog).getByRole("alert").textContent).toBe(
+      `${UNCONFIRMED} ${REFRESHED}`,
+    );
   });
 
   it("is dismissible again once the attempt is over, and says so to the parent", async () => {
