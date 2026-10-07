@@ -801,7 +801,12 @@ def list_scenarios(
                 citations_outside_subset=len(
                     {
                         o.technique_code
-                        for o in outside_subset_citations(db, client.id, _base_rows(db, base.id))
+                        for o in outside_subset_citations(
+                            db,
+                            client.id,
+                            _base_rows(db, base.id),
+                            parents_computed=parents_computed(base),
+                        )
                     }
                 ),
             )

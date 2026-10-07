@@ -247,7 +247,9 @@ def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentR
         .scalars()
         .all()
     )
-    checked, outside = subset_state(db, _client_id_of(db, a.service_id), rows)
+    checked, outside = subset_state(
+        db, _client_id_of(db, a.service_id), rows, parents_computed=parents_computed(a)
+    )
     return AttackAssessmentResponse(
         id=a.id,
         service_id=a.service_id,
@@ -302,20 +304,32 @@ def citation_resolver_for(
 
 
 def outside_subset_citations(
-    db: Session, client_id: uuid.UUID, rows: Iterable[AttackCoverage]
+    db: Session,
+    client_id: uuid.UUID,
+    rows: Iterable[AttackCoverage],
+    *,
+    parents_computed: bool,
 ) -> list[OutsideCitation]:
     """#851: the rows' tools outside the client's CURRENT security tool list;
     [] when there is no list to check against (see `subset_state`)."""
-    return subset_state(db, client_id, rows)[1]
+    return subset_state(db, client_id, rows, parents_computed=parents_computed)[1]
 
 
 def subset_state(
-    db: Session, client_id: uuid.UUID, rows: Iterable[AttackCoverage]
+    db: Session,
+    client_id: uuid.UUID,
+    rows: Iterable[AttackCoverage],
+    *,
+    parents_computed: bool,
 ) -> tuple[bool, list[OutsideCitation]]:
     """#851: the rows' tools outside the client's CURRENT security tool list,
     checked by the resolver built from the SAME inputs Run AI's request uses
     (`_attack_ai_request_for`: `_client_capability_inputs`, the client's
-    legal name, and no name hints for `mitre_map`)."""
+    legal name, and no name hints for `mitre_map`).
+
+    `parents_computed` is the assessment's rule set (`attack/rules.py`),
+    required: a computed parent's own tools are not checked under D-094
+    (`subset_drift.citations_outside_subset`, review finding F1 on #897)."""
     client = db.get(Client, client_id)
     if client is None:
         raise ValueError(f"client {client_id} does not exist")
@@ -330,7 +344,7 @@ def subset_state(
         [Candidate(name=c.name, vendor=c.vendor) for c in membership.inputs()],
         client_org_name=client.legal_name,
     )
-    return True, citations_outside_subset(rows, subset)
+    return True, citations_outside_subset(rows, subset, parents_computed=parents_computed)
 
 
 def _tool_retirement_marks(
@@ -2600,6 +2614,7 @@ def approve_assessment(
         db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
         .scalars()
         .all(),
+        parents_computed=parents_computed(a),
     )
     if blocking or outside:
         raise release_readiness.refuse_approve(blocking, outside)
@@ -3426,7 +3441,9 @@ def finalize_attack_deliverable(
         ai_mode=ai_mode_for(db, svc, assessment),
         # #851: whether the cited tools could be checked at all, AS OF this
         # finalize; the rendered bytes keep it.
-        subset_checked=subset_state(db, svc.client_id, coverage)[0],
+        subset_checked=subset_state(
+            db, svc.client_id, coverage, parents_computed=parents_computed(assessment)
+        )[0],
     )
     pdf_bytes = render_attack_pdf(ctx)
     xlsx_bytes = render_attack_xlsx(ctx)

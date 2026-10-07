@@ -274,6 +274,85 @@ def test_an_approved_assessment_still_discloses_a_later_removal(app_parts) -> No
     ]
 
 
+def _parent_with_child(w: World) -> tuple[str, str, str, str]:
+    """A computed parent and one of its children, as (code, row id) pairs."""
+    from app.attack.parents import PARENT_CHILDREN
+
+    by_code = {r["technique_code"]: r["id"] for r in w.get()["coverage"]}
+    parent = next(p for p, kids in PARENT_CHILDREN.items() if p in by_code and kids[0] in by_code)
+    child = PARENT_CHILDREN[parent][0]
+    return parent, by_code[parent], child, by_code[child]
+
+
+def _legacy_parent_tools(w: World, row_id: str, tools: list[str]) -> None:
+    """A computed parent's OWN tool list, written the way only a pre-#620 Run AI
+    could: since D-094 the PATCH refuses it (`parent_status_computed`) and the
+    run refuses a parent's suggestion, so a draft scored before #620 is the
+    writer. Seeded directly because no current route can produce it."""
+    from app.models.attack_assessment import AttackCoverage
+
+    with w.sessions() as db:
+        db.get(AttackCoverage, uuid.UUID(row_id)).detection_tools = tools
+        db.commit()
+
+
+def test_a_computed_parents_own_tools_are_not_flagged(app_parts) -> None:  # noqa: F811
+    """Review finding F1 on #897. A computed parent's own stored tools are not
+    its evidence (D-094): no deliverable prints them (`exporters._delivered_rows`)
+    and its score is its children's. Every control that could clear one is
+    refused for a parent -- the PATCH, Remove included, and Run AI -- so flagging
+    it made approve refuse with a remedy that cannot work. Its children's tools
+    are checked as every other row's are."""
+    w = _world(app_parts)
+    _, parent_id, child, child_id = _parent_with_child(w)
+    _legacy_parent_tools(w, parent_id, [LEGACY])
+    w.rows[child] = child_id
+    assert w.patch(child, {"detection_tools": [LEGACY]}).status_code == 200
+    w.confirm_not_security(LEGACY)
+    # The positive state first: the child IS flagged, so the check ran.
+    assert _outside(w) == [(child, "detection_tools", LEGACY, False)]
+    # The parent's control refuses, so a flag on it could never clear.
+    refused = w.c.patch(
+        f"/attack/coverage/{parent_id}",
+        headers=w.h,
+        json={"remove_tool": {"field": "detection_tools", "name": LEGACY}},
+    )
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["error"]["reason"] == "parent_status_computed"
+    # Removing the child's tool is the whole remedy: approve proceeds.
+    assert (
+        w.patch(child, {"remove_tool": {"field": "detection_tools", "name": LEGACY}}).status_code
+        == 200
+    )
+    assert _outside(w) == []
+    r = w.approve()
+    assert r.status_code == 200, r.text
+
+
+def test_an_old_rules_parents_own_tools_are_still_disclosed(app_parts) -> None:  # noqa: F811
+    """The other half of F1. Under the rules an assessment approved before #620
+    keeps (`parent_rules` 1), a parent's own tools ARE delivered, so a tool that
+    later left the list is disclosed there as on any row (S5)."""
+    from sqlalchemy import update
+
+    from app.models.attack_assessment import AttackAssessment
+
+    w = _world(app_parts)
+    _, parent_id, _, _ = _parent_with_child(w)
+    _legacy_parent_tools(w, parent_id, [LEGACY])
+    assert w.approve().status_code == 200
+    with w.sessions() as db:
+        db.execute(
+            update(AttackAssessment)
+            .where(AttackAssessment.id == uuid.UUID(w.assessment_id))
+            .values(parent_rules=1)
+        )
+        db.commit()
+    w.confirm_not_security(LEGACY)
+    parent = next(r for r in w.get()["coverage"] if r["id"] == parent_id)["technique_code"]
+    assert _outside(w) == [(parent, "detection_tools", LEGACY, False)]
+
+
 def test_the_what_if_base_carries_the_same_count(app_parts) -> None:  # noqa: F811
     w = _world(app_parts)
     code = _codes(w)[0]

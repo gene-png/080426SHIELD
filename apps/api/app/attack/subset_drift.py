@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.attack.citations import CitationResolver
+from app.attack.parents import is_computed_parent
 from app.attack.pending import TOOL_FIELDS
 from app.models.capability import CapabilityListStatus
 
@@ -81,13 +82,26 @@ def subset_applies(list_statuses: Iterable[Any]) -> bool:
 
 
 def citations_outside_subset(
-    rows: Iterable[Any], subset: CitationResolver
+    rows: Iterable[Any], subset: CitationResolver, *, parents_computed: bool
 ) -> list[OutsideCitation]:
     """Every (row, field, tool) credited outside the subset, by technique code
     then field, locked or not: an unlocked row credits the tool too, until a
-    re-run, and `locked` says which a re-run will NOT fix."""
+    re-run, and `locked` says which a re-run will NOT fix.
+
+    A COMPUTED PARENT's own tools are skipped when the assessment computes its
+    parents (`parents_computed`, the assessment's rule set, REQUIRED so no
+    caller defaults it -- the same contract as `pending.pending_codes`). Under
+    D-094 a parent's evidence is its children's: no deliverable prints its own
+    tools (`exporters._delivered_rows`) and no score rests on them. And no
+    control can clear one -- the coverage PATCH, Remove included, and Run AI
+    both refuse a parent -- so flagging it refused approve with a remedy that
+    cannot work (review finding F1 on #897). Its children are checked like any
+    row. Under the OLD rules (an assessment approved before #620) a parent's
+    own tools ARE delivered, so they are checked there."""
     out: list[OutsideCitation] = []
     for row in sorted(rows, key=lambda r: r.technique_code):
+        if parents_computed and is_computed_parent(row.technique_code):
+            continue
         for field in TOOL_FIELDS:
             for tool in getattr(row, field, None) or []:
                 if isinstance(tool, str) and tool.strip() and is_outside_subset(tool, subset):
