@@ -95,6 +95,9 @@ export interface ScenarioBase {
   version: number;
   approved_at: string | null;
   tools: string[];
+  /** #851: rows in the base crediting a tool outside the client's security
+   *  tool list; today's figure still counts them. */
+  citations_outside_subset?: number;
 }
 
 export interface ScenarioSummary {
