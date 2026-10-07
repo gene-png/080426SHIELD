@@ -70,6 +70,19 @@ export interface RiskGate {
    * older server's response parses.
    */
   duplicate_inputs?: string | null;
+  /**
+   * #896: the services behind `duplicate_inputs`, in the order its sentence
+   * names them; [] when there is no such pair. The duplicate banner offers
+   * one archive button per row. Optional so an older server's response
+   * parses.
+   */
+  duplicate_services?: RiskDuplicateService[];
+}
+
+/** #896: one service behind the duplicate refusal. */
+export interface RiskDuplicateService {
+  service_id: string;
+  title: string;
 }
 
 export interface RiskEntry {

@@ -164,6 +164,46 @@ export async function archiveClient(cid: string): Promise<void> {
   if (!res.ok) throw new Error(await _detail(res));
 }
 
+/**
+ * #896: why an archive failed -- the status and the parsed body (null when
+ * the body was not JSON). `payload` is the shape `clientFacingError` reads, so
+ * the screen shows the API's own sentence where there is one and its own
+ * fallback otherwise, rather than a bare "Request failed (502)."
+ */
+export class ArchiveServiceError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly payload: unknown,
+  ) {
+    super(`Service archive failed (${status}).`);
+  }
+}
+
+/**
+ * #896: archive one service. The API only sets its status to archived and
+ * writes an audit row -- nothing is deleted -- and there is no unarchive
+ * route. The Risk Register's duplicate banner calls this.
+ */
+export async function archiveService(serviceId: string): Promise<void> {
+  const res = await fetch(`/api/proxy/admin/services/${serviceId}`, {
+    method: "DELETE",
+  });
+  if (res.ok) return;
+  // Read the body ONCE, then parse it (CLAUDE.md: a Response body can be read
+  // once, and a json()-then-text() fallback throws in place of this error).
+  const raw = await res.text();
+  let payload: unknown = null;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    // Not JSON (an HTML error page, an empty body): there is no sentence of
+    // the API's to show, so the caller's fallback applies. Recorded as null
+    // and thrown below, never swallowed.
+    payload = null;
+  }
+  throw new ArchiveServiceError(res.status, payload);
+}
+
 /** Issue 3: the users pinned to a tenant, active and deactivated alike. */
 export async function listClientUsers(cid: string): Promise<AdminUserRow[]> {
   const res = await fetch(`/api/proxy/admin/clients/${cid}/users`, {

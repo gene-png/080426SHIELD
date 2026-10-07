@@ -36,6 +36,7 @@ import {
   type RiskTier,
 } from "@/lib/risk/matrix";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
+import { ArchiveServiceButton } from "@/components/admin/risk/ArchiveServiceButton";
 import { carriedSentences } from "@/lib/risk/carry";
 import {
   INPUTS_RULE,
@@ -380,6 +381,18 @@ export function RiskRegisterDashboard(): JSX.Element {
     };
   }, []);
 
+  // #896: after a service is archived from the duplicate banner, read the
+  // gate again -- the refusal, the banner and Generate all derive from it.
+  async function onServiceArchived(): Promise<void> {
+    if (!cid) return;
+    setError(null);
+    try {
+      setGate(await fetchRiskGate(cid));
+    } catch (err) {
+      setError(describeRiskError(err));
+    }
+  }
+
   async function onGenerate(): Promise<void> {
     if (!cid) return;
     setBusy("generate");
@@ -512,6 +525,10 @@ export function RiskRegisterDashboard(): JSX.Element {
   const duplicateInputs = gate?.unlocked
     ? (gate.duplicate_inputs ?? null)
     : null;
+  // #896: the services that sentence names, one archive button each. `?? []`
+  // covers an older server that does not send the field: the sentence still
+  // shows, with no buttons, as it did before #896.
+  const duplicateServices = gate?.duplicate_services ?? [];
   // #554 R3 no longer blocks Generate (advisor, #736 5998764095, option (b)):
   // a draft is generated, each affected entry says its computed status awaits
   // review, and publish refuses. The banner and the disabled Generate that sat
@@ -620,6 +637,31 @@ export function RiskRegisterDashboard(): JSX.Element {
         >
           {duplicateInputs} Anything already generated below is unaffected.
         </p>
+      ) : null}
+
+      {/* #896: the remedy, beneath the refusal rather than inside it -- the
+          API's sentence also reaches callers that are not this screen
+          (advisor, #736 6042801745). One button per service it names. */}
+      {duplicateInputs !== null && duplicateServices.length > 0 ? (
+        <div
+          className="flex flex-col gap-2 text-sm"
+          data-testid="risk-register-duplicate-archive"
+        >
+          <p className="text-ink-secondary">
+            Archive the one this register should not draw on:
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {duplicateServices.map((svc) => (
+              <ArchiveServiceButton
+                key={svc.service_id}
+                serviceId={svc.service_id}
+                title={svc.title}
+                onArchived={onServiceArchived}
+                disabled={busy !== null}
+              />
+            ))}
+          </div>
+        </div>
       ) : null}
 
       {catalogMismatch !== null ? (
