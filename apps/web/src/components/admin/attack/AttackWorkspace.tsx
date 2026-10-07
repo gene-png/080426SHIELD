@@ -136,9 +136,12 @@ const PARENT_INPUTS: readonly (keyof AttackCoveragePatch)[] = [
  *  ASSESSMENT-level list the server derives from every row's tools. The PATCH
  *  returns only the row, so a write to a tool list -- a Remove included --
  *  re-reads the assessment rather than re-deriving the list here: the rule
- *  lives once, in `app/attack/subset_drift.py`. */
+ *  lives once, in `app/attack/subset_drift.py`. `locked` is in it because each
+ *  entry carries the row's lock, and the alert's "(locked, ...)" marker reads
+ *  it -- "unlock the row" is the S3b remedy itself (review N1). */
 const SUBSET_INPUTS: readonly (keyof AttackCoveragePatch)[] = [
   "remove_tool",
+  "locked",
   "detection_tools",
   "prevention_tools",
   "response_tools",

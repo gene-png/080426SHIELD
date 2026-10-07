@@ -81,6 +81,12 @@ vi.mock("./AttackTechniquePanel", () => ({
       >
         replace the detection list
       </button>
+      <button
+        type="button"
+        onClick={() => void props.onPatch({ locked: false })}
+      >
+        unlock the row
+      </button>
       <button type="button" onClick={() => void props.onPatch({ notes: "x" })}>
         edit the notes
       </button>
@@ -212,6 +218,33 @@ describe("AttackWorkspace, the outside-subset alert after a write (#851 F2)", ()
       expect(screen.queryByTestId("attack-outside-subset")).toBeNull();
     },
   );
+
+  it("re-reads after the lock changes, so the alert stops calling the row locked", async () => {
+    // Review N1 (round 2): the alert's "(locked, ...)" marker is read from the
+    // same assessment-level list, and S3b's own remedy is "unlock the row".
+    const LOCKED = { ...LEGACY, locked: true };
+    vi.mocked(attackClient.fetchLatestAssessment)
+      .mockResolvedValueOnce(draft([LOCKED]))
+      // The server after the unlock: still outside, no longer locked.
+      .mockResolvedValue(draft([LEGACY]));
+    render(<AttackWorkspace serviceId="svc" serviceTitle="ATT&CK" />);
+    expect(
+      await screen.findByTestId("attack-outside-subset"),
+    ).toHaveTextContent(
+      "T1003, Detection: Legacy AV (locked, so Run AI will not change it)",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "select the row" }));
+    fireEvent.click(screen.getByRole("button", { name: "unlock the row" }));
+    await vi.waitFor(() =>
+      expect(attackClient.fetchLatestAssessment).toHaveBeenCalledTimes(2),
+    );
+    await vi.waitFor(() =>
+      expect(
+        screen.getByTestId("attack-outside-subset").querySelector("li")
+          ?.textContent,
+      ).toBe("T1003, Detection: Legacy AV"),
+    );
+  });
 
   it("does not re-read for a write that cannot move the alert", async () => {
     await openWithTheAlert();
