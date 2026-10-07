@@ -31,7 +31,7 @@ from app.zt.maturity import (
     stage_label,
 )
 
-CISA_CODE_PATTERN = re.compile(r"^CISA\.[A-Z]{2}\.\d{2}$")
+CISA_CODE_PATTERN = re.compile(r"^CISA\.[A-Z]{2}\.(\d{2}|VA|AO|GV)$")
 DOD_CODE_PATTERN = re.compile(r"^DOD\.[A-Z]{3}\.\d{2}$")
 
 
@@ -41,8 +41,8 @@ DOD_CODE_PATTERN = re.compile(r"^DOD\.[A-Z]{3}\.\d{2}$")
 
 
 @pytest.mark.unit
-def test_cisa_pillar_count_is_eight() -> None:
-    assert len(CISA_PILLARS) == 8
+def test_cisa_pillar_count_is_five() -> None:
+    assert len(CISA_PILLARS) == 5
 
 
 @pytest.mark.unit
