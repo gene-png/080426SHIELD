@@ -89,6 +89,7 @@ from app.attack.exporters import render_docx as render_attack_docx
 from app.attack.exporters import render_pdf as render_attack_pdf
 from app.attack.exporters import render_xlsx as render_attack_xlsx
 from app.attack.exporters import retirement_sentences as attack_retirement_sentences
+from app.attack.exporters import subset_sentences as attack_subset_sentences
 from app.attack.parents import PARENT_CHILDREN, is_computed_parent, recompute_parents
 from app.attack.pending import CLAIMS_SUPPORT as _STATUS_CLAIMS_SUPPORT
 from app.attack.pending import NO_CITATION as _NO_CITATION
@@ -99,6 +100,11 @@ from app.attack.pending import row_tools as attack_row_tools
 from app.attack.retirement import PlanEntry, RetirementIndex
 from app.attack.retirement import build_index as build_retirement_index
 from app.attack.rules import COMPUTED_STATUSES, NEW_RULES, parents_computed, statuses_computed
+from app.attack.subset_drift import (
+    OutsideCitation,
+    citations_outside_subset,
+    subset_applies,
+)
 from app.audit import audit
 from app.config import get_settings
 from app.db.session import get_db
@@ -138,6 +144,7 @@ from app.schemas.attack import (
     AttackCoveragePatch,
     AttackCoverageResponse,
     AttackHeatmap,
+    AttackOutsideCitation,
     AttackRunAiResponse,
     AttackServiceCreateRequest,
     AttackServiceResponse,
@@ -240,6 +247,9 @@ def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentR
         .scalars()
         .all()
     )
+    checked, outside = subset_state(
+        db, _client_id_of(db, a.service_id), rows, parents_computed=parents_computed(a)
+    )
     return AttackAssessmentResponse(
         id=a.id,
         service_id=a.service_id,
@@ -257,7 +267,84 @@ def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentR
         statuses_computed=statuses_computed(a),
         coverage=_serialize_coverage(a, rows),
         tool_retirement=_tool_retirement_marks(db, a.service_id, rows),
+        citations_outside_subset=[
+            AttackOutsideCitation(
+                technique_code=o.technique_code, field=o.field, tool=o.tool, locked=o.locked
+            )
+            for o in outside
+        ],
+        subset_checked=checked,
     )
+
+
+def _client_id_of(db: Session, service_id: uuid.UUID) -> uuid.UUID:
+    svc = db.get(Service, service_id)
+    if svc is None:
+        raise ValueError(f"assessment's service {service_id} does not exist")
+    return svc.client_id
+
+
+def citation_resolver_for(
+    candidates: list[Candidate],
+    *,
+    client_org_name: str | None,
+    name_hints: Iterable[str] = (),
+) -> CitationResolver:
+    """The resolver Run AI checks citations with. ONE builder, called by the
+    run and by the #851 subset check, so what counts as "the same tool" can
+    never differ between them. The redaction mode is the egress's own: the
+    resolver indexes org-name and address aliases only in strict mode, so a
+    different mode would index placeholders the model was never shown."""
+    return CitationResolver(
+        candidates,
+        client_org_name=client_org_name,
+        redaction_mode=get_settings().shield_redaction_mode,
+        name_hints=tuple(name_hints),
+    )
+
+
+def outside_subset_citations(
+    db: Session,
+    client_id: uuid.UUID,
+    rows: Iterable[AttackCoverage],
+    *,
+    parents_computed: bool,
+) -> list[OutsideCitation]:
+    """#851: the rows' tools outside the client's CURRENT security tool list;
+    [] when there is no list to check against (see `subset_state`)."""
+    return subset_state(db, client_id, rows, parents_computed=parents_computed)[1]
+
+
+def subset_state(
+    db: Session,
+    client_id: uuid.UUID,
+    rows: Iterable[AttackCoverage],
+    *,
+    parents_computed: bool,
+) -> tuple[bool, list[OutsideCitation]]:
+    """#851: the rows' tools outside the client's CURRENT security tool list,
+    checked by the resolver built from the SAME inputs Run AI's request uses
+    (`_attack_ai_request_for`: `_client_capability_inputs`, the client's
+    legal name, and no name hints for `mitre_map`).
+
+    `parents_computed` is the assessment's rule set (`attack/rules.py`),
+    required: a computed parent's own tools are not checked under D-094
+    (`subset_drift.citations_outside_subset`, review finding F1 on #897)."""
+    client = db.get(Client, client_id)
+    if client is None:
+        raise ValueError(f"client {client_id} does not exist")
+    # ONE membership read: its `inputs()` IS `_client_capability_inputs`, and
+    # its lists decide whether there is a subset to judge against at all.
+    membership = _client_capability_membership(db, client_id)
+    if not subset_applies(cl.status for cl in membership.lists):
+        # NOT CHECKED, the third state: nothing is flagged because nothing
+        # could be, never because nothing was found.
+        return False, []
+    subset = citation_resolver_for(
+        [Candidate(name=c.name, vendor=c.vendor) for c in membership.inputs()],
+        client_org_name=client.legal_name,
+    )
+    return True, citations_outside_subset(rows, subset, parents_computed=parents_computed)
 
 
 def _tool_retirement_marks(
@@ -586,6 +673,59 @@ def latest_assessment(
 # ---------------------------------------------------------------------------
 
 
+#: #851 (D2): the panel's labels, for the remove refusal's copy.
+_TOOL_FIELD_LABEL = {
+    "detection_tools": "Detection",
+    "prevention_tools": "Prevention",
+    "response_tools": "Response",
+}
+
+
+def _remove_tool(db: Session, row: AttackCoverage, remove: dict, user: User) -> None:
+    """#851 (D2): take ONE name off one tool list, with that name's citation
+    record in that list, and nothing else. A PATCH of the whole list would mark
+    every other citation in it confirmed by hand (#102); a removal reviews
+    nothing, so it must not. The refusals' copy is approved (#736, 6024072042).
+    """
+    field, name = remove["field"], remove["name"]
+    if field not in _TOOL_FIELD_LABEL:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "remove_tool_unknown_field",
+                "message": "Only a Detection, Prevention or Response tool can be removed.",
+            },
+        )
+    tools = list(getattr(row, field) or [])
+    if name not in tools:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "remove_tool_not_listed",
+                "message": (
+                    f"That tool is not listed under {_TOOL_FIELD_LABEL[field]} for "
+                    f"{row.technique_code}. Reload the page to see the current tools."
+                ),
+            },
+        )
+    setattr(row, field, [t for t in tools if t != name])
+    if row.unconfirmed_citations is not None:
+        row.unconfirmed_citations = [
+            e
+            for e in row.unconfirmed_citations
+            if not (e.get("field") == field and e.get("tool") == name)
+        ]
+    # The technique and the list only: tool names are the client's data.
+    audit(
+        db,
+        action="attack.coverage.tool_removed",
+        target_type="attack_coverage",
+        target_id=row.id,
+        actor_user_id=user.id,
+        details={"technique_code": row.technique_code, "field": field},
+    )
+
+
 @router.patch(
     "/coverage/{coverage_id}",
     response_model=AttackCoverageResponse,
@@ -708,6 +848,8 @@ def patch_coverage(
     for f in ("detection_tools", "prevention_tools", "response_tools", "rationale"):
         if f in data:
             setattr(row, f, data[f])
+    if data.get("remove_tool") is not None:
+        _remove_tool(db, row, data["remove_tool"], user)
     # #102. Setting the status or curating the tools by hand makes the ADMIN the
     # author of this row's claim, not a reviewer of the model's -- so the model's
     # outstanding inferences and rejections stop being what the claim rests on,
@@ -1990,11 +2132,10 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
     # while the egress ran "standard" would index placeholders the model was
     # never shown. Both come from the same places `run_job` reads them from
     # below, so the two cannot disagree.
-    resolver = CitationResolver(
+    resolver = citation_resolver_for(
         req.capabilities,
         client_org_name=req.preview.client_org_name,
-        redaction_mode=get_settings().shield_redaction_mode,
-        name_hints=tuple(req.preview.name_hints or ()),
+        name_hints=req.preview.name_hints or (),
     )
     citations = CitationOutcome()
     # #109. Rows this run deliberately left NULL because a field it did not
@@ -2464,8 +2605,19 @@ def approve_assessment(
     # row unscored, so a refusal first met at release would have no remedy.
     # Checked AFTER the recompute, so a parent's computed status is judged.
     blocking = release_readiness.blocking_rows(db, a)
-    if blocking:
-        raise release_readiness.refuse_approve(blocking)
+    # #851: a row crediting a tool outside the client's current security tool
+    # list refuses approve too; kept OUT of `blocking_rows`, which is also the
+    # release flip's predicate, because release discloses rather than blocks.
+    outside = outside_subset_citations(
+        db,
+        client.id,
+        db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
+        .scalars()
+        .all(),
+        parents_computed=parents_computed(a),
+    )
+    if blocking or outside:
+        raise release_readiness.refuse_approve(blocking, outside)
     a.status = AttackAssessmentStatus.APPROVED
     a.approved_at = utcnow()
     a.approved_by = user.id
@@ -3287,6 +3439,11 @@ def finalize_attack_deliverable(
         retirement=client_retirement_index(db, svc.client_id),
         # #646: the ONE derivation every surface calls.
         ai_mode=ai_mode_for(db, svc, assessment),
+        # #851: whether the cited tools could be checked at all, AS OF this
+        # finalize; the rendered bytes keep it.
+        subset_checked=subset_state(
+            db, svc.client_id, coverage, parents_computed=parents_computed(assessment)
+        )[0],
     )
     pdf_bytes = render_attack_pdf(ctx)
     xlsx_bytes = render_attack_xlsx(ctx)
@@ -3338,6 +3495,8 @@ def finalize_attack_deliverable(
         + (f" {outside_assessed_text(rollup)}." if states_outside_counts(ctx) else "")
         # #686: the renderers' own sentences, only when non-zero.
         + "".join(f" {s}" for s in attack_retirement_sentences(ctx))
+        # #851: the renderers' own "not checked" sentence, only when it applies.
+        + "".join(f" {s}" for s in attack_subset_sentences(ctx))
         # #554 R3 (Q4): the renderers' own sentence, only when non-zero.
         + (f" {awaiting}" if (awaiting := attack_awaiting_review_text(ctx)) else "")
         # #801 (F1): the figure after planned changes, and its counts.
