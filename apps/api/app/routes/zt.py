@@ -115,7 +115,6 @@ from app.zt.exporters import render_pdf as render_zt_pdf
 from app.zt.exporters import render_xlsx as render_zt_xlsx
 from app.zt.maturity import ZtFrameworkCode, level_count, stage_definitions
 from app.zt.retired import retired_answer_count, retired_sentence
-from app.zt.target_caps import target_cap_sentences
 from app.zt.scoring import (
     analyze_gaps,
     build_roadmap,
@@ -123,6 +122,7 @@ from app.zt.scoring import (
     resolve_target_stage,
 )
 from app.zt.scoring import compute as compute_score
+from app.zt.target_caps import target_cap_sentences
 
 router = APIRouter(prefix="/zt", tags=["zt"])
 

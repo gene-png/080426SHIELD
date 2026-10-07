@@ -200,6 +200,21 @@ def _framework_label(framework: ZtFrameworkCode) -> str:
     )
 
 
+#: #839: the DoD catalog's source note, the advisor's re-ruling verbatim (#736,
+#: Oct 7 14:48Z, comment 6040458893). CISA's catalog needs none: its levels are
+#: tabulated in its one source document.
+_DOD_SOURCE_NOTE = (
+    "Levels are as published in the 2025 edition (25-T-1465). The 2022 Roadmap "
+    "shows levels only as colours in its timeline, which could not be matched to "
+    "activities reliably; only 1.2.1 to 1.2.5, which it tabulates, were checked, "
+    "and they agree."
+)
+
+
+def _source_note(framework: ZtFrameworkCode) -> str | None:
+    return _DOD_SOURCE_NOTE if framework == ZtFrameworkCode.DOD_ZTRA else None
+
+
 # ---------------------------------------------------------------------------
 # XLSX
 # ---------------------------------------------------------------------------
@@ -231,6 +246,9 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
     ws.append(["Engagement", ctx.client_legal_name])
     ws.append(["Service", ctx.service_title])
     ws.append(["Framework", _framework_label(ctx.framework)])
+    source_note = _source_note(ctx.framework)
+    if source_note:
+        ws.append(["Source", source_note])  # #839
     ws.append(["Assessment version", ctx.assessment.version])
     ws.append(["Overall stage", ctx.score.overall_stage_label])
     ws.append(["Average stage", _fmt(ctx.score.average_stage)])
@@ -374,6 +392,9 @@ def render_docx(ctx: ZtDeliverableContext) -> bytes:
         f"{ctx.client_legal_name} · {_framework_label(ctx.framework)}",
     )
     add_docx_paragraph(doc, ctx.ai_mode)  # #646, under the title
+    source_note = _source_note(ctx.framework)
+    if source_note:
+        add_paragraphs(doc, [source_note])  # #839, under the framework line
     retired = _retired_note(ctx)
     if retired:
         add_paragraphs(doc, [retired])  # #838, beside the mode stamp
@@ -464,6 +485,9 @@ def render_pdf(ctx: ZtDeliverableContext) -> bytes:
     story.append(Paragraph(ctx.service_title, h1))
     story.append(Paragraph(f"{ctx.client_legal_name} · {_framework_label(ctx.framework)}", body))
     story.append(pdf_paragraph(ctx.ai_mode, body))  # #646, under the title
+    source_note = _source_note(ctx.framework)
+    if source_note:
+        story.append(Paragraph(source_note, body))  # #839, under the framework line
     retired = _retired_note(ctx)
     if retired:
         story.append(Paragraph(retired, body))  # #838, beside the mode stamp

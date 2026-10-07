@@ -128,9 +128,7 @@ def _risk(engine) -> list[tuple]:
     from app.models.risk_register import RiskEntry
 
     with Session(engine) as db:
-        return [
-            (r.source_id, r.linked_controls) for r in db.execute(select(RiskEntry)).scalars()
-        ]
+        return [(r.source_id, r.linked_controls) for r in db.execute(select(RiskEntry)).scalars()]
 
 
 def test_upgrade_swaps_inserts_and_keeps_everything(world) -> None:

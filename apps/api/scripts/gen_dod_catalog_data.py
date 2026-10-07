@@ -81,7 +81,9 @@ def main() -> int:
         return 2
     dest = repo / "apps" / "api" / "app" / "zt" / "_dod_catalog_data.py"
     dest.write_bytes(render(src).encode("utf-8"))
-    print(f"wrote {dest} ({len(src['capabilities'])} capabilities, {len(src['activities'])} activities)")
+    print(
+        f"wrote {dest} ({len(src['capabilities'])} capabilities, {len(src['activities'])} activities)"
+    )
     return 0
 
 
