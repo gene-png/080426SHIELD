@@ -298,7 +298,7 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
             cell.font = Font(bold=True)
             cell.fill = fill
         for service, scored, total in sorted(ctx.link_scope):
-            sheet.append([_SERVICE_LABELS.get(service, service), scored, total, total - scored])
+            sheet.append([scope_label(service), scored, total, total - scored])
         sheet.append([])
         sheet.append(
             [
@@ -343,6 +343,27 @@ _SERVICE_LABELS = {
     "zt": "Zero Trust",
 }
 
+#: The ZT frameworks by the names the ZT deliverable already prints
+#: (`app/zt/exporters.py`), so the Risk Register names a framework the way the
+#: client's own Zero Trust report does (advisor, #736 6019425290, Q3). The web
+#: dashboard holds the same two strings beside its `SERVICE_LABELS`; change both.
+ZT_FRAMEWORK_NAMES = {
+    "cisa_ztmm_2_0": "CISA ZTMM 2.0",
+    "dod_ztra": "DoD ZT Reference Architecture",
+}
+
+
+def scope_label(key: str) -> str:
+    """A scored-coverage row's label (#876). "zt" while a kind has one source;
+    "zt:cisa_ztmm_2_0" -> "Zero Trust (CISA ZTMM 2.0)" when it has two. An
+    unknown key renders as itself, for the reason `_link_scope_lines` gives."""
+    if key in _SERVICE_LABELS:
+        return _SERVICE_LABELS[key]
+    kind, _, qualifier = key.partition(":")
+    if kind in _SERVICE_LABELS and qualifier in ZT_FRAMEWORK_NAMES:
+        return f"{_SERVICE_LABELS[kind]} ({ZT_FRAMEWORK_NAMES[qualifier]})"
+    return key
+
 
 def _link_scope_lines(ctx: RiskExportContext) -> list[str]:
     """The #403 disclosure, for the client's PDF and Word deliverable.
@@ -362,7 +383,7 @@ def _link_scope_lines(ctx: RiskExportContext) -> list[str]:
     if not ctx.link_scope:
         return []
     parts = [
-        f"{_SERVICE_LABELS.get(service, service)} {scored} of {total}"
+        f"{scope_label(service)} {scored} of {total}"
         for service, scored, total in sorted(ctx.link_scope)
     ]
     return [
