@@ -162,8 +162,10 @@ function droppedALink(e: RiskEntry): boolean {
  *   technique or control link left;
  * - `entries_links_not_recorded`: `dropped_links` NULL (rows from before
  *   migration 0048);
- * - `dropped_citations`: every dropped value, or null when no entry carries a
- *   record (`_dropped_citations`).
+ * - `dropped_citations`, as `_dropped_citations` computes it: null when there
+ *   ARE entries and none carries a record; otherwise the number of values in
+ *   every list-valued `dropped_links` field (a non-list is skipped). An empty
+ *   register is an observed 0, not null.
  *
  * `over` carries only the fields that are not derived from the entries.
  */
@@ -175,7 +177,10 @@ function stored(
   const values = recorded.reduce(
     (n, e) =>
       n +
-      Object.values(e.dropped_links ?? {}).reduce((m, v) => m + v.length, 0),
+      Object.values(e.dropped_links ?? {}).reduce(
+        (m, v) => m + (Array.isArray(v) ? v.length : 0),
+        0,
+      ),
     0,
   );
   return register({
@@ -191,7 +196,8 @@ function stored(
         (e.linked_controls ?? []).length === 0,
     ).length,
     entries_links_not_recorded: entries.length - recorded.length,
-    dropped_citations: recorded.length === 0 ? null : values,
+    dropped_citations:
+      entries.length > 0 && recorded.length === 0 ? null : values,
     ...over,
   });
 }
@@ -385,6 +391,70 @@ describe("RiskRegisterDashboard count nouns (#743)", () => {
       await screen.findByTestId("risk-citations-dropped"),
     ).toHaveTextContent("1 citation value was discarded");
     expect(screen.queryByTestId("risk-entries-with-dropped-links")).toBeNull();
+  });
+
+  // Round 3: each clause of `sourceOnlyUnlinked` pinned by its own case.
+  // `generate`: the model's source_id named no finding, and a technique it
+  // proposed resolved. The entry shows linkage, so it is counted.
+  it("counts a source-only drop that kept a technique link", async () => {
+    const t = await textOf(
+      "risk-entries-with-dropped-links",
+      stored([
+        rated("e0", {
+          source_id: null,
+          linked_techniques: ["T1078"],
+          dropped_links: { source_id: ["T0000"] },
+        }),
+      ]),
+    );
+    expect(t).toContain("1 of 1 entry lost at least one value the model sent");
+    expect(t).toContain("so it shows linkage");
+  });
+
+  // The same, with a control kept.
+  it("counts a source-only drop that kept a control link", async () => {
+    const t = await textOf(
+      "risk-entries-with-dropped-links",
+      stored([
+        rated("e0", {
+          source_id: null,
+          linked_controls: ["GV.OC-01"],
+          dropped_links: { source_id: ["T0000"] },
+        }),
+      ]),
+    );
+    expect(t).toContain("1 of 1 entry lost at least one value the model sent");
+    expect(t).toContain("so it shows linkage");
+  });
+
+  // `generate`: the only proposed control was dropped and nothing was kept.
+  // It is in the unlinked count, not in the source-only one, so the banner
+  // still counts the one linked entry beside it.
+  it("leaves a dropped control with no link to the unlinked banner", async () => {
+    await show(
+      stored([
+        keptLink("e0"),
+        rated("e1", { dropped_links: { linked_controls: ["XX.YY-99"] } }),
+      ]),
+    );
+    expect(
+      (await screen.findByTestId("risk-entries-with-dropped-links"))
+        .textContent,
+    ).toContain("1 of 2 entries lost at least one value the model sent");
+    expect(
+      screen.getByTestId("risk-entries-unlinked-after-drops").textContent,
+    ).toContain(
+      "1 of 2 entries proposed ATT&CK or control links and kept none",
+    );
+  });
+
+  // `generate` with no findings stores a register with no entries. Its
+  // citation count is an observed 0 (`_dropped_citations`), not null.
+  it("an empty register states an observed zero", async () => {
+    const t = await textOf("risk-citations-dropped", stored([]));
+    expect(t).toContain(
+      "No citation values were discarded across all 0 entries.",
+    );
   });
 
   // Rows written before migration 0048 carry `dropped_links` NULL
