@@ -60,8 +60,9 @@ export function ExtractionFlags({
 }: {
   flags: ExtractionFlagCounts | null | undefined;
 }): React.ReactElement | null {
-  // Null is "not measured" (an earlier prompt's list): say nothing, rather
-  // than imply nothing was found.
+  // Null is "not measured": a list an earlier prompt drafted, or one no
+  // extraction is on record for. Say nothing, rather than imply nothing was
+  // found.
   if (!flags) return null;
   const shown = ORDER.filter((k) => flags[k] > 0);
   if (shown.length === 0) return null;
