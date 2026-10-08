@@ -22,6 +22,9 @@ const PYTHON_SCOPE_LABELS: [key: string, label: string, unit: string][] = [
   ["zt:unknown", "zt:unknown", "stage"],
   ["zt:dod_ztra:x", "zt:dod_ztra:x", "stage"],
   ["constructor", "constructor", "level"],
+  // The framework-name lookup is own-key only too: an object literal would
+  // turn this into "Zero Trust (function Object() ...)".
+  ["zt:constructor", "zt:constructor", "stage"],
 ];
 
 describe("scopeLabel and unitOf match the export's labeller", () => {
