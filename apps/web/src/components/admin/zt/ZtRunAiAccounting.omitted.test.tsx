@@ -165,4 +165,122 @@ describe("ZtRunAiAccounting, capabilities with no result (#840)", () => {
       expect(container.textContent).not.toContain("got no stage");
     },
   );
+
+  it("Z3 is the only alert when nothing else on the panel is one", () => {
+    render(<ZtRunAiAccounting result={result([nr("DS.1", false, 3)])} />);
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "DS.1: keeps stage 3, recorded earlier. This run did not confirm it.",
+    );
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("Z3 is a polite status beside the failure alert: one assertive region", () => {
+    render(
+      <ZtRunAiAccounting
+        result={result([nr("DS.1", false, 3)], {
+          suggestions_received: 4,
+          suggestions_applied: 3,
+          dropped: [
+            {
+              reason: "out_of_range",
+              key: "DS.9",
+              field: "current",
+              values: 1,
+            },
+          ],
+        })}
+      />,
+    );
+    const alerts = screen.getAllByRole("alert");
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toHaveTextContent(
+      "1 suggested value could not be applied:",
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Check these before approving. A stage kept this way can come from a client's self-assessment and reaches the deliverable as it is.",
+    );
+  });
+
+  it("Z3 is a polite status beside the headline alert", () => {
+    render(
+      <ZtRunAiAccounting
+        result={result([nr("DS.1", false, 3)], {
+          suggestions_received: 2,
+          suggestions_applied: 0,
+          dropped: [
+            { reason: "unknown_field", key: "DS.9", field: "stage", values: 2 },
+          ],
+        })}
+      />,
+    );
+    const alerts = screen.getAllByRole("alert");
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toHaveTextContent(/^AI applied 0 of 2/);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "DS.1: keeps stage 3, recorded earlier. This run did not confirm it.",
+    );
+  });
+
+  it("Z3 is a polite status beside the received-0 alert", () => {
+    render(
+      <ZtRunAiAccounting
+        result={result([nr("DS.1", false, 3)], {
+          suggestions_received: 0,
+          suggestions_applied: 0,
+        })}
+      />,
+    );
+    const alerts = screen.getAllByRole("alert");
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toHaveTextContent(
+      /^The AI returned no suggestions at all/,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "DS.1: keeps stage 3, recorded earlier. This run did not confirm it.",
+    );
+  });
+
+  function many(n: number, notesBlank: boolean): ZtOmittedCapability[] {
+    return Array.from({ length: n }, (_, i) =>
+      nr(`C.${String(i + 1).padStart(2, "0")}`, notesBlank, null),
+    );
+  }
+
+  it("lists 10 items in a group with no remainder line", () => {
+    const { container } = render(
+      <ZtRunAiAccounting result={result(many(10, true))} />,
+    );
+    const items = listItems(container);
+    expect(items).toHaveLength(10);
+    expect(items[9]).toBe("C.10: no stage, so it stays unscored.");
+    expect(container.textContent).not.toContain("more");
+  });
+
+  it("caps a group at 10 items, then 'and 1 more'", () => {
+    const { container } = render(
+      <ZtRunAiAccounting result={result(many(11, true))} />,
+    );
+    const items = listItems(container);
+    expect(items).toHaveLength(11);
+    expect(items[9]).toBe("C.10: no stage, so it stays unscored.");
+    expect(items[10]).toBe("and 1 more");
+    expect(paragraphs(container)).toContain("No notes recorded (11):");
+  });
+
+  it("caps each group on its own: 12 with notes ends 'and 2 more'", () => {
+    const { container } = render(
+      <ZtRunAiAccounting
+        result={result([nr("B.01", true, null), ...many(12, false)])}
+      />,
+    );
+    const items = listItems(container);
+    expect(items).toEqual([
+      "B.01: no stage, so it stays unscored.",
+      ...many(10, false).map(
+        (x) => `${x.capability_code}: no stage, so it stays unscored.`,
+      ),
+      "and 2 more",
+    ]);
+  });
 });

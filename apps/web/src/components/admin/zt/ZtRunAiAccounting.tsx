@@ -182,10 +182,38 @@ function describeOmitted(n: ZtOmittedCapability): string {
  *
  * Absent (a run stored before #840) or 0 renders nothing.
  */
+/**
+ * One group's items, at most `ITEM_CAP`, then the approved ATT&CK string
+ * "and {k} more" (#736 joint plan, A-copy, reused verbatim per the ruling).
+ * The cap is per group: each group's heading already states its full count.
+ */
+function OmittedItems({
+  items,
+}: {
+  items: ZtOmittedCapability[];
+}): JSX.Element {
+  const rest = items.length - ITEM_CAP;
+  return (
+    <ul className="list-disc pl-5">
+      {items.slice(0, ITEM_CAP).map((x) => (
+        <li key={x.capability_code}>{describeOmitted(x)}</li>
+      ))}
+      {rest > 0 ? <li>and {rest} more</li> : null}
+    </ul>
+  );
+}
+
 function ZtOmittedBlock({
   result,
+  otherAlert,
 }: {
   result: ZtRunAiResponse;
+  /**
+   * Whether the panel already carries a `role="alert"`. One assertive region
+   * (#736 ruling): Z3 is an alert only when it is alone, and a polite
+   * `status` beside another alert.
+   */
+  otherAlert: boolean;
 }): JSX.Element | null {
   const n = result.omitted_count ?? 0;
   if (n === 0) return null;
@@ -203,27 +231,21 @@ function ZtOmittedBlock({
       {blank.length > 0 ? (
         <div className="text-ink-secondary">
           <p>No notes recorded ({blank.length}):</p>
-          <ul className="list-disc pl-5">
-            {blank.map((x) => (
-              <li key={x.capability_code}>{describeOmitted(x)}</li>
-            ))}
-          </ul>
+          <OmittedItems items={blank} />
         </div>
       ) : null}
       {noted.length > 0 ? (
         <div
           className={notedKept ? "text-status-danger-fg" : "text-ink-secondary"}
-          {...(notedKept ? { role: "alert" as const } : {})}
+          {...(notedKept
+            ? { role: otherAlert ? ("status" as const) : ("alert" as const) }
+            : {})}
         >
           <p>
             Notes recorded, but no stage given ({noted.length}). This includes
             notes such as &quot;N/A&quot; or &quot;TBD&quot;:
           </p>
-          <ul className="list-disc pl-5">
-            {noted.map((x) => (
-              <li key={x.capability_code}>{describeOmitted(x)}</li>
-            ))}
-          </ul>
+          <OmittedItems items={noted} />
           {notedKept ? (
             <p>
               Check these before approving. A stage kept this way can come from
@@ -308,7 +330,7 @@ export function ZtRunAiAccounting({
           its response did not match the shape this job expects. Re-run, and if
           it repeats, the prompt and the parser have drifted apart.
         </p>
-        <ZtOmittedBlock result={result} />
+        <ZtOmittedBlock result={result} otherAlert />
       </div>
     );
   }
@@ -441,7 +463,10 @@ export function ZtRunAiAccounting({
         </ul>
       ) : null}
 
-      <ZtOmittedBlock result={result} />
+      <ZtOmittedBlock
+        result={result}
+        otherAlert={failed.length > 0 || headlineIsAlert}
+      />
     </div>
   );
 }
