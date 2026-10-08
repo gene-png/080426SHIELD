@@ -11,8 +11,9 @@ import { ExtractionFlags } from "./ExtractionFlags";
 
 /**
  * C6, for #806: the E1 lines over the api's `extraction_flags`. Every expected
- * string is written out here from the plan's proposed copy (issue 806, comment
- * 5984600764), never read from the component.
+ * string is written out here from the approved copy (issue 736, comment
+ * 6068587667, over the plan's in 806/5984600764), never read from the
+ * component.
  */
 
 const ZERO: ExtractionFlagCounts = {
@@ -38,7 +39,7 @@ describe("ExtractionFlags (#806, E1)", () => {
     expect(items).toEqual([
       '2 rows came back without a name and are listed as "Unknown capability".',
       "3 rows came back with a confidence the extraction does not use (only 100, 90 or 60).",
-      "4 rows came back with a category outside the standard list; it is kept as the AI wrote it.",
+      "4 rows came back with a category outside the standard list, and it was kept.",
       "5 source rows were turned into more than one capability.",
     ]);
   });
@@ -58,7 +59,7 @@ describe("ExtractionFlags (#806, E1)", () => {
     expect(items).toEqual([
       '1 row came back without a name and is listed as "Unknown capability".',
       "1 row came back with a confidence the extraction does not use (only 100, 90 or 60).",
-      "1 row came back with a category outside the standard list; it is kept as the AI wrote it.",
+      "1 row came back with a category outside the standard list, and it was kept.",
       "1 source row was turned into more than one capability.",
     ]);
   });
@@ -70,7 +71,7 @@ describe("ExtractionFlags (#806, E1)", () => {
     expect(
       screen.getByTestId("extraction-flag-category_off_list").textContent,
     ).toBe(
-      "2 rows came back with a category outside the standard list; it is kept as the AI wrote it.",
+      "2 rows came back with a category outside the standard list, and it was kept.",
     );
   });
 

@@ -8,10 +8,10 @@ import type { ExtractionFlagCounts } from "@/lib/tech_debt/types";
  * The rows are editable in the list below, and correcting one clears its count
  * (the api reads the first three live from the rows).
  *
- * E1 copy, PROPOSED in the #806 plan (issue 806, comment 5984600764) and NOT
- * yet approved: the advisor sees it before it ships. Every string lives in
- * `EXTRACTION_FLAG_COPY`, so a wording change is one edit there. The singular
- * forms are new with this build and go to the advisor with the rest.
+ * E1 copy, proposed in the #806 plan (issue 806, comment 5984600764) and
+ * approved by the advisor (issue 736, comment 6068587667) with the singular
+ * forms, `category_off_list` reworded to the past tense. Every string lives in
+ * `EXTRACTION_FLAG_COPY`, so a wording change is one edit there.
  */
 
 type FlagKey = keyof ExtractionFlagCounts;
@@ -31,9 +31,9 @@ export const EXTRACTION_FLAG_COPY: Record<
       `${n} rows came back with a confidence the extraction does not use (only 100, 90 or 60).`,
   },
   category_off_list: {
-    one: "1 row came back with a category outside the standard list; it is kept as the AI wrote it.",
+    one: "1 row came back with a category outside the standard list, and it was kept.",
     many: (n) =>
-      `${n} rows came back with a category outside the standard list; it is kept as the AI wrote it.`,
+      `${n} rows came back with a category outside the standard list, and it was kept.`,
   },
   source_row_duplicated: {
     one: "1 source row was turned into more than one capability.",
