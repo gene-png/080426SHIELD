@@ -784,7 +784,18 @@ def test_an_inventory_in_another_format_is_refused(td_world, tmp_path) -> None:
 
 @pytest.mark.parametrize(
     ("service_id", "reason"),
-    [(str(uuid.uuid4()), "no_tech_debt_service"), ("not-a-uuid", "service_id_invalid")],
+    [
+        # A FIXED well-formed UUID naming no service in this fresh database. A
+        # `uuid.uuid4()` here put a different value in the test id on every
+        # collection, so `check_ci_selection` could not match its own
+        # collection to CI's `-m unit` one and reported it never run.
+        pytest.param(
+            "5d7e1c2a-0b3f-4a6e-9c41-7f2d8e6b9a10",
+            "no_tech_debt_service",
+            id="no_tech_debt_service",
+        ),
+        pytest.param("not-a-uuid", "service_id_invalid", id="service_id_invalid"),
+    ],
 )
 def test_a_service_id_naming_no_tech_debt_service_is_refused(
     td_world, service_id: str, reason: str
