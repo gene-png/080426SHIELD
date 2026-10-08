@@ -1,11 +1,12 @@
 """Rows stored against a subcategory the CSF catalog no longer has (#852).
 
-#852 corrected the CSF catalog to NIST CSWP 29: CSF 2.0 has no `ID.AM-09`.
-Migration 0064 KEEPS every row an assessment stored under it, in `csf_answers`,
-`csf_dimension_scores` and `csf_gap_actions`, rather than delete them, as the ZT
-catalog corrections did (`app.zt.retired`). The scoring and gap engines iterate
-the catalog, so those rows are not scored; every reader of STORED rows filters
-to `catalog_rows` (or `all_codes()`) itself.
+#852 corrected the CSF catalog toward NIST CSWP 29 (not yet source-pinned):
+CSF 2.0 has no `ID.AM-09`. Migration 0064 KEEPS every row an assessment stored
+under it, in `csf_answers`, `csf_dimension_scores` and `csf_gap_actions`, rather
+than delete them: the pattern the CISA catalog correction used (`app.zt.retired`,
+migration 0063). The scoring and gap engines iterate the catalog, so those rows
+are not scored; every reader of STORED rows filters to `catalog_rows` (or
+`all_codes()`) itself.
 
 This module is the ONE derivation of how many of them hold an answer and of the
 sentences that disclose it. The workspace and the self-assessment
@@ -129,14 +130,16 @@ def working_profile_sentence(rows: Iterable[Any], actions: Iterable[Any]) -> str
     if not kept and not kept_actions:
         return None
     if not kept:
-        # Not the approved copy's shape: an action plan on a kept code with no
-        # recorded row under it. No screen writes one (the action editor lists
-        # only gaps, and a gap needs a target), so this is unreachable through
-        # the product; it is stated rather than dropped.
+        # An action plan on a kept code with no recorded Working Profile row
+        # under it. REACHABLE in stored data: before #852 the gap-action upsert
+        # (`PUT /csf/services/{id}/gap-actions/{code}`) accepted any catalog
+        # code, gap or not, and ID.AM-09 was one, so a plan could be written
+        # over rows nobody scored. Not the approved S2 shape; this sentence
+        # awaits the advisor's approval. Stated rather than dropped.
         m = len(kept_actions)
         plans = "1 action plan" if m == 1 else f"{m} action plans"
         verb = "is" if m == 1 else "are"
-        return f"{plans} recorded for {_named(_codes(kept_actions))} {verb} kept and not listed."
+        return f"{plans} recorded for {_named(_codes(kept_actions))}, {verb} kept and not listed."
     n = len(kept)
     named = _named(_codes(kept))
     if n == 1:

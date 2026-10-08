@@ -1,12 +1,14 @@
-"""The CSF catalog matches NIST CSWP 29 (#852): data only.
+"""The CSF catalog is corrected toward NIST CSWP 29, not yet source-pinned (#852): data only.
 
 Revision ID: 0064
 Revises: 0063
 Create Date: 2026-10-08
 
-#852 corrected two rows of the CSF catalog against NIST CSWP 29 (CSF 2.0):
-CSF 2.0 has no `ID.AM-09`, which the catalog held, and has `RC.CO-04`, which it
-lacked. Per non-discarded CSF assessment (draft, submitted, approved, released):
+#852 corrected two rows of the CSF catalog toward NIST CSWP 29 (CSF 2.0), per
+the issue's comparison with the PDF: CSF 2.0 has no `ID.AM-09`, which the
+catalog held, and has `RC.CO-04`, which it lacked. No test yet pins the code set
+to the PDF; #852 stays open until one does. Per non-discarded CSF assessment
+(draft, submitted, approved, released):
 
 * **Inserted:** an empty `RC.CO-04` answer where the assessment does not have
   one, and an empty `RC.CO-04` Working Profile row for each tier the assessment
@@ -17,10 +19,10 @@ lacked. Per non-discarded CSF assessment (draft, submitted, approved, released):
   existing row is never duplicated or overwritten.
 * **Retired:** rows on `ID.AM-09`, in `csf_answers`, `csf_dimension_scores` and
   `csf_gap_actions`, are KEPT, untouched (the approved plan, #736 comment
-  6054419744, as 0063 and 0064's ZT twin did for retired ZT rows). The scoring
-  and gap engines iterate the catalog, and every reader of stored rows filters
-  to it (`app.csf.retired.catalog_rows`), so they are not scored; the
-  workspace, the self-assessment, the deliverable, the client dashboard, the
+  6054419744, the pattern 0063 used for retired CISA rows, and #925 uses for
+  DoD). The scoring and gap engines iterate the catalog, and every reader of
+  stored rows filters to it (`app.csf.retired.catalog_rows`), so they are not
+  scored; the workspace, the self-assessment, the deliverable, the client dashboard, the
   Working Profile and the playbook files disclose how many hold an answer.
   Nothing is deleted.
 * `risk_entries` are NOT touched: CSF 2.0 has no successor for `ID.AM-09`, so
@@ -191,6 +193,9 @@ def downgrade() -> None:
             blank(_answers.c.notes),
             _answers.c.evidence_artifact_id.is_(None),
             _answers.c.answered_by.is_(None),
+            # A locked row is kept, empty or not, as the Working Profile half
+            # below keeps one: locking is a consultant's "never touch this".
+            _answers.c.locked.is_(False),
         )
     )
     conn.execute(
