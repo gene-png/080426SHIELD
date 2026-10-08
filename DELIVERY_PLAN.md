@@ -86,7 +86,9 @@ Track work outside that list is paused.
 The DoD Zero Trust catalog follows the DoD CIO's 2025 roadmap (25-T-1465), with
 migration 0064 and per-capability target caps that the gap engine and Risk
 synthesis both apply. Every DoD deliverable carries the approved source note and
-ruling 4's line beside it.
+ruling 4's line beside it. No write path stores a stage above a capability's
+maximum; a stage stored before that is disclosed on every surface, and the Risk
+Register states which targets the cap lowered.
 The decision record is **D-109**; the narrative is in
 `context/entries/2026-10-07-839-dod-catalog.md`. The PR goes to Gene: it trips
 merge-rule conditions 4 (migration 0064), 5 and 6.
