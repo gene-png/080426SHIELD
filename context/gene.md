@@ -16,6 +16,14 @@ is true for new extractions; close #871 by hand after merge. The existing-test
 edit in `test_tech_debt_not_in_use_signoff.py` and the s4 comment were approved
 in the same ruling. It comes back to you: conditions 5 and 6, no migration.
 
+_2026-10-08: #474 option 2 is PR #861 (`track6/474-415-risk-baseline`), in
+review._ A Risk Register states which target its CSF and Zero Trust findings
+were measured against, in the strings the advisor approved on #736 (6053630989,
+ruled in 6054419744); the framework is named only when there are two Zero Trust
+services. Still yours: #474 option 1 (freeze each source's target at release)
+and #415 (whether pending-review techniques are excluded from the links), so
+neither issue closes with this PR. Comes back to you: conditions 5 and 6.
+
 _2026-10-08: #852 (CSF catalog corrected to NIST CSWP 29, now pinned to the PDF
 you supplied) is draft PR #940 on `track5/852-csf-cswp29`; D-110, migration
 0065._
