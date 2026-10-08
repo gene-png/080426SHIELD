@@ -82,6 +82,21 @@ sizes marked coarse.
 
 Track work outside that list is paused.
 
+**2026-10-08: #862 (the Risk PDF printed "ATT&CK;") is built on
+`track6/862-risk-pdf-escape`; no PR yet.** Status as written before it merges;
+update this line in the landing commit. One PR per track, so it opens after
+#861 merges, with `main` merged in. reportlab's `Paragraph` parses its text as
+markup, so the Risk Register PDF printed "ATT&CK coverage" as "ATT&CK;
+coverage", a client named "R&D <Labs> Co" as "R&D; Co", and a name carrying
+"</b>" made the export fail. `render_pdf` now escapes every string it hands
+`Paragraph` through a local `_text` helper (`html.escape(s, quote=False)`,
+exactly `&`, `<` and `>`); `_summary_lines` is unchanged, so the DOCX and XLSX
+stay plain text. Rulings: advisor, #736 comment 6067815887 (Risk only, the
+escape in `render_pdf` only, re-export-only accepted, the declared removal of
+the "&" skip in `test_risk_export_unrated.py` approved), on the plan in
+6067131971. The twin sites in the other services stay on #775, whose re-tier
+is with Gene. Trips merge-rule conditions 5 and 6, so it comes back to Gene.
+
 **2026-10-08: #852 implemented (`tier-1`, `client-reaching`): the CSF catalog corrected to NIST CSWP 29 and pinned to its PDF.** `ID.AM-09` (not a CSF 2.0 subcategory) is retired, its stored answers kept, not scored and disclosed; `RC.CO-04` is added and inserted empty into every non-discarded assessment (migration 0065, after #925's 0064). A kept Working Profile row no longer makes the enterprise profile, the gap actions or the playbook export answer 500. Branch `track5/852-csf-cswp29`; decision record **D-110**; detail in `context/entries/2026-10-08-852-csf-cswp29.md`. Gene supplied the PDF (`reference-docs/nist/NIST.CSWP.29.pdf`); `test_csf_catalog_source.py` pins its sha256 and holds the served and seeded code set to the codes read out of it. **#852 is closed by hand** when this PR merges; the body carries no closing keyword. Gene confirmed the D-107 precondition (#736 comment 6060587658). Routed to Gene rather than self-merged: merge-rule conditions 4, 5 and 6.
 
 **2026-10-07: #839 is implemented (`mvp-blocking`, `tier-2`) and lands with the #838 PR 3 PR.** The status here is as written before it merged.
