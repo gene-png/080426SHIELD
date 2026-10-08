@@ -207,3 +207,119 @@ def test_two_zero_trust_services_reach_the_client_dashboard_keyed_by_framework(
     body = _client_dashboard(c, bearer, cid)
     assert body["targets_recorded"] is True
     assert sorted(t["service"] for t in body["targets"]) == sorted(_ZT_LABELS)
+
+
+# ---------------------------------------------------------------------------
+# The third state: no CSF or ZT input, which `generate` would record as
+# `"targets": {}` (`targets_record` is built from `target_sources`, which has an
+# entry per CSF and ZT source). That is a record of no targets, not a missing
+# one, and it read as unreadable: an error logged on every read and "not
+# recorded" printed.
+#
+# NO CURRENT WRITER PRODUCES IT. Generate unlocks only with a CSF or ZT
+# assessment, and synthesis reads drafts too, so every register that can be
+# generated has at least one target (pinned below). This is a RATCHET for the
+# day that changes: an unlock on ATT&CK alone, or a CSF/ZT input the gate
+# counts and synthesis skips. So the state is written onto a real register.
+# ---------------------------------------------------------------------------
+
+_NOT_RECORDED = (
+    "The targets these findings were measured against were not recorded for this register."
+)
+
+
+def _seed_attack_only(c, bearer: str, cid: str) -> None:
+    """The ATT&CK half of `_seed_attack_and_zt`: one gap, approved."""
+    from tests._attack_rows import first_standalone
+
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    asvc = c.post("/attack/services", headers=h, json={"kind": "attack_coverage", "title": "A"})
+    assert asvc.status_code in (200, 201), asvc.text
+    a = c.post(f"/attack/services/{asvc.json()['id']}/assessments", headers=h)
+    cov = first_standalone(a.json()["coverage"])
+    r = c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "gap"})
+    assert r.status_code == 200, r.text
+    ar = c.post(f"/attack/assessments/{a.json()['id']}/approve", headers=h)
+    assert ar.status_code == 200, ar.text
+
+
+def test_attack_alone_cannot_generate_which_is_why_no_register_has_empty_targets(
+    app_client,  # noqa: F811
+) -> None:
+    c, _provider = app_client
+    bearer, cid = _admin(c)
+    _seed_attack_only(c, bearer, cid)
+    r = c.post(
+        f"/risk/clients/{cid}/register/generate",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    assert r.status_code == 409, r.text
+    assert "a CSF or Zero Trust assessment" in r.text
+
+
+def _with_empty_targets(cid: str) -> None:
+    from sqlalchemy import select
+
+    from app.models.risk_register import RiskRegister
+
+    with _session() as s:
+        reg = s.execute(select(RiskRegister)).scalar_one()
+        prov = dict(reg.provenance)
+        assert prov["targets"], prov  # the real record first
+        prov["targets"] = {}
+        reg.provenance = prov
+        s.commit()
+
+
+def test_an_empty_record_prints_no_target_line_and_no_not_recorded_line(
+    app_client, capsys  # noqa: F811
+) -> None:
+    c, bearer, cid = _world(app_client)
+    _with_empty_targets(cid)
+    capsys.readouterr()
+    body = _latest(c, bearer, cid)
+    assert body["targets_recorded"] is True
+    assert body["targets"] == []
+    text = _export_pdf_text(c, bearer, cid)
+    assert "Risk Register (v1)" in text  # the positive state first
+    assert _NOT_RECORDED not in text
+    assert "findings are measured against target" not in text
+    assert "risk_register_targets_unreadable" not in capsys.readouterr().out
+
+
+def test_an_empty_record_on_the_client_dashboard(app_client) -> None:  # noqa: F811
+    c, bearer, cid = _world(app_client)
+    _with_empty_targets(cid)
+    body = _client_dashboard(c, bearer, cid)
+    assert body["total_entries"] == 1  # the positive state first
+    assert body["targets_recorded"] is True
+    assert body["targets"] == []
+
+
+_GOOD = {"target": 4, "source": "client", "origin": "live_at_generate"}
+
+
+def test_the_reader_reads_an_empty_record_as_recorded(capsys) -> None:
+    from app.risk.baseline import targets_used
+
+    assert targets_used({"targets": {}}) == ([], True)
+    assert "risk_register_targets_unreadable" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        [],
+        None,
+        {"csf": {**_GOOD, "target": "4"}},
+        {"csf": {**_GOOD, "target": True}},
+        {"csf": {**_GOOD, "origin": "frozen_at_release"}},
+        {"csf": _GOOD, "zt": "stage 3"},
+    ],
+    ids=["list", "null", "string-target", "bool-target", "unknown-origin", "one-bad-entry"],
+)
+def test_a_malformed_record_still_fails_closed_and_logs(raw, capsys) -> None:
+    from app.risk.baseline import targets_used
+
+    assert targets_used({"targets": raw}) == ([], False)
+    assert "risk_register_targets_unreadable" in capsys.readouterr().out
