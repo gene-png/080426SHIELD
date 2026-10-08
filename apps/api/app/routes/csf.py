@@ -2229,7 +2229,7 @@ def _omitted_keys(
     so on a non-rectangular profile (an assessment provisioned before #852
     has no RC.CO-04 rows, and re-seeding one tier adds them to that tier
     only) it asks for keys that are not rows. Such a key keeps no score, so
-    it is not an omitted row. Pending the advisor's question 5 on #736.
+    it is not an omitted row. Approved on #736 (comment 6067815887).
 
     An omitted row keeps its previous values -- zeros on a new Playbook, which
     `score_tier` reads as Level 1 -- so it is counted and named. Not a
@@ -2245,8 +2245,8 @@ def _omitted_keys(
       successful batches only), so its rows stay `batches_failed`'s.
     - A locked row is left alone by design whether answered or not.
     - A row EDITED during the run is NOT subtracted: the model still sent
-      nothing for it, so "got no answer from the AI" stays true (the
-      recommendation pending the advisor's question 4 on #736).
+      nothing for it, so "got no answer from the AI" stays true (approved
+      on #736, comment 6067815887).
 
     A sibling of `_split_strays`, not a change to it: the measure script calls
     that one, and its signature is its contract.
@@ -2436,7 +2436,7 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
             "dropped_by_reason": dropped_by_reason,
             "batches_total": batched.total,
             "batches_failed": batched.failed,
-            "rows_omitted": len(omitted_rows),
+            "omitted_count": len(omitted_rows),
         },
     )
 
@@ -2458,7 +2458,7 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
             "batches_total": batched.total,
             "batches_failed": batched.failed,
             # #836: a count, never the row keys (codes and counts only).
-            "rows_omitted": len(omitted_rows),
+            "omitted_count": len(omitted_rows),
         },
     )
     # No commit: the framework commits this apply with the run's completion.
@@ -2473,7 +2473,7 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
         dropped=dropped,
         batches_total=batched.total,
         batches_failed=batched.failed,
-        rows_omitted=len(omitted_rows),
+        omitted_count=len(omitted_rows),
         omitted_rows=omitted_rows,
     )
     return RunOutcome(

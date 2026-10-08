@@ -228,7 +228,7 @@ function OmittedRows({
 }: {
   result: CsfRunAiResponse;
 }): JSX.Element | null {
-  const count = result.rows_omitted ?? 0;
+  const count = result.omitted_count ?? 0;
   if (count <= 0) return null;
   const rows = result.omitted_rows ?? [];
   const rest = rows.length - ITEM_CAP;

@@ -380,7 +380,7 @@ describe("CsfPlaybookPanel, rows a batch left out (#836)", () => {
   it("says how many rows got no answer, and names them", async () => {
     showsLastRun(
       result({
-        rows_omitted: 3,
+        omitted_count: 3,
         omitted_rows: [
           { tier: "high", subcategory_code: "GV.OC-01" },
           { tier: "high", subcategory_code: "GV.OC-02" },
@@ -402,7 +402,7 @@ describe("CsfPlaybookPanel, rows a batch left out (#836)", () => {
   it("uses the singular for one row", async () => {
     showsLastRun(
       result({
-        rows_omitted: 1,
+        omitted_count: 1,
         omitted_rows: [{ tier: "low", subcategory_code: "DE.CM-01" }],
       }),
     );
@@ -418,7 +418,7 @@ describe("CsfPlaybookPanel, rows a batch left out (#836)", () => {
       tier: "high",
       subcategory_code: `GV.OC-${String(i + 1).padStart(2, "0")}`,
     }));
-    showsLastRun(result({ rows_omitted: 12, omitted_rows: rows }));
+    showsLastRun(result({ omitted_count: 12, omitted_rows: rows }));
     const block = await screen.findByTestId("csf-run-omitted");
     const items = [...block.querySelectorAll("li")].map((li) => li.textContent);
     expect(items).toHaveLength(11);
@@ -433,7 +433,7 @@ describe("CsfPlaybookPanel, rows a batch left out (#836)", () => {
         suggestions_received: 0,
         suggestions_applied: 0,
         dropped: [],
-        rows_omitted: 1,
+        omitted_count: 1,
         omitted_rows: [{ tier: "high", subcategory_code: "GV.OC-01" }],
       }),
     );
@@ -449,7 +449,7 @@ describe("CsfPlaybookPanel, rows a batch left out (#836)", () => {
   });
 
   it("says nothing for a run that left none out", async () => {
-    showsLastRun(result({ rows_omitted: 0, omitted_rows: [] }));
+    showsLastRun(result({ omitted_count: 0, omitted_rows: [] }));
     // The positive state first: the accounting has rendered.
     expect(await screen.findByText(/AI applied/)).toBeInTheDocument();
     expect(screen.queryByTestId("csf-run-omitted")).toBeNull();

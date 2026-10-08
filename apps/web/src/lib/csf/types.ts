@@ -314,7 +314,7 @@ export interface CsfRunAiResponse {
    * named; they keep their previous scores. Optional: a result stored before
    * this carries neither. Read the VALUE, never the presence.
    */
-  rows_omitted?: number;
+  omitted_count?: number;
   omitted_rows?: { tier: string; subcategory_code: string }[];
 }
 

@@ -485,7 +485,7 @@ class CsfRunAiResponse(BaseModel):
     # named. They keep their previous values and are in neither count above
     # (the model sent nothing for them). Defaults so a stored run result written
     # before this parses unchanged; the panel tests the VALUE, never presence.
-    rows_omitted: int = 0
+    omitted_count: int = 0
     omitted_rows: list[CsfRowKey] = []
 
 

@@ -385,7 +385,7 @@ def test_rows_a_batch_leaves_out_are_counted_and_named(world) -> None:
     world.provider.register("csf_score", _omit(left_out))
     result = csf_run_ai(world.c, world.svc_id, world.h)
 
-    assert result["rows_omitted"] == 3
+    assert result["omitted_count"] == 3
     assert set(_omitted(result)) == left_out
     for key in left_out:
         row = _row(result, key)
@@ -405,13 +405,13 @@ def test_a_row_left_out_keeps_the_value_an_earlier_run_set_and_is_counted(world)
     target = ("high", high[0])
     world.provider.register("csf_score", _omit(set()))
     first = csf_run_ai(world.c, world.svc_id, world.h)
-    assert first["rows_omitted"] == 0
+    assert first["omitted_count"] == 0
     assert _row(first, target)["governance"] == 1
 
     world.provider.register("csf_score", _omit({target}))
     result = csf_run_ai(world.c, world.svc_id, world.h)
 
-    assert result["rows_omitted"] == 1
+    assert result["omitted_count"] == 1
     assert _omitted(result) == [target]
     assert _row(result, target)["governance"] == 1
     assert _row(result, target)["what_we_found"] == "Answered with 1."
@@ -433,7 +433,7 @@ def test_a_row_answered_with_a_bad_value_is_refused_not_omitted(world) -> None:
     world.provider.register("csf_score", _omit({target}, extra=_bad))
     result = csf_run_ai(world.c, world.svc_id, world.h)
 
-    assert result["rows_omitted"] == 0
+    assert result["omitted_count"] == 0
     assert result["omitted_rows"] == []
     reasons = [d["reason"] for d in result["dropped"] if d.get("key") == "|".join(target)]
     assert reasons == ["out_of_range"]
@@ -455,7 +455,7 @@ def test_an_entry_naming_no_row_is_unknown_and_omits_nothing(world) -> None:
     result = csf_run_ai(world.c, world.svc_id, world.h)
 
     assert [d["reason"] for d in result["dropped"]] == ["unknown_key"]
-    assert result["rows_omitted"] == 0
+    assert result["omitted_count"] == 0
     assert result["omitted_rows"] == []
     assert _identity_holds(result)
 
@@ -478,7 +478,7 @@ def test_a_row_answered_only_by_another_batch_is_still_omitted(world) -> None:
     assert [d["reason"] for d in result["dropped"] if d.get("key") == "|".join(target)] == [
         "not_in_batch"
     ]
-    assert result["rows_omitted"] == 1
+    assert result["omitted_count"] == 1
     assert _omitted(result) == [target]
     assert _row(result, target)["governance"] == 0, "never written from the wrong batch"
     assert _identity_holds(result)
@@ -492,7 +492,7 @@ def test_a_failed_batchs_rows_are_counted_as_failed_not_omitted(world, prior) ->
     low = _batch_codes(world, "low")
     if prior:
         world.provider.register("csf_score", _omit(set()))
-        assert csf_run_ai(world.c, world.svc_id, world.h)["rows_omitted"] == 0
+        assert csf_run_ai(world.c, world.svc_id, world.h)["omitted_count"] == 0
 
     def _fails(payload: dict[str, Any]) -> bool:
         return payload["tiers"] == ["low"] and low[0] in payload["subcategories"]
@@ -502,7 +502,7 @@ def test_a_failed_batchs_rows_are_counted_as_failed_not_omitted(world, prior) ->
     result = get_run(world.c, started["run_id"], world.h)["result"]
 
     assert result["batches_failed"] == 1
-    assert result["rows_omitted"] == 0
+    assert result["omitted_count"] == 0
     assert result["omitted_rows"] == []
     assert _row(result, ("low", low[0]))["governance"] == (1 if prior else 0)
 
@@ -517,14 +517,14 @@ def test_a_locked_row_left_out_is_not_counted(world) -> None:
     world.provider.register("csf_score", _omit({("high", high[0]), ("high", high[1])}))
     result = csf_run_ai(world.c, world.svc_id, world.h)
 
-    assert result["rows_omitted"] == 1
+    assert result["omitted_count"] == 1
     assert _omitted(result) == [("high", high[1])]
 
 
 @pytest.mark.unit
 def test_a_row_edited_during_the_run_and_left_out_is_counted(world) -> None:
     """The model sent nothing for it, so "got no answer from the AI" stays
-    true (the recommendation pending #736's question 4). The row keeps the
+    true (approved on #736, comment 6067815887). The row keeps the
     consultant's edit. The run is held, as `test_ai_runs_csf.py` holds it, so
     the edit lands after the run started and before its batches answer."""
     from app.models._common import utcnow
@@ -549,7 +549,7 @@ def test_a_row_edited_during_the_run_and_left_out_is_counted(world) -> None:
     assert run["status"] == "completed", run
     result = run["result"]
 
-    assert result["rows_omitted"] == 1
+    assert result["omitted_count"] == 1
     assert _omitted(result) == [target]
     assert _row(result, target)["governance"] == 2, "the consultant's edit stands"
 
@@ -564,7 +564,7 @@ def test_the_audit_row_carries_the_omitted_count_and_no_codes(world) -> None:
 
     with world.sessions() as s:
         entry = s.execute(select(AuditEntry).where(AuditEntry.action == "csf.run_ai")).scalar_one()
-    assert entry.details.get("rows_omitted") == 2, "the audit row does not carry the count"
+    assert entry.details.get("omitted_count") == 2, "the audit row does not carry the count"
     assert "omitted_rows" not in entry.details
     assert high[0] not in json.dumps(entry.details), "the audit row carries counts only"
     assert high[1] not in json.dumps(entry.details), "the audit row carries counts only"
@@ -608,5 +608,5 @@ def test_a_key_the_cross_product_asks_for_that_is_not_a_row_is_never_omitted(wor
 
     asked = {r for p in payloads for r in _rows_asked(p)}
     assert phantoms <= asked, "the cross product asked for keys that are not rows"
-    assert result["rows_omitted"] == 1
+    assert result["omitted_count"] == 1
     assert _omitted(result) == [real]
