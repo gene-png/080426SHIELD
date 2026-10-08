@@ -72,6 +72,7 @@ from app.models.capability import (
 )
 from app.models.client import Client
 from app.models.deliverable import Deliverable
+from app.models.llm_call import LLMCall
 from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.user import User, UserRole
 from app.routes.artifacts import _storage_dep
@@ -84,6 +85,7 @@ from app.schemas.tech_debt import (
     CapabilityListResponse,
     ConsolidationPlanSummary,
     DeliverableResponse,
+    ExtractionFlags,
     ExtractRequest,
     IncludeExcludedRowRequest,
     OverlapAnalysisResponse,
@@ -107,8 +109,11 @@ from app.tech_debt.exporters import (
     render_xlsx,
 )
 from app.tech_debt.extract import (
+    PROMPT_VERSIONS_WITH_CLOSED_SCALES,
     client_org_name_for_tenant,
+    duplicated_source_rows,
     extract_from_rows,
+    extraction_flags,
     name_hints_for_tenant,
     read_inventory,
 )
@@ -358,6 +363,44 @@ def _not_in_use_contradictions(db: Session, items: list[CapabilityItem]) -> int:
     return sum(1 for c in candidates if c not in overridden)
 
 
+def _extraction_prompt_version(db: Session, cap_list: CapabilityList) -> str | None:
+    """The prompt version of the extraction that wrote this list, or None when
+    no extraction is on record for it (a seeded list, or one whose call was not
+    recorded). Read through the list's own `capability_list.extracted` audit,
+    which names the `llm_calls` row."""
+    entry = db.execute(
+        select(AuditEntry)
+        .where(
+            AuditEntry.action == "capability_list.extracted",
+            AuditEntry.target_id == cap_list.id,
+        )
+        .order_by(AuditEntry.at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    call_id = (entry.details or {}).get("llm_call_id") if entry is not None else None
+    if not call_id:
+        return None
+    call = db.get(LLMCall, uuid.UUID(call_id))
+    return call.prompt_version if call is not None else None
+
+
+def _extraction_flags(
+    db: Session, cap_list: CapabilityList, items: list[CapabilityItem]
+) -> dict[str, int] | None:
+    """C6 (for #806): what v3.2 closes and the model still sent, read live.
+
+    None ("not measured") for a list an earlier prompt drafted, which followed
+    that prompt's rules, and for a list no extraction is on record for. Only the
+    AI's rows are counted: a row a consultant included has no source document,
+    and the copy says the row "came back" from the extraction.
+    """
+    version = _extraction_prompt_version(db, cap_list)
+    if version not in PROMPT_VERSIONS_WITH_CLOSED_SCALES:
+        return None
+    extracted = [i for i in items if i.source_artifact_id is not None]
+    return extraction_flags(extracted, cap_list.extraction_findings or [])
+
+
 def _component_cost_refusal(parent_name: str | None) -> HTTPException:
     """for #927 (inside #835): a bundle part's cost is held by its bundle.
 
@@ -437,6 +480,8 @@ def _serialize_list_with_items(db: Session, cap_list: CapabilityList) -> Capabil
     # #177/#193: the one reader, as the deliverable and the dashboard call it.
     resp.exclusion_count_state = exclusion_count_state(cap_list)
     resp.not_in_use_contradictions = _not_in_use_contradictions(db, items)
+    flags = _extraction_flags(db, cap_list, items)
+    resp.extraction_flags = None if flags is None else ExtractionFlags.model_validate(flags)
     # #646: the ONE derivation every surface calls.
     resp.ai_source = AiSource.model_validate(
         ai_mode_for(db, db.get(Service, cap_list.service_id), cap_list).as_api()
@@ -674,8 +719,9 @@ def _extract_run_work(
                 notes=item.notes,
                 confidence_pct=item.confidence_pct,
                 source_artifact_id=artifact_id,
-                # Prompt v2 classifies rather than filters. None stays None: an
-                # unclassified row is not a negative one.
+                # Since prompt v2 (v3.2 keeps it) the extraction classifies rather
+                # than filters. None stays None: an unclassified row is not a
+                # negative one.
                 security_related=item.security_related,
                 security_functions=list(item.security_functions),
             )
@@ -703,6 +749,13 @@ def _extract_run_work(
             ),
             # #833 / #834: counts only; the entries are on the list.
             "findings_by_reason": dict(Counter(f["reason"] for f in result.findings)),
+            # C6 (for #806), at extraction, before any consultant edit. None for a
+            # prompt whose rules these are not ("not measured").
+            "extraction_flags": (
+                extraction_flags(result.items, result.findings)
+                if result.llm_call.prompt_version in PROMPT_VERSIONS_WITH_CLOSED_SCALES
+                else None
+            ),
             "llm_call_id": str(result.llm_call.id),
             "run_id": str(ctx.run_id),
         },
@@ -719,6 +772,9 @@ def _extract_run_work(
             # attribution was complete: 0 when it failed, so this is NOT the
             # excluded count (#193). No surface renders it.
             "excluded_rows": len(result.reconciliation.excluded_rows),
+            # C6 (6), for #806: source rows the model turned into more than one
+            # item. Both items are kept; the list's findings name the later ones.
+            "source_row_duplicated": duplicated_source_rows(result.findings),
         },
         applied_count=len(result.items),
     )

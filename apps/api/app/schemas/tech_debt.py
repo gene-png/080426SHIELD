@@ -114,6 +114,15 @@ class IncludeExcludedRowRequest(BaseModel):
     notes: str | None = None
 
 
+class ExtractionFlags(BaseModel):
+    """`app.tech_debt.extract.extraction_flags`, one count per C6 rule (#806)."""
+
+    name_missing: int
+    confidence_off_scale: int
+    category_off_list: int
+    source_row_duplicated: int
+
+
 class CapabilityListResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -159,6 +168,13 @@ class CapabilityListResponse(BaseModel):
     # security-related -- the model contradicting itself, kept in ATT&CK scope.
     # Derived by the route from the stored rows, a consultant's override excluded.
     not_in_use_contradictions: int = 0
+    # C6, for #806: what Tech Debt v3.2 closes and the model still sent, each
+    # value kept as sent. name_missing, confidence_off_scale and
+    # category_off_list are read live from the AI's rows, so a correction
+    # clears them; source_row_duplicated is from the findings recorded at
+    # extraction. None is "not measured": a list an earlier prompt drafted, or
+    # one no extraction is on record for.
+    extraction_flags: ExtractionFlags | None = None
 
     @field_validator("excluded_rows", mode="before")
     @classmethod
