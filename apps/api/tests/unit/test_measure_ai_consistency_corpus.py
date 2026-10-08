@@ -1000,7 +1000,7 @@ def test_main_writes_the_report_into_the_file_it_opened(cli) -> None:
     assert code == 1  # no run succeeded
 
 
-# --- the per-service cost cap ------------------------------------------------------
+# --- the per-service cost cap: a projected dollar guard (#952 review F1) -----------
 
 
 def test_the_cost_caps_are_section_2s_table_and_total_the_approved_25() -> None:
@@ -1015,34 +1015,346 @@ def test_the_cost_caps_are_section_2s_table_and_total_the_approved_25() -> None:
     assert sum(COST_CAPS_USD.values()) == 25
 
 
+def _usd_run(input_tokens: int, output_tokens: int, calls: int = 1):
+    from scripts.measure_ai_consistency import RunRecord
+
+    return RunRecord(True, {}, None, input_tokens, output_tokens, calls=calls)
+
+
+def test_the_guard_refuses_to_start_a_run_the_largest_so_far_would_take_over_the_cap() -> None:
+    from scripts.measure_ai_consistency import run_loop
+
+    # 40,000 output tokens at $25 per million is $1.00 a run. Before run 2:
+    # $1 spent + $1 (the largest run) = $2 <= $2.50. Before run 3: $2 + $1 =
+    # $3 > $2.50, so run 3 is not started.
+    started: list[int] = []
+
+    def one(n: int):
+        started.append(n)
+        return _usd_run(0, 40_000)
+
+    records = run_loop(3, one, max_output_tokens=None, max_usd=2.5)
+    assert started == [1, 2]
+    assert [r.failure for r in records] == [None, None, "stopped_budget"]
+
+
+def test_the_guard_counts_input_tokens_too() -> None:
+    from scripts.measure_ai_consistency import run_loop
+
+    # 200,000 input tokens at $5 per million is $1.00, with no output at all:
+    # a guard on output alone would start all three.
+    started: list[int] = []
+
+    def one(n: int):
+        started.append(n)
+        return _usd_run(200_000, 0)
+
+    run_loop(3, one, max_output_tokens=None, max_usd=2.5)
+    assert started == [1, 2]
+
+
+def test_the_first_run_always_starts_and_is_reported_unbounded() -> None:
+    from scripts.measure_ai_consistency import run_loop
+
+    records = run_loop(2, lambda n: _usd_run(0, 400_000), max_output_tokens=None, max_usd=1.5)
+    assert [r.failure for r in records] == [None, "stopped_budget"]
+    s = summarize("zt_score", records, context=ZT_SCOPE_FOR_SUMMARY, max_usd=1.5)
+    assert s["budget_usd"] == {
+        "max_usd": 1.5,
+        "spent_usd": 10.0,
+        "per_run_usd": [10.0, 0.0],
+        "complete": True,
+        "first_run_bounded": False,
+        "overrun": True,
+    }
+
+
+def test_unknown_spend_stops_further_runs_under_the_dollar_guard() -> None:
+    from scripts.measure_ai_consistency import run_loop
+
+    records = run_loop(
+        2,
+        lambda n: _usd_run(5, 100) if n > 1 else _usd_run(5, None),
+        max_output_tokens=None,
+        max_usd=100.0,
+    )
+    assert [r.failure for r in records] == [None, "stopped_unknown_spend"]
+
+
+def test_a_run_that_wrote_no_call_spent_nothing_and_stops_nothing() -> None:
+    # #952 review F3: a failure before the provider wrote no `llm_calls` row,
+    # which is zero spend, not unknown spend.
+    from scripts.measure_ai_consistency import RunRecord, run_loop
+
+    def one(n: int):
+        if n == 1:
+            return RunRecord(
+                False, None, "ai_call_failed", None, None, "RuntimeError", None, False, calls=0
+            )
+        return _usd_run(1, 1)
+
+    records = run_loop(2, one, max_output_tokens=None, max_usd=1.0)
+    assert [r.failure for r in records] == ["ai_call_failed", None]
+    s = summarize("zt_score", records, context=ZT_SCOPE_FOR_SUMMARY, max_usd=1.0)
+    assert s["budget_usd"]["complete"] is True
+    assert s["tokens"]["complete"] is True
+
+
+def test_runs_never_started_are_known_not_to_have_charged() -> None:
+    # #952 review F4: a `stopped_*` run made no call, so False, not None.
+    from scripts.measure_ai_consistency import run_loop
+
+    records = run_loop(3, lambda n: _usd_run(0, 400_000), max_output_tokens=None, max_usd=1.0)
+    s = summarize("zt_score", records, context=ZT_SCOPE_FOR_SUMMARY)
+    assert [(f["failure"], f["charged_likely"]) for f in s["failed_runs"]] == [
+        ("stopped_budget", False),
+        ("stopped_budget", False),
+    ]
+
+
+def test_the_table_prints_charged_likely_for_a_failed_run(capsys) -> None:
+    from scripts.measure_ai_consistency import RunRecord, _print_table
+
+    records = [RunRecord(False, None, "ai_call_failed", 1, 1, "RuntimeError", True)]
+    _print_table(summarize("zt_score", records, context=ZT_SCOPE_FOR_SUMMARY))
+    assert "run 1 FAILED: ai_call_failed (charged_likely: True)" in capsys.readouterr().out
+
+
+def test_main_passes_each_job_half_its_service_cap(cli) -> None:
+    state, out = cli
+    for job, extra, side in [
+        ("zt_score", [], 1.5),
+        ("csf_score", [], 4.0),
+        ("mitre_map", [], 3.0),
+        ("tech_debt_extract", ["--inventory", "x.xlsx", "--service-id", "s"], 1.5),
+    ]:
+        state["reached"].clear()
+        main(["--job", job, "--runs", "2", "--out", str(out), *extra])
+        ((_, kw, _),) = state["reached"]
+        assert kw["max_usd"] == side, job
+
+
+def test_main_keeps_max_output_tokens_optional_and_as_given(cli) -> None:
+    state, out = cli
+    main(["--job", "zt_score", "--runs", "2", "--out", str(out)])
+    assert state["reached"][-1][1]["max_output_tokens"] is None
+    out2 = out.parent / "o2.json"
+    main(["--job", "zt_score", "--runs", "2", "--out", str(out2), "--max-output-tokens", "9"])
+    assert state["reached"][-1][1]["max_output_tokens"] == 9
+
+
 @pytest.mark.parametrize(
-    ("job", "extra", "ceiling"),
+    ("url", "query", "timeout"),
     [
-        # cap / 2 sides (before, after) / $25 per million output tokens.
-        ("zt_score", [], 60_000),
-        ("csf_score", [], 160_000),
-        ("mitre_map", [], 120_000),
-        ("tech_debt_extract", ["--inventory", "x.xlsx", "--service-id", "s"], 60_000),
+        pytest.param("sqlite:///{db}?timeout=900", {"timeout": "900"}, "900", id="with-timeout"),
+        pytest.param("sqlite:///{db}", {}, None, id="without"),
     ],
 )
-def test_main_sets_the_output_guard_from_the_jobs_cap(cli, job, extra, ceiling) -> None:
+def test_the_report_records_the_database_url_parameters_only(
+    cli, monkeypatch, capsys, url, query, timeout
+) -> None:
+    # The advisor's ruling (#736 comment 6068587667): the live run sets
+    # ?timeout=900 by hand, so the report records exactly that parameter.
+    from app.config import get_settings
+
     state, out = cli
-    main(["--job", job, "--runs", "2", "--out", str(out), *extra])
-    ((_, kw, _),) = state["reached"]
-    assert kw["max_output_tokens"] == ceiling
+    monkeypatch.setenv("DATABASE_URL", url.format(db=out.parent / "x.db"))
+    get_settings.cache_clear()
+    state["report"] = summarize("zt_score", [])
+    main(["--job", "zt_score", "--runs", "2", "--out", str(out)])
+    written = json.loads(out.read_text(encoding="utf-8"))
+    assert written["database_url"] == {"query": query, "sqlite_timeout": timeout}
+    assert "x.db" not in json.dumps(written["database_url"]), "the path is not a parameter"
+    printed = capsys.readouterr().out
+    if timeout is None:
+        assert "DATABASE_URL sets no ?timeout=" in printed
 
 
-def test_main_accepts_a_guard_below_the_cap(cli) -> None:
-    state, out = cli
-    main(["--job", "zt_score", "--runs", "2", "--out", str(out), "--max-output-tokens", "1000"])
-    ((_, kw, _),) = state["reached"]
-    assert kw["max_output_tokens"] == 1000
+from scripts.measure_ai_consistency import ZtScope  # noqa: E402
+
+ZT_SCOPE_FOR_SUMMARY = ZtScope(max_stage=4, codes=frozenset())
 
 
-def test_main_refuses_a_guard_above_the_cap(cli, capsys) -> None:
-    state, out = cli
-    argv = ["--job", "zt_score", "--runs", "2", "--out", str(out), "--max-output-tokens", "60001"]
-    assert main(argv) == 2
-    assert "REFUSED (max_output_tokens_above_cap)" in capsys.readouterr().err
-    assert state["built"] == []
+# --- main, end to end on the real path: the report survives (#952 review F2) ------
+
+
+@pytest.fixture()
+def main_world(world, monkeypatch, tmp_path):
+    """`main` against the world's database with a fixture provider: settings
+    say live + strict + SQLite, `SessionLocal` is the world's, and `from_db`
+    returns the world's provider. Yields what the tests need."""
+    from app.ai.llm import LLMClient as _Client
+    from app.config import get_settings
+
+    c, TestSession, provider = world
+    _zt(c)
+    monkeypatch.setenv("SHIELD_LLM_MODE", "live")
+    monkeypatch.setenv("SHIELD_LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-not-a-key")
+    monkeypatch.setenv("SHIELD_REDACTION_MODE", "strict")
+    get_settings.cache_clear()
+    monkeypatch.setattr("app.db.session.SessionLocal", TestSession)
+    monkeypatch.setattr(_Client, "from_db", classmethod(lambda cls, db, s=None: _Client(provider)))
+    yield TestSession, provider, tmp_path / "report.json"
+    get_settings.cache_clear()
+
+
+def _zt_tokens(output_tokens: int, calls: list[int], on_call=None):
+    def respond(payload: dict) -> LLMResponse:
+        calls.append(1)
+        if on_call is not None:
+            on_call(len(calls))
+        rows = [{"code": code, "current": 1, "target": 2} for code in payload["capabilities"]]
+        return LLMResponse(
+            json.dumps({"capabilities": rows}), input_tokens=10, output_tokens=output_tokens
+        )
+
+    return respond
+
+
+ZT_ARGV = ["--job", "zt_score", "--framework", "cisa"]
+
+
+def test_main_does_not_start_a_run_the_guard_projects_over_the_side_cap(main_world) -> None:
+    # zt_score's side cap is $1.50. Run 1 spends just over $1 (40,000 output
+    # tokens plus 10 input), so run 2 would take the side past it: not started.
+    TestSession, provider, out = main_world
+    calls: list[int] = []
+    provider.register("zt_score", _zt_tokens(40_000, calls))
+    code = main([*ZT_ARGV, "--runs", "2", "--out", str(out)])
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert calls == [1]
+    assert report["failed_runs"] == [
+        {"run": 2, "failure": "stopped_budget", "cause": None, "charged_likely": False}
+    ]
+    assert report["budget_usd"]["max_usd"] == 1.5
+    assert code == 1
+
+
+def test_main_counts_a_failure_before_the_provider_as_no_spend(main_world, monkeypatch) -> None:
+    # #952 review F3, through `main` with the budget it always sets.
+    TestSession, provider, out = main_world
+    provider.register("zt_score", _zt_tokens(5, []))
+    _fail_before_the_provider(monkeypatch, which={1})
+    code = main([*ZT_ARGV, "--runs", "3", "--out", str(out)])
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert [f["failure"] for f in report["failed_runs"]] == ["ai_call_failed"]
+    assert report["runs_ok"] == 2
+    assert code == 1
+
+
+def test_main_writes_each_completed_run_before_the_next_starts(main_world) -> None:
+    TestSession, provider, out = main_world
+    seen: list[dict] = []
+
+    def look(n: int) -> None:
+        if n == 2:
+            seen.append(json.loads(out.read_text(encoding="utf-8")))
+
+    provider.register("zt_score", _zt_tokens(5, [], on_call=look))
+    main([*ZT_ARGV, "--runs", "2", "--out", str(out)])
+    (during,) = seen
+    assert during["status"] == "in_progress"
+    assert [r["run"] for r in during["runs"]] == [1]
+    assert during["runs"][0]["ok"] is True
+
+
+def test_an_interrupt_after_a_paid_run_keeps_that_run(main_world) -> None:
+    TestSession, provider, out = main_world
+
+    def stop(n: int) -> None:
+        if n == 2:
+            raise KeyboardInterrupt
+
+    provider.register("zt_score", _zt_tokens(5, [], on_call=stop))
+    with pytest.raises(KeyboardInterrupt):
+        main([*ZT_ARGV, "--runs", "2", "--out", str(out)])
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert report["status"] == "aborted"
+    assert report["aborted"]["exception"] == "KeyboardInterrupt"
+    assert [r["run"] for r in report["runs"]] == [1]
+    assert report["runs"][0]["output_tokens"] == 5
+    assert report["provider_calls_started"] == 2
+
+
+def test_an_interrupt_before_any_call_leaves_no_file(main_world, monkeypatch) -> None:
+    TestSession, provider, out = main_world
+    provider.register("zt_score", _zt_tokens(5, []))
+
+    def interrupted(*a, **kw):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("app.routes.zt._zt_ai_request_for", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        main([*ZT_ARGV, "--runs", "2", "--out", str(out)])
     assert not out.exists()
+
+
+def test_a_crash_inside_the_first_call_keeps_a_report(main_world) -> None:
+    # The call was started, so it may have billed: the file is kept, and says so.
+    TestSession, provider, out = main_world
+
+    def boom(n: int) -> None:
+        raise KeyboardInterrupt
+
+    provider.register("zt_score", _zt_tokens(5, [], on_call=boom))
+    with pytest.raises(KeyboardInterrupt):
+        main([*ZT_ARGV, "--runs", "2", "--out", str(out)])
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert report["status"] == "aborted"
+    assert report["runs"] == []
+    assert report["provider_calls_started"] == 1
+
+
+# --- the ATT&CK probe, compared (#736 comment 6068587667) ---------------------------
+
+
+def test_main_compares_two_mitre_map_probe_runs_of_the_same_batches(
+    attack_world, monkeypatch, tmp_path
+) -> None:
+    from app.ai.llm import LLMClient as _Client
+    from app.config import get_settings
+
+    c, TestSession, provider = attack_world
+    asked: list[list[str]] = []
+
+    def respond(payload: dict) -> LLMResponse:
+        asked.append(list(payload["technique_codes"]))
+        return _cover_every_asked_technique(payload)
+
+    provider.register("mitre_map", respond)
+    monkeypatch.setenv("SHIELD_LLM_MODE", "live")
+    monkeypatch.setenv("SHIELD_LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-not-a-key")
+    monkeypatch.setenv("SHIELD_REDACTION_MODE", "strict")
+    get_settings.cache_clear()
+    monkeypatch.setattr("app.db.session.SessionLocal", TestSession)
+    monkeypatch.setattr(_Client, "from_db", classmethod(lambda cls, db, s=None: _Client(provider)))
+    out = tmp_path / "probe.json"
+    try:
+        code = main(
+            ["--job", "mitre_map", "--runs", "2", "--probe-batches", "2", "--out", str(out)]
+        )
+    finally:
+        get_settings.cache_clear()
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert code == 0
+    assert report["probe"]["batches"] == 2
+    # Both runs asked for exactly the same techniques.
+    half = len(asked) // 2
+    assert half == 2
+    assert sorted(sum(asked[:half], [])) == sorted(sum(asked[half:], []))
+    (pair,) = report["pairs"]
+    sent = report["techniques_sent"]
+    assert pair["rows"]["in_both"] == sent
+    assert pair["fields"]["status"]["equal"] == sent
+    assert pair["fields"]["reason_code"]["compared"] == sent
+    assert pair["computed_status"]["equal"] == sent
+    assert report["budget_usd"]["max_usd"] == 3.0
+
+
+def test_main_still_refuses_a_csf_probe_of_two_runs(cli, capsys) -> None:
+    state, out = cli
+    argv = ["--job", "csf_score", "--runs", "2", "--probe-batches", "1", "--out", str(out)]
+    assert main(argv) == 2
+    assert "REFUSED (probe_runs_not_one)" in capsys.readouterr().err

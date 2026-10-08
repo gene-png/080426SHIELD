@@ -49,9 +49,27 @@ without them is refused rather than guessed (`_require_context`). List fields
 repeated the `current` stage it was sent (`echo`). Counts and codes only: no
 model text reaches the output or the logs.
 
-`--max-output-tokens N` starts no further run once N output tokens are spent.
-It defaults to, and may not exceed, the job's ceiling from the #806 live-pass
-cost caps (`COST_CAPS_USD`, `output_token_ceiling`).
+THE DOLLAR GUARD (#952 review F1): every invocation is one side (before or
+after) of a service's pair, and gets half that service's #806 cost cap
+(`COST_CAPS_USD`, `side_cap_usd`). Before each run after the first, the spend so
+far plus the largest single run so far -- input and output at list price, from
+the `llm_calls` rows -- must stay within it, or the run is not started
+(`stopped_budget`). It is a projection: a run larger than every earlier one can
+still cross the line, and the FIRST run is not bounded in advance, because
+nothing is known before it. `--max-output-tokens N`, optional, additionally
+starts no further run once N output tokens are spent.
+
+THE REPORT IS KEPT (#952 review F2): `--out` is rewritten after every run, so it
+always holds every completed run. A crash or Ctrl-C after any provider call was
+started leaves a report marked `aborted`; the file is removed only when no
+provider call was started at all.
+
+`--probe-batches` runs only the first N of a batched job's batches. For
+mitre_map, `--runs 2` or more compares runs of the same probed batches like any
+measurement (#736 comment 6068587667); for csf_score a probe is one run.
+
+The report records the DATABASE_URL's query parameters (never its path or
+credentials), so a SQLite `?timeout=` the run depended on is on record.
 
 THE SYNTHETIC CORPUS (#806 comment 5983938383, section 2): the demo seed's notes
 cannot exercise the #806 prompts, so `scripts/measure_corpus/` holds a committed
@@ -100,6 +118,11 @@ _IMPLEMENTED_JOBS = ("zt_score", "csf_score", "mitre_map", "tech_debt_extract")
 #: Jobs `--probe-batches` applies to: the batched ones.
 _BATCHED_JOBS = ("csf_score", "mitre_map")
 
+#: Jobs whose probe may run more than once and be COMPARED: the same probed
+#: batches every run, agreement reported like a full measurement. mitre_map's
+#: numbers back #479 and the cap re-derivation (#736 comment 6068587667).
+_COMPARED_PROBE_JOBS = ("mitre_map",)
+
 #: Free text, which differs in wording on every run, so never compared.
 _ATTACK_FREE_TEXT = ("rationale",)
 _TECH_DEBT_FREE_TEXT = ("function", "notes")
@@ -133,6 +156,11 @@ class RunRecord:
     # count -- a call that failed after billing writes a FAILED row with NULL
     # tokens, and leaving it out of a sum would understate the spend in silence.
     tokens_complete: bool = True
+    # #952 review F3: how many `llm_calls` rows the run wrote. 0 is a run that
+    # never reached a provider -- zero spend, KNOWN -- which is not the same as
+    # a run whose spend is unknown. None where nobody counted (a hand-built
+    # record), which keeps the older reading: no output count is unknown.
+    calls: int | None = None
 
 
 #: More runs than this is refused: every run is billed, and five pairs already
@@ -160,20 +188,30 @@ LIST_PRICE_USD_PER_MTOK: dict[str, int] = {"input": 5, "output": 25}
 _SIDES_PER_SERVICE = 2
 
 
-def output_token_ceiling(job: str) -> int:
-    """The most output tokens one invocation of `job` may be told to spend:
-    one side's half of the service's cap, all of it priced as output. It
-    bounds OUTPUT only -- input is billed too, and a run under way is never cut
-    off -- so the report also carries the whole spend's estimate
-    (`cost_cap.estimated_usd`) for the operator to set against the cap."""
-    per_side = COST_CAPS_USD[job] * 1_000_000
-    return per_side // (_SIDES_PER_SERVICE * LIST_PRICE_USD_PER_MTOK["output"])
+def side_cap_usd(job: str) -> float:
+    """The dollars one invocation of `job` may spend: one side's half of its
+    service's cap. `run_loop` guards it (`max_usd`)."""
+    return COST_CAPS_USD[job] / _SIDES_PER_SERVICE
+
+
+def _usd(input_tokens: int, output_tokens: int) -> float:
+    price = LIST_PRICE_USD_PER_MTOK
+    return round((input_tokens * price["input"] + output_tokens * price["output"]) / 1e6, 6)
 
 
 def _estimated_usd(tokens: Mapping[str, Any]) -> float:
-    price = LIST_PRICE_USD_PER_MTOK
-    usd = (tokens["input"] * price["input"] + tokens["output"] * price["output"]) / 1_000_000
-    return round(usd, 4)
+    return round(_usd(tokens["input"], tokens["output"]), 4)
+
+
+def run_usd(record: RunRecord) -> float | None:
+    """One run's spend at list price, input AND output, from its `llm_calls`
+    rows. 0 for a run that wrote no row (it reached no provider, #952 F3);
+    None when a row's tokens are missing, which is spend nobody can see."""
+    if record.calls == 0:
+        return 0.0
+    if record.input_tokens is None or record.output_tokens is None or not record.tokens_complete:
+        return None
+    return _usd(record.input_tokens, record.output_tokens)
 
 
 # --- the synthetic notes corpus (#806 comment 5983938383, section 2) ---------
@@ -1091,6 +1129,8 @@ def run_loop(
     *,
     max_output_tokens: int | None,
     stop_on_failure: bool = False,
+    max_usd: float | None = None,
+    progress: Callable[[Sequence[RunRecord]], None] | None = None,
 ) -> list[RunRecord]:
     """Call `one_run(n)` for n = 1..runs. Once the output tokens spent exceed
     `max_output_tokens`, no further run STARTS; each one not started is recorded
@@ -1101,36 +1141,68 @@ def run_loop(
     being kept. With `stop_on_failure`, no run starts after a failed one
     (`stopped_after_failure`): a rate-limited provider is not retried into.
     A run that hit the run deadline stops every later run, whatever else is
-    set (`stopped_after_deadline`)."""
+    set (`stopped_after_deadline`).
+
+    THE DOLLAR GUARD (`max_usd`, #952 review F1): before each run after the
+    first, the spend so far PLUS the largest single run so far -- input and
+    output at list price (`run_usd`) -- must not exceed `max_usd`, or that run
+    is not started (`stopped_budget`). It is a projection, not a promise: a run
+    larger than every run before it can still cross the line, and THE FIRST
+    RUN IS NOT BOUNDED AT ALL, because nothing is known before it. A run that
+    wrote no `llm_calls` row spent nothing (#952 F3) and stops nothing.
+
+    A run not started made no call, so its `charged_likely` is False (#952 F4).
+    `progress`, when given, is called with every record after each one is
+    added, so a caller can keep a report of every completed run on disk."""
     from app.ai.runs import RUN_DEADLINE_EXCEEDED
 
     records: list[RunRecord] = []
     spent = 0
     unknown = False
+    spent_usd = 0.0
+    largest_usd = 0.0
+
+    def not_started(reason: str) -> RunRecord:
+        return RunRecord(False, None, reason, 0, 0, charged_likely=False, calls=0)
+
     for n in range(1, runs + 1):
         if any(r.failure == RUN_DEADLINE_EXCEEDED for r in records):
             # A batch still inside a provider call after the deadline writes its
             # `llm_calls` row LATER, into whichever run is counting then. So no
             # run starts after a deadline, budget or not: its window would hold
             # a straggler's tokens under `tokens_complete: True`.
-            records.append(RunRecord(False, None, "stopped_after_deadline", 0, 0))
-            continue
-        if stop_on_failure and any(not r.ok for r in records):
-            records.append(RunRecord(False, None, "stopped_after_failure", 0, 0))
-            continue
-        if max_output_tokens is not None and unknown:
+            records.append(not_started("stopped_after_deadline"))
+        elif stop_on_failure and any(not r.ok for r in records):
+            records.append(not_started("stopped_after_failure"))
+        elif (max_output_tokens is not None or max_usd is not None) and unknown:
             _log.warning("measure_ai_consistency.budget_unknown_stop", run=n)
-            records.append(RunRecord(False, None, "stopped_unknown_spend", 0, 0))
-            continue
-        if max_output_tokens is not None and spent > max_output_tokens:
+            records.append(not_started("stopped_unknown_spend"))
+        elif max_output_tokens is not None and spent > max_output_tokens:
             _log.warning("measure_ai_consistency.budget_stop", run=n, output_tokens=spent)
-            records.append(RunRecord(False, None, "stopped_output_budget", 0, 0))
-            continue
-        record = one_run(n)
-        if record.output_tokens is None or not record.tokens_complete:
-            unknown = True
-        spent += record.output_tokens or 0
-        records.append(record)
+            records.append(not_started("stopped_output_budget"))
+        elif max_usd is not None and n > 1 and spent_usd + largest_usd > max_usd:
+            _log.warning(
+                "measure_ai_consistency.usd_budget_stop",
+                run=n,
+                spent_usd=spent_usd,
+                largest_run_usd=largest_usd,
+                max_usd=max_usd,
+            )
+            records.append(not_started("stopped_budget"))
+        else:
+            record = one_run(n)
+            if record.calls != 0 and (record.output_tokens is None or not record.tokens_complete):
+                unknown = True
+            spent += record.output_tokens or 0
+            usd = run_usd(record)
+            if usd is None:
+                unknown = True
+            else:
+                spent_usd += usd
+                largest_usd = max(largest_usd, usd)
+            records.append(record)
+        if progress is not None:
+            progress(records)
     return records
 
 
@@ -1139,7 +1211,24 @@ _NOT_STARTED = (
     "stopped_after_failure",
     "stopped_unknown_spend",
     "stopped_after_deadline",
+    "stopped_budget",
 )
+
+
+def run_row(n: int, r: RunRecord) -> dict:
+    """One run as the report's per-run record, counts and codes only."""
+    return {
+        "run": n,
+        "ok": r.ok,
+        "failure": r.failure,
+        "cause": r.cause,
+        "charged_likely": r.charged_likely,
+        "input_tokens": r.input_tokens,
+        "output_tokens": r.output_tokens,
+        "tokens_complete": r.tokens_complete,
+        "calls": r.calls,
+        "estimated_usd": run_usd(r),
+    }
 
 
 def summarize(
@@ -1149,10 +1238,12 @@ def summarize(
     max_output_tokens: int | None = None,
     min_ok_runs: int = 2,
     context: Any = None,
+    max_usd: float | None = None,
 ) -> dict:
     """Every pair of successful runs, plus the failed runs by number (1-based).
     Fewer than `min_ok_runs` successes is a failure: 2 for a measurement, since
-    there is nothing to compare below that, and 1 for a cost probe."""
+    there is nothing to compare below that, and 1 for a cost probe. With
+    `max_usd`, a `budget_usd` block reports the dollar guard's accounting."""
     ok = [(i + 1, r) for i, r in enumerate(runs) if r.ok]
     pairs = [
         {"pair": [i, j], **compare_pair(job, ra.data or {}, rb.data or {}, context=context)}
@@ -1169,10 +1260,11 @@ def summarize(
         if not r.ok
     ]
     # A run that called the provider and has no output count is spend nobody
-    # can see. A budget-stopped run made no call, so it does not count.
-    called = [r for r in runs if r.failure not in _NOT_STARTED]
+    # can see. A budget-stopped run made no call, and neither did a run that
+    # wrote no `llm_calls` row (#952 F3), so neither counts.
+    called = [r for r in runs if r.failure not in _NOT_STARTED and r.calls != 0]
     spent = sum(r.output_tokens or 0 for r in runs)
-    return {
+    report = {
         "job": job,
         "runs_requested": len(runs),
         "runs_ok": len(ok),
@@ -1204,6 +1296,19 @@ def summarize(
         },
         "exit_code": 0 if not failed and len(ok) >= min_ok_runs else 1,
     }
+    if max_usd is not None:
+        per_run = [run_usd(r) for r in runs]
+        spent_usd = round(sum(u for u in per_run if u is not None), 6)
+        report["budget_usd"] = {
+            "max_usd": max_usd,
+            "spent_usd": spent_usd,
+            "per_run_usd": per_run,
+            "complete": all(u is not None for u in per_run),
+            # Nothing is known before the first run, so nothing bounds it.
+            "first_run_bounded": False,
+            "overrun": spent_usd > max_usd,
+        }
+    return report
 
 
 def _framework_enum(name: str) -> Any:
@@ -1336,6 +1441,8 @@ def measure_zt(
     max_output_tokens: int | None = None,
     stop_on_failure: bool = False,
     notes_corpus: NotesCorpus | None = None,
+    max_usd: float | None = None,
+    progress: Callable[[Sequence[RunRecord]], None] | None = None,
 ) -> dict:
     """Run zt_score `runs` times on the latest editable assessment for
     `framework` and summarize. Writes only what `run_job` itself writes, plus
@@ -1407,6 +1514,7 @@ def measure_zt(
         except HTTPException as exc:
             reason, cause, typed = _failure(exc)
             tokens_in, tokens_out, complete = _tokens_since(db, before)
+            calls = _calls_since(db, before)
             charged = _charged_likely(db, before, answered=0, typed=typed)
             _log.error(
                 "measure_ai_consistency.run_failed",
@@ -1415,9 +1523,12 @@ def measure_zt(
                 cause=cause,
                 charged_likely=charged,
             )
-            return RunRecord(False, None, reason, tokens_in, tokens_out, cause, charged, complete)
+            return RunRecord(
+                False, None, reason, tokens_in, tokens_out, cause, charged, complete, calls=calls
+            )
         db.commit()
         tokens_in, tokens_out, complete = _tokens_since(db, before)
+        calls = _calls_since(db, before)
         _log.info(
             "measure_ai_consistency.run_ok",
             run=n,
@@ -1425,13 +1536,22 @@ def measure_zt(
             output_tokens=tokens_out,
             duration_ms=result.llm_call.duration_ms,
         )
-        return RunRecord(True, result.data, None, tokens_in, tokens_out, tokens_complete=complete)
+        return RunRecord(
+            True, result.data, None, tokens_in, tokens_out, tokens_complete=complete, calls=calls
+        )
 
     records = run_loop(
-        runs, one_run, max_output_tokens=max_output_tokens, stop_on_failure=stop_on_failure
+        runs,
+        one_run,
+        max_output_tokens=max_output_tokens,
+        stop_on_failure=stop_on_failure,
+        max_usd=max_usd,
+        progress=progress,
     )
     scope = ZtScope(max_stage=req.max_stage, codes=frozenset(req.rows), framework=fw)
-    report = summarize("zt_score", records, max_output_tokens=max_output_tokens, context=scope)
+    report = summarize(
+        "zt_score", records, max_output_tokens=max_output_tokens, context=scope, max_usd=max_usd
+    )
     report["assessment_id"] = str(a.id)
     report["assessment_capabilities"] = len(req.rows)
     report["engagement_stage"] = {"stage": stage, "source": stage_source}
@@ -1479,6 +1599,16 @@ def _tokens_since(db: Any, before: set) -> tuple[int | None, int | None, bool]:
     return total("input_tokens"), total("output_tokens"), complete
 
 
+def _calls_since(db: Any, before: set) -> int:
+    """How many `llm_calls` rows were written since `before`."""
+    from sqlalchemy import select
+
+    from app.models.llm_call import LLMCall
+
+    db.expire_all()
+    return sum(1 for i in db.execute(select(LLMCall.id)).scalars() if i not in before)
+
+
 def _charged_likely(db: Any, before: set, *, answered: int, typed: bool | None) -> bool | None:
     """Whether a failed run's FAILED calls likely billed, read from the
     `llm_calls` rows the run wrote -- `invoke` writes its row before it calls
@@ -1494,12 +1624,7 @@ def _charged_likely(db: Any, before: set, *, answered: int, typed: bool | None) 
     one (`ai_call_boundary`), else True. A batched run's total failure is a
     `RunFailed` carrying none (#800), and a deadline does not say how many
     batches answered, so both pass `answered=0`."""
-    from sqlalchemy import select
-
-    from app.models.llm_call import LLMCall
-
-    db.expire_all()
-    rows = sum(1 for i in db.execute(select(LLMCall.id)).scalars() if i not in before)
+    rows = _calls_since(db, before)
     if rows <= answered:
         return None
     return True if typed is None else typed
@@ -1563,6 +1688,8 @@ def measure_csf(
     stop_on_failure: bool = False,
     probe_batches: int | None = None,
     notes_corpus: NotesCorpus | None = None,
+    max_usd: float | None = None,
+    progress: Callable[[Sequence[RunRecord]], None] | None = None,
 ) -> dict:
     """Run csf_score `runs` times on the latest editable CSF assessment, batched
     exactly as the route batches it, and summarize. With `notes_corpus`, the
@@ -1659,6 +1786,7 @@ def measure_csf(
         except (HTTPException, RunFailed) as exc:
             reason, cause, typed = _failure(exc)
             tokens_in, tokens_out, complete = _tokens_since(db, before)
+            calls = _calls_since(db, before)
             charged = _charged_likely(db, before, answered=0, typed=typed)
             if isinstance(exc, RunFailed) and exc.reason == RUN_DEADLINE_EXCEEDED:
                 # `run_batches` cancels batches not yet started, but one already
@@ -1673,8 +1801,11 @@ def measure_csf(
                 cause=cause,
                 charged_likely=charged,
             )
-            return RunRecord(False, None, reason, tokens_in, tokens_out, cause, charged, complete)
+            return RunRecord(
+                False, None, reason, tokens_in, tokens_out, cause, charged, complete, calls=calls
+            )
         tokens_in, tokens_out, complete = _tokens_since(db, before)
+        calls = _calls_since(db, before)
         if batched.failed:
             failure = f"batches_failed:{batched.failed}/{batched.total}"
             answered = batched.total - batched.failed
@@ -1685,7 +1816,9 @@ def measure_csf(
                 failure=failure,
                 charged_likely=charged,
             )
-            return RunRecord(False, None, failure, tokens_in, tokens_out, None, charged, complete)
+            return RunRecord(
+                False, None, failure, tokens_in, tokens_out, None, charged, complete, calls=calls
+            )
         data = csf_run_data(batched.inputs, batched.answers, req.rows)
         _log.info(
             "measure_ai_consistency.run_ok",
@@ -1694,10 +1827,17 @@ def measure_csf(
             input_tokens=tokens_in,
             output_tokens=tokens_out,
         )
-        return RunRecord(True, data, None, tokens_in, tokens_out, tokens_complete=complete)
+        return RunRecord(
+            True, data, None, tokens_in, tokens_out, tokens_complete=complete, calls=calls
+        )
 
     records = run_loop(
-        runs, one_run, max_output_tokens=max_output_tokens, stop_on_failure=stop_on_failure
+        runs,
+        one_run,
+        max_output_tokens=max_output_tokens,
+        stop_on_failure=stop_on_failure,
+        max_usd=max_usd,
+        progress=progress,
     )
     report = summarize(
         "csf_score",
@@ -1705,6 +1845,7 @@ def measure_csf(
         max_output_tokens=max_output_tokens,
         min_ok_runs=1 if probe_batches is not None else 2,
         context=CsfScope(row_keys=frozenset(req.rows)),
+        max_usd=max_usd,
     )
     data_by_run = dict(_ok_runs(records))
     levels = {n: csf_levels(data, has_evidence=has_evidence) for n, data in data_by_run.items()}
@@ -1851,6 +1992,8 @@ def measure_attack(
     max_output_tokens: int | None = None,
     stop_on_failure: bool = False,
     probe_batches: int | None = None,
+    max_usd: float | None = None,
+    progress: Callable[[Sequence[RunRecord]], None] | None = None,
 ) -> dict:
     """Run mitre_map `runs` times on the latest editable ATT&CK assessment,
     through the route's own batching (`_run_mitre_map_batched`), and summarize.
@@ -1946,6 +2089,7 @@ def measure_attack(
         except (HTTPException, RunFailed) as exc:
             reason, cause, typed = _failure(exc)
             tokens_in, tokens_out, complete = _tokens_since(db, before)
+            calls = _calls_since(db, before)
             charged = _charged_likely(db, before, answered=0, typed=typed)
             if isinstance(exc, RunFailed) and exc.reason == RUN_DEADLINE_EXCEEDED:
                 # As for csf_score: a batch still inside a provider call writes
@@ -1958,8 +2102,11 @@ def measure_attack(
                 cause=cause,
                 charged_likely=charged,
             )
-            return RunRecord(False, None, reason, tokens_in, tokens_out, cause, charged, complete)
+            return RunRecord(
+                False, None, reason, tokens_in, tokens_out, cause, charged, complete, calls=calls
+            )
         tokens_in, tokens_out, complete = _tokens_since(db, before)
+        calls = _calls_since(db, before)
         if failed:
             failure = f"batches_failed:{failed}/{total}"
             charged = _charged_likely(db, before, answered=total - failed, typed=None)
@@ -1969,7 +2116,9 @@ def measure_attack(
                 failure=failure,
                 charged_likely=charged,
             )
-            return RunRecord(False, None, failure, tokens_in, tokens_out, None, charged, complete)
+            return RunRecord(
+                False, None, failure, tokens_in, tokens_out, None, charged, complete, calls=calls
+            )
         _log.info(
             "measure_ai_consistency.run_ok",
             run=n,
@@ -1978,17 +2127,27 @@ def measure_attack(
             output_tokens=tokens_out,
         )
         data = {"techniques": suggestions}
-        return RunRecord(True, data, None, tokens_in, tokens_out, tokens_complete=complete)
+        return RunRecord(
+            True, data, None, tokens_in, tokens_out, tokens_complete=complete, calls=calls
+        )
 
     records = run_loop(
-        runs, one_run, max_output_tokens=max_output_tokens, stop_on_failure=stop_on_failure
+        runs,
+        one_run,
+        max_output_tokens=max_output_tokens,
+        stop_on_failure=stop_on_failure,
+        max_usd=max_usd,
+        progress=progress,
     )
     report = summarize(
         "mitre_map",
         records,
         max_output_tokens=max_output_tokens,
-        min_ok_runs=1 if probe_batches is not None else 2,
+        # A single-run probe sizes cost; two or more runs of the same probed
+        # batches are compared like any measurement (#736 comment 6068587667).
+        min_ok_runs=1 if runs == 1 else 2,
         context=scope,
+        max_usd=max_usd,
     )
     computed = {n: attack_downstream(data, scope) for n, data in _ok_runs(records)}
     for pair in report["pairs"]:
@@ -2067,6 +2226,8 @@ def measure_tech_debt(
     service_id: str,
     max_output_tokens: int | None = None,
     stop_on_failure: bool = False,
+    max_usd: float | None = None,
+    progress: Callable[[Sequence[RunRecord]], None] | None = None,
 ) -> dict:
     """Run tech_debt_extract `runs` times on the rows of `inventory`, through
     `extract_from_rows` (the extraction's own call), for the Tech Debt service
@@ -2151,6 +2312,7 @@ def measure_tech_debt(
             db.commit()
             reason, cause, typed = _failure(exc)
             tokens_in, tokens_out, complete = _tokens_since(db, before)
+            calls = _calls_since(db, before)
             charged = _charged_likely(db, before, answered=0, typed=typed)
             _log.error(
                 "measure_ai_consistency.run_failed",
@@ -2159,9 +2321,12 @@ def measure_tech_debt(
                 cause=cause,
                 charged_likely=charged,
             )
-            return RunRecord(False, None, reason, tokens_in, tokens_out, cause, charged, complete)
+            return RunRecord(
+                False, None, reason, tokens_in, tokens_out, cause, charged, complete, calls=calls
+            )
         db.commit()
         tokens_in, tokens_out, complete = _tokens_since(db, before)
+        calls = _calls_since(db, before)
         rec = result.reconciliation
         reconciliations[n] = {
             "excluded_row_indexes": sorted(e.index for e in rec.excluded_rows),
@@ -2178,12 +2343,21 @@ def measure_tech_debt(
             output_tokens=tokens_out,
         )
         data = {"items": [_item_record(i) for i in result.items]}
-        return RunRecord(True, data, None, tokens_in, tokens_out, tokens_complete=complete)
+        return RunRecord(
+            True, data, None, tokens_in, tokens_out, tokens_complete=complete, calls=calls
+        )
 
     records = run_loop(
-        runs, one_run, max_output_tokens=max_output_tokens, stop_on_failure=stop_on_failure
+        runs,
+        one_run,
+        max_output_tokens=max_output_tokens,
+        stop_on_failure=stop_on_failure,
+        max_usd=max_usd,
+        progress=progress,
     )
-    report = summarize("tech_debt_extract", records, max_output_tokens=max_output_tokens)
+    report = summarize(
+        "tech_debt_extract", records, max_output_tokens=max_output_tokens, max_usd=max_usd
+    )
     report["service_id"] = str(svc.id)
     # Whose names the redactor used: the client the operator named, by id.
     report["redaction_client_id"] = str(svc.client_id)
@@ -2201,7 +2375,7 @@ def measure_tech_debt(
 def _print_table(report: dict) -> None:
     print(f"job={report['job']} runs_ok={report['runs_ok']}/{report['runs_requested']}")
     for f in report["failed_runs"]:
-        print(f"  run {f['run']} FAILED: {f['failure']}")
+        print(f"  run {f['run']} FAILED: {f['failure']} (charged_likely: {f['charged_likely']})")
     for p in report["pairs"]:
         r = p["rows"]
         print(
@@ -2355,9 +2529,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--max-output-tokens",
         type=int,
         default=None,
-        help="Start no further run once this many output tokens are spent. A run "
-        "under way is never cut off, so the overrun is at most one run. Defaults to, "
-        "and may not exceed, the job's ceiling from the #806 cost caps.",
+        help="Optional, OUTPUT tokens only: start no further run once this many are "
+        "spent. The dollar guard from the #806 cost caps (input and output) always "
+        "applies besides.",
     )
     args = p.parse_args(argv)
     if args.probe_batches is not None and (args.job not in _BATCHED_JOBS or args.probe_batches < 1):
@@ -2393,8 +2567,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    if args.probe_batches is not None and args.runs != 1:
-        print("REFUSED (probe_runs_not_one): a probe is a single run.", file=sys.stderr)
+    compared_probe = args.job in _COMPARED_PROBE_JOBS and args.runs >= 2
+    if args.probe_batches is not None and args.runs != 1 and not compared_probe:
+        print(
+            "REFUSED (probe_runs_not_one): a probe is a single run, except that "
+            f"{' and '.join(_COMPARED_PROBE_JOBS)} may compare two or more runs of the "
+            "same probed batches.",
+            file=sys.stderr,
+        )
         return 2
     if args.runs < 2 and args.probe_batches is None:
         print("REFUSED (runs_below_two): agreement needs at least two runs.", file=sys.stderr)
@@ -2421,63 +2601,149 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         if args.job not in _IMPLEMENTED_JOBS:
             _job_shape(args.job)
-        max_output_tokens = _guard_from_cap(args.job, args.max_output_tokens)
         corpus = None if args.notes_corpus is None else load_notes_corpus(args.notes_corpus)
         out = _open_report(args.out)
     except Refused as exc:
         print(f"REFUSED ({exc.reason}): {exc}", file=sys.stderr)
         return 2
+    max_usd = side_cap_usd(args.job)
+    database_url = database_url_params(s.database_url)
+    report_file = _ReportFile(out, args.job, max_usd, database_url)
+    print(
+        f"budget: ${max_usd} for this side (half the ${COST_CAPS_USD[args.job]} service cap), "
+        "input and output at list price. A later run is not STARTED if the spend so far "
+        "plus the largest run so far would cross it. The FIRST run is not bounded in "
+        "advance."
+    )
+    if database_url["sqlite_timeout"] is None:
+        print(
+            "DATABASE_URL sets no ?timeout=: a batched job's workers can hit SQLite's "
+            "default busy timeout (#806 comment 5965066136)."
+        )
     try:
         for sentinel in _PARSER_SENTINELS.get(args.job, {}).values():
             # Read BEFORE any provider exists (#867 review A1): a parser that
             # can no longer produce its sentinel fails here, not after the
             # paid runs.
             sentinel()
-        report = _measure(args, max_output_tokens, corpus)
+        report = _measure(args, corpus, max_usd, report_file)
     except BaseException as exc:
-        # A refusal or a crash: no report exists, so the file this run created
-        # empty is removed rather than left looking like one.
-        out.close()
-        Path(args.out).unlink()
+        if report_file.provider_calls_started == 0:
+            # No provider call was even started: nothing was spent, and there
+            # is no run to keep. The file this run created empty goes.
+            out.close()
+            Path(args.out).unlink()
+        else:
+            # #952 review F2: something may have been billed. Keep every
+            # completed run, and say why the report stops where it does.
+            report_file.abort(exc)
+            out.close()
         if isinstance(exc, Refused):
             print(f"REFUSED ({exc.reason}): {exc}", file=sys.stderr)
             return 2
         raise
     report["cost_cap"] = {
         "service_cap_usd": COST_CAPS_USD[args.job],
-        "output_token_ceiling": output_token_ceiling(args.job),
-        "max_output_tokens": max_output_tokens,
+        "side_cap_usd": max_usd,
         "list_price_usd_per_mtok": LIST_PRICE_USD_PER_MTOK,
         # At claude-opus-5 list price whatever ran; complete only when every
         # call reported its tokens (`tokens.complete`).
         "estimated_usd": _estimated_usd(report["tokens"]),
         "estimate_complete": report["tokens"]["complete"],
     }
-    with out:
-        json.dump(report, out, indent=2, sort_keys=True)
+    report["database_url"] = database_url
+    report["provider_calls_started"] = report_file.provider_calls_started
+    report["status"] = "complete"
+    report_file.write(report)
+    out.close()
     _print_table(report)
     cap = report["cost_cap"]
     print(
-        f"estimated spend ${cap['estimated_usd']} at list price, against a "
-        f"${cap['service_cap_usd']} cap for both sides"
+        f"estimated spend ${cap['estimated_usd']} at list price, against ${max_usd} for "
+        f"this side of a ${cap['service_cap_usd']} service cap"
         + ("" if cap["estimate_complete"] else " (count INCOMPLETE: spend is UNDERSTATED)")
     )
     return report["exit_code"]
 
 
-def _guard_from_cap(job: str, given: int | None) -> int:
-    """`--max-output-tokens`, set from the job's cost cap: the ceiling when not
-    given, refused above it (`max_output_tokens_above_cap`)."""
-    ceiling = output_token_ceiling(job)
-    if given is None:
-        return ceiling
-    if given > ceiling:
-        raise Refused(
-            "max_output_tokens_above_cap",
-            f"--max-output-tokens {given} is above {job}'s ceiling of {ceiling} "
-            f"(half its ${COST_CAPS_USD[job]} cap at the output list price).",
+def database_url_params(url: str) -> dict:
+    """The DATABASE_URL's query parameters, and the SQLite busy timeout among
+    them: never the scheme, host, path or credentials. The live run sets
+    `?timeout=900` by hand (#736 comment 6068587667), so the report records
+    exactly what it ran with, and `None` when there was no timeout."""
+    from urllib.parse import parse_qsl, urlsplit
+
+    query = dict(parse_qsl(urlsplit(url).query, keep_blank_values=True))
+    return {"query": query, "sqlite_timeout": query.get("timeout")}
+
+
+class _ReportFile:
+    """The open `--out`, rewritten after every run (#952 review F2), so the
+    file always holds every completed run; and the count of provider calls
+    STARTED, counted where `LLMClient.invoke` is entered -- before its
+    `llm_calls` row exists, so a call interrupted mid-flight, whose row is
+    rolled back, still counts."""
+
+    def __init__(self, fh: Any, job: str, max_usd: float, database_url: dict) -> None:
+        self.fh = fh
+        self.job = job
+        self.max_usd = max_usd
+        self.database_url = database_url
+        self.provider_calls_started = 0
+        self.records: list[RunRecord] = []
+
+    def count_calls(self, llm: Any) -> None:
+        original = llm.invoke
+
+        def invoke(*args: Any, **kwargs: Any) -> Any:
+            self.provider_calls_started += 1
+            return original(*args, **kwargs)
+
+        llm.invoke = invoke
+
+    def write(self, report: dict) -> None:
+        import os
+
+        self.fh.seek(0)
+        self.fh.truncate()
+        json.dump(report, self.fh, indent=2, sort_keys=True)
+        self.fh.flush()
+        os.fsync(self.fh.fileno())
+
+    def partial(self, status: str) -> dict:
+        rows = [run_row(i + 1, r) for i, r in enumerate(self.records)]
+        known = [r["estimated_usd"] for r in rows if r["estimated_usd"] is not None]
+        return {
+            "job": self.job,
+            "status": status,
+            "runs": rows,
+            "spent_usd": round(sum(known), 6),
+            "spent_usd_complete": len(known) == len(rows),
+            "max_usd": self.max_usd,
+            "database_url": self.database_url,
+            "provider_calls_started": self.provider_calls_started,
+        }
+
+    def progress(self, records: Sequence[RunRecord]) -> None:
+        self.records = list(records)
+        self.write(self.partial("in_progress"))
+
+    def abort(self, exc: BaseException) -> None:
+        report = self.partial("aborted")
+        # The exception's TYPE only: a message can quote the model.
+        report["aborted"] = {
+            "exception": type(exc).__name__,
+            "after_runs": len(self.records),
+            "note": "a run under way when this happened is not in `runs`; "
+            "`provider_calls_started` counts its calls",
+        }
+        self.write(report)
+        _log.error(
+            "measure_ai_consistency.aborted",
+            exception=type(exc).__name__,
+            runs_kept=len(self.records),
+            provider_calls_started=self.provider_calls_started,
         )
-    return given
 
 
 def _open_report(path: str) -> Any:
@@ -2493,7 +2759,7 @@ def _open_report(path: str) -> Any:
         raise Refused("out_unwritable", f"--out {path} cannot be created: {exc}") from exc
 
 
-def _measure(args: argparse.Namespace, max_output_tokens: int, corpus: Any) -> dict:
+def _measure(args: argparse.Namespace, corpus: Any, max_usd: float, report_file: Any) -> dict:
     """Build the provider and run the measurement `args` names. A refusal is
     raised as `Refused` for `main` to report."""
     from app.ai.llm import LLMClient
@@ -2502,12 +2768,15 @@ def _measure(args: argparse.Namespace, max_output_tokens: int, corpus: Any) -> d
 
     with SessionLocal() as db:
         llm = LLMClient.from_db(db, get_settings())
+        report_file.count_calls(llm)
         print(f"provider={llm.provider.name} model={llm.provider.model} runs={args.runs}")
         common = {
             "runs": args.runs,
             "reopen_released": args.reopen_released,
-            "max_output_tokens": max_output_tokens,
+            "max_output_tokens": args.max_output_tokens,
             "stop_on_failure": args.stop_on_failure,
+            "max_usd": max_usd,
+            "progress": report_file.progress,
         }
         if args.job == "csf_score":
             tiers = [t for t in args.seed_profile_tiers.split(",") if t]
