@@ -722,6 +722,11 @@ class RiskDashboardResponse(BaseModel):
     action_counts: dict[str, int]
     matrix: list[RiskMatrixCell]
     entries: list[RiskDashboardEntry]
+    #: #915 (S3): the approved sentence for the DoD target cap, from the
+    #: register's provenance through `risk/zt_capped.py`, the reader the
+    #: consultant's register and the three files use. None when nothing was
+    #: lowered or the register predates the record.
+    zt_capped_target_note: str | None = None
 
 
 class ValueSummaryResponse(BaseModel):

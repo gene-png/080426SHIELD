@@ -90,6 +90,8 @@ from app.risk.engine import (
     matrix_counts,
     tier_counts,
 )
+from app.risk.zt_capped import capped_target_codes as risk_capped_target_codes
+from app.risk.zt_capped import capped_target_sentence as risk_capped_target_sentence
 from app.routes.attack import client_retirement_index
 from app.schemas.clients import (
     AttackDashboardResponse,
@@ -1990,6 +1992,8 @@ def risk_dashboard(
             )
             for e in entries
         ],
+        # #915: the same reader and sentence as the register and its files.
+        zt_capped_target_note=risk_capped_target_sentence(risk_capped_target_codes(reg.provenance)),
     )
 
 

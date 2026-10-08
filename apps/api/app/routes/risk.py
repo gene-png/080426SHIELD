@@ -70,6 +70,9 @@ from app.risk.inputs import (
     publish_blockers,
 )
 from app.risk.link_scope import LinkScope, scope_for
+from app.risk.zt_capped import CAPPED_TARGET_KEY as ZT_CAPPED_TARGET_KEY
+from app.risk.zt_capped import capped_target_codes as zt_capped_target_codes
+from app.risk.zt_capped import capped_target_sentence as zt_capped_target_sentence
 from app.routes.artifacts import _storage_dep
 from app.schemas.risk import (
     LinkScopeDisclosure,
@@ -1852,6 +1855,11 @@ def generate(
         _prov_with_count["source_states"] = source_states
         _prov_with_count["review_pending"] = review_pending
         _prov_with_count["ratings_carried"] = ratings_carried
+        # #915: per ZT source, the capabilities whose target the #839 cap
+        # lowered, read back by `risk/zt_capped.py` for the register, the
+        # client dashboard and the three files. A sibling key, so the pinned
+        # key sets of `targets` are unchanged.
+        _prov_with_count[ZT_CAPPED_TARGET_KEY] = snap.cap_lowered
         register.provenance = _prov_with_count
         db.add(register)
     else:
@@ -2304,6 +2312,8 @@ def _render_and_store(
             else None
         ),
         draft=draft,
+        # #915: the same reader and sentence the register response uses.
+        zt_capped_target_note=zt_capped_target_sentence(zt_capped_target_codes(reg.provenance)),
         # #646: `ai_mode` is left at "not recorded", deliberately -- see
         # `RiskExportContext.ai_mode`. Nothing ties a register to the calls
         # that drafted it until Risk runs through the run framework (#504).
@@ -3137,7 +3147,11 @@ def _serialize(
     _review_pending: set[str] = (
         {str(x) for x in _raw_pending} if isinstance(_raw_pending, list) else set()
     )
+    # #915: read through the one reader the dashboard and the files call.
+    _capped = zt_capped_target_codes(stored)
     return RiskRegisterResponse(
+        capped_target_codes=_capped,
+        zt_capped_target_note=zt_capped_target_sentence(_capped),
         excluded_inputs=resolved_excluded,
         excluded_inputs_recorded=excluded_recorded,
         entries_total=len(entries),
