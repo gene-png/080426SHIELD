@@ -8,6 +8,7 @@ table. Tool bytes are written by the route layer.
 
 from __future__ import annotations
 
+import html
 import io
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -553,18 +554,28 @@ def render_pdf(ctx: RiskExportContext) -> bytes:
         )
         return t
 
+    def _text(s: str, style) -> Paragraph:
+        """#862. `Paragraph` parses its input as markup: unescaped, "ATT&CK"
+        printed as "ATT&CK;", "<Labs>" was dropped in silence, and "</b>" in a
+        client's name made the export fail. `html.escape(s, quote=False)`
+        escapes exactly `&`, `<` and `>`, the three characters the markup
+        reads, so every string prints as itself. Here and not in
+        `_summary_lines`, which also feeds the DOCX and XLSX: those are plain
+        text and would print `&amp;`."""
+        return Paragraph(html.escape(s, quote=False), style)
+
     story: list = [
-        Paragraph(f"Risk Register (v{ctx.version})", h1),
-        Paragraph(ctx.client_legal_name, body),
+        _text(f"Risk Register (v{ctx.version})", h1),
+        _text(ctx.client_legal_name, body),
         pdf_paragraph(ctx.ai_mode, body),  # #646, under the title
-        *([Paragraph(DRAFT_MARKER, body)] if ctx.draft else []),
+        *([_text(DRAFT_MARKER, body)] if ctx.draft else []),
         Spacer(1, 0.2 * inch),
-        Paragraph("Summary", h2),
+        _text("Summary", h2),
     ]
     for line in _summary_lines(ctx):
-        story.append(Paragraph(line, body))
+        story.append(_text(line, body))
 
-    story.append(Paragraph("Likelihood x Impact matrix", h2))
+    story.append(_text("Likelihood x Impact matrix", h2))
     matrix = matrix_counts(
         [
             (Likelihood(e.likelihood), Impact(e.impact))
@@ -587,18 +598,18 @@ def render_pdf(ctx: RiskExportContext) -> bytes:
     left_out = len(ctx.entries) - sum(c.count for c in matrix)
     if left_out:
         story.append(
-            Paragraph(
+            _text(
                 f"{left_out} unrated {_entries_noun(left_out)} "
                 f"{'is' if left_out == 1 else 'are'} not in this matrix.",
                 body,
             )
         )
 
-    story.append(Paragraph("Tier legend (review cadence)", h2))
+    story.append(_text("Tier legend (review cadence)", h2))
     story.append(_grid([["Tier", "Suggested cadence"], *_legend_rows()], [1.2 * inch, 5.0 * inch]))
 
     story.append(PageBreak())
-    story.append(Paragraph("Register", h2))
+    story.append(_text("Register", h2))
     table = [["ID", "Weakness", "Axis", "L x I", "Tier", "Recommended", "Linked Source"]]
     for i, e in enumerate(ctx.entries, start=1):
         table.append(
