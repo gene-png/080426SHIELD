@@ -946,7 +946,7 @@ export function ZtWorkspace({
           <WorkflowStep
             number={1}
             title="Draft the maturity scoring with AI"
-            description="Claude suggests a current and target maturity stage for each capability on this framework's scale. It drafts; you decide. An offline run leaves alone locked rows, and any answer the AI did not write — a client submission, or one still in progress. It does NOT leave alone an unlocked row the AI wrote: that row stays AI-owned even after you correct it, so running offline again can redraft your correction. A live run may draft over any unlocked row, and shows you the diff."
+            description="Claude suggests a current maturity stage for each capability on this framework's scale. It does not suggest targets. It drafts; you decide. An offline run leaves alone locked rows, and any answer the AI did not write — a client submission, or one still in progress. It does NOT leave alone an unlocked row the AI wrote: that row stays AI-owned even after you correct it, so running offline again can redraft your correction. A live run may draft over any unlocked row, and shows you the diff."
             // Not `runResult !== null`: a run that applied NOTHING put a green
             // success badge and a "— done" heading directly above "AI applied 0
             // of 74". The step is complete when the AI actually drafted
