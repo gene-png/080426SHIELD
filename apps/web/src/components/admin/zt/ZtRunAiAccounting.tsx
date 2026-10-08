@@ -48,7 +48,7 @@ const DROP_REASON_LABEL: Record<ZtDroppedSuggestion["reason"], string> = {
   protected: "answer was not written by the AI, and an offline run left it",
   // #645: an edit that landed after the run started is kept, never overwritten.
   edited: "answer was edited after this run started, so the run left it",
-  // #839 F1. DRAFT COPY, pending the advisor's approval: the PATCH routes
+  // #839 F1, S4, approved verbatim at #736 comment 6049667540: the PATCH routes
   // refuse this stage with the approved 422, and this is the run's word for it.
   stage_above_capability_max:
     "the capability has no DoD activities at that level, so it cannot be scored that stage",
