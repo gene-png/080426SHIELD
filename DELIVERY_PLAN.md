@@ -95,11 +95,9 @@ inventory pill), 6055276302 (#927 folded in; the license labels) and 6056012075
 (the 422 copy). Left for follow-ups: #929 and #935. Trips merge-rule conditions
 5 and 6, so it comes back to Gene; no migration.
 
-**2026-10-08: #743 (`tier-2`, `client-reaching`) is in PR #855, not merged.**
-Status as written before it merges; update this line in the landing commit if
-anything changes. What it carries: every count on both Risk screens, except
-the client remedy line pending Gene, now agrees with its noun, verb and pronoun
-(the client dashboard's withheld-breakdown
+**2026-10-08: #743 (`tier-2`, `client-reaching`) landed in PR #855
+(99279cb8).** What it carries: every count on both Risk screens now agrees with
+its noun, verb and pronoun (the client dashboard's withheld-breakdown
 banner, its pill and donut tooltip; the admin register's batch, lost-entry,
 unrated, unlinked, dropped-link and not-recorded banners), and
 `lib/risk/carry.ts` says "each entry" for more than one rating. The admin "lost
@@ -109,8 +107,11 @@ K = D - U - S, where D and U are the server's `entries_with_dropped_links` and
 `source_id` and holds no technique or control link) is counted from the
 entries. Rulings: advisor, #736 comments
 6054419744 (strings, K, fixtures) and 6056012075 (docs before the ready line).
-**Pending:** the client remedy line, a count-neutral rewording held for Gene;
-the code keeps his ruled sentence in one constant. **Filed from the reviews:**
+**Remedy line:** the client remedy, held for Gene when #855 landed, is
+swapped in the PR for #939 (branch `track6/939-remedy-swap`) on his ruling, #736
+comment 6060627178: "Ask your consultant to complete each entry counted above."
+replaces "Ask your consultant to complete those entries.", in the constant
+`WITHHELD_REMEDY` and its two pinned test literals. **Filed from the reviews:**
 #930, #931, #932, #939.
 
 **2026-10-08: #842 (`tier-2`, ATT&CK copy after R3) in PR #933.** The
