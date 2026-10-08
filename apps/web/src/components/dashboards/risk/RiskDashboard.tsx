@@ -199,10 +199,15 @@ function th(): React.CSSProperties {
 
 /**
  * #854 F4, Gene's ruling (#736 item 9): the remedy names something the CLIENT
- * can do. A rewording that holds at any count ("each entry counted above") is
- * pending him (#736 6054419744); swapping it is this one line.
+ * can do. The wording holds at any count. Gene ruled it on #736 6060627178 and
+ * tightened it on 6064328745 (for #943), so that it cannot be read as every
+ * entry in "Of {total} entries" rather than only the missing ones. The first
+ * ruling replaced "Ask your consultant to complete those entries." Changing it
+ * is this one product line plus two pinned test literals: `REMEDY` in
+ * RiskDashboard.count-nouns.test.tsx and the regex in RiskDashboard.test.tsx.
  */
-const WITHHELD_REMEDY = "Ask your consultant to complete those entries.";
+const WITHHELD_REMEDY =
+  "Ask your consultant to complete each entry counted as missing above.";
 
 export function RiskDashboard({
   data,

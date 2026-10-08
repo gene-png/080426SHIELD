@@ -161,7 +161,7 @@ describe("RiskDashboard withheld-entry disclosure (#313)", () => {
     // #854 F4: a remedy the CLIENT can take; regenerating is an admin control.
     const note = screen.getByTestId("risk-entries-without-tier");
     expect(note).toHaveTextContent(
-      /Ask your consultant to complete those entries\./,
+      /Ask your consultant to complete each entry counted as missing above\./,
     );
     expect(note.textContent).not.toMatch(/Regenerate/);
   });
