@@ -13,6 +13,13 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**2026-10-08: the Tech Debt v3.2 prompt PR for #806 is built (not on `main`).**
+Branch `track3/806-tech-debt-prompt`: the prompt verbatim with
+`PROMPT_VERSION = "v3.2"`, the C6 counts as `extraction_flags` with E1 in the
+workspace, the fixture re-authored from v3.2 with #845's lifecycle rule and e2e
+s47, and #871's Q2 advisory resolved for new extractions. Status and rulings:
+`DELIVERY_PLAN.md`, the 2026-10-08 #806 entry under "MVP completion path".
+
 **2026-10-08: #835 with #927 in review as draft PR #936 (not on `main`).** Bundle
 parts stop counting as tools or costs on the client Tech Debt dashboard, the
 deliverable and the admin overlap view, and the PATCH refuses a cost on a part.

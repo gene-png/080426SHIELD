@@ -82,6 +82,26 @@ sizes marked coarse.
 
 Track work outside that list is paused.
 
+**2026-10-08: the Tech Debt prompt PR for #806 is built on
+`track3/806-tech-debt-prompt`; the draft PR is not open yet and nothing is
+merged.** The extraction prompt is Tech Debt v3.2 verbatim (#806 comment
+5983838515, sha256-pinned), `PROMPT_VERSION = "v3.2"`. What v3.2 closes and a
+model can still send is kept as sent and counted (C6): a missing name, a
+confidence off 100/90/60, a category off the closed list (read live from the
+AI's rows, so a correction clears it) and a source row that produced a
+second item (recorded in `extraction_findings`, the run result and the audit). The
+list's `extraction_flags` is null ("not measured") for a list an earlier prompt
+drafted and for a list whose rows have lost their source-document link. E1
+states each non-zero count in the workspace. The offline fixture is re-authored
+from v3.2's text, and carries #845's lifecycle rule and e2e s47 (s46 in #869's
+branch; s46 is taken on main), moved here from #869. With v3.2 in the tree the
+not-in-use group fills from the AI, so #871's Q2 advisory ("The AI found") is
+resolved for new extractions; #871 is closed by hand after this PR merges.
+Rulings: the plan, #806 comment 5984600764, approved on #736 5986057990 (item 4);
+E1 copy, the existing-test edit, the gating and the s4 comment on #736
+6068587667. Trips merge-rule conditions 5 and 6, so it comes back to Gene; no
+migration. No plan item changes and no total moves.
+
 **2026-10-08: #852 implemented (`tier-1`, `client-reaching`): the CSF catalog corrected to NIST CSWP 29 and pinned to its PDF.** `ID.AM-09` (not a CSF 2.0 subcategory) is retired, its stored answers kept, not scored and disclosed; `RC.CO-04` is added and inserted empty into every non-discarded assessment (migration 0065, after #925's 0064). A kept Working Profile row no longer makes the enterprise profile, the gap actions or the playbook export answer 500. Branch `track5/852-csf-cswp29`; decision record **D-110**; detail in `context/entries/2026-10-08-852-csf-cswp29.md`. Gene supplied the PDF (`reference-docs/nist/NIST.CSWP.29.pdf`); `test_csf_catalog_source.py` pins its sha256 and holds the served and seeded code set to the codes read out of it. **#852 is closed by hand** when this PR merges; the body carries no closing keyword. Gene confirmed the D-107 precondition (#736 comment 6060587658). Routed to Gene rather than self-merged: merge-rule conditions 4, 5 and 6.
 
 **2026-10-07: #839 is implemented (`mvp-blocking`, `tier-2`) and lands with the #838 PR 3 PR.** The status here is as written before it merged.

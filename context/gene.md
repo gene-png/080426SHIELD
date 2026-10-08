@@ -1,5 +1,19 @@
 # Gene — in-flight status
 
+_2026-10-08: the Tech Debt prompt PR for #806 is pushed on
+`track3/806-tech-debt-prompt`; the draft PR and its review are next._
+
+**What it does.** The extraction runs Tech Debt v3.2 as you approved it.
+Whatever the model still sends against v3.2's rules is kept and counted, and
+E1 says so above the list, in the copy the advisor approved on #736 (comment
+6068587667, `category_off_list` in the past tense). The counts are not measured
+for a list an earlier prompt drafted or one whose rows lost their source link.
+The offline fixture follows v3.2, including #845's not-in-use rule and e2e s47.
+**For #871:** the not-in-use group now fills from the AI, so Q2's "The AI found"
+is true for new extractions; close #871 by hand after merge. The existing-test
+edit in `test_tech_debt_not_in_use_signoff.py` and the s4 comment were approved
+in the same ruling. It comes back to you: conditions 5 and 6, no migration.
+
 _2026-10-08: #852 (CSF catalog corrected to NIST CSWP 29, now pinned to the PDF
 you supplied) is draft PR #940 on `track5/852-csf-cswp29`; D-110, migration
 0065._
