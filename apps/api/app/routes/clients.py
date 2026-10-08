@@ -81,6 +81,7 @@ from app.models.zt_assessment import (
     ZtAssessmentStatus,
     ZtFramework,
 )
+from app.risk.baseline import targets_used
 from app.risk.engine import (
     Impact,
     Likelihood,
@@ -120,6 +121,7 @@ from app.schemas.clients import (
     ZtDashboardResponse,
     ZtPillarDashboard,
 )
+from app.schemas.risk import RiskTargetUsed
 from app.services.engagement_targets import client_target_stage, client_target_tier
 from app.tech_debt.components import is_component, license_count, source_items
 from app.tech_debt.reconcile import exclusion_count_state
@@ -1928,6 +1930,7 @@ def risk_dashboard(
         a for a in (_safe_enum(RecommendedAction, e.recommended_action) for e in entries) if a
     ]
     tc = tier_counts(tiers)
+    _risk_targets, _risk_targets_recorded = targets_used(reg.provenance)
 
     _log.info(
         "client.risk_dashboard.built",
@@ -1989,6 +1992,18 @@ def risk_dashboard(
         tier_counts=tc,
         axis_counts=axis_counts(axes),
         action_counts=action_counts(actions),
+        # #474, through the one reader of the register's record.
+        targets=[
+            RiskTargetUsed(
+                kind=t.kind,
+                framework=t.framework,
+                target=t.target,
+                source=t.source,
+                origin=t.origin,
+            )
+            for t in _risk_targets
+        ],
+        targets_recorded=_risk_targets_recorded,
         matrix=[
             RiskMatrixCell(
                 likelihood=cell.likelihood,

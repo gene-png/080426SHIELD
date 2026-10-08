@@ -1,3 +1,4 @@
+import type { RiskTargetUsed } from "./baseline";
 import type { RatingNotCarried } from "./carry";
 export interface RiskInputState {
   kind: string;
@@ -260,6 +261,9 @@ export interface RiskRegister {
   ratings_carried: number | null;
   ratings_carried_from_version: number | null;
   ratings_not_carried: RatingNotCarried[];
+  /** #474. Optional so an older response parses; absent reads as not recorded. */
+  targets?: RiskTargetUsed[];
+  targets_recorded?: boolean;
 
   /**
    * #330. The generate loop's INTENDED tally.
