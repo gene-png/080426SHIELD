@@ -163,6 +163,18 @@ export function CsfDashboard({
         />
       </KpiRow>
 
+      {/* #852: the API's own approved sentence (`csf/retired.py`), the one the
+          released document carries, under the maturity header. Never rebuilt
+          here. */}
+      {data.retired_answers_note ? (
+        <p
+          data-testid="csf-retired-answers"
+          style={{ margin: "0 0 16px", fontSize: 13, lineHeight: 1.5 }}
+        >
+          {data.retired_answers_note}
+        </p>
+      ) : null}
+
       <Section
         title="Maturity by function"
         desc="Ordered by the largest move required to reach your target"
