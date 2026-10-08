@@ -388,39 +388,28 @@ def _extraction_prompt_version(db: Session, record: dict) -> str | None:
     return call.prompt_version if call is not None else None
 
 
-def _extraction_flags(
-    db: Session, cap_list: CapabilityList, items: list[CapabilityItem]
-) -> dict[str, int] | None:
-    """C6 (for #806): what v3.2 closes and the model still sent, read live.
+def _extraction_flags(db: Session, cap_list: CapabilityList) -> dict[str, int] | None:
+    """C6 (for #806): what v3.2 closes and the model still sent, as recorded
+    at extraction in the list's own `capability_list.extracted` audit.
 
-    Only the AI's rows are counted, because the copy says the row "came back"
-    from the extraction: a row linked to the source document that is not a
-    bundle part. A row a consultant included has no source document, and a
-    bundle part a consultant added (`parent_item_id` set) carries its bundle's
-    link and a category the consultant typed (review finding F1 on PR #955).
+    Advisor ruling F2 (issue 736, comment 6069328834, option (a)): E1 says the
+    rows "came back" this way, which is exactly true of the extraction and
+    stays true whatever a consultant edits afterwards, so the counts are the
+    extraction's and never a live read of the rows. That also leaves out, by
+    construction, a row a consultant included and a bundle part a consultant
+    added (review finding F1 on PR #955), and it does not depend on the source
+    document's link (it replaces item 3b of 6068587667).
 
-    None ("not measured"), never a count, when:
-    - no extraction is on record for the list;
-    - an earlier prompt drafted it, which followed that prompt's rules;
-    - the extracted rows have lost their link to the source document, so they
-      can no longer be told apart and a count would be smaller than the truth
-      (advisor ruling, issue 736 comment 6068587667, item 3b). No current
-      writer produces this state: no route deletes an Artifact, and the link
-      is cleared only by `source_artifact_id`'s ON DELETE SET NULL. The guard
-      is kept as a ratchet; an artifact delete route would make it reachable.
+    None ("not measured"), never a count, when no extraction is on record for
+    the list, or when the extraction ran on an earlier prompt, which followed
+    that prompt's rules (the version of the call the list's own audit names).
     """
     record = _extraction_record(db, cap_list)
     if record is None:
         return None
     if _extraction_prompt_version(db, record) not in PROMPT_VERSIONS_WITH_CLOSED_SCALES:
         return None
-    source = record.get("artifact_id")
-    extracted = [i for i in items if i.source_artifact_id is not None and i.parent_item_id is None]
-    linked = any(str(i.source_artifact_id) == source for i in extracted)
-    if record.get("item_count") and not linked:
-        _log.info("tech_debt.extraction_flags_not_measured", list_id=str(cap_list.id))
-        return None
-    return extraction_flags(extracted, cap_list.extraction_findings or [])
+    return record.get("extraction_flags")
 
 
 def _component_cost_refusal(parent_name: str | None) -> HTTPException:
@@ -502,7 +491,7 @@ def _serialize_list_with_items(db: Session, cap_list: CapabilityList) -> Capabil
     # #177/#193: the one reader, as the deliverable and the dashboard call it.
     resp.exclusion_count_state = exclusion_count_state(cap_list)
     resp.not_in_use_contradictions = _not_in_use_contradictions(db, items)
-    flags = _extraction_flags(db, cap_list, items)
+    flags = _extraction_flags(db, cap_list)
     resp.extraction_flags = None if flags is None else ExtractionFlags.model_validate(flags)
     # #646: the ONE derivation every surface calls.
     resp.ai_source = AiSource.model_validate(

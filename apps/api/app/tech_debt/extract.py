@@ -673,10 +673,10 @@ def duplicated_source_rows(findings: Iterable[dict[str, Any]]) -> int:
 def extraction_flags(items: Iterable[object], findings: Iterable[dict[str, Any]]) -> dict[str, int]:
     """What v3.2 closes and a model can still send, each kept as sent and counted.
 
-    `items` are extracted capabilities or stored rows, read by attribute, so the
-    extraction's audit and the list response share one derivation. The first
-    three are read from the values themselves, so a consultant's correction
-    clears them; `source_row_duplicated` comes from the recorded findings.
+    Computed once, at extraction, over the items the model returned, and
+    recorded in the extraction's audit; the list response reads that record
+    (advisor ruling F2, issue 736 comment 6069328834), so a consultant's later
+    edit never changes it. `items` are read by attribute.
     """
     values = [
         (getattr(i, "name", None), getattr(i, "confidence_pct", None), getattr(i, "category", None))

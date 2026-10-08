@@ -9,9 +9,10 @@ item 4). Its tests, in the plan's order:
    a missing name (`name_missing`), a confidence off v3.2's scale
    (`confidence_off_scale`), a category off v3.2's closed list
    (`category_off_list`), and two items naming one source row
-   (`source_row_duplicated`). The first three are read live from the stored
-   rows, so a consultant's correction clears them; the fourth cannot be (the
-   row index is not stored on an item), so it is recorded at extraction.
+   (`source_row_duplicated`). All four are counted at extraction and recorded
+   in the extraction's audit, and the list response reads that record, so a
+   consultant's later edit does not change them (advisor ruling F2, issue 736
+   comment 6069328834).
 3. The closed category list held in code equals the one in the prompt.
 4. The offline fixture does what v3.2 says (`test_the_fixture_*`).
 
@@ -24,6 +25,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import uuid
 
 import pytest
 from sqlalchemy import select
@@ -260,15 +262,20 @@ def test_a_row_named_three_times_is_one_source_row(app_client) -> None:  # noqa:
     assert [f["item_name"] for f in body["extraction_findings"]] == ["B", "C"]
 
 
-def test_a_consultant_correction_clears_its_flag(app_client) -> None:  # noqa: F811
+def test_a_consultant_edit_leaves_e1_unchanged(app_client) -> None:  # noqa: F811
+    """Advisor ruling F2 (issue 736, comment 6069328834, option (a)): E1 is the
+    count recorded at extraction, so "came back" stays exactly true. An edit to
+    a row's category, name or confidence (a PATCH clears `confidence_pct`)
+    does not change it."""
     items = [_example(0, category="EDR"), _example(1, name="", confidence_pct=75)]
     c, _, h, _, body = _extract(app_client, items, rows=2)
-    assert body["extraction_flags"] == {
+    at_extraction = {
         **ZERO,
         "name_missing": 1,
         "confidence_off_scale": 1,
         "category_off_list": 1,
     }
+    assert body["extraction_flags"] == at_extraction
     by_name = {i["name"]: i for i in body["items"]}
     r = c.patch(
         f"/tech-debt/capability-items/{by_name['Capability 0']['id']}",
@@ -285,7 +292,9 @@ def test_a_consultant_correction_clears_its_flag(app_client) -> None:  # noqa: F
     after = c.get(
         f"/tech-debt/services/{body['service_id']}/capability-lists/latest", headers=h
     ).json()
-    assert after["extraction_flags"] == ZERO
+    assert {i["category"] for i in after["items"]} == {"EDR/XDR", None}
+    assert {i["confidence_pct"] for i in after["items"]} == {None}
+    assert after["extraction_flags"] == at_extraction
 
 
 def test_the_prompt_version_is_recorded_and_an_earlier_one_is_not_measured(
@@ -396,25 +405,23 @@ def test_a_human_included_row_is_not_counted_as_the_ais(app_client) -> None:  # 
     assert after["extraction_flags"] == ZERO
 
 
-def test_a_list_whose_source_link_is_gone_is_not_measured(app_client) -> None:  # noqa: F811
-    """Advisor ruling (issue 736, comment 6068587667, item 3b): the counts read
-    only the AI's rows, which are the rows linked to the source document. When
-    that link is null, the AI's rows can no longer be told apart, so the list
-    reports `extraction_flags` null ("not measured"), never a smaller count.
-    No current writer produces that state (no route deletes an Artifact; the
-    link is cleared only by ON DELETE SET NULL), so the setup writes it
-    directly. The guard is a ratchet against an artifact delete route."""
+def test_clearing_the_source_link_does_not_change_e1(app_client) -> None:  # noqa: F811
+    """Advisor ruling F2 (issue 736, comment 6069328834) replaces item 3b of
+    6068587667: E1 reads the extraction's own audit, which does not depend on
+    the source document's link, so a cleared link (ON DELETE SET NULL; no
+    current route deletes an Artifact, so the setup writes it directly) leaves
+    E1 as it was."""
     from app.models.capability import CapabilityItem
 
     items = [_example(0, category="EDR", confidence_pct=70), _example(1, name="")]
     c, Sess, h, _, body = _extract(app_client, items, rows=2)
-    # APPEAR first: linked, the counts are there.
-    assert body["extraction_flags"] == {
+    at_extraction = {
         **ZERO,
         "name_missing": 1,
         "confidence_off_scale": 1,
         "category_off_list": 1,
     }
+    assert body["extraction_flags"] == at_extraction
     with Sess() as s:
         for it in s.execute(select(CapabilityItem)).scalars():
             it.source_artifact_id = None
@@ -422,7 +429,30 @@ def test_a_list_whose_source_link_is_gone_is_not_measured(app_client) -> None:  
     after = c.get(
         f"/tech-debt/services/{body['service_id']}/capability-lists/latest", headers=h
     ).json()
-    assert len(after["items"]) == 2
+    assert {i["source_artifact_id"] for i in after["items"]} == {None}
+    assert after["extraction_flags"] == at_extraction
+
+
+def test_a_list_with_no_extraction_on_record_is_not_measured(app_client) -> None:  # noqa: F811
+    """A list no extraction audit names (a seeded list, say) reports null."""
+    from app.models.capability import CapabilityList
+
+    items = [_example(0, category="EDR")]
+    c, Sess, h, _, body = _extract(app_client, items, rows=1)
+    assert body["extraction_flags"]["category_off_list"] == 1  # APPEAR first
+    with Sess() as s:
+        extracted = s.get(CapabilityList, uuid.UUID(body["id"]))
+        extracted.status = "discarded"
+        s.add(
+            CapabilityList(
+                service_id=extracted.service_id, version=extracted.version + 1, status="draft"
+            )
+        )
+        s.commit()
+    after = c.get(
+        f"/tech-debt/services/{body['service_id']}/capability-lists/latest", headers=h
+    ).json()
+    assert after["id"] != body["id"]
     assert after["extraction_flags"] is None
 
 
@@ -528,13 +558,14 @@ def test_the_fixture_marks_a_planned_security_tool_as_v32_says(app_client) -> No
     assert planned["signoff_kind"] == "not_in_use"
 
 
-def test_the_fixture_demo_items_follow_v32(app_client) -> None:  # noqa: F811
-    """The items the fixture returns for a payload with no rows."""
+def test_the_fixture_returns_no_items_for_no_rows(app_client) -> None:  # noqa: F811
+    """Advisor ruling F3 (issue 736, comment 6069328834): v3.2 section 10, "If
+    `rows` is missing, is not an array, or contains no identifiable
+    capabilities, return exactly: {"items":[]}". The fixture used to invent
+    three costed demo capabilities instead."""
     from app.ai.fixtures import build_runtime_provider
 
-    out = build_runtime_provider().complete("", {"__purpose__": "extract.capabilities"})
-    items = json.loads(out.content)["items"]
-    assert [i["category"] for i in items] == ["EDR/XDR", "SIEM/SOAR", "IAM/PAM"]
-    assert {i["confidence_pct"] for i in items} <= V32_CONFIDENCE
-    for i in items:
-        assert not re.search(r"confirm|review|approv|fixture", i["notes"] or "", re.I), i
+    provider = build_runtime_provider()
+    for payload in ({}, {"rows": []}, {"rows": "not a list"}):
+        out = provider.complete("", {**payload, "__purpose__": "extract.capabilities"})
+        assert json.loads(out.content) == {"items": []}, payload

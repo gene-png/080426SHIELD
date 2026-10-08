@@ -169,11 +169,10 @@ class CapabilityListResponse(BaseModel):
     # Derived by the route from the stored rows, a consultant's override excluded.
     not_in_use_contradictions: int = 0
     # C6, for #806: what Tech Debt v3.2 closes and the model still sent, each
-    # value kept as sent. name_missing, confidence_off_scale and
-    # category_off_list are read live from the AI's rows, so a correction
-    # clears them; source_row_duplicated is from the findings recorded at
-    # extraction. None is "not measured": a list an earlier prompt drafted, or
-    # one no extraction is on record for.
+    # value kept as sent, as counted AT EXTRACTION (the list's own extraction
+    # audit); a consultant's later edit does not change it. None is "not
+    # measured": a list an earlier prompt drafted, or one no extraction is on
+    # record for.
     extraction_flags: ExtractionFlags | None = None
 
     @field_validator("excluded_rows", mode="before")

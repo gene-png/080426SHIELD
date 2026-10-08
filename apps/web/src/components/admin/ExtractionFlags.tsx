@@ -5,8 +5,9 @@ import type { ExtractionFlagCounts } from "@/lib/tech_debt/types";
 /**
  * C6, for #806: what Tech Debt prompt v3.2 closes and the AI still sent. Each
  * value was kept as the AI sent it; this says so, one line per non-zero count.
- * The rows are editable in the list below, and correcting one clears its count
- * (the api reads the first three live from the rows).
+ * The counts are the extraction's own, recorded when it ran (advisor ruling
+ * F2, issue 736 comment 6069328834), so editing a row below does not change
+ * them and "came back" stays true.
  *
  * E1 copy, proposed in the #806 plan (issue 806, comment 5984600764) and
  * approved by the advisor (issue 736, comment 6068587667) with the singular
