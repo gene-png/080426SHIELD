@@ -136,6 +136,7 @@ from app.zt.exporters import render_pdf as render_zt_pdf  # noqa: E402
 from app.zt.exporters import render_xlsx as render_zt_xlsx  # noqa: E402
 from app.zt.maturity import ZtFrameworkCode  # noqa: E402
 from app.zt.scoring import analyze_gaps as analyze_zt_gap  # noqa: E402
+from app.zt.scoring import capability_max_stage as zt_capability_max_stage  # noqa: E402
 from app.zt.scoring import compute as compute_zt  # noqa: E402
 
 ADMIN_EMAIL = "admin@kentro.example"
@@ -802,6 +803,19 @@ def _zt_stage_for(index: int) -> int:
     return pattern[index % len(pattern)]
 
 
+def _zt_seed_stage(catalog_fw: ZtFrameworkCode, cap, index: int) -> int:
+    """The pattern's stage, never above what this capability can reach (#839).
+
+    One pattern serves both frameworks. Under DoD it put stage 4 on six rows,
+    outside DoD's three-stage ladder (PRE-EXISTING), and stage 3 on six
+    capabilities with no DoD Advanced activities, which every write path now
+    refuses (#839 F1). The seed writes the store directly, so it is held to the
+    same maximum here: each such row is stored at its capability's maximum.
+    CISA defines every stage for every capability, so no CISA row moves.
+    """
+    return min(_zt_stage_for(index), zt_capability_max_stage(catalog_fw, cap))
+
+
 def _seed_zt(
     db: Session,
     storage: StorageBackend,
@@ -844,7 +858,7 @@ def _seed_zt(
                 assessment_id=assessment.id,
                 client_id=org.id,
                 capability_code=cap.code,
-                maturity_stage=_zt_stage_for(idx),
+                maturity_stage=_zt_seed_stage(catalog_fw, cap, idx),
                 notes=(
                     "Validated via control inheritance from agency MAS." if idx % 9 == 0 else None
                 ),

@@ -71,6 +71,9 @@ from app.risk.inputs import (
     publish_blockers,
 )
 from app.risk.link_scope import LinkScope, scope_for
+from app.risk.zt_capped import CAPPED_TARGET_KEY as ZT_CAPPED_TARGET_KEY
+from app.risk.zt_capped import capped_target_codes as zt_capped_target_codes
+from app.risk.zt_capped import capped_target_sentence as zt_capped_target_sentence
 from app.routes.artifacts import _storage_dep
 from app.schemas.risk import (
     LinkScopeDisclosure,
@@ -93,8 +96,9 @@ from app.services.engagement_targets import client_target_tier as _client_target
 from app.storage import StorageBackend
 from app.tech_debt.filename import SERVICE_SLUG_RISK_REGISTER, deliverable_filename
 from app.zt.catalog import all_codes
+from app.zt.catalog import capability_by_code as zt_capability_by_code
 from app.zt.maturity import ZtFrameworkCode
-from app.zt.scoring import resolve_target_stage
+from app.zt.scoring import capability_max_stage, resolve_target_stage
 
 router = APIRouter(prefix="/risk", tags=["risk-register"])
 
@@ -415,6 +419,11 @@ class _InputSnapshot:
     review_pending: tuple[str, ...]
     current: tuple[InputRecord, ...]
     drafted_from: dict[str, _Source] = dataclasses.field(default_factory=dict)
+    #: #915: per ZT source (`scope_key`), the capabilities whose target the
+    #: #839 cap lowered, in row order; filled by `_gather_findings`. A sibling
+    #: of the audit row's `targets`, not a key inside its entries, whose exact
+    #: shape tests pin.
+    cap_lowered: dict[str, list[str]] = dataclasses.field(default_factory=dict)
 
     def of_kind(self, kind: str) -> list[_Source]:
         return [src for src in self.sources if src.kind == kind]
@@ -1038,8 +1047,9 @@ def _gather_findings(
         # CISA ZTMM 2.0 does not have, and the ZT deliverable says they are not
         # scored, so they feed no finding and are not citable here either.
         # Per SOURCE since #876: each ZT service is filtered by its own
-        # framework's catalog.
-        zt_codes = all_codes(ZtFrameworkCode(zt.framework.value))
+        # framework's catalog, and (#839) capped by its own framework's ladder.
+        zt_fw = ZtFrameworkCode(zt.framework.value)
+        zt_codes = all_codes(zt_fw)
         zt_rows = [
             r
             for r in db.execute(select(ZtAnswer).where(ZtAnswer.assessment_id == zt.id)).scalars()
@@ -1048,6 +1058,9 @@ def _gather_findings(
         zt_scope = scope_for(ZtAnswer, zt_rows)
         valid_controls |= zt_scope.codes
         link_scopes[src.scope_key] = zt_scope
+        # #915: the rows whose target the #839 cap lowered, in row order, kept
+        # beside this source's target in the audit row. Empty when none were.
+        lowered: list[str] = []
         for r in zt_rows:
             # Per-capability target first, then the ENGAGEMENT target. The
             # fallback was a hardcoded 3 (#84); it is now the client's
@@ -1069,7 +1082,18 @@ def _gather_findings(
             # Closing it means calling `capability_target_override`; that
             # changes what the feed reports and wants its own both-states
             # evidence, so it is tracked rather than done here.
-            tgt = r.target_stage if r.target_stage is not None else zt_target
+            #
+            # #839: never above what the capability can score. The cap is the
+            # same function the gap engine applies (`capability_max_stage`), so
+            # a DoD capability the deliverable shows at its target is no
+            # finding here either.
+            asked = r.target_stage if r.target_stage is not None else zt_target
+            tgt = min(
+                asked,
+                capability_max_stage(zt_fw, zt_capability_by_code(r.capability_code)),
+            )
+            if tgt < asked:
+                lowered.append(r.capability_code)  # #915: what the disclosure reads
             if r.maturity_stage is not None and r.maturity_stage < tgt:
                 findings.append(
                     {
@@ -1079,6 +1103,7 @@ def _gather_findings(
                         "label": f"ZT {r.capability_code}: stage {r.maturity_stage}",
                     }
                 )
+        snap.cap_lowered[src.scope_key] = lowered
         _record_drafted_from(snap, findings[start:], src)
 
     return findings, valid_techniques, valid_controls, target_sources, link_scopes
@@ -1971,6 +1996,11 @@ def generate(
         _prov_with_count["source_states"] = source_states
         _prov_with_count["review_pending"] = review_pending
         _prov_with_count["ratings_carried"] = ratings_carried
+        # #915: per ZT source, the capabilities whose target the #839 cap
+        # lowered, read back by `risk/zt_capped.py` for the register, the
+        # client dashboard and the three files. A sibling key, so the pinned
+        # key sets of `targets` are unchanged.
+        _prov_with_count[ZT_CAPPED_TARGET_KEY] = snap.cap_lowered
         register.provenance = _prov_with_count
         db.add(register)
     else:
@@ -2019,6 +2049,10 @@ def generate(
             # the next one falsifiable, and `source` keeps "the client chose
             # nothing" apart from "the client's choice could not be used".
             "targets": target_sources,
+            # #915: per ZT source, the capabilities whose target the #839 cap
+            # lowered (an empty list when none were), so a register's missing
+            # DoD findings can be told from findings never looked for.
+            "capped_target_codes": snap.cap_lowered,
             "batches_total": batches_total,
             "batches_failed": batches_failed,
             # Both present rather than omitted, so a reader can tell
@@ -2419,6 +2453,8 @@ def _render_and_store(
             else None
         ),
         draft=draft,
+        # #915: the same reader and sentence the register response uses.
+        zt_capped_target_note=zt_capped_target_sentence(zt_capped_target_codes(reg.provenance)),
         # #646: `ai_mode` is left at "not recorded", deliberately -- see
         # `RiskExportContext.ai_mode`. Nothing ties a register to the calls
         # that drafted it until Risk runs through the run framework (#504).
@@ -3252,7 +3288,11 @@ def _serialize(
     _review_pending: set[str] = (
         {str(x) for x in _raw_pending} if isinstance(_raw_pending, list) else set()
     )
+    # #915: read through the one reader the dashboard and the files call.
+    _capped = zt_capped_target_codes(stored)
     return RiskRegisterResponse(
+        capped_target_codes=_capped,
+        zt_capped_target_note=zt_capped_target_sentence(_capped),
         excluded_inputs=resolved_excluded,
         excluded_inputs_recorded=excluded_recorded,
         entries_total=len(entries),

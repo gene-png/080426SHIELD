@@ -285,6 +285,7 @@ class ZtDroppedSuggestion(BaseModel):
     | `locked`       | a human locked the row — a by-design skip, not a defect  |
     | `protected`    | an offline run declined to overwrite a non-AI answer     |
     | `edited`       | the answer was edited after the run started (#645)       |
+    | `stage_above_capability_max` | a current stage above the capability's own maximum (#839) |
 
     `locked` and `protected` render separately from the rest. Both are by-design
     skips; folding them into one "N dropped" number rebuilds the alert-fatigue
@@ -308,6 +309,7 @@ class ZtDroppedSuggestion(BaseModel):
         "locked",
         "protected",
         "edited",
+        "stage_above_capability_max",
     ]
     # The capability code as the model wrote it (escaped and bounded), or None
     # when the model omitted it — never the literal "None", which fabricates a
@@ -428,6 +430,12 @@ class GapAnalysisResponse(BaseModel):
     # client's dashboard but hidden from the person who can FIX it would be the
     # worst of the three places to leave silent.
     unusable_target_codes: list[str] = []
+    # #839: the approved C1/C2 sentences, one per capped DoD capability or per
+    # capability that cannot score the target level (`zt/target_caps.py`).
+    target_cap_notes: list[str] = []
+    # #839 S1: one approved sentence per stored stage above its capability's
+    # maximum, which every figure counts at the maximum (`zt/target_caps.py`).
+    stage_above_max_notes: list[str] = []
     gap_count_by_pillar: dict[str, int]
     gaps: list[GapItem]
     roadmap: list[RoadmapEntry] = []

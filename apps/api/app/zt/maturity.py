@@ -3,7 +3,7 @@
 The two frameworks use different-length ladders (Work Order A4):
 
 CISA ZTMM 2.0 — 4 levels:  Traditional (1) -> Initial (2) -> Advanced (3) -> Optimal (4)
-DoD ZTRA      — 3 levels:  Not Started (1) -> Target (2) -> Advanced (3)
+DoD ZTRA      — 3 levels:  Below Target (1) -> Target (2) -> Advanced (3)
 
 A capability's stored `maturity_stage` is an integer in 1..level_count(framework).
 `level_count` lets the scoring engine normalize per framework so a DoD "3" and a
@@ -67,9 +67,10 @@ CISA_STAGES: tuple[StageDefinition, ...] = (
 DOD_STAGES: tuple[StageDefinition, ...] = (
     StageDefinition(
         1,
-        "Not Started",
-        "Foundational hygiene only — no formal Zero Trust activity adopted yet for this "
-        "capability.",
+        # #839 (decision E2, copy C3): a Kentro value, not a DoD level.
+        "Below Target",
+        "Assessed below the capability's first DoD level: at least one activity that "
+        "level requires is not achieved.",
     ),
     StageDefinition(
         2,

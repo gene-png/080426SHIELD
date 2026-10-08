@@ -246,10 +246,17 @@ class ZtScope:
     """What the zt_score APPLY path (`routes/zt.py::_zt_run_work`) checks a
     suggestion against: the framework's top stage (`_validated_stage`'s range)
     and the assessment's capability codes -- a code outside them finds no row
-    and is dropped as `unknown_key` (#867 re-review F1)."""
+    and is dropped as `unknown_key` (#867 re-review F1).
+
+    `framework` (a catalog `ZtFrameworkCode`) is what `_zt_capability_max`
+    reads each capability's own maximum from, as the apply path does
+    (`target_caps.max_stage_for`, #839 F1). `None` checks the ladder only,
+    and only a scope built by hand does that: `measure_zt` always passes the
+    assessment's framework."""
 
     max_stage: int
     codes: frozenset[str]
+    framework: Any = None
 
 
 @dataclass(frozen=True)
@@ -365,6 +372,19 @@ def _csf_key(row: Mapping[str, Any]) -> str:
     return f"{row.get('tier')}|{row.get('subcategory_code')}"
 
 
+def _zt_capability_max(field: str, row: Mapping[str, Any], context: Any) -> int | None:
+    """The `capability_max` `_zt_run_work` passes `_validated_stage` for this
+    row and field: the capability's own maximum for a maturity (`current`)
+    stage, None for a target (#839 F1, the #867 hand-off). Derived by the same
+    `max_stage_for`, never a copy of its table."""
+    code = row.get("code")
+    if field != "current" or context.framework is None or not isinstance(code, str):
+        return None
+    from app.zt.target_caps import max_stage_for
+
+    return max_stage_for(context.framework, code)
+
+
 def _key_refused(job: str, row: Mapping[str, Any], context: Any) -> bool:
     """Would the apply path drop this answer by its KEY, before reading any
     value? The FIRST refusal on each path (#867 re-review F1, B-1's twin):
@@ -428,7 +448,8 @@ def _absence(job: str, field: str, row: Mapping[str, Any], context: Any = None) 
     |            | _validated_dimension` refuses it (unparseable, outside 0-2,  |
     |            | not whole). zt_score: `routes/zt.py::_validated_stage`       |
     |            | refuses it (unparseable, off the 1..max_stage ladder, not    |
-    |            | whole). The tech_debt extraction's refusals arrive as null.  |
+    |            | whole, or a maturity stage above the capability's own        |
+    |            | maximum). The tech_debt extraction's refusals arrive as null.|
 
     Every value refusal above is the apply path's own function, CALLED (#867
     review B-1, B-4); a key refusal is membership in the keys the apply path
@@ -461,10 +482,12 @@ def _absence(job: str, field: str, row: Mapping[str, Any], context: Any = None) 
             return "refused"
     if job == "zt_score":
         # The apply path's own validator, called (#867 review B-4): parse,
-        # range 1..max_stage, wholeness, as `_zt_run_work` judges them.
+        # range 1..max_stage, wholeness, then the capability's own maximum
+        # for a maturity stage, as `_zt_run_work` judges them.
         from app.routes.zt import _validated_stage
 
-        if _validated_stage(value, context.max_stage)[1] is not None:
+        cap = _zt_capability_max(field, row, context)
+        if _validated_stage(value, context.max_stage, cap)[1] is not None:
             return "refused"
     if field in _LIST_FIELDS.get(job, ()) and isinstance(value, list):
         if not value:
@@ -538,6 +561,8 @@ def compare_pair(
                 # review B-5): "2" and 2 are the same applied stage.
                 from app.routes.zt import _validated_stage
 
+                # No capability maximum here: `_absence` has already refused
+                # a maturity stage above it, so none reaches this line.
                 va = _validated_stage(va, context.max_stage)[0]
                 vb = _validated_stage(vb, context.max_stage)[0]
             if f in list_fields:
@@ -1159,7 +1184,7 @@ def measure_zt(
     records = run_loop(
         runs, one_run, max_output_tokens=max_output_tokens, stop_on_failure=stop_on_failure
     )
-    scope = ZtScope(max_stage=req.max_stage, codes=frozenset(req.rows))
+    scope = ZtScope(max_stage=req.max_stage, codes=frozenset(req.rows), framework=fw)
     report = summarize("zt_score", records, max_output_tokens=max_output_tokens, context=scope)
     report["assessment_id"] = str(a.id)
     report["assessment_capabilities"] = len(req.rows)

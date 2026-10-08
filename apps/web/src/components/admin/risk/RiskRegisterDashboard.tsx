@@ -1184,6 +1184,18 @@ export function RiskRegisterDashboard(): JSX.Element {
               </p>
             </div>
           ) : null}
+          {/* #915 (S3): the API's own sentence for the DoD target cap
+              (`risk/zt_capped.py`), beside the scored-coverage disclosure,
+              rendered as given. The files and the client dashboard print the
+              same sentence. */}
+          {register.zt_capped_target_note ? (
+            <p
+              className="rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
+              data-testid="risk-zt-capped-target"
+            >
+              {register.zt_capped_target_note}
+            </p>
+          ) : null}
           {/* #854 F3: what the regenerate that produced this version carried
               over, and what it could not. Rendered only when recorded and
               when there is something to say. */}

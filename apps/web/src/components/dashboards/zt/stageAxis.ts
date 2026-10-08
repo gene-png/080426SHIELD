@@ -29,7 +29,7 @@ import type { ZtFramework } from "@/lib/zt/types";
  */
 const STAGE_LABELS: Record<ZtFramework, readonly string[]> = {
   cisa_ztmm_2_0: ["Traditional", "Initial", "Advanced", "Optimal"],
-  dod_ztra: ["Not Started", "Target", "Advanced"],
+  dod_ztra: ["Below Target", "Target", "Advanced"],
 };
 
 /**
