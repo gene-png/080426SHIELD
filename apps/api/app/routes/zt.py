@@ -84,6 +84,7 @@ from app.schemas.zt import (
     ZtCapabilityChange,
     ZtDroppedSuggestion,
     ZtInterviewQuestion,
+    ZtNoResult,
     ZtQuestionnaireResponse,
     ZtRunAiResponse,
     ZtScoreSummary,
@@ -719,6 +720,46 @@ def run_ai(
     )
 
 
+def _zt_no_result(
+    *,
+    asked: list[str],
+    rows: dict[str, ZtAnswer],
+    answered: set[str],
+    locked_keys: frozenset[str],
+) -> list[ZtNoResult]:
+    """#840: the capabilities the run asked for that no entry named.
+
+    `(asked & rows) - answered - locked`. A locked row is untouched by design,
+    so it is never a missing answer. A row edited during the run is counted:
+    "got no stage from the AI this run" stays true of it. Call it after the
+    apply, so `kept_stage` is the stage the row holds now.
+    """
+    codes = (set(asked) & set(rows)) - answered - locked_keys
+    out: list[ZtNoResult] = []
+    for code in sorted(codes):
+        notes = rows[code].notes
+        out.append(
+            ZtNoResult(
+                capability_code=code,
+                # Whitespace-only is blank; "N/A" is a note.
+                notes_blank=notes is None or not notes.strip(),
+                kept_stage=rows[code].maturity_stage,
+            )
+        )
+    return out
+
+
+def _zt_no_result_counts(no_result: list[ZtNoResult]) -> dict[str, int]:
+    """Counts only, never a code (#44 constraint 1): the audit row and the
+    accounting line carry these, and the run result carries the codes."""
+    blank = sum(1 for n in no_result if n.notes_blank)
+    return {
+        "no_result_blank_notes": blank,
+        "no_result_with_notes": len(no_result) - blank,
+        "no_result_kept_stage": sum(1 for n in no_result if n.kept_stage is not None),
+    }
+
+
 def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID) -> RunOutcome:
     """The zt_score run, in the background job's own session (#645). Re-loads
     by id; a refusal becomes the run's FAILED state with the same reason."""
@@ -787,6 +828,9 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
     # invisible: `applied` counts both, the row holds the last, and the first is
     # gone with no record.
     written: dict[tuple[str, str], Any] = {}
+    # #840: every code a dict entry NAMED, whatever then happened to it. A
+    # refused entry is an answer: its loss is itemized under its own reason.
+    answered: set[str] = set()
 
     # `parse_json_object_with_list("capabilities")` guarantees the key is
     # PRESENT and holds a list, or raises a typed 502. A non-list `capabilities`
@@ -823,6 +867,8 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
             continue
 
         raw_code = sugg.get("code")
+        if isinstance(raw_code, str):
+            answered.add(raw_code)
         # Never the literal "None" — that fabricates a capability nobody named.
         key = _bounded_key(raw_code) if raw_code is not None else None
         fields = [f for f in _ZT_ROW_FIELDS if f in sugg]
@@ -956,6 +1002,15 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
 
     db.flush()
     after = _snap()
+    # #840: read AFTER the apply, so `kept_stage` is what the row holds now,
+    # including an edit that landed while the model answered.
+    no_result = _zt_no_result(
+        asked=req.preview.inputs["capabilities"],
+        rows=rows,
+        answered=answered,
+        locked_keys=locked_keys,
+    )
+    no_result_counts = _zt_no_result_counts(no_result)
 
     # Provenance follows the VALUE, not the attempt (issue #38). Settled here,
     # from the net before/after effect, so it cannot be fooled by a rejected
@@ -1021,6 +1076,7 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
             "received": received,
             "applied": applied,
             "dropped_by_reason": dropped_by_reason,
+            **no_result_counts,
         },
     )
 
@@ -1040,6 +1096,8 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
             "suggestions_received": received,
             "suggestions_applied": applied,
             "dropped_by_reason": dropped_by_reason,
+            # #840: counts only, never a capability code.
+            **no_result_counts,
         },
     )
     # No commit: the framework commits this apply with the run's completion.
@@ -1053,6 +1111,8 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
         suggestions_applied=applied,
         dropped=dropped,
         preserved_client_answers=len(protected),
+        no_result_count=len(no_result),
+        no_result=no_result,
     )
     return RunOutcome(
         result=payload.model_dump(mode="json"), applied_count=applied, accounting=accounting
