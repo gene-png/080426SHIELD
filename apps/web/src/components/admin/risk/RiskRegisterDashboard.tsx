@@ -75,6 +75,11 @@ import type { JSX } from "react";
  * Change both, or the client's PDF and this screen disagree about which
  * assessment a count belongs to.
  */
+/** #743: the noun agrees with the count beside it ("1 entry", "2 entries"). */
+function entriesNoun(n: number): string {
+  return n === 1 ? "entry" : "entries";
+}
+
 const SERVICE_LABELS: Record<string, string> = {
   attack: "ATT&CK coverage",
   csf: "NIST CSF",
@@ -594,6 +599,35 @@ export function RiskRegisterDashboard(): JSX.Element {
   // regenerate would carry over -- the warning beside the button keys on it.
   const consultantEdited =
     register?.entries.filter((e) => e.rating_edited_at !== null).length ?? 0;
+  // #743 (advisor, #736 6054419744): the "lost a value and still shows
+  // linkage" banner counts exactly that population -- entries with a
+  // non-empty `dropped_links` AND at least one technique or control link
+  // left. `_serialize`'s `entries_with_dropped_links` (D) counts every entry
+  // that lost any value, and splits into three disjoint parts:
+  //   - still linked: the population this banner counts;
+  //   - `entries_unlinked_after_drops` (U): lost a technique or control and
+  //     has no link left (the banner above);
+  //   - lost only its `source_id` and never had a link (S): it shows NO
+  //     linkage, and its dropped source shows as "not recognised" in the
+  //     Source column.
+  // D - U alone left S in and called it linked (review round 2). So this is
+  // D - U - S, with S counted from the entries, which `_serialize` returns in
+  // full; the two server counters stay the authority for D and U.
+  const sourceOnlyUnlinked =
+    register?.entries.filter(
+      (e) =>
+        e.dropped_links !== null &&
+        Object.keys(e.dropped_links).length > 0 &&
+        !(e.dropped_links.linked_techniques ?? []).length &&
+        !(e.dropped_links.linked_controls ?? []).length &&
+        !(e.linked_techniques ?? []).length &&
+        !(e.linked_controls ?? []).length,
+    ).length ?? 0;
+  const stillLinked = register
+    ? register.entries_with_dropped_links -
+      register.entries_unlinked_after_drops -
+      sourceOnlyUnlinked
+    : 0;
   // #844. `?? 0` covers only the no-register-yet case.
   const findingsWithout = register?.findings_without_entry.length ?? 0;
   const findingsSeveral = register
@@ -857,11 +891,17 @@ export function RiskRegisterDashboard(): JSX.Element {
               role="alert"
               data-testid="risk-batches-failed"
             >
+              {/* #743: "batches" is always plural. `_run_risk_synthesize_batched`
+                  re-raises when EVERY batch fails (`if failed == len(batches)
+                  and first_error is not None`), so no register is stored with
+                  one batch failed of one: whenever this renders, the total is
+                  at least two. The failed count can be one. */}
               <span className="font-semibold">
                 {register.batches_failed} of {register.batches_total} synthesis
                 batches failed
               </span>
-              , so this register is INCOMPLETE -- the entries those batches
+              , so this register is INCOMPLETE -- the entries{" "}
+              {register.batches_failed === 1 ? "that batch" : "those batches"}{" "}
               would have produced are missing, not merely unscored. Regenerate
               before exporting. This notice is recorded with the register, so it
               survives an export and a reload and will still be here when you
@@ -883,10 +923,11 @@ export function RiskRegisterDashboard(): JSX.Element {
             >
               <span className="font-semibold">
                 {register.entries_intended - register.entries_total} of{" "}
-                {register.entries_intended} entries did not reach storage
+                {register.entries_intended}{" "}
+                {entriesNoun(register.entries_intended)} did not reach storage
               </span>
-              , so every count below describes the {register.entries_total} that
-              were stored, not the {register.entries_intended} the run intended.
+              , so every count below describes the {register.entries_total}{" "}
+              stored, not the {register.entries_intended} the run intended.
               Regenerate before exporting: the deliverable reports the stored
               count with no note that anything is missing.
             </div>
@@ -899,10 +940,13 @@ export function RiskRegisterDashboard(): JSX.Element {
             >
               <span className="font-semibold">
                 {register.entries_without_tier} of {register.entries_total}{" "}
-                entries have no likelihood, impact or tier
+                {entriesNoun(register.entries_total)}{" "}
+                {register.entries_without_tier === 1 ? "has" : "have"} no
+                likelihood, impact or tier
               </span>
-              , so they are missing from the matrix and the tier counts while
-              still counting toward Entries.
+              , so {register.entries_without_tier === 1 ? "it is" : "they are"}{" "}
+              missing from the matrix and the tier counts while still counting
+              toward Entries.
               {/* #854 review, F5: the remedy names the selects, which exist
                   only while the register is editable. On a published register
                   they are gone, so the sentence would name a control that is
@@ -934,25 +978,34 @@ export function RiskRegisterDashboard(): JSX.Element {
             >
               <span className="font-semibold">
                 {register.entries_unlinked_after_drops} of{" "}
-                {register.entries_total} entries proposed ATT&amp;CK or control
-                links and kept none
+                {register.entries_total} {entriesNoun(register.entries_total)}{" "}
+                proposed ATT&amp;CK or control links and kept none
               </span>
-              , so they show no linkage at all — the same as an entry nobody
-              linked. Every value the model sent was either misnamed or names a
-              control this client&apos;s assessments have not scored. A dropped
-              source shows as <em>not recognised</em> in the Source column; the
-              full values are on the <code>risk_register.generated</code> audit
-              row. Where the cause is unscored assessment work rather than a
-              misnamed value, regenerating returns the same rows and spends
-              another model call. A client reading this register sees those rows
+              , so{" "}
+              {register.entries_unlinked_after_drops === 1
+                ? "it shows"
+                : "they show"}{" "}
+              no linkage at all — the same as an entry nobody linked. Every
+              value the model sent was either misnamed or names a control this
+              client&apos;s assessments have not scored. A dropped source shows
+              as <em>not recognised</em> in the Source column; the full values
+              are on the <code>risk_register.generated</code> audit row. Where
+              the cause is unscored assessment work rather than a misnamed
+              value, regenerating returns the same rows and spends another model
+              call. A client reading this register sees{" "}
+              {register.entries_unlinked_after_drops === 1
+                ? "that row"
+                : "those rows"}{" "}
               as unlinked.
             </div>
           ) : null}
           {/* #132 review. Three counters exist because there are three
               states; one was rendered. These are the other two.
 
-              `entries_with_dropped_links` is entries that lost a value and
-              still show linkage. Lower severity than the banner above and not
+              The first is entries that lost a value and still show linkage:
+              `stillLinked`, which is NOT `entries_with_dropped_links` (that
+              also counts entries showing no linkage; see `stillLinked`).
+              Lower severity than the banner above and not
               nothing: it is what a consultant fixes to stop the next run
               losing more.
 
@@ -969,19 +1022,19 @@ export function RiskRegisterDashboard(): JSX.Element {
               hypothetical: `seed_demo.py` builds every RiskEntry without
               `dropped_links`, so the whole demo register is in this state, and
               without this it renders identically to a clean one. */}
-          {register.entries_with_dropped_links >
-          register.entries_unlinked_after_drops ? (
+          {stillLinked > 0 ? (
             <div
               className="rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
               data-testid="risk-entries-with-dropped-links"
             >
               <span className="font-semibold">
-                {register.entries_with_dropped_links} of{" "}
-                {register.entries_total} entries lost at least one value the
-                model sent
+                {stillLinked} of {register.entries_total}{" "}
+                {entriesNoun(register.entries_total)} lost at least one value
+                the model sent
               </span>{" "}
-              — the rest of each still resolved, so they show linkage. The
-              values are on each entry and on the{" "}
+              {stillLinked === 1
+                ? "— the rest of it still resolved, so it shows linkage. The values are on the entry and on the"
+                : "— the rest of each still resolved, so they show linkage. The values are on each entry and on the"}{" "}
               <code>risk_register.generated</code> audit row. Worth a look
               before the next run: each is either a value the model misnamed or
               a control nobody has scored yet.
@@ -1028,12 +1081,25 @@ export function RiskRegisterDashboard(): JSX.Element {
                   across the{" "}
                   {register.entries_total -
                     register.entries_links_not_recorded}{" "}
-                  of {register.entries_total} entries that carry a link record —{" "}
-                  {register.entries_links_not_recorded} predate link recording
-                  and are not in this count.
+                  of {register.entries_total}{" "}
+                  {entriesNoun(register.entries_total)} that{" "}
+                  {register.entries_total -
+                    register.entries_links_not_recorded ===
+                  1
+                    ? "carries"
+                    : "carry"}{" "}
+                  a link record — {register.entries_links_not_recorded}{" "}
+                  {register.entries_links_not_recorded === 1
+                    ? "predates link recording and is"
+                    : "predate link recording and are"}{" "}
+                  not in this count.
                 </>
               ) : (
-                <> across all {register.entries_total} entries.</>
+                <>
+                  {register.entries_total === 1
+                    ? " across the 1 entry."
+                    : ` across all ${register.entries_total} entries.`}
+                </>
               )}{" "}
               This counts VALUES; the entry tallies above count ROWS, so one
               entry that lost three techniques is 1 there and 3 here.
@@ -1046,11 +1112,16 @@ export function RiskRegisterDashboard(): JSX.Element {
             >
               <span className="font-semibold">
                 {register.entries_links_not_recorded} of{" "}
-                {register.entries_total} entries predate link recording
+                {register.entries_total} {entriesNoun(register.entries_total)}{" "}
+                {register.entries_links_not_recorded === 1
+                  ? "predates"
+                  : "predate"}{" "}
+                link recording
               </span>
-              , so nothing on file says whether the model proposed linkage for
-              them. That is not the same as nothing having been dropped.
-              Regenerate to find out.
+              , so nothing on file says whether the model proposed linkage for{" "}
+              {register.entries_links_not_recorded === 1 ? "it" : "them"}. That
+              is not the same as nothing having been dropped. Regenerate to find
+              out.
             </div>
           ) : null}
           {/* #403. WHY the links are sparse, which none of the counters above
@@ -1113,6 +1184,18 @@ export function RiskRegisterDashboard(): JSX.Element {
                 more widely.
               </p>
             </div>
+          ) : null}
+          {/* #915 (S3): the API's own sentence for the DoD target cap
+              (`risk/zt_capped.py`), beside the scored-coverage disclosure,
+              rendered as given. The files and the client dashboard print the
+              same sentence. */}
+          {register.zt_capped_target_note ? (
+            <p
+              className="rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
+              data-testid="risk-zt-capped-target"
+            >
+              {register.zt_capped_target_note}
+            </p>
           ) : null}
           {/* #854 F3: what the regenerate that produced this version carried
               over, and what it could not. Rendered only when recorded and

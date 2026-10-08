@@ -123,8 +123,8 @@ def test_zt_run_ai_applies_current_and_target(app_client) -> None:
 def test_zt_run_ai_clamps_out_of_range_for_dod(app_client) -> None:
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_dod")
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
-    code = a.json()["answers"][0]["capability_code"]
+    c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    code = "DOD.USR.02"  # 1.2 has Advanced activities, so 3 is reachable (#839 F1)
     # DoD max stage is 3; a suggested 4 is out of range and must be ignored.
     provider.register_static(
         "zt_score",

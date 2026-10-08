@@ -97,6 +97,9 @@ class RiskExportContext:
     #: register did not record them -- which the summary STATES, because a
     #: deliverable that silently omits its baseline reads as having none.
     targets: tuple[tuple[str, int, str, str], ...] | None = None
+    #: #915 (S3): the approved sentence for the DoD target cap, from
+    #: `risk/zt_capped.py`, or None when nothing was lowered or recorded.
+    zt_capped_target_note: str | None = None
 
 
 def _enum_list(values, enum_cls):
@@ -122,6 +125,7 @@ def build_context(
     source_states: dict[str, str] | None = None,
     review_pending: frozenset[str] = frozenset(),
     targets: Sequence[tuple[str, int, str, str]] | None = None,
+    zt_capped_target_note: str | None = None,
 ) -> RiskExportContext:
     return RiskExportContext(
         client_legal_name=org_display_name(client_legal_name),
@@ -133,6 +137,7 @@ def build_context(
         source_states=dict(source_states or {}),
         review_pending=review_pending,
         targets=tuple(targets) if targets is not None else None,
+        zt_capped_target_note=zt_capped_target_note,
     )
 
 
@@ -444,6 +449,8 @@ def _summary_lines(ctx: RiskExportContext) -> list[str]:
         *_finding_lines(ctx.finding_counts),
         *_target_lines(ctx.targets),
         *_link_scope_lines(ctx),
+        # #915 (S3), beside the scored-coverage disclosure; one line, or none.
+        *([ctx.zt_capped_target_note] if ctx.zt_capped_target_note else []),
     ]
 
 

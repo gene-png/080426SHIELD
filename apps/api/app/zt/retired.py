@@ -24,7 +24,7 @@ from app.zt.maturity import ZtFrameworkCode
 #: disclosure names it (#838 comment 5982917066, decision 4).
 _SOURCE = {
     ZtFrameworkCode.CISA_ZTMM_2_0: "CISA ZTMM 2.0",
-    ZtFrameworkCode.DOD_ZTRA: "the DoD Zero Trust Capability Execution Roadmap",
+    ZtFrameworkCode.DOD_ZTRA: "the DoD Zero Trust Execution Roadmap",  # approved, #839
 }
 
 

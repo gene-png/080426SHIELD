@@ -525,6 +525,18 @@ class ZtDashboardResponse(BaseModel):
     # Empty on an ordinary engagement. Codes rather than a count, so the UI can
     # name the rows and the count stays derivable.
     unusable_target_codes: list[str] = []
+    # #839: the approved C1/C2 sentences for the DoD target caps, the API's own
+    # (`zt/target_caps.py`), rendered as given.
+    target_cap_notes: list[str] = []
+    #: #914 (in #839): answers kept on rows the catalog no longer has (0063,
+    #: 0064), and the approved sentence saying they are not scored, from the
+    #: one derivation the workspace and the three files call (`zt/retired.py`).
+    #: 0 and None when there are none.
+    retired_answers: int = 0
+    retired_answers_note: str | None = None
+    #: #839 S1: one approved sentence per stored stage above its capability's
+    #: maximum, which every figure here counts at the maximum.
+    stage_above_max_notes: list[str] = []
 
     # The real total: every gap the engine found, not a rendered subset. The ZT
     # dashboard shows no truncated gap list today, and this is in the payload
@@ -603,7 +615,12 @@ class TechDebtDashboardResponse(BaseModel):
     # #646: which mode drafted the AI suggestions behind these figures, as the
     # deliverable states it. REQUIRED.
     ai_source: AiSource
+    # for #835: SOURCE items only. A split bundle's named parts are listed in
+    # `items` but are not applications; `bundle_part_count` says how many of
+    # `items` are parts, so the inventory can say so. REQUIRED: absent would
+    # read as "no parts", which is a claim.
     total_applications: int
+    bundle_part_count: int
     annual_spend_usd: float
     identified_savings_usd: float
     savings_cost_known: bool  # False when a counted (cut) item lacked a cost (savings is a floor)
@@ -718,6 +735,11 @@ class RiskDashboardResponse(BaseModel):
     #: and `targets_recorded` False means "not recorded", never "none".
     targets: list[RiskTargetUsed]
     targets_recorded: bool
+    #: #915 (S3): the approved sentence for the DoD target cap, from the
+    #: register's provenance through `risk/zt_capped.py`, the reader the
+    #: consultant's register and the three files use. None when nothing was
+    #: lowered or the register predates the record.
+    zt_capped_target_note: str | None = None
 
 
 class ValueSummaryResponse(BaseModel):

@@ -98,6 +98,7 @@ from app.schemas.tech_debt import (
 from app.security.rate_limit import enforce_ai_rate_limit
 from app.storage import StorageBackend
 from app.tech_debt.bounds import NOT_WHOLE_CENTS, cost_problem, license_problem
+from app.tech_debt.components import is_component
 from app.tech_debt.exporters import (
     build_context,
     cost_label,
@@ -355,6 +356,33 @@ def _not_in_use_contradictions(db: Session, items: list[CapabilityItem]) -> int:
         ).scalars()
     )
     return sum(1 for c in candidates if c not in overridden)
+
+
+def _component_cost_refusal(parent_name: str | None) -> HTTPException:
+    """for #927 (inside #835): a bundle part's cost is held by its bundle.
+
+    Copy approved verbatim by the advisor on #736 (comment 6056012075). The
+    remedy names the bundle's row, whose Annual cost cell is editable whenever
+    this can fire (a released or discarded list is refused with 409 first).
+    With no bundle row to name, or a name that is blank once stripped (the
+    item PATCH accepts a whitespace-only name), it names none rather than
+    printing a blank or inventing one.
+    """
+    parent_name = parent_name.strip() if parent_name else None
+    if parent_name:
+        message = (
+            f"The annual cost of a bundle part is held by its bundle, {parent_name}. "
+            f"Enter the cost on the {parent_name} row instead."
+        )
+    else:
+        message = (
+            "The annual cost of a bundle part is held by its bundle. "
+            "Enter the cost on the bundle's row instead."
+        )
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={"reason": "component_cost_held_by_bundle", "message": message},
+    )
 
 
 def _refuse_unstorable_values(cost: float | None, licenses: int | None) -> None:
@@ -1139,7 +1167,7 @@ def add_capability_components(
         )
     # One level only: a component of a component has no real-world counterpart
     # here and would make the cost story ambiguous.
-    if item.parent_item_id is not None:
+    if is_component(item):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -1274,6 +1302,18 @@ def patch_capability_item(
             detail="Patch body is empty.",
         )
     _refuse_unstorable_values(data.get("annual_cost_usd"), data.get("license_count"))
+    # for #927: a part carries no cost; its bundle holds the license value
+    # (`tech_debt/components.py`). Null stays allowed: it is the state a part is
+    # born in, and the way a cost stored before this refusal is cleared.
+    if is_component(item) and data.get("annual_cost_usd") is not None:
+        parent = db.get(CapabilityItem, item.parent_item_id)
+        _log.info(
+            "tech_debt.component_cost_refused",
+            item_id=str(item.id),
+            parent_item_id=str(item.parent_item_id),
+            parent_found=parent is not None,
+        )
+        raise _component_cost_refusal(parent.name if parent is not None else None)
     if data.get("consolidation_target_id") is not None:
         _check_consolidation_target(db, item, data["consolidation_target_id"])
     # Lock/unlock is a meta-action handled separately so a NULL never reaches
@@ -2278,7 +2318,14 @@ def finalize_deliverable(
     )
 
     summary_line = (
-        f"{len(items)} capabilities reviewed; "
+        # for #835: the client's Results and Home pages show this beside the
+        # files, so it counts what the PDF's "Capabilities reviewed" counts:
+        # source items, never a split bundle's parts. `ctx.included_count` is
+        # that derivation (`source_items`), read rather than recomputed.
+        # `scripts/seed_demo.py` builds the same sentence from `len(items)`;
+        # the seed creates no parts, so its count is already right and it is
+        # left alone.
+        f"{ctx.included_count} capabilities reviewed; "
         f"{'≥ ' if not ctx.savings_cost_known else ''}"
         f"${ctx.estimated_savings:,.0f} estimated annual savings."
     )

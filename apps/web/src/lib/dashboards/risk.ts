@@ -72,6 +72,12 @@ export interface RiskDashboardData {
   /** #474. Optional so an older response parses; absent reads as not recorded. */
   targets?: RiskTargetUsed[];
   targets_recorded?: boolean;
+  /**
+   * #915 (S3): the API's own sentence for the DoD target cap
+   * (`risk/zt_capped.py`), rendered as given. Null when no target was capped
+   * or the register predates the record.
+   */
+  zt_capped_target_note?: string | null;
 }
 
 // Display order. Likelihood is shown high→low down the rows so the most severe

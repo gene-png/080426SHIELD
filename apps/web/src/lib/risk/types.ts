@@ -355,6 +355,13 @@ export interface RiskRegister {
    * trap `excluded_inputs_recorded` exists for.
    */
   excluded_unscored_links_recorded: boolean;
+  /**
+   * #915: per ZT source, the capabilities whose target the #839 DoD cap
+   * lowered, read from the register's provenance. Null when not recorded.
+   */
+  capped_target_codes?: Record<string, string[]> | null;
+  /** #915 (S3): the API's own sentence built from it, rendered as given. */
+  zt_capped_target_note?: string | null;
   id: string;
   client_id: string;
   version: number;

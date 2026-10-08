@@ -45,7 +45,10 @@ function BucketList({
             <p className="text-sm font-semibold text-ink-primary">{b.key}</p>
             <div className="flex flex-wrap items-center gap-2">
               <StatusPill tone="warning">
-                {b.item_count} overlapping items
+                {/* for #835: `item_count` counts LICENSES (a bundle and its
+                    parts are one); copy approved on #736, comment 6056012075. */}
+                {b.item_count} overlapping{" "}
+                {b.item_count === 1 ? "license" : "licenses"}
               </StatusPill>
               <StatusPill tone="neutral">
                 {b.cost_known

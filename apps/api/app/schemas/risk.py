@@ -500,3 +500,9 @@ class RiskRegisterResponse(BaseModel):
     #: default would let a future writer that forgets the field certify a fully
     #: scored assessment it never looked at.
     excluded_unscored_links_recorded: bool = False
+    #: #915: per ZT source, the capabilities whose target the #839 cap lowered,
+    #: read from provenance (`risk/zt_capped.py`). None when the register
+    #: records nothing, which is not "the cap lowered nothing" (an empty list).
+    capped_target_codes: dict[str, list[str]] | None = None
+    #: #915 (S3): the approved sentence built from it, rendered as given.
+    zt_capped_target_note: str | None = None
