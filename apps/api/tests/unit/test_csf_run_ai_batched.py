@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,12 +36,12 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.models.llm_call import LLMCall
-from tests._ai_runs import csf_run_ai, get_run, start_run
+from tests._ai_runs import csf_run_ai, defer_runs, get_run, start_run
 
 # The provider figures above, restated rather than imported (see the docstring).
 _NON_STREAMED_CAP = 8192
@@ -334,3 +335,236 @@ def test_every_batch_answering_the_same_rows_applies_each_once_and_counts_the_re
             r for r in result["rows"] if (r["tier"], r["subcategory_code"]) == ("high", code)
         )
         assert row["governance"] == 2
+
+
+# --- #836: a row the model leaves out of its own batch is counted ------------
+# The prompt asks for every (tier, subcategory) row in the batch ("Score EACH
+# in-scope (tier, subcategory) pair: for every subcategory code emit one row per
+# tier listed"). A row a batch was asked for and did not answer keeps its
+# previous values; the run must say so, per row. The truth table is #736
+# comment 6067124922: R sent, F batch failed, A an entry names it, V a valid
+# value applied, P a prior value stored. Each test names its row.
+
+
+def _omit(rows: set[tuple[str, str]], *, extra=None):
+    """Answer as the prompt asks, except for `rows`, which no entry names.
+    `extra(payload)` may add entries (a stray, an out-of-range value)."""
+
+    def _answer(payload: dict[str, Any]) -> LLMResponse:
+        scores = [_row_entry(t, c, 1) for t, c in _rows_asked(payload) if (t, c) not in rows]
+        if extra is not None:
+            scores += extra(payload)
+        return LLMResponse(json.dumps({"scores": scores}))
+
+    return _answer
+
+
+def _batch_codes(world: World, tier: str) -> list[str]:
+    return sorted(code for t, code in _profile_rows(world) if t == tier)
+
+
+def _row(result: dict[str, Any], key: tuple[str, str]) -> dict[str, Any]:
+    return next(r for r in result["rows"] if (r["tier"], r["subcategory_code"]) == key)
+
+
+def _omitted(result: dict[str, Any]) -> list[tuple[str, str]]:
+    return [(r["tier"], r["subcategory_code"]) for r in result["omitted_rows"]]
+
+
+def _identity_holds(result: dict[str, Any]) -> bool:
+    accounted = result["suggestions_applied"] + sum(d["values"] for d in result["dropped"])
+    return result["suggestions_received"] == accounted
+
+
+@pytest.mark.unit
+def test_rows_a_batch_leaves_out_are_counted_and_named(world) -> None:
+    """Truth-table rows 5 (left out, nothing stored) and 8 (answered, applied)."""
+    profile = _profile_rows(world)
+    high = _batch_codes(world, "high")
+    left_out = {("high", high[0]), ("high", high[1]), ("high", high[2])}
+    world.provider.register("csf_score", _omit(left_out))
+    result = csf_run_ai(world.c, world.svc_id, world.h)
+
+    assert result["rows_omitted"] == 3
+    assert set(_omitted(result)) == left_out
+    for key in left_out:
+        row = _row(result, key)
+        assert row["governance"] == 0 and row["what_we_found"] is None, "left out, kept"
+    assert _row(result, ("high", high[3]))["governance"] == 1, "answered, applied"
+    # The W1 identity is about values SENT, and an omitted row sent none.
+    assert _identity_holds(result)
+    assert result["suggestions_received"] == (len(profile) - 3) * 6
+    assert result["dropped"] == []
+
+
+@pytest.mark.unit
+def test_a_row_left_out_keeps_the_value_an_earlier_run_set_and_is_counted(world) -> None:
+    """Truth-table row 6: a prior value this run did not confirm is still
+    omitted, and the row keeps that value."""
+    high = _batch_codes(world, "high")
+    target = ("high", high[0])
+    world.provider.register("csf_score", _omit(set()))
+    first = csf_run_ai(world.c, world.svc_id, world.h)
+    assert first["rows_omitted"] == 0
+    assert _row(first, target)["governance"] == 1
+
+    world.provider.register("csf_score", _omit({target}))
+    result = csf_run_ai(world.c, world.svc_id, world.h)
+
+    assert result["rows_omitted"] == 1
+    assert _omitted(result) == [target]
+    assert _row(result, target)["governance"] == 1
+    assert _row(result, target)["what_we_found"] == "Answered with 1."
+    assert _identity_holds(result)
+
+
+@pytest.mark.unit
+def test_a_row_answered_with_a_bad_value_is_refused_not_omitted(world) -> None:
+    """Truth-table row 7: an entry that names the row is an answer, even when
+    its value is then refused. The loss is itemized once, under its reason."""
+    high = _batch_codes(world, "high")
+    target = ("high", high[0])
+
+    def _bad(payload: dict[str, Any]) -> list[dict[str, Any]]:
+        if high[0] in payload["subcategories"] and payload["tiers"] == ["high"]:
+            return [{**_row_entry(*target, 1), "governance": 9}]
+        return []
+
+    world.provider.register("csf_score", _omit({target}, extra=_bad))
+    result = csf_run_ai(world.c, world.svc_id, world.h)
+
+    assert result["rows_omitted"] == 0
+    assert result["omitted_rows"] == []
+    reasons = [d["reason"] for d in result["dropped"] if d.get("key") == "|".join(target)]
+    assert reasons == ["out_of_range"]
+    assert _identity_holds(result)
+
+
+@pytest.mark.unit
+def test_an_entry_naming_no_row_is_unknown_and_omits_nothing(world) -> None:
+    """Truth-table row 2: a key nobody asked for is `unknown_key`; it is not
+    a row, so it cannot be omitted, and every asked row was answered."""
+    high = _batch_codes(world, "high")
+
+    def _unknown(payload: dict[str, Any]) -> list[dict[str, Any]]:
+        if payload["tiers"] == ["high"] and high[0] in payload["subcategories"]:
+            return [_row_entry("high", "ZZ.ZZ-99", 1)]
+        return []
+
+    world.provider.register("csf_score", _omit(set(), extra=_unknown))
+    result = csf_run_ai(world.c, world.svc_id, world.h)
+
+    assert [d["reason"] for d in result["dropped"]] == ["unknown_key"]
+    assert result["rows_omitted"] == 0
+    assert result["omitted_rows"] == []
+    assert _identity_holds(result)
+
+
+@pytest.mark.unit
+def test_a_row_answered_only_by_another_batch_is_still_omitted(world) -> None:
+    """A stray answer from the wrong batch is `not_in_batch` and is never an
+    answer for the row: the batch that was asked still left it out."""
+    high = _batch_codes(world, "high")
+    target = ("high", high[-1])  # asked by the LAST high batch
+
+    def _stray(payload: dict[str, Any]) -> list[dict[str, Any]]:
+        if payload["tiers"] == ["high"] and high[0] in payload["subcategories"]:
+            return [_row_entry(*target, 2)]
+        return []
+
+    world.provider.register("csf_score", _omit({target}, extra=_stray))
+    result = csf_run_ai(world.c, world.svc_id, world.h)
+
+    assert [d["reason"] for d in result["dropped"] if d.get("key") == "|".join(target)] == [
+        "not_in_batch"
+    ]
+    assert result["rows_omitted"] == 1
+    assert _omitted(result) == [target]
+    assert _row(result, target)["governance"] == 0, "never written from the wrong batch"
+    assert _identity_holds(result)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("prior", [False, True], ids=["nothing-stored", "prior-stored"])
+def test_a_failed_batchs_rows_are_counted_as_failed_not_omitted(world, prior) -> None:
+    """Truth-table rows 3 and 4: a failed batch's rows are `batches_failed`'s
+    only, whatever they held, and the run reports no omission for them."""
+    low = _batch_codes(world, "low")
+    if prior:
+        world.provider.register("csf_score", _omit(set()))
+        assert csf_run_ai(world.c, world.svc_id, world.h)["rows_omitted"] == 0
+
+    def _fails(payload: dict[str, Any]) -> bool:
+        return payload["tiers"] == ["low"] and low[0] in payload["subcategories"]
+
+    world.provider.register("csf_score", _Recorder(fail_when=_fails))
+    started = start_run(world.c, f"/csf/services/{world.svc_id}/run-ai", world.h)
+    result = get_run(world.c, started["run_id"], world.h)["result"]
+
+    assert result["batches_failed"] == 1
+    assert result["rows_omitted"] == 0
+    assert result["omitted_rows"] == []
+    assert _row(result, ("low", low[0]))["governance"] == (1 if prior else 0)
+
+
+@pytest.mark.unit
+def test_a_locked_row_left_out_is_not_counted(world) -> None:
+    high = _batch_codes(world, "high")
+    rows = world.c.get(f"/csf/services/{world.svc_id}/profile/high", headers=world.h).json()
+    sid = next(r["id"] for r in rows["rows"] if r["subcategory_code"] == high[0])
+    locked = world.c.patch(f"/csf/dimension-scores/{sid}", headers=world.h, json={"locked": True})
+    assert locked.status_code == 200, locked.text
+    world.provider.register("csf_score", _omit({("high", high[0]), ("high", high[1])}))
+    result = csf_run_ai(world.c, world.svc_id, world.h)
+
+    assert result["rows_omitted"] == 1
+    assert _omitted(result) == [("high", high[1])]
+
+
+@pytest.mark.unit
+def test_a_row_edited_during_the_run_and_left_out_is_counted(world) -> None:
+    """The model sent nothing for it, so "got no answer from the AI" stays
+    true (the recommendation pending #736's question 4). The row keeps the
+    consultant's edit. The run is held, as `test_ai_runs_csf.py` holds it, so
+    the edit lands after the run started and before its batches answer."""
+    from app.models._common import utcnow
+    from app.models.csf_profile import CsfDimensionScore
+
+    high = _batch_codes(world, "high")
+    target = ("high", high[0])
+    rows = world.c.get(f"/csf/services/{world.svc_id}/profile/high", headers=world.h).json()
+    sid = next(r["id"] for r in rows["rows"] if r["subcategory_code"] == high[0])
+    runner = defer_runs(world.c.app)
+    world.provider.register("csf_score", _omit({target}))
+    started = start_run(world.c, f"/csf/services/{world.svc_id}/run-ai", world.h)
+    with world.sessions() as s:
+        s.execute(
+            update(CsfDimensionScore)
+            .where(CsfDimensionScore.id == uuid.UUID(sid))
+            .values(governance=2, updated_at=utcnow())
+        )
+        s.commit()
+    assert runner.run_all() == 1
+    run = get_run(world.c, started["run_id"], world.h)
+    assert run["status"] == "completed", run
+    result = run["result"]
+
+    assert result["rows_omitted"] == 1
+    assert _omitted(result) == [target]
+    assert _row(result, target)["governance"] == 2, "the consultant's edit stands"
+
+
+@pytest.mark.unit
+def test_the_audit_row_carries_the_omitted_count_and_no_codes(world) -> None:
+    from app.models.audit_entry import AuditEntry
+
+    high = _batch_codes(world, "high")
+    world.provider.register("csf_score", _omit({("high", high[0]), ("high", high[1])}))
+    csf_run_ai(world.c, world.svc_id, world.h)
+
+    with world.sessions() as s:
+        entry = s.execute(select(AuditEntry).where(AuditEntry.action == "csf.run_ai")).scalar_one()
+    assert entry.details["rows_omitted"] == 2
+    assert "omitted_rows" not in entry.details
+    assert high[0] not in json.dumps(entry.details), "the audit row carries counts only"
+    assert high[1] not in json.dumps(entry.details), "the audit row carries counts only"
