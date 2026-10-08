@@ -8,7 +8,9 @@ from the `llm_calls` rows. After review it also replaces the report atomically
 after every run (so it is always either empty or one whole report holding every
 completed run), counts a started call with no row as unknown spend, refuses a
 model with no recorded price (a hard kill still writes nothing, so `--out` can stay
-empty after paid calls), records the DATABASE_URL query parameters, and
+empty after paid calls; after an interrupt during a batched job, queued batches
+can still bill, so the aborted report's call count is a lower bound; the
+`app/ai/batching.py` fix is with the advisor), records the DATABASE_URL query parameters, and
 compares two mitre_map probe runs of the same batches. No live call was made.
 What the money guard enforces: each side of a service's before/after pair gets
 half that service's cap from the $25 the advisor approved (#736 comments

@@ -73,9 +73,16 @@ run had completed even though calls may have been paid for, and a
 
 `invoke_calls_started` counts `LLMClient.invoke` ENTRIES, not provider requests:
 an entry refused before egress counts (the safe side), and an SDK retry inside
-one entry is not seen. The Anthropic SDK retries by default (`sdk_retries`,
-read from the client, 2 unless overridden) before the stream starts, and the
-`llm_calls` row records only the attempt that finished.
+one entry is not seen. The Anthropic SDK retries by default before the stream
+starts, and the `llm_calls` row records only the attempt that finished; the
+report's `sdk_retries` says how many times it may, read from the client the
+adapter will use (`source: client`).
+
+AFTER AN INTERRUPT DURING A BATCHED JOB (csf_score, mitre_map), batches already
+queued can still start, and bill, after the aborted report is written:
+`run_batches` cancels queued work only on its deadline. So an aborted report's
+`invoke_calls_started` is a LOWER BOUND, and it says so. The fix belongs in
+`app/ai/batching.py` and is with the advisor.
 
 PRICES: the dollar guard prices tokens at the configured provider and model's
 list price (`PRICES_USD_PER_MTOK`); a model with no recorded price is refused
@@ -2891,20 +2898,29 @@ def database_url_params(url: str) -> dict:
 def sdk_retries(provider: Any) -> dict:
     """How many times the provider's SDK may RETRY inside one `invoke`, which
     the `llm_calls` row does not see: it records the attempt that finished.
-    Read from the Anthropic client when one exists, else the SDK's default
-    (the adapter constructs it with no override). Other adapters are thin
-    httpx clients with no SDK retry, and `None` says the count is not one an
-    SDK reports."""
-    if getattr(provider, "name", None) == "anthropic":
-        client = getattr(provider, "_client", None)
-        if client is not None:
-            retries = client.max_retries
-        else:
-            import anthropic
 
-            retries = anthropic.DEFAULT_MAX_RETRIES
-        return {"provider": "anthropic", "max_retries": retries}
-    return {"provider": getattr(provider, "name", None), "max_retries": None}
+    For Anthropic it is read from the client the adapter will use, built now
+    through the adapter's own `_ensure_client` if it does not exist yet (it is
+    built lazily, so reading `_client` before the first call would always find
+    nothing). Building it opens no connection: with an explicit `api_key` the
+    SDK's constructor reads no environment or profile and only sets up an
+    httpx client object (`anthropic/_client.py`, `_base_client.py`; the test
+    forbids sockets while it runs). `source` says where the number came from:
+    `client`, or `sdk_default` if the adapter has no `_ensure_client`. Other
+    adapters are thin httpx clients with no SDK retry (`no_sdk`, None)."""
+    name = getattr(provider, "name", None)
+    if name == "anthropic":
+        ensure = getattr(provider, "_ensure_client", None)
+        if ensure is not None:
+            return {"provider": name, "max_retries": ensure().max_retries, "source": "client"}
+        import anthropic
+
+        return {
+            "provider": name,
+            "max_retries": anthropic.DEFAULT_MAX_RETRIES,
+            "source": "sdk_default",
+        }
+    return {"provider": name, "max_retries": None, "source": "no_sdk"}
 
 
 def _dump_json(obj: Any, fh: Any) -> None:
@@ -2994,8 +3010,15 @@ class _ReportFile:
         report["aborted"] = {
             "exception": type(exc).__name__,
             "after_runs": len(self.records),
-            "note": "a run under way when this happened is not in `runs`; "
-            "`invoke_calls_started` counts its calls",
+            "run_in_progress": "a run under way when this happened is not in `runs`; "
+            "its calls are in `invoke_calls_started`",
+            # #952 round 4, F1: `run_batches` cancels queued batches only on its
+            # deadline, so after an interrupt during a batched job (csf_score,
+            # mitre_map) they can still start -- and bill -- after this report
+            # is written. The fix is in app/ai/batching.py, with the advisor.
+            "invoke_calls_started_is_a_lower_bound": "for a batched job (csf_score, "
+            "mitre_map), queued batches can still start, and bill, after an interrupt "
+            "and after this report was written, so invoke_calls_started is a lower bound",
         }
         try:
             self.write(report)

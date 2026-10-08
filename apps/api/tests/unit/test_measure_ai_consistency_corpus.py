@@ -1015,19 +1015,54 @@ def test_the_cost_caps_are_section_2s_table_and_total_the_approved_25() -> None:
     assert sum(COST_CAPS_USD.values()) == 25
 
 
-def test_the_sdk_retries_are_read_from_the_anthropic_client() -> None:
-    # One `invoke` records only the attempt that finished; the SDK may have
-    # retried before the stream started. The report says how many it may.
+def test_count_calls_reads_the_retries_from_the_real_anthropic_client(monkeypatch) -> None:
+    """#952 round 4, F2: through `count_calls` on a real `AnthropicProvider`
+    whose client does not exist yet (it is built lazily). The client is built
+    then, with no network: any attempt to open a socket fails this test."""
+    import socket
+    from pathlib import Path as _Path
+
+    import anthropic
+    from scripts.measure_ai_consistency import _ReportFile
+
+    from app.ai.llm import AnthropicProvider, LLMClient
+
+    def no_network(*a, **kw):
+        raise AssertionError("building the client opened a connection")
+
+    monkeypatch.setattr(socket, "create_connection", no_network)
+    monkeypatch.setattr(socket.socket, "connect", no_network)
+    provider = AnthropicProvider(model="claude-opus-5", api_key="test-not-a-key")
+    assert provider._client is None, "precondition: the client is built lazily"
+    rf = _ReportFile(
+        _Path("unused.json"),
+        "zt_score",
+        1.5,
+        {"provider": "anthropic", "model": "claude-opus-5", "usd_per_mtok": OPUS5},
+        {"query": {}, "sqlite_timeout": None},
+    )
+    rf.count_calls(LLMClient(provider))
+    assert rf.sdk_retries == {
+        "provider": "anthropic",
+        "max_retries": anthropic.DEFAULT_MAX_RETRIES,
+        "source": "client",
+    }
+
+
+def test_sdk_retries_reports_an_override_on_the_client_and_none_without_an_sdk() -> None:
     import anthropic
     from scripts.measure_ai_consistency import sdk_retries
 
     from app.ai.llm import AnthropicProvider
 
     provider = AnthropicProvider(model="claude-opus-5", api_key="test-not-a-key")
-    assert sdk_retries(provider)["max_retries"] == anthropic.DEFAULT_MAX_RETRIES
     provider._client = anthropic.Anthropic(api_key="test-not-a-key", max_retries=7)
     assert sdk_retries(provider)["max_retries"] == 7
-    assert sdk_retries(FixtureProvider())["max_retries"] is None
+    assert sdk_retries(FixtureProvider()) == {
+        "provider": "fixture",
+        "max_retries": None,
+        "source": "no_sdk",
+    }
 
 
 def test_the_price_table_holds_only_cited_prices() -> None:
@@ -1598,6 +1633,11 @@ def test_an_interrupt_after_a_paid_run_keeps_that_run(main_world) -> None:
     report = json.loads(out.read_text(encoding="utf-8"))
     assert report["status"] == "aborted"
     assert report["aborted"]["exception"] == "KeyboardInterrupt"
+    # #952 round 4, F1: queued batches can still start, and bill, after an
+    # interrupt, so the count here is a lower bound, and the report says so.
+    bound = report["aborted"]["invoke_calls_started_is_a_lower_bound"]
+    assert "lower bound" in bound
+    assert "queued batches can still start" in bound
     assert [r["run"] for r in report["runs"]] == [1]
     assert report["runs"][0]["output_tokens"] == 5
     assert report["invoke_calls_started"] == 2
