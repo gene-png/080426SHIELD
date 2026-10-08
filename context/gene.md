@@ -1,5 +1,13 @@
 # Gene — in-flight status
 
+_2026-10-08 (track4): #839, the DoD catalog (#838 PR 3), is pushed on
+`track4/zt-dod-catalog` with the F1 guard, S1 to S4 and the demo seed fix
+(#736 comments 6048561596 and 6049667540), and is waiting for a full
+adversarial review before its PR opens as a draft. It comes back to you under
+conditions 4, 5 and 6. The nine earlier existing-test edits were approved in
+#736 comment 6046898402, the two F1 test edits in 6049667540, and ruling 4's
+source-note line in 6047873969. D-109 records the decisions._
+
 _2026-10-08: #835 (with #927 folded in) built on
 `track3/835-bundle-components`, draft PR #936; review in progress, not merged._
 

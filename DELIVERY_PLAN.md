@@ -82,6 +82,22 @@ sizes marked coarse.
 
 Track work outside that list is paused.
 
+**2026-10-07: #839 is implemented (`mvp-blocking`, `tier-2`) and lands with the #838 PR 3 PR.** The status here is as written before it merged.
+The DoD Zero Trust catalog follows the DoD CIO's 2025 roadmap (25-T-1465), with
+migration 0064 and per-capability target caps that the gap engine and Risk
+synthesis both apply. Every DoD deliverable carries the approved source note and
+ruling 4's line beside it. No write path stores a stage above a capability's
+maximum; a stage stored before that is disclosed on every surface, and the Risk
+Register states which targets the cap lowered.
+The decision record is **D-109**; the narrative is in
+`context/entries/2026-10-07-839-dod-catalog.md`. The PR goes to Gene: it trips
+merge-rule conditions 4 (migration 0064), 5 and 6.
+
+**#838 stays open** for its PR 4. **#839 is closed by hand** when this PR
+merges; the body carries no closing keyword. No estimate row changes and no
+total moves, because #839 owns no item in the table below. The board is the
+list.
+
 **2026-10-08: #835 (`tier-2`, on the board) is IN REVIEW as draft PR #936, with
 #927 folded in. Not merged.** A Tech Debt bundle split into named parts no
 longer reads as separately costed tools: client spend is not turned into a

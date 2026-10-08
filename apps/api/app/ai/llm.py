@@ -303,7 +303,7 @@ _MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
     # one live run failed on stop_reason=max_tokens and the retry finished at
     # 8117 of 8192.
     "extract.capabilities": 64000,
-    # zt_score is small: 37-50 capabilities, three short fields each, no
+    # zt_score is small: 37-45 capabilities, three short fields each, no
     # narrative since #64 removed three unconsumed ones. Its 2026-08-04 overrun
     # at 4096 was with those narratives, and the 2026-07-15 one at 8192 was
     # unbounded gemini thinking, now capped at _THINKING_BUDGET_TOKENS. So 8192

@@ -90,6 +90,8 @@ from app.risk.engine import (
     matrix_counts,
     tier_counts,
 )
+from app.risk.zt_capped import capped_target_codes as risk_capped_target_codes
+from app.risk.zt_capped import capped_target_sentence as risk_capped_target_sentence
 from app.routes.attack import client_retirement_index
 from app.schemas.clients import (
     AttackDashboardResponse,
@@ -123,6 +125,8 @@ from app.tech_debt.savings import estimated_savings
 from app.zt.catalog import capability_by_code as zt_capability_by_code
 from app.zt.maturity import ZtFrameworkCode
 from app.zt.maturity import stage_label as zt_stage_label
+from app.zt.retired import retired_answer_count as zt_retired_answer_count
+from app.zt.retired import retired_sentence as zt_retired_sentence
 from app.zt.scoring import analyze_gaps as zt_analyze_gaps
 from app.zt.scoring import compute as zt_compute
 from app.zt.scoring import effective_target_stages as zt_effective_target_stages
@@ -130,6 +134,8 @@ from app.zt.scoring import (
     engagement_target_capability_count as zt_engagement_target_capability_count,
 )
 from app.zt.scoring import resolve_target_stage as zt_resolve_target_stage
+from app.zt.target_caps import stage_above_max_sentences as zt_stage_above_max_sentences
+from app.zt.target_caps import target_cap_sentences as zt_target_cap_sentences
 
 router = APIRouter(prefix="/clients", tags=["clients"])
 
@@ -1577,6 +1583,13 @@ def zt_dashboard(
         # would be worse than most -- the screen and the PDF would be stating
         # different facts about one assessment.
         unusable_target_codes=list(gap_analysis.unusable_target_codes),
+        # #839: off the same GapAnalysis, as #188's field above.
+        target_cap_notes=zt_target_cap_sentences(gap_analysis),
+        # #914: the same derivation the workspace and the three files call.
+        retired_answers=zt_retired_answer_count(fw, rows),
+        retired_answers_note=zt_retired_sentence(fw, zt_retired_answer_count(fw, rows)),
+        # #839 S1: from the same stored answers every figure above read.
+        stage_above_max_notes=zt_stage_above_max_sentences(fw, answers),
         total_gap_count=gap_analysis.total_gap_count,
         largest_gap_pillar=largest.name if largest else None,
         largest_gap_pct=largest.gap_pct if largest else 0.0,
@@ -1994,6 +2007,8 @@ def risk_dashboard(
             )
             for e in entries
         ],
+        # #915: the same reader and sentence as the register and its files.
+        zt_capped_target_note=risk_capped_target_sentence(risk_capped_target_codes(reg.provenance)),
     )
 
 

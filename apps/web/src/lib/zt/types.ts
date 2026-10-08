@@ -120,7 +120,9 @@ export interface ZtDroppedSuggestion {
     | "superseded"
     | "locked"
     | "protected"
-    | "edited";
+    | "edited"
+    // #839 F1: a current stage above the capability's own maximum.
+    | "stage_above_capability_max";
   /** The capability code exactly as the model wrote it, or null. */
   key: string | null;
   /** "current" or "target", for drops attributable to one value. */
@@ -199,6 +201,10 @@ export interface GapAnalysis {
   gap_count_by_pillar: Record<string, number>;
   gaps: GapItem[];
   roadmap?: RoadmapEntry[];
+  /** #839: the API's own C1/C2 sentences for the DoD target caps. */
+  target_cap_notes?: string[];
+  /** #839 S1: the API's own sentence per stored stage above its maximum. */
+  stage_above_max_notes?: string[];
 }
 
 export interface RoadmapEntry {

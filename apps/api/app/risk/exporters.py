@@ -93,6 +93,9 @@ class RiskExportContext:
     #: #554 R3, option (b): ATT&CK codes whose computed status awaited review
     #: at generate; the source cell says so.
     review_pending: frozenset[str] = frozenset()
+    #: #915 (S3): the approved sentence for the DoD target cap, from
+    #: `risk/zt_capped.py`, or None when nothing was lowered or recorded.
+    zt_capped_target_note: str | None = None
 
 
 def _enum_list(values, enum_cls):
@@ -117,6 +120,7 @@ def build_context(
     draft: bool = False,
     source_states: dict[str, str] | None = None,
     review_pending: frozenset[str] = frozenset(),
+    zt_capped_target_note: str | None = None,
 ) -> RiskExportContext:
     return RiskExportContext(
         client_legal_name=org_display_name(client_legal_name),
@@ -127,6 +131,7 @@ def build_context(
         draft=draft,
         source_states=dict(source_states or {}),
         review_pending=review_pending,
+        zt_capped_target_note=zt_capped_target_note,
     )
 
 
@@ -437,6 +442,8 @@ def _summary_lines(ctx: RiskExportContext) -> list[str]:
         *_missing_line(total, total - len(actions), "no recommended action"),
         *_finding_lines(ctx.finding_counts),
         *_link_scope_lines(ctx),
+        # #915 (S3), beside the scored-coverage disclosure; one line, or none.
+        *([ctx.zt_capped_target_note] if ctx.zt_capped_target_note else []),
     ]
 
 

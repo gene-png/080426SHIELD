@@ -277,7 +277,7 @@ const ZT_STAGES: Record<
   // `AssessmentsView` is NOT in that population -- it maps this array into
   // <option>s in a creation form and never looks up a stored value's label.
   zero_trust_dod: [
-    { value: 1, label: "Stage 1 · Not Started" },
+    { value: 1, label: "Stage 1 · Below Target" },
     { value: 2, label: "Stage 2 · Target" },
     { value: 3, label: "Stage 3 · Advanced" },
   ],
