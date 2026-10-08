@@ -111,13 +111,16 @@ TOOLS = ["CrowdStrike Falcon", "Splunk Enterprise", "Veeam Backup"]
 
 
 def _payload(n: int, *, tools: list[str] = TOOLS) -> dict:
-    """`n` codes, every third one not preventable. The codes are synthetic, so
-    the fixture can only learn `not_preventable` from `technique_details`."""
+    """`n` codes, every other one not preventable. The codes are synthetic, so
+    the fixture can only learn `not_preventable` from `technique_details`.
+    Every other, not every third: the fixture's partial rows recur every 15
+    codes, so a stride of three would never put a not-preventable code on the
+    row where it would choose `prevention_limited`."""
     codes = [f"T{1000 + i}" for i in range(n)]
     return {
         "technique_codes": codes,
         "technique_details": {
-            c: {"name": f"Technique {c}", "not_preventable": i % 3 == 0}
+            c: {"name": f"Technique {c}", "not_preventable": i % 2 == 0}
             for i, c in enumerate(codes)
         },
         "capability_list": [{"name": t, "vendor": "V", "category": "C"} for t in tools],
@@ -176,7 +179,7 @@ def test_the_fixture_answers_in_the_prompts_shape_and_nothing_else() -> None:
 
 
 def test_every_fixture_row_follows_the_prompts_status_and_reason_rules() -> None:
-    payload = _payload(30)
+    payload = _payload(50)
     details = payload["technique_details"]
     seen_status: set[str] = set()
     seen_reason: set[str] = set()
