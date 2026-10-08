@@ -257,50 +257,9 @@ def _fixture_csf_score(payload: dict[str, Any]) -> LLMResponse:
 #     yet deployed, inactive or no longer used is `security_related: false` with
 #     no functions, its note beginning with exactly the not-in-use prefix;
 #   - section 8: confidence is 100, 90 or 60, and every 60 has a note.
+#   - section 10: no rows (missing, not an array, or empty) is {"items":[]}.
 # Costs and licence counts stay null, as before: the fixture drafts the
 # classification, and offline demo totals are not its job.
-
-_DEMO_TECH_DEBT_ITEMS: list[dict[str, Any]] = [
-    {
-        "name": "CrowdStrike Falcon",
-        "vendor": "CrowdStrike",
-        "category": "EDR/XDR",
-        "function": "Endpoint detection and response.",
-        "annual_cost_usd": 120000,
-        "license_count": 500,
-        "notes": None,
-        "security_related": True,
-        "security_functions": ["prevent", "detect", "respond"],
-        "confidence_pct": 90,
-        "source_row_index": 0,
-    },
-    {
-        "name": "Splunk Enterprise",
-        "vendor": "Splunk",
-        "category": "SIEM/SOAR",
-        "function": "Log aggregation and security analytics.",
-        "annual_cost_usd": 200000,
-        "license_count": None,
-        "notes": None,
-        "security_related": True,
-        "security_functions": ["detect"],
-        "confidence_pct": 90,
-        "source_row_index": 1,
-    },
-    {
-        "name": "Okta",
-        "vendor": "Okta",
-        "category": "IAM/PAM",
-        "function": "Identity and single sign-on.",
-        "annual_cost_usd": 60000,
-        "license_count": 500,
-        "notes": None,
-        "security_related": True,
-        "security_functions": ["prevent"],
-        "confidence_pct": 90,
-        "source_row_index": 2,
-    },
-]
 
 _TECH_DEBT_NAME_KEYS = ("name", "product", "tool", "capability", "vendor_product", "item")
 
@@ -361,7 +320,11 @@ def _v32_category(row: dict[str, Any]) -> tuple[str | None, str | None]:
 def _fixture_tech_debt(payload: dict[str, Any]) -> LLMResponse:
     rows = payload.get("rows")
     if not (isinstance(rows, list) and rows):
-        return _resp({"items": _DEMO_TECH_DEBT_ITEMS})
+        # v3.2 section 10: "If `rows` is missing, is not an array, or contains no
+        # identifiable capabilities, return exactly: {"items":[]}". This branch
+        # used to invent three costed demo capabilities (advisor ruling F3,
+        # issue 736 comment 6069328834).
+        return _resp({"items": []})
     items: list[dict[str, Any]] = []
     for i, row in enumerate(rows):
         row = row if isinstance(row, dict) else {}
