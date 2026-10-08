@@ -124,6 +124,7 @@ from app.zt.scoring import (
 from app.zt.scoring import compute as compute_score
 from app.zt.target_caps import (
     STAGE_ABOVE_CAPABILITY_MAX,
+    max_stage_for,
     stage_above_max_message,
     stage_above_max_sentences,
     target_cap_sentences,
@@ -253,7 +254,9 @@ def _as_number(raw: Any) -> float | None:
     return None
 
 
-def _validated_stage(raw: Any, max_stage: int) -> tuple[int | None, str | None]:
+def _validated_stage(
+    raw: Any, max_stage: int, capability_max: int | None = None
+) -> tuple[int | None, str | None]:
     """A suggested maturity stage as the zt_score apply path would STORE it:
     `(stage, None)`, or `(None, reason)` with the `ZtDroppedSuggestion` reason
     it is refused for. ONE statement of the rule, called by `_zt_run_work` and
@@ -266,6 +269,14 @@ def _validated_stage(raw: Any, max_stage: int) -> tuple[int | None, str | None]:
     and out-of-range is the more useful thing to say. It also keeps `inf`/`nan`
     away from `int()`. Extracted unchanged from the inline checks
     `_zt_run_work` carried; the order and the reasons are the same.
+
+    `capability_max`, when given, is the capability's own maximum
+    (`target_caps.max_stage_for`), checked LAST: a whole stage on the ladder
+    but above it is refused as `stage_above_capability_max`, the reason the
+    PATCH routes give (#839 F1). Callers pass it for a maturity (`current`)
+    stage only; a target above it is stored and disclosed (C1). Both callers
+    pass it, so a run and the measure refuse the same values (the #867
+    hand-off, which #839 owed by merging second).
     """
     n = _as_number(raw)
     if n is None:
@@ -274,6 +285,8 @@ def _validated_stage(raw: Any, max_stage: int) -> tuple[int | None, str | None]:
         return None, "out_of_range"
     if n != int(n):
         return None, "unparseable"
+    if capability_max is not None and int(n) > capability_max:
+        return None, STAGE_ABOVE_CAPABILITY_MAX
     return int(n), None
 
 
@@ -890,9 +903,17 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
         # handing the settlement loop a row the model never wrote.
         for field in fields:
             raw = sugg[field]
-            # Parse, range, wholeness, in that order: `_validated_stage`, the
-            # one statement of the rule, also called by the consistency measure.
-            stage, refusal = _validated_stage(raw, max_stage)
+            # Parse, range, wholeness, then the capability's own maximum for a
+            # maturity stage (#839 F1: the PATCH routes refuse a stage above
+            # it, so a suggestion of one is refused the same way, never
+            # stored). `_validated_stage`, the one statement of the rule, also
+            # called by the consistency measure with the same maximum.
+            capability_max = (
+                max_stage_for(_to_catalog_framework(a.framework), raw_code)
+                if field == "current"
+                else None
+            )
+            stage, refusal = _validated_stage(raw, max_stage, capability_max)
             if refusal is not None:
                 # `values=field_values[field]`, NOT 1. `received` charged this
                 # key every leaf it hides, so a flat 1 here drops the rest out
@@ -910,25 +931,6 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
                     )
                 )
                 continue
-            # #839 F1: the PATCH routes refuse a maturity stage above the
-            # capability's own maximum (`_refuse_stage_above_capability_max`),
-            # so a suggestion of one is refused the same way, never stored.
-            if (
-                field == "current"
-                and stage_above_max_message(_to_catalog_framework(a.framework), raw_code, int(n))
-                is not None
-            ):
-                dropped.append(
-                    ZtDroppedSuggestion(
-                        reason=STAGE_ABOVE_CAPABILITY_MAX,
-                        key=key,
-                        field=field,
-                        value=_bounded(raw),
-                        values=field_values[field],
-                    )
-                )
-                continue
-
             slot = (raw_code, field)
             if slot in written:
                 # Names the value that was LOST, not the one that won.
