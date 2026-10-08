@@ -1,6 +1,35 @@
 import { describe, expect, it } from "vitest";
 
-import { TARGETS_NOT_RECORDED, targetSentences } from "./baseline";
+import {
+  TARGETS_NOT_RECORDED,
+  scopeLabel,
+  targetSentences,
+  unitOf,
+} from "./baseline";
+
+/**
+ * Expected values PRINTED BY the Python labeller, `scope_label` and
+ * `_TARGET_UNITS.get(key.partition(":")[0], "level")` in
+ * `app/risk/exporters.py`, run over these keys on 2026-10-08. Not read from
+ * this module's constants: the point is that the screen and the PDF agree.
+ */
+const PYTHON_SCOPE_LABELS: [key: string, label: string, unit: string][] = [
+  ["csf", "NIST CSF", "tier"],
+  ["zt", "Zero Trust", "stage"],
+  ["attack", "ATT&CK coverage", "level"],
+  ["zt:cisa_ztmm_2_0", "Zero Trust (CISA ZTMM 2.0)", "stage"],
+  ["zt:dod_ztra", "Zero Trust (DoD ZT Reference Architecture)", "stage"],
+  ["zt:unknown", "zt:unknown", "stage"],
+  ["zt:dod_ztra:x", "zt:dod_ztra:x", "stage"],
+  ["constructor", "constructor", "level"],
+];
+
+describe("scopeLabel and unitOf match the export's labeller", () => {
+  it.each(PYTHON_SCOPE_LABELS)("%s -> %s, %s", (key, label, unit) => {
+    expect(scopeLabel(key)).toBe(label);
+    expect(unitOf(key)).toBe(unit);
+  });
+});
 
 describe("targetSentences (#474)", () => {
   it("names each service's target and why, in the export's words", () => {

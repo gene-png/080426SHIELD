@@ -186,7 +186,8 @@ def test_two_zero_trust_services_each_name_their_framework_in_every_file(
     targets = {t["service"]: t["target"] for t in _latest(c, bearer, cid)["targets"]}
     assert set(targets) == set(_ZT_LABELS), targets  # the positive state first
     texts = _export_texts(c, bearer, cid)
-    for fmt in ("pdf", "docx"):
+    # All three files: the XLSX summary sheet prints `_summary_lines` too.
+    for fmt in ("pdf", "docx", "xlsx"):
         text = " ".join(texts[fmt].split())
         for key, label in _ZT_LABELS.items():
             assert f"{label} findings are measured against target stage {targets[key]}," in text, (

@@ -12,40 +12,64 @@ export interface RiskTargetUsed {
   origin: string;
 }
 
-const LABELS: Record<string, string> = {
-  csf: "NIST CSF",
-  zt: "Zero Trust",
-};
-const UNITS: Record<string, string> = { csf: "tier", zt: "stage" };
+/**
+ * Service tokens as the API spells them (#403), and (#876) the Zero Trust
+ * frameworks by the names the ZT deliverable prints, for the scope keys the
+ * Risk Register records: "zt" while a kind has one source, "zt:<framework>"
+ * when it has two.
+ *
+ * THE ONE WEB COPY of `_SERVICE_LABELS`, `ZT_FRAMEWORK_NAMES` and
+ * `scope_label` in `app/risk/exporters.py`, which label the same keys in the
+ * client's PDF, Word file and workbook. A Python dict cannot be shared with
+ * TypeScript, so this is a synchronization rather than a derivation. Change
+ * both, or the files and the screens name an assessment differently.
+ * `lib/risk/baseline.test.ts` pins this module to values the Python printed.
+ *
+ * Maps rather than object literals, so a key like "constructor" is not found
+ * on the prototype: the Python `dict` lookups this mirrors see own keys only.
+ */
+const SERVICE_LABELS: ReadonlyMap<string, string> = new Map([
+  ["attack", "ATT&CK coverage"],
+  ["csf", "NIST CSF"],
+  ["zt", "Zero Trust"],
+]);
+
+const ZT_FRAMEWORK_NAMES: ReadonlyMap<string, string> = new Map([
+  ["cisa_ztmm_2_0", "CISA ZTMM 2.0"],
+  ["dod_ztra", "DoD ZT Reference Architecture"],
+]);
+
+/** #474. The word each kind's target takes; `_TARGET_UNITS` in the export. */
+const UNITS: ReadonlyMap<string, string> = new Map([
+  ["csf", "tier"],
+  ["zt", "stage"],
+]);
+
+/** Python's `str.partition(":")`: split on the FIRST colon only. */
+function partition(key: string): [kind: string, qualifier: string] {
+  const at = key.indexOf(":");
+  return at === -1 ? [key, ""] : [key.slice(0, at), key.slice(at + 1)];
+}
 
 /**
- * #876: with two Zero Trust services the key is "zt:<framework>". The client
- * dashboard has no link-scope label function to reuse, so this is a PORT of
- * `scope_label` in `app/risk/exporters.py` (the export's own labeller) and of
- * `scopeLabel` in `components/admin/risk/RiskRegisterDashboard.tsx`, with the
- * same two framework names. Change all three together, or the client's PDF
- * and this screen name a framework differently.
+ * A scope key's label, as `scope_label` gives it. An unknown key renders as
+ * itself: a row that vanished from a disclosure would be the failure the
+ * disclosure exists to prevent, and an ugly token is merely ugly.
  */
-const ZT_FRAMEWORK_NAMES: Record<string, string> = {
-  cisa_ztmm_2_0: "CISA ZTMM 2.0",
-  dod_ztra: "DoD ZT Reference Architecture",
-};
-
-function scopeLabel(key: string): string {
-  const known = LABELS[key];
+export function scopeLabel(key: string): string {
+  const known = SERVICE_LABELS.get(key);
   if (known !== undefined) return known;
-  const [kind, qualifier] = key.split(":", 2);
-  const kindLabel = LABELS[kind];
-  const fw =
-    qualifier === undefined ? undefined : ZT_FRAMEWORK_NAMES[qualifier];
+  const [kind, qualifier] = partition(key);
+  const kindLabel = SERVICE_LABELS.get(kind);
+  const fw = ZT_FRAMEWORK_NAMES.get(qualifier);
   return kindLabel !== undefined && fw !== undefined
     ? `${kindLabel} (${fw})`
     : key;
 }
 
 /** The unit is the KIND's, so a framework-qualified key keeps "stage". */
-function unitOf(key: string): string {
-  return UNITS[key.split(":", 1)[0]] ?? "level";
+export function unitOf(key: string): string {
+  return UNITS.get(partition(key)[0]) ?? "level";
 }
 
 export const TARGETS_NOT_RECORDED =
