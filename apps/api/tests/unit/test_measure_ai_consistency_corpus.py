@@ -1710,6 +1710,78 @@ def test_an_in_progress_report_between_runs_is_complete(main_world) -> None:
     assert during["price_basis"]["usd_per_mtok"] == {"input": 5, "output": 25}
 
 
+def _main_env(monkeypatch, TestSession, provider) -> None:
+    """`main` against a world's database and provider (see `main_world`)."""
+    from app.ai.llm import LLMClient as _Client
+    from app.config import get_settings
+
+    monkeypatch.setenv("SHIELD_LLM_MODE", "live")
+    monkeypatch.setenv("SHIELD_LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-not-a-key")
+    monkeypatch.setenv("SHIELD_REDACTION_MODE", "strict")
+    monkeypatch.setenv("SHIELD_LLM_MODEL", "claude-opus-5")
+    get_settings.cache_clear()
+    monkeypatch.setattr("app.db.session.SessionLocal", TestSession)
+    monkeypatch.setattr(_Client, "from_db", classmethod(lambda cls, db, s=None: _Client(provider)))
+
+
+def test_a_batched_job_refused_in_setup_leaves_no_file(cli, capsys) -> None:
+    # A typed refusal is raised in a measure's setup, before any batch is
+    # queued, so nothing can bill: the reserved file goes, batched or not.
+    state, out = cli
+    assert main(["--job", "csf_score", "--runs", "2", "--out", str(out)]) == 2
+    assert "REFUSED (measure_reached)" in capsys.readouterr().err
+    assert state["built"] == [True]
+    assert not out.exists()
+
+
+def test_a_batched_job_interrupted_before_the_provider_exists_leaves_no_file(
+    cli, monkeypatch
+) -> None:
+    # No provider was built, so nothing can have been queued or billed.
+    from app.ai.llm import LLMClient as _Client
+
+    state, out = cli
+
+    def interrupted(cls, db, settings=None):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(_Client, "from_db", classmethod(interrupted))
+    with pytest.raises(KeyboardInterrupt):
+        main(["--job", "mitre_map", "--runs", "2", "--out", str(out)])
+    assert not out.exists()
+
+
+def test_a_batched_interrupt_before_any_invoke_keeps_the_report(
+    csf_world, monkeypatch, tmp_path
+) -> None:
+    """#952 round 5: Ctrl-C after csf_score's batches are submitted and before
+    any worker has entered `invoke` (workers do session and `run_job` setup
+    first). Zero calls started, yet the queued batches can still bill, so the
+    report is KEPT, aborted, with the lower-bound note -- never unlinked."""
+    from app.config import get_settings
+
+    c, TestSession, provider = csf_world
+    provider.register("csf_score", _csf_answer_all([]))
+    _main_env(monkeypatch, TestSession, provider)
+
+    def interrupted(*a, **kw):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("app.ai.batching.run_batches", interrupted)
+    out = tmp_path / "csf.json"
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            main(["--job", "csf_score", "--runs", "2", "--out", str(out)])
+    finally:
+        get_settings.cache_clear()
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert report["status"] == "aborted"
+    assert report["invoke_calls_started"] == 0
+    assert report["spent_usd_complete"] is False
+    assert "lower bound" in report["aborted"]["invoke_calls_started_is_a_lower_bound"]
+
+
 # --- the ATT&CK probe, compared (#736 comment 6068587667) ---------------------------
 
 

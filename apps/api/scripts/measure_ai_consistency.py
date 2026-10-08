@@ -66,7 +66,11 @@ empty (no run has completed yet) or one whole JSON report: the last one written,
 holding every run completed before that write. A crash or Ctrl-C after any
 provider call was started replaces it with a report marked `aborted`; if even
 that write fails, the last in-progress report stays. The file is removed only
-when no provider call was started at all. A HARD KILL (SIGKILL, the OOM killer)
+when nothing can have been spent: a failure before the provider was built, a
+typed refusal (raised only in a measure's setup, before any batch is queued)
+with no call started, or a single-call job (zt_score, tech_debt_extract) that
+never entered `invoke`. A batched job's file is never removed on an interrupt, even at zero
+calls (see below). A HARD KILL (SIGKILL, the OOM killer)
 runs no handler: nothing marks the report `aborted`, `--out` stays EMPTY if no
 run had completed even though calls may have been paid for, and a
 `.<name>.*.tmp` file may be left beside it.
@@ -81,8 +85,10 @@ adapter will use (`source: client`).
 AFTER AN INTERRUPT DURING A BATCHED JOB (csf_score, mitre_map), batches already
 queued can still start, and bill, after the aborted report is written:
 `run_batches` cancels queued work only on its deadline. So an aborted report's
-`invoke_calls_started` is a LOWER BOUND, and it says so. The fix belongs in
-`app/ai/batching.py` and is with the advisor.
+`invoke_calls_started` is a LOWER BOUND, and it says so -- even when it is 0,
+because the interrupt can land after the batches were queued and before any
+worker entered `invoke`; the report is kept, and its `spent_usd_complete` is
+false. The fix belongs in `app/ai/batching.py` and is with the advisor.
 
 PRICES: the dollar guard prices tokens at the configured provider and model's
 list price (`PRICES_USD_PER_MTOK`); a model with no recorded price is refused
@@ -2862,9 +2868,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         # last in-progress report on disk, never a half-written one.
         report_file.write(report)
     except BaseException as exc:
-        if report_file.invoke_calls_started == 0:
-            # No provider call was even started: nothing was spent, and there
-            # is no run to keep. The file this run reserved empty goes.
+        refused_in_setup = isinstance(exc, Refused) and report_file.invoke_calls_started == 0
+        if (
+            not report_file.provider_built
+            or refused_in_setup
+            or (args.job not in _BATCHED_JOBS and report_file.invoke_calls_started == 0)
+        ):
+            # Nothing can have been spent: no provider existed yet; or a typed
+            # refusal, which every measure raises only in its setup, before any
+            # batch is queued; or a single-call job never entered `invoke`.
+            # The file this run reserved empty goes. A BATCHED job interrupted
+            # any other way is never unlinked (#952 round 5): an interrupt after
+            # its batches were queued and before any worker entered `invoke`
+            # reads 0 calls, and the queued batches can still start and bill.
             Path(args.out).unlink()
         else:
             # #952 review F2: something may have been billed. Keep every
@@ -2903,8 +2919,9 @@ def sdk_retries(provider: Any) -> dict:
     through the adapter's own `_ensure_client` if it does not exist yet (it is
     built lazily, so reading `_client` before the first call would always find
     nothing). Building it opens no connection: with an explicit `api_key` the
-    SDK's constructor reads no environment or profile and only sets up an
-    httpx client object (`anthropic/_client.py`, `_base_client.py`; the test
+    SDK's constructor reads no credentials (it still reads settings such as
+    ANTHROPIC_BASE_URL and ANTHROPIC_CUSTOM_HEADERS, and the profile pointer
+    for a warning) and only sets up an httpx client object (`anthropic/_client.py`, `_base_client.py`; the test
     forbids sockets while it runs). `source` says where the number came from:
     `client`, or `sdk_default` if the adapter has no `_ensure_client`. Other
     adapters are thin httpx clients with no SDK retry (`no_sdk`, None)."""
@@ -2950,6 +2967,8 @@ class _ReportFile:
         self.price = price_basis["usd_per_mtok"]
         self.database_url = database_url
         self.counter: Any = None
+        self.provider_built = False
+        self.batched = job in _BATCHED_JOBS
         self.sdk_retries: dict | None = None
         self.records: list[RunRecord] = []
 
@@ -2958,6 +2977,7 @@ class _ReportFile:
         return 0 if self.counter is None else self.counter.n
 
     def count_calls(self, llm: Any) -> None:
+        self.provider_built = True
         self.counter = _InvokeCounter(llm)
         self.sdk_retries = sdk_retries(llm.provider)
 
@@ -2991,8 +3011,10 @@ class _ReportFile:
             "status": status,
             "runs": rows,
             "spent_usd": round(sum(known), 6),
+            # An aborted batched job may still have queued batches to bill.
             "spent_usd_complete": len(known) == len(rows)
-            and self.invoke_calls_started <= accounted,
+            and self.invoke_calls_started <= accounted
+            and not (status == "aborted" and self.batched),
             "max_usd": self.max_usd,
             "price_basis": self.price_basis,
             "database_url": self.database_url,

@@ -9,7 +9,8 @@ after every run (so it is always either empty or one whole report holding every
 completed run), counts a started call with no row as unknown spend, refuses a
 model with no recorded price (a hard kill still writes nothing, so `--out` can stay
 empty after paid calls; after an interrupt during a batched job, queued batches
-can still bill, so the aborted report's call count is a lower bound; the
+can still bill, so the aborted report is always kept and its call count is a
+lower bound, even at 0; the
 `app/ai/batching.py` fix is with the advisor), records the DATABASE_URL query parameters, and
 compares two mitre_map probe runs of the same batches. No live call was made.
 What the money guard enforces: each side of a service's before/after pair gets
