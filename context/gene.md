@@ -4,11 +4,14 @@ _2026-10-08: #852 (CSF catalog corrected toward NIST CSWP 29, not yet
 source-pinned) is draft PR #940 on `track5/852-csf-cswp29`; D-110, migration
 0065._
 
-**Before merge, Gene:** confirm the D-107 precondition (no real client
-onboarded), and supply NIST CSWP 29 for the source test; #852 stays open until
-that test lands. `apps/api/scripts/count_csf_retired_rows.py` (read-only)
-measures the reach on the dev database. #925 landed first with its own 0064
-and D-109, so this PR is migration 0065 and D-110.
+**Before merge:** nothing left from you. The D-107 precondition is confirmed
+("no real client data has been onboarded", #736 comment 6060587658, recorded
+in D-110). Separately, the NIST CSWP 29 PDF is supplied; it never blocked the
+merge, and #852 is closed by hand once the source test against it lands. The PR
+still comes back to you, not self-merged: merge-rule conditions 4 (migration
+0065), 5 and 6. `apps/api/scripts/count_csf_retired_rows.py` (read-only)
+measures the reach on the dev database. #925 landed first with its own 0064 and
+D-109, so this PR is migration 0065 and D-110.
 
 _2026-10-08 (track4): #839, the DoD catalog (#838 PR 3), is pushed on
 `track4/zt-dod-catalog` with the F1 guard, S1 to S4 and the demo seed fix
