@@ -27,7 +27,7 @@ from app.zt.catalog import capabilities, pillars
 from app.zt.maturity import ZtFrameworkCode, stage_label
 from app.zt.retired import retired_answer_count, retired_sentence
 from app.zt.scoring import GapAnalysis, ScoreResult
-from app.zt.target_caps import target_cap_sentences
+from app.zt.target_caps import stage_above_max_sentences, target_cap_sentences
 
 if TYPE_CHECKING:
     from reportlab.platypus import TableStyle
@@ -217,6 +217,14 @@ _DOD_SOURCE_NOTE = (
 _DOD_AS_PUBLISHED = "Activity descriptions are reproduced as published."
 
 
+def _stage_above_max_notes(ctx: ZtDeliverableContext) -> list[str]:
+    """#839 S1: the stored answers this document was rendered from, through the
+    one derivation the workspace and the dashboard call."""
+    return stage_above_max_sentences(
+        ctx.framework, {a.capability_code: a.maturity_stage for a in ctx.answers}
+    )
+
+
 def _source_note(framework: ZtFrameworkCode) -> str | None:
     return _DOD_SOURCE_NOTE if framework == ZtFrameworkCode.DOD_ZTRA else None
 
@@ -263,6 +271,10 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
     retired = _retired_note(ctx)
     if retired:
         ws.append(["Not scored", retired])  # #838: rows the catalog no longer has
+    for sentence in _stage_above_max_notes(ctx):
+        # #839 S1, one row per capability. The label cell is left empty: only
+        # the sentence is approved copy (#736 comment 6049667540).
+        ws.append(["", sentence])
     for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=1):
         for cell in row:
             cell.font = bold
@@ -437,6 +449,8 @@ def render_docx(ctx: ZtDeliverableContext) -> bytes:
     doc.add_paragraph(_gap_plan_caption(ctx.gap, _target_note(ctx)))
     for sentence in target_cap_sentences(ctx.gap):  # #839, per capability
         doc.add_paragraph(sentence)
+    for sentence in _stage_above_max_notes(ctx):  # #839 S1, after the cap sentences
+        doc.add_paragraph(sentence)
     if not ctx.gap.gaps:
         add_paragraphs(
             doc,
@@ -538,6 +552,8 @@ def render_pdf(ctx: ZtDeliverableContext) -> bytes:
     story.append(Paragraph(f"Top remediation gaps (target S{ctx.gap.target_stage})", h2))
     story.append(Paragraph(_gap_plan_caption(ctx.gap, _target_note(ctx)), styles["BodyText"]))
     for sentence in target_cap_sentences(ctx.gap):  # #839, per capability
+        story.append(Paragraph(sentence, styles["BodyText"]))
+    for sentence in _stage_above_max_notes(ctx):  # #839 S1, after the cap sentences
         story.append(Paragraph(sentence, styles["BodyText"]))
     if not ctx.gap.gaps:
         story.append(

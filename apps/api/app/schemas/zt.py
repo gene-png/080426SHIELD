@@ -433,6 +433,9 @@ class GapAnalysisResponse(BaseModel):
     # #839: the approved C1/C2 sentences, one per capped DoD capability or per
     # capability that cannot score the target level (`zt/target_caps.py`).
     target_cap_notes: list[str] = []
+    # #839 S1: one approved sentence per stored stage above its capability's
+    # maximum, which every figure counts at the maximum (`zt/target_caps.py`).
+    stage_above_max_notes: list[str] = []
     gap_count_by_pillar: dict[str, int]
     gaps: list[GapItem]
     roadmap: list[RoadmapEntry] = []

@@ -533,6 +533,9 @@ class ZtDashboardResponse(BaseModel):
     #: 0 and None when there are none.
     retired_answers: int = 0
     retired_answers_note: str | None = None
+    #: #839 S1: one approved sentence per stored stage above its capability's
+    #: maximum, which every figure here counts at the maximum.
+    stage_above_max_notes: list[str] = []
 
     # The real total: every gap the engine found, not a rendered subset. The ZT
     # dashboard shows no truncated gap list today, and this is in the payload
