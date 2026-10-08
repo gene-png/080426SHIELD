@@ -1,12 +1,19 @@
 # Gene — in-flight status
 
-_2026-10-08 (track1): the #806 corpus PR is pushed on `track1/806-measure-corpus`,
-for #806. It adds the measure's synthetic corpus (`--notes-corpus` and a synthetic
-Tech Debt XLSX), the per-service cost caps that set `--max-output-tokens`, and two
-fixes: `--out` is opened before any paid call, and `charged_likely` is read from
-the `llm_calls` rows. No live call was made. The paid "before" runs start only
-after it lands, within the $25 cap the advisor approved (#736 comments 5984022081
-item 8 and 6067815887). It comes back to you under merge-rule condition 5
+_2026-10-08 (track1): the #806 corpus PR is draft #952 on
+`track1/806-measure-corpus`, for #806. It adds the measure's synthetic corpus
+(`--notes-corpus` and a synthetic Tech Debt XLSX), the per-service cost caps, and
+two fixes: `--out` is opened before any paid call, and `charged_likely` is read
+from the `llm_calls` rows. After review it also keeps the report through a crash
+(rewritten after every run), records the DATABASE_URL query parameters, and
+compares two mitre_map probe runs of the same batches. No live call was made.
+What the money guard enforces: each side of a service's before/after pair gets
+half that service's cap from the $25 the advisor approved (#736 comments
+5984022081 item 8 and 6067815887); a run after the first is not started if the
+spend so far plus the largest run so far, input and output at list price, would
+cross it. That is a projection, not a guarantee, and the first run is not bounded
+in advance. Spend is reported per run. The paid "before" runs start only after
+it lands and is re-reviewed. It comes back to you under merge-rule condition 5
 (`apps/api/tests/**`)._
 
 _2026-10-08: #852 (CSF catalog corrected to NIST CSWP 29, now pinned to the PDF
