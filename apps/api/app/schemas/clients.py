@@ -602,7 +602,12 @@ class TechDebtDashboardResponse(BaseModel):
     # #646: which mode drafted the AI suggestions behind these figures, as the
     # deliverable states it. REQUIRED.
     ai_source: AiSource
+    # for #835: SOURCE items only. A split bundle's named parts are listed in
+    # `items` but are not applications; `bundle_part_count` says how many of
+    # `items` are parts, so the inventory can say so. REQUIRED: absent would
+    # read as "no parts", which is a claim.
     total_applications: int
+    bundle_part_count: int
     annual_spend_usd: float
     identified_savings_usd: float
     savings_cost_known: bool  # False when a counted (cut) item lacked a cost (savings is a floor)

@@ -14,6 +14,13 @@ Cost handling: an item with `annual_cost_usd = None` is excluded from the
 sum but still counted in `item_count`. Buckets with at least one None
 cost flag `cost_known = False` so the renderer can show "≥ $X" rather
 than a misleading exact total.
+
+Bundle parts (for #835): a split bundle's named parts carry no cost because
+the parent holds the license value (`tech_debt/components.py`). They never
+add to a cost, never count as missing one, and a bucket counts distinct
+LICENSES, so a bundle and its parts (which inherit its vendor) count once.
+`total_items` still counts every row in the list, parts included: it is the
+size of the table the consultant edits.
 """
 
 from __future__ import annotations
@@ -23,6 +30,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from app.models.capability import CapabilityItem
+from app.tech_debt.components import is_component, license_count
 
 
 @dataclass(frozen=True)
@@ -70,11 +78,14 @@ def _bucketize(
 
     out: list[OverlapBucket] = []
     for key, group in grouped.items():
-        if len(group) <= 1:
+        licenses = license_count(group)
+        if licenses <= 1:
             continue
         total = 0.0
         all_known = True
         for it in group:
+            if is_component(it):
+                continue
             if it.annual_cost_usd is None:
                 all_known = False
                 continue
@@ -82,7 +93,7 @@ def _bucketize(
         out.append(
             OverlapBucket(
                 key=key,
-                item_count=len(group),
+                item_count=licenses,
                 total_cost=total,
                 cost_known=all_known,
                 item_ids=tuple(str(i.id) for i in group),
@@ -99,7 +110,7 @@ def analyze_overlap(items: list[CapabilityItem]) -> OverlapAnalysis:
     by_category = _bucketize(items, lambda i: (i.category or "").strip())
     by_vendor = _bucketize(items, lambda i: (i.vendor or "").strip())
 
-    costed = [it for it in items if it.annual_cost_usd is not None]
+    costed = [it for it in items if it.annual_cost_usd is not None and not is_component(it)]
     costed.sort(key=lambda i: float(i.annual_cost_usd or 0), reverse=True)
     top_cost = [
         TopCostItem(
@@ -115,7 +126,7 @@ def analyze_overlap(items: list[CapabilityItem]) -> OverlapAnalysis:
     total_cost = sum(float(i.annual_cost_usd or 0) for i in costed)
     uncategorized = sum(1 for i in items if not (i.category or "").strip())
     no_vendor = sum(1 for i in items if not (i.vendor or "").strip())
-    no_cost = sum(1 for i in items if i.annual_cost_usd is None)
+    no_cost = sum(1 for i in items if i.annual_cost_usd is None and not is_component(i))
 
     return OverlapAnalysis(
         by_category=by_category,

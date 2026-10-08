@@ -1,5 +1,17 @@
 # Gene — in-flight status
 
+_2026-10-08: #835 (with #927 folded in) built on
+`track3/835-bundle-components`, draft PR #936; review in progress, not merged._
+
+A split bundle's parts are now one rule, `tech_debt/components.py`, which every
+reader calls: they never add to spend or make it a floor, they are not counted
+as Applications or "Capabilities reviewed", and buckets count licenses. The item
+PATCH refuses a cost on a part with the copy approved on #736 (comment
+6056012075); a null cost is allowed, which is how a cost stored before the
+refusal is cleared. Savings are unchanged by ruling (#736 comment 5986057990),
+so a legacy costed part marked Cut still counts there. Follow-ups #929 and #935
+are open. Comes back to you: conditions 5 and 6.
+
 _2026-10-08: #743 is PR #855 (`track6/743-risk-count-nouns`), clean on code
 and tests at review round 4 (cb6fceea), not merged._
 
