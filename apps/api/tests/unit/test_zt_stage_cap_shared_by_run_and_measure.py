@@ -56,6 +56,8 @@ RESPONSE = (
         # The ladder and wholeness are judged first: their reasons win.
         (4, 2, (None, "out_of_range")),
         (2.5, 2, (None, "unparseable")),
+        # 2.5 is above a maximum of 1 AND not whole: wholeness is judged first.
+        (2.5, 1, (None, "unparseable")),
         ("x", 2, (None, "unparseable")),
     ],
 )
