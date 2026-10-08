@@ -13,6 +13,12 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**2026-10-08 — #743 in PR #855 (not merged).** Count words agree with their
+numbers on both Risk screens and in `lib/risk/carry.ts`; the admin
+still-linked banner counts K = D - U - S. Detail, rulings (#736 6054419744)
+and what is pending Gene: `DELIVERY_PLAN.md`, the MVP completion path entry
+dated 2026-10-08.
+
 **#347 landed as tier-1: `CLAUDE.md` was being truncated before any agent read
 it.** At 210,958 bytes against a 150,000-byte reader limit, the last 29% was cut
 silently — and the cut landed on the merge rule. `An agent merges on green` sat

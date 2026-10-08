@@ -1,5 +1,17 @@
 # Gene — in-flight status
 
+_2026-10-08 — #743 is PR #855 (`track6/743-risk-count-nouns`), clean at review
+round 4, not merged._
+
+**What it does:** count words agree with their numbers on both Risk screens and
+in `carry.ts`; the admin still-linked banner counts K = D - U - S (rulings on
+#736, comment 6054419744). **Yours:** the client remedy line. The advisor
+approved the new lead; the count-neutral remedy "Ask your consultant to
+complete each entry counted above." waits on you, and the code keeps your ruled
+sentence in the one constant `WITHHELD_REMEDY` (#939 notes a third pinned
+literal the swap must also edit). Filed from the reviews: #930, #931, #932,
+#939. Trips merge-rule conditions 5 and 6, so it comes back to you.
+
 _2026-09-22 — #254 merged as #444 (`d5f97eb`); a FOLLOW-UP is open for what
 round 4 found after the merge._
 
