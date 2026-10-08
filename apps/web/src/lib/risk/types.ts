@@ -70,6 +70,28 @@ export interface RiskGate {
    * older server's response parses.
    */
   duplicate_inputs?: string | null;
+  /**
+   * #896: the services behind `duplicate_inputs`, in the order its sentence
+   * names them; [] when there is no such pair. The duplicate banner offers
+   * one archive button per row. Optional so an older server's response
+   * parses.
+   */
+  duplicate_services?: RiskDuplicateService[];
+}
+
+/** #896: one service behind the duplicate refusal. */
+export interface RiskDuplicateService {
+  service_id: string;
+  title: string;
+  /**
+   * Review B1: what tells two rows with the SAME title apart. When the
+   * service was opened (ISO, UTC), and the status and version the Inputs
+   * panel shows for it. Required: a server that sends `duplicate_services`
+   * at all sends these.
+   */
+  started_at: string;
+  status: string;
+  version: number;
 }
 
 export interface RiskEntry {

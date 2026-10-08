@@ -36,6 +36,10 @@ import {
   type RiskTier,
 } from "@/lib/risk/matrix";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
+import {
+  ArchiveServiceButton,
+  ArchiveServiceDialog,
+} from "@/components/admin/risk/ArchiveServiceButton";
 import { carriedSentences } from "@/lib/risk/carry";
 import {
   INPUTS_RULE,
@@ -44,7 +48,12 @@ import {
   sourceStateNote,
 } from "@/lib/risk/inputs";
 
-import type { RiskEntry, RiskGate, RiskRegister } from "@/lib/risk/types";
+import type {
+  RiskDuplicateService,
+  RiskEntry,
+  RiskGate,
+  RiskRegister,
+} from "@/lib/risk/types";
 
 import type { JSX } from "react";
 
@@ -348,6 +357,9 @@ export function RiskRegisterDashboard(): JSX.Element {
     "generate" | "export" | "publish" | "rate" | null
   >(null);
   const [error, setError] = React.useState<string | null>(null);
+  // #896: the duplicate service whose archive dialog is open, if any.
+  const [archiveTarget, setArchiveTarget] =
+    React.useState<RiskDuplicateService | null>(null);
 
   React.useEffect(() => {
     let active = true;
@@ -379,6 +391,30 @@ export function RiskRegisterDashboard(): JSX.Element {
       active = false;
     };
   }, []);
+
+  // #896: after any archive attempt from the duplicate banner (review B2:
+  // success OR failure), read the gate again -- the refusal, the banner and
+  // Generate all derive from it.
+  //
+  // Returns whether the gate was re-read (review round 2, F1): the archive
+  // dialog must not say the list was refreshed when it was not. The failure is
+  // still shown on the page, as before.
+  async function reloadGate(): Promise<boolean> {
+    if (!cid) {
+      // The dialog is only rendered with a client id, so this cannot be hit
+      // from it; if it is, nothing was re-read, and that is what we say.
+      console.error("[risk] gate reload without an active client");
+      return false;
+    }
+    setError(null);
+    try {
+      setGate(await fetchRiskGate(cid));
+      return true;
+    } catch (err) {
+      setError(describeRiskError(err));
+      return false;
+    }
+  }
 
   async function onGenerate(): Promise<void> {
     if (!cid) return;
@@ -512,6 +548,10 @@ export function RiskRegisterDashboard(): JSX.Element {
   const duplicateInputs = gate?.unlocked
     ? (gate.duplicate_inputs ?? null)
     : null;
+  // #896: the services that sentence names, one archive button each. `?? []`
+  // covers an older server that does not send the field: the sentence still
+  // shows, with no buttons, as it did before #896.
+  const duplicateServices = gate?.duplicate_services ?? [];
   // #554 R3 no longer blocks Generate (advisor, #736 5998764095, option (b)):
   // a draft is generated, each affected entry says its computed status awaits
   // review, and publish refuses. The banner and the disabled Generate that sat
@@ -620,6 +660,40 @@ export function RiskRegisterDashboard(): JSX.Element {
         >
           {duplicateInputs} Anything already generated below is unaffected.
         </p>
+      ) : null}
+
+      {/* #896: the remedy, beneath the refusal rather than inside it -- the
+          API's sentence also reaches callers that are not this screen
+          (advisor, #736 6042801745). One button per service it names. */}
+      {duplicateInputs !== null && duplicateServices.length > 0 ? (
+        <div
+          className="flex flex-col gap-2 text-sm"
+          data-testid="risk-register-duplicate-archive"
+        >
+          <p className="text-ink-secondary">
+            Archive the one this register should not draw on:
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {duplicateServices.map((svc) => (
+              <ArchiveServiceButton
+                key={svc.service_id}
+                service={svc}
+                onOpen={setArchiveTarget}
+                disabled={busy !== null}
+              />
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {/* Hosted here, not by a button: the reload after an attempt can remove
+          the button that opened it (#896 review B2). */}
+      {cid ? (
+        <ArchiveServiceDialog
+          clientId={cid}
+          service={archiveTarget}
+          onClose={() => setArchiveTarget(null)}
+          onSettled={reloadGate}
+        />
       ) : null}
 
       {catalogMismatch !== null ? (
