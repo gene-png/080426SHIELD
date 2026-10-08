@@ -125,10 +125,11 @@ entries. Rulings: advisor, #736 comments
 6054419744 (strings, K, fixtures) and 6056012075 (docs before the ready line).
 **Remedy line:** the client remedy, held for Gene when #855 landed, is
 swapped in the PR for #939 (branch `track6/939-remedy-swap`) on his ruling, #736
-comment 6060627178: "Ask your consultant to complete each entry counted above."
-replaces "Ask your consultant to complete those entries.", in the constant
+comment 6060627178, tightened on 6064328745 (for #943): "Ask your consultant to
+complete each entry counted as missing above." replaces "Ask your consultant to
+complete those entries.", in the constant
 `WITHHELD_REMEDY` and its two pinned test literals. **Filed from the reviews:**
-#930, #931, #932, #939.
+#930, #931, #932, #939, #943.
 
 **2026-10-08: #842 (`tier-2`, ATT&CK copy after R3) in PR #933.** The
 status below is as written before it merged. What lands: the

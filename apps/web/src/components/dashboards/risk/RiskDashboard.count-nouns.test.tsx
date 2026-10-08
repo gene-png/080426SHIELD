@@ -21,9 +21,10 @@ import type { RiskDashboardData, RiskEntry } from "@/lib/dashboards/risk";
  * fixture cannot disagree with itself.
  */
 
-// The remedy sentence Gene ruled (#736 6060627178), replacing his earlier
-// #854 F4 wording. It is pinned twice: here and in RiskDashboard.test.tsx.
-const REMEDY = "Ask your consultant to complete each entry counted above.";
+// The remedy sentence Gene ruled (#736 6064328745, for #943), replacing his
+// 6060627178 wording. It is pinned twice: here and in RiskDashboard.test.tsx.
+const REMEDY =
+  "Ask your consultant to complete each entry counted as missing above.";
 
 function entry(
   title: string,

@@ -26,11 +26,12 @@ _2026-10-08: #743 landed as PR #855 (`track6/743-risk-count-nouns`,
 **What it does:** count words agree with their numbers on both Risk screens,
 `carry.ts` included; the admin still-linked banner counts K = D - U - S
 (rulings on #736, comment 6054419744). **Remedy line:** you ruled it on #736
-(comment 6060627178), and the PR for #939 swaps it: "Ask your consultant to
-complete each entry counted above." replaces "Ask your consultant to complete
+(comment 6060627178) and tightened it on #943 (comment 6064328745), and the PR
+for #939 swaps it: "Ask your consultant to complete each entry counted as
+missing above." replaces "Ask your consultant to complete
 those entries." in the constant `WITHHELD_REMEDY` and in its two pinned test
 literals. Filed from the reviews: #930, #931, #932,
-#939. Trips merge-rule conditions 5 and 6, so it comes back to you.
+#939, #943. Trips merge-rule conditions 5 and 6, so it comes back to you.
 
 _2026-10-08: #842 (ATT&CK copy after R3) is PR #933; the advisor merges it once the re-ready line is posted._
 

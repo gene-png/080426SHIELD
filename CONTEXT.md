@@ -23,7 +23,8 @@ The status and the rulings it follows are in `DELIVERY_PLAN.md`, in the
 their numbers on both Risk screens, `lib/risk/carry.ts` included; the admin
 still-linked banner counts K = D - U - S. The client remedy line, held for Gene
 when #855 landed, is swapped in the PR for #939 on his ruling (#736 comment
-6060627178): "Ask your consultant to complete each entry counted above."
+6060627178, tightened on 6064328745 for #943): "Ask your consultant to
+complete each entry counted as missing above."
 Detail and rulings (#736 6054419744): `DELIVERY_PLAN.md`, the MVP completion
 path entry dated 2026-10-08.
 
