@@ -1,5 +1,13 @@
 # Gene — in-flight status
 
+_2026-10-08: #840 (a Zero Trust capability the AI returns no result for is now
+counted and shown) is draft PR #963 on `track4/840-zt-no-result`, merged with
+main at 5ef7f700. The run result carries `omitted_count` and
+`omitted_capabilities`, the consultant's panel shows them with the approved
+Z1 to Z6 copy, and the audit row carries counts only. Step 1 `done` is
+unchanged. It comes back to you, not self-merged: conditions 5 and 6. The
+adversarial review is pending._
+
 _2026-10-08: #836 (a CSF Run-AI row the model leaves out of its batch is now
 counted and named) is rebuilt on main as `track5/836-omitted-rows-v2`. The run
 result carries `omitted_count` and `omitted_rows`, the Playbook panel shows
