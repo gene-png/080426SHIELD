@@ -66,6 +66,13 @@ export interface CsfAssessment {
   answers: CsfAnswer[];
   client_target_tier: number | null;
   client_profile: string | null;
+  /**
+   * #852: answers kept on a subcategory the catalog no longer has (ID.AM-09),
+   * not scored, with the API's approved sentence (`csf/retired.py`). Render
+   * the sentence as given; never rebuild it here.
+   */
+  retired_answers?: number;
+  retired_answers_note?: string | null;
 }
 
 /**
@@ -233,6 +240,12 @@ export interface EnterpriseSubcategory {
 export interface EnterpriseProfile {
   tiers_in_use: string[];
   subcategories: EnterpriseSubcategory[];
+  /**
+   * #852: Working Profile rows kept on a subcategory the catalog no longer
+   * has, not rolled up, with the API's approved sentence (`csf/retired.py`).
+   */
+  retired_rows?: number;
+  retired_rows_note?: string | null;
 }
 
 export interface CsfDimensionChange {

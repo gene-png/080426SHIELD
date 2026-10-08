@@ -343,6 +343,10 @@ services:
       # make `/` look like one (`test_root_discovery.py`). Not app runtime.
       - ./reference-docs/cisa:/zt-sources/cisa:ro
       - ./reference-docs/dod:/zt-sources/dod:ro
+      # NIST CSWP 29 (CSF 2.0), read-only, for the CSF catalog source test
+      # (#852, `tests/unit/test_csf_catalog_source.py`). Under the same root so
+      # the one finder, `tests/_paths.find_zt_source`, reaches it. Not app runtime.
+      - ./reference-docs/nist:/zt-sources/nist:ro
       # Host gcloud config, READ-ONLY, so the Vertex provider can use this box's
       # Application Default Credentials without any API key or committed secret
       # (D-029). Default is the canonical Linux ADC dir ($HOME/.config/gcloud) —
