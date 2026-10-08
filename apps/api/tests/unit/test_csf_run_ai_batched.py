@@ -564,7 +564,7 @@ def test_the_audit_row_carries_the_omitted_count_and_no_codes(world) -> None:
 
     with world.sessions() as s:
         entry = s.execute(select(AuditEntry).where(AuditEntry.action == "csf.run_ai")).scalar_one()
-    assert entry.details["rows_omitted"] == 2
+    assert entry.details.get("rows_omitted") == 2, "the audit row does not carry the count"
     assert "omitted_rows" not in entry.details
     assert high[0] not in json.dumps(entry.details), "the audit row carries counts only"
     assert high[1] not in json.dumps(entry.details), "the audit row carries counts only"

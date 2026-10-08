@@ -309,6 +309,13 @@ export interface CsfRunAiResponse {
    */
   batches_total?: number;
   batches_failed?: number;
+  /**
+   * #836: rows a successful batch was asked for that no entry of that batch
+   * named; they keep their previous scores. Optional: a result stored before
+   * this carries neither. Read the VALUE, never the presence.
+   */
+  rows_omitted?: number;
+  omitted_rows?: { tier: string; subcategory_code: string }[];
 }
 
 export interface ExportedArtifact {
