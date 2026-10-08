@@ -1,6 +1,10 @@
 import type { JSX } from "react";
 
-import type { ZtDroppedSuggestion, ZtRunAiResponse } from "@/lib/zt/types";
+import type {
+  ZtDroppedSuggestion,
+  ZtNoResult,
+  ZtRunAiResponse,
+} from "@/lib/zt/types";
 
 /**
  * Run-AI accounting for the Zero Trust workspace (W1, issue #44, D-047).
@@ -156,6 +160,83 @@ export function lostValueCount(result: ZtRunAiResponse): number {
     .reduce((n, d) => n + d.values, 0);
 }
 
+function describeNoResult(n: ZtNoResult): string {
+  return n.kept_stage === null
+    ? `${n.capability_code}: no stage, so it stays unscored.`
+    : `${n.capability_code}: keeps stage ${n.kept_stage}, recorded earlier. This run did not confirm it.`;
+}
+
+/**
+ * #840: the capabilities the run asked about and got no entry for. Copy Z1 to
+ * Z6, approved verbatim (#840 plan, #736 ruling).
+ *
+ * Not a drop reason: every number above counts values the model SENT, and a
+ * capability with no entry sent none. Blank notes come first in neutral
+ * styling, because the prompt can leave those out by design. Notes present
+ * come next, as an alert when any of them kept a stage, since that stage
+ * reaches the deliverable unconfirmed. Code cannot tell a deliberate "N/A"
+ * from a miss, so Z3 says so instead of classifying them.
+ *
+ * Z6 names approving: the "Approve client inputs" / "Approve" control in
+ * `ZtWorkspace` step 3.
+ *
+ * Absent (a run stored before #840) or 0 renders nothing.
+ */
+function ZtNoResultBlock({
+  result,
+}: {
+  result: ZtRunAiResponse;
+}): JSX.Element | null {
+  const n = result.no_result_count ?? 0;
+  if (n === 0) return null;
+  const items = result.no_result ?? [];
+  const blank = items.filter((x) => x.notes_blank);
+  const noted = items.filter((x) => !x.notes_blank);
+  const notedKept = noted.some((x) => x.kept_stage !== null);
+  return (
+    <div className="space-y-2 text-sm">
+      <p className="text-ink-secondary">
+        {n === 1
+          ? "1 capability got no stage from the AI this run."
+          : `${n} capabilities got no stage from the AI this run.`}
+      </p>
+      {blank.length > 0 ? (
+        <div className="text-ink-secondary">
+          <p>No notes recorded ({blank.length}):</p>
+          <ul className="list-disc pl-5">
+            {blank.map((x) => (
+              <li key={x.capability_code}>{describeNoResult(x)}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {noted.length > 0 ? (
+        <div
+          className={notedKept ? "text-status-danger-fg" : "text-ink-secondary"}
+          {...(notedKept ? { role: "alert" as const } : {})}
+        >
+          <p>
+            Notes recorded, but no stage given ({noted.length}). This includes
+            notes such as &quot;N/A&quot; or &quot;TBD&quot;:
+          </p>
+          <ul className="list-disc pl-5">
+            {noted.map((x) => (
+              <li key={x.capability_code}>{describeNoResult(x)}</li>
+            ))}
+          </ul>
+          {notedKept ? (
+            <p>
+              Check these before approving. A stage kept this way can come from
+              a client&apos;s self-assessment and reaches the deliverable as it
+              is.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function ZtRunAiAccounting({
   result,
 }: {
@@ -215,14 +296,20 @@ export function ZtRunAiAccounting({
   // A run that received NOTHING is not a clean run. The response parsed, so no
   // error path fired, and "applied 0 of 0" reads as calmly as "applied 12 of
   // 12" — the most reassuring possible way to report a wholly-lost response.
+  //
+  // #840: a response with no entries leaves every capability it was asked
+  // about without a result, so the no-result block renders here too.
   if (result.suggestions_received === 0) {
     return (
-      <p className="text-sm text-status-danger-fg" role="alert">
-        The AI returned no suggestions at all, so nothing was applied. That is
-        expected only if the model genuinely had nothing to say — otherwise its
-        response did not match the shape this job expects. Re-run, and if it
-        repeats, the prompt and the parser have drifted apart.
-      </p>
+      <div className="space-y-2">
+        <p className="text-sm text-status-danger-fg" role="alert">
+          The AI returned no suggestions at all, so nothing was applied. That is
+          expected only if the model genuinely had nothing to say — otherwise
+          its response did not match the shape this job expects. Re-run, and if
+          it repeats, the prompt and the parser have drifted apart.
+        </p>
+        <ZtNoResultBlock result={result} />
+      </div>
     );
   }
 
@@ -353,6 +440,8 @@ export function ZtRunAiAccounting({
           ))}
         </ul>
       ) : null}
+
+      <ZtNoResultBlock result={result} />
     </div>
   );
 }

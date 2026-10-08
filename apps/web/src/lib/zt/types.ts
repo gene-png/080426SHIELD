@@ -153,6 +153,24 @@ export interface ZtRunAiResponse {
    * in progress, or consultant-entered. 0 for a live run.
    */
   preserved_client_answers?: number;
+  /**
+   * #840: capabilities the run asked about, not locked, that no entry named.
+   * Not part of the values identity above: a capability with no entry sent no
+   * value. Optional, so a run stored before #840 reads as none.
+   */
+  no_result_count?: number;
+  no_result?: ZtNoResult[];
+}
+
+/**
+ * One capability a zt_score run got no entry for (#840). `notes_blank` is
+ * "no notes, or whitespace only"; "N/A" is a note. `kept_stage` is the stage
+ * the row still holds after the run, or null when it has none.
+ */
+export interface ZtNoResult {
+  capability_code: string;
+  notes_blank: boolean;
+  kept_stage: number | null;
 }
 
 export interface PillarScore {
