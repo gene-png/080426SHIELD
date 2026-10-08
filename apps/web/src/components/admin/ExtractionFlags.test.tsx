@@ -24,7 +24,7 @@ const ZERO: ExtractionFlagCounts = {
 };
 
 describe("ExtractionFlags (#806, E1)", () => {
-  it("gives one line per non-zero flag, in the plan's words", () => {
+  it("gives one line per non-zero flag, in the approved copy", () => {
     render(
       <ExtractionFlags
         flags={{
