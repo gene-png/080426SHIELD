@@ -139,7 +139,17 @@ def _release(
     ch = {"Authorization": f"Bearer {client['tokens']['access_token']}", "X-Client-Id": cid}
     dash = c.get(f"/clients/{cid}/tech-debt/{svc}/dashboard", headers=ch)
     assert dash.status_code == 200, dash.text
-    return {"dashboard": dash.json(), "overlap": overlap.json(), "files": files}
+    # The client's Results and Home pages render each deliverable's `summary`.
+    results = c.get(f"/clients/{cid}/deliverables", headers=ch)
+    assert results.status_code == 200, results.text
+    mine = [d for d in results.json()["items"] if d["id"] == deliv["id"]]
+    assert len(mine) == 1, results.text
+    return {
+        "dashboard": dash.json(),
+        "overlap": overlap.json(),
+        "files": files,
+        "summary": mine[0]["summary"],
+    }
 
 
 @pytest.fixture()
@@ -152,6 +162,20 @@ def _xlsx_cells(raw: bytes) -> list[str]:
 
     wb = load_workbook(io.BytesIO(raw))
     return [str(x.value) for ws in wb for row in ws.iter_rows() for x in row if x.value is not None]
+
+
+def _xlsx_total(raw: bytes) -> float:
+    """The figure beside the workbook's cost label (column A names it)."""
+    from openpyxl import load_workbook
+
+    ws = load_workbook(io.BytesIO(raw)).active
+    rows = [
+        r
+        for r in ws.iter_rows()
+        if isinstance(r[0].value, str) and "annual cost" in r[0].value.lower()
+    ]
+    assert len(rows) == 1, [r[0].value for r in rows]
+    return float(rows[0][4].value)
 
 
 def _pdf_text(raw: bytes) -> str:
@@ -195,6 +219,9 @@ def test_a_costed_part_never_adds_to_spend(env) -> None:
     edr = next(s for s in dash["spend_by_category"] if s["category"] == "EDR")
     assert edr["total_usd"] == 120000.0
     assert "Total annual cost" in _xlsx_cells(got["files"]["xlsx"])
+    # The TOTAL, not only its label: a part's typed cost must not reach it.
+    assert _xlsx_total(got["files"]["xlsx"]) == SPEND
+    assert "Total annual cost: $514,120 ·" in _pdf_text(got["files"]["pdf"])
     # The admin overlap view's total and its top-cost list read the same rule.
     assert got["overlap"]["total_cost"] == SPEND
     top = [t["name"] for t in got["overlap"]["top_cost_items"]]
@@ -245,6 +272,15 @@ def test_the_docx_counts_source_items_as_capabilities_reviewed(env) -> None:
     text = _docx_text(_release(c, provider, SPLIT_BESIDE_TOOLS)["files"]["docx"])
     assert "Capabilities reviewed: 4" in text
     assert "Capabilities reviewed: 6" not in text
+
+
+def test_the_client_results_summary_counts_source_items(env) -> None:
+    """`Deliverable.summary` is what the client's Results and Home pages show
+    beside the files; it must agree with the PDF's "Capabilities reviewed"."""
+    c, provider = env
+    summary = _release(c, provider, SPLIT_BESIDE_TOOLS)["summary"]
+    assert summary.startswith("4 capabilities reviewed; "), summary
+    assert "6 capabilities" not in summary
 
 
 # --- categories (ruling Q1 = B) ----------------------------------------------

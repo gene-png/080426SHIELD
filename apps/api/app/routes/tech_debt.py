@@ -2279,7 +2279,14 @@ def finalize_deliverable(
     )
 
     summary_line = (
-        f"{len(items)} capabilities reviewed; "
+        # for #835: the client's Results and Home pages show this beside the
+        # files, so it counts what the PDF's "Capabilities reviewed" counts:
+        # source items, never a split bundle's parts. `ctx.included_count` is
+        # that derivation (`source_items`), read rather than recomputed.
+        # `scripts/seed_demo.py` builds the same sentence from `len(items)`;
+        # the seed creates no parts, so its count is already right and it is
+        # left alone.
+        f"{ctx.included_count} capabilities reviewed; "
         f"{'≥ ' if not ctx.savings_cost_known else ''}"
         f"${ctx.estimated_savings:,.0f} estimated annual savings."
     )
