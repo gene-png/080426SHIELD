@@ -417,7 +417,7 @@ def test_a_cost_on_a_part_is_refused_and_names_the_bundle(env, cost) -> None:
     assert r.status_code == 422, r.text
     assert r.json()["error"]["reason"] == "component_cost_held_by_bundle"
     assert r.json()["error"]["message"] == REFUSED
-    # Refused BEFORE anything is written.
+    # Refused before anything is committed.
     assert _latest_items(c, h, svc)[part["name"]]["annual_cost_usd"] is None
 
 
@@ -471,3 +471,42 @@ def test_the_refusal_without_a_loadable_bundle_names_no_bundle() -> None:
         ),
     }
     assert _component_cost_refusal("Microsoft 365 E5").detail["message"] == REFUSED
+
+
+def test_a_blank_bundle_name_gets_the_unnamed_refusal(env) -> None:
+    """The item PATCH accepts a whitespace-only name, so a bundle can be
+    renamed "   ". The refusal must not interpolate a blank: it uses the
+    approved fallback instead."""
+    c, provider = env
+    h, _svc, _lst, items, bundle_id = _extract_and_split(c, provider, SPLIT_BESIDE_TOOLS)
+    renamed = c.patch(f"/tech-debt/capability-items/{bundle_id}", headers=h, json={"name": "   "})
+    assert renamed.status_code == 200, renamed.text
+    part = next(i for i in items if i.get("parent_item_id") == bundle_id)
+    r = c.patch(
+        f"/tech-debt/capability-items/{part['id']}", headers=h, json={"annual_cost_usd": 100}
+    )
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["message"] == (
+        "The annual cost of a bundle part is held by its bundle. "
+        "Enter the cost on the bundle's row instead."
+    )
+
+
+def test_a_refused_part_patch_writes_none_of_its_fields(env) -> None:
+    """A name-plus-cost PATCH on a part is refused whole: the name is not
+    committed either. Moving the refusal below the commit turns this red;
+    moving it only below the in-memory assignments does not, because the
+    request then ends without a commit and nothing reaches the table."""
+    c, provider = env
+    h, svc, _lst, items, bundle_id = _extract_and_split(c, provider, SPLIT_BESIDE_TOOLS)
+    part = next(i for i in items if i.get("parent_item_id") == bundle_id)
+    r = c.patch(
+        f"/tech-debt/capability-items/{part['id']}",
+        headers=h,
+        json={"name": "Renamed part", "annual_cost_usd": 100},
+    )
+    assert r.status_code == 422, r.text
+    after = _latest_items(c, h, svc)
+    assert part["name"] in after
+    assert "Renamed part" not in after
+    assert after[part["name"]]["annual_cost_usd"] is None

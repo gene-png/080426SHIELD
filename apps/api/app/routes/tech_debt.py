@@ -364,8 +364,11 @@ def _component_cost_refusal(parent_name: str | None) -> HTTPException:
     Copy approved verbatim by the advisor on #736 (comment 6056012075). The
     remedy names the bundle's row, whose Annual cost cell is editable whenever
     this can fire (a released or discarded list is refused with 409 first).
-    With no bundle row to name, it names none rather than inventing one.
+    With no bundle row to name, or a name that is blank once stripped (the
+    item PATCH accepts a whitespace-only name), it names none rather than
+    printing a blank or inventing one.
     """
+    parent_name = parent_name.strip() if parent_name else None
     if parent_name:
         message = (
             f"The annual cost of a bundle part is held by its bundle, {parent_name}. "
