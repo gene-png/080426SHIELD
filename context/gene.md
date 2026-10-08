@@ -4,8 +4,10 @@ _2026-10-08 (track1): the #806 corpus PR is draft #952 on
 `track1/806-measure-corpus`, for #806. It adds the measure's synthetic corpus
 (`--notes-corpus` and a synthetic Tech Debt XLSX), the per-service cost caps, and
 two fixes: `--out` is opened before any paid call, and `charged_likely` is read
-from the `llm_calls` rows. After review it also keeps the report through a crash
-(rewritten after every run), records the DATABASE_URL query parameters, and
+from the `llm_calls` rows. After review it also replaces the report atomically
+after every run (so it is always either empty or one whole report holding every
+completed run), counts a started call with no row as unknown spend, refuses a
+model with no recorded price, records the DATABASE_URL query parameters, and
 compares two mitre_map probe runs of the same batches. No live call was made.
 What the money guard enforces: each side of a service's before/after pair gets
 half that service's cap from the $25 the advisor approved (#736 comments
