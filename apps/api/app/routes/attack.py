@@ -49,6 +49,7 @@ from app.attack.after import sentences as after_sentences
 from app.attack.after import summary_sentence as after_summary_sentence
 from app.attack.analytics import compute as compute_heatmap
 from app.attack.catalog import (
+    NOT_PREVENTABLE,
     SOURCE_VERSION,
     TACTICS,
     TECHNIQUES,
@@ -1743,6 +1744,25 @@ _VALID_STATUSES = {s.value for s in WRITABLE}
 #: so it is left as it is (#841 plan, advisor decision 4).
 _NOT_APPLICABLE = CoverageStatus.NOT_APPLICABLE.value
 _AI_WRITABLE_STATUSES = _VALID_STATUSES - {_NOT_APPLICABLE}
+#: #806 (the advisor's ruling C4, #736 comment 5984022081): the partial reasons
+#: the `mitre_map` prompt offers, copied from its section 8. The other four are
+#: forbidden to the AI, which the prompt says, and a suggestion giving one is
+#: refused WHOLE into `reason_codes_rejected`, like a mispaired reason. Derived
+#: as the vocabulary's Partial codes minus the offered three, so a new Partial
+#: code is refused to the AI until a prompt offers it. A consultant keeps all
+#: seven through the PATCH; this is the AI path only.
+_AI_OFFERED_PARTIAL_REASONS = frozenset(
+    {"prevention_limited", "recovery_absent", "missing_control_category"}
+)
+_unknown_offered = _AI_OFFERED_PARTIAL_REASONS - set(reason_codes_for(CoverageStatus.PARTIAL))
+if _unknown_offered:
+    raise RuntimeError(
+        "The mitre_map prompt offers a partial reason the vocabulary does not have: "
+        f"{sorted(_unknown_offered)}"
+    )
+_AI_FORBIDDEN_PARTIAL_REASONS = (
+    frozenset(reason_codes_for(CoverageStatus.PARTIAL)) - _AI_OFFERED_PARTIAL_REASONS
+)
 _DIFF_FIELDS = (
     "status",
     # #554: a consultant's reason the AI's new status does not take is dropped
@@ -1812,6 +1832,7 @@ def _attack_ai_request_for(db: Session, a: AttackAssessment, client: Client) -> 
         .all()
     }
     locked_keys = frozenset(code for code, r in rows.items() if r.locked)
+    codes = sorted(c for c in rows if not is_computed_parent(c))
     client_org = client.legal_name  # NULL when nobody has named the org (D-080)
     return AttackAiRequest(
         assessment=a,
@@ -1830,11 +1851,38 @@ def _attack_ai_request_for(db: Session, a: AttackAssessment, client: Client) -> 
                 # #620 round 2: a computed parent's suggestion is refused whole
                 # (D-094), so it is never sent -- tokens spent on an answer that
                 # is always discarded.
-                "technique_codes": sorted(c for c in rows if not is_computed_parent(c)),
+                "technique_codes": codes,
+                # #806 M2: the prompt judges a not-preventable technique on
+                # Detect and Respond only, so it has to be told which those are.
+                # Sliced per batch by `_run_mitre_map_batched`.
+                "technique_details": _technique_details(codes),
             },
             client_org_name=client_org,
         ),
     )
+
+
+def _technique_details(codes: list[str]) -> dict[str, dict[str, Any]]:
+    """#806 M2: each code's catalogue name and whether MITRE ATT&CK lists no
+    preventive control for it (`NOT_PREVENTABLE`, generated from MITRE's data).
+    A code the catalogue does not carry raises KeyError: `require_current_catalog`
+    has already refused an assessment keyed to another catalogue."""
+    return {
+        c: {"name": technique_by_id(c).name, "not_preventable": c in NOT_PREVENTABLE} for c in codes
+    }
+
+
+def _batch_inputs(inputs: dict[str, Any], batch: list[str]) -> dict[str, Any]:
+    """One batch's payload: its own codes and ONLY their `technique_details`
+    (#806 C10). Copying the whole map would send every code's details to every
+    batch. A batch code with no details raises KeyError rather than reaching the
+    model undescribed."""
+    details = inputs["technique_details"]
+    return {
+        **inputs,
+        "technique_codes": batch,
+        "technique_details": {c: details[c] for c in batch},
+    }
 
 
 # mitre_map asks for one JSON object per ATT&CK technique, and the Enterprise
@@ -1882,7 +1930,7 @@ def _run_mitre_map_batched(
         db,
         llm,
         req.preview.job_name,
-        [{**req.preview.inputs, "technique_codes": b} for b in batches],
+        [_batch_inputs(req.preview.inputs, b) for b in batches],
         requested_by=requested_by,
         service_id=service_id,
         client_id=client_id,
@@ -2318,6 +2366,13 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
                     "status": st,
                     "reason_code": _audit_safe_code(offered),
                 }
+            )
+            continue
+        if st == CoverageStatus.PARTIAL.value and offered in _AI_FORBIDDEN_PARTIAL_REASONS:
+            # #806 C4: a valid Partial reason the prompt forbids the AI to give.
+            # Refused whole and recorded in the same shape as a mispaired one.
+            reason_codes_rejected.append(
+                {"technique_code": row.technique_code, "status": st, "reason_code": offered}
             )
             continue
         # Here `st` is a writable status and any offered reason fits it: every
