@@ -66,7 +66,16 @@ empty (no run has completed yet) or one whole JSON report: the last one written,
 holding every run completed before that write. A crash or Ctrl-C after any
 provider call was started replaces it with a report marked `aborted`; if even
 that write fails, the last in-progress report stays. The file is removed only
-when no provider call was started at all.
+when no provider call was started at all. A HARD KILL (SIGKILL, the OOM killer)
+runs no handler: nothing marks the report `aborted`, `--out` stays EMPTY if no
+run had completed even though calls may have been paid for, and a
+`.<name>.*.tmp` file may be left beside it.
+
+`invoke_calls_started` counts `LLMClient.invoke` ENTRIES, not provider requests:
+an entry refused before egress counts (the safe side), and an SDK retry inside
+one entry is not seen. The Anthropic SDK retries by default (`sdk_retries`,
+read from the client, 2 unless overridden) before the stream starts, and the
+`llm_calls` row records only the attempt that finished.
 
 PRICES: the dollar guard prices tokens at the configured provider and model's
 list price (`PRICES_USD_PER_MTOK`); a model with no recorded price is refused
@@ -1340,8 +1349,12 @@ def summarize(
             "max_output_tokens": max_output_tokens,
             "spent_output_tokens": spent,
             "overrun": max_output_tokens is not None and spent > max_output_tokens,
-            # An overrun of False means nothing when the count is not complete.
-            "complete": all(r.output_tokens is not None and r.tokens_complete for r in called),
+            # An overrun of False means nothing when the count is not complete:
+            # the same rule as `tokens.complete` and `budget_usd.complete`.
+            "complete": all(
+                r.output_tokens is not None and r.tokens_complete and _spend_known(r)
+                for r in called
+            ),
         },
         "exit_code": 0 if not failed and len(ok) >= min_ok_runs else 1,
     }
@@ -2801,7 +2814,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "model": s.shield_llm_model,
         "usd_per_mtok": price,
     }
-    report_file = _ReportFile(Path(args.out), args.job, max_usd, price, database_url)
+    report_file = _ReportFile(Path(args.out), args.job, max_usd, price_basis, database_url)
     print(
         f"budget: ${max_usd} for this side (half the ${COST_CAPS_USD[args.job]} service cap), "
         f"input and output at the {s.shield_llm_provider}/{s.shield_llm_model} list price. "
@@ -2832,13 +2845,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             "estimate_complete": report["tokens"]["complete"],
         }
         report["database_url"] = database_url
-        report["provider_calls_started"] = report_file.provider_calls_started
+        # `LLMClient.invoke` entries, NOT provider requests: an entry that
+        # failed before egress (a redaction refusal, a lock) counts, and an
+        # SDK retry inside one entry does not (`sdk_retries`).
+        report["invoke_calls_started"] = report_file.invoke_calls_started
+        report["sdk_retries"] = report_file.sdk_retries
         report["status"] = "complete"
         # Inside the handler (#952 narrow review 2): a failure here leaves the
         # last in-progress report on disk, never a half-written one.
         report_file.write(report)
     except BaseException as exc:
-        if report_file.provider_calls_started == 0:
+        if report_file.invoke_calls_started == 0:
             # No provider call was even started: nothing was spent, and there
             # is no run to keep. The file this run reserved empty goes.
             Path(args.out).unlink()
@@ -2871,6 +2888,25 @@ def database_url_params(url: str) -> dict:
     return {"query": query, "sqlite_timeout": query.get("timeout")}
 
 
+def sdk_retries(provider: Any) -> dict:
+    """How many times the provider's SDK may RETRY inside one `invoke`, which
+    the `llm_calls` row does not see: it records the attempt that finished.
+    Read from the Anthropic client when one exists, else the SDK's default
+    (the adapter constructs it with no override). Other adapters are thin
+    httpx clients with no SDK retry, and `None` says the count is not one an
+    SDK reports."""
+    if getattr(provider, "name", None) == "anthropic":
+        client = getattr(provider, "_client", None)
+        if client is not None:
+            retries = client.max_retries
+        else:
+            import anthropic
+
+            retries = anthropic.DEFAULT_MAX_RETRIES
+        return {"provider": "anthropic", "max_retries": retries}
+    return {"provider": getattr(provider, "name", None), "max_retries": None}
+
+
 def _dump_json(obj: Any, fh: Any) -> None:
     json.dump(obj, fh, indent=2, sort_keys=True)
 
@@ -2888,23 +2924,26 @@ class _ReportFile:
         path: Path,
         job: str,
         max_usd: float,
-        price: Mapping[str, float],
+        price_basis: Mapping[str, Any],
         database_url: dict,
     ) -> None:
         self.path = path
         self.job = job
         self.max_usd = max_usd
-        self.price = price
+        self.price_basis = price_basis
+        self.price = price_basis["usd_per_mtok"]
         self.database_url = database_url
         self.counter: Any = None
+        self.sdk_retries: dict | None = None
         self.records: list[RunRecord] = []
 
     @property
-    def provider_calls_started(self) -> int:
+    def invoke_calls_started(self) -> int:
         return 0 if self.counter is None else self.counter.n
 
     def count_calls(self, llm: Any) -> None:
         self.counter = _InvokeCounter(llm)
+        self.sdk_retries = sdk_retries(llm.provider)
 
     def write(self, report: dict) -> None:
         import os
@@ -2926,15 +2965,23 @@ class _ReportFile:
     def partial(self, status: str) -> dict:
         rows = [run_row(i + 1, r, self.price) for i, r in enumerate(self.records)]
         known = [r["estimated_usd"] for r in rows if r["estimated_usd"] is not None]
+        # #952 round 3, finding 1: calls started that no completed run accounts
+        # for -- a run in progress, or one interrupted mid-call -- are spend
+        # nobody can see, so the total is not complete. Records not started
+        # carry `started=0`.
+        accounted = sum(r.started or 0 for r in self.records)
         return {
             "job": self.job,
             "status": status,
             "runs": rows,
             "spent_usd": round(sum(known), 6),
-            "spent_usd_complete": len(known) == len(rows),
+            "spent_usd_complete": len(known) == len(rows)
+            and self.invoke_calls_started <= accounted,
             "max_usd": self.max_usd,
+            "price_basis": self.price_basis,
             "database_url": self.database_url,
-            "provider_calls_started": self.provider_calls_started,
+            "invoke_calls_started": self.invoke_calls_started,
+            "sdk_retries": self.sdk_retries,
         }
 
     def progress(self, records: Sequence[RunRecord]) -> None:
@@ -2948,7 +2995,7 @@ class _ReportFile:
             "exception": type(exc).__name__,
             "after_runs": len(self.records),
             "note": "a run under way when this happened is not in `runs`; "
-            "`provider_calls_started` counts its calls",
+            "`invoke_calls_started` counts its calls",
         }
         try:
             self.write(report)
@@ -2965,7 +3012,7 @@ class _ReportFile:
             "measure_ai_consistency.aborted",
             exception=type(exc).__name__,
             runs_kept=len(self.records),
-            provider_calls_started=self.provider_calls_started,
+            invoke_calls_started=self.invoke_calls_started,
         )
 
 

@@ -1015,6 +1015,21 @@ def test_the_cost_caps_are_section_2s_table_and_total_the_approved_25() -> None:
     assert sum(COST_CAPS_USD.values()) == 25
 
 
+def test_the_sdk_retries_are_read_from_the_anthropic_client() -> None:
+    # One `invoke` records only the attempt that finished; the SDK may have
+    # retried before the stream started. The report says how many it may.
+    import anthropic
+    from scripts.measure_ai_consistency import sdk_retries
+
+    from app.ai.llm import AnthropicProvider
+
+    provider = AnthropicProvider(model="claude-opus-5", api_key="test-not-a-key")
+    assert sdk_retries(provider)["max_retries"] == anthropic.DEFAULT_MAX_RETRIES
+    provider._client = anthropic.Anthropic(api_key="test-not-a-key", max_retries=7)
+    assert sdk_retries(provider)["max_retries"] == 7
+    assert sdk_retries(FixtureProvider())["max_retries"] is None
+
+
 def test_the_price_table_holds_only_cited_prices() -> None:
     # The Claude API skill's model table, cached 2026-10-06: claude-opus-5
     # "$5.00 | $25.00", claude-sonnet-5 "$2.00 | $10.00" (input | output per 1M).
@@ -1375,21 +1390,83 @@ def test_main_stops_after_a_started_call_left_no_row(main_world, monkeypatch) ->
     assert code == 1
 
 
-def test_a_deadline_with_a_call_in_flight_is_unknown_spend(csf_world, monkeypatch) -> None:
-    # Scenario (a): the run deadline fires while a batch's call is in flight;
-    # its row is flushed in the worker's session and never committed.
+def test_the_real_run_deadline_with_a_call_in_flight_is_unknown_spend(
+    csf_world, monkeypatch
+) -> None:
+    """Scenario (a) on the REAL path: `run_batches`' thread pool and its
+    deadline, with RUN_DEADLINE shortened and one batch's provider call held
+    past it. The held call has entered `invoke` and its row is not committed
+    when the run is counted.
+
+    NOTE what this covers and what it does not: `measure_csf` ALSO marks a
+    deadline run incomplete on its own (`RUN_DEADLINE_EXCEEDED`), so this test
+    would pass with the `calls < started` rule deleted. The rule itself is
+    pinned by the next test."""
+    import time
+    from datetime import timedelta
+
+    from app.ai.runs import RUN_DEADLINE_EXCEEDED
+    from app.models.llm_call import LLMCall
+
+    c, TestSession, provider = csf_world
+    release = threading.Event()
+    answer = _csf_answer_all([])
+    held: list[int] = []
+    lock = threading.Lock()
+
+    def respond(payload: dict) -> LLMResponse:
+        with lock:
+            first = not held
+            held.append(1)
+        if first:
+            release.wait(10)
+        return answer(payload)
+
+    provider.register("csf_score", respond)
+    monkeypatch.setattr("app.ai.runs.RUN_DEADLINE", timedelta(seconds=1))
+    try:
+        with TestSession() as db:
+            report = measure_csf(db, LLMClient(provider), runs=2, max_usd=100.0, price=OPUS5)
+    finally:
+        release.set()
+    assert report["failed_runs"][0]["failure"] == RUN_DEADLINE_EXCEEDED
+    assert report["failed_runs"][1]["failure"] == "stopped_after_deadline"
+    assert report["budget_usd"]["per_run_usd"][0] is None
+    assert report["budget_usd"]["complete"] is False
+    assert report["budget"]["complete"] is False
+    # Let the straggler land its row before the database goes away.
+    deadline = time.monotonic() + 10
+    with TestSession() as db:
+        while time.monotonic() < deadline:
+            db.expire_all()
+            if db.query(LLMCall).filter(LLMCall.status != "running").count() >= len(held):
+                break
+            time.sleep(0.05)
+
+
+def test_a_started_call_whose_row_never_landed_is_unknown_even_in_a_successful_run(
+    csf_world, monkeypatch
+) -> None:
+    """The `calls < started` rule on its own. This FAKES `run_batches`: it runs
+    the real batches (every row committed, tokens complete), then enters
+    `invoke` once more in a session that is never committed -- the in-flight
+    straggler's shape -- and returns success. Nothing else marks the run
+    incomplete, so only the rule can make its spend unknown. It does not drive
+    the deadline path; the test above does."""
     from sqlalchemy.orm import Session as _Session
 
+    import app.ai.batching as batching
     from app.ai.engine import run_job
-    from app.ai.runs import RUN_DEADLINE_EXCEEDED, RunFailed
 
     c, TestSession, provider = csf_world
     provider.register("csf_score", _csf_answer_all([]))
+    real = batching.run_batches
 
-    def deadline_mid_call(db, llm, job_name, batch_inputs, **kw):
-        session = _Session(bind=db.get_bind())
+    def with_a_lost_row(db, llm, job_name, batch_inputs, **kw):
+        result = real(db, llm, job_name, batch_inputs, **kw)
+        lost = _Session(bind=db.get_bind())
         run_job(
-            session,
+            lost,
             llm,
             job_name,
             inputs=batch_inputs[0],
@@ -1399,15 +1476,20 @@ def test_a_deadline_with_a_call_in_flight_is_unknown_spend(csf_world, monkeypatc
             client_org_name=kw["client_org_name"],
             name_hints=kw["name_hints"],
         )
-        session.close()  # never committed: the row is gone with the session
-        raise RunFailed(RUN_DEADLINE_EXCEEDED, kw["deadline_message"])
+        lost.close()
+        return result
 
-    monkeypatch.setattr("app.ai.batching.run_batches", deadline_mid_call)
+    monkeypatch.setattr("app.ai.batching.run_batches", with_a_lost_row)
     with TestSession() as db:
         report = measure_csf(db, LLMClient(provider), runs=2, max_usd=100.0, price=OPUS5)
-    assert report["failed_runs"][0]["failure"] == RUN_DEADLINE_EXCEEDED
+    assert report["runs"][0]["ok"] is True
+    assert report["runs"][0]["tokens_complete"] is True, "precondition: only the rule"
     assert report["budget_usd"]["per_run_usd"][0] is None
     assert report["budget_usd"]["complete"] is False
+    assert report["budget"]["complete"] is False
+    assert report["failed_runs"] == [
+        {"run": 2, "failure": "stopped_unknown_spend", "cause": None, "charged_likely": False}
+    ]
 
 
 def test_a_batch_whose_commit_failed_after_the_call_is_unknown_spend(
@@ -1437,6 +1519,8 @@ def test_a_batch_whose_commit_failed_after_the_call_is_unknown_spend(
     assert report["failed_runs"][0]["failure"] == "batches_failed:1/11"
     assert report["failed_runs"][1]["failure"] == "stopped_unknown_spend"
     assert report["budget_usd"]["complete"] is False
+    # #952 round 3, finding 2: the output-token block says the same.
+    assert report["budget"]["complete"] is False
 
 
 def _dump_failing(monkeypatch, statuses: dict[str, str]):
@@ -1516,7 +1600,7 @@ def test_an_interrupt_after_a_paid_run_keeps_that_run(main_world) -> None:
     assert report["aborted"]["exception"] == "KeyboardInterrupt"
     assert [r["run"] for r in report["runs"]] == [1]
     assert report["runs"][0]["output_tokens"] == 5
-    assert report["provider_calls_started"] == 2
+    assert report["invoke_calls_started"] == 2
 
 
 def test_an_interrupt_before_any_call_leaves_no_file(main_world, monkeypatch) -> None:
@@ -1545,7 +1629,45 @@ def test_a_crash_inside_the_first_call_keeps_a_report(main_world) -> None:
     report = json.loads(out.read_text(encoding="utf-8"))
     assert report["status"] == "aborted"
     assert report["runs"] == []
-    assert report["provider_calls_started"] == 1
+    assert report["invoke_calls_started"] == 1
+    # #952 round 3, finding 1: a call was started and no run completed, so
+    # the spend is NOT "$0, complete".
+    assert report["spent_usd"] == 0.0
+    assert report["spent_usd_complete"] is False
+    assert report["price_basis"]["model"] == "claude-opus-5"
+    assert report["sdk_retries"]["provider"] == "fixture"
+
+
+def test_an_interrupt_mid_run_after_a_completed_run_is_not_complete(main_world) -> None:
+    # Run 1 completed; run 2 started a call and was interrupted inside it.
+    TestSession, provider, out = main_world
+
+    def stop(n: int) -> None:
+        if n == 2:
+            raise KeyboardInterrupt
+
+    provider.register("zt_score", _zt_tokens(5, [], on_call=stop))
+    with pytest.raises(KeyboardInterrupt):
+        main([*ZT_ARGV, "--runs", "2", "--out", str(out)])
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert [r["run"] for r in report["runs"]] == [1]
+    assert report["spent_usd_complete"] is False
+
+
+def test_an_in_progress_report_between_runs_is_complete(main_world) -> None:
+    # Between runs every started call belongs to a completed run.
+    TestSession, provider, out = main_world
+    seen: list[dict] = []
+
+    def look(n: int) -> None:
+        if n == 2:
+            seen.append(json.loads(out.read_text(encoding="utf-8")))
+
+    provider.register("zt_score", _zt_tokens(5, [], on_call=look))
+    main([*ZT_ARGV, "--runs", "2", "--out", str(out)])
+    (during,) = seen
+    assert during["spent_usd_complete"] is True
+    assert during["price_basis"]["usd_per_mtok"] == {"input": 5, "output": 25}
 
 
 # --- the ATT&CK probe, compared (#736 comment 6068587667) ---------------------------
