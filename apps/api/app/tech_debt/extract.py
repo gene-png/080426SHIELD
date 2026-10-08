@@ -309,7 +309,7 @@ class ExtractedCapability:
     confidence_pct: int | None
     source_row_index: int | None
     # Since prompt v2 (v3.2 keeps it). None when the provider omitted the field
-    # (an older prompt, or a response that dropped it) — never coerced to False, because False is a
+    # (an older prompt, or a response that dropped it), never coerced to False, because False is a
     # decision and None is the absence of one. app.tech_debt.security_scope
     # keeps unclassified rows in the ATT&CK subset for exactly that reason.
     security_related: bool | None = None
