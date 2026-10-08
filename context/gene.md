@@ -1,16 +1,16 @@
 # Gene — in-flight status
 
 _2026-10-08: #862 (the Risk PDF printed "ATT&CK;") is built on
-`track6/862-risk-pdf-escape`; no PR yet. #861 merged (14db80a2), so it opens next._
+`track6/862-risk-pdf-escape`, in review as PR #958; `main` 14db80a2 (#861) is merged in._
 
 **What it does:** the Risk Register PDF escapes the text it prints, so "ATT&CK",
 "&" and "<...>" in a client's legal name print as typed, and a name carrying
 "</b>" no longer fails the export. The Word file and workbook are unchanged.
 A file already published changes only when it is re-exported (accepted, #736
 comment 6067815887). One test on `main` is edited, as approved there: the "&"
-skip in `test_risk_export_unrated.py` is removed. **From you:** the re-tier of
-#775 (the same defect in the other four services' PDFs); the advisor
-recommends `tier-2`, `mvp-blocking`. Trips merge-rule conditions 5 and 6, so it
+skip in `test_risk_export_unrated.py` is removed. You re-tiered #775 (the
+same defect in the other four services' PDFs) to `tier-2`, `mvp-blocking` (#736
+comment 6069566861); its plan is with the advisor. Trips merge-rule conditions 5 and 6, so it
 comes back to you.
 
 _2026-10-08: #474 option 2 is PR #861 (`track6/474-415-risk-baseline`), in

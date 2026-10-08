@@ -13,8 +13,7 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
-**2026-10-08: #862 built on `track6/862-risk-pdf-escape`, no PR yet (not on
-`main`).** The Risk Register PDF escapes its text, so "ATT&CK", "&" and "<...>"
+**2026-10-08: #862 in review as PR #958 (not on `main`).** The Risk Register PDF escapes its text, so "ATT&CK", "&" and "<...>"
 in a client's name print as typed and "</b>" no longer fails the export; the
 DOCX and XLSX are unchanged. Status and rulings (#736 6067815887): the
 2026-10-08 #862 entry in `DELIVERY_PLAN.md`'s MVP completion path.

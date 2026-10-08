@@ -231,5 +231,6 @@ def test_the_xlsx_carries_the_same_summary_disclosures(app_client) -> None:  # n
     # And it is the SAME list the PDF prints, not a second copy kept in step.
     # Every line, "ATT&CK" ones included, since the PDF escapes its text (#862).
     pdf = _flat(_pdf_text(files["pdf"]))
+    assert any("&" in line for line in lines), lines
     for line in lines:
         assert line in pdf, line

@@ -82,10 +82,9 @@ sizes marked coarse.
 
 Track work outside that list is paused.
 
-**2026-10-08: #862 (the Risk PDF printed "ATT&CK;") is built on
-`track6/862-risk-pdf-escape`; no PR yet.** Status as written before it merges;
-update this line in the landing commit. One PR per track, so it opens after
-#861, which merged as 14db80a2; `main` is merged in. reportlab's `Paragraph` parses its text as
+**2026-10-08: #862 (the Risk PDF printed "ATT&CK;") is IN REVIEW as PR #958
+(`track6/862-risk-pdf-escape`).** Status as written before it merges; `main`
+14db80a2 (#861) is merged in. reportlab's `Paragraph` parses its text as
 markup, so the Risk Register PDF printed "ATT&CK coverage" as "ATT&CK;
 coverage", a client named "R&D <Labs> Co" as "R&D; Co", and a name carrying
 "</b>" made the export fail. `render_pdf` now escapes every string it hands
@@ -94,8 +93,8 @@ exactly `&`, `<` and `>`); `_summary_lines` is unchanged, so the DOCX and XLSX
 stay plain text. Rulings: advisor, #736 comment 6067815887 (Risk only, the
 escape in `render_pdf` only, re-export-only accepted, the declared removal of
 the "&" skip in `test_risk_export_unrated.py` approved), on the plan in
-6067131971. The twin sites in the other services stay on #775, whose re-tier
-is with Gene. Trips merge-rule conditions 5 and 6, so it comes back to Gene.
+6067131971. The twin sites in the other services stay on #775, which Gene
+re-tiered to `tier-2`, `mvp-blocking` (#736 comment 6069566861). Trips merge-rule conditions 5 and 6, so it comes back to Gene.
 
 **2026-10-08: #474 (`tier-2`, `client-reaching`), option 2, is IN REVIEW as PR
 #861.** The status here is as written before it merged. A Risk Register now
