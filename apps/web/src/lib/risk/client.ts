@@ -41,6 +41,41 @@ async function jsonRequest<T>(
 }
 
 /**
+ * #896 review B2: archive one service of a duplicate group through the
+ * Risk-scoped route, which re-checks on the server that it is STILL one of a
+ * group and refuses with a typed 409 otherwise. 204 on success, so this does
+ * not go through `jsonRequest`, which parses a body.
+ *
+ * Rejects with `RiskProxyError(status, payload)`. `payload` is null when the
+ * body was not JSON, and it can be a STRING when the Risk proxy re-sent a
+ * gateway's unparseable body (`lib/api.ts` keeps it raw). The archive dialog
+ * reads anything that is not a JSON object as no answer at all, and reports
+ * the outcome as unconfirmed (#896 R3-3 and round 4, F1) -- never as the
+ * fallback "Nothing was changed.", which would assert an unknown outcome.
+ */
+export async function archiveDuplicateService(
+  cid: string,
+  serviceId: string,
+): Promise<void> {
+  const res = await fetch(
+    `/api/proxy/risk/clients/${cid}/services/${serviceId}/archive`,
+    { method: "POST", cache: "no-store" },
+  );
+  if (res.ok) return;
+  // Read the body ONCE, then parse it (see `jsonRequest`).
+  const raw = await res.text();
+  let payload: unknown = null;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    // Not JSON: no answer from the API, so the screen reports the outcome as
+    // unconfirmed. Thrown below, not swallowed.
+    payload = null;
+  }
+  throw new RiskProxyError(res.status, payload);
+}
+
+/**
  * Re-exported from the neutral module: the active tenant is not a risk concern,
  * and /admin/deliverables needs the same lookup. `describeRiskError` already
  * falls back to `err.message` for a non-RiskProxyError, so callers here are
