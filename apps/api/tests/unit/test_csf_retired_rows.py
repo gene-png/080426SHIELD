@@ -2,8 +2,8 @@
 
 The catalog no longer has `ID.AM-09` (NIST CSWP 29 has no such subcategory),
 and the migration KEEPS every row an assessment stored under it, answered or
-not, as the ZT catalog corrections did (0063, 0064). The writer of the state
-seeded here is provisioning under the OLD catalog, which made one answer row and
+not, as 0063 did for CISA and #925's DoD migration proposes. The writer of the
+state seeded here is provisioning under the OLD catalog, which made one answer row and
 one Working Profile row per tier for every code it held: the rows are inserted
 after the assessment exists, exactly as an assessment that predates #852 holds
 them.
@@ -187,7 +187,7 @@ def test_an_action_plan_with_no_recorded_row_is_stated(app_client) -> None:  # n
     accepts any catalog code, gap or not (`_effective_priority` says so), and
     ID.AM-09 was a catalog code. That route now refuses the code, so the row is
     inserted directly, exactly as such a PUT left it, beside a seeded row
-    nobody touched. The sentence is awaiting the advisor's approval; this pins
+    nobody touched. The sentence is approved (#736 comment 6056012075); this pins
     its punctuation and that it is said at all."""
     c = app_client
     h, svc_id, a = _service(c)
@@ -358,3 +358,89 @@ def test_the_ai_payload_carries_no_kept_row(app_client) -> None:  # noqa: F811
     assert "GV.OC-01" in inputs["subcategories"]
     assert RETIRED not in inputs["subcategories"]
     assert RETIRED not in inputs["answers"]
+
+
+# ---------------------------------------------------------------------------
+# The action-only sentence, approved with commas (#736 comment 6056012075).
+# ---------------------------------------------------------------------------
+
+S2_ACTIONS_ONE_CODE = (
+    "2 action plans recorded for ID.AM-09, a subcategory NIST CSF 2.0 does not have, "
+    "are kept and not listed."
+)
+S2_ACTIONS_TWO_CODES = (
+    "2 action plans recorded for ID.AM-09, ID.AM-10, subcategories NIST CSF 2.0 does "
+    "not have, are kept and not listed."
+)
+
+
+def test_the_action_only_sentence_reaches_the_playbook_workbook(app_client) -> None:  # noqa: F811
+    """The singular form, through the export route and the downloaded XLSX.
+    The gap action is inserted directly for the reason given on
+    `test_an_action_plan_with_no_recorded_row_is_stated`."""
+    c = app_client
+    h, svc_id, a = _service(c)
+    _seed_profiles(c, h, svc_id)
+    _keep_profile_rows(a["id"], scored_tiers=(), untouched_tiers=("high",))
+    _keep_gap_action(a["id"])
+    files = _export(c, h, svc_id)
+    wb = load_workbook(io.BytesIO(files["xlsx"]))
+    about = [str(v) for row in wb["About"].iter_rows(values_only=True) for v in row if v]
+    assert "SHIELD by Kentro — CSF 2.0 Full Playbook" in about
+    assert S2_ACTION_ONLY in about
+
+
+def _action(code: str):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        subcategory_code=code,
+        characterization=None,
+        priority_override=None,
+        owner="Ops",
+        deadline=None,
+        resources=None,
+        success_criteria=None,
+        poam_ref=None,
+    )
+
+
+def test_the_plural_action_only_sentence_with_one_code() -> None:
+    """NOT REACHABLE through any route, and built at the function level for that
+    reason: `CsfGapAction` is unique per (assessment, code), so one assessment
+    holds at most one plan per code, and ID.AM-09 is the only retired code. The
+    approved plural must still read correctly the day either changes."""
+    from app.csf.retired import working_profile_sentence
+
+    out = working_profile_sentence([], [_action("ID.AM-09"), _action("ID.AM-09")])
+    assert out == S2_ACTIONS_ONE_CODE
+
+
+def test_the_plural_action_only_sentence_with_two_codes() -> None:
+    """Also unreachable (see above): `ID.AM-10` is not a CSF code of any
+    edition, used only as a second code the catalog does not have."""
+    from app.csf.retired import working_profile_sentence
+
+    out = working_profile_sentence([], [_action("ID.AM-10"), _action("ID.AM-09")])
+    assert out == S2_ACTIONS_TWO_CODES
+
+
+def test_the_plural_action_only_sentence_reaches_the_workbook_cover() -> None:
+    """The file level: what `export_playbook` passes, rendered into the XLSX
+    About sheet. Built from the function for the reason above."""
+    from app.csf import playbook_export
+    from app.csf.retired import working_profile_sentence
+
+    note = working_profile_sentence([], [_action("ID.AM-09"), _action("ID.AM-09")])
+    raw = playbook_export.render_xlsx(
+        approved=False,
+        client_name="Acme",
+        version=1,
+        enterprise_rows=[],
+        tier_profiles={},
+        retired_note=note,
+    )
+    wb = load_workbook(io.BytesIO(raw))
+    about = [str(v) for row in wb["About"].iter_rows(values_only=True) for v in row if v]
+    assert "Client: Acme" in about
+    assert S2_ACTIONS_ONE_CODE in about

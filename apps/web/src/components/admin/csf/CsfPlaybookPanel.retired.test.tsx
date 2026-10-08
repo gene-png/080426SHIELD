@@ -72,6 +72,31 @@ describe("CsfPlaybookPanel states a Working Profile row kept on a retired subcat
     expect(await screen.findByTestId("csf-retired-rows")).toHaveTextContent(S2);
   });
 
+  // The action-only sentence, approved with commas (#736 comment 6056012075).
+  // Its row count is 0: the note, not the count, decides whether it shows.
+  it.each([
+    [
+      "one plan",
+      "1 action plan recorded for ID.AM-09, a subcategory NIST CSF 2.0 does" +
+        " not have, is kept and not listed.",
+    ],
+    [
+      // Not reachable today (one plan per assessment and code, and one
+      // retired code); the API's plural form, rendered as given.
+      "several plans",
+      "2 action plans recorded for ID.AM-09, a subcategory NIST CSF 2.0 does" +
+        " not have, are kept and not listed.",
+    ],
+  ])("renders the action-only sentence, %s", async (_label, note) => {
+    vi.mocked(csfClient.fetchEnterpriseProfile).mockResolvedValue(
+      profile({ retired_rows: 0, retired_rows_note: note }),
+    );
+    render(<CsfPlaybookPanel serviceId="svc-852" />);
+    expect(await screen.findByTestId("csf-retired-rows")).toHaveTextContent(
+      note,
+    );
+  });
+
   it("says nothing when nothing was kept", async () => {
     vi.mocked(csfClient.fetchEnterpriseProfile).mockResolvedValue(
       profile({ retired_rows: 0, retired_rows_note: null }),
