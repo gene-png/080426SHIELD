@@ -30,7 +30,12 @@ export function TierMixDonut({
         position: "right",
         labels: { color: TEXT, font: { size: 12 }, boxWidth: 12, padding: 10 },
       },
-      tooltip: { callbacks: { label: (c) => `${c.label}: ${c.raw} risks` } },
+      tooltip: {
+        callbacks: {
+          label: (c) =>
+            `${c.label}: ${c.raw} ${c.raw === 1 ? "risk" : "risks"}`,
+        },
+      },
     },
     cutout: "62%",
     maintainAspectRatio: false,

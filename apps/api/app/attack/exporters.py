@@ -45,7 +45,7 @@ from app.attack.partial_reasons import (
     TABLE_ORDER,
     WHY_PARTIAL_LEGEND,
     PartialReason,
-    partial_reason,
+    partial_reason_for_row,
 )
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.pending import row_tools, uncleared_tools
@@ -280,11 +280,11 @@ def _row_reason(ctx: AttackDeliverableContext, cov: AttackCoverage | None) -> Pa
     parents directly, so its parent reads like any other row."""
     if cov is None:
         return None
-    return partial_reason(
-        cov.status,
-        cov.reason_code,
+    # #842: the client dashboard's twin (`routes/clients.py`) calls the same
+    # entry point, so a stored reason is checked against the computed line in both.
+    return partial_reason_for_row(
+        cov,
         computed_parent=ctx.parents_computed and is_computed_parent(cov.technique_code),
-        computed_leaf=_computed_leaf(cov),
     )
 
 

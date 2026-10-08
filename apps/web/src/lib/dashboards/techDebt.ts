@@ -36,7 +36,10 @@ export interface TechDebtDashboardData {
   service_title: string;
   released_at: string;
   deliverable_version: number;
+  /** for #835: source items only; a split bundle's parts are not applications. */
   total_applications: number;
+  /** How many of `items` are named parts of a split bundle. */
+  bundle_part_count: number;
   annual_spend_usd: number;
   identified_savings_usd: number;
   savings_cost_known: boolean;

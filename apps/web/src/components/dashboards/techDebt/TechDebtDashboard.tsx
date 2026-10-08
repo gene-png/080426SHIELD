@@ -94,6 +94,32 @@ export function spendSub(data: TechDebtDashboardData): string {
   return "Across all tools";
 }
 
+/**
+ * The inventory pill (for #835). "Applications" counts SOURCE items, while the
+ * table lists every row, so once a bundle is split into named parts the pill
+ * names the parts separately; otherwise it is unchanged. Copy approved by the
+ * advisor on #736.
+ */
+export function inventoryPill(data: TechDebtDashboardData): string {
+  if (!(data.bundle_part_count > 0)) {
+    return `${data.items.length} tools`;
+  }
+  const tools = data.total_applications;
+  const parts = data.bundle_part_count;
+  return `${tools} ${tools === 1 ? "tool" : "tools"}, ${parts} ${
+    parts === 1 ? "bundle part" : "bundle parts"
+  }`;
+}
+
+/**
+ * The redundancy card's count (for #835). `r.count` counts LICENSES: a bundle
+ * split into named parts is one license however many of its parts sit in the
+ * category. Copy approved by the advisor on #736 (comment 6056012075).
+ */
+export function redundancyLicenses(n: number): string {
+  return `· ${n} ${n === 1 ? "license" : "licenses"}`;
+}
+
 function DispositionChip({ value }: { value: string | null }): JSX.Element {
   if (!value || !DISPOSITION[value]) {
     return <span style={{ color: C.muted, fontSize: 11.5 }}>—</span>;
@@ -161,7 +187,7 @@ function RedundancyCard({ r }: { r: Redundancy }): JSX.Element {
         <div style={{ fontWeight: 700, fontSize: 14 }}>
           {r.category}{" "}
           <span style={{ color: C.muted, fontWeight: 400 }}>
-            · {r.count} tools
+            {redundancyLicenses(r.count)}
           </span>
         </div>
         {r.savings_usd > 0 ? (
@@ -287,10 +313,7 @@ export function TechDebtDashboard({
         </Section>
       ) : null}
 
-      <Section
-        title="Full software inventory"
-        pill={`${data.items.length} tools`}
-      >
+      <Section title="Full software inventory" pill={inventoryPill(data)}>
         <div style={{ marginBottom: 12 }}>
           <input
             aria-label="Search inventory"
