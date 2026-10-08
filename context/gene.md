@@ -1,5 +1,14 @@
 # Gene — in-flight status
 
+_2026-10-08 (track2): #806, the ATT&CK `mitre_map` part, is pushed on
+`track2/806-mitre-map-prompt`. It runs the prompt you approved (comment
+5982555899) verbatim, with `prompt_version` "v2", per-batch
+`technique_details`, the four forbidden partial reasons refused on the AI
+path, and the fixture rewritten from the prompt. `_MITRE_BATCH_SIZE` stays at
+25 until the authorized live probe sets it (D2 (a)); if a full run then needs
+more than about 100 calls, it comes to you first. The PR comes back to you
+under merge-rule conditions 5 and 6._
+
 _2026-10-08: #852 (CSF catalog corrected to NIST CSWP 29, now pinned to the PDF
 you supplied) is draft PR #940 on `track5/852-csf-cswp29`; D-110, migration
 0065._
