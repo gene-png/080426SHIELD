@@ -82,6 +82,8 @@ sizes marked coarse.
 
 Track work outside that list is paused.
 
+**2026-10-08: #852 implemented (`tier-1`, `client-reaching`): the CSF catalog matches NIST CSWP 29.** `ID.AM-09` (not a CSF 2.0 subcategory) is retired, its stored answers kept, not scored and disclosed; `RC.CO-04` is added and inserted empty into every non-discarded assessment (migration 0064). A kept Working Profile row no longer makes the enterprise profile, the gap actions or the playbook export answer 500. Branch `track5/852-csf-cswp29`; decision record **D-109**; detail in `context/entries/2026-10-08-852-csf-cswp29.md`. **#852 stays open** until the source test pinning the code set to the NIST PDF lands (the PDF could not be fetched; Gene is asked to supply it). Routed to Gene rather than self-merged: merge-rule conditions 4, 5 and 6.
+
 **2026-09-22 — #209 implemented (`tier-1`, `client-reaching`); LANDED 2026-09-23 as PR #476 (`c4d3cc2`).** The status below is as written before it merged.
 The last open `tier-1`. Four client-facing surfaces resolved the engagement
 target LIVE on every request while the released document held the number it was
