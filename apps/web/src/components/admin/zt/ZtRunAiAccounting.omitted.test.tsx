@@ -338,4 +338,55 @@ describe("ZtRunAiAccounting, capabilities with no result (#840)", () => {
     expect(screen.getAllByRole("alert")).toHaveLength(1);
     expect(screen.getByRole("status")).toHaveTextContent(Z6);
   });
+
+  /** The notes group's container: the element holding Z3's heading. */
+  function notesGroup(): HTMLElement {
+    const heading = screen.getByText(/^Notes recorded, but no stage given/);
+    const group = heading.parentElement;
+    if (group === null) throw new Error("Z3 heading has no container");
+    return group;
+  }
+
+  it("a blank kept stage beside a notes group that kept none: one alert, Z6 in it, notes group neutral", () => {
+    render(
+      <ZtRunAiAccounting
+        result={result([
+          nr("ID.1", true, null),
+          nr("ID.2", false, null),
+          nr("ID.3", true, 2),
+        ])}
+      />,
+    );
+    const alerts = screen.getAllByRole("alert");
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toHaveTextContent(Z6);
+    expect(alerts[0]).toHaveTextContent(
+      "ID.2: no stage, so it stays unscored.",
+    );
+    const blankKept = screen.getByText(
+      "ID.3: keeps stage 2, recorded earlier. This run did not confirm it.",
+    );
+    expect(blankKept.closest("[role]")).toBeNull();
+    expect(notesGroup()).toHaveClass("text-ink-secondary");
+    expect(notesGroup()).not.toHaveClass("text-status-danger-fg");
+  });
+
+  it.each([
+    ["kept a stage", 3, "text-status-danger-fg", "text-ink-secondary"],
+    ["kept none", null, "text-ink-secondary", "text-status-danger-fg"],
+  ] as const)(
+    "Z3's colour: the notes group is danger only when a notes row %s",
+    (_label, kept, is, isNot) => {
+      render(
+        <ZtRunAiAccounting
+          // A blank kept stage too, so Z6 is on the panel in both cases and
+          // the colour cannot follow "any kept" by accident.
+          result={result([nr("DS.1", false, kept), nr("DS.2", true, 2)])}
+        />,
+      );
+      expect(screen.getByRole("alert")).toHaveTextContent(Z6);
+      expect(notesGroup()).toHaveClass(is);
+      expect(notesGroup()).not.toHaveClass(isNot);
+    },
+  );
 });
