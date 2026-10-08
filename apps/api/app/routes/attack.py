@@ -2610,13 +2610,18 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
         pending_review_rows=len(pending),
         rows_skipped_edited=len(skipped_codes),
         # TECHNIQUES, not suggestions: one technique can be suggested by more
-        # than one batch, and the copy counts techniques.
+        # than one batch, and the copy counts techniques. Less the techniques
+        # this run APPLIED from another suggestion (PR #951 narrow review): the
+        # copy says "not applied", which is false of a technique refused once
+        # and applied once. The audit row keeps every refusal regardless.
         not_applicable_refused=len(
             {e["technique_code"] for e in statuses_rejected if e["status"] == _NOT_APPLICABLE}
+            - applied_codes
         ),
         # #806 C4, counted the same way: only the forbidden-reason refusals, not
-        # the mispaired reasons that share `reason_codes_rejected`.
-        forbidden_reason_refused=len(forbidden_reason_codes),
+        # the mispaired reasons that share `reason_codes_rejected`, and not a
+        # technique the run applied ("keeps the status it had" would be false).
+        forbidden_reason_refused=len(forbidden_reason_codes - applied_codes),
     )
     return RunOutcome(
         result=result_payload.model_dump(mode="json"),
