@@ -1,5 +1,14 @@
 # Gene — in-flight status
 
+_2026-10-08 (track1): the #806 corpus PR is pushed on `track1/806-measure-corpus`,
+for #806. It adds the measure's synthetic corpus (`--notes-corpus` and a synthetic
+Tech Debt XLSX), the per-service cost caps that set `--max-output-tokens`, and two
+fixes: `--out` is opened before any paid call, and `charged_likely` is read from
+the `llm_calls` rows. No live call was made. The paid "before" runs start only
+after it lands, within the $25 cap the advisor approved (#736 comments 5984022081
+item 8 and 6067815887). It comes back to you under merge-rule condition 5
+(`apps/api/tests/**`)._
+
 _2026-10-08: #852 (CSF catalog corrected to NIST CSWP 29, now pinned to the PDF
 you supplied) is draft PR #940 on `track5/852-csf-cswp29`; D-110, migration
 0065._
