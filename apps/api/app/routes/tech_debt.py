@@ -363,11 +363,9 @@ def _not_in_use_contradictions(db: Session, items: list[CapabilityItem]) -> int:
     return sum(1 for c in candidates if c not in overridden)
 
 
-def _extraction_prompt_version(db: Session, cap_list: CapabilityList) -> str | None:
-    """The prompt version of the extraction that wrote this list, or None when
-    no extraction is on record for it (a seeded list, or one whose call was not
-    recorded). Read through the list's own `capability_list.extracted` audit,
-    which names the `llm_calls` row."""
+def _extraction_record(db: Session, cap_list: CapabilityList) -> dict | None:
+    """The details of this list's own `capability_list.extracted` audit, or None
+    when no extraction is on record for it (a seeded list)."""
     entry = db.execute(
         select(AuditEntry)
         .where(
@@ -377,7 +375,13 @@ def _extraction_prompt_version(db: Session, cap_list: CapabilityList) -> str | N
         .order_by(AuditEntry.at.desc())
         .limit(1)
     ).scalar_one_or_none()
-    call_id = (entry.details or {}).get("llm_call_id") if entry is not None else None
+    return (entry.details or {}) if entry is not None else None
+
+
+def _extraction_prompt_version(db: Session, record: dict) -> str | None:
+    """The prompt version of the `llm_calls` row the extraction audit names, or
+    None when the call is not on record."""
+    call_id = record.get("llm_call_id")
     if not call_id:
         return None
     call = db.get(LLMCall, uuid.UUID(call_id))
@@ -389,15 +393,26 @@ def _extraction_flags(
 ) -> dict[str, int] | None:
     """C6 (for #806): what v3.2 closes and the model still sent, read live.
 
-    None ("not measured") for a list an earlier prompt drafted, which followed
-    that prompt's rules, and for a list no extraction is on record for. Only the
-    AI's rows are counted: a row a consultant included has no source document,
-    and the copy says the row "came back" from the extraction.
+    None ("not measured"), never a count, when:
+    - no extraction is on record for the list;
+    - an earlier prompt drafted it, which followed that prompt's rules;
+    - the AI's rows have lost their link to the source document. Only the AI's
+      rows are counted (a row a consultant included has no source document,
+      and the copy says the row "came back" from the extraction), so with the
+      link gone (the document deleted, ON DELETE SET NULL) a count would be
+      smaller than the truth. Advisor ruling, issue 736 comment 6068587667.
     """
-    version = _extraction_prompt_version(db, cap_list)
-    if version not in PROMPT_VERSIONS_WITH_CLOSED_SCALES:
+    record = _extraction_record(db, cap_list)
+    if record is None:
         return None
+    if _extraction_prompt_version(db, record) not in PROMPT_VERSIONS_WITH_CLOSED_SCALES:
+        return None
+    source = record.get("artifact_id")
     extracted = [i for i in items if i.source_artifact_id is not None]
+    linked = any(str(i.source_artifact_id) == source for i in extracted)
+    if record.get("item_count") and not linked:
+        _log.info("tech_debt.extraction_flags_not_measured", list_id=str(cap_list.id))
+        return None
     return extraction_flags(extracted, cap_list.extraction_findings or [])
 
 

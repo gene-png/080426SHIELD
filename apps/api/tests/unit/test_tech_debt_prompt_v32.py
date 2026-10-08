@@ -329,6 +329,34 @@ def test_a_human_included_row_is_not_counted_as_the_ais(app_client) -> None:  # 
     assert after["extraction_flags"] == ZERO
 
 
+def test_a_list_whose_source_link_is_gone_is_not_measured(app_client) -> None:  # noqa: F811
+    """Advisor ruling (issue 736, comment 6068587667, item 3b): the counts read
+    only the AI's rows, which are the rows linked to the source document. When
+    that link is null (the document was deleted, and `source_artifact_id` is ON
+    DELETE SET NULL), the AI's rows can no longer be told apart, so the list
+    reports `extraction_flags` null ("not measured"), never a smaller count."""
+    from app.models.capability import CapabilityItem
+
+    items = [_example(0, category="EDR", confidence_pct=70), _example(1, name="")]
+    c, Sess, h, _, body = _extract(app_client, items, rows=2)
+    # APPEAR first: linked, the counts are there.
+    assert body["extraction_flags"] == {
+        **ZERO,
+        "name_missing": 1,
+        "confidence_off_scale": 1,
+        "category_off_list": 1,
+    }
+    with Sess() as s:
+        for it in s.execute(select(CapabilityItem)).scalars():
+            it.source_artifact_id = None
+        s.commit()
+    after = c.get(
+        f"/tech-debt/services/{body['service_id']}/capability-lists/latest", headers=h
+    ).json()
+    assert len(after["items"]) == 2
+    assert after["extraction_flags"] is None
+
+
 # --- 4. the offline fixture follows v3.2 ---------------------------------------
 
 #: s4's inventory, plus a total line, a retired row with no cost, a planned
