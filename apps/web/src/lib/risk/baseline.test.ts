@@ -106,10 +106,6 @@ describe("targetSentences (#474)", () => {
     ]);
   });
 
-  it("says nothing for a record of no targets (no CSF or ZT input)", () => {
-    expect(targetSentences([], true)).toEqual([]);
-  });
-
   it("says not recorded rather than nothing, for false and for absent", () => {
     expect(targetSentences([], false)).toEqual([TARGETS_NOT_RECORDED]);
     expect(targetSentences(undefined, undefined)).toEqual([

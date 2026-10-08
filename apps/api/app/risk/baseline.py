@@ -16,15 +16,9 @@ whether the client's choice was used, absent, or unusable. `origin` is WHEN
 the target was read; `live_at_generate` is the only value any writer produces
 today.
 
-Four states, kept apart: no `targets` key (a register generated before this
-was recorded; nothing is known), a readable record, an EMPTY record (no CSF or
-ZT input, so no target to name: recorded, with no rows), and a record this
-reader cannot read, which is reported as not recorded and logged, never as an
-answer.
-
-No current writer produces the empty record: generate unlocks only with a CSF
-or ZT assessment, and every such source gets a target. Reading it as recorded
-is a ratchet for the day an unlock or a synthesis filter changes that.
+Three states, kept apart: no `targets` key (a register generated before this
+was recorded; nothing is known), a readable record, and a record this reader
+cannot read, which is reported as not recorded and logged, never as an answer.
 """
 
 from __future__ import annotations
@@ -57,8 +51,6 @@ def targets_used(stored: object) -> tuple[list[TargetUsed], bool]:
     if not isinstance(stored, dict) or "targets" not in stored:
         return [], False
     raw = stored["targets"]
-    if isinstance(raw, dict) and not raw:
-        return [], True
     rows: list[TargetUsed] = []
     if isinstance(raw, dict) and raw:
         for service, entry in sorted(raw.items()):

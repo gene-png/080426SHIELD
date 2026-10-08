@@ -61,12 +61,4 @@ describe("RiskDashboard baseline (#474)", () => {
       "The targets these findings were measured against were not recorded for this register.",
     );
   });
-
-  it("prints nothing for a record of no targets, not the not-recorded line", () => {
-    render(
-      <RiskDashboard data={data({ targets: [], targets_recorded: true })} />,
-    );
-    expect(screen.getByText("Open risks")).toBeInTheDocument();
-    expect(screen.getByTestId("risk-targets-used").textContent).toBe("");
-  });
 });
