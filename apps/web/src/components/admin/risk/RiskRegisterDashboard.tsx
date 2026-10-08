@@ -598,14 +598,34 @@ export function RiskRegisterDashboard(): JSX.Element {
   // regenerate would carry over -- the warning beside the button keys on it.
   const consultantEdited =
     register?.entries.filter((e) => e.rating_edited_at !== null).length ?? 0;
-  // #743 (advisor, #736 6054419744). `_serialize` counts an entry in
-  // `entries_with_dropped_links` whenever it lost a value, which INCLUDES every
-  // entry `entries_unlinked_after_drops` counts. Those show no linkage and have
-  // their own banner, so the "still shows linkage" banner counts the rest.
-  // `0` covers only the no-register-yet case.
+  // #743 (advisor, #736 6054419744): the "lost a value and still shows
+  // linkage" banner counts exactly that population -- entries with a
+  // non-empty `dropped_links` AND at least one technique or control link
+  // left. `_serialize`'s `entries_with_dropped_links` (D) counts every entry
+  // that lost any value, and splits into three disjoint parts:
+  //   - still linked: the population this banner counts;
+  //   - `entries_unlinked_after_drops` (U): lost a technique or control and
+  //     has no link left (the banner above);
+  //   - lost only its `source_id` and never had a link (S): it shows NO
+  //     linkage, and its dropped source shows as "not recognised" in the
+  //     Source column.
+  // D - U alone left S in and called it linked (review round 2). So this is
+  // D - U - S, with S counted from the entries, which `_serialize` returns in
+  // full; the two server counters stay the authority for D and U.
+  const sourceOnlyUnlinked =
+    register?.entries.filter(
+      (e) =>
+        e.dropped_links !== null &&
+        Object.keys(e.dropped_links).length > 0 &&
+        !(e.dropped_links.linked_techniques ?? []).length &&
+        !(e.dropped_links.linked_controls ?? []).length &&
+        !(e.linked_techniques ?? []).length &&
+        !(e.linked_controls ?? []).length,
+    ).length ?? 0;
   const stillLinked = register
     ? register.entries_with_dropped_links -
-      register.entries_unlinked_after_drops
+      register.entries_unlinked_after_drops -
+      sourceOnlyUnlinked
     : 0;
   // #844. `?? 0` covers only the no-register-yet case.
   const findingsWithout = register?.findings_without_entry.length ?? 0;
@@ -981,8 +1001,10 @@ export function RiskRegisterDashboard(): JSX.Element {
           {/* #132 review. Three counters exist because there are three
               states; one was rendered. These are the other two.
 
-              `entries_with_dropped_links` is entries that lost a value and
-              still show linkage. Lower severity than the banner above and not
+              The first is entries that lost a value and still show linkage:
+              `stillLinked`, which is NOT `entries_with_dropped_links` (that
+              also counts entries showing no linkage; see `stillLinked`).
+              Lower severity than the banner above and not
               nothing: it is what a consultant fixes to stop the next run
               losing more.
 

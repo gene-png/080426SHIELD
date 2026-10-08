@@ -128,24 +128,97 @@ function register(over: Partial<RiskRegister> = {}): RiskRegister {
   };
 }
 
-/**
- * The stored entries agree with the counts, as `_serialize` derives them:
- * `entries_total` rows, the first `entries_without_tier` of them unrated.
- */
-function consistent(over: Partial<RiskRegister>): Partial<RiskRegister> {
-  const total = over.entries_total ?? 1;
-  const unrated = over.entries_without_tier ?? 1;
-  const entries = Array.from({ length: total }, (_, i) =>
-    i < unrated
-      ? entry({ id: `e${i}` })
-      : entry({
-          id: `e${i}`,
-          likelihood: "high",
-          impact: "major",
-          tier: "high",
-        }),
+function rated(id: string, over: Partial<RiskEntry> = {}): RiskEntry {
+  return entry({
+    id,
+    likelihood: "high",
+    impact: "major",
+    tier: "high",
+    ...over,
+  });
+}
+
+function droppedAny(e: RiskEntry): boolean {
+  return e.dropped_links !== null && Object.keys(e.dropped_links).length > 0;
+}
+
+function droppedALink(e: RiskEntry): boolean {
+  const d = e.dropped_links ?? {};
+  return (
+    (d.linked_techniques?.length ?? 0) > 0 ||
+    (d.linked_controls?.length ?? 0) > 0
   );
-  return { entries, ...over };
+}
+
+/**
+ * A stored register whose counters are DERIVED from its entries by the rules
+ * `_serialize` uses (`app/routes/risk.py`), so no fixture can claim a count
+ * its entries contradict:
+ *
+ * - `entries_without_tier`: entries with no tier;
+ * - `entries_with_dropped_links`: a non-empty `dropped_links`, which includes
+ *   an entry whose only drop is its `source_id`;
+ * - `entries_unlinked_after_drops`: a dropped technique or control AND no
+ *   technique or control link left;
+ * - `entries_links_not_recorded`: `dropped_links` NULL (rows from before
+ *   migration 0048);
+ * - `dropped_citations`: every dropped value, or null when no entry carries a
+ *   record (`_dropped_citations`).
+ *
+ * `over` carries only the fields that are not derived from the entries.
+ */
+function stored(
+  entries: RiskEntry[],
+  over: Partial<RiskRegister> = {},
+): RiskRegister {
+  const recorded = entries.filter((e) => e.dropped_links !== null);
+  const values = recorded.reduce(
+    (n, e) =>
+      n +
+      Object.values(e.dropped_links ?? {}).reduce((m, v) => m + v.length, 0),
+    0,
+  );
+  return register({
+    entries,
+    entries_total: entries.length,
+    entries_without_tier: entries.filter((e) => e.tier === null).length,
+    entries_with_dropped_links: entries.filter(droppedAny).length,
+    entries_unlinked_after_drops: entries.filter(
+      (e) =>
+        droppedAny(e) &&
+        droppedALink(e) &&
+        (e.linked_techniques ?? []).length === 0 &&
+        (e.linked_controls ?? []).length === 0,
+    ).length,
+    entries_links_not_recorded: entries.length - recorded.length,
+    dropped_citations: recorded.length === 0 ? null : values,
+    ...over,
+  });
+}
+
+/** `generate`: an entry that lost a technique and kept one. */
+function keptLink(id: string): RiskEntry {
+  return rated(id, {
+    linked_techniques: ["T1078"],
+    dropped_links: { linked_techniques: ["T9999"] },
+  });
+}
+
+/** `generate`: an entry whose only proposed technique was dropped. */
+function lostAllLinks(id: string): RiskEntry {
+  return rated(id, { dropped_links: { linked_techniques: ["T9999"] } });
+}
+
+/**
+ * `generate`: an entry whose only drop is its `source_id` and which never had
+ * a technique or control link. It is in `entries_with_dropped_links`, it is
+ * NOT in `entries_unlinked_after_drops`, and it shows no linkage.
+ */
+function sourceOnly(id: string): RiskEntry {
+  return rated(id, {
+    source_id: null,
+    dropped_links: { source_id: ["T0000"] },
+  });
 }
 
 async function loaded(): Promise<void> {
@@ -165,26 +238,31 @@ describe("RiskRegisterDashboard count nouns (#743)", () => {
     fetchRiskGate.mockResolvedValue(gate());
   });
 
-  async function textOf(testId: string, over: Partial<RiskRegister>) {
-    fetchRiskRegisterLatest.mockResolvedValue(register(consistent(over)));
+  async function show(reg: RiskRegister): Promise<void> {
+    fetchRiskRegisterLatest.mockResolvedValue(reg);
     await loaded();
+  }
+
+  async function textOf(testId: string, reg: RiskRegister): Promise<string> {
+    await show(reg);
     return (await screen.findByTestId(testId)).textContent ?? "";
   }
 
+  // `generate`, on a draft: the model left likelihood and impact unset.
   it("one unrated entry of one", async () => {
-    const t = await textOf("risk-entries-without-tier", {
-      entries_total: 1,
-      entries_without_tier: 1,
-    });
+    const t = await textOf(
+      "risk-entries-without-tier",
+      stored([entry({ id: "e0" })]),
+    );
     expect(t).toContain("1 of 1 entry has no likelihood, impact or tier");
     expect(t).toContain("so it is missing from the matrix");
   });
 
   it("two unrated entries of three", async () => {
-    const t = await textOf("risk-entries-without-tier", {
-      entries_total: 3,
-      entries_without_tier: 2,
-    });
+    const t = await textOf(
+      "risk-entries-without-tier",
+      stored([entry({ id: "e0" }), entry({ id: "e1" }), rated("e2")]),
+    );
     expect(t).toContain("2 of 3 entries have no likelihood, impact or tier");
     expect(t).toContain("so they are missing from the matrix");
   });
@@ -193,34 +271,51 @@ describe("RiskRegisterDashboard count nouns (#743)", () => {
   // stored register has 1 <= batches_failed < batches_total: "1 of 1" cannot
   // be stored and is not built here.
   it("one synthesis batch of two failed", async () => {
-    const t = await textOf("risk-batches-failed", {
-      batches_total: 2,
-      batches_failed: 1,
-    });
+    const t = await textOf(
+      "risk-batches-failed",
+      stored([rated("e0")], { batches_total: 2, batches_failed: 1 }),
+    );
     expect(t).toContain("1 of 2 synthesis batches failed");
     expect(t).toContain("the entries that batch would have produced");
     expect(t).not.toContain("those batches");
   });
 
   it("two synthesis batches of three failed", async () => {
-    const t = await textOf("risk-batches-failed", {
-      batches_total: 3,
-      batches_failed: 2,
-    });
+    const t = await textOf(
+      "risk-batches-failed",
+      stored([rated("e0")], { batches_total: 3, batches_failed: 2 }),
+    );
     expect(t).toContain("2 of 3 synthesis batches failed");
     expect(t).toContain("the entries those batches would have produced");
   });
 
-  // `generate`: an entry whose every proposed technique and control was
-  // dropped. Such an entry is also counted in `entries_with_dropped_links`.
+  // A RATCHET, not a reachable state: `generate` records `entries_intended`
+  // as the same tally it stores, so no current writer produces a register
+  // that intended more rows than it stored. Built directly so the wording the
+  // banner would show is pinned all the same.
+  it("entries lost before storage: one stored of two intended", async () => {
+    const t = await textOf(
+      "risk-entries-lost",
+      stored([rated("e0")], { entries_intended: 2 }),
+    );
+    expect(t).toContain("1 of 2 entries did not reach storage");
+    expect(t).toContain("describes the 1 stored, not the 2 the run intended");
+  });
+
+  it("entries lost before storage: two stored of three intended", async () => {
+    const t = await textOf(
+      "risk-entries-lost",
+      stored([rated("e0"), rated("e1")], { entries_intended: 3 }),
+    );
+    expect(t).toContain("1 of 3 entries did not reach storage");
+    expect(t).toContain("describes the 2 stored, not the 3 the run intended");
+  });
+
   it("one entry of two kept none of its links", async () => {
-    const t = await textOf("risk-entries-unlinked-after-drops", {
-      entries_total: 2,
-      entries_without_tier: 0,
-      entries_with_dropped_links: 1,
-      entries_unlinked_after_drops: 1,
-      dropped_citations: 1,
-    });
+    const t = await textOf(
+      "risk-entries-unlinked-after-drops",
+      stored([lostAllLinks("e0"), rated("e1")]),
+    );
     expect(t).toContain(
       "1 of 2 entries proposed ATT&CK or control links and kept none",
     );
@@ -230,13 +325,10 @@ describe("RiskRegisterDashboard count nouns (#743)", () => {
   });
 
   it("two entries of three kept none of their links", async () => {
-    const t = await textOf("risk-entries-unlinked-after-drops", {
-      entries_total: 3,
-      entries_without_tier: 0,
-      entries_with_dropped_links: 2,
-      entries_unlinked_after_drops: 2,
-      dropped_citations: 2,
-    });
+    const t = await textOf(
+      "risk-entries-unlinked-after-drops",
+      stored([lostAllLinks("e0"), lostAllLinks("e1"), rated("e2")]),
+    );
     expect(t).toContain(
       "2 of 3 entries proposed ATT&CK or control links and kept none",
     );
@@ -244,15 +336,11 @@ describe("RiskRegisterDashboard count nouns (#743)", () => {
     expect(t).toContain("sees those rows as unlinked");
   });
 
-  // `generate`: an entry that lost a value and kept a link.
   it("one entry of two lost a value and still shows linkage", async () => {
-    const t = await textOf("risk-entries-with-dropped-links", {
-      entries_total: 2,
-      entries_without_tier: 0,
-      entries_with_dropped_links: 1,
-      entries_unlinked_after_drops: 0,
-      dropped_citations: 1,
-    });
+    const t = await textOf(
+      "risk-entries-with-dropped-links",
+      stored([keptLink("e0"), rated("e1")]),
+    );
     expect(t).toContain(
       "1 of 2 entries lost at least one value the model sent",
     );
@@ -261,16 +349,12 @@ describe("RiskRegisterDashboard count nouns (#743)", () => {
   });
 
   // Three entries lost a value and one of them kept no link at all: the
-  // banner counts the TWO that still show linkage, because the unlinked one
-  // has its own banner and does not show linkage.
+  // banner counts the TWO that still show linkage.
   it("counts only the entries that still show linkage", async () => {
-    const t = await textOf("risk-entries-with-dropped-links", {
-      entries_total: 4,
-      entries_without_tier: 0,
-      entries_with_dropped_links: 3,
-      entries_unlinked_after_drops: 1,
-      dropped_citations: 3,
-    });
+    const t = await textOf(
+      "risk-entries-with-dropped-links",
+      stored([keptLink("e0"), keptLink("e1"), lostAllLinks("e2"), rated("e3")]),
+    );
     expect(t).toContain(
       "2 of 4 entries lost at least one value the model sent",
     );
@@ -280,36 +364,59 @@ describe("RiskRegisterDashboard count nouns (#743)", () => {
     expect(t).not.toContain("3 of 4");
   });
 
+  // Review round 2: an entry whose only drop is its `source_id` and which
+  // has no link is in `entries_with_dropped_links` and NOT in the unlinked
+  // count, so "with dropped minus unlinked" counted it as showing linkage.
+  it("does not count a source-only drop on an entry with no link", async () => {
+    const t = await textOf(
+      "risk-entries-with-dropped-links",
+      stored([sourceOnly("e0"), keptLink("e1")]),
+    );
+    expect(t).toContain(
+      "1 of 2 entries lost at least one value the model sent",
+    );
+    expect(t).toContain("so it shows linkage");
+    expect(t).not.toContain("2 of 2");
+  });
+
+  it("says nothing about linkage when the only drop is a source on an unlinked entry", async () => {
+    await show(stored([sourceOnly("e0"), rated("e1")]));
+    expect(
+      await screen.findByTestId("risk-citations-dropped"),
+    ).toHaveTextContent("1 citation value was discarded");
+    expect(screen.queryByTestId("risk-entries-with-dropped-links")).toBeNull();
+  });
+
   // Rows written before migration 0048 carry `dropped_links` NULL
   // (`seed_demo.py` builds its entries that way). One register is written by
   // one generate, so either every entry predates the recording or none does.
   it("one entry predating link recording", async () => {
-    const t = await textOf("risk-entries-links-not-recorded", {
-      entries_total: 1,
-      entries_without_tier: 0,
-      entries_links_not_recorded: 1,
-    });
+    const t = await textOf(
+      "risk-entries-links-not-recorded",
+      stored([rated("e0", { dropped_links: null })]),
+    );
     expect(t).toContain("1 of 1 entry predates link recording");
     expect(t).toContain("proposed linkage for it.");
     expect(t).not.toContain("for them");
   });
 
   it("three entries predating link recording", async () => {
-    const t = await textOf("risk-entries-links-not-recorded", {
-      entries_total: 3,
-      entries_without_tier: 0,
-      entries_links_not_recorded: 3,
-    });
+    const t = await textOf(
+      "risk-entries-links-not-recorded",
+      stored([
+        rated("e0", { dropped_links: null }),
+        rated("e1", { dropped_links: null }),
+        rated("e2", { dropped_links: null }),
+      ]),
+    );
     expect(t).toContain("3 of 3 entries predate link recording");
     expect(t).toContain("proposed linkage for them.");
   });
 
+  // `generate`, one entry, nothing dropped.
   it("citations across a one-entry register", async () => {
-    const t = await textOf("risk-citations-dropped", {
-      entries_total: 1,
-      entries_without_tier: 0,
-      dropped_citations: 0,
-    });
+    const t = await textOf("risk-citations-dropped", stored([rated("e0")]));
+    expect(t).toContain("No citation values were discarded");
     expect(t).toContain("across the 1 entry.");
     expect(t).not.toContain("1 entries");
   });
