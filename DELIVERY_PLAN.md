@@ -82,7 +82,7 @@ sizes marked coarse.
 
 Track work outside that list is paused.
 
-**2026-10-08 — #842 (`tier-2`, ATT&CK copy after R3) in PR #933.** The
+**2026-10-08: #842 (`tier-2`, ATT&CK copy after R3) in PR #933.** The
 status below is as written before it merged. What lands: the
 consultant Covered definition follows R3 (Detect, Prevent and Respond, or
 Detect and Respond where MITRE ATT&CK lists no preventive control);
