@@ -19,6 +19,7 @@ import {
   type RiskDashboardData,
   type RiskEntry,
 } from "@/lib/dashboards/risk";
+import { targetSentences } from "@/lib/risk/baseline";
 
 import type { JSX } from "react";
 
@@ -291,6 +292,18 @@ export function RiskDashboard({
           {withheldNote}
         </div>
       ) : null}
+      {/* #474. Which target the findings were measured against, in the words
+          the exported register prints, so the client can compare it with the
+          target their CSF or Zero Trust report states. */}
+      <div
+        className="mb-4 text-sm"
+        style={{ color: C.muted }}
+        data-testid="risk-targets-used"
+      >
+        {targetSentences(data.targets, data.targets_recorded).map((line) => (
+          <p key={line}>{line}</p>
+        ))}
+      </div>
       {/* #915 (S3): the API's own sentence for the DoD target cap
           (`risk/zt_capped.py`), the one the register's files print, rendered
           as given. */}
