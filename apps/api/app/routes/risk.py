@@ -19,6 +19,7 @@ import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -77,6 +78,7 @@ from app.routes.artifacts import _storage_dep
 from app.schemas.risk import (
     LinkScopeDisclosure,
     RatingNotCarried,
+    RiskDuplicateService,
     RiskEntryRatingEdit,
     RiskEntryResponse,
     RiskGateStatus,
@@ -304,15 +306,75 @@ def _duplicate_inputs_message(sources: list[_Source]) -> str | None:
     They would produce the same finding codes, and `source_id` is the key the
     per-finding count, the rating carry-forward and the draft labels all join
     on, so their findings would merge in silence. Refused until a register can
-    key a finding by service (filed post-MVP, with a screen control to archive
-    a service). The advisor's sentence (#736 6020214342) names no remedy,
-    because no screen can archive a service today (D-076).
+    key a finding by service (filed post-MVP). The advisor's sentence (#736
+    6020214342) names no remedy, and still does now that the Risk Register's
+    banner offers an archive button per service (#896): this message also
+    reaches callers that are not that screen, so the remedy sits on screen
+    beneath it instead (advisor, #736 6042801745, D-076).
     """
-    groups: dict[tuple[str, str | None], list[str]] = {}
-    for src in sources:
-        groups.setdefault((src.kind, src.framework), []).append(src.title)
-    sentences = [_duplicate_sentence(titles) for titles in groups.values() if len(titles) > 1]
+    sentences = [_duplicate_sentence([s.title for s in g]) for g in _duplicate_groups(sources)]
     return " ".join(sentences) or None
+
+
+def _duplicate_groups(sources: list[_Source]) -> list[list[_Source]]:
+    """Each group of two or more sources of one kind AND framework, in source
+    order. The one grouping both the refusal's sentence and the banner's
+    archive buttons (#896) are read from, so the buttons name exactly the
+    services the sentence names."""
+    groups: dict[tuple[str, str | None], list[_Source]] = {}
+    for src in sources:
+        groups.setdefault((src.kind, src.framework), []).append(src)
+    return [g for g in groups.values() if len(g) > 1]
+
+
+def _duplicate_services(
+    db: Session, client_id: uuid.UUID, sources: list[_Source]
+) -> list[RiskDuplicateService]:
+    """#896: the services behind the duplicate refusal, one row per archive
+    button on the Risk Register's duplicate banner.
+
+    Review B1 (advisor, #736 6046491381): two services of a kind can carry the
+    SAME title -- both default title paths build "{org} -- {service type
+    title}" -- so each row also says what tells them apart: when the service
+    was opened, and the status and version the Inputs panel shows for it. The
+    status and version are read from `current_inputs`, the reader the panel
+    (`_input_states`) uses, so the two cannot disagree."""
+    current = {(r.kind, r.service_id): r for r in current_inputs(db, client_id)}
+    rows: list[RiskDuplicateService] = []
+    for group in _duplicate_groups(sources):
+        for src in group:
+            svc = db.get(Service, uuid.UUID(src.service_id))
+            if svc is None:
+                raise RuntimeError(f"risk.duplicate_services: service {src.service_id} vanished")
+            rec = current.get((src.kind, src.service_id))
+            if rec is None:
+                # A source exists only for a record, and both read
+                # `latest_record`; reaching here means they diverged.
+                raise RuntimeError(
+                    f"risk.duplicate_services: no current input for service {src.service_id}"
+                )
+            rows.append(
+                RiskDuplicateService(
+                    service_id=src.service_id,
+                    title=src.title,
+                    started_at=_as_utc(svc.created_at),
+                    status=rec.status,
+                    version=rec.version,
+                )
+            )
+    return rows
+
+
+def _as_utc(at: datetime) -> datetime:
+    """A stored timestamp as an aware UTC datetime. SQLite returns it naive
+    (the tests' database); Postgres returns it aware."""
+    return at.replace(tzinfo=UTC) if at.tzinfo is None else at.astimezone(UTC)
+
+
+def _in_duplicate_group(sources: list[_Source], service_id: str) -> bool:
+    """#896 B2: whether this service is one of a duplicate group NOW -- the
+    same `_duplicate_groups` the refusal and the banner are read from."""
+    return any(src.service_id == service_id for g in _duplicate_groups(sources) for src in g)
 
 
 def _duplicate_sentence(titles: list[str]) -> str:
@@ -554,6 +616,8 @@ def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
         # #876 Q2 (a): the same sentence generate refuses with, so the gate
         # never offers a Generate whose only outcome is a 409.
         duplicate_inputs=_duplicate_inputs_message(sources),
+        # #896: who the banner's archive buttons name -- the same groups.
+        duplicate_services=_duplicate_services(db, client_id, sources),
     )
 
 
@@ -576,6 +640,83 @@ def gate(
 ) -> RiskGateStatus:
     _require_client(db, cid)
     return _gate(db, cid)
+
+
+@router.post(
+    "/clients/{cid}/services/{sid}/archive",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Archive one service of a duplicate group (admin, #896)",
+)
+def archive_duplicate_service(
+    cid: uuid.UUID,
+    sid: uuid.UUID,
+    admin: Annotated[User, _admin_required],
+    db: Annotated[Session, Depends(get_db)],
+) -> None:
+    """The Risk Register's duplicate-banner archive (#896 review B2; advisor,
+    #736 6046491381).
+
+    The banner is a list read earlier, perhaps in another tab, so the server
+    decides: in this transaction it recomputes the duplicate groups
+    (`_duplicate_groups`, through `_in_duplicate_group`) and archives only a
+    service that is STILL one of a group. Otherwise it refuses with a typed
+    409, so two tabs archiving one member of a pair each cannot leave the kind
+    unengaged.
+
+    The client row is locked first (`FOR UPDATE`; a no-op on SQLite), so two
+    archives for one client are serialised and the second reads what the first
+    committed. Like `DELETE /admin/services/{id}`, it only sets ARCHIVED and
+    writes an audit row; there is no unarchive route.
+    """
+    client = db.execute(
+        select(Client).where(Client.id == cid).with_for_update()
+    ).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
+    svc = db.get(Service, sid)
+    if svc is None or svc.client_id != cid:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found.")
+    if not _in_duplicate_group(_synthesis_sources(db, cid), str(sid)):
+        _log.info(
+            "risk_archive_duplicate_refused",
+            client_id=str(cid),
+            service_id=str(sid),
+            reason="service_not_in_duplicate_group",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "service_not_in_duplicate_group",
+                # The advisor's sentence, exactly (#736 6046491381). Its old
+                # last sentence, "The list has been refreshed.", is the
+                # screen's to say, and only once its reload has succeeded
+                # (review round 2, F1; 6047873969): the API cannot know.
+                "message": (
+                    f"{svc.title} is no longer one of several engaged services of the same "
+                    "kind, so it was not archived."
+                ),
+            },
+        )
+    svc.status = ServiceStatus.ARCHIVED
+    audit(
+        db,
+        action="service.archived",
+        target_type="service",
+        target_id=svc.id,
+        actor_user_id=admin.id,
+        details={
+            "client_id": str(cid),
+            "kind": svc.kind.value,
+            "via": "risk_duplicate_banner",
+        },
+    )
+    db.commit()
+    _log.info(
+        "risk_archive_duplicate_archived",
+        client_id=str(cid),
+        service_id=str(sid),
+        by=str(admin.id),
+    )
 
 
 def _provenance_snapshot(snap: _InputSnapshot, excluded: list[str]) -> dict:

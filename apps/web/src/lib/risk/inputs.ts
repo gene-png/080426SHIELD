@@ -21,6 +21,15 @@ const STATES: Record<string, string> = {
   approved: "approved, not yet released",
 };
 
+/**
+ * The panel's word for a record status. Exported so the duplicate banner's
+ * line (#896 B1) says what the panel says, by calling this rather than
+ * copying the table.
+ */
+export function statusWord(status: string): string {
+  return STATES[status] ?? status;
+}
+
 export function inputLine(row: RiskInputState): string {
   // #876: the framework (or service title) only when a kind has more than
   // one row; the server decides, so the screen and the refusal agree.
@@ -28,7 +37,7 @@ export function inputLine(row: RiskInputState): string {
   const label = row.qualifier ? `${base} (${row.qualifier})` : base;
   if (!row.engaged) return `${label}: not engaged`;
   if (row.status === null) return `${label}: not started`;
-  return `${label}: ${STATES[row.status] ?? row.status}`;
+  return `${label}: ${statusWord(row.status)}`;
 }
 
 /**
