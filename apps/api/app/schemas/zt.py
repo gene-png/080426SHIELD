@@ -344,9 +344,11 @@ class ZtOmittedCapability(BaseModel):
     that names the capability and is then refused is not here; its loss is
     already itemized under its own reason.
 
-    `notes_blank` is the only part of the prompt's "nothing to score" rule code
-    can test: no notes, or whitespace only. "N/A" and "TBD" are notes, and the
-    panel says so instead of classifying them.
+    `notes_blank` is the only part of the #806 ZT prompt's "nothing to score"
+    rule (A5) code can test: no notes, or whitespace only. "N/A" and "TBD" are
+    notes, and the panel says so instead of classifying them. Leaving a
+    blank-notes capability out is by design once the #806 ZT prompt ships; on
+    today's prompt, it is a miss.
 
     `kept_stage` is the maturity stage the row still holds, read AFTER the
     apply, so an edit that landed while the model answered is what it reports.

@@ -330,3 +330,31 @@ def test_the_audit_row_carries_omitted_counts_and_no_codes(world) -> None:
     blob = json.dumps(details)
     for code in omitted:
         assert code not in blob, blob
+
+
+@pytest.mark.unit
+def test_the_audit_row_and_accounting_line_carry_the_omitted_total(world, capsys) -> None:
+    """#964: `omitted_count` sits beside its split on the audit row and on the
+    accounting line, as CSF's does. The expected total is the number of codes
+    the provider leaves out."""
+    from app.models.audit_entry import AuditEntry
+
+    omitted = {world.code(i) for i in range(3)}
+    world.answer_all_but(omitted)
+    capsys.readouterr()
+
+    world.run()
+
+    with world.sessions() as s:
+        row = s.execute(select(AuditEntry).where(AuditEntry.action == "zt.run_ai")).scalar_one()
+    assert row.details["omitted_count"] == len(omitted), row.details
+    lines = [
+        json.loads(line)
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("{") and '"zt_run_ai_suggestions_accounted"' in line
+    ]
+    assert len(lines) == 1, lines
+    assert lines[0]["event"] == "zt_run_ai_suggestions_accounted"
+    assert lines[0]["omitted_count"] == len(omitted), lines[0]
+    for code in omitted:
+        assert code not in json.dumps(lines[0]), lines[0]

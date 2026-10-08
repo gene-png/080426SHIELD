@@ -167,22 +167,6 @@ function describeOmitted(n: ZtOmittedCapability): string {
 }
 
 /**
- * #840: the capabilities the run asked about and got no entry for. Copy Z1 to
- * Z6, approved verbatim (#840 plan, #736 ruling).
- *
- * Not a drop reason: every number above counts values the model SENT, and a
- * capability with no entry sent none. Blank notes come first in neutral
- * styling, because the prompt can leave those out by design. Notes present
- * come next, as an alert when any of them kept a stage, since that stage
- * reaches the deliverable unconfirmed. Code cannot tell a deliberate "N/A"
- * from a miss, so Z3 says so instead of classifying them.
- *
- * Z6 names approving: the "Approve client inputs" / "Approve" control in
- * `ZtWorkspace` step 3.
- *
- * Absent (a run stored before #840) or 0 renders nothing.
- */
-/**
  * One group's items, at most `ITEM_CAP`, then the approved ATT&CK string
  * "and {k} more" (#736 joint plan, A-copy, reused verbatim per the ruling).
  * The cap is per group: each group's heading already states its full count.
@@ -203,6 +187,28 @@ function OmittedItems({
   );
 }
 
+/**
+ * #840: the capabilities the run asked about and got no entry for. Copy Z1 to
+ * Z6, approved verbatim (#840 plan, #736 ruling).
+ *
+ * Not a drop reason: every number above counts values the model SENT, and a
+ * capability with no entry sent none. Blank notes come first in neutral
+ * styling and are never a live region: leaving them out is by design once the
+ * #806 ZT prompt ships, since A5 tells the model to; on today's prompt, a miss.
+ * Notes present come next. Code cannot tell a deliberate "N/A" from a miss, so
+ * Z3 says so instead of classifying them.
+ *
+ * Z6 renders once, after both groups, whenever any capability in either group
+ * kept a stage, since that stage reaches the deliverable unconfirmed (#736
+ * comment 6071261772). It is carried by the panel's single assertive region,
+ * which wraps the notes group (when there is one) and Z6: `role="alert"` when
+ * it is the panel's only alert, `role="status"` beside another.
+ *
+ * Z6 names approving: the "Approve client inputs" / "Approve" control in
+ * `ZtWorkspace` step 3.
+ *
+ * Absent (a run stored before #840) or 0 renders nothing.
+ */
 function ZtOmittedBlock({
   result,
   otherAlert,
@@ -210,8 +216,8 @@ function ZtOmittedBlock({
   result: ZtRunAiResponse;
   /**
    * Whether the panel already carries a `role="alert"`. One assertive region
-   * (#736 ruling): Z3 is an alert only when it is alone, and a polite
-   * `status` beside another alert.
+   * (#736 rulings): the region carrying Z6 is an alert only when it is alone,
+   * and a polite `status` beside another alert.
    */
   otherAlert: boolean;
 }): JSX.Element | null {
@@ -221,6 +227,19 @@ function ZtOmittedBlock({
   const blank = items.filter((x) => x.notes_blank);
   const noted = items.filter((x) => !x.notes_blank);
   const notedKept = noted.some((x) => x.kept_stage !== null);
+  const anyKept = items.some((x) => x.kept_stage !== null);
+  const notesGroup =
+    noted.length > 0 ? (
+      <div
+        className={notedKept ? "text-status-danger-fg" : "text-ink-secondary"}
+      >
+        <p>
+          Notes recorded, but no stage given ({noted.length}). This includes
+          notes such as &quot;N/A&quot; or &quot;TBD&quot;:
+        </p>
+        <OmittedItems items={noted} />
+      </div>
+    ) : null;
   return (
     <div className="space-y-2 text-sm">
       <p className="text-ink-secondary">
@@ -234,27 +253,17 @@ function ZtOmittedBlock({
           <OmittedItems items={blank} />
         </div>
       ) : null}
-      {noted.length > 0 ? (
-        <div
-          className={notedKept ? "text-status-danger-fg" : "text-ink-secondary"}
-          {...(notedKept
-            ? { role: otherAlert ? ("status" as const) : ("alert" as const) }
-            : {})}
-        >
-          <p>
-            Notes recorded, but no stage given ({noted.length}). This includes
-            notes such as &quot;N/A&quot; or &quot;TBD&quot;:
+      {anyKept ? (
+        <div className="space-y-2" role={otherAlert ? "status" : "alert"}>
+          {notesGroup}
+          <p className="text-status-danger-fg">
+            Check these before approving. A stage kept this way can come from a
+            client&apos;s self-assessment and reaches the deliverable as it is.
           </p>
-          <OmittedItems items={noted} />
-          {notedKept ? (
-            <p>
-              Check these before approving. A stage kept this way can come from
-              a client&apos;s self-assessment and reaches the deliverable as it
-              is.
-            </p>
-          ) : null}
         </div>
-      ) : null}
+      ) : (
+        notesGroup
+      )}
     </div>
   );
 }

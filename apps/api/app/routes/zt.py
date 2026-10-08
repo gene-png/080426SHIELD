@@ -754,6 +754,8 @@ def _zt_omitted_counts(omitted_capabilities: list[ZtOmittedCapability]) -> dict[
     accounting line carry these, and the run result carries the codes."""
     blank = sum(1 for n in omitted_capabilities if n.notes_blank)
     return {
+        # #964: the total, beside its split, so the audit row states it.
+        "omitted_count": len(omitted_capabilities),
         "omitted_blank_notes": blank,
         "omitted_with_notes": len(omitted_capabilities) - blank,
         "omitted_kept_stage": sum(1 for n in omitted_capabilities if n.kept_stage is not None),

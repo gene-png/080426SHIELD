@@ -100,12 +100,10 @@ describe("ZtRunAiAccounting, capabilities with no result (#840)", () => {
     );
   });
 
-  it("no alert and no Z6 when no capability in the notes group kept a stage", () => {
+  it("no alert and no Z6 when no capability in either group kept a stage", () => {
     const { container } = render(
       <ZtRunAiAccounting
-        // A kept stage in the BLANK group is neutral: the prompt leaves those
-        // out by design.
-        result={result([nr("DS.1", false, null), nr("DS.2", true, 2)])}
+        result={result([nr("DS.1", false, null), nr("DS.2", true, null)])}
       />,
     );
     // Positive state first, so the absences below are not read mid-render.
@@ -282,5 +280,62 @@ describe("ZtRunAiAccounting, capabilities with no result (#840)", () => {
       ),
       "and 2 more",
     ]);
+  });
+
+  const Z6 =
+    "Check these before approving. A stage kept this way can come from a client's self-assessment and reaches the deliverable as it is.";
+
+  it("a blank-notes capability that kept a stage brings Z6, in the one assertive region", () => {
+    const { container } = render(
+      <ZtRunAiAccounting
+        // A kept stage in the BLANK group: leaving it out is by design once
+        // the #806 ZT prompt ships; on today's prompt, a miss. Either way the
+        // stage reaches the deliverable unconfirmed (#736 comment 6071261772).
+        result={result([nr("DS.2", true, 2)])}
+      />,
+    );
+    const alerts = screen.getAllByRole("alert");
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toHaveTextContent(Z6);
+    // The blank group itself is neutral and not a live region.
+    const item = screen.getByText(
+      "DS.2: keeps stage 2, recorded earlier. This run did not confirm it.",
+    );
+    expect(item.closest("[role]")).toBeNull();
+    expect(paragraphs(container)).toContain("No notes recorded (1):");
+  });
+
+  it("Z6 renders once when both groups kept a stage", () => {
+    const { container } = render(
+      <ZtRunAiAccounting
+        result={result([nr("DS.1", false, 3), nr("DS.2", true, 2)])}
+      />,
+    );
+    expect(paragraphs(container).filter((p) => p === Z6)).toHaveLength(1);
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "DS.1: keeps stage 3, recorded earlier. This run did not confirm it.",
+    );
+  });
+
+  it("a blank-notes kept stage beside the failure alert is a polite status", () => {
+    render(
+      <ZtRunAiAccounting
+        result={result([nr("DS.2", true, 2)], {
+          suggestions_received: 4,
+          suggestions_applied: 3,
+          dropped: [
+            {
+              reason: "out_of_range",
+              key: "DS.9",
+              field: "current",
+              values: 1,
+            },
+          ],
+        })}
+      />,
+    );
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.getByRole("status")).toHaveTextContent(Z6);
   });
 });
