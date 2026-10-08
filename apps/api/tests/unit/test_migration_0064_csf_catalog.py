@@ -121,6 +121,19 @@ def world(tmp_path):
                 answer_source="consultant",
             )
         )
+        # The approved assessment seeded `low` and already holds a scored
+        # RC.CO-04 row there: never duplicated, never overwritten.
+        for code, gov, src in (("GV.OC-01", 0, None), (NEW, 1, "consultant")):
+            db.add(
+                CsfDimensionScore(
+                    assessment_id=approved.id,
+                    client_id=client.id,
+                    tier="low",
+                    subcategory_code=code,
+                    governance=gov,
+                    answer_source=src,
+                )
+            )
         # A discarded assessment's seeded tier gets nothing.
         db.add(
             CsfDimensionScore(
@@ -227,6 +240,82 @@ def test_upgrade_twice_adds_nothing_more(world) -> None:
     command.downgrade(cfg, "0063")
     command.upgrade(cfg, "0064")
     assert (_answers(engine, ids["draft"]), _profile(engine, ids["draft"])) == first
+
+
+def _row_counts(engine) -> tuple[list[tuple], list[tuple]]:
+    """Rows per (assessment, code) and per (assessment, tier, code), counted in
+    SQL. A code-keyed dict would fold a duplicate into one entry."""
+    from sqlalchemy import func
+
+    from app.models.csf_assessment import CsfAnswer
+    from app.models.csf_profile import CsfDimensionScore
+
+    with Session(engine) as db:
+        answers = db.execute(
+            select(CsfAnswer.assessment_id, CsfAnswer.subcategory_code, func.count())
+            .group_by(CsfAnswer.assessment_id, CsfAnswer.subcategory_code)
+            .having(func.count() > 1)
+        ).all()
+        scores = db.execute(
+            select(
+                CsfDimensionScore.assessment_id,
+                CsfDimensionScore.tier,
+                CsfDimensionScore.subcategory_code,
+                func.count(),
+            )
+            .group_by(
+                CsfDimensionScore.assessment_id,
+                CsfDimensionScore.tier,
+                CsfDimensionScore.subcategory_code,
+            )
+            .having(func.count() > 1)
+        ).all()
+    return list(answers), list(scores)
+
+
+def test_a_second_upgrade_with_no_downgrade_duplicates_nothing(world) -> None:
+    """Upgrade, then run 0064's upgrade AGAIN over its own output, with no
+    downgrade between (`stamp` moves the version without running anything). The
+    rows it inserted the first time, and the ones that existed before it, must
+    each stay one row."""
+    cfg, engine, ids = world
+    command.upgrade(cfg, "0064")
+    first = (
+        _answers(engine, ids["approved"]),
+        _profile(engine, ids["approved"]),
+        _profile(engine, ids["draft"]),
+    )
+    command.stamp(cfg, "0063")
+    command.upgrade(cfg, "0064")
+    assert _row_counts(engine) == ([], [])
+    assert (
+        _answers(engine, ids["approved"]),
+        _profile(engine, ids["approved"]),
+        _profile(engine, ids["draft"]),
+    ) == first
+    # The pre-existing scored RC.CO-04 row on the approved `low` tier is as it was.
+    assert _profile(engine, ids["approved"])[("low", NEW)][0] == 1
+    assert _profile(engine, ids["approved"])[("low", NEW)][9] == "consultant"
+
+
+def test_downgrade_keeps_a_locked_empty_answer(world) -> None:
+    """A locked row is a consultant's "never touch this again", empty or not.
+    The Working Profile half already keeps one; the answer half must too."""
+    from app.models.csf_assessment import CsfAnswer
+
+    cfg, engine, ids = world
+    command.upgrade(cfg, "0064")
+    with Session(engine) as db:
+        row = db.execute(
+            select(CsfAnswer).where(
+                CsfAnswer.assessment_id == ids["submitted"], CsfAnswer.subcategory_code == NEW
+            )
+        ).scalar_one()
+        row.locked = True
+        db.commit()
+    command.downgrade(cfg, "0063")
+    assert _answers(engine, ids["submitted"])[NEW] == (None, None)  # locked: kept
+    assert NEW not in _answers(engine, ids["approved"])  # empty and unlocked: removed
 
 
 def test_downgrade_deletes_only_rows_that_are_still_empty(world) -> None:

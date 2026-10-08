@@ -174,6 +174,34 @@ def test_the_working_profile_states_the_kept_row_and_its_action(app_client) -> N
     assert body["retired_rows_note"] == S2_ONE_WITH_ACTION
 
 
+S2_ACTION_ONLY = (
+    "1 action plan recorded for ID.AM-09, a subcategory NIST CSF 2.0 does not have, "
+    "is kept and not listed."
+)
+
+
+def test_an_action_plan_with_no_recorded_row_is_stated(app_client) -> None:  # noqa: F811
+    """An action plan on ID.AM-09 whose Working Profile rows nobody wrote.
+
+    Reachable before #852: `PUT /csf/services/{id}/gap-actions/{code}`
+    accepts any catalog code, gap or not (`_effective_priority` says so), and
+    ID.AM-09 was a catalog code. That route now refuses the code, so the row is
+    inserted directly, exactly as such a PUT left it, beside a seeded row
+    nobody touched. The sentence is awaiting the advisor's approval; this pins
+    its punctuation and that it is said at all."""
+    c = app_client
+    h, svc_id, a = _service(c)
+    _seed_profiles(c, h, svc_id)
+    _keep_profile_rows(a["id"], scored_tiers=(), untouched_tiers=("high",))
+    _keep_gap_action(a["id"])
+    r = c.get(f"/csf/services/{svc_id}/enterprise-profile", headers=h)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert len(body["subcategories"]) > 0
+    assert body["retired_rows"] == 0
+    assert body["retired_rows_note"] == S2_ACTION_ONLY
+
+
 def test_two_kept_rows_read_in_the_plural_with_no_action_tail(app_client) -> None:  # noqa: F811
     c = app_client
     h, svc_id, a = _service(c)
