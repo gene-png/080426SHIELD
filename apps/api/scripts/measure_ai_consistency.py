@@ -50,10 +50,27 @@ repeated the `current` stage it was sent (`echo`). Counts and codes only: no
 model text reaches the output or the logs.
 
 `--max-output-tokens N` starts no further run once N output tokens are spent.
+It defaults to, and may not exceed, the job's ceiling from the #806 live-pass
+cost caps (`COST_CAPS_USD`, `output_token_ceiling`).
+
+THE SYNTHETIC CORPUS (#806 comment 5983938383, section 2): the demo seed's notes
+cannot exercise the #806 prompts, so `scripts/measure_corpus/` holds a committed
+synthetic one. `--notes-corpus scripts/measure_corpus/notes.json` (zt_score and
+csf_score) writes its notes over the measured assessment's answer rows before
+the route's builder runs -- recorded in the report as `input_setup` -- and
+`--inventory scripts/measure_corpus/tech_debt_inventory.xlsx` is tech_debt_extract's
+input. `{{CLIENT_NAME}}` in either is filled with the client's legal name, so the
+redactor has a real client name to replace on the way out.
+
+`--out` is created before any provider exists (#806 comment 5965052688), and
+never over an existing file: an earlier report is a paid run's only record.
 
 EXIT: 0 every run succeeded; 1 a run failed, or fewer than two succeeded -- one,
 for a `--probe-batches` run (the report is still written, and names each
-failure); 2 refused.
+failure); 2 refused, before any provider call, each refusal with its own typed
+reason -- including every input this could otherwise read as nothing to do (a
+corpus that is missing, empty, malformed, for a job that reads no notes, or
+landing on no row the route sends; an `--out` that exists or cannot be written).
 
 `zt_score`, `csf_score`, `mitre_map` and `tech_debt_extract` are implemented
 (#806: the last two so the "before" runs use today's prompts). Any other job is
@@ -69,6 +86,7 @@ import json
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from app.logging import get_logger
@@ -120,6 +138,221 @@ class RunRecord:
 #: More runs than this is refused: every run is billed, and five pairs already
 #: show an observed set rather than one value.
 MAX_RUNS = 5
+
+#: The #806 live-pass caps, USD per SERVICE: comment 5983938383, section 2's
+#: table, with the $25 total approved in #736 (comment 5984022081, item 8). A
+#: cap covers its service's whole before-and-after -- two invocations of this
+#: script, one per side.
+COST_CAPS_USD: dict[str, int] = {
+    "tech_debt_extract": 3,
+    "csf_score": 8,
+    "zt_score": 3,
+    "mitre_map": 6,
+    "risk_synthesize": 5,
+}
+
+#: The list price section 2's estimates use: claude-opus-5, USD per million
+#: tokens. Another provider or model prices differently, so a figure computed
+#: from it is an ESTIMATE and is labelled as one.
+LIST_PRICE_USD_PER_MTOK: dict[str, int] = {"input": 5, "output": 25}
+
+#: One invocation is one side (before or after) of a service's pair.
+_SIDES_PER_SERVICE = 2
+
+
+def output_token_ceiling(job: str) -> int:
+    """The most output tokens one invocation of `job` may be told to spend:
+    one side's half of the service's cap, all of it priced as output. It
+    bounds OUTPUT only -- input is billed too, and a run under way is never cut
+    off -- so the report also carries the whole spend's estimate
+    (`cost_cap.estimated_usd`) for the operator to set against the cap."""
+    per_side = COST_CAPS_USD[job] * 1_000_000
+    return per_side // (_SIDES_PER_SERVICE * LIST_PRICE_USD_PER_MTOK["output"])
+
+
+def _estimated_usd(tokens: Mapping[str, Any]) -> float:
+    price = LIST_PRICE_USD_PER_MTOK
+    usd = (tokens["input"] * price["input"] + tokens["output"] * price["output"]) / 1_000_000
+    return round(usd, 4)
+
+
+# --- the synthetic notes corpus (#806 comment 5983938383, section 2) ---------
+
+#: Filled with the client's legal name before anything is built, so the
+#: redactor has a real client name to replace: a corpus naming no client would
+#: never exercise that path, and one naming a real client is client data.
+CLIENT_NAME_PLACEHOLDER = "{{CLIENT_NAME}}"
+
+#: The jobs whose payload carries interview notes. Any other job given
+#: `--notes-corpus` is refused: ignoring it would report a corpus run that
+#: never used the corpus.
+_NOTES_JOBS = ("zt_score", "csf_score")
+
+
+@dataclass(frozen=True)
+class NotesCorpus:
+    """A loaded `--notes-corpus`: its name, its classes in file order, each
+    with its notes, and the file's sha256 (recorded, so a report names the
+    exact corpus it ran on)."""
+
+    corpus: str
+    classes: tuple[tuple[str, tuple[str, ...]], ...]
+    sha256: str
+
+
+def _corpus_invalid(message: str) -> Refused:
+    return Refused("notes_corpus_invalid", f"--notes-corpus: {message}")
+
+
+def load_notes_corpus(path: str) -> NotesCorpus:
+    """Read and check a notes corpus. Every input that would otherwise measure
+    nothing is refused with its own reason, never read as "no notes to write":
+    an unreadable path (`notes_corpus_unreadable`), an empty file or one with no
+    class (`notes_corpus_empty`), and anything malformed -- a class with no
+    notes, a note that is not text, a class named twice or not at all, a key
+    misspelt (`notes_corpus_invalid`)."""
+    import hashlib
+
+    try:
+        # An empty path reads the working directory, which is not a file: the
+        # same refusal as any other path that names no readable file.
+        raw = Path(path).read_bytes()
+    except OSError as exc:
+        raise Refused(
+            "notes_corpus_unreadable", f"--notes-corpus could not be read: {exc}"
+        ) from exc
+    if not raw.strip():
+        raise Refused("notes_corpus_empty", "--notes-corpus is an empty file.")
+    try:
+        doc = json.loads(raw)
+    except ValueError as exc:
+        raise _corpus_invalid(f"not JSON ({exc.__class__.__name__}).") from exc
+    if not isinstance(doc, dict) or not isinstance(doc.get("classes"), list):
+        raise _corpus_invalid('expected an object with a "classes" list.')
+    name = doc.get("corpus")
+    if not (isinstance(name, str) and name):
+        raise _corpus_invalid('"corpus" must name the corpus.')
+    if not doc["classes"]:
+        raise Refused("notes_corpus_empty", "--notes-corpus has no class.")
+    classes: list[tuple[str, tuple[str, ...]]] = []
+    for i, entry in enumerate(doc["classes"]):
+        if not isinstance(entry, dict) or set(entry) != {"class", "notes"}:
+            raise _corpus_invalid(f'class {i} must have exactly "class" and "notes".')
+        cls, notes = entry["class"], entry["notes"]
+        if not (isinstance(cls, str) and cls):
+            raise _corpus_invalid(f"class {i} has no name.")
+        if cls in {c for c, _ in classes}:
+            raise _corpus_invalid(f"class {cls!r} appears twice.")
+        if not (isinstance(notes, list) and notes and all(isinstance(n, str) for n in notes)):
+            raise _corpus_invalid(f"class {cls!r} needs a non-empty list of text notes.")
+        classes.append((cls, tuple(notes)))
+    corpus = NotesCorpus(name, tuple(classes), hashlib.sha256(raw).hexdigest())
+    _log.info(
+        "measure_ai_consistency.notes_corpus_loaded",
+        corpus=name,
+        classes=len(classes),
+        sha256=corpus.sha256,
+    )
+    return corpus
+
+
+def _require_client_name(texts: Sequence[str], client_name: str | None, what: str) -> None:
+    """Refuse a placeholder that cannot be filled: sent as written, it would
+    reach the provider as a literal and the redactor would have no name to
+    replace -- a corpus run that never tested redaction."""
+    if not client_name and any(CLIENT_NAME_PLACEHOLDER in t for t in texts):
+        raise Refused(
+            "client_name_missing",
+            f"{what} uses {CLIENT_NAME_PLACEHOLDER} and the client has no legal name to fill it.",
+        )
+
+
+def _fill_client_name(text: str, client_name: str | None) -> tuple[str, int]:
+    """`text` with the placeholder filled, and how many were filled. Callers
+    have already refused a placeholder with no name (`_require_client_name`)."""
+    n = text.count(CLIENT_NAME_PLACEHOLDER)
+    return (text.replace(CLIENT_NAME_PLACEHOLDER, client_name or ""), n) if n else (text, 0)
+
+
+def assign_notes(keys: Sequence[str], corpus: NotesCorpus) -> dict[str, tuple[str, str]]:
+    """key -> (class, note): the keys in sorted order, the classes in turn, each
+    class's notes in turn within it. Deterministic, so both sides of a
+    before/after pair see the same notes on the same rows.
+
+    Refused when there is no row (`notes_corpus_no_rows`), and when there are
+    fewer rows than classes (`notes_corpus_classes_unplaced`): section 2 asks
+    for a row per class, and a class landing on no row would be in the corpus
+    and in no payload, unremarked."""
+    ordered = sorted(keys)
+    if not ordered:
+        raise Refused("notes_corpus_no_rows", "The assessment has no answer row to write notes to.")
+    n = len(corpus.classes)
+    if len(ordered) < n:
+        raise Refused(
+            "notes_corpus_classes_unplaced",
+            f"The corpus has {n} classes and the assessment {len(ordered)} rows: "
+            "some class would land on no row.",
+        )
+    out: dict[str, tuple[str, str]] = {}
+    for i, key in enumerate(ordered):
+        cls, notes = corpus.classes[i % n]
+        out[key] = (cls, notes[(i // n) % len(notes)])
+    return out
+
+
+def _write_corpus_notes(
+    db: Any, rows: Mapping[str, Any], corpus: NotesCorpus, client_name: str | None
+) -> tuple[dict[str, str], int]:
+    """Write the corpus's notes over `rows` (key -> an answer row with a
+    `notes` column) and commit, in the throwaway database every `measure_*`
+    has already checked it is bound to. Returns key -> class and the number of
+    placeholders filled. Nothing else on a row is touched."""
+    _require_client_name(
+        [n for _, notes in corpus.classes for n in notes], client_name, "--notes-corpus"
+    )
+    assigned = assign_notes(list(rows), corpus)
+    filled = 0
+    for key, (_, note) in assigned.items():
+        rows[key].notes, k = _fill_client_name(note, client_name)
+        filled += k
+    db.commit()
+    _log.info(
+        "measure_ai_consistency.notes_corpus_written",
+        corpus=corpus.corpus,
+        rows=len(assigned),
+        client_name_substituted=filled,
+    )
+    return {key: cls for key, (cls, _) in assigned.items()}, filled
+
+
+def _corpus_setup(
+    corpus: NotesCorpus, classes_by_key: Mapping[str, str], sent: Any, filled: int
+) -> dict:
+    """The report's record of the corpus run: per class, the rows it landed
+    on and how many of them the route's builder actually SENT (csf_score sends
+    only answers "with actual signal", so a blank note on an unscored row is
+    written and not sent). Refused when the builder sent none at all
+    (`notes_corpus_nothing_sent`): that run would measure no corpus text."""
+    sent_keys = set(sent)
+    per_class = {
+        cls: {
+            "rows": sum(1 for c in classes_by_key.values() if c == cls),
+            "sent": sum(1 for k, c in classes_by_key.items() if c == cls and k in sent_keys),
+        }
+        for cls, _ in corpus.classes
+    }
+    if not any(v["sent"] for v in per_class.values()):
+        raise Refused(
+            "notes_corpus_nothing_sent",
+            "The route's builder sent none of the rows the corpus was written to.",
+        )
+    return {
+        "corpus": corpus.corpus,
+        "sha256": corpus.sha256,
+        "rows": len(classes_by_key),
+        "classes": per_class,
+        "client_name_substituted": filled,
+    }
 
 
 def preflight(*, database_url: str, llm_mode: str, redaction_mode: str) -> None:
@@ -1102,10 +1335,13 @@ def measure_zt(
     reopen_released: bool = False,
     max_output_tokens: int | None = None,
     stop_on_failure: bool = False,
+    notes_corpus: NotesCorpus | None = None,
 ) -> dict:
     """Run zt_score `runs` times on the latest editable assessment for
     `framework` and summarize. Writes only what `run_job` itself writes, plus
-    the status change `reopen_released` asks for (see `_pick_assessment`)."""
+    the status change `reopen_released` asks for (see `_pick_assessment`) and,
+    with `notes_corpus`, the corpus's notes over the rows the route's builder
+    selects (`_write_corpus_notes`), before the payload is built from them."""
     from fastapi import HTTPException
 
     from app.ai.engine import run_job
@@ -1130,6 +1366,15 @@ def measure_zt(
         req = _zt_ai_request_for(db, a, client)
     except HTTPException as exc:
         raise _builder_refusal(exc) from exc
+    corpus_setup = None
+    if notes_corpus is not None:
+        # The builder's own rows, then the builder again over the new notes:
+        # the payload is still built by the route, never assembled here.
+        classes, filled = _write_corpus_notes(db, req.rows, notes_corpus, client.legal_name)
+        req = _zt_ai_request_for(db, a, client)
+        corpus_setup = _corpus_setup(
+            notes_corpus, classes, req.preview.inputs.get("answers") or {}, filled
+        )
     fw = _to_catalog_framework(a.framework)
     stage, stage_source = resolve_target_stage(fw, client_target_stage(db, a.service_id))
     _log.info(
@@ -1160,8 +1405,9 @@ def measure_zt(
                     name_hints=req.preview.name_hints,
                 )
         except HTTPException as exc:
-            reason, cause, charged = _failure(exc)
+            reason, cause, typed = _failure(exc)
             tokens_in, tokens_out, complete = _tokens_since(db, before)
+            charged = _charged_likely(db, before, answered=0, typed=typed)
             _log.error(
                 "measure_ai_consistency.run_failed",
                 run=n,
@@ -1190,6 +1436,8 @@ def measure_zt(
     report["assessment_capabilities"] = len(req.rows)
     report["engagement_stage"] = {"stage": stage, "source": stage_source}
     report["input_setup"] = {"reopened_from": reopened_from}
+    if corpus_setup is not None:
+        report["input_setup"]["notes_corpus"] = corpus_setup
     report["provider"] = {"name": llm.provider.name, "model": llm.provider.model}
     report["echo"] = [
         {"run": n, **echo_share("zt_score", req.preview.inputs, data, context=scope)}
@@ -1231,6 +1479,32 @@ def _tokens_since(db: Any, before: set) -> tuple[int | None, int | None, bool]:
     return total("input_tokens"), total("output_tokens"), complete
 
 
+def _charged_likely(db: Any, before: set, *, answered: int, typed: bool | None) -> bool | None:
+    """Whether a failed run's FAILED calls likely billed, read from the
+    `llm_calls` rows the run wrote -- `invoke` writes its row before it calls
+    the provider -- never assumed (#806 comments 5965066136, 5965088703).
+
+    `answered` is how many of the run's calls came back with an answer; each
+    wrote a row. Rows beyond those are failed calls that got as far as the
+    provider. With none, no failed call demonstrably reached it -- the SQLite
+    lock that killed 10 of 11 batches while inserting their row -- and the
+    answer is None, NOT KNOWN, never False: a row lost to a failed commit may
+    still have billed (`app/ai/runs.py::_charged_likely`, the same three
+    values). With some, it is the failure's own typed value where it carried
+    one (`ai_call_boundary`), else True. A batched run's total failure is a
+    `RunFailed` carrying none (#800), and a deadline does not say how many
+    batches answered, so both pass `answered=0`."""
+    from sqlalchemy import select
+
+    from app.models.llm_call import LLMCall
+
+    db.expire_all()
+    rows = sum(1 for i in db.execute(select(LLMCall.id)).scalars() if i not in before)
+    if rows <= answered:
+        return None
+    return True if typed is None else typed
+
+
 def _seed_profile_if_empty(db: Any, a: Any, admin: Any, client: Any, tiers: Sequence[str]) -> list:
     """Seed the Working Profile through the route's own handler when the
     assessment has no profile rows -- the demo seed creates answers and no
@@ -1266,6 +1540,18 @@ def _seed_profile_if_empty(db: Any, a: Any, admin: Any, client: Any, tiers: Sequ
     return list(seeded)
 
 
+def _csf_answer_rows(db: Any, a: Any) -> dict[str, Any]:
+    """The answer rows `routes/csf.py::_csf_ai_request_for` reads its notes
+    from, by subcategory code, through the same `catalog_rows` filter."""
+    from sqlalchemy import select
+
+    from app.csf.retired import catalog_rows
+    from app.models.csf_assessment import CsfAnswer
+
+    rows = db.execute(select(CsfAnswer).where(CsfAnswer.assessment_id == a.id)).scalars().all()
+    return {r.subcategory_code: r for r in catalog_rows(rows)}
+
+
 def measure_csf(
     db: Any,
     llm: Any,
@@ -1276,9 +1562,12 @@ def measure_csf(
     seed_profile_tiers: Sequence[str] = (),
     stop_on_failure: bool = False,
     probe_batches: int | None = None,
+    notes_corpus: NotesCorpus | None = None,
 ) -> dict:
     """Run csf_score `runs` times on the latest editable CSF assessment, batched
-    exactly as the route batches it, and summarize.
+    exactly as the route batches it, and summarize. With `notes_corpus`, the
+    corpus's notes are written over the answer rows the route's builder reads
+    (`catalog_rows` of the assessment's answers) before it builds the payload.
 
     A run in which ANY batch failed is a failed run: its missing rows would
     otherwise read as rows the model chose to leave out. The batches' scores are
@@ -1307,10 +1596,23 @@ def measure_csf(
     )
     client = _client_of(db, a)
     seeded_tiers = _seed_profile_if_empty(db, a, admin, client, seed_profile_tiers)
+    corpus_written = None
+    if notes_corpus is not None:
+        corpus_written = _write_corpus_notes(
+            db, _csf_answer_rows(db, a), notes_corpus, client.legal_name
+        )
     try:
         req = _csf_ai_request_for(db, a, client)
     except HTTPException as exc:
         raise _builder_refusal(exc) from exc
+    corpus_setup = None
+    if notes_corpus is not None and corpus_written is not None:
+        corpus_setup = _corpus_setup(
+            notes_corpus,
+            corpus_written[0],
+            req.preview.inputs.get("answers") or {},
+            corpus_written[1],
+        )
     batches = _csf_batch_inputs(req.preview.inputs)
     all_batches = len(batches)
     if probe_batches is not None:
@@ -1355,8 +1657,9 @@ def measure_csf(
                 deadline_message="The measurement run did not finish within the run deadline.",
             )
         except (HTTPException, RunFailed) as exc:
-            reason, cause, charged = _failure(exc)
+            reason, cause, typed = _failure(exc)
             tokens_in, tokens_out, complete = _tokens_since(db, before)
+            charged = _charged_likely(db, before, answered=0, typed=typed)
             if isinstance(exc, RunFailed) and exc.reason == RUN_DEADLINE_EXCEEDED:
                 # `run_batches` cancels batches not yet started, but one already
                 # inside a provider call keeps running and writes its row LATER
@@ -1374,8 +1677,15 @@ def measure_csf(
         tokens_in, tokens_out, complete = _tokens_since(db, before)
         if batched.failed:
             failure = f"batches_failed:{batched.failed}/{batched.total}"
-            _log.error("measure_ai_consistency.run_failed", run=n, failure=failure)
-            return RunRecord(False, None, failure, tokens_in, tokens_out, None, True, complete)
+            answered = batched.total - batched.failed
+            charged = _charged_likely(db, before, answered=answered, typed=None)
+            _log.error(
+                "measure_ai_consistency.run_failed",
+                run=n,
+                failure=failure,
+                charged_likely=charged,
+            )
+            return RunRecord(False, None, failure, tokens_in, tokens_out, None, charged, complete)
         data = csf_run_data(batched.inputs, batched.answers, req.rows)
         _log.info(
             "measure_ai_consistency.run_ok",
@@ -1413,6 +1723,8 @@ def measure_csf(
     )
     report["answers_sent"] = len(req.preview.inputs.get("answers") or {})
     report["input_setup"] = {"reopened_from": reopened_from, "profile_seeded_tiers": seeded_tiers}
+    if corpus_setup is not None:
+        report["input_setup"]["notes_corpus"] = corpus_setup
     report["provider"] = {"name": llm.provider.name, "model": llm.provider.model}
     report["downstream"] = [
         {
@@ -1632,8 +1944,9 @@ def measure_attack(
                 deadline_at=utcnow() + timedelta(seconds=RUN_DEADLINE.total_seconds()),
             )
         except (HTTPException, RunFailed) as exc:
-            reason, cause, charged = _failure(exc)
+            reason, cause, typed = _failure(exc)
             tokens_in, tokens_out, complete = _tokens_since(db, before)
+            charged = _charged_likely(db, before, answered=0, typed=typed)
             if isinstance(exc, RunFailed) and exc.reason == RUN_DEADLINE_EXCEEDED:
                 # As for csf_score: a batch still inside a provider call writes
                 # its row later, so the spend so far is not the run's spend.
@@ -1649,8 +1962,14 @@ def measure_attack(
         tokens_in, tokens_out, complete = _tokens_since(db, before)
         if failed:
             failure = f"batches_failed:{failed}/{total}"
-            _log.error("measure_ai_consistency.run_failed", run=n, failure=failure)
-            return RunRecord(False, None, failure, tokens_in, tokens_out, None, True, complete)
+            charged = _charged_likely(db, before, answered=total - failed, typed=None)
+            _log.error(
+                "measure_ai_consistency.run_failed",
+                run=n,
+                failure=failure,
+                charged_likely=charged,
+            )
+            return RunRecord(False, None, failure, tokens_in, tokens_out, None, charged, complete)
         _log.info(
             "measure_ai_consistency.run_ok",
             run=n,
@@ -1787,6 +2106,18 @@ def measure_tech_debt(
         )
     org_name = client_org_name_for_tenant(db, svc.client_id)
     hints = name_hints_for_tenant(db, svc.client_id)
+    # The synthetic corpus names its client by placeholder (#806 section 2's
+    # "[CLIENT] name" row): filled with the NAMED client's legal name, so the
+    # redactor below replaces a real name -- refused when there is none.
+    _require_client_name(
+        [v for r in rows for v in r.values() if isinstance(v, str)], org_name, "--inventory"
+    )
+    filled = 0
+    for r in rows:
+        for k, v in r.items():
+            if isinstance(v, str):
+                r[k], n = _fill_client_name(v, org_name)
+                filled += n
     _log.info(
         "measure_ai_consistency.start",
         job="tech_debt_extract",
@@ -1818,8 +2149,9 @@ def measure_tech_debt(
             # reports as `ai_extraction_unparseable`. Committed first, as the
             # route commits, so the call's `llm_calls` row is counted.
             db.commit()
-            reason, cause, charged = _failure(exc)
+            reason, cause, typed = _failure(exc)
             tokens_in, tokens_out, complete = _tokens_since(db, before)
+            charged = _charged_likely(db, before, answered=0, typed=typed)
             _log.error(
                 "measure_ai_consistency.run_failed",
                 run=n,
@@ -1856,7 +2188,11 @@ def measure_tech_debt(
     # Whose names the redactor used: the client the operator named, by id.
     report["redaction_client_id"] = str(svc.client_id)
     report["rows_sent"] = len(rows)
-    report["input_setup"] = {"inventory": Path(inventory).name, "mime": mime}
+    report["input_setup"] = {
+        "inventory": Path(inventory).name,
+        "mime": mime,
+        "client_name_substituted": filled,
+    }
     report["provider"] = {"name": llm.provider.name, "model": llm.provider.model}
     report["downstream"] = [{"run": n, **r} for n, r in reconciliations.items()]
     return report
@@ -1946,6 +2282,10 @@ def _print_table(report: dict) -> None:
     print(f"rows asked per run: {asked}")
     if report.get("probe"):
         print(f"PROBE: {report['probe']['batches']} of {report['probe']['of']} batches")
+    corpus = report.get("input_setup", {}).get("notes_corpus")
+    if corpus:
+        sent = ", ".join(f"{name} {c['sent']}/{c['rows']}" for name, c in corpus["classes"].items())
+        print(f"notes corpus {corpus['corpus']}: rows sent per class {sent}")
     t, b = report["tokens"], report["budget"]
     print(
         f"tokens: input {t['input']}, output {t['output']}, "
@@ -2000,6 +2340,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         "replaces, so it is never guessed.",
     )
     p.add_argument(
+        "--notes-corpus",
+        default=None,
+        help="zt_score and csf_score only: a notes corpus (scripts/measure_corpus/notes.json) "
+        "whose notes are written over the measured assessment's answer rows before the "
+        "route's builder runs. Recorded in the report.",
+    )
+    p.add_argument(
         "--stop-on-failure",
         action="store_true",
         help="Start no further run after a failed one (a rate limit is not retried into).",
@@ -2009,7 +2356,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=int,
         default=None,
         help="Start no further run once this many output tokens are spent. A run "
-        "under way is never cut off, so the overrun is at most one run.",
+        "under way is never cut off, so the overrun is at most one run. Defaults to, "
+        "and may not exceed, the job's ceiling from the #806 cost caps.",
     )
     args = p.parse_args(argv)
     if args.probe_batches is not None and (args.job not in _BATCHED_JOBS or args.probe_batches < 1):
@@ -2054,6 +2402,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.runs > MAX_RUNS:
         print(f"REFUSED (runs_above_max): at most {MAX_RUNS} runs.", file=sys.stderr)
         return 2
+    if args.notes_corpus is not None and args.job not in _NOTES_JOBS:
+        print(
+            "REFUSED (notes_corpus_not_applicable): --notes-corpus is for "
+            f"{' and '.join(_NOTES_JOBS)} only; {args.job} sends no interview notes.",
+            file=sys.stderr,
+        )
+        return 2
 
     from app.config import get_settings
 
@@ -2066,49 +2421,113 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         if args.job not in _IMPLEMENTED_JOBS:
             _job_shape(args.job)
+        max_output_tokens = _guard_from_cap(args.job, args.max_output_tokens)
+        corpus = None if args.notes_corpus is None else load_notes_corpus(args.notes_corpus)
+        out = _open_report(args.out)
     except Refused as exc:
         print(f"REFUSED ({exc.reason}): {exc}", file=sys.stderr)
         return 2
-    for sentinel in _PARSER_SENTINELS.get(args.job, {}).values():
-        # Read BEFORE any provider exists (#867 review A1): a parser that can no
-        # longer produce its sentinel fails here, not after the paid runs.
-        sentinel()
+    try:
+        for sentinel in _PARSER_SENTINELS.get(args.job, {}).values():
+            # Read BEFORE any provider exists (#867 review A1): a parser that
+            # can no longer produce its sentinel fails here, not after the
+            # paid runs.
+            sentinel()
+        report = _measure(args, max_output_tokens, corpus)
+    except BaseException as exc:
+        # A refusal or a crash: no report exists, so the file this run created
+        # empty is removed rather than left looking like one.
+        out.close()
+        Path(args.out).unlink()
+        if isinstance(exc, Refused):
+            print(f"REFUSED ({exc.reason}): {exc}", file=sys.stderr)
+            return 2
+        raise
+    report["cost_cap"] = {
+        "service_cap_usd": COST_CAPS_USD[args.job],
+        "output_token_ceiling": output_token_ceiling(args.job),
+        "max_output_tokens": max_output_tokens,
+        "list_price_usd_per_mtok": LIST_PRICE_USD_PER_MTOK,
+        # At claude-opus-5 list price whatever ran; complete only when every
+        # call reported its tokens (`tokens.complete`).
+        "estimated_usd": _estimated_usd(report["tokens"]),
+        "estimate_complete": report["tokens"]["complete"],
+    }
+    with out:
+        json.dump(report, out, indent=2, sort_keys=True)
+    _print_table(report)
+    cap = report["cost_cap"]
+    print(
+        f"estimated spend ${cap['estimated_usd']} at list price, against a "
+        f"${cap['service_cap_usd']} cap for both sides"
+        + ("" if cap["estimate_complete"] else " (count INCOMPLETE: spend is UNDERSTATED)")
+    )
+    return report["exit_code"]
 
+
+def _guard_from_cap(job: str, given: int | None) -> int:
+    """`--max-output-tokens`, set from the job's cost cap: the ceiling when not
+    given, refused above it (`max_output_tokens_above_cap`)."""
+    ceiling = output_token_ceiling(job)
+    if given is None:
+        return ceiling
+    if given > ceiling:
+        raise Refused(
+            "max_output_tokens_above_cap",
+            f"--max-output-tokens {given} is above {job}'s ceiling of {ceiling} "
+            f"(half its ${COST_CAPS_USD[job]} cap at the output list price).",
+        )
+    return given
+
+
+def _open_report(path: str) -> Any:
+    """Create `--out` now, before any provider exists (#806 comment 5965052688:
+    a bad path found after the paid runs loses the report). Exclusive: an
+    existing file is an earlier run's report, possibly the only record of a
+    paid run, and is never overwritten."""
+    try:
+        return open(path, "x", encoding="utf-8")  # noqa: SIM115 - closed by main
+    except FileExistsError as exc:
+        raise Refused("out_exists", f"--out {path} already exists; name a new file.") from exc
+    except OSError as exc:
+        raise Refused("out_unwritable", f"--out {path} cannot be created: {exc}") from exc
+
+
+def _measure(args: argparse.Namespace, max_output_tokens: int, corpus: Any) -> dict:
+    """Build the provider and run the measurement `args` names. A refusal is
+    raised as `Refused` for `main` to report."""
     from app.ai.llm import LLMClient
+    from app.config import get_settings
     from app.db.session import SessionLocal
 
     with SessionLocal() as db:
-        llm = LLMClient.from_db(db, s)
+        llm = LLMClient.from_db(db, get_settings())
         print(f"provider={llm.provider.name} model={llm.provider.model} runs={args.runs}")
-        try:
-            common = {
-                "runs": args.runs,
-                "reopen_released": args.reopen_released,
-                "max_output_tokens": args.max_output_tokens,
-                "stop_on_failure": args.stop_on_failure,
-            }
-            if args.job == "csf_score":
-                tiers = [t for t in args.seed_profile_tiers.split(",") if t]
-                report = measure_csf(
-                    db, llm, seed_profile_tiers=tiers, probe_batches=args.probe_batches, **common
-                )
-            elif args.job == "mitre_map":
-                report = measure_attack(db, llm, probe_batches=args.probe_batches, **common)
-            elif args.job == "tech_debt_extract":
-                # No assessment to reopen (refused above): the input is the file.
-                common.pop("reopen_released")
-                report = measure_tech_debt(
-                    db, llm, inventory=args.inventory, service_id=args.service_id, **common
-                )
-            else:
-                report = measure_zt(db, llm, framework=args.framework, **common)
-        except Refused as exc:
-            print(f"REFUSED ({exc.reason}): {exc}", file=sys.stderr)
-            return 2
-    with open(args.out, "w", encoding="utf-8") as fh:
-        json.dump(report, fh, indent=2, sort_keys=True)
-    _print_table(report)
-    return report["exit_code"]
+        common = {
+            "runs": args.runs,
+            "reopen_released": args.reopen_released,
+            "max_output_tokens": max_output_tokens,
+            "stop_on_failure": args.stop_on_failure,
+        }
+        if args.job == "csf_score":
+            tiers = [t for t in args.seed_profile_tiers.split(",") if t]
+            return measure_csf(
+                db,
+                llm,
+                seed_profile_tiers=tiers,
+                probe_batches=args.probe_batches,
+                notes_corpus=corpus,
+                **common,
+            )
+        if args.job == "mitre_map":
+            return measure_attack(db, llm, probe_batches=args.probe_batches, **common)
+        if args.job == "tech_debt_extract":
+            # No assessment to reopen (refused above): the input is the file.
+            common.pop("reopen_released")
+            return measure_tech_debt(
+                db, llm, inventory=args.inventory, service_id=args.service_id, **common
+            )
+        return measure_zt(db, llm, framework=args.framework, notes_corpus=corpus, **common)
 
 
 if __name__ == "__main__":
