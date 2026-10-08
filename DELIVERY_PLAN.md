@@ -86,14 +86,15 @@ Track work outside that list is paused.
 (`track3/806-tech-debt-prompt`).** The extraction prompt is Tech Debt v3.2 verbatim (#806 comment
 5983838515, sha256-pinned), `PROMPT_VERSION = "v3.2"`. What v3.2 closes and a
 model can still send is kept as sent and counted (C6): a missing name, a
-confidence off 100/90/60, a category off the closed list (read live from the
-AI's rows, so a correction clears it; a consultant's included row or bundle
-part is not counted) and a source row that produced a
-second item (recorded in `extraction_findings`, the run result and the audit). The
-list's `extraction_flags` is null ("not measured") for a list an earlier prompt
-drafted and for a list whose rows have lost their source-document link. No
-current writer produces that second state (no route deletes an Artifact); the
-guard is a ratchet that an artifact delete route would make reachable. E1
+confidence off 100/90/60, a category off the closed list and a source row
+that produced a second item (also recorded in `extraction_findings` and the run
+result). The counts are taken at extraction and recorded in the list's
+extraction audit, and the list's `extraction_flags` reads that record, so a
+consultant's edit, an included row or a bundle part never changes them (advisor
+ruling F2, #736 comment 6069328834, which replaces item 3b of 6068587667). It
+is null ("not measured") for a list no extraction is on record for and for one
+an earlier prompt drafted. With no rows, the offline fixture returns no items,
+as v3.2 section 10 says (ruling F3). E1
 states each non-zero count in the workspace. The offline fixture is re-authored
 from v3.2's text, and carries #845's lifecycle rule and e2e s47 (s46 in #869's
 branch; s46 is taken on main), moved here from #869. With v3.2 in the tree the
