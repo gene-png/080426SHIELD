@@ -677,6 +677,32 @@ def echo_share(
     return out
 
 
+#: C2 (#806 plan 5983938383): the approved prompt (v2) asks for no `target`,
+#: so `downstream` measures each run's gaps against the engagement stage. A
+#: report from the v1 prompt measured them against the targets the model sent.
+#: Stated in every zt_score report, because the two figures look alike.
+ZT_DOWNSTREAM_TARGET_BASIS = (
+    "From prompt v2 (#806) the model sends no target, so these gaps are measured "
+    "against the engagement stage. A v1 report measured them against the "
+    "model's own targets; the two gap counts are not comparable."
+)
+
+
+def zt_no_result_count(inputs: Mapping[str, Any], data: Mapping[str, Any]) -> int:
+    """Capabilities the run asked about that no entry named (#806, C3). Under
+    the approved prompt a blank or placeholder note, and a DoD capability that
+    is Not Assessed, get no result by design, so this is a count to read, not a
+    fault. Locks are not modelled: this is what the model answered, not what a
+    run would write."""
+    asked = {c for c in inputs.get("capabilities") or [] if isinstance(c, str)}
+    named = {
+        row["code"]
+        for row in data.get("capabilities") or []
+        if isinstance(row, dict) and isinstance(row.get("code"), str)
+    }
+    return len(asked - named)
+
+
 def zt_downstream(framework: Any, *, engagement_stage: int, data: Mapping[str, Any]) -> dict:
     """The gaps a client would see if every value in `data` were applied,
     counted by the engine (`analyze_gaps`) with no truncation.
@@ -1197,6 +1223,11 @@ def measure_zt(
     ]
     report["downstream"] = [
         {"run": n, **zt_downstream(fw, engagement_stage=stage, data=data)}
+        for n, data in _ok_runs(records)
+    ]
+    report["downstream_target_basis"] = ZT_DOWNSTREAM_TARGET_BASIS
+    report["no_result"] = [
+        {"run": n, "no_result_count": zt_no_result_count(req.preview.inputs, data)}
         for n, data in _ok_runs(records)
     ]
     return report

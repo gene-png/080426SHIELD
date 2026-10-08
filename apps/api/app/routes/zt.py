@@ -107,6 +107,8 @@ from app.tenant import (
 from app.zt.catalog import (
     all_codes,
     capabilities,
+    capability_by_code,
+    pillar_by_code,
     pillars,
 )
 from app.zt.exporters import build_context as build_zt_context
@@ -144,7 +146,12 @@ _log = get_logger(__name__)
 # may carry `key`/`value` and the audit row and logs get reason codes and counts
 # ONLY. The information they held now reaches the admin through `dropped` on the
 # run response, where it belongs.
-_ZT_ROW_FIELDS = ("current", "target")
+#
+# `current` only (#806, ruling (a) in #736 comment 5963632707): the approved
+# prompt asks for no `target` (D4, A6), and the intake target governs. A stray
+# `target` lands as `unknown_field`: counted, disclosed, never applied. Per-row
+# `target_stage` values an earlier AI run wrote stay until someone edits them.
+_ZT_ROW_FIELDS = ("current",)
 _ROW_KEY_FIELDS = ("code",)
 # One capability entry's worth of suggestions. Used when an entry is too broken
 # to enumerate what it meant to set, so an unreadable entry is never cheaper to
@@ -637,6 +644,30 @@ def build_zt_ai_request(db: Session, svc: Service, client: Client) -> ZtAiReques
     return _zt_ai_request_for(db, a, client)
 
 
+def _zt_capability_details(framework: ZtFrameworkCode, codes: list[str]) -> dict[str, dict]:
+    """The approved prompt's `capability_details` (A2, build requirement 1):
+    for every code, its pillar's name and its own name, verbatim from the
+    catalog. A DoD entry also carries its activities, in the catalog's order,
+    which is sorted by DoD activity id; a CISA entry carries none.
+
+    Built here, in the one builder the run and `/ai/preview` share, so the two
+    cannot diverge."""
+    details: dict[str, dict] = {}
+    for code in codes:
+        cap = capability_by_code(code)
+        entry: dict[str, Any] = {
+            "pillar": pillar_by_code(framework, cap.pillar_code).name,
+            "name": cap.name,
+        }
+        if framework == ZtFrameworkCode.DOD_ZTRA:
+            entry["activities"] = [
+                {"id": act.id, "name": act.name, "level": act.level, "description": act.description}
+                for act in cap.activities
+            ]
+        details[code] = entry
+    return details
+
+
 def _zt_ai_request_for(db: Session, a: ZtAssessment, client: Client) -> ZtAiRequest:
     """The request for ONE assessment, named by id: the background job (#645)
     re-loads the assessment its POST validated, never "the latest"."""
@@ -665,6 +696,7 @@ def _zt_ai_request_for(db: Session, a: ZtAssessment, client: Client) -> ZtAiRequ
             inputs={
                 "framework": a.framework.value,
                 "capabilities": sorted(rows),
+                "capability_details": _zt_capability_details(cat_fw, sorted(rows)),
                 "answers": {
                     code: {"notes": r.notes, "current": r.maturity_stage}
                     for code, r in rows.items()
@@ -691,9 +723,10 @@ def run_ai(
     _rl: Annotated[None, Depends(enforce_ai_rate_limit)],
     body: RunAiRequest | None = None,
 ) -> AiRunStarted:
-    """The ZT 'Run AI'. Suggests a current and target maturity level per
-    capability, on the framework's own scale. AI suggests; locked rows are
-    untouched; code does the pillar roll-up + roadmap.
+    """The ZT 'Run AI'. Suggests a current maturity stage per capability, on
+    the framework's own scale, and no target (#806: the intake target governs).
+    AI suggests; locked rows are untouched; code does the pillar roll-up +
+    roadmap.
 
     #645: answers 202 with a run to poll. The refusals that need no AI are made
     here, synchronously; the work is `_zt_run_work`, in the background.
