@@ -12,12 +12,24 @@ Each subcategory carries:
 
 Notes on counts (CSF 2.0 Final, Feb 2024):
   GOVERN   31 subcategories across 6 categories
-  IDENTIFY 22 subcategories across 3 categories
+  IDENTIFY 21 subcategories across 3 categories
   PROTECT  22 subcategories across 5 categories
   DETECT   11 subcategories across 2 categories
   RESPOND  13 subcategories across 4 categories
-  RECOVER   7 subcategories across 2 categories
+  RECOVER   8 subcategories across 2 categories
   Total    106 subcategories / 22 categories / 6 functions
+
+Source of record: NIST CSWP 29, The NIST Cybersecurity Framework (CSF) 2.0,
+February 26, 2024 (https://doi.org/10.6028/NIST.CSWP.29). #852 corrected two
+rows against it: CSF 2.0 has no `ID.AM-09`, which this catalog used to hold, and
+it has `RC.CO-04`, which this catalog lacked. The total read 106 both before and
+after, which is why a count could not see it. A stored answer on `ID.AM-09` is
+kept, not scored, and disclosed (`app.csf.retired`, migration 0064).
+
+The code set is corroborated by the Kentro Working Profile toolkit
+(`reference-docs/Step_2_*_Working_Profile_*.xlsx`) but NOT yet pinned to the
+NIST PDF by a test: that source test waits on the PDF, and #852 stays open
+until it lands.
 """
 
 from __future__ import annotations
@@ -412,7 +424,7 @@ SUBCATEGORIES: tuple[Subcategory, ...] = (
         "Cybersecurity supply chain risk management plans include provisions for activities that occur after the conclusion of a partnership or service agreement.",
     ),
     # ---- IDENTIFY --------------------------------------------------------
-    # ID.AM - Asset Management (8)
+    # ID.AM - Asset Management (7)
     _sc(
         "ID.AM-01",
         "Hardware inventory",
@@ -447,11 +459,6 @@ SUBCATEGORIES: tuple[Subcategory, ...] = (
         "ID.AM-08",
         "Asset life cycle management",
         "Systems, hardware, software, services, and data are managed throughout their life cycles.",
-    ),
-    _sc(
-        "ID.AM-09",
-        "Personnel inventories",
-        "Inventories of personnel with cybersecurity-related responsibilities are maintained.",
     ),
     # ID.RA - Risk Assessment (10)
     _sc(
@@ -783,11 +790,16 @@ SUBCATEGORIES: tuple[Subcategory, ...] = (
         "End of recovery declared",
         "The end of incident recovery is declared based on criteria, and incident-related documentation is completed.",
     ),
-    # RC.CO - Incident Recovery Communication (1)
+    # RC.CO - Incident Recovery Communication (2)
     _sc(
         "RC.CO-03",
-        "Public updates",
+        "Recovery progress communicated",
         "Recovery activities and progress in restoring operational capabilities are communicated to designated internal and external stakeholders.",
+    ),
+    _sc(
+        "RC.CO-04",
+        "Public recovery updates",
+        "Public updates on incident recovery are shared using approved methods and messaging.",
     ),
 )
 

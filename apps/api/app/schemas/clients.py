@@ -443,6 +443,11 @@ class CsfDashboardResponse(BaseModel):
     # the reason is a precedent now, not a live defect. An earlier draft said
     # "is open", which sends the next reader to fix something already fixed.
     top_gaps: list[CsfGapDashboard]
+    # #852: answers on a subcategory the catalog no longer has (ID.AM-09), kept
+    # and not scored, so every figure above leaves them out. The approved
+    # sentence, from the derivation the deliverable calls (`csf/retired.py`).
+    retired_answers: int = 0
+    retired_answers_note: str | None = None
 
 
 class ZtDashboardResponse(BaseModel):

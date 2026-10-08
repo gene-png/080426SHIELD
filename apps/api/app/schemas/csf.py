@@ -145,6 +145,12 @@ class CsfAssessmentResponse(BaseModel):
     client_profile: str | None = None
     # #646: which mode drafted this assessment's AI suggestions. REQUIRED.
     ai_source: AiSource
+    # #852: answers stored against a subcategory the catalog no longer has
+    # (ID.AM-09), kept rather than deleted (migration 0064), and therefore not
+    # scored. With its approved sentence, or None when there are none
+    # (`csf/retired.py`).
+    retired_answers: int = 0
+    retired_answers_note: str | None = None
 
 
 class CsfAnswerPatch(BaseModel):
@@ -364,6 +370,11 @@ class EnterpriseSubcategory(BaseModel):
 class EnterpriseProfileResponse(BaseModel):
     tiers_in_use: list[str]
     subcategories: list[EnterpriseSubcategory]
+    # #852: Working Profile rows someone wrote on a subcategory the catalog no
+    # longer has (ID.AM-09), kept and not rolled up, with the approved sentence
+    # (which also counts kept action plans), or None when there are none.
+    retired_rows: int = 0
+    retired_rows_note: str | None = None
 
 
 class CsfDimensionChange(BaseModel):

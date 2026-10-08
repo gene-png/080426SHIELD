@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 from app.csf.catalog import FUNCTIONS, SUBCATEGORIES, FunctionCode, Subcategory
 from app.csf.gap import GapAnalysis
 from app.csf.maturity import tier_label
+from app.csf.retired import answers_sentence
 from app.csf.scoring import ScoreResult
 from app.mode_stamp import (
     UNKNOWN_AI_MODE,
@@ -136,6 +137,15 @@ def _target_note(ctx: CsfDeliverableContext) -> str | None:
     return target_source_sentence("tier", ctx.target_source)
 
 
+def _retired_note(ctx: CsfDeliverableContext) -> str | None:
+    """#852: answers kept on a subcategory the catalog no longer has are not
+    scored, and the document says so. The one derivation is `csf/retired.py`,
+    which the workspace and the client dashboard call too, so the screen and
+    the document cannot disagree. Every sheet and table here iterates the
+    catalog, so without this the kept answer vanishes in silence."""
+    return answers_sentence(ctx.answers)
+
+
 def _unscored_sentence(unscored: int) -> str:
     """#699: `analyze_gaps` skips an unscored subcategory, so a gap count says
     nothing about it. Without this a mostly-unscored assessment delivered "All 0
@@ -203,6 +213,10 @@ def render_xlsx(ctx: CsfDeliverableContext) -> bytes:
                 _fmt_tier(fs.average_tier),
             ]
         )
+    retired = _retired_note(ctx)
+    if retired:
+        ws.append([])
+        ws.append(["Not scored", retired])  # #852: a subcategory CSF 2.0 does not have
     for w, col in zip([10, 28, 12, 10, 14, 16], range(1, 7), strict=True):
         ws.column_dimensions[get_column_letter(col)].width = w
 
@@ -327,6 +341,9 @@ def render_docx(ctx: CsfDeliverableContext) -> bytes:
     doc = new_document(f"{ctx.service_title} — {ctx.client_legal_name}")
     add_title(doc, ctx.service_title, ctx.client_legal_name)
     add_docx_paragraph(doc, ctx.ai_mode)  # #646, under the title
+    retired = _retired_note(ctx)
+    if retired:
+        add_paragraphs(doc, [retired])  # #852, beside the mode stamp
 
     add_heading(doc, "Maturity summary")
     add_paragraphs(
@@ -412,6 +429,9 @@ def render_pdf(ctx: CsfDeliverableContext) -> bytes:
     story.append(Paragraph(ctx.service_title, h1))
     story.append(Paragraph(ctx.client_legal_name, body))
     story.append(pdf_paragraph(ctx.ai_mode, body))  # #646, under the title
+    retired = _retired_note(ctx)
+    if retired:
+        story.append(Paragraph(retired, body))  # #852, beside the mode stamp
     story.append(Spacer(1, 0.2 * inch))
 
     story.append(Paragraph("Maturity summary", h2))
