@@ -40,6 +40,11 @@ import {
   ArchiveServiceButton,
   ArchiveServiceDialog,
 } from "@/components/admin/risk/ArchiveServiceButton";
+import { targetSentences } from "@/lib/risk/baseline";
+// #403 / #876: the scored-coverage banner labels its scope keys with the one
+// web copy of the export's `scope_label`. A service token the labeller does not
+// know renders as itself, so a new service cannot vanish from the disclosure.
+import { scopeLabel } from "@/lib/risk/labels";
 import { carriedSentences } from "@/lib/risk/carry";
 import {
   INPUTS_RULE,
@@ -57,54 +62,9 @@ import type {
 
 import type { JSX } from "react";
 
-/**
- * #403. Service tokens as the API spells them, for the scored-coverage banner.
- *
- * `?? s.service` at the call site rather than a lookup that can return
- * undefined: a service added on the API side must render as its raw token —
- * which is ugly and legible — instead of vanishing from a disclosure or
- * printing "undefined" beside a real count. A missing label is a cosmetic
- * defect; a missing ROW is the disclosure failing silently, which is the
- * failure this banner exists to prevent.
- *
- * DUPLICATED, unavoidably: `_SERVICE_LABELS` in `app/risk/exporters.py` holds
- * the same three strings for the client's deliverable. No shared label map
- * exists in this repo to reuse, and a Python dict cannot be shared with TSX, so
- * this is a synchronization whose window is named rather than a derivation.
- * Change both, or the client's PDF and this screen disagree about which
- * assessment a count belongs to.
- */
 /** #743: the noun agrees with the count beside it ("1 entry", "2 entries"). */
 function entriesNoun(n: number): string {
   return n === 1 ? "entry" : "entries";
-}
-
-const SERVICE_LABELS: Record<string, string> = {
-  attack: "ATT&CK coverage",
-  csf: "NIST CSF",
-  zt: "Zero Trust",
-};
-
-/**
- * #876: with two Zero Trust services the scope key is "zt:<framework>", and
- * the row names the framework (advisor, #736 6019425290 Q3). The same two
- * names as `ZT_FRAMEWORK_NAMES` in `app/risk/exporters.py`; change both.
- */
-const ZT_FRAMEWORK_NAMES: Record<string, string> = {
-  cisa_ztmm_2_0: "CISA ZTMM 2.0",
-  dod_ztra: "DoD ZT Reference Architecture",
-};
-
-function scopeLabel(key: string): string {
-  const known = SERVICE_LABELS[key];
-  if (known !== undefined) return known;
-  const [kind, qualifier] = key.split(":", 2);
-  const kindLabel = SERVICE_LABELS[kind];
-  const fw =
-    qualifier === undefined ? undefined : ZT_FRAMEWORK_NAMES[qualifier];
-  return kindLabel !== undefined && fw !== undefined
-    ? `${kindLabel} (${fw})`
-    : key;
 }
 
 function TierChip({ tier }: { tier: string | null }): JSX.Element {
@@ -1244,6 +1204,19 @@ export function RiskRegisterDashboard(): JSX.Element {
               counts.
             </div>
           ) : null}
+          {/* #474. The baseline every CSF and ZT finding was measured
+              against. Rendered in every state: "not recorded" is said, never
+              left as silence, because the client's export says it too. */}
+          <div
+            className="rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
+            data-testid="risk-targets-used"
+          >
+            {targetSentences(register.targets, register.targets_recorded).map(
+              (line) => (
+                <p key={line}>{line}</p>
+              ),
+            )}
+          </div>
           <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
             <NumberCard label="Entries" value={register.entries.length} />
             <NumberCard
