@@ -94,7 +94,7 @@ def test_technique_details_carry_the_catalogue_name_and_mitres_preventability(
 
 def test_every_catalogue_technique_name_survives_strict_redaction() -> None:
     """Build note 4: redact all 697 names in strict mode and diff. Measured
-    when this was written: no name changed, with or without an org name."""
+    when this was written: no name changed, for org None and 'Acme'."""
     from app.ai.redact import redact_payload
     from app.attack.catalog import TECHNIQUES
 
@@ -129,6 +129,11 @@ def test_an_ai_partial_with_a_forbidden_reason_is_refused_whole(
         e == {"technique_code": code, "status": "partial", "reason_code": reason} for e in rejected
     ), rejected
     assert audit["statuses_rejected"] == []
+    # Disclosed on the run, not only in the audit row (PR #951 review, F2):
+    # one TECHNIQUE, however many batches made the suggestion. `result` is the
+    # stored run read back through `/ai-runs/{id}`, so it survives a reload.
+    assert len(rejected) > 1, "one batch cannot show techniques are counted, not suggestions"
+    assert result["forbidden_reason_refused"] == 1
 
 
 @pytest.mark.parametrize("reason", OFFERED)
@@ -139,6 +144,7 @@ def test_an_ai_partial_with_an_offered_reason_is_stored(app_client, reason) -> N
     row = next(t for t in result["coverage"] if t["id"] == row_id)
     assert (row["status"], row["reason_code"]) == ("partial", reason)
     assert _run_audit(TestSession)["reason_codes_rejected"] == []
+    assert result["forbidden_reason_refused"] == 0
 
 
 @pytest.mark.parametrize("reason", FORBIDDEN)
@@ -185,3 +191,16 @@ def test_the_consultant_definition_of_prevention_limited_is_the_approved_text(
         "Detect is in place and Prevent is not, for a technique MITRE ATT&CK lists "
         "a preventive control for."
     )
+
+
+def test_a_mispaired_reason_is_not_counted_as_a_forbidden_one(app_client) -> None:  # noqa: F811
+    """`reason_codes_rejected` also holds mispaired reasons (a gap with
+    `reach_limited`). Those are not a partial the prompt disputed, so the
+    forbidden-reason count stays 0 while the refusal is still recorded."""
+    c, TestSession, provider = app_client
+    h, svc_id, _row_id, _ = _one_row_run_with_reason(
+        c, TestSession, provider, "gap", "reach_limited"
+    )
+    result = attack_run_ai(c, svc_id, h)
+    assert _run_audit(TestSession)["reason_codes_rejected"], "the mispairing was not refused"
+    assert result["forbidden_reason_refused"] == 0

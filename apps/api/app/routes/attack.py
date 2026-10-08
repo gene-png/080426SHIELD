@@ -2326,6 +2326,9 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
     # missing or disallowed status; then a mispaired reason; only then is
     # anything applied. Each refusal is recorded in exactly one list.
     parent_suggestions_refused: list[dict[str, str]] = []
+    # #806 C4: the techniques refused for a partial reason the prompt forbids,
+    # a subset of `reason_codes_rejected`, counted for the workspace.
+    forbidden_reason_codes: set[str] = set()
     for sugg in (result.data or {}).get("techniques", []):
         if not isinstance(sugg, dict):
             continue
@@ -2374,6 +2377,7 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
             reason_codes_rejected.append(
                 {"technique_code": row.technique_code, "status": st, "reason_code": offered}
             )
+            forbidden_reason_codes.add(row.technique_code)
             continue
         # Here `st` is a writable status and any offered reason fits it: every
         # other case was refused whole above.
@@ -2610,6 +2614,9 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
         not_applicable_refused=len(
             {e["technique_code"] for e in statuses_rejected if e["status"] == _NOT_APPLICABLE}
         ),
+        # #806 C4, counted the same way: only the forbidden-reason refusals, not
+        # the mispaired reasons that share `reason_codes_rejected`.
+        forbidden_reason_refused=len(forbidden_reason_codes),
     )
     return RunOutcome(
         result=result_payload.model_dump(mode="json"),
