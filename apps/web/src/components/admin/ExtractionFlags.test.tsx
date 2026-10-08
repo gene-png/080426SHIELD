@@ -37,7 +37,7 @@ describe("ExtractionFlags (#806, E1)", () => {
     );
     const items = screen.getAllByRole("listitem").map((li) => li.textContent);
     expect(items).toEqual([
-      '2 rows came back without a name and are listed as "Unknown capability".',
+      '2 rows came back without a name and were listed as "Unknown capability".',
       "3 rows came back with a confidence the extraction does not use (only 100, 90 or 60).",
       "4 rows came back with a category outside the standard list, and it was kept.",
       "5 source rows were turned into more than one capability.",
@@ -57,7 +57,7 @@ describe("ExtractionFlags (#806, E1)", () => {
     );
     const items = screen.getAllByRole("listitem").map((li) => li.textContent);
     expect(items).toEqual([
-      '1 row came back without a name and is listed as "Unknown capability".',
+      '1 row came back without a name and was listed as "Unknown capability".',
       "1 row came back with a confidence the extraction does not use (only 100, 90 or 60).",
       "1 row came back with a category outside the standard list, and it was kept.",
       "1 source row was turned into more than one capability.",

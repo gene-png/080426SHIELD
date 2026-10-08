@@ -11,7 +11,9 @@ import type { ExtractionFlagCounts } from "@/lib/tech_debt/types";
  *
  * E1 copy, proposed in the #806 plan (issue 806, comment 5984600764) and
  * approved by the advisor (issue 736, comment 6068587667) with the singular
- * forms, `category_off_list` reworded to the past tense. Every string lives in
+ * forms, `category_off_list` reworded to the past tense; `name_missing` is past
+ * tense too (6070049755), because under F2 the count is the extraction's and a
+ * consultant may since have renamed the row. Every string lives in
  * `EXTRACTION_FLAG_COPY`, so a wording change is one edit there.
  */
 
@@ -22,9 +24,9 @@ export const EXTRACTION_FLAG_COPY: Record<
   { one: string; many: (n: number) => string }
 > = {
   name_missing: {
-    one: '1 row came back without a name and is listed as "Unknown capability".',
+    one: '1 row came back without a name and was listed as "Unknown capability".',
     many: (n) =>
-      `${n} rows came back without a name and are listed as "Unknown capability".`,
+      `${n} rows came back without a name and were listed as "Unknown capability".`,
   },
   confidence_off_scale: {
     one: "1 row came back with a confidence the extraction does not use (only 100, 90 or 60).",
