@@ -310,6 +310,73 @@ def test_the_prompt_version_is_recorded_and_an_earlier_one_is_not_measured(
     assert after["extraction_flags"] is None
 
 
+def test_each_list_reads_its_own_extractions_prompt_version(app_client) -> None:  # noqa: F811
+    """Review finding F5 on PR #955: the version is the one the LIST's own
+    extraction ran, never the latest call. A later v3.2 extraction on another
+    service leaves an earlier list's v2 call where it was."""
+    items = [_example(0, category="EDR", confidence_pct=70)]
+    c, Sess, h, _, first = _extract(app_client, items, rows=1)
+    with Sess() as s:
+        call = s.execute(
+            select(LLMCall).where(LLMCall.purpose == "extract.capabilities")
+        ).scalar_one()
+        call.prompt_version = "v2"
+        s.commit()
+
+    # A second, later extraction on a different service and list, under v3.2.
+    bearer = h["Authorization"].split()[1]
+    svc2 = c.post("/tech-debt/services", headers=h, json={"title": "y"}).json()["id"]
+    art2 = _upload_csv(c, bearer, "y.csv", b"name\nrow0\n")
+    r = c.post(
+        f"/tech-debt/services/{svc2}/capability-lists/extract",
+        headers=h,
+        json={"artifact_id": art2, "serves": "offline"},
+    )
+    assert r.status_code == 202, r.text
+    assert get_run(c, r.json()["run_id"], h)["status"] == "completed"
+    with Sess() as s:
+        versions = sorted(
+            v
+            for (v,) in s.execute(
+                select(LLMCall.prompt_version).where(LLMCall.purpose == "extract.capabilities")
+            )
+        )
+    assert versions == ["v2", "v3.2"]
+
+    second = c.get(f"/tech-debt/services/{svc2}/capability-lists/latest", headers=h).json()
+    assert second["extraction_flags"]["category_off_list"] == 1
+    again = c.get(
+        f"/tech-debt/services/{first['service_id']}/capability-lists/latest", headers=h
+    ).json()
+    assert again["extraction_flags"] is None
+
+
+def test_a_bundle_part_a_consultant_adds_is_not_counted_as_the_ais(
+    app_client,  # noqa: F811
+) -> None:
+    """Review finding F1 on PR #955: the components route copies the bundle's
+    `source_artifact_id` onto each part, with a category the consultant typed.
+    A part is the consultant's row, not one the AI returned, so it is not
+    counted."""
+    items = [_example(0, name="Microsoft 365 E5", category="Productivity/Content")]
+    c, _, h, _, body = _extract(app_client, items, rows=1)
+    assert body["extraction_flags"] == ZERO  # APPEAR: measured, and clean
+    (bundle,) = body["items"]
+    r = c.post(
+        f"/tech-debt/capability-items/{bundle['id']}/components",
+        headers=h,
+        json={"components": [{"name": "Defender for Endpoint", "category": "EDR"}]},
+    )
+    assert r.status_code in (200, 201), r.text
+    after = c.get(
+        f"/tech-debt/services/{body['service_id']}/capability-lists/latest", headers=h
+    ).json()
+    part = next(i for i in after["items"] if i["name"] == "Defender for Endpoint")
+    assert part["category"] == "EDR"
+    assert part["source_artifact_id"] == bundle["source_artifact_id"]
+    assert after["extraction_flags"] == ZERO
+
+
 def test_a_human_included_row_is_not_counted_as_the_ais(app_client) -> None:  # noqa: F811
     """The copy says the row "came back" from the AI; a consultant's own row
     did not, so its free-typed category is not counted."""
@@ -332,9 +399,11 @@ def test_a_human_included_row_is_not_counted_as_the_ais(app_client) -> None:  # 
 def test_a_list_whose_source_link_is_gone_is_not_measured(app_client) -> None:  # noqa: F811
     """Advisor ruling (issue 736, comment 6068587667, item 3b): the counts read
     only the AI's rows, which are the rows linked to the source document. When
-    that link is null (the document was deleted, and `source_artifact_id` is ON
-    DELETE SET NULL), the AI's rows can no longer be told apart, so the list
-    reports `extraction_flags` null ("not measured"), never a smaller count."""
+    that link is null, the AI's rows can no longer be told apart, so the list
+    reports `extraction_flags` null ("not measured"), never a smaller count.
+    No current writer produces that state (no route deletes an Artifact; the
+    link is cleared only by ON DELETE SET NULL), so the setup writes it
+    directly. The guard is a ratchet against an artifact delete route."""
     from app.models.capability import CapabilityItem
 
     items = [_example(0, category="EDR", confidence_pct=70), _example(1, name="")]

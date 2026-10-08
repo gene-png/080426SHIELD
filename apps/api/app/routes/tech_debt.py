@@ -393,14 +393,21 @@ def _extraction_flags(
 ) -> dict[str, int] | None:
     """C6 (for #806): what v3.2 closes and the model still sent, read live.
 
+    Only the AI's rows are counted, because the copy says the row "came back"
+    from the extraction: a row linked to the source document that is not a
+    bundle part. A row a consultant included has no source document, and a
+    bundle part a consultant added (`parent_item_id` set) carries its bundle's
+    link and a category the consultant typed (review finding F1 on PR #955).
+
     None ("not measured"), never a count, when:
     - no extraction is on record for the list;
     - an earlier prompt drafted it, which followed that prompt's rules;
-    - the AI's rows have lost their link to the source document. Only the AI's
-      rows are counted (a row a consultant included has no source document,
-      and the copy says the row "came back" from the extraction), so with the
-      link gone (the document deleted, ON DELETE SET NULL) a count would be
-      smaller than the truth. Advisor ruling, issue 736 comment 6068587667.
+    - the extracted rows have lost their link to the source document, so they
+      can no longer be told apart and a count would be smaller than the truth
+      (advisor ruling, issue 736 comment 6068587667, item 3b). No current
+      writer produces this state: no route deletes an Artifact, and the link
+      is cleared only by `source_artifact_id`'s ON DELETE SET NULL. The guard
+      is kept as a ratchet; an artifact delete route would make it reachable.
     """
     record = _extraction_record(db, cap_list)
     if record is None:
@@ -408,7 +415,7 @@ def _extraction_flags(
     if _extraction_prompt_version(db, record) not in PROMPT_VERSIONS_WITH_CLOSED_SCALES:
         return None
     source = record.get("artifact_id")
-    extracted = [i for i in items if i.source_artifact_id is not None]
+    extracted = [i for i in items if i.source_artifact_id is not None and i.parent_item_id is None]
     linked = any(str(i.source_artifact_id) == source for i in extracted)
     if record.get("item_count") and not linked:
         _log.info("tech_debt.extraction_flags_not_measured", list_id=str(cap_list.id))
