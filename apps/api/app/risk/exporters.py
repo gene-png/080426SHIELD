@@ -93,6 +93,11 @@ class RiskExportContext:
     #: #554 R3, option (b): ATT&CK codes whose computed status awaited review
     #: at generate; the source cell says so.
     review_pending: frozenset[str] = frozenset()
+    #: #474. `(kind, framework, target, source, origin)` per service, sorted by
+    #: `(kind, framework)` (`app/risk/baseline.py`), or None when the
+    #: register did not record them -- which the summary STATES, because a
+    #: deliverable that silently omits its baseline reads as having none.
+    targets: tuple[tuple[str, str | None, int, str, str], ...] | None = None
     #: #915 (S3): the approved sentence for the DoD target cap, from
     #: `risk/zt_capped.py`, or None when nothing was lowered or recorded.
     zt_capped_target_note: str | None = None
@@ -120,6 +125,7 @@ def build_context(
     draft: bool = False,
     source_states: dict[str, str] | None = None,
     review_pending: frozenset[str] = frozenset(),
+    targets: Sequence[tuple[str, str | None, int, str, str]] | None = None,
     zt_capped_target_note: str | None = None,
 ) -> RiskExportContext:
     return RiskExportContext(
@@ -131,6 +137,7 @@ def build_context(
         draft=draft,
         source_states=dict(source_states or {}),
         review_pending=review_pending,
+        targets=tuple(targets) if targets is not None else None,
         zt_capped_target_note=zt_capped_target_note,
     )
 
@@ -332,16 +339,17 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
 #: disclosure.
 #:
 #: DUPLICATED, unavoidably: `SERVICE_LABELS` in
-#: `apps/web/src/components/admin/risk/RiskRegisterDashboard.tsx` holds the same
-#: three strings for the consultant's screen. There is no shared label map in
-#: this repo to reuse (searched) and no way to share a Python dict with TSX, so
-#: this is a synchronization rather than a derivation -- which `CLAUDE.md` says
-#: to avoid where possible and otherwise to NAME, with the window stated.
+#: `apps/web/src/lib/risk/labels.ts` is the one web copy of the target and
+#: scope-key labels; `lib/risk/inputs.ts` and `components/admin/zt/ZtWorkspace.tsx`
+#: repeat these strings (#946). There is no way to share a Python
+#: dict with TSX, so this is a synchronization rather than a derivation --
+#: which `CLAUDE.md` says to avoid where possible and otherwise to NAME, with
+#: the window stated.
 #:
 #: The window: a label changed in one place and not the other makes the client's
-#: PDF and the consultant's screen disagree about which assessment a count
-#: belongs to. Cosmetic rather than numeric -- the counts themselves come from
-#: one parser -- but it is the kind of drift nobody notices. Change both.
+#: PDF and the screens disagree about which assessment a count belongs to.
+#: Cosmetic rather than numeric -- the counts themselves come from one parser --
+#: but it is the kind of drift nobody notices. Change both.
 _SERVICE_LABELS = {
     "attack": "ATT&CK coverage",
     "csf": "NIST CSF",
@@ -350,8 +358,11 @@ _SERVICE_LABELS = {
 
 #: The ZT frameworks by the names the ZT deliverable already prints
 #: (`app/zt/exporters.py`), so the Risk Register names a framework the way the
-#: client's own Zero Trust report does (advisor, #736 6019425290, Q3). The web
-#: dashboard holds the same two strings beside its `SERVICE_LABELS`; change both.
+#: client's own Zero Trust report does (advisor, #736 6019425290, Q3).
+#: `ZT_FRAMEWORK_NAMES` in `apps/web/src/lib/risk/labels.ts` is the one web copy
+#: of the target and scope-key labels; `lib/risk/inputs.ts` and
+#: `components/admin/zt/ZtWorkspace.tsx` repeat these strings (#946). Change
+#: both.
 ZT_FRAMEWORK_NAMES = {
     "cisa_ztmm_2_0": "CISA ZTMM 2.0",
     "dod_ztra": "DoD ZT Reference Architecture",
@@ -441,10 +452,65 @@ def _summary_lines(ctx: RiskExportContext) -> list[str]:
         "By recommended action — " + ", ".join(f"{k} {v}" for k, v in acts.items() if v),
         *_missing_line(total, total - len(actions), "no recommended action"),
         *_finding_lines(ctx.finding_counts),
+        *_target_lines(ctx.targets),
         *_link_scope_lines(ctx),
         # #915 (S3), beside the scored-coverage disclosure; one line, or none.
         *([ctx.zt_capped_target_note] if ctx.zt_capped_target_note else []),
     ]
+
+
+#: #474. Which word each kind's target takes.
+_TARGET_UNITS = {"csf": "tier", "zt": "stage"}
+
+
+def target_label(kind: str, framework: str | None, *, name_framework: bool) -> str:
+    """#474. What a target line calls a service: its kind's label, and the ZT
+    framework only when `name_framework` (the record holds more than one ZT
+    entry, Q3, ruling 2a). Built from the record's `kind` and `framework`,
+    never from a scope key.
+
+    `kind` and `framework` are the reader's validated values, so a missing
+    label raises rather than printing a token. Two services of one kind AND
+    framework cannot reach here (generate refuses them, 409
+    `risk_register_duplicate_inputs`, and the reader refuses a record holding
+    two). If per-service keying (post-MVP) lifts that refusal, a third
+    discriminator, the service title, is needed here.
+    """
+    label = _SERVICE_LABELS[kind]
+    if name_framework and framework is not None:
+        return f"{label} ({ZT_FRAMEWORK_NAMES[framework]})"
+    return label
+
+
+def _target_lines(
+    targets: tuple[tuple[str, str | None, int, str, str], ...] | None,
+) -> list[str]:
+    """#474. Which target each service's findings were measured against.
+
+    Two states: recorded (one line per service, in the reader's order) and not
+    recorded (one line saying so). A record with no CSF or ZT entry cannot
+    occur: generate requires a CSF or ZT input, and the reader reads an empty
+    record as not recorded (ruling 2d). ATT&CK has no target and never
+    appears here.
+    """
+    if targets is None:
+        return [
+            "The targets these findings were measured against were not recorded for "
+            "this register."
+        ]
+    name_framework = sum(1 for kind, *_ in targets if kind == "zt") > 1
+    lines = []
+    for kind, framework, target, source, _origin in targets:
+        label = target_label(kind, framework, name_framework=name_framework)
+        unit = _TARGET_UNITS[kind]
+        if source == "client":
+            why = "the engagement target when this register was generated"
+        elif source == "default":
+            why = "SHIELD's default: no engagement target was set"
+        else:
+            why = "SHIELD's default: the engagement target could not be used"
+        lines.append(f"{label} findings are measured against target {unit} {target}, {why}.")
+    return lines
 
 
 def _finding_lines(counts: tuple[int, int, int] | None) -> list[str]:

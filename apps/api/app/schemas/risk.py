@@ -185,6 +185,23 @@ class RatingNotCarried(BaseModel):
     reason: Literal["ambiguous", "no_entry", "no_source_id"]
 
 
+class RiskTargetUsed(BaseModel):
+    """#474. The target one service's findings were measured against.
+
+    `kind` and `framework` say which service (`framework` is the ZT
+    framework, None for CSF); the stored scope key is never sent, so nothing
+    can render it. `source` is the resolver's word for whether the client's
+    choice was used; `origin` is when the target was read (`live_at_generate`
+    today).
+    """
+
+    kind: str
+    framework: str | None
+    target: int
+    source: str
+    origin: str
+
+
 class LinkScopeDisclosure(BaseModel):
     """How much of one assessment was SCORED, and therefore citable (#403).
 
@@ -326,6 +343,12 @@ class RiskRegisterResponse(BaseModel):
     ratings_carried: int | None = None
     ratings_carried_from_version: int | None = None
     ratings_not_carried: list[RatingNotCarried] = []
+    # #474. The target each service's findings were measured against, read
+    # back from provenance by `app/risk/baseline.py`. `targets_recorded` False
+    # means a register generated before this was recorded: the empty list then
+    # says nothing, never "no target applied".
+    targets: list[RiskTargetUsed] = []
+    targets_recorded: bool = False
     findings_recorded: bool = False
     findings_total: int | None = None
     findings_without_entry: list[str] = []
