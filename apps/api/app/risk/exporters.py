@@ -472,8 +472,11 @@ def _target_lines(targets: tuple[tuple[str, int, str, str], ...] | None) -> list
         ]
     lines = []
     for service, target, source, _origin in targets:
-        label = _SERVICE_LABELS.get(service, service)
-        unit = _TARGET_UNITS.get(service, "level")
+        # The key is a scope key: "zt" with one ZT service, "zt:<framework>"
+        # with two (#876). Labelled as the scored-coverage line labels it, and
+        # the unit is the KIND's, so a framework-qualified key keeps "stage".
+        label = scope_label(service)
+        unit = _TARGET_UNITS.get(service.partition(":")[0], "level")
         if source == "client":
             why = "the engagement target when this register was generated"
         elif source == "default":

@@ -46,6 +46,34 @@ describe("targetSentences (#474)", () => {
     ]);
   });
 
+  it("names each Zero Trust framework when two are engaged (#876 scope keys)", () => {
+    // The keys the API sends for a client with both ZT services
+    // (`test_risk_baseline_disclosure.py`), labelled the way the scored-
+    // coverage line labels them, with the ZT unit.
+    expect(
+      targetSentences(
+        [
+          {
+            service: "zt:cisa_ztmm_2_0",
+            target: 3,
+            source: "default",
+            origin: "live_at_generate",
+          },
+          {
+            service: "zt:dod_ztra",
+            target: 2,
+            source: "client",
+            origin: "live_at_generate",
+          },
+        ],
+        true,
+      ),
+    ).toEqual([
+      "Zero Trust (CISA ZTMM 2.0) findings are measured against target stage 3, SHIELD's default: no engagement target was set.",
+      "Zero Trust (DoD ZT Reference Architecture) findings are measured against target stage 2, the engagement target when this register was generated.",
+    ]);
+  });
+
   it("says not recorded rather than nothing, for false and for absent", () => {
     expect(targetSentences([], false)).toEqual([TARGETS_NOT_RECORDED]);
     expect(targetSentences(undefined, undefined)).toEqual([
