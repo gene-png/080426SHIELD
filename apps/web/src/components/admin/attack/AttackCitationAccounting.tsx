@@ -9,14 +9,15 @@ import type { AttackRunAiResponse } from "@/lib/attack/types";
  * a consultant may give, and the row keeps the status it had. Said here so a
  * row the new prompt disputed is not read as one the AI agreed with.
  *
- * COPY NOT YET APPROVED: drafted by the coordinator and with the advisor.
- * Both forms live here so a ruling is a one-line change.
+ * Copy approved verbatim, singular and plural (advisor, #736 comment
+ * 6068587667). Both forms live here so a later ruling is a one-line change.
  *
- * D-076, the remedy it names exists today: the technique panel offers every
- * catalogue reason for the row's status (`AttackTechniquePanel`, `offered`),
- * and the PATCH accepts any reason `is_valid_reason` gives that status, so a
- * consultant can set all seven Partial reasons. Only the Run-AI apply loop
- * refuses the four (`_AI_FORBIDDEN_PARTIAL_REASONS`).
+ * D-076, the remedy it names exists today: the technique panel's `ReasonField`
+ * select offers every catalogue reason for the row's status
+ * (`reasonCodes.filter((r) => r.status === status)`, fed `catalog.reason_codes`
+ * by `AttackWorkspace`), and the PATCH accepts any reason `is_valid_reason`
+ * gives that status, so a consultant can set all seven Partial reasons. Only
+ * the Run-AI apply loop refuses the four (`_AI_FORBIDDEN_PARTIAL_REASONS`).
  */
 export const FORBIDDEN_REASON_REFUSED_COPY = {
   one: "1 technique was suggested as Partial with a reason only a consultant can give, so it was not applied and keeps the status it had. A consultant can set that reason in the technique panel.",
