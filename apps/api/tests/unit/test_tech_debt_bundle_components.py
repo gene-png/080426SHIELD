@@ -195,6 +195,11 @@ def test_a_costed_part_never_adds_to_spend(env) -> None:
     edr = next(s for s in dash["spend_by_category"] if s["category"] == "EDR")
     assert edr["total_usd"] == 120000.0
     assert "Total annual cost" in _xlsx_cells(got["files"]["xlsx"])
+    # The admin overlap view's total and its top-cost list read the same rule.
+    assert got["overlap"]["total_cost"] == SPEND
+    top = [t["name"] for t in got["overlap"]["top_cost_items"]]
+    assert top[0] == BUNDLE
+    assert not {p["name"] for p in SPLIT_BESIDE_TOOLS} & set(top)
 
 
 def test_a_real_uncosted_source_row_still_reads_partial(env) -> None:
