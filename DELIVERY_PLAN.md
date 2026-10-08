@@ -82,6 +82,24 @@ sizes marked coarse.
 
 Track work outside that list is paused.
 
+**2026-10-08: #743 (`tier-2`, `client-reaching`) is in PR #855, not merged.**
+Status as written before it merges; update this line in the landing commit if
+anything changes. What it carries: every count on both Risk screens, except
+the client remedy line pending Gene, now agrees with its noun, verb and pronoun
+(the client dashboard's withheld-breakdown
+banner, its pill and donut tooltip; the admin register's batch, lost-entry,
+unrated, unlinked, dropped-link and not-recorded banners), and
+`lib/risk/carry.ts` says "each entry" for more than one rating. The admin "lost
+a value and still shows linkage" banner now counts exactly that population:
+K = D - U - S, where D and U are the server's `entries_with_dropped_links` and
+`entries_unlinked_after_drops`, and S (an entry that dropped only its
+`source_id` and holds no technique or control link) is counted from the
+entries. Rulings: advisor, #736 comments
+6054419744 (strings, K, fixtures) and 6056012075 (docs before the ready line).
+**Pending:** the client remedy line, a count-neutral rewording held for Gene;
+the code keeps his ruled sentence in one constant. **Filed from the reviews:**
+#930, #931, #932, #939.
+
 **2026-10-08: #842 (`tier-2`, ATT&CK copy after R3) in PR #933.** The
 status below is as written before it merged. What lands: the
 consultant Covered definition follows R3 (Detect, Prevent and Respond, or

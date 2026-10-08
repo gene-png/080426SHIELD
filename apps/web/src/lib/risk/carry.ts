@@ -43,7 +43,8 @@ export function carriedSentences(
   const noSource = keys("no_source_id");
   if (noSource.length > 0) {
     lines.push(
-      `${ratings(noSource.length)} could not be carried because the entry named no finding: ${noSource.map((t) => `"${t}"`).join(", ")}.`,
+      // #743: one rating per entry, so two ratings are two entries.
+      `${ratings(noSource.length)} could not be carried because ${noSource.length === 1 ? "the entry" : "each entry"} named no finding: ${noSource.map((t) => `"${t}"`).join(", ")}.`,
     );
   }
   return lines;
