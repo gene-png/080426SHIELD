@@ -82,6 +82,19 @@ sizes marked coarse.
 
 Track work outside that list is paused.
 
+**2026-10-08: #835 (`tier-2`, on the board) is IN REVIEW as draft PR #936, with
+#927 folded in. Not merged.** A Tech Debt bundle split into named parts no
+longer reads as separately costed tools: client spend is not turned into a
+floor, Applications and "Capabilities reviewed" (PDF, DOCX and the Results-page
+summary) count source items, and category and vendor buckets count licenses, so
+a part still shows beside a separately licensed tool but a bundle counts once.
+#927, the prerequisite, is inside the same PR: the item PATCH refuses a cost on
+a bundle part with a typed 422. Rulings on #736: comment 5986057990 (item 2:
+source-item counts, savings unchanged), 6053562002 (license buckets; the
+inventory pill), 6055276302 (#927 folded in; the license labels) and 6056012075
+(the 422 copy). Left for follow-ups: #929 and #935. Trips merge-rule conditions
+5 and 6, so it comes back to Gene; no migration.
+
 **2026-09-22 — #209 implemented (`tier-1`, `client-reaching`); LANDED 2026-09-23 as PR #476 (`c4d3cc2`).** The status below is as written before it merged.
 The last open `tier-1`. Four client-facing surfaces resolved the engagement
 target LIVE on every request while the released document held the number it was

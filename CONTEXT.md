@@ -13,6 +13,12 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**2026-10-08: #835 with #927 in review as draft PR #936 (not on `main`).** Bundle
+parts stop counting as tools or costs on the client Tech Debt dashboard, the
+deliverable and the admin overlap view, and the PATCH refuses a cost on a part.
+The status and the rulings it follows are in `DELIVERY_PLAN.md`, in the
+2026-10-08 entry under "MVP completion path".
+
 **#347 landed as tier-1: `CLAUDE.md` was being truncated before any agent read
 it.** At 210,958 bytes against a 150,000-byte reader limit, the last 29% was cut
 silently — and the cut landed on the merge rule. `An agent merges on green` sat
