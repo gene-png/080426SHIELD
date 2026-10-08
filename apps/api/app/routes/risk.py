@@ -997,7 +997,7 @@ def _gather_findings(
         csf_target, csf_target_source = resolve_target_tier(_client_target_tier(db, csf.service_id))
         target_sources[src.scope_key] = {"target": csf_target, "source": csf_target_source}
         # #852: only the catalog's rows, the twin of the #838 ZT filter below.
-        # Migration 0064 KEEPS answers on ID.AM-09, which CSF 2.0 does not have,
+        # Migration 0065 KEEPS answers on ID.AM-09, which CSF 2.0 does not have,
         # and the CSF deliverable says they are not scored, so they feed no
         # finding and are not citable here either.
         csf_rows = csf_catalog_rows(

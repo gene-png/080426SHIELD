@@ -1,7 +1,7 @@
 """The CSF catalog is corrected toward NIST CSWP 29, not yet source-pinned (#852): data only.
 
-Revision ID: 0064
-Revises: 0063
+Revision ID: 0065
+Revises: 0064
 Create Date: 2026-10-08
 
 #852 corrected two rows of the CSF catalog toward NIST CSWP 29 (CSF 2.0), per
@@ -19,8 +19,8 @@ to the PDF; #852 stays open until one does. Per non-discarded CSF assessment
   existing row is never duplicated or overwritten.
 * **Retired:** rows on `ID.AM-09`, in `csf_answers`, `csf_dimension_scores` and
   `csf_gap_actions`, are KEPT, untouched (the approved plan, #736 comment
-  6054419744, the pattern 0063 used for retired CISA rows, and #925 proposes
-  for DoD). The scoring and gap engines iterate the catalog, and every reader of
+  6054419744, the pattern 0063 used for retired CISA rows, and 0064 uses for
+  DoD, #925). The scoring and gap engines iterate the catalog, and every reader of
   stored rows filters to it (`app.csf.retired.catalog_rows`), so they are not
   scored; the workspace, the self-assessment, the deliverable, the client dashboard, the
   Working Profile and the playbook files disclose how many hold an answer.
@@ -44,8 +44,8 @@ from datetime import UTC, datetime
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0064"
-down_revision: str | Sequence[str] | None = "0063"
+revision: str = "0065"
+down_revision: str | Sequence[str] | None = "0064"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -171,7 +171,7 @@ def upgrade() -> None:
             )
             scores += 1
     print(
-        f"[0064] inserted {answers} empty RC.CO-04 answer row(s) and {scores} empty RC.CO-04 "
+        f"[0065] inserted {answers} empty RC.CO-04 answer row(s) and {scores} empty RC.CO-04 "
         "Working Profile row(s). ID.AM-09 rows are kept, not deleted; risk entries untouched."
     )
 

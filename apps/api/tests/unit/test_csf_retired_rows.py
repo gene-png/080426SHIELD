@@ -2,7 +2,7 @@
 
 The catalog no longer has `ID.AM-09` (NIST CSWP 29 has no such subcategory),
 and the migration KEEPS every row an assessment stored under it, answered or
-not, as 0063 did for CISA and #925's DoD migration proposes. The writer of the
+not, as 0063 did for CISA and 0064 does for DoD (#925). The writer of the
 state seeded here is provisioning under the OLD catalog, which made one answer row and
 one Working Profile row per tier for every code it held: the rows are inserted
 after the assessment exists, exactly as an assessment that predates #852 holds

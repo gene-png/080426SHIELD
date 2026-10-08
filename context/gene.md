@@ -1,14 +1,14 @@
 # Gene — in-flight status
 
 _2026-10-08: #852 (CSF catalog corrected toward NIST CSWP 29, not yet
-source-pinned) is draft PR #940 on `track5/852-csf-cswp29`; D-109, migration
-0064._
+source-pinned) is draft PR #940 on `track5/852-csf-cswp29`; D-110, migration
+0065._
 
 **Before merge, Gene:** confirm the D-107 precondition (no real client
 onboarded), and supply NIST CSWP 29 for the source test; #852 stays open until
 that test lands. `apps/api/scripts/count_csf_retired_rows.py` (read-only)
-measures the reach on the dev database. #925 also carries a 0064 and a D-109:
-whichever lands second takes 0065 and D-110.
+measures the reach on the dev database. #925 landed first with its own 0064
+and D-109, so this PR is migration 0065 and D-110.
 
 _2026-10-08 (track4): #839, the DoD catalog (#838 PR 3), is pushed on
 `track4/zt-dod-catalog` with the F1 guard, S1 to S4 and the demo seed fix

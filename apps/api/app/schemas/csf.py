@@ -146,7 +146,7 @@ class CsfAssessmentResponse(BaseModel):
     # #646: which mode drafted this assessment's AI suggestions. REQUIRED.
     ai_source: AiSource
     # #852: answers stored against a subcategory the catalog no longer has
-    # (ID.AM-09), kept rather than deleted (migration 0064), and therefore not
+    # (ID.AM-09), kept rather than deleted (migration 0065), and therefore not
     # scored. With its approved sentence, or None when there are none
     # (`csf/retired.py`).
     retired_answers: int = 0

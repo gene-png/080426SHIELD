@@ -1,7 +1,7 @@
 """Rows stored against a subcategory the CSF catalog no longer has (#852).
 
 #852 corrected the CSF catalog toward NIST CSWP 29 (not yet source-pinned):
-CSF 2.0 has no `ID.AM-09`. Migration 0064 KEEPS every row an assessment stored
+CSF 2.0 has no `ID.AM-09`. Migration 0065 KEEPS every row an assessment stored
 under it, in `csf_answers`, `csf_dimension_scores` and `csf_gap_actions`, rather
 than delete them: the pattern the CISA catalog correction used (`app.zt.retired`,
 migration 0063). The scoring and gap engines iterate the catalog, so those rows

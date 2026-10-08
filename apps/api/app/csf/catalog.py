@@ -25,7 +25,7 @@ rows toward it, per the issue's comparison with the PDF: CSF 2.0 has no
 `ID.AM-09`, which this catalog used to hold, and it has `RC.CO-04`, which this
 catalog lacked. That correction is not yet source-pinned (below). The total read 106 both before and
 after, which is why a count could not see it. A stored answer on `ID.AM-09` is
-kept, not scored, and disclosed (`app.csf.retired`, migration 0064).
+kept, not scored, and disclosed (`app.csf.retired`, migration 0065).
 
 The code set is corroborated by the Kentro Working Profile toolkit
 (`reference-docs/Step_2_*_Working_Profile_*.xlsx`) but NOT yet pinned to the
