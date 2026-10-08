@@ -132,3 +132,63 @@ def test_nothing_is_disclosed_when_every_stage_is_reachable(app_client) -> None:
     assert "DoD ZT Reference Architecture" in _flat(docx)
     assert "is recorded at stage" not in _flat(pdf)
     assert "is recorded at stage" not in _flat(docx)
+
+
+# --- The figures S1 promises (review round 2, finding 1) ---------------------
+#
+# S1 says "every figure here counts it as Target (2)". In this world every
+# capability is at 2 and only DOD.USR.01 is stored at 3, so if the 3 is counted
+# as 2 every figure is the all-2 figure. Derived by hand from the world, never
+# from `compute`:
+#
+#   overall average  = 2.00            (45 rows at 2)      -- uncapped: 91/45 = 2.02
+#   overall percent  = 2/3   -> 66.7   (DoD's top stage 3) -- uncapped: 2.02/3 -> 67.3
+#   User pillar      = 2.00, 66.7%     (9 rows at 2)       -- uncapped: 19/9 = 2.11 -> 70.3
+#   overall label    = "Target"        (stage 2)
+
+ALL_TWO_AVERAGE = 2.0
+ALL_TWO_PCT = 66.7
+
+
+def test_the_score_endpoint_counts_it_at_the_maximum(app_client) -> None:  # noqa: F811
+    c = app_client
+    svc_id, _bearer, h, _client = _world(c, over_cap=True)
+    r = c.get(f"/zt/services/{svc_id}/score", headers=h)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["answered_capabilities"] == 45  # every row is counted, first
+    assert body["average_stage"] == ALL_TWO_AVERAGE
+    assert body["overall_stage_label"] == "Target"
+    usr = next(p for p in body["by_pillar"] if p["pillar_code"] == "USR")
+    assert usr["average_stage"] == ALL_TWO_AVERAGE
+
+
+def test_the_client_dashboard_counts_it_at_the_maximum(app_client) -> None:  # noqa: F811
+    c = app_client
+    svc_id, _bearer, _h, client = _world(c, over_cap=True)
+    client_id = client["user"]["client_id"]
+    c.headers["X-Client-Id"] = client_id
+    r = c.get(
+        f"/clients/{client_id}/zt/{svc_id}/dashboard",
+        headers={"Authorization": f"Bearer {client['tokens']['access_token']}"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["stage_above_max_notes"] == [S1]  # the disclosure is there, first
+    assert body["current_pct"] == ALL_TWO_PCT
+    usr = next(p for p in body["pillars"] if p["code"] == "USR")
+    assert usr["answered_count"] == 9
+    assert usr["current_pct"] == ALL_TWO_PCT
+
+
+def test_the_released_files_count_it_at_the_maximum(app_client) -> None:  # noqa: F811
+    c = app_client
+    svc_id, _bearer, h, _client = _world(c, over_cap=True)
+    _pdf, _docx, wb = _files(c, svc_id, h)
+    rows = [list(r) for r in wb["Score Summary"].iter_rows(values_only=True)]
+    by_label = {r[0]: r[1] for r in rows if r and r[0]}
+    assert by_label["Coverage"] == "45/45"  # every row is counted, first
+    assert by_label["Average stage"] == "2.00"
+    assert by_label["Overall stage"] == "Target"
+    usr = next(r for r in rows if r and r[0] == "USR")
+    assert usr[5] == "2.00"  # the pillar row's Average stage

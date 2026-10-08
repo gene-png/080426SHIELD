@@ -105,3 +105,50 @@ def test_cisa_is_never_capped() -> None:
     assert gap.capped_target_codes == ()
     assert gap.no_target_level_codes == ()
     assert target_cap_sentences(gap) == []
+
+
+# --- The levels that decide every cap, tied to the PDF (review round 2, F2) ---
+#
+# The tests above read the levels from the committed extraction, so a wrong
+# level in the extraction would move the caps and keep every test green. These
+# two lists were typed from the PDF read with a DIFFERENT engine:
+# `pdftotext -raw ZT-CapabilitiesActivities.pdf` (poppler), not pdfplumber.
+# For each activity, the level is the first "Target Level" / "Advanced Level"
+# after its id line; three activities (4.7.5, 6.2.3, 6.6.3) mention the other
+# level later in their prose, and each was read by eye: the level cell agrees
+# with the first match. Read on 2026-10-08; 152 activities, 45 capabilities.
+
+#: Capabilities with no Advanced activity: their maximum is Target (2).
+_PDF_NO_ADVANCED = (
+    "1.1",
+    "1.7",
+    "2.5",
+    "2.6",
+    "3.1",
+    "3.3",
+    "4.1",
+    "4.2",
+    "5.1",
+    "5.3",
+    "6.3",
+    "6.6",
+    "7.1",
+    "7.3",
+    "7.5",
+)
+#: Capabilities with no Target activity: disclosed only (reading (a)).
+_PDF_NO_TARGET = ("3.5", "6.4", "7.6")
+
+
+def test_the_served_maximum_of_every_capability_is_the_pdfs() -> None:
+    from app.zt.target_caps import max_stage_for
+
+    served = {c.dod_number: max_stage_for(_FW, c.code) for c in capabilities(_FW)}
+    assert len(served) == 45  # every capability is read, first
+    assert sorted(n for n, top in served.items() if top == 2) == sorted(_PDF_NO_ADVANCED)
+    assert {n for n, top in served.items() if top == 3} == set(served) - set(_PDF_NO_ADVANCED)
+
+
+def test_the_served_no_target_capabilities_are_the_pdfs() -> None:
+    gap = analyze_gaps(_FW, {c.code: 1 for c in capabilities(_FW)}, target_stage=2)
+    assert sorted(gap.no_target_level_codes) == sorted(_code(n) for n in _PDF_NO_TARGET)

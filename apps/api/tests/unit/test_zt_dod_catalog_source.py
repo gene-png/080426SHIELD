@@ -1,7 +1,6 @@
 """The DoD catalog IS the 2025 DoD CIO roadmap (#839), held to its own text.
 
-Two independent anchors, so neither the extraction nor the catalog can drift
-from the PDF without a red test:
+Two anchors to the PDF itself:
 
 * **The PDF and the extraction.** `ZT-CapabilitiesActivities.pdf` (DoD CIO,
   2025, 25-T-1465) is pinned here by sha256, and the committed extraction
@@ -14,6 +13,14 @@ from the PDF without a red test:
 
 Then the rest of the catalog (pillars, descriptions, every activity) is
 compared with the extraction, never with `app.zt.catalog`'s own constants.
+
+What is pinned to the PDF, and what is not: the file's hash, and every
+capability's code and name. The activity levels that decide each capability's
+maximum are pinned to the PDF in `test_zt_dod_target_caps.py` (the no-Advanced
+and no-Target lists, typed from `pdftotext -raw`). Pillar names, descriptions,
+activity names and activity text are held only to the extraction, so a
+pdfplumber misreading of those would pass here; the record that they were
+cross-read with a second engine is in the PR, not in a test.
 """
 
 from __future__ import annotations

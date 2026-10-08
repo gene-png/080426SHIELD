@@ -77,6 +77,11 @@ def test_it_counts_each_field_per_status_and_writes_nothing(app_client) -> None:
     before = _db_path(url).read_bytes()
     r = _run(url)
     assert r.returncode == 0, r.stderr
+    # What was read, before what was found (review round 2, finding 5).
+    assert "read: DoD assessments 1, DoD answer rows 45" in r.stdout, r.stdout
+    assert "  released read: assessments 1, answer rows 45" in r.stdout, r.stdout
+    assert "  draft read: assessments 0, answer rows 0" in r.stdout, r.stdout
+    assert "NOTHING TO MEASURE" not in r.stdout, r.stdout
     assert "released: current stage over 1, target over 1" in r.stdout, r.stdout
     assert f"current {a['id']} DOD.USR.01 = 3" in r.stdout, r.stdout
     assert f"target {a['id']} DOD.USR.01 = 3" in r.stdout, r.stdout
@@ -91,8 +96,27 @@ def test_a_clean_database_prints_zeros_and_exits_0(app_client) -> None:  # noqa:
     c.post(f"/zt/services/{svc_id}/assessments", headers=h)
     r = _run(os.environ["DATABASE_URL"])
     assert r.returncode == 0, r.stderr
+    # Clean because 45 rows were read, which the output says first.
+    assert "read: DoD assessments 1, DoD answer rows 45" in r.stdout, r.stdout
+    assert "NOTHING TO MEASURE" not in r.stdout, r.stdout
     for status in ("draft", "submitted", "approved", "released", "discarded"):
         assert f"{status}: current stage over 0, target over 0" in r.stdout, r.stdout
+
+
+def test_a_database_with_no_dod_rows_says_it_read_none(app_client) -> None:  # noqa: F811
+    """A readable database holding no DoD answers (here, only a CISA
+    assessment) prints zeros that measured nothing. It must say so, so it can
+    never read as the clean result above."""
+    c, _ = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    r = _run(os.environ["DATABASE_URL"])
+    assert r.returncode == 0, r.stderr
+    assert "read: DoD assessments 0, DoD answer rows 0" in r.stdout, r.stdout
+    assert (
+        "NOTHING TO MEASURE: no DoD answer rows were read, so the zeros below "
+        "are not a clean result"
+    ) in r.stdout, r.stdout
 
 
 def test_an_unreadable_database_exits_2_and_prints_no_count(tmp_path: Path) -> None:
