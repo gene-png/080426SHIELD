@@ -125,6 +125,7 @@ from app.zt.scoring import compute as compute_score
 from app.zt.target_caps import (
     STAGE_ABOVE_CAPABILITY_MAX,
     stage_above_max_message,
+    stage_above_max_sentences,
     target_cap_sentences,
 )
 
@@ -1746,6 +1747,8 @@ def gap_analysis(
         unusable_target_codes=list(analysis.unusable_target_codes),
         # #839: from the same GapAnalysis the deliverable and dashboard read.
         target_cap_notes=target_cap_sentences(analysis),
+        # #839 S1: from the same stored answers the analysis read.
+        stage_above_max_notes=stage_above_max_sentences(cat_fw, answers),
         gap_count_by_pillar=analysis.gap_count_by_pillar,
         gaps=[
             GapItem(

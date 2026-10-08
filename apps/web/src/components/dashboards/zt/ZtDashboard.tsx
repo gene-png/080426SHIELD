@@ -187,6 +187,18 @@ export function ZtDashboard({ data }: { data: ZtDashboardData }): JSX.Element {
         />
       </KpiRow>
 
+      {/* #914 (S2): the API's own approved sentence (`zt/retired.py`), the one
+          the workspace and the self-assessment render, under the maturity
+          header. Never rebuilt here. */}
+      {data.retired_answers_note ? (
+        <p
+          data-testid="zt-retired-answers"
+          style={{ margin: "0 0 16px", fontSize: 13, lineHeight: 1.5 }}
+        >
+          {data.retired_answers_note}
+        </p>
+      ) : null}
+
       {/* #839: the API's own sentences (`zt/target_caps.py`), one per DoD
           capability whose target was capped, rendered as given. */}
       {data.target_cap_notes?.length ? (
@@ -200,6 +212,25 @@ export function ZtDashboard({ data }: { data: ZtDashboardData }): JSX.Element {
           }}
         >
           {data.target_cap_notes.map((s) => (
+            <li key={s}>{s}</li>
+          ))}
+        </ul>
+      ) : null}
+
+      {/* #839 S1: the API's own sentence per stored stage above its
+          capability's maximum (`zt/target_caps.py`), beside the cap notes.
+          Every figure above already counts that row at the maximum. */}
+      {data.stage_above_max_notes?.length ? (
+        <ul
+          data-testid="zt-stage-above-max"
+          style={{
+            margin: "0 0 16px",
+            paddingLeft: 20,
+            fontSize: 13,
+            lineHeight: 1.5,
+          }}
+        >
+          {data.stage_above_max_notes.map((s) => (
             <li key={s}>{s}</li>
           ))}
         </ul>

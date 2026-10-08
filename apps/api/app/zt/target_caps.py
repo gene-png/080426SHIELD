@@ -56,6 +56,26 @@ def stages_above_capability_max(
     return tuple(out)
 
 
+def stage_above_max_sentences(
+    framework: ZtFrameworkCode, answers: Mapping[str, int | None]
+) -> list[str]:
+    """S1, approved verbatim (#736 comment 6049667540), one per row that
+    `stages_above_capability_max` finds, in catalog order. ONE derivation for
+    every surface: the workspace gap endpoint, the client dashboard and the
+    three files. Empty when every stored stage is reachable."""
+    out = []
+    for code in stages_above_capability_max(framework, answers):
+        cap = capability_by_code(code)
+        stored = int(answers[code])  # type: ignore[arg-type]  # found non-None above
+        top = capability_max_stage(framework, cap)
+        out.append(
+            f"{cap.dod_number} {cap.name} is recorded at stage {stored}, but it has no "
+            f"DoD {stage_label(stored, framework)} activities, so every figure here "
+            f"counts it as {stage_label(top, framework)} ({top})."
+        )
+    return out
+
+
 def stage_above_max_message(framework: ZtFrameworkCode, code: str, stage: int) -> str | None:
     """The approved refusal (#736 comment 6048561596), or None when `stage` is
     within this capability's maximum. Only a catalog row can be over its own

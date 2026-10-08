@@ -203,6 +203,8 @@ export interface GapAnalysis {
   roadmap?: RoadmapEntry[];
   /** #839: the API's own C1/C2 sentences for the DoD target caps. */
   target_cap_notes?: string[];
+  /** #839 S1: the API's own sentence per stored stage above its maximum. */
+  stage_above_max_notes?: string[];
 }
 
 export interface RoadmapEntry {

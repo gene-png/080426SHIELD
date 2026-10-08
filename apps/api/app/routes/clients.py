@@ -131,6 +131,7 @@ from app.zt.scoring import (
     engagement_target_capability_count as zt_engagement_target_capability_count,
 )
 from app.zt.scoring import resolve_target_stage as zt_resolve_target_stage
+from app.zt.target_caps import stage_above_max_sentences as zt_stage_above_max_sentences
 from app.zt.target_caps import target_cap_sentences as zt_target_cap_sentences
 
 router = APIRouter(prefix="/clients", tags=["clients"])
@@ -1587,6 +1588,8 @@ def zt_dashboard(
         # #914: the same derivation the workspace and the three files call.
         retired_answers=zt_retired_answer_count(fw, rows),
         retired_answers_note=zt_retired_sentence(fw, zt_retired_answer_count(fw, rows)),
+        # #839 S1: from the same stored answers every figure above read.
+        stage_above_max_notes=zt_stage_above_max_sentences(fw, answers),
         total_gap_count=gap_analysis.total_gap_count,
         largest_gap_pillar=largest.name if largest else None,
         largest_gap_pct=largest.gap_pct if largest else 0.0,
