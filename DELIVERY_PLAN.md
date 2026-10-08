@@ -82,6 +82,20 @@ sizes marked coarse.
 
 Track work outside that list is paused.
 
+**2026-10-08: #474 (`tier-2`, `client-reaching`), option 2, is IN REVIEW as PR
+#861.** The status here is as written before it merged. A Risk Register now
+states which target its CSF and Zero Trust findings were measured against:
+`generate` stores each target with its `kind` and `framework`, and
+`risk/baseline.py` is the one reader for the admin screen, the client dashboard
+and the PDF, DOCX and XLSX. The lines are the strings approved on #736 (comment
+6053630989, ruled in 6054419744): the framework is named only when a register
+holds more than one Zero Trust service, and a register generated before this
+reads "The targets these findings were measured against were not recorded for
+this register." The reader fails closed (ruling 2d). Filed from the reviews:
+#944, #946. **#474 stays open** for option 1 (freeze each source's target at
+release) and **#415** for its own decision, both Gene's. The PR goes to Gene:
+merge-rule conditions 5 and 6.
+
 **2026-10-07: #839 is implemented (`mvp-blocking`, `tier-2`) and lands with the #838 PR 3 PR.** The status here is as written before it merged.
 The DoD Zero Trust catalog follows the DoD CIO's 2025 roadmap (25-T-1465), with
 migration 0064 and per-capability target caps that the gap engine and Risk

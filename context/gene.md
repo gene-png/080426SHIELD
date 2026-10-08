@@ -1,5 +1,13 @@
 # Gene — in-flight status
 
+_2026-10-08: #474 option 2 is PR #861 (`track6/474-415-risk-baseline`), in
+review._ A Risk Register states which target its CSF and Zero Trust findings
+were measured against, in the strings the advisor approved on #736 (6053630989,
+ruled in 6054419744); the framework is named only when there are two Zero Trust
+services. Still yours: #474 option 1 (freeze each source's target at release)
+and #415 (whether pending-review techniques are excluded from the links), so
+neither issue closes with this PR. Comes back to you: conditions 5 and 6.
+
 _2026-10-08 (track4): #839, the DoD catalog (#838 PR 3), is pushed on
 `track4/zt-dod-catalog` with the F1 guard, S1 to S4 and the demo seed fix
 (#736 comments 6048561596 and 6049667540), and is waiting for a full
