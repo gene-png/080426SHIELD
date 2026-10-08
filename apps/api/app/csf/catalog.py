@@ -21,16 +21,15 @@ Notes on counts (CSF 2.0 Final, Feb 2024):
 
 Source of record: NIST CSWP 29, The NIST Cybersecurity Framework (CSF) 2.0,
 February 26, 2024 (https://doi.org/10.6028/NIST.CSWP.29). #852 corrected two
-rows toward it, per the issue's comparison with the PDF: CSF 2.0 has no
-`ID.AM-09`, which this catalog used to hold, and it has `RC.CO-04`, which this
-catalog lacked. That correction is not yet source-pinned (below). The total read 106 both before and
-after, which is why a count could not see it. A stored answer on `ID.AM-09` is
-kept, not scored, and disclosed (`app.csf.retired`, migration 0065).
+rows to match it: CSF 2.0 has no `ID.AM-09`, which this catalog used to hold,
+and it has `RC.CO-04`, which this catalog lacked. The total read 106 both before
+and after, which is why a count could not see it. A stored answer on `ID.AM-09`
+is kept, not scored, and disclosed (`app.csf.retired`, migration 0065).
 
-The code set is corroborated by the Kentro Working Profile toolkit
-(`reference-docs/Step_2_*_Working_Profile_*.xlsx`) but NOT yet pinned to the
-NIST PDF by a test: that source test waits on the PDF, and #852 stays open
-until it lands.
+The code set is pinned to the PDF (`reference-docs/nist/NIST.CSWP.29.pdf`, by
+sha256) by `tests/unit/test_csf_catalog_source.py`, which reads every
+subcategory code out of the PDF's Appendix A and compares it with the catalog
+served and seeded.
 """
 
 from __future__ import annotations

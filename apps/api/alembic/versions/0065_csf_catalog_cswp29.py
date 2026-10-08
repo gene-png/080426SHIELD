@@ -1,14 +1,13 @@
-"""The CSF catalog is corrected toward NIST CSWP 29, not yet source-pinned (#852): data only.
+"""The CSF catalog is corrected to NIST CSWP 29 (#852): data only.
 
 Revision ID: 0065
 Revises: 0064
 Create Date: 2026-10-08
 
-#852 corrected two rows of the CSF catalog toward NIST CSWP 29 (CSF 2.0), per
-the issue's comparison with the PDF: CSF 2.0 has no `ID.AM-09`, which the
-catalog held, and has `RC.CO-04`, which it lacked. No test yet pins the code set
-to the PDF; #852 stays open until one does. Per non-discarded CSF assessment
-(draft, submitted, approved, released):
+#852 corrected two rows of the CSF catalog to NIST CSWP 29 (CSF 2.0): CSF 2.0
+has no `ID.AM-09`, which the catalog held, and has `RC.CO-04`, which it lacked.
+`tests/unit/test_csf_catalog_source.py` pins the code set to the PDF. Per
+non-discarded CSF assessment (draft, submitted, approved, released):
 
 * **Inserted:** an empty `RC.CO-04` answer where the assessment does not have
   one, and an empty `RC.CO-04` Working Profile row for each tier the assessment

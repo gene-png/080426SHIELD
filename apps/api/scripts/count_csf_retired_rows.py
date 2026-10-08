@@ -1,6 +1,6 @@
 """Count stored CSF rows on ID.AM-09 and missing RC.CO-04 rows (#852). READ-ONLY.
 
-#852 corrected the CSF catalog toward NIST CSWP 29 (not yet source-pinned):
+#852 corrected the CSF catalog to NIST CSWP 29 (pinned to the PDF by a test):
 CSF 2.0 has no `ID.AM-09` and has `RC.CO-04`. Migration 0065 keeps every `ID.AM-09` row and inserts empty
 `RC.CO-04` rows. This measures, before or after it runs, how many rows the
 change reaches, so the disclosure's reach on released work is a number rather

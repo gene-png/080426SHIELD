@@ -6,9 +6,8 @@ count could not see it. The expected values below are written out from the
 ruling on #852 (advisor, #736 comment 6054419744) and the Kentro Working
 Profile toolkit's Reference Data sheet, never read from the catalog itself.
 
-NOT YET PINNED TO THE NIST PDF: the source test that compares every code with
-CSWP 29 waits on the PDF, which could not be fetched here. #852 stays open
-until it lands.
+The whole code set is held to the NIST PDF itself by
+`test_csf_catalog_source.py`; this file pins the two corrected rows' content.
 """
 
 from __future__ import annotations
