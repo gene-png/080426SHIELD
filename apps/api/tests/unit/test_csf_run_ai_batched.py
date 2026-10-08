@@ -568,3 +568,45 @@ def test_the_audit_row_carries_the_omitted_count_and_no_codes(world) -> None:
     assert "omitted_rows" not in entry.details
     assert high[0] not in json.dumps(entry.details), "the audit row carries counts only"
     assert high[1] not in json.dumps(entry.details), "the audit row carries counts only"
+
+
+@pytest.mark.unit
+def test_a_key_the_cross_product_asks_for_that_is_not_a_row_is_never_omitted(world) -> None:
+    """A batch asks for its tier x the PROFILE-WIDE subcategory list, so on a
+    non-rectangular profile it asks for keys that are not rows. Reachable: an
+    assessment provisioned before #852 has no RC.CO-04 rows
+    (`count_csf_retired_rows.py` counts them), and re-seeding one tier through
+    the seed route adds RC.CO-04 to that tier only. A key that is not a row
+    cannot keep a score, so it is not an omitted row."""
+    from sqlalchemy import delete
+
+    from app.models.csf_profile import CsfDimensionScore
+
+    with world.sessions() as s:
+        s.execute(delete(CsfDimensionScore).where(CsfDimensionScore.subcategory_code == "RC.CO-04"))
+        s.commit()
+    seeded = world.c.post(
+        f"/csf/services/{world.svc_id}/profiles/seed", headers=world.h, json={"tiers": ["low"]}
+    )
+    assert seeded.status_code in (200, 201), seeded.text
+    profile = set(_profile_rows(world))
+    assert ("low", "RC.CO-04") in profile
+    assert ("high", "RC.CO-04") not in profile and ("moderate", "RC.CO-04") not in profile
+
+    high = _batch_codes(world, "high")
+    real = ("high", high[0])
+    phantoms = {("high", "RC.CO-04"), ("moderate", "RC.CO-04")}
+    payloads: list[dict[str, Any]] = []  # list.append is atomic across batch threads
+    omit = _omit({real} | phantoms)
+
+    def _answer(payload: dict[str, Any]) -> LLMResponse:
+        payloads.append(payload)
+        return omit(payload)
+
+    world.provider.register("csf_score", _answer)
+    result = csf_run_ai(world.c, world.svc_id, world.h)
+
+    asked = {r for p in payloads for r in _rows_asked(p)}
+    assert phantoms <= asked, "the cross product asked for keys that are not rows"
+    assert result["rows_omitted"] == 1
+    assert _omitted(result) == [real]

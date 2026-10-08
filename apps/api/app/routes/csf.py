@@ -2219,10 +2219,17 @@ def _split_strays(
 def _omitted_keys(
     batch_inputs: Sequence[dict[str, Any]],
     answers: Sequence[dict[str, Any]],
+    rows: Mapping[str, Any],
     locked: AbstractSet[str],
 ) -> set[str]:
-    """The `tier|code` keys a SUCCESSFUL batch was asked for that no entry of
-    THAT batch names (#836): `asked - answered - locked`, per batch.
+    """The `tier|code` ROWS a SUCCESSFUL batch was asked for that no entry of
+    THAT batch names (#836): `(asked & rows) - answered - locked`, per batch.
+
+    `& rows`: a batch asks for its tier x the PROFILE-WIDE subcategory list,
+    so on a non-rectangular profile (an assessment provisioned before #852
+    has no RC.CO-04 rows, and re-seeding one tier adds them to that tier
+    only) it asks for keys that are not rows. Such a key keeps no score, so
+    it is not an omitted row. Pending the advisor's question 5 on #736.
 
     An omitted row keeps its previous values -- zeros on a new Playbook, which
     `score_tier` reads as Level 1 -- so it is counted and named. Not a
@@ -2252,7 +2259,7 @@ def _omitted_keys(
             for entry in answer["scores"]
             if isinstance(entry, dict)
         }
-        omitted |= asked - answered - locked
+        omitted |= (asked & rows.keys()) - answered - locked
     return omitted
 
 
@@ -2318,7 +2325,7 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
     # ever written from the batch that asked for it.
     scores, strays = _split_strays(batched.inputs, batched.answers, rows)
     # #836: rows a successful batch was asked for and left out (`_omitted_keys`).
-    omitted = _omitted_keys(batched.inputs, batched.answers, locked_keys)
+    omitted = _omitted_keys(batched.inputs, batched.answers, rows, locked_keys)
     data = {"scores": scores}
     omitted_rows = [
         CsfRowKey(tier=tier, subcategory_code=code)
