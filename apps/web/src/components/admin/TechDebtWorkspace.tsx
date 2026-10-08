@@ -55,6 +55,7 @@ import { DiscardDraftButton } from "./DiscardDraftButton";
 import { DispositionHelp } from "./DispositionHelp";
 import { EditableCapabilityTable } from "./EditableCapabilityTable";
 import { ExtractionFindings } from "./ExtractionFindings";
+import { ExtractionFlags } from "./ExtractionFlags";
 import { IntakeDocumentsPanel } from "./IntakeDocumentsPanel";
 import { OverlapDashboard } from "./OverlapDashboard";
 
@@ -950,6 +951,7 @@ Components carry no cost of their own — this licence keeps its full value.`,
                 )}
               </div>
             ) : null}
+            <ExtractionFlags flags={list.extraction_flags} />
             <ExtractionFindings
               findings={list.extraction_findings}
               readOnly={readOnly}
