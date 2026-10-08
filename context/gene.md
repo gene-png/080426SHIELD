@@ -1,7 +1,7 @@
 # Gene — in-flight status
 
 _2026-10-08: #862 (the Risk PDF printed "ATT&CK;") is built on
-`track6/862-risk-pdf-escape`; no PR yet. It opens after #861 merges._
+`track6/862-risk-pdf-escape`; no PR yet. #861 merged (14db80a2), so it opens next._
 
 **What it does:** the Risk Register PDF escapes the text it prints, so "ATT&CK",
 "&" and "<...>" in a client's legal name print as typed, and a name carrying
@@ -12,6 +12,14 @@ skip in `test_risk_export_unrated.py` is removed. **From you:** the re-tier of
 #775 (the same defect in the other four services' PDFs); the advisor
 recommends `tier-2`, `mvp-blocking`. Trips merge-rule conditions 5 and 6, so it
 comes back to you.
+
+_2026-10-08: #474 option 2 is PR #861 (`track6/474-415-risk-baseline`), in
+review._ A Risk Register states which target its CSF and Zero Trust findings
+were measured against, in the strings the advisor approved on #736 (6053630989,
+ruled in 6054419744); the framework is named only when there are two Zero Trust
+services. Still yours: #474 option 1 (freeze each source's target at release)
+and #415 (whether pending-review techniques are excluded from the links), so
+neither issue closes with this PR. Comes back to you: conditions 5 and 6.
 
 _2026-10-08: #852 (CSF catalog corrected to NIST CSWP 29, now pinned to the PDF
 you supplied) is draft PR #940 on `track5/852-csf-cswp29`; D-110, migration
