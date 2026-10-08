@@ -418,8 +418,8 @@ def attack_world(world):
 
 
 def _cover_every_asked_technique(payload: dict) -> LLMResponse:
-    # The prompt: "For each technique you can speak to, suggest a coverage status
-    # ... and which listed tools provide detection, prevention, and response".
+    # The #806 prompt, section 11: one entry per code in `technique_codes`, and
+    # only `techniques` at the top level.
     techniques = [
         {
             "technique_code": code,
@@ -432,7 +432,7 @@ def _cover_every_asked_technique(payload: dict) -> LLMResponse:
         }
         for code in payload["technique_codes"]
     ]
-    body = {"techniques": techniques, "executive_summary": "s", "top_blind_spots": []}
+    body = {"techniques": techniques}
     return LLMResponse(json.dumps(body), input_tokens=3, output_tokens=5)
 
 

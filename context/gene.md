@@ -70,7 +70,7 @@ ATT&CK lists no preventive control". Rulings: #736 comments 6053562002 and
 
 **What it does not do.** Already-released deliverables keep the old sentence
 (stored files, not re-finalized; the advisor's Q3 ruling). The consultant reason-code
-definition (Q5) waits for the #806 ATT&CK prompt PR. #928 and #934 are filed.
+definition (Q5) lands in #951, the #806 ATT&CK prompt PR. #928 and #934 are filed.
 It trips conditions 5 and 6. The advisor merges it once the re-ready line is
 posted (#736 comment 6056012075), and #842 is then closed by hand.
 
