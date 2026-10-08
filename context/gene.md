@@ -9,6 +9,14 @@ change). #840 (ZT) and #853 (ATT&CK) follow under the same design, approved on
 #736 (comment 6067815887). It comes back to you, not self-merged: conditions
 5 and 6._
 
+_2026-10-08: #474 option 2 is PR #861 (`track6/474-415-risk-baseline`), in
+review._ A Risk Register states which target its CSF and Zero Trust findings
+were measured against, in the strings the advisor approved on #736 (6053630989,
+ruled in 6054419744); the framework is named only when there are two Zero Trust
+services. Still yours: #474 option 1 (freeze each source's target at release)
+and #415 (whether pending-review techniques are excluded from the links), so
+neither issue closes with this PR. Comes back to you: conditions 5 and 6.
+
 _2026-10-08: #852 (CSF catalog corrected to NIST CSWP 29, pinned to the PDF
 you supplied) landed as PR #940 (`d70b6e62`); D-110, migration 0065. #852 and
 #941 were closed by hand (#736 comment 6066989098). The D-107 confirmation is
