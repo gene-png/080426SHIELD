@@ -96,6 +96,8 @@ the "&" skip in `test_risk_export_unrated.py` approved), on the plan in
 6067131971. The twin sites in the other services stay on #775, which Gene
 re-tiered to `tier-2`, `mvp-blocking` (#736 comment 6069566861). Trips merge-rule conditions 5 and 6, so it comes back to Gene.
 
+**2026-10-08: #836 implemented (`tier-2`): a CSF Run-AI now counts and names the rows the model left out of its batch.** A row a successful batch was asked for and never answered keeps its previous scores (zeros on a new Playbook, which read as Level 1) and used to be reported nowhere. The run now records `omitted_count` and `omitted_rows` on its result, beside the received/applied/dropped accounting rather than inside it, and the audit row carries the count only. The Playbook panel names each row with the approved copy (O1/O2), including when the run received no suggestions at all. The rule is `(asked & rows) - answered - locked` per successful batch, in `_omitted_keys` beside `_split_strays`, which is unchanged. `check_disclosure_consumers.py` now matches `omitted_*`, a condition-5 gate change. Design approved on #736 (comment 6067815887); #840 (ZT) and #853 (ATT&CK) follow under the same design. Branch `track5/836-omitted-rows-v2`, for #836. Routed to Gene rather than self-merged: merge-rule conditions 5 and 6.
+
 **2026-10-08: #474 (`tier-2`, `client-reaching`), option 2, is IN REVIEW as PR
 #861.** The status here is as written before it merged. A Risk Register now
 states which target its CSF and Zero Trust findings were measured against:
