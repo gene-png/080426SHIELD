@@ -128,6 +128,26 @@ function register(over: Partial<RiskRegister> = {}): RiskRegister {
   };
 }
 
+/**
+ * The stored entries agree with the counts, as `_serialize` derives them:
+ * `entries_total` rows, the first `entries_without_tier` of them unrated.
+ */
+function consistent(over: Partial<RiskRegister>): Partial<RiskRegister> {
+  const total = over.entries_total ?? 1;
+  const unrated = over.entries_without_tier ?? 1;
+  const entries = Array.from({ length: total }, (_, i) =>
+    i < unrated
+      ? entry({ id: `e${i}` })
+      : entry({
+          id: `e${i}`,
+          likelihood: "high",
+          impact: "major",
+          tier: "high",
+        }),
+  );
+  return { entries, ...over };
+}
+
 async function loaded(): Promise<void> {
   render(<RiskRegisterDashboard />);
   await waitFor(() =>
@@ -146,7 +166,7 @@ describe("RiskRegisterDashboard count nouns (#743)", () => {
   });
 
   async function textOf(testId: string, over: Partial<RiskRegister>) {
-    fetchRiskRegisterLatest.mockResolvedValue(register(over));
+    fetchRiskRegisterLatest.mockResolvedValue(register(consistent(over)));
     await loaded();
     return (await screen.findByTestId(testId)).textContent ?? "";
   }
@@ -169,24 +189,100 @@ describe("RiskRegisterDashboard count nouns (#743)", () => {
     expect(t).toContain("so they are missing from the matrix");
   });
 
-  it("one synthesis batch of one", async () => {
+  // `_run_risk_synthesize_batched` re-raises when EVERY batch fails, so a
+  // stored register has 1 <= batches_failed < batches_total: "1 of 1" cannot
+  // be stored and is not built here.
+  it("one synthesis batch of two failed", async () => {
     const t = await textOf("risk-batches-failed", {
-      batches_total: 1,
+      batches_total: 2,
       batches_failed: 1,
     });
-    expect(t).toContain("1 of 1 synthesis batch failed");
+    expect(t).toContain("1 of 2 synthesis batches failed");
+    expect(t).toContain("the entries that batch would have produced");
+    expect(t).not.toContain("those batches");
   });
 
-  it("entries lost before storage, against a one-entry intent", async () => {
-    const t = await textOf("risk-entries-lost", {
-      entries_intended: 1,
-      entries_total: 0,
-      entries_without_tier: 0,
-      entries: [],
+  it("two synthesis batches of three failed", async () => {
+    const t = await textOf("risk-batches-failed", {
+      batches_total: 3,
+      batches_failed: 2,
     });
-    expect(t).toContain("1 of 1 entry did not reach storage");
+    expect(t).toContain("2 of 3 synthesis batches failed");
+    expect(t).toContain("the entries those batches would have produced");
   });
 
+  // `generate`: an entry whose every proposed technique and control was
+  // dropped. Such an entry is also counted in `entries_with_dropped_links`.
+  it("one entry of two kept none of its links", async () => {
+    const t = await textOf("risk-entries-unlinked-after-drops", {
+      entries_total: 2,
+      entries_without_tier: 0,
+      entries_with_dropped_links: 1,
+      entries_unlinked_after_drops: 1,
+      dropped_citations: 1,
+    });
+    expect(t).toContain(
+      "1 of 2 entries proposed ATT&CK or control links and kept none",
+    );
+    expect(t).toContain("so it shows no linkage at all");
+    expect(t).toContain("sees that row as unlinked");
+    expect(t).not.toContain("so they show");
+  });
+
+  it("two entries of three kept none of their links", async () => {
+    const t = await textOf("risk-entries-unlinked-after-drops", {
+      entries_total: 3,
+      entries_without_tier: 0,
+      entries_with_dropped_links: 2,
+      entries_unlinked_after_drops: 2,
+      dropped_citations: 2,
+    });
+    expect(t).toContain(
+      "2 of 3 entries proposed ATT&CK or control links and kept none",
+    );
+    expect(t).toContain("so they show no linkage at all");
+    expect(t).toContain("sees those rows as unlinked");
+  });
+
+  // `generate`: an entry that lost a value and kept a link.
+  it("one entry of two lost a value and still shows linkage", async () => {
+    const t = await textOf("risk-entries-with-dropped-links", {
+      entries_total: 2,
+      entries_without_tier: 0,
+      entries_with_dropped_links: 1,
+      entries_unlinked_after_drops: 0,
+      dropped_citations: 1,
+    });
+    expect(t).toContain(
+      "1 of 2 entries lost at least one value the model sent",
+    );
+    expect(t).toContain("the rest of it still resolved, so it shows linkage");
+    expect(t).toContain("The values are on the entry");
+  });
+
+  // Three entries lost a value and one of them kept no link at all: the
+  // banner counts the TWO that still show linkage, because the unlinked one
+  // has its own banner and does not show linkage.
+  it("counts only the entries that still show linkage", async () => {
+    const t = await textOf("risk-entries-with-dropped-links", {
+      entries_total: 4,
+      entries_without_tier: 0,
+      entries_with_dropped_links: 3,
+      entries_unlinked_after_drops: 1,
+      dropped_citations: 3,
+    });
+    expect(t).toContain(
+      "2 of 4 entries lost at least one value the model sent",
+    );
+    expect(t).toContain(
+      "the rest of each still resolved, so they show linkage",
+    );
+    expect(t).not.toContain("3 of 4");
+  });
+
+  // Rows written before migration 0048 carry `dropped_links` NULL
+  // (`seed_demo.py` builds its entries that way). One register is written by
+  // one generate, so either every entry predates the recording or none does.
   it("one entry predating link recording", async () => {
     const t = await textOf("risk-entries-links-not-recorded", {
       entries_total: 1,
@@ -194,6 +290,18 @@ describe("RiskRegisterDashboard count nouns (#743)", () => {
       entries_links_not_recorded: 1,
     });
     expect(t).toContain("1 of 1 entry predates link recording");
+    expect(t).toContain("proposed linkage for it.");
+    expect(t).not.toContain("for them");
+  });
+
+  it("three entries predating link recording", async () => {
+    const t = await textOf("risk-entries-links-not-recorded", {
+      entries_total: 3,
+      entries_without_tier: 0,
+      entries_links_not_recorded: 3,
+    });
+    expect(t).toContain("3 of 3 entries predate link recording");
+    expect(t).toContain("proposed linkage for them.");
   });
 
   it("citations across a one-entry register", async () => {

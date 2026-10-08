@@ -196,6 +196,13 @@ function th(): React.CSSProperties {
   };
 }
 
+/**
+ * #854 F4, Gene's ruling (#736 item 9): the remedy names something the CLIENT
+ * can do. A rewording that holds at any count ("each entry counted above") is
+ * pending him (#736 6054419744); swapping it is this one line.
+ */
+const WITHHELD_REMEDY = "Ask your consultant to complete those entries.";
+
 export function RiskDashboard({
   data,
 }: {
@@ -241,9 +248,13 @@ export function RiskDashboard({
   const withheldNote =
     gaps.length > 0 ? (
       <span>
+        {/* #743: the counts below overlap (one entry can be missing from two
+            breakdowns), so how many DISTINCT entries are affected is not
+            known here. "At least one" is true in every state that renders
+            (advisor, #736 6054419744). */}
         <span className="font-semibold">
-          Some entries are counted in Open risks and missing from a breakdown
-          below.
+          At least one entry is counted in Open risks and missing from a
+          breakdown below.
         </span>{" "}
         Of {data.total_entries} {data.total_entries === 1 ? "entry" : "entries"}
         :{" "}
@@ -255,7 +266,7 @@ export function RiskDashboard({
         ))}
         . Each is counted separately because each breakdown filters
         independently — an entry can carry a valid tier and still be missing
-        from the axis chart. Ask your consultant to complete those entries.
+        from the axis chart. {WITHHELD_REMEDY}
       </span>
     ) : null;
   return (
