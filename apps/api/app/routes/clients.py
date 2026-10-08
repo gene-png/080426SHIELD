@@ -117,6 +117,7 @@ from app.schemas.clients import (
     ZtPillarDashboard,
 )
 from app.services.engagement_targets import client_target_stage, client_target_tier
+from app.tech_debt.components import is_component, licence_count, source_items
 from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.savings import estimated_savings
 from app.zt.catalog import capability_by_code as zt_capability_by_code
@@ -1661,7 +1662,13 @@ def tech_debt_dashboard(
     )
 
     annual_spend = 0.0
-    # #804: the deliverable's own derivation, not a copy of it.
+    # for #835: the ONE rule for what counts as an application. A split
+    # bundle's parts are listed in the inventory but are not tools of their own.
+    sources = source_items(items)
+    bundle_part_count = len(items) - len(sources)
+    # #804: the deliverable's own derivation, not a copy of it. Savings still
+    # see a part (advisor ruling on #736): a part marked Cut with no cost is a
+    # genuinely unknown saving.
     found = estimated_savings((it.disposition, it.annual_cost_usd) for it in items)
     savings = found.amount
     savings_cost_known = found.known
@@ -1670,18 +1677,27 @@ def tech_debt_dashboard(
     # `total_applications`, so the spend figure was a floor and said so nowhere
     # while `savings` beside it carried a flag for exactly this.
     spend_cost_known = True
-    # category -> {"total": float, "count": int, "items": [CapabilityItem]}
+    # category -> {"total": float, "items": [CapabilityItem]}; "count" is
+    # derived below as the number of distinct LICENCES in the bucket.
     by_cat: dict[str, dict] = {}
     for it in items:
-        cost = float(it.annual_cost_usd) if it.annual_cost_usd is not None else 0.0
-        if it.annual_cost_usd is None:
+        # for #835: a bundle's part is not a cost. Its parent holds the licence
+        # value, so the part neither adds to spend nor, by having no cost of its
+        # own, makes spend a floor. A real uncosted source row still does.
+        part = is_component(it)
+        cost = float(it.annual_cost_usd) if it.annual_cost_usd is not None and not part else 0.0
+        if it.annual_cost_usd is None and not part:
             spend_cost_known = False
         annual_spend += cost
+        # A part DOES sit in its own category (UX finding 5: Defender beside
+        # CrowdStrike is a real redundancy), but a bundle and its parts are one
+        # licence, so the bucket counts licences rather than rows.
         cat = it.category or _UNCATEGORIZED
-        bucket = by_cat.setdefault(cat, {"total": 0.0, "count": 0, "items": []})
+        bucket = by_cat.setdefault(cat, {"total": 0.0, "items": []})
         bucket["total"] += cost
-        bucket["count"] += 1
         bucket["items"].append(it)
+    for bucket in by_cat.values():
+        bucket["count"] = licence_count(bucket["items"])
 
     spend_by_category = [
         TechDebtCategorySpend(category=cat, total_usd=round(b["total"], 2), count=b["count"])
@@ -1714,7 +1730,8 @@ def tech_debt_dashboard(
         client_id=str(client.id),
         service_id=str(service_id),
         actor_user_id=str(user.id),
-        applications=len(items),
+        applications=len(sources),
+        bundle_parts=bundle_part_count,
         savings=savings,
     )
 
@@ -1724,7 +1741,7 @@ def tech_debt_dashboard(
     # way as the exporter -- source-derived items only, so decomposing a bundle
     # into children can never move the arithmetic.
     source_rows_total = getattr(cl, "source_rows_total", None)
-    included_count = sum(1 for it in items if getattr(it, "parent_item_id", None) is None)
+    included_count = len(sources)
     excluded_count = (
         max(source_rows_total - included_count, 0) if source_rows_total is not None else 0
     )
@@ -1781,7 +1798,8 @@ def tech_debt_dashboard(
         deliverable_version=deliv.version,
         # #646: the ONE derivation every surface calls, for the released list.
         ai_source=ai_mode_for(db, svc, cl).as_api(),
-        total_applications=len(items),
+        total_applications=len(sources),
+        bundle_part_count=bundle_part_count,
         annual_spend_usd=round(annual_spend, 2),
         identified_savings_usd=round(savings, 2),
         savings_cost_known=savings_cost_known,

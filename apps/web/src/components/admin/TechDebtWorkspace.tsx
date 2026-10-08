@@ -581,6 +581,13 @@ Components carry no cost of their own — this licence keeps its full value.`,
     }
   }
 
+  // KNOWN TWIN, deliberately left for a follow-up (for #835): this sum and the
+  // "Capabilities" card below (`list.items.length`) include a split bundle's
+  // named parts. A part has no cost by design, so the sum is right unless a
+  // cost has been typed onto a part (nothing refuses that; #927), and the
+  // count reads parts as capabilities while the client dashboard and the
+  // deliverable count source items only (`tech_debt/components.py`). Admin
+  // only; the follow-up issue carries it.
   const totalCost =
     list?.items.reduce((acc, i) => acc + (i.annual_cost_usd ?? 0), 0) ?? 0;
   const lowConfidence =

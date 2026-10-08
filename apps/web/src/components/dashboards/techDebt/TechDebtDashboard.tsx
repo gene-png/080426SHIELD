@@ -94,6 +94,23 @@ export function spendSub(data: TechDebtDashboardData): string {
   return "Across all tools";
 }
 
+/**
+ * The inventory pill (for #835). "Applications" counts SOURCE items, while the
+ * table lists every row, so once a bundle is split into named parts the pill
+ * names the parts separately; otherwise it is unchanged. Copy approved by the
+ * advisor on #736.
+ */
+export function inventoryPill(data: TechDebtDashboardData): string {
+  if (!(data.bundle_part_count > 0)) {
+    return `${data.items.length} tools`;
+  }
+  const tools = data.total_applications;
+  const parts = data.bundle_part_count;
+  return `${tools} ${tools === 1 ? "tool" : "tools"}, ${parts} ${
+    parts === 1 ? "bundle part" : "bundle parts"
+  }`;
+}
+
 function DispositionChip({ value }: { value: string | null }): JSX.Element {
   if (!value || !DISPOSITION[value]) {
     return <span style={{ color: C.muted, fontSize: 11.5 }}>—</span>;
@@ -287,10 +304,7 @@ export function TechDebtDashboard({
         </Section>
       ) : null}
 
-      <Section
-        title="Full software inventory"
-        pill={`${data.items.length} tools`}
-      >
+      <Section title="Full software inventory" pill={inventoryPill(data)}>
         <div style={{ marginBottom: 12 }}>
           <input
             aria-label="Search inventory"

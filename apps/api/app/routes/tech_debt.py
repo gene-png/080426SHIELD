@@ -98,6 +98,7 @@ from app.schemas.tech_debt import (
 from app.security.rate_limit import enforce_ai_rate_limit
 from app.storage import StorageBackend
 from app.tech_debt.bounds import NOT_WHOLE_CENTS, cost_problem, license_problem
+from app.tech_debt.components import is_component
 from app.tech_debt.exporters import (
     build_context,
     cost_label,
@@ -1139,7 +1140,7 @@ def add_capability_components(
         )
     # One level only: a component of a component has no real-world counterpart
     # here and would make the cost story ambiguous.
-    if item.parent_item_id is not None:
+    if is_component(item):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
