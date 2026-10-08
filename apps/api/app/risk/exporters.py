@@ -338,9 +338,10 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
 #: Service tokens as the API spells them, for the #403 scored-coverage
 #: disclosure.
 #:
-#: DUPLICATED, unavoidably: the one web copy is `SERVICE_LABELS` in
-#: `apps/web/src/lib/risk/labels.ts`, which labels the same keys on the
-#: consultant's and the client's screens. There is no way to share a Python
+#: DUPLICATED, unavoidably: `SERVICE_LABELS` in
+#: `apps/web/src/lib/risk/labels.ts` is the one web copy of the target and
+#: scope-key labels; `lib/risk/inputs.ts` and `components/admin/zt/ZtWorkspace.tsx`
+#: repeat these strings (#946). There is no way to share a Python
 #: dict with TSX, so this is a synchronization rather than a derivation --
 #: which `CLAUDE.md` says to avoid where possible and otherwise to NAME, with
 #: the window stated.
@@ -357,9 +358,11 @@ _SERVICE_LABELS = {
 
 #: The ZT frameworks by the names the ZT deliverable already prints
 #: (`app/zt/exporters.py`), so the Risk Register names a framework the way the
-#: client's own Zero Trust report does (advisor, #736 6019425290, Q3). The one
-#: web copy is `ZT_FRAMEWORK_NAMES` in `apps/web/src/lib/risk/labels.ts`;
-#: change both.
+#: client's own Zero Trust report does (advisor, #736 6019425290, Q3).
+#: `ZT_FRAMEWORK_NAMES` in `apps/web/src/lib/risk/labels.ts` is the one web copy
+#: of the target and scope-key labels; `lib/risk/inputs.ts` and
+#: `components/admin/zt/ZtWorkspace.tsx` repeat these strings (#946). Change
+#: both.
 ZT_FRAMEWORK_NAMES = {
     "cisa_ztmm_2_0": "CISA ZTMM 2.0",
     "dod_ztra": "DoD ZT Reference Architecture",

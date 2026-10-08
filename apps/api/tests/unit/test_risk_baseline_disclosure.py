@@ -268,6 +268,62 @@ def test_two_zero_trust_services_name_each_framework_in_every_file(
         assert "target level" not in text, fmt
 
 
+_CSF_CLIENT_4_LINE = (
+    "NIST CSF findings are measured against target tier 4, the engagement "
+    "target when this register was generated."
+)
+
+
+def test_csf_plus_cisa_plus_dod_print_the_csf_line_then_cisa_then_dod(
+    app_client,  # noqa: F811
+) -> None:
+    """The table's last recorded row: the CSF line, then the two ZT lines,
+    sorted by (kind, framework), in every file."""
+    from tests.unit.test_risk_register import _set_zt_target
+
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    _both_frameworks(c, bearer, cid)
+    _seed_csf_answer_at_tier(c, bearer, cid, tier=1)
+    _set_csf_target(cid, 4)
+    _set_zt_target(cid, 4, kind="zero_trust_cisa")
+    r = _generate_per_finding(c, provider, bearer, cid, [])
+    assert r.status_code == 201, r.text
+    texts = _export_texts(c, bearer, cid)
+    for fmt in ("pdf", "docx", "xlsx"):
+        text = " ".join(texts[fmt].split())
+        positions = [text.find(line) for line in (_CSF_CLIENT_4_LINE, _CISA_LINE, _DOD_LINE)]
+        assert -1 not in positions, (fmt, positions, text)  # the positive state first
+        assert positions == sorted(positions), (fmt, positions)
+
+
+@pytest.mark.parametrize(
+    "chosen, line",
+    [
+        (
+            None,
+            "NIST CSF findings are measured against target tier 3, SHIELD's default: "
+            "no engagement target was set.",
+        ),
+        (
+            9,
+            "NIST CSF findings are measured against target tier 3, SHIELD's default: "
+            "the engagement target could not be used.",
+        ),
+    ],
+    ids=["none-set", "unusable"],
+)
+def test_one_csf_default_and_unusable_lines(chosen, line) -> None:
+    """The table's "One CSF, none set" and "One CSF, unusable" rows. The
+    target and source come from the resolver generate calls, so the state is
+    one a register can hold."""
+    from app.csf.gap import resolve_target_tier
+    from app.risk.exporters import _target_lines
+
+    target, source = resolve_target_tier(chosen)
+    assert _target_lines((("csf", None, target, source, "live_at_generate"),)) == [line]
+
+
 # ---------------------------------------------------------------------------
 # The reader (`app/risk/baseline.py::targets_used`), every stored shape.
 # Fail closed (ruling 2d): anything it cannot read is "not recorded", logged.
