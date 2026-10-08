@@ -119,9 +119,9 @@ DISCLOSURE_PREFIXES = (
 #: SUBSTRINGS, not prefixes, and #209 added the last two. `target_frozen_at`
 #: and `<kind>_targets_computed_live` are disclosure fields by the same
 #: definition as the rest -- each records what a figure could NOT be checked
-#: against -- and matched none of the eight prefixes above, so this gate was
-#: structurally blind to them. That is #373's prefix-anchoring residual,
-#: narrowed here for these two shapes rather than solved.
+#: against -- and matched none of the prefixes the tuple above held then, so
+#: this gate was structurally blind to them. That is #373's prefix-anchoring
+#: residual, narrowed here for these two shapes rather than solved.
 #:
 #: Measured before landing: adding them takes the gate from 25 of 25 to 29 of
 #: 29, still exit 0. Four fields, no false positives, and RED when the field

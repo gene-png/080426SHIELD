@@ -1,5 +1,14 @@
 # Gene — in-flight status
 
+_2026-10-08: #836 (a CSF Run-AI row the model leaves out of its batch is now
+counted and named) is rebuilt on main as `track5/836-omitted-rows-v2`. The run
+result carries `omitted_count` and `omitted_rows`, the Playbook panel shows
+them with the approved O1/O2 copy, and the audit row carries the count only.
+`check_disclosure_consumers.py` now matches `omitted_*` (a condition-5 gate
+change). #840 (ZT) and #853 (ATT&CK) follow under the same design, approved on
+#736 (comment 6067815887). It comes back to you, not self-merged: conditions
+5 and 6._
+
 _2026-10-08: #852 (CSF catalog corrected to NIST CSWP 29, now pinned to the PDF
 you supplied) is draft PR #940 on `track5/852-csf-cswp29`; D-110, migration
 0065._
