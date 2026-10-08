@@ -3,7 +3,7 @@
 `_zt_run_work` asks the model about every capability and applies only the
 entries that come back. Before #840 a capability with no entry kept whatever
 stage it held and the run recorded nothing. The run now reports
-`no_result = (asked & rows) - answered - locked`, with `notes_blank` and
+`omitted_capabilities = (asked & rows) - answered - locked`, with `notes_blank` and
 `kept_stage` per capability, and the audit row carries counts only.
 
 Every test drives the run through `POST /zt/services/{id}/run-ai`. The provider
@@ -83,7 +83,7 @@ class World:
 
 @pytest.fixture()
 def world(tmp_path) -> Iterator[World]:
-    url = f"sqlite:///{tmp_path / 'shield-zt-noresult.db'}"
+    url = f"sqlite:///{tmp_path / 'shield-zt-omitted.db'}"
     os.environ["DATABASE_URL"] = url
     api_root = Path(__file__).resolve().parents[2]
     cfg = Config(str(api_root / "alembic.ini"))
@@ -134,7 +134,7 @@ def world(tmp_path) -> Iterator[World]:
 
 
 def _identity_holds(result: dict) -> None:
-    """No-result must not touch the values identity: it counts what was SENT."""
+    """Omitted must not touch the values identity: it counts what was SENT."""
     assert result["suggestions_received"] == result["suggestions_applied"] + sum(
         d["values"] for d in result["dropped"]
     ), result
@@ -154,14 +154,14 @@ def test_capabilities_left_out_are_listed_with_their_notes_and_kept_stage(world)
 
     result = world.run()
 
-    assert result["no_result"] == sorted(
+    assert result["omitted_capabilities"] == sorted(
         [
             {"capability_code": blank, "notes_blank": True, "kept_stage": None},
             {"capability_code": noted, "notes_blank": False, "kept_stage": 2},
         ],
         key=lambda n: n["capability_code"],
-    ), result["no_result"]
-    assert result["no_result_count"] == 2
+    ), result["omitted_capabilities"]
+    assert result["omitted_count"] == 2
     # Both rows are as the setup left them.
     assert (world.row(blank).maturity_stage, world.row(blank).notes) == (None, None)
     assert (world.row(noted).maturity_stage, world.row(noted).notes) == (
@@ -170,13 +170,13 @@ def test_capabilities_left_out_are_listed_with_their_notes_and_kept_stage(world)
     )
     # And a capability that WAS answered is not listed: the run applied it.
     answered = world.code(2)
-    assert answered not in {n["capability_code"] for n in result["no_result"]}
+    assert answered not in {n["capability_code"] for n in result["omitted_capabilities"]}
     assert world.row(answered).maturity_stage == 1
     _identity_holds(result)
 
 
 @pytest.mark.unit
-def test_an_entry_that_names_a_capability_and_is_refused_is_not_no_result(world) -> None:
+def test_an_entry_that_names_a_capability_and_is_refused_is_not_omitted(world) -> None:
     """Truth-table row 7: an entry names the capability, and nothing applies.
 
     Its loss is itemized under its own reason, so counting it again here would
@@ -199,13 +199,13 @@ def test_an_entry_that_names_a_capability_and_is_refused_is_not_no_result(world)
     reasons = {(d["key"], d["reason"]) for d in result["dropped"]}
     assert (out_of_range, "out_of_range") in reasons, result["dropped"]
     assert (empty_entry, "entry_shape") in reasons, result["dropped"]
-    assert result["no_result"] == [], result["no_result"]
-    assert result["no_result_count"] == 0
+    assert result["omitted_capabilities"] == [], result["omitted_capabilities"]
+    assert result["omitted_count"] == 0
     _identity_holds(result)
 
 
 @pytest.mark.unit
-def test_a_locked_capability_left_out_is_not_no_result(world) -> None:
+def test_a_locked_capability_left_out_is_not_omitted(world) -> None:
     """A locked row is untouched by design, so a missing answer for it is not
     news. An unlocked one left out in the same run IS listed, so the empty
     result for the locked one is not a run that lists nothing at all.
@@ -218,9 +218,9 @@ def test_a_locked_capability_left_out_is_not_no_result(world) -> None:
 
     result = world.run()
 
-    listed = [n["capability_code"] for n in result["no_result"]]
+    listed = [n["capability_code"] for n in result["omitted_capabilities"]]
     assert listed == [unlocked], listed
-    assert result["no_result_count"] == 1
+    assert result["omitted_count"] == 1
 
 
 @pytest.mark.unit
@@ -234,8 +234,8 @@ def test_whitespace_notes_are_blank_and_na_is_a_note(world) -> None:
 
     result = world.run()
 
-    blank_by_code = {n["capability_code"]: n["notes_blank"] for n in result["no_result"]}
-    assert blank_by_code == {spaces: True, na: False}, result["no_result"]
+    blank_by_code = {n["capability_code"]: n["notes_blank"] for n in result["omitted_capabilities"]}
+    assert blank_by_code == {spaces: True, na: False}, result["omitted_capabilities"]
 
 
 @pytest.mark.unit
@@ -277,9 +277,9 @@ def test_kept_stage_is_read_after_the_apply(world, monkeypatch) -> None:
     result = world.run()
 
     assert calls == [1], "the edit never ran, so this test proves nothing"
-    assert result["no_result"] == [
+    assert result["omitted_capabilities"] == [
         {"capability_code": edited, "notes_blank": False, "kept_stage": 3}
-    ], result["no_result"]
+    ], result["omitted_capabilities"]
     assert world.row(edited).maturity_stage == 3
 
 
@@ -295,12 +295,12 @@ def test_an_empty_response_lists_every_unlocked_capability(world) -> None:
 
     expected = sorted(a["capability_code"] for a in world.answers if a["capability_code"] != locked)
     assert result["suggestions_received"] == 0
-    assert [n["capability_code"] for n in result["no_result"]] == expected
-    assert result["no_result_count"] == len(expected)
+    assert [n["capability_code"] for n in result["omitted_capabilities"]] == expected
+    assert result["omitted_count"] == len(expected)
 
 
 @pytest.mark.unit
-def test_the_audit_row_carries_no_result_counts_and_no_codes(world) -> None:
+def test_the_audit_row_carries_omitted_counts_and_no_codes(world) -> None:
     """#44 constraint 1: counts only. Each count derived from the setup."""
     from app.models.audit_entry import AuditEntry
 
@@ -324,9 +324,9 @@ def test_the_audit_row_carries_no_result_counts_and_no_codes(world) -> None:
     details = row.details
     blank = sum(1 for _, f in setups if not f.get("notes"))
     kept = sum(1 for _, f in setups if f.get("maturity_stage") is not None)
-    assert details["no_result_blank_notes"] == blank, details
-    assert details["no_result_with_notes"] == len(setups) - blank, details
-    assert details["no_result_kept_stage"] == kept, details
+    assert details["omitted_blank_notes"] == blank, details
+    assert details["omitted_with_notes"] == len(setups) - blank, details
+    assert details["omitted_kept_stage"] == kept, details
     blob = json.dumps(details)
     for code in omitted:
         assert code not in blob, blob

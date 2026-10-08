@@ -3,7 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import type { ZtNoResult, ZtRunAiResponse } from "@/lib/zt/types";
+import type { ZtOmittedCapability, ZtRunAiResponse } from "@/lib/zt/types";
 
 import { ZtRunAiAccounting } from "./ZtRunAiAccounting";
 
@@ -16,13 +16,13 @@ function nr(
   code: string,
   notes_blank: boolean,
   kept_stage: number | null,
-): ZtNoResult {
+): ZtOmittedCapability {
   return { capability_code: code, notes_blank, kept_stage };
 }
 
 /** A run that applied what it received and left `items` without a result. */
 function result(
-  items: ZtNoResult[] | undefined,
+  items: ZtOmittedCapability[] | undefined,
   over: Partial<ZtRunAiResponse> = {},
 ): ZtRunAiResponse {
   return {
@@ -33,7 +33,7 @@ function result(
     dropped: [],
     ...(items === undefined
       ? {}
-      : { no_result: items, no_result_count: items.length }),
+      : { omitted_capabilities: items, omitted_count: items.length }),
     ...over,
   };
 }
@@ -135,7 +135,7 @@ describe("ZtRunAiAccounting, capabilities with no result (#840)", () => {
 
   it.each([
     ["absent", undefined],
-    ["0", [] as ZtNoResult[]],
+    ["0", [] as ZtOmittedCapability[]],
   ])("renders nothing when the field is %s", (_label, items) => {
     const { container } = render(<ZtRunAiAccounting result={result(items)} />);
     // Positive state first: the accounting headline rendered.
@@ -147,7 +147,7 @@ describe("ZtRunAiAccounting, capabilities with no result (#840)", () => {
 
   it.each([
     ["absent", undefined],
-    ["0", [] as ZtNoResult[]],
+    ["0", [] as ZtOmittedCapability[]],
   ])(
     "renders nothing in the received-0 branch when the field is %s",
     (_label, items) => {

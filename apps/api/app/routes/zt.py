@@ -84,7 +84,7 @@ from app.schemas.zt import (
     ZtCapabilityChange,
     ZtDroppedSuggestion,
     ZtInterviewQuestion,
-    ZtNoResult,
+    ZtOmittedCapability,
     ZtQuestionnaireResponse,
     ZtRunAiResponse,
     ZtScoreSummary,
@@ -720,13 +720,13 @@ def run_ai(
     )
 
 
-def _zt_no_result(
+def _zt_omitted(
     *,
     asked: list[str],
     rows: dict[str, ZtAnswer],
     answered: set[str],
     locked_keys: frozenset[str],
-) -> list[ZtNoResult]:
+) -> list[ZtOmittedCapability]:
     """#840: the capabilities the run asked for that no entry named.
 
     `(asked & rows) - answered - locked`. A locked row is untouched by design,
@@ -735,11 +735,11 @@ def _zt_no_result(
     apply, so `kept_stage` is the stage the row holds now.
     """
     codes = (set(asked) & set(rows)) - answered - locked_keys
-    out: list[ZtNoResult] = []
+    out: list[ZtOmittedCapability] = []
     for code in sorted(codes):
         notes = rows[code].notes
         out.append(
-            ZtNoResult(
+            ZtOmittedCapability(
                 capability_code=code,
                 # Whitespace-only is blank; "N/A" is a note.
                 notes_blank=notes is None or not notes.strip(),
@@ -749,14 +749,14 @@ def _zt_no_result(
     return out
 
 
-def _zt_no_result_counts(no_result: list[ZtNoResult]) -> dict[str, int]:
+def _zt_omitted_counts(omitted_capabilities: list[ZtOmittedCapability]) -> dict[str, int]:
     """Counts only, never a code (#44 constraint 1): the audit row and the
     accounting line carry these, and the run result carries the codes."""
-    blank = sum(1 for n in no_result if n.notes_blank)
+    blank = sum(1 for n in omitted_capabilities if n.notes_blank)
     return {
-        "no_result_blank_notes": blank,
-        "no_result_with_notes": len(no_result) - blank,
-        "no_result_kept_stage": sum(1 for n in no_result if n.kept_stage is not None),
+        "omitted_blank_notes": blank,
+        "omitted_with_notes": len(omitted_capabilities) - blank,
+        "omitted_kept_stage": sum(1 for n in omitted_capabilities if n.kept_stage is not None),
     }
 
 
@@ -1004,13 +1004,13 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
     after = _snap()
     # #840: read AFTER the apply, so `kept_stage` is what the row holds now,
     # including an edit that landed while the model answered.
-    no_result = _zt_no_result(
+    omitted_capabilities = _zt_omitted(
         asked=req.preview.inputs["capabilities"],
         rows=rows,
         answered=answered,
         locked_keys=locked_keys,
     )
-    no_result_counts = _zt_no_result_counts(no_result)
+    omitted_counts = _zt_omitted_counts(omitted_capabilities)
 
     # Provenance follows the VALUE, not the attempt (issue #38). Settled here,
     # from the net before/after effect, so it cannot be fooled by a rejected
@@ -1076,7 +1076,7 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
             "received": received,
             "applied": applied,
             "dropped_by_reason": dropped_by_reason,
-            **no_result_counts,
+            **omitted_counts,
         },
     )
 
@@ -1097,7 +1097,7 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
             "suggestions_applied": applied,
             "dropped_by_reason": dropped_by_reason,
             # #840: counts only, never a capability code.
-            **no_result_counts,
+            **omitted_counts,
         },
     )
     # No commit: the framework commits this apply with the run's completion.
@@ -1111,8 +1111,8 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
         suggestions_applied=applied,
         dropped=dropped,
         preserved_client_answers=len(protected),
-        no_result_count=len(no_result),
-        no_result=no_result,
+        omitted_count=len(omitted_capabilities),
+        omitted_capabilities=omitted_capabilities,
     )
     return RunOutcome(
         result=payload.model_dump(mode="json"), applied_count=applied, accounting=accounting

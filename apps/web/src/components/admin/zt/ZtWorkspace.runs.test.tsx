@@ -384,12 +384,12 @@ describe("ZtWorkspace, the assessment's AI source (#646)", () => {
   });
 });
 
-describe("ZtWorkspace, Step 1 done is unchanged by no-result capabilities (#840)", () => {
+describe("ZtWorkspace, Step 1 done is unchanged by omitted capabilities (#840)", () => {
   // The Step 1 `done` predicate has been rewritten three times, so its inputs
-  // are crossed with `no_result_count > 0` as a table written BEFORE the field
-  // reached the page: received > 0, applied > 0, nothing lost, no-result.
+  // are crossed with `omitted_count > 0` as a table written BEFORE the field
+  // reached the page: received > 0, applied > 0, nothing lost, omitted.
   // `done` is a literal per row, never recomputed from the predicate, and the
-  // two rows of each pair differ only in no-result, so a no-result that moved
+  // two rows of each pair differ only in omitted, so an omission that moved
   // the badge turns one row of a pair red.
   //
   // Rows with received = 0 and applied or lost set are not states the server
@@ -397,7 +397,7 @@ describe("ZtWorkspace, Step 1 done is unchanged by no-result capabilities (#840)
   // kept so the table is the whole space and pins that received = 0 is never
   // done, whatever else the result carries.
   const MATRIX: [boolean, boolean, boolean, boolean, boolean][] = [
-    // received, applied, nothing lost, no-result, done
+    // received, applied, nothing lost, omitted, done
     [false, false, false, false, false],
     [false, false, false, true, false],
     [false, false, true, false, false],
@@ -417,8 +417,8 @@ describe("ZtWorkspace, Step 1 done is unchanged by no-result capabilities (#840)
   ];
 
   it.each(MATRIX)(
-    "received %s, applied %s, nothing lost %s, no-result %s: done is %s",
-    async (received, applied, nothingLost, noResult, done) => {
+    "received %s, applied %s, nothing lost %s, omitted %s: done is %s",
+    async (received, applied, nothingLost, omitted, done) => {
       const completed = run({
         status: "completed",
         result: result({
@@ -434,10 +434,10 @@ describe("ZtWorkspace, Step 1 done is unchanged by no-result capabilities (#840)
                   values: 1,
                 },
               ],
-          ...(noResult
+          ...(omitted
             ? {
-                no_result_count: 1,
-                no_result: [
+                omitted_count: 1,
+                omitted_capabilities: [
                   {
                     capability_code: "ID.2",
                     notes_blank: false,
@@ -458,7 +458,7 @@ describe("ZtWorkspace, Step 1 done is unchanged by no-result capabilities (#840)
       // Positive state first: the run's accounting is on the page.
       const marker = received ? /AI applied/ : /returned no suggestions at all/;
       expect((await screen.findAllByText(marker)).length).toBeGreaterThan(0);
-      if (noResult) {
+      if (omitted) {
         expect(
           screen.getByText("1 capability got no stage from the AI this run."),
         ).toBeInTheDocument();

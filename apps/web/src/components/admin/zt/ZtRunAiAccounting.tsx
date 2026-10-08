@@ -2,7 +2,7 @@ import type { JSX } from "react";
 
 import type {
   ZtDroppedSuggestion,
-  ZtNoResult,
+  ZtOmittedCapability,
   ZtRunAiResponse,
 } from "@/lib/zt/types";
 
@@ -160,7 +160,7 @@ export function lostValueCount(result: ZtRunAiResponse): number {
     .reduce((n, d) => n + d.values, 0);
 }
 
-function describeNoResult(n: ZtNoResult): string {
+function describeOmitted(n: ZtOmittedCapability): string {
   return n.kept_stage === null
     ? `${n.capability_code}: no stage, so it stays unscored.`
     : `${n.capability_code}: keeps stage ${n.kept_stage}, recorded earlier. This run did not confirm it.`;
@@ -182,14 +182,14 @@ function describeNoResult(n: ZtNoResult): string {
  *
  * Absent (a run stored before #840) or 0 renders nothing.
  */
-function ZtNoResultBlock({
+function ZtOmittedBlock({
   result,
 }: {
   result: ZtRunAiResponse;
 }): JSX.Element | null {
-  const n = result.no_result_count ?? 0;
+  const n = result.omitted_count ?? 0;
   if (n === 0) return null;
-  const items = result.no_result ?? [];
+  const items = result.omitted_capabilities ?? [];
   const blank = items.filter((x) => x.notes_blank);
   const noted = items.filter((x) => !x.notes_blank);
   const notedKept = noted.some((x) => x.kept_stage !== null);
@@ -205,7 +205,7 @@ function ZtNoResultBlock({
           <p>No notes recorded ({blank.length}):</p>
           <ul className="list-disc pl-5">
             {blank.map((x) => (
-              <li key={x.capability_code}>{describeNoResult(x)}</li>
+              <li key={x.capability_code}>{describeOmitted(x)}</li>
             ))}
           </ul>
         </div>
@@ -221,7 +221,7 @@ function ZtNoResultBlock({
           </p>
           <ul className="list-disc pl-5">
             {noted.map((x) => (
-              <li key={x.capability_code}>{describeNoResult(x)}</li>
+              <li key={x.capability_code}>{describeOmitted(x)}</li>
             ))}
           </ul>
           {notedKept ? (
@@ -298,7 +298,7 @@ export function ZtRunAiAccounting({
   // 12" — the most reassuring possible way to report a wholly-lost response.
   //
   // #840: a response with no entries leaves every capability it was asked
-  // about without a result, so the no-result block renders here too.
+  // about without a result, so the omitted block renders here too.
   if (result.suggestions_received === 0) {
     return (
       <div className="space-y-2">
@@ -308,7 +308,7 @@ export function ZtRunAiAccounting({
           its response did not match the shape this job expects. Re-run, and if
           it repeats, the prompt and the parser have drifted apart.
         </p>
-        <ZtNoResultBlock result={result} />
+        <ZtOmittedBlock result={result} />
       </div>
     );
   }
@@ -441,7 +441,7 @@ export function ZtRunAiAccounting({
         </ul>
       ) : null}
 
-      <ZtNoResultBlock result={result} />
+      <ZtOmittedBlock result={result} />
     </div>
   );
 }

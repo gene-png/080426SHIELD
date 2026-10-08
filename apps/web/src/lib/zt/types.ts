@@ -158,8 +158,8 @@ export interface ZtRunAiResponse {
    * Not part of the values identity above: a capability with no entry sent no
    * value. Optional, so a run stored before #840 reads as none.
    */
-  no_result_count?: number;
-  no_result?: ZtNoResult[];
+  omitted_count?: number;
+  omitted_capabilities?: ZtOmittedCapability[];
 }
 
 /**
@@ -167,7 +167,7 @@ export interface ZtRunAiResponse {
  * "no notes, or whitespace only"; "N/A" is a note. `kept_stage` is the stage
  * the row still holds after the run, or null when it has none.
  */
-export interface ZtNoResult {
+export interface ZtOmittedCapability {
   capability_code: string;
   notes_blank: boolean;
   kept_stage: number | null;

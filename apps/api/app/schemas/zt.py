@@ -336,7 +336,7 @@ class ZtDroppedSuggestion(BaseModel):
     value: Any = None
 
 
-class ZtNoResult(BaseModel):
+class ZtOmittedCapability(BaseModel):
     """A capability the run asked the model about and got no entry for (#840).
 
     NOT a `ZtDroppedSuggestion`: `received == applied + sum(dropped)` counts
@@ -391,8 +391,8 @@ class ZtRunAiResponse(BaseModel):
     preserved_client_answers: int = 0
     # #840: every capability asked for, not locked, that no entry named. Both
     # optional, so a stored run result written before them parses unchanged.
-    no_result_count: int = 0
-    no_result: list[ZtNoResult] = []
+    omitted_count: int = 0
+    omitted_capabilities: list[ZtOmittedCapability] = []
 
 
 class ZtInterviewQuestion(BaseModel):
