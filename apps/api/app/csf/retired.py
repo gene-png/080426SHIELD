@@ -134,8 +134,8 @@ def working_profile_sentence(rows: Iterable[Any], actions: Iterable[Any]) -> str
         # under it. REACHABLE in stored data: before #852 the gap-action upsert
         # (`PUT /csf/services/{id}/gap-actions/{code}`) accepted any catalog
         # code, gap or not, and ID.AM-09 was one, so a plan could be written
-        # over rows nobody scored. Not the approved S2 shape; this sentence
-        # awaits the advisor's approval. Stated rather than dropped.
+        # over rows nobody scored. Approved with its commas, both forms
+        # (#736 comment 6056012075). Stated rather than dropped.
         m = len(kept_actions)
         plans = "1 action plan" if m == 1 else f"{m} action plans"
         verb = "is" if m == 1 else "are"

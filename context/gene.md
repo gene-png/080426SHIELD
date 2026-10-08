@@ -1,5 +1,15 @@
 # Gene — in-flight status
 
+_2026-10-08: #852 (CSF catalog corrected toward NIST CSWP 29, not yet
+source-pinned) is draft PR #940 on `track5/852-csf-cswp29`; D-109, migration
+0064._
+
+**Before merge, Gene:** confirm the D-107 precondition (no real client
+onboarded), and supply NIST CSWP 29 for the source test; #852 stays open until
+that test lands. `apps/api/scripts/count_csf_retired_rows.py` (read-only)
+measures the reach on the dev database. #925 also carries a 0064 and a D-109:
+whichever lands second takes 0065 and D-110.
+
 _2026-09-22 — #254 merged as #444 (`d5f97eb`); a FOLLOW-UP is open for what
 round 4 found after the merge._
 

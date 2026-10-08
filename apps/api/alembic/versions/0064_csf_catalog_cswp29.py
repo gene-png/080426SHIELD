@@ -19,8 +19,8 @@ to the PDF; #852 stays open until one does. Per non-discarded CSF assessment
   existing row is never duplicated or overwritten.
 * **Retired:** rows on `ID.AM-09`, in `csf_answers`, `csf_dimension_scores` and
   `csf_gap_actions`, are KEPT, untouched (the approved plan, #736 comment
-  6054419744, the pattern 0063 used for retired CISA rows, and #925 uses for
-  DoD). The scoring and gap engines iterate the catalog, and every reader of
+  6054419744, the pattern 0063 used for retired CISA rows, and #925 proposes
+  for DoD). The scoring and gap engines iterate the catalog, and every reader of
   stored rows filters to it (`app.csf.retired.catalog_rows`), so they are not
   scored; the workspace, the self-assessment, the deliverable, the client dashboard, the
   Working Profile and the playbook files disclose how many hold an answer.
