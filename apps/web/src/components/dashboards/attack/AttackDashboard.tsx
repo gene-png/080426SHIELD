@@ -854,9 +854,11 @@ function TriadCard({
   );
 }
 
-/** #554 R3 copy, approved by the advisor 01:35Z (#808 copy, items 1 and 2). */
+/** #554 R3 copy, approved by the advisor 01:35Z (#808 copy, items 1 and 2).
+ * The KPI sub was aligned to the triad's wording for #842 (#736, comment
+ * 6053562002): it states what MITRE lists, never that prevention is impossible. */
 const FULLY_COVERED_SUB_R3 =
-  "Detection, prevention and response in place, or detection and response where it cannot be prevented";
+  "Detection, prevention and response in place, or detection and response where MITRE ATT&CK lists no preventive control";
 const TRIAD_DESC_R3 =
   "A technique is fully covered when detection, prevention and response are all in place, or detection and response where MITRE ATT&CK lists no preventive control.";
 

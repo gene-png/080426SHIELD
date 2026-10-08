@@ -55,10 +55,10 @@ APPROVED = {
         "There is a signal for this activity, but it is noisy or approximate, or depends "
         "on custom detection rules that still need to be written and tuned.",
     ),
+    # #842, Option B (the advisor's ruling on #736, comment 6053562002).
     "prevention_limited": (
-        "Detected, not blocked",
-        "This activity can be detected but not prevented, sometimes because legitimate "
-        "work needs the same capability.",
+        "Detected, no blocking control",
+        "This activity can be detected, but no control in place blocks it.",
     ),
     "evasive_variant_uncovered": (
         "Advanced variants not covered",

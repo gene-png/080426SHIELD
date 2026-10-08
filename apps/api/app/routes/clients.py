@@ -43,7 +43,7 @@ from app.attack.exporters import partial_reason_counts as attack_partial_reason_
 from app.attack.exporters import retirement_sentences as attack_retirement_sentences
 from app.attack.parents import PARENT_CHILDREN as ATTACK_PARENT_CHILDREN
 from app.attack.parents import is_computed_parent as attack_is_computed_parent
-from app.attack.partial_reasons import partial_reason as attack_partial_reason
+from app.attack.partial_reasons import partial_reason_for_row as attack_partial_reason_for_row
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.rules import parents_computed as attack_parents_computed
 from app.attack.rules import statuses_computed as attack_statuses_computed
@@ -1251,13 +1251,10 @@ def attack_dashboard(
                 partial_reason=(
                     AttackPartialReason(label=reason.label, sentence=reason.sentence)
                     if (
-                        reason := attack_partial_reason(
-                            r.status,
-                            r.reason_code,
-                            computed_parent=bool(parent),
-                            # #554 R3: the exporters' `_row_reason` twin.
-                            computed_leaf=getattr(r, "is_computed", False),
-                        )
+                        # #842: the exporters' `_row_reason` calls the same entry
+                        # point, so a stored reason is shown only when it is true
+                        # of the computed Detect / Prevent / Respond line.
+                        reason := attack_partial_reason_for_row(r, computed_parent=bool(parent))
                     )
                     is not None
                     else None
