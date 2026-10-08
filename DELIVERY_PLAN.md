@@ -95,6 +95,40 @@ inventory pill), 6055276302 (#927 folded in; the license labels) and 6056012075
 (the 422 copy). Left for follow-ups: #929 and #935. Trips merge-rule conditions
 5 and 6, so it comes back to Gene; no migration.
 
+**2026-10-08: #743 (`tier-2`, `client-reaching`) is in PR #855, not merged.**
+Status as written before it merges; update this line in the landing commit if
+anything changes. What it carries: every count on both Risk screens, except
+the client remedy line pending Gene, now agrees with its noun, verb and pronoun
+(the client dashboard's withheld-breakdown
+banner, its pill and donut tooltip; the admin register's batch, lost-entry,
+unrated, unlinked, dropped-link and not-recorded banners), and
+`lib/risk/carry.ts` says "each entry" for more than one rating. The admin "lost
+a value and still shows linkage" banner now counts exactly that population:
+K = D - U - S, where D and U are the server's `entries_with_dropped_links` and
+`entries_unlinked_after_drops`, and S (an entry that dropped only its
+`source_id` and holds no technique or control link) is counted from the
+entries. Rulings: advisor, #736 comments
+6054419744 (strings, K, fixtures) and 6056012075 (docs before the ready line).
+**Pending:** the client remedy line, a count-neutral rewording held for Gene;
+the code keeps his ruled sentence in one constant. **Filed from the reviews:**
+#930, #931, #932, #939.
+
+**2026-10-08: #842 (`tier-2`, ATT&CK copy after R3) in PR #933.** The
+status below is as written before it merged. What lands: the
+consultant Covered definition follows R3 (Detect, Prevent and Respond, or
+Detect and Respond where MITRE ATT&CK lists no preventive control);
+`prevention_limited` reads "Detected, no blocking control" / "This activity can
+be detected, but no control in place blocks it." (Option B), so it names a
+missing control and never reads as a technique that cannot be prevented; on a
+computed row a stored Partial reason is shown only when its sentence is true of
+the computed Detect / Prevent / Respond line, otherwise "Set by what is in
+place"; and the client "Fully covered" tile says "where MITRE ATT&CK lists no
+preventive control". Rulings: the advisor on #736, comments 6053562002 and
+6056012075. Released deliverables are left as delivered. What does NOT land
+here: the consultant `REASON_CODES` definition of `prevention_limited` (Q5) goes
+in the #806 ATT&CK prompt PR; #928 and #934 are filed from this work. No plan
+item changes and no total moves: #842 owns no row in the table below.
+
 **2026-09-22 — #209 implemented (`tier-1`, `client-reaching`); LANDED 2026-09-23 as PR #476 (`c4d3cc2`).** The status below is as written before it merged.
 The last open `tier-1`. Four client-facing surfaces resolved the engagement
 target LIVE on every request while the released document held the number it was

@@ -12,6 +12,36 @@ refusal is cleared. Savings are unchanged by ruling (#736 comment 5986057990),
 so a legacy costed part marked Cut still counts there. Follow-ups #929 and #935
 are open. Comes back to you: conditions 5 and 6.
 
+_2026-10-08: #743 is PR #855 (`track6/743-risk-count-nouns`), clean on code
+and tests at review round 4 (cb6fceea), not merged._
+
+**What it does:** count words agree with their numbers on both Risk screens,
+except the client remedy line below, and in `carry.ts`; the admin still-linked banner counts K = D - U - S (rulings on
+#736, comment 6054419744). **Yours:** the client remedy line. The advisor
+approved the new lead; the count-neutral remedy "Ask your consultant to
+complete each entry counted above." waits on you, and the code keeps your ruled
+sentence in the one constant `WITHHELD_REMEDY` (#939 notes a third pinned
+literal the swap must also edit). Filed from the reviews: #930, #931, #932,
+#939. Trips merge-rule conditions 5 and 6, so it comes back to you.
+
+_2026-10-08: #842 (ATT&CK copy after R3) is PR #933; the advisor merges it once the re-ready line is posted._
+
+**What it does.** The Covered definition consultants see follows R3.
+`prevention_limited` now tells the client "Detected, no blocking control" /
+"This activity can be detected, but no control in place blocks it." (Option B),
+so a missing control no longer reads as a technique that cannot be prevented.
+A stored Partial reason on a computed row is shown only when its sentence is
+true of the computed Detect / Prevent / Respond line; otherwise the row reads
+"Set by what is in place". The client "Fully covered" tile says "where MITRE
+ATT&CK lists no preventive control". Rulings: #736 comments 6053562002 and
+6056012075.
+
+**What it does not do.** Already-released deliverables keep the old sentence
+(stored files, not re-finalized; the advisor's Q3 ruling). The consultant reason-code
+definition (Q5) waits for the #806 ATT&CK prompt PR. #928 and #934 are filed.
+It trips conditions 5 and 6. The advisor merges it once the re-ready line is
+posted (#736 comment 6056012075), and #842 is then closed by hand.
+
 _2026-09-22 — #254 merged as #444 (`d5f97eb`); a FOLLOW-UP is open for what
 round 4 found after the merge._
 
