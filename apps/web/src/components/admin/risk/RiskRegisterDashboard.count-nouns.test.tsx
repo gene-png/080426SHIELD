@@ -50,6 +50,8 @@ function gate(): RiskGate {
     not_finalized: [],
     synthesizable_missing: [],
     attack_catalog_mismatch: null,
+    // #737: required; the Inputs panel's rows.
+    inputs: [],
   };
 }
 
@@ -73,6 +75,9 @@ function entry(over: Partial<RiskEntry> = {}): RiskEntry {
     origin: "ai_generated",
     trust: "admin_assisted",
     dropped_links: {},
+    // #737: required; null = the finding's input was released.
+    source_state: null,
+    source_review_pending: false,
     rating_edited_by: null,
     rating_edited_at: null,
     ...over,
@@ -98,6 +103,11 @@ function register(over: Partial<RiskRegister> = {}): RiskRegister {
     findings_total: null,
     findings_without_entry: [],
     findings_with_several_entries: {},
+    // #854 F3: not recorded, for the same reason as the findings fields.
+    ratings_carried_recorded: false,
+    ratings_carried: null,
+    ratings_carried_from_version: null,
+    ratings_not_carried: [],
     id: "r1",
     client_id: "c1",
     version: 1,
