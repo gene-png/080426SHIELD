@@ -98,9 +98,13 @@ COVERAGE_DEFINITIONS: tuple[CoverageDefinition, ...] = (
     CoverageDefinition(
         status=CoverageStatus.COVERED,
         short_label="Covered",
+        # R3 (Gene, 2026-10-02, on #554); wording approved for #842 (#736,
+        # comment 6053562002). Reach is a Partial reason (`reach_limited`), not
+        # part of Covered.
         description=(
-            "Detection + response controls are in place for this technique "
-            "across the relevant attack surface."
+            "Detect, Prevent and Respond are all in place for this technique, or Detect "
+            "and Respond where MITRE ATT&CK lists no preventive control. In place means "
+            "at least one confirmed tool provides it."
         ),
     ),
     CoverageDefinition(

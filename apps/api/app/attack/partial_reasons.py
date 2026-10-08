@@ -28,17 +28,22 @@ condition 5 (a scoring surface); this module only words them, and
 `test_attack_partial_reason.py` derives its key set from `coverage.REASON_CODES`
 so a new Partial code with no client wording goes red.
 
-**R3 SLOT.** Gene's Covered rule (R3) adds a "What is in place: Detect /
-Prevent / Respond" line beside the reason, on these same surfaces. It waits on
-his "in place" decision and is NOT built. Each surface carries an `R3 SLOT`
-comment where it goes: the XLSX column after "Why partial", the PDF and DOCX
-count table, and the dashboard row under the reason label.
+**R3.** Gene's Covered rule (R3) computes a row's status from Detect /
+Prevent / Respond (`computed.py`, built in #808), and every surface prints the
+"Detect: ... · Prevent: ... · Respond: ..." line beside the reason. A stored
+reason on a computed row is shown only when its sentence is true of that line
+(`_holds` below, for #842); otherwise the row reads "Set by what is in place".
+`prevention_limited`'s wording is Option B of #842 (the advisor's ruling on
+#736, comment 6053562002): it names a missing control, never a technique that
+cannot be prevented, which is MITRE's list and has its own section (Gene's
+decision 3 on #554).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.attack.computed import Capabilities, InPlace
 from app.attack.coverage import CoverageStatus
 
 
@@ -72,9 +77,8 @@ CLIENT_WORDING: dict[str, PartialReason] = {
         "on custom detection rules that still need to be written and tuned.",
     ),
     "prevention_limited": PartialReason(
-        "Detected, not blocked",
-        "This activity can be detected but not prevented, sometimes because legitimate "
-        "work needs the same capability.",
+        "Detected, no blocking control",
+        "This activity can be detected, but no control in place blocks it.",
     ),
     "evasive_variant_uncovered": PartialReason(
         "Advanced variants not covered",
@@ -124,12 +128,40 @@ TABLE_ORDER: tuple[PartialReason, ...] = (
 WHY_PARTIAL_LEGEND = ("Why partial", "The reason a Partial technique is only partly covered.")
 
 
+def _holds(code: str, caps: Capabilities) -> bool:
+    """Whether every claim `code`'s client sentence makes is true of the computed
+    line (for #842; the claims table approved on #736, comment 6053562002).
+
+    `awaiting_review` satisfies neither an "in place" nor a "not in place"
+    claim: tools are listed and none is confirmed, so neither is known. The
+    claims are read from the sentences in `CLIENT_WORDING`; change both."""
+    detect_in = caps.detect is InPlace.IN_PLACE
+    if code == "prevention_limited":
+        # "can be detected, but no control in place blocks it". A technique MITRE
+        # lists no preventive control for reads "cannot be prevented", not this.
+        return detect_in and caps.prevent is InPlace.NOT_IN_PLACE
+    if code == "recovery_absent":
+        # "would be detected, but no way to recover from it ... is evidenced".
+        return detect_in and caps.respond is InPlace.NOT_IN_PLACE
+    if code in ("detection_weak", "periodic_not_continuous"):
+        # "There is a signal" / "found only when a scheduled scan runs".
+        return detect_in
+    if code == "missing_control_category":
+        # "a whole category of control ... is not in place".
+        return InPlace.NOT_IN_PLACE in caps.judged()
+    if code in ("reach_limited", "evasive_variant_uncovered"):
+        # "Defended on most" / "Common forms ... are covered": a computed Partial
+        # always has something in place, so these hold of any computed Partial.
+        return True
+    raise ValueError(f"no claims are recorded for Partial reason {code!r}")
+
+
 def partial_reason(
     status: str | None,
     reason_code: str | None,
     *,
     computed_parent: bool,
-    computed_leaf: bool = False,
+    capabilities: Capabilities | None = None,
 ) -> PartialReason | None:
     """What a client reads for one row, or None when the row is not Partial.
 
@@ -137,10 +169,11 @@ def partial_reason(
     technique with sub-techniques; under rule 1 a parent was scored directly
     and reads like any other row.
 
-    `computed_leaf` is True for a row whose status #554 R3 computed from Detect /
-    Prevent / Respond (`computed.EffectiveRow.is_computed`). Its stored reason,
-    when it has one, is kept beside the D/P/R line (the advisor's Q7); without
-    one it reads `SET_BY_WHAT_IS_IN_PLACE`, never "Reason not recorded".
+    `capabilities` is set only for a row whose status #554 R3 computed from
+    Detect / Prevent / Respond (`computed.EffectiveRow.capabilities`). Its stored
+    reason is shown only when its sentence is true of that line (`_holds`, for
+    #842, narrowing the advisor's Q7); otherwise, and without a stored reason, it
+    reads `SET_BY_WHAT_IS_IN_PLACE`, never "Reason not recorded".
 
     An unknown code RAISES. Every writer validates the code against the status
     (`coverage.is_valid_reason`), so one here is a writer bug; rendering it as
@@ -152,11 +185,26 @@ def partial_reason(
     if computed_parent:
         return SET_BY_SUB_TECHNIQUES
     if reason_code is None:
-        return SET_BY_WHAT_IS_IN_PLACE if computed_leaf else REASON_NOT_RECORDED
+        return SET_BY_WHAT_IS_IN_PLACE if capabilities is not None else REASON_NOT_RECORDED
     wording = CLIENT_WORDING.get(reason_code)
     if wording is None:
         raise ValueError(
             f"a Partial row carries reason_code {reason_code!r}, which is not a Partial "
             "reason; writes validate it, so this row was written past the validator"
         )
+    if capabilities is not None and not _holds(reason_code, capabilities):
+        return SET_BY_WHAT_IS_IN_PLACE
     return wording
+
+
+def partial_reason_for_row(row: object, *, computed_parent: bool) -> PartialReason | None:
+    """`partial_reason` for one coverage row: the ONE entry point the exporters
+    and the client dashboard both call, so the two cannot read a row differently
+    (for #842). A stored ORM row, or an `EffectiveRow` that was not computed,
+    has no capabilities and reads its stored reason."""
+    return partial_reason(
+        row.status,
+        row.reason_code,
+        computed_parent=computed_parent,
+        capabilities=getattr(row, "capabilities", None),
+    )
