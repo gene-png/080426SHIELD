@@ -1,5 +1,23 @@
 # Gene — in-flight status
 
+_2026-10-08 — #842 (ATT&CK copy after R3) is PR #933, waiting for your merge._
+
+**What it does.** The Covered definition consultants see follows R3.
+`prevention_limited` now tells the client "Detected, no blocking control" /
+"This activity can be detected, but no control in place blocks it." (Option B),
+so a missing control no longer reads as a technique that cannot be prevented.
+A stored Partial reason on a computed row is shown only when its sentence is
+true of the computed Detect / Prevent / Respond line; otherwise the row reads
+"Set by what is in place". The client "Fully covered" tile says "where MITRE
+ATT&CK lists no preventive control". Rulings: #736 comments 6053562002 and
+6056012075.
+
+**What it does not do.** Already-released deliverables keep the old sentence
+(stored files, not re-finalized; the advisor's Q3 ruling). The consultant reason-code
+definition (Q5) waits for the #806 ATT&CK prompt PR. #928 and #934 are filed.
+It trips conditions 5 and 6, so it is yours to merge; the issue is then closed
+by hand.
+
 _2026-09-22 — #254 merged as #444 (`d5f97eb`); a FOLLOW-UP is open for what
 round 4 found after the merge._
 
