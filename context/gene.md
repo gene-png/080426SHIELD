@@ -26,7 +26,7 @@ _2026-10-08: #743 landed as PR #855 (`track6/743-risk-count-nouns`,
 **What it does:** count words agree with their numbers on both Risk screens,
 `carry.ts` included; the admin still-linked banner counts K = D - U - S
 (rulings on #736, comment 6054419744). **Remedy line:** you ruled it on #736
-(comment 6060627178) and tightened it on #943 (comment 6064328745), and the PR
+(comment 6060627178) and tightened it for #943 (#736 comment 6064328745), and the PR
 for #939 swaps it: "Ask your consultant to complete each entry counted as
 missing above." replaces "Ask your consultant to complete
 those entries." in the constant `WITHHELD_REMEDY` and in its two pinned test
