@@ -80,6 +80,13 @@ export interface CsfDashboardData {
   functions: CsfFunction[];
   /** Ranked and TRUNCATED. `total_gap_count` is the real total. */
   top_gaps: CsfGap[];
+  /**
+   * #852: answers kept on a subcategory the catalog no longer has (ID.AM-09),
+   * in no figure above, with the API's approved sentence: the one the
+   * released document carries (`csf/retired.py`).
+   */
+  retired_answers?: number;
+  retired_answers_note?: string | null;
 }
 
 /* No `radarData` here, deliberately. ZT ships one because `ZtCharts` renders a

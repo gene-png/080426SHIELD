@@ -140,6 +140,7 @@ def render_xlsx(
     *,
     approved: bool,
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
+    retired_note: str | None = None,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -327,6 +328,8 @@ def render_xlsx(
     cover.append([f"Working profile version: {version}"])
     # #277: on the SHEET, not only in the filename.
     cover.append([_approval_notice(approved)])
+    if retired_note:
+        cover.append([retired_note])  # #852: kept rows, not on any sheet below
     cover.append([])
     cover.append(
         [
@@ -759,6 +762,7 @@ def _cover(
     client_name: str,
     version: int,
     generated_on: str | None,
+    retired_note: str | None = None,
 ) -> None:
     from reportlab.lib.units import inch
     from reportlab.platypus import Paragraph, Spacer
@@ -774,6 +778,9 @@ def _cover(
     story.append(Paragraph(escape(_approval_notice(approved)), styles["body"]))
     # #646: beside the approval notice, for the same reason (#277).
     story.append(pdf_paragraph(ai_mode, styles["body"]))
+    if retired_note:
+        # #852: the cover, because no table in the document lists a kept row.
+        story.append(Paragraph(escape(retired_note), styles["body"]))
     if generated_on:
         story.append(Paragraph(f"Generated: {escape(generated_on)}", styles["body"]))
     story.append(Spacer(1, 0.3 * inch))
@@ -902,6 +909,7 @@ def render_exec_pdf(
     *,
     approved: bool,
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
+    retired_note: str | None = None,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -922,6 +930,7 @@ def render_exec_pdf(
         generated_on=generated_on,
         approved=approved,
         ai_mode=ai_mode,
+        retired_note=retired_note,
     )
     story.append(PageBreak())
 
@@ -945,6 +954,7 @@ def render_full_pdf(
     *,
     approved: bool,
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
+    retired_note: str | None = None,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -966,6 +976,7 @@ def render_full_pdf(
         generated_on=generated_on,
         approved=approved,
         ai_mode=ai_mode,
+        retired_note=retired_note,
     )
     story.append(PageBreak())
 
@@ -1105,6 +1116,7 @@ def _docx_cover(
     generated_on: str | None,
     approved: bool,
     ai_mode: AiModeStamp,
+    retired_note: str | None = None,
 ) -> None:
     from app.docx_export import add_paragraphs, add_title, set_footer
 
@@ -1118,6 +1130,9 @@ def _docx_cover(
     add_title(doc, "NIST CSF 2.0", subtitle)
     # #646: first thing under the title, before the cover metadata.
     add_docx_paragraph(doc, ai_mode)
+    if retired_note:
+        # #852: the cover, because no table in the document lists a kept row.
+        add_paragraphs(doc, [retired_note])
     meta = [
         f"Prepared for: {client_name}",
         f"Working profile version: {version}",
@@ -1160,6 +1175,7 @@ def render_exec_docx(
     *,
     approved: bool,
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
+    retired_note: str | None = None,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -1176,6 +1192,7 @@ def render_exec_docx(
         generated_on=generated_on,
         approved=approved,
         ai_mode=ai_mode,
+        retired_note=retired_note,
     )
 
     add_heading(doc, "Executive summary")
@@ -1215,6 +1232,7 @@ def render_full_docx(
     *,
     approved: bool,
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
+    retired_note: str | None = None,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -1238,6 +1256,7 @@ def render_full_docx(
         generated_on=generated_on,
         approved=approved,
         ai_mode=ai_mode,
+        retired_note=retired_note,
     )
     add_page_break(doc)
 

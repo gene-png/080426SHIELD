@@ -720,6 +720,18 @@ export function CsfPlaybookPanel({
             ) : null}
           </div>
 
+          {/* #852: the API's own sentence (`csf/retired.py`), the one the
+              playbook files carry. The table below lists the catalog's rows
+              only, so this is where a kept row shows. */}
+          {enterprise?.retired_rows_note ? (
+            <p
+              className="text-sm text-ink-secondary"
+              data-testid="csf-retired-rows"
+            >
+              {enterprise.retired_rows_note}
+            </p>
+          ) : null}
+
           {seeded ? (
             <AiPreviewButton serviceId={serviceId} disabled={busy !== null} />
           ) : null}

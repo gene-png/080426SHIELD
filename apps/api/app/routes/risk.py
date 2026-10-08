@@ -36,6 +36,7 @@ from app.attack.release_readiness import unreviewed_codes as attack_unreviewed_c
 from app.attack.rules import parents_computed
 from app.audit import audit
 from app.csf.gap import resolve_target_tier
+from app.csf.retired import catalog_rows as csf_catalog_rows
 from app.db.session import get_db
 from app.dependencies import require_role
 from app.docx_export import DOCX_MIME
@@ -997,7 +998,11 @@ def _gather_findings(
         # "the client's choice could not be used" stay separate facts.
         csf_target, csf_target_source = resolve_target_tier(_client_target_tier(db, csf.service_id))
         target_sources[src.scope_key] = {"target": csf_target, "source": csf_target_source}
-        csf_rows = (
+        # #852: only the catalog's rows, the twin of the #838 ZT filter below.
+        # Migration 0065 KEEPS answers on ID.AM-09, which CSF 2.0 does not have,
+        # and the CSF deliverable says they are not scored, so they feed no
+        # finding and are not citable here either.
+        csf_rows = csf_catalog_rows(
             db.execute(select(CsfAnswer).where(CsfAnswer.assessment_id == csf.id)).scalars().all()
         )
         csf_scope = scope_for(CsfAnswer, csf_rows)

@@ -75,6 +75,13 @@ from app.csf.playbook import (
     score_tier,
     weighted_floor_rollup,
 )
+from app.csf.retired import (
+    answers_sentence,
+    catalog_rows,
+    retired_answers,
+    retired_scores,
+    working_profile_sentence,
+)
 from app.csf.scoring import compute as compute_score
 from app.db.session import get_db
 from app.deliverable_release import release_deliverable
@@ -189,6 +196,12 @@ def _serialize_assessment(db: Session, a: CsfAssessment) -> CsfAssessmentRespons
         client_profile=_client_profile(db, a.service_id),
         # #646: the ONE derivation every surface calls.
         ai_source=ai_mode_for(db, db.get(Service, a.service_id), a).as_api(),
+        # #852: answers kept on a code the catalog no longer has (ID.AM-09),
+        # from the one derivation the deliverable and the dashboard call too.
+        # `answers` above still lists them, as ZT's does; the questionnaire
+        # iterates the catalog, so this sentence is how a person learns of them.
+        retired_answers=len(retired_answers(rows)),
+        retired_answers_note=answers_sentence(rows),
     )
 
 
@@ -1206,7 +1219,9 @@ def get_profile(
     a = _latest_assessment(db, svc.id)
     if a is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No assessment yet.")
-    rows = (
+    # #852: only the catalog's rows. A row kept on ID.AM-09 is not scored, so
+    # it is not listed for scoring either; the enterprise profile discloses it.
+    rows = catalog_rows(
         db.execute(
             select(CsfDimensionScore)
             .where(
@@ -1319,14 +1334,39 @@ def enterprise_profile(
     if a is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No assessment yet.")
     out, tiers_in_use = _enterprise_subcategories(db, a)
-    return EnterpriseProfileResponse(tiers_in_use=sorted(tiers_in_use), subcategories=out)
+    stored = (
+        db.execute(select(CsfDimensionScore).where(CsfDimensionScore.assessment_id == a.id))
+        .scalars()
+        .all()
+    )
+    return EnterpriseProfileResponse(
+        tiers_in_use=sorted(tiers_in_use),
+        subcategories=out,
+        # #852: the rows `_enterprise_subcategories` leaves out, said aloud.
+        retired_rows=len(retired_scores(stored)),
+        retired_rows_note=_working_profile_note(db, a, stored),
+    )
+
+
+def _working_profile_note(
+    db: Session, a: CsfAssessment, stored: Sequence[CsfDimensionScore]
+) -> str | None:
+    """S2 (#852): the kept Working Profile rows and action plans, for the
+    panel and the playbook files alike."""
+    actions = db.execute(select(CsfGapAction).where(CsfGapAction.assessment_id == a.id)).scalars()
+    return working_profile_sentence(stored, actions)
 
 
 def _enterprise_subcategories(
     db: Session, a: CsfAssessment
 ) -> tuple[list[EnterpriseSubcategory], set[str]]:
-    """The weighted-floor Enterprise roll-up per in-scope subcategory."""
-    rows = (
+    """The weighted-floor Enterprise roll-up per in-scope subcategory.
+
+    #852: over the catalog's rows only. A row kept on a code the catalog no
+    longer has (ID.AM-09) is not rolled up, and reading it here raised KeyError
+    in `subcategory_by_code` below, a 500 on the enterprise profile, the gap
+    actions and the playbook export alike. `enterprise_profile` discloses it."""
+    rows = catalog_rows(
         db.execute(select(CsfDimensionScore).where(CsfDimensionScore.assessment_id == a.id))
         .scalars()
         .all()
@@ -2011,13 +2051,15 @@ def _csf_ai_request_for(db: Session, a: CsfAssessment, client: Client) -> CsfAiR
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="This assessment is locked."
         )
+    # #852: the catalog's rows only. A row kept on ID.AM-09 is not scored, so
+    # it is neither sent to the model nor written from its answer.
     rows = {
         f"{r.tier}|{r.subcategory_code}": r
-        for r in db.execute(
-            select(CsfDimensionScore).where(CsfDimensionScore.assessment_id == a.id)
+        for r in catalog_rows(
+            db.execute(select(CsfDimensionScore).where(CsfDimensionScore.assessment_id == a.id))
+            .scalars()
+            .all()
         )
-        .scalars()
-        .all()
     }
     if not rows:
         raise HTTPException(
@@ -2031,7 +2073,7 @@ def _csf_ai_request_for(db: Session, a: CsfAssessment, client: Client) -> CsfAiR
     # are sent (a scored tier, notes, or attached evidence) so the model sees
     # what the analyst captured rather than ~106 empty rows. The payload goes
     # through the redactor (nested note strings included) as designed.
-    answer_rows = (
+    answer_rows = catalog_rows(
         db.execute(select(CsfAnswer).where(CsfAnswer.assessment_id == a.id)).scalars().all()
     )
     answers = {
@@ -2402,11 +2444,14 @@ def export_playbook(
     a = _latest_assessment(db, svc.id)
     if a is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No assessment yet.")
-    all_rows = (
+    stored_rows = (
         db.execute(select(CsfDimensionScore).where(CsfDimensionScore.assessment_id == a.id))
         .scalars()
         .all()
     )
+    # #852: the files list the catalog's rows and state the kept ones (S2).
+    all_rows = catalog_rows(stored_rows)
+    retired_note = _working_profile_note(db, a, stored_rows)
     if not all_rows:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -2487,6 +2532,7 @@ def export_playbook(
                 gap_actions=gap_actions,
                 approved=_approved,
                 ai_mode=_ai_mode,
+                retired_note=retired_note,
             ),
         ),
         (
@@ -2501,6 +2547,7 @@ def export_playbook(
                 generated_on=on,
                 approved=_approved,
                 ai_mode=_ai_mode,
+                retired_note=retired_note,
             ),
         ),
         (
@@ -2515,6 +2562,7 @@ def export_playbook(
                 generated_on=on,
                 approved=_approved,
                 ai_mode=_ai_mode,
+                retired_note=retired_note,
             ),
         ),
         (
@@ -2529,6 +2577,7 @@ def export_playbook(
                 generated_on=on,
                 approved=_approved,
                 ai_mode=_ai_mode,
+                retired_note=retired_note,
             ),
         ),
         (
@@ -2543,6 +2592,7 @@ def export_playbook(
                 generated_on=on,
                 approved=_approved,
                 ai_mode=_ai_mode,
+                retired_note=retired_note,
             ),
         ),
     ]

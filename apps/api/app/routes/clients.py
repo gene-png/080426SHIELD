@@ -50,6 +50,8 @@ from app.attack.rules import statuses_computed as attack_statuses_computed
 from app.csf.gap import MAX_TIER as CSF_MAX_TIER
 from app.csf.gap import analyze as csf_analyze_gaps
 from app.csf.gap import resolve_target_tier as csf_resolve_target_tier
+from app.csf.retired import answers_sentence as csf_retired_sentence
+from app.csf.retired import retired_answers as csf_retired_answers
 from app.csf.scoring import _label_from_average as csf_label_from_average
 from app.csf.scoring import compute as csf_compute
 from app.db.session import get_db
@@ -2182,6 +2184,11 @@ def csf_dashboard(
         largest_gap_function=largest_gap_function,
         largest_gap_pct=largest_gap_pct,
         functions=functions,
+        # #852: the engines above iterate the catalog, so an answer kept on
+        # ID.AM-09 is in no figure here; this is where the client is told. The
+        # same derivation and sentence as the released document.
+        retired_answers=len(csf_retired_answers(rows)),
+        retired_answers_note=csf_retired_sentence(rows),
         top_gaps=[
             CsfGapDashboard(
                 code=g.code,
