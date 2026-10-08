@@ -82,21 +82,23 @@ sizes marked coarse.
 
 Track work outside that list is paused.
 
-**2026-10-08: the Tech Debt prompt PR for #806 is built on
-`track3/806-tech-debt-prompt`; the draft PR is not open yet and nothing is
-merged.** The extraction prompt is Tech Debt v3.2 verbatim (#806 comment
+**2026-10-08: the Tech Debt v3.2 prompt for #806 lands with PR #955
+(`track3/806-tech-debt-prompt`).** The extraction prompt is Tech Debt v3.2 verbatim (#806 comment
 5983838515, sha256-pinned), `PROMPT_VERSION = "v3.2"`. What v3.2 closes and a
 model can still send is kept as sent and counted (C6): a missing name, a
 confidence off 100/90/60, a category off the closed list (read live from the
-AI's rows, so a correction clears it) and a source row that produced a
+AI's rows, so a correction clears it; a consultant's included row or bundle
+part is not counted) and a source row that produced a
 second item (recorded in `extraction_findings`, the run result and the audit). The
 list's `extraction_flags` is null ("not measured") for a list an earlier prompt
-drafted and for a list whose rows have lost their source-document link. E1
+drafted and for a list whose rows have lost their source-document link. No
+current writer produces that second state (no route deletes an Artifact); the
+guard is a ratchet that an artifact delete route would make reachable. E1
 states each non-zero count in the workspace. The offline fixture is re-authored
 from v3.2's text, and carries #845's lifecycle rule and e2e s47 (s46 in #869's
 branch; s46 is taken on main), moved here from #869. With v3.2 in the tree the
 not-in-use group fills from the AI, so #871's Q2 advisory ("The AI found") is
-resolved for new extractions; #871 is closed by hand after this PR merges.
+resolved for new extractions; #871 is closed by hand after PR #955 merges.
 Rulings: the plan, #806 comment 5984600764, approved on #736 5986057990 (item 4);
 E1 copy, the existing-test edit, the gating and the s4 comment on #736
 6068587667. Trips merge-rule conditions 5 and 6, so it comes back to Gene; no

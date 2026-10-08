@@ -13,7 +13,7 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
-**2026-10-08: the Tech Debt v3.2 prompt PR for #806 is built (not on `main`).**
+**2026-10-08: the Tech Debt v3.2 prompt for #806 lands with PR #955.**
 Branch `track3/806-tech-debt-prompt`: the prompt verbatim with
 `PROMPT_VERSION = "v3.2"`, the C6 counts as `extraction_flags` with E1 in the
 workspace, the fixture re-authored from v3.2 with #845's lifecycle rule and e2e

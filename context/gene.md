@@ -1,7 +1,8 @@
 # Gene — in-flight status
 
-_2026-10-08: the Tech Debt prompt PR for #806 is pushed on
-`track3/806-tech-debt-prompt`; the draft PR and its review are next._
+_2026-10-08: the Tech Debt prompt for #806 is draft PR #955 on
+`track3/806-tech-debt-prompt`; review findings F1, F4, F5 and F7 are built,
+and F2 and F3 wait on the advisor._
 
 **What it does.** The extraction runs Tech Debt v3.2 as you approved it.
 Whatever the model still sends against v3.2's rules is kept and counted, and
