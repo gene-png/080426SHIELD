@@ -667,11 +667,36 @@ def archive_service(
     admin: Annotated[User, _admin_required],
     db: Annotated[Session, Depends(get_db)],
 ) -> None:
-    """Soft-remove a service by archiving it. Data is retained per policy and
-    the workspace drops out of active lists."""
+    """Archive a service: set its status to ARCHIVED and write an audit row.
+
+    Nothing is deleted. The service's workspace, its assessments, its
+    deliverables and the client's home view keep working as before; the new
+    status is reported where a service's status is shown, but the only code
+    that FILTERS on it is the Risk Register's (`app/risk/inputs.py` and
+    `routes/risk.py`), which stops drawing on the service. The register's
+    duplicate banner does NOT call this route: it calls
+    `POST /risk/clients/{cid}/services/{sid}/archive`, which also re-checks
+    that the service is still one of a duplicate group (#896 review B2).
+    Archiving an already-archived service is refused (#906). There is no
+    unarchive route, so archiving cannot be undone.
+
+    (#896 corrected this docstring: it said the workspace "drops out of active
+    lists", which no list did.)"""
     svc = db.get(Service, service_id)
     if svc is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found.")
+    if svc.status == ServiceStatus.ARCHIVED:
+        # #906 (advisor, #736 6046491381): this answered 204 and wrote a second
+        # `service.archived` row, recording an action that did not happen. Now
+        # a typed refusal, and no audit row.
+        logger.info("admin.service_archive.already service_id=%s", service_id)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "service_already_archived",
+                "message": "This service is already archived. Nothing was changed.",
+            },
+        )
     svc.status = ServiceStatus.ARCHIVED
     audit(
         db,
@@ -682,6 +707,12 @@ def archive_service(
         details={"client_id": str(svc.client_id), "kind": svc.kind.value},
     )
     db.commit()
+    logger.info(
+        "admin.service_archived service_id=%s client_id=%s by=%s",
+        service_id,
+        svc.client_id,
+        admin.id,
+    )
 
 
 @router.post(

@@ -15,6 +15,25 @@ reviewer/release-flow supersession) and in code comments at the points they
 bind. If David supplies the original work-order document later, commit it
 here and update this note.
 
+## `cisa/`: CISA ZTMM 2.0, the source of record for the ZT catalog (#838)
+
+`cisa/zero_trust_maturity_model_v2_508.pdf` is CISA's *Zero Trust Maturity
+Model*, Version 2.0, April 2023, downloaded from cisa.gov on 2026-10-04
+(sha256 `4a95fdff55a64e2468b69af075b7f208176b88c751af92aefc3b7dacad26fdb4`).
+`cisa/cisa_ztmm_v2_rows.json` is its extraction (Tables 2-6: 37 rows, each
+pillar's Optimal text and definition) by `apps/api/scripts/extract_zt_sources.py`,
+which also re-derives it from the PDF for review. The catalog will be tested
+against this extraction (#838 PR 2), never against its own constants.
+
+## `dod/`: DoD's Zero Trust documents, the source for the DoD catalog (#839)
+
+The 2025 DoD CIO *Zero Trust Execution Roadmap (COAs 1-3)*, 25-T-1465, and the
+2022 *DoD ZT Capability Execution Roadmap*, with their hashes, dates and source
+URLs in `dod/README.md`. Pinning (#839 comment 5983310584): the catalog takes
+the 2025 edition's capabilities and activities, with each Advanced level
+cross-checked against the 2022 Roadmap. No extraction yet; that is the DoD
+catalog PR.
+
 ## Known spec discrepancies
 
 - **"108 subcategories" vs 106 implemented.** `SHIELDv2_Master_Spec.txt`

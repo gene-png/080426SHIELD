@@ -7,10 +7,11 @@ embed the framework prefix to keep them globally unique:
   CISA codes: "CISA.<PILLAR>.<NN>"   e.g. "CISA.ID.01"
   DoD codes:  "DOD.<PILLAR>.<NN>"    e.g. "DOD.USR.01"
 
-Counts (Phase 5 v1):
-  CISA ZTMM 2.0:  8 pillars / 37 capabilities (complete)
-  DoD ZTRA:       7 pillars / 50 capabilities (v1 baseline; full DoD
-                  catalog of 152 activities lands as a future patch)
+Counts:
+  CISA ZTMM 2.0:  5 pillars / 37 rows, verbatim from CISA's PDF (#838):
+                  each pillar's functions plus its own three cross-cutting rows
+  DoD ZTRA:       7 pillars / 50 capabilities (v1 baseline; corrected to the
+                  DoD Execution Roadmap's 45 + 152 activities by #839)
 """
 
 from __future__ import annotations
@@ -35,290 +36,301 @@ class Capability:
     code: str  # full code, e.g. "CISA.ID.01"
     name: str
     outcome: str
+    #: "function", or "cross_cutting" for a CISA pillar's Visibility and
+    #: Analytics, Automation and Orchestration and Governance rows (#838).
+    kind: str = "function"
 
 
 # ---------------------------------------------------------------------------
-# CISA ZTMM 2.0 pillars
+# CISA ZTMM 2.0 (#838): verbatim from CISA's own PDF, Version 2.0, April 2023
 # ---------------------------------------------------------------------------
+#
+# Five pillars (Section 5.1-5.5), each holding its functions and its own three
+# cross-cutting rows, as CISA's Tables 2-6 do: 37 rows. Names, pillar
+# definitions (`purpose`) and each row's Optimal stage text (`outcome`, labelled
+# "CISA Optimal:") are CISA's, verbatim, from the committed extraction
+# `reference-docs/cisa/cisa_ztmm_v2_rows.json`, which `test_zt_catalog_source.py`
+# holds this section to. Table 7 (the enterprise-level cross-cutting
+# capabilities) is out of scope (#838 decision 1). Codes are Kentro's:
+# functions `CISA.<P>.<NN>` in CISA's row order, cross-cutting rows
+# `CISA.<P>.VA` / `.AO` / `.GV` (never `.05`+, which would re-use codes that
+# meant something else before #838).
 
 CISA_PILLARS: tuple[Pillar, ...] = (
     Pillar(
         ZtFrameworkCode.CISA_ZTMM_2_0,
         "ID",
         "Identity",
-        "Verify users + non-person entities with phishing-resistant credentials and risk-adaptive access decisions.",
+        "An identity refers to an attribute or set of attributes that uniquely describes an agency user or entity, including non-person entities.",
     ),
     Pillar(
         ZtFrameworkCode.CISA_ZTMM_2_0,
         "DV",
         "Devices",
-        "Maintain comprehensive device inventory, enforce compliance posture, and use device signals in access decisions.",
+        "A device refers to any asset (including its hardware, software, firmware, etc.) that can connect to a network, including servers, desktop and laptop machines, printers, mobile phones, IoT devices, networking equipment, and more.",
     ),
     Pillar(
         ZtFrameworkCode.CISA_ZTMM_2_0,
         "NW",
         "Networks",
-        "Segment networks, encrypt traffic, and monitor for anomalous flows.",
+        "A network refers to an open communications medium including typical channels such as agency internal networks, wireless networks, and the Internet as well as other potential channels such as cellular and application-level channels used to transport messages.",
     ),
     Pillar(
         ZtFrameworkCode.CISA_ZTMM_2_0,
         "AW",
-        "Applications & Workloads",
-        "Secure applications by design; protect APIs and microservices throughout the lifecycle.",
+        "Applications and Workloads",
+        "Applications and workloads include agency systems, computer programs, and services that execute on-premises, on mobile devices, and in cloud environments.",
     ),
     Pillar(
         ZtFrameworkCode.CISA_ZTMM_2_0,
         "DT",
         "Data",
-        "Inventory, classify, encrypt, and govern data with rights-based access enforcement.",
-    ),
-    Pillar(
-        ZtFrameworkCode.CISA_ZTMM_2_0,
-        "VA",
-        "Visibility & Analytics",
-        "Collect telemetry across pillars and feed analytics into automated risk scoring.",
-    ),
-    Pillar(
-        ZtFrameworkCode.CISA_ZTMM_2_0,
-        "AO",
-        "Automation & Orchestration",
-        "Automate policy enforcement, incident response, and continuous compliance verification.",
-    ),
-    Pillar(
-        ZtFrameworkCode.CISA_ZTMM_2_0,
-        "GV",
-        "Governance",
-        "Govern ZT strategy, policies, and supply-chain risk; align with mission objectives.",
+        "Data includes all structured and unstructured files and fragments that reside or have resided in federal systems, devices, networks, applications, databases, infrastructure, and backups (including on-premises and virtual environments) as well as the associated metadata.",
     ),
 )
 
 
-def _cisa(pillar: str, num: int, name: str, outcome: str) -> Capability:
+def _cisa(pillar: str, row: int | str, name: str, optimal: str) -> Capability:
+    """A function row (`row` is its 1-based number) or one of the pillar's three
+    cross-cutting rows (`row` is "VA", "AO" or "GV")."""
+    cross_cutting = isinstance(row, str)
     return Capability(
         framework=ZtFrameworkCode.CISA_ZTMM_2_0,
         pillar_code=pillar,
-        code=f"CISA.{pillar}.{num:02d}",
+        code=f"CISA.{pillar}.{row}" if cross_cutting else f"CISA.{pillar}.{row:02d}",
         name=name,
-        outcome=outcome,
+        outcome=f"CISA Optimal: {optimal}",
+        kind="cross_cutting" if cross_cutting else "function",
     )
 
 
 CISA_CAPABILITIES: tuple[Capability, ...] = (
-    # Identity (5)
+    # Identity (7): pages 13-15
     _cisa(
         "ID",
         1,
         "Authentication",
-        "Authenticate users with phishing-resistant MFA across all access points.",
+        "Agency continuously validates identity with phishing-resistant MFA, not just when access is initially granted.",
     ),
     _cisa(
         "ID",
         2,
         "Identity Stores",
-        "Consolidate identity stores; federate non-person entity identities.",
+        "Agency securely integrates their identity stores across all partners and environments as appropriate.",
     ),
     _cisa(
         "ID",
         3,
         "Risk Assessments",
-        "Apply continuous, risk-based authentication decisions using behavioral signals.",
+        "Agency determines identity risk in real time based on continuous analysis and dynamic rules to deliver ongoing protection.",
     ),
     _cisa(
         "ID",
         4,
         "Access Management",
-        "Enforce just-in-time, just-enough access with continuous validation.",
+        "Agency uses automation to authorize just-in-time and just-enough access tailored to individual actions and individual resource needs.",
     ),
     _cisa(
         "ID",
-        5,
-        "Visibility for Identity",
-        "Stream identity signals (login, role change, anomaly) into the analytics pillar.",
+        "VA",
+        "Visibility and Analytics Capability",
+        "Agency maintains comprehensive visibility and situational awareness across enterprise by performing automated analysis over user activity log types, including behavior-based analytics.",
     ),
-    # Devices (5)
+    _cisa(
+        "ID",
+        "AO",
+        "Automation and Orchestration Capability",
+        "Agency automates orchestration of all identities with full integration across all environments based on behaviors, enrollments, and deployment needs.",
+    ),
+    _cisa(
+        "ID",
+        "GV",
+        "Governance Capability",
+        "Agency implements and fully automates enterprise-wide identity policies for all users and entities across all systems with continuous enforcement and dynamic updates.",
+    ),
+    # Devices (7): pages 17-19
     _cisa(
         "DV",
         1,
-        "Policy Enforcement & Compliance",
-        "Devices enforce compliance baselines (patch level, EDR, FDE) before access.",
+        "Policy Enforcement & Compliance Monitoring",
+        "Agency continuously verifies insights and enforces compliance throughout the lifetime of devices and virtual assets. Agency integrates device, software, configuration, and vulnerability management across all agency environments, including for virtual assets.",
     ),
     _cisa(
         "DV",
         2,
-        "Asset & Supply Chain Risk",
-        "Inventory hardware + firmware provenance and surface supply-chain risk.",
+        "Asset & Supply Chain Risk Management",
+        "Agency has a comprehensive, at- or near-real-time view of all assets across vendors and service providers, automates its supply chain risk management as applicable, builds operations that tolerate supply chain failures, and incorporates best practices.",
     ),
     _cisa(
         "DV",
         3,
         "Resource Access",
-        "Device posture is evaluated for every resource request, not just at login.",
+        "Agency’s resource access considers real-time risk analytics within devices and virtual assets.",
     ),
     _cisa(
         "DV",
         4,
         "Device Threat Protection",
-        "Endpoint detection + response with automated containment of compromised devices.",
+        "Agency has a centralized threat protection security solution(s) deployed with advanced capabilities for all devices and virtual assets and a unified approach for device threat protection, policy enforcement, and compliance monitoring.",
     ),
     _cisa(
-        "DV", 5, "Visibility for Devices", "Continuous device telemetry feeds the analytics pillar."
+        "DV",
+        "VA",
+        "Visibility and Analytics Capability",
+        "Agency automates status collection of all network-connected devices and virtual assets while correlating with identities, conducting endpoint monitoring, and performing anomaly detection to inform resource access. Agency tracks patterns of provisioning and/or de-provisioning of virtual assets for anomalies.",
     ),
-    # Networks (4)
+    _cisa(
+        "DV",
+        "AO",
+        "Automation and Orchestration Capability",
+        "Agency has fully automated processes for provisioning, registering, monitoring, isolating, remediating, and deprovisioning devices and virtual assets.",
+    ),
+    _cisa(
+        "DV",
+        "GV",
+        "Governance Capability",
+        "Agency automates policies for the lifecycle of all network-connected devices and virtual assets across the enterprise.",
+    ),
+    # Networks (7): pages 20-22
     _cisa(
         "NW",
         1,
         "Network Segmentation",
-        "Implement microsegmentation; deny-by-default east-west traffic between workloads.",
+        "Agency network architecture consists of fully distributed ingress/egress micro-perimeters and extensive micro-segmentation based around application profiles with dynamic just-in-time and just-enough connectivity for service-specific interconnections.",
     ),
     _cisa(
         "NW",
         2,
         "Network Traffic Management",
-        "Encrypt all traffic; inspect with privacy-respecting controls.",
+        "Agency implements dynamic network rules and configurations that continuously evolve to meet application profile needs and reprioritize applications based on mission criticality, risk, etc.",
     ),
     _cisa(
         "NW",
         3,
         "Traffic Encryption",
-        "Enforce TLS 1.3+ and post-quantum-ready algorithms across internal links.",
+        "Agency continues to encrypt traffic as appropriate, enforces least privilege principles for secure key management enterprise-wide, and incorporates best practices for cryptographic agility as widely as possible.",
     ),
     _cisa(
         "NW",
         4,
         "Network Resilience",
-        "Resilient network architectures with automated traffic steering during incidents.",
+        "Agency integrates holistic delivery and awareness in adapting to changes in availability demands for all workloads and provides proportionate resilience.",
     ),
-    # Applications & Workloads (5)
+    _cisa(
+        "NW",
+        "VA",
+        "Visibility and Analytics Capability",
+        "Agency maintains visibility into communication across all agency networks and environments while enabling enterprise-wide situational awareness and advanced monitoring capabilities that automate telemetry correlation across all detection sources.",
+    ),
+    _cisa(
+        "NW",
+        "AO",
+        "Automation and Orchestration Capability",
+        "Agency networks and environments are defined using infrastructure-as-code managed by automated change management methods, including automated initiation and expiration to align with changing needs.",
+    ),
+    _cisa(
+        "NW",
+        "GV",
+        "Governance Capability",
+        "Agency implements enterprise-wide network policies that enable tailored, local controls; dynamic updates; and secure external connections based on application and user workflows.",
+    ),
+    # Applications and Workloads (8): pages 23-25
     _cisa(
         "AW",
         1,
         "Application Access",
-        "Brokered, identity-aware access to applications regardless of network.",
+        "Agency continuously authorizes application access, incorporating real-time risk analytics and factors such as behavior or usage patterns.",
     ),
     _cisa(
         "AW",
         2,
         "Application Threat Protections",
-        "Runtime application protection; secrets isolated from code.",
+        "Agency integrates advanced threat protections into all application workflows, offering real-time visibility and content-aware protections against sophisticated attacks tailored to applications.",
     ),
     _cisa(
         "AW",
         3,
         "Accessible Applications",
-        "Public-facing applications use ZT-aligned brokers; internal apps require no VPN.",
+        "Agency makes all applicable applications available over open public networks to authorized users and devices, where appropriate, as needed.",
     ),
     _cisa(
         "AW",
         4,
-        "Secure Application Development & Deployment Workflow",
-        "Secure-by-default CI/CD pipelines with SBOM, signed artifacts, and policy gates.",
+        "Secure Application Development and Deployment Workflow",
+        "Agency leverages immutable workloads where feasible, only allowing changes to take effect through redeployment, and removes administrator access to deployment environments in favor of automated processes for code deployment.",
     ),
     _cisa(
         "AW",
         5,
         "Application Security Testing",
-        "Continuous SAST/DAST/IaC scanning integrated into the change pipeline.",
+        "Agency integrates application security testing throughout the software development lifecycle across the enterprise with routine automated testing of deployed applications.",
     ),
-    # Data (5)
+    _cisa(
+        "AW",
+        "VA",
+        "Visibility and Analytics Capability",
+        "Agency performs continuous and dynamic monitoring across all applications to maintain enterprise-wide comprehensive visibility.",
+    ),
+    _cisa(
+        "AW",
+        "AO",
+        "Automation and Orchestration Capability",
+        "Agency automates application configurations to continuously optimize for security and performance.",
+    ),
+    _cisa(
+        "AW",
+        "GV",
+        "Governance Capability",
+        "Agency fully automates policies governing applications development and deployment, including incorporating dynamic updates for applications through the CI/CD pipeline.",
+    ),
+    # Data (8): pages 26-28
     _cisa(
         "DT",
         1,
         "Data Inventory Management",
-        "Maintain dynamic inventory of data assets with sensitivity classification.",
+        "Agency continuously inventories all applicable agency data and employs robust data loss prevention strategies that dynamically block suspected data exfiltration.",
     ),
     _cisa(
         "DT",
         2,
         "Data Categorization",
-        "Automated, ML-assisted data classification driving rights enforcement.",
+        "Agency automates data categorization and labeling enterprise-wide with robust techniques; granular, structured formats; and mechanisms to address all data types.",
     ),
     _cisa(
         "DT",
         3,
         "Data Availability",
-        "Data availability + integrity guarantees enforced by replication and immutable backups.",
+        "Agency uses dynamic methods to optimize data availability, including historical data, according to user and entity need.",
     ),
     _cisa(
         "DT",
         4,
         "Data Access",
-        "Data access decisions consider user, device, location, and request context.",
+        "Agency automates dynamic just-in-time and just-enough data access controls enterprise-wide with continuous review of permissions.",
     ),
     _cisa(
         "DT",
         5,
         "Data Encryption",
-        "Data encrypted at rest, in transit, and in use; key custody separated from data plane.",
+        "Agency encrypts data in use where appropriate, enforces least privilege principles for secure key management enterprise-wide, and applies encryption using up-to-date standards and cryptographic agility to the extent possible.",
     ),
-    # Visibility & Analytics (4)
     _cisa(
+        "DT",
         "VA",
-        1,
-        "Log Storage",
-        "Centralized, immutable log storage with retention aligned to mission needs.",
+        "Visibility and Analytics Capability",
+        "Agency has visibility across the full data lifecycle with robust analytics, including predictive analytics, that support comprehensive views of agency data and continuous security posture assessment.",
     ),
     _cisa(
-        "VA",
-        2,
-        "Security Information & Event Management",
-        "Cross-pillar SIEM correlation with risk scoring.",
-    ),
-    _cisa(
-        "VA",
-        3,
-        "Threat Detection",
-        "Behavior-based detections; threat hunting integrated into operations.",
-    ),
-    _cisa(
-        "VA",
-        4,
-        "Common Security & Risk Analytics",
-        "Unified risk model fusing identity, device, data, and workload signals.",
-    ),
-    # Automation & Orchestration (4)
-    _cisa(
+        "DT",
         "AO",
-        1,
-        "Policy Decision Point & Policy Orchestration",
-        "Centralized PDP; policies expressed as code and enforced consistently.",
+        "Automation and Orchestration Capability",
+        "Agency automates, to the maximum extent possible, data lifecycles and security policies for all agency data across the enterprise.",
     ),
     _cisa(
-        "AO",
-        2,
-        "Critical Process Automation",
-        "Automated incident triage, containment, and remediation for known patterns.",
-    ),
-    _cisa("AO", 3, "Machine Learning", "ML-driven anomaly detection and adaptive policy tuning."),
-    _cisa(
-        "AO",
-        4,
-        "Artificial Intelligence",
-        "AI-assisted decision support with human-in-the-loop for high-risk actions.",
-    ),
-    # Governance (5)
-    _cisa(
-        "GV", 1, "Policy", "Documented ZT policy with measurable outcomes; updated on a cadence."
-    ),
-    _cisa(
+        "DT",
         "GV",
-        2,
-        "Compliance",
-        "Continuous compliance monitoring against regulatory + agency requirements.",
-    ),
-    _cisa(
-        "GV",
-        3,
-        "Supply Chain Risk Management",
-        "Third-party + supply-chain risk integrated into ZT decisioning.",
-    ),
-    _cisa(
-        "GV", 4, "Workforce", "ZT-aware workforce: training, role-based curricula, and exercises."
-    ),
-    _cisa(
-        "GV",
-        5,
-        "Strategic Planning",
-        "ZT roadmap aligned to mission objectives with measurable milestones.",
+        "Governance Capability",
+        "Agency data lifecycle policies are unified to the maximum extent possible and dynamically enforced across the enterprise.",
     ),
 )
 

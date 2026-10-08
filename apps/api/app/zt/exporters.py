@@ -25,6 +25,7 @@ from app.mode_stamp import (
 from app.models.zt_assessment import ZtAnswer, ZtAssessment
 from app.zt.catalog import capabilities, pillars
 from app.zt.maturity import ZtFrameworkCode, stage_label
+from app.zt.retired import retired_answer_count, retired_sentence
 from app.zt.scoring import GapAnalysis, ScoreResult
 
 if TYPE_CHECKING:
@@ -203,6 +204,13 @@ def _framework_label(framework: ZtFrameworkCode) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _retired_note(ctx: ZtDeliverableContext) -> str | None:
+    """#838: answers kept on rows the catalog no longer has are not scored, and
+    the document says how many. The one derivation is `zt/retired.py`, which
+    the workspace calls too, so the screen and the document cannot disagree."""
+    return retired_sentence(ctx.framework, retired_answer_count(ctx.framework, ctx.answers))
+
+
 def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
@@ -226,7 +234,10 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
     ws.append(["Overall stage", ctx.score.overall_stage_label])
     ws.append(["Average stage", _fmt(ctx.score.average_stage)])
     ws.append(["Coverage", f"{ctx.score.answered_capabilities}/{ctx.score.total_capabilities}"])
-    for row in ws.iter_rows(min_row=1, max_row=7, min_col=1, max_col=1):
+    retired = _retired_note(ctx)
+    if retired:
+        ws.append(["Not scored", retired])  # #838: rows the catalog no longer has
+    for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=1):
         for cell in row:
             cell.font = bold
     ws.append([])
@@ -356,6 +367,9 @@ def render_docx(ctx: ZtDeliverableContext) -> bytes:
         f"{ctx.client_legal_name} · {_framework_label(ctx.framework)}",
     )
     add_docx_paragraph(doc, ctx.ai_mode)  # #646, under the title
+    retired = _retired_note(ctx)
+    if retired:
+        add_paragraphs(doc, [retired])  # #838, beside the mode stamp
 
     add_heading(doc, "Maturity summary")
     add_paragraphs(
@@ -441,6 +455,9 @@ def render_pdf(ctx: ZtDeliverableContext) -> bytes:
     story.append(Paragraph(ctx.service_title, h1))
     story.append(Paragraph(f"{ctx.client_legal_name} · {_framework_label(ctx.framework)}", body))
     story.append(pdf_paragraph(ctx.ai_mode, body))  # #646, under the title
+    retired = _retired_note(ctx)
+    if retired:
+        story.append(Paragraph(retired, body))  # #838, beside the mode stamp
     story.append(Spacer(1, 0.2 * inch))
 
     story.append(Paragraph("Maturity summary", h2))

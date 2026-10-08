@@ -115,7 +115,7 @@ def test_catalog_returns_cisa_by_default(app_client) -> None:
     body = r.json()
     assert body["framework"] == "cisa_ztmm_2_0"
     assert body["total_capabilities"] == 37
-    assert len(body["pillars"]) == 8
+    assert len(body["pillars"]) == 5
 
 
 @pytest.mark.unit
@@ -363,7 +363,7 @@ def test_score_endpoint_rolls_up_cisa(app_client) -> None:
     assert body["average_stage"] == 3.0
     # CISA labels.
     assert body["overall_stage_label"] == "Advanced"
-    assert len(body["by_pillar"]) == 8
+    assert len(body["by_pillar"]) == 5
 
 
 @pytest.mark.unit

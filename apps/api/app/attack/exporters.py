@@ -58,6 +58,7 @@ from app.attack.retirement import (
     summary_sentences,
 )
 from app.attack.rules import parents_computed, statuses_computed
+from app.attack.subset_drift import NOT_CHECKED_SENTENCE
 from app.client_naming import org_display_name
 from app.mode_stamp import (
     UNKNOWN_AI_MODE,
@@ -105,6 +106,11 @@ class AttackDeliverableContext:
     #: context (finalize freezes it into the bytes); None where there is nothing
     #: to recount (`attack/after.py`). Derived in `build_context`.
     after: AfterPlannedChanges | None = None
+    #: #851: whether the cited tools were checked against a security tool
+    #: list, read at finalize. False: the client has none, and every format
+    #: says so (`subset_sentences`). None: nobody asked (the client dashboard,
+    #: #889), and nothing is said either way.
+    subset_checked: bool | None = None
 
 
 def build_context(
@@ -116,6 +122,7 @@ def build_context(
     rollup: CoverageRollup,
     retirement: RetirementIndex = NO_PLAN,
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
+    subset_checked: bool | None = None,
 ) -> AttackDeliverableContext:
     rows = list(coverage)
     rule = parents_computed(assessment)
@@ -143,7 +150,14 @@ def build_context(
         ai_mode=ai_mode,
         statuses_computed=computed,
         after=after_planned_changes(assessment, rows, retirement),
+        subset_checked=subset_checked,
     )
+
+
+def subset_sentences(ctx: AttackDeliverableContext) -> list[str]:
+    """#851: the "not checked" sentence, only when the client has no security
+    tool list to check against; [] otherwise (and when nobody asked)."""
+    return [NOT_CHECKED_SENTENCE] if ctx.subset_checked is False else []
 
 
 def _computed_leaf(cov: object) -> bool:
@@ -618,6 +632,9 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
                 "for retirement is not known.",
             ]
         )
+    # #851: the third state, only when nothing could be checked.
+    for sentence in subset_sentences(ctx):
+        ws.append([sentence])
     for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=1):
         for cell in row:
             cell.font = bold
@@ -837,6 +854,8 @@ def render_docx(ctx: AttackDeliverableContext) -> bytes:
             + (", " + outside_assessed_text(ctx.rollup) if outside else ""),
             # #686: only when non-zero, so nothing changes without a plan.
             *retirement_sentences(ctx),
+            # #851: the third state, only when nothing could be checked.
+            *subset_sentences(ctx),
             # #554 R3 (Q4): only when something awaits review.
             *([awaiting] if (awaiting := awaiting_review_text(ctx)) is not None else []),
         ],
@@ -1026,6 +1045,9 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
     story.append(Paragraph(_definition(ctx), body))
     # #686: only when non-zero, so nothing changes without a plan.
     for sentence in retirement_sentences(ctx):
+        story.append(Paragraph(html_escape(sentence, quote=False), body))
+    # #851: the third state, only when nothing could be checked.
+    for sentence in subset_sentences(ctx):
         story.append(Paragraph(html_escape(sentence, quote=False), body))
     # #554 R3 (Q4): only when something awaits review.
     if (awaiting := awaiting_review_text(ctx)) is not None:

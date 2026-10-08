@@ -12,6 +12,7 @@ import {
 import type {
   AttackCoverageRow,
   AttackCoveragePatch,
+  AttackToolField,
   CatalogCoverageDefinition,
   CatalogReasonCode,
   CatalogTechnique,
@@ -41,9 +42,12 @@ function ToolRow({
   label,
   tools,
   marks,
+  onRemove,
 }: {
   label: string;
   tools: string[] | null | undefined;
+  /** #851 (D2): removes one tool and confirms nothing else. Absent: read only. */
+  onRemove?: (tool: string) => void;
   /** #686: the plan's retirement state per tool; absent marks nothing. */
   marks?: ToolRetirement;
 }): JSX.Element {
@@ -60,6 +64,16 @@ function ToolRow({
               className="rounded-full bg-surface-sunken px-2 py-0.5 text-xs text-ink-secondary"
             >
               {withRetirementMark(t, marks)}
+              {onRemove ? (
+                <button
+                  type="button"
+                  aria-label={`Remove ${t} from ${label}`}
+                  onClick={() => onRemove(t)}
+                  className="ml-1 text-xs font-semibold text-ink-secondary underline"
+                >
+                  Remove
+                </button>
+              ) : null}
             </span>
           ))}
         </div>
@@ -256,6 +270,12 @@ export function AttackTechniquePanel({
   // Cleared entries are rendered too, not just outstanding ones: "a human
   // accepted this" and "nobody ever cited it" are different answers to why this
   // technique counts, and this panel is where that question gets asked.
+  // #851 (D2): the Remove control, only where the row can be edited. It sends
+  // the narrow `remove_tool`, which confirms none of the row's other tools.
+  const removeFrom = (field: AttackToolField) =>
+    readOnly || !coverage
+      ? undefined
+      : (tool: string) => void onPatch({ remove_tool: { field, name: tool } });
   const citations = coverage?.unconfirmed_citations ?? [];
   const outstanding = citations.filter(
     (c) => (c.cleared_at ?? null) === null,
@@ -395,16 +415,19 @@ export function AttackTechniquePanel({
               label="Detection"
               tools={coverage?.detection_tools}
               marks={toolRetirement}
+              onRemove={removeFrom("detection_tools")}
             />
             <ToolRow
               label="Prevention"
               tools={coverage?.prevention_tools}
               marks={toolRetirement}
+              onRemove={removeFrom("prevention_tools")}
             />
             <ToolRow
               label="Response"
               tools={coverage?.response_tools}
               marks={toolRetirement}
+              onRemove={removeFrom("response_tools")}
             />
             {anyRetirementMark(toolRetirement) ? (
               <p className="text-xs text-ink-tertiary sm:col-span-3">

@@ -1821,7 +1821,7 @@ def risk_dashboard(
     db: Annotated[Session, Depends(get_db)],
 ) -> RiskDashboardResponse:
     """The synthesized 5x5 Risk Register for the client. Client-level (not
-    per-service); gated on the register being FINALIZED (exported), tenant-scoped.
+    per-service); gated on the register being FINALIZED (published), tenant-scoped.
     """
     if client_id != client.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
@@ -1829,13 +1829,14 @@ def risk_dashboard(
     # The latest FINALIZED register, not the latest register (#123).
     #
     # This took the highest version and then 404'd if that one was unfinalized.
-    # `generate` always mints the next version and only `export` sets
-    # `finalized_at` -- so the moment a consultant clicked Generate to refresh
-    # a delivered register, the client's dashboard 404'd with "No finalized
-    # Risk Register for your organization yet". One existed, and they had been
-    # reading it a minute earlier. It also removed the Risk link from Results,
-    # which probes this endpoint to decide whether to show it, and it stayed
-    # gone for however long the review took, with nothing telling anyone.
+    # `generate` always mints the next version and only `publish` sets
+    # `finalized_at` (`export` did until #737) -- so the moment a consultant
+    # clicked Generate to refresh a delivered register, the client's dashboard
+    # 404'd with "No finalized Risk Register for your organization yet". One
+    # existed, and they had been reading it a minute earlier. It also removed
+    # the Risk link from Results, which probes this endpoint to decide whether
+    # to show it, and it stayed gone for however long the review took, with
+    # nothing telling anyone.
     #
     # Same root cause as #114: resolve the record being LABELLED, never
     # whatever row happens to be newest. Filtering in the QUERY rather than

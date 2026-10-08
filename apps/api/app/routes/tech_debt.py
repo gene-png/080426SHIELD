@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import functools
 import uuid
+from collections import Counter
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -62,6 +63,7 @@ from app.logging import get_logger
 from app.mode_stamp import ai_mode_for
 from app.models._common import utcnow
 from app.models.artifact import Artifact, ArtifactOrigin
+from app.models.audit_entry import AuditEntry
 from app.models.capability import (
     CapabilityDisposition,
     CapabilityItem,
@@ -95,6 +97,7 @@ from app.schemas.tech_debt import (
 )
 from app.security.rate_limit import enforce_ai_rate_limit
 from app.storage import StorageBackend
+from app.tech_debt.bounds import NOT_WHOLE_CENTS, cost_problem, license_problem
 from app.tech_debt.exporters import (
     build_context,
     cost_label,
@@ -114,9 +117,14 @@ from app.tech_debt.filename import (
 )
 from app.tech_debt.overlap import analyze_overlap
 from app.tech_debt.parsers import SUPPORTED_MIME, UnsupportedInventoryFormat
-from app.tech_debt.reconcile import exclusion_count_state
+from app.tech_debt.reconcile import exclusion_count_state, unconfirmed_exclusions
 from app.tech_debt.savings import estimated_savings
-from app.tech_debt.security_scope import security_scope_filter
+from app.tech_debt.security_scope import (
+    PROMPT_VERSIONS_WITH_PREFIX,
+    not_in_use_contradiction,
+    not_in_use_security_tool,
+    security_scope_filter,
+)
 from app.tenant import (
     require_artifact_in_tenant,
     require_deliverable_in_tenant,
@@ -327,6 +335,63 @@ def approved_membership_stale(db: Session, cap_list: CapabilityList) -> bool:
     return approved != current
 
 
+def _not_in_use_contradictions(db: Session, items: list[CapabilityItem]) -> int:
+    """#845: rows the model marked "Security tool not in use:" while also giving
+    them security functions -- kept in ATT&CK scope by the parser, and counted.
+
+    A consultant's override of a not-in-use row stores the same shape (security
+    related, the note unchanged), and it is their ruling rather than the model
+    contradicting itself, so a row with an override on record is not counted.
+    """
+    candidates = [i.id for i in items if not_in_use_contradiction(i)]
+    if not candidates:
+        return 0
+    overridden = set(
+        db.execute(
+            select(AuditEntry.target_id).where(
+                AuditEntry.action == SECURITY_CLASSIFICATION_OVERRIDDEN,
+                AuditEntry.target_id.in_(candidates),
+            )
+        ).scalars()
+    )
+    return sum(1 for c in candidates if c not in overridden)
+
+
+def _refuse_unstorable_values(cost: float | None, licenses: int | None) -> None:
+    """#879: a consultant's cost and licence count, bounded as the extraction
+    bounds the model's (`tech_debt/bounds.py`), refused typed BEFORE anything is
+    written. Without it a value the column cannot hold was an untyped 500 on
+    Postgres, and a negative was stored. Copy V1-V3 (#850/#879 plan).
+    """
+    if cost is not None:
+        problem = cost_problem(cost)
+        if problem is not None:
+            _log.info("tech_debt.capability_value_refused", field="annual_cost_usd", reason=problem)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    {
+                        "reason": "capability_cost_not_whole_cents",
+                        "message": "Annual cost can have at most two decimal places.",
+                    }
+                    if problem == NOT_WHOLE_CENTS
+                    else {
+                        "reason": "capability_cost_out_of_range",
+                        "message": "Annual cost must be between $0 and $999,999,999,999.99.",
+                    }
+                ),
+            )
+    if licenses is not None and license_problem(licenses) is not None:
+        _log.info("tech_debt.capability_value_refused", field="license_count")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "capability_license_count_out_of_range",
+                "message": "License count must be a whole number between 0 and 2,147,483,647.",
+            },
+        )
+
+
 def _serialize_list_with_items(db: Session, cap_list: CapabilityList) -> CapabilityListResponse:
     items = (
         db.execute(select(CapabilityItem).where(CapabilityItem.capability_list_id == cap_list.id))
@@ -343,6 +408,7 @@ def _serialize_list_with_items(db: Session, cap_list: CapabilityList) -> Capabil
     resp.approved_membership_stale = approved_membership_stale(db, cap_list)
     # #177/#193: the one reader, as the deliverable and the dashboard call it.
     resp.exclusion_count_state = exclusion_count_state(cap_list)
+    resp.not_in_use_contradictions = _not_in_use_contradictions(db, items)
     # #646: the ONE derivation every surface calls.
     resp.ai_source = AiSource.model_validate(
         ai_mode_for(db, db.get(Service, cap_list.service_id), cap_list).as_api()
@@ -561,6 +627,8 @@ def _extract_run_work(
         # #177: persisted, so an empty `excluded_rows` can say which of its two
         # meanings it carries -- nothing excluded, or attribution failed.
         attribution_complete=result.reconciliation.attribution_complete,
+        # #833 / #834: [] when checked and nothing to record, never NULL here.
+        extraction_findings=list(result.findings),
     )
     db.add(cap_list)
     db.flush()
@@ -596,6 +664,17 @@ def _extract_run_work(
             "version": next_version,
             "artifact_id": str(artifact_id),
             "item_count": len(result.items),
+            # #845: at extraction, before any consultant could override one --
+            # and only from a prompt that asks for the prefix. Under an earlier
+            # prompt the count is structurally 0, so it is recorded as None
+            # ("not measured"), never as a measured 0.
+            "not_in_use_contradictions": (
+                sum(1 for i in result.items if not_in_use_contradiction(i))
+                if result.llm_call.prompt_version in PROMPT_VERSIONS_WITH_PREFIX
+                else None
+            ),
+            # #833 / #834: counts only; the entries are on the list.
+            "findings_by_reason": dict(Counter(f["reason"] for f in result.findings)),
             "llm_call_id": str(result.llm_call.id),
             "run_id": str(ctx.run_id),
         },
@@ -744,6 +823,7 @@ def include_excluded_row(
         # `confirm_excluded_row` needs nothing: it never removes an entry.
         cap_list.attribution_complete = True
 
+    _refuse_unstorable_values(body.annual_cost_usd, body.license_count)
     item = CapabilityItem(
         capability_list_id=cap_list.id,
         name=body.name,
@@ -932,13 +1012,20 @@ def confirm_security_classification(
 
     item.security_class_confirmed = True
     _record_edit(db, item.capability_list_id)
+    # #845: a security tool the extraction marked not in use is taken out of
+    # ATT&CK scope, not judged "not security-related", and the record says so.
+    removed = not_in_use_security_tool(item)
     audit(
         db,
-        action="capability_item.security_classification_confirmed",
+        action=(
+            REMOVED_FROM_ATTACK_SCOPE
+            if removed
+            else "capability_item.security_classification_confirmed"
+        ),
         target_type="capability_item",
         target_id=item.id,
         actor_user_id=user.id,
-        details={"name": item.name},
+        details={"name": item.name, "notes": item.notes} if removed else {"name": item.name},
     )
     db.commit()
     db.refresh(cap_list)
@@ -949,6 +1036,8 @@ def confirm_security_classification(
 #: ATT&CK what-if counts a row overridden after its base as brought into scope
 #: (`routes/attack_scenarios.py`, #802 (ii)).
 SECURITY_CLASSIFICATION_OVERRIDDEN = "capability_item.security_classification_overridden"
+#: #845: what confirming a not-in-use security tool writes (approved name).
+REMOVED_FROM_ATTACK_SCOPE = "capability_item.removed_from_attack_scope"
 
 
 @router.post(
@@ -1184,6 +1273,7 @@ def patch_capability_item(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Patch body is empty.",
         )
+    _refuse_unstorable_values(data.get("annual_cost_usd"), data.get("license_count"))
     if data.get("consolidation_target_id") is not None:
         _check_consolidation_target(db, item, data["consolidation_target_id"])
     # Lock/unlock is a meta-action handled separately so a NULL never reaches
@@ -1377,6 +1467,37 @@ def _refuse_undecided(count: int, *, then: str = "approve again") -> HTTPExcepti
     )
 
 
+def _refuse_unconfirmed_exclusions(cap_list: CapabilityList, *, then: str) -> HTTPException:
+    """#850: rows the AI excluded that nobody has confirmed. Typed, like #639's
+    undecided rows, at the same three gates. Copy X1, approved (736/5986057990,
+    item 3), quoting the step-2 control as it renders: its count is ALL the
+    excluded rows (`TechDebtWorkspace.tsx`), not only the unconfirmed ones."""
+    unconfirmed = len(unconfirmed_exclusions(cap_list))
+    total = len(cap_list.excluded_rows or [])
+    control = f"Show the {total} excluded row{'' if total == 1 else 's'}"
+    if unconfirmed == 1:
+        head, each = "1 row the AI excluded is not confirmed yet.", "for it"
+    else:
+        head, each = f"{unconfirmed} rows the AI excluded are not confirmed yet.", "for each"
+    _log.info(
+        "tech_debt.refused_unconfirmed_exclusions",
+        capability_list_id=str(cap_list.id),
+        unconfirmed=unconfirmed,
+        then=then,
+    )
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "reason": "capability_list_unconfirmed_exclusions",
+            "message": (
+                f"{head} In step 2, Review and correct the extracted list, open "
+                f'"{control}" and choose "Include…" or "Correctly excluded" {each}, '
+                f"then {then}."
+            ),
+        },
+    )
+
+
 def _refuse_edited_since_approval(*, then: str) -> HTTPException:
     """#640: the list was edited after step 3 approved it. Typed (D-016), naming
     step 3 by the title the workspace shows, whose Approve button is enabled
@@ -1536,6 +1657,11 @@ def approve_capability_list(
     undecided = undecided_row_count(db, cap_list.id)
     if undecided:
         raise _refuse_undecided(undecided)
+    # #850: no unconfirmed AI exclusion. Not in the UPDATE's WHERE: confirming or
+    # including a row is the only way one changes, it only ever REDUCES the set,
+    # and it bumps `revision`, which the WHERE below already requires unchanged.
+    if unconfirmed_exclusions(cap_list):
+        raise _refuse_unconfirmed_exclusions(cap_list, then="approve again")
     # #640: the revision this approval covers, read BEFORE the membership is
     # built from the rows. The UPDATE below matches only while the list is
     # still at it, so an edit landing between the read and the write refuses
@@ -1575,6 +1701,8 @@ def approve_capability_list(
             undecided = undecided_row_count(db, cap_list.id)
             if undecided:
                 raise _refuse_undecided(undecided)
+            if unconfirmed_exclusions(cap_list):
+                raise _refuse_unconfirmed_exclusions(cap_list, then="approve again")
             raise _refuse_changed_during_approval()
         raise _refuse_approval(cap_list.status)
     db.refresh(cap_list)
@@ -2065,6 +2193,9 @@ def finalize_deliverable(
         undecided = sum(1 for it in items if it.disposition is None)
         if undecided:
             raise _refuse_undecided(undecided, then="generate the deliverable again")
+        # #850: a list approved before the exclusion gate can hold one.
+        if unconfirmed_exclusions(cap_list):
+            raise _refuse_unconfirmed_exclusions(cap_list, then="generate the deliverable again")
         # #640: step 3 must run again after any edit. Judged on a revision read
         # AFTER `items` was loaded: if the list is still at its approved revision
         # now, no edit had committed before the rows were read, so the render
@@ -2239,6 +2370,7 @@ def release_tech_debt_deliverable(
 ) -> DeliverableResponse:
     guard = _release_guard_for(require_deliverable_in_tenant(db, deliverable_id, client.id))
     _refuse_a_deliverable_the_flip_guard_cannot_reach(db, deliverable_id, client.id)
+    _refuse_release_over_unconfirmed_exclusions(db, deliverable_id, client.id)
     deliv = release_deliverable(
         db,
         deliverable_id=deliverable_id,
@@ -2249,6 +2381,37 @@ def release_tech_debt_deliverable(
         parent_guard=guard,
     )
     return _serialize_deliverable(db, deliv)
+
+
+def _refuse_release_over_unconfirmed_exclusions(
+    db: Session, deliverable_id: uuid.UUID, client_id: uuid.UUID
+) -> None:
+    """#850: release freezes the list, so it must not freeze one holding an
+    exclusion nobody confirmed. Checked before the flip rather than in its WHERE:
+    the set only shrinks, and every change to it bumps `revision`, which the
+    flip already requires equal to `approved_revision` -- so a confirm landing
+    between this read and the flip makes the flip miss, not pass wrongly.
+    APPROVED lists only: a RELEASED list refuses the remedy (#639's carve-out).
+    """
+    deliv = require_deliverable_in_tenant(db, deliverable_id, client_id)
+    if deliv.parent_version is None:
+        return
+    cap_list = (
+        db.execute(
+            select(CapabilityList).where(
+                CapabilityList.service_id == deliv.service_id,
+                CapabilityList.version == deliv.parent_version,
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if cap_list is None or cap_list.status != CapabilityListStatus.APPROVED:
+        return
+    if unconfirmed_exclusions(cap_list):
+        raise _refuse_unconfirmed_exclusions(
+            cap_list, then="generate the deliverable again before releasing"
+        )
 
 
 def _release_guard_for(deliv: Deliverable) -> ParentGuard:

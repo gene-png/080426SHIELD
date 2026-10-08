@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
+import { acknowledgeOfflineAi } from "../helpers/ai";
 import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
 
 /**
@@ -9,14 +10,19 @@ import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
  * capabilities in place, approved -- rather than relying on seeded data,
  * whose state other specs change.
  *
- * Until #806 releases the prompt text the analysis cannot run, so the journey
- * ends where the product does: the change list, the affected count, the
- * "not available yet" sentence in place of the run control, and a discard.
+ * The prompt ships (#802), so the journey runs the analysis: the change list,
+ * the affected count, the run control, a run to completion on the fixture-mode
+ * answer (`attack_scenario_delta` in `app/ai/fixtures.py`), and a discard.
  */
 
-const DETECT = "E2E What-if Detect Tool";
-const PREVENT = "E2E What-if Prevent Tool";
-const RESPOND = "E2E What-if Respond Tool";
+// #851: approve refuses a row crediting a tool that is not in the client's
+// security tool list, so the base credits tools the seeded Atlas Tech Debt
+// list holds (`scripts/seed_demo.py::_TD_ITEMS`). That list is RELEASED, so no
+// other spec can edit it out of the subset, and each of these is "keep", so no
+// retirement mark (#686) enters the base either.
+const DETECT = "CrowdStrike Falcon";
+const PREVENT = "Okta Workforce Identity";
+const RESPOND = "Splunk Enterprise";
 
 test("an admin starts and discards an ATT&CK what-if against a confirmed assessment", async ({
   page,
@@ -88,12 +94,20 @@ test("an admin starts and discards an ATT&CK what-if against a confirmed assessm
   await expect(panel.getByTestId("attack-scenario-affected")).toHaveText(
     "2 techniques use these tools and will be re-assessed.",
   );
-  await expect(panel.getByTestId("attack-scenario-unavailable")).toHaveText(
-    "AI analysis for what-ifs is not available yet.",
-  );
-  await expect(
-    panel.getByRole("button", { name: "Run AI analysis on these changes" }),
-  ).toHaveCount(0);
+  const run = panel.getByRole("button", {
+    name: "Run AI analysis on these changes",
+  });
+  await expect(run).toBeVisible();
+  await run.click();
+  // The offline guard intercepts the first click in fixture mode (CI, dev).
+  await acknowledgeOfflineAi(page);
+  // Completed: the after-rollup renders only once a run has finished. Then the
+  // failure line's absence, which means something only after that.
+  await expect(panel.getByTestId("scenario-after")).toBeVisible({
+    timeout: 60_000,
+  });
+  await expect(panel.getByTestId("attack-scenario-run-failed")).toHaveCount(0);
+  await expect(panel.getByTestId("attack-scenario-unavailable")).toHaveCount(0);
 
   await panel.getByRole("button", { name: "Discard this what-if" }).click();
   // The api's answer first (a positive state), then the control's absence.

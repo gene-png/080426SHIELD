@@ -22,6 +22,7 @@ import {
   fetchRiskRegisterLatest,
   generateRiskRegister,
   getActiveClientId,
+  publishRiskRegister,
   getClientName,
 } from "@/lib/risk/client";
 import {
@@ -35,9 +36,25 @@ import {
   type RiskTier,
 } from "@/lib/risk/matrix";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
+import {
+  ArchiveServiceButton,
+  ArchiveServiceDialog,
+} from "@/components/admin/risk/ArchiveServiceButton";
 import { targetSentences } from "@/lib/risk/baseline";
+import { carriedSentences } from "@/lib/risk/carry";
+import {
+  INPUTS_RULE,
+  REVIEW_PENDING_NOTE,
+  inputLine,
+  sourceStateNote,
+} from "@/lib/risk/inputs";
 
-import type { RiskEntry, RiskGate, RiskRegister } from "@/lib/risk/types";
+import type {
+  RiskDuplicateService,
+  RiskEntry,
+  RiskGate,
+  RiskRegister,
+} from "@/lib/risk/types";
 
 import type { JSX } from "react";
 
@@ -63,6 +80,28 @@ const SERVICE_LABELS: Record<string, string> = {
   csf: "NIST CSF",
   zt: "Zero Trust",
 };
+
+/**
+ * #876: with two Zero Trust services the scope key is "zt:<framework>", and
+ * the row names the framework (advisor, #736 6019425290 Q3). The same two
+ * names as `ZT_FRAMEWORK_NAMES` in `app/risk/exporters.py`; change both.
+ */
+const ZT_FRAMEWORK_NAMES: Record<string, string> = {
+  cisa_ztmm_2_0: "CISA ZTMM 2.0",
+  dod_ztra: "DoD ZT Reference Architecture",
+};
+
+function scopeLabel(key: string): string {
+  const known = SERVICE_LABELS[key];
+  if (known !== undefined) return known;
+  const [kind, qualifier] = key.split(":", 2);
+  const kindLabel = SERVICE_LABELS[kind];
+  const fw =
+    qualifier === undefined ? undefined : ZT_FRAMEWORK_NAMES[qualifier];
+  return kindLabel !== undefined && fw !== undefined
+    ? `${kindLabel} (${fw})`
+    : key;
+}
 
 function TierChip({ tier }: { tier: string | null }): JSX.Element {
   // #844. An unrated entry has NO tier, and it used to be painted in the
@@ -220,12 +259,15 @@ function columnsFor(
               {r.impact ? titleCase(r.impact) : "Not rated"}
             </span>
           )}
-          {r.rating_edited_at ? (
+          {/* Same rule as the export (`_consultant_rated`): any edited row with
+            at least one half set (Gene's ruling (a)); a FULLY cleared rating
+            is unrated and carries no consultant credit (#854 review, F2). */}
+          {r.rating_edited_at && (r.likelihood || r.impact) ? (
             <span
               className="text-xs text-ink-tertiary"
               data-testid="risk-rating-set-by-consultant"
             >
-              Rating set by consultant
+              Rating edited by consultant
             </span>
           ) : null}
         </div>
@@ -247,7 +289,10 @@ function columnsFor(
       // without this the drop reached no surface at all.
       cell: (r) => {
         const dropped = r.dropped_links?.source_id ?? [];
-        if (r.source_id) return r.source_id;
+        if (r.source_id)
+          return `${r.source_id}${sourceStateNote(r.source_state) ?? ""}${
+            r.source_review_pending ? REVIEW_PENDING_NOTE : ""
+          }`;
         if (dropped.length > 0) {
           return (
             <span
@@ -309,10 +354,13 @@ export function RiskRegisterDashboard(): JSX.Element {
   // synchronized one merely is not, right now, for reasons that have to keep
   // holding -- and one of those reasons had already stopped holding.
   const [loading, setLoading] = React.useState(true);
-  const [busy, setBusy] = React.useState<"generate" | "export" | "rate" | null>(
-    null,
-  );
+  const [busy, setBusy] = React.useState<
+    "generate" | "export" | "publish" | "rate" | null
+  >(null);
   const [error, setError] = React.useState<string | null>(null);
+  // #896: the duplicate service whose archive dialog is open, if any.
+  const [archiveTarget, setArchiveTarget] =
+    React.useState<RiskDuplicateService | null>(null);
 
   React.useEffect(() => {
     let active = true;
@@ -344,6 +392,30 @@ export function RiskRegisterDashboard(): JSX.Element {
       active = false;
     };
   }, []);
+
+  // #896: after any archive attempt from the duplicate banner (review B2:
+  // success OR failure), read the gate again -- the refusal, the banner and
+  // Generate all derive from it.
+  //
+  // Returns whether the gate was re-read (review round 2, F1): the archive
+  // dialog must not say the list was refreshed when it was not. The failure is
+  // still shown on the page, as before.
+  async function reloadGate(): Promise<boolean> {
+    if (!cid) {
+      // The dialog is only rendered with a client id, so this cannot be hit
+      // from it; if it is, nothing was re-read, and that is what we say.
+      console.error("[risk] gate reload without an active client");
+      return false;
+    }
+    setError(null);
+    try {
+      setGate(await fetchRiskGate(cid));
+      return true;
+    } catch (err) {
+      setError(describeRiskError(err));
+      return false;
+    }
+  }
 
   async function onGenerate(): Promise<void> {
     if (!cid) return;
@@ -381,6 +453,19 @@ export function RiskRegisterDashboard(): JSX.Element {
       // is added. That is the precondition-comment shape CLAUDE.md records,
       // and it has now caught this file twice.
       setRegister(await exportRiskRegister(cid));
+    } catch (err) {
+      setError(describeRiskError(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onPublish(): Promise<void> {
+    if (!cid) return;
+    setBusy("publish");
+    setError(null);
+    try {
+      setRegister(await publishRiskRegister(cid));
     } catch (err) {
       setError(describeRiskError(err));
     } finally {
@@ -450,16 +535,28 @@ export function RiskRegisterDashboard(): JSX.Element {
   // records: when a heading renders in every state except one, "heading
   // visible" silently becomes a proxy for "the page works", and a spec waiting
   // on it fails as a timeout rather than as an assertion.
-  const blocking = gate?.synthesizable_missing ?? [];
-  const blockedFromGenerating = Boolean(gate?.unlocked) && blocking.length > 0;
+  // #737: an unapproved input no longer blocks generating (Gene's ruling,
+  // reversing #237): it yields a DRAFT register, and the Inputs panel below
+  // says which inputs are not final. The "cannot be generated until these are
+  // approved" banner that stood here would now be false, so it is gone.
   // #556: blocks too, with its own sentence and remedy -- see the type.
   const catalogMismatch = gate?.unlocked
     ? (gate.attack_catalog_mismatch ?? null)
     : null;
-  // #554 R3: blocks the same way, with the server's own sentence.
-  const unreviewedAttack = gate?.unlocked
-    ? (gate.attack_computed_status_unreviewed ?? null)
+  // #876 Q2 (a): two services of one kind and framework would produce the
+  // same findings, so generate refuses -- the gate carries the same sentence,
+  // and Generate is not offered over a refusal it already knows about.
+  const duplicateInputs = gate?.unlocked
+    ? (gate.duplicate_inputs ?? null)
     : null;
+  // #896: the services that sentence names, one archive button each. `?? []`
+  // covers an older server that does not send the field: the sentence still
+  // shows, with no buttons, as it did before #896.
+  const duplicateServices = gate?.duplicate_services ?? [];
+  // #554 R3 no longer blocks Generate (advisor, #736 5998764095, option (b)):
+  // a draft is generated, each affected entry says its computed status awaits
+  // review, and publish refuses. The banner and the disabled Generate that sat
+  // on `attack_computed_status_unreviewed` are gone; the server sends null.
   // Inputs that existed, were not approved, did not BLOCK (the unlock rule was
   // satisfied without them) and therefore contributed nothing. The `??` guards
   // `register` being null before anything is generated -- not an absent field,
@@ -493,12 +590,15 @@ export function RiskRegisterDashboard(): JSX.Element {
   }
 
   const tc = register?.tier_counts ?? {};
-  // #844. `?? []` / `?? {}` only for a response predating the fields, which
-  // `findings_recorded` (absent -> not true) already keeps from rendering.
-  const findingsWithout = register?.findings_without_entry?.length ?? 0;
-  const findingsSeveral = Object.keys(
-    register?.findings_with_several_entries ?? {},
-  ).length;
+  // #854 F3: ratings a consultant edited in the version on screen, which a
+  // regenerate would carry over -- the warning beside the button keys on it.
+  const consultantEdited =
+    register?.entries.filter((e) => e.rating_edited_at !== null).length ?? 0;
+  // #844. `?? 0` covers only the no-register-yet case.
+  const findingsWithout = register?.findings_without_entry.length ?? 0;
+  const findingsSeveral = register
+    ? Object.keys(register.findings_with_several_entries).length
+    : 0;
   const ac = register?.axis_counts ?? {};
 
   // #244. Derived per render from whatever response is in hand, rather than
@@ -540,14 +640,61 @@ export function RiskRegisterDashboard(): JSX.Element {
         </p>
       ) : null}
 
-      {blockedFromGenerating ? (
+      {gate && gate.inputs.length > 0 ? (
+        <div
+          className="rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
+          data-testid="risk-register-inputs"
+        >
+          <p className="font-semibold">{INPUTS_RULE}</p>
+          <ul className="mt-1 list-disc pl-5">
+            {gate.inputs.map((row, i) => (
+              <li key={`${row.kind}-${i}`}>{inputLine(row)}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {duplicateInputs !== null ? (
         <p
           className="text-sm font-medium text-status-warning-fg"
-          data-testid="risk-register-unapproved-sources"
+          data-testid="risk-register-duplicate-inputs"
         >
-          A new register cannot be generated until these are approved:{" "}
-          {blocking.join("; ")}. Anything already generated below is unaffected.
+          {duplicateInputs} Anything already generated below is unaffected.
         </p>
+      ) : null}
+
+      {/* #896: the remedy, beneath the refusal rather than inside it -- the
+          API's sentence also reaches callers that are not this screen
+          (advisor, #736 6042801745). One button per service it names. */}
+      {duplicateInputs !== null && duplicateServices.length > 0 ? (
+        <div
+          className="flex flex-col gap-2 text-sm"
+          data-testid="risk-register-duplicate-archive"
+        >
+          <p className="text-ink-secondary">
+            Archive the one this register should not draw on:
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {duplicateServices.map((svc) => (
+              <ArchiveServiceButton
+                key={svc.service_id}
+                service={svc}
+                onOpen={setArchiveTarget}
+                disabled={busy !== null}
+              />
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {/* Hosted here, not by a button: the reload after an attempt can remove
+          the button that opened it (#896 review B2). */}
+      {cid ? (
+        <ArchiveServiceDialog
+          clientId={cid}
+          service={archiveTarget}
+          onClose={() => setArchiveTarget(null)}
+          onSettled={reloadGate}
+        />
       ) : null}
 
       {catalogMismatch !== null ? (
@@ -557,15 +704,6 @@ export function RiskRegisterDashboard(): JSX.Element {
         >
           A new register cannot be generated from the ATT&amp;CK mapping.{" "}
           {catalogMismatch} Anything already generated below is unaffected.
-        </p>
-      ) : null}
-
-      {unreviewedAttack !== null ? (
-        <p
-          className="text-sm font-medium text-status-warning-fg"
-          data-testid="risk-register-attack-unreviewed"
-        >
-          {unreviewedAttack} Anything already generated below is unaffected.
         </p>
       ) : null}
 
@@ -579,6 +717,11 @@ export function RiskRegisterDashboard(): JSX.Element {
             {register
               ? ` · version ${register.version}`
               : " · not yet generated"}
+            {register
+              ? register.finalized_at
+                ? " · published to the client"
+                : " · not published to the client"
+              : null}
           </p>
           {/* The IA appendix asks whether the register is global, per-client or
               per-service. It is per-client, synthesized across that client's
@@ -591,6 +734,18 @@ export function RiskRegisterDashboard(): JSX.Element {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {/* #854 F3: the warning BEFORE regenerating, beside the button, while
+              the current version holds consultant ratings. */}
+          {consultantEdited > 0 ? (
+            <p
+              className="w-full text-sm text-status-warning-fg"
+              data-testid="risk-regenerate-carries-ratings"
+            >
+              Regenerating drafts a new version. Consultant ratings carry over
+              to the entry for the same finding; any that cannot be matched are
+              listed after, to rate again.
+            </p>
+          ) : null}
           {/* Issue 2: risk_synthesize is an AI job — warn before producing
               canned output when no key is loaded. */}
           <RunAiGuard onProceed={() => void onGenerate()}>
@@ -603,7 +758,7 @@ export function RiskRegisterDashboard(): JSX.Element {
                 disabled={
                   busy !== null ||
                   catalogMismatch !== null ||
-                  unreviewedAttack !== null ||
+                  duplicateInputs !== null ||
                   statusUnknown
                 }
                 className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:opacity-50"
@@ -624,6 +779,20 @@ export function RiskRegisterDashboard(): JSX.Element {
               className="rounded-md border border-border px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-sunken disabled:opacity-50"
             >
               {busy === "export" ? "Exporting…" : "Export XLSX / PDF / Word"}
+            </button>
+          ) : null}
+          {/* #737. Export is the consultant's copy; Publish is what puts the
+              register on the client's dashboard. Not offered while an entry is
+              unrated (#844 D1) -- the api refuses it too, and the banner below
+              says why -- nor once this version is published. */}
+          {register && register.finalized_at === null ? (
+            <button
+              type="button"
+              onClick={() => void onPublish()}
+              disabled={busy !== null || register.entries_without_tier > 0}
+              className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:opacity-50"
+            >
+              {busy === "publish" ? "Publishing…" : "Publish to client"}
             </button>
           ) : null}
         </div>
@@ -733,9 +902,14 @@ export function RiskRegisterDashboard(): JSX.Element {
                 entries have no likelihood, impact or tier
               </span>
               , so they are missing from the matrix and the tier counts while
-              still counting toward Entries. Set a likelihood and impact on each
-              in the Register table below; the export states how many are
-              unrated.
+              still counting toward Entries.
+              {/* #854 review, F5: the remedy names the selects, which exist
+                  only while the register is editable. On a published register
+                  they are gone, so the sentence would name a control that is
+                  not there (D-076). */}
+              {register.finalized_at === null
+                ? " Set a likelihood and impact on each in the Register table below; the export states how many are unrated."
+                : null}
             </div>
           ) : null}
           {/* #132. An entry that proposed ATT&CK or control links and kept
@@ -925,8 +1099,7 @@ export function RiskRegisterDashboard(): JSX.Element {
               <ul className="mt-1 list-disc pl-5">
                 {register.excluded_unscored_links.map((s) => (
                   <li key={s.service}>
-                    {SERVICE_LABELS[s.service] ?? s.service}: {s.scored} of{" "}
-                    {s.total} scored
+                    {scopeLabel(s.service)}: {s.scored} of {s.total} scored
                     {s.total > s.scored
                       ? `, ${s.total - s.scored} not yet judged and therefore not citable`
                       : " — every row judged"}
@@ -941,11 +1114,35 @@ export function RiskRegisterDashboard(): JSX.Element {
               </p>
             </div>
           ) : null}
+          {/* #854 F3: what the regenerate that produced this version carried
+              over, and what it could not. Rendered only when recorded and
+              when there is something to say. */}
+          {register.ratings_carried_recorded &&
+          register.ratings_carried_from_version !== null &&
+          ((register.ratings_carried ?? 0) > 0 ||
+            register.ratings_not_carried.length > 0) ? (
+            <div
+              className={
+                register.ratings_not_carried.length > 0
+                  ? "rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm text-status-warning-fg"
+                  : "rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
+              }
+              data-testid="risk-ratings-carried"
+            >
+              {carriedSentences(
+                register.ratings_carried ?? 0,
+                register.ratings_carried_from_version,
+                register.ratings_not_carried,
+              ).map((line) => (
+                <p key={line}>{line}</p>
+              ))}
+            </div>
+          ) : null}
           {/* #844. Each finding should get exactly one entry. Rendered only
               when the record exists AND something is off: an unrecorded
               register says nothing here (its empty list is not a clean
               result), and a clean one needs no sentence. */}
-          {register.findings_recorded === true &&
+          {register.findings_recorded &&
           (findingsWithout > 0 || findingsSeveral > 0) ? (
             <div
               className="rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm text-status-warning-fg"
@@ -1010,7 +1207,7 @@ export function RiskRegisterDashboard(): JSX.Element {
                 Tier is always code-derived from likelihood × impact. Governance
                 columns (owner, approval, review) print blank for the client.
                 {register.finalized_at
-                  ? " This version has been exported, so its ratings are fixed. Generate a new version to rate entries again."
+                  ? " This version is published to the client, so its ratings are fixed. Generate a new version to rate entries again."
                   : null}
               </CardDescription>
             </CardHeader>

@@ -114,6 +114,7 @@ from app.zt.exporters import render_docx as render_zt_docx
 from app.zt.exporters import render_pdf as render_zt_pdf
 from app.zt.exporters import render_xlsx as render_zt_xlsx
 from app.zt.maturity import ZtFrameworkCode, level_count, stage_definitions
+from app.zt.retired import retired_answer_count, retired_sentence
 from app.zt.scoring import (
     analyze_gaps,
     build_roadmap,
@@ -246,6 +247,30 @@ def _as_number(raw: Any) -> float | None:
     return None
 
 
+def _validated_stage(raw: Any, max_stage: int) -> tuple[int | None, str | None]:
+    """A suggested maturity stage as the zt_score apply path would STORE it:
+    `(stage, None)`, or `(None, reason)` with the `ZtDroppedSuggestion` reason
+    it is refused for. ONE statement of the rule, called by `_zt_run_work` and
+    by `scripts/measure_ai_consistency.py` (#867 review B-4), so the measure
+    counts as refused exactly what a run refuses. The twin of
+    `routes/csf.py::_validated_dimension`.
+
+    Parse (`_as_number`), then RANGE `1..max_stage`, then wholeness. Range
+    BEFORE wholeness: `4.9` on a 1-4 ladder is both out of range and not whole,
+    and out-of-range is the more useful thing to say. It also keeps `inf`/`nan`
+    away from `int()`. Extracted unchanged from the inline checks
+    `_zt_run_work` carried; the order and the reasons are the same.
+    """
+    n = _as_number(raw)
+    if n is None:
+        return None, "unparseable"
+    if not 1 <= n <= max_stage:
+        return None, "out_of_range"
+    if n != int(n):
+        return None, "unparseable"
+    return int(n), None
+
+
 # ---------------------------------------------------------------------------
 # Framework <-> ServiceKind mapping
 # ---------------------------------------------------------------------------
@@ -286,6 +311,8 @@ def _serialize_answers(rows: Iterable[ZtAnswer]) -> list[ZtAnswerResponse]:
 
 def _serialize_assessment(db: Session, a: ZtAssessment) -> ZtAssessmentResponse:
     rows = db.execute(select(ZtAnswer).where(ZtAnswer.assessment_id == a.id)).scalars().all()
+    cat_fw = _to_catalog_framework(a.framework)
+    retired = retired_answer_count(cat_fw, rows)
     return ZtAssessmentResponse(
         id=a.id,
         service_id=a.service_id,
@@ -299,6 +326,8 @@ def _serialize_assessment(db: Session, a: ZtAssessment) -> ZtAssessmentResponse:
         client_target_stage=client_target_stage(db, a.service_id),
         # #646: the ONE derivation every surface calls.
         ai_source=ai_mode_for(db, db.get(Service, a.service_id), a).as_api(),
+        retired_answers=retired,
+        retired_answers_note=retired_sentence(cat_fw, retired),
     )
 
 
@@ -455,6 +484,7 @@ def get_catalog(
                 pillar_code=c.pillar_code,
                 name=c.name,
                 outcome=c.outcome,
+                kind=c.kind,
             )
             for c in capabilities(cat_fw)
             if c.pillar_code == p.code
@@ -841,8 +871,10 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
         # handing the settlement loop a row the model never wrote.
         for field in fields:
             raw = sugg[field]
-            n = _as_number(raw)
-            if n is None:
+            # Parse, range, wholeness, in that order: `_validated_stage`, the
+            # one statement of the rule, also called by the consistency measure.
+            stage, refusal = _validated_stage(raw, max_stage)
+            if refusal is not None:
                 # `values=field_values[field]`, NOT 1. `received` charged this
                 # key every leaf it hides, so a flat 1 here drops the rest out
                 # of both sides of the invariant with no record — the silent
@@ -851,32 +883,7 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
                 # adversarial pass; `csf.py` had it right and a test for it.
                 dropped.append(
                     ZtDroppedSuggestion(
-                        reason="unparseable",
-                        key=key,
-                        field=field,
-                        value=_bounded(raw),
-                        values=field_values[field],
-                    )
-                )
-                continue
-            # RANGE before wholeness: `4.9` on a 1-4 ladder is both out of range
-            # and not whole, and out-of-range is the more useful thing to say.
-            # It also keeps `inf`/`nan` away from `int()`.
-            if not 1 <= n <= max_stage:
-                dropped.append(
-                    ZtDroppedSuggestion(
-                        reason="out_of_range",
-                        key=key,
-                        field=field,
-                        value=_bounded(raw),
-                        values=field_values[field],
-                    )
-                )
-                continue
-            if n != int(n):
-                dropped.append(
-                    ZtDroppedSuggestion(
-                        reason="unparseable",
+                        reason=refusal,
                         key=key,
                         field=field,
                         value=_bounded(raw),
@@ -898,7 +905,7 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
                 )
                 applied -= 1
             written[slot] = raw
-            setattr(row, "maturity_stage" if field == "current" else "target_stage", int(n))
+            setattr(row, "maturity_stage" if field == "current" else "target_stage", stage)
             applied += 1
             suggested.add(raw_code)
 
