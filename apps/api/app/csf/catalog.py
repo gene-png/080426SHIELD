@@ -21,8 +21,9 @@ Notes on counts (CSF 2.0 Final, Feb 2024):
 
 Source of record: NIST CSWP 29, The NIST Cybersecurity Framework (CSF) 2.0,
 February 26, 2024 (https://doi.org/10.6028/NIST.CSWP.29). #852 corrected two
-rows against it: CSF 2.0 has no `ID.AM-09`, which this catalog used to hold, and
-it has `RC.CO-04`, which this catalog lacked. The total read 106 both before and
+rows toward it, per the issue's comparison with the PDF: CSF 2.0 has no
+`ID.AM-09`, which this catalog used to hold, and it has `RC.CO-04`, which this
+catalog lacked. That correction is not yet source-pinned (below). The total read 106 both before and
 after, which is why a count could not see it. A stored answer on `ID.AM-09` is
 kept, not scored, and disclosed (`app.csf.retired`, migration 0064).
 
