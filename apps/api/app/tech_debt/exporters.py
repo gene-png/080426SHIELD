@@ -237,7 +237,7 @@ def build_context(
     spend_known = True
     for it in items_list:
         # for #835: a split bundle's part is not a cost. Its parent holds the
-        # licence value, so the part neither adds to the total nor, by having
+        # license value, so the part neither adds to the total nor, by having
         # no cost of its own, makes the total a floor.
         if is_component(it):
             continue

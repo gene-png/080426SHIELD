@@ -117,7 +117,7 @@ from app.schemas.clients import (
     ZtPillarDashboard,
 )
 from app.services.engagement_targets import client_target_stage, client_target_tier
-from app.tech_debt.components import is_component, licence_count, source_items
+from app.tech_debt.components import is_component, license_count, source_items
 from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.savings import estimated_savings
 from app.zt.catalog import capability_by_code as zt_capability_by_code
@@ -1678,10 +1678,10 @@ def tech_debt_dashboard(
     # while `savings` beside it carried a flag for exactly this.
     spend_cost_known = True
     # category -> {"total": float, "items": [CapabilityItem]}; "count" is
-    # derived below as the number of distinct LICENCES in the bucket.
+    # derived below as the number of distinct LICENSES in the bucket.
     by_cat: dict[str, dict] = {}
     for it in items:
-        # for #835: a bundle's part is not a cost. Its parent holds the licence
+        # for #835: a bundle's part is not a cost. Its parent holds the license
         # value, so the part neither adds to spend nor, by having no cost of its
         # own, makes spend a floor. A real uncosted source row still does.
         part = is_component(it)
@@ -1691,13 +1691,13 @@ def tech_debt_dashboard(
         annual_spend += cost
         # A part DOES sit in its own category (UX finding 5: Defender beside
         # CrowdStrike is a real redundancy), but a bundle and its parts are one
-        # licence, so the bucket counts licences rather than rows.
+        # license, so the bucket counts licenses rather than rows.
         cat = it.category or _UNCATEGORIZED
         bucket = by_cat.setdefault(cat, {"total": 0.0, "items": []})
         bucket["total"] += cost
         bucket["items"].append(it)
     for bucket in by_cat.values():
-        bucket["count"] = licence_count(bucket["items"])
+        bucket["count"] = license_count(bucket["items"])
 
     spend_by_category = [
         TechDebtCategorySpend(category=cat, total_usd=round(b["total"], 2), count=b["count"])

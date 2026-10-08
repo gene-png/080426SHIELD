@@ -1,8 +1,8 @@
-"""A bundle's components are parts of ONE licence, not tools of their own (for #835).
+"""A bundle's components are parts of ONE license, not tools of their own (for #835).
 
 `add_capability_components` (routes/tech_debt.py) writes each named part with
 `parent_item_id` set and NO cost, because the parent row keeps the whole
-licence value. Before this, every reader below treated a part as one more
+license value. Before this, every reader below treated a part as one more
 separately licensed, separately costed tool:
 
   - the client dashboard read the part's missing cost as a missing cost, so a
@@ -210,7 +210,7 @@ def test_a_split_bundle_leaves_a_fully_costed_spend_complete(env) -> None:
 
 
 def test_a_costed_part_never_adds_to_spend(env) -> None:
-    """The parent holds the licence value. A cost typed onto a part (nothing
+    """The parent holds the license value. A cost typed onto a part (nothing
     refuses it, filed separately) must not count the bundle twice."""
     c, provider = env
     got = _release(c, provider, SPLIT_BESIDE_TOOLS, component_cost=50000)
@@ -302,7 +302,7 @@ def test_a_part_beside_a_separately_licensed_tool_is_still_a_redundancy(env) -> 
 def test_parts_of_one_bundle_in_one_category_count_once(env) -> None:
     c, provider = env
     dash = _release(c, provider, SPLIT_ONE_CATEGORY)["dashboard"]
-    # Positive control first: the categories exist and carry one licence each.
+    # Positive control first: the categories exist and carry one license each.
     counts = {s["category"]: s["count"] for s in dash["spend_by_category"]}
     assert counts["Email Security"] == 1
     assert counts["Productivity and Security Suite"] == 1
@@ -341,7 +341,7 @@ def test_the_overlap_view_does_not_ask_for_a_cost_on_a_part(env) -> None:
 
 
 def test_the_overlap_view_counts_a_bundle_once_per_vendor_and_category(env) -> None:
-    """Parts inherit the bundle's vendor, so without the licence key Microsoft
+    """Parts inherit the bundle's vendor, so without the license key Microsoft
     read as three subscriptions from one vendor."""
     c, provider = env
     overlap = _release(c, provider, SPLIT_ONE_CATEGORY)["overlap"]

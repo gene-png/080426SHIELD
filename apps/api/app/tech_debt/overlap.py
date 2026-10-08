@@ -16,9 +16,9 @@ cost flag `cost_known = False` so the renderer can show "≥ $X" rather
 than a misleading exact total.
 
 Bundle parts (for #835): a split bundle's named parts carry no cost because
-the parent holds the licence value (`tech_debt/components.py`). They never
+the parent holds the license value (`tech_debt/components.py`). They never
 add to a cost, never count as missing one, and a bucket counts distinct
-LICENCES, so a bundle and its parts (which inherit its vendor) count once.
+LICENSES, so a bundle and its parts (which inherit its vendor) count once.
 `total_items` still counts every row in the list, parts included: it is the
 size of the table the consultant edits.
 """
@@ -30,7 +30,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from app.models.capability import CapabilityItem
-from app.tech_debt.components import is_component, licence_count
+from app.tech_debt.components import is_component, license_count
 
 
 @dataclass(frozen=True)
@@ -78,8 +78,8 @@ def _bucketize(
 
     out: list[OverlapBucket] = []
     for key, group in grouped.items():
-        licences = licence_count(group)
-        if licences <= 1:
+        licenses = license_count(group)
+        if licenses <= 1:
             continue
         total = 0.0
         all_known = True
@@ -93,7 +93,7 @@ def _bucketize(
         out.append(
             OverlapBucket(
                 key=key,
-                item_count=licences,
+                item_count=licenses,
                 total_cost=total,
                 cost_known=all_known,
                 item_ids=tuple(str(i.id) for i in group),
