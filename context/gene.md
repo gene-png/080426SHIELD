@@ -1,5 +1,13 @@
 # Gene — in-flight status
 
+_2026-10-08: #806 C1 (seven CSF outcome strings made NIST CSWP 29 verbatim:
+GV.OC-02, GV.OC-03, GV.OC-04, GV.RM-04, GV.RM-05, GV.RM-07, ID.RA-02) is on
+`track5/806-csf-c1`. A test reads each from the pinned PDF under the advisor's
+comparison rules (#736 comment 6070708992). GV.OC-03 keeps its two em dashes
+as printed. The client sees the new wording in the questionnaire and every
+catalog surface, so it comes back to you: conditions 5 and 6. The
+character-only rows are filed separately as tier-3._
+
 _2026-10-08: #836 (a CSF Run-AI row the model leaves out of its batch is now
 counted and named) is rebuilt on main as `track5/836-omitted-rows-v2`. The run
 result carries `omitted_count` and `omitted_rows`, the Playbook panel shows
