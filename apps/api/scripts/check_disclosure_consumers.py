@@ -110,6 +110,11 @@ DISCLOSURE_PREFIXES = (
     "unusable_",
     "source_rows_",
     "batches_",
+    # #836: rows a run was asked for and that the model never answered
+    # (`omitted_count`, `omitted_rows`). One prefix for all three services by
+    # the advisor's ruling on #736 (comment 6067815887): CSF first, then ZT
+    # (#840) and ATT&CK (#853).
+    "omitted_",
 )
 #: SUBSTRINGS, not prefixes, and #209 added the last two. `target_frozen_at`
 #: and `<kind>_targets_computed_live` are disclosure fields by the same
