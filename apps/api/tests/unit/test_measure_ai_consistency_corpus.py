@@ -1015,10 +1015,56 @@ def test_the_cost_caps_are_section_2s_table_and_total_the_approved_25() -> None:
     assert sum(COST_CAPS_USD.values()) == 25
 
 
-def _usd_run(input_tokens: int, output_tokens: int, calls: int = 1):
+def test_the_price_table_holds_only_cited_prices() -> None:
+    # The Claude API skill's model table, cached 2026-10-06: claude-opus-5
+    # "$5.00 | $25.00", claude-sonnet-5 "$2.00 | $10.00" (input | output per 1M).
+    from scripts.measure_ai_consistency import PRICES_USD_PER_MTOK
+
+    assert PRICES_USD_PER_MTOK == {
+        ("anthropic", "claude-opus-5"): {"input": 5, "output": 25},
+        ("anthropic", "claude-sonnet-5"): {"input": 2, "output": 10},
+    }
+
+
+def test_main_refuses_a_model_with_no_known_price(cli, monkeypatch, capsys) -> None:
+    from app.config import get_settings
+
+    state, out = cli
+    monkeypatch.setenv("SHIELD_LLM_MODEL", "claude-imaginary-9")
+    get_settings.cache_clear()
+    assert main(["--job", "zt_score", "--runs", "2", "--out", str(out)]) == 2
+    assert "REFUSED (price_unknown_for_model)" in capsys.readouterr().err
+    assert state["built"] == []
+    assert not out.exists()
+
+
+def test_the_report_records_the_model_and_price_it_used(cli, monkeypatch) -> None:
+    from app.config import get_settings
+
+    state, out = cli
+    monkeypatch.setenv("SHIELD_LLM_MODEL", "claude-sonnet-5")
+    get_settings.cache_clear()
+    state["report"] = summarize("zt_score", [])
+    main(["--job", "zt_score", "--runs", "2", "--out", str(out)])
+    written = json.loads(out.read_text(encoding="utf-8"))
+    assert written["cost_cap"]["price_basis"] == {
+        "provider": "anthropic",
+        "model": "claude-sonnet-5",
+        "usd_per_mtok": {"input": 2, "output": 10},
+    }
+
+
+#: claude-opus-5's list price, USD per million tokens, from the Claude API
+#: skill's model table (cached 2026-10-06), as section 2 of #806 comment
+#: 5983938383 quotes it ("$5 / $25 per MTok").
+OPUS5 = {"input": 5, "output": 25}
+
+
+def _usd_run(input_tokens, output_tokens, calls: int = 1, started: int | None = None):
     from scripts.measure_ai_consistency import RunRecord
 
-    return RunRecord(True, {}, None, input_tokens, output_tokens, calls=calls)
+    started = calls if started is None else started
+    return RunRecord(True, {}, None, input_tokens, output_tokens, calls=calls, started=started)
 
 
 def test_the_guard_refuses_to_start_a_run_the_largest_so_far_would_take_over_the_cap() -> None:
@@ -1033,7 +1079,7 @@ def test_the_guard_refuses_to_start_a_run_the_largest_so_far_would_take_over_the
         started.append(n)
         return _usd_run(0, 40_000)
 
-    records = run_loop(3, one, max_output_tokens=None, max_usd=2.5)
+    records = run_loop(3, one, max_output_tokens=None, max_usd=2.5, price=OPUS5)
     assert started == [1, 2]
     assert [r.failure for r in records] == [None, None, "stopped_budget"]
 
@@ -1049,16 +1095,18 @@ def test_the_guard_counts_input_tokens_too() -> None:
         started.append(n)
         return _usd_run(200_000, 0)
 
-    run_loop(3, one, max_output_tokens=None, max_usd=2.5)
+    run_loop(3, one, max_output_tokens=None, max_usd=2.5, price=OPUS5)
     assert started == [1, 2]
 
 
 def test_the_first_run_always_starts_and_is_reported_unbounded() -> None:
     from scripts.measure_ai_consistency import run_loop
 
-    records = run_loop(2, lambda n: _usd_run(0, 400_000), max_output_tokens=None, max_usd=1.5)
+    records = run_loop(
+        2, lambda n: _usd_run(0, 400_000), max_output_tokens=None, max_usd=1.5, price=OPUS5
+    )
     assert [r.failure for r in records] == [None, "stopped_budget"]
-    s = summarize("zt_score", records, context=ZT_SCOPE_FOR_SUMMARY, max_usd=1.5)
+    s = summarize("zt_score", records, context=ZT_SCOPE_FOR_SUMMARY, max_usd=1.5, price=OPUS5)
     assert s["budget_usd"] == {
         "max_usd": 1.5,
         "spent_usd": 10.0,
@@ -1077,34 +1125,88 @@ def test_unknown_spend_stops_further_runs_under_the_dollar_guard() -> None:
         lambda n: _usd_run(5, 100) if n > 1 else _usd_run(5, None),
         max_output_tokens=None,
         max_usd=100.0,
+        price=OPUS5,
     )
     assert [r.failure for r in records] == [None, "stopped_unknown_spend"]
 
 
-def test_a_run_that_wrote_no_call_spent_nothing_and_stops_nothing() -> None:
-    # #952 review F3: a failure before the provider wrote no `llm_calls` row,
-    # which is zero spend, not unknown spend.
+def test_a_run_that_started_no_call_spent_nothing_and_stops_nothing() -> None:
+    # A failure before `invoke` was ever entered: no call, so $0, KNOWN.
     from scripts.measure_ai_consistency import RunRecord, run_loop
 
     def one(n: int):
         if n == 1:
             return RunRecord(
-                False, None, "ai_call_failed", None, None, "RuntimeError", None, False, calls=0
+                False,
+                None,
+                "ai_call_failed",
+                None,
+                None,
+                "RuntimeError",
+                None,
+                False,
+                calls=0,
+                started=0,
             )
         return _usd_run(1, 1)
 
-    records = run_loop(2, one, max_output_tokens=None, max_usd=1.0)
+    records = run_loop(2, one, max_output_tokens=None, max_usd=1.0, price=OPUS5)
     assert [r.failure for r in records] == ["ai_call_failed", None]
-    s = summarize("zt_score", records, context=ZT_SCOPE_FOR_SUMMARY, max_usd=1.0)
+    s = summarize("zt_score", records, context=ZT_SCOPE_FOR_SUMMARY, max_usd=1.0, price=OPUS5)
+    assert s["budget_usd"]["per_run_usd"][0] == 0.0
     assert s["budget_usd"]["complete"] is True
     assert s["tokens"]["complete"] is True
+
+
+def test_a_started_call_with_no_row_is_unknown_spend_and_stops_later_runs() -> None:
+    # #952 narrow review 1: a call was started and wrote no row -- it may have
+    # billed (a deadline in flight, a failed commit). Unknown, never $0.
+    from scripts.measure_ai_consistency import RunRecord, run_loop
+
+    def one(n: int):
+        return RunRecord(
+            False,
+            None,
+            "ai_call_failed",
+            None,
+            None,
+            "RuntimeError",
+            None,
+            False,
+            calls=0,
+            started=1,
+        )
+
+    records = run_loop(2, one, max_output_tokens=None, max_usd=100.0, price=OPUS5)
+    assert [r.failure for r in records] == ["ai_call_failed", "stopped_unknown_spend"]
+    s = summarize("zt_score", records, context=ZT_SCOPE_FOR_SUMMARY, max_usd=100.0, price=OPUS5)
+    assert s["budget_usd"]["per_run_usd"][0] is None
+    assert s["budget_usd"]["complete"] is False
+    assert s["tokens"]["complete"] is False
+
+
+def test_fewer_rows_than_calls_started_is_unknown_even_with_tokens() -> None:
+    # Ten batches' rows, eleven calls started: the rows that exist carry
+    # tokens, and the missing one is still spend nobody can see.
+    from scripts.measure_ai_consistency import run_loop
+
+    records = run_loop(
+        2,
+        lambda n: _usd_run(10, 10, calls=10, started=11),
+        max_output_tokens=None,
+        max_usd=100.0,
+        price=OPUS5,
+    )
+    assert records[1].failure == "stopped_unknown_spend"
 
 
 def test_runs_never_started_are_known_not_to_have_charged() -> None:
     # #952 review F4: a `stopped_*` run made no call, so False, not None.
     from scripts.measure_ai_consistency import run_loop
 
-    records = run_loop(3, lambda n: _usd_run(0, 400_000), max_output_tokens=None, max_usd=1.0)
+    records = run_loop(
+        3, lambda n: _usd_run(0, 400_000), max_output_tokens=None, max_usd=1.0, price=OPUS5
+    )
     s = summarize("zt_score", records, context=ZT_SCOPE_FOR_SUMMARY)
     assert [(f["failure"], f["charged_likely"]) for f in s["failed_runs"]] == [
         ("stopped_budget", False),
@@ -1192,6 +1294,7 @@ def main_world(world, monkeypatch, tmp_path):
     monkeypatch.setenv("SHIELD_LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-not-a-key")
     monkeypatch.setenv("SHIELD_REDACTION_MODE", "strict")
+    monkeypatch.setenv("SHIELD_LLM_MODEL", "claude-opus-5")
     get_settings.cache_clear()
     monkeypatch.setattr("app.db.session.SessionLocal", TestSession)
     monkeypatch.setattr(_Client, "from_db", classmethod(lambda cls, db, s=None: _Client(provider)))
@@ -1231,16 +1334,155 @@ def test_main_does_not_start_a_run_the_guard_projects_over_the_side_cap(main_wor
     assert code == 1
 
 
-def test_main_counts_a_failure_before_the_provider_as_no_spend(main_world, monkeypatch) -> None:
-    # #952 review F3, through `main` with the budget it always sets.
+def test_main_counts_a_run_that_started_no_call_as_no_spend(main_world, monkeypatch) -> None:
+    # The failure is raised before `invoke` is entered, so no call started.
+    import app.ai.engine as engine
+
+    TestSession, provider, out = main_world
+    provider.register("zt_score", _zt_tokens(5, []))
+    original, seen = engine.run_job, []
+
+    def first_fails(*a, **kw):
+        seen.append(1)
+        if len(seen) == 1:
+            raise RuntimeError("failed before any provider call")
+        return original(*a, **kw)
+
+    monkeypatch.setattr(engine, "run_job", first_fails)
+    code = main([*ZT_ARGV, "--runs", "3", "--out", str(out)])
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert [f["failure"] for f in report["failed_runs"]] == ["ai_call_failed"]
+    assert report["runs_ok"] == 2
+    assert report["budget_usd"]["per_run_usd"][0] == 0.0
+    assert code == 1
+
+
+def test_main_stops_after_a_started_call_left_no_row(main_world, monkeypatch) -> None:
+    # Inside `invoke`, before its row lands (the SQLite-lock shape): the call
+    # was started, so the spend is unknown and no later run starts.
     TestSession, provider, out = main_world
     provider.register("zt_score", _zt_tokens(5, []))
     _fail_before_the_provider(monkeypatch, which={1})
     code = main([*ZT_ARGV, "--runs", "3", "--out", str(out)])
     report = json.loads(out.read_text(encoding="utf-8"))
-    assert [f["failure"] for f in report["failed_runs"]] == ["ai_call_failed"]
-    assert report["runs_ok"] == 2
+    assert [f["failure"] for f in report["failed_runs"]] == [
+        "ai_call_failed",
+        "stopped_unknown_spend",
+        "stopped_unknown_spend",
+    ]
+    assert report["budget_usd"]["complete"] is False
+    assert report["cost_cap"]["estimate_complete"] is False
     assert code == 1
+
+
+def test_a_deadline_with_a_call_in_flight_is_unknown_spend(csf_world, monkeypatch) -> None:
+    # Scenario (a): the run deadline fires while a batch's call is in flight;
+    # its row is flushed in the worker's session and never committed.
+    from sqlalchemy.orm import Session as _Session
+
+    from app.ai.engine import run_job
+    from app.ai.runs import RUN_DEADLINE_EXCEEDED, RunFailed
+
+    c, TestSession, provider = csf_world
+    provider.register("csf_score", _csf_answer_all([]))
+
+    def deadline_mid_call(db, llm, job_name, batch_inputs, **kw):
+        session = _Session(bind=db.get_bind())
+        run_job(
+            session,
+            llm,
+            job_name,
+            inputs=batch_inputs[0],
+            requested_by=kw["requested_by"],
+            service_id=kw["service_id"],
+            client_id=kw["client_id"],
+            client_org_name=kw["client_org_name"],
+            name_hints=kw["name_hints"],
+        )
+        session.close()  # never committed: the row is gone with the session
+        raise RunFailed(RUN_DEADLINE_EXCEEDED, kw["deadline_message"])
+
+    monkeypatch.setattr("app.ai.batching.run_batches", deadline_mid_call)
+    with TestSession() as db:
+        report = measure_csf(db, LLMClient(provider), runs=2, max_usd=100.0, price=OPUS5)
+    assert report["failed_runs"][0]["failure"] == RUN_DEADLINE_EXCEEDED
+    assert report["budget_usd"]["per_run_usd"][0] is None
+    assert report["budget_usd"]["complete"] is False
+
+
+def test_a_batch_whose_commit_failed_after_the_call_is_unknown_spend(
+    csf_world, monkeypatch
+) -> None:
+    # Scenario (b): the provider call returned (and billed), then the
+    # worker's `session.commit()` failed, so its row never landed.
+    from sqlalchemy.orm import Session as _Session
+
+    c, TestSession, provider = csf_world
+    provider.register("csf_score", _csf_answer_all([]))
+    lock, chosen = threading.Lock(), []
+
+    class FailingCommit(_Session):
+        def commit(self):
+            with lock:
+                if not chosen:
+                    chosen.append(id(self))
+                mine = chosen[0] == id(self)
+            if mine:
+                raise RuntimeError("commit failed")
+            return super().commit()
+
+    monkeypatch.setattr("app.ai.batching.Session", FailingCommit)
+    with TestSession() as db:
+        report = measure_csf(db, LLMClient(provider), runs=2, max_usd=100.0, price=OPUS5)
+    assert report["failed_runs"][0]["failure"] == "batches_failed:1/11"
+    assert report["failed_runs"][1]["failure"] == "stopped_unknown_spend"
+    assert report["budget_usd"]["complete"] is False
+
+
+def _dump_failing(monkeypatch, statuses: dict[str, str]):
+    """`_dump_json` that writes half a document and raises, for the report
+    statuses named, with the message given; any other status is written."""
+    import scripts.measure_ai_consistency as m
+
+    real = m._dump_json
+
+    def dump(obj, fh):
+        status = obj.get("status")
+        if status in statuses:
+            fh.write('{"job": "zt_score", "status": ')
+            raise RuntimeError(statuses[status])
+        real(obj, fh)
+
+    monkeypatch.setattr(m, "_dump_json", dump)
+
+
+def test_a_failed_final_write_leaves_the_last_whole_report(main_world, monkeypatch) -> None:
+    # #952 narrow review 2: a dump that dies midway never reaches `--out`,
+    # and when the abort record cannot be written either, the last
+    # in-progress report stays -- whole -- and the ORIGINAL error is raised.
+    TestSession, provider, out = main_world
+    provider.register("zt_score", _zt_tokens(5, []))
+    _dump_failing(monkeypatch, {"complete": "disk full", "aborted": "disk full again"})
+    with pytest.raises(RuntimeError, match="^disk full$"):
+        main([*ZT_ARGV, "--runs", "2", "--out", str(out)])
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert report["status"] == "in_progress"
+    assert [r["run"] for r in report["runs"]] == [1, 2]
+    assert [p.name for p in out.parent.iterdir() if p.name.endswith(".tmp")] == []
+
+
+def test_a_failed_final_write_is_recorded_as_an_abort(main_world, monkeypatch) -> None:
+    # The final write is inside the handler: its failure is an abort like
+    # any other, recorded with every completed run.
+    TestSession, provider, out = main_world
+    provider.register("zt_score", _zt_tokens(5, []))
+    _dump_failing(monkeypatch, {"complete": "disk full"})
+    with pytest.raises(RuntimeError, match="^disk full$"):
+        main([*ZT_ARGV, "--runs", "2", "--out", str(out)])
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert report["status"] == "aborted"
+    assert report["aborted"]["exception"] == "RuntimeError"
+    assert [r["run"] for r in report["runs"]] == [1, 2]
 
 
 def test_main_writes_each_completed_run_before_the_next_starts(main_world) -> None:
@@ -1327,6 +1569,7 @@ def test_main_compares_two_mitre_map_probe_runs_of_the_same_batches(
     monkeypatch.setenv("SHIELD_LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-not-a-key")
     monkeypatch.setenv("SHIELD_REDACTION_MODE", "strict")
+    monkeypatch.setenv("SHIELD_LLM_MODEL", "claude-opus-5")
     get_settings.cache_clear()
     monkeypatch.setattr("app.db.session.SessionLocal", TestSession)
     monkeypatch.setattr(_Client, "from_db", classmethod(lambda cls, db, s=None: _Client(provider)))

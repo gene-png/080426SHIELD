@@ -59,10 +59,18 @@ still cross the line, and the FIRST run is not bounded in advance, because
 nothing is known before it. `--max-output-tokens N`, optional, additionally
 starts no further run once N output tokens are spent.
 
-THE REPORT IS KEPT (#952 review F2): `--out` is rewritten after every run, so it
-always holds every completed run. A crash or Ctrl-C after any provider call was
-started leaves a report marked `aborted`; the file is removed only when no
-provider call was started at all.
+THE REPORT IS KEPT (#952 review F2, narrow review 2): `--out` is reserved empty
+at start, then REPLACED after every run by an atomic rename (a temporary file in
+the same directory, fsynced, then `os.replace`). So the file is always either
+empty (no run has completed yet) or one whole JSON report: the last one written,
+holding every run completed before that write. A crash or Ctrl-C after any
+provider call was started replaces it with a report marked `aborted`; if even
+that write fails, the last in-progress report stays. The file is removed only
+when no provider call was started at all.
+
+PRICES: the dollar guard prices tokens at the configured provider and model's
+list price (`PRICES_USD_PER_MTOK`); a model with no recorded price is refused
+(`price_unknown_for_model`), and the report records the price it used.
 
 `--probe-batches` runs only the first N of a batched job's batches. For
 mitre_map, `--runs 2` or more compares runs of the same probed batches like any
@@ -84,8 +92,9 @@ redactor has a real client name to replace on the way out.
 never over an existing file: an earlier report is a paid run's only record.
 
 EXIT: 0 every run succeeded; 1 a run failed, or fewer than two succeeded -- one,
-for a `--probe-batches` run (the report is still written, and names each
-failure); 2 refused, before any provider call, each refusal with its own typed
+for a single-run probe (`--probe-batches` with `--runs 1`; a mitre_map probe of
+two or more runs needs two, like any measurement). The report is still written,
+and names each failure. 2 refused, before any provider call, each refusal with its own typed
 reason -- including every input this could otherwise read as nothing to do (a
 corpus that is missing, empty, malformed, for a job that reads no notes, or
 landing on no row the route sends; an `--out` that exists or cannot be written).
@@ -161,6 +170,12 @@ class RunRecord:
     # a run whose spend is unknown. None where nobody counted (a hand-built
     # record), which keeps the older reading: no output count is unknown.
     calls: int | None = None
+    # #952 narrow review 1: how many provider calls the run STARTED, counted
+    # where `LLMClient.invoke` is entered -- before its row exists. A row can
+    # be missing for a call that billed (a deadline while it was in flight, a
+    # failed commit after it returned), so only `started == 0` is known zero
+    # spend; fewer rows than calls started is UNKNOWN spend.
+    started: int | None = None
 
 
 #: More runs than this is refused: every run is billed, and five pairs already
@@ -179,10 +194,29 @@ COST_CAPS_USD: dict[str, int] = {
     "risk_synthesize": 5,
 }
 
-#: The list price section 2's estimates use: claude-opus-5, USD per million
-#: tokens. Another provider or model prices differently, so a figure computed
-#: from it is an ESTIMATE and is labelled as one.
-LIST_PRICE_USD_PER_MTOK: dict[str, int] = {"input": 5, "output": 25}
+#: List prices, USD per million tokens, by (provider, model) as configured
+#: (`SHIELD_LLM_PROVIDER`, `SHIELD_LLM_MODEL`). Source: the Claude API skill's
+#: model table, cached 2026-10-06 (Anthropic first-party rates; section 2's
+#: estimates use the claude-opus-5 row). A model not listed is REFUSED
+#: (`price_unknown_for_model`): a dollar guard priced for another model is not
+#: a guard. Add a row only with a cited price.
+PRICES_USD_PER_MTOK: dict[tuple[str, str], dict[str, float]] = {
+    ("anthropic", "claude-opus-5"): {"input": 5, "output": 25},
+    ("anthropic", "claude-sonnet-5"): {"input": 2, "output": 10},
+}
+
+
+def price_for(provider: str, model: str) -> dict[str, float]:
+    """The list price for the configured provider and model, or a refusal."""
+    price = PRICES_USD_PER_MTOK.get((provider, model))
+    if price is None:
+        raise Refused(
+            "price_unknown_for_model",
+            f"No list price is recorded for {provider}/{model}; the dollar guard "
+            "cannot be priced. Add a cited row to PRICES_USD_PER_MTOK first.",
+        )
+    return price
+
 
 #: One invocation is one side (before or after) of a service's pair.
 _SIDES_PER_SERVICE = 2
@@ -194,24 +228,32 @@ def side_cap_usd(job: str) -> float:
     return COST_CAPS_USD[job] / _SIDES_PER_SERVICE
 
 
-def _usd(input_tokens: int, output_tokens: int) -> float:
-    price = LIST_PRICE_USD_PER_MTOK
+def _usd(input_tokens: int, output_tokens: int, price: Mapping[str, float]) -> float:
     return round((input_tokens * price["input"] + output_tokens * price["output"]) / 1e6, 6)
 
 
-def _estimated_usd(tokens: Mapping[str, Any]) -> float:
-    return round(_usd(tokens["input"], tokens["output"]), 4)
+def _spend_known(record: RunRecord) -> bool:
+    """Every call the run started is accounted for by a row with tokens."""
+    if record.started == 0:
+        return True
+    if record.started is not None and record.calls is not None and record.calls < record.started:
+        return False
+    return (
+        record.input_tokens is not None
+        and record.output_tokens is not None
+        and record.tokens_complete
+    )
 
 
-def run_usd(record: RunRecord) -> float | None:
+def run_usd(record: RunRecord, price: Mapping[str, float]) -> float | None:
     """One run's spend at list price, input AND output, from its `llm_calls`
-    rows. 0 for a run that wrote no row (it reached no provider, #952 F3);
-    None when a row's tokens are missing, which is spend nobody can see."""
-    if record.calls == 0:
+    rows. 0 ONLY for a run that started no provider call; None (unknown) when
+    a started call has no row or a row has no tokens."""
+    if record.started == 0:
         return 0.0
-    if record.input_tokens is None or record.output_tokens is None or not record.tokens_complete:
+    if not _spend_known(record):
         return None
-    return _usd(record.input_tokens, record.output_tokens)
+    return _usd(record.input_tokens or 0, record.output_tokens or 0, price)
 
 
 # --- the synthetic notes corpus (#806 comment 5983938383, section 2) ---------
@@ -1130,6 +1172,7 @@ def run_loop(
     max_output_tokens: int | None,
     stop_on_failure: bool = False,
     max_usd: float | None = None,
+    price: Mapping[str, float] | None = None,
     progress: Callable[[Sequence[RunRecord]], None] | None = None,
 ) -> list[RunRecord]:
     """Call `one_run(n)` for n = 1..runs. Once the output tokens spent exceed
@@ -1149,13 +1192,16 @@ def run_loop(
     is not started (`stopped_budget`). It is a projection, not a promise: a run
     larger than every run before it can still cross the line, and THE FIRST
     RUN IS NOT BOUNDED AT ALL, because nothing is known before it. A run that
-    wrote no `llm_calls` row spent nothing (#952 F3) and stops nothing.
+    that started no provider call spent nothing and stops nothing; one whose
+    started calls are not all accounted for by rows is unknown spend.
 
     A run not started made no call, so its `charged_likely` is False (#952 F4).
     `progress`, when given, is called with every record after each one is
     added, so a caller can keep a report of every completed run on disk."""
     from app.ai.runs import RUN_DEADLINE_EXCEEDED
 
+    if max_usd is not None and price is None:
+        raise ValueError("a dollar guard needs the price it is counted in")
     records: list[RunRecord] = []
     spent = 0
     unknown = False
@@ -1163,7 +1209,7 @@ def run_loop(
     largest_usd = 0.0
 
     def not_started(reason: str) -> RunRecord:
-        return RunRecord(False, None, reason, 0, 0, charged_likely=False, calls=0)
+        return RunRecord(False, None, reason, 0, 0, charged_likely=False, calls=0, started=0)
 
     for n in range(1, runs + 1):
         if any(r.failure == RUN_DEADLINE_EXCEEDED for r in records):
@@ -1191,13 +1237,11 @@ def run_loop(
             records.append(not_started("stopped_budget"))
         else:
             record = one_run(n)
-            if record.calls != 0 and (record.output_tokens is None or not record.tokens_complete):
+            if not _spend_known(record):
                 unknown = True
             spent += record.output_tokens or 0
-            usd = run_usd(record)
-            if usd is None:
-                unknown = True
-            else:
+            if price is not None and not unknown:
+                usd = run_usd(record, price) or 0.0
                 spent_usd += usd
                 largest_usd = max(largest_usd, usd)
             records.append(record)
@@ -1215,7 +1259,7 @@ _NOT_STARTED = (
 )
 
 
-def run_row(n: int, r: RunRecord) -> dict:
+def run_row(n: int, r: RunRecord, price: Mapping[str, float]) -> dict:
     """One run as the report's per-run record, counts and codes only."""
     return {
         "run": n,
@@ -1227,7 +1271,8 @@ def run_row(n: int, r: RunRecord) -> dict:
         "output_tokens": r.output_tokens,
         "tokens_complete": r.tokens_complete,
         "calls": r.calls,
-        "estimated_usd": run_usd(r),
+        "calls_started": r.started,
+        "estimated_usd": run_usd(r, price),
     }
 
 
@@ -1239,6 +1284,7 @@ def summarize(
     min_ok_runs: int = 2,
     context: Any = None,
     max_usd: float | None = None,
+    price: Mapping[str, float] | None = None,
 ) -> dict:
     """Every pair of successful runs, plus the failed runs by number (1-based).
     Fewer than `min_ok_runs` successes is a failure: 2 for a measurement, since
@@ -1262,7 +1308,7 @@ def summarize(
     # A run that called the provider and has no output count is spend nobody
     # can see. A budget-stopped run made no call, and neither did a run that
     # wrote no `llm_calls` row (#952 F3), so neither counts.
-    called = [r for r in runs if r.failure not in _NOT_STARTED and r.calls != 0]
+    called = [r for r in runs if r.failure not in _NOT_STARTED and r.started != 0]
     spent = sum(r.output_tokens or 0 for r in runs)
     report = {
         "job": job,
@@ -1285,7 +1331,10 @@ def summarize(
         "tokens": {
             "input": sum(r.input_tokens or 0 for r in runs),
             "output": sum(r.output_tokens or 0 for r in runs),
-            "complete": all(r.output_tokens is not None and r.tokens_complete for r in called),
+            "complete": all(
+                r.output_tokens is not None and r.tokens_complete and _spend_known(r)
+                for r in called
+            ),
         },
         "budget": {
             "max_output_tokens": max_output_tokens,
@@ -1297,7 +1346,9 @@ def summarize(
         "exit_code": 0 if not failed and len(ok) >= min_ok_runs else 1,
     }
     if max_usd is not None:
-        per_run = [run_usd(r) for r in runs]
+        if price is None:
+            raise ValueError("a dollar budget needs the price it is counted in")
+        per_run = [run_usd(r, price) for r in runs]
         spent_usd = round(sum(u for u in per_run if u is not None), 6)
         report["budget_usd"] = {
             "max_usd": max_usd,
@@ -1442,6 +1493,7 @@ def measure_zt(
     stop_on_failure: bool = False,
     notes_corpus: NotesCorpus | None = None,
     max_usd: float | None = None,
+    price: Mapping[str, float] | None = None,
     progress: Callable[[Sequence[RunRecord]], None] | None = None,
 ) -> dict:
     """Run zt_score `runs` times on the latest editable assessment for
@@ -1496,8 +1548,11 @@ def measure_zt(
         runs=runs,
     )
 
+    started_calls = _InvokeCounter(llm)
+
     def one_run(n: int) -> RunRecord:
         before = _call_ids(db)
+        started_before = started_calls.n
         try:
             with ai_call_boundary(db, llm, purpose=req.preview.job_name):
                 result = run_job(
@@ -1524,7 +1579,16 @@ def measure_zt(
                 charged_likely=charged,
             )
             return RunRecord(
-                False, None, reason, tokens_in, tokens_out, cause, charged, complete, calls=calls
+                False,
+                None,
+                reason,
+                tokens_in,
+                tokens_out,
+                cause,
+                charged,
+                complete,
+                calls=calls,
+                started=started_calls.n - started_before,
             )
         db.commit()
         tokens_in, tokens_out, complete = _tokens_since(db, before)
@@ -1537,7 +1601,14 @@ def measure_zt(
             duration_ms=result.llm_call.duration_ms,
         )
         return RunRecord(
-            True, result.data, None, tokens_in, tokens_out, tokens_complete=complete, calls=calls
+            True,
+            result.data,
+            None,
+            tokens_in,
+            tokens_out,
+            tokens_complete=complete,
+            calls=calls,
+            started=started_calls.n - started_before,
         )
 
     records = run_loop(
@@ -1546,11 +1617,17 @@ def measure_zt(
         max_output_tokens=max_output_tokens,
         stop_on_failure=stop_on_failure,
         max_usd=max_usd,
+        price=price,
         progress=progress,
     )
     scope = ZtScope(max_stage=req.max_stage, codes=frozenset(req.rows), framework=fw)
     report = summarize(
-        "zt_score", records, max_output_tokens=max_output_tokens, context=scope, max_usd=max_usd
+        "zt_score",
+        records,
+        max_output_tokens=max_output_tokens,
+        context=scope,
+        max_usd=max_usd,
+        price=price,
     )
     report["assessment_id"] = str(a.id)
     report["assessment_capabilities"] = len(req.rows)
@@ -1568,6 +1645,26 @@ def measure_zt(
         for n, data in _ok_runs(records)
     ]
     return report
+
+
+class _InvokeCounter:
+    """Counts `LLMClient.invoke` entries on one client, thread-safely (batch
+    workers call it concurrently). Entry comes before the `llm_calls` row is
+    written, so a call whose row never lands is still counted."""
+
+    def __init__(self, llm: Any) -> None:
+        import threading
+
+        self.n = 0
+        self._lock = threading.Lock()
+        original = llm.invoke
+
+        def invoke(*args: Any, **kwargs: Any) -> Any:
+            with self._lock:
+                self.n += 1
+            return original(*args, **kwargs)
+
+        llm.invoke = invoke
 
 
 def _call_ids(db: Any) -> set:
@@ -1689,6 +1786,7 @@ def measure_csf(
     probe_batches: int | None = None,
     notes_corpus: NotesCorpus | None = None,
     max_usd: float | None = None,
+    price: Mapping[str, float] | None = None,
     progress: Callable[[Sequence[RunRecord]], None] | None = None,
 ) -> dict:
     """Run csf_score `runs` times on the latest editable CSF assessment, batched
@@ -1766,8 +1864,11 @@ def measure_csf(
         runs=runs,
     )
 
+    started_calls = _InvokeCounter(llm)
+
     def one_run(n: int) -> RunRecord:
         before = _call_ids(db)
+        started_before = started_calls.n
         try:
             batched = run_batches(
                 db,
@@ -1802,7 +1903,16 @@ def measure_csf(
                 charged_likely=charged,
             )
             return RunRecord(
-                False, None, reason, tokens_in, tokens_out, cause, charged, complete, calls=calls
+                False,
+                None,
+                reason,
+                tokens_in,
+                tokens_out,
+                cause,
+                charged,
+                complete,
+                calls=calls,
+                started=started_calls.n - started_before,
             )
         tokens_in, tokens_out, complete = _tokens_since(db, before)
         calls = _calls_since(db, before)
@@ -1817,7 +1927,16 @@ def measure_csf(
                 charged_likely=charged,
             )
             return RunRecord(
-                False, None, failure, tokens_in, tokens_out, None, charged, complete, calls=calls
+                False,
+                None,
+                failure,
+                tokens_in,
+                tokens_out,
+                None,
+                charged,
+                complete,
+                calls=calls,
+                started=started_calls.n - started_before,
             )
         data = csf_run_data(batched.inputs, batched.answers, req.rows)
         _log.info(
@@ -1828,7 +1947,14 @@ def measure_csf(
             output_tokens=tokens_out,
         )
         return RunRecord(
-            True, data, None, tokens_in, tokens_out, tokens_complete=complete, calls=calls
+            True,
+            data,
+            None,
+            tokens_in,
+            tokens_out,
+            tokens_complete=complete,
+            calls=calls,
+            started=started_calls.n - started_before,
         )
 
     records = run_loop(
@@ -1837,6 +1963,7 @@ def measure_csf(
         max_output_tokens=max_output_tokens,
         stop_on_failure=stop_on_failure,
         max_usd=max_usd,
+        price=price,
         progress=progress,
     )
     report = summarize(
@@ -1846,6 +1973,7 @@ def measure_csf(
         min_ok_runs=1 if probe_batches is not None else 2,
         context=CsfScope(row_keys=frozenset(req.rows)),
         max_usd=max_usd,
+        price=price,
     )
     data_by_run = dict(_ok_runs(records))
     levels = {n: csf_levels(data, has_evidence=has_evidence) for n, data in data_by_run.items()}
@@ -1993,6 +2121,7 @@ def measure_attack(
     stop_on_failure: bool = False,
     probe_batches: int | None = None,
     max_usd: float | None = None,
+    price: Mapping[str, float] | None = None,
     progress: Callable[[Sequence[RunRecord]], None] | None = None,
 ) -> dict:
     """Run mitre_map `runs` times on the latest editable ATT&CK assessment,
@@ -2074,8 +2203,11 @@ def measure_attack(
         runs=runs,
     )
 
+    started_calls = _InvokeCounter(llm)
+
     def one_run(n: int) -> RunRecord:
         before = _call_ids(db)
+        started_before = started_calls.n
         try:
             suggestions, total, failed = _run_mitre_map_batched(
                 db,
@@ -2103,7 +2235,16 @@ def measure_attack(
                 charged_likely=charged,
             )
             return RunRecord(
-                False, None, reason, tokens_in, tokens_out, cause, charged, complete, calls=calls
+                False,
+                None,
+                reason,
+                tokens_in,
+                tokens_out,
+                cause,
+                charged,
+                complete,
+                calls=calls,
+                started=started_calls.n - started_before,
             )
         tokens_in, tokens_out, complete = _tokens_since(db, before)
         calls = _calls_since(db, before)
@@ -2117,7 +2258,16 @@ def measure_attack(
                 charged_likely=charged,
             )
             return RunRecord(
-                False, None, failure, tokens_in, tokens_out, None, charged, complete, calls=calls
+                False,
+                None,
+                failure,
+                tokens_in,
+                tokens_out,
+                None,
+                charged,
+                complete,
+                calls=calls,
+                started=started_calls.n - started_before,
             )
         _log.info(
             "measure_ai_consistency.run_ok",
@@ -2128,7 +2278,14 @@ def measure_attack(
         )
         data = {"techniques": suggestions}
         return RunRecord(
-            True, data, None, tokens_in, tokens_out, tokens_complete=complete, calls=calls
+            True,
+            data,
+            None,
+            tokens_in,
+            tokens_out,
+            tokens_complete=complete,
+            calls=calls,
+            started=started_calls.n - started_before,
         )
 
     records = run_loop(
@@ -2137,6 +2294,7 @@ def measure_attack(
         max_output_tokens=max_output_tokens,
         stop_on_failure=stop_on_failure,
         max_usd=max_usd,
+        price=price,
         progress=progress,
     )
     report = summarize(
@@ -2148,6 +2306,7 @@ def measure_attack(
         min_ok_runs=1 if runs == 1 else 2,
         context=scope,
         max_usd=max_usd,
+        price=price,
     )
     computed = {n: attack_downstream(data, scope) for n, data in _ok_runs(records)}
     for pair in report["pairs"]:
@@ -2227,6 +2386,7 @@ def measure_tech_debt(
     max_output_tokens: int | None = None,
     stop_on_failure: bool = False,
     max_usd: float | None = None,
+    price: Mapping[str, float] | None = None,
     progress: Callable[[Sequence[RunRecord]], None] | None = None,
 ) -> dict:
     """Run tech_debt_extract `runs` times on the rows of `inventory`, through
@@ -2290,8 +2450,11 @@ def measure_tech_debt(
     )
     reconciliations: dict[int, dict] = {}
 
+    started_calls = _InvokeCounter(llm)
+
     def one_run(n: int) -> RunRecord:
         before = _call_ids(db)
+        started_before = started_calls.n
         try:
             result = extract_from_rows(
                 db=db,
@@ -2322,7 +2485,16 @@ def measure_tech_debt(
                 charged_likely=charged,
             )
             return RunRecord(
-                False, None, reason, tokens_in, tokens_out, cause, charged, complete, calls=calls
+                False,
+                None,
+                reason,
+                tokens_in,
+                tokens_out,
+                cause,
+                charged,
+                complete,
+                calls=calls,
+                started=started_calls.n - started_before,
             )
         db.commit()
         tokens_in, tokens_out, complete = _tokens_since(db, before)
@@ -2344,7 +2516,14 @@ def measure_tech_debt(
         )
         data = {"items": [_item_record(i) for i in result.items]}
         return RunRecord(
-            True, data, None, tokens_in, tokens_out, tokens_complete=complete, calls=calls
+            True,
+            data,
+            None,
+            tokens_in,
+            tokens_out,
+            tokens_complete=complete,
+            calls=calls,
+            started=started_calls.n - started_before,
         )
 
     records = run_loop(
@@ -2353,10 +2532,15 @@ def measure_tech_debt(
         max_output_tokens=max_output_tokens,
         stop_on_failure=stop_on_failure,
         max_usd=max_usd,
+        price=price,
         progress=progress,
     )
     report = summarize(
-        "tech_debt_extract", records, max_output_tokens=max_output_tokens, max_usd=max_usd
+        "tech_debt_extract",
+        records,
+        max_output_tokens=max_output_tokens,
+        max_usd=max_usd,
+        price=price,
     )
     report["service_id"] = str(svc.id)
     # Whose names the redactor used: the client the operator named, by id.
@@ -2497,8 +2681,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--probe-batches",
         type=int,
         default=None,
-        help="csf_score and mitre_map only: run just the first N of the route's batches, "
-        "to measure per-batch cost before a full run. Allows --runs 1; reports no agreement.",
+        help="csf_score and mitre_map only: run just the first N of the route's batches. "
+        "With --runs 1 it sizes per-batch cost and reports no agreement. mitre_map also "
+        "allows --runs 2 or more over the same batches, compared like a full measurement.",
     )
     p.add_argument(
         "--inventory",
@@ -2601,19 +2786,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         if args.job not in _IMPLEMENTED_JOBS:
             _job_shape(args.job)
+        price = price_for(s.shield_llm_provider, s.shield_llm_model)
         corpus = None if args.notes_corpus is None else load_notes_corpus(args.notes_corpus)
-        out = _open_report(args.out)
+        # Reserve the name now (exclusive create), before any provider exists.
+        # Every later write replaces it atomically (`_ReportFile.write`).
+        _open_report(args.out).close()
     except Refused as exc:
         print(f"REFUSED ({exc.reason}): {exc}", file=sys.stderr)
         return 2
     max_usd = side_cap_usd(args.job)
     database_url = database_url_params(s.database_url)
-    report_file = _ReportFile(out, args.job, max_usd, database_url)
+    price_basis = {
+        "provider": s.shield_llm_provider,
+        "model": s.shield_llm_model,
+        "usd_per_mtok": price,
+    }
+    report_file = _ReportFile(Path(args.out), args.job, max_usd, price, database_url)
     print(
         f"budget: ${max_usd} for this side (half the ${COST_CAPS_USD[args.job]} service cap), "
-        "input and output at list price. A later run is not STARTED if the spend so far "
-        "plus the largest run so far would cross it. The FIRST run is not bounded in "
-        "advance."
+        f"input and output at the {s.shield_llm_provider}/{s.shield_llm_model} list price. "
+        "A later run is not STARTED if the spend so far plus the largest run so far would "
+        "cross it. The FIRST run is not bounded in advance."
     )
     if database_url["sqlite_timeout"] is None:
         print(
@@ -2626,36 +2819,37 @@ def main(argv: Sequence[str] | None = None) -> int:
             # can no longer produce its sentinel fails here, not after the
             # paid runs.
             sentinel()
-        report = _measure(args, corpus, max_usd, report_file)
+        report = _measure(args, corpus, max_usd, price, report_file)
+        report["cost_cap"] = {
+            "service_cap_usd": COST_CAPS_USD[args.job],
+            "side_cap_usd": max_usd,
+            "price_basis": price_basis,
+            # Complete only when every started call is accounted for by a
+            # row with tokens (`tokens.complete`).
+            "estimated_usd": round(
+                _usd(report["tokens"]["input"], report["tokens"]["output"], price), 4
+            ),
+            "estimate_complete": report["tokens"]["complete"],
+        }
+        report["database_url"] = database_url
+        report["provider_calls_started"] = report_file.provider_calls_started
+        report["status"] = "complete"
+        # Inside the handler (#952 narrow review 2): a failure here leaves the
+        # last in-progress report on disk, never a half-written one.
+        report_file.write(report)
     except BaseException as exc:
         if report_file.provider_calls_started == 0:
             # No provider call was even started: nothing was spent, and there
-            # is no run to keep. The file this run created empty goes.
-            out.close()
+            # is no run to keep. The file this run reserved empty goes.
             Path(args.out).unlink()
         else:
             # #952 review F2: something may have been billed. Keep every
             # completed run, and say why the report stops where it does.
             report_file.abort(exc)
-            out.close()
         if isinstance(exc, Refused):
             print(f"REFUSED ({exc.reason}): {exc}", file=sys.stderr)
             return 2
         raise
-    report["cost_cap"] = {
-        "service_cap_usd": COST_CAPS_USD[args.job],
-        "side_cap_usd": max_usd,
-        "list_price_usd_per_mtok": LIST_PRICE_USD_PER_MTOK,
-        # At claude-opus-5 list price whatever ran; complete only when every
-        # call reported its tokens (`tokens.complete`).
-        "estimated_usd": _estimated_usd(report["tokens"]),
-        "estimate_complete": report["tokens"]["complete"],
-    }
-    report["database_url"] = database_url
-    report["provider_calls_started"] = report_file.provider_calls_started
-    report["status"] = "complete"
-    report_file.write(report)
-    out.close()
     _print_table(report)
     cap = report["cost_cap"]
     print(
@@ -2677,41 +2871,60 @@ def database_url_params(url: str) -> dict:
     return {"query": query, "sqlite_timeout": query.get("timeout")}
 
 
-class _ReportFile:
-    """The open `--out`, rewritten after every run (#952 review F2), so the
-    file always holds every completed run; and the count of provider calls
-    STARTED, counted where `LLMClient.invoke` is entered -- before its
-    `llm_calls` row exists, so a call interrupted mid-flight, whose row is
-    rolled back, still counts."""
+def _dump_json(obj: Any, fh: Any) -> None:
+    json.dump(obj, fh, indent=2, sort_keys=True)
 
-    def __init__(self, fh: Any, job: str, max_usd: float, database_url: dict) -> None:
-        self.fh = fh
+
+class _ReportFile:
+    """`--out`, replaced ATOMICALLY after every run (#952 review F2 and narrow
+    review 2): each write goes to a temporary file in the same directory, is
+    fsynced, then `os.replace`d over `--out`. So at any moment the file is
+    either the last complete write -- every run completed up to it -- or the
+    empty file reserved at start; never half a JSON document. It also counts
+    the provider calls STARTED, where `LLMClient.invoke` is entered."""
+
+    def __init__(
+        self,
+        path: Path,
+        job: str,
+        max_usd: float,
+        price: Mapping[str, float],
+        database_url: dict,
+    ) -> None:
+        self.path = path
         self.job = job
         self.max_usd = max_usd
+        self.price = price
         self.database_url = database_url
-        self.provider_calls_started = 0
+        self.counter: Any = None
         self.records: list[RunRecord] = []
 
+    @property
+    def provider_calls_started(self) -> int:
+        return 0 if self.counter is None else self.counter.n
+
     def count_calls(self, llm: Any) -> None:
-        original = llm.invoke
-
-        def invoke(*args: Any, **kwargs: Any) -> Any:
-            self.provider_calls_started += 1
-            return original(*args, **kwargs)
-
-        llm.invoke = invoke
+        self.counter = _InvokeCounter(llm)
 
     def write(self, report: dict) -> None:
         import os
+        import tempfile
 
-        self.fh.seek(0)
-        self.fh.truncate()
-        json.dump(report, self.fh, indent=2, sort_keys=True)
-        self.fh.flush()
-        os.fsync(self.fh.fileno())
+        fd, tmp = tempfile.mkstemp(
+            dir=self.path.parent, prefix=f".{self.path.name}.", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                _dump_json(report, fh)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, self.path)
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise
 
     def partial(self, status: str) -> dict:
-        rows = [run_row(i + 1, r) for i, r in enumerate(self.records)]
+        rows = [run_row(i + 1, r, self.price) for i, r in enumerate(self.records)]
         known = [r["estimated_usd"] for r in rows if r["estimated_usd"] is not None]
         return {
             "job": self.job,
@@ -2737,7 +2950,17 @@ class _ReportFile:
             "note": "a run under way when this happened is not in `runs`; "
             "`provider_calls_started` counts its calls",
         }
-        self.write(report)
+        try:
+            self.write(report)
+        except Exception as write_exc:  # noqa: BLE001 - logged; the cause wins
+            # The last in-progress report is still on disk, whole. The ORIGINAL
+            # exception is the one `main` re-raises.
+            _log.error(
+                "measure_ai_consistency.abort_write_failed",
+                error=type(write_exc).__name__,
+                cause=type(exc).__name__,
+            )
+            return
         _log.error(
             "measure_ai_consistency.aborted",
             exception=type(exc).__name__,
@@ -2759,7 +2982,13 @@ def _open_report(path: str) -> Any:
         raise Refused("out_unwritable", f"--out {path} cannot be created: {exc}") from exc
 
 
-def _measure(args: argparse.Namespace, corpus: Any, max_usd: float, report_file: Any) -> dict:
+def _measure(
+    args: argparse.Namespace,
+    corpus: Any,
+    max_usd: float,
+    price: Mapping[str, float],
+    report_file: Any,
+) -> dict:
     """Build the provider and run the measurement `args` names. A refusal is
     raised as `Refused` for `main` to report."""
     from app.ai.llm import LLMClient
@@ -2776,6 +3005,7 @@ def _measure(args: argparse.Namespace, corpus: Any, max_usd: float, report_file:
             "max_output_tokens": args.max_output_tokens,
             "stop_on_failure": args.stop_on_failure,
             "max_usd": max_usd,
+            "price": price,
             "progress": report_file.progress,
         }
         if args.job == "csf_score":
