@@ -1939,10 +1939,7 @@ def generate(
         .where(RiskEntry.register_id == register.id, RiskEntry.tier.is_(None))
     ).scalar_one()
     # #474. `origin` says WHEN the target was read: here, live at generate.
-    targets_record = {
-        service: {**resolved, "origin": "live_at_generate"}
-        for service, resolved in target_sources.items()
-    }
+    targets_record = _targets_record(target_sources, snap.sources)
     # #844. Which findings got no entry and which got several. Sorted, so the
     # record does not depend on the order batches finished in. A GENERATE-TIME
     # fact (the findings are not stored anywhere else), so it is persisted with
@@ -2469,7 +2466,7 @@ def _render_and_store(
         ),
         draft=draft,
         targets=(
-            tuple((t.service, t.target, t.source, t.origin) for t in _targets)
+            tuple((t.kind, t.framework, t.target, t.source, t.origin) for t in _targets)
             if _targets_recorded
             else None
         ),
@@ -3187,12 +3184,46 @@ def _finding_fields(stored: object) -> dict:
     return dict(_FINDINGS_NOT_RECORDED)
 
 
+def _targets_record(
+    target_sources: dict[str, dict], sources: tuple[_Source, ...]
+) -> dict[str, dict]:
+    """#474. The provenance `targets` record: each target joined to the source
+    it was resolved for, so the entry carries its `kind` and `framework`
+    (advisor, #736 6054419744, approving 6053630989). The key stays the scope
+    key, an id that is never parsed or rendered.
+
+    A key with no source raises, fail closed: `_gather_findings` keys every
+    target by a source's `scope_key`, so no path produces one, and a record
+    that guessed would name a service it could not identify.
+    """
+    by_key = {src.scope_key: src for src in sources}
+    record: dict[str, dict] = {}
+    for key, resolved in target_sources.items():
+        src = by_key.get(key)
+        if src is None:
+            _log.error("risk_register_target_without_source", key=key, keys=sorted(by_key))
+            raise RuntimeError(f"Risk Register target {key!r} has no source to name it by.")
+        record[key] = {
+            **resolved,
+            "kind": src.kind,
+            "framework": src.framework,
+            "origin": "live_at_generate",
+        }
+    return record
+
+
 def _target_fields(stored: object) -> dict:
     """#474, through the one reader of the record (`app/risk/baseline.py`)."""
     rows, recorded = targets_used(stored)
     return {
         "targets": [
-            RiskTargetUsed(service=r.service, target=r.target, source=r.source, origin=r.origin)
+            RiskTargetUsed(
+                kind=r.kind,
+                framework=r.framework,
+                target=r.target,
+                source=r.source,
+                origin=r.origin,
+            )
             for r in rows
         ],
         "targets_recorded": recorded,

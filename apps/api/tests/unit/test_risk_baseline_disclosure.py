@@ -12,6 +12,12 @@ fact) and reaches the admin response, the client dashboard and the three
 exports. Three states: recorded, recorded with the default, and not recorded
 (a register generated before this), which the export states rather than
 leaving silent.
+
+Each stored entry carries its `kind` and `framework` (advisor, #736
+6054419744, approving 6053630989): the dict key is a scope key, an id that is
+never rendered. The framework is named only when the record holds more than
+one Zero Trust entry (Q3, ruling 2a). The expected lines below are the
+approved table's strings, verbatim.
 """
 
 from __future__ import annotations
@@ -71,30 +77,33 @@ def test_the_register_records_each_services_target(app_client) -> None:  # noqa:
     c, bearer, cid = _world(app_client, csf_target=4)
     body = _latest(c, bearer, cid)
     assert body["targets_recorded"] is True
-    by_service = {t["service"]: t for t in body["targets"]}
-    assert by_service["csf"] == {
-        "service": "csf",
+    by_kind = {t["kind"]: t for t in body["targets"]}
+    assert by_kind["csf"] == {
+        "kind": "csf",
+        "framework": None,
         "target": 4,
         "source": "client",
         "origin": "live_at_generate",
     }
     # No ZT target was set, so ZT used the engine default and says so.
-    assert by_service["zt"]["source"] == "default"
-    assert by_service["zt"]["origin"] == "live_at_generate"
+    assert by_kind["zt"]["framework"] == "cisa_ztmm_2_0"
+    assert by_kind["zt"]["source"] == "default"
+    assert by_kind["zt"]["origin"] == "live_at_generate"
 
 
 def test_the_export_states_the_baseline(app_client) -> None:  # noqa: F811
     c, bearer, cid = _world(app_client, csf_target=4)
-    zt = {t["service"]: t for t in _latest(c, bearer, cid)["targets"]}["zt"]
     text = _export_pdf_text(c, bearer, cid)
     assert (
         "NIST CSF findings are measured against target tier 4, the engagement "
         "target when this register was generated." in text
     )
+    # One ZT entry: the framework is not named (Q3).
     assert (
-        f"Zero Trust findings are measured against target stage {zt['target']}, "
+        "Zero Trust findings are measured against target stage 3, "
         "SHIELD's default: no engagement target was set." in text
     )
+    assert "Zero Trust (" not in text
 
 
 def test_a_register_without_the_record_says_so(app_client) -> None:  # noqa: F811
@@ -155,56 +164,247 @@ def test_the_client_dashboard_carries_the_baseline(app_client) -> None:  # noqa:
     c, bearer, cid = _world(app_client, csf_target=4)
     body = _client_dashboard(c, bearer, cid)
     assert body["targets_recorded"] is True
-    assert {t["service"]: t["target"] for t in body["targets"]}["csf"] == 4
+    assert {t["kind"]: t["target"] for t in body["targets"]}["csf"] == 4
 
 
 # ---------------------------------------------------------------------------
-# Two Zero Trust services (#876): the scope keys are "zt:<framework>", and the
-# target line names each framework the way the scored-coverage line already
-# does (`scope_label`), with the ZT unit. It printed the raw key and "level".
+# CISA (client 4) plus DoD (default), the approved table's two-ZT row, through
+# generate and every surface. Literal strings, positive first.
 # ---------------------------------------------------------------------------
 
-_ZT_LABELS = {
-    "zt:cisa_ztmm_2_0": "Zero Trust (CISA ZTMM 2.0)",
-    "zt:dod_ztra": "Zero Trust (DoD ZT Reference Architecture)",
-}
+_CISA_LINE = (
+    "Zero Trust (CISA ZTMM 2.0) findings are measured against target stage 4, "
+    "the engagement target when this register was generated."
+)
+_DOD_LINE = (
+    "Zero Trust (DoD ZT Reference Architecture) findings are measured against "
+    "target stage 3, SHIELD's default: no engagement target was set."
+)
+_TWO_ZT_TARGETS = [
+    {
+        "kind": "zt",
+        "framework": "cisa_ztmm_2_0",
+        "target": 4,
+        "source": "client",
+        "origin": "live_at_generate",
+    },
+    {
+        "kind": "zt",
+        "framework": "dod_ztra",
+        "target": 3,
+        "source": "default",
+        "origin": "live_at_generate",
+    },
+]
 
 
 def _two_zt_world(app_client):  # noqa: F811
+    from tests.unit.test_risk_register import _set_zt_target
+
     c, provider = app_client
     bearer, cid = _admin(c)
     _both_frameworks(c, bearer, cid)
+    _set_zt_target(cid, 4, kind="zero_trust_cisa")
     r = _generate_per_finding(c, provider, bearer, cid, [])
     assert r.status_code == 201, r.text
     return c, bearer, cid
 
 
-def test_two_zero_trust_services_each_name_their_framework_in_every_file(
+def _stored_targets() -> dict:
+    from sqlalchemy import select
+
+    from app.models.risk_register import RiskRegister
+
+    with _session() as s:
+        return dict(s.execute(select(RiskRegister)).scalar_one().provenance["targets"])
+
+
+def test_two_zero_trust_services_store_kind_and_framework(app_client) -> None:  # noqa: F811
+    _two_zt_world(app_client)
+    assert _stored_targets() == {
+        "zt:cisa_ztmm_2_0": {
+            "target": 4,
+            "source": "client",
+            "kind": "zt",
+            "framework": "cisa_ztmm_2_0",
+            "origin": "live_at_generate",
+        },
+        "zt:dod_ztra": {
+            "target": 3,
+            "source": "default",
+            "kind": "zt",
+            "framework": "dod_ztra",
+            "origin": "live_at_generate",
+        },
+    }
+
+
+def test_two_zero_trust_services_reach_the_admin_response(app_client) -> None:  # noqa: F811
+    c, bearer, cid = _two_zt_world(app_client)
+    body = _latest(c, bearer, cid)
+    assert body["targets_recorded"] is True
+    assert body["targets"] == _TWO_ZT_TARGETS
+
+
+def test_two_zero_trust_services_reach_the_client_dashboard(app_client) -> None:  # noqa: F811
+    c, bearer, cid = _two_zt_world(app_client)
+    body = _client_dashboard(c, bearer, cid)
+    assert body["targets_recorded"] is True
+    assert body["targets"] == _TWO_ZT_TARGETS
+
+
+def test_two_zero_trust_services_name_each_framework_in_every_file(
     app_client,  # noqa: F811
 ) -> None:
     c, bearer, cid = _two_zt_world(app_client)
-    targets = {t["service"]: t["target"] for t in _latest(c, bearer, cid)["targets"]}
-    assert set(targets) == set(_ZT_LABELS), targets  # the positive state first
     texts = _export_texts(c, bearer, cid)
     # All three files: the XLSX summary sheet prints `_summary_lines` too.
     for fmt in ("pdf", "docx", "xlsx"):
         text = " ".join(texts[fmt].split())
-        for key, label in _ZT_LABELS.items():
-            assert f"{label} findings are measured against target stage {targets[key]}," in text, (
-                fmt,
-                key,
-                text,
-            )
+        assert _CISA_LINE in text, (fmt, text)
+        assert _DOD_LINE in text, (fmt, text)
+        assert text.index(_CISA_LINE) < text.index(_DOD_LINE), fmt
         assert "zt:" not in text, fmt
-        assert "against target level" not in text, fmt
+        assert "target level" not in text, fmt
 
 
-def test_two_zero_trust_services_reach_the_client_dashboard_keyed_by_framework(
+# ---------------------------------------------------------------------------
+# The reader (`app/risk/baseline.py::targets_used`), every stored shape.
+# Fail closed (ruling 2d): anything it cannot read is "not recorded", logged.
+# ---------------------------------------------------------------------------
+
+_E = {"target": 4, "source": "client", "origin": "live_at_generate"}
+
+
+def _read(raw):
+    from app.risk.baseline import targets_used
+
+    rows, recorded = targets_used({"targets": raw})
+    return [(r.kind, r.framework, r.target, r.source, r.origin) for r in rows], recorded
+
+
+def test_the_reader_reads_kind_and_framework(capsys) -> None:
+    raw = {
+        "zt:dod_ztra": {**_E, "target": 3, "kind": "zt", "framework": "dod_ztra"},
+        "csf": {**_E, "kind": "csf", "framework": None},
+        "zt:cisa_ztmm_2_0": {**_E, "kind": "zt", "framework": "cisa_ztmm_2_0"},
+    }
+    # Sorted by (kind, framework), whatever the stored order.
+    assert _read(raw) == (
+        [
+            ("csf", None, 4, "client", "live_at_generate"),
+            ("zt", "cisa_ztmm_2_0", 4, "client", "live_at_generate"),
+            ("zt", "dod_ztra", 3, "client", "live_at_generate"),
+        ],
+        True,
+    )
+    assert "risk_register_targets_unreadable" not in capsys.readouterr().out
+
+
+def test_the_reader_reads_a_legacy_bare_entry_as_before(capsys) -> None:
+    raw = {"csf": dict(_E), "zt": {**_E, "target": 3, "source": "default"}}
+    assert _read(raw) == (
+        [
+            ("csf", None, 4, "client", "live_at_generate"),
+            ("zt", None, 3, "default", "live_at_generate"),
+        ],
+        True,
+    )
+    assert "risk_register_targets_unreadable" not in capsys.readouterr().out
+
+
+def test_no_targets_key_is_not_recorded_and_not_logged(capsys) -> None:
+    from app.risk.baseline import targets_used
+
+    assert targets_used({"inputs": []}) == ([], False)
+    assert targets_used(None) == ([], False)
+    assert "risk_register_targets_unreadable" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        # Ruling 2d: an empty record is unreachable and reads as not recorded.
+        {},
+        [],
+        None,
+        # A framework-qualified key without `kind`: the key is never parsed.
+        {"zt:cisa_ztmm_2_0": dict(_E)},
+        # A legacy entry under a key that is not a bare kind.
+        {"attack": dict(_E)},
+        # `kind` present but not a pair the reader knows.
+        {"csf": {**_E, "kind": "csf", "framework": "cisa_ztmm_2_0"}},
+        {"zt": {**_E, "kind": "zt", "framework": None}},
+        {"zt": {**_E, "kind": "zt"}},
+        {"zt": {**_E, "kind": "zt", "framework": "zt_unknown"}},
+        {"attack": {**_E, "kind": "attack", "framework": None}},
+        {"zt": {**_E, "kind": "zt", "framework": ["dod_ztra"]}},
+        # Two entries the lines could not tell apart.
+        {
+            "zt:a": {**_E, "kind": "zt", "framework": "dod_ztra"},
+            "zt:b": {**_E, "kind": "zt", "framework": "dod_ztra"},
+        },
+        # The value shapes, as before.
+        {"csf": {**_E, "target": "4"}},
+        {"csf": {**_E, "target": True}},
+        {"csf": {**_E, "origin": "frozen_at_release"}},
+        {"csf": {**_E, "source": 1}},
+        {"csf": dict(_E), "zt": "stage 3"},
+    ],
+    ids=[
+        "empty",
+        "list",
+        "null",
+        "qualified-key-no-kind",
+        "legacy-unknown-key",
+        "csf-with-framework",
+        "zt-null-framework",
+        "zt-no-framework",
+        "zt-unknown-framework",
+        "unknown-kind",
+        "unhashable-framework",
+        "duplicate-kind-framework",
+        "string-target",
+        "bool-target",
+        "unknown-origin",
+        "non-string-source",
+        "one-bad-entry",
+    ],
+)
+def test_an_unreadable_record_is_not_recorded_and_logged(raw, capsys) -> None:
+    assert _read(raw) == ([], False)
+    assert "risk_register_targets_unreadable" in capsys.readouterr().out
+
+
+def test_attack_alone_cannot_generate_so_no_register_records_no_targets(
     app_client,  # noqa: F811
 ) -> None:
-    """The dashboard carries the scope keys; the web formatter labels them
-    (`lib/risk/baseline.test.ts` uses these exact keys)."""
-    c, bearer, cid = _two_zt_world(app_client)
-    body = _client_dashboard(c, bearer, cid)
-    assert body["targets_recorded"] is True
-    assert sorted(t["service"] for t in body["targets"]) == sorted(_ZT_LABELS)
+    """Why the empty record is unreachable (ruling 2d): generate requires
+    `has_attack and (has_csf or has_zt)`, and every CSF or ZT source gets a
+    target."""
+    from tests._attack_rows import first_standalone
+
+    c, _provider = app_client
+    bearer, cid = _admin(c)
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    asvc = c.post("/attack/services", headers=h, json={"kind": "attack_coverage", "title": "A"})
+    assert asvc.status_code in (200, 201), asvc.text
+    a = c.post(f"/attack/services/{asvc.json()['id']}/assessments", headers=h)
+    cov = first_standalone(a.json()["coverage"])
+    r = c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "gap"})
+    assert r.status_code == 200, r.text
+    ar = c.post(f"/attack/assessments/{a.json()['id']}/approve", headers=h)
+    assert ar.status_code == 200, ar.text
+    gen = c.post(f"/risk/clients/{cid}/register/generate", headers=h)
+    assert gen.status_code == 409, gen.text
+    assert "a CSF or Zero Trust assessment" in gen.text
+
+
+def test_a_target_with_no_source_raises_rather_than_guessing() -> None:
+    """Fail closed: `_gather_findings` keys every target by a source's
+    `scope_key`, so no path produces an orphan, and a record that guessed
+    would name a service it could not identify."""
+    from app.routes.risk import _targets_record
+
+    with pytest.raises(RuntimeError, match="'zt:dod_ztra' has no source"):
+        _targets_record({"zt:dod_ztra": {"target": 3, "source": "default"}}, ())

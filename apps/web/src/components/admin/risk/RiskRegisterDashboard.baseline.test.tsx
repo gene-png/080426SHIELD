@@ -146,7 +146,8 @@ describe("RiskRegisterDashboard baseline (#474)", () => {
       register({
         targets: [
           {
-            service: "zt",
+            kind: "zt",
+            framework: "dod_ztra",
             target: 3,
             source: "default",
             origin: "live_at_generate",
@@ -159,6 +160,39 @@ describe("RiskRegisterDashboard baseline (#474)", () => {
     expect(screen.getByTestId("risk-targets-used").textContent).toBe(
       "Zero Trust findings are measured against target stage 3, SHIELD's default: no engagement target was set.",
     );
+  });
+
+  it("names each framework when CISA and DoD are both engaged", async () => {
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({
+        targets: [
+          {
+            kind: "zt",
+            framework: "cisa_ztmm_2_0",
+            target: 4,
+            source: "client",
+            origin: "live_at_generate",
+          },
+          {
+            kind: "zt",
+            framework: "dod_ztra",
+            target: 3,
+            source: "default",
+            origin: "live_at_generate",
+          },
+        ],
+        targets_recorded: true,
+      }),
+    );
+    await loaded();
+    expect(
+      [...screen.getByTestId("risk-targets-used").querySelectorAll("p")].map(
+        (p) => p.textContent,
+      ),
+    ).toEqual([
+      "Zero Trust (CISA ZTMM 2.0) findings are measured against target stage 4, the engagement target when this register was generated.",
+      "Zero Trust (DoD ZT Reference Architecture) findings are measured against target stage 3, SHIELD's default: no engagement target was set.",
+    ]);
   });
 
   it("says not recorded for a register that predates the record", async () => {

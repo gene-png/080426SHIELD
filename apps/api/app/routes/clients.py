@@ -1992,7 +1992,13 @@ def risk_dashboard(
         action_counts=action_counts(actions),
         # #474, through the one reader of the register's record.
         targets=[
-            RiskTargetUsed(service=t.service, target=t.target, source=t.source, origin=t.origin)
+            RiskTargetUsed(
+                kind=t.kind,
+                framework=t.framework,
+                target=t.target,
+                source=t.source,
+                origin=t.origin,
+            )
             for t in _risk_targets
         ],
         targets_recorded=_risk_targets_recorded,

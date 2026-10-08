@@ -40,7 +40,8 @@ describe("RiskDashboard baseline (#474)", () => {
         data={data({
           targets: [
             {
-              service: "csf",
+              kind: "csf",
+              framework: null,
               target: 4,
               source: "client",
               origin: "live_at_generate",
@@ -53,6 +54,40 @@ describe("RiskDashboard baseline (#474)", () => {
     expect(screen.getByTestId("risk-targets-used").textContent).toBe(
       "NIST CSF findings are measured against target tier 4, the engagement target when this register was generated.",
     );
+  });
+
+  it("names each framework when CISA and DoD are both engaged", () => {
+    render(
+      <RiskDashboard
+        data={data({
+          targets: [
+            {
+              kind: "zt",
+              framework: "cisa_ztmm_2_0",
+              target: 4,
+              source: "client",
+              origin: "live_at_generate",
+            },
+            {
+              kind: "zt",
+              framework: "dod_ztra",
+              target: 3,
+              source: "default",
+              origin: "live_at_generate",
+            },
+          ],
+          targets_recorded: true,
+        })}
+      />,
+    );
+    expect(
+      [...screen.getByTestId("risk-targets-used").querySelectorAll("p")].map(
+        (p) => p.textContent,
+      ),
+    ).toEqual([
+      "Zero Trust (CISA ZTMM 2.0) findings are measured against target stage 4, the engagement target when this register was generated.",
+      "Zero Trust (DoD ZT Reference Architecture) findings are measured against target stage 3, SHIELD's default: no engagement target was set.",
+    ]);
   });
 
   it("says the baseline was not recorded rather than saying nothing", () => {

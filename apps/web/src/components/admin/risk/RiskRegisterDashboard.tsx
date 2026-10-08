@@ -40,10 +40,11 @@ import {
   ArchiveServiceButton,
   ArchiveServiceDialog,
 } from "@/components/admin/risk/ArchiveServiceButton";
+import { targetSentences } from "@/lib/risk/baseline";
 // #403 / #876: the scored-coverage banner labels its scope keys with the one
 // web copy of the export's `scope_label`. A service token the labeller does not
 // know renders as itself, so a new service cannot vanish from the disclosure.
-import { scopeLabel, targetSentences } from "@/lib/risk/baseline";
+import { scopeLabel } from "@/lib/risk/labels";
 import { carriedSentences } from "@/lib/risk/carry";
 import {
   INPUTS_RULE,

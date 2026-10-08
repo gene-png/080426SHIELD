@@ -188,11 +188,15 @@ class RatingNotCarried(BaseModel):
 class RiskTargetUsed(BaseModel):
     """#474. The target one service's findings were measured against.
 
-    `source` is the resolver's word for whether the client's choice was used;
-    `origin` is when the target was read (`live_at_generate` today).
+    `kind` and `framework` say which service (`framework` is the ZT
+    framework, None for CSF); the stored scope key is never sent, so nothing
+    can render it. `source` is the resolver's word for whether the client's
+    choice was used; `origin` is when the target was read (`live_at_generate`
+    today).
     """
 
-    service: str
+    kind: str
+    framework: str | None
     target: int
     source: str
     origin: str

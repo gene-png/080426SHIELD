@@ -93,10 +93,11 @@ class RiskExportContext:
     #: #554 R3, option (b): ATT&CK codes whose computed status awaited review
     #: at generate; the source cell says so.
     review_pending: frozenset[str] = frozenset()
-    #: #474. `(service, target, source, origin)` per service, or None when the
+    #: #474. `(kind, framework, target, source, origin)` per service, sorted by
+    #: `(kind, framework)` (`app/risk/baseline.py`), or None when the
     #: register did not record them -- which the summary STATES, because a
     #: deliverable that silently omits its baseline reads as having none.
-    targets: tuple[tuple[str, int, str, str], ...] | None = None
+    targets: tuple[tuple[str, str | None, int, str, str], ...] | None = None
     #: #915 (S3): the approved sentence for the DoD target cap, from
     #: `risk/zt_capped.py`, or None when nothing was lowered or recorded.
     zt_capped_target_note: str | None = None
@@ -124,7 +125,7 @@ def build_context(
     draft: bool = False,
     source_states: dict[str, str] | None = None,
     review_pending: frozenset[str] = frozenset(),
-    targets: Sequence[tuple[str, int, str, str]] | None = None,
+    targets: Sequence[tuple[str, str | None, int, str, str]] | None = None,
     zt_capped_target_note: str | None = None,
 ) -> RiskExportContext:
     return RiskExportContext(
@@ -338,7 +339,7 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
 #: disclosure.
 #:
 #: DUPLICATED, unavoidably: the one web copy is `SERVICE_LABELS` in
-#: `apps/web/src/lib/risk/baseline.ts`, which labels the same keys on the
+#: `apps/web/src/lib/risk/labels.ts`, which labels the same keys on the
 #: consultant's and the client's screens. There is no way to share a Python
 #: dict with TSX, so this is a synchronization rather than a derivation --
 #: which `CLAUDE.md` says to avoid where possible and otherwise to NAME, with
@@ -357,7 +358,7 @@ _SERVICE_LABELS = {
 #: The ZT frameworks by the names the ZT deliverable already prints
 #: (`app/zt/exporters.py`), so the Risk Register names a framework the way the
 #: client's own Zero Trust report does (advisor, #736 6019425290, Q3). The one
-#: web copy is `ZT_FRAMEWORK_NAMES` in `apps/web/src/lib/risk/baseline.ts`;
+#: web copy is `ZT_FRAMEWORK_NAMES` in `apps/web/src/lib/risk/labels.ts`;
 #: change both.
 ZT_FRAMEWORK_NAMES = {
     "cisa_ztmm_2_0": "CISA ZTMM 2.0",
@@ -455,29 +456,50 @@ def _summary_lines(ctx: RiskExportContext) -> list[str]:
     ]
 
 
-#: #474. How each service's target is named, and which word its unit takes.
+#: #474. Which word each kind's target takes.
 _TARGET_UNITS = {"csf": "tier", "zt": "stage"}
 
 
-def _target_lines(targets: tuple[tuple[str, int, str, str], ...] | None) -> list[str]:
+def target_label(kind: str, framework: str | None, *, name_framework: bool) -> str:
+    """#474. What a target line calls a service: its kind's label, and the ZT
+    framework only when `name_framework` (the record holds more than one ZT
+    entry, Q3, ruling 2a). Built from the record's `kind` and `framework`,
+    never from a scope key.
+
+    `kind` and `framework` are the reader's validated values, so a missing
+    label raises rather than printing a token. Two services of one kind AND
+    framework cannot reach here (generate refuses them, 409
+    `risk_register_duplicate_inputs`, and the reader refuses a record holding
+    two). If per-service keying (post-MVP) lifts that refusal, a third
+    discriminator, the service title, is needed here.
+    """
+    label = _SERVICE_LABELS[kind]
+    if name_framework and framework is not None:
+        return f"{label} ({ZT_FRAMEWORK_NAMES[framework]})"
+    return label
+
+
+def _target_lines(
+    targets: tuple[tuple[str, str | None, int, str, str], ...] | None,
+) -> list[str]:
     """#474. Which target each service's findings were measured against.
 
-    Three states: recorded (one line per service), not recorded (one line
-    saying so), and no CSF or ZT input (nothing, because there is no target to
-    name). ATT&CK has no target and never appears here.
+    Two states: recorded (one line per service, in the reader's order) and not
+    recorded (one line saying so). A record with no CSF or ZT entry cannot
+    occur: generate requires a CSF or ZT input, and the reader reads an empty
+    record as not recorded (ruling 2d). ATT&CK has no target and never
+    appears here.
     """
     if targets is None:
         return [
             "The targets these findings were measured against were not recorded for "
             "this register."
         ]
+    name_framework = sum(1 for kind, *_ in targets if kind == "zt") > 1
     lines = []
-    for service, target, source, _origin in targets:
-        # The key is a scope key: "zt" with one ZT service, "zt:<framework>"
-        # with two (#876). Labelled as the scored-coverage line labels it, and
-        # the unit is the KIND's, so a framework-qualified key keeps "stage".
-        label = scope_label(service)
-        unit = _TARGET_UNITS.get(service.partition(":")[0], "level")
+    for kind, framework, target, source, _origin in targets:
+        label = target_label(kind, framework, name_framework=name_framework)
+        unit = _TARGET_UNITS[kind]
         if source == "client":
             why = "the engagement target when this register was generated"
         elif source == "default":
