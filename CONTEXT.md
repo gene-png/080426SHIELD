@@ -13,7 +13,7 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
-**2026-10-08 — #743 in PR #855 (not merged).** Count words agree with their
+**2026-10-08: #743 in PR #855 (not merged).** Count words agree with their
 numbers on both Risk screens and in `lib/risk/carry.ts`; the admin
 still-linked banner counts K = D - U - S. Detail, rulings (#736 6054419744)
 and what is pending Gene: `DELIVERY_PLAN.md`, the MVP completion path entry

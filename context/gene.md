@@ -1,6 +1,6 @@
 # Gene — in-flight status
 
-_2026-10-08 — #743 is PR #855 (`track6/743-risk-count-nouns`), clean at review
+_2026-10-08: #743 is PR #855 (`track6/743-risk-count-nouns`), clean at review
 round 4, not merged._
 
 **What it does:** count words agree with their numbers on both Risk screens and

@@ -82,7 +82,7 @@ sizes marked coarse.
 
 Track work outside that list is paused.
 
-**2026-10-08 — #743 (`tier-2`, `client-reaching`) is in PR #855, not merged.**
+**2026-10-08: #743 (`tier-2`, `client-reaching`) is in PR #855, not merged.**
 Status as written before it merges; update this line in the landing commit if
 anything changes. What it carries: every count on both Risk screens now agrees
 with its noun, verb and pronoun (the client dashboard's withheld-breakdown
