@@ -84,6 +84,69 @@ Track work outside that list is paused.
 
 **2026-10-08: #852 implemented (`tier-1`, `client-reaching`): the CSF catalog corrected toward NIST CSWP 29, not yet source-pinned.** `ID.AM-09` (not a CSF 2.0 subcategory) is retired, its stored answers kept, not scored and disclosed; `RC.CO-04` is added and inserted empty into every non-discarded assessment (migration 0064). A kept Working Profile row no longer makes the enterprise profile, the gap actions or the playbook export answer 500. Branch `track5/852-csf-cswp29`; decision record **D-109**; detail in `context/entries/2026-10-08-852-csf-cswp29.md`. **#852 stays open** until the source test pinning the code set to the NIST PDF lands (the PDF could not be fetched; Gene is asked to supply it). Routed to Gene rather than self-merged: merge-rule conditions 4, 5 and 6.
 
+**2026-10-07: #839 is implemented (`mvp-blocking`, `tier-2`) and lands with the #838 PR 3 PR.** The status here is as written before it merged.
+The DoD Zero Trust catalog follows the DoD CIO's 2025 roadmap (25-T-1465), with
+migration 0064 and per-capability target caps that the gap engine and Risk
+synthesis both apply. Every DoD deliverable carries the approved source note and
+ruling 4's line beside it. No write path stores a stage above a capability's
+maximum; a stage stored before that is disclosed on every surface, and the Risk
+Register states which targets the cap lowered.
+The decision record is **D-109**; the narrative is in
+`context/entries/2026-10-07-839-dod-catalog.md`. The PR goes to Gene: it trips
+merge-rule conditions 4 (migration 0064), 5 and 6.
+
+**#838 stays open** for its PR 4. **#839 is closed by hand** when this PR
+merges; the body carries no closing keyword. No estimate row changes and no
+total moves, because #839 owns no item in the table below. The board is the
+list.
+
+**2026-10-08: #835 (`tier-2`, on the board) is IN REVIEW as draft PR #936, with
+#927 folded in. Not merged.** A Tech Debt bundle split into named parts no
+longer reads as separately costed tools: client spend is not turned into a
+floor, Applications and "Capabilities reviewed" (PDF, DOCX and the Results-page
+summary) count source items, and category and vendor buckets count licenses, so
+a part still shows beside a separately licensed tool but a bundle counts once.
+#927, the prerequisite, is inside the same PR: the item PATCH refuses a cost on
+a bundle part with a typed 422. Rulings on #736: comment 5986057990 (item 2:
+source-item counts, savings unchanged), 6053562002 (license buckets; the
+inventory pill), 6055276302 (#927 folded in; the license labels) and 6056012075
+(the 422 copy). Left for follow-ups: #929 and #935. Trips merge-rule conditions
+5 and 6, so it comes back to Gene; no migration.
+
+**2026-10-08: #743 (`tier-2`, `client-reaching`) is in PR #855, not merged.**
+Status as written before it merges; update this line in the landing commit if
+anything changes. What it carries: every count on both Risk screens, except
+the client remedy line pending Gene, now agrees with its noun, verb and pronoun
+(the client dashboard's withheld-breakdown
+banner, its pill and donut tooltip; the admin register's batch, lost-entry,
+unrated, unlinked, dropped-link and not-recorded banners), and
+`lib/risk/carry.ts` says "each entry" for more than one rating. The admin "lost
+a value and still shows linkage" banner now counts exactly that population:
+K = D - U - S, where D and U are the server's `entries_with_dropped_links` and
+`entries_unlinked_after_drops`, and S (an entry that dropped only its
+`source_id` and holds no technique or control link) is counted from the
+entries. Rulings: advisor, #736 comments
+6054419744 (strings, K, fixtures) and 6056012075 (docs before the ready line).
+**Pending:** the client remedy line, a count-neutral rewording held for Gene;
+the code keeps his ruled sentence in one constant. **Filed from the reviews:**
+#930, #931, #932, #939.
+
+**2026-10-08: #842 (`tier-2`, ATT&CK copy after R3) in PR #933.** The
+status below is as written before it merged. What lands: the
+consultant Covered definition follows R3 (Detect, Prevent and Respond, or
+Detect and Respond where MITRE ATT&CK lists no preventive control);
+`prevention_limited` reads "Detected, no blocking control" / "This activity can
+be detected, but no control in place blocks it." (Option B), so it names a
+missing control and never reads as a technique that cannot be prevented; on a
+computed row a stored Partial reason is shown only when its sentence is true of
+the computed Detect / Prevent / Respond line, otherwise "Set by what is in
+place"; and the client "Fully covered" tile says "where MITRE ATT&CK lists no
+preventive control". Rulings: the advisor on #736, comments 6053562002 and
+6056012075. Released deliverables are left as delivered. What does NOT land
+here: the consultant `REASON_CODES` definition of `prevention_limited` (Q5) goes
+in the #806 ATT&CK prompt PR; #928 and #934 are filed from this work. No plan
+item changes and no total moves: #842 owns no row in the table below.
+
 **2026-09-22 — #209 implemented (`tier-1`, `client-reaching`); LANDED 2026-09-23 as PR #476 (`c4d3cc2`).** The status below is as written before it merged.
 The last open `tier-1`. Four client-facing surfaces resolved the engagement
 target LIVE on every request while the released document held the number it was

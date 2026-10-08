@@ -122,6 +122,13 @@ from app.zt.scoring import (
     resolve_target_stage,
 )
 from app.zt.scoring import compute as compute_score
+from app.zt.target_caps import (
+    STAGE_ABOVE_CAPABILITY_MAX,
+    max_stage_for,
+    stage_above_max_message,
+    stage_above_max_sentences,
+    target_cap_sentences,
+)
 
 router = APIRouter(prefix="/zt", tags=["zt"])
 
@@ -247,7 +254,9 @@ def _as_number(raw: Any) -> float | None:
     return None
 
 
-def _validated_stage(raw: Any, max_stage: int) -> tuple[int | None, str | None]:
+def _validated_stage(
+    raw: Any, max_stage: int, capability_max: int | None = None
+) -> tuple[int | None, str | None]:
     """A suggested maturity stage as the zt_score apply path would STORE it:
     `(stage, None)`, or `(None, reason)` with the `ZtDroppedSuggestion` reason
     it is refused for. ONE statement of the rule, called by `_zt_run_work` and
@@ -260,6 +269,14 @@ def _validated_stage(raw: Any, max_stage: int) -> tuple[int | None, str | None]:
     and out-of-range is the more useful thing to say. It also keeps `inf`/`nan`
     away from `int()`. Extracted unchanged from the inline checks
     `_zt_run_work` carried; the order and the reasons are the same.
+
+    `capability_max`, when given, is the capability's own maximum
+    (`target_caps.max_stage_for`), checked LAST: a whole stage on the ladder
+    but above it is refused as `stage_above_capability_max`, the reason the
+    PATCH routes give (#839 F1). Callers pass it for a maturity (`current`)
+    stage only; a target above it is stored and disclosed (C1). Both callers
+    pass it, so a run and the measure refuse the same values (the #867
+    hand-off, which #839 owed by merging second).
     """
     n = _as_number(raw)
     if n is None:
@@ -268,6 +285,8 @@ def _validated_stage(raw: Any, max_stage: int) -> tuple[int | None, str | None]:
         return None, "out_of_range"
     if n != int(n):
         return None, "unparseable"
+    if capability_max is not None and int(n) > capability_max:
+        return None, STAGE_ABOVE_CAPABILITY_MAX
     return int(n), None
 
 
@@ -289,6 +308,19 @@ def _framework_for_kind(kind: ServiceKind) -> ZtFramework:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Service kind must be zero_trust_cisa or zero_trust_dod.",
         ) from exc
+
+
+def _refuse_stage_above_capability_max(fw: ZtFramework, code: str, stage: int) -> None:
+    """#839 F1 (#736 comment 6048561596): a maturity stage above the
+    capability's own maximum is refused with a typed 422 and stores nothing.
+    Called by BOTH stage-writing PATCH routes, after the framework range check;
+    `_zt_run_work` drops the same value as `stage_above_capability_max`."""
+    message = stage_above_max_message(_to_catalog_framework(fw), code, stage)
+    if message is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"reason": STAGE_ABOVE_CAPABILITY_MAX, "message": message},
+        )
 
 
 def _to_catalog_framework(fw: ZtFramework) -> ZtFrameworkCode:
@@ -871,9 +903,17 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
         # handing the settlement loop a row the model never wrote.
         for field in fields:
             raw = sugg[field]
-            # Parse, range, wholeness, in that order: `_validated_stage`, the
-            # one statement of the rule, also called by the consistency measure.
-            stage, refusal = _validated_stage(raw, max_stage)
+            # Parse, range, wholeness, then the capability's own maximum for a
+            # maturity stage (#839 F1: the PATCH routes refuse a stage above
+            # it, so a suggestion of one is refused the same way, never
+            # stored). `_validated_stage`, the one statement of the rule, also
+            # called by the consistency measure with the same maximum.
+            capability_max = (
+                max_stage_for(_to_catalog_framework(a.framework), raw_code)
+                if field == "current"
+                else None
+            )
+            stage, refusal = _validated_stage(raw, max_stage, capability_max)
             if refusal is not None:
                 # `values=field_values[field]`, NOT 1. `received` charged this
                 # key every leaf it hides, so a flat 1 here drops the rest out
@@ -891,7 +931,6 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
                     )
                 )
                 continue
-
             slot = (raw_code, field)
             if slot in written:
                 # Names the value that was LOST, not the one that won.
@@ -1175,6 +1214,7 @@ def patch_answer(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"maturity_stage must be 1-{max_stage}.",
             )
+        _refuse_stage_above_capability_max(a.framework, row.capability_code, s)
         row.maturity_stage = s
     elif "maturity_stage" in data:
         row.maturity_stage = None
@@ -1290,6 +1330,7 @@ def patch_self_assessment_answer(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"maturity_stage must be 1-{max_stage}.",
             )
+        _refuse_stage_above_capability_max(a.framework, row.capability_code, s)
         row.maturity_stage = s
     elif "maturity_stage" in data:
         row.maturity_stage = None
@@ -1707,6 +1748,10 @@ def gap_analysis(
         unscored_count=len(analysis.unscored_codes),
         # Off the same GapAnalysis the deliverable and the dashboard read.
         unusable_target_codes=list(analysis.unusable_target_codes),
+        # #839: from the same GapAnalysis the deliverable and dashboard read.
+        target_cap_notes=target_cap_sentences(analysis),
+        # #839 S1: from the same stored answers the analysis read.
+        stage_above_max_notes=stage_above_max_sentences(cat_fw, answers),
         gap_count_by_pillar=analysis.gap_count_by_pillar,
         gaps=[
             GapItem(

@@ -10,14 +10,15 @@ embed the framework prefix to keep them globally unique:
 Counts:
   CISA ZTMM 2.0:  5 pillars / 37 rows, verbatim from CISA's PDF (#838):
                   each pillar's functions plus its own three cross-cutting rows
-  DoD ZTRA:       7 pillars / 50 capabilities (v1 baseline; corrected to the
-                  DoD Execution Roadmap's 45 + 152 activities by #839)
+  DoD ZTRA:       7 pillars / 45 capabilities / 152 activities, verbatim from
+                  DoD CIO's 2025 roadmap, 25-T-1465 (#839)
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.zt._dod_catalog_data import DOD_ACTIVITY_ROWS, DOD_CAPABILITY_ROWS
 from app.zt.maturity import ZtFrameworkCode
 
 
@@ -30,6 +31,17 @@ class Pillar:
 
 
 @dataclass(frozen=True)
+class Activity:
+    """One DoD activity (#839): the unit DoD's Target and Advanced levels are
+    defined by. Reference data, sent to the model; not answered per activity."""
+
+    id: str  # DoD's activity number, e.g. "1.3.1"
+    name: str
+    level: str  # "target" or "advanced"
+    description: str  # the description, plus its outcomes and End State
+
+
+@dataclass(frozen=True)
 class Capability:
     framework: ZtFrameworkCode
     pillar_code: str
@@ -39,6 +51,10 @@ class Capability:
     #: "function", or "cross_cutting" for a CISA pillar's Visibility and
     #: Analytics, Automation and Orchestration and Governance rows (#838).
     kind: str = "function"
+    #: DoD's own capability number, e.g. "4.6" (#839). None for CISA.
+    dod_number: str | None = None
+    #: A DoD capability's activities, sorted by id (#839). Empty for CISA.
+    activities: tuple[Activity, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -336,299 +352,58 @@ CISA_CAPABILITIES: tuple[Capability, ...] = (
 
 
 # ---------------------------------------------------------------------------
-# DoD Zero Trust Reference Architecture (v1 baseline)
+# DoD Zero Trust (#839): the 2025 DoD CIO roadmap, 25-T-1465
 # ---------------------------------------------------------------------------
+#
+# Seven pillars in DoD's numbering (6 Automation and Orchestration before 7
+# Visibility and Analytics), 45 capabilities and their 152 activities, each
+# Target or Advanced. Names, pillar names, capability descriptions (`outcome`,
+# labelled "DoD:") and activities are DoD's, verbatim, generated into
+# `_dod_catalog_data.py` from the committed extraction
+# `reference-docs/dod/dod_zt_2025_rows.json`, which
+# `test_zt_dod_catalog_source.py` holds this section to. Codes stay
+# `DOD.<PILLAR>.<NN>`, NN being DoD's own minor number, so `DOD.DAT.06` is now
+# Data Loss Prevention (4.6) and `DOD.DAT.07` Data Access Control (4.7):
+# migration 0064 swaps the stored answers to match. The pillar `purpose` lines
+# are Kentro's, unchanged: the 2025 document defines no pillars.
 
-DOD_PILLARS: tuple[Pillar, ...] = (
-    Pillar(
-        ZtFrameworkCode.DOD_ZTRA,
-        "USR",
-        "User",
-        "Authenticate, authorize, and continuously evaluate users against mission-driven risk.",
-    ),
-    Pillar(
-        ZtFrameworkCode.DOD_ZTRA,
-        "DEV",
-        "Device",
-        "Identify, authenticate, and continuously evaluate device security posture.",
-    ),
-    Pillar(
-        ZtFrameworkCode.DOD_ZTRA,
-        "APP",
-        "Application & Workload",
-        "Secure DevSecOps lifecycle and runtime protection for mission applications.",
-    ),
-    Pillar(
-        ZtFrameworkCode.DOD_ZTRA,
-        "DAT",
-        "Data",
-        "Tag, encrypt, and control data based on attributes throughout its lifecycle.",
-    ),
-    Pillar(
-        ZtFrameworkCode.DOD_ZTRA,
-        "NET",
-        "Network & Environment",
-        "Segment, isolate, and continuously monitor mission networks.",
-    ),
-    Pillar(
-        ZtFrameworkCode.DOD_ZTRA,
-        "VIS",
-        "Visibility & Analytics",
-        "Centralize sensor data and apply analytics across all pillars.",
-    ),
-    Pillar(
-        ZtFrameworkCode.DOD_ZTRA,
-        "AUT",
-        "Automation & Orchestration",
-        "Automate policy enforcement, response, and continuous validation across pillars.",
-    ),
+_DOD_PURPOSES = {
+    "USR": "Authenticate, authorize, and continuously evaluate users against mission-driven risk.",
+    "DEV": "Identify, authenticate, and continuously evaluate device security posture.",
+    "APP": "Secure DevSecOps lifecycle and runtime protection for mission applications.",
+    "DAT": "Tag, encrypt, and control data based on attributes throughout its lifecycle.",
+    "NET": "Segment, isolate, and continuously monitor mission networks.",
+    "AUT": "Automate policy enforcement, response, and continuous validation across pillars.",
+    "VIS": "Centralize sensor data and apply analytics across all pillars.",
+}
+
+DOD_PILLARS: tuple[Pillar, ...] = tuple(
+    Pillar(ZtFrameworkCode.DOD_ZTRA, code, name, _DOD_PURPOSES[code])
+    for code, name in dict.fromkeys((row[0], row[1]) for row in DOD_CAPABILITY_ROWS)
 )
 
 
-def _dod(pillar: str, num: int, name: str, outcome: str) -> Capability:
-    return Capability(
+def _dod_activities(dod_number: str) -> tuple[Activity, ...]:
+    prefix = f"{dod_number}."
+    found = [
+        Activity(id=aid, name=name, level=level, description=description)
+        for aid, name, level, description in DOD_ACTIVITY_ROWS
+        if aid.startswith(prefix)
+    ]
+    return tuple(sorted(found, key=lambda a: tuple(int(x) for x in a.id.split("."))))
+
+
+DOD_CAPABILITIES: tuple[Capability, ...] = tuple(
+    Capability(
         framework=ZtFrameworkCode.DOD_ZTRA,
         pillar_code=pillar,
-        code=f"DOD.{pillar}.{num:02d}",
+        code=code,
         name=name,
-        outcome=outcome,
+        outcome=f"DoD: {description}",
+        dod_number=number,
+        activities=_dod_activities(number),
     )
-
-
-DOD_CAPABILITIES: tuple[Capability, ...] = (
-    # User (8)
-    _dod(
-        "USR",
-        1,
-        "User Inventory",
-        "Authoritative user inventory across mission partners and contractors.",
-    ),
-    _dod(
-        "USR",
-        2,
-        "Conditional User Access",
-        "Risk-adaptive conditional access decisions per request.",
-    ),
-    _dod("USR", 3, "Multi-Factor Authentication", "Phishing-resistant MFA mandated for all users."),
-    _dod(
-        "USR", 4, "Privileged Access Management", "Just-in-time elevation with session recording."
-    ),
-    _dod(
-        "USR",
-        5,
-        "Identity Federation & User Credentialing",
-        "Federated identity with non-person-entity support.",
-    ),
-    _dod(
-        "USR",
-        6,
-        "Behavioral Contextual ID + Biometrics",
-        "Continuous behavior + biometric signals shape trust.",
-    ),
-    _dod(
-        "USR", 7, "Least Privilege Access", "Defaults to least privilege; periodic recertification."
-    ),
-    _dod(
-        "USR", 8, "Continuous Authentication", "Continuous re-authentication based on session risk."
-    ),
-    # Device (7)
-    _dod("DEV", 1, "Device Inventory", "Hardware + firmware inventory maintained continuously."),
-    _dod(
-        "DEV",
-        2,
-        "Device Detection & Compliance",
-        "Compliance posture checked before every resource access.",
-    ),
-    _dod(
-        "DEV",
-        3,
-        "Device Authorization w/ Real Time Inspection",
-        "Real-time device authorization with health attestation.",
-    ),
-    _dod("DEV", 4, "Remote Access", "Brokered remote access; per-resource authorization."),
-    _dod(
-        "DEV",
-        5,
-        "Partially & Fully Automated Asset, Vulnerability and Patch Management",
-        "Automated patching with measured success rate.",
-    ),
-    _dod(
-        "DEV",
-        6,
-        "Unified Endpoint Management & Mobile Device Management",
-        "Unified policy across endpoint OSes and mobile.",
-    ),
-    _dod(
-        "DEV",
-        7,
-        "Endpoint & Extended Detection & Response",
-        "EDR/XDR coverage with automated containment.",
-    ),
-    # Application & Workload (7)
-    _dod(
-        "APP", 1, "Application Inventory", "Authoritative application portfolio with criticality."
-    ),
-    _dod(
-        "APP",
-        2,
-        "Secure Software Development & Integration",
-        "Secure-by-default DevSecOps with SBOM + signing.",
-    ),
-    _dod(
-        "APP",
-        3,
-        "Software Risk Management",
-        "Application-level risk register and remediation tracking.",
-    ),
-    _dod(
-        "APP",
-        4,
-        "Resource Authorization & Integration",
-        "Per-resource authorization integrated with PDP.",
-    ),
-    _dod(
-        "APP",
-        5,
-        "Continuous Monitoring & Ongoing Authorizations",
-        "Continuous ATO with automated artifact collection.",
-    ),
-    _dod(
-        "APP",
-        6,
-        "Application Delivery",
-        "Trusted application delivery with deployment policy gates.",
-    ),
-    _dod(
-        "APP",
-        7,
-        "Software Defined Compute Infrastructure",
-        "Software-defined compute with policy-enforced runtime.",
-    ),
-    # Data (7)
-    _dod(
-        "DAT", 1, "Data Catalog Risk Alignment", "Catalog data assets and align controls to risk."
-    ),
-    _dod(
-        "DAT",
-        2,
-        "DoD Enterprise Data Governance",
-        "Enterprise data governance applied to mission data.",
-    ),
-    _dod(
-        "DAT", 3, "Data Labeling & Tagging", "Automated data tagging drives downstream enforcement."
-    ),
-    _dod(
-        "DAT",
-        4,
-        "Data Monitoring & Sensing",
-        "Data loss + exfiltration monitoring across egress points.",
-    ),
-    _dod(
-        "DAT",
-        5,
-        "Data Encryption & Rights Management",
-        "Rights-based access + encryption tied to data tags.",
-    ),
-    _dod("DAT", 6, "Data Access Control", "Attribute-based access enforced on every data request."),
-    _dod("DAT", 7, "Data Loss Prevention", "Active DLP across endpoints, networks, and cloud."),
-    # Network & Environment (7)
-    _dod("NET", 1, "Data Flow Mapping", "Data flow maps maintained and used in policy decisions."),
-    _dod("NET", 2, "Software Defined Networking", "SDN enables policy-driven traffic isolation."),
-    _dod("NET", 3, "Macro Segmentation", "Mission-level macro segmentation with deny-by-default."),
-    _dod(
-        "NET",
-        4,
-        "Micro Segmentation",
-        "Workload-level microsegmentation enforced by identity-aware proxies.",
-    ),
-    _dod(
-        "NET",
-        5,
-        "Network Inspection & Traffic Analytics",
-        "Encrypted-traffic-aware analytics with privacy safeguards.",
-    ),
-    _dod(
-        "NET",
-        6,
-        "Network Threat Protection",
-        "Inline threat protection with rapid signature distribution.",
-    ),
-    _dod(
-        "NET",
-        7,
-        "Network Access Control",
-        "ZT-aligned NAC; no implicit trust based on network position.",
-    ),
-    # Visibility & Analytics (7)
-    _dod(
-        "VIS",
-        1,
-        "Log All Traffic - Network, Data, Apps, Users",
-        "Comprehensive logging with retention policies.",
-    ),
-    _dod(
-        "VIS",
-        2,
-        "Security Information & Event Management (SIEM)",
-        "SIEM correlates events across all pillars.",
-    ),
-    _dod(
-        "VIS", 3, "Common Security & Risk Analytics", "Unified risk scoring informs PDP decisions."
-    ),
-    _dod(
-        "VIS",
-        4,
-        "User & Entity Behavior Analytics",
-        "UEBA detects anomalies across user + entity activity.",
-    ),
-    _dod(
-        "VIS",
-        5,
-        "Threat Intelligence Integration",
-        "Threat intel actively shapes detections + policy.",
-    ),
-    _dod(
-        "VIS",
-        6,
-        "Automated Dynamic Policies",
-        "Analytics output adjusts policy automatically within guardrails.",
-    ),
-    _dod(
-        "VIS",
-        7,
-        "Asset ID & Alert Correlation",
-        "Asset-aware alert correlation drives prioritization.",
-    ),
-    # Automation & Orchestration (7)
-    _dod(
-        "AUT",
-        1,
-        "Policy Decision Point & Policy Orchestration",
-        "Centralized PDP enforces unified policy.",
-    ),
-    _dod(
-        "AUT",
-        2,
-        "Critical Process Automation",
-        "Automated response to defined high-confidence patterns.",
-    ),
-    _dod("AUT", 3, "Machine Learning", "ML adapts policy and detections to current telemetry."),
-    _dod(
-        "AUT", 4, "Artificial Intelligence", "AI-assisted decision support with human-in-the-loop."
-    ),
-    _dod(
-        "AUT",
-        5,
-        "Security Orchestration, Automation & Response (SOAR)",
-        "SOAR runbooks executed with audit trail.",
-    ),
-    _dod("AUT", 6, "API Standardization", "Standardized APIs across pillars enable orchestration."),
-    _dod(
-        "AUT",
-        7,
-        "Security Operations Center & Incident Response",
-        "SOC + IR drilled regularly with measurable outcomes.",
-    ),
+    for pillar, _pillar_name, number, code, name, description in DOD_CAPABILITY_ROWS
 )
 
 
@@ -667,6 +442,7 @@ def all_codes(framework: ZtFrameworkCode) -> frozenset[str]:
 
 
 __all__ = [
+    "Activity",
     "CISA_CAPABILITIES",
     "CISA_PILLARS",
     "Capability",

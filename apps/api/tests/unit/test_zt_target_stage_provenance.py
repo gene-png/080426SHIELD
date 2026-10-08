@@ -270,6 +270,11 @@ def test_every_dataclass_the_zt_exporter_reads_is_shape_pinned() -> None:
         # the others. The gate fired on the branch that added it, which is
         # the behaviour it was written for.
         "unusable_target_codes",
+        # Added by #839, the same way: `zt/target_caps.py` reads both to write
+        # the approved C1/C2 sentences, and all three renderers in
+        # `exporters.py` call it. The gate fired on the branch that added them.
+        "capped_target_codes",
+        "no_target_level_codes",
     }
     assert {f.name for f in fields(ScoreResult)} == {
         "framework",

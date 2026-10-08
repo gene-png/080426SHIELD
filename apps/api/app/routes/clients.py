@@ -43,7 +43,7 @@ from app.attack.exporters import partial_reason_counts as attack_partial_reason_
 from app.attack.exporters import retirement_sentences as attack_retirement_sentences
 from app.attack.parents import PARENT_CHILDREN as ATTACK_PARENT_CHILDREN
 from app.attack.parents import is_computed_parent as attack_is_computed_parent
-from app.attack.partial_reasons import partial_reason as attack_partial_reason
+from app.attack.partial_reasons import partial_reason_for_row as attack_partial_reason_for_row
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.rules import parents_computed as attack_parents_computed
 from app.attack.rules import statuses_computed as attack_statuses_computed
@@ -92,6 +92,8 @@ from app.risk.engine import (
     matrix_counts,
     tier_counts,
 )
+from app.risk.zt_capped import capped_target_codes as risk_capped_target_codes
+from app.risk.zt_capped import capped_target_sentence as risk_capped_target_sentence
 from app.routes.attack import client_retirement_index
 from app.schemas.clients import (
     AttackDashboardResponse,
@@ -119,11 +121,14 @@ from app.schemas.clients import (
     ZtPillarDashboard,
 )
 from app.services.engagement_targets import client_target_stage, client_target_tier
+from app.tech_debt.components import is_component, license_count, source_items
 from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.savings import estimated_savings
 from app.zt.catalog import capability_by_code as zt_capability_by_code
 from app.zt.maturity import ZtFrameworkCode
 from app.zt.maturity import stage_label as zt_stage_label
+from app.zt.retired import retired_answer_count as zt_retired_answer_count
+from app.zt.retired import retired_sentence as zt_retired_sentence
 from app.zt.scoring import analyze_gaps as zt_analyze_gaps
 from app.zt.scoring import compute as zt_compute
 from app.zt.scoring import effective_target_stages as zt_effective_target_stages
@@ -131,6 +136,8 @@ from app.zt.scoring import (
     engagement_target_capability_count as zt_engagement_target_capability_count,
 )
 from app.zt.scoring import resolve_target_stage as zt_resolve_target_stage
+from app.zt.target_caps import stage_above_max_sentences as zt_stage_above_max_sentences
+from app.zt.target_caps import target_cap_sentences as zt_target_cap_sentences
 
 router = APIRouter(prefix="/clients", tags=["clients"])
 
@@ -1253,13 +1260,10 @@ def attack_dashboard(
                 partial_reason=(
                     AttackPartialReason(label=reason.label, sentence=reason.sentence)
                     if (
-                        reason := attack_partial_reason(
-                            r.status,
-                            r.reason_code,
-                            computed_parent=bool(parent),
-                            # #554 R3: the exporters' `_row_reason` twin.
-                            computed_leaf=getattr(r, "is_computed", False),
-                        )
+                        # #842: the exporters' `_row_reason` calls the same entry
+                        # point, so a stored reason is shown only when it is true
+                        # of the computed Detect / Prevent / Respond line.
+                        reason := attack_partial_reason_for_row(r, computed_parent=bool(parent))
                     )
                     is not None
                     else None
@@ -1581,6 +1585,13 @@ def zt_dashboard(
         # would be worse than most -- the screen and the PDF would be stating
         # different facts about one assessment.
         unusable_target_codes=list(gap_analysis.unusable_target_codes),
+        # #839: off the same GapAnalysis, as #188's field above.
+        target_cap_notes=zt_target_cap_sentences(gap_analysis),
+        # #914: the same derivation the workspace and the three files call.
+        retired_answers=zt_retired_answer_count(fw, rows),
+        retired_answers_note=zt_retired_sentence(fw, zt_retired_answer_count(fw, rows)),
+        # #839 S1: from the same stored answers every figure above read.
+        stage_above_max_notes=zt_stage_above_max_sentences(fw, answers),
         total_gap_count=gap_analysis.total_gap_count,
         largest_gap_pillar=largest.name if largest else None,
         largest_gap_pct=largest.gap_pct if largest else 0.0,
@@ -1663,7 +1674,13 @@ def tech_debt_dashboard(
     )
 
     annual_spend = 0.0
-    # #804: the deliverable's own derivation, not a copy of it.
+    # for #835: the ONE rule for what counts as an application. A split
+    # bundle's parts are listed in the inventory but are not tools of their own.
+    sources = source_items(items)
+    bundle_part_count = len(items) - len(sources)
+    # #804: the deliverable's own derivation, not a copy of it. Savings still
+    # see a part (advisor ruling on #736): a part marked Cut with no cost is a
+    # genuinely unknown saving.
     found = estimated_savings((it.disposition, it.annual_cost_usd) for it in items)
     savings = found.amount
     savings_cost_known = found.known
@@ -1672,18 +1689,27 @@ def tech_debt_dashboard(
     # `total_applications`, so the spend figure was a floor and said so nowhere
     # while `savings` beside it carried a flag for exactly this.
     spend_cost_known = True
-    # category -> {"total": float, "count": int, "items": [CapabilityItem]}
+    # category -> {"total": float, "items": [CapabilityItem]}; "count" is
+    # derived below as the number of distinct LICENSES in the bucket.
     by_cat: dict[str, dict] = {}
     for it in items:
-        cost = float(it.annual_cost_usd) if it.annual_cost_usd is not None else 0.0
-        if it.annual_cost_usd is None:
+        # for #835: a bundle's part is not a cost. Its parent holds the license
+        # value, so the part neither adds to spend nor, by having no cost of its
+        # own, makes spend a floor. A real uncosted source row still does.
+        part = is_component(it)
+        cost = float(it.annual_cost_usd) if it.annual_cost_usd is not None and not part else 0.0
+        if it.annual_cost_usd is None and not part:
             spend_cost_known = False
         annual_spend += cost
+        # A part DOES sit in its own category (UX finding 5: Defender beside
+        # CrowdStrike is a real redundancy), but a bundle and its parts are one
+        # license, so the bucket counts licenses rather than rows.
         cat = it.category or _UNCATEGORIZED
-        bucket = by_cat.setdefault(cat, {"total": 0.0, "count": 0, "items": []})
+        bucket = by_cat.setdefault(cat, {"total": 0.0, "items": []})
         bucket["total"] += cost
-        bucket["count"] += 1
         bucket["items"].append(it)
+    for bucket in by_cat.values():
+        bucket["count"] = license_count(bucket["items"])
 
     spend_by_category = [
         TechDebtCategorySpend(category=cat, total_usd=round(b["total"], 2), count=b["count"])
@@ -1716,7 +1742,8 @@ def tech_debt_dashboard(
         client_id=str(client.id),
         service_id=str(service_id),
         actor_user_id=str(user.id),
-        applications=len(items),
+        applications=len(sources),
+        bundle_parts=bundle_part_count,
         savings=savings,
     )
 
@@ -1726,7 +1753,7 @@ def tech_debt_dashboard(
     # way as the exporter -- source-derived items only, so decomposing a bundle
     # into children can never move the arithmetic.
     source_rows_total = getattr(cl, "source_rows_total", None)
-    included_count = sum(1 for it in items if getattr(it, "parent_item_id", None) is None)
+    included_count = len(sources)
     excluded_count = (
         max(source_rows_total - included_count, 0) if source_rows_total is not None else 0
     )
@@ -1783,7 +1810,8 @@ def tech_debt_dashboard(
         deliverable_version=deliv.version,
         # #646: the ONE derivation every surface calls, for the released list.
         ai_source=ai_mode_for(db, svc, cl).as_api(),
-        total_applications=len(items),
+        total_applications=len(sources),
+        bundle_part_count=bundle_part_count,
         annual_spend_usd=round(annual_spend, 2),
         identified_savings_usd=round(savings, 2),
         savings_cost_known=savings_cost_known,
@@ -1981,6 +2009,8 @@ def risk_dashboard(
             )
             for e in entries
         ],
+        # #915: the same reader and sentence as the register and its files.
+        zt_capped_target_note=risk_capped_target_sentence(risk_capped_target_codes(reg.provenance)),
     )
 
 

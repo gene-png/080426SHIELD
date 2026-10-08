@@ -78,9 +78,9 @@ def test_dod_pillar_count_is_seven() -> None:
 
 
 @pytest.mark.unit
-def test_dod_capability_count_is_fifty() -> None:
-    # v1 baseline; expand to the full 152 in a future patch.
-    assert len(DOD_CAPABILITIES) == 50
+def test_dod_capability_count_is_fortyfive() -> None:
+    # #839: the 2025 DoD CIO roadmap (25-T-1465) has 45 capabilities.
+    assert len(DOD_CAPABILITIES) == 45
 
 
 @pytest.mark.unit
@@ -156,7 +156,7 @@ def test_capability_by_code_finds_across_frameworks() -> None:
 
 @pytest.mark.unit
 def test_framework_level_counts() -> None:
-    # CISA has 4 levels (Traditional..Optimal); DoD has 3 (Not Started..Advanced).
+    # CISA has 4 levels (Traditional..Optimal); DoD has 3 (Below Target..Advanced).
     assert level_count(ZtFrameworkCode.CISA_ZTMM_2_0) == 4
     assert level_count(ZtFrameworkCode.DOD_ZTRA) == 3
     assert [d.stage for d in CISA_STAGES] == [1, 2, 3, 4]
@@ -168,7 +168,7 @@ def test_framework_level_counts() -> None:
     "stage,fw,expected",
     [
         (1, ZtFrameworkCode.CISA_ZTMM_2_0, "Traditional"),
-        (1, ZtFrameworkCode.DOD_ZTRA, "Not Started"),
+        (1, ZtFrameworkCode.DOD_ZTRA, "Below Target"),
         (2, ZtFrameworkCode.CISA_ZTMM_2_0, "Initial"),
         (2, ZtFrameworkCode.DOD_ZTRA, "Target"),
         (3, ZtFrameworkCode.CISA_ZTMM_2_0, "Advanced"),

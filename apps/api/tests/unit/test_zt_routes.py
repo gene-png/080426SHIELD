@@ -128,11 +128,11 @@ def test_catalog_returns_dod_when_requested(app_client) -> None:
     )
     body = r.json()
     assert body["framework"] == "dod_ztra"
-    assert body["total_capabilities"] == 50
+    assert body["total_capabilities"] == 45  # #839
     assert len(body["pillars"]) == 7
     # DoD label vocabulary: 3 levels (Work Order A4).
     labels = {s["label"] for s in body["stages"]}
-    assert labels == {"Not Started", "Target", "Advanced"}
+    assert labels == {"Below Target", "Target", "Advanced"}
     assert len(body["stages"]) == 3
 
 
@@ -210,14 +210,14 @@ def test_create_assessment_seeds_cisa_with_37_empty_answers(app_client) -> None:
 
 
 @pytest.mark.unit
-def test_create_assessment_seeds_dod_with_50_empty_answers(app_client) -> None:
+def test_create_assessment_seeds_dod_with_45_empty_answers(app_client) -> None:
     c = app_client
     admin = _register(c, "admin@example.com")
     bearer = admin["tokens"]["access_token"]
     svc_id = _open_service(c, bearer, "zero_trust_dod")
     body = _new_assessment(c, bearer, svc_id)
     assert body["framework"] == "dod_ztra"
-    assert len(body["answers"]) == 50
+    assert len(body["answers"]) == 45  # #839
 
 
 @pytest.mark.unit
@@ -373,18 +373,28 @@ def test_score_endpoint_rolls_up_dod(app_client) -> None:
     bearer = admin["tokens"]["access_token"]
     svc_id = _open_service(c, bearer, "zero_trust_dod")
     a = _new_assessment(c, bearer, svc_id)
+    refused = 0
     for ans in a["answers"]:
-        c.patch(
+        r = c.patch(
             f"/zt/answers/{ans['id']}",
             headers={"Authorization": f"Bearer {bearer}"},
             json={"maturity_stage": 3},
         )
+        if r.status_code == 422:
+            assert r.json()["error"]["reason"] == "stage_above_capability_max", r.text
+            refused += 1
+        else:
+            assert r.status_code == 200, r.text
+    # #839 F1: 3 is refused on the no-Advanced capabilities (15, per
+    # `count_dod_levels.py`), so 30 are answered.
+    assert refused == 15
     r = c.get(
         f"/zt/services/{svc_id}/score",
         headers={"Authorization": f"Bearer {bearer}"},
     )
     body = r.json()
-    assert body["total_capabilities"] == 50
+    assert body["total_capabilities"] == 45  # #839
+    assert body["answered_capabilities"] == 30
     assert body["average_stage"] == 3.0
     # DoD stage 3 ("Advanced") is the top of the 3-level scale -> 100%.
     assert body["overall_stage_label"] == "Advanced"

@@ -85,6 +85,28 @@ export function ZtGapList({
               {targetNote}
             </p>
           ) : null}
+          {/* #839: the API's own sentences, one per capped capability. */}
+          {analysis?.target_cap_notes?.length ? (
+            <ul
+              className="w-full list-disc pl-5 text-xs text-ink-secondary"
+              data-testid="zt-target-caps"
+            >
+              {analysis.target_cap_notes.map((s) => (
+                <li key={s}>{s}</li>
+              ))}
+            </ul>
+          ) : null}
+          {/* #839 S1: the API's own sentence per stored stage above its maximum. */}
+          {analysis?.stage_above_max_notes?.length ? (
+            <ul
+              className="w-full list-disc pl-5 text-xs text-ink-secondary"
+              data-testid="zt-stage-above-max"
+            >
+              {analysis.stage_above_max_notes.map((s) => (
+                <li key={s}>{s}</li>
+              ))}
+            </ul>
+          ) : null}
         </div>
 
         {!analysis ? (
