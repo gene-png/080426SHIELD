@@ -29,6 +29,9 @@ class ScenarioParseRequest(BaseModel):
     description is refused with a typed 422 (C7, C8)."""
 
     text: Any = None
+    #: The mode the page acknowledged (#504): only "live" lets the text reach
+    #: the AI. Absent means no AI, so a caller that never asks gets slice C.
+    serves: Any = None
 
 
 class ScenarioNotUnderstood(BaseModel):
@@ -45,6 +48,15 @@ class ScenarioParseResponse(BaseModel):
     removed: list[str]
     added: list[str]
     not_understood: list[ScenarioNotUnderstood]
+    #: Who read the text: "matcher" (slice C) or "ai" (#802, copy N1).
+    source: str = "matcher"
+    #: N2 when the AI was tried, or would have been, and could not be used.
+    note: str | None = None
+    #: #802: names the AI suggested that failed the checks, counted and never
+    #: quoted (Gene's ruling), and the sentence that says so; 0 and None for
+    #: the matcher.
+    left_out: int = 0
+    left_out_message: str | None = None
 
 
 class ScenarioAddedTool(BaseModel):
@@ -133,6 +145,9 @@ class ScenarioBase(BaseModel):
     version: int
     approved_at: datetime | None
     tools: list[str]
+    #: #851: tool citations in the base outside the client's CURRENT security
+    #: tool list; today's figure still counts them. REQUIRED.
+    citations_outside_subset: int
 
 
 class ScenarioListResponse(BaseModel):
@@ -164,7 +179,8 @@ class ScenarioResponse(BaseModel):
     base_approved_at: datetime | None
     #: A newer assessment is now the confirmed base. Shown, never re-based.
     stale: bool
-    #: True when the run route would refuse with 503 (no prompt text yet).
+    #: True when the what-if job is registered and a run can be accepted. False
+    #: only if the registration is removed; the run route then refuses with 503.
     analysis_available: bool
     ai_run_id: uuid.UUID | None
     #: The run's status (`running`, `completed`, `failed`), None before a run.

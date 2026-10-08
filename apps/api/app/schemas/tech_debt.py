@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from app.models.capability import (
     CapabilityDisposition,
@@ -14,8 +14,9 @@ from app.models.capability import (
     SecurityFunction,
 )
 from app.models.service import ServiceKind, ServiceStatus
-from app.schemas._numeric import IntNotBool
+from app.schemas._numeric import FloatNotBool, IntNotBool
 from app.schemas.ai_runs import AiSource
+from app.tech_debt.security_scope import signoff_kind
 
 
 class ServiceCreateRequest(BaseModel):
@@ -71,6 +72,12 @@ class CapabilityItemResponse(BaseModel):
     security_functions: list[SecurityFunction] = []
     security_class_confirmed: bool = False
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def signoff_kind(self) -> Literal["not_in_use", "not_security"] | None:
+        """#845: how the sign-off queue words this row (`security_scope`)."""
+        return signoff_kind(self)  # type: ignore[return-value]
+
     @field_validator("security_functions", mode="before")
     @classmethod
     def _functions_default(cls, v: object) -> object:
@@ -102,7 +109,7 @@ class IncludeExcludedRowRequest(BaseModel):
     vendor: str | None = Field(default=None, max_length=255)
     category: str | None = Field(default=None, max_length=128)
     function: str | None = Field(default=None, max_length=255)
-    annual_cost_usd: float | None = None
+    annual_cost_usd: FloatNotBool | None = None
     license_count: IntNotBool | None = None
     notes: str | None = None
 
@@ -142,9 +149,16 @@ class CapabilityListResponse(BaseModel):
     # #177: whether the extraction attributed every item to one uploaded row.
     # NULL is "not recorded" (pre-0058, or no extraction), never complete.
     attribution_complete: bool | None = None
+    # #833 / #834: what the extraction could not store as given. None is "not
+    # recorded" (a list from before 0062); [] is "checked, nothing to record".
+    extraction_findings: list[dict] | None = None
     # #177/#193: `reconcile.exclusion_count_state` -- whether the excluded count
     # is exact or only a floor, from the one reader every surface calls.
     exclusion_count_state: Literal["not_recorded", "exact", "unknown"] | None = None
+    # #845: rows carrying v3.2's "Security tool not in use:" prefix while also
+    # security-related -- the model contradicting itself, kept in ATT&CK scope.
+    # Derived by the route from the stored rows, a consultant's override excluded.
+    not_in_use_contradictions: int = 0
 
     @field_validator("excluded_rows", mode="before")
     @classmethod
@@ -192,7 +206,7 @@ class CapabilityItemPatch(BaseModel):
     vendor: str | None = Field(default=None, max_length=255)
     category: str | None = Field(default=None, max_length=128)
     function: str | None = Field(default=None, max_length=255)
-    annual_cost_usd: float | None = None
+    annual_cost_usd: FloatNotBool | None = None
     license_count: IntNotBool | None = None
     notes: str | None = None
     disposition: CapabilityDisposition | None = None

@@ -258,6 +258,21 @@ export function AttackCitationAccounting({
           .
         </p>
       ) : null}
+
+      {/* #841. Only a consultant may rule a technique N/A, so the run refused
+          every N/A the AI suggested. Said here so a refusal is not mistaken for
+          the AI having no view on that technique. Copy approved verbatim
+          (issue 841, comment 5983735013). */}
+      {(result.not_applicable_refused ?? 0) > 0 ? (
+        <p
+          className="text-ink-secondary"
+          data-testid="attack-not-applicable-refused"
+        >
+          {result.not_applicable_refused === 1
+            ? "1 technique was suggested as N/A and not applied. Only a consultant can mark a technique N/A, in the technique panel."
+            : `${result.not_applicable_refused} techniques were suggested as N/A and not applied. Only a consultant can mark a technique N/A, in the technique panel.`}
+        </p>
+      ) : null}
     </div>
   );
 }

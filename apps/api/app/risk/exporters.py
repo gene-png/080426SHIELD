@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import io
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from app.client_naming import org_display_name
@@ -35,6 +35,9 @@ from app.risk.engine import (
     matrix_counts,
     tier_counts,
 )
+
+#: #737, Gene's ruling (#736, 5986057990 item 13), verbatim.
+DRAFT_MARKER = "Draft: not published"
 
 # Blank columns the client uses for governance — SHIELD does not populate these.
 _GOVERNANCE_COLUMNS = [
@@ -80,6 +83,16 @@ class RiskExportContext:
     #: "every finding has one entry" over a register nobody counted would be a
     #: claim, where silence is only an absence.
     finding_counts: tuple[int, int, int] | None = None
+    #: #737: True for every file rendered while the register is unpublished.
+    #: Such a file is the consultant's copy, and says so on its face, because a
+    #: file that leaves by email otherwise reads as final.
+    draft: bool = False
+    #: #737: `source_id -> state` for findings drafted from an input that was
+    #: not released at generate; the source cell names it.
+    source_states: dict[str, str] = field(default_factory=dict)
+    #: #554 R3, option (b): ATT&CK codes whose computed status awaited review
+    #: at generate; the source cell says so.
+    review_pending: frozenset[str] = frozenset()
 
 
 def _enum_list(values, enum_cls):
@@ -101,6 +114,9 @@ def build_context(
     entries: Sequence[Any],
     link_scope: Sequence[tuple[str, int, int]] = (),
     finding_counts: tuple[int, int, int] | None = None,
+    draft: bool = False,
+    source_states: dict[str, str] | None = None,
+    review_pending: frozenset[str] = frozenset(),
 ) -> RiskExportContext:
     return RiskExportContext(
         client_legal_name=org_display_name(client_legal_name),
@@ -108,6 +124,9 @@ def build_context(
         entries=list(entries),
         link_scope=tuple(link_scope),
         finding_counts=finding_counts,
+        draft=draft,
+        source_states=dict(source_states or {}),
+        review_pending=review_pending,
     )
 
 
@@ -124,19 +143,30 @@ def _li(e: Any) -> str:
     return f"{_rating(e.likelihood)} x {_rating(e.impact)}"
 
 
-def _rating_edited(e: Any) -> bool:
+def _consultant_rated(e: Any) -> bool:
+    """A consultant EDITED this entry's rating and at least one half is present.
+
+    Gene's ruling (a) on the half-set case (#736, 5986057990 item 10): an entry
+    whose likelihood a consultant set, impact still unrated, is marked -- the
+    half they set must not read as the model's. A FULLY cleared rating (both
+    halves null) is unrated and carries no consultant credit (#854 review,
+    F2). ONE predicate for the count line and the Origin column, so the two
+    cannot disagree; the admin marker uses the same rule.
+    """
     # `getattr`, because the renderers take duck-typed rows (`entries: list[Any]`)
     # and a row built before 0061's field existed carries no attribute. Absent
     # reads as "not edited", which is what every such row is: the edit path is
     # the field's only writer.
-    return getattr(e, "rating_edited_at", None) is not None
+    return getattr(e, "rating_edited_at", None) is not None and (
+        e.likelihood is not None or e.impact is not None
+    )
 
 
 def _origin(e: Any) -> str:
     """#844. `origin` describes who drafted the ENTRY; once a consultant has set
     the rating, printing `ai_generated` alone credits the model with a rating it
     never gave."""
-    return f"{e.origin}; rating set by consultant" if _rating_edited(e) else e.origin
+    return f"{e.origin}; rating edited by consultant" if _consultant_rated(e) else e.origin
 
 
 def _entries_noun(n: int) -> str:
@@ -147,10 +177,26 @@ def _joined(v) -> str:
     return ", ".join(v) if isinstance(v, list) else ""
 
 
-def _source(e: Any) -> str:
+def _source(
+    e: Any, states: dict[str, str] | None = None, pending: frozenset[str] = frozenset()
+) -> str:
     if e.source and e.source_id:
-        return f"{e.source}:{e.source_id}"
-    return e.source_id or e.source or ""
+        cell = f"{e.source}:{e.source_id}"
+    else:
+        cell = e.source_id or e.source or ""
+    # #737, Gene's ruling: a finding drafted from an unreleased input says so.
+    # DRAFT copy, with the advisor.
+    state = (states or {}).get(e.source_id or "")
+    if state:
+        # "an" before a vowel: "from an approved assessment" (coordinator,
+        # #860). {state} is the input's stored status -- draft, submitted or
+        # approved; a released input carries no label.
+        article = "an" if state[:1].lower() in "aeiou" else "a"
+        cell = f"{cell} (from {article} {state} assessment)"
+    # #554 R3, option (b). DRAFT copy, with the advisor.
+    if (e.source_id or "") in pending:
+        cell = f"{cell} (computed status awaiting review)"
+    return cell
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +247,7 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
                 e.title,
                 e.description or "",
                 (e.axis or "").title(),
-                _source(e),
+                _source(e, ctx.source_states, ctx.review_pending),
                 _joined(e.linked_techniques),
                 _joined(e.linked_controls),
                 _rating(e.likelihood),
@@ -219,8 +265,10 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
         )
 
     # #403, the XLSX half. The PDF and Word carry this in `_summary_lines`;
-    # the spreadsheet has no summary block, so it goes in a sheet of its own
-    # rather than being squeezed into a header row.
+    # it also appears in the XLSX "Summary" sheet above (#854 F6), because that
+    # sheet IS `_summary_lines`. Kept here as well, deliberately: this sheet is
+    # the per-assessment TABLE (scored, total, not citable) the prose line
+    # summarises, and dropping either loses something the other cannot show.
     #
     # A SEPARATE SHEET, not extra columns: the disclosure is per ASSESSMENT and
     # the table is per ENTRY, so a column would repeat one assessment-level fact
@@ -229,6 +277,19 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
     # Omitted entirely when nothing was recorded -- an empty sheet headed
     # "Scored coverage" with no rows reads as "nothing was scored", which is a
     # false claim rather than an absence.
+    # #854 review, F6. The PDF and Word carry the summary disclosures (unrated,
+    # consultant-rated, axis and action gaps, finding coverage, baseline); the
+    # spreadsheet had none, while the admin copy says "the exported documents"
+    # state them. The SAME `_summary_lines`, one line per row, so the three
+    # formats cannot drift apart.
+    summary = wb.create_sheet("Summary")
+    if ctx.draft:
+        summary.append([DRAFT_MARKER])
+    summary.append(["Summary"])
+    summary.cell(row=1, column=1).font = Font(bold=True)
+    for line in _summary_lines(ctx):
+        summary.append([line])
+
     if ctx.link_scope:
         sheet = wb.create_sheet("Scored coverage")
         sheet.append(["Assessment", "Rows scored", "Rows total", "Not citable"])
@@ -237,7 +298,7 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
             cell.font = Font(bold=True)
             cell.fill = fill
         for service, scored, total in sorted(ctx.link_scope):
-            sheet.append([_SERVICE_LABELS.get(service, service), scored, total, total - scored])
+            sheet.append([scope_label(service), scored, total, total - scored])
         sheet.append([])
         sheet.append(
             [
@@ -282,6 +343,27 @@ _SERVICE_LABELS = {
     "zt": "Zero Trust",
 }
 
+#: The ZT frameworks by the names the ZT deliverable already prints
+#: (`app/zt/exporters.py`), so the Risk Register names a framework the way the
+#: client's own Zero Trust report does (advisor, #736 6019425290, Q3). The web
+#: dashboard holds the same two strings beside its `SERVICE_LABELS`; change both.
+ZT_FRAMEWORK_NAMES = {
+    "cisa_ztmm_2_0": "CISA ZTMM 2.0",
+    "dod_ztra": "DoD ZT Reference Architecture",
+}
+
+
+def scope_label(key: str) -> str:
+    """A scored-coverage row's label (#876). "zt" while a kind has one source;
+    "zt:cisa_ztmm_2_0" -> "Zero Trust (CISA ZTMM 2.0)" when it has two. An
+    unknown key renders as itself, for the reason `_link_scope_lines` gives."""
+    if key in _SERVICE_LABELS:
+        return _SERVICE_LABELS[key]
+    kind, _, qualifier = key.partition(":")
+    if kind in _SERVICE_LABELS and qualifier in ZT_FRAMEWORK_NAMES:
+        return f"{_SERVICE_LABELS[kind]} ({ZT_FRAMEWORK_NAMES[qualifier]})"
+    return key
+
 
 def _link_scope_lines(ctx: RiskExportContext) -> list[str]:
     """The #403 disclosure, for the client's PDF and Word deliverable.
@@ -301,7 +383,7 @@ def _link_scope_lines(ctx: RiskExportContext) -> list[str]:
     if not ctx.link_scope:
         return []
     parts = [
-        f"{_SERVICE_LABELS.get(service, service)} {scored} of {total}"
+        f"{scope_label(service)} {scored} of {total}"
         for service, scored, total in sorted(ctx.link_scope)
     ]
     return [
@@ -391,10 +473,10 @@ def _unrated_lines(total: int, unrated: int) -> list[str]:
 
 
 def _consultant_rated_lines(ctx: RiskExportContext) -> list[str]:
-    edited = sum(1 for e in ctx.entries if _rating_edited(e))
+    edited = sum(1 for e in ctx.entries if _consultant_rated(e))
     if edited == 0:
         return []
-    return [f"Ratings set by a consultant: {edited} of {len(ctx.entries)} entries."]
+    return [f"Ratings edited by a consultant: {edited} of {len(ctx.entries)} entries."]
 
 
 def _missing_line(total: int, missing: int, phrase: str) -> list[str]:
@@ -468,6 +550,7 @@ def render_pdf(ctx: RiskExportContext) -> bytes:
         Paragraph(f"Risk Register (v{ctx.version})", h1),
         Paragraph(ctx.client_legal_name, body),
         pdf_paragraph(ctx.ai_mode, body),  # #646, under the title
+        *([Paragraph(DRAFT_MARKER, body)] if ctx.draft else []),
         Spacer(1, 0.2 * inch),
         Paragraph("Summary", h2),
     ]
@@ -519,7 +602,7 @@ def render_pdf(ctx: RiskExportContext) -> bytes:
                 _li(e),
                 _rating(e.tier),
                 (e.recommended_action or "").title(),
-                _source(e),
+                _source(e, ctx.source_states, ctx.review_pending),
             ]
         )
     story.append(
@@ -550,6 +633,8 @@ def render_docx(ctx: RiskExportContext) -> bytes:
     doc = new_document(f"Risk Register — {ctx.client_legal_name}")
     add_title(doc, f"Risk Register (v{ctx.version})", ctx.client_legal_name)
     add_docx_paragraph(doc, ctx.ai_mode)  # #646, under the title
+    if ctx.draft:
+        add_paragraphs(doc, [DRAFT_MARKER])
 
     add_heading(doc, "Summary")
     add_paragraphs(doc, _summary_lines(ctx))
@@ -566,7 +651,7 @@ def render_docx(ctx: RiskExportContext) -> bytes:
             _li(e),
             _rating(e.tier),
             (e.recommended_action or "").title(),
-            _source(e),
+            _source(e, ctx.source_states, ctx.review_pending),
         ]
         for i, e in enumerate(ctx.entries, start=1)
     ]

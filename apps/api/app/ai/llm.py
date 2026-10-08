@@ -56,12 +56,12 @@ class LLMResponse:
         self.output_tokens = output_tokens
 
 
-class IncompleteResponseError(RuntimeError):
-    """A provider stopped without finishing (a cut-off at the output cap, a
-    content filter, ...). The response is NOT parsed, but it was generated and
-    billed, so the error carries the usage the provider reported and
-    `LLMClient.invoke` records it on the FAILED `llm_calls` row. Without it a
-    truncated call billed up to the cap reads as zero tokens (the N-019 shape).
+class UnparsedResponseError(RuntimeError):
+    """The provider answered, but nothing in the answer may be parsed. The call
+    was still sent and counted, so the error carries the usage the provider
+    reported and `LLMClient.invoke` records it on the FAILED `llm_calls` row.
+    Without it the spend reads as zero tokens (the N-019 shape). Raise one of
+    the two subclasses, which name what was wrong with the answer.
     """
 
     def __init__(
@@ -70,6 +70,19 @@ class IncompleteResponseError(RuntimeError):
         super().__init__(message)
         self.input_tokens = input_tokens
         self.output_tokens = output_tokens
+
+
+class IncompleteResponseError(UnparsedResponseError):
+    """A provider stopped without finishing (a cut-off at the output cap, a
+    content filter, no stop signal, ...): something was generated, and it is
+    not the whole answer."""
+
+
+class NoUsableResponseError(UnparsedResponseError):
+    """A provider returned nothing to parse: the prompt was blocked, no
+    candidate came back, or the one that did has no content (#828). Nothing
+    was cut short, so this is not an `IncompleteResponseError`, whose message
+    `failures.friendly_reason` reads as "cut off"."""
 
 
 class LLMProvider(Protocol):
@@ -251,7 +264,11 @@ _MAX_OUTPUT_TOKENS = 8192
 #   csf_score              ~4,200 a batch of 10 (#806 probe 4,213, 2026-10-03;
 #                          the largest single batch was not recorded)
 #   risk_synthesize        not measured live; ~14k a batch is an estimate
-#   attack_scenario_delta  not measured live
+#   attack_scenario_delta   1,700 a batch of 6 (2026-10-04, Gene's amended
+#                          text, the route's first 4 batches on the demo seed,
+#                          1,173-1,700, #846). At the earlier batch of 25 it
+#                          was 8,231, over the non-streamed 8,192 itself, so
+#                          the batch was shrunk (`scenario.BATCH_SIZE`).
 # THE RULE (advisor, 2026-10-03): a cap is at least 3x the largest observed
 # single call. The caps below are NOT re-derived from it yet: they will be,
 # from #806's "after" measurements, which run on the prompts that will ship.
@@ -293,11 +310,16 @@ _MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
     # is CHOSEN, not defaulted: raising it buys nothing for an output this
     # size.
     "zt_score": _MAX_OUTPUT_TOKENS,
-    # #802's ATT&CK what-if: only contributing (technique, tool) rows come back,
-    # far smaller than mitre_map's; sized like it, per batch of 25, because
-    # output is billed as generated. To be live-measured once #806 releases
-    # the prompt text.
+    # #802's ATT&CK what-if, per batch of `scenario.BATCH_SIZE` (6). 64000 is
+    # what the STREAMED adapter sends, billed as generated. The non-streamed
+    # adapters send 8,192 (`non_streamed_output_cap`), and the 3x rule holds for
+    # them only because the batch was shrunk: 3 x 1,700 = 5,100 (see OBSERVED
+    # and the arithmetic beside BATCH_SIZE).
     "attack_scenario_delta": 64000,
+    # #802's chat box: three short lists naming a few tools. The shared
+    # default, CHOSEN: it keeps the non-streamed adapters sending what main
+    # sent. Unmeasured; re-derived from the first live call by the 3x rule.
+    "attack_scenario_intent": _MAX_OUTPUT_TOKENS,
 }
 
 
@@ -407,8 +429,18 @@ def _parse_generate_content(data: dict[str, Any]) -> LLMResponse:
     ``finishReason`` is refused too (#823): nothing then says the generation
     finished, the same rule as the Anthropic and OpenAI adapters.
     """
-    candidate = data["candidates"][0]
     usage = data.get("usageMetadata") or {}
+    candidates = data.get("candidates") or []
+    if not candidates:
+        # A blocked PROMPT returns promptFeedback.blockReason and no candidate.
+        block = (data.get("promptFeedback") or {}).get("blockReason")
+        cause = f": the prompt was blocked (blockReason={block})" if block else ""
+        raise NoUsableResponseError(
+            f"generateContent returned no candidates{cause}. Nothing was generated or parsed.",
+            input_tokens=usage.get("promptTokenCount"),
+            output_tokens=usage.get("candidatesTokenCount"),
+        )
+    candidate = candidates[0]
     finish_reason = candidate.get("finishReason")
     if finish_reason != "STOP":
         stated = "no finishReason" if finish_reason is None else f"finishReason={finish_reason}"
@@ -419,8 +451,27 @@ def _parse_generate_content(data: dict[str, Any]) -> LLMResponse:
             input_tokens=usage.get("promptTokenCount"),
             output_tokens=usage.get("candidatesTokenCount"),
         )
-    parts = candidate["content"]["parts"]
+    parts = (candidate.get("content") or {}).get("parts")
+    if not parts:
+        raise NoUsableResponseError(
+            "generateContent returned a candidate with no content "
+            f"(finishReason={finish_reason}). Nothing was parsed.",
+            input_tokens=usage.get("promptTokenCount"),
+            output_tokens=usage.get("candidatesTokenCount"),
+        )
     text = "".join(p.get("text", "") for p in parts)
+    # Parts can exist and still carry no text: an empty or whitespace-only
+    # string, or only non-text parts such as a functionCall. Each would join to
+    # nothing a parser can read, be recorded COMPLETED, and fail later as a bare
+    # JSONDecodeError (#830 review F1). Whitespace-only counts as no text: no
+    # job's answer can be blank.
+    if not text.strip():
+        raise NoUsableResponseError(
+            "generateContent returned a candidate with no text "
+            f"(finishReason={finish_reason}). Nothing was parsed.",
+            input_tokens=usage.get("promptTokenCount"),
+            output_tokens=usage.get("candidatesTokenCount"),
+        )
     return LLMResponse(
         text,
         usage.get("promptTokenCount"),
@@ -781,7 +832,7 @@ class LLMClient:
         except Exception as exc:  # noqa: BLE001 - boundary; log + record + re-raise
             row.status = LLMCallStatus.FAILED
             row.error_message = f"{type(exc).__name__}: {exc}"
-            if isinstance(exc, IncompleteResponseError):
+            if isinstance(exc, UnparsedResponseError):
                 # Generated and billed, though not parsed: record what it cost.
                 row.input_tokens = exc.input_tokens
                 row.output_tokens = exc.output_tokens

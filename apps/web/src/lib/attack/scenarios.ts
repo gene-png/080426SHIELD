@@ -95,6 +95,9 @@ export interface ScenarioBase {
   version: number;
   approved_at: string | null;
   tools: string[];
+  /** #851: rows in the base crediting a tool outside the client's security
+   *  tool list; today's figure still counts them. */
+  citations_outside_subset?: number;
 }
 
 export interface ScenarioSummary {
@@ -196,15 +199,26 @@ export interface ParsedChange {
   removed: string[];
   added: string[];
   not_understood: NotUnderstood[];
+  /** #802: who read the text. Absent is the matcher (slice C). */
+  source?: "matcher" | "ai";
+  /** #802: N2, when the AI could not be used. */
+  note?: string | null;
+  /** #802: names the AI suggested that were left out, counted and never
+   * quoted, and the API's sentence for it. */
+  left_out?: number;
+  left_out_message?: string | null;
 }
 
+/** `serves` is the mode acknowledged at Fill (#504): only "live" lets the
+ * text reach the AI; "offline" gets the list matcher alone. */
 export function parseChange(
   serviceId: string,
   text: string,
+  serves: AiServes,
 ): Promise<ParsedChange> {
   return request(`/api/proxy/attack/services/${serviceId}/scenarios/parse`, {
     method: "POST",
-    body: { text },
+    body: { text, serves },
   });
 }
 

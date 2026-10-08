@@ -54,6 +54,7 @@ import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { DiscardDraftButton } from "./DiscardDraftButton";
 import { DispositionHelp } from "./DispositionHelp";
 import { EditableCapabilityTable } from "./EditableCapabilityTable";
+import { ExtractionFindings } from "./ExtractionFindings";
 import { IntakeDocumentsPanel } from "./IntakeDocumentsPanel";
 import { OverlapDashboard } from "./OverlapDashboard";
 
@@ -941,6 +942,10 @@ Components carry no cost of their own — this licence keeps its full value.`,
                 )}
               </div>
             ) : null}
+            <ExtractionFindings
+              findings={list.extraction_findings}
+              readOnly={readOnly}
+            />
             <DispositionHelp />
             <EditableCapabilityTable
               items={list.items}

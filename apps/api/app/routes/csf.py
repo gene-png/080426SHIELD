@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import functools
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any
 
@@ -1729,6 +1729,30 @@ def _as_number(raw: Any) -> float | None:
     return None
 
 
+def _validated_dimension(raw: Any) -> tuple[int | None, str | None]:
+    """A suggested dimension score as the apply path would STORE it: `(value,
+    None)`, or `(None, reason)` with the `CsfDroppedSuggestion` reason it is
+    refused for. ONE statement of the rule, called by `_apply_suggestions` and
+    by `scripts/measure_ai_consistency.py` (#867), so the measure counts as
+    refused exactly what a run refuses.
+
+    Parse, then range 0-2, then wholeness. Range BEFORE wholeness: `3.9` is
+    both, and the range is what a reader needs to hear; it also runs before any
+    `int()`, which is what keeps `inf` and `nan` from raising. In range but not
+    whole (`1.9`) used to be applied as 1 with nothing recorded -- the only
+    place in this path where a suggested value changed silently.
+    """
+    n = _as_number(raw)
+    if n is None:
+        # Not a score at all: text, a bool, a container.
+        return None, "unparseable"
+    if not 0 <= n <= 2:
+        return None, "out_of_range"
+    if n != int(n):
+        return None, "unparseable"
+    return int(n), None
+
+
 def _verbatim_key(sugg: dict) -> str | None:
     """The row key as the model wrote it, with a missing half NAMED as missing.
 
@@ -1927,12 +1951,11 @@ def _apply_suggestions(
                         )
                     )
                 continue
-            n = _as_number(raw)
-            if n is None:
-                # Not a score at all: text, a bool, a container.
+            v, refusal = _validated_dimension(raw)
+            if refusal is not None:
                 dropped.append(
                     CsfDroppedSuggestion(
-                        reason="unparseable",
+                        reason=refusal,
                         key=key,
                         field=field,
                         value=_bounded(raw),
@@ -1940,36 +1963,6 @@ def _apply_suggestions(
                     )
                 )
                 continue
-            if not 0 <= n <= 2:
-                # Range BEFORE wholeness: `3.9` is both, and the range is what a
-                # reader needs to hear. This also runs before any `int()`, which
-                # is what keeps `inf` and `nan` from raising.
-                dropped.append(
-                    CsfDroppedSuggestion(
-                        reason="out_of_range",
-                        key=key,
-                        field=field,
-                        value=_bounded(raw),
-                        values=field_values[field],
-                    )
-                )
-                continue
-            if n != int(n):
-                # In range but not whole. `1.9` used to be applied as 1 with
-                # nothing recorded — the only place in this path where a
-                # suggested value changed silently, inside the mechanism built
-                # to end exactly that.
-                dropped.append(
-                    CsfDroppedSuggestion(
-                        reason="unparseable",
-                        key=key,
-                        field=field,
-                        value=_bounded(raw),
-                        values=field_values[field],
-                    )
-                )
-                continue
-            v = int(n)
             if (row_key, field) in written:
                 dropped.append(CsfDroppedSuggestion(reason="superseded", key=key, field=field))
                 applied -= 1
@@ -2147,6 +2140,38 @@ def run_ai(
     )
 
 
+def _split_strays(
+    batch_inputs: Sequence[dict[str, Any]],
+    answers: Sequence[dict[str, Any]],
+    rows: Mapping[str, Any],
+) -> tuple[list[Any], list[Any]]:
+    """The batches' `scores`, in batch order, split into (entries to apply,
+    STRAYS). A stray is an entry naming a real row (`rows`) that its own batch
+    was not asked for; `_apply_suggestions` drops it as `not_in_batch`, so a
+    row is only ever written from the batch that asked for it (#479). Every
+    other entry, an unknown key included, goes to the first list.
+
+    ONE statement of the rule, called by `_csf_run_work` and by
+    `scripts/measure_ai_consistency.py` (#867 re-review F1), extracted
+    unchanged from the inline loop `_csf_run_work` carried.
+    """
+    scores: list[Any] = []
+    strays: list[Any] = []
+    for inputs, answer in zip(batch_inputs, answers, strict=True):
+        asked = {f"{t}|{c}" for t in inputs["tiers"] for c in inputs["subcategories"]}
+        for entry in answer["scores"]:
+            named = (
+                f"{entry.get('tier')}|{entry.get('subcategory_code')}"
+                if isinstance(entry, dict)
+                else None
+            )
+            if named is not None and named in rows and named not in asked:
+                strays.append(entry)
+            else:
+                scores.append(entry)
+    return scores, strays
+
+
 def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID) -> RunOutcome:
     """The csf_score run, in the background job's own session (#645). Re-loads
     by id; a refusal becomes the run's FAILED state with the same reason."""
@@ -2207,20 +2232,7 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
     # An entry naming a real row its batch was not asked for is a STRAY: kept
     # out of the applied set and itemized as `not_in_batch`, so a row is only
     # ever written from the batch that asked for it.
-    scores: list[Any] = []
-    strays: list[Any] = []
-    for inputs, answer in zip(batched.inputs, batched.answers, strict=True):
-        asked = {f"{t}|{c}" for t in inputs["tiers"] for c in inputs["subcategories"]}
-        for entry in answer["scores"]:
-            named = (
-                f"{entry.get('tier')}|{entry.get('subcategory_code')}"
-                if isinstance(entry, dict)
-                else None
-            )
-            if named is not None and named in rows and named not in asked:
-                strays.append(entry)
-            else:
-                scores.append(entry)
+    scores, strays = _split_strays(batched.inputs, batched.answers, rows)
     data = {"scores": scores}
 
     # Offline output must never overwrite what a human typed (#67, migration

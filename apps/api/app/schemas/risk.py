@@ -4,10 +4,51 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
 from app.risk.engine import Impact, Likelihood
+
+
+class RiskInputState(BaseModel):
+    """#737, the admin Inputs panel: one row per input kind.
+
+    `engaged` False: the client has no service of this kind, so it does not
+    hold publication up. Engaged with `status` None: a service exists and no
+    assessment (or Tech Debt list) has been started. Otherwise `status` is the
+    current record's status and `version` its version; publication needs
+    "released". For Tech Debt, one row per engaged service.
+    """
+
+    kind: str
+    engaged: bool
+    status: str | None = None
+    version: int | None = None
+    # #876: what tells this row from another of the same kind -- the ZT
+    # framework's name ("CISA ZTMM 2.0"), or the service title where that does
+    # not separate them. None while a kind has one row (advisor, #736
+    # 6019425290 Q3). Defaulted so an older client parses a newer response.
+    qualifier: str | None = None
+
+
+class RiskDuplicateService(BaseModel):
+    """#896: one service behind the duplicate refusal (`duplicate_inputs`).
+
+    The Risk Register's duplicate banner offers one archive button per row, so
+    it needs the id the archive route takes and the title the button names.
+    """
+
+    service_id: str
+    title: str
+    # Review B1 (advisor, #736 6046491381): what tells two rows with the SAME
+    # title apart. When the service was opened (its created_at, UTC), and the
+    # status and version the Inputs panel shows for it. Every member of a
+    # duplicate group has a current record (a group is built from synthesis
+    # sources, which exist only for a record), so both are required.
+    started_at: datetime
+    status: str
+    version: int
 
 
 class RiskGateStatus(BaseModel):
@@ -61,6 +102,18 @@ class RiskGateStatus(BaseModel):
     # catalog mismatch does, and is the refusal's own sentence. Required, for
     # the same reason.
     attack_computed_status_unreviewed: str | None
+    # #737: what the register would be drafted from, and whether each input is
+    # final. Defaulted so an older client parses a newer response.
+    inputs: list[RiskInputState] = []
+    # #876 Q2 (a): two engaged services of one kind and framework, which would
+    # produce the same findings. The sentence generate refuses with; None when
+    # there is no such pair. Defaulted so an older client parses.
+    duplicate_inputs: str | None = None
+    # #896: the services behind `duplicate_inputs`, read off the same groups
+    # the sentence is built from, in the order it names them; [] when there is
+    # no such pair. The banner offers one archive button per row (advisor, #736
+    # 6042801745). Defaulted so an older client parses.
+    duplicate_services: list[RiskDuplicateService] = []
 
 
 class RiskEntryResponse(BaseModel):
@@ -88,6 +141,13 @@ class RiskEntryResponse(BaseModel):
     # nothing was dropped. A renderer that treats the two alike reinstates the
     # defect the column was added for.
     dropped_links: dict | None = None
+    # #737, Gene's ruling: the state of the input this entry's finding came
+    # from, when that input was NOT released at generate ("draft", "submitted",
+    # "approved"); None when it was released, or the register predates this.
+    source_state: str | None = None
+    # #554 R3, option (b): this entry's finding is an ATT&CK technique whose
+    # computed status awaited review when the register was generated.
+    source_review_pending: bool = False
     # #844. Both None: the rating is the model's as generated. Set: a consultant
     # set likelihood or impact through the edit path, and the screen and the
     # exports say so instead of crediting the model.
@@ -111,6 +171,18 @@ class RiskEntryRatingEdit(BaseModel):
 
     likelihood: Likelihood | None = None
     impact: Impact | None = None
+
+
+class RatingNotCarried(BaseModel):
+    """#854 F3: one consultant rating a regenerate could not carry, and why.
+
+    `key` is the finding's `source_id`, or the entry's title when `reason` is
+    `no_source_id`. One item per RATING, so the list length is a count of
+    ratings, not of findings.
+    """
+
+    key: str
+    reason: Literal["ambiguous", "no_entry", "no_source_id"]
 
 
 class LinkScopeDisclosure(BaseModel):
@@ -244,6 +316,16 @@ class RiskRegisterResponse(BaseModel):
     # was recorded (or a record that could not be read), and its empty list and
     # empty map mean NOTHING, not "every finding had one entry"; True with both
     # empty is that observed fact.
+    # #854 F3: consultant ratings carried from the previous version on
+    # regenerate, matched by `source_id`. `ratings_not_carried` lists each
+    # RATING that could not be carried, one item per rating with its reason
+    # (`RatingNotCarried`), so its length counts ratings, not findings.
+    # `..._recorded` False: a
+    # register generated before this was recorded; the rest then means nothing.
+    ratings_carried_recorded: bool = False
+    ratings_carried: int | None = None
+    ratings_carried_from_version: int | None = None
+    ratings_not_carried: list[RatingNotCarried] = []
     findings_recorded: bool = False
     findings_total: int | None = None
     findings_without_entry: list[str] = []

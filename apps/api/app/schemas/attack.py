@@ -186,6 +186,25 @@ class AttackCoverageResponse(BaseModel):
     reviewed_at: datetime | None = None
 
 
+class AttackOutsideCitation(BaseModel):
+    """#851: one tool one row credits outside the client's current security
+    tool list. `field` is the tool list; `locked`: Run AI will not change
+    the row."""
+
+    technique_code: str
+    field: str
+    tool: str
+    locked: bool
+
+
+class AttackRemoveTool(BaseModel):
+    """#851 (D2): remove ONE name from one tool list, and only that name's
+    citation record. Unlike a PATCH of the whole list it confirms nothing."""
+
+    field: str = Field(max_length=48)
+    name: str = Field(max_length=512)
+
+
 class AttackAssessmentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -215,6 +234,14 @@ class AttackAssessmentResponse(BaseModel):
     #: absent here is not retiring. None: the client has no approved or released
     #: Tech Debt list, so there is no plan and nothing is marked.
     tool_retirement: dict[str, str] | None = None
+    #: #851: every tool a row credits outside the client's CURRENT security
+    #: tool list (`attack/subset_drift.py`). REQUIRED: a default would turn
+    #: missing wiring into a confident "none".
+    citations_outside_subset: list[AttackOutsideCitation]
+    #: #851: False when the client has no security tool list to check against,
+    #: so `citations_outside_subset` is empty because nothing was checked,
+    #: never because nothing was found (advisor: a third state). REQUIRED.
+    subset_checked: bool
 
 
 class ComputedStatusReviewItem(BaseModel):
@@ -310,6 +337,10 @@ class AttackRunAiResponse(BaseModel):
     # checked the lock before the run existed). Kept as edited, never
     # overwritten, and counted so the workspace can say which run left them.
     rows_skipped_edited: int = 0
+    # #841. Techniques the AI suggested as N/A, refused because only a
+    # consultant may rule a technique N/A. The codes are in the audit row's
+    # `statuses_rejected`; the count is what the workspace says.
+    not_applicable_refused: int = 0
 
 
 class AttackCoveragePatch(BaseModel):
@@ -332,6 +363,8 @@ class AttackCoveragePatch(BaseModel):
     # as sent (only a blank one becomes NULL). Whoever changes it here must
     # change it there.
     narrative: str | None = Field(default=None, max_length=8000)
+    #: #851 (D2): the technique panel's Remove control.
+    remove_tool: AttackRemoveTool | None = None
 
 
 # ---------------------------------------------------------------------------

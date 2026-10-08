@@ -1,4 +1,4 @@
-"""Both directions of the THREE root searches that replaced `parents[N]` (#314).
+"""Both directions of each root search that replaced `parents[N]` (#314, #838).
 
 `CLAUDE.md`: *a guard must be observed in BOTH states before it is trusted.
 Watching it fire proves it fires; it does not prove it passes.*
@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._paths import find_workflows_dir
+from tests._paths import find_workflows_dir, find_zt_source
 
 pytestmark = pytest.mark.unit
 
@@ -148,12 +148,12 @@ def test_the_workspace_search_finds_a_packages_directory(tmp_path: Path) -> None
 
 
 # ---------------------------------------------------------------------------
-# THE THIRD ROOT SEARCH.
+# `extract_csf_questionnaires._find_workspace`.
 #
-# This file opened by saying "the two root searches that replaced `parents[N]`".
-# There are THREE. `extract_csf_questionnaires._find_workspace` took no `start`
+# This file once opened by counting the root searches that replaced
+# `parents[N]`, and the count was short by one: this one. It took no `start`
 # parameter, so neither of its directions could be exercised at all -- and the
-# one thing it does differently from its two siblings, the choice of MARKER, was
+# one thing it does differently from its siblings, the choice of MARKER, was
 # the part pinned least.
 #
 # That choice is the subtle half of #314's fix. `_common` searches for
@@ -203,3 +203,70 @@ def test_the_extractor_refuses_a_tree_with_no_reference_docs(tmp_path: Path) -> 
 
     with pytest.raises(RuntimeError, match="reference-docs"):
         _find_workspace(deep / "extract_csf_questionnaires.py")
+
+
+# --- find_zt_source (#838): checkout first, then the container mount ---------
+
+
+@pytest.mark.unit
+def test_a_zt_source_is_found_in_a_checkout(tmp_path: Path) -> None:
+    root = tmp_path / "checkout"
+    (root / "reference-docs" / "cisa").mkdir(parents=True)
+    deep = root / "apps" / "api" / "tests" / "unit"
+    deep.mkdir(parents=True)
+    mount = tmp_path / "no-mount"
+    assert find_zt_source(deep, "cisa", container_root=mount) == root / "reference-docs" / "cisa"
+
+
+@pytest.mark.unit
+def test_a_zt_source_falls_back_to_the_container_mount(tmp_path: Path) -> None:
+    deep = tmp_path / "app" / "tests" / "unit"
+    deep.mkdir(parents=True)
+    mount = tmp_path / "zt-sources"
+    (mount / "cisa").mkdir(parents=True)
+    assert find_zt_source(deep, "cisa", container_root=mount) == mount / "cisa"
+
+
+@pytest.mark.unit
+def test_no_zt_source_anywhere_returns_None(tmp_path: Path) -> None:
+    deep = tmp_path / "app" / "tests" / "unit"
+    deep.mkdir(parents=True)
+    assert find_zt_source(deep, "cisa", container_root=tmp_path / "nothing") is None
+
+
+@pytest.mark.unit
+def test_a_checkout_wins_over_the_container_mount(tmp_path: Path) -> None:
+    """The ORDER, with both present: a checkout's file is the one under review,
+    so it must be preferred over a mount that may come from another tree."""
+    root = tmp_path / "checkout"
+    (root / "reference-docs" / "cisa").mkdir(parents=True)
+    deep = root / "apps" / "api" / "tests" / "unit"
+    deep.mkdir(parents=True)
+    mount = tmp_path / "zt-sources"
+    (mount / "cisa").mkdir(parents=True)
+    assert find_zt_source(deep, "cisa", container_root=mount) == root / "reference-docs" / "cisa"
+
+
+# --- extract_zt_sources.find_checkout (#838): walked up, never parents[3] -----
+
+
+@pytest.mark.unit
+def test_the_zt_extractor_finds_a_checkout_by_its_reference_docs(tmp_path: Path) -> None:
+    from scripts.extract_zt_sources import find_checkout
+
+    root = tmp_path / "checkout"
+    (root / "reference-docs").mkdir(parents=True)
+    deep = root / "apps" / "api" / "scripts"
+    deep.mkdir(parents=True)
+    assert find_checkout(deep) == root
+
+
+@pytest.mark.unit
+def test_the_zt_extractor_returns_None_in_a_shallow_tree(tmp_path: Path) -> None:
+    """The api container's shape: the script at /app/scripts, two levels from
+    the root. A fixed `parents[3]` raised IndexError there at import."""
+    from scripts.extract_zt_sources import find_checkout
+
+    shallow = tmp_path / "app" / "scripts"
+    shallow.mkdir(parents=True)
+    assert find_checkout(shallow) is None
