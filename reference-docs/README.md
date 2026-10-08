@@ -34,6 +34,15 @@ the 2025 edition's capabilities and activities, with each Advanced level
 cross-checked against the 2022 Roadmap. No extraction yet; that is the DoD
 catalog PR.
 
+## `nist/`: NIST CSWP 29 (CSF 2.0), the source of record for the CSF catalog (#852)
+
+`nist/NIST.CSWP.29.pdf` is NIST CSWP 29, *The NIST Cybersecurity Framework
+(CSF) 2.0*, February 26, 2024, supplied by Gene on 2026-10-08 (sha256
+`3c31f46fee98cac0c4323453e5109291a213b4de7fef8c058af9bf67f717433c`).
+`apps/api/tests/unit/test_csf_catalog_source.py` pins that hash and holds the
+CSF catalog's subcategory codes to the ones read out of the PDF's Appendix A.
+There is no extraction file: the test reads the PDF directly.
+
 ## Known spec discrepancies
 
 - **"108 subcategories" vs 106 implemented.** `SHIELDv2_Master_Spec.txt`

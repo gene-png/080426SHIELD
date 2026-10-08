@@ -1,13 +1,14 @@
 # Gene — in-flight status
 
-_2026-10-08: #852 (CSF catalog corrected toward NIST CSWP 29, not yet
-source-pinned) is draft PR #940 on `track5/852-csf-cswp29`; D-110, migration
+_2026-10-08: #852 (CSF catalog corrected to NIST CSWP 29, now pinned to the PDF
+you supplied) is draft PR #940 on `track5/852-csf-cswp29`; D-110, migration
 0065._
 
 **Before merge:** nothing left from you. The D-107 precondition is confirmed
 ("no real client data has been onboarded", #736 comment 6060587658, recorded
-in D-110). Separately, the NIST CSWP 29 PDF is supplied; it never blocked the
-merge, and #852 is closed by hand once the source test against it lands. The PR
+in D-110). The NIST CSWP 29 PDF never blocked the merge; it is now committed
+and pinned by `test_csf_catalog_source.py`, so #852 is closed by hand after
+this PR merges. The PR
 still comes back to you, not self-merged: merge-rule conditions 4 (migration
 0065), 5 and 6. `apps/api/scripts/count_csf_retired_rows.py` (read-only)
 measures the reach on the dev database. #925 landed first with its own 0064 and
