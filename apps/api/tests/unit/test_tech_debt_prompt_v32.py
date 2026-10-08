@@ -327,3 +327,117 @@ def test_a_human_included_row_is_not_counted_as_the_ais(app_client) -> None:  # 
     ).json()
     assert any(i["category"] == "Mainframe" for i in after["items"])
     assert after["extraction_flags"] == ZERO
+
+
+# --- 4. the offline fixture follows v3.2 ---------------------------------------
+
+#: s4's inventory, plus a total line, a retired row with no cost, a planned
+#: security row, and a retired row that still carries a cost at an index the
+#: fixture's cycle calls non-security (every fourth row). Columns are what a
+#: client sends.
+FIXTURE_CSV = (
+    "name,vendor,category,annual_cost_usd,license_count,status\n"
+    "CrowdStrike Falcon,CrowdStrike,EDR,120000,500,active\n"  # 0
+    "Splunk Enterprise,Splunk,SIEM,200000,100,active\n"  # 1
+    "Okta,Okta,IAM,60000,500,active\n"  # 2
+    "Tenable Nessus,Tenable,VulnScan,40000,50,active\n"  # 3
+    "Total,,,420000,,\n"  # 4: a total line
+    "Symantec Endpoint,Broadcom,EDR,,,retired 2025\n"  # 5: retired, no cost
+    "Falcon Identity,CrowdStrike,ITDR,40000,0,planned FY27\n"  # 6: planned, security
+    "McAfee ePO,Trellix,EDR,15000,,decommissioned\n"  # 7: retired, still a cost
+)
+
+
+def _fixture_extract(app_client):  # noqa: F811
+    from app.ai.fixtures import build_runtime_provider
+
+    c, Sess, provider = app_client
+    runtime = build_runtime_provider()
+    provider.register(
+        "extract.capabilities",
+        lambda p: runtime.complete("", {**p, "__purpose__": "extract.capabilities"}),
+    )
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc = c.post("/tech-debt/services", headers=h, json={"title": "x"}).json()["id"]
+    art = _upload_csv(c, bearer, "inv.csv", FIXTURE_CSV.encode())
+    r = c.post(
+        f"/tech-debt/services/{svc}/capability-lists/extract",
+        headers=h,
+        json={"artifact_id": art, "serves": "offline"},
+    )
+    assert r.status_code == 202, r.text
+    assert get_run(c, r.json()["run_id"], h)["status"] == "completed"
+    return c.get(f"/tech-debt/services/{svc}/capability-lists/latest", headers=h).json()
+
+
+def test_the_fixture_uses_only_v32_values(app_client) -> None:  # noqa: F811
+    body = _fixture_extract(app_client)
+    items = body["items"]
+    assert items, "the fixture returned nothing"
+    assert {i["confidence_pct"] for i in items} <= V32_CONFIDENCE
+    assert {i["category"] for i in items} <= set(V32_CATEGORIES) | {None}
+    for i in items:
+        if i["confidence_pct"] == 60:
+            assert i["notes"], f"{i['name']}: a 60 with no note saying why"
+        # Notes are plain facts about the row, never an instruction to a reviewer.
+        assert not re.search(r"confirm|review|approv", i["notes"] or "", re.I), i
+    # A known category that is not on the list is null, with the real one noted.
+    nessus = next(i for i in items if i["name"] == "Tenable Nessus")
+    assert nessus["category"] is None
+    assert "VulnScan" in nessus["notes"]
+    # On the list: the client's own word, as the list writes it.
+    by_name = {i["name"]: i for i in items}
+    assert by_name["CrowdStrike Falcon"]["category"] == "EDR/XDR"
+    assert by_name["Splunk Enterprise"]["category"] == "SIEM/SOAR"
+    assert by_name["Okta"]["category"] == "IAM/PAM"
+    assert body["extraction_flags"] == ZERO
+    # s4 depends on exactly one of its four rows reading "AI 60%".
+    assert [by_name[n]["confidence_pct"] for n in ("CrowdStrike Falcon",)] == [60]
+    assert (
+        sum(
+            1
+            for n in ("CrowdStrike Falcon", "Splunk Enterprise", "Okta", "Tenable Nessus")
+            if by_name[n]["confidence_pct"] == 60
+        )
+        == 1
+    )
+
+
+def test_the_fixture_skips_a_total_line_and_a_retired_row_with_no_cost(
+    app_client,  # noqa: F811
+) -> None:
+    body = _fixture_extract(app_client)
+    names = {i["name"] for i in body["items"]}
+    assert "Total" not in names
+    assert "Symantec Endpoint" not in names
+    assert sorted(e["index"] for e in body["excluded_rows"]) == [4, 5]
+    # Retired but still carrying a cost: kept, its status noted, confidence 60.
+    mcafee = next(i for i in body["items"] if i["name"] == "McAfee ePO")
+    assert mcafee["confidence_pct"] == 60
+    assert mcafee["notes"].startswith("Status: decommissioned.")
+
+
+def test_the_fixture_marks_a_planned_security_tool_as_v32_says(app_client) -> None:  # noqa: F811
+    body = _fixture_extract(app_client)
+    planned = next(i for i in body["items"] if i["name"] == "Falcon Identity")
+    assert planned["security_related"] is False
+    assert planned["security_functions"] == []
+    # v3.2: "Begin `notes` with exactly `Security tool not in use:` followed by
+    # the status as the row states it".
+    assert planned["notes"].startswith(f"{PREFIX} planned FY27.")
+    assert planned["confidence_pct"] == 60
+    # The sign-off queue reads it as a not-in-use tool (#845).
+    assert planned["signoff_kind"] == "not_in_use"
+
+
+def test_the_fixture_demo_items_follow_v32(app_client) -> None:  # noqa: F811
+    """The items the fixture returns for a payload with no rows."""
+    from app.ai.fixtures import build_runtime_provider
+
+    out = build_runtime_provider().complete("", {"__purpose__": "extract.capabilities"})
+    items = json.loads(out.content)["items"]
+    assert [i["category"] for i in items] == ["EDR/XDR", "SIEM/SOAR", "IAM/PAM"]
+    assert {i["confidence_pct"] for i in items} <= V32_CONFIDENCE
+    for i in items:
+        assert not re.search(r"confirm|review|approv|fixture", i["notes"] or "", re.I), i
