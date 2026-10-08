@@ -458,7 +458,14 @@ export function EditableCapabilityTable({
                     <input
                       type="text"
                       defaultValue={fmtCurrency(item.annual_cost_usd)}
-                      readOnly={readOnly}
+                      // for #927: a part's cost is held by its bundle, and the
+                      // API refuses one. A part with a cost stored before that
+                      // refusal keeps an editable cell so the cost can be
+                      // cleared (a null cost is allowed).
+                      readOnly={
+                        readOnly ||
+                        (isComponent && item.annual_cost_usd === null)
+                      }
                       onBlur={(e) => {
                         const next = parseCurrency(e.target.value);
                         if (Number.isNaN(next)) {

@@ -28,8 +28,10 @@ from __future__ import annotations
 
 import io
 import json
+import os
 
 import pytest
+from sqlalchemy import create_engine, text
 
 from app.ai.llm import LLMResponse
 from tests._ai_runs import tech_debt_extract
@@ -63,17 +65,9 @@ SPLIT_ONE_CATEGORY = [
 ]
 
 
-def _release(
-    c,
-    provider,
-    components: list[dict],
-    *,
-    source: list[tuple] = SOURCE,
-    disposition: dict[str, str] | None = None,
-    component_cost: float | None = None,
-) -> dict:
-    """Extract `source`, split the bundle, decide every row, approve, finalize
-    and release. Returns what each reader sees."""
+def _extract_and_split(c, provider, components: list[dict], *, source: list[tuple] = SOURCE):
+    """Extract `source` and split the bundle into `components`. Returns the
+    admin headers, the service id, the list, the items and the bundle's id."""
     provider.register(
         "extract.capabilities",
         lambda _p: LLMResponse(
@@ -98,7 +92,6 @@ def _release(
         ),
     )
     admin = _register(c, "admin@example.com")
-    client = _register(c, "client@example.com")
     h = {"Authorization": f"Bearer {admin['tokens']['access_token']}"}
     svc = c.post("/tech-debt/services", headers=h, json={"title": "TD"}).json()["id"]
     # One upload row per source item, so the reconciliation balances.
@@ -116,10 +109,30 @@ def _release(
     assert split.status_code == 201, split.text
     items = split.json()["items"]
     assert sum(1 for i in items if i.get("parent_item_id") == bundle_id) == len(components)
+    return h, svc, lst, items, bundle_id
+
+
+def _release(
+    c,
+    provider,
+    components: list[dict],
+    *,
+    source: list[tuple] = SOURCE,
+    disposition: dict[str, str] | None = None,
+    component_cost: float | None = None,
+) -> dict:
+    """Extract `source`, split the bundle, decide every row, approve, finalize
+    and release. Returns what each reader sees.
+
+    `component_cost` writes a LEGACY cost onto every part. Since #927 the PATCH
+    route refuses that, so it is written straight to the table: the state a
+    part could reach before this PR, which every reader must still handle."""
+    h, svc, lst, items, bundle_id = _extract_and_split(c, provider, components, source=source)
+    client = _register(c, "client@example.com")
+    if component_cost is not None:
+        _store_legacy_part_cost(bundle_id, component_cost, expected=len(components))
     for it in items:
         body: dict = {"disposition": (disposition or {}).get(it["name"], "keep")}
-        if component_cost is not None and it.get("parent_item_id") == bundle_id:
-            body["annual_cost_usd"] = component_cost
         r = c.patch(f"/tech-debt/capability-items/{it['id']}", headers=h, json=body)
         assert r.status_code == 200, r.text
     overlap = c.get(f"/tech-debt/services/{svc}/overlap-analysis", headers=h)
@@ -155,6 +168,18 @@ def _release(
 @pytest.fixture()
 def env(app_client):  # noqa: F811
     return app_client
+
+
+def _store_legacy_part_cost(bundle_id: str, cost: float, *, expected: int) -> None:
+    """A cost on a part as a pre-#927 PATCH could leave it (see `_release`)."""
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with engine.begin() as conn:
+        n = conn.execute(
+            text("UPDATE capability_items SET annual_cost_usd = :c WHERE parent_item_id = :p"),
+            {"c": cost, "p": bundle_id.replace("-", "")},
+        ).rowcount
+    engine.dispose()
+    assert n == expected, f"wrote a legacy cost onto {n} parts, expected {expected}"
 
 
 def _xlsx_cells(raw: bytes) -> list[str]:
@@ -210,8 +235,8 @@ def test_a_split_bundle_leaves_a_fully_costed_spend_complete(env) -> None:
 
 
 def test_a_costed_part_never_adds_to_spend(env) -> None:
-    """The parent holds the license value. A cost typed onto a part (nothing
-    refuses it, filed separately) must not count the bundle twice."""
+    """The parent holds the license value. A LEGACY cost on a part (a PATCH
+    could store one before #927) must not count the bundle twice."""
     c, provider = env
     got = _release(c, provider, SPLIT_BESIDE_TOOLS, component_cost=50000)
     dash = got["dashboard"]
@@ -299,6 +324,23 @@ def test_a_part_beside_a_separately_licensed_tool_is_still_a_redundancy(env) -> 
     }
 
 
+def test_two_parts_beside_one_tool_are_two_licenses(env) -> None:
+    """Three EDR rows (CrowdStrike and two parts of one bundle) are a
+    redundancy of two licenses, which the client card prints as "· 2 licenses"."""
+    c, provider = env
+    dash = _release(
+        c,
+        provider,
+        [
+            {"name": "Microsoft Defender for Endpoint", "category": "EDR"},
+            {"name": "Microsoft Defender for Cloud Apps", "category": "EDR"},
+        ],
+    )["dashboard"]
+    edr = next(r for r in dash["redundancies"] if r["category"] == "EDR")
+    assert len(edr["items"]) == 3
+    assert edr["count"] == 2
+
+
 def test_parts_of_one_bundle_in_one_category_count_once(env) -> None:
     c, provider = env
     dash = _release(c, provider, SPLIT_ONE_CATEGORY)["dashboard"]
@@ -347,3 +389,85 @@ def test_the_overlap_view_counts_a_bundle_once_per_vendor_and_category(env) -> N
     overlap = _release(c, provider, SPLIT_ONE_CATEGORY)["overlap"]
     assert overlap["by_vendor"] == []
     assert overlap["by_category"] == []
+
+
+# --- a cost on a part is refused (for #927) ---------------------------------
+
+#: Approved verbatim by the advisor on #736 (comment 6056012075).
+REFUSED = (
+    "The annual cost of a bundle part is held by its bundle, Microsoft 365 E5. "
+    "Enter the cost on the Microsoft 365 E5 row instead."
+)
+
+
+def _latest_items(c, h, svc: str) -> dict[str, dict]:
+    r = c.get(f"/tech-debt/services/{svc}/capability-lists/latest", headers=h)
+    assert r.status_code == 200, r.text
+    return {i["name"]: i for i in r.json()["items"]}
+
+
+@pytest.mark.parametrize("cost", [50000, 0])
+def test_a_cost_on_a_part_is_refused_and_names_the_bundle(env, cost) -> None:
+    c, provider = env
+    h, svc, _lst, items, bundle_id = _extract_and_split(c, provider, SPLIT_BESIDE_TOOLS)
+    part = next(i for i in items if i.get("parent_item_id") == bundle_id)
+    r = c.patch(
+        f"/tech-debt/capability-items/{part['id']}", headers=h, json={"annual_cost_usd": cost}
+    )
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["reason"] == "component_cost_held_by_bundle"
+    assert r.json()["error"]["message"] == REFUSED
+    # Refused BEFORE anything is written.
+    assert _latest_items(c, h, svc)[part["name"]]["annual_cost_usd"] is None
+
+
+def test_a_null_cost_on_a_part_is_allowed(env) -> None:
+    """Null is the state a part is born in, and the way a legacy cost is cleared."""
+    c, provider = env
+    h, svc, _lst, items, bundle_id = _extract_and_split(c, provider, SPLIT_BESIDE_TOOLS)
+    part = next(i for i in items if i.get("parent_item_id") == bundle_id)
+    _store_legacy_part_cost(bundle_id, 50000, expected=len(SPLIT_BESIDE_TOOLS))
+    r = c.patch(
+        f"/tech-debt/capability-items/{part['id']}",
+        headers=h,
+        json={"annual_cost_usd": None, "notes": "cleared"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["annual_cost_usd"] is None
+    assert _latest_items(c, h, svc)[part["name"]]["annual_cost_usd"] is None
+
+
+def test_the_bundle_row_still_takes_a_cost(env) -> None:
+    """The remedy the refusal names exists: the parent row's cost is editable."""
+    c, provider = env
+    h, svc, _lst, _items, bundle_id = _extract_and_split(c, provider, SPLIT_BESIDE_TOOLS)
+    r = c.patch(
+        f"/tech-debt/capability-items/{bundle_id}", headers=h, json={"annual_cost_usd": 300000}
+    )
+    assert r.status_code == 200, r.text
+    assert float(_latest_items(c, h, svc)[BUNDLE]["annual_cost_usd"]) == 300000.0
+
+
+def test_a_part_edit_without_a_cost_is_unaffected(env) -> None:
+    c, provider = env
+    h, _svc, _lst, items, bundle_id = _extract_and_split(c, provider, SPLIT_BESIDE_TOOLS)
+    part = next(i for i in items if i.get("parent_item_id") == bundle_id)
+    r = c.patch(f"/tech-debt/capability-items/{part['id']}", headers=h, json={"notes": "n"})
+    assert r.status_code == 200, r.text
+
+
+def test_the_refusal_without_a_loadable_bundle_names_no_bundle() -> None:
+    """No writer can produce a part whose bundle row is gone (a row is never
+    deleted on its own), so this branch is pinned on the message builder: the
+    route must not invent a name."""
+    from app.routes.tech_debt import _component_cost_refusal
+
+    detail = _component_cost_refusal(None).detail
+    assert detail == {
+        "reason": "component_cost_held_by_bundle",
+        "message": (
+            "The annual cost of a bundle part is held by its bundle. "
+            "Enter the cost on the bundle's row instead."
+        ),
+    }
+    assert _component_cost_refusal("Microsoft 365 E5").detail["message"] == REFUSED

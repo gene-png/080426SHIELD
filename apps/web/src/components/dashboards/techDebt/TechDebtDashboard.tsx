@@ -111,6 +111,15 @@ export function inventoryPill(data: TechDebtDashboardData): string {
   }`;
 }
 
+/**
+ * The redundancy card's count (for #835). `r.count` counts LICENSES: a bundle
+ * split into named parts is one license however many of its parts sit in the
+ * category. Copy approved by the advisor on #736 (comment 6056012075).
+ */
+export function redundancyLicenses(n: number): string {
+  return `· ${n} ${n === 1 ? "license" : "licenses"}`;
+}
+
 function DispositionChip({ value }: { value: string | null }): JSX.Element {
   if (!value || !DISPOSITION[value]) {
     return <span style={{ color: C.muted, fontSize: 11.5 }}>—</span>;
@@ -178,7 +187,7 @@ function RedundancyCard({ r }: { r: Redundancy }): JSX.Element {
         <div style={{ fontWeight: 700, fontSize: 14 }}>
           {r.category}{" "}
           <span style={{ color: C.muted, fontWeight: 400 }}>
-            · {r.count} tools
+            {redundancyLicenses(r.count)}
           </span>
         </div>
         {r.savings_usd > 0 ? (
