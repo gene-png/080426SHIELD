@@ -8,6 +8,66 @@ as printed. The client sees the new wording in the questionnaire and every
 catalog surface, so it comes back to you: conditions 5 and 6. The
 character-only rows are filed separately as tier-3._
 
+_2026-10-08 (track1): the #806 corpus PR is draft #952 on
+`track1/806-measure-corpus`, for #806. It adds the measure's synthetic corpus
+(`--notes-corpus` and a synthetic Tech Debt XLSX), the per-service cost caps, and
+two fixes: `--out` is opened before any paid call, and `charged_likely` is read
+from the `llm_calls` rows. After review it also replaces the report atomically
+after every run (so it is always either empty or one whole report holding every
+completed run), counts a started call with no row as unknown spend, refuses a
+model with no recorded price (a hard kill still writes nothing, so `--out` can stay
+empty after paid calls; after an interrupt during a batched job, queued batches
+can still bill, so the aborted report is always kept and its call count is a
+lower bound, even at 0; the
+`app/ai/batching.py` fix is with the advisor), records the DATABASE_URL query parameters, and
+compares two mitre_map probe runs of the same batches. No live call was made.
+What the money guard enforces: each side of a service's before/after pair gets
+half that service's cap from the $25 the advisor approved (#736 comments
+5984022081 item 8 and 6067815887); a run after the first is not started if the
+spend so far plus the largest run so far, input and output at list price, would
+cross it. That is a projection, not a guarantee, and the first run is not bounded
+in advance. Spend is reported per run. The paid "before" runs start only after
+it lands and is re-reviewed. It comes back to you under merge-rule condition 5
+(`apps/api/tests/**`)._
+
+_2026-10-08: the Tech Debt prompt for #806 is draft PR #955 on
+`track3/806-tech-debt-prompt`; review findings F1, F4, F5 and F7 are built,
+and F2 and F3 are built as the advisor ruled (#736 comment 6069328834)._
+
+**What it does.** The extraction runs Tech Debt v3.2 as you approved it.
+Whatever the model still sends against v3.2's rules is kept and counted, and
+E1 says so above the list, in the copy the advisor approved on #736 (comment
+6068587667, `category_off_list` in the past tense). The counts are the
+extraction's own (ruling F2, comment 6069328834), so edits never change them,
+and they are not measured for a list an earlier prompt drafted.
+The offline fixture follows v3.2, including #845's not-in-use rule and e2e s47.
+**For #871:** the not-in-use group now fills from the AI, so Q2's "The AI found"
+is true for new extractions; close #871 by hand after merge. The existing-test
+edit in `test_tech_debt_not_in_use_signoff.py` and the s4 comment were approved
+in the same ruling. It comes back to you: conditions 5 and 6, no migration.
+
+_2026-10-08 (track2): #806, the ATT&CK `mitre_map` part, is pushed on
+`track2/806-mitre-map-prompt`. It runs the prompt you approved (comment
+5982555899) verbatim, with `prompt_version` "v2", per-batch
+`technique_details`, the four forbidden partial reasons refused on the AI
+path, and the fixture rewritten from the prompt. `_MITRE_BATCH_SIZE` stays at
+25 until the authorized live probe sets it (D2 (a)); if a full run then needs
+more than about 100 calls, it comes to you first. The PR comes back to you
+under merge-rule conditions 5 and 6._
+
+_2026-10-08: #862 (the Risk PDF printed "ATT&CK;") is built on
+`track6/862-risk-pdf-escape`, in review as PR #958; `main` 14db80a2 (#861) is merged in._
+
+**What it does:** the Risk Register PDF escapes the text it prints, so "ATT&CK",
+"&" and "<...>" in a client's legal name print as typed, and a name carrying
+"</b>" no longer fails the export. The Word file and workbook are unchanged.
+A file already published changes only when it is re-exported (accepted, #736
+comment 6067815887). One test on `main` is edited, as approved there: the "&"
+skip in `test_risk_export_unrated.py` is removed. You re-tiered #775 (the
+same defect in the other four services' PDFs) to `tier-2`, `mvp-blocking` (#736
+comment 6069566861); its plan is with the advisor. Trips merge-rule conditions 5 and 6, so it
+comes back to you.
+
 _2026-10-08: #836 (a CSF Run-AI row the model leaves out of its batch is now
 counted and named) is rebuilt on main as `track5/836-omitted-rows-v2`. The run
 result carries `omitted_count` and `omitted_rows`, the Playbook panel shows
@@ -78,7 +138,7 @@ ATT&CK lists no preventive control". Rulings: #736 comments 6053562002 and
 
 **What it does not do.** Already-released deliverables keep the old sentence
 (stored files, not re-finalized; the advisor's Q3 ruling). The consultant reason-code
-definition (Q5) waits for the #806 ATT&CK prompt PR. #928 and #934 are filed.
+definition (Q5) lands in #951, the #806 ATT&CK prompt PR. #928 and #934 are filed.
 It trips conditions 5 and 6. The advisor merges it once the re-ready line is
 posted (#736 comment 6056012075), and #842 is then closed by hand.
 
