@@ -45,58 +45,256 @@ from app.tech_debt.bounds import (
 from app.tech_debt.parsers import parse_inventory
 from app.tech_debt.reconcile import Reconciliation, reconcile_rows
 
-# v2 (2026-08-05): portfolio scope. v1 kept only security capabilities and
-# silently dropped the rest, so the workspace presented the survivors as the
-# whole inventory. v2 keeps every row and classifies it instead.
-PROMPT_VERSION = "v2"
+# v3.2 (issue 806, comment 5983838515, approved by Gene 2026-10-04; for #806).
+# What it changes from v2, which asked only for a portfolio-wide list:
+#   - the scope rules are explicit (section 1): a total line, a header, a note and
+#     an exact duplicate are skipped; a retired row with no cost is skipped; an
+#     inactive, planned or no-longer-used capability that still carries a cost is
+#     kept with its status in `notes` and confidence 60;
+#   - one item per row (section 4), so two items naming one row are counted;
+#   - `category` is one of a closed list or null (`CATEGORIES` below);
+#   - `confidence_pct` is 100, 90 or 60 only (section 8), and every 60 says why;
+#   - `notes` are plain facts for the client's deliverable, never instructions;
+#   - a security tool not in use today is `security_related: false` with a note
+#     beginning with exactly `security_scope.NOT_IN_USE_PREFIX` (for #845).
+# The text is placed verbatim, with no `.format()`: a test pins its sha256.
+# `llm_calls.prompt_version` tells a v3.2 run from a v2 one.
+PROMPT_VERSION = "v3.2"
 
-PROMPT = """You extract a structured capability list from a raw software \
-inventory.
+PROMPT = """You are a deterministic software-inventory extraction engine. Convert the input JSON `rows` array into a normalized capability list by applying the rules below exactly.
 
-The inventory covers the organization's ENTIRE software portfolio, not only its \
-security tooling. For each row in the JSON `rows` array, decide if it \
-represents a capability the organization is paying for (tool, platform, \
-service, subscription). Keep it if so, whatever its purpose - finance, HR, \
-collaboration, engineering and security all belong in the list. Skip a row ONLY \
-when it is a note, a blank, a column header, or a duplicate of a row you have \
-already returned.
+## 1. Scope
 
-Classify every capability you keep:
+The inventory represents the organization's entire software portfolio, not only dedicated security products.
 
-  - `security_related`: true if the capability's purpose includes defending the \
-organization (preventing, detecting or responding to threats), false otherwise. \
-Judge the capability's actual purpose - a payroll system that happens to have a \
-login is not security-related.
-  - `security_functions`: when `security_related` is true, which of "prevent", \
-"detect" and "respond" it serves. Return every one that applies - an endpoint \
-detection and response platform typically serves all three. Return an empty \
-list when `security_related` is false.
+Include every identifiable software capability, regardless of business purpose; whether it is paid, free, bundled, open-source, or internally developed; or whether it is hosted, installed, subscribed to, or provided as a service. A capability may be a tool, application, platform, service, subscription, suite, product, or explicitly identified module.
 
-Return ONLY a JSON object of the form:
+Exclude a row only when it is:
 
-  {
-    "items": [
-      {
-        "name": "<short name>",
-        "vendor": "<vendor or null>",
-        "category": "<category like CNAPP, EDR, SIEM, IAM, GRC, ERP, HCM, \
-Productivity, or null>",
-        "function": "<one-line function the capability serves, or null>",
-        "annual_cost_usd": <number or null>,
-        "license_count": <integer or null>,
-        "notes": "<short note, or null>",
-        "security_related": <true or false>,
-        "security_functions": ["prevent"|"detect"|"respond", ...],
-        "confidence_pct": <integer 0-100>,
-        "source_row_index": <integer index into rows[]>
-      },
-      ...
-    ]
-  }
+1. blank;
+2. solely a title, section label, or column header;
+3. solely an instruction or explanatory note and does not identify a capability;
+4. a total, subtotal, or summary line that adds up other rows;
+5. an exact duplicate under the duplicate rules below; or
+6. explicitly described as retired, removed, or decommissioned AND the row states no current cost or license count.
 
-Do not include any text outside the JSON object. Set confidence_pct \
-honestly - 100 for unambiguous rows, lower when the row needs human \
-review."""
+Do not exclude a capability merely because information is incomplete. Keep inactive, planned, and no-longer-used capabilities that still carry a cost or license count; record their status in `notes` and set `confidence_pct` to 60.
+
+## 2. Redacted values
+
+Some values were replaced before you received them with placeholders such as `[NAME]`, `[EMAIL]`, `[PHONE]`, `[ADDRESS]`, `[CLIENT]` and `[CONTRACT]`. Keep a placeholder exactly as written when it is part of a capability's name (for example `[CLIENT] Portal`). Never treat a placeholder alone as a capability, and never guess what it replaced.
+
+## 3. Permitted inference
+
+You may use well-established product knowledge only to determine:
+
+- canonical product name;
+- vendor;
+- category;
+- one-line function;
+- whether the capability is security-related; and
+- which security functions it provides.
+
+Do not use outside knowledge to infer cost, license count, acquisition type, lifecycle status, organizational owner, deployment status, or contract details.
+
+When a permitted inference is not supported by either the row or well-established product knowledge, return `null`, or an empty array for `security_functions`.
+
+Do not invent products, modules, costs, licenses, statuses, or contractual relationships.
+
+## 4. One item per row
+
+1. Inspect all fields in each row, not only the first field.
+2. Return exactly one item for each row you keep.
+3. If a row names a suite and products or modules included in it, return the suite as the item and list the included products in `notes` (for example "Includes: X, Y.").
+4. If a row names several independent products, return the one the row's cost and license values belong to and list the others in `notes` (for example "Row also names: X, Y."). When it is unclear which one the values belong to, return the first named and set `confidence_pct` to 60.
+5. Never name a product or module in `notes` that the row does not name, even if it is commonly included in a known suite.
+
+## 5. Duplicate handling
+
+Two rows are exact duplicates only when their substantive contents are identical after ignoring differences in capitalization, surrounding whitespace, and inconsequential punctuation.
+
+When rows are exact duplicates, return the item from the earliest row and return no item for the later rows.
+
+Do not merge rows merely because they name the same product. Keep separate items when any material information differs, including cost, license count, edition or tier, business unit, owner, contract, deployment, environment, lifecycle status, notes, or acquisition arrangement.
+
+Never add or aggregate costs or license counts across rows.
+
+## 6. Field rules
+
+### `name`
+
+The shortest unambiguous canonical product or capability name, at most 100 characters. Normalize obvious abbreviations and naming variations only when well-established product knowledge makes the identity certain. Do not include cost, license quantity, status, or descriptive notes in the name.
+
+### `vendor`
+
+The canonical vendor name, at most 100 characters, when stated in the row or unambiguously established by product knowledge. Otherwise `null`.
+
+### `category`
+
+Exactly one value from this list, or `null`:
+
+`AI/ML`, `Analytics/BI`, `Application Security`, `Backup/Recovery`, `Cloud Infrastructure`, `CNAPP`, `Collaboration/Communication`, `CRM/Sales`, `Data/Database`, `DevOps/Engineering`, `EDR/XDR`, `ERP`, `Finance/Accounting`, `GRC/Compliance`, `HCM/HR`, `IAM/PAM`, `Incident Response`, `IT Asset Management`, `IT Operations/ITSM`, `Legal`, `Marketing`, `Network Infrastructure`, `Network Security`, `Productivity/Content`, `Project/Work Management`, `Security Awareness`, `SIEM/SOAR`, `Storage`, `Vulnerability Management`
+
+Choose the most specific applicable category. Return `null` when the category cannot be determined, or when it is known but not on the list; in the second case, state the actual category in `notes`.
+
+### `function`
+
+One factual sentence, at most 200 characters, describing the capability's primary operational purpose. It must describe what the capability does, not merely repeat its category. Return `null` when the function cannot be determined reliably.
+
+### `annual_cost_usd`
+
+A JSON number with no currency symbol, commas, or text (for example `12000.5`).
+
+- A number in a column whose header names cost, price, spend, or fees is an annual U.S. dollar cost, unless the header or the row states a different billing period or currency.
+- An amount the row explicitly states as annual and in U.S. dollars is an annual U.S. dollar cost. Accept a dollar sign as USD unless the row explicitly identifies another currency.
+- Return `0` when the row explicitly states the capability is free or costs nothing.
+
+Do not annualize monthly, quarterly, or multiyear amounts; convert foreign currencies; divide bundled costs among products; estimate missing costs; or infer costs from product knowledge. In those cases return `null`, and when the row contains any cost information, copy that cost expression exactly as stated into `notes`.
+
+### `license_count`
+
+A JSON integer with no commas or text, only when the row explicitly states a numeric license, seat, or user count for that capability. Do not infer or calculate a license count. For values such as `enterprise`, `unlimited`, a range, or an unclear shared count, return `null` and preserve the source wording in `notes`.
+
+### `notes`
+
+At most 300 characters. Notes appear in the client's deliverable, so write them as short, plain facts about the source row (for example "Edition not stated."), never as instructions or questions to a reviewer. Include, when the row states it:
+
+- the cost as stated, when `annual_cost_usd` is `null`;
+- license wording that is not a plain count;
+- lifecycle status, when inactive, planned, or no longer used;
+- acquisition arrangement (bundled, free, open source, internally developed);
+- the suite or parent product it belongs to;
+- other products the row names (section 4);
+- the actual category, when `category` is `null` for that reason; and
+- what is ambiguous, when `confidence_pct` is 60.
+
+Do not place hidden reasoning, speculation, or unsupported assumptions in this field. Return `null` when no note is needed.
+
+## 7. Security classification
+
+### `security_related`
+
+`true` when defending the organization (preventing, detecting, or responding to threats) is part of the capability's purpose: for example endpoint, email, network, cloud or application protection, identity and access management, SIEM or SOAR, vulnerability management, data-loss prevention, backup and recovery, security awareness, and incident response.
+
+`false` when the capability only has the built-in protections any business software has, such as a login, permissions, or audit history. A payroll, HR, finance, collaboration, engineering, or productivity product is `false` unless it is also sold as a security capability.
+
+This overrides the rule above: a security capability that the row describes as planned, not yet deployed, inactive, or no longer used is `false`, with an empty `security_functions`, because it does not protect the organization today. Begin `notes` with exactly `Security tool not in use:` followed by the status as the row states it (for example "Security tool not in use: planned, not yet deployed."). An analyst reviews this classification before the tool is left out of the ATT&CK assessment.
+
+### `security_functions`
+
+When `security_related` is `true`, return every applicable value, using these decision rules:
+
+- `prevent`: authentication, MFA, access enforcement, encryption, filtering, blocking, hardening, segmentation, or another protection intended to stop or reduce unauthorized or harmful activity.
+- `detect`: security monitoring, scanning, analysis, alerting, anomaly identification, security audit logging, or another function that identifies potentially harmful activity.
+- `respond`: containment, isolation, remediation, recovery, restoration, incident workflow, or another function that helps act on or recover from an event. Backup and restoration are `respond`.
+
+When `security_related` is `true`, return at least one value. When it is `false`, return an empty array.
+
+## 8. Confidence scoring
+
+Use only these values for `confidence_pct`:
+
+- `100`: the row states the capability's name and vendor, and nothing about the item is ambiguous.
+- `90`: identity is unambiguous, but vendor, category, function, or security classification relies on well-established product knowledge.
+- `60`: the item needs human review: its identity, edition, module, or parent relationship is ambiguous; it was chosen as the first named product under section 4; or it is an inactive, planned, or no-longer-used capability kept under section 1.
+
+Low confidence does not justify excluding an identifiable capability. State what is ambiguous in `notes`.
+
+## 9. Source indexes and output order
+
+`source_row_index` is the zero-based index of the source row in `rows[]`. Return items in ascending `source_row_index` order.
+
+## 10. Output requirements
+
+Return only valid JSON. Do not include Markdown, explanations, comments, headings, or text outside the JSON object. Use `null` exactly where required; do not substitute empty strings, "N/A", "none", or "unknown".
+
+{
+  "items": [
+    {
+      "name": "Canonical capability name",
+      "vendor": null,
+      "category": null,
+      "function": null,
+      "annual_cost_usd": null,
+      "license_count": null,
+      "notes": null,
+      "security_related": false,
+      "security_functions": [],
+      "confidence_pct": 90,
+      "source_row_index": 0
+    }
+  ]
+}
+
+If `rows` is missing, is not an array, or contains no identifiable capabilities, return exactly:
+
+{"items":[]}
+
+Before returning the JSON, silently verify:
+
+1. Every included item represents an identifiable capability, and every excluded row satisfies an exclusion rule.
+2. No total or summary line was returned as an item.
+3. No row produced more than one item, and no two items share a `source_row_index`.
+4. No unnamed suite components were invented.
+5. Costs and license counts are plain JSON numbers, never inferred or aggregated.
+6. Every security-related item has at least one security function; every other item, including a planned, inactive, or no-longer-used security tool, has none.
+7. `confidence_pct` is 100, 90, or 60, and every 60 has a note saying why.
+8. No field exceeds its length limit.
+9. The response is valid JSON with no text outside the object."""  # noqa: E501
+
+#: v3.2 section 6's closed `category` list, held ONCE. A test parses the list
+#: out of `PROMPT` and requires it to equal this tuple, so a drift between the
+#: prompt and the code goes red.
+CATEGORIES: tuple[str, ...] = (
+    "AI/ML",
+    "Analytics/BI",
+    "Application Security",
+    "Backup/Recovery",
+    "Cloud Infrastructure",
+    "CNAPP",
+    "Collaboration/Communication",
+    "CRM/Sales",
+    "Data/Database",
+    "DevOps/Engineering",
+    "EDR/XDR",
+    "ERP",
+    "Finance/Accounting",
+    "GRC/Compliance",
+    "HCM/HR",
+    "IAM/PAM",
+    "Incident Response",
+    "IT Asset Management",
+    "IT Operations/ITSM",
+    "Legal",
+    "Marketing",
+    "Network Infrastructure",
+    "Network Security",
+    "Productivity/Content",
+    "Project/Work Management",
+    "Security Awareness",
+    "SIEM/SOAR",
+    "Storage",
+    "Vulnerability Management",
+)
+
+#: v3.2 section 8: the only confidence values the prompt allows.
+CONFIDENCE_SCALE: frozenset[int] = frozenset({100, 90, 60})
+
+#: The prompt versions whose rules `extraction_flags` judges by. A list an
+#: earlier prompt drafted followed that prompt's rules (v2 asked for any
+#: confidence from 0 to 100 and offered "EDR" as a category), so its flags are
+#: not measured rather than counted. Add a version only when its prompt carries
+#: the same closed scale, closed list and one-item-per-row rule.
+PROMPT_VERSIONS_WITH_CLOSED_SCALES: frozenset[str] = frozenset({"v3.2"})
+
+#: The name an item is stored under when the model sent none. Kept, not
+#: dropped: the row is a capability the client pays for (C6 (1), for #806).
+UNKNOWN_NAME = "Unknown capability"
+
+#: The finding reason for an item whose `source_row_index` an earlier item in
+#: the same answer already named (v3.2 section 4, "Return exactly one item for
+#: each row you keep"). Both items are kept; the later one is recorded.
+DUPLICATED = "duplicated"
 
 
 @dataclass(frozen=True)
@@ -110,8 +308,8 @@ class ExtractedCapability:
     notes: str | None
     confidence_pct: int | None
     source_row_index: int | None
-    # Prompt v2. None when the provider omitted the field (an older prompt, or a
-    # response that dropped it) — never coerced to False, because False is a
+    # Since prompt v2 (v3.2 keeps it). None when the provider omitted the field
+    # (an older prompt, or a response that dropped it), never coerced to False, because False is a
     # decision and None is the absence of one. app.tech_debt.security_scope
     # keeps unclassified rows in the ATT&CK subset for exactly that reason.
     security_related: bool | None = None
@@ -287,7 +485,7 @@ def _coerce_item(item: dict[str, Any]) -> ExtractedCapability:
         return s or None
 
     findings: list[dict[str, Any]] = []
-    name_for_record = _opt_str("name") or "Unknown capability"
+    name_for_record = _opt_str("name") or UNKNOWN_NAME
     # The VALIDATED row index, set below before any other field is read. The raw
     # one can be a NaN or an infinity (json.loads accepts both), which Postgres
     # json rejects at commit -- after the call is paid (#878 review B1).
@@ -384,7 +582,7 @@ def _coerce_item(item: dict[str, Any]) -> ExtractedCapability:
     # have: `with_row_bounds` checks it once the rows are known.
     row = _opt_int("source_row_index", 0, INT_MAX)
     row_for_record = row
-    name = _bounded_str("name") or "Unknown capability"
+    name = _bounded_str("name") or UNKNOWN_NAME
     vendor = _bounded_str("vendor")
     category = _bounded_str("category")
     function = _bounded_str("function")
@@ -429,6 +627,71 @@ def with_row_bounds(items: list[ExtractedCapability], row_count: int) -> list[Ex
         }
         out.append(replace(it, source_row_index=None, findings=(*it.findings, finding)))
     return out
+
+
+def with_duplicate_rows(items: list[ExtractedCapability]) -> list[ExtractedCapability]:
+    """Two items naming one source row are both kept, and the later is recorded.
+
+    v3.2 asks for one item per row (section 4). A second item on the same row is
+    still a capability somebody named, so it is not dropped; it stays in the
+    list and in `reconcile_rows`' per-item count, and the record is what says the
+    row produced more than one (C6 (6), for #806). The row index is not stored on
+    an item, so this is the one flag that cannot be derived later.
+    """
+    seen: set[int] = set()
+    out: list[ExtractedCapability] = []
+    for it in items:
+        i = it.source_row_index
+        if i is None or i not in seen:
+            if i is not None:
+                seen.add(i)
+            out.append(it)
+            continue
+        finding = {
+            "source_row_index": i,
+            "item_name": it.name,
+            "field": "source_row_index",
+            "reason": DUPLICATED,
+            "value": _shown(i),
+        }
+        out.append(replace(it, findings=(*it.findings, finding)))
+    return out
+
+
+def duplicated_source_rows(findings: Iterable[dict[str, Any]]) -> int:
+    """How many SOURCE ROWS were turned into more than one item: a row named
+    three times is one row."""
+    return len(
+        {
+            f.get("source_row_index")
+            for f in findings
+            if f.get("field") == "source_row_index" and f.get("reason") == DUPLICATED
+        }
+    )
+
+
+def extraction_flags(items: Iterable[object], findings: Iterable[dict[str, Any]]) -> dict[str, int]:
+    """What v3.2 closes and a model can still send, each kept as sent and counted.
+
+    Computed once, at extraction, over the items the model returned, and
+    recorded in the extraction's audit; the list response reads that record
+    (advisor ruling F2, issue 736 comment 6069328834), so a consultant's later
+    edit never changes it. `items` are read by attribute.
+    """
+    values = [
+        (getattr(i, "name", None), getattr(i, "confidence_pct", None), getattr(i, "category", None))
+        for i in items
+    ]
+    return {
+        "name_missing": sum(1 for name, _, _ in values if name == UNKNOWN_NAME),
+        "confidence_off_scale": sum(
+            1 for _, conf, _ in values if conf is not None and conf not in CONFIDENCE_SCALE
+        ),
+        "category_off_list": sum(
+            1 for _, _, cat in values if cat is not None and cat not in CATEGORIES
+        ),
+        "source_row_duplicated": duplicated_source_rows(findings),
+    }
 
 
 def read_inventory(storage: StorageBackend, artifact: Artifact) -> list[dict]:
@@ -482,7 +745,9 @@ def extract_from_rows(
             client_org_name=client_org_name,
             name_hints=tuple(name_hints),
         )
-    items = with_row_bounds(result.data, len(rows))
+    # Bounds first: an index that names no uploaded row is cleared, and a
+    # cleared index is not a duplicate of anything.
+    items = with_duplicate_rows(with_row_bounds(result.data, len(rows)))
     return ExtractionResult(
         items=items,
         llm_call=result.llm_call,

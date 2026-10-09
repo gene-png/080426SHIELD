@@ -1,0 +1,397 @@
+{
+  "corpus": "measure-tech-debt-v1",
+  "about": [
+    "Synthetic Tech Debt inventory for the #806 consistency measure (comment 5983938383, section 2). Every product, vendor and figure is invented; it holds no client data, no person's name and no secret.",
+    "{{CLIENT_NAME}} is replaced, at measure time, by the legal name of the client the operator names with --service-id, so the redactor sees a real client name to replace.",
+    "Subtotal rows sum the Active rows above them as written (a monthly cost counted twelve times; the duplicate row counted twice); TOTAL sums the subtotals.",
+    "tech_debt_inventory.xlsx is built from this file by `python -m scripts.build_measure_corpus`; `classes` names the rows of each section 2 class by 0-based index into `rows` and is never written to the XLSX."
+  ],
+  "header": [
+    "Product",
+    "Vendor",
+    "Category",
+    "Description",
+    "Annual Cost",
+    "Licenses",
+    "Status",
+    "Notes"
+  ],
+  "rows": [
+    [
+      "Ironvale Endpoint Guard",
+      "Ironvale Security",
+      "EDR/XDR",
+      "Endpoint detection and response agent on every laptop and server",
+      "$96,000",
+      "1,200",
+      "Active",
+      ""
+    ],
+    [
+      "Ironvale Mail Shield",
+      "Ironvale Security",
+      "Email Security",
+      "Inbound email filtering and attachment sandboxing",
+      "$28,500",
+      "1,150",
+      "Active",
+      ""
+    ],
+    [
+      "Cedar Ridge SIEM Cloud",
+      "Cedar Ridge Labs",
+      "SIEM",
+      "Central log collection and correlation rules",
+      "$140,000",
+      "",
+      "Active",
+      "Priced by daily ingest"
+    ],
+    [
+      "Gatehouse Identity",
+      "Gatehouse Inc.",
+      "IAM",
+      "Single sign-on and MFA for workforce applications",
+      "$54,000",
+      "1,200",
+      "Active",
+      ""
+    ],
+    [
+      "Gatehouse Vault",
+      "Gatehouse Inc.",
+      "PAM",
+      "Vault for administrator credentials with session recording",
+      "$31,000",
+      "60",
+      "Active",
+      ""
+    ],
+    [
+      "Lanternfish Scanner",
+      "Lanternfish",
+      "Vulnerability Management",
+      "Weekly authenticated scans of servers",
+      "$1,200",
+      "1",
+      "Active",
+      "One scanner appliance"
+    ],
+    [
+      "Bastion Edge Firewall",
+      "Bastion Networks",
+      "Network Security",
+      "Perimeter firewalls at two data centers",
+      "$62,000",
+      "4",
+      "Active",
+      "Support included"
+    ],
+    [
+      "Watchpost Web Proxy",
+      "Watchpost",
+      "Network Security",
+      "Outbound web filtering for office networks",
+      "$26,000",
+      "1,200",
+      "Active",
+      ""
+    ],
+    [
+      "Keystone Cert Manager",
+      "Keystone Labs",
+      "PKI",
+      "Internal certificate issuance and renewal",
+      "$8,000",
+      "",
+      "Active",
+      ""
+    ],
+    [
+      "Tidewater Backup",
+      "Tidewater Data",
+      "Backup",
+      "Nightly backups with an offsite copy",
+      "$38,000",
+      "",
+      "Active",
+      ""
+    ],
+    [
+      "Quillstone GRC",
+      "Quillstone",
+      "GRC",
+      "Policy library, risk register and audit tracking",
+      "$22,000",
+      "40",
+      "Active",
+      ""
+    ],
+    [
+      "{{CLIENT_NAME}} SOC Platform",
+      "Internal",
+      "Security Operations",
+      "Alert triage portal built in-house by the security team",
+      "$75,000",
+      "",
+      "Active",
+      "Internal build; cost is staff time"
+    ],
+    [
+      "Kestrel Threat Feed",
+      "Kestrel Intel",
+      "Cyber Misc",
+      "Threat indicator feed loaded into the SIEM",
+      "$18,000",
+      "",
+      "Active",
+      ""
+    ],
+    [
+      "Ironvale Cloud Posture",
+      "Ironvale Security",
+      "CNAPP",
+      "Cloud misconfiguration and workload scanning",
+      "$48,000",
+      "",
+      "Planned FY27",
+      "Quote received; not purchased"
+    ],
+    [
+      "Brightmoor Antivirus",
+      "Brightmoor",
+      "Antivirus",
+      "Legacy antivirus, replaced by Endpoint Guard",
+      "",
+      "",
+      "Retired",
+      "Decommissioned 2025-11"
+    ],
+    ["Subtotal - Security", "", "", "", "$599,700", "", "", ""],
+    [
+      "Bluefin Office Suite (Mail, Docs, Chat, Video)",
+      "Bluefin Systems",
+      "Productivity",
+      "Email, documents, chat and video meetings for all staff",
+      "$180,000",
+      "1,200",
+      "Active",
+      "Modules: Mail, Docs, Chat, Video"
+    ],
+    [
+      "Ledgerline ERP + Ledgerline Payroll",
+      "Ledgerline",
+      "ERP",
+      "General ledger, purchasing and payroll",
+      "$210,000",
+      "150",
+      "Active",
+      "Two products on one contract"
+    ],
+    [
+      "Harbor Point CRM",
+      "Harbor Point Software",
+      "CRM",
+      "Sales pipeline and customer records",
+      "$66,000",
+      "90",
+      "Active",
+      ""
+    ],
+    [
+      "Peoplewise HR",
+      "Peoplewise",
+      "HCM",
+      "Employee records, onboarding and time off",
+      "$44,000",
+      "1,200",
+      "Active",
+      ""
+    ],
+    [
+      "Sketchwell Design",
+      "Sketchwell",
+      "Design",
+      "Design tool for the marketing team",
+      "$450/month",
+      "12",
+      "Active",
+      "Billed monthly"
+    ],
+    [
+      "Pagecraft Wiki",
+      "Lumen Fork",
+      "Collaboration",
+      "Internal knowledge base",
+      "$9,600",
+      "400",
+      "Active",
+      ""
+    ],
+    [
+      "Trackwise Service Desk",
+      "Lumen Fork",
+      "ITSM",
+      "IT service desk ticketing",
+      "$27,000",
+      "35",
+      "Active",
+      ""
+    ],
+    [
+      "Codeharbor",
+      "Codeharbor Inc.",
+      "Engineering",
+      "Source control and build pipelines",
+      "$36,000",
+      "80",
+      "Active",
+      ""
+    ],
+    [
+      "Codeharbor",
+      "Codeharbor Inc.",
+      "Engineering",
+      "Source control and build pipelines",
+      "$36,000",
+      "80",
+      "Active",
+      ""
+    ],
+    [
+      "Northgate Dashboards",
+      "Northgate Analytics",
+      "BI",
+      "Dashboards for finance and operations",
+      "$24,000",
+      "50",
+      "Active",
+      ""
+    ],
+    [
+      "Expensely",
+      "Expensely",
+      "Finance",
+      "Expense reports and card reconciliation",
+      "$12,500",
+      "300",
+      "Active",
+      ""
+    ],
+    [
+      "Signline",
+      "Signline",
+      "Productivity",
+      "Electronic signatures for contracts",
+      "$6,000",
+      "25",
+      "Active",
+      ""
+    ],
+    [
+      "Mapleleaf Learning",
+      "Mapleleaf",
+      "HCM",
+      "Mandatory staff training, including security awareness",
+      "$19,000",
+      "1,200",
+      "Active",
+      ""
+    ],
+    [
+      "Cloudcrate Hosting",
+      "Cloudcrate",
+      "Infrastructure",
+      "Hosting for the customer portal",
+      "$120,000",
+      "",
+      "Active",
+      "Usage-based"
+    ],
+    [
+      "Domainly DNS",
+      "Domainly",
+      "Infrastructure",
+      "Public DNS",
+      "$4,800",
+      "",
+      "Active",
+      ""
+    ],
+    [
+      "Voxline Phones",
+      "Voxline",
+      "Telephony",
+      "Desk and softphone service",
+      "$30,000",
+      "1,000",
+      "Active",
+      ""
+    ],
+    [
+      "Roomly",
+      "Roomly",
+      "Facilities",
+      "Meeting room booking",
+      "$3,600",
+      "",
+      "Active",
+      ""
+    ],
+    [
+      "Printhub Managed Print",
+      "Printhub",
+      "Facilities",
+      "Managed printers and toner",
+      "$15,000",
+      "",
+      "Active",
+      ""
+    ],
+    [
+      "Survey Owl",
+      "Survey Owl",
+      "Marketing",
+      "Customer surveys",
+      "$2,400",
+      "10",
+      "Active",
+      ""
+    ],
+    [
+      "Calendo Scheduling",
+      "Calendo",
+      "Productivity",
+      "External meeting scheduling links",
+      "$1,800",
+      "20",
+      "Active",
+      ""
+    ],
+    [
+      "Old Intranet",
+      "Lumen Fork",
+      "Collaboration",
+      "Former intranet, read-only archive",
+      "",
+      "",
+      "Retired",
+      ""
+    ],
+    ["Subtotal - Business Applications", "", "", "", "$853,100", "", "", ""],
+    ["TOTAL", "", "", "", "$1,452,800", "", "", ""]
+  ],
+  "classes": {
+    "total": [38],
+    "subtotal": [15, 37],
+    "exact_duplicate": [23, 24],
+    "planned_security_tool_with_cost": [13],
+    "retired_no_cost": [14, 36],
+    "dollar_string": [5],
+    "monthly_cost": [20],
+    "suite_with_modules": [16],
+    "two_products_one_row": [17],
+    "client_name": [11],
+    "off_list_category": [12]
+  }
+}
