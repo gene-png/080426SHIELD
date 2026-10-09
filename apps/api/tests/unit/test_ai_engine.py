@@ -81,7 +81,7 @@ def test_run_job_csf_score_returns_suggestions_and_logs_call(db_session) -> None
     canned = LLMResponse(
         '{"scores": [{"subcategory_code": "GV.OC-01", "tier": "partial",'
         ' "governance": 1, "policy": 1, "implementation": 0, "monitoring": 0,'
-        ' "improvement": 0}], "executive_summary": "draft"}',
+        ' "improvement": 0}]}',
         input_tokens=100,
         output_tokens=40,
     )

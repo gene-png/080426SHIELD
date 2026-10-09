@@ -135,7 +135,7 @@ def _answer_as_the_prompt_asks(payload: dict[str, Any]) -> LLMResponse:
         }
         for t, code in _rows_asked(payload)
     ]
-    return LLMResponse(json.dumps({"scores": scores, "executive_summary": "Draft."}))
+    return LLMResponse(json.dumps({"scores": scores}))
 
 
 class _Recorder:
