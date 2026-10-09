@@ -18,11 +18,20 @@ notes) and model output (rationale, findings). Two things go wrong with a bare
 starting with any of those six as TEXT: data type "s" and Excel's quote prefix,
 which shows the cell exactly as typed and never evaluates it. The value itself
 is not changed, so the cell reads back exactly as typed.
+
+Every strip logs ONE warning per cell, `xlsx_export.control_characters_removed`,
+naming the sheet, the column (its row-1 header where there is one, otherwise
+the letter), the row and how many characters went. NEVER the value: the cell
+is client or model text, and the log is not a place to copy it to.
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+from app.logging import get_logger
+
+_log = get_logger(__name__)
 
 #: A leading character that makes a cell a formula, or one a spreadsheet tool
 #: can evaluate when the text is re-read (OWASP, CSV injection).
@@ -33,8 +42,29 @@ def safe_text_row(ws: Any, values: list) -> None:
     """Append `values` to `ws` with every string stored as text, as typed."""
     from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 
+    removed = [len(ILLEGAL_CHARACTERS_RE.findall(v)) if isinstance(v, str) else 0 for v in values]
     ws.append([ILLEGAL_CHARACTERS_RE.sub("", v) if isinstance(v, str) else v for v in values])
+    row = ws.max_row
+    for column, count in enumerate(removed, start=1):  # append starts at column A
+        if count:
+            cell = ws.cell(row=row, column=column)
+            _log.warning(
+                "xlsx_export.control_characters_removed",
+                sheet=ws.title,
+                column=_column_name(ws, cell),
+                row=cell.row,
+                removed=count,
+            )
     for cell in ws[ws.max_row]:
         if isinstance(cell.value, str) and cell.value.startswith(FORMULA_TRIGGERS):
             cell.data_type = "s"
             cell.quotePrefix = True
+
+
+def _column_name(ws: Any, cell: Any) -> str:
+    """The row-1 header above `cell` when it is text, else the column letter."""
+    if cell.row > 1:
+        header = ws.cell(row=1, column=cell.column).value
+        if isinstance(header, str) and header:
+            return header
+    return cell.column_letter

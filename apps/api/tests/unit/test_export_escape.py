@@ -356,3 +356,71 @@ def test_zt_catalog_sentences_print_as_text(app_client, monkeypatch, hook) -> No
     text = read_pdf(files["pdf"])
     assert sentence in text
     assert _ENTITY.search(text) is None, _ENTITY.findall(text)
+
+
+# --- control characters: stripped, and every strip logged (advisor, #972) --------
+
+
+def test_a_control_character_is_stripped_and_the_strip_is_logged(app_client, capsys) -> None:
+    """The cell is clean, and ONE warning names the sheet, the column header,
+    the row and how many characters went -- never the value. `capsys`, not
+    `caplog`: structlog renders to stdout (`app/logging.py`), so stdlib log
+    capture sees nothing (the lesson `test_risk_link_scope.py` records).
+
+    `app_client` comes FIRST and is otherwise unused: the app's lifespan is
+    what calls `configure_logging`, so without it this test passed only when
+    an earlier test had started the app, and failed run alone. Listed before
+    `capsys`, the lifespan binds the stream structlog treats as stdout, which
+    it resolves at call time, so the capture sees the line."""
+    from openpyxl import Workbook
+
+    from app.xlsx_export import safe_text_row
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Answers"
+    safe_text_row(ws, ["Code", "Notes"])
+    capsys.readouterr()  # the header row removed nothing
+    secret = "Sensitive\x00note\x07here\x1b"
+    safe_text_row(ws, ["ID.AM-01", secret])
+    assert ws["B2"].value == "Sensitivenotehere"  # the positive state first
+    out = capsys.readouterr().out
+    events = [json.loads(line) for line in out.splitlines() if line.startswith("{")]
+    removed = [e for e in events if e.get("event") == "xlsx_export.control_characters_removed"]
+    assert len(removed) == 1, events
+    (e,) = removed
+    assert e["level"] == "warning"
+    assert (e["sheet"], e["column"], e["row"], e["removed"]) == ("Answers", "Notes", 2, 3)
+    for fragment in ("Sensitive", "note", "here", "\x00", "\\u0000"):
+        assert fragment not in out, f"the log carries part of the value: {fragment!r}"
+
+
+def test_a_sheet_without_a_header_names_the_column_letter(app_client, capsys) -> None:
+    # `app_client` first: the lifespan configures logging (see above).
+    from openpyxl import Workbook
+
+    from app.xlsx_export import safe_text_row
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Cover"
+    safe_text_row(ws, ["clean", "x\x01"])
+    out = capsys.readouterr().out
+    (e,) = [
+        json.loads(line)
+        for line in out.splitlines()
+        if line.startswith("{") and "control_characters_removed" in line
+    ]
+    assert (e["sheet"], e["column"], e["row"], e["removed"]) == ("Cover", "B", 1, 1)
+
+
+def test_a_clean_row_logs_nothing(app_client, capsys) -> None:
+    # `app_client` first, or this passes vacuously on an unconfigured logger.
+    from openpyxl import Workbook
+
+    from app.xlsx_export import safe_text_row
+
+    ws = Workbook().active
+    safe_text_row(ws, ["Header"])
+    safe_text_row(ws, ["clean value", 3, None])
+    assert "control_characters_removed" not in capsys.readouterr().out
