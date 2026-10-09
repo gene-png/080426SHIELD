@@ -19,7 +19,6 @@ from __future__ import annotations
 import io
 from collections.abc import Iterable
 from dataclasses import dataclass
-from html import escape as html_escape
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
@@ -68,6 +67,8 @@ from app.mode_stamp import (
     pdf_paragraph,
 )
 from app.models.attack_assessment import AttackAssessment, AttackCoverage
+from app.pdf_export import pdf_escape, pdf_text
+from app.xlsx_export import safe_text_row
 
 if TYPE_CHECKING:
     from reportlab.platypus import TableStyle
@@ -479,20 +480,10 @@ def _tools(
 
 
 def _safe_text_row(ws, values: list) -> None:
-    """Append a row whose strings may be model output or client input.
-
-    openpyxl stores any string starting with "=" as a FORMULA, and raises on
-    control characters -- so a rationale of `=HYPERLINK(...)` would become a
-    live formula in a Kentro-branded workbook, and one stray control byte
-    would fail the whole finalize. Illegal characters are dropped and a
-    leading "=" is kept as text.
-    """
-    from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
-
-    ws.append([ILLEGAL_CHARACTERS_RE.sub("", v) if isinstance(v, str) else v for v in values])
-    for cell in ws[ws.max_row]:
-        if isinstance(cell.value, str) and cell.value.startswith("="):
-            cell.data_type = "s"
+    """Append a row whose strings may be model output or client input: the
+    shared guard, `app/xlsx_export.py::safe_text_row` (#972), which this
+    function was the pattern for. Kept under this name for its call sites."""
+    safe_text_row(ws, values)
 
 
 _CATALOGUE_CODES = all_codes()
@@ -1004,8 +995,8 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
 
     outside = states_outside_counts(ctx)
     story: list = []
-    story.append(Paragraph(ctx.service_title, h1))
-    story.append(Paragraph(ctx.client_legal_name, body))
+    story.append(pdf_text(ctx.service_title, h1))  # #775
+    story.append(pdf_text(ctx.client_legal_name, body))  # #775
     story.append(pdf_paragraph(ctx.ai_mode, body))  # #646, under the title
     story.append(Spacer(1, 0.2 * inch))
 
@@ -1019,8 +1010,7 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
                 # Escaped: a Paragraph is markup, and a bare "&" in "ATT&CK"
                 # renders as "ATT&CK;". quote=False escapes exactly &, < and >,
                 # what reportlab's markup needs; quotes are literal text there.
-                f"{ctx.rollup.catalogue_count} "
-                f"{html_escape(_catalog_phrase(ctx), quote=False)} · "
+                f"{ctx.rollup.catalogue_count} " f"{pdf_escape(_catalog_phrase(ctx))} · "
                 if outside
                 else f"Scored: <b>{_scored_total(ctx)}</b> · "
             )
@@ -1041,17 +1031,17 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
             after_document_sentence(_pct_text(ctx.after.rollup)),
             *after_counts(ctx.after),
         ]:
-            story.append(Paragraph(html_escape(sentence, quote=False), body))
+            story.append(pdf_text(sentence, body))
     story.append(Paragraph(_definition(ctx), body))
     # #686: only when non-zero, so nothing changes without a plan.
     for sentence in retirement_sentences(ctx):
-        story.append(Paragraph(html_escape(sentence, quote=False), body))
+        story.append(pdf_text(sentence, body))
     # #851: the third state, only when nothing could be checked.
     for sentence in subset_sentences(ctx):
-        story.append(Paragraph(html_escape(sentence, quote=False), body))
+        story.append(pdf_text(sentence, body))
     # #554 R3 (Q4): only when something awaits review.
     if (awaiting := awaiting_review_text(ctx)) is not None:
-        story.append(Paragraph(html_escape(awaiting, quote=False), body))
+        story.append(pdf_text(awaiting, body))
 
     # #554 R1: the same table as the DOCX, and they MUST move together.
     reason_counts = partial_reason_counts(ctx)
@@ -1062,8 +1052,8 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
                 PARTIAL_TABLE_COLUMNS,
                 *[
                     [
-                        Paragraph(html_escape(reason.label, quote=False), body),
-                        Paragraph(html_escape(reason.sentence, quote=False), body),
+                        pdf_text(reason.label, body),
+                        pdf_text(reason.sentence, body),
                         str(n),
                     ]
                     for reason, n in reason_counts
@@ -1087,7 +1077,7 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
         )
         unpreventable_table.setStyle(_table_style())
         story.append(unpreventable_table)
-        story.append(Paragraph(html_escape(CANNOT_BE_PREVENTED_SENTENCE, quote=False), body))
+        story.append(pdf_text(CANNOT_BE_PREVENTED_SENTENCE, body))
 
     story.append(Paragraph("Per-tactic rollup", h2))
     tactic_table_data: list[list] = [
