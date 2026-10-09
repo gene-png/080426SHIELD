@@ -1,5 +1,7 @@
 # Gene — in-flight status
 
+_2026-10-09 (track4): #889 PR 1 is built on `track4/889-attack-subset-drift`, for #889; the PR is not yet open. When a tool leaves a client's security tool list after their ATT&CK report is approved, the client's dashboard now says so and marks the tool, the documents say so as of finalize, and the home card says its ATT&CK total counts such a tool. A client with no list sees "not checked" on the dashboard. No number changes. **One thing needs you:** the golden `dashboard.json` gains that "not checked" sentence; the advisor approved it (#736 6090360421) and your ratification is pending, as for #851's. The admin "finalize again" line is filed as #1005 (tier-3). The Risk half waits for D′. It comes back to you: conditions 5 and 6._
+
 _2026-10-09 (track1): #993 is built on `track1/993-docx-control-chars`, for
 #993; the PR is not yet open. A client legal name with a control character
 (for example a stray BEL byte, which the admin route accepts) no longer blocks
