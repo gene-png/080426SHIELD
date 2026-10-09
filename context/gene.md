@@ -1,5 +1,13 @@
 # Gene — in-flight status
 
+_2026-10-09 (track1): #775 and #972 are built on `track1/775-export-escape`,
+for #775 and #972; the PR opens after the run_batches PR. Every PDF prints the
+service title and the client's name as text (no more "ATT&CK;", and a name with
+"</b>" no longer fails finalize), and every free-text XLSX cell in CSF, Zero
+Trust, Tech Debt and Risk is stored as text, so a value opening with "=", "+",
+"-", "@", tab or carriage return is never a live formula. One golden word
+changes, declared. It comes back to you: conditions 5 and 6._
+
 _2026-10-08 (track2): #806, the ATT&CK `mitre_map` part, is pushed on
 `track2/806-mitre-map-prompt`. It runs the prompt you approved (comment
 5982555899) verbatim, with `prompt_version` "v2", per-batch
