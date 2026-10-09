@@ -98,6 +98,23 @@ from pathlib import Path
 # mapping nor the fixture tree FAILS the run: silence must not be how coverage
 # quietly shrinks.
 DEFERRED: dict[str, str] = {
+    "merge_group_pr.py": (
+        "Resolves a merge-queue entry to its PR's current body with `gh`, so every "
+        "exit-0 case needs a network fetch, and a fixture here runs "
+        "`[sys.executable] + argv` with no way to replace `gh`. It also has NO exit 1 "
+        "by design: it resolves inputs and judges nothing, so the contract's "
+        "negative-control rule has nothing to hold it to. Its states are covered by "
+        "`tests/unit/test_merge_group_pr.py` with `gh` replaced in-process: 0 for a "
+        "valid queue ref, writing that PR's body (the fake answers per PR number, so "
+        "the wrong PR is visible); 2 for 16 malformed refs having called `gh` zero "
+        "times, for each of the five fetches failing with pre-seeded stale outputs "
+        "deleted, for a file or commit list shorter than the PR reports (GitHub "
+        "truncates silently), for GitHub answering with a different PR, and for bad arguments. "
+        "Red-on-revert, 2026-09-26, nine mutations each red on its named test "
+        "(leading zeros, search for fullmatch, a PR-0 fallback, no stale-output "
+        "delete, a foreign PR accepted, null body as 'None', a gh failure uncaught, "
+        "nothing asked for accepted, the wrong body written)."
+    ),
     "compose_unchanged.py": (
         "Reads a git RANGE -- the merge base and the head -- and a fixture here is "
         "a static directory, not a repository, so no case can give it a range. "
@@ -130,6 +147,15 @@ DEFERRED: dict[str, str] = {
     # thing it guards -- and what this file now enforces for them is the half
     # that was actually missing: that a workflow INVOKES them. Both shipped
     # with neither, and ran nowhere for weeks.
+    "gitleaks_merge_group.sh": (
+        "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
+        "It builds a throwaway repository and runs `scripts/gitleaks-merge-group.sh` "
+        "against a stub gitleaks in five states: a squash-shaped group exits 0 "
+        "having run the scanner over exactly base..head; a merge-shaped group "
+        "exits 2 without running it (the zero-commit guard); a leak exits 1; an "
+        "unknown sha and a missing argument exit 2. Red-on-revert, 2026-09-26: "
+        "the zero-commit guard removed turns the merge-shaped case red."
+    ),
     "prepush_hook_status.sh": (
         "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
         "It EXTRACTS the api-unit-tests hook's `bash -c` body from "

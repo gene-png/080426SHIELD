@@ -101,6 +101,12 @@ GATES = [
     # D-095's compose exception. Added WITH its entry here. `sys.argv` because
     # `main(argv)` takes the argument list.
     ("compose_unchanged", "sys.argv"),
+    # The merge-queue resolver (#659). It decides whether the two required body
+    # checks can run at all on a merge_group event -- a failed fetch is exit 2,
+    # red -- so it carries the handler, and `check_gate_fixtures` found it
+    # without one. Added WITH its entry here. `sys.argv` because `main(argv)`
+    # takes the argument list.
+    ("merge_group_pr", "sys.argv"),
 ]
 
 MARKER = 'if __name__ == "__main__":'

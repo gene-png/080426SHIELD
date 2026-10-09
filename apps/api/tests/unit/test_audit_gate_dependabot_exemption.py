@@ -56,10 +56,14 @@ this exact check.
 
 from __future__ import annotations
 
+import os
 import pathlib
 import re
+import shutil
+import subprocess
 
 import pytest
+import yaml
 
 from tests._paths import find_workflows_dir
 
@@ -103,7 +107,12 @@ if _WORKFLOWS_DIR is None:  # pragma: no cover - container-only branch
 WORKFLOW = _WORKFLOWS_DIR / "audit-gate.yml"
 STEP = "Require recorded audit evidence"
 BOT = "dependabot[bot]"
-EXPECTED_CONDITION = f"if: github.event.pull_request.user.login != '{BOT}'"
+# Keyed on the "Who opened the PR" step since merge_group was added: the event's
+# `pull_request.user.login` is EMPTY on merge_group, and an empty author reads as
+# "not Dependabot", so a bot PR in the queue would face the audit gate its body
+# can never satisfy. That is the future-trigger case the docstring above names.
+# Repinned by the coordinator's verdict on the merge_group PR, keeping equality.
+EXPECTED_CONDITION = f"if: steps.author.outputs.login != '{BOT}'"
 
 
 def _step_block(step: str = STEP) -> str:
@@ -139,10 +148,11 @@ def test_the_step_carries_an_author_condition() -> None:
         f"check_audit_evidence -- its body is not editable by a human without "
         f"taking over the PR -- so the gate is red by construction for that class."
     )
-    assert "github.event.pull_request.user.login" in block, (
-        "the condition must key on the PR AUTHOR. `github.actor` is who "
-        "triggered the run, which on a re-run is whoever clicked it, not the "
-        "bot that opened the PR."
+    assert "steps.author.outputs.login" in block, (
+        "the condition must key on the PR AUTHOR, through the `author` step, "
+        "which reads it on both events (its own tests below pin where from). "
+        "`github.actor` is who triggered the run, which on a re-run is whoever "
+        "clicked it, not the bot that opened the PR."
     )
 
 
@@ -307,7 +317,7 @@ def test_the_script_itself_is_still_author_BLIND() -> None:
 # ---------------------------------------------------------------------------
 
 GUARD_STEP = "An audit-exempt bot PR must be manifest-only"
-GUARD_EXPECTED_CONDITION = f"if: github.event.pull_request.user.login == '{BOT}'"
+GUARD_EXPECTED_CONDITION = f"if: steps.author.outputs.login == '{BOT}'"
 
 
 @pytest.mark.unit
@@ -366,3 +376,110 @@ def test_the_guard_step_actually_invokes_the_guard() -> None:
             f"exits 2 on every PR touching a workflow or a package.json, which is "
             f"correct of the script and a broken gate."
         )
+
+
+# ---------------------------------------------------------------------------
+# THE AUTHOR STEP both conditions above key on (merge_group PR).
+#
+# On pull_request it reads the event's `pull_request.user.login`; on
+# merge_group, where that is empty, it reads the author the resolver FETCHED for
+# the queued PR. Never `github.actor`. An author it cannot determine is exit 2,
+# because an empty author reads as "not Dependabot" in the audit step's `!=`.
+# ---------------------------------------------------------------------------
+
+AUTHOR_STEP = "Who opened the PR"
+# The path the WORKFLOW uses, matched as text and replaced before anything runs.
+AUTHOR_FILE = "/tmp/author.txt"  # noqa: S108 - a literal in the workflow, not a temp file
+
+
+def _audit_steps() -> list[dict]:
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    return workflow["jobs"]["audit-gate"]["steps"]
+
+
+def _step(name: str) -> dict:
+    found = [s for s in _audit_steps() if s.get("name") == name]
+    assert len(found) == 1, f"expected exactly one {name!r} step, found {len(found)}"
+    return found[0]
+
+
+@pytest.mark.unit
+def test_the_author_step_reads_the_pr_author_and_never_the_actor() -> None:
+    step = _step(AUTHOR_STEP)
+    assert step.get("id") == "author", "the conditions read steps.author; the id must match"
+    assert (
+        step["env"]["PR_AUTHOR"] == "${{ github.event.pull_request.user.login }}"
+    ), "on pull_request the author is the PR's user.login, not anything else"
+    assert "github.actor" not in _step_block(
+        AUTHOR_STEP
+    ), "github.actor is whoever triggered the run -- on a re-run, whoever clicked"
+
+
+@pytest.mark.unit
+def test_on_merge_group_the_author_comes_from_the_FETCHED_pr() -> None:
+    """The file the author step reads is the file the resolver step WRITES, on
+    the same event -- so the author is the queued PR's own `user.login`."""
+    resolver = _step("Read the queued PR (merge_group)")
+    assert resolver["if"] == "github.event_name == 'merge_group'"
+    assert f"--author-out {AUTHOR_FILE}" in resolver["run"], resolver["run"]
+    assert _step(AUTHOR_STEP)["run"].count(AUTHOR_FILE) == 1
+
+
+def _run_author_step(
+    tmp_path: pathlib.Path, *, event: str, pr_author: str, fetched: str | None
+) -> tuple[int, str]:
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("no bash here")
+    run = _step(AUTHOR_STEP)["run"]
+    assert run.count(AUTHOR_FILE) == 1, run
+    author_file = tmp_path / "author.txt"
+    if fetched is not None:
+        author_file.write_text(fetched, encoding="utf-8")
+    script = tmp_path / "author-step.sh"
+    script.write_text(run.replace(AUTHOR_FILE, str(author_file)), encoding="utf-8", newline="\n")
+    output = tmp_path / "github_output"
+    output.write_text("", encoding="utf-8")
+    env = {
+        **os.environ,
+        "EVENT": event,
+        "PR_AUTHOR": pr_author,
+        "GITHUB_ACTOR": "whoever-clicked-rerun",
+        "GITHUB_OUTPUT": str(output),
+    }
+    # GitHub runs a `run:` block with no `shell:` as `bash -e {0}`.
+    proc = subprocess.run(  # noqa: S603
+        [bash, "--noprofile", "--norc", "-e", str(script)], env=env, capture_output=True
+    )
+    return proc.returncode, output.read_text(encoding="utf-8")
+
+
+@pytest.mark.unit
+def test_the_author_step_takes_the_fetched_login_on_merge_group(tmp_path: pathlib.Path) -> None:
+    """The event's login and the actor both say someone else; the fetched PR says
+    the bot. The fetched one wins, because on merge_group it is the only one that
+    describes the queued PR."""
+    rc, out = _run_author_step(tmp_path, event="merge_group", pr_author="a-human", fetched=BOT)
+    assert rc == 0, out
+    assert out == f"login={BOT}\n", out
+
+
+@pytest.mark.unit
+def test_the_author_step_takes_the_event_login_on_pull_request(tmp_path: pathlib.Path) -> None:
+    rc, out = _run_author_step(tmp_path, event="pull_request", pr_author=BOT, fetched="a-human")
+    assert rc == 0, out
+    assert out == f"login={BOT}\n", out
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("event", "pr_author", "fetched"),
+    [("merge_group", "a-human", ""), ("pull_request", "", "a-human")],
+)
+def test_an_empty_author_exits_2_and_publishes_nothing(
+    tmp_path: pathlib.Path, event: str, pr_author: str, fetched: str
+) -> None:
+    """Empty would read as "not Dependabot" in the audit step's `!=`: a guess."""
+    rc, out = _run_author_step(tmp_path, event=event, pr_author=pr_author, fetched=fetched)
+    assert rc == 2, (rc, out)
+    assert out == "", f"an undetermined author still published {out!r}"
