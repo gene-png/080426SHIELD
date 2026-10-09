@@ -82,6 +82,22 @@ sizes marked coarse.
 
 Track work outside that list is paused.
 
+**2026-10-09: #930 (`tier-2`) is built on `track6/930-published-amber`, a
+draft PR opened after #974 (#415) merged.** Status as written before it
+merges; update this line in the landing commit. On a published
+Risk Register version, the carried-ratings block no longer tells the consultant
+to "Rate it/them again in the Register table": the selects are gone and the
+rating edit answers 409 once a version is published (D-076). The published
+sentence drops the imperative and does not repeat the card above it, and the
+block keeps its amber style, because the ratings were carried by the model and
+not re-rated. The draft wording is unchanged. `carriedSentences` takes a
+required `editable`, so no caller can fail open. Rulings: advisor, #736 comment
+6067815887 (option A, amber kept, the declared edit giving five existing calls
+`true`), on the plan in 6067131971. The draft-side case, where the imperative
+stays after a consultant has re-rated, is filed as #950 (tier-3) and not built.
+Trips merge-rule condition 5 (web test globs); condition 6 is not tripped (the
+admin screen only).
+
 **2026-10-09: #415 (`tier-2`, `client-reaching`) is built on
 `track6/415-pending-links`, a draft PR.** Status as written before it merges;
 update this line in the landing commit. An ATT&CK technique pending review
