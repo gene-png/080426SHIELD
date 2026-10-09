@@ -336,6 +336,30 @@ class ZtDroppedSuggestion(BaseModel):
     value: Any = None
 
 
+class ZtOmittedCapability(BaseModel):
+    """A capability the run asked the model about and got no entry for (#840).
+
+    NOT a `ZtDroppedSuggestion`: `received == applied + sum(dropped)` counts
+    values the model SENT, and a capability with no entry sent none. An entry
+    that names the capability and is then refused is not here; its loss is
+    already itemized under its own reason.
+
+    `notes_blank` is the only part of the #806 ZT prompt's "nothing to score"
+    rule (A5) code can test: no notes, or whitespace only. "N/A" and "TBD" are
+    notes, and the panel says so instead of classifying them. Leaving a
+    blank-notes capability out is by design once the #806 ZT prompt ships; on
+    today's prompt, it is a miss.
+
+    `kept_stage` is the maturity stage the row still holds, read AFTER the
+    apply, so an edit that landed while the model answered is what it reports.
+    Not null means a stage nobody confirmed this run reaches the deliverable.
+    """
+
+    capability_code: str
+    notes_blank: bool
+    kept_stage: int | None = None
+
+
 class ZtRunAiResponse(BaseModel):
     """What a zt_score Run-AI did, with the refreshed answers. Stored as
     `ai_runs.result` (#645), every field the synchronous response carried, so
@@ -367,6 +391,10 @@ class ZtRunAiResponse(BaseModel):
     # `update_answer`, which never writes the field. The name is kept for
     # compatibility; the population is "answers the AI did not write".
     preserved_client_answers: int = 0
+    # #840: every capability asked for, not locked, that no entry named. Both
+    # optional, so a stored run result written before them parses unchanged.
+    omitted_count: int = 0
+    omitted_capabilities: list[ZtOmittedCapability] = []
 
 
 class ZtInterviewQuestion(BaseModel):

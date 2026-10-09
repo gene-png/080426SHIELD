@@ -8,6 +8,14 @@ as printed. The client sees the new wording in the questionnaire and every
 catalog surface, so it comes back to you: conditions 5 and 6. The
 character-only rows are filed separately as tier-3._
 
+_2026-10-08: #840 (a Zero Trust capability the AI returns no result for is now
+counted and shown) is draft PR #963 on `track4/840-zt-no-result`, merged with
+main at 5ef7f700. The run result carries `omitted_count` and
+`omitted_capabilities`, the consultant's panel shows them with the approved
+Z1 to Z6 copy, and the audit row carries counts only. Step 1 `done` is
+unchanged. It comes back to you, not self-merged: conditions 5 and 6. The
+adversarial review is pending._
+
 _2026-10-08 (track1): the #806 corpus PR is draft #952 on
 `track1/806-measure-corpus`, for #806. It adds the measure's synthetic corpus
 (`--notes-corpus` and a synthetic Tech Debt XLSX), the per-service cost caps, and
