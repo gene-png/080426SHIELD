@@ -196,3 +196,50 @@ describe("RiskRegisterDashboard pending review (#415)", () => {
     expect(banner().textContent).not.toContain("pending review and therefore");
   });
 });
+
+describe("RiskRegisterDashboard dropped-link banners name pending review (#415)", () => {
+  // The wording approved verbatim on #736: a dropped value has a third cause.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getActiveClientId.mockResolvedValue("c1");
+    getClientName.mockResolvedValue("Client");
+    fetchRiskGate.mockResolvedValue(gate());
+  });
+
+  it("the unlinked-entries banner names all three causes", async () => {
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({
+        entries_total: 4,
+        entries_unlinked_after_drops: 1,
+        entries_with_dropped_links: 1,
+      }),
+    );
+    await loaded();
+    const text = (
+      screen.getByTestId("risk-entries-unlinked-after-drops").textContent ?? ""
+    ).replace(/\s+/g, " ");
+    expect(text).toContain(
+      "Every value the model sent was misnamed, names a control this client's assessments have not scored, or names an ATT&CK technique pending review.",
+    );
+    expect(text).toContain(
+      "Where the cause is unscored or pending-review assessment work rather than a misnamed value, regenerating returns the same rows and spends another model call.",
+    );
+  });
+
+  it("the still-linked banner names all three causes", async () => {
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({
+        entries_total: 4,
+        entries_unlinked_after_drops: 0,
+        entries_with_dropped_links: 1,
+      }),
+    );
+    await loaded();
+    const text = (
+      screen.getByTestId("risk-entries-with-dropped-links").textContent ?? ""
+    ).replace(/\s+/g, " ");
+    expect(text).toContain(
+      "Worth a look before the next run: each is a value the model misnamed, a control nobody has scored yet, or an ATT&CK technique pending review.",
+    );
+  });
+});

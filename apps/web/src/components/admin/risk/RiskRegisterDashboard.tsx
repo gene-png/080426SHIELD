@@ -963,13 +963,14 @@ export function RiskRegisterDashboard(): JSX.Element {
                 ? "it shows"
                 : "they show"}{" "}
               no linkage at all — the same as an entry nobody linked. Every
-              value the model sent was either misnamed or names a control this
-              client&apos;s assessments have not scored. A dropped source shows
-              as <em>not recognised</em> in the Source column; the full values
-              are on the <code>risk_register.generated</code> audit row. Where
-              the cause is unscored assessment work rather than a misnamed
-              value, regenerating returns the same rows and spends another model
-              call. A client reading this register sees{" "}
+              value the model sent was misnamed, names a control this
+              client&apos;s assessments have not scored, or names an ATT&amp;CK
+              technique pending review. A dropped source shows as{" "}
+              <em>not recognised</em> in the Source column; the full values are
+              on the <code>risk_register.generated</code> audit row. Where the
+              cause is unscored or pending-review assessment work rather than a
+              misnamed value, regenerating returns the same rows and spends
+              another model call. A client reading this register sees{" "}
               {register.entries_unlinked_after_drops === 1
                 ? "that row"
                 : "those rows"}{" "}
@@ -990,9 +991,12 @@ export function RiskRegisterDashboard(): JSX.Element {
               spelling problem" -- true when the allow-lists held every code
               that exists, so the only way to miss was to misname one. They now
               hold the codes an assessment SCORED, so a perfectly spelled,
-              catalog-valid code is dropped when nobody has judged it. The two
-              causes are not separable per value here; the scored-coverage
-              banner below is what tells them apart at the assessment level.
+              catalog-valid code is dropped when nobody has judged it. #415
+              added a third cause: an ATT&CK technique pending review
+              (`attack/pending.py::pending_codes`) is not citable either, and
+              the two banners name it (wording approved on #736). The causes
+              are not separable per value here; the scored-coverage banner
+              below is what tells them apart at the assessment level.
 
               `entries_links_not_recorded` is pre-0048 rows, where "nothing was
               dropped" and "nobody was counting" are different facts. NOT
@@ -1013,8 +1017,8 @@ export function RiskRegisterDashboard(): JSX.Element {
                 ? "— the rest of it still resolved, so it shows linkage. The values are on the entry and on the"
                 : "— the rest of each still resolved, so they show linkage. The values are on each entry and on the"}{" "}
               <code>risk_register.generated</code> audit row. Worth a look
-              before the next run: each is either a value the model misnamed or
-              a control nobody has scored yet.
+              before the next run: each is a value the model misnamed, a control
+              nobody has scored yet, or an ATT&amp;CK technique pending review.
             </div>
           ) : null}
           {/* #403, the owner's three-state requirement. The VALUE tally, beside
