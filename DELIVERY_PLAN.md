@@ -82,6 +82,21 @@ sizes marked coarse.
 
 Track work outside that list is paused.
 
+**2026-10-09: #415 (`tier-2`, `client-reaching`) is built on
+`track6/415-pending-links`, a draft PR.** Status as written before it merges;
+update this line in the landing commit. An ATT&CK technique pending review
+(`attack/pending.py::pending_codes`, the set the heatmap withholds, #102) is no
+longer citable in the Risk Register, and the count is disclosed apart from
+"unscored": a summary line in the PDF, DOCX and XLSX, a "Pending review" column
+on the workbook's scored-coverage sheet, and a clause on the admin banner. A
+register generated before this says the count was not recorded. Under R3 an
+awaiting-review tool is scored as not in place, so the exclusion only applies
+to ATT&CK assessments approved before R3. Rulings: Gene, #736 comment
+5986057990 item 14; copy and (a) to (c), 6072976838 item 1 on the plan in
+6069843323. The client dashboard is filed as #970. The admin banner's remedy
+sentence and the not-recorded workbook cell wait on the advisor. Trips
+merge-rule conditions 5 and 6, so it comes back to Gene.
+
 **2026-10-08: #806, the ATT&CK `mitre_map` part, built on `track2/806-mitre-map-prompt`.** The `mitre_map` prompt is the text Gene approved (#806 comment 5982555899), verbatim and pinned by its sha256, with `prompt_version` "v2". Each batch now carries `technique_details` (name and `not_preventable`) for its own codes only. The AI path refuses the four partial reasons the prompt forbids into `reason_codes_rejected`; a consultant keeps all seven. The fixture is rewritten from the prompt, and the `prevention_limited` definition is the approved Q5 text. `_MITRE_BATCH_SIZE` is unchanged at 25, pending the authorized live probe that sets it (D2 (a), #736 comment 5986064696). One existing-test edit beyond the three declared was approved (#736 comment 6067815887). Routed to Gene rather than self-merged: merge-rule conditions 5 (`app/ai/`, a live prompt, tests) and 6 (the AI's statuses and partial reasons reach client coverage and deliverables).
 
 **2026-10-08: #862 (the Risk PDF printed "ATT&CK;") is IN REVIEW as PR #958
@@ -111,8 +126,11 @@ holds more than one Zero Trust service, and a register generated before this
 reads "The targets these findings were measured against were not recorded for
 this register." The reader fails closed (ruling 2d). Filed from the reviews:
 #944, #946. **#474 stays open** for option 1 (freeze each source's target at
-release) and **#415** for its own decision, both Gene's. The PR goes to Gene:
-merge-rule conditions 5 and 6.
+release), which Gene approved and deferred to post-MVP as its first fix (#736
+comment 6069875345). **Correction, 2026-10-09:** this entry said #415 was also
+Gene's to decide. It was not: he approved the exclusion on 2026-10-05 (#736
+comment 5986057990 item 14), and it is built in the #415 PR. The PR goes to
+Gene: merge-rule conditions 5 and 6.
 
 **2026-10-08: #852 implemented (`tier-1`, `client-reaching`): the CSF catalog corrected to NIST CSWP 29 and pinned to its PDF.** `ID.AM-09` (not a CSF 2.0 subcategory) is retired, its stored answers kept, not scored and disclosed; `RC.CO-04` is added and inserted empty into every non-discarded assessment (migration 0065, after #925's 0064). A kept Working Profile row no longer makes the enterprise profile, the gap actions or the playbook export answer 500. Branch `track5/852-csf-cswp29`; decision record **D-110**; detail in `context/entries/2026-10-08-852-csf-cswp29.md`. Gene supplied the PDF (`reference-docs/nist/NIST.CSWP.29.pdf`); `test_csf_catalog_source.py` pins its sha256 and holds the served and seeded code set to the codes read out of it. **#852 is closed by hand** when this PR merges; the body carries no closing keyword. Gene confirmed the D-107 precondition (#736 comment 6060587658). Routed to Gene rather than self-merged: merge-rule conditions 4, 5 and 6.
 

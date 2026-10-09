@@ -13,6 +13,12 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**2026-10-09: #415 built on `track6/415-pending-links`, a draft PR (not on
+`main`).** ATT&CK techniques pending review are no longer citable in the Risk
+Register, and the files and the admin banner count them apart from "unscored".
+Status and rulings (#736 5986057990 item 14; 6072976838 item 1): the
+2026-10-09 #415 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
 **2026-10-08: #862 in review as PR #958 (not on `main`).** The Risk Register PDF escapes its text, so "ATT&CK", "&" and "<...>"
 in a client's name print as typed and "</b>" no longer fails the export; the
 DOCX and XLSX are unchanged. Status and rulings (#736 6067815887): the

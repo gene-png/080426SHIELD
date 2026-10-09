@@ -1,5 +1,14 @@
 # Gene — in-flight status
 
+_2026-10-09: #415 is built on `track6/415-pending-links`, a draft PR._
+
+**What it does:** an ATT&CK technique pending review is no longer citable in
+the Risk Register, as you ruled (#736 comment 5986057990 item 14), and every
+file and the admin banner count it apart from "unscored". A register generated
+before this says the count was not recorded. Under R3 the exclusion only bites
+on ATT&CK assessments approved before R3. The client dashboard is filed as
+#970. Comes back to you: conditions 5 and 6.
+
 _2026-10-08 (track2): #806, the ATT&CK `mitre_map` part, is pushed on
 `track2/806-mitre-map-prompt`. It runs the prompt you approved (comment
 5982555899) verbatim, with `prompt_version` "v2", per-batch
@@ -35,9 +44,12 @@ _2026-10-08: #474 option 2 is PR #861 (`track6/474-415-risk-baseline`), in
 review._ A Risk Register states which target its CSF and Zero Trust findings
 were measured against, in the strings the advisor approved on #736 (6053630989,
 ruled in 6054419744); the framework is named only when there are two Zero Trust
-services. Still yours: #474 option 1 (freeze each source's target at release)
-and #415 (whether pending-review techniques are excluded from the links), so
-neither issue closes with this PR. Comes back to you: conditions 5 and 6.
+services. #474 option 1 (freeze each source's target at release): you
+approved it and deferred it to post-MVP as the first post-MVP fix (#736
+comment 6069875345), so #474 stays open. **Correction, 2026-10-09:** this line
+also listed #415 as yours. You approved that exclusion on 2026-10-05 (#736
+comment 5986057990 item 14), and it is built in the #415 PR. Comes back to
+you: conditions 5 and 6.
 
 _2026-10-08: #852 (CSF catalog corrected to NIST CSWP 29, pinned to the PDF
 you supplied) landed as PR #940 (`d70b6e62`); D-110, migration 0065. #852 and
