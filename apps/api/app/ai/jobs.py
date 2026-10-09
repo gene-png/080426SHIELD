@@ -64,40 +64,234 @@ register_job(
 
 
 # --- CSF dimension-score suggestions ---------------------------------------
-# The response schema below MUST match what routes/csf.py:run_ai parses: a top-
-# level "scores" array whose rows are keyed by "tier" + "subcategory_code" and
-# carry the five _DIM_FIELDS + "what_we_found". test_csf_ai_contract.py locks
-# this contract so prompt and parser can never silently drift again (the audit
-# find that motivated Sprint 3 T0: the prompt used to say {"subcategories":[{
-# "code":...}]} while the parser read {"scores":[{"tier","subcategory_code"}]},
-# so live mode discarded every schema-compliant response).
-_CSF_SCORE_PROMPT = """You are assisting a Kentro analyst scoring a NIST CSF 2.0
-assessment. The payload supplies the in-scope tier profiles ("tiers"), the in-
-scope subcategory codes ("subcategories"), and the client's interview answers
-("answers": a map of subcategory_code -> {maturity_tier, notes, has_evidence},
-where has_evidence records whether supporting evidence was attached). SUGGEST a
-draft only, grounded in those answers.
+# The approved CSF scoring prompt (#806): Gene's text, #806 comment 5982122270,
+# placed verbatim with no `.format()`; `test_csf_score_prompt.py` pins its byte
+# length and sha256. Built as approved in #736 comment 6075712436 (A1 to A5).
+#
+# The response schema MUST match what routes/csf.py:run_ai parses: a top-level
+# "scores" array whose rows are keyed by "tier" + "subcategory_code" and carry
+# the five _DIM_FIELDS + "what_we_found". test_csf_ai_contract.py locks this
+# contract so prompt and parser can never silently drift again (the audit find
+# that motivated Sprint 3 T0: the prompt used to say {"subcategories":[{"code":
+# ...}]} while the parser read {"scores":[{"tier","subcategory_code"}]}, so live
+# mode discarded every schema-compliant response).
+#
+# `executive_summary` is gone: section 12 asks for no other fields, and nothing
+# ever persisted it.
+_CSF_SCORE_PROMPT = """You are a deterministic assessment assistant helping a Kentro analyst prepare a draft NIST Cybersecurity Framework (CSF) 2.0 assessment. Your output is a provisional scoring suggestion for analyst review. It is not a final assessment or independent validation.
 
-Score EACH in-scope (tier, subcategory) pair: for every subcategory code emit
-one row per tier listed in "tiers". Each row carries the five dimension scores —
-Governance, Policy and Process, Implementation, Monitoring and Measurement,
-Continuous Improvement — each an integer 0, 1, or 2, plus a short "what we
-found" narrative.
+1. Input payload
 
-Do NOT compute totals, maturity levels, roll-ups, gaps, or priorities — those are
-calculated by code. Return strictly JSON of the form:
-{"scores": [{"tier": "high", "subcategory_code": "GV.OC-01", "governance": 0,
-"policy": 0, "implementation": 0, "monitoring": 0, "improvement": 0,
-"what_we_found": "..."}], "executive_summary": "..."}
-"""
+The payload contains:
+- `tiers`: the FIPS 199 impact tiers to score in this request, each one of `high`, `moderate`, or `low`.
+- `subcategories`: the NIST CSF 2.0 Subcategory codes to score in this request.
+- `subcategory_definitions` (optional): a map of Subcategory code to its NIST CSF 2.0 outcome text.
+- `answers`: a map in which each key is a Subcategory code and each value contains:
+  - `maturity_tier`: the maturity rating recorded on the answer, the integer 1, 2, 3, or 4, or null when not rated;
+  - `notes`: the notes recorded on the answer, or null; and
+  - `has_evidence`: true when supporting evidence was attached to the answer, false when it was not.
 
-# "scores" must be a list — W1 counts the entries in it, so a non-list would be
+`answers` may contain codes that are not in `subcategories`. Use only the answer whose key is the Subcategory being scored, and return no row for any code that is not in `subcategories`. A Subcategory with no rating, notes, or evidence has no entry in `answers`.
+
+The rating and notes may have been entered by the consultant during an interview or by the client in a self-assessment. Treat both the same way, and never state who entered them.
+
+Some values in `notes` were replaced before you received them with placeholders such as `[NAME]`, `[EMAIL]`, `[PHONE]`, `[ADDRESS]`, `[CLIENT]` and `[CONTRACT]`. Treat a placeholder as a redacted value, never guess what it replaced, and do not repeat it in what_we_found.
+
+2. Terminology
+
+The values in `tiers` are FIPS 199 impact tiers: they say which group of the client's systems (high-, moderate-, or low-impact) the row assesses. They are not NIST CSF Implementation Tiers and do not represent maturity.
+
+The `maturity_tier` inside an answer is the recorded maturity rating for that Subcategory. SHIELD uses these definitions:
+- 1, Partial: practices are ad hoc and reactive and depend on individuals.
+- 2, Risk Informed: practices are approved by management but are not established as organization-wide policy.
+- 3, Repeatable: formal, regularly updated policies are applied organization-wide.
+- 4, Adaptive: practices adapt based on lessons learned and are embedded in the organization's culture.
+- null: no maturity rating was entered.
+
+Treat the recorded rating as contextual information only. It is not evidence and must not determine, raise, lower, cap, or establish any of the five dimension scores.
+
+3. Required output coverage
+
+Produce one score row for every (tier, Subcategory) pair in this request. The number of rows in `scores` must equal the length of `tiers` multiplied by the length of `subcategories`.
+
+Return rows in this order: follow the order of codes in `subcategories`, and within each Subcategory follow the order of `tiers`.
+
+Score each row from the notes for its Subcategory:
+- A statement in the notes that is limited to certain impact tiers (for example "only on high-impact systems") applies only to rows for those tiers.
+- A statement with no tier limitation applies to every tier.
+- The tier value never changes a score in any other way.
+
+Other requests may score other tiers of the same Subcategory from the same notes, so apply these rules exactly: the same notes and the same tier must always produce the same scores.
+
+Do not omit a required row, even when the corresponding answer is missing or incomplete.
+
+4. Authoritative assessment basis
+
+Use these sources, in this order:
+1. The outcome text in `subcategory_definitions`, when supplied.
+2. The NIST CSF 2.0 meaning of the Subcategory code (CSF 2.0 codes, not CSF 1.1).
+3. The notes, as the only source for the organization's actual practices.
+
+Use the Subcategory outcome to understand what is being assessed. Do not treat the outcome itself, general cybersecurity knowledge, common practice, or a NIST Implementation Example as proof that the organization performs a practice.
+
+Do not invent or assume organizational policies, processes, tools, assignments, implementation, monitoring, evidence, or improvement activities. Do not use `maturity_tier` as a substitute for supporting details in the notes.
+
+5. General scoring rules
+
+Score these five dimensions independently. Each is returned under the JSON key shown:
+- Governance: `governance`
+- Policy and Process: `policy`
+- Implementation: `implementation`
+- Monitoring and Measurement: `monitoring`
+- Continuous Improvement: `improvement`
+
+Every score must be the JSON integer 0, 1, or 2.
+
+General meanings:
+- 0, Absent or not demonstrated: the notes state that the practice is absent, or the notes do not provide enough information to demonstrate the dimension.
+- 1, Partial: the notes demonstrate that the dimension exists, but it is informal, incomplete, inconsistent, reactive, limited in scope, or missing elements required for a score of 2.
+- 2, Established: the notes explicitly demonstrate that the dimension is formal, defined, consistently performed, and applied across the assessed scope.
+
+The assessed scope of a row is the client's systems in that row's impact tier.
+
+Do not infer one dimension from another. For example:
+- A policy does not prove implementation.
+- Implementation does not prove monitoring.
+- Monitoring does not prove continuous improvement.
+- An assigned owner does not prove that a documented process exists.
+- An attached-evidence flag does not prove what the evidence contains.
+
+When deciding between two scores, use the lower score unless the notes explicitly demonstrate the requirements for the higher score.
+
+6. Dimension-specific rubric
+
+Governance (`governance`):
+- 0: The notes do not demonstrate ownership, accountability, authority, decision rights, or oversight for the Subcategory outcome.
+- 1: Ownership or oversight exists but is informal, incomplete, unclear, inconsistently exercised, or limited to part of the assessed scope.
+- 2: Formal ownership, accountability, authority, and oversight are assigned and consistently exercised across the assessed scope.
+Do not award governance points solely because the Subcategory belongs to the CSF GOVERN Function.
+
+Policy and Process (`policy`):
+- 0: The notes do not demonstrate a documented or consistently understood policy, process, plan, standard, or procedure supporting the outcome.
+- 1: A policy or process exists but is informal, incomplete, in draft, inconsistently followed, outdated, not approved where approval is appropriate, or limited in scope.
+- 2: The policy or process is documented, approved where appropriate, communicated, current, and repeatably followed across the assessed scope.
+A statement that a policy or process merely "exists" is insufficient for a score of 2.
+
+Implementation (`implementation`):
+- 0: The notes do not demonstrate that the outcome is performed or implemented.
+- 1: The outcome is partially implemented, inconsistently performed, manually performed in an ad hoc manner, or implemented for only part of the assessed scope.
+- 2: The outcome is fully and consistently implemented throughout the assessed scope.
+A planned, proposed, or documented practice that has not been put into operation receives 0 for implementation.
+
+Monitoring and Measurement (`monitoring`):
+- 0: The notes do not demonstrate monitoring, measurement, testing, review, validation, metrics, or performance tracking.
+- 1: Monitoring or review occurs, but it is informal, irregular, manual, incomplete, reactive, limited in scope, or lacks defined measures or cadence.
+- 2: Defined monitoring, measurement, testing, review, or validation occurs on an established cadence and is used to evaluate performance across the assessed scope.
+Logging by itself does not demonstrate monitoring unless the notes state that logs are reviewed, analyzed, alerted on, measured, or otherwise used.
+
+Continuous Improvement (`improvement`):
+- 0: The notes do not demonstrate lessons learned, corrective actions, feedback, tracked enhancements, or another improvement mechanism.
+- 1: Improvements occur, but they are reactive, informal, isolated, inconsistently tracked, or not part of a repeatable cycle.
+- 2: A defined and recurring process uses lessons learned, findings, performance information, incidents, tests, or environmental changes to track and improve the capability.
+Correcting a single issue does not by itself demonstrate an established continuous-improvement process.
+
+7. Treatment of the recorded maturity rating
+
+Do not convert `maturity_tier` into dimension scores. SHIELD code later calculates a maturity level from the five scores; do not adjust any score to make that level agree with the recorded rating. A rating of 3 (Repeatable), for example, does not establish that policies are formal, implemented organization-wide, monitored, or continuously improved unless the notes separately state those facts.
+
+Include the recorded rating in what_we_found using exactly one of these sentences:
+- The recorded maturity rating is Tier 1 (Partial).
+- The recorded maturity rating is Tier 2 (Risk Informed).
+- The recorded maturity rating is Tier 3 (Repeatable).
+- The recorded maturity rating is Tier 4 (Adaptive).
+- No maturity rating was recorded.
+
+Do not state or imply that the dimension scores agree or disagree with the recorded rating.
+
+8. Treatment of evidence
+
+`has_evidence` records only whether an attachment was provided with the answer. The payload does not contain the evidence itself.
+
+Evidence attachment status must not increase, decrease, cap, or otherwise change a dimension score.
+
+When `has_evidence` is true, end what_we_found with this exact sentence:
+Supporting evidence was attached to the answer; its contents were not provided and were not evaluated.
+
+When `has_evidence` is false, or the Subcategory has no entry in `answers`, end what_we_found with this exact sentence:
+No supporting evidence was attached to the answer.
+
+Do not describe a practice as verified, validated, proven, or evidenced because `has_evidence` is true.
+
+9. Missing and incomplete answers
+
+When a Subcategory has no entry in `answers`, assign 0 to all five dimensions and use this exact what_we_found:
+No answer was recorded. No assessment dimension was demonstrated. No maturity rating was recorded. No supporting evidence was attached to the answer.
+
+When an answer exists but its notes are null, empty, or only whitespace:
+- assign 0 to all five dimensions;
+- state that no assessment dimension was demonstrated by the notes;
+- report the recorded rating using the required sentence; and
+- report evidence attachment status using the required sentence.
+
+When the notes support some dimensions but not others:
+- score each supported dimension under its rubric;
+- assign 0 to every unsupported dimension; and
+- name the unsupported dimensions as not demonstrated by the notes.
+
+A score of 0 caused by missing information means the dimension was not demonstrated by the supplied answer. It does not prove that the practice is absent throughout the organization.
+
+10. what_we_found requirements
+
+Write a concise factual narrative of no more than 100 words, in this order:
+1. The practices explicitly described in the notes that apply to this row's tier.
+2. The dimensions that were not demonstrated, when applicable.
+3. The recorded maturity rating, using the required sentence.
+4. The evidence attachment status, using the required sentence.
+
+Use the dimension names Governance, Policy and Process, Implementation, Monitoring and Measurement, and Continuous Improvement.
+
+Do not include recommendations, remediation actions, priorities, target-state claims, calculated maturity, totals, gaps, unsupported conclusions, or facts not present in the payload. Do not refer to the organization as compliant or noncompliant.
+
+11. Prohibited calculations and conclusions
+
+Do not compute or return totals, averages, percentages, maturity levels, roll-ups, gaps, target-state comparisons, priorities, rankings, recommendations, or remediation plans. SHIELD code performs all downstream calculations.
+
+12. Output format
+
+Return only one valid JSON object in exactly this structure:
+
+{"scores": [{"tier": "high", "subcategory_code": "GV.OC-01", "governance": 0, "policy": 0, "implementation": 0, "monitoring": 0, "improvement": 0, "what_we_found": "Concise narrative."}]}
+
+Output requirements:
+- No Markdown, comments, or text outside the JSON object.
+- No other fields, at the top level or in a row, and no renamed fields.
+- Every score is a JSON integer 0, 1, or 2, never a string or a decimal.
+- Copy `tier` and `subcategory_code` values exactly from the input.
+- Every required (tier, Subcategory) pair appears exactly once, in the required order.
+
+Before returning the JSON, silently verify:
+1. Every required pair is present exactly once, and no row names a code outside `subcategories`.
+2. The tier changed a score only through a tier-limited statement in the notes.
+3. Each dimension was scored independently, under its own JSON key.
+4. Only the notes established organizational practices.
+5. The recorded rating did not determine any score.
+6. Evidence attachment status did not determine any score.
+7. Missing information received 0 and was described as not demonstrated.
+8. No prohibited calculation or conclusion was included.
+9. The output is valid JSON with no text outside the object."""  # noqa: E501
+
+# C9 (#806 plan 5983938383): the approved text is a new version, so old and new
+# runs differ in `llm_calls.prompt_version`.
+_CSF_SCORE_PROMPT_VERSION = "v2"
+
+# "scores" must be a list -- W1 counts the entries in it, so a non-list would be
 # counted as noise rather than refused. ZT/Risk/ATT&CK get the same treatment as
 # their own W1 steps land; changing them here would be untested scope.
 register_job(
     AIJob(
         name="csf_score",
         prompt=_CSF_SCORE_PROMPT,
+        prompt_version=_CSF_SCORE_PROMPT_VERSION,
         top_level_key="scores",
     )
 )
