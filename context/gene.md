@@ -1,5 +1,12 @@
 # Gene — in-flight status
 
+_2026-10-09 (track1): the #806 run_batches fix is pushed on
+`track1/806-run-batches-cancel`, for #806, and its PR opens after #952 merges.
+A batched Run-AI now cancels its queued batches on any exception, not only its
+run deadline, and re-raises the original exception unchanged, so a Ctrl-C no
+longer leaves queued batches to bill. It comes back to you under merge-rule
+condition 5 (`app/ai/`)._
+
 _2026-10-08: #862 (the Risk PDF printed "ATT&CK;") is built on
 `track6/862-risk-pdf-escape`, in review as PR #958; `main` 14db80a2 (#861) is merged in._
 
