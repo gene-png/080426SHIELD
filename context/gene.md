@@ -6,7 +6,8 @@ for #775 and #972, with `main` merged in at e3c962f0 after the run_batches PR
 service title and the client's name as text (no more "ATT&CK;", and a name with
 "</b>" no longer fails finalize), and every free-text XLSX cell in CSF, Zero
 Trust, Tech Debt and Risk is stored as text, so a value opening with "=", "+",
-"-", "@", tab or carriage return is never a live formula. One golden word
+"-", "@", tab or carriage return is shown as typed and not evaluated in the
+.xlsx (a CSV saved from it carries the raw value, for #992). One golden word
 changes, declared. Follow-up filed as #991 (tier-3): the `pdf_export.py`
 docstring states a greppable invariant that the other exporters do not meet
 and nothing checks. It comes back to you: conditions 5 and 6._

@@ -9,15 +9,18 @@ notes) and model output (rationale, findings). Two things go wrong with a bare
 
 * openpyxl stores a string starting with "=" as a FORMULA, so a legal name of
   `=HYPERLINK(...)` becomes a live formula in a Kentro-branded workbook. A
-  leading "+", "-", "@", tab or carriage return is the same attack in any tool
-  that re-reads the cell (CSV export, copy and paste);
+  leading "+", "-", "@", tab or carriage return is the same attack in a
+  spreadsheet tool that reads the cell as input;
 * openpyxl raises on a control character, so one stray byte fails the whole
   finalize.
 
 `safe_text_row` drops the characters openpyxl cannot store, and marks a string
-starting with any of those six as TEXT: data type "s" and Excel's quote prefix,
-which shows the cell exactly as typed and never evaluates it. The value itself
-is not changed, so the cell reads back exactly as typed.
+starting with any of those six as TEXT: data type "s" and Excel's quote prefix.
+Inside the .xlsx, Excel and LibreOffice then show the cell as typed and do not
+evaluate it. The value itself is not changed, so the cell reads back exactly as
+typed. That protection is the .xlsx file's only: the quote prefix is a style
+flag, so a CSV saved from the sheet carries the raw value, leading "=" and all
+(#992).
 
 Every strip logs ONE warning per cell, `xlsx_export.control_characters_removed`,
 naming the sheet, the column LETTER, the row and how many characters went.
@@ -35,7 +38,9 @@ from app.logging import get_logger
 _log = get_logger(__name__)
 
 #: A leading character that makes a cell a formula, or one a spreadsheet tool
-#: can evaluate when the text is re-read (OWASP, CSV injection).
+#: can evaluate when it reads the text as input (OWASP, "CSV injection"). Marking
+#: the cell as text guards the .xlsx only; a CSV saved from it does not keep the
+#: mark (#992).
 FORMULA_TRIGGERS = ("=", "+", "-", "@", "\t", "\r")
 
 
