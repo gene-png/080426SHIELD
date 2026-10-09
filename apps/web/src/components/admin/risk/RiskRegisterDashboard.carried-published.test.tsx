@@ -13,7 +13,8 @@ import { RiskRegisterDashboard } from "./RiskRegisterDashboard";
  * block drops the "Rate it/them again" imperative, because the Register table's
  * selects are gone (D-076), and keeps its amber style, because the ratings were
  * carried by the model and not re-rated (ruling (b)). The fixture is a state
- * publish allows: every entry rated, one rating not carried as ambiguous.
+ * generate and publish can produce: two entries for T1003, so a rating for it
+ * is not carried as ambiguous, and every entry rated.
  */
 
 vi.mock("@/lib/risk/client", () => ({
@@ -147,8 +148,31 @@ const DRAFT_LINE =
 function carried(finalizedAt: string | null): RiskRegister {
   return register({
     finalized_at: finalizedAt,
+    // Reachable: `_carry_ratings` records "ambiguous" only when this version
+    // or the last has more than one entry for the finding (here two T1003
+    // entries), and "no_entry" when it has none. Every entry is rated, which
+    // publish requires.
+    entries_total: 3,
     entries_without_tier: 0,
-    entries: [entry({ likelihood: "likely", impact: "major", tier: "high" })],
+    entries: [
+      entry({ likelihood: "high", impact: "major", tier: "high" }),
+      entry({
+        id: "e2",
+        title: "Credential dumping from LSASS",
+        source_id: "T1003",
+        likelihood: "medium",
+        impact: "major",
+        tier: "medium",
+      }),
+      entry({
+        id: "e3",
+        title: "Credential dumping from the SAM database",
+        source_id: "T1003",
+        likelihood: "medium",
+        impact: "moderate",
+        tier: "medium",
+      }),
+    ],
     ratings_carried_recorded: true,
     ratings_carried: 0,
     ratings_carried_from_version: 1,
