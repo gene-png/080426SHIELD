@@ -21,34 +21,39 @@ from app.ai.jobs import _MITRE_MAP_PROMPT
 
 pytestmark = pytest.mark.unit
 
+#: #806 M3 (Gene, comment 5982555899): the three Partial reasons the AI may
+#: give. The other four (`reach_limited`, `evasive_variant_uncovered`,
+#: `periodic_not_continuous`, `detection_weak`) stay a consultant's.
 PARTIAL_REASONS = {
-    "missing_control_category",
-    "reach_limited",
-    "detection_weak",
     "prevention_limited",
-    "evasive_variant_uncovered",
     "recovery_absent",
-    "periodic_not_continuous",
+    "missing_control_category",
 }
 
 
 def _offered_partial_codes(prompt: str) -> set[str]:
-    """The Partial codes as the PROMPT TEXT lists them, one per bullet."""
-    return set(re.findall(r"^\s+- ([a-z_]+): ", prompt, flags=re.MULTILINE))
+    """The Partial codes as the PROMPT TEXT lists them in section 8, one per
+    bullet: "- `code`: ..." at the start of a line. Section 2 lists the
+    payload's fields in the same form, so only section 8 is read."""
+    section = prompt[prompt.index("\n8. Reason codes\n") : prompt.index("\n9. Rationale\n")]
+    return set(re.findall(r"^- `([a-z_]+)`: ", section, flags=re.MULTILINE))
 
 
 def test_the_prompt_offers_exactly_the_decided_partial_reasons() -> None:
     assert _offered_partial_codes(_MITRE_MAP_PROMPT) == PARTIAL_REASONS
 
 
-def test_the_prompt_allows_only_platform_absent_for_not_applicable() -> None:
+def test_the_prompt_forbids_not_applicable() -> None:
+    """#806: the AI may not return N/A at all, since the payload carries no
+    asset inventory that could show a platform absent. The test this replaces
+    pinned `platform_absent` as the one N/A reason offered, which is wrong
+    under the approved prompt."""
     flat = " ".join(_MITRE_MAP_PROMPT.split())
-    (na_line,) = [ln for ln in _MITRE_MAP_PROMPT.splitlines() if "* not_applicable:" in ln]
-    # Every code the N/A line offers, parsed from the TEXT: exactly the one the
-    # owner decided.
-    assert set(re.findall(r"`([a-z_]+)`", na_line)) == {"platform_absent"}
-    # The prohibition the vocabulary exists for, in the prompt's own words.
-    assert "If nothing does, that is gap -- never not_applicable." in flat
+    # The prohibition, in the prompt's own words.
+    assert "Never return `not_applicable`" in flat
+    # No N/A reason is offered, and N/A is not among the statuses it allows.
+    assert "platform_absent" not in flat
+    assert "`status` is `covered`, `partial`, or `gap`." in flat
 
 
 def test_the_prompts_json_shape_carries_reason_code() -> None:
@@ -61,7 +66,16 @@ def test_every_fixture_reason_is_one_the_prompt_offers() -> None:
     import json
 
     codes = [f"T{1000 + i}" for i in range(40)]
-    body = json.loads(_fixture_mitre_map({"technique_codes": codes}).content)
+    payload = {
+        "technique_codes": codes,
+        # The fields the #806 prompt says the payload carries. Without tools
+        # every row would be a gap and no reason would be exercised.
+        "technique_details": {
+            c: {"name": c, "not_preventable": i % 3 == 0} for i, c in enumerate(codes)
+        },
+        "capability_list": [{"name": "Tool A"}, {"name": "Tool B"}],
+    }
+    body = json.loads(_fixture_mitre_map(payload).content)
     offered = _offered_partial_codes(_MITRE_MAP_PROMPT)
     seen: set[tuple[str, str | None]] = set()
     for t in body["techniques"]:

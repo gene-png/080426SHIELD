@@ -1,5 +1,14 @@
 # Gene — in-flight status
 
+_2026-10-08 (track2): #806, the ATT&CK `mitre_map` part, is pushed on
+`track2/806-mitre-map-prompt`. It runs the prompt you approved (comment
+5982555899) verbatim, with `prompt_version` "v2", per-batch
+`technique_details`, the four forbidden partial reasons refused on the AI
+path, and the fixture rewritten from the prompt. `_MITRE_BATCH_SIZE` stays at
+25 until the authorized live probe sets it (D2 (a)); if a full run then needs
+more than about 100 calls, it comes to you first. The PR comes back to you
+under merge-rule conditions 5 and 6._
+
 _2026-10-08: #862 (the Risk PDF printed "ATT&CK;") is built on
 `track6/862-risk-pdf-escape`, in review as PR #958; `main` 14db80a2 (#861) is merged in._
 
@@ -83,7 +92,7 @@ ATT&CK lists no preventive control". Rulings: #736 comments 6053562002 and
 
 **What it does not do.** Already-released deliverables keep the old sentence
 (stored files, not re-finalized; the advisor's Q3 ruling). The consultant reason-code
-definition (Q5) waits for the #806 ATT&CK prompt PR. #928 and #934 are filed.
+definition (Q5) lands in #951, the #806 ATT&CK prompt PR. #928 and #934 are filed.
 It trips conditions 5 and 6. The advisor merges it once the re-ready line is
 posted (#736 comment 6056012075), and #842 is then closed by hand.
 

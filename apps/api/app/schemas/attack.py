@@ -341,6 +341,11 @@ class AttackRunAiResponse(BaseModel):
     # consultant may rule a technique N/A. The codes are in the audit row's
     # `statuses_rejected`; the count is what the workspace says.
     not_applicable_refused: int = 0
+    # #806 C4. Techniques the AI suggested as Partial with a reason only a
+    # consultant may give, refused whole (the row keeps its status). The codes
+    # are in the audit row's `reason_codes_rejected`; the count is what the
+    # workspace says.
+    forbidden_reason_refused: int = 0
 
 
 class AttackCoveragePatch(BaseModel):

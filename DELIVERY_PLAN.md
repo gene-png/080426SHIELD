@@ -82,6 +82,8 @@ sizes marked coarse.
 
 Track work outside that list is paused.
 
+**2026-10-08: #806, the ATT&CK `mitre_map` part, built on `track2/806-mitre-map-prompt`.** The `mitre_map` prompt is the text Gene approved (#806 comment 5982555899), verbatim and pinned by its sha256, with `prompt_version` "v2". Each batch now carries `technique_details` (name and `not_preventable`) for its own codes only. The AI path refuses the four partial reasons the prompt forbids into `reason_codes_rejected`; a consultant keeps all seven. The fixture is rewritten from the prompt, and the `prevention_limited` definition is the approved Q5 text. `_MITRE_BATCH_SIZE` is unchanged at 25, pending the authorized live probe that sets it (D2 (a), #736 comment 5986064696). One existing-test edit beyond the three declared was approved (#736 comment 6067815887). Routed to Gene rather than self-merged: merge-rule conditions 5 (`app/ai/`, a live prompt, tests) and 6 (the AI's statuses and partial reasons reach client coverage and deliverables).
+
 **2026-10-08: #862 (the Risk PDF printed "ATT&CK;") is IN REVIEW as PR #958
 (`track6/862-risk-pdf-escape`).** Status as written before it merges; `main`
 14db80a2 (#861) is merged in. reportlab's `Paragraph` parses its text as
