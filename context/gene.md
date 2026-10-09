@@ -1,5 +1,14 @@
 # Gene — in-flight status
 
+_2026-10-09: #984 (client-name redaction rewrote catalog text sent to the AI)
+is on `track5/984-catalog-redaction`. Catalog fields are now sent as the
+catalog has them and guarded byte for byte; the client's own notes and tool
+names are still redacted. Open for you: the same rewrite reaches the code
+lists (a client named "DoD" turns every DoD capability code into
+"[CLIENT].USR.01" on main today); covering them edits three tests on main,
+so it is held for a ruling. It comes back to you: conditions 5 (`app/ai/`)
+and 6 (the model sees different text for such clients)._
+
 _2026-10-08: #840 (a Zero Trust capability the AI returns no result for is now
 counted and shown) is draft PR #963 on `track4/840-zt-no-result`, merged with
 main at 5ef7f700. The run result carries `omitted_count` and
