@@ -158,6 +158,21 @@ def test_zt_capability_allow_list_equals_the_scored_answers(app_client) -> None:
     assert set(seen[0]["valid_controls"]) == expected
 
 
+def _csf_scenario_codes(c, bearer: str, cid: str) -> list[str]:
+    """The two subcategories `_seed_csf_playbook_at_level` writes: the CSF
+    assessment's first two answers, read back through the API."""
+    from app.models.service import Service
+
+    db = _session()
+    svc = db.execute(
+        select(Service).where(Service.client_id == uuid.UUID(cid), Service.kind == "nist_csf")
+    ).scalar_one()
+    db.close()
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    latest = c.get(f"/csf/services/{svc.id}/assessments/latest", headers=h).json()
+    return [a["subcategory_code"] for a in latest["answers"][:2]]
+
+
 @pytest.mark.unit
 def test_csf_control_allow_list_equals_the_scored_answers(app_client) -> None:  # noqa: F811
     c, provider = app_client
@@ -165,23 +180,18 @@ def test_csf_control_allow_list_equals_the_scored_answers(app_client) -> None:  
     # ATT&CK first: the gate needs it, and `_seed_csf_playbook_at_level` alone
     # leaves the register locked.
     _seed_attack_and_zt(c, bearer, cid)
-    _seed_csf_playbook_at_level(c, bearer, cid, level=1)
+    code = _seed_csf_playbook_at_level(c, bearer, cid, level=1)
     seen = _capture(provider)
     _generate(c, bearer, cid)
 
-    from app.models.csf_profile import CsfDimensionScore
     from app.models.zt_assessment import ZtAnswer
 
+    # #474 D': the expected CSF set is the SCENARIO's, never a predicate: the
+    # helper scores exactly two Playbook rows, its subcategory and its floor
+    # row (the assessment's first two answers), and nothing else.
+    csf = set(_csf_scenario_codes(c, bearer, cid))
+    assert code in csf and len(csf) == 2, csf
     db = _session()
-    # #474 D': a Playbook row is scored when somebody wrote it (`answer_source`
-    # set); every dimension defaults to 0, so a value cannot say so.
-    csf = {
-        r.subcategory_code
-        for r in db.execute(
-            select(CsfDimensionScore).where(CsfDimensionScore.client_id == uuid.UUID(cid))
-        ).scalars()
-        if r.in_scope and r.answer_source is not None
-    }
     zt = {
         r.capability_code
         for r in db.execute(select(ZtAnswer).where(ZtAnswer.client_id == uuid.UUID(cid))).scalars()
@@ -236,18 +246,12 @@ def test_an_unscored_csf_subcategory_is_dropped_and_recorded(app_client) -> None
     scored_technique, _cap = _seed_attack_and_zt(c, bearer, cid)
     _seed_csf_playbook_at_level(c, bearer, cid, level=1)
 
-    from app.models.csf_profile import CsfDimensionScore
+    from app.csf.catalog import SUBCATEGORIES
 
-    db = _session()
-    # #474 D': unscored is a Playbook row nobody wrote (`answer_source` NULL).
-    unscored = next(
-        r.subcategory_code
-        for r in db.execute(
-            select(CsfDimensionScore).where(CsfDimensionScore.client_id == uuid.UUID(cid))
-        ).scalars()
-        if r.answer_source is None
-    )
-    db.close()
+    # #474 D': unscored is a catalog subcategory the scenario never wrote: the
+    # helper writes only its two rows, so any other code is one.
+    written = set(_csf_scenario_codes(c, bearer, cid))
+    unscored = next(s.code for s in SUBCATEGORIES if s.code not in written)
 
     _cited(provider, techniques=[], controls=[unscored], source_id=scored_technique)
     body = _generate(c, bearer, cid)
