@@ -82,6 +82,24 @@ sizes marked coarse.
 
 Track work outside that list is paused.
 
+**2026-10-09: #944 (`tier-3`) is built on `track6/944-cap-note-order`.**
+Status as written before it merges; update this line in the landing commit.
+The DoD cap note (#915) now renders immediately after the Zero Trust target
+line (#861) on every Risk surface, so the two read as one baseline rather than
+two: in the PDF, DOCX and XLSX summary it moved up from after the
+scored-coverage and pending-review lines, and on the admin register from above
+the carried-ratings and finding-coverage blocks to just below the targets
+block. The client dashboard already had this order and needed no code change
+(a comment only). No copy changed. Each surface has adjacency tests for two
+target shapes: a single DoD Zero Trust target, and CISA plus DoD, where the
+note must follow the DoD line. The "targets not recorded" state is not tested.
+The PDF, DOCX, XLSX and admin tests went red on main's order and on revert;
+the client dashboard's could not, since main was already right, so it was
+shown able to fail by a hand mutation instead. The CISA plus DoD cases were
+also shown red, alone, under a mutation placing the note after the first
+Zero Trust line. Ruling: advisor, #736 comment 6069566861, option 1. Trips merge-rule conditions 5 (tests) and 6 (deliverable order), so
+it comes back to Gene.
+
 **2026-10-09: #984 and #986 implemented (`tier-2`): catalog text and catalog codes reach the model unredacted, and guarded.** Strict redaction rewrote every string in an AI payload, so a client whose legal name is a word in a catalog had that catalog text rewritten before the model read it, and `redacted_counts.client_org` counted each hit. Measured on main 2f701f5b: a client named "Cloud" rewrote ATT&CK technique names; "DoD" or "CISA" rewrote every ZT capability code (the model was asked about "[CLIENT].USR.01"); "GV" or "ID" rewrote CSF subcategory codes and "High" the tier `high`; "Critical" would rewrite CSF outcome definitions once they are sent. `app/ai/catalog_fields.py` exempts a registered catalog field from redaction and rebuilds it from the catalog before and after redaction; any byte difference raises `CatalogFieldMismatch` and nothing is sent, and the preview refuses it typed (`catalog_field_mismatch`). The client's own data is still redacted. Registered: ATT&CK `technique_details` and `technique_codes`, ZT `capabilities`, CSF `subcategories`, `tiers` and `subcategory_definitions`; ZT `capability_details` registers with #981. One approved edit to a test on main (`test_ai_runtime_fixtures.py`, made-up ZT codes replaced by real ones). Advisor's rulings on #736. Branch `track5/984-catalog-redaction`, PR #985, for #984 and #986. A change under `app/ai/`, so merge-rule condition 5 is tripped, and condition 6 is treated as tripped because what the model is shown changes for such clients; routed to Gene rather than self-merged.
 
 **2026-10-09: batched Run-AI cancels its queued batches on any exception (for #806), on branch `track1/806-run-batches-cancel`.** `app/ai/batching.py::run_batches` cancelled batches not yet started only when its run deadline fired. A Ctrl-C, or any other exception while the caller waited for results, left them queued, so they went on to start, and bill, after the caller had stopped listening. It now cancels every queued batch on any exception (and sets the stop flag, so a batch a worker has just dequeued is not sent; the deadline handler now sets that flag too) and re-raises the original exception unchanged. A batch already inside a provider call cannot be cancelled and finishes into its own `llm_calls` row. The advisor chose this as a separate PR (option (b), #736, the message after comment 6071798189). Callers are unchanged: csf_score, mitre_map and the ATT&CK what-if pass the exception to the background run, which records it as a failed run, and the consistency measure's own handler (#952, now on `main`) records an aborted report. This PR also corrects the measure's docstring and comments, which said queued batches can still bill after an interrupt: only a batch already past the stop check, up to `max_workers` of them, can, so an aborted batched report is still kept and its count is still a lower bound. The report's own `invoke_calls_started_is_a_lower_bound` string says the same, naming the running job's worker count read from its route constant, never copied; the edit to the test on `main` that asserted the old wording was approved by the advisor. Comes back to the human rather than self-merged: merge-rule condition 5 (`app/ai/`, `apps/api/tests/**`).

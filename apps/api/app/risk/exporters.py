@@ -526,10 +526,14 @@ def _summary_lines(ctx: RiskExportContext) -> list[str]:
         *_missing_line(total, total - len(actions), "no recommended action"),
         *_finding_lines(ctx.finding_counts),
         *_target_lines(ctx.targets),
+        # #915 (S3), one line or none. #944: immediately after the target
+        # lines. Their last line is a Zero Trust one whenever the register has
+        # one, and the DoD one when both ZT frameworks are engaged, because
+        # `risk/baseline.py` sorts by kind, then framework. So the cap and the
+        # target it lowers read as one baseline, not two.
+        *([ctx.zt_capped_target_note] if ctx.zt_capped_target_note else []),
         *_link_scope_lines(ctx),
         *_pending_review_lines(ctx),
-        # #915 (S3), beside the scored-coverage disclosure; one line, or none.
-        *([ctx.zt_capped_target_note] if ctx.zt_capped_target_note else []),
     ]
 
 
