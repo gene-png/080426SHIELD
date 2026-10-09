@@ -271,17 +271,17 @@ SUBCATEGORIES: tuple[Subcategory, ...] = (
     _sc(
         "GV.OC-02",
         "Stakeholder expectations",
-        "Internal and external stakeholders are understood, and their needs and expectations regarding cybersecurity are considered.",
+        "Internal and external stakeholders are understood, and their needs and expectations regarding cybersecurity risk management are understood and considered.",
     ),
     _sc(
         "GV.OC-03",
         "Legal, regulatory, contractual",
-        "Legal, regulatory, and contractual requirements regarding cybersecurity are understood and managed.",
+        "Legal, regulatory, and contractual requirements regarding cybersecurity — including privacy and civil liberties obligations — are understood and managed.",
     ),
     _sc(
         "GV.OC-04",
         "Critical objectives, capabilities, services",
-        "Critical objectives, capabilities, and services that stakeholders depend on are understood and communicated.",
+        "Critical objectives, capabilities, and services that external stakeholders depend on or expect from the organization are understood and communicated.",
     ),
     _sc(
         "GV.OC-05",
@@ -307,12 +307,12 @@ SUBCATEGORIES: tuple[Subcategory, ...] = (
     _sc(
         "GV.RM-04",
         "Strategic direction",
-        "Strategic direction describing appropriate risk response options is established and communicated.",
+        "Strategic direction that describes appropriate risk response options is established and communicated.",
     ),
     _sc(
         "GV.RM-05",
         "Lines of communication",
-        "Lines of communication across the organization are established for cybersecurity risks.",
+        "Lines of communication across the organization are established for cybersecurity risks, including risks from suppliers and other third parties.",
     ),
     _sc(
         "GV.RM-06",
@@ -322,7 +322,7 @@ SUBCATEGORIES: tuple[Subcategory, ...] = (
     _sc(
         "GV.RM-07",
         "Strategic risk opportunities",
-        "Strategic opportunities (i.e., positive risks) are characterized and included in organizational cybersecurity risk discussions.",
+        "Strategic opportunities (i.e., positive risks) are characterized and are included in organizational cybersecurity risk discussions.",
     ),
     # GV.RR - Roles, Responsibilities, and Authorities (4)
     _sc(
@@ -469,7 +469,7 @@ SUBCATEGORIES: tuple[Subcategory, ...] = (
     _sc(
         "ID.RA-02",
         "Cyber threat intelligence",
-        "Cyber threat intelligence is received from information-sharing forums and sources.",
+        "Cyber threat intelligence is received from information sharing forums and sources.",
     ),
     _sc(
         "ID.RA-03",
