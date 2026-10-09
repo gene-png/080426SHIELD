@@ -1179,18 +1179,6 @@ export function RiskRegisterDashboard(): JSX.Element {
               </p>
             </div>
           ) : null}
-          {/* #915 (S3): the API's own sentence for the DoD target cap
-              (`risk/zt_capped.py`), beside the scored-coverage disclosure,
-              rendered as given. The files and the client dashboard print the
-              same sentence. */}
-          {register.zt_capped_target_note ? (
-            <p
-              className="rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
-              data-testid="risk-zt-capped-target"
-            >
-              {register.zt_capped_target_note}
-            </p>
-          ) : null}
           {/* #854 F3: what the regenerate that produced this version carried
               over, and what it could not. Rendered only when recorded and
               when there is something to say. */}
@@ -1254,6 +1242,19 @@ export function RiskRegisterDashboard(): JSX.Element {
               ),
             )}
           </div>
+          {/* #915 (S3): the API's own sentence for the DoD target cap
+              (`risk/zt_capped.py`), rendered as given. The files and the
+              client dashboard print the same sentence. #944: immediately
+              after the target lines, whose last is the Zero Trust one, so the
+              cap and the target it lowers read as one baseline, not two. */}
+          {register.zt_capped_target_note ? (
+            <p
+              className="rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
+              data-testid="risk-zt-capped-target"
+            >
+              {register.zt_capped_target_note}
+            </p>
+          ) : null}
           <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
             <NumberCard label="Entries" value={register.entries.length} />
             <NumberCard

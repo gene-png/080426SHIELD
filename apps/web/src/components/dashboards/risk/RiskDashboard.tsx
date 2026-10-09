@@ -306,7 +306,8 @@ export function RiskDashboard({
       </div>
       {/* #915 (S3): the API's own sentence for the DoD target cap
           (`risk/zt_capped.py`), the one the register's files print, rendered
-          as given. */}
+          as given. #944: keep it immediately after the target lines, whose
+          last is the Zero Trust one, so the two read as one baseline. */}
       {data.zt_capped_target_note ? (
         <p
           className="mb-4 rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"

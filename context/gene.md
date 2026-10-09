@@ -11,6 +11,17 @@ approved on #736 (comment 6072976838). The DoD output-cap probe is authorized
 but still waits on a provider key in this environment, and #981 merges only
 after it. It comes back to you, not self-merged: conditions 5 and 6._
 
+_2026-10-09: #944 is built on `track6/944-cap-note-order`._
+
+**What it does:** the DoD cap note now sits directly under the Zero Trust
+target line in the Risk Register's three files and on the admin screen, so
+the two no longer read as two baselines. The client dashboard already had it
+there and needed no code change; its test was shown able to fail by a hand
+mutation, not a revert. Tested with a single DoD target and with CISA plus
+DoD, where the note follows the DoD line; "targets not recorded" is not
+tested. Order only, no wording changed, as the advisor ruled on #736
+comment 6069566861. Comes back to you: conditions 5 and 6.
+
 _2026-10-09: #984 and #986 (client-name redaction rewrote catalog text and
 catalog codes sent to the AI) are draft PR #985 on
 `track5/984-catalog-redaction`. Catalog fields and code lists are now sent
