@@ -31,6 +31,7 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.ai.batching import run_batches
+from app.ai.catalog_fields import register_catalog_field
 from app.ai.diff import diff_keyed_rows
 from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
@@ -2044,6 +2045,41 @@ def build_csf_ai_request(db: Session, svc: Service, client: Client) -> CsfAiRequ
             status_code=status.HTTP_404_NOT_FOUND, detail="Create an assessment first."
         )
     return _csf_ai_request_for(db, a, client)
+
+
+def _subcategory_definitions(codes: list[str]) -> dict[str, str]:
+    """Each code's NIST CSF 2.0 outcome text, as the catalog has it (#806 D2).
+
+    Not sent yet: the #806 CSF prompt PR adds it to the payload built below,
+    sliced per batch, by calling this function. It is registered now (#984), so
+    the moment it is sent it egresses unredacted and guarded: a client named
+    "Critical" would otherwise turn GV.OC-04's outcome into "[CLIENT]
+    objectives, ...". A code the catalog does not have raises KeyError, which
+    the guard reports as a mismatch."""
+    return {code: subcategory_by_code(code).outcome for code in codes}
+
+
+register_catalog_field(
+    "subcategory_definitions", lambda _payload, value: _subcategory_definitions(list(value))
+)
+
+
+def _catalog_tier(tier: str) -> str:
+    """A tier as the vocabulary has it; KeyError for one it does not have."""
+    if tier not in _VALID_TIERS:
+        raise KeyError(tier)
+    return tier
+
+
+# #984, #986: the codes and tiers a request asks about are catalog vocabulary
+# too, and the same rewrite reached them: a client named "GV" sent
+# "[CLIENT].OC-01", one named "High" sent the tier "[CLIENT]". Measured on main
+# 2f701f5b. Each entry is rebuilt from the catalog, so an unknown code or tier
+# is refused, not sent.
+register_catalog_field(
+    "subcategories", lambda _payload, value: [subcategory_by_code(c).code for c in value]
+)
+register_catalog_field("tiers", lambda _payload, value: [_catalog_tier(t) for t in value])
 
 
 def _csf_ai_request_for(db: Session, a: CsfAssessment, client: Client) -> CsfAiRequest:

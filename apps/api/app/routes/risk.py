@@ -32,6 +32,7 @@ from app.ai.llm import LLMClient
 from app.attack.catalog_version import catalog_mismatch_message, require_current_catalog
 from app.attack.computed import effective_coverage
 from app.attack.parents import is_computed_parent
+from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.release_readiness import unreviewed_codes as attack_unreviewed_codes
 from app.attack.rules import parents_computed
 from app.audit import audit
@@ -932,27 +933,27 @@ def _gather_findings(
             .scalars()
             .all(),
         )
-        # PENDING-REVIEW ROWS ARE CITABLE HERE, AND THAT IS AN OPEN QUESTION
-        # RATHER THAN AN OVERSIGHT -- stated at the site because an unstated
-        # exemption reads as one to whoever runs this sweep next.
+        # #415 (Gene, #736 5986057990 item 14): a technique PENDING REVIEW is
+        # not citable. `attack/pending.py::pending_codes` is the set the
+        # heatmap withholds (#102) for a status backed by no confirmed
+        # citation; CALLED, never reimplemented, over the same effective rows
+        # and rule set the ATT&CK deliverable passes, so the register cannot
+        # cite a technique the client's ATT&CK report declines to count. A
+        # computed parent is pending through its children (D-094), which only
+        # `pending_codes` knows. Findings are unchanged: the ruling is about
+        # links. The count is disclosed apart from "unscored" (`LinkScope`).
         #
-        # #102 says a status backed by no CONFIRMED citation must not score:
-        # `attack/pending.py::pending_codes` is the authoritative set the
-        # heatmap withholds. This scope does NOT subtract it, so a technique
-        # whose coverage status is withheld from the score can still appear in
-        # the register's `linked_techniques` and in the client's export.
-        #
-        # Arguable both ways, which is why it is filed rather than decided
-        # here. A link says "this risk relates to T1003", not "T1003 is
-        # covered", so citing a pending row may be perfectly honest -- or it may
-        # propagate an unreviewed model inference into a deliverable, which is
-        # the harm #102 exists to prevent.
-        #
-        # NOT INTRODUCED and strictly improved by this change: before #403 every
-        # technique in the catalog was citable, pending or not. Narrowing to
-        # scored rows is a subset of that, so nothing got worse. Tracked in #415.
+        # Under R3 (statuses computed) an awaiting-review tool is scored as
+        # not in place, so a leaf is a gap rather than a pending claim and
+        # this set is empty; it is non-empty only on an assessment approved
+        # before R3 (`status_rules` 1).
         attack_scope = scope_for(AttackCoverage, rows)
-        valid_techniques |= set(attack_scope.codes)
+        attack_scope = dataclasses.replace(
+            attack_scope,
+            pending=attack_pending_codes(rows, parents_computed=parents_computed(attack))
+            & attack_scope.codes,
+        )
+        valid_techniques |= set(attack_scope.citable)
         link_scopes[src.scope_key] = attack_scope
         # Gene's condition (D-094): only an assessment approved under D-094
         # takes its findings through sub-techniques; one approved before #620
@@ -1998,8 +1999,7 @@ def generate(
         # back by `_serialize`, so the register's own disclosure survives a
         # reload -- the half #316 shipped without.
         _prov_with_count["link_scope"] = {
-            service: {"scored": len(sc.codes), "total": sc.total}
-            for service, sc in link_scopes.items()
+            service: _link_scope_record(sc) for service, sc in link_scopes.items()
         }
         _prov_with_count["finding_coverage"] = finding_record
         _prov_with_count["source_states"] = source_states
@@ -2026,10 +2026,7 @@ def generate(
             # scored-share disclosure too. Named here rather than left to the
             # field name above, or the log would report one of two losses and
             # read as complete.
-            link_scope={
-                service: {"scored": len(sc.codes), "total": sc.total}
-                for service, sc in link_scopes.items()
-            },
+            link_scope={service: _link_scope_record(sc) for service, sc in link_scopes.items()},
             finding_coverage=finding_record,
             targets=targets_record,
             reason="provenance is NULL, which no current writer produces",
@@ -2096,10 +2093,7 @@ def generate(
             # they separate "the model named something wrong" from "the
             # assessment scored almost nothing", which are the two ways a
             # register comes out sparsely linked and have opposite remedies.
-            "link_scope": {
-                service: {"scored": len(sc.codes), "total": sc.total}
-                for service, sc in link_scopes.items()
-            },
+            "link_scope": {service: _link_scope_record(sc) for service, sc in link_scopes.items()},
             # #132, and the same pairing: the map names what to fix, the count
             # names what the consultant sees. `entries_offered_links` is the
             # denominator -- "3 entries lost every link" means something
@@ -2459,7 +2453,7 @@ def _render_and_store(
         client_legal_name=org,
         version=reg.version,
         entries=entries,
-        link_scope=[(r.service, r.scored, r.total) for r in _scope_rows],
+        link_scope=[(r.service, r.scored, r.total, r.pending_review) for r in _scope_rows],
         finding_counts=(
             (
                 _findings["findings_total"],
@@ -3018,10 +3012,29 @@ def _link_scope_row_fault(counts: object) -> str | None:
         return "counts are not plain integers"
     if scored < 0 or total < 0 or scored > total:
         return "counts are not a scored-subset-of-total pair"
+    if "pending_review" in counts:
+        # #415. Optional (CSF and ZT have no review queue, and an ATT&CK record
+        # written before the count was has none), but when present it is a
+        # plain int and a subset of `scored`: pending codes are scored codes.
+        pending = counts["pending_review"]
+        if not isinstance(pending, int) or isinstance(pending, bool):
+            return "pending_review is not a plain integer"
+        if pending < 0 or pending > scored:
+            return "pending_review is not a subset of scored"
     return None
 
 
 _NOT_RECORDED = {"excluded_unscored_links": [], "excluded_unscored_links_recorded": False}
+
+
+def _link_scope_record(sc: LinkScope) -> dict:
+    """One service's #403 record, plus (#415) its pending-review count when the
+    service has a review queue. ONE construction for the provenance, the
+    audit row and the NULL-provenance log, so the three cannot disagree."""
+    record: dict = {"scored": len(sc.codes), "total": sc.total}
+    if sc.pending is not None:
+        record["pending_review"] = len(sc.pending)
+    return record
 
 
 def _link_scope_unreadable(reason: str, **fields: object) -> dict:
@@ -3136,6 +3149,10 @@ def _link_scope_fields(stored: object) -> dict:
                 service=str(service),
                 scored=counts["scored"],  # type: ignore[index]
                 total=counts["total"],  # type: ignore[index]
+                # #415: absent on CSF and ZT (no review queue) and on an
+                # ATT&CK record written before the count was: None, which
+                # renders as "not recorded" for ATT&CK. Validated above.
+                pending_review=counts.get("pending_review"),  # type: ignore[union-attr]
             )
         )
     return {

@@ -82,13 +82,14 @@ starts, and the `llm_calls` row records only the attempt that finished; the
 report's `sdk_retries` says how many times it may, read from the client the
 adapter will use (`source: client`).
 
-AFTER AN INTERRUPT DURING A BATCHED JOB (csf_score, mitre_map), batches already
-queued can still start, and bill, after the aborted report is written:
-`run_batches` cancels queued work only on its deadline. So an aborted report's
-`invoke_calls_started` is a LOWER BOUND, and it says so -- even when it is 0,
-because the interrupt can land after the batches were queued and before any
-worker entered `invoke`; the report is kept, and its `spent_usd_complete` is
-false. The fix belongs in `app/ai/batching.py` and is with the advisor.
+AFTER AN INTERRUPT DURING A BATCHED JOB (csf_score, mitre_map), `run_batches`
+cancels every batch still queued and sets a stop flag that turns away a batch
+a worker has just dequeued, but a batch already past that check, up to
+`max_workers` of them (`_CSF_MAX_WORKERS`, `_MITRE_MAX_WORKERS`), can still finish, and bill, after the aborted report
+is written. So an aborted report's `invoke_calls_started` is a LOWER BOUND, and
+it says so -- even when it is 0, because the interrupt can land after a worker
+passed the stop check and before it entered `invoke`; the report is kept, and
+its `spent_usd_complete` is false.
 
 PRICES: the dollar guard prices tokens at the configured provider and model's
 list price (`PRICES_USD_PER_MTOK`); a model with no recorded price is refused
@@ -2896,6 +2897,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             _job_shape(args.job)
         price = price_for(s.shield_llm_provider, s.shield_llm_model)
         corpus = None if args.notes_corpus is None else load_notes_corpus(args.notes_corpus)
+        # Built BEFORE `--out` is reserved (#978 review): it imports the CSF
+        # and ATT&CK route modules, and a failure or a Ctrl-C after the
+        # reservation would leave an empty `--out` that refuses the next run.
+        lower_bound_note = _lower_bound_note(args.job)
         # Reserve the name now (exclusive create), before any provider exists.
         # Every later write replaces it atomically (`_ReportFile.write`).
         _open_report(args.out).close()
@@ -2909,7 +2914,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "model": s.shield_llm_model,
         "usd_per_mtok": price,
     }
-    report_file = _ReportFile(Path(args.out), args.job, max_usd, price_basis, database_url)
+    report_file = _ReportFile(
+        Path(args.out), args.job, max_usd, price_basis, database_url, lower_bound_note
+    )
     print(
         f"budget: ${max_usd} for this side (half the ${COST_CAPS_USD[args.job]} service cap), "
         f"input and output at the {s.shield_llm_provider}/{s.shield_llm_model} list price. "
@@ -2961,8 +2968,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             # batch is queued; or a single-call job never entered `invoke`.
             # The file this run reserved empty goes. A BATCHED job interrupted
             # any other way is never unlinked (#952 round 5): an interrupt after
-            # its batches were queued and before any worker entered `invoke`
-            # reads 0 calls, and the queued batches can still start and bill.
+            # a worker passed `run_batches`' stop check and before it entered
+            # `invoke` reads 0 calls, and that batch can still start and bill.
             Path(args.out).unlink()
         else:
             # #952 review F2: something may have been billed. Keep every
@@ -3026,6 +3033,34 @@ def _dump_json(obj: Any, fh: Any) -> None:
     json.dump(obj, fh, indent=2, sort_keys=True)
 
 
+def _batch_workers() -> dict[str, int]:
+    """Each batched job's `max_workers`, READ from the route module the job
+    runs through (#978): never copied, so the note cannot drift from it."""
+    import app.routes.attack as attack_routes
+    import app.routes.csf as csf_routes
+
+    return {
+        "csf_score": csf_routes._CSF_MAX_WORKERS,
+        "mitre_map": attack_routes._MITRE_MAX_WORKERS,
+    }
+
+
+def _lower_bound_note(job: str) -> str:
+    """The aborted report's lower-bound note, naming the running job's own
+    worker count; a job that is not batched names both."""
+    workers = _batch_workers()
+    if job in workers:
+        n = str(workers[job])
+    else:
+        n = ", ".join(f"{name} {count}" for name, count in workers.items())
+    return (
+        "for a batched job (csf_score, mitre_map), queued batches are cancelled on "
+        "an interrupt, but the batches already handed to a worker (up to "
+        f"max_workers, {n}) can still finish, and bill, after this report was "
+        "written, so invoke_calls_started is a lower bound"
+    )
+
+
 class _ReportFile:
     """`--out`, replaced ATOMICALLY after every run (#952 review F2 and narrow
     review 2): each write goes to a temporary file in the same directory, is
@@ -3041,6 +3076,7 @@ class _ReportFile:
         max_usd: float,
         price_basis: Mapping[str, Any],
         database_url: dict,
+        lower_bound_note: str | None = None,
     ) -> None:
         self.path = path
         self.job = job
@@ -3051,6 +3087,12 @@ class _ReportFile:
         self.counter: Any = None
         self.provider_built = False
         self.batched = job in _BATCHED_JOBS
+        # `main` builds it before `--out` is reserved (#978 review) and passes
+        # it in; a direct construction with no file to protect builds the
+        # same note here. Never in `abort`: the imports fail loudly at start.
+        self.lower_bound_note = (
+            _lower_bound_note(job) if lower_bound_note is None else lower_bound_note
+        )
         self.sdk_retries: dict | None = None
         self.records: list[RunRecord] = []
 
@@ -3093,7 +3135,7 @@ class _ReportFile:
             "status": status,
             "runs": rows,
             "spent_usd": round(sum(known), 6),
-            # An aborted batched job may still have queued batches to bill.
+            # An aborted batched job may still have batches in its workers to bill.
             "spent_usd_complete": len(known) == len(rows)
             and self.invoke_calls_started <= accounted
             and not (status == "aborted" and self.batched),
@@ -3116,13 +3158,12 @@ class _ReportFile:
             "after_runs": len(self.records),
             "run_in_progress": "a run under way when this happened is not in `runs`; "
             "its calls are in `invoke_calls_started`",
-            # #952 round 4, F1: `run_batches` cancels queued batches only on its
-            # deadline, so after an interrupt during a batched job (csf_score,
-            # mitre_map) they can still start -- and bill -- after this report
-            # is written. The fix is in app/ai/batching.py, with the advisor.
-            "invoke_calls_started_is_a_lower_bound": "for a batched job (csf_score, "
-            "mitre_map), queued batches can still start, and bill, after an interrupt "
-            "and after this report was written, so invoke_calls_started is a lower bound",
+            # #952 round 4, F1: after an interrupt during a batched job
+            # (csf_score, mitre_map), `run_batches` cancels the queued batches
+            # (#806), but those already past its stop check, up to
+            # `max_workers`, can still finish -- and bill -- after this report
+            # is written.
+            "invoke_calls_started_is_a_lower_bound": self.lower_bound_note,
         }
         try:
             self.write(report)

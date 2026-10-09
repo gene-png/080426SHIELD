@@ -8,6 +8,52 @@ test edits and the Step 1 copy are as approved on #736 (comment 6072976838).
 The DoD output-cap probe is authorized but waits on a provider key in this
 environment. It comes back to you, not self-merged: conditions 5 and 6._
 
+_2026-10-09: #984 and #986 (client-name redaction rewrote catalog text and
+catalog codes sent to the AI) are draft PR #985 on
+`track5/984-catalog-redaction`. Catalog fields and code lists are now sent
+as the catalog has them and guarded byte for byte; the client's own notes and
+tool names are still redacted. A client named "DoD" no longer turns every DoD
+capability code into "[CLIENT].USR.01". It comes back to you: conditions 5
+(`app/ai/`) and 6 (the model sees different text for such clients)._
+
+_2026-10-09 (track1): the #806 run_batches fix is pushed on
+`track1/806-run-batches-cancel`, for #806, with `main` merged in after #952
+landed, and opened as a draft PR.
+A batched Run-AI now cancels its queued batches on any exception, not only its
+run deadline, and re-raises the original exception unchanged, so a Ctrl-C no
+longer leaves queued batches to bill. It also corrects the consistency
+measure's docstring and comments: after an interrupt only a batch already past
+the stop check, up to `max_workers` of them, can still bill. The report's own
+lower-bound string says the same, with the job's worker count read from its
+constant; the edit to the test on `main` was approved. It comes back
+to you under merge-rule condition 5 (`app/ai/`, `apps/api/tests/**`)._
+
+_2026-10-09: #930 is built on `track6/930-published-amber`, a draft PR (opened
+after #974 merged)._
+
+**What it does:** on a published Risk Register version, the carried-ratings
+block no longer tells the consultant to rate entries again in a table that is
+no longer editable; the sentence ends at the finding codes and the amber style
+stays (advisor, #736 comment 6067815887). Drafts read as before. The draft-side
+follow-up is #950. Comes back to you under condition 5 only.
+
+_2026-10-09: #415 is built on `track6/415-pending-links`, a draft PR._
+
+**What it does:** an ATT&CK technique pending review is no longer citable in
+the Risk Register, as you ruled (#736 comment 5986057990 item 14), and every
+file and the admin banner count it apart from "unscored". A register generated
+before this says the count was not recorded. Under R3 the exclusion only bites
+on ATT&CK assessments approved before R3. The client dashboard is filed as
+#970. Comes back to you: conditions 5 and 6.
+
+_2026-10-08: #806 C1 (seven CSF outcome strings made NIST CSWP 29 verbatim:
+GV.OC-02, GV.OC-03, GV.OC-04, GV.RM-04, GV.RM-05, GV.RM-07, ID.RA-02) is on
+`track5/806-csf-c1`. A test reads each from the pinned PDF under the advisor's
+comparison rules (#736 comment 6070708992). GV.OC-03 keeps its two em dashes
+as printed. The client sees the new wording in the questionnaire and every
+catalog surface, so it comes back to you: conditions 5 and 6. The
+character-only rows are filed separately as tier-3._
+
 _2026-10-08: #840 (a Zero Trust capability the AI returns no result for is now
 counted and shown) is draft PR #963 on `track4/840-zt-no-result`, merged with
 main at 5ef7f700. The run result carries `omitted_count` and
@@ -27,7 +73,7 @@ model with no recorded price (a hard kill still writes nothing, so `--out` can s
 empty after paid calls; after an interrupt during a batched job, queued batches
 can still bill, so the aborted report is always kept and its call count is a
 lower bound, even at 0; the
-`app/ai/batching.py` fix is with the advisor), records the DATABASE_URL query parameters, and
+`app/ai/batching.py` fix is with the advisor) (superseded 2026-10-09, see above), records the DATABASE_URL query parameters, and
 compares two mitre_map probe runs of the same batches. No live call was made.
 What the money guard enforces: each side of a service's before/after pair gets
 half that service's cap from the $25 the advisor approved (#736 comments
@@ -89,9 +135,12 @@ _2026-10-08: #474 option 2 is PR #861 (`track6/474-415-risk-baseline`), in
 review._ A Risk Register states which target its CSF and Zero Trust findings
 were measured against, in the strings the advisor approved on #736 (6053630989,
 ruled in 6054419744); the framework is named only when there are two Zero Trust
-services. Still yours: #474 option 1 (freeze each source's target at release)
-and #415 (whether pending-review techniques are excluded from the links), so
-neither issue closes with this PR. Comes back to you: conditions 5 and 6.
+services. #474 option 1 (freeze each source's target at release): you
+approved it and deferred it to post-MVP as the first post-MVP fix (#736
+comment 6069875345), so #474 stays open. **Correction, 2026-10-09:** this line
+also listed #415 as yours. You approved that exclusion on 2026-10-05 (#736
+comment 5986057990 item 14), and it is built in the #415 PR. Comes back to
+you: conditions 5 and 6.
 
 _2026-10-08: #852 (CSF catalog corrected to NIST CSWP 29, pinned to the PDF
 you supplied) landed as PR #940 (`d70b6e62`); D-110, migration 0065. #852 and

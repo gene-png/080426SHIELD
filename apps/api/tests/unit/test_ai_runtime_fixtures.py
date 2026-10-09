@@ -105,20 +105,21 @@ def test_run_job_zt_score_cisa_is_parseable_without_overrides(db_session) -> Non
         # blank notes get no result (A5).
         inputs={
             "framework": "cisa_ztmm_2_0",
-            "capabilities": ["ID.1", "ID.2", "DE.1"],
+            "capabilities": ["CISA.ID.01", "CISA.ID.02", "CISA.DV.01"],
             "capability_details": {
-                code: {"pillar": "Identity", "name": code} for code in ("ID.1", "ID.2", "DE.1")
+                code: {"pillar": "Identity", "name": code}
+                for code in ("CISA.ID.01", "CISA.ID.02", "CISA.DV.01")
             },
             "answers": {
                 code: {"notes": "MFA is enforced for every account.", "current": None}
-                for code in ("ID.1", "ID.2", "DE.1")
+                for code in ("CISA.ID.01", "CISA.ID.02", "CISA.DV.01")
             },
         },
         requested_by=uuid.uuid4(),
     )
     assert isinstance(result.data, dict)
     caps = result.data["capabilities"]
-    assert {c["code"] for c in caps} == {"ID.1", "ID.2", "DE.1"}
+    assert {c["code"] for c in caps} == {"CISA.ID.01", "CISA.ID.02", "CISA.DV.01"}
     for c in caps:
         assert 1 <= c["current"] <= 4
         assert set(c) == {"code", "current"}, c  # A9: no `target` (A6)
@@ -136,7 +137,7 @@ def test_zt_score_dod_respects_three_stage_clamp(db_session) -> None:
         # capability's activities (C3: none means no result).
         inputs={
             "framework": "dod_ztra",
-            "capabilities": ["ID.1", "ID.2", "AC.1"],
+            "capabilities": ["DOD.USR.01", "DOD.USR.02", "DOD.APP.01"],
             "capability_details": {
                 code: {
                     "pillar": "User",
@@ -146,11 +147,11 @@ def test_zt_score_dod_respects_three_stage_clamp(db_session) -> None:
                         {"id": "1.1.2", "name": "a", "level": "advanced", "description": "d"},
                     ],
                 }
-                for code in ("ID.1", "ID.2", "AC.1")
+                for code in ("DOD.USR.01", "DOD.USR.02", "DOD.APP.01")
             },
             "answers": {
                 code: {"notes": "MFA is enforced for every account.", "current": None}
-                for code in ("ID.1", "ID.2", "AC.1")
+                for code in ("DOD.USR.01", "DOD.USR.02", "DOD.APP.01")
             },
         },
         requested_by=uuid.uuid4(),
@@ -168,7 +169,7 @@ def test_all_purposes_return_valid_json_for_their_parser(db_session) -> None:
     llm = LLMClient(build_runtime_provider())
     cases = {
         "mitre_map": {"technique_codes": ["T1003"], "capability_list": ["Splunk"]},
-        "zt_score": {"framework": "cisa_ztmm_2_0", "capabilities": ["ID.1"]},
+        "zt_score": {"framework": "cisa_ztmm_2_0", "capabilities": ["CISA.ID.01"]},
         "csf_score": {"tiers": ["high"], "subcategories": ["GV.OC-01"]},
         "tech_debt_extract": {"rows": [{"name": "Okta"}], "context": {}},
         "risk_synthesize": {
