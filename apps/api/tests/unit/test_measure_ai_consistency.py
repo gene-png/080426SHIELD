@@ -200,12 +200,14 @@ def test_downstream_counts_gaps_through_the_engine() -> None:
     fw = ZtFrameworkCode.CISA_ZTMM_2_0
     c1, c2 = sorted(all_codes(fw))[:2]
     data = _caps(
-        {"code": c1, "current": 2, "target": 3},  # 2 < 3: a gap
-        {"code": c2, "current": 3, "target": 2},  # 3 >= 2: none, though below S3
+        {"code": c1, "current": 2, "target": 3},  # 2 < 3 (the engagement stage): a gap
+        # #806: the stray target 2 is not read, so the engagement stage (3)
+        # decides, and 2 < 3 is a gap. Read as a target it would hide it.
+        {"code": c2, "current": 2, "target": 2},
     )
     d = zt_downstream(fw, engagement_stage=3, data=data)
-    assert d["gap_codes"] == [c1]
-    assert d["total_gap_count"] == 1
+    assert d["gap_codes"] == sorted([c1, c2])
+    assert d["total_gap_count"] == 2
     # Every other capability got no `current` from the model.
     assert d["unscored_count"] == len(all_codes(fw)) - 2
     assert d["non_integer_values"] == 0
@@ -239,9 +241,10 @@ def test_downstream_never_coerces_a_non_integer_stage() -> None:
     )
     d = zt_downstream(fw, engagement_stage=3, data=data)
     # c1 and c2 are unscored rather than read as 1 and 2; c3's current is
-    # whole, and its fractional target falls back to the engagement stage.
+    # whole. Its stray target is never read (#806), so only the two currents
+    # are non-integer.
     assert d["gap_codes"] == [c3]
-    assert d["non_integer_values"] == 3
+    assert d["non_integer_values"] == 2
 
 
 # --- echo_share: did the model judge, or repeat what it was sent? ----------
@@ -794,7 +797,7 @@ def test_downstream_counts_an_out_of_range_current_instead_of_calling_it_unscore
     assert d["total_gap_count"] == 0
 
 
-def test_downstream_reports_targets_the_engine_could_not_use() -> None:
+def test_downstream_never_reads_a_stray_target() -> None:
     from app.zt.catalog import all_codes
     from app.zt.maturity import ZtFrameworkCode
 
@@ -802,9 +805,10 @@ def test_downstream_reports_targets_the_engine_could_not_use() -> None:
     codes = sorted(all_codes(fw))
     data = _caps(*({"code": c, "current": 1, "target": 9} for c in codes))
     d = zt_downstream(fw, engagement_stage=3, data=data)
-    assert d["out_of_range_values"] == len(codes)
-    assert d["unusable_target_codes"] == codes
-    # The engagement stage (3) applied instead, so every capability at 1 is a gap.
+    # #806: the stray target 9 is neither counted out of range nor handed to
+    # the engine; the engagement stage (3) decides, so every 1 is a gap.
+    assert d["out_of_range_values"] == 0
+    assert d["unusable_target_codes"] == []
     assert d["total_gap_count"] == len(codes)
 
 

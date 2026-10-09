@@ -25,6 +25,8 @@ pytestmark = pytest.mark.unit
 # sha256 of the approved text: 5982427179 + B2 from 5982919007 + A9 and D2
 # from 6068587667. A one-byte drift turns this red.
 ZT_SCORE_PROMPT_SHA256 = "654ffe5ba9b35256afefb784f13ed7e9ebc17e8f0d6bb89bc3c73a365bea0caa"
+# Its length in UTF-8 bytes, beside the hash (#981 ruling).
+ZT_SCORE_PROMPT_BYTES = 14353
 
 _CISA = find_zt_source(Path(__file__).resolve(), "cisa") or Path("/nonexistent/reference-docs/cisa")
 
@@ -34,7 +36,9 @@ def _prompt() -> str:
 
 
 def test_the_prompt_is_the_approved_text() -> None:
-    assert hashlib.sha256(_prompt().encode("utf-8")).hexdigest() == ZT_SCORE_PROMPT_SHA256
+    encoded = _prompt().encode("utf-8")
+    assert len(encoded) == ZT_SCORE_PROMPT_BYTES
+    assert hashlib.sha256(encoded).hexdigest() == ZT_SCORE_PROMPT_SHA256
 
 
 def test_the_prompt_is_plain_ascii_with_no_control_characters() -> None:

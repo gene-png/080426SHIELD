@@ -1069,16 +1069,20 @@ def zt_downstream(framework: Any, *, engagement_stage: int, data: Mapping[str, A
     `non_integer_values` and treated as absent, because the engine's own
     validator calls `int()`, which would read `true` as 1 and `"2"` as 2.
     A whole number outside the framework's stages is passed on (the engine
-    treats it as unscored, or an unusable target) and ALSO counted in
-    `out_of_range_values`, so a run of stage 9s cannot read as a run that
-    simply left rows blank. `unusable_target_codes` is the engine's own list.
+    treats it as unscored) and ALSO counted in `out_of_range_values`, so a
+    run of stage 9s cannot read as a run that simply left rows blank.
+
+    Only `current` is read (#806): the model sends no target, a stray one is
+    an unknown field (`compare_pair`'s `unknown_fields`), and the gaps rest on
+    the engagement stage, as `ZT_DOWNSTREAM_TARGET_BASIS` says. So
+    `unusable_target_codes`, the engine's own list, is empty here.
     Rows the real apply path would skip (locked, protected, edited) are not
     modelled: this is what the model ASKED for, not what a run would write.
 
     A TWIN LEFT ALONE, on purpose (#867 review B-4/B-5): unlike `compare_pair`
     and `csf_levels`, this does NOT go through `routes/zt.py::_validated_stage`.
-    It passes out-of-range whole numbers ON so the engine names unusable
-    targets, which the validator would hide; and it reads "2" as non-integer
+    It passes out-of-range whole numbers ON so the engine sees them, which
+    the validator would hide; and it reads "2" as non-integer
     where the apply path stores 2. The second is a known disagreement with the
     apply path, recorded on #867 for a decision rather than changed here.
     """
@@ -1095,7 +1099,10 @@ def zt_downstream(framework: Any, *, engagement_stage: int, data: Mapping[str, A
     for row in data.get("capabilities") or []:
         if not isinstance(row, dict) or not isinstance(row.get("code"), str):
             continue
-        for field, dest in (("current", answers), ("target", targets)):
+        # #806: the model sends no target. A stray one is an unknown field
+        # (`compare_pair`'s `unknown_fields`), never an input to the engine,
+        # so the gaps here rest on the engagement stage, as the report says.
+        for field, dest in (("current", answers),):
             if field not in row or row[field] is None:
                 continue
             if _is_whole(row[field]):
