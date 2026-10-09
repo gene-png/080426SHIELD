@@ -222,6 +222,11 @@ class LinkScopeDisclosure(BaseModel):
     service: str
     scored: int
     total: int
+    #: #415: how many of the `scored` codes are pending review
+    #: (`attack/pending.py::pending_codes`) and so not citable, counted apart
+    #: from the unscored rows. None where the service has no review queue (CSF,
+    #: ZT) or where an ATT&CK register predates the count (not recorded).
+    pending_review: int | None = None
 
 
 class RiskRegisterResponse(BaseModel):

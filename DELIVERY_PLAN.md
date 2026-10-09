@@ -84,6 +84,39 @@ Track work outside that list is paused.
 
 **2026-10-09: #984 and #986 implemented (`tier-2`): catalog text and catalog codes reach the model unredacted, and guarded.** Strict redaction rewrote every string in an AI payload, so a client whose legal name is a word in a catalog had that catalog text rewritten before the model read it, and `redacted_counts.client_org` counted each hit. Measured on main 2f701f5b: a client named "Cloud" rewrote ATT&CK technique names; "DoD" or "CISA" rewrote every ZT capability code (the model was asked about "[CLIENT].USR.01"); "GV" or "ID" rewrote CSF subcategory codes and "High" the tier `high`; "Critical" would rewrite CSF outcome definitions once they are sent. `app/ai/catalog_fields.py` exempts a registered catalog field from redaction and rebuilds it from the catalog before and after redaction; any byte difference raises `CatalogFieldMismatch` and nothing is sent, and the preview refuses it typed (`catalog_field_mismatch`). The client's own data is still redacted. Registered: ATT&CK `technique_details` and `technique_codes`, ZT `capabilities`, CSF `subcategories`, `tiers` and `subcategory_definitions`; ZT `capability_details` registers with #981. One approved edit to a test on main (`test_ai_runtime_fixtures.py`, made-up ZT codes replaced by real ones). Advisor's rulings on #736. Branch `track5/984-catalog-redaction`, PR #985, for #984 and #986. A change under `app/ai/`, so merge-rule condition 5 is tripped, and condition 6 is treated as tripped because what the model is shown changes for such clients; routed to Gene rather than self-merged.
 
+**2026-10-09: #930 (`tier-2`) is built on `track6/930-published-amber`, a
+draft PR opened after #974 (#415) merged.** Status as written before it
+merges; update this line in the landing commit. On a published
+Risk Register version, the carried-ratings block no longer tells the consultant
+to "Rate it/them again in the Register table": the selects are gone and the
+rating edit answers 409 once a version is published (D-076). The published
+sentence drops the imperative and does not repeat the card above it, and the
+block keeps its amber style, because the ratings were carried by the model and
+not re-rated. The draft wording is unchanged. `carriedSentences` takes a
+required `editable`, so no caller can fail open. Rulings: advisor, #736 comment
+6067815887 (option A, amber kept, the declared edit giving five existing calls
+`true`), on the plan in 6067131971. The draft-side case, where the imperative
+stays after a consultant has re-rated, is filed as #950 (tier-3) and not built.
+Trips merge-rule condition 5 (web test globs); condition 6 is not tripped (the
+admin screen only).
+
+**2026-10-09: #415 (`tier-2`, `client-reaching`) is built on
+`track6/415-pending-links`, a draft PR.** Status as written before it merges;
+update this line in the landing commit. An ATT&CK technique pending review
+(`attack/pending.py::pending_codes`, the set the heatmap withholds, #102) is no
+longer citable in the Risk Register, and the count is disclosed apart from
+"unscored": a summary line in the PDF, DOCX and XLSX, a "Pending review" column
+on the workbook's scored-coverage sheet, and a clause on the admin banner. A
+register generated before this says the count was not recorded. Under R3 an
+awaiting-review tool is scored as not in place, so the exclusion only applies
+to ATT&CK assessments approved before R3. Rulings: Gene, #736 comment
+5986057990 item 14; copy and (a) to (c), 6072976838 item 1 on the plan in
+6069843323. The client dashboard is filed as #970. Per #736 6073312727: the
+admin banner carries the count clause only (option (A), D-076: the confirm
+control is locked once the ATT&CK assessment is approved), and the workbook's
+not-recorded cell reads "not recorded". Trips merge-rule conditions 5 and 6, so
+it comes back to Gene.
+
 **2026-10-08: #806 C1 implemented: seven CSF outcome strings are NIST CSWP 29 verbatim.** GV.OC-02, GV.OC-03, GV.OC-04, GV.RM-04, GV.RM-05, GV.RM-07 and ID.RA-02 carried condensed paraphrases; each is now the text CSWP 29 prints, plus the catalog's closing period, and GV.OC-03 keeps its two em dashes. `test_csf_catalog_c1_outcomes.py` reads each from the pinned PDF and compares it with `GET /csf/catalog`, under the comparison rules the advisor ruled (#736 comment 6070708992). The rows that differ only in characters are filed separately as `tier-3`. Branch `track5/806-csf-c1`, for #806. Client-visible catalog text, so merge-rule condition 6 is tripped, and condition 5 by the tests; routed to Gene rather than self-merged.
 
 **2026-10-08: #840 in review (draft PR #963): a Zero Trust Run-AI now counts and names the capabilities the model returned no result for.** Such a capability keeps whatever stage it held, from a consultant, a client self-assessment or an earlier run, and used to be reported nowhere. The run now records `omitted_count` and `omitted_capabilities` (each `{capability_code, notes_blank, kept_stage}`, `kept_stage` read after the apply) on its result, and the audit row and accounting line carry counts only. The rule is `(asked & rows) - answered - locked` after the apply loop in `_zt_run_work`; a refused entry counts as an answer and a row edited during the run counts as omitted. The panel shows the approved copy Z1 to Z6, panel-only for the MVP (#736 comment 5984022081), with one assertive region and 10 items per group (#736 comment 6068587667). Step 1 `done` is unchanged and pinned by a 16-row matrix. `check_disclosure_consumers.py` (prefix added by #836) reads 41 of 41 (at 568807b5, 2026-10-08). Z6 fires for a kept stage in either group, and the audit row and accounting line also carry `omitted_count` (for #964), per #736 comment 6071261772. Branch `track4/840-zt-no-result`, for #840. Routed to Gene rather than self-merged: merge-rule conditions 5 and 6.
@@ -142,8 +175,11 @@ holds more than one Zero Trust service, and a register generated before this
 reads "The targets these findings were measured against were not recorded for
 this register." The reader fails closed (ruling 2d). Filed from the reviews:
 #944, #946. **#474 stays open** for option 1 (freeze each source's target at
-release) and **#415** for its own decision, both Gene's. The PR goes to Gene:
-merge-rule conditions 5 and 6.
+release), which Gene approved and deferred to post-MVP as its first fix (#736
+comment 6069875345). **Correction, 2026-10-09:** this entry said #415 was also
+Gene's to decide. It was not: he approved the exclusion on 2026-10-05 (#736
+comment 5986057990 item 14), and it is built in the #415 PR. The PR goes to
+Gene: merge-rule conditions 5 and 6.
 
 **2026-10-08: #852 implemented (`tier-1`, `client-reaching`): the CSF catalog corrected to NIST CSWP 29 and pinned to its PDF.** `ID.AM-09` (not a CSF 2.0 subcategory) is retired, its stored answers kept, not scored and disclosed; `RC.CO-04` is added and inserted empty into every non-discarded assessment (migration 0065, after #925's 0064). A kept Working Profile row no longer makes the enterprise profile, the gap actions or the playbook export answer 500. Branch `track5/852-csf-cswp29`; decision record **D-110**; detail in `context/entries/2026-10-08-852-csf-cswp29.md`. Gene supplied the PDF (`reference-docs/nist/NIST.CSWP.29.pdf`); `test_csf_catalog_source.py` pins its sha256 and holds the served and seeded code set to the codes read out of it. **#852 is closed by hand** when this PR merges; the body carries no closing keyword. Gene confirmed the D-107 precondition (#736 comment 6060587658). Routed to Gene rather than self-merged: merge-rule conditions 4, 5 and 6.
 

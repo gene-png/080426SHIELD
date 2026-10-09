@@ -10,19 +10,27 @@ import { carriedSentences } from "./carry";
  */
 describe("carriedSentences count nouns (#743)", () => {
   it("one rating whose entry named no finding", () => {
-    const [, line] = carriedSentences(0, 2, [
-      { key: "Orphan risk", reason: "no_source_id" },
-    ]);
+    const [, line] = carriedSentences(
+      0,
+      2,
+      [{ key: "Orphan risk", reason: "no_source_id" }],
+      true,
+    );
     expect(line).toBe(
       '1 rating could not be carried because the entry named no finding: "Orphan risk".',
     );
   });
 
   it("two ratings whose entries named no finding", () => {
-    const [, line] = carriedSentences(0, 2, [
-      { key: "Orphan risk", reason: "no_source_id" },
-      { key: "Second orphan", reason: "no_source_id" },
-    ]);
+    const [, line] = carriedSentences(
+      0,
+      2,
+      [
+        { key: "Orphan risk", reason: "no_source_id" },
+        { key: "Second orphan", reason: "no_source_id" },
+      ],
+      true,
+    );
     expect(line).toBe(
       '2 ratings could not be carried because each entry named no finding: "Orphan risk", "Second orphan".',
     );
