@@ -1,12 +1,15 @@
 # Gene — in-flight status
 
 _2026-10-09: the #806 Zero Trust prompt is draft PR #981 on
-`track4/806-zt-prompt`, merged with main at 2f701f5b. It ships your approved
-text (sha256-pinned), sends `capability_details` with the DoD activities, and
-stops applying the AI's target, so the intake target governs new runs. The
-test edits and the Step 1 copy are as approved on #736 (comment 6072976838).
-The DoD output-cap probe is authorized but waits on a provider key in this
-environment. It comes back to you, not self-merged: conditions 5 and 6._
+`track4/806-zt-prompt`, merged with main at aac434ef, so #985 is in. It ships
+your approved text (sha256-pinned), sends `capability_details` with the DoD
+activities, and stops applying the AI's target, so the intake target governs
+new runs. `capability_details` now goes through #985's catalog guard: sent
+unredacted, rebuilt from the catalog and compared byte for byte, refused
+before any send if it differs. The test edits and the Step 1 copy are as
+approved on #736 (comment 6072976838). The DoD output-cap probe is authorized
+but still waits on a provider key in this environment, and #981 merges only
+after it. It comes back to you, not self-merged: conditions 5 and 6._
 
 _2026-10-09: #984 and #986 (client-name redaction rewrote catalog text and
 catalog codes sent to the AI) are draft PR #985 on
