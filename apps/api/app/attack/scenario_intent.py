@@ -22,8 +22,9 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from app.ai import redact
+from app.ai.catalog_fields import redact_ai_payload
 from app.ai.engine import AIResponseShapeError, parse_json_object
-from app.ai.redact import RedactionMode, redact_payload
+from app.ai.redact import RedactionMode
 from app.attack import scenario
 from app.attack.citations import Candidate, CitationResolver
 
@@ -79,9 +80,9 @@ def sent_description(
     name_hints: Iterable[str] = (),
 ) -> str:
     """The description AS THE AI RECEIVES IT: the same payload through the same
-    `redact_payload` call `LLMClient.invoke` makes, with the same inputs, called
+    `redact_ai_payload` call `LLMClient.invoke` makes, with the same inputs, called
     rather than repeated. Condition 1 is checked against this text."""
-    cleaned, _counts = redact_payload(
+    cleaned, _counts = redact_ai_payload(
         payload(description, cited),
         mode=redaction_mode,
         client_org_name=client_org_name,

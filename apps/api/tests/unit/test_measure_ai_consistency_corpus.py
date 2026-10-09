@@ -1633,11 +1633,14 @@ def test_an_interrupt_after_a_paid_run_keeps_that_run(main_world) -> None:
     report = json.loads(out.read_text(encoding="utf-8"))
     assert report["status"] == "aborted"
     assert report["aborted"]["exception"] == "KeyboardInterrupt"
-    # #952 round 4, F1: queued batches can still start, and bill, after an
-    # interrupt, so the count here is a lower bound, and the report says so.
+    # #952 round 4, F1, as #806's run_batches fix left it: queued batches are
+    # cancelled on an interrupt, but those already handed to a worker can
+    # still finish, and bill, so the count here is a lower bound, and the
+    # report says so.
     bound = report["aborted"]["invoke_calls_started_is_a_lower_bound"]
     assert "lower bound" in bound
-    assert "queued batches can still start" in bound
+    assert "queued batches are cancelled" in bound
+    assert "already handed to a worker" in bound
     assert [r["run"] for r in report["runs"]] == [1]
     assert report["runs"][0]["output_tokens"] == 5
     assert report["invoke_calls_started"] == 2
@@ -1750,6 +1753,51 @@ def test_a_batched_job_interrupted_before_the_provider_exists_leaves_no_file(
     with pytest.raises(KeyboardInterrupt):
         main(["--job", "mitre_map", "--runs", "2", "--out", str(out)])
     assert not out.exists()
+
+
+def test_a_failure_building_the_note_leaves_no_out_file(main_world, monkeypatch) -> None:
+    """#978 review: the lower-bound note imports the CSF and ATT&CK route
+    modules. Built after `--out` is reserved, a Ctrl-C or ImportError there
+    left an empty `--out`, and the next run was refused as `out_exists`. It is
+    built BEFORE the reservation, so a failure there leaves no file."""
+    TestSession, provider, out = main_world
+
+    def broken() -> dict:
+        raise ImportError("synthetic: the route module failed to import")
+
+    monkeypatch.setattr("scripts.measure_ai_consistency._batch_workers", broken)
+    with pytest.raises(ImportError, match="synthetic"):
+        main([*ZT_ARGV, "--runs", "2", "--out", str(out)])
+    assert not out.exists(), "an empty --out was left to refuse the next run"
+
+
+def test_the_lower_bound_note_takes_the_jobs_own_worker_count(
+    csf_world, monkeypatch, tmp_path
+) -> None:
+    """#978: the note's worker count is READ from the running job's constant,
+    never copied. The constant is patched to 3, a value no route uses, so a
+    hardcoded 5 in the string cannot pass."""
+    from app.config import get_settings
+
+    c, TestSession, provider = csf_world
+    provider.register("csf_score", _csf_answer_all([]))
+    _main_env(monkeypatch, TestSession, provider)
+    monkeypatch.setattr("app.routes.csf._CSF_MAX_WORKERS", 3)
+
+    def interrupted(*a, **kw):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("app.ai.batching.run_batches", interrupted)
+    out = tmp_path / "csf.json"
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            main(["--job", "csf_score", "--runs", "2", "--out", str(out)])
+    finally:
+        get_settings.cache_clear()
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert report["status"] == "aborted"  # the positive state first
+    bound = report["aborted"]["invoke_calls_started_is_a_lower_bound"]
+    assert "(up to max_workers, 3)" in bound, bound
 
 
 def test_a_batched_interrupt_before_any_invoke_keeps_the_report(

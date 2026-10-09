@@ -11,6 +11,26 @@ DoD, where the note follows the DoD line; "targets not recorded" is not
 tested. Order only, no wording changed, as the advisor ruled on #736
 comment 6069566861. Comes back to you: conditions 5 and 6.
 
+_2026-10-09: #984 and #986 (client-name redaction rewrote catalog text and
+catalog codes sent to the AI) are draft PR #985 on
+`track5/984-catalog-redaction`. Catalog fields and code lists are now sent
+as the catalog has them and guarded byte for byte; the client's own notes and
+tool names are still redacted. A client named "DoD" no longer turns every DoD
+capability code into "[CLIENT].USR.01". It comes back to you: conditions 5
+(`app/ai/`) and 6 (the model sees different text for such clients)._
+
+_2026-10-09 (track1): the #806 run_batches fix is pushed on
+`track1/806-run-batches-cancel`, for #806, with `main` merged in after #952
+landed, and opened as a draft PR.
+A batched Run-AI now cancels its queued batches on any exception, not only its
+run deadline, and re-raises the original exception unchanged, so a Ctrl-C no
+longer leaves queued batches to bill. It also corrects the consistency
+measure's docstring and comments: after an interrupt only a batch already past
+the stop check, up to `max_workers` of them, can still bill. The report's own
+lower-bound string says the same, with the job's worker count read from its
+constant; the edit to the test on `main` was approved. It comes back
+to you under merge-rule condition 5 (`app/ai/`, `apps/api/tests/**`)._
+
 _2026-10-09: #930 is built on `track6/930-published-amber`, a draft PR (opened
 after #974 merged)._
 
@@ -56,7 +76,7 @@ model with no recorded price (a hard kill still writes nothing, so `--out` can s
 empty after paid calls; after an interrupt during a batched job, queued batches
 can still bill, so the aborted report is always kept and its call count is a
 lower bound, even at 0; the
-`app/ai/batching.py` fix is with the advisor), records the DATABASE_URL query parameters, and
+`app/ai/batching.py` fix is with the advisor) (superseded 2026-10-09, see above), records the DATABASE_URL query parameters, and
 compares two mitre_map probe runs of the same batches. No live call was made.
 What the money guard enforces: each side of a service's before/after pair gets
 half that service's cap from the $25 the advisor approved (#736 comments

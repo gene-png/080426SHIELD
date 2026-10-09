@@ -101,12 +101,15 @@ def test_run_job_zt_score_cisa_is_parseable_without_overrides(db_session) -> Non
         db_session,
         llm,
         "zt_score",
-        inputs={"framework": "cisa_ztmm_2_0", "capabilities": ["ID.1", "ID.2", "DE.1"]},
+        inputs={
+            "framework": "cisa_ztmm_2_0",
+            "capabilities": ["CISA.ID.01", "CISA.ID.02", "CISA.DV.01"],
+        },
         requested_by=uuid.uuid4(),
     )
     assert isinstance(result.data, dict)
     caps = result.data["capabilities"]
-    assert {c["code"] for c in caps} == {"ID.1", "ID.2", "DE.1"}
+    assert {c["code"] for c in caps} == {"CISA.ID.01", "CISA.ID.02", "CISA.DV.01"}
     for c in caps:
         assert 1 <= c["current"] <= 4
         assert 1 <= c["target"] <= 4
@@ -120,7 +123,10 @@ def test_zt_score_dod_respects_three_stage_clamp(db_session) -> None:
         db_session,
         llm,
         "zt_score",
-        inputs={"framework": "dod_ztra", "capabilities": ["ID.1", "ID.2", "AC.1"]},
+        inputs={
+            "framework": "dod_ztra",
+            "capabilities": ["DOD.USR.01", "DOD.USR.02", "DOD.APP.01"],
+        },
         requested_by=uuid.uuid4(),
     )
     caps = result.data["capabilities"]
@@ -136,7 +142,7 @@ def test_all_purposes_return_valid_json_for_their_parser(db_session) -> None:
     llm = LLMClient(build_runtime_provider())
     cases = {
         "mitre_map": {"technique_codes": ["T1003"], "capability_list": ["Splunk"]},
-        "zt_score": {"framework": "cisa_ztmm_2_0", "capabilities": ["ID.1"]},
+        "zt_score": {"framework": "cisa_ztmm_2_0", "capabilities": ["CISA.ID.01"]},
         "csf_score": {"tiers": ["high"], "subcategories": ["GV.OC-01"]},
         "tech_debt_extract": {"rows": [{"name": "Okta"}], "context": {}},
         "risk_synthesize": {

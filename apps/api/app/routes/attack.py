@@ -29,6 +29,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.ai.batching import run_batches
+from app.ai.catalog_fields import register_catalog_field
 from app.ai.diff import diff_keyed_rows
 from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
@@ -1870,6 +1871,28 @@ def _technique_details(codes: list[str]) -> dict[str, dict[str, Any]]:
     return {
         c: {"name": technique_by_id(c).name, "not_preventable": c in NOT_PREVENTABLE} for c in codes
     }
+
+
+# #984: catalogue text, so it egresses unredacted and guarded: a client named
+# "Cloud" no longer turns "Cloud Accounts" into "[CLIENT] Accounts". The guard
+# rebuilds the value with the same function, for the codes it carries (a batch
+# carries only its own, `_batch_inputs`).
+register_catalog_field("technique_details", lambda _payload, value: _technique_details(list(value)))
+# #986: the technique codes are catalogue identifiers too. No client name can
+# collide with "T1003.001" today (the phone rule's lookbehind, `routes/risk.py`),
+# but the list is catalogue-sourced, so it is sent verbatim and guarded like the
+# rest: an unknown code is refused, not sent.
+#
+# The key is global, so this ALSO guards the what-if scenario job
+# (`attack_scenario_delta`), whose `app/attack/scenario.py::batch_inputs` sends
+# `technique_codes` from the scenario's affected codes. Those come from its base
+# assessment, so they pass today (`test_attack_scenario_technique_codes_guard.py`).
+# `routes/attack_scenarios.py` does not call `require_current_catalog`, so after a
+# SOURCE_VERSION bump a stale base's code would be refused here, at egress, as an
+# AI failure; that case is filed separately.
+register_catalog_field(
+    "technique_codes", lambda _payload, value: [technique_by_id(c).id for c in value]
+)
 
 
 def _batch_inputs(inputs: dict[str, Any], batch: list[str]) -> dict[str, Any]:
