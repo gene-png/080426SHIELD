@@ -30,11 +30,14 @@ its dependency overrides take precedence over this runtime provider.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.ai.llm import FixtureProvider, LLMResponse
+from app.tech_debt.extract import CATEGORIES as TECH_DEBT_CATEGORIES
+from app.tech_debt.security_scope import NOT_IN_USE_PREFIX
 
 # Job purposes (== FixtureProvider keys). Tech Debt keeps its historical
 # "extract.capabilities" purpose for llm_calls + fixture compatibility.
@@ -271,42 +274,23 @@ def _fixture_csf_score(payload: dict[str, Any]) -> LLMResponse:
 # ---------------------------------------------------------------------------
 # extract.capabilities: Tech Debt capability extraction from inventory rows
 # ---------------------------------------------------------------------------
-
-_DEMO_TECH_DEBT_ITEMS: list[dict[str, Any]] = [
-    {
-        "name": "CrowdStrike Falcon",
-        "vendor": "CrowdStrike",
-        "category": "EDR",
-        "function": "Endpoint detection and response.",
-        "annual_cost_usd": 120000,
-        "license_count": 500,
-        "notes": "Fixture-mode demo capability.",
-        "confidence_pct": 90,
-        "source_row_index": 0,
-    },
-    {
-        "name": "Splunk Enterprise",
-        "vendor": "Splunk",
-        "category": "SIEM",
-        "function": "Log aggregation and security analytics.",
-        "annual_cost_usd": 200000,
-        "license_count": None,
-        "notes": "Fixture-mode demo capability.",
-        "confidence_pct": 80,
-        "source_row_index": 1,
-    },
-    {
-        "name": "Okta",
-        "vendor": "Okta",
-        "category": "IAM",
-        "function": "Identity and single sign-on.",
-        "annual_cost_usd": 60000,
-        "license_count": 500,
-        "notes": "Fixture-mode demo capability.",
-        "confidence_pct": 70,
-        "source_row_index": 2,
-    },
-]
+#
+# Authored from Tech Debt prompt v3.2's TEXT (issue 806, comment 5983838515; for
+# #806), never from the parser. What the prompt says, and so what this does:
+#   - section 1: skip a total line and a retired row that states no cost; keep an
+#     inactive, planned or no-longer-used row that still carries a cost, its
+#     status in `notes` and confidence 60;
+#   - section 6: `category` is one of the closed list or null, with the actual
+#     category in `notes` when it is known but not on the list;
+#   - section 6, `notes`: plain facts about the row, never an instruction to a
+#     reviewer ("confirm before approving" was one, and is gone);
+#   - section 7 (for #845): a security tool the row describes as planned, not
+#     yet deployed, inactive or no longer used is `security_related: false` with
+#     no functions, its note beginning with exactly the not-in-use prefix;
+#   - section 8: confidence is 100, 90 or 60, and every 60 has a note.
+#   - section 10: no rows (missing, not an array, or empty) is {"items":[]}.
+# Costs and licence counts stay null, as before: the fixture drafts the
+# classification, and offline demo totals are not its job.
 
 _TECH_DEBT_NAME_KEYS = ("name", "product", "tool", "capability", "vendor_product", "item")
 
@@ -314,65 +298,137 @@ _TECH_DEBT_NAME_KEYS = ("name", "product", "tool", "capability", "vendor_product
 # Deterministic per-row function so offline output is stable across runs.
 _TECH_DEBT_FUNCTION_CYCLE = ("prevent", "detect", "respond")
 
+#: v3.2 section 1, "a total, subtotal, or summary line that adds up other rows".
+_TECH_DEBT_TOTAL_LINE = re.compile(r"^\s*(sub|grand\s+)?totals?\b", re.IGNORECASE)
+#: v3.2 section 1, exclusion 6: "retired, removed, or decommissioned".
+_TECH_DEBT_RETIRED_WORDS = ("retired", "removed", "decommissioned")
+#: v3.2 sections 1 and 7: "inactive, planned, and no-longer-used", "not yet
+#: deployed". Retired-with-a-cost rows are kept and read as no longer used.
+_TECH_DEBT_NOT_IN_USE_WORDS = ("not yet deployed", "no longer used", "inactive", "planned")
+#: v3.2 section 6, `annual_cost_usd` and `license_count`: a header naming cost,
+#: price, spend or fees, or a license, seat or user count.
+_TECH_DEBT_COST_HEADER_WORDS = ("cost", "price", "spend", "fee", "licen", "seat")
+
+
+def _row_cells(row: dict[str, Any]) -> list[str]:
+    return [v.strip() for v in row.values() if isinstance(v, str) and v.strip()]
+
+
+def _lifecycle(row: dict[str, Any]) -> tuple[str, str] | None:
+    """(word, the cell as the row states it) for the first lifecycle word any
+    cell carries, retired words first, or None."""
+    for word in (*_TECH_DEBT_RETIRED_WORDS, *_TECH_DEBT_NOT_IN_USE_WORDS):
+        for cell in _row_cells(row):
+            if word in cell.lower():
+                return word, cell.rstrip(".")
+    return None
+
+
+def _states_a_cost(row: dict[str, Any]) -> bool:
+    return any(
+        isinstance(k, str)
+        and any(w in k.lower() for w in _TECH_DEBT_COST_HEADER_WORDS)
+        and str(v).strip() != ""
+        for k, v in row.items()
+        if v is not None
+    )
+
+
+def _v32_category(row: dict[str, Any]) -> tuple[str | None, str | None]:
+    """(category, note): the row's own category when it names a value on v3.2's
+    list (whole, or the part before its "/", so "EDR" is "EDR/XDR"); otherwise
+    null, with the actual category stated in a note."""
+    stated = row.get("category")
+    if not isinstance(stated, str) or not stated.strip():
+        return None, None
+    word = stated.strip().lower()
+    for listed in TECH_DEBT_CATEGORIES:
+        if word in (listed.lower(), listed.split("/")[0].lower()):
+            return listed, None
+    return None, f"Category: {stated.strip()}."
+
 
 def _fixture_tech_debt(payload: dict[str, Any]) -> LLMResponse:
     rows = payload.get("rows")
-    if isinstance(rows, list) and rows:
-        items: list[dict[str, Any]] = []
-        for i, row in enumerate(rows):
-            row = row if isinstance(row, dict) else {}
-            name: str | None = None
-            for key in _TECH_DEBT_NAME_KEYS:
-                value = row.get(key)
-                if isinstance(value, str) and value.strip():
-                    name = value.strip()
-                    break
-            if name is None:
-                # No usable name in any known column: a note, a blank, a
-                # section header, a totals line. The real prompt tells the
-                # model to skip exactly these, so the fixture does too.
-                #
-                # It used to invent "Capability N" instead, which meant the
-                # fixture ALWAYS returned one item per uploaded row — so
-                # `excluded_rows` was always empty and the reconciliation
-                # banner and its review queue could never appear offline.
-                # An unreachable review surface is an untested one; this is the
-                # same unlock that made the security sign-off queue testable.
-                continue
+    if not (isinstance(rows, list) and rows):
+        # v3.2 section 10: "If `rows` is missing, is not an array, or contains no
+        # identifiable capabilities, return exactly: {"items":[]}". This branch
+        # used to invent three costed demo capabilities (advisor ruling F3,
+        # issue 736 comment 6069328834).
+        return _resp({"items": []})
+    items: list[dict[str, Any]] = []
+    for i, row in enumerate(rows):
+        row = row if isinstance(row, dict) else {}
+        name: str | None = None
+        for key in _TECH_DEBT_NAME_KEYS:
+            value = row.get(key)
+            if isinstance(value, str) and value.strip():
+                name = value.strip()
+                break
+        if name is None or _TECH_DEBT_TOTAL_LINE.match(name):
+            # No usable name in any known column (a note, a blank, a section
+            # header), or a totals line: v3.2 section 1 excludes exactly these,
+            # so the fixture does too. Skipping keeps `excluded_rows` and its
+            # review queue reachable offline; an unreachable review surface is
+            # an untested one.
+            continue
+        lifecycle = _lifecycle(row)
+        retired = lifecycle is not None and lifecycle[0] in _TECH_DEBT_RETIRED_WORDS
+        if retired and not _states_a_cost(row):
+            # v3.2 section 1, exclusion 6: retired AND no current cost.
+            continue
 
-            vendor = row.get("vendor")
-            # Prompt v2 classifies every row instead of dropping the
-            # non-security ones. Cycle the call so offline mode exercises BOTH
-            # branches — otherwise the sign-off queue could never appear in a
-            # demo or an e2e run, and an unreachable review surface is an
-            # untested one (the excluded-rows queue had exactly this problem:
-            # the fixture echoed every row, so no exclusion could ever exist).
-            security_related = i % 4 != 3
-            items.append(
-                {
-                    "name": name or f"Capability {i + 1}",
-                    "vendor": vendor if isinstance(vendor, str) and vendor.strip() else None,
-                    "category": None,
-                    "function": (
-                        "Security capability (fixture-mode draft)."
-                        if security_related
-                        else "Business capability (fixture-mode draft)."
-                    ),
-                    "annual_cost_usd": None,
-                    "license_count": None,
-                    "notes": "Drafted offline in fixture mode; confirm before approving.",
-                    "confidence_pct": 60 + (i % 4) * 10,  # 60..90
-                    "source_row_index": i,
-                    "security_related": security_related,
-                    "security_functions": (
-                        [_TECH_DEBT_FUNCTION_CYCLE[i % len(_TECH_DEBT_FUNCTION_CYCLE)]]
-                        if security_related
-                        else []
-                    ),
-                }
-            )
-    else:
-        items = _DEMO_TECH_DEBT_ITEMS
+        vendor = row.get("vendor")
+        vendor = vendor.strip() if isinstance(vendor, str) and vendor.strip() else None
+        # Cycle the security call so offline mode exercises BOTH branches;
+        # otherwise the sign-off queue could never appear in a demo or an e2e
+        # run.
+        security_tool = i % 4 != 3
+        not_in_use = lifecycle is not None and security_tool
+        security_related = security_tool and not not_in_use
+        category, category_note = _v32_category(row)
+
+        notes: list[str] = []
+        if lifecycle is not None:
+            # v3.2 sections 1 and 7: the status as the row states it, and for a
+            # security tool, a note beginning with exactly the prefix.
+            status = lifecycle[1]
+            notes.append(f"{NOT_IN_USE_PREFIX} {status}." if not_in_use else f"Status: {status}.")
+            confidence = 60
+        elif i % 4 == 0:
+            # One row in four needs review, with the reason v3.2's own example
+            # gives, so the low-confidence flag is reachable offline (s4).
+            notes.append("Edition not stated.")
+            confidence = 60
+        else:
+            # v3.2 section 8: 100 when the row states name and vendor.
+            confidence = 100 if vendor else 90
+        if category_note:
+            notes.append(category_note)
+
+        items.append(
+            {
+                "name": name,
+                "vendor": vendor,
+                "category": category,
+                "function": (
+                    "Security capability (fixture-mode draft)."
+                    if security_tool
+                    else "Business capability (fixture-mode draft)."
+                ),
+                "annual_cost_usd": None,
+                "license_count": None,
+                "notes": " ".join(notes) or None,
+                "confidence_pct": confidence,
+                "source_row_index": i,
+                "security_related": security_related,
+                "security_functions": (
+                    [_TECH_DEBT_FUNCTION_CYCLE[i % len(_TECH_DEBT_FUNCTION_CYCLE)]]
+                    if security_related
+                    else []
+                ),
+            }
+        )
     return _resp({"items": items})
 
 

@@ -8,6 +8,90 @@ Trust, Tech Debt and Risk is stored as text, so a value opening with "=", "+",
 "-", "@", tab or carriage return is never a live formula. One golden word
 changes, declared. It comes back to you: conditions 5 and 6._
 
+_2026-10-09 (track1): the #806 run_batches fix is pushed on
+`track1/806-run-batches-cancel`, for #806, with `main` merged in after #952
+landed, and opened as a draft PR.
+A batched Run-AI now cancels its queued batches on any exception, not only its
+run deadline, and re-raises the original exception unchanged, so a Ctrl-C no
+longer leaves queued batches to bill. It also corrects the consistency
+measure's docstring and comments: after an interrupt only a batch already past
+the stop check, up to `max_workers` of them, can still bill. The report's own
+lower-bound string says the same, with the job's worker count read from its
+constant; the edit to the test on `main` was approved. It comes back
+to you under merge-rule condition 5 (`app/ai/`, `apps/api/tests/**`)._
+
+_2026-10-09: #930 is built on `track6/930-published-amber`, a draft PR (opened
+after #974 merged)._
+
+**What it does:** on a published Risk Register version, the carried-ratings
+block no longer tells the consultant to rate entries again in a table that is
+no longer editable; the sentence ends at the finding codes and the amber style
+stays (advisor, #736 comment 6067815887). Drafts read as before. The draft-side
+follow-up is #950. Comes back to you under condition 5 only.
+
+_2026-10-09: #415 is built on `track6/415-pending-links`, a draft PR._
+
+**What it does:** an ATT&CK technique pending review is no longer citable in
+the Risk Register, as you ruled (#736 comment 5986057990 item 14), and every
+file and the admin banner count it apart from "unscored". A register generated
+before this says the count was not recorded. Under R3 the exclusion only bites
+on ATT&CK assessments approved before R3. The client dashboard is filed as
+#970. Comes back to you: conditions 5 and 6.
+
+_2026-10-08: #806 C1 (seven CSF outcome strings made NIST CSWP 29 verbatim:
+GV.OC-02, GV.OC-03, GV.OC-04, GV.RM-04, GV.RM-05, GV.RM-07, ID.RA-02) is on
+`track5/806-csf-c1`. A test reads each from the pinned PDF under the advisor's
+comparison rules (#736 comment 6070708992). GV.OC-03 keeps its two em dashes
+as printed. The client sees the new wording in the questionnaire and every
+catalog surface, so it comes back to you: conditions 5 and 6. The
+character-only rows are filed separately as tier-3._
+
+_2026-10-08: #840 (a Zero Trust capability the AI returns no result for is now
+counted and shown) is draft PR #963 on `track4/840-zt-no-result`, merged with
+main at 5ef7f700. The run result carries `omitted_count` and
+`omitted_capabilities`, the consultant's panel shows them with the approved
+Z1 to Z6 copy, and the audit row carries counts only. Step 1 `done` is
+unchanged. It comes back to you, not self-merged: conditions 5 and 6. The
+adversarial review is pending._
+
+_2026-10-08 (track1): the #806 corpus PR is draft #952 on
+`track1/806-measure-corpus`, for #806. It adds the measure's synthetic corpus
+(`--notes-corpus` and a synthetic Tech Debt XLSX), the per-service cost caps, and
+two fixes: `--out` is opened before any paid call, and `charged_likely` is read
+from the `llm_calls` rows. After review it also replaces the report atomically
+after every run (so it is always either empty or one whole report holding every
+completed run), counts a started call with no row as unknown spend, refuses a
+model with no recorded price (a hard kill still writes nothing, so `--out` can stay
+empty after paid calls; after an interrupt during a batched job, queued batches
+can still bill, so the aborted report is always kept and its call count is a
+lower bound, even at 0; the
+`app/ai/batching.py` fix is with the advisor) (superseded 2026-10-09, see above), records the DATABASE_URL query parameters, and
+compares two mitre_map probe runs of the same batches. No live call was made.
+What the money guard enforces: each side of a service's before/after pair gets
+half that service's cap from the $25 the advisor approved (#736 comments
+5984022081 item 8 and 6067815887); a run after the first is not started if the
+spend so far plus the largest run so far, input and output at list price, would
+cross it. That is a projection, not a guarantee, and the first run is not bounded
+in advance. Spend is reported per run. The paid "before" runs start only after
+it lands and is re-reviewed. It comes back to you under merge-rule condition 5
+(`apps/api/tests/**`)._
+
+_2026-10-08: the Tech Debt prompt for #806 is draft PR #955 on
+`track3/806-tech-debt-prompt`; review findings F1, F4, F5 and F7 are built,
+and F2 and F3 are built as the advisor ruled (#736 comment 6069328834)._
+
+**What it does.** The extraction runs Tech Debt v3.2 as you approved it.
+Whatever the model still sends against v3.2's rules is kept and counted, and
+E1 says so above the list, in the copy the advisor approved on #736 (comment
+6068587667, `category_off_list` in the past tense). The counts are the
+extraction's own (ruling F2, comment 6069328834), so edits never change them,
+and they are not measured for a list an earlier prompt drafted.
+The offline fixture follows v3.2, including #845's not-in-use rule and e2e s47.
+**For #871:** the not-in-use group now fills from the AI, so Q2's "The AI found"
+is true for new extractions; close #871 by hand after merge. The existing-test
+edit in `test_tech_debt_not_in_use_signoff.py` and the s4 comment were approved
+in the same ruling. It comes back to you: conditions 5 and 6, no migration.
+
 _2026-10-08 (track2): #806, the ATT&CK `mitre_map` part, is pushed on
 `track2/806-mitre-map-prompt`. It runs the prompt you approved (comment
 5982555899) verbatim, with `prompt_version` "v2", per-batch
@@ -43,9 +127,12 @@ _2026-10-08: #474 option 2 is PR #861 (`track6/474-415-risk-baseline`), in
 review._ A Risk Register states which target its CSF and Zero Trust findings
 were measured against, in the strings the advisor approved on #736 (6053630989,
 ruled in 6054419744); the framework is named only when there are two Zero Trust
-services. Still yours: #474 option 1 (freeze each source's target at release)
-and #415 (whether pending-review techniques are excluded from the links), so
-neither issue closes with this PR. Comes back to you: conditions 5 and 6.
+services. #474 option 1 (freeze each source's target at release): you
+approved it and deferred it to post-MVP as the first post-MVP fix (#736
+comment 6069875345), so #474 stays open. **Correction, 2026-10-09:** this line
+also listed #415 as yours. You approved that exclusion on 2026-10-05 (#736
+comment 5986057990 item 14), and it is built in the #415 PR. Comes back to
+you: conditions 5 and 6.
 
 _2026-10-08: #852 (CSF catalog corrected to NIST CSWP 29, pinned to the PDF
 you supplied) landed as PR #940 (`d70b6e62`); D-110, migration 0065. #852 and

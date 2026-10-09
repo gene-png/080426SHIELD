@@ -190,13 +190,15 @@ test("CSF answers persist across save-and-exit, and submit moves the status", as
  * label. Each question card renders `subcategory.outcome` (the "outcome
  * statement assessors score against") beneath the short name.
  *
- * Source of record for the verbatim text: apps/api/app/csf/catalog.py
- * SUBCATEGORIES — the deterministic CSF catalog the questionnaire renders from
- * ("AI suggests, code computes"), transcribing the canonical NIST CSF 2.0
- * Final (Feb 2024) outcome statements. The master spec
- * (reference-docs/SHIELDv2_Master_Spec.txt §7, ~line 1413) defines the
- * subcategory model (GV.OC-01, GV.OC-02, …) but not the per-item outcome text,
- * so catalog.py is the authoritative verbatim source. This test asserts the
+ * Source of record for the verbatim text: NIST CSWP 29, The NIST
+ * Cybersecurity Framework (CSF) 2.0 (February 2024), committed as
+ * reference-docs/nist/NIST.CSWP.29.pdf. apps/api/app/csf/catalog.py
+ * SUBCATEGORIES is the catalog the questionnaire renders from, and
+ * apps/api/tests/unit/test_csf_catalog_c1_outcomes.py holds GV.OC-02 and
+ * GV.OC-03 (among others) to the text read out of that PDF (for #806). The
+ * master spec (reference-docs/SHIELDv2_Master_Spec.txt §7, ~line 1413) defines
+ * the subcategory model (GV.OC-01, GV.OC-02, …) but not the per-item outcome
+ * text. This test asserts the
  * DOM text equals these literals exactly, guarding against UI truncation /
  * reformatting or catalog drift.
  *
@@ -208,9 +210,9 @@ const CSF_VERBATIM_PROMPTS: Record<string, string> = {
   "GV.OC-01":
     "The organizational mission is understood and informs cybersecurity risk management.",
   "GV.OC-02":
-    "Internal and external stakeholders are understood, and their needs and expectations regarding cybersecurity are considered.",
+    "Internal and external stakeholders are understood, and their needs and expectations regarding cybersecurity risk management are understood and considered.",
   "GV.OC-03":
-    "Legal, regulatory, and contractual requirements regarding cybersecurity are understood and managed.",
+    "Legal, regulatory, and contractual requirements regarding cybersecurity — including privacy and civil liberties obligations — are understood and managed.",
 };
 
 test("CSF questionnaire renders the verbatim subcategory outcome prompts (C8)", async ({

@@ -62,6 +62,24 @@ import type {
 
 import type { JSX } from "react";
 
+/**
+ * #415, ruling (b) (#736 6072976838): an ATT&CK scope row with no
+ * pending-review count is a register generated before the count was recorded.
+ * The same sentence as `PENDING_REVIEW_NOT_RECORDED` in
+ * `app/risk/exporters.py`; change both.
+ */
+const PENDING_REVIEW_NOT_RECORDED =
+  "Whether any linked technique was pending review was not recorded for this register.";
+
+/**
+ * #415: the ATT&CK row of the scored-coverage record, by the kind its scope
+ * key names (the first-colon reading `scopeLabel` makes). Only ATT&CK has a
+ * review queue, so only its row carries a pending-review count.
+ */
+function isAttackScope(key: string): boolean {
+  return key.split(":", 1)[0] === "attack";
+}
+
 /** #743: the noun agrees with the count beside it ("1 entry", "2 entries"). */
 function entriesNoun(n: number): string {
   return n === 1 ? "entry" : "entries";
@@ -945,13 +963,14 @@ export function RiskRegisterDashboard(): JSX.Element {
                 ? "it shows"
                 : "they show"}{" "}
               no linkage at all — the same as an entry nobody linked. Every
-              value the model sent was either misnamed or names a control this
-              client&apos;s assessments have not scored. A dropped source shows
-              as <em>not recognised</em> in the Source column; the full values
-              are on the <code>risk_register.generated</code> audit row. Where
-              the cause is unscored assessment work rather than a misnamed
-              value, regenerating returns the same rows and spends another model
-              call. A client reading this register sees{" "}
+              value the model sent was misnamed, names a control this
+              client&apos;s assessments have not scored, or names an ATT&amp;CK
+              technique pending review. A dropped source shows as{" "}
+              <em>not recognised</em> in the Source column; the full values are
+              on the <code>risk_register.generated</code> audit row. Where the
+              cause is unscored or pending-review assessment work rather than a
+              misnamed value, regenerating returns the same rows and spends
+              another model call. A client reading this register sees{" "}
               {register.entries_unlinked_after_drops === 1
                 ? "that row"
                 : "those rows"}{" "}
@@ -972,9 +991,12 @@ export function RiskRegisterDashboard(): JSX.Element {
               spelling problem" -- true when the allow-lists held every code
               that exists, so the only way to miss was to misname one. They now
               hold the codes an assessment SCORED, so a perfectly spelled,
-              catalog-valid code is dropped when nobody has judged it. The two
-              causes are not separable per value here; the scored-coverage
-              banner below is what tells them apart at the assessment level.
+              catalog-valid code is dropped when nobody has judged it. #415
+              added a third cause: an ATT&CK technique pending review
+              (`attack/pending.py::pending_codes`) is not citable either, and
+              the two banners name it (wording approved on #736). The causes
+              are not separable per value here; the scored-coverage banner
+              below is what tells them apart at the assessment level.
 
               `entries_links_not_recorded` is pre-0048 rows, where "nothing was
               dropped" and "nobody was counting" are different facts. NOT
@@ -995,8 +1017,8 @@ export function RiskRegisterDashboard(): JSX.Element {
                 ? "— the rest of it still resolved, so it shows linkage. The values are on the entry and on the"
                 : "— the rest of each still resolved, so they show linkage. The values are on each entry and on the"}{" "}
               <code>risk_register.generated</code> audit row. Worth a look
-              before the next run: each is either a value the model misnamed or
-              a control nobody has scored yet.
+              before the next run: each is a value the model misnamed, a control
+              nobody has scored yet, or an ATT&amp;CK technique pending review.
             </div>
           ) : null}
           {/* #403, the owner's three-state requirement. The VALUE tally, beside
@@ -1133,9 +1155,22 @@ export function RiskRegisterDashboard(): JSX.Element {
                     {s.total > s.scored
                       ? `, ${s.total - s.scored} not yet judged and therefore not citable`
                       : " — every row judged"}
+                    {/* Unpinned on purpose: the API sends no ZT pending count, and a fixture would build a state it cannot produce. */}
+                    {isAttackScope(s.service) &&
+                    typeof s.pending_review === "number" &&
+                    s.pending_review > 0
+                      ? `, and ${s.pending_review} pending review and therefore not citable`
+                      : null}
                   </li>
                 ))}
               </ul>
+              {register.excluded_unscored_links.some(
+                (s) =>
+                  isAttackScope(s.service) &&
+                  typeof s.pending_review !== "number",
+              ) ? (
+                <p className="mt-1">{PENDING_REVIEW_NOT_RECORDED}</p>
+              ) : null}
               <p className="mt-1">
                 An unscored control is unfinished assessment work, not a model
                 error: regenerating cannot add links for rows nobody has judged.
@@ -1175,6 +1210,8 @@ export function RiskRegisterDashboard(): JSX.Element {
                 register.ratings_carried ?? 0,
                 register.ratings_carried_from_version,
                 register.ratings_not_carried,
+                // #930: the rate-again remedy only while the selects exist.
+                register.finalized_at === null,
               ).map((line) => (
                 <p key={line}>{line}</p>
               ))}
