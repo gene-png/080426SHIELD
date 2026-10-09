@@ -220,3 +220,47 @@ def test_a_field_cannot_be_registered_twice_with_different_builders() -> None:
 
     with pytest.raises(ValueError, match="subcategory_definitions"):
         register_catalog_field("subcategory_definitions", lambda _p, v: v)
+
+
+# --- CSF: the codes and tiers a request asks about (#986) -------------------
+
+
+@pytest.mark.parametrize(
+    ("org", "field"), [("GV", "subcategories"), ("ID", "subcategories"), ("High", "tiers")]
+)
+def test_csf_codes_and_tiers_reach_the_model_unchanged(db_session, org, field) -> None:
+    import app.routes.csf  # noqa: F401
+    from app.csf.catalog import SUBCATEGORIES
+
+    codes = [s.code for s in SUBCATEGORIES]
+    tiers = ["high", "low", "moderate"]
+    assert _collides(field, codes if field == "subcategories" else tiers, org)
+    payload = {
+        "tiers": tiers,
+        "subcategories": codes,
+        "answers": {codes[0]: {"notes": f"{org} owns this.", "maturity_tier": 1}},
+    }
+
+    sent, row = _invoke(db_session, payload, org)
+
+    assert sent[0]["subcategories"] == codes
+    assert sent[0]["tiers"] == tiers
+    assert sent[0]["answers"][codes[0]]["notes"] == "[CLIENT] owns this."
+    assert row.redacted_counts == {"client_org": 1}
+
+
+# --- ATT&CK: the technique codes (#986) ---------------------------------------
+
+
+def test_attack_technique_codes_are_guarded(db_session) -> None:
+    """No client name collides with an ATT&CK id (the phone rule's lookbehind
+    keeps "T1003.001" whole), so there is no collision to prove here. The list
+    is catalogue-sourced all the same, so it is sent verbatim and guarded: a
+    code the catalogue does not have is refused, not sent."""
+    import app.routes.attack  # noqa: F401  (registers the field, as the app does)
+
+    codes = ["T1003", "T1003.001", "T1566"]
+    sent, row = _invoke(db_session, {"technique_codes": codes}, "Acme")
+    assert sent[0]["technique_codes"] == codes
+    with pytest.raises(CatalogFieldMismatch, match="technique_codes"):
+        _invoke(db_session, {"technique_codes": ["T9999"]}, "Acme")

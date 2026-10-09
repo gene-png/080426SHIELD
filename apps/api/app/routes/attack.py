@@ -1878,6 +1878,13 @@ def _technique_details(codes: list[str]) -> dict[str, dict[str, Any]]:
 # rebuilds the value with the same function, for the codes it carries (a batch
 # carries only its own, `_batch_inputs`).
 register_catalog_field("technique_details", lambda _payload, value: _technique_details(list(value)))
+# #986: the technique codes are catalogue identifiers too. No client name can
+# collide with "T1003.001" today (the phone rule's lookbehind, `routes/risk.py`),
+# but the list is catalogue-sourced, so it is sent verbatim and guarded like the
+# rest: an unknown code is refused, not sent.
+register_catalog_field(
+    "technique_codes", lambda _payload, value: [technique_by_id(c).id for c in value]
+)
 
 
 def _batch_inputs(inputs: dict[str, Any], batch: list[str]) -> dict[str, Any]:

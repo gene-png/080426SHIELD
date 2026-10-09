@@ -2064,6 +2064,24 @@ register_catalog_field(
 )
 
 
+def _catalog_tier(tier: str) -> str:
+    """A tier as the vocabulary has it; KeyError for one it does not have."""
+    if tier not in _VALID_TIERS:
+        raise KeyError(tier)
+    return tier
+
+
+# #984, #986: the codes and tiers a request asks about are catalog vocabulary
+# too, and the same rewrite reached them: a client named "GV" sent
+# "[CLIENT].OC-01", one named "High" sent the tier "[CLIENT]". Measured on main
+# 2f701f5b. Each entry is rebuilt from the catalog, so an unknown code or tier
+# is refused, not sent.
+register_catalog_field(
+    "subcategories", lambda _payload, value: [subcategory_by_code(c).code for c in value]
+)
+register_catalog_field("tiers", lambda _payload, value: [_catalog_tier(t) for t in value])
+
+
 def _csf_ai_request_for(db: Session, a: CsfAssessment, client: Client) -> CsfAiRequest:
     """The request for ONE assessment, named by id: the background job (#645)
     re-loads the assessment its POST validated, never "the latest"."""
