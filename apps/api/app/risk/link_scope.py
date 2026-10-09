@@ -162,4 +162,21 @@ def scope_for(model: type, rows: Sequence[object] | Iterable[object]) -> LinkSco
     return LinkScope(codes=frozenset(codes), total=total)
 
 
-__all__ = ["LinkScope", "SCORE_COLUMNS", "scope_for"]
+def csf_playbook_scope(rows: Iterable[object]) -> LinkScope:
+    """#474 D': the CSF scope once Risk reads the Playbook. A Working Profile
+    row has no unscored value (every dimension defaults to 0, a real score), so
+    "scored" is "somebody wrote it": an in-scope row whose `answer_source` is
+    set (migration 0042; NULL is the seeded state). Per SUBCATEGORY, since a
+    subcategory has one row per system tier. `total` is the distinct
+    subcategories the profile holds."""
+    codes: set[str] = set()
+    present: set[str] = set()
+    for row in rows:
+        code = row.subcategory_code
+        present.add(code)
+        if row.in_scope and row.answer_source is not None:
+            codes.add(code)
+    return LinkScope(codes=frozenset(codes), total=len(present))
+
+
+__all__ = ["LinkScope", "SCORE_COLUMNS", "csf_playbook_scope", "scope_for"]

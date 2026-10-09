@@ -33,13 +33,17 @@ from tests.unit.test_risk_register import (  # noqa: F401  (app_client is a fixt
     _generate,
     _pdf_text,
     _seed_attack_and_zt,
-    _seed_csf_answer_at_tier,
+    _seed_csf_playbook_at_level,
     _session,
-    _set_csf_target,
     app_client,
 )
 
 pytestmark = pytest.mark.unit
+
+#: #474 D': CSF is measured per subcategory against the Playbook.
+_CSF_PLAYBOOK_LINE = (
+    "NIST CSF findings are measured against each subcategory's target level in the CSF Playbook."
+)
 
 
 def _latest(c, bearer: str, cid: str) -> dict:
@@ -62,27 +66,26 @@ def _export_pdf_text(c, bearer: str, cid: str) -> str:
     return " ".join(_pdf_text(pdf.content).split())
 
 
-def _world(app_client, *, csf_target: int | None = None):  # noqa: F811
+def _world(app_client, *, csf: bool = False):  # noqa: F811
     c, provider = app_client
     bearer, cid = _admin(c)
     _seed_attack_and_zt(c, bearer, cid)
-    if csf_target is not None:
-        _seed_csf_answer_at_tier(c, bearer, cid, tier=1)
-        _set_csf_target(cid, csf_target)
+    if csf:
+        _seed_csf_playbook_at_level(c, bearer, cid, level=1, target=4)
     _generate(c, provider, bearer, cid, _entries_payload(_entry("R")))
     return c, bearer, cid
 
 
 def test_the_register_records_each_services_target(app_client) -> None:  # noqa: F811
-    c, bearer, cid = _world(app_client, csf_target=4)
+    c, bearer, cid = _world(app_client, csf=True)
     body = _latest(c, bearer, cid)
     assert body["targets_recorded"] is True
     by_kind = {t["kind"]: t for t in body["targets"]}
     assert by_kind["csf"] == {
         "kind": "csf",
         "framework": None,
-        "target": 4,
-        "source": "client",
+        "target": None,
+        "source": "playbook",
         "origin": "live_at_generate",
     }
     # No ZT target was set, so ZT used the engine default and says so.
@@ -92,12 +95,9 @@ def test_the_register_records_each_services_target(app_client) -> None:  # noqa:
 
 
 def test_the_export_states_the_baseline(app_client) -> None:  # noqa: F811
-    c, bearer, cid = _world(app_client, csf_target=4)
+    c, bearer, cid = _world(app_client, csf=True)
     text = _export_pdf_text(c, bearer, cid)
-    assert (
-        "NIST CSF findings are measured against target tier 4, the engagement "
-        "target when this register was generated." in text
-    )
+    assert _CSF_PLAYBOOK_LINE in text
     # One ZT entry: the framework is not named (Q3).
     assert (
         "Zero Trust findings are measured against target stage 3, "
@@ -161,10 +161,11 @@ def _client_dashboard(c, bearer: str, cid: str) -> dict:
 
 def test_the_client_dashboard_carries_the_baseline(app_client) -> None:  # noqa: F811
     """The client's screen, read as a client user, after publication."""
-    c, bearer, cid = _world(app_client, csf_target=4)
+    c, bearer, cid = _world(app_client, csf=True)
     body = _client_dashboard(c, bearer, cid)
     assert body["targets_recorded"] is True
-    assert {t["kind"]: t["target"] for t in body["targets"]}["csf"] == 4
+    csf = {t["kind"]: t for t in body["targets"]}["csf"]
+    assert (csf["target"], csf["source"]) == (None, "playbook")
 
 
 # ---------------------------------------------------------------------------
@@ -268,12 +269,6 @@ def test_two_zero_trust_services_name_each_framework_in_every_file(
         assert "target level" not in text, fmt
 
 
-_CSF_CLIENT_4_LINE = (
-    "NIST CSF findings are measured against target tier 4, the engagement "
-    "target when this register was generated."
-)
-
-
 def test_csf_plus_cisa_plus_dod_print_the_csf_line_then_cisa_then_dod(
     app_client,  # noqa: F811
 ) -> None:
@@ -284,15 +279,14 @@ def test_csf_plus_cisa_plus_dod_print_the_csf_line_then_cisa_then_dod(
     c, provider = app_client
     bearer, cid = _admin(c)
     _both_frameworks(c, bearer, cid)
-    _seed_csf_answer_at_tier(c, bearer, cid, tier=1)
-    _set_csf_target(cid, 4)
+    _seed_csf_playbook_at_level(c, bearer, cid, level=1, target=4)
     _set_zt_target(cid, 4, kind="zero_trust_cisa")
     r = _generate_per_finding(c, provider, bearer, cid, [])
     assert r.status_code == 201, r.text
     texts = _export_texts(c, bearer, cid)
     for fmt in ("pdf", "docx", "xlsx"):
         text = " ".join(texts[fmt].split())
-        positions = [text.find(line) for line in (_CSF_CLIENT_4_LINE, _CISA_LINE, _DOD_LINE)]
+        positions = [text.find(line) for line in (_CSF_PLAYBOOK_LINE, _CISA_LINE, _DOD_LINE)]
         assert -1 not in positions, (fmt, positions, text)  # the positive state first
         assert positions == sorted(positions), (fmt, positions)
 

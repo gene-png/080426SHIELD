@@ -104,10 +104,11 @@ class RiskExportContext:
     #: `(kind, framework)` (`app/risk/baseline.py`), or None when the
     #: register did not record them -- which the summary STATES, because a
     #: deliverable that silently omits its baseline reads as having none.
-    targets: tuple[tuple[str, str | None, int, str, str], ...] | None = None
+    targets: tuple[tuple[str, str | None, int | None, str, str], ...] | None = None
     #: #915 (S3): the approved sentence for the DoD target cap, from
     #: `risk/zt_capped.py`, or None when nothing was lowered or recorded.
     zt_capped_target_note: str | None = None
+    csf_source_note: str | None = None
 
 
 def _enum_list(values, enum_cls):
@@ -132,8 +133,9 @@ def build_context(
     draft: bool = False,
     source_states: dict[str, str] | None = None,
     review_pending: frozenset[str] = frozenset(),
-    targets: Sequence[tuple[str, str | None, int, str, str]] | None = None,
+    targets: Sequence[tuple[str, str | None, int | None, str, str]] | None = None,
     zt_capped_target_note: str | None = None,
+    csf_source_note: str | None = None,
 ) -> RiskExportContext:
     return RiskExportContext(
         client_legal_name=org_display_name(client_legal_name),
@@ -148,6 +150,7 @@ def build_context(
         review_pending=review_pending,
         targets=tuple(targets) if targets is not None else None,
         zt_capped_target_note=zt_capped_target_note,
+        csf_source_note=csf_source_note,
     )
 
 
@@ -538,6 +541,7 @@ def _summary_lines(ctx: RiskExportContext) -> list[str]:
         # `risk/baseline.py` sorts by kind, then framework. So the cap and the
         # target it lowers read as one baseline, not two.
         *([ctx.zt_capped_target_note] if ctx.zt_capped_target_note else []),
+        *([ctx.csf_source_note] if ctx.csf_source_note else []),
         *_link_scope_lines(ctx),
         *_pending_review_lines(ctx),
     ]
@@ -567,7 +571,7 @@ def target_label(kind: str, framework: str | None, *, name_framework: bool) -> s
 
 
 def _target_lines(
-    targets: tuple[tuple[str, str | None, int, str, str], ...] | None,
+    targets: tuple[tuple[str, str | None, int | None, str, str], ...] | None,
 ) -> list[str]:
     """#474. Which target each service's findings were measured against.
 
@@ -586,6 +590,13 @@ def _target_lines(
     lines = []
     for kind, framework, target, source, _origin in targets:
         label = target_label(kind, framework, name_framework=name_framework)
+        if source == "playbook":
+            # #474 D': approved, #736 6087027524 (Q1).
+            lines.append(
+                f"{label} findings are measured against each subcategory's target "
+                "level in the CSF Playbook."
+            )
+            continue
         unit = _TARGET_UNITS[kind]
         if source == "client":
             why = "the engagement target when this register was generated"

@@ -82,6 +82,7 @@ from app.models.zt_assessment import (
     ZtFramework,
 )
 from app.risk.baseline import targets_used
+from app.risk.csf_source import csf_source_note as risk_csf_source_note
 from app.risk.engine import (
     Impact,
     Likelihood,
@@ -2026,6 +2027,7 @@ def risk_dashboard(
         ],
         # #915: the same reader and sentence as the register and its files.
         zt_capped_target_note=risk_capped_target_sentence(risk_capped_target_codes(reg.provenance)),
+        csf_source_note=risk_csf_source_note(reg.provenance),
     )
 
 

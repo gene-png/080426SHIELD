@@ -36,7 +36,7 @@ from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.release_readiness import unreviewed_codes as attack_unreviewed_codes
 from app.attack.rules import parents_computed
 from app.audit import audit
-from app.csf.gap import resolve_target_tier
+from app.csf.enterprise import enterprise_subcategories as csf_enterprise_subcategories
 from app.csf.retired import catalog_rows as csf_catalog_rows
 from app.db.session import get_db
 from app.dependencies import require_role
@@ -46,13 +46,15 @@ from app.models._common import utcnow
 from app.models.artifact import Artifact, ArtifactOrigin
 from app.models.attack_assessment import AttackAssessment, AttackCoverage
 from app.models.client import Client
-from app.models.csf_assessment import CsfAnswer, CsfAssessment
+from app.models.csf_assessment import CsfAssessment
+from app.models.csf_profile import CsfDimensionScore
 from app.models.risk_register import RiskEntry, RiskRegister
 from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.user import User, UserRole
 from app.models.zt_assessment import ZtAnswer, ZtAssessment
 from app.risk import exporters as risk_exporters
 from app.risk.baseline import targets_used
+from app.risk.csf_source import CSF_FINDINGS_KEY, csf_source_note
 from app.risk.engine import (
     Impact,
     Likelihood,
@@ -73,7 +75,7 @@ from app.risk.inputs import (
     latest_record,
     publish_blockers,
 )
-from app.risk.link_scope import LinkScope, scope_for
+from app.risk.link_scope import LinkScope, csf_playbook_scope, scope_for
 from app.risk.zt_capped import CAPPED_TARGET_KEY as ZT_CAPPED_TARGET_KEY
 from app.risk.zt_capped import capped_target_codes as zt_capped_target_codes
 from app.risk.zt_capped import capped_target_sentence as zt_capped_target_sentence
@@ -96,7 +98,6 @@ from app.security.rate_limit import RateLimiter, get_rate_limiter
 # admin routers' private copies, so no line below changes: Risk is set aside,
 # and this is an import repoint, not a behaviour change.
 from app.services.engagement_targets import client_target_stage as _client_target_stage
-from app.services.engagement_targets import client_target_tier as _client_target_tier
 from app.storage import StorageBackend
 from app.tech_debt.filename import SERVICE_SLUG_RISK_REGISTER, deliverable_filename
 from app.zt.catalog import all_codes
@@ -497,9 +498,22 @@ def _input_states(db: Session, client_id: uuid.UUID) -> list[RiskInputState]:
                     status=r.status if r else None,
                     version=r.version if r else None,
                     qualifier=qualifier,
+                    no_playbook_scores=(
+                        _csf_has_no_playbook_scores(db, r) if kind == "csf" and r else None
+                    ),
                 )
             )
     return rows
+
+
+def _csf_has_no_playbook_scores(db: Session, r: InputRecord) -> bool:
+    """#474 D' (Gene, #736 5984218862): a CSF record with no in-scope Playbook
+    rows feeds no CSF finding, and the Inputs panel says so."""
+    a = db.get(CsfAssessment, uuid.UUID(r.record_id))
+    if a is None:
+        raise RuntimeError(f"CSF input {r.record_id!r} has no assessment row")
+    ents, _tiers = csf_enterprise_subcategories(db, a)
+    return not ents
 
 
 def _row_qualifiers(services: list[Service]) -> list[str | None]:
@@ -877,10 +891,14 @@ def _gather_findings(
     An empty allow-list is therefore a legitimate answer, not an error:
     `approve_assessment` in `routes/attack.py` has no scoring precondition, so
     an APPROVED assessment with every `status` NULL is reachable today. Nothing
-    is raised for it. Every finding this function emits already requires a
-    judgement (`status in ("gap", "partial")`, `maturity_tier is not None`), so
-    a scored-nothing service contributes no findings either -- the model is
-    asked to link nothing and drops nothing. What must never happen is that
+    is raised for it. Every ATT&CK and ZT finding this function emits already
+    requires a judgement (`status in ("gap", "partial")`, `maturity_stage is not
+    None`), so a scored-nothing service contributes no findings either -- the
+    model is asked to link nothing and drops nothing. CSF (#474 D') raises a
+    finding where the Playbook roll-up's `is_gap` says so, which needs a
+    `target_level`; a target set on a row nobody scored is a finding whose own
+    code is not citable (`csf_playbook_scope`), and the dropped link is
+    recorded on the entry like any other. What must never happen is that
     state passing SILENTLY, which is what `link_scopes` is returned for.
 
     The fourth return value is not bookkeeping. Every finding here is "current
@@ -984,39 +1002,42 @@ def _gather_findings(
     for src in snap.of_kind("csf"):
         start = len(findings)
         csf = src.assessment
-        # #84. This read `r.maturity_tier < 3` -- a HARDCODED tier, so every
-        # client's CSF findings were computed against tier 3 no matter what
-        # they engaged for. A client targeting tier 2 was handed findings for
-        # controls already AT their goal; one targeting tier 4 was handed a
-        # register that stopped looking one tier early. The number reached the
-        # client's Risk Register, which is what makes it the defect it is
-        # rather than an internal inconsistency.
+        # #474 D' (Gene, #736 5984218862): CSF findings come from the Playbook
+        # Enterprise level against the Playbook `target_level`, by CALLING the
+        # roll-up `routes/csf.py` uses (`app/csf/enterprise.py`: `score_tier`,
+        # the weighted-floor rollup and `is_gap`), never re-deriving it. The
+        # questionnaire `maturity_tier` is no longer read, and neither is the
+        # client's engagement tier (#84's `resolve_target_tier`): the Playbook
+        # target is per subcategory, so the record names no single tier and the
+        # surfaces say so (`risk/baseline.py`).
         #
-        # Resolved through `resolve_target_tier`, the SAME function
-        # `routes/csf.py` uses -- imported rather than reimplemented, because a
-        # second copy is how two services come to disagree about one client's
-        # target. It returns the source too, so "the client chose nothing" and
-        # "the client's choice could not be used" stay separate facts.
-        csf_target, csf_target_source = resolve_target_tier(_client_target_tier(db, csf.service_id))
-        target_sources[src.scope_key] = {"target": csf_target, "source": csf_target_source}
-        # #852: only the catalog's rows, the twin of the #838 ZT filter below.
-        # Migration 0065 KEEPS answers on ID.AM-09, which CSF 2.0 does not have,
-        # and the CSF deliverable says they are not scored, so they feed no
-        # finding and are not citable here either.
-        csf_rows = csf_catalog_rows(
-            db.execute(select(CsfAnswer).where(CsfAnswer.assessment_id == csf.id)).scalars().all()
+        # #852: only the catalog's rows, both for the roll-up (it filters them
+        # itself) and for the citable scope below. Migration 0065 KEEPS rows on
+        # ID.AM-09, which CSF 2.0 does not have.
+        target_sources[src.scope_key] = {"target": None, "source": "playbook"}
+        ents, _tiers = csf_enterprise_subcategories(db, csf)
+        csf_scope = csf_playbook_scope(
+            csf_catalog_rows(
+                db.execute(
+                    select(CsfDimensionScore).where(CsfDimensionScore.assessment_id == csf.id)
+                )
+                .scalars()
+                .all()
+            )
         )
-        csf_scope = scope_for(CsfAnswer, csf_rows)
         valid_controls |= csf_scope.codes
         link_scopes[src.scope_key] = csf_scope
-        for r in csf_rows:
-            if r.maturity_tier is not None and r.maturity_tier < csf_target:
+        for e in ents:
+            if e.gap:
                 findings.append(
                     {
                         "source": "questionnaire_response",
-                        "source_id": r.subcategory_code,
+                        "source_id": e.subcategory_code,
                         "kind": "csf",
-                        "label": f"CSF {r.subcategory_code}: tier {r.maturity_tier}",
+                        "label": (
+                            f"CSF {e.subcategory_code}: level {e.enterprise_level} "
+                            f"of target {e.target_level}"
+                        ),
                     }
                 )
 
@@ -2015,6 +2036,7 @@ def generate(
         # client dashboard and the three files. A sibling key, so the pinned
         # key sets of `targets` are unchanged.
         _prov_with_count[ZT_CAPPED_TARGET_KEY] = snap.cap_lowered
+        _prov_with_count[CSF_FINDINGS_KEY] = sum(1 for f in findings if f["kind"] == "csf")
         register.provenance = _prov_with_count
         db.add(register)
     else:
@@ -2471,6 +2493,7 @@ def _render_and_store(
         ),
         # #915: the same reader and sentence the register response uses.
         zt_capped_target_note=zt_capped_target_sentence(zt_capped_target_codes(reg.provenance)),
+        csf_source_note=csf_source_note(reg.provenance),
         # #646: `ai_mode` is left at "not recorded", deliberately -- see
         # `RiskExportContext.ai_mode`. Nothing ties a register to the calls
         # that drafted it until Risk runs through the run framework (#504).
@@ -3378,6 +3401,7 @@ def _serialize(
     return RiskRegisterResponse(
         capped_target_codes=_capped,
         zt_capped_target_note=zt_capped_target_sentence(_capped),
+        csf_source_note=csf_source_note(stored),
         excluded_inputs=resolved_excluded,
         excluded_inputs_recorded=excluded_recorded,
         entries_total=len(entries),

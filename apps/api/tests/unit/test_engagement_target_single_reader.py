@@ -13,7 +13,9 @@ Two halves:
   chosen target (4), none at all, and a below-floor 1 (#85): the admin
   workspace's raw `client_target_*`, finalize's frozen value, the client
   dashboard reading LIVE (nothing frozen), the home value card, and the Risk
-  gather. Expected values are written out from the spec, not imported.
+  gather (ZT only for Risk since #474 D': its CSF half reads the Playbook's
+  per-subcategory targets, so it must NOT read the engagement tier). Expected
+  values are written out from the spec, not imported.
 * ONE READER: patch the helper's single read and every surface sees the
   patched value. A divergent copy left anywhere reads the database instead,
   and that surface goes red.
@@ -111,8 +113,9 @@ def test_every_csf_surface_reads_the_same_target(
     latest = c.get(f"/csf/services/{svc_id}/assessments/latest", headers=ah).json()
     assert latest["client_target_tier"] == chosen, latest.get("client_target_tier")
 
-    # The Risk gather: the resolved target and its source.
-    assert _risk_targets(client_id)["csf"] == {"target": target, "source": source}
+    # The Risk gather does NOT read the engagement tier for CSF (#474 D',
+    # Gene, #736 5984218862): its CSF findings use the Playbook targets.
+    assert _risk_targets(client_id)["csf"] == {"target": None, "source": "playbook"}
 
     # Finalize freezes the RAW choice.
     deliv = c.post(f"/csf/services/{svc_id}/deliverables/finalize", headers=ah).json()
@@ -188,7 +191,10 @@ def test_every_csf_surface_reads_through_the_one_helper(
 
     latest = c.get(f"/csf/services/{svc_id}/assessments/latest", headers=ah).json()
     assert latest["client_target_tier"] == 2, "workspace"
-    assert _risk_targets(client_id)["csf"]["target"] == 2, "risk gather"
+    assert _risk_targets(client_id)["csf"] == {
+        "target": None,
+        "source": "playbook",
+    }, "risk gather: the Playbook, never the engagement tier (#474 D')"
     deliv = c.post(f"/csf/services/{svc_id}/deliverables/finalize", headers=ah).json()
     assert _deliverable_freeze(svc_id) == (2, "finalize"), "finalize"
     assert c.post(f"/csf/deliverables/{deliv['id']}/release", headers=ah).status_code == 200

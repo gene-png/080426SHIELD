@@ -8,8 +8,9 @@ still became a client-facing finding and stayed in the allow-list the model
 cites from.
 
 The world: `_seed_attack_and_zt` plus an approved CSF assessment with one
-catalog row scored below target, and a row on `ID.AM-09` at tier 1, as an
-assessment provisioned before #852 holds it. Driven through generate, read at
+catalog Playbook row below its target, and a Playbook row on `ID.AM-09` below
+its target, as an assessment provisioned before #852 holds it (#474 D': Risk
+reads the Playbook). Driven through generate, read at
 the egress payload.
 """
 
@@ -36,22 +37,29 @@ RETIRED = "ID.AM-09"
 
 
 def _approved_csf_with_kept_row(c, bearer: str, cid: str) -> str:
-    from app.models.csf_assessment import CsfAnswer, CsfAssessment
+    """#474 D': Risk reads the Playbook, so the kept row is a Working Profile
+    row on `ID.AM-09`, written as a consultant would have before #852."""
+    from app.models.csf_assessment import CsfAssessment
+    from app.models.csf_profile import CsfDimensionScore
+    from tests._csf_playbook_rows import score_csf_playbook
 
     h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
     svc = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "CSF"})
     a = c.post(f"/csf/services/{svc.json()['id']}/assessments", headers=h).json()
     scored = a["answers"][0]
-    r = c.patch(f"/csf/answers/{scored['id']}", headers=h, json={"maturity_tier": 1})
-    assert r.status_code == 200, r.text
+    score_csf_playbook(c, h, svc.json()["id"], {scored["subcategory_code"]: (1, 5)})
     db = _session()
     row = db.get(CsfAssessment, uuid.UUID(a["id"]))
     db.add(
-        CsfAnswer(
+        CsfDimensionScore(
             assessment_id=row.id,
             client_id=row.client_id,
+            tier="high",
             subcategory_code=RETIRED,
-            maturity_tier=1,
+            in_scope=True,
+            has_evidence=True,
+            target_level=5,
+            answer_source="consultant",
         )
     )
     db.commit()

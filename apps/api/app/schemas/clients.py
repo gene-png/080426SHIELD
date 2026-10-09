@@ -745,6 +745,7 @@ class RiskDashboardResponse(BaseModel):
     #: consultant's register and the three files use. None when nothing was
     #: lowered or the register predates the record.
     zt_capped_target_note: str | None = None
+    csf_source_note: str | None = None
 
 
 class ValueSummaryResponse(BaseModel):

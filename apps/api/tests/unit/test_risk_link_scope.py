@@ -20,7 +20,7 @@ weaker than one that calls the endpoint that reaches it.
 
 ## The discriminator these rely on
 
-`_seed_attack_and_zt` and `_seed_csf_answer_at_tier` score a HANDFUL of rows and
+`_seed_attack_and_zt` and `_seed_csf_playbook_at_level` score a HANDFUL of rows and
 leave the rest of each catalog pre-seeded and unscored. So a real, catalog-valid,
 UNSCORED code is available in every fixture, and citing one separates the two
 readings cleanly: under the defect it is kept, under the fix it is dropped. A
@@ -42,7 +42,7 @@ from app.ai.llm import LLMResponse
 from .test_risk_register import (
     _admin,
     _seed_attack_and_zt,
-    _seed_csf_answer_at_tier,
+    _seed_csf_playbook_at_level,
     _session,
     app_client,  # noqa: F401  -- the fixture, used by name below.
 )
@@ -162,23 +162,25 @@ def test_zt_capability_allow_list_equals_the_scored_answers(app_client) -> None:
 def test_csf_control_allow_list_equals_the_scored_answers(app_client) -> None:  # noqa: F811
     c, provider = app_client
     bearer, cid = _admin(c)
-    # ATT&CK first: the gate needs it, and `_seed_csf_answer_at_tier` alone
+    # ATT&CK first: the gate needs it, and `_seed_csf_playbook_at_level` alone
     # leaves the register locked.
     _seed_attack_and_zt(c, bearer, cid)
-    _seed_csf_answer_at_tier(c, bearer, cid, tier=1)
+    _seed_csf_playbook_at_level(c, bearer, cid, level=1)
     seen = _capture(provider)
     _generate(c, bearer, cid)
 
-    from app.models.csf_assessment import CsfAnswer
+    from app.models.csf_profile import CsfDimensionScore
     from app.models.zt_assessment import ZtAnswer
 
     db = _session()
+    # #474 D': a Playbook row is scored when somebody wrote it (`answer_source`
+    # set); every dimension defaults to 0, so a value cannot say so.
     csf = {
         r.subcategory_code
         for r in db.execute(
-            select(CsfAnswer).where(CsfAnswer.client_id == uuid.UUID(cid))
+            select(CsfDimensionScore).where(CsfDimensionScore.client_id == uuid.UUID(cid))
         ).scalars()
-        if r.maturity_tier is not None
+        if r.in_scope and r.answer_source is not None
     }
     zt = {
         r.capability_code
@@ -232,17 +234,18 @@ def test_an_unscored_csf_subcategory_is_dropped_and_recorded(app_client) -> None
     c, provider = app_client
     bearer, cid = _admin(c)
     scored_technique, _cap = _seed_attack_and_zt(c, bearer, cid)
-    _seed_csf_answer_at_tier(c, bearer, cid, tier=1)
+    _seed_csf_playbook_at_level(c, bearer, cid, level=1)
 
-    from app.models.csf_assessment import CsfAnswer
+    from app.models.csf_profile import CsfDimensionScore
 
     db = _session()
+    # #474 D': unscored is a Playbook row nobody wrote (`answer_source` NULL).
     unscored = next(
         r.subcategory_code
         for r in db.execute(
-            select(CsfAnswer).where(CsfAnswer.client_id == uuid.UUID(cid))
+            select(CsfDimensionScore).where(CsfDimensionScore.client_id == uuid.UUID(cid))
         ).scalars()
-        if r.maturity_tier is None
+        if r.answer_source is None
     )
     db.close()
 
@@ -637,7 +640,7 @@ def test_every_findings_source_id_stays_inside_the_allow_list(app_client) -> Non
     """The narrowing must not orphan a finding from its own citation.
 
     Every finding already requires a judgement -- `status in ("gap","partial")`,
-    `maturity_tier is not None`, `maturity_stage is not None` -- and the
+    a Playbook gap on a written row (#474 D'), `maturity_stage is not None` -- and the
     allow-lists are now exactly the judged rows, so findings are a SUBSET by
     construction. That is a new invariant this change creates, and it is worth
     pinning rather than reasoning about: loosening any findings predicate (say,
@@ -651,7 +654,7 @@ def test_every_findings_source_id_stays_inside_the_allow_list(app_client) -> Non
     c, provider = app_client
     bearer, cid = _admin(c)
     _seed_attack_and_zt(c, bearer, cid)
-    _seed_csf_answer_at_tier(c, bearer, cid, tier=1)
+    _seed_csf_playbook_at_level(c, bearer, cid, level=1)
     seen = _capture(provider)
     _generate(c, bearer, cid)
 
