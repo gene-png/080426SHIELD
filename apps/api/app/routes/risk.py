@@ -511,11 +511,13 @@ def _input_states(db: Session, client_id: uuid.UUID) -> list[RiskInputState]:
 
 def _csf_has_no_playbook_scores(db: Session, r: InputRecord) -> bool:
     """#474 D' (Gene, #736 5984218862): a CSF record whose Playbook has no
-    recorded score feeds no CSF finding, and the Inputs panel says so. The
-    SAME predicate as the register's `no_scores` state
-    (`csf_source.csf_playbook_state`, advisor #736 6087786886, item 4), so the
-    panel and the register cannot disagree; seeded rows nobody scored count
-    as none."""
+    recorded score, and the Inputs panel says so. The SAME predicate as the
+    register's `no_scores` state (`csf_source.csf_playbook_state`, advisor
+    #736 6087786886 item 4 and 6090360421), so the panel and the register
+    cannot disagree; seeded rows nobody scored count as none, and so does a
+    Playbook whose only recorded values are targets. Such a Playbook can still
+    feed CSF findings (`is_gap` on a targeted row at level 1): open, with
+    Gene's row-level ruling on target-only findings."""
     a = db.get(CsfAssessment, uuid.UUID(r.record_id))
     if a is None:
         raise RuntimeError(f"CSF input {r.record_id!r} has no assessment row")

@@ -57,7 +57,18 @@ def has_recorded_score(row: Any) -> bool:
     does not either, so those rows count through the values they wrote, which
     differ from the seed default. An AI row scored 0 everywhere, with no notes,
     evidence or target, is indistinguishable from the seeded row and does not
-    count."""
+    count.
+
+    Defined as the two halves below, so a reader that needs "recorded, other
+    than a target" (`risk/csf_source.py::csf_playbook_state`) shares this
+    definition rather than restating it."""
+    return has_recorded_value_besides_target(row) or row.target_level is not None
+
+
+def has_recorded_value_besides_target(row: Any) -> bool:
+    """`has_recorded_score` without `target_level`: something written on the
+    row that is not the target. #474 D' (advisor, #736 6090360421): a Playbook
+    whose only recorded values are target levels has measured nothing."""
     return (
         row.answer_source is not None
         or any(
@@ -68,7 +79,6 @@ def has_recorded_score(row: Any) -> bool:
         or not _blank(row.what_we_found)
         or row.evidence_artifact_id is not None
         or bool(row.has_evidence)
-        or row.target_level is not None
         or not row.in_scope
     )
 
