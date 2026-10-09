@@ -92,7 +92,15 @@ class _World:
     one confirmed covered technique, and whichever pending rows a test asks
     for. `pending` is the ATT&CK API's own `pending_review` set, read back."""
 
-    def __init__(self, client_fixture, *, pending_leaf: bool, pending_parent: bool) -> None:
+    def __init__(
+        self,
+        client_fixture,
+        *,
+        pending_leaf: bool,
+        pending_parent: bool,
+        parent_rules: int = 2,
+        parent_own_pending: bool = False,
+    ) -> None:
         from app.attack.parents import PARENT_CHILDREN
         from app.models.attack_assessment import AttackAssessment, AttackCoverage
 
@@ -122,7 +130,10 @@ class _World:
         with _session() as s:
             assessment = s.get(AttackAssessment, uuid.UUID(a["id"]))
             assessment.status_rules = 1  # approved before R3 (migration 0059)
-            assessment.parent_rules = 2  # approved after #620: parents computed
+            # 2: approved after #620, parents computed from their children.
+            # 1: approved before #620 (migration 0054's backfill), each row,
+            # a parent included, judged on its own citations.
+            assessment.parent_rules = parent_rules
 
             def row(code: str) -> AttackCoverage:
                 return s.get(AttackCoverage, uuid.UUID(by_code[code]))
@@ -137,6 +148,12 @@ class _World:
                 for i, child in enumerate(children):
                     cites = [dict(_PENDING_ENTRY)] if i == 0 else []
                     _set_row(row(child), "covered", "Tool A", cites)
+            if parent_own_pending:
+                # The parent's OWN citation is unconfirmed and its children's
+                # are confirmed: pending only under the pre-#620 rule.
+                _set_row(row(self.parent), "covered", "Tool A", [dict(_PENDING_ENTRY)])
+                for child in children:
+                    _set_row(row(child), "covered", "Tool P", [])
             s.commit()
 
         latest = c.get(f"/attack/services/{self.attack_service}/assessments/latest", headers=h)
@@ -219,6 +236,26 @@ def test_a_computed_parent_pending_through_its_child_is_not_linked(
     pending under D-094 (`pending_codes`). A per-row reading of the parent's
     own citations would let it through."""
     w = _World(app_client, pending_leaf=False, pending_parent=True)
+    assert w.parent in w.pending, w.pending
+    body = w.generate(w.confirmed, w.parent)
+    assert _linked(body) == {w.confirmed}
+
+
+def test_a_pre_620_parent_pending_on_its_own_citation_is_not_linked(
+    app_client,  # noqa: F811
+) -> None:
+    """An assessment approved before #620 (`parent_rules` 1) judges a parent
+    on its own citations, as it always did: here the parent's is unconfirmed
+    and its children's are confirmed, so the ATT&CK screen shows the parent
+    pending. The register passes the assessment's own rule set to
+    `pending_codes`; reading every assessment under D-094 would link it."""
+    w = _World(
+        app_client,
+        pending_leaf=False,
+        pending_parent=False,
+        parent_rules=1,
+        parent_own_pending=True,
+    )
     assert w.parent in w.pending, w.pending
     body = w.generate(w.confirmed, w.parent)
     assert _linked(body) == {w.confirmed}
