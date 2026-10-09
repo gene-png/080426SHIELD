@@ -172,21 +172,45 @@ test("Run AI clamps DoD suggestions to <= 3 and the roadmap groups gaps by month
   // nothing. Record notes on three capabilities first, through the same API
   // the questionnaire's notes field saves to; the run under test is the AI's.
   const ztDodServiceId = await atlasServiceId(page, "zero_trust_dod");
+  // Three capabilities of the FIRST pillar, which is the tab the questionnaire
+  // opens on, so the notes can be checked on screen below.
+  const catalogRes = await page.request.get(
+    "/api/proxy/zt/catalog?framework=dod_ztra",
+  );
+  expect(catalogRes.ok()).toBeTruthy();
+  const catalog = (await catalogRes.json()) as {
+    pillars: Array<{ capabilities: Array<{ code: string }> }>;
+  };
+  const noted = catalog.pillars[0].capabilities.slice(0, 3).map((c) => c.code);
+  expect(noted).toHaveLength(3);
   const latest = await page.request.get(
     `/api/proxy/zt/services/${ztDodServiceId}/assessments/latest`,
   );
   expect(latest.ok()).toBeTruthy();
-  const draft = (await latest.json()) as { answers: Array<{ id: string }> };
-  expect(draft.answers.length).toBeGreaterThanOrEqual(3);
-  for (const answer of draft.answers.slice(0, 3)) {
+  const draft = (await latest.json()) as {
+    answers: Array<{ id: string; capability_code: string }>;
+  };
+  const NOTE = "MFA is enforced for every workforce account.";
+  for (const code of noted) {
+    const answer = draft.answers.find((a) => a.capability_code === code);
+    expect(answer, `no answer row for ${code}`).toBeTruthy();
     const saved = await page.request.patch(
-      `/api/proxy/zt/answers/${answer.id}`,
-      { data: { notes: "MFA is enforced for every workforce account." } },
+      `/api/proxy/zt/answers/${answer!.id}`,
+      { data: { notes: NOTE } },
     );
     expect(saved.ok()).toBeTruthy();
   }
   await page.reload();
   await expect(page.getByText(/Draft v\d+/)).toBeVisible({ timeout: 30000 });
+  // The setup reached the screen the run reads from (#736 comment
+  // 6073312727): each note is visible in its capability's notes field, opened
+  // from its collapsed summary.
+  for (const code of noted) {
+    const field = page.getByLabel(`Notes for ${code}`, { exact: true });
+    await page.locator("details", { has: field }).locator("summary").click();
+    await expect(field).toBeVisible({ timeout: 30000 });
+    await expect(field).toHaveValue(NOTE);
+  }
 
   // Run the fixture AI and capture the what-changed payload.
   const runDone = page.waitForResponse(
