@@ -362,8 +362,9 @@ def test_zt_catalog_sentences_print_as_text(app_client, monkeypatch, hook) -> No
 
 
 def test_a_control_character_is_stripped_and_the_strip_is_logged(app_client, capsys) -> None:
-    """The cell is clean, and ONE warning names the sheet, the column header,
-    the row and how many characters went -- never the value. `capsys`, not
+    """The cell is clean, and ONE warning names the sheet, the column LETTER,
+    the row and how many characters went -- never the value, and never any
+    other cell's text (review of 373d7c70). `capsys`, not
     `caplog`: structlog renders to stdout (`app/logging.py`), so stdlib log
     capture sees nothing (the lesson `test_risk_link_scope.py` records).
 
@@ -390,7 +391,7 @@ def test_a_control_character_is_stripped_and_the_strip_is_logged(app_client, cap
     assert len(removed) == 1, events
     (e,) = removed
     assert e["level"] == "warning"
-    assert (e["sheet"], e["column"], e["row"], e["removed"]) == ("Answers", "Notes", 2, 3)
+    assert (e["sheet"], e["column"], e["row"], e["removed"]) == ("Answers", "B", 2, 3)
     for fragment in ("Sensitive", "note", "here", "\x00", "\\u0000"):
         assert fragment not in out, f"the log carries part of the value: {fragment!r}"
 
@@ -415,12 +416,41 @@ def test_a_sheet_without_a_header_names_the_column_letter(app_client, capsys) ->
 
 
 def test_a_clean_row_logs_nothing(app_client, capsys) -> None:
-    # `app_client` first, or this passes vacuously on an unconfigured logger.
+    """A dirty cell's warning is seen FIRST, in this test, so the capture is
+    proven live before a clean row is shown to add nothing; on its own the
+    absence could pass on a logger that prints nowhere."""
     from openpyxl import Workbook
 
     from app.xlsx_export import safe_text_row
 
     ws = Workbook().active
     safe_text_row(ws, ["Header"])
+    safe_text_row(ws, ["dirty\x02"])
+    assert capsys.readouterr().out.count("control_characters_removed") == 1
     safe_text_row(ws, ["clean value", 3, None])
     assert "control_characters_removed" not in capsys.readouterr().out
+
+
+def test_the_log_never_carries_another_cells_text(app_client, capsys) -> None:
+    """Row 1 of the CSF, Zero Trust and ATT&CK summary sheets is
+    `["Engagement", <client legal name>]`, so naming a column by its row-1
+    text logged the client's name for a control character in the title below
+    it. The log names the column by LETTER and reads no cell's text."""
+    from openpyxl import Workbook
+
+    from app.xlsx_export import safe_text_row
+
+    ws = Workbook().active
+    ws.title = "Summary"
+    safe_text_row(ws, ["Engagement", "Acme QZXJTOKEN Holdings"])
+    safe_text_row(ws, ["Service", "VALUEMARK\x07TAIL"])
+    assert ws["B2"].value == "VALUEMARKTAIL"  # the positive state first
+    out = capsys.readouterr().out
+    (e,) = [
+        json.loads(line)
+        for line in out.splitlines()
+        if line.startswith("{") and "control_characters_removed" in line
+    ]
+    assert (e["sheet"], e["column"], e["row"], e["removed"]) == ("Summary", "B", 2, 1)
+    for fragment in ("QZXJTOKEN", "Acme", "Engagement", "VALUEMARK", "TAIL"):
+        assert fragment not in out, f"the log carries cell text: {fragment!r}"

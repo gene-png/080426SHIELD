@@ -20,9 +20,10 @@ which shows the cell exactly as typed and never evaluates it. The value itself
 is not changed, so the cell reads back exactly as typed.
 
 Every strip logs ONE warning per cell, `xlsx_export.control_characters_removed`,
-naming the sheet, the column (its row-1 header where there is one, otherwise
-the letter), the row and how many characters went. NEVER the value: the cell
-is client or model text, and the log is not a place to copy it to.
+naming the sheet, the column LETTER, the row and how many characters went.
+NEVER the value, and no cell's text at all: a column is not named by the text
+above it, because row 1 of the CSF, Zero Trust and ATT&CK summary sheets is
+the client's legal name, and other sheets open with a banner or a caption.
 """
 
 from __future__ import annotations
@@ -51,7 +52,7 @@ def safe_text_row(ws: Any, values: list) -> None:
             _log.warning(
                 "xlsx_export.control_characters_removed",
                 sheet=ws.title,
-                column=_column_name(ws, cell),
+                column=cell.column_letter,  # never the text above it
                 row=cell.row,
                 removed=count,
             )
@@ -59,12 +60,3 @@ def safe_text_row(ws: Any, values: list) -> None:
         if isinstance(cell.value, str) and cell.value.startswith(FORMULA_TRIGGERS):
             cell.data_type = "s"
             cell.quotePrefix = True
-
-
-def _column_name(ws: Any, cell: Any) -> str:
-    """The row-1 header above `cell` when it is text, else the column letter."""
-    if cell.row > 1:
-        header = ws.cell(row=1, column=cell.column).value
-        if isinstance(header, str) and header:
-            return header
-    return cell.column_letter
