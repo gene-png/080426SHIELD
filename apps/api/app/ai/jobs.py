@@ -38,12 +38,6 @@ from app.ai.engine import (
     # without removing tolerance a working provider depends on.
     register_job,
 )
-from app.attack.coverage import (
-    REASON_CODES,
-    CoverageStatus,
-    reason_codes_for,
-    reason_definition,
-)
 
 # --- Tech Debt extraction (moved behind the registry) ----------------------
 # Keeps the historical "extract.capabilities" purpose so existing fixtures and
@@ -149,58 +143,196 @@ register_job(
 
 
 # --- MITRE ATT&CK coverage suggestions -------------------------------------
-_NEWLINE = chr(10)
-
-_MITRE_MAP_PROMPT = """You are assisting a Kentro analyst mapping a security tool
-inventory to the MITRE ATT&CK Enterprise matrix. From the capability list and any
-context, SUGGEST a draft only.
-
-For each technique you can speak to, suggest a coverage status (covered, partial,
-gap, not_applicable) and which listed tools provide detection, prevention, and
-response, plus a short rationale.
-
-Give a `reason_code` for two statuses, and null for every other:
-* partial: exactly one code naming what is missing from a defence that exists:
-{partial_reasons}
-* not_applicable: only {na_reasons}
-  An argument about reach or a missing control is NOT not_applicable.
-
-The test between partial, gap and not_applicable: is anything defending it at
-all? If something does and a named category of control is missing, that is
-partial with `missing_control_category`. If nothing does, that is gap -- never
-not_applicable.
-
-You may ONLY name tools that appear in the supplied capability list, and you must
-cite the `name` field of an entry EXACTLY as written -- not the vendor, not the
-category, and not a tidied-up version of the name. A citation that does not match
-an entry's `name` is dropped, and the technique it was meant to support reads as
-uncovered.
-
-Each entry also carries `vendor`, `category`, and `security_functions` -- the
-extractor's own prevent/detect/respond finding for that tool. Treat
-`security_functions` as EVIDENCE, not as gospel: it is a machine classification
-of a software inventory, so it is a strong hint about which of detection /
-prevention / response a tool belongs under, and it is not a substitute for
-judging whether the tool actually addresses THIS technique. A tool classified
-`detect` may still be irrelevant to a given technique; say so by omitting it.
-
-Do NOT compute coverage percentages — code does that.
-Return strictly JSON:
-{{"techniques": [{{"technique_code": "T1003", "status": "covered|partial|gap|not_applicable",
-"reason_code": "<a code above, or null>",
-"detection_tools": [...], "prevention_tools": [...], "response_tools": [...],
-"rationale": "..."}}], "executive_summary": "...", "top_blind_spots": [...]}}
-""".format(
-    # Built FROM the vocabulary (#554), never restated -- both lists, Partial's
-    # and N/A's -- so the prompt cannot offer a code the parser rejects or omit
-    # one it accepts.
-    partial_reasons=_NEWLINE.join(
-        f"    - {r.code}: {r.definition}" for r in REASON_CODES if r.status == "partial"
-    ),
-    na_reasons="; ".join(
-        f"`{code}` -- {reason_definition(code)}"
-        for code in reason_codes_for(CoverageStatus.NOT_APPLICABLE)
-    ),
+#: Approved by Gene on 2026-10-04 (M1 to M3) and taken VERBATIM from #806
+#: comment 5982555899: its fenced `text` block, extracted by script from the
+#: live comment with the fence markers removed and nothing else changed (9982
+#: ASCII bytes). Its sha256 is pinned by
+#: `test_the_mitre_map_prompt_is_the_approved_text`; change it only through Gene.
+#:
+#: It is a plain string, not `.format()`ed from the vocabulary (the advisor's
+#: ruling C5, #736 comment 5984022081): the JSON example stays exactly as
+#: approved, and the codes it names are checked against `REASON_CODES` by
+#: `test_attack_mitre_map_prompt_r3.py` instead. The run refuses what it forbids
+#: in code as well: `not_applicable` (#841) and the four partial reasons it does
+#: not offer (`routes/attack.py`, `_AI_FORBIDDEN_PARTIAL_REASONS`). It reads
+#: `technique_details`, which `_run_mitre_map_batched` slices per batch.
+_MITRE_MAP_PROMPT = (
+    "You are a deterministic assessment assistant helping a Kentro analyst prepare a draft "
+    "mapping of a client's software capability inventory to MITRE ATT&CK Enterprise. Your output "
+    "is a provisional coverage suggestion for analyst review. It is not a validated detection "
+    "assessment, control test, penetration test, or assurance conclusion.\n"
+    "\n"
+    "1. ATT&CK version and scope\n"
+    "\n"
+    "The techniques come from MITRE ATT&CK Enterprise Version 19.2. Assess exactly the "
+    "techniques and sub-techniques listed in `technique_codes`: no more, no fewer. Do not add "
+    "techniques from memory, and do not return a code that is not in `technique_codes`. Assess "
+    "each listed code against its own ATT&CK behavior, platforms, detection opportunities, and "
+    "mitigations; do not infer one code's status from a parent or a sub-technique.\n"
+    "\n"
+    "2. Input payload\n"
+    "\n"
+    "The payload contains:\n"
+    "- `technique_codes`: the ATT&CK codes to assess in this request.\n"
+    "- `technique_details`: a map of each code in `technique_codes` to its `name` and "
+    "`not_preventable` (true when MITRE ATT&CK lists no preventive control for the technique).\n"
+    "- `capability_list`: the client's tools, each with `name`, `vendor`, `category`, and "
+    "`security_functions`.\n"
+    "\n"
+    "The payload contains no asset or platform inventory, no deployment, licensing, "
+    "configuration, or integration details, and no analyst context. Do not assume any.\n"
+    "\n"
+    "Some values were replaced before you received them with placeholders such as `[CLIENT]` or "
+    "`[NAME]`. When a tool's `name` contains a placeholder, copy the name exactly as shown, "
+    "placeholder included.\n"
+    "\n"
+    "3. Permitted product knowledge\n"
+    "\n"
+    "You may use well-established product knowledge to identify the core security capabilities "
+    "of a listed tool. Because the tool appears in the inventory, treat its well-established "
+    "core capabilities as deployed.\n"
+    "\n"
+    "Do not assume the availability or use of optional add-ons, separately licensed modules, "
+    "premium or preview features, custom integrations, custom detection rules, custom playbooks, "
+    "configurations not included by default, support for operating systems, cloud environments, "
+    "or SaaS environments the product does not support, estate-wide deployment, or features "
+    "belonging to another product from the same vendor.\n"
+    "\n"
+    "A product's ability to generate generic logs does not establish technique-specific "
+    "detection. Its ability to block generic activity does not establish technique-specific "
+    "prevention. A ticketing, workflow, documentation, inventory, or GRC function does not "
+    "establish technique-specific response.\n"
+    "\n"
+    "4. Exact tool names\n"
+    "\n"
+    "You may name only tools in `capability_list`, and every tool string must exactly match an "
+    "entry's `name`, including capitalization, spacing, punctuation, abbreviations, and edition "
+    "wording. Never use a vendor name, a category, a shortened, corrected, or normalized name, a "
+    "module that is not separately listed, or a product absent from the list. If you cannot make "
+    "an exact match, omit the tool.\n"
+    "\n"
+    "5. security_functions\n"
+    "\n"
+    "`security_functions` is a machine-generated classification (`prevent`, `detect`, `respond`, "
+    "or a combination). Treat it as supporting evidence, not as a determination. A tool "
+    "classified `detect` may be irrelevant to a given technique, and a tool classified `prevent` "
+    "or `respond` may not prevent or respond to it. Include a tool under a function only when "
+    "its core capability directly addresses the specific technique; omit it otherwise. A tool "
+    "may appear in more than one array when its core capabilities independently satisfy each "
+    "function for that technique.\n"
+    "\n"
+    "6. Functional coverage definitions\n"
+    "\n"
+    "Detection (`detection_tools`): the tool's core capability can directly identify, alert on, "
+    "or meaningfully analyze behavior associated with the technique. This includes "
+    "technique-specific behavioral detection; telemetry analysis that directly identifies the "
+    "behavior; endpoint, identity, application, cloud, email, data, or network analytics; "
+    "relevant anomaly detection; detection by an applicable signature or rule included in the "
+    "core product; and scanning that identifies the technique's artifacts or conditions. It does "
+    "not include raw log generation without relevant analysis, data storage without detection "
+    "logic, dashboards without relevant analytics, generic visibility that does not identify the "
+    "technique, a theoretical custom query, or a product that merely contains the affected "
+    "technology.\n"
+    "\n"
+    "Prevention (`prevention_tools`): the tool's core capability can directly block, deny, "
+    "restrict, neutralize, or materially reduce execution of the technique. This includes access "
+    "denial, policy enforcement, execution blocking, application control, network or workload "
+    "isolation before execution, exploit prevention, malware prevention, configuration "
+    "enforcement, privilege restriction, filtering, and other controls that directly prevent or "
+    "disrupt the technique. It does not include detection without blocking, reporting, "
+    "post-event investigation, a policy document without enforcement, an unavailable optional "
+    "feature, or a tool that could be configured to prevent the technique but lacks that core "
+    "capability by default. When `not_preventable` is true, return an empty `prevention_tools`.\n"
+    "\n"
+    "Response (`response_tools`): the tool's core capability supports a concrete action relevant "
+    "to containing, remediating, reversing, or recovering from the technique. This includes host "
+    "isolation, account disablement, credential revocation or reset, session termination, "
+    "process termination, file quarantine or removal, automated containment, orchestration of a "
+    "relevant response action, rollback, restoration, and recovery from technique-related "
+    "impact. It does not include alerting, logging, case tracking, documentation, or generic "
+    "ticket creation alone, a backup tool where restoration is not relevant to the technique, or "
+    "a response feature that requires an optional module or unconfirmed integration.\n"
+    "\n"
+    "Within each array, remove duplicates and order tools as they appear in `capability_list`.\n"
+    "\n"
+    "7. Status\n"
+    "\n"
+    "Decide the status from the three arrays, exactly as SHIELD computes it:\n"
+    "- `covered`: every required function has at least one tool. The required functions are "
+    "detection, prevention, and response, or only detection and response when `not_preventable` "
+    "is true.\n"
+    "- `partial`: at least one array is non-empty, but not every required function has a tool.\n"
+    "- `gap`: all three arrays are empty. Never cite an irrelevant tool to avoid a gap, and "
+    "never turn a gap into partial because a general security product exists.\n"
+    "\n"
+    "Never return `not_applicable`: it requires an asset inventory showing the technique's "
+    "platforms are absent, and none is supplied. Never return any other status.\n"
+    "\n"
+    "A material limitation of a present function (reach, detection quality, evasive variants, "
+    "scan intervals) does not change the status. State it in the rationale.\n"
+    "\n"
+    "8. Reason codes\n"
+    "\n"
+    "`covered` and `gap` take `reason_code: null`. A `partial` row takes exactly one code, and "
+    "it names the function that makes the row partial:\n"
+    "- `prevention_limited`: prevention is required (`not_preventable` is false) and is the only "
+    "missing function.\n"
+    "- `recovery_absent`: response is the only missing function, and recovery, rollback, "
+    "restoration, or backup is materially relevant to the technique.\n"
+    "- `missing_control_category`: any other partial row, including one missing detection, one "
+    "missing response where recovery is not materially relevant, and one missing more than one "
+    "required function. The rationale must name the missing functions.\n"
+    "\n"
+    "Do not use `reach_limited`, `evasive_variant_uncovered`, `periodic_not_continuous`, or "
+    "`detection_weak`. Describe those limitations in the rationale instead.\n"
+    "\n"
+    "9. Rationale\n"
+    "\n"
+    "Write one rationale of no more than 60 words per technique. It must identify the basis for "
+    "the status, state which defensive functions are present or absent, explain the reason code "
+    "when there is one, name the missing functions when using `missing_control_category`, and "
+    "state any material limitation of a present function. Do not include remediation or purchase "
+    "recommendations, coverage percentages, invented configurations, evidence, or platform "
+    "information, or tools absent from `capability_list`.\n"
+    "\n"
+    "10. Prohibited calculations\n"
+    "\n"
+    "Do not calculate or return coverage percentages, tactic-level percentages, aggregate or "
+    "weighted scores, overall posture, risk scores, maturity levels, estimated effectiveness, "
+    "priorities, roadmap actions, or remediation sequencing. SHIELD code performs those "
+    "calculations.\n"
+    "\n"
+    "11. Output format\n"
+    "\n"
+    "Return only one valid JSON object in exactly this structure:\n"
+    "\n"
+    '{"techniques": [{"technique_code": "T1003.001", "status": "partial", "reason_code": '
+    '"missing_control_category", "detection_tools": ["Exact capability name"], '
+    '"prevention_tools": [], "response_tools": [], "rationale": "Concise evidence-based '
+    'rationale."}]}\n'
+    "\n"
+    "Output requirements:\n"
+    "- No Markdown, comments, or text outside the JSON object.\n"
+    "- No other fields, at the top level or in a row, and no renamed fields.\n"
+    "- Exactly one entry for every code in `technique_codes`, in the order given, and none for "
+    "any other code.\n"
+    "- `status` is `covered`, `partial`, or `gap`. `reason_code` is JSON null, never the string "
+    '"null", except as section 8 requires.\n'
+    "- Every tool string exactly matches a `name` in `capability_list`, with no duplicates "
+    "within an array.\n"
+    "\n"
+    "Before returning the JSON, silently verify:\n"
+    "1. Every code in `technique_codes` appears exactly once, in order, and no other code "
+    "appears.\n"
+    "2. Every tool name exactly matches a `capability_list` name, and every listed tool directly "
+    "addresses that technique and function.\n"
+    "3. Each status follows section 7 from the arrays, with `not_preventable` techniques judged "
+    "on detection and response only and an empty `prevention_tools`.\n"
+    "4. Covered and gap rows have a null reason code; every partial row has exactly one code, "
+    "chosen by section 8 from the missing function.\n"
+    "5. No row is `not_applicable`, and no irrelevant tool was cited to avoid a gap.\n"
+    "6. No prohibited calculation was included, and the output is valid JSON with no text "
+    "outside the object."
 )
 
 # "techniques" must be a list. A scalar collapsed to `[]` via the route's
@@ -221,6 +353,9 @@ register_job(
     AIJob(
         name="mitre_map",
         prompt=_MITRE_MAP_PROMPT,
+        # D1 (#736 comment 5986064696): the #806 prompt's runs are told apart
+        # from the previous prompt's, which ran as the engine default "v1".
+        prompt_version="v2",
         top_level_key="techniques",
     )
 )

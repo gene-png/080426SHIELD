@@ -187,8 +187,11 @@ REASON_CODES: tuple[ReasonCode, ...] = (
     ReasonCode(
         "prevention_limited",
         CoverageStatus.PARTIAL,
-        "Detectable but not preventable, including where legitimate use needs the "
-        "same capability.",
+        # #806 Q5 (#736 comment 6053562002): the text proposed in comment
+        # 6053026654, approved. Under the #806 prompt it means prevention is
+        # required and is the only missing function, a control the client lacks.
+        "Detect is in place and Prevent is not, for a technique MITRE ATT&CK lists "
+        "a preventive control for.",
     ),
     ReasonCode(
         "evasive_variant_uncovered",
