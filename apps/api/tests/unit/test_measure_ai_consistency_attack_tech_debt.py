@@ -168,7 +168,7 @@ def test_a_row_with_no_key_is_unkeyable_never_compared_under_null() -> None:
 
 
 def test_mitre_map_compares_status_and_reason_and_never_the_rationale() -> None:
-    a = {"techniques": [_tech("T1", status="partial", reason_code="detection_weak")]}
+    a = {"techniques": [_tech("T1", status="partial", reason_code="prevention_limited")]}
     b = {"techniques": [_tech("T1", status="gap", rationale="different words")]}
     fields = compare_pair("mitre_map", a, b, context=_T)["fields"]
     assert fields["status"]["equal"] == 0
@@ -418,8 +418,8 @@ def attack_world(world):
 
 
 def _cover_every_asked_technique(payload: dict) -> LLMResponse:
-    # The prompt: "For each technique you can speak to, suggest a coverage status
-    # ... and which listed tools provide detection, prevention, and response".
+    # The #806 prompt, section 11: one entry per code in `technique_codes`, and
+    # only `techniques` at the top level.
     techniques = [
         {
             "technique_code": code,
@@ -432,7 +432,7 @@ def _cover_every_asked_technique(payload: dict) -> LLMResponse:
         }
         for code in payload["technique_codes"]
     ]
-    body = {"techniques": techniques, "executive_summary": "s", "top_blind_spots": []}
+    body = {"techniques": techniques}
     return LLMResponse(json.dumps(body), input_tokens=3, output_tokens=5)
 
 
@@ -1044,7 +1044,7 @@ def test_a_null_reason_code_is_counted_as_absent_for_mitre_map() -> None:
     a = {
         "techniques": [
             _tech("T1", status="covered"),
-            _tech("T2", status="partial", reason_code="detection_weak"),
+            _tech("T2", status="partial", reason_code="prevention_limited"),
         ]
     }
     r = compare_pair("mitre_map", a, json.loads(json.dumps(a)), context=_T)["fields"]["reason_code"]

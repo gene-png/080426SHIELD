@@ -133,57 +133,88 @@ def _capability_names(value: object) -> list[str]:
     return out
 
 
-#: #841: no `not_applicable`. #841 refuses an AI N/A (the run refuses it and
-#: counts it); the #806 ATT&CK prompt, not yet in the tree, stops offering it.
-#: Today's `_MITRE_MAP_PROMPT` still offers it, so the fixture no longer
-#: suggesting it is the refusal's world, not the prompt's. The fifth slot is a
-#: gap, keeping the cycle's length and so the Partial reasons' cadence.
+#: The #806 prompt (#806 comment 5982555899) is what this is written from
+#: (CLAUDE.md: author fixtures from the PROMPT, never from the parser):
+#: - section 7: the status follows from the three arrays. `covered` has every
+#:   required function, `partial` some, `gap` none; never `not_applicable`;
+#: - section 6: a not-preventable technique has an empty `prevention_tools` and
+#:   is covered on Detect and Respond;
+#: - section 8: a partial row's one reason names its missing function, from the
+#:   three the prompt offers; covered and gap rows carry null;
+#: - section 11: only `techniques`, and only the seven row keys.
+#: The cycle keeps the old fixture's statuses and length, so rows land where
+#: they did; a status the arrays cannot support (no tools) is a gap instead.
 _MITRE_STATUS_CYCLE = ("covered", "partial", "gap", "covered", "gap")
-#: #554: the reason each fixture status carries, copied from what the mitre_map
-#: PROMPT offers (CLAUDE.md: author fixtures from the prompt, never from the
-#: parser). A Partial cycles through three of the prompt's seven codes.
-_MITRE_PARTIAL_REASONS = ("reach_limited", "detection_weak", "missing_control_category")
+#: The partial reasons the prompt offers (section 8), in the order the fixture
+#: cycles through them.
+_MITRE_PARTIAL_REASONS = ("prevention_limited", "recovery_absent", "missing_control_category")
+
+
+def _mitre_not_preventable(payload: dict[str, Any], code: str) -> bool:
+    """`technique_details[code].not_preventable`, as the prompt reads it.
+
+    C0: a payload stored before #806 (an `llm_calls` row replayed, an older
+    preview) carries no `technique_details`, and the prompt it was sent with
+    made no such distinction, so the code is judged preventable: all three
+    functions required, the stricter reading."""
+    details = payload.get("technique_details")
+    entry = details.get(code) if isinstance(details, dict) else None
+    return isinstance(entry, dict) and entry.get("not_preventable") is True
+
+
+def _mitre_arrays(
+    status: str, reason: str | None, not_preventable: bool, tools: list[str], i: int
+) -> tuple[list[str], list[str], list[str]]:
+    """Detection, prevention and response for a row the fixture means to be
+    `status` with `reason`, built so the prompt's section 7 and 8 rules hold.
+    One tool may fill more than one array (section 5)."""
+    if status == "gap" or not tools:
+        return [], [], []
+    d = [tools[i % len(tools)]]
+    r = [tools[(i + 1) % len(tools)]]
+    p = [] if not_preventable else [tools[(i + 2) % len(tools)]]
+    if status == "covered":
+        return d, p, r
+    if reason == "prevention_limited":
+        return d, [], r
+    if reason == "recovery_absent":
+        return d, p, []
+    # missing_control_category: missing Detect when not preventable, else
+    # missing Prevent and Respond.
+    return ([], [], r) if not_preventable else (d, [], [])
 
 
 def _fixture_mitre_map(payload: dict[str, Any]) -> LLMResponse:
-    codes = sorted(_strs(payload.get("technique_codes")))
+    # Section 11: one entry per code, in the order given.
+    codes = _strs(payload.get("technique_codes"))
     tools = _capability_names(payload.get("capability_list"))
     techniques: list[dict[str, Any]] = []
     for i, code in enumerate(codes):
-        status = _MITRE_STATUS_CYCLE[i % len(_MITRE_STATUS_CYCLE)]
-        detection: list[str] = []
-        response: list[str] = []
+        status = _MITRE_STATUS_CYCLE[i % len(_MITRE_STATUS_CYCLE)] if tools else "gap"
+        not_preventable = _mitre_not_preventable(payload, code)
+        reason = None
+        if status == "partial":
+            reason = _MITRE_PARTIAL_REASONS[
+                (i // len(_MITRE_STATUS_CYCLE)) % len(_MITRE_PARTIAL_REASONS)
+            ]
+            if reason == "prevention_limited" and not_preventable:
+                # Section 8: prevention_limited needs prevention to be required.
+                reason = "recovery_absent"
         # Cite tools ONLY from the supplied capability list; the route re-validates
         # every cited tool against the client's approved capability list.
-        if status in ("covered", "partial") and tools:
-            detection = [tools[i % len(tools)]]
-            if status == "covered" and len(tools) > 1:
-                response = [tools[(i + 1) % len(tools)]]
-        reason = (
-            _MITRE_PARTIAL_REASONS[(i // len(_MITRE_STATUS_CYCLE)) % len(_MITRE_PARTIAL_REASONS)]
-            if status == "partial"
-            else None
-        )
+        detection, prevention, response = _mitre_arrays(status, reason, not_preventable, tools, i)
         techniques.append(
             {
                 "technique_code": code,
                 "status": status,
                 "reason_code": reason,
                 "detection_tools": detection,
-                "prevention_tools": [],
+                "prevention_tools": prevention,
                 "response_tools": response,
                 "rationale": f"Fixture-mode draft coverage assessment for {code}.",
             }
         )
-    body: dict[str, Any] = {
-        "techniques": techniques,
-        "executive_summary": (
-            "Fixture-mode ATT&CK coverage draft. Statuses and tool citations are "
-            "deterministic placeholders for offline demo; confirm before release."
-        ),
-        "top_blind_spots": [t["technique_code"] for t in techniques if t["status"] == "gap"][:5],
-    }
-    return _resp(body)
+    return _resp({"techniques": techniques})
 
 
 # ---------------------------------------------------------------------------

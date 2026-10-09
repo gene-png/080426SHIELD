@@ -676,16 +676,18 @@ def _attack_row_refused(row: Mapping[str, Any], scope: AttackScope) -> bool:
     1. a code the assessment does not hold: `rows.get(code)` is None, skipped;
     2. a computed parent: `is_computed_parent`, `parent_suggestions_refused`;
     3. a status outside `_AI_WRITABLE_STATUSES`: `statuses_rejected`;
-    4. an offered reason `is_valid_reason` rejects for it: `reason_codes_rejected`.
+    4. an offered reason `is_valid_reason` rejects for it: `reason_codes_rejected`;
+    5. a partial whose reason only a consultant may give (#806 C4,
+       `_AI_FORBIDDEN_PARTIAL_REASONS`): `reason_codes_rejected`.
 
-    Steps 1-2 are `_key_refused`, shared with the other jobs. Steps 2-4 CALL
-    the catalog's, the route's and the vocabulary's predicates; step 1 is
+    Steps 1-2 are `_key_refused`, shared with the other jobs. Steps 2-5 CALL
+    or READ the catalog's, the route's and the vocabulary's predicates; step 1 is
     membership in the codes the apply path indexes (`AttackScope.
     assessment_codes`, built from the same `req.rows`). Locked and
     concurrently edited rows are skipped too, and are NOT modelled here: they
     are consultant state, not the model's answer (`attack_downstream`)."""
     from app.attack.coverage import is_valid_reason
-    from app.routes.attack import _AI_WRITABLE_STATUSES
+    from app.routes.attack import _AI_FORBIDDEN_PARTIAL_REASONS, _AI_WRITABLE_STATUSES
 
     if _key_refused("mitre_map", row, scope):
         return True
@@ -693,7 +695,9 @@ def _attack_row_refused(row: Mapping[str, Any], scope: AttackScope) -> bool:
     if not (isinstance(st, str) and st in _AI_WRITABLE_STATUSES):
         return True
     offered = row.get("reason_code")
-    return offered is not None and not (isinstance(offered, str) and is_valid_reason(st, offered))
+    if offered is not None and not (isinstance(offered, str) and is_valid_reason(st, offered)):
+        return True
+    return st == "partial" and offered in _AI_FORBIDDEN_PARTIAL_REASONS
 
 
 #: The key the measure gives an entry `routes/csf.py::_split_strays` drops
@@ -778,7 +782,8 @@ def _absence(job: str, field: str, row: Mapping[str, Any], context: Any = None) 
     |            | mitre_map: the apply path writes nothing from the suggestion |
     |            | (`_attack_row_refused`: a code the assessment lacks, a       |
     |            | computed parent, a status it may not write, a mispaired      |
-    |            | reason), and a tool list none of whose names the run's       |
+    |            | reason, a partial reason only a consultant may give), and a  |
+    |            | tool list none of whose names the run's                      |
     |            | resolver can place. csf_score: `routes/csf.py::              |
     |            | _validated_dimension` refuses it (unparseable, outside 0-2,  |
     |            | not whole). zt_score: `routes/zt.py::_validated_stage`       |

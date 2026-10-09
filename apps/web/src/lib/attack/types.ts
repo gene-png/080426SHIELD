@@ -253,6 +253,11 @@ export interface AttackRunAiResponse {
    * may rule a technique N/A.
    */
   not_applicable_refused?: number;
+  /**
+   * #806 C4. Techniques the AI suggested as Partial with a reason only a
+   * consultant may give, refused whole so the row keeps its status.
+   */
+  forbidden_reason_refused?: number;
 }
 
 export interface TacticHeatmapEntry {
