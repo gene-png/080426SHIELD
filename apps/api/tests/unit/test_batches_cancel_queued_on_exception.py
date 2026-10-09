@@ -134,3 +134,69 @@ def test_a_keyboard_interrupt_cancels_the_queued_batches(db, monkeypatch) -> Non
     held, caught = _run_interrupted(db, monkeypatch, original)
     assert caught.value is original, "the original KeyboardInterrupt, unchanged"
     assert held.calls == 1, f"queued batches started after Ctrl-C: {held.calls} calls"
+
+
+# --- the stop flag, with cancellation taken away (#806, review of 216aa815) ------
+#
+# `cancel_futures` covers the batches still in the queue. The stop flag is
+# what turns away a batch a worker has ALREADY dequeued but not yet sent, and
+# what still holds if a second exception lands during the drain. To test the
+# flag on its own, cancellation is disabled: the pool's `shutdown` ignores
+# `cancel_futures`, so every queued batch reaches a worker, and only the flag
+# can keep it from calling the provider.
+
+
+def _no_cancel(monkeypatch) -> None:
+    import app.ai.batching as batching
+
+    class NoCancelPool(batching.ThreadPoolExecutor):
+        def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+            super().shutdown(wait=wait, cancel_futures=False)
+
+    monkeypatch.setattr(batching, "ThreadPoolExecutor", NoCancelPool)
+
+
+@pytest.mark.parametrize(
+    "exc", [RuntimeError("caller failed"), KeyboardInterrupt()], ids=["exception", "ctrl-c"]
+)
+def test_the_stop_flag_alone_keeps_dequeued_batches_from_calling(db, monkeypatch, exc) -> None:
+    _no_cancel(monkeypatch)
+    held, caught = _run_interrupted(db, monkeypatch, exc)
+    assert caught.value is exc
+    assert held.calls == 1, f"batches reached the provider after the stop: {held.calls} calls"
+
+
+def test_the_deadline_sets_the_stop_flag_too(db, monkeypatch) -> None:
+    """The REAL deadline path (`as_completed` times out, `RunFailed`
+    RUN_DEADLINE_EXCEEDED), with cancellation disabled: only the stop flag can
+    keep the batches queued behind the held call from being sent."""
+    import app.ai.batching as batching
+    from app.ai.runs import RUN_DEADLINE_EXCEEDED, RunFailed
+    from app.models._common import utcnow
+
+    _no_cancel(monkeypatch)
+    held = _HeldProvider()
+    before = set(threading.enumerate())
+    try:
+        with pytest.raises(RunFailed) as caught:
+            batching.run_batches(
+                db,
+                LLMClient(held.provider),
+                "mitre_map",
+                [{"technique_codes": [f"T{1000 + i}"]} for i in range(BATCHES)],
+                requested_by=uuid.uuid4(),
+                service_id=uuid.uuid4(),
+                client_id=uuid.uuid4(),
+                client_org_name=None,
+                name_hints=(),
+                deadline_at=utcnow() + timedelta(seconds=1),
+                max_workers=1,
+                deadline_message="deadline",
+            )
+    finally:
+        held.release.set()
+    for t in set(threading.enumerate()) - before:
+        if t.name.startswith("ThreadPoolExecutor"):
+            t.join(timeout=10)
+    assert caught.value.reason == RUN_DEADLINE_EXCEEDED
+    assert held.calls == 1, f"batches were sent after the deadline: {held.calls} calls"

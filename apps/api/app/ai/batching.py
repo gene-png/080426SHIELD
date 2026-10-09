@@ -228,6 +228,9 @@ def run_batches(
     except TimeoutError as exc:
         # Batches not yet started are cancelled; one already inside a provider
         # call cannot be, and is left to finish into its own `llm_calls` row.
+        # The stop flag turns away a batch a worker has already dequeued but
+        # not yet sent, which `cancel_futures` cannot reach (#806).
+        stop.set()
         pool.shutdown(wait=False, cancel_futures=True)
         _log.error(f"{job_name}_deadline_exceeded", service_id=str(service_id))
         raise RunFailed(RUN_DEADLINE_EXCEEDED, deadline_message) from exc
