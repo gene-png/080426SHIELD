@@ -73,19 +73,57 @@ def _as_bytes(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _entries(value: Any) -> list[tuple[int, Any, Any]]:
+    """(position, a one-entry value of the same shape, the entry) for a list or
+    dict field. Empty for any other shape."""
+    if isinstance(value, list):
+        return [(i, [entry], entry) for i, entry in enumerate(value)]
+    if isinstance(value, dict):
+        return [(i, {key: entry}, entry) for i, (key, entry) in enumerate(value.items())]
+    return []
+
+
+def _rebuilds(field: str, payload: Mapping[str, Any], value: Any) -> bool:
+    """Whether `value` is the catalog's text, byte for byte. A builder that
+    raises (an unknown code, say) means it is not."""
+    try:
+        expected = CATALOG_FIELDS[field](payload, value)
+    except Exception:  # noqa: BLE001 - a refusal, reported by the caller
+        return False
+    return _as_bytes(value) == _as_bytes(expected)
+
+
+def _where(field: str, payload: Mapping[str, Any], value: Any) -> str:
+    """The first entry that is not the catalog's, by POSITION and TYPE only.
+
+    Never its value: if client text ever reached a registered key, the refusal
+    would otherwise copy it into the exception, then into Run-AI's user-facing
+    reason and the failure log (#985 review)."""
+    for i, one, entry in _entries(value):
+        if not _rebuilds(field, payload, one):
+            return f"entry {i}, a {type(entry).__name__}"
+    return f"the whole value, a {type(value).__name__}"
+
+
 def _check(field: str, payload: Mapping[str, Any], value: Any, stage: str) -> None:
     try:
         expected = CATALOG_FIELDS[field](payload, value)
-    except Exception as exc:
-        raise CatalogFieldMismatch(
-            field,
-            f"payload field {field!r} could not be rebuilt from the catalog {stage} "
-            f"({type(exc).__name__}: {exc}); nothing was sent",
-        ) from exc
-    if _as_bytes(value) != _as_bytes(expected):
-        raise CatalogFieldMismatch(
-            field, f"payload field {field!r} is not the catalog's text {stage}; nothing was sent"
-        )
+        failed = False
+    except Exception:  # noqa: BLE001 - refused below, without the exception's text
+        failed = True
+    if failed:
+        what = "could not be rebuilt from the catalog"
+    elif _as_bytes(value) != _as_bytes(expected):
+        what = "is not the catalog's text"
+    else:
+        return
+    # Raised outside the `except`, so no exception carrying the entry's repr
+    # (a KeyError naming it, say) is chained onto this one.
+    raise CatalogFieldMismatch(
+        field,
+        f"payload field {field!r} {what} {stage} ({_where(field, payload, value)}); "
+        "nothing was sent",
+    )
 
 
 def redact_ai_payload(

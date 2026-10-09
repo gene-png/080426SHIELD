@@ -1882,6 +1882,14 @@ register_catalog_field("technique_details", lambda _payload, value: _technique_d
 # collide with "T1003.001" today (the phone rule's lookbehind, `routes/risk.py`),
 # but the list is catalogue-sourced, so it is sent verbatim and guarded like the
 # rest: an unknown code is refused, not sent.
+#
+# The key is global, so this ALSO guards the what-if scenario job
+# (`attack_scenario_delta`), whose `app/attack/scenario.py::batch_inputs` sends
+# `technique_codes` from the scenario's affected codes. Those come from its base
+# assessment, so they pass today (`test_attack_scenario_technique_codes_guard.py`).
+# `routes/attack_scenarios.py` does not call `require_current_catalog`, so after a
+# SOURCE_VERSION bump a stale base's code would be refused here, at egress, as an
+# AI failure; that case is filed separately.
 register_catalog_field(
     "technique_codes", lambda _payload, value: [technique_by_id(c).id for c in value]
 )

@@ -264,3 +264,31 @@ def test_attack_technique_codes_are_guarded(db_session) -> None:
     assert sent[0]["technique_codes"] == codes
     with pytest.raises(CatalogFieldMismatch, match="technique_codes"):
         _invoke(db_session, {"technique_codes": ["T9999"]}, "Acme")
+
+
+# --- The refusal never carries the entry's value ------------------------------
+
+
+def test_a_rebuild_failure_names_the_field_index_and_type_never_the_value(
+    db_session, caplog, capsys
+) -> None:
+    """If client text ever reached a registered key, the refusal must not copy
+    it into the exception, the user's message or the logs. Only the field, the
+    entry's position and its type."""
+    import app.routes.attack  # noqa: F401
+
+    token = "ZEBRA-PRIVATE-NOTE-7731"
+    with pytest.raises(CatalogFieldMismatch) as info:
+        _invoke(db_session, {"technique_codes": ["T1003", token]}, "Acme")
+
+    err = info.value
+    assert err.field == "technique_codes"
+    assert str(err) == (
+        "payload field 'technique_codes' could not be rebuilt from the catalog "
+        "before redaction (entry 1, a str); nothing was sent"
+    )
+    assert err.__cause__ is None and err.__context__ is None, "nothing chained"
+    captured = capsys.readouterr()
+    assert token not in str(err)
+    assert token not in caplog.text
+    assert token not in captured.out + captured.err
