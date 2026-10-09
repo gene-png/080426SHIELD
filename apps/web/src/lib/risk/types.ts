@@ -169,6 +169,13 @@ export interface LinkScopeDisclosure {
   service: string;
   scored: number;
   total: number;
+  /**
+   * #415: how many of the `scored` codes are pending review, and so not
+   * citable, counted apart from the unscored rows. Null where the service has
+   * no review queue (CSF, ZT) or the ATT&CK record predates the count. Optional
+   * so an older response parses; absent reads as not recorded.
+   */
+  pending_review?: number | null;
 }
 
 export interface RiskRegister {
