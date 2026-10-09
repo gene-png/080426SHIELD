@@ -1,5 +1,14 @@
 # Gene — in-flight status
 
+_2026-10-09: #930 is built on `track6/930-published-amber`; no PR yet. It
+opens after #974 merges._
+
+**What it does:** on a published Risk Register version, the carried-ratings
+block no longer tells the consultant to rate entries again in a table that is
+no longer editable; the sentence ends at the finding codes and the amber style
+stays (advisor, #736 comment 6067815887). Drafts read as before. The draft-side
+follow-up is #950. Comes back to you under condition 5 only.
+
 _2026-10-08: #840 (a Zero Trust capability the AI returns no result for is now
 counted and shown) is draft PR #963 on `track4/840-zt-no-result`, merged with
 main at 5ef7f700. The run result carries `omitted_count` and
