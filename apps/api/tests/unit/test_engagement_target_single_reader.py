@@ -114,8 +114,10 @@ def test_every_csf_surface_reads_the_same_target(
     assert latest["client_target_tier"] == chosen, latest.get("client_target_tier")
 
     # The Risk gather does NOT read the engagement tier for CSF (#474 D',
-    # Gene, #736 5984218862): its CSF findings use the Playbook targets.
-    assert _risk_targets(client_id)["csf"] == {"target": None, "source": "playbook"}
+    # Gene, #736 5984218862): its CSF findings use the Playbook targets. This
+    # world scores the questionnaire and never the Playbook, so the Playbook
+    # state is `no_scores` (#736 6087786886, item 4) whatever the tier.
+    assert _risk_targets(client_id)["csf"] == {"target": None, "source": "playbook_no_scores"}
 
     # Finalize freezes the RAW choice.
     deliv = c.post(f"/csf/services/{svc_id}/deliverables/finalize", headers=ah).json()
@@ -193,7 +195,7 @@ def test_every_csf_surface_reads_through_the_one_helper(
     assert latest["client_target_tier"] == 2, "workspace"
     assert _risk_targets(client_id)["csf"] == {
         "target": None,
-        "source": "playbook",
+        "source": "playbook_no_scores",
     }, "risk gather: the Playbook, never the engagement tier (#474 D')"
     deliv = c.post(f"/csf/services/{svc_id}/deliverables/finalize", headers=ah).json()
     assert _deliverable_freeze(svc_id) == (2, "finalize"), "finalize"
