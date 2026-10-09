@@ -27,6 +27,7 @@ from app.mode_stamp import (
     pdf_paragraph,
     xlsx_rows,
 )
+from app.xlsx_export import safe_text_row  # #972: every workbook append
 
 # ---------------------------------------------------------------------------
 # XLSX workbook
@@ -126,7 +127,7 @@ def _banner(ws: Any, approved: bool) -> None:
     """
     from openpyxl.styles import Font, PatternFill
 
-    ws.append([_approval_notice(approved)])
+    safe_text_row(ws, [_approval_notice(approved)])
     cell = ws.cell(row=1, column=1)
     cell.font = Font(bold=True, color=_NOTICE_ARGB[approved])
     cell.fill = PatternFill(
@@ -167,7 +168,7 @@ def render_xlsx(
         # data. A hardcoded `1` here would have bolded the notice and left the
         # column headings plain, which looks like a styling slip and is
         # actually the banner being overwritten.
-        ws.append(cols)
+        safe_text_row(ws, cols)
         row = ws.max_row
         for i in range(1, len(cols) + 1):
             cell = ws.cell(row=row, column=i)
@@ -220,7 +221,8 @@ def render_xlsx(
     )
     for r in enterprise_rows:
         levels = r.tier_levels
-        ws.append(
+        safe_text_row(
+            ws,
             [
                 r.subcategory_code,
                 r.function,
@@ -233,7 +235,7 @@ def render_xlsx(
                 f"L{r.target_level}" if r.target_level else "",
                 _gap_cell(r),
                 r.priority or "",
-            ]
+            ],
         )
     # from_row=2: the banner is row 1 (#294).
     _autofit(ws, from_row=2)
@@ -261,7 +263,8 @@ def render_xlsx(
             ],
         )
         for row in rows:
-            ts.append(
+            safe_text_row(
+                ts,
                 [
                     row.subcategory_code,
                     row.governance,
@@ -274,7 +277,7 @@ def render_xlsx(
                     "Yes" if row.evidence_capped else "",
                     "Yes" if row.in_scope else "No",
                     f"L{row.target_level}" if row.target_level else "",
-                ]
+                ],
             )
         _autofit(ts, from_row=2)
 
@@ -305,7 +308,8 @@ def render_xlsx(
             continue
         act = actions.get(r.subcategory_code)
         override = getattr(act, "priority_override", None) if act else None
-        aps.append(
+        safe_text_row(
+            aps,
             [
                 r.subcategory_code,
                 r.name,
@@ -318,25 +322,26 @@ def render_xlsx(
                 getattr(act, "resources", "") or "" if act else "",
                 getattr(act, "success_criteria", "") or "" if act else "",
                 getattr(act, "poam_ref", "") or "" if act else "",
-            ]
+            ],
         )
     _autofit(aps, from_row=2)
 
     cover = wb.create_sheet("About", 0)
-    cover.append(["SHIELD by Kentro — CSF 2.0 Full Playbook"])
-    cover.append([f"Client: {client_name}"])
-    cover.append([f"Working profile version: {version}"])
+    safe_text_row(cover, ["SHIELD by Kentro — CSF 2.0 Full Playbook"])
+    safe_text_row(cover, [f"Client: {client_name}"])
+    safe_text_row(cover, [f"Working profile version: {version}"])
     # #277: on the SHEET, not only in the filename.
-    cover.append([_approval_notice(approved)])
+    safe_text_row(cover, [_approval_notice(approved)])
     if retired_note:
-        cover.append([retired_note])  # #852: kept rows, not on any sheet below
-    cover.append([])
-    cover.append(
+        safe_text_row(cover, [retired_note])  # #852: kept rows, not on any sheet below
+    safe_text_row(cover, [])
+    safe_text_row(
+        cover,
         [
             "Levels are code-computed: total = sum of the five dimensions (0-10); "
             "L1 0-2, L2 3-5, L3 6-7, L4 8-9, L5 10. Enterprise = weighted-floor "
             "roll-up across the tiers in use."
-        ]
+        ],
     )
     cover["A1"].font = Font(bold=True, size=14)
 
@@ -347,7 +352,7 @@ def render_xlsx(
     ai_heading, ai_rows = xlsx_rows(ai_mode)
     _header(ai_ws, ai_heading)
     for ai_row in ai_rows:
-        ai_ws.append(ai_row)
+        safe_text_row(ai_ws, ai_row)
     ai_ws.column_dimensions["A"].width = 24
 
     out = io.BytesIO()

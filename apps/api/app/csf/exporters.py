@@ -35,6 +35,8 @@ from app.mode_stamp import (
     add_xlsx_sheet,
     pdf_paragraph,
 )
+from app.pdf_export import pdf_text
+from app.xlsx_export import safe_text_row
 
 if TYPE_CHECKING:
     from reportlab.platypus import TableStyle
@@ -187,23 +189,26 @@ def render_xlsx(ctx: CsfDeliverableContext) -> bytes:
 
     # --- Sheet 1: Score Summary ---
     ws = wb.create_sheet("Score Summary")
-    ws.append(["Engagement", ctx.client_legal_name])
-    ws.append(["Service", ctx.service_title])
-    ws.append(["Assessment version", ctx.assessment.version])
-    ws.append(["Overall maturity", ctx.score.overall_maturity_label])
-    ws.append(["Average tier", _fmt_tier(ctx.score.average_tier)])
-    ws.append(["Coverage", f"{ctx.score.answered_subcategories}/{ctx.score.total_subcategories}"])
+    safe_text_row(ws, ["Engagement", ctx.client_legal_name])
+    safe_text_row(ws, ["Service", ctx.service_title])
+    safe_text_row(ws, ["Assessment version", ctx.assessment.version])
+    safe_text_row(ws, ["Overall maturity", ctx.score.overall_maturity_label])
+    safe_text_row(ws, ["Average tier", _fmt_tier(ctx.score.average_tier)])
+    safe_text_row(
+        ws, ["Coverage", f"{ctx.score.answered_subcategories}/{ctx.score.total_subcategories}"]
+    )
     for row in ws.iter_rows(min_row=1, max_row=6, min_col=1, max_col=1):
         for cell in row:
             cell.font = bold
-    ws.append([])
-    ws.append(["Function", "Name", "Answered", "Total", "Coverage %", "Average tier"])
+    safe_text_row(ws, [])
+    safe_text_row(ws, ["Function", "Name", "Answered", "Total", "Coverage %", "Average tier"])
     for col_idx in range(1, 7):
         cell = ws.cell(row=ws.max_row, column=col_idx)
         cell.font = bold
         cell.fill = header_fill
     for fs in ctx.score.by_function:
-        ws.append(
+        safe_text_row(
+            ws,
             [
                 fs.function.value,
                 fs.function_name,
@@ -211,12 +216,12 @@ def render_xlsx(ctx: CsfDeliverableContext) -> bytes:
                 fs.subcategory_count,
                 fs.coverage_pct,
                 _fmt_tier(fs.average_tier),
-            ]
+            ],
         )
     retired = _retired_note(ctx)
     if retired:
-        ws.append([])
-        ws.append(["Not scored", retired])  # #852: a subcategory CSF 2.0 does not have
+        safe_text_row(ws, [])
+        safe_text_row(ws, ["Not scored", retired])  # #852: a subcategory CSF 2.0 does not have
     for w, col in zip([10, 28, 12, 10, 14, 16], range(1, 7), strict=True):
         ws.column_dimensions[get_column_letter(col)].width = w
 
@@ -232,7 +237,7 @@ def render_xlsx(ctx: CsfDeliverableContext) -> bytes:
         "Tier label",
         "Notes",
     ]
-    ws2.append(headers)
+    safe_text_row(ws2, headers)
     for col in range(1, len(headers) + 1):
         cell = ws2.cell(row=1, column=col)
         cell.font = bold
@@ -246,7 +251,8 @@ def render_xlsx(ctx: CsfDeliverableContext) -> bytes:
         ans = answers_by_code.get(sc.code)
         tier = ans.maturity_tier if ans else None
         notes = ans.notes if ans else None
-        ws2.append(
+        safe_text_row(
+            ws2,
             [
                 sc.code,
                 sc.function.value,
@@ -256,7 +262,7 @@ def render_xlsx(ctx: CsfDeliverableContext) -> bytes:
                 tier if tier is not None else "",
                 tier_label(tier) if tier is not None else "Unscored",
                 notes or "",
-            ]
+            ],
         )
     for w, col in zip([14, 10, 10, 32, 60, 8, 16, 60], range(1, 9), strict=True):
         ws2.column_dimensions[get_column_letter(col)].width = w
@@ -277,14 +283,15 @@ def render_xlsx(ctx: CsfDeliverableContext) -> bytes:
     # Caption first, so a client reading top-down learns the list is a slice
     # BEFORE reading it. That puts the header on row 2 — every row index below
     # is offset accordingly.
-    ws3.append([_gap_plan_caption(ctx.gap, _target_note(ctx))])
-    ws3.append(headers3)
+    safe_text_row(ws3, [_gap_plan_caption(ctx.gap, _target_note(ctx))])
+    safe_text_row(ws3, headers3)
     for col in range(1, len(headers3) + 1):
         cell = ws3.cell(row=2, column=col)
         cell.font = bold
         cell.fill = header_fill
     for g in ctx.gap.gaps:
-        ws3.append(
+        safe_text_row(
+            ws3,
             [
                 g.code,
                 g.function.value,
@@ -295,10 +302,11 @@ def render_xlsx(ctx: CsfDeliverableContext) -> bytes:
                 g.gap_size,
                 g.priority_score,
                 g.notes or "",
-            ]
+            ],
         )
     if not ctx.gap.gaps:
-        ws3.append(
+        safe_text_row(
+            ws3,
             [
                 "—",
                 "",
@@ -309,7 +317,7 @@ def render_xlsx(ctx: CsfDeliverableContext) -> bytes:
                 0,
                 0,
                 "",
-            ]
+            ],
         )
         # Row 1 is the caption, row 2 the header, so the placeholder is row 3.
         ws3.cell(row=3, column=4).font = italic
@@ -426,8 +434,8 @@ def render_pdf(ctx: CsfDeliverableContext) -> bytes:
     body = styles["BodyText"]
 
     story: list = []
-    story.append(Paragraph(ctx.service_title, h1))
-    story.append(Paragraph(ctx.client_legal_name, body))
+    story.append(pdf_text(ctx.service_title, h1))  # #775
+    story.append(pdf_text(ctx.client_legal_name, body))  # #775
     story.append(pdf_paragraph(ctx.ai_mode, body))  # #646, under the title
     retired = _retired_note(ctx)
     if retired:

@@ -28,9 +28,11 @@ from app.mode_stamp import (
     pdf_paragraph,
 )
 from app.models.capability import CapabilityDisposition, CapabilityItem, CapabilityList
+from app.pdf_export import pdf_text
 from app.tech_debt.components import is_component, source_items
 from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.savings import estimated_savings as estimated_savings_of
+from app.xlsx_export import safe_text_row
 
 
 @dataclass(frozen=True)
@@ -328,7 +330,7 @@ def render_xlsx(ctx: DeliverableContext) -> bytes:
         "Notes",
         "AI Confidence %",
     ]
-    ws.append(header)
+    safe_text_row(ws, header)
     header_fill = PatternFill(start_color="FFEEF2F7", end_color="FFEEF2F7", fill_type="solid")
     for col in range(1, len(header) + 1):
         cell = ws.cell(row=1, column=col)
@@ -337,7 +339,8 @@ def render_xlsx(ctx: DeliverableContext) -> bytes:
         cell.alignment = Alignment(horizontal="left", vertical="center")
 
     for item in ctx.items:
-        ws.append(
+        safe_text_row(
+            ws,
             [
                 item.name,
                 item.vendor or "",
@@ -349,7 +352,7 @@ def render_xlsx(ctx: DeliverableContext) -> bytes:
                 item.disposition_rationale or "",
                 item.notes or "",
                 item.confidence_pct if item.confidence_pct is not None else "",
-            ]
+            ],
         )
 
     # Summary row at the bottom.
@@ -422,8 +425,8 @@ def render_pdf(ctx: DeliverableContext) -> bytes:
     body = styles["BodyText"]
 
     story: list = []
-    story.append(Paragraph(ctx.service_title, h1))
-    story.append(Paragraph(ctx.client_legal_name, body))
+    story.append(pdf_text(ctx.service_title, h1))  # #775
+    story.append(pdf_text(ctx.client_legal_name, body))  # #775
     story.append(pdf_paragraph(ctx.ai_mode, body))  # #646, under the title
     story.append(Spacer(1, 0.2 * inch))
 
