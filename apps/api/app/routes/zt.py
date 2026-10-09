@@ -670,6 +670,21 @@ def _zt_capability_details(framework: ZtFrameworkCode, codes: list[str]) -> dict
     return details
 
 
+# #984 for #981: `capability_details` is catalog text (pillar and capability
+# names, DoD roadmap activities), so it egresses unredacted and guarded like
+# `capabilities` below: a client named "DoD" or "Data" no longer rewrites it,
+# and any entry that is not the catalog's, byte for byte, is refused before the
+# provider is called. The guard CALLS the builder the request uses, with the
+# payload's own framework; a payload with no framework cannot be rebuilt, so
+# it is refused, never sent unguarded.
+register_catalog_field(
+    "capability_details",
+    lambda payload, value: _zt_capability_details(
+        ZtFrameworkCode(payload["framework"]), list(value)
+    ),
+)
+
+
 # #984, #986: the capability codes a request asks about are catalog text, and a
 # client named "DoD" turned every DoD code into "[CLIENT].USR.01" (one named
 # "CISA" did the same to CISA's), so the model was asked about codes that do not
