@@ -92,6 +92,12 @@ def run_batches(
     instead of one per batch. Any other failure -- a rate limit, a 5xx, a
     timeout, a malformed answer -- costs its batch and the run goes on.
 
+    ANY OTHER EXCEPTION raised while the caller waits for results -- a Ctrl-C,
+    a failure in the caller's own thread -- cancels every batch not yet
+    started and is re-raised UNCHANGED (#806). Before, only the deadline
+    cancelled them, and queued batches went on to bill after the caller had
+    stopped listening.
+
     The single-call purposes (`zt_score`, `extract.capabilities`) do not come
     through here: one call already stops at its first failure.
     """
@@ -225,6 +231,23 @@ def run_batches(
         pool.shutdown(wait=False, cancel_futures=True)
         _log.error(f"{job_name}_deadline_exceeded", service_id=str(service_id))
         raise RunFailed(RUN_DEADLINE_EXCEEDED, deadline_message) from exc
+    except BaseException as exc:
+        # #806 (the advisor's option (b) on #736): ANY other exception while
+        # waiting -- a Ctrl-C, a failure in the caller's thread -- cancels the
+        # queued batches too. Before this only the deadline did, so they went
+        # on to start, and bill, after the caller had stopped listening. The
+        # stop flag also turns away a batch a worker has just dequeued; one
+        # already inside a provider call cannot be cancelled and finishes into
+        # its own `llm_calls` row. The ORIGINAL exception is re-raised
+        # unchanged: callers type it themselves.
+        stop.set()
+        pool.shutdown(wait=False, cancel_futures=True)
+        _log.error(
+            f"{job_name}_batches_cancelled",
+            service_id=str(service_id),
+            error=type(exc).__name__,
+        )
+        raise
     pool.shutdown(wait=True)
 
     # A batch with no answer is a failed batch, whether it was sent and failed
