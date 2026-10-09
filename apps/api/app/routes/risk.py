@@ -26,9 +26,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
+from app.ai.catalog_fields import register_catalog_field
 from app.ai.engine import get_job, run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
+from app.attack.catalog import technique_by_id
 from app.attack.catalog_version import catalog_mismatch_message, require_current_catalog
 from app.attack.computed import effective_coverage
 from app.attack.parents import is_computed_parent
@@ -36,6 +38,7 @@ from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.release_readiness import unreviewed_codes as attack_unreviewed_codes
 from app.attack.rules import parents_computed
 from app.audit import audit
+from app.csf.catalog import subcategory_by_code
 from app.csf.gap import resolve_target_tier
 from app.csf.retired import catalog_rows as csf_catalog_rows
 from app.db.session import get_db
@@ -1342,6 +1345,37 @@ def _batches(findings: list[dict], keys: list[str] | None) -> list[list[dict]]:
     if batch:
         out.append(batch)
     return out
+
+
+def _catalog_control_code(code: str) -> str:
+    """`code` as the CSF or Zero Trust catalog has it. `valid_controls` mixes
+    the two (`_gather_findings`), and their codes never share a spelling, so
+    exactly one catalog must know it. KeyError otherwise, including a code both
+    knew, which the guard reports as a mismatch rather than guessing."""
+    found = []
+    for lookup in (subcategory_by_code, zt_capability_by_code):
+        try:
+            found.append(lookup(code).code)
+        except KeyError:
+            continue  # this catalog does not have it; the count below decides
+    if len(found) != 1:
+        raise KeyError(code)
+    return found[0]
+
+
+# #997 (the code lists; #986's Risk twin): the allow-lists are catalog codes,
+# and strict redaction rewrote them for a client named after a code's prefix --
+# "GV" sent every CSF code as "[CLIENT].OC-01", "DoD" every DoD capability as
+# "[CLIENT].USR.01" (measured on main aa099ac0). Sent verbatim and guarded
+# (#985): each entry is rebuilt from its catalog, so a value that is not a
+# catalog code is refused before egress, not sent. `findings` is deliberately
+# NOT registered: it is nested, and its design waits on the Risk E ruling.
+register_catalog_field(
+    "valid_controls", lambda _payload, value: [_catalog_control_code(c) for c in value]
+)
+register_catalog_field(
+    "valid_techniques", lambda _payload, value: [technique_by_id(c).id for c in value]
+)
 
 
 def _run_risk_synthesize_batched(
