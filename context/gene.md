@@ -11,6 +11,18 @@ approved on #736 (comment 6072976838). The DoD output-cap probe is authorized
 but still waits on a provider key in this environment, and #981 merges only
 after it. It comes back to you, not self-merged: conditions 5 and 6._
 
+_2026-10-09 (track1): #775 and #972 are built on `track1/775-export-escape`,
+for #775 and #972, with `main` merged in at e3c962f0 after the run_batches PR
+(#978) landed; the PR is not yet open. Every PDF prints the
+service title and the client's name as text (no more "ATT&CK;", and a name with
+"</b>" no longer fails finalize), and every free-text XLSX cell in CSF, Zero
+Trust, Tech Debt and Risk is stored as text, so a value opening with "=", "+",
+"-", "@", tab or carriage return is shown as typed and not evaluated in the
+.xlsx (a CSV saved from it carries the raw value, for #992). One golden word
+changes, declared. Follow-up filed as #991 (tier-3): the `pdf_export.py`
+docstring states a greppable invariant that the other exporters do not meet
+and nothing checks. It comes back to you: conditions 5 and 6._
+
 _2026-10-09: #944 is built on `track6/944-cap-note-order`._
 
 **What it does:** the DoD cap note now sits directly under the Zero Trust

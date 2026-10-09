@@ -23,6 +23,8 @@ from app.mode_stamp import (
     pdf_paragraph,
 )
 from app.models.zt_assessment import ZtAnswer, ZtAssessment
+from app.pdf_export import pdf_escape, pdf_text
+from app.xlsx_export import safe_text_row
 from app.zt.catalog import capabilities, pillars
 from app.zt.maturity import ZtFrameworkCode, stage_label
 from app.zt.retired import retired_answer_count, retired_sentence
@@ -257,35 +259,38 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
 
     # --- Score Summary ---
     ws = wb.create_sheet("Score Summary")
-    ws.append(["Engagement", ctx.client_legal_name])
-    ws.append(["Service", ctx.service_title])
-    ws.append(["Framework", _framework_label(ctx.framework)])
+    safe_text_row(ws, ["Engagement", ctx.client_legal_name])
+    safe_text_row(ws, ["Service", ctx.service_title])
+    safe_text_row(ws, ["Framework", _framework_label(ctx.framework)])
     source_note = _source_note(ctx.framework)
     if source_note:
-        ws.append(["Source", source_note])  # #839
-        ws.append(["", _DOD_AS_PUBLISHED])  # #839, ruling 4
-    ws.append(["Assessment version", ctx.assessment.version])
-    ws.append(["Overall stage", ctx.score.overall_stage_label])
-    ws.append(["Average stage", _fmt(ctx.score.average_stage)])
-    ws.append(["Coverage", f"{ctx.score.answered_capabilities}/{ctx.score.total_capabilities}"])
+        safe_text_row(ws, ["Source", source_note])  # #839
+        safe_text_row(ws, ["", _DOD_AS_PUBLISHED])  # #839, ruling 4
+    safe_text_row(ws, ["Assessment version", ctx.assessment.version])
+    safe_text_row(ws, ["Overall stage", ctx.score.overall_stage_label])
+    safe_text_row(ws, ["Average stage", _fmt(ctx.score.average_stage)])
+    safe_text_row(
+        ws, ["Coverage", f"{ctx.score.answered_capabilities}/{ctx.score.total_capabilities}"]
+    )
     retired = _retired_note(ctx)
     if retired:
-        ws.append(["Not scored", retired])  # #838: rows the catalog no longer has
+        safe_text_row(ws, ["Not scored", retired])  # #838: rows the catalog no longer has
     for sentence in _stage_above_max_notes(ctx):
         # #839 S1, one row per capability. The label cell is left empty: only
         # the sentence is approved copy (#736 comment 6049667540).
-        ws.append(["", sentence])
+        safe_text_row(ws, ["", sentence])
     for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=1):
         for cell in row:
             cell.font = bold
-    ws.append([])
-    ws.append(["Pillar", "Name", "Answered", "Total", "Coverage %", "Average stage"])
+    safe_text_row(ws, [])
+    safe_text_row(ws, ["Pillar", "Name", "Answered", "Total", "Coverage %", "Average stage"])
     for col_idx in range(1, 7):
         cell = ws.cell(row=ws.max_row, column=col_idx)
         cell.font = bold
         cell.fill = header_fill
     for ps in ctx.score.by_pillar:
-        ws.append(
+        safe_text_row(
+            ws,
             [
                 ps.pillar_code,
                 ps.pillar_name,
@@ -293,7 +298,7 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
                 ps.capability_count,
                 ps.coverage_pct,
                 _fmt(ps.average_stage),
-            ]
+            ],
         )
     for w, col in zip([10, 36, 12, 10, 14, 16], range(1, 7), strict=True):
         ws.column_dimensions[get_column_letter(col)].width = w
@@ -301,7 +306,7 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
     # --- Answers ---
     ws2 = wb.create_sheet("Answers")
     headers = ["Capability", "Pillar", "Name", "Outcome", "Stage", "Stage label", "Notes"]
-    ws2.append(headers)
+    safe_text_row(ws2, headers)
     for col in range(1, len(headers) + 1):
         cell = ws2.cell(row=1, column=col)
         cell.font = bold
@@ -315,7 +320,8 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
         ans = answers_by_code.get(cap.code)
         s = ans.maturity_stage if ans else None
         notes = ans.notes if ans else None
-        ws2.append(
+        safe_text_row(
+            ws2,
             [
                 cap.code,
                 f"{cap.pillar_code} · {pillar_lookup.get(cap.pillar_code, cap.pillar_code)}",
@@ -324,7 +330,7 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
                 s if s is not None else "",
                 stage_label(s, ctx.framework) if s is not None else "Unscored",
                 notes or "",
-            ]
+            ],
         )
     for w, col in zip([18, 30, 36, 60, 8, 16, 60], range(1, 8), strict=True):
         ws2.column_dimensions[get_column_letter(col)].width = w
@@ -347,14 +353,15 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
     # assumes row 1 is the header (`pandas.read_excel`, Excel's "Format as
     # Table") will take the caption as column names. Nothing in this repo reads
     # this sheet, and the disclosure is for a human, so visibility wins.
-    ws3.append([_gap_plan_caption(ctx.gap, _target_note(ctx))])
-    ws3.append(headers3)
+    safe_text_row(ws3, [_gap_plan_caption(ctx.gap, _target_note(ctx))])
+    safe_text_row(ws3, headers3)
     for col in range(1, len(headers3) + 1):
         cell = ws3.cell(row=2, column=col)
         cell.font = bold
         cell.fill = header_fill
     for g in ctx.gap.gaps:
-        ws3.append(
+        safe_text_row(
+            ws3,
             [
                 g.code,
                 g.pillar_code,
@@ -364,10 +371,10 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
                 g.gap_size,
                 g.priority_score,
                 g.notes or "",
-            ]
+            ],
         )
     if not ctx.gap.gaps:
-        ws3.append(["—", "", "No gaps at target stage", "", ctx.gap.target_stage, 0, 0, ""])
+        safe_text_row(ws3, ["—", "", "No gaps at target stage", "", ctx.gap.target_stage, 0, 0, ""])
         # Row 1 is the caption and row 2 the header, so the placeholder is row 3.
         # This said row 2 until the caption was inserted above it — which styled
         # the "Name" HEADER italic and dropped its bold, because assigning
@@ -376,9 +383,9 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
     # #839: below the plan, so the header stays row 2. One row per capability.
     caps = target_cap_sentences(ctx.gap)
     if caps:
-        ws3.append([])
+        safe_text_row(ws3, [])
         for sentence in caps:
-            ws3.append([sentence])
+            safe_text_row(ws3, [sentence])
     for w, col in zip([18, 10, 36, 14, 14, 12, 12, 50], range(1, 9), strict=True):
         ws3.column_dimensions[get_column_letter(col)].width = w
 
@@ -504,8 +511,11 @@ def render_pdf(ctx: ZtDeliverableContext) -> bytes:
     body = styles["BodyText"]
 
     story: list = []
-    story.append(Paragraph(ctx.service_title, h1))
-    story.append(Paragraph(f"{ctx.client_legal_name} · {_framework_label(ctx.framework)}", body))
+    story.append(pdf_text(ctx.service_title, h1))  # #775
+    # #775: only the name is free text; the framework label is a literal.
+    story.append(
+        Paragraph(f"{pdf_escape(ctx.client_legal_name)} · {_framework_label(ctx.framework)}", body)
+    )
     story.append(pdf_paragraph(ctx.ai_mode, body))  # #646, under the title
     source_note = _source_note(ctx.framework)
     if source_note:
@@ -552,9 +562,10 @@ def render_pdf(ctx: ZtDeliverableContext) -> bytes:
     story.append(Paragraph(f"Top remediation gaps (target S{ctx.gap.target_stage})", h2))
     story.append(Paragraph(_gap_plan_caption(ctx.gap, _target_note(ctx)), styles["BodyText"]))
     for sentence in target_cap_sentences(ctx.gap):  # #839, per capability
-        story.append(Paragraph(sentence, styles["BodyText"]))
+        # #775: the sentences carry catalog names; printed as text.
+        story.append(pdf_text(sentence, styles["BodyText"]))
     for sentence in _stage_above_max_notes(ctx):  # #839 S1, after the cap sentences
-        story.append(Paragraph(sentence, styles["BodyText"]))
+        story.append(pdf_text(sentence, styles["BodyText"]))  # #775
     if not ctx.gap.gaps:
         story.append(
             Paragraph(

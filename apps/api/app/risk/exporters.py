@@ -8,7 +8,6 @@ table. Tool bytes are written by the route layer.
 
 from __future__ import annotations
 
-import html
 import io
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -22,6 +21,7 @@ from app.mode_stamp import (
     add_xlsx_sheet,
     pdf_paragraph,
 )
+from app.pdf_export import pdf_text
 from app.risk.engine import (
     IMPACT_ORDER,
     LIKELIHOOD_ORDER,
@@ -36,6 +36,7 @@ from app.risk.engine import (
     matrix_counts,
     tier_counts,
 )
+from app.xlsx_export import safe_text_row
 
 #: #737, Gene's ruling (#736, 5986057990 item 13), verbatim.
 DRAFT_MARKER = "Draft: not published"
@@ -253,7 +254,7 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
         "Trust",
         *_GOVERNANCE_COLUMNS,
     ]
-    ws.append(header)
+    safe_text_row(ws, header)
     fill = PatternFill(start_color="FFEEF2F7", end_color="FFEEF2F7", fill_type="solid")
     for col in range(1, len(header) + 1):
         cell = ws.cell(row=1, column=col)
@@ -261,7 +262,8 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
         cell.fill = fill
 
     for i, e in enumerate(ctx.entries, start=1):
-        ws.append(
+        safe_text_row(
+            ws,
             [
                 i,
                 e.title,
@@ -281,7 +283,7 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
                 e.trust or "",
                 # Blank governance columns for the client.
                 *["" for _ in _GOVERNANCE_COLUMNS],
-            ]
+            ],
         )
 
     # #403, the XLSX half. The PDF and Word carry this in `_summary_lines`;
@@ -304,31 +306,35 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
     # formats cannot drift apart.
     summary = wb.create_sheet("Summary")
     if ctx.draft:
-        summary.append([DRAFT_MARKER])
-    summary.append(["Summary"])
+        safe_text_row(summary, [DRAFT_MARKER])
+    safe_text_row(summary, ["Summary"])
     summary.cell(row=1, column=1).font = Font(bold=True)
     for line in _summary_lines(ctx):
-        summary.append([line])
+        safe_text_row(summary, [line])
 
     if ctx.link_scope:
         sheet = wb.create_sheet("Scored coverage")
-        sheet.append(["Assessment", "Rows scored", "Rows total", "Not citable", "Pending review"])
+        safe_text_row(
+            sheet, ["Assessment", "Rows scored", "Rows total", "Not citable", "Pending review"]
+        )
         for col in range(1, 6):
             cell = sheet.cell(row=1, column=col)
             cell.font = Font(bold=True)
             cell.fill = fill
         for service, scored, total, pending in sorted(ctx.link_scope):
-            sheet.append(
+            safe_text_row(
+                sheet,
                 [
                     scope_label(service),
                     scored,
                     total,
                     total - scored,
                     _pending_cell(service, pending),
-                ]
+                ],
             )
-        sheet.append([])
-        sheet.append(
+        safe_text_row(sheet, [])
+        safe_text_row(
+            sheet,
             [
                 # #554: "Not verified" is the ATT&CK deliverable's word for
                 # these rows. Two client documents naming the same rows two
@@ -337,11 +343,11 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
                 "assessment has scored, so unscored rows and techniques marked "
                 "Not verified cannot appear in the Linked Techniques or Linked "
                 "Controls columns."
-            ]
+            ],
         )
         # #415: the pending-review sentence, or that it was not recorded.
         for line in _pending_review_lines(ctx):
-            sheet.append([line])
+            safe_text_row(sheet, [line])
 
     out = io.BytesIO()
     add_xlsx_sheet(wb, ctx.ai_mode)  # #646: the LAST sheet
@@ -705,7 +711,7 @@ def render_pdf(ctx: RiskExportContext) -> bytes:
         reads, so every string prints as itself. Here and not in
         `_summary_lines`, which also feeds the DOCX and XLSX: those are plain
         text and would print `&amp;`."""
-        return Paragraph(html.escape(s, quote=False), style)
+        return pdf_text(s, style)  # #775: the shared helper, app/pdf_export.py
 
     story: list = [
         _text(f"Risk Register (v{ctx.version})", h1),
