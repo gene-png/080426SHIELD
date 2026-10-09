@@ -476,14 +476,14 @@ def _pending_review_lines(ctx: RiskExportContext) -> list[str]:
     ]
 
 
-def _pending_cell(service: str, pending: int | None) -> int | str | None:
+def _pending_cell(service: str, pending: int | None) -> int | str:
     """#415, C2: the "Pending review" column. ATT&CK shows its count, 0
     included (ruling (a)); CSF and ZT have no review queue and read "n/a"; an
-    ATT&CK row from before the count is left blank, beside the footnote's
-    not-recorded sentence."""
+    ATT&CK row from before the count reads "not recorded" (#736 6073312727),
+    because a blank cell in a column that always shows a number reads as 0."""
     if not _is_attack_scope(service):
         return "n/a"
-    return pending
+    return "not recorded" if pending is None else pending
 
 
 def _summary_lines(ctx: RiskExportContext) -> list[str]:

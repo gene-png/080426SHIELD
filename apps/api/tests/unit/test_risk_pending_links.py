@@ -301,7 +301,7 @@ def test_a_register_from_before_this_says_the_count_was_not_recorded(
     assert _NOT_RECORDED in files["docx"]
     assert "pending review and is not linked" not in files["pdf"]
     by_label = {r[0]: r for r in files["xlsx_scope"][1:] if r and r[0]}
-    assert by_label["ATT&CK coverage"][4] is None
+    assert by_label["ATT&CK coverage"][4] == "not recorded"
     assert any(r and r[0] == _NOT_RECORDED for r in files["xlsx_scope"]), files["xlsx_scope"]
 
 
