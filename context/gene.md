@@ -1,5 +1,15 @@
 # Gene — in-flight status
 
+_2026-10-09 (track5): the #806 CSF prompt is built on `track5/806-csf-prompt`;
+the PR is not yet open. It ships your approved CSF text (#806 comment
+5982122270, sha256-pinned) as `prompt_version` "v2", sends each
+subcategory's NIST outcome text through #985's catalog guard, a batch's own
+codes only, and rewrites the offline fixture from the prompt. The test edits
+are A1 to A5 as approved on #736 (comment 6075712436), s7 included. The batch
+size stays at 10 until the authorized probe runs, which waits on a provider
+key. No live call was made. It comes back to you, not self-merged:
+conditions 5 and 6._
+
 _2026-10-09 (track1): #775 and #972 are built on `track1/775-export-escape`,
 for #775 and #972, with `main` merged in at e3c962f0 after the run_batches PR
 (#978) landed; the PR is not yet open. Every PDF prints the
