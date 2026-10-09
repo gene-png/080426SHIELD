@@ -67,7 +67,7 @@ import functools
 import itertools
 import json
 import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -615,7 +615,25 @@ def compare_pair(
     if objects_only:
         rows["unkeyable_a"] = len(keyless_a or [])
         rows["unkeyable_b"] = len(keyless_b or [])
-    return {"rows": rows, "fields": out_fields}
+    out: dict[str, Any] = {"rows": rows, "fields": out_fields}
+    if job == "zt_score":
+        # #806: the apply path reads `current` only, so any other key on a row
+        # (a stray `target` above all) is an `unknown_field` there. Counted here
+        # per run, never compared: two runs agreeing on a value nobody applies
+        # is not agreement.
+        out["unknown_fields"] = {
+            "a": _unknown_field_count(ia.values(), key_fields, fields),
+            "b": _unknown_field_count(ib.values(), key_fields, fields),
+        }
+    return out
+
+
+def _unknown_field_count(
+    rows: Iterable[Mapping[str, Any]], key_fields: Sequence[str], fields: Sequence[str]
+) -> int:
+    """Keys on the indexed rows that are neither a key field nor a compared one."""
+    known = set(key_fields) | set(fields)
+    return sum(1 for row in rows for k in row if k not in known)
 
 
 def _zt_sent_current(inputs: Mapping[str, Any], code: Any) -> Any:

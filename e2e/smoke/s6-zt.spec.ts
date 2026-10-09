@@ -167,6 +167,27 @@ test("Run AI clamps DoD suggestions to <= 3 and the roadmap groups gaps by month
   test.slow();
   await openFreshDraft(page);
 
+  // #806: the approved prompt gives no result for a capability with blank
+  // notes (A5), and the fixture follows it, so a BLANK draft would change
+  // nothing. Record notes on three capabilities first, through the same API
+  // the questionnaire's notes field saves to; the run under test is the AI's.
+  const ztDodServiceId = await atlasServiceId(page, "zero_trust_dod");
+  const latest = await page.request.get(
+    `/api/proxy/zt/services/${ztDodServiceId}/assessments/latest`,
+  );
+  expect(latest.ok()).toBeTruthy();
+  const draft = (await latest.json()) as { answers: Array<{ id: string }> };
+  expect(draft.answers.length).toBeGreaterThanOrEqual(3);
+  for (const answer of draft.answers.slice(0, 3)) {
+    const saved = await page.request.patch(
+      `/api/proxy/zt/answers/${answer.id}`,
+      { data: { notes: "MFA is enforced for every workforce account." } },
+    );
+    expect(saved.ok()).toBeTruthy();
+  }
+  await page.reload();
+  await expect(page.getByText(/Draft v\d+/)).toBeVisible({ timeout: 30000 });
+
   // Run the fixture AI and capture the what-changed payload.
   const runDone = page.waitForResponse(
     (r) =>
@@ -192,7 +213,8 @@ test("Run AI clamps DoD suggestions to <= 3 and the roadmap groups gaps by month
 
   // Suggestions were applied...
   expect(runBody.changed.length).toBeGreaterThan(0);
-  // ...and every drafted stage (current or target) respects the DoD <= 3 clamp.
+  // ...and every drafted stage respects the DoD <= 3 clamp. Since #806 the AI
+  // drafts a current stage only, never a target.
   const stageValues = runBody.changed
     .map((c) => c.new)
     .filter((v): v is number => typeof v === "number");
@@ -205,10 +227,10 @@ test("Run AI clamps DoD suggestions to <= 3 and the roadmap groups gaps by month
   // not just the ones that landed — this replaced the old "Updated N fields
   // across M capabilities" line.
   //
-  // NOTE: this spec mints a BLANK draft, so every row is unanswered and nothing
-  // is protected; the fixture then echoes the payload keys back with in-range
-  // values, so this run has zero drops and can only prove the accounting line
-  // renders. The VALIDATION drop branches are covered in
+  // NOTE: this spec mints a BLANK draft and records notes only, so every row is
+  // unanswered and nothing is protected; the fixture then answers the noted
+  // rows with in-range values, so this run has zero drops and can only prove
+  // the accounting line renders. The VALIDATION drop branches are covered in
   // ZtRunAiAccounting.test.tsx and the API unit tests.
   //
   // Round 2 correction: "fixture mode cannot produce a drop" is false for ZT.

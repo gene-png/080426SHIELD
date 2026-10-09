@@ -123,7 +123,10 @@ def test_identical_runs_agree_fully_with_denominators() -> None:
         "both_absent": 0,
         "one_absent": 0,
     }
-    assert r["fields"]["target"]["equal"] == 2
+    # #806: `target` is no longer a measured field; the rows' `target` keys
+    # are counted as unknown fields, one per row per run.
+    assert set(r["fields"]) == {"current"}
+    assert r["unknown_fields"] == {"a": 2, "b": 2}
 
 
 def test_a_moved_value_counts_against_that_field_only() -> None:
@@ -134,7 +137,7 @@ def test_a_moved_value_counts_against_that_field_only() -> None:
     assert r["fields"]["current"]["equal"] == 1
     assert r["fields"]["current"]["within_one"] == 2
     assert r["fields"]["current"]["mean_abs_diff"] == 0.5
-    assert r["fields"]["target"]["equal"] == 2
+    assert "target" not in r["fields"]  # #806: counted, never compared
 
 
 def test_a_row_in_one_run_only_is_counted_not_dropped() -> None:
@@ -149,15 +152,15 @@ def test_a_row_in_one_run_only_is_counted_not_dropped() -> None:
 
 
 def test_a_field_one_run_omitted_is_counted_as_missing() -> None:
-    a = _caps({"code": "C1", "current": 2, "target": 3})
-    b = _caps({"code": "C1", "current": 2})
+    # #806: on `current`, the one measured zt field, since `target` is gone.
+    a = _caps({"code": "C1", "current": 2})
+    b = _caps({"code": "C1"})
     r = compare_pair("zt_score", a, b, context=ZT_SCOPE)
-    assert r["fields"]["target"]["compared"] == 1
-    assert r["fields"]["target"]["one_absent"] == 1
-    assert r["fields"]["target"]["equal"] == 0
-    assert r["fields"]["target"]["missing_in_b"] == 1
-    assert r["fields"]["target"]["missing_in_a"] == 0
-    assert r["fields"]["current"]["equal"] == 1
+    assert r["fields"]["current"]["compared"] == 1
+    assert r["fields"]["current"]["one_absent"] == 1
+    assert r["fields"]["current"]["equal"] == 0
+    assert r["fields"]["current"]["missing_in_b"] == 1
+    assert r["fields"]["current"]["missing_in_a"] == 0
 
 
 def test_true_and_one_are_not_the_same_answer() -> None:
@@ -840,7 +843,7 @@ def test_a_non_json_response_is_a_failed_run_through_the_real_path(world) -> Non
 def test_measure_zt_counts_a_stage_the_run_refuses_as_no_agreement(world) -> None:
     """#867 narrow review B-4, through `measure_zt`: a stage off CISA's 1..4
     ladder, answered identically twice, is refused by the apply path both
-    times -- no agreement -- while its in-range sibling agrees."""
+    times -- no agreement. Its stray `target` is counted, not compared (#806)."""
     c, TestSession, provider = world
     code = _zt_assessment(c)
     provider.register_static(
@@ -853,7 +856,8 @@ def test_measure_zt_counts_a_stage_the_run_refuses_as_no_agreement(world) -> Non
     fields = report["pairs"][0]["fields"]
     assert (fields["current"]["compared"], fields["current"]["equal"]) == (1, 0)
     assert fields["current"]["both_absent"] == 1
-    assert (fields["target"]["compared"], fields["target"]["equal"]) == (1, 1)
+    assert "target" not in fields
+    assert report["pairs"][0]["unknown_fields"] == {"a": 1, "b": 1}
 
 
 # --- B1: main() refuses before it builds a provider -------------------------

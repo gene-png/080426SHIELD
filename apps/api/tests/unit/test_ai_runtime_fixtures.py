@@ -101,7 +101,19 @@ def test_run_job_zt_score_cisa_is_parseable_without_overrides(db_session) -> Non
         db_session,
         llm,
         "zt_score",
-        inputs={"framework": "cisa_ztmm_2_0", "capabilities": ["ID.1", "ID.2", "DE.1"]},
+        # The approved prompt's payload (#806, A2): `answers` with notes, since
+        # blank notes get no result (A5).
+        inputs={
+            "framework": "cisa_ztmm_2_0",
+            "capabilities": ["ID.1", "ID.2", "DE.1"],
+            "capability_details": {
+                code: {"pillar": "Identity", "name": code} for code in ("ID.1", "ID.2", "DE.1")
+            },
+            "answers": {
+                code: {"notes": "MFA is enforced for every account.", "current": None}
+                for code in ("ID.1", "ID.2", "DE.1")
+            },
+        },
         requested_by=uuid.uuid4(),
     )
     assert isinstance(result.data, dict)
@@ -109,7 +121,7 @@ def test_run_job_zt_score_cisa_is_parseable_without_overrides(db_session) -> Non
     assert {c["code"] for c in caps} == {"ID.1", "ID.2", "DE.1"}
     for c in caps:
         assert 1 <= c["current"] <= 4
-        assert 1 <= c["target"] <= 4
+        assert set(c) == {"code", "current"}, c  # A9: no `target` (A6)
 
 
 @pytest.mark.unit
@@ -120,14 +132,34 @@ def test_zt_score_dod_respects_three_stage_clamp(db_session) -> None:
         db_session,
         llm,
         "zt_score",
-        inputs={"framework": "dod_ztra", "capabilities": ["ID.1", "ID.2", "AC.1"]},
+        # The approved prompt's payload (#806, A2): notes, and each DoD
+        # capability's activities (C3: none means no result).
+        inputs={
+            "framework": "dod_ztra",
+            "capabilities": ["ID.1", "ID.2", "AC.1"],
+            "capability_details": {
+                code: {
+                    "pillar": "User",
+                    "name": code,
+                    "activities": [
+                        {"id": "1.1.1", "name": "t", "level": "target", "description": "d"},
+                        {"id": "1.1.2", "name": "a", "level": "advanced", "description": "d"},
+                    ],
+                }
+                for code in ("ID.1", "ID.2", "AC.1")
+            },
+            "answers": {
+                code: {"notes": "MFA is enforced for every account.", "current": None}
+                for code in ("ID.1", "ID.2", "AC.1")
+            },
+        },
         requested_by=uuid.uuid4(),
     )
     caps = result.data["capabilities"]
     assert caps, "expected at least one drafted capability"
     for c in caps:
         assert 1 <= c["current"] <= 3
-        assert 1 <= c["target"] <= 3
+        assert set(c) == {"code", "current"}, c  # A9: no `target` (A6)
 
 
 @pytest.mark.unit

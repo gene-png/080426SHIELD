@@ -87,9 +87,13 @@ def test_zt_run_ai_applies_current_and_target(app_client) -> None:
     body = r
     row = next(x for x in body["answers"] if x["capability_code"] == code)
     assert row["maturity_stage"] == 2
-    assert row["target_stage"] == 4
+    # #806 (ruling (a), #736 comment 5963632707): the AI's target is no longer
+    # applied. It is counted as an unknown field, and the row's target stays.
+    assert row["target_stage"] is None
     fields = {ch["field"] for ch in body["changed"] if ch["capability_code"] == code}
-    assert {"maturity_stage", "target_stage"} <= fields
+    assert fields == {"maturity_stage"}
+    stray = [d for d in body["dropped"] if d["field"] == "target"]
+    assert [d["reason"] for d in stray] == ["unknown_field"], body["dropped"]
 
     # This test used to assert `pillar_narratives` and `executive_summary` were
     # echoed back. Those assertions were not WRONG about the old behaviour —
@@ -115,8 +119,10 @@ def test_zt_run_ai_applies_current_and_target(app_client) -> None:
     # above; asserted here so a future `received` that enumerates top-level keys
     # cannot pass silently.
     assert body["suggestions_received"] == 2, body
-    assert body["suggestions_applied"] == 2, body
-    assert body["dropped"] == [], body["dropped"]
+    assert body["suggestions_applied"] == 1, body
+    assert [(d["reason"], d["field"]) for d in body["dropped"]] == [
+        ("unknown_field", "target")
+    ], body["dropped"]
 
 
 @pytest.mark.unit
@@ -341,10 +347,10 @@ def test_live_run_ai_agreeing_with_the_client_does_not_claim_authorship(
     assessment leaves DRAFT — and unprotects the row for every later fixture
     run, because `protected_keys` protects only non-AI rows.
 
-    The model here also proposes a TARGET, which IS new: the target must land
-    and appear in the diff, while the client's stamp on the maturity stage
-    survives. Provenance tracks who set the stage, which is what
-    `protected_keys` keys on.
+    The model here also proposes a TARGET. Since #806 a target is never
+    applied (it is counted as an unknown field), so the row's target stays as
+    it was, and the client's stamp on the maturity stage survives. Provenance
+    tracks who set the stage, which is what `protected_keys` keys on.
     """
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
@@ -361,7 +367,7 @@ def test_live_run_ai_agreeing_with_the_client_does_not_claim_authorship(
 
     row = next(x for x in body["answers"] if x["capability_code"] == code)
     assert row["maturity_stage"] == 3
-    assert row["target_stage"] == 4, "a genuinely new target must still apply"
+    assert row["target_stage"] is None, "an AI target must not apply (#806)"
 
     from app.models.zt_assessment import ZtAnswer
 
@@ -429,9 +435,10 @@ def test_live_run_ai_drops_an_out_of_range_value_but_applies_its_sibling(
 ) -> None:
     """The two stage values are validated independently.
 
-    `{"current": 9, "target": 3}` must apply the target and drop the current,
-    rather than the bad value poisoning the whole suggestion or the good one
-    dragging the bad one in. The drop is now visible in the RESPONSE, itemized
+    `{"current": 9}` on one capability must drop that current while a second
+    capability's valid `current` still applies, rather than the bad value
+    poisoning the response or the good one dragging the bad one in. (Before
+    #806 the sibling was the same row's `target`, which is no longer applied.) The drop is now visible in the RESPONSE, itemized
     per reason (W1, D-047). This docstring used to point at a
     `zt_run_ai_suggestions_dropped` log line explaining why the count was
     deliberately withheld; that line and that rationale are both gone.
@@ -440,19 +447,28 @@ def test_live_run_ai_drops_an_out_of_range_value_but_applies_its_sibling(
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
     a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
     code = a.json()["answers"][0]["capability_code"]
+    sibling = a.json()["answers"][1]["capability_code"]
 
     monkeypatch.setattr(type(provider), "name", "anthropic", raising=False)
-    # CISA tops out at 4: the current is rejected, the target is fine.
+    # CISA tops out at 4: the first current is rejected, the sibling's is fine.
     provider.register_static(
         "zt_score",
-        LLMResponse('{"capabilities": [{"code": "' + code + '", "current": 9, "target": 3}]}'),
+        LLMResponse(
+            '{"capabilities": [{"code": "'
+            + code
+            + '", "current": 9}, {"code": "'
+            + sibling
+            + '", "current": 3}]}'
+        ),
     )
     r = zt_run_ai(c, svc_id, h, serves="live")
     body = r
 
     row = next(x for x in body["answers"] if x["capability_code"] == code)
     assert row["maturity_stage"] is None, "an out-of-range current must not apply"
-    assert row["target_stage"] == 3
+    assert (
+        next(x for x in body["answers"] if x["capability_code"] == sibling)["maturity_stage"] == 3
+    )
 
 
 @pytest.mark.unit
@@ -564,9 +580,10 @@ def test_a_malformed_response_does_not_500_and_changes_nothing(app_client, monke
 # count here is unambiguous regardless of how the narrative fields are scoped.
 # ---------------------------------------------------------------------------
 
-# One capability entry's worth of suggestions: `current` and `target`. Used when
-# an entry is too broken to enumerate what it meant to set.
-_ROW_VALUE_SLOTS = 2
+# One capability entry's worth of suggestions: `current` only since #806 (the
+# AI's `target` is no longer applied). Used when an entry is too broken to
+# enumerate what it meant to set.
+_ROW_VALUE_SLOTS = 1
 
 
 def _run_ai_caps(c, provider, h, svc_id: str, caps: list) -> dict:
@@ -661,12 +678,14 @@ def test_zt_run_ai_whole_number_written_as_text_or_float_is_applied(app_client) 
     a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
     code = a.json()["answers"][0]["capability_code"]
 
-    body = _run_ai_caps(c, provider, h, svc_id, [{"code": code, "current": "2", "target": 3.0}])
+    body = _run_ai_caps(c, provider, h, svc_id, [{"code": code, "current": "2"}])
     assert body["dropped"] == [], body["dropped"]
-    assert body["suggestions_applied"] == 2
+    assert body["suggestions_applied"] == 1
     row = _answer(body, code)
     assert row["maturity_stage"] == 2
-    assert row["target_stage"] == 3
+    body = _run_ai_caps(c, provider, h, svc_id, [{"code": code, "current": 3.0}])
+    assert body["dropped"] == [], body["dropped"]
+    assert _answer(body, code)["maturity_stage"] == 3
     _assert_invariant(body)
 
 
@@ -886,11 +905,11 @@ def test_zt_run_ai_protected_answer_is_itemized_not_a_silent_skip(app_client) ->
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
     code, _ = _submitted_self_assessment(c, h, svc_id)
 
-    body = _run_ai_caps(c, provider, h, svc_id, [{"code": code, "current": 1, "target": 2}])
+    body = _run_ai_caps(c, provider, h, svc_id, [{"code": code, "current": 1}])
     d = _only_dropped(body)
     assert d["reason"] == "protected", d
     assert d["key"] == code, d
-    assert d["values"] == 2, d
+    assert d["values"] == 1, d
     # Distinct from `locked` — nobody locked this row.
     assert d["reason"] != "locked"
     assert _answer(body, code)["maturity_stage"] == 3, "client answer was overwritten"
