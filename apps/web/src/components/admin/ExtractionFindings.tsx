@@ -23,6 +23,9 @@ const LABELS: Record<string, string> = {
   license_count: "License count",
 };
 
+/** `app.tech_debt.extract.DUPLICATED`: two items naming one source row. */
+const DUPLICATED = "duplicated";
+
 /** Not editable in the table, so never under "Correct these in the table". */
 const NOT_EDITABLE = new Set(["confidence_pct", "source_row_index"]);
 
@@ -55,9 +58,13 @@ export function ExtractionFindings({
 }): React.ReactElement | null {
   // NULL is "not recorded" (a list from before the check): say nothing, rather
   // than imply nothing was found.
-  if (!findings || findings.length === 0) return null;
-  const editable = findings.filter((f) => !NOT_EDITABLE.has(f.field));
-  const other = findings.length - editable.length;
+  if (!findings) return null;
+  // C6 (for #806): a duplicated source row is a value KEPT as sent, not one
+  // that could not be stored; `ExtractionFlags` says it, so it is not here.
+  const shown = findings.filter((f) => f.reason !== DUPLICATED);
+  if (shown.length === 0) return null;
+  const editable = shown.filter((f) => !NOT_EDITABLE.has(f.field));
+  const other = shown.length - editable.length;
   return (
     <div
       className="rounded-md border border-border bg-surface-sunken p-3 text-sm"

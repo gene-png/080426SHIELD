@@ -449,6 +449,13 @@ class CsfDroppedSuggestion(BaseModel):
     value: Any = None
 
 
+class CsfRowKey(BaseModel):
+    """One (tier, subcategory) row of the Working Profile, by its key."""
+
+    tier: str
+    subcategory_code: str
+
+
 class CsfRunAiResponse(BaseModel):
     """What a csf_score Run-AI did, with the refreshed rows. Stored as
     `ai_runs.result` (#645), every field the synchronous response carried, so
@@ -474,6 +481,12 @@ class CsfRunAiResponse(BaseModel):
     # `batches_total` is what says the run is partial.
     batches_total: int = 0
     batches_failed: int = 0
+    # #836: rows a SUCCESSFUL batch was asked for that no entry of that batch
+    # named. They keep their previous values and are in neither count above
+    # (the model sent nothing for them). Defaults so a stored run result written
+    # before this parses unchanged; the panel tests the VALUE, never presence.
+    omitted_count: int = 0
+    omitted_rows: list[CsfRowKey] = []
 
 
 class ExportedArtifact(BaseModel):

@@ -22,6 +22,7 @@ from __future__ import annotations
 import functools
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from typing import Annotated, Any
 
@@ -125,6 +126,7 @@ from app.schemas.csf import (
     CsfPlaybookExportResponse,
     CsfProfileResponse,
     CsfQuestionnaireResponse,
+    CsfRowKey,
     CsfRunAiResponse,
     CsfScoreSummary,
     CsfSelfAssessmentAnswerPatch,
@@ -2214,6 +2216,53 @@ def _split_strays(
     return scores, strays
 
 
+def _omitted_keys(
+    batch_inputs: Sequence[dict[str, Any]],
+    answers: Sequence[dict[str, Any]],
+    rows: Mapping[str, Any],
+    locked: AbstractSet[str],
+) -> set[str]:
+    """The `tier|code` ROWS a SUCCESSFUL batch was asked for that no entry of
+    THAT batch names (#836): `(asked & rows) - answered - locked`, per batch.
+
+    `& rows`: a batch asks for its tier x the PROFILE-WIDE subcategory list,
+    so on a non-rectangular profile (an assessment provisioned before #852
+    has no RC.CO-04 rows, and re-seeding one tier adds them to that tier
+    only) it asks for keys that are not rows. Such a key keeps no score, so
+    it is not an omitted row. Approved on #736 (comment 6067815887).
+
+    An omitted row keeps its previous values -- zeros on a new Playbook, which
+    `score_tier` reads as Level 1 -- so it is counted and named. Not a
+    `dropped` reason: the W1 identity is over values the model SENT, and an
+    omitted row sent none.
+
+    - An entry that names the row and is then refused (a bad value) is an
+      ANSWER, already itemized under its own reason.
+    - A stray from ANOTHER batch never answers for it: `answered` is built
+      from this batch's own entries only, so a CSF stray is both
+      `not_in_batch` and omitted. (ATT&CK applies a stray; CSF does not.)
+    - A failed batch is not in `batch_inputs` (`run_batches` returns
+      successful batches only), so its rows stay `batches_failed`'s.
+    - A locked row is left alone by design whether answered or not.
+    - A row EDITED during the run is NOT subtracted: the model still sent
+      nothing for it, so "got no answer from the AI" stays true (approved
+      on #736, comment 6067815887).
+
+    A sibling of `_split_strays`, not a change to it: the measure script calls
+    that one, and its signature is its contract.
+    """
+    omitted: set[str] = set()
+    for inputs, answer in zip(batch_inputs, answers, strict=True):
+        asked = {f"{t}|{c}" for t in inputs["tiers"] for c in inputs["subcategories"]}
+        answered = {
+            f"{entry.get('tier')}|{entry.get('subcategory_code')}"
+            for entry in answer["scores"]
+            if isinstance(entry, dict)
+        }
+        omitted |= (asked & rows.keys()) - answered - locked
+    return omitted
+
+
 def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID) -> RunOutcome:
     """The csf_score run, in the background job's own session (#645). Re-loads
     by id; a refusal becomes the run's FAILED state with the same reason."""
@@ -2275,7 +2324,13 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
     # out of the applied set and itemized as `not_in_batch`, so a row is only
     # ever written from the batch that asked for it.
     scores, strays = _split_strays(batched.inputs, batched.answers, rows)
+    # #836: rows a successful batch was asked for and left out (`_omitted_keys`).
+    omitted = _omitted_keys(batched.inputs, batched.answers, rows, locked_keys)
     data = {"scores": scores}
+    omitted_rows = [
+        CsfRowKey(tier=tier, subcategory_code=code)
+        for tier, _, code in (key.partition("|") for key in sorted(omitted))
+    ]
 
     # Offline output must never overwrite what a human typed (#67, migration
     # 0042). `protected_keys` returns an empty set off-fixture, so a LIVE run may
@@ -2381,6 +2436,7 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
             "dropped_by_reason": dropped_by_reason,
             "batches_total": batched.total,
             "batches_failed": batched.failed,
+            "omitted_count": len(omitted_rows),
         },
     )
 
@@ -2401,6 +2457,8 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
             "dropped_by_reason": dropped_by_reason,
             "batches_total": batched.total,
             "batches_failed": batched.failed,
+            # #836: a count, never the row keys (codes and counts only).
+            "omitted_count": len(omitted_rows),
         },
     )
     # No commit: the framework commits this apply with the run's completion.
@@ -2415,6 +2473,8 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
         dropped=dropped,
         batches_total=batched.total,
         batches_failed=batched.failed,
+        omitted_count=len(omitted_rows),
+        omitted_rows=omitted_rows,
     )
     return RunOutcome(
         result=payload.model_dump(mode="json"),

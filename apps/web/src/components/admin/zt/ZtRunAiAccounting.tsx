@@ -1,6 +1,10 @@
 import type { JSX } from "react";
 
-import type { ZtDroppedSuggestion, ZtRunAiResponse } from "@/lib/zt/types";
+import type {
+  ZtDroppedSuggestion,
+  ZtOmittedCapability,
+  ZtRunAiResponse,
+} from "@/lib/zt/types";
 
 /**
  * Run-AI accounting for the Zero Trust workspace (W1, issue #44, D-047).
@@ -156,6 +160,114 @@ export function lostValueCount(result: ZtRunAiResponse): number {
     .reduce((n, d) => n + d.values, 0);
 }
 
+function describeOmitted(n: ZtOmittedCapability): string {
+  return n.kept_stage === null
+    ? `${n.capability_code}: no stage, so it stays unscored.`
+    : `${n.capability_code}: keeps stage ${n.kept_stage}, recorded earlier. This run did not confirm it.`;
+}
+
+/**
+ * One group's items, at most `ITEM_CAP`, then the approved ATT&CK string
+ * "and {k} more" (#736 joint plan, A-copy, reused verbatim per the ruling).
+ * The cap is per group: each group's heading already states its full count.
+ */
+function OmittedItems({
+  items,
+}: {
+  items: ZtOmittedCapability[];
+}): JSX.Element {
+  const rest = items.length - ITEM_CAP;
+  return (
+    <ul className="list-disc pl-5">
+      {items.slice(0, ITEM_CAP).map((x) => (
+        <li key={x.capability_code}>{describeOmitted(x)}</li>
+      ))}
+      {rest > 0 ? <li>and {rest} more</li> : null}
+    </ul>
+  );
+}
+
+/**
+ * #840: the capabilities the run asked about and got no entry for. Copy Z1 to
+ * Z6, approved verbatim (#840 plan, #736 ruling).
+ *
+ * Not a drop reason: every number above counts values the model SENT, and a
+ * capability with no entry sent none. Blank notes come first in neutral
+ * styling and are never a live region: leaving them out is by design once the
+ * #806 ZT prompt ships, since A5 tells the model to; on today's prompt, a miss.
+ * Notes present come next. Code cannot tell a deliberate "N/A" from a miss, so
+ * Z3 says so instead of classifying them.
+ *
+ * Z6 renders once, after both groups, whenever any capability in either group
+ * kept a stage, since that stage reaches the deliverable unconfirmed (#736
+ * comment 6071261772). It is carried by the panel's single assertive region,
+ * which wraps the notes group (when there is one) and Z6: `role="alert"` when
+ * it is the panel's only alert, `role="status"` beside another.
+ *
+ * Z6 names approving: the "Approve client inputs" / "Approve" control in
+ * `ZtWorkspace` step 3.
+ *
+ * Absent (a run stored before #840) or 0 renders nothing.
+ */
+function ZtOmittedBlock({
+  result,
+  otherAlert,
+}: {
+  result: ZtRunAiResponse;
+  /**
+   * Whether the panel already carries a `role="alert"`. One assertive region
+   * (#736 rulings): the region carrying Z6 is an alert only when it is alone,
+   * and a polite `status` beside another alert.
+   */
+  otherAlert: boolean;
+}): JSX.Element | null {
+  const n = result.omitted_count ?? 0;
+  if (n === 0) return null;
+  const items = result.omitted_capabilities ?? [];
+  const blank = items.filter((x) => x.notes_blank);
+  const noted = items.filter((x) => !x.notes_blank);
+  const notedKept = noted.some((x) => x.kept_stage !== null);
+  const anyKept = items.some((x) => x.kept_stage !== null);
+  const notesGroup =
+    noted.length > 0 ? (
+      <div
+        className={notedKept ? "text-status-danger-fg" : "text-ink-secondary"}
+      >
+        <p>
+          Notes recorded, but no stage given ({noted.length}). This includes
+          notes such as &quot;N/A&quot; or &quot;TBD&quot;:
+        </p>
+        <OmittedItems items={noted} />
+      </div>
+    ) : null;
+  return (
+    <div className="space-y-2 text-sm">
+      <p className="text-ink-secondary">
+        {n === 1
+          ? "1 capability got no stage from the AI this run."
+          : `${n} capabilities got no stage from the AI this run.`}
+      </p>
+      {blank.length > 0 ? (
+        <div className="text-ink-secondary">
+          <p>No notes recorded ({blank.length}):</p>
+          <OmittedItems items={blank} />
+        </div>
+      ) : null}
+      {anyKept ? (
+        <div className="space-y-2" role={otherAlert ? "status" : "alert"}>
+          {notesGroup}
+          <p className="text-status-danger-fg">
+            Check these before approving. A stage kept this way can come from a
+            client&apos;s self-assessment and reaches the deliverable as it is.
+          </p>
+        </div>
+      ) : (
+        notesGroup
+      )}
+    </div>
+  );
+}
+
 export function ZtRunAiAccounting({
   result,
 }: {
@@ -215,14 +327,20 @@ export function ZtRunAiAccounting({
   // A run that received NOTHING is not a clean run. The response parsed, so no
   // error path fired, and "applied 0 of 0" reads as calmly as "applied 12 of
   // 12" — the most reassuring possible way to report a wholly-lost response.
+  //
+  // #840: a response with no entries leaves every capability it was asked
+  // about without a result, so the omitted block renders here too.
   if (result.suggestions_received === 0) {
     return (
-      <p className="text-sm text-status-danger-fg" role="alert">
-        The AI returned no suggestions at all, so nothing was applied. That is
-        expected only if the model genuinely had nothing to say — otherwise its
-        response did not match the shape this job expects. Re-run, and if it
-        repeats, the prompt and the parser have drifted apart.
-      </p>
+      <div className="space-y-2">
+        <p className="text-sm text-status-danger-fg" role="alert">
+          The AI returned no suggestions at all, so nothing was applied. That is
+          expected only if the model genuinely had nothing to say — otherwise
+          its response did not match the shape this job expects. Re-run, and if
+          it repeats, the prompt and the parser have drifted apart.
+        </p>
+        <ZtOmittedBlock result={result} otherAlert />
+      </div>
     );
   }
 
@@ -353,6 +471,11 @@ export function ZtRunAiAccounting({
           ))}
         </ul>
       ) : null}
+
+      <ZtOmittedBlock
+        result={result}
+        otherAlert={failed.length > 0 || headlineIsAlert}
+      />
     </div>
   );
 }

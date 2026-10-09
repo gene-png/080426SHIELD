@@ -51,6 +51,7 @@ from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.user import User, UserRole
 from app.models.zt_assessment import ZtAnswer, ZtAssessment
 from app.risk import exporters as risk_exporters
+from app.risk.baseline import targets_used
 from app.risk.engine import (
     Impact,
     Likelihood,
@@ -85,6 +86,7 @@ from app.schemas.risk import (
     RiskGateStatus,
     RiskInputState,
     RiskRegisterResponse,
+    RiskTargetUsed,
 )
 from app.security.rate_limit import RateLimiter, get_rate_limiter
 
@@ -1941,6 +1943,8 @@ def generate(
         .select_from(RiskEntry)
         .where(RiskEntry.register_id == register.id, RiskEntry.tier.is_(None))
     ).scalar_one()
+    # #474. `origin` says WHEN the target was read: here, live at generate.
+    targets_record = _targets_record(target_sources, snap.sources)
     # #844. Which findings got no entry and which got several. Sorted, so the
     # record does not depend on the order batches finished in. A GENERATE-TIME
     # fact (the findings are not stored anywhere else), so it is persisted with
@@ -2001,6 +2005,11 @@ def generate(
         _prov_with_count["source_states"] = source_states
         _prov_with_count["review_pending"] = review_pending
         _prov_with_count["ratings_carried"] = ratings_carried
+        # #474. The target each service was measured against reached only the
+        # audit row, so the baseline was invisible on every surface a person
+        # reads. Persisted here, a generate-time fact like the rest of this
+        # block, and read back by `app/risk/baseline.py`.
+        _prov_with_count["targets"] = targets_record
         # #915: per ZT source, the capabilities whose target the #839 cap
         # lowered, read back by `risk/zt_capped.py` for the register, the
         # client dashboard and the three files. A sibling key, so the pinned
@@ -2022,6 +2031,7 @@ def generate(
                 for service, sc in link_scopes.items()
             },
             finding_coverage=finding_record,
+            targets=targets_record,
             reason="provenance is NULL, which no current writer produces",
         )
     if entries_written != entries_total:
@@ -2437,6 +2447,8 @@ def _render_and_store(
     _findings = _finding_fields(reg.provenance)
     _states = (reg.provenance or {}).get("source_states")
     _pending = (reg.provenance or {}).get("review_pending")
+    # #474, likewise.
+    _targets, _targets_recorded = targets_used(reg.provenance)
     ctx = risk_exporters.build_context(
         review_pending=(
             frozenset(str(x) for x in _pending) if isinstance(_pending, list) else frozenset()
@@ -2458,6 +2470,11 @@ def _render_and_store(
             else None
         ),
         draft=draft,
+        targets=(
+            tuple((t.kind, t.framework, t.target, t.source, t.origin) for t in _targets)
+            if _targets_recorded
+            else None
+        ),
         # #915: the same reader and sentence the register response uses.
         zt_capped_target_note=zt_capped_target_sentence(zt_capped_target_codes(reg.provenance)),
         # #646: `ai_mode` is left at "not recorded", deliberately -- see
@@ -3172,6 +3189,52 @@ def _finding_fields(stored: object) -> dict:
     return dict(_FINDINGS_NOT_RECORDED)
 
 
+def _targets_record(
+    target_sources: dict[str, dict], sources: tuple[_Source, ...]
+) -> dict[str, dict]:
+    """#474. The provenance `targets` record: each target joined to the source
+    it was resolved for, so the entry carries its `kind` and `framework`
+    (advisor, #736 6054419744, approving 6053630989). The key stays the scope
+    key, an id that is never parsed or rendered.
+
+    A key with no source raises, fail closed: `_gather_findings` keys every
+    target by a source's `scope_key`, so no path produces one, and a record
+    that guessed would name a service it could not identify.
+    """
+    by_key = {src.scope_key: src for src in sources}
+    record: dict[str, dict] = {}
+    for key, resolved in target_sources.items():
+        src = by_key.get(key)
+        if src is None:
+            _log.error("risk_register_target_without_source", key=key, keys=sorted(by_key))
+            raise RuntimeError(f"Risk Register target {key!r} has no source to name it by.")
+        record[key] = {
+            **resolved,
+            "kind": src.kind,
+            "framework": src.framework,
+            "origin": "live_at_generate",
+        }
+    return record
+
+
+def _target_fields(stored: object) -> dict:
+    """#474, through the one reader of the record (`app/risk/baseline.py`)."""
+    rows, recorded = targets_used(stored)
+    return {
+        "targets": [
+            RiskTargetUsed(
+                kind=r.kind,
+                framework=r.framework,
+                target=r.target,
+                source=r.source,
+                origin=r.origin,
+            )
+            for r in rows
+        ],
+        "targets_recorded": recorded,
+    }
+
+
 def _serialize(
     db: Session,
     register: RiskRegister,
@@ -3351,6 +3414,7 @@ def _serialize(
         **_link_scope_fields(stored),
         **_finding_fields(stored),
         **_carried_fields(stored),
+        **_target_fields(stored),
         id=register.id,
         client_id=register.client_id,
         version=register.version,

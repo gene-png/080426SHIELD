@@ -5,6 +5,27 @@ import * as React from "react";
 import type { AttackRunAiResponse } from "@/lib/attack/types";
 
 /**
+ * #806 C4 (PR #951 review, F2): the run refuses an AI Partial whose reason only
+ * a consultant may give, and the row keeps the status it had. Said here so a
+ * row the new prompt disputed is not read as one the AI agreed with.
+ *
+ * Copy approved verbatim, singular and plural (advisor, #736 comment
+ * 6068587667). Both forms live here so a later ruling is a one-line change.
+ *
+ * D-076, the remedy it names exists today: the technique panel's `ReasonField`
+ * select offers every catalogue reason for the row's status
+ * (`reasonCodes.filter((r) => r.status === status)`, fed `catalog.reason_codes`
+ * by `AttackWorkspace`), and the PATCH accepts any reason `is_valid_reason`
+ * gives that status, so a consultant can set all seven Partial reasons. Only
+ * the Run-AI apply loop refuses the four (`_AI_FORBIDDEN_PARTIAL_REASONS`).
+ */
+export const FORBIDDEN_REASON_REFUSED_COPY = {
+  one: "1 technique was suggested as Partial with a reason only a consultant can give, so it was not applied and keeps the status it had. A consultant can set that reason in the technique panel.",
+  many: (n: number) =>
+    `${n} techniques were suggested as Partial with a reason only a consultant can give, so they were not applied and keep the status they had. A consultant can set that reason in the technique panel.`,
+} as const;
+
+/**
  * What happened to the tools the model cited (W2).
  *
  * Before the resolver, a cited name that missed the capability list by a word
@@ -271,6 +292,19 @@ export function AttackCitationAccounting({
           {result.not_applicable_refused === 1
             ? "1 technique was suggested as N/A and not applied. Only a consultant can mark a technique N/A, in the technique panel."
             : `${result.not_applicable_refused} techniques were suggested as N/A and not applied. Only a consultant can mark a technique N/A, in the technique panel.`}
+        </p>
+      ) : null}
+
+      {(result.forbidden_reason_refused ?? 0) > 0 ? (
+        <p
+          className="text-ink-secondary"
+          data-testid="attack-forbidden-reason-refused"
+        >
+          {result.forbidden_reason_refused === 1
+            ? FORBIDDEN_REASON_REFUSED_COPY.one
+            : FORBIDDEN_REASON_REFUSED_COPY.many(
+                result.forbidden_reason_refused ?? 0,
+              )}
         </p>
       ) : null}
     </div>
