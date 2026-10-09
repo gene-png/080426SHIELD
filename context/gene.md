@@ -1,5 +1,13 @@
 # Gene — in-flight status
 
+_2026-10-09 (track1): #853's API half is built on `track1/853-attack-omitted`,
+for #853, and is NOT pushed. An ATT&CK technique a Run-AI batch leaves out is
+now counted and named on the run result (`omitted_count`,
+`omitted_techniques`, with the status each one kept), and the audit row
+carries counts only. The panel line is not built: its copy is drafted for your
+approval, and until it renders, the disclosure gate is red on the branch. It
+comes back to you: conditions 5 and 6._
+
 _2026-10-09 (track1): #993 is built on `track1/993-docx-control-chars`, for
 #993; the PR is not yet open. A client legal name with a control character
 (for example a stray BEL byte, which the admin route accepts) no longer blocks

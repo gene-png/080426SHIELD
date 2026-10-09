@@ -270,6 +270,23 @@ class CoverageChange(BaseModel):
     new: Any = None
 
 
+class AttackOmittedTechnique(BaseModel):
+    """A technique a successful batch was asked about and no entry named (#853).
+
+    NOT a refusal: an entry that names the technique and is then refused is an
+    answer, already itemized under its own reason (`statuses_rejected` and the
+    rest). A technique in a FAILED batch is not here either; it is counted by
+    `batches_failed`.
+
+    `kept_status` is the status the row still holds, read after the apply:
+    None reads as unscored, anything else is a status nobody confirmed this
+    run, reaching the coverage figures and the deliverable as if it had been.
+    """
+
+    technique_code: str
+    kept_status: str | None = None
+
+
 class AttackRunAiResponse(BaseModel):
     """What a mitre_map Run-AI did, with the refreshed coverage.
 
@@ -346,6 +363,11 @@ class AttackRunAiResponse(BaseModel):
     # are in the audit row's `reason_codes_rejected`; the count is what the
     # workspace says.
     forbidden_reason_refused: int = 0
+    # #853: every technique a SUCCESSFUL batch asked for, not locked, that no
+    # entry named (twins: CSF #836, ZT #840). Both optional, so a stored run
+    # result written before them parses unchanged (C0).
+    omitted_count: int = 0
+    omitted_techniques: list[AttackOmittedTechnique] = Field(default_factory=list)
 
 
 class AttackCoveragePatch(BaseModel):
