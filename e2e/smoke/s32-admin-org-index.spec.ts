@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
+import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
 
 /**
  * Issue 7: /admin/queue used to open straight onto ONE organization.
@@ -66,44 +67,54 @@ test("admin queue is an organization index, and each org opens its own scoped pa
 
 test("scoped queue pages for two different orgs show different organizations", async ({
   page,
+  request,
 }) => {
+  // The spec MINTS its second tenant rather than skipping without one. It used
+  // to `test.skip(count < 2, ...)`, and the seed makes one tenant: serially,
+  // specs that ran earlier had minted others, but under sharding it ran on a
+  // fresh seed and skipped, and the partition check counted the skip as run
+  // (#680 round 1). CLAUDE.md: seed the precondition, don't branch on it.
+  const token = await adminApiToken(request);
+  const legalName = `Queue Scope QA ${Date.now()}`;
+  const tenant = await request.post(`${API_BASE}/admin/clients`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { legal_name: legalName },
+  });
+  expect(tenant.ok(), `create tenant (${tenant.status()})`).toBeTruthy();
+  const mintedId = ((await tenant.json()) as { id: string }).id;
+  const atlasId = await atlasClientIdViaApi(request, token);
+
   await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
   await page.goto("/admin/queue");
 
-  const orgLinks = page.locator('a[href^="/admin/queue/"]');
-  await expect(orgLinks.first()).toBeVisible();
-  const count = await orgLinks.count();
-  test.skip(count < 2, "needs at least two tenants to prove scoping");
+  // Both organizations are in the index: the precondition is an assertion.
+  await expect(
+    page.locator(`a[href="/admin/queue/${mintedId}"]`),
+  ).toBeVisible();
+  await expect(page.locator(`a[href="/admin/queue/${atlasId}"]`)).toBeVisible();
 
-  const hrefs = await orgLinks.evaluateAll((els) =>
-    els.map((e) => (e as HTMLAnchorElement).getAttribute("href") ?? ""),
-  );
-
-  // The page H1 is the organization's legal name once intake exists; at minimum
-  // the two pages must not render identical content, which is exactly what the
-  // old advisory-client behaviour did.
-  await page.goto(hrefs[0]);
+  // The page H1 is the organization's legal name once one exists. The old
+  // advisory-client behaviour rendered the same organization on every page.
+  await page.goto(`/admin/queue/${mintedId}`);
   await expect(
     page.getByRole("heading", { name: /^Service requests \(/ }),
   ).toBeVisible();
-  const firstHeading = await page
-    .getByRole("heading", { level: 1 })
-    .first()
-    .innerText();
+  const mintedHeading = page.getByRole("heading", { level: 1 }).first();
+  await expect(mintedHeading).toHaveText(legalName);
 
-  await page.goto(hrefs[1]);
+  await page.goto(`/admin/queue/${atlasId}`);
   await expect(
     page.getByRole("heading", { name: /^Service requests \(/ }),
   ).toBeVisible();
-  const secondHeading = await page
+  const atlasHeading = await page
     .getByRole("heading", { level: 1 })
     .first()
-    .innerText();
+    .textContent();
 
   expect(
-    firstHeading,
+    atlasHeading,
     "two different orgs must not render the same organization header",
-  ).not.toBe(secondHeading);
+  ).not.toBe(legalName);
 });
 
 /**
