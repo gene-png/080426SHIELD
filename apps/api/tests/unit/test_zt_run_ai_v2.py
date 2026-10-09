@@ -357,3 +357,20 @@ def test_the_fixture_never_gives_2_to_a_capability_with_no_target_activity(posit
     by_code = {r["code"]: r["current"] for r in rows}
     assert set(by_code) == set(codes)
     assert by_code[codes[position]] != 2
+
+
+def test_rows_the_fixture_leaves_out_are_counted_as_omitted(world) -> None:
+    """A5 makes "no result" a by-design outcome; #840's accounting must see
+    every such row through the real run. Expected sets come from the setup:
+    the four noted rows are answered, the three placeholders are omitted with
+    notes, and every other row is omitted with blank notes."""
+    noted, rest = _fixture_world(world, "zero_trust_cisa")
+    placeholders = {world.answers[i]["capability_code"] for i in range(4, 7)}
+
+    result = zt_run_ai(world.c, world.svc_id, world.h)
+
+    omitted = {o["capability_code"]: o for o in result["omitted_capabilities"]}
+    assert set(omitted) == rest
+    assert result["omitted_count"] == len(rest)
+    assert {c for c, o in omitted.items() if not o["notes_blank"]} == placeholders
+    assert all(o["kept_stage"] is None for o in omitted.values())
