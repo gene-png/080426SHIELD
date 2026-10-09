@@ -289,5 +289,5 @@ def test_every_source_state_label_reads_correctly(state: str, label: str) -> Non
     from app.risk.exporters import _source
 
     e = SimpleNamespace(source="coverage_finding", source_id="T1078")
-    assert _source(e, {"T1078": state}) == f"coverage_finding:T1078{label}"
-    assert _source(e, {}) == "coverage_finding:T1078"
+    assert _source(e, {"T1078": state}, csf_playbook=False) == f"coverage_finding:T1078{label}"
+    assert _source(e, {}, csf_playbook=False) == "coverage_finding:T1078"

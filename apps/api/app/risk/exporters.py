@@ -229,11 +229,8 @@ def _source(
     states: dict[str, str] | None = None,
     pending: frozenset[str] = frozenset(),
     *,
-    csf_playbook: bool = False,
+    csf_playbook: bool,
 ) -> str:
-    # `csf_playbook` defaults to the questionnaire label, which is what a
-    # register with no Playbook record prints; every renderer passes it from
-    # `_csf_from_playbook(ctx.targets)`.
     if csf_playbook and e.source == _CSF_SOURCE and e.source_id in _CSF_CODES:
         # #474 D' (advisor, #736 6087786886, item 5): CSF findings come from
         # the Playbook. The stored token stays `questionnaire_response` (E's
