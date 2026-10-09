@@ -23,6 +23,7 @@ from app.mode_stamp import (
     pdf_paragraph,
 )
 from app.pdf_export import pdf_text
+from app.risk.baseline import PLAYBOOK_SOURCES
 from app.risk.engine import (
     IMPACT_ORDER,
     LIKELIHOOD_ORDER,
@@ -208,13 +209,36 @@ _CSF_SOURCE = "questionnaire_response"
 _CSF_CODES = csf_all_codes()
 
 
+def _csf_from_playbook(
+    targets: tuple[tuple[str, str | None, int | None, str, str], ...] | None,
+) -> bool:
+    """#474 D': whether this register RECORDED its CSF findings as measured on
+    the Playbook -- its CSF target's source is a Playbook token
+    (`risk/baseline.py::PLAYBOOK_SOURCES`). A register generated before D'
+    recorded the engagement tier, or no targets at all, and stays
+    re-exportable; its CSF findings came from the questionnaire, so its Source
+    cells must not say Playbook. Keyed on the record, never on the code's
+    shape, which is the same for both."""
+    return targets is not None and any(
+        kind == "csf" and source in PLAYBOOK_SOURCES for kind, _fw, _t, source, _o in targets
+    )
+
+
 def _source(
-    e: Any, states: dict[str, str] | None = None, pending: frozenset[str] = frozenset()
+    e: Any,
+    states: dict[str, str] | None = None,
+    pending: frozenset[str] = frozenset(),
+    *,
+    csf_playbook: bool = False,
 ) -> str:
-    if e.source == _CSF_SOURCE and e.source_id in _CSF_CODES:
+    # `csf_playbook` defaults to the questionnaire label, which is what a
+    # register with no Playbook record prints; every renderer passes it from
+    # `_csf_from_playbook(ctx.targets)`.
+    if csf_playbook and e.source == _CSF_SOURCE and e.source_id in _CSF_CODES:
         # #474 D' (advisor, #736 6087786886, item 5): CSF findings come from
         # the Playbook. The stored token stays `questionnaire_response` (E's
-        # approved prompt and parser use it); only the files say Playbook.
+        # approved prompt and parser use it); only the files say Playbook,
+        # and only for a register that recorded the Playbook as its basis.
         cell = f"CSF Playbook:{e.source_id}"
     elif e.source and e.source_id:
         cell = f"{e.source}:{e.source_id}"
@@ -284,7 +308,12 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
                 e.title,
                 e.description or "",
                 (e.axis or "").title(),
-                _source(e, ctx.source_states, ctx.review_pending),
+                _source(
+                    e,
+                    ctx.source_states,
+                    ctx.review_pending,
+                    csf_playbook=_csf_from_playbook(ctx.targets),
+                ),
                 _joined(e.linked_techniques),
                 _joined(e.linked_controls),
                 _rating(e.likelihood),
@@ -806,7 +835,12 @@ def render_pdf(ctx: RiskExportContext) -> bytes:
                 _li(e),
                 _rating(e.tier),
                 (e.recommended_action or "").title(),
-                _source(e, ctx.source_states, ctx.review_pending),
+                _source(
+                    e,
+                    ctx.source_states,
+                    ctx.review_pending,
+                    csf_playbook=_csf_from_playbook(ctx.targets),
+                ),
             ]
         )
     story.append(
@@ -855,7 +889,12 @@ def render_docx(ctx: RiskExportContext) -> bytes:
             _li(e),
             _rating(e.tier),
             (e.recommended_action or "").title(),
-            _source(e, ctx.source_states, ctx.review_pending),
+            _source(
+                e,
+                ctx.source_states,
+                ctx.review_pending,
+                csf_playbook=_csf_from_playbook(ctx.targets),
+            ),
         ]
         for i, e in enumerate(ctx.entries, start=1)
     ]

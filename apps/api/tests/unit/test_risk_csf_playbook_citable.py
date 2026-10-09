@@ -139,3 +139,60 @@ def test_an_ai_row_of_zeros_with_nothing_else_is_neither_a_finding_nor_citable(
     assert AI_SCORED in citable and AI_SCORED in findings  # positive first
     assert AI_ZEROS not in findings, findings
     assert AI_ZEROS not in citable, citable
+
+
+def test_a_playbook_scored_only_by_the_run_ai_counts_through_its_dimensions(
+    app_client,  # noqa: F811
+) -> None:
+    """The Run-AI writes no `answer_source`, and here NO row has a target, so
+    the only thing recorded on the row is the two dimension scores the model
+    sent. `has_recorded_score` must count it through those: the code is
+    citable, and the Playbook is `no_targets` (scores, no targets), not
+    `no_scores`."""
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    _seed_attack_and_zt(c, bearer, cid)
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    svc = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "CSF"})
+    assert svc.status_code in (200, 201), svc.text
+    sid = svc.json()["id"]
+    a = c.post(f"/csf/services/{sid}/assessments", headers=h)
+    assert a.status_code in (200, 201), a.text
+    seeded = c.post(f"/csf/services/{sid}/profiles/seed", headers=h, json={"tiers": ["high"]})
+    assert seeded.status_code in (200, 201), seeded.text
+
+    from app.ai.llm import LLMClient
+    from app.routes.csf import _llm_dep as csf_llm_dep
+
+    c.app.dependency_overrides[csf_llm_dep] = lambda: LLMClient(provider)
+    provider.register(
+        "csf_score",
+        csf_scores_by_batch(
+            [{"tier": "high", "subcategory_code": AI_SCORED, "governance": 2, "policy": 1}],
+            tiers=["high"],
+            codes=[s.code for s in SUBCATEGORIES],
+        ),
+    )
+    run = csf_run_ai(c, sid, h, serves="offline")
+    # One entry, two values: both applied.
+    assert run["suggestions_received"] == 2 and run["suggestions_applied"] == 2, run
+    rows = {
+        r["subcategory_code"]: r
+        for r in c.get(f"/csf/services/{sid}/profile/high", headers=h).json()["rows"]
+    }
+    assert (rows[AI_SCORED]["governance"], rows[AI_SCORED]["policy"]) == (2, 1)
+    assert all(r["target_level"] is None for r in rows.values()), "no row has a target"
+    ap = c.post(f"/csf/assessments/{a.json()['id']}/approve", headers=h)
+    assert ap.status_code == 200, ap.text
+
+    payload = _generate(c, provider, bearer, cid)
+    assert _csf_ids(payload["valid_controls"]) == {AI_SCORED}
+    # No target anywhere, so nothing is below one: no CSF finding.
+    assert _csf_ids(f["source_id"] for f in payload["findings"]) == set()
+
+    latest = c.get(
+        f"/risk/clients/{cid}/register/latest", headers={"Authorization": f"Bearer {bearer}"}
+    )
+    assert latest.status_code == 200, latest.text
+    (csf,) = [t for t in latest.json()["targets"] if t["kind"] == "csf"]
+    assert csf["source"] == "playbook_no_targets", csf
