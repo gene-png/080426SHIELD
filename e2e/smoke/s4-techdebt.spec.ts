@@ -29,8 +29,9 @@ import { atlasServiceId } from "../helpers/ids";
  */
 
 // A tiny inventory. The fixture extractor reads the redacted rows and stamps a
-// deterministic confidence per row (60, 70, 80, 90) — so exactly one row is
-// "AI 60%", which we edit to prove the badge clears.
+// deterministic confidence per row on Tech Debt v3.2's scale (100, 90 or 60):
+// here 60, 100, 100, 100, so exactly one row is "AI 60%", which we edit to
+// prove the badge clears.
 const INVENTORY_CSV =
   "name,vendor,category,annual_cost_usd,license_count\n" +
   "CrowdStrike Falcon,CrowdStrike,EDR,120000,500\n" +
