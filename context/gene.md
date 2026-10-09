@@ -14,6 +14,17 @@ the advisor's approval, because your decision retired that rule. The Atlas demo
 gets Playbook rows in a small PR right after this one. When the PR opens it
 comes back to you (conditions 5 and 6).
 
+_2026-10-09 (track6): #997's code-list half is built on `track6/997-risk-code-lists`._
+
+**What it does:** the Risk Register's AI call now sends its two lists of
+citable codes exactly as the catalogs have them. Before, a client whose name
+matched a code prefix ("GV", "DoD") had those codes rewritten to "[CLIENT]..."
+before the model saw them. A list entry that is not a real catalog code stops
+the call before anything is sent. The findings themselves are unchanged and
+still redacted; that half waits on the Risk E ruling. Held as track6's second
+branch, with no PR yet; when it is opened it comes back to you (conditions 5
+and 6).
+
 _2026-10-09 (track1): #775 and #972 are built on `track1/775-export-escape`,
 for #775 and #972, with `main` merged in at e3c962f0 after the run_batches PR
 (#978) landed; the PR is not yet open. Every PDF prints the
