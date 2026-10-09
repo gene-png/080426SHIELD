@@ -249,37 +249,60 @@ def test_the_playbook_footer_and_function_heading_are_stripped(app_client, monke
 # --- U+FFFE and U+FFFF: refused by XML 1.0, missed by openpyxl's regex ----------------
 
 
-@pytest.mark.parametrize("char", ["￾", "￿"], ids=["U+FFFE", "U+FFFF"])
-def test_a_noncharacter_legal_name_finalizes_the_docx_and_the_xlsx(app_client, char) -> None:
+@pytest.mark.parametrize("char", ["\ufffe", "\uffff"], ids=["U+FFFE", "U+FFFF"])
+def test_a_noncharacter_legal_name_finalizes_the_docx_and_the_xlsx(
+    app_client, capsys, char
+) -> None:
     """Pydantic accepts these from JSON; python-docx and openpyxl both raised on
-    them, so finalize failed in both formats (review of 185393fc)."""
+    them, so finalize failed in both formats (review of 185393fc). Each strip
+    is logged with its count: a strip counted as zero would log nothing.
+
+    `app_client` first: its lifespan configures logging, so `capsys` sees it."""
     c, provider = app_client
-    bearer, _cid, h = _tenant(c, f"Acme{char}")
+    bearer, _cid, h = _tenant(c, f"QZXJ{char}")
+    capsys.readouterr()
     fin = _FINALIZE["csf"](c, provider, bearer, h, "Plain title")
     assert fin.status_code == 201, fin.text
+    out = capsys.readouterr().out
     text = _docx_text(_download(c, h, fin.json()["docx_artifact_id"]))
-    assert text[0] == "Plain title — Acme"  # the positive state first
+    assert text[0] == "Plain title — QZXJ"  # the positive state first
     assert not any(char in s for s in text)
     wb = load_workbook(io.BytesIO(_download(c, h, fin.json()["xlsx_artifact_id"])))
     values = [cell.value for ws in wb.worksheets for row in ws.iter_rows() for cell in row]
-    assert "Acme" in values, values
+    assert "QZXJ" in values, values
     assert not any(isinstance(v, str) and char in v for v in values)
+    logged = [json.loads(line) for line in out.splitlines() if line.startswith("{")]
+    for event in (EVENT, "xlsx_export.control_characters_removed"):
+        found = [e for e in logged if e.get("event") == event]
+        assert found, f"no {event} for the stripped legal name"
+        assert all(e["removed"] == 1 for e in found), found
+    assert "QZXJ" not in out, "the log carries the legal name"
 
 
 # --- the core-properties length limit -------------------------------------------------
 
 
-def test_a_long_title_and_name_finalize_with_the_core_title_capped(app_client) -> None:
+def test_a_long_title_and_name_finalize_with_the_core_title_capped(app_client, capsys) -> None:
     """python-docx refuses a core property over 255 characters, and its error
     quotes the value. Each part may be 255 on its own, so the joined title is
-    capped; the visible heading keeps the whole title."""
+    capped; the visible heading keeps the whole title. The cut is logged once,
+    with the length the code logs (after cleaning: 200 + 3 + 60), never the
+    value."""
     title = "T" * 199 + "Z"  # 200 characters
     name = "N" * 59 + "Q"  # 60 characters
+    capsys.readouterr()
     docx = _finalized_docx(app_client, "csf", name=name, title=title)
+    out = capsys.readouterr().out
     text = _docx_text(docx)
     assert len(text[0]) == 255, len(text[0])
     assert text[0] == "T" * 199 + "Z — " + "N" * 52  # 200 + 3 + 52
     assert title in text[1:], "the visible heading lost part of the title"
+    logged = [json.loads(line) for line in out.splitlines() if line.startswith("{")]
+    cut = [e for e in logged if e.get("event") == "docx_export.core_property_truncated"]
+    assert len(cut) == 1, cut
+    assert (cut[0]["field"], cut[0]["length"], cut[0]["limit"]) == ("title", 263, 255)
+    for run in ("TTTTTTTT", "NNNNNNNN"):
+        assert run not in out, f"the log carries the value: {run!r}"
 
 
 # --- the AI-mode stamp: its DOCX paragraph and its XLSX sheet ---------------------------
