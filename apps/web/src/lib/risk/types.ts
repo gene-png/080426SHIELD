@@ -14,6 +14,11 @@ export interface RiskInputState {
    * server's response parses.
    */
   qualifier?: string | null;
+  /**
+   * #474 D': CSF rows only. True when the record has no in-scope Playbook
+   * rows, so it feeds no CSF finding. Absent on every other kind.
+   */
+  no_playbook_scores?: boolean;
 }
 
 export interface RiskGate {
@@ -369,6 +374,11 @@ export interface RiskRegister {
   capped_target_codes?: Record<string, string[]> | null;
   /** #915 (S3): the API's own sentence built from it, rendered as given. */
   zt_capped_target_note?: string | null;
+  /**
+   * #474 D': the API's own CSF source note (`risk/csf_source.py`), rendered
+   * as given. Null when the register has no CSF findings.
+   */
+  csf_source_note?: string | null;
   id: string;
   client_id: string;
   version: number;

@@ -37,7 +37,14 @@ export function inputLine(row: RiskInputState): string {
   const label = row.qualifier ? `${base} (${row.qualifier})` : base;
   if (!row.engaged) return `${label}: not engaged`;
   if (row.status === null) return `${label}: not started`;
-  return `${label}: ${statusWord(row.status)}`;
+  // #474 D' (Gene, #736 5984218862): a released CSF record with no in-scope
+  // Playbook rows feeds no CSF finding. Said only after "released" (#736
+  // 6087027524, Q3): Risk reads only released CSF.
+  const noPlaybook =
+    row.status === "released" && row.no_playbook_scores === true
+      ? ", no Playbook scores"
+      : "";
+  return `${label}: ${statusWord(row.status)}${noPlaybook}`;
 }
 
 /**

@@ -78,6 +78,11 @@ export interface RiskDashboardData {
    * or the register predates the record.
    */
   zt_capped_target_note?: string | null;
+  /**
+   * #474 D': the API's own CSF source note (`risk/csf_source.py`), rendered
+   * as given. Null when the register has no CSF findings.
+   */
+  csf_source_note?: string | null;
 }
 
 // Display order. Likelihood is shown high→low down the rows so the most severe

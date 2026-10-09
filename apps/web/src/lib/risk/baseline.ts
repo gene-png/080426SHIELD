@@ -13,7 +13,8 @@ import { SERVICE_LABELS, ZT_FRAMEWORK_NAMES } from "./labels";
 export interface RiskTargetUsed {
   kind: string;
   framework: string | null;
-  target: number;
+  /** #474 D': null for a CSF record measured against the Playbook. */
+  target: number | null;
   source: string;
   origin: string;
 }
@@ -40,10 +41,20 @@ function targetLabel(t: RiskTargetUsed, nameFramework: boolean): string {
 export const TARGETS_NOT_RECORDED =
   "The targets these findings were measured against were not recorded for this register.";
 
+/**
+ * #474 D' (Gene, #736 5984218862): CSF findings are measured against each
+ * subcategory's Playbook target, so the record names no single target.
+ * Approved verbatim (#736 6087027524, Q1); `_target_lines` prints the same.
+ */
+const PLAYBOOK_SOURCE = "playbook";
+
 export function targetSentence(
   t: RiskTargetUsed,
   nameFramework: boolean,
 ): string {
+  if (t.source === PLAYBOOK_SOURCE) {
+    return `${targetLabel(t, nameFramework)} findings are measured against each subcategory's target level in the CSF Playbook.`;
+  }
   const why =
     t.source === "client"
       ? "the engagement target when this register was generated"

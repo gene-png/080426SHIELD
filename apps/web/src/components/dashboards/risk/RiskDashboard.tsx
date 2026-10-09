@@ -316,6 +316,17 @@ export function RiskDashboard({
           {data.zt_capped_target_note}
         </p>
       ) : null}
+      {/* #474 D' (Gene, #736 5984256202): where the register's CSF risks come
+          from, in the API's own sentence (`risk/csf_source.py`), rendered as
+          given. Null when the register has no CSF findings. */}
+      {data.csf_source_note ? (
+        <p
+          className="mb-4 rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
+          data-testid="risk-csf-source"
+        >
+          {data.csf_source_note}
+        </p>
+      ) : null}
       <KpiRow>
         <KpiCard
           label="Open risks"

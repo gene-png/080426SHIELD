@@ -1255,6 +1255,18 @@ export function RiskRegisterDashboard(): JSX.Element {
               {register.zt_capped_target_note}
             </p>
           ) : null}
+          {/* #474 D' (Gene, #736 5984256202): where the register's CSF risks
+              come from, in the API's own sentence (`risk/csf_source.py`),
+              rendered as given. Null when the register has no CSF findings.
+              The files and the client dashboard print the same sentence. */}
+          {register.csf_source_note ? (
+            <p
+              className="rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
+              data-testid="risk-csf-source"
+            >
+              {register.csf_source_note}
+            </p>
+          ) : null}
           <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
             <NumberCard label="Entries" value={register.entries.length} />
             <NumberCard
