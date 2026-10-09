@@ -1025,7 +1025,8 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
                 )
                 applied -= 1
             written[slot] = raw
-            setattr(row, "maturity_stage" if field == "current" else "target_stage", stage)
+            # `current` is the only field a run applies (#806).
+            row.maturity_stage = stage
             applied += 1
             suggested.add(raw_code)
 
@@ -1055,13 +1056,12 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
     # `answer_source` has exactly one functional reader: `protected_keys`,
     # which protects a row when it is answered (`maturity_stage is not None`)
     # and its source is not AI. That protection exists to guard the MATURITY
-    # STAGE, so only a net change to the stage may claim it. A run that merely
-    # proposes a target has not answered the assessment and must not strip a
-    # stamp — and with it the protection — from a value it never wrote.
+    # STAGE, so only a net change to the stage may claim it.
     #
-    # `answered_by` / `answered_at` DO move on a target-only change, because
-    # the model did write something. They are the "who last touched this row"
-    # pair; `answer_source` is the narrower "who authored the stage" claim.
+    # Since #806 a run writes `current` only (`_ZT_ROW_FIELDS`), so every net
+    # change here is a stage change, and `answered_by` / `answered_at` and
+    # `answer_source` move together. The stage comparison below is kept as the
+    # statement of the rule, not because a target-only change can reach it.
     for code in suggested:
         if after[code] == before[code]:
             continue  # net no-op: agreement, or a duplicate that round-tripped
