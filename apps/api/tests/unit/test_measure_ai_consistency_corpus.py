@@ -1755,6 +1755,22 @@ def test_a_batched_job_interrupted_before_the_provider_exists_leaves_no_file(
     assert not out.exists()
 
 
+def test_a_failure_building_the_note_leaves_no_out_file(main_world, monkeypatch) -> None:
+    """#978 review: the lower-bound note imports the CSF and ATT&CK route
+    modules. Built after `--out` is reserved, a Ctrl-C or ImportError there
+    left an empty `--out`, and the next run was refused as `out_exists`. It is
+    built BEFORE the reservation, so a failure there leaves no file."""
+    TestSession, provider, out = main_world
+
+    def broken() -> dict:
+        raise ImportError("synthetic: the route module failed to import")
+
+    monkeypatch.setattr("scripts.measure_ai_consistency._batch_workers", broken)
+    with pytest.raises(ImportError, match="synthetic"):
+        main([*ZT_ARGV, "--runs", "2", "--out", str(out)])
+    assert not out.exists(), "an empty --out was left to refuse the next run"
+
+
 def test_the_lower_bound_note_takes_the_jobs_own_worker_count(
     csf_world, monkeypatch, tmp_path
 ) -> None:

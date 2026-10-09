@@ -2820,6 +2820,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             _job_shape(args.job)
         price = price_for(s.shield_llm_provider, s.shield_llm_model)
         corpus = None if args.notes_corpus is None else load_notes_corpus(args.notes_corpus)
+        # Built BEFORE `--out` is reserved (#978 review): it imports the CSF
+        # and ATT&CK route modules, and a failure or a Ctrl-C after the
+        # reservation would leave an empty `--out` that refuses the next run.
+        lower_bound_note = _lower_bound_note(args.job)
         # Reserve the name now (exclusive create), before any provider exists.
         # Every later write replaces it atomically (`_ReportFile.write`).
         _open_report(args.out).close()
@@ -2833,7 +2837,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "model": s.shield_llm_model,
         "usd_per_mtok": price,
     }
-    report_file = _ReportFile(Path(args.out), args.job, max_usd, price_basis, database_url)
+    report_file = _ReportFile(
+        Path(args.out), args.job, max_usd, price_basis, database_url, lower_bound_note
+    )
     print(
         f"budget: ${max_usd} for this side (half the ${COST_CAPS_USD[args.job]} service cap), "
         f"input and output at the {s.shield_llm_provider}/{s.shield_llm_model} list price. "
@@ -2993,6 +2999,7 @@ class _ReportFile:
         max_usd: float,
         price_basis: Mapping[str, Any],
         database_url: dict,
+        lower_bound_note: str | None = None,
     ) -> None:
         self.path = path
         self.job = job
@@ -3003,9 +3010,12 @@ class _ReportFile:
         self.counter: Any = None
         self.provider_built = False
         self.batched = job in _BATCHED_JOBS
-        # Built here, not in `abort`: the imports it needs fail loudly at
-        # start rather than inside the interrupt path.
-        self.lower_bound_note = _lower_bound_note(job)
+        # `main` builds it before `--out` is reserved (#978 review) and passes
+        # it in; a direct construction with no file to protect builds the
+        # same note here. Never in `abort`: the imports fail loudly at start.
+        self.lower_bound_note = (
+            _lower_bound_note(job) if lower_bound_note is None else lower_bound_note
+        )
         self.sdk_retries: dict | None = None
         self.records: list[RunRecord] = []
 
