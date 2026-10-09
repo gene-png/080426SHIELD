@@ -62,6 +62,24 @@ import type {
 
 import type { JSX } from "react";
 
+/**
+ * #415, ruling (b) (#736 6072976838): an ATT&CK scope row with no
+ * pending-review count is a register generated before the count was recorded.
+ * The same sentence as `PENDING_REVIEW_NOT_RECORDED` in
+ * `app/risk/exporters.py`; change both.
+ */
+const PENDING_REVIEW_NOT_RECORDED =
+  "Whether any linked technique was pending review was not recorded for this register.";
+
+/**
+ * #415: the ATT&CK row of the scored-coverage record, by the kind its scope
+ * key names (the first-colon reading `scopeLabel` makes). Only ATT&CK has a
+ * review queue, so only its row carries a pending-review count.
+ */
+function isAttackScope(key: string): boolean {
+  return key.split(":", 1)[0] === "attack";
+}
+
 /** #743: the noun agrees with the count beside it ("1 entry", "2 entries"). */
 function entriesNoun(n: number): string {
   return n === 1 ? "entry" : "entries";
@@ -1133,9 +1151,22 @@ export function RiskRegisterDashboard(): JSX.Element {
                     {s.total > s.scored
                       ? `, ${s.total - s.scored} not yet judged and therefore not citable`
                       : " — every row judged"}
+                    {/* Unpinned on purpose: the API sends no ZT pending count, and a fixture would build a state it cannot produce. */}
+                    {isAttackScope(s.service) &&
+                    typeof s.pending_review === "number" &&
+                    s.pending_review > 0
+                      ? `, and ${s.pending_review} pending review and therefore not citable`
+                      : null}
                   </li>
                 ))}
               </ul>
+              {register.excluded_unscored_links.some(
+                (s) =>
+                  isAttackScope(s.service) &&
+                  typeof s.pending_review !== "number",
+              ) ? (
+                <p className="mt-1">{PENDING_REVIEW_NOT_RECORDED}</p>
+              ) : null}
               <p className="mt-1">
                 An unscored control is unfinished assessment work, not a model
                 error: regenerating cannot add links for rows nobody has judged.
