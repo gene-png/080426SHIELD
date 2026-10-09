@@ -146,22 +146,50 @@ def test_a_keyboard_interrupt_cancels_the_queued_batches(db, monkeypatch) -> Non
 # can keep it from calling the provider.
 
 
-def _no_cancel(monkeypatch) -> None:
+class _NoCancelRecord:
+    """What the swapped pool saw: every instance built, and every
+    `cancel_futures` value its `shutdown` was asked for (and ignored)."""
+
+    def __init__(self) -> None:
+        self.pools: list = []
+        self.cancel_requests: list[bool] = []
+
+    def assert_swap_took_effect(self) -> None:
+        # Without this, a pool built any other way would miss the patch, real
+        # `cancel_futures` would do the work, and the flag tests would pass
+        # over a deleted `stop.set()` (#806, review of 94abce7a).
+        assert len(self.pools) == 1, f"NoCancelPool built {len(self.pools)} times, not once"
+        assert True in self.cancel_requests, (
+            "the handler never asked the swapped pool to cancel: "
+            f"cancel_futures values seen {self.cancel_requests}"
+        )
+
+
+def _no_cancel(monkeypatch) -> _NoCancelRecord:
     import app.ai.batching as batching
 
+    record = _NoCancelRecord()
+
     class NoCancelPool(batching.ThreadPoolExecutor):
+        def __init__(self, *a, **kw) -> None:
+            super().__init__(*a, **kw)
+            record.pools.append(self)
+
         def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+            record.cancel_requests.append(cancel_futures)
             super().shutdown(wait=wait, cancel_futures=False)
 
     monkeypatch.setattr(batching, "ThreadPoolExecutor", NoCancelPool)
+    return record
 
 
 @pytest.mark.parametrize(
     "exc", [RuntimeError("caller failed"), KeyboardInterrupt()], ids=["exception", "ctrl-c"]
 )
 def test_the_stop_flag_alone_keeps_dequeued_batches_from_calling(db, monkeypatch, exc) -> None:
-    _no_cancel(monkeypatch)
+    record = _no_cancel(monkeypatch)
     held, caught = _run_interrupted(db, monkeypatch, exc)
+    record.assert_swap_took_effect()
     assert caught.value is exc
     assert held.calls == 1, f"batches reached the provider after the stop: {held.calls} calls"
 
@@ -174,7 +202,7 @@ def test_the_deadline_sets_the_stop_flag_too(db, monkeypatch) -> None:
     from app.ai.runs import RUN_DEADLINE_EXCEEDED, RunFailed
     from app.models._common import utcnow
 
-    _no_cancel(monkeypatch)
+    record = _no_cancel(monkeypatch)
     held = _HeldProvider()
     before = set(threading.enumerate())
     try:
@@ -198,5 +226,6 @@ def test_the_deadline_sets_the_stop_flag_too(db, monkeypatch) -> None:
     for t in set(threading.enumerate()) - before:
         if t.name.startswith("ThreadPoolExecutor"):
             t.join(timeout=10)
+    record.assert_swap_took_effect()
     assert caught.value.reason == RUN_DEADLINE_EXCEEDED
     assert held.calls == 1, f"batches were sent after the deadline: {held.calls} calls"
