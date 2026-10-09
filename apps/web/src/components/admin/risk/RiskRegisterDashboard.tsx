@@ -1175,6 +1175,8 @@ export function RiskRegisterDashboard(): JSX.Element {
                 register.ratings_carried ?? 0,
                 register.ratings_carried_from_version,
                 register.ratings_not_carried,
+                // #930: the rate-again remedy only while the selects exist.
+                register.finalized_at === null,
               ).map((line) => (
                 <p key={line}>{line}</p>
               ))}
