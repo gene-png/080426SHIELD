@@ -13,6 +13,13 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**2026-10-08: the Tech Debt v3.2 prompt for #806 lands with PR #955.**
+Branch `track3/806-tech-debt-prompt`: the prompt verbatim with
+`PROMPT_VERSION = "v3.2"`, the C6 counts as `extraction_flags` with E1 in the
+workspace, the fixture re-authored from v3.2 with #845's lifecycle rule and e2e
+s47, and #871's Q2 advisory resolved for new extractions. Status and rulings:
+`DELIVERY_PLAN.md`, the 2026-10-08 #806 entry under "MVP completion path".
+
 **2026-10-08: #862 in review as PR #958 (not on `main`).** The Risk Register PDF escapes its text, so "ATT&CK", "&" and "<...>"
 in a client's name print as typed and "</b>" no longer fails the export; the
 DOCX and XLSX are unchanged. Status and rulings (#736 6067815887): the
