@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.client_naming import org_display_name
+from app.csf.catalog import all_codes as csf_all_codes
 from app.mode_stamp import (
     UNKNOWN_AI_MODE_REGISTER,
     AiModeStamp,
@@ -201,10 +202,21 @@ def _joined(v) -> str:
     return ", ".join(v) if isinstance(v, list) else ""
 
 
+#: #474 D': a CSF entry is a questionnaire-response entry whose code is a
+#: CSF subcategory; ZT capability codes never share a CSF spelling.
+_CSF_SOURCE = "questionnaire_response"
+_CSF_CODES = csf_all_codes()
+
+
 def _source(
     e: Any, states: dict[str, str] | None = None, pending: frozenset[str] = frozenset()
 ) -> str:
-    if e.source and e.source_id:
+    if e.source == _CSF_SOURCE and e.source_id in _CSF_CODES:
+        # #474 D' (advisor, #736 6087786886, item 5): CSF findings come from
+        # the Playbook. The stored token stays `questionnaire_response` (E's
+        # approved prompt and parser use it); only the files say Playbook.
+        cell = f"CSF Playbook:{e.source_id}"
+    elif e.source and e.source_id:
         cell = f"{e.source}:{e.source_id}"
     else:
         cell = e.source_id or e.source or ""
