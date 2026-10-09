@@ -92,3 +92,47 @@ def test_the_console_table_prints_stray_keys_not_unusable_targets(
         assert f"run {run}: client-visible gaps" in out, out
     assert out.count("stray keys such as target (not applied, not measured) 1") == 2, out
     assert "unusable targets" not in out, out
+
+
+def test_stray_keys_on_duplicated_rows_are_counted_from_the_raw_response(
+    world, capsys  # noqa: F811
+) -> None:
+    """#981 re-review at e680d270: a run that names one capability twice, each
+    copy with a stray `target`, sends two stray keys, and the apply path drops
+    two `unknown_field` values for them. The measure indexes neither copy of a
+    duplicated code, so it must count stray keys over the raw rows, not the
+    index: the console prints 2 per run, never 0."""
+    from scripts.measure_ai_consistency import _print_table, measure_zt
+
+    from app.ai.llm import LLMClient, LLMResponse
+
+    c, TestSession, provider = world
+    code = _zt_assessment(c)
+    row = '{"code": "' + code + '", "current": 2, "target": 3}'
+    provider.register_static(
+        "zt_score", LLMResponse('{"capabilities": [' + row + ", " + row + "]}")
+    )
+    with TestSession() as db:
+        report = measure_zt(db, LLMClient(provider), framework="cisa", runs=2)
+        db.commit()
+    capsys.readouterr()
+
+    _print_table(report)
+
+    out = capsys.readouterr().out
+    assert out.count("stray keys such as target (not applied, not measured) 2") == 2, out
+
+
+def test_a_non_object_row_carries_no_stray_key_and_is_counted_as_unreadable() -> None:
+    """A row that is not an object has no keys, so it adds no stray key; the
+    apply path drops it as `entry_shape`, not `unknown_field`. It is not lost:
+    the pair counts it as unreadable."""
+    from scripts.measure_ai_consistency import ZtScope, compare_pair
+
+    scope = ZtScope(max_stage=4, codes=frozenset({"C1"}))
+    dup = {"code": "C1", "current": 2, "target": 3}
+    a = {"capabilities": [dup, dup, "not an object"]}
+    b = {"capabilities": [{"code": "C1", "current": 2}]}
+    r = compare_pair("zt_score", a, b, context=scope)
+    assert r["unknown_fields"] == {"a": 2, "b": 0}
+    assert r["rows"]["unreadable_a"] == 1

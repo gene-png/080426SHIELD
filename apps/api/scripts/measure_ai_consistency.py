@@ -961,20 +961,29 @@ def compare_pair(
         # #806: the apply path reads `current` only, so any other key on a row
         # (a stray `target` above all) is an `unknown_field` there. Counted here
         # per run, never compared: two runs agreeing on a value nobody applies
-        # is not agreement.
+        # is not agreement. Counted over the RAW rows, never the index: `_index`
+        # drops both copies of a duplicated code, while the apply path drops
+        # every copy's stray key as `unknown_field` (#981 re-review).
         out["unknown_fields"] = {
-            "a": _unknown_field_count(ia.values(), key_fields, fields),
-            "b": _unknown_field_count(ib.values(), key_fields, fields),
+            "a": _unknown_field_count(a.get(list_key) or [], key_fields, fields),
+            "b": _unknown_field_count(b.get(list_key) or [], key_fields, fields),
         }
     return out
 
 
 def _unknown_field_count(
-    rows: Iterable[Mapping[str, Any]], key_fields: Sequence[str], fields: Sequence[str]
+    rows: Iterable[Any], key_fields: Sequence[str], fields: Sequence[str]
 ) -> int:
-    """Keys on the indexed rows that are neither a key field nor a compared one."""
+    """Keys, on every raw response row, that are neither a key field nor a
+    compared one: each copy of a duplicated row counts, as each is an
+    `unknown_field` drop on the apply path.
+
+    A row that is not an object is EXCLUDED, deliberately: it has no keys, so
+    it carries no stray key, and the apply path drops it as `entry_shape`, not
+    `unknown_field`. It is not lost: `_index` counts it as unreadable, and the
+    pair line prints that count."""
     known = set(key_fields) | set(fields)
-    return sum(1 for row in rows for k in row if k not in known)
+    return sum(1 for row in rows if isinstance(row, dict) for k in row if k not in known)
 
 
 def _zt_sent_current(inputs: Mapping[str, Any], code: Any) -> Any:
@@ -2645,7 +2654,7 @@ def measure_tech_debt(
 
 
 def _zt_stray_keys_by_run(report: dict) -> dict[int, int]:
-    """Each run's count of keys beside `current` on its rows, read from the
+    """Each run's count of keys beside `current` on its raw rows, read from the
     pairs' `unknown_fields` (`compare_pair`, zt_score only). A run's count is
     the same in every pair it is in, since it counts that run's own response,
     so it is taken per run, never summed across pairs."""
