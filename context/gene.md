@@ -1,5 +1,13 @@
 # Gene — in-flight status
 
+_2026-10-09: #944 is built on `track6/944-cap-note-order`._
+
+**What it does:** the DoD cap note now sits directly under the Zero Trust
+target line in the Risk Register's three files and on the admin screen (the
+client dashboard already had it there), so the two no longer read as two
+baselines. Order only, no wording changed, as the advisor ruled on #736
+comment 6069566861. Comes back to you: conditions 5 and 6.
+
 _2026-10-09: #930 is built on `track6/930-published-amber`, a draft PR (opened
 after #974 merged)._
 

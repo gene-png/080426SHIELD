@@ -82,6 +82,19 @@ sizes marked coarse.
 
 Track work outside that list is paused.
 
+**2026-10-09: #944 (`tier-3`) is built on `track6/944-cap-note-order`.**
+Status as written before it merges; update this line in the landing commit.
+The DoD cap note (#915) now renders immediately after the Zero Trust target
+line (#861) on every Risk surface, so the two read as one baseline rather than
+two: in the PDF, DOCX and XLSX summary it moved up from after the
+scored-coverage and pending-review lines, and on the admin register from above
+the carried-ratings and finding-coverage blocks to just below the targets
+block. The client dashboard already had this order and is unchanged apart from
+a comment. No copy changed. Each surface has an adjacency test, and each goes
+red with the note out of place. Ruling: advisor, #736 comment 6069566861,
+option 1. Trips merge-rule conditions 5 (tests) and 6 (deliverable order), so
+it comes back to Gene.
+
 **2026-10-09: #930 (`tier-2`) is built on `track6/930-published-amber`, a
 draft PR opened after #974 (#415) merged.** Status as written before it
 merges; update this line in the landing commit. On a published
