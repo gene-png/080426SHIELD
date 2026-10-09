@@ -192,9 +192,11 @@ been tripped.
   `apps/web/**` would expand scope on an argument nobody has made.
 - `apps/api/scripts/seed_demo.py` and `scripts/demo-reset.sh` — both drive CI
   jobs, and seed data being clean is why #130 survived months of green.
-- `docker-compose.yml` and `docker-compose.demo.yml` — CI's E2E and Demo jobs
-  ARE this file: it defines the api bind mounts every containerised gate reads,
-  the web install guard, the api boot chain, and every healthcheck. Listing
+- `docker-compose.yml`, `docker-compose.demo.yml` and
+  `scripts/web-install-if-stale.sh` — CI's E2E and Demo jobs ARE these files:
+  they define the api bind mounts every containerised gate reads, the web
+  install guard (the script, which compose mounts and runs), the api boot
+  chain, and every healthcheck. Listing
   only `scripts/demo-reset.sh`, a WRAPPER around `docker compose`, left a
   compose-only PR clearing all six conditions.
 - `apps/api/scripts/check_*.py`, `apps/api/scripts/leave_row_oracle.py` (a CI
@@ -231,7 +233,7 @@ tests. Condition 5's path list applied to the fifteen most recent PR merges on
 | 2026-08-26 | 4 | 11 | 4 / 11 |
 | 2026-09-21 | 2 | 13 | 3 / 12 |
 
-<!-- counted: condition 5's path list applied to `git log --first-parent -40 --format='%H|%s' origin/main | grep -E '\(#[0-9]+\)$' | head -15`, at 897eeae, 2026-09-21; last column: `compose_unchanged.py --repo . <sha>^1..<sha>` per PR, 2026-09-25 (D-095) -->
+<!-- counted: condition 5's path list applied to `git log --first-parent -40 --format='%H|%s' origin/main | grep -E '\(#[0-9]+\)$' | head -15`, at 897eeae, 2026-09-21; last column: `compose_unchanged.py --repo . <sha>^1..<sha>` per PR, 2026-09-25 (D-095); both rows hold with `scripts/web-install-if-stale.sh` added, which no PR in either window touches, 2026-09-26 -->
 
 Each is a claim about a fixed window, so it does not rot the way a live count
 does — and each is true only of condition 5 as it stood that day. **Re-derive
