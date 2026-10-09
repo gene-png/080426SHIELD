@@ -1,5 +1,13 @@
 # Gene — in-flight status
 
+_2026-10-09: the #806 Zero Trust prompt is draft PR #981 on
+`track4/806-zt-prompt`, merged with main at 2f701f5b. It ships your approved
+text (sha256-pinned), sends `capability_details` with the DoD activities, and
+stops applying the AI's target, so the intake target governs new runs. The
+test edits and the Step 1 copy are as approved on #736 (comment 6072976838).
+The DoD output-cap probe is authorized but waits on a provider key in this
+environment. It comes back to you, not self-merged: conditions 5 and 6._
+
 _2026-10-08: #840 (a Zero Trust capability the AI returns no result for is now
 counted and shown) is draft PR #963 on `track4/840-zt-no-result`, merged with
 main at 5ef7f700. The run result carries `omitted_count` and
