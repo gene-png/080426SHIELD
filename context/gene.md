@@ -12,6 +12,15 @@ lower-bound string says the same, with the job's worker count read from its
 constant; the edit to the test on `main` was approved. It comes back
 to you under merge-rule condition 5 (`app/ai/`, `apps/api/tests/**`)._
 
+_2026-10-09: #930 is built on `track6/930-published-amber`, a draft PR (opened
+after #974 merged)._
+
+**What it does:** on a published Risk Register version, the carried-ratings
+block no longer tells the consultant to rate entries again in a table that is
+no longer editable; the sentence ends at the finding codes and the amber style
+stays (advisor, #736 comment 6067815887). Drafts read as before. The draft-side
+follow-up is #950. Comes back to you under condition 5 only.
+
 _2026-10-09: #415 is built on `track6/415-pending-links`, a draft PR._
 
 **What it does:** an ATT&CK technique pending review is no longer citable in
