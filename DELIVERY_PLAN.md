@@ -89,10 +89,15 @@ line (#861) on every Risk surface, so the two read as one baseline rather than
 two: in the PDF, DOCX and XLSX summary it moved up from after the
 scored-coverage and pending-review lines, and on the admin register from above
 the carried-ratings and finding-coverage blocks to just below the targets
-block. The client dashboard already had this order and is unchanged apart from
-a comment. No copy changed. Each surface has an adjacency test, and each goes
-red with the note out of place. Ruling: advisor, #736 comment 6069566861,
-option 1. Trips merge-rule conditions 5 (tests) and 6 (deliverable order), so
+block. The client dashboard already had this order and needed no code change
+(a comment only). No copy changed. Each surface has adjacency tests for two
+target shapes: a single DoD Zero Trust target, and CISA plus DoD, where the
+note must follow the DoD line. The "targets not recorded" state is not tested.
+The PDF, DOCX, XLSX and admin tests went red on main's order and on revert;
+the client dashboard's could not, since main was already right, so it was
+shown able to fail by a hand mutation instead. The CISA plus DoD cases were
+also shown red, alone, under a mutation placing the note after the first
+Zero Trust line. Ruling: advisor, #736 comment 6069566861, option 1. Trips merge-rule conditions 5 (tests) and 6 (deliverable order), so
 it comes back to Gene.
 
 **2026-10-09: #930 (`tier-2`) is built on `track6/930-published-amber`, a
