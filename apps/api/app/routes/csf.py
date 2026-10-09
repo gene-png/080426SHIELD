@@ -2050,12 +2050,11 @@ def build_csf_ai_request(db: Session, svc: Service, client: Client) -> CsfAiRequ
 def _subcategory_definitions(codes: list[str]) -> dict[str, str]:
     """Each code's NIST CSF 2.0 outcome text, as the catalog has it (#806 D2).
 
-    Not sent yet: the #806 CSF prompt PR adds it to the payload built below,
-    sliced per batch, by calling this function. It is registered now (#984), so
-    the moment it is sent it egresses unredacted and guarded: a client named
-    "Critical" would otherwise turn GV.OC-04's outcome into "[CLIENT]
-    objectives, ...". A code the catalog does not have raises KeyError, which
-    the guard reports as a mismatch."""
+    The request builder below sends it, and `_csf_batch_inputs` slices it per
+    batch. It is registered (#984), so it egresses unredacted and guarded: a
+    client named "Critical" would otherwise turn GV.OC-04's outcome into
+    "[CLIENT] objectives, ...". A code the catalog does not have raises
+    KeyError, which the guard reports as a mismatch."""
     return {code: subcategory_by_code(code).outcome for code in codes}
 
 
@@ -2124,6 +2123,7 @@ def _csf_ai_request_for(db: Session, a: CsfAssessment, client: Client) -> CsfAiR
         if ans.maturity_tier is not None or ans.notes or ans.evidence_artifact_id is not None
     }
     client_org = client.legal_name  # NULL when nobody has named the org (D-080)
+    codes = sorted({r.subcategory_code for r in rows.values()})
     return CsfAiRequest(
         assessment=a,
         rows=rows,
@@ -2132,7 +2132,11 @@ def _csf_ai_request_for(db: Session, a: CsfAssessment, client: Client) -> CsfAiR
             job_name="csf_score",
             inputs={
                 "tiers": sorted({r.tier for r in rows.values()}),
-                "subcategories": sorted({r.subcategory_code for r in rows.values()}),
+                "subcategories": codes,
+                # #806 D2: the outcome text the prompt scores against (its
+                # section 4, source 1). The preview shows the full map; each
+                # batch carries only its own codes' (`_csf_batch_inputs`).
+                "subcategory_definitions": _subcategory_definitions(codes),
                 "answers": answers,
             },
             client_org_name=client_org,
@@ -2154,7 +2158,7 @@ def _csf_ai_request_for(db: Session, a: CsfAssessment, client: Client) -> CsfAiR
 #     routes/attack.py), the high end of the range the llm.py comment gives
 #     for csf_score. No live csf_score has been measured.
 # (8192 - 2048) / 575 = 10.7, so 10 rows: ~5.75k tokens, leaving ~400 for the
-# JSON wrapper and the prompt's `executive_summary`. A tier's subcategories are
+# JSON wrapper. A tier's subcategories are
 # split in tens, so the 318-row profile is 3 x 11 = 33 batches, 6 short ones.
 # The streamed Anthropic adapter (64000) has room to spare at this size.
 _CSF_BATCH_ROWS = 10
@@ -2167,15 +2171,23 @@ def _csf_batch_inputs(inputs: dict[str, Any]) -> list[dict[str, Any]]:
     """The payload split into batches of at most `_CSF_BATCH_ROWS` rows: one
     tier per batch, that tier's subcategories in order, each batch carrying
     every interview answer (input tokens are the cheap side, and a batch must
-    not lose the grounding the prompt asks it to use). Every (tier,
-    subcategory) row the single-call payload asked for is asked for once."""
+    not lose the grounding the prompt asks it to use; the prompt says to ignore
+    answers for codes it was not asked about). Every (tier, subcategory) row
+    the single-call payload asked for is asked for once.
+
+    `subcategory_definitions` is sliced to the batch's own codes (#806 D2), in
+    the batch's code order, so no batch resends all 106 outcomes."""
     tiers = list(inputs.get("tiers") or [])
     codes = list(inputs.get("subcategories") or [])
-    batches = [
-        {**inputs, "tiers": [tier], "subcategories": codes[i : i + _CSF_BATCH_ROWS]}
-        for tier in tiers
-        for i in range(0, len(codes), _CSF_BATCH_ROWS)
-    ]
+    definitions = inputs.get("subcategory_definitions") or {}
+    batches = []
+    for tier in tiers:
+        for i in range(0, len(codes), _CSF_BATCH_ROWS):
+            batch_codes = codes[i : i + _CSF_BATCH_ROWS]
+            batch = {**inputs, "tiers": [tier], "subcategories": batch_codes}
+            if "subcategory_definitions" in inputs:
+                batch["subcategory_definitions"] = {c: definitions[c] for c in batch_codes}
+            batches.append(batch)
     return batches or [inputs]
 
 

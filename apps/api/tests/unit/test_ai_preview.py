@@ -106,7 +106,10 @@ def test_preview_equals_run_ai_egress_and_counts_match(app_client) -> None:
     #479: csf_score egresses in batches, each the previewed payload with its
     tiers and subcategories narrowed to one batch's rows. So every batch must
     equal the preview outside those two keys, and the batches together must
-    ask for exactly the previewed rows, each once."""
+    ask for exactly the previewed rows, each once.
+
+    #806 D2: each batch also narrows `subcategory_definitions` to its own
+    codes, while the preview shows the full map."""
     c, provider, _ = app_client
     h, svc_id, _code = _bootstrap_csf(c)
 
@@ -135,7 +138,14 @@ def test_preview_equals_run_ai_egress_and_counts_match(app_client) -> None:
     assert len(egress) > 1, "a batched run egresses more than one payload"
     preview = body["payload"]
     for batch in egress:
-        narrowed = {**preview, "tiers": batch["tiers"], "subcategories": batch["subcategories"]}
+        narrowed = {
+            **preview,
+            "tiers": batch["tiers"],
+            "subcategories": batch["subcategories"],
+            "subcategory_definitions": {
+                code: preview["subcategory_definitions"][code] for code in batch["subcategories"]
+            },
+        }
         assert batch == narrowed
     asked = sorted((t, c) for b in egress for t in b["tiers"] for c in b["subcategories"])
     previewed = sorted((t, c) for t in preview["tiers"] for c in preview["subcategories"])
