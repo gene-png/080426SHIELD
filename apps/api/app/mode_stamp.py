@@ -283,10 +283,11 @@ def pdf_paragraph(stamp: AiModeStamp, style: Any) -> Any:
 
 
 def add_docx_paragraph(doc: Any, stamp: AiModeStamp) -> None:
-    """The stamp as a DOCX paragraph, bold when it is a warning."""
-    para = doc.add_paragraph()
-    run = para.add_run(stamp.sentence())
-    run.bold = stamp.is_warning
+    """The stamp as a DOCX paragraph, bold when it is a warning. Through
+    `app.docx_export`, which strips what XML 1.0 refuses (#993)."""
+    from app.docx_export import add_paragraph
+
+    add_paragraph(doc, stamp.sentence(), bold=stamp.is_warning)
 
 
 def xlsx_rows(stamp: AiModeStamp) -> tuple[list[Any], list[list[Any]]]:

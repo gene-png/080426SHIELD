@@ -44,12 +44,24 @@ _log = get_logger(__name__)
 FORMULA_TRIGGERS = ("=", "+", "-", "@", "\t", "\r")
 
 
-def safe_text_row(ws: Any, values: list) -> None:
-    """Append `values` to `ws` with every string stored as text, as typed."""
+def strip_illegal_characters(text: str) -> tuple[str, int]:
+    """`text` without the control characters openpyxl refuses, and how many
+    went. ONE definition of the set, for this module and `app/docx_export.py`
+    (#993): XML 1.0, which python-docx enforces, refuses the same C0 controls.
+
+    It is openpyxl's `ILLEGAL_CHARACTERS_RE`, which does NOT cover U+FFFE,
+    U+FFFF or a lone surrogate; both formats still raise on those (#993's
+    report records the measurement)."""
     from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 
-    removed = [len(ILLEGAL_CHARACTERS_RE.findall(v)) if isinstance(v, str) else 0 for v in values]
-    ws.append([ILLEGAL_CHARACTERS_RE.sub("", v) if isinstance(v, str) else v for v in values])
+    return ILLEGAL_CHARACTERS_RE.subn("", text)
+
+
+def safe_text_row(ws: Any, values: list) -> None:
+    """Append `values` to `ws` with every string stored as text, as typed."""
+    stripped = [strip_illegal_characters(v) if isinstance(v, str) else (v, 0) for v in values]
+    removed = [count for _value, count in stripped]
+    ws.append([value for value, _count in stripped])
     row = ws.max_row
     for column, count in enumerate(removed, start=1):  # append starts at column A
         if count:

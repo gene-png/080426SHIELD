@@ -453,11 +453,11 @@ def render_docx(ctx: ZtDeliverableContext) -> bytes:
     )
 
     add_heading(doc, f"Top remediation gaps (target S{ctx.gap.target_stage})")
-    doc.add_paragraph(_gap_plan_caption(ctx.gap, _target_note(ctx)))
-    for sentence in target_cap_sentences(ctx.gap):  # #839, per capability
-        doc.add_paragraph(sentence)
-    for sentence in _stage_above_max_notes(ctx):  # #839 S1, after the cap sentences
-        doc.add_paragraph(sentence)
+    # Through `add_paragraphs`, never `doc.add_paragraph`, so the strip of
+    # what XML 1.0 refuses reaches these lines too (#993).
+    add_paragraphs(doc, [_gap_plan_caption(ctx.gap, _target_note(ctx))])
+    add_paragraphs(doc, target_cap_sentences(ctx.gap))  # #839, per capability
+    add_paragraphs(doc, _stage_above_max_notes(ctx))  # #839 S1, after the cap sentences
     if not ctx.gap.gaps:
         add_paragraphs(
             doc,
