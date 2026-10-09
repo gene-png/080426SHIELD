@@ -104,6 +104,7 @@ from app.attack.retirement import build_index as build_retirement_index
 from app.attack.rules import COMPUTED_STATUSES, NEW_RULES, parents_computed, statuses_computed
 from app.attack.subset_drift import (
     OutsideCitation,
+    SubsetCheck,
     citations_outside_subset,
     subset_applies,
 )
@@ -249,7 +250,7 @@ def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentR
         .scalars()
         .all()
     )
-    checked, outside = subset_state(
+    subset = subset_state(
         db, _client_id_of(db, a.service_id), rows, parents_computed=parents_computed(a)
     )
     return AttackAssessmentResponse(
@@ -273,9 +274,9 @@ def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentR
             AttackOutsideCitation(
                 technique_code=o.technique_code, field=o.field, tool=o.tool, locked=o.locked
             )
-            for o in outside
+            for o in subset.outside
         ],
-        subset_checked=checked,
+        subset_checked=subset.checked,
     )
 
 
@@ -314,7 +315,7 @@ def outside_subset_citations(
 ) -> list[OutsideCitation]:
     """#851: the rows' tools outside the client's CURRENT security tool list;
     [] when there is no list to check against (see `subset_state`)."""
-    return subset_state(db, client_id, rows, parents_computed=parents_computed)[1]
+    return list(subset_state(db, client_id, rows, parents_computed=parents_computed).outside)
 
 
 def subset_state(
@@ -323,7 +324,7 @@ def subset_state(
     rows: Iterable[AttackCoverage],
     *,
     parents_computed: bool,
-) -> tuple[bool, list[OutsideCitation]]:
+) -> SubsetCheck:
     """#851: the rows' tools outside the client's CURRENT security tool list,
     checked by the resolver built from the SAME inputs Run AI's request uses
     (`_attack_ai_request_for`: `_client_capability_inputs`, the client's
@@ -341,12 +342,15 @@ def subset_state(
     if not subset_applies(cl.status for cl in membership.lists):
         # NOT CHECKED, the third state: nothing is flagged because nothing
         # could be, never because nothing was found.
-        return False, []
+        return SubsetCheck(checked=False)
     subset = citation_resolver_for(
         [Candidate(name=c.name, vendor=c.vendor) for c in membership.inputs()],
         client_org_name=client.legal_name,
     )
-    return True, citations_outside_subset(rows, subset, parents_computed=parents_computed)
+    return SubsetCheck(
+        checked=True,
+        outside=tuple(citations_outside_subset(rows, subset, parents_computed=parents_computed)),
+    )
 
 
 def _tool_retirement_marks(
@@ -3529,11 +3533,11 @@ def finalize_attack_deliverable(
         retirement=client_retirement_index(db, svc.client_id),
         # #646: the ONE derivation every surface calls.
         ai_mode=ai_mode_for(db, svc, assessment),
-        # #851: whether the cited tools could be checked at all, AS OF this
-        # finalize; the rendered bytes keep it.
-        subset_checked=subset_state(
+        # #851 / #889: whether the cited tools could be checked, and which are
+        # outside the list, AS OF this finalize; the rendered bytes keep both.
+        subset=subset_state(
             db, svc.client_id, coverage, parents_computed=parents_computed(assessment)
-        )[0],
+        ),
     )
     pdf_bytes = render_attack_pdf(ctx)
     xlsx_bytes = render_attack_xlsx(ctx)

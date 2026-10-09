@@ -57,7 +57,13 @@ from app.attack.retirement import (
     summary_sentences,
 )
 from app.attack.rules import parents_computed, statuses_computed
-from app.attack.subset_drift import NOT_CHECKED_SENTENCE
+from app.attack.subset_drift import (
+    NOT_CHECKED_SENTENCE,
+    OUTSIDE_LEGEND,
+    OUTSIDE_MARK,
+    SubsetCheck,
+    outside_rows_sentence,
+)
 from app.client_naming import org_display_name
 from app.mode_stamp import (
     UNKNOWN_AI_MODE,
@@ -107,11 +113,12 @@ class AttackDeliverableContext:
     #: context (finalize freezes it into the bytes); None where there is nothing
     #: to recount (`attack/after.py`). Derived in `build_context`.
     after: AfterPlannedChanges | None = None
-    #: #851: whether the cited tools were checked against a security tool
-    #: list, read at finalize. False: the client has none, and every format
-    #: says so (`subset_sentences`). None: nobody asked (the client dashboard,
-    #: #889), and nothing is said either way.
-    subset_checked: bool | None = None
+    #: #851 / #889 (Q7): the security tool list check, read at finalize (the
+    #: rendered bytes keep it) or live (the client dashboard). Not checked: the
+    #: client has none, and every format says so. Checked: the rows crediting a
+    #: tool outside the list are counted (C1) and each such tool is marked (C3).
+    #: None: nobody asked, and nothing is said either way.
+    subset: SubsetCheck | None = None
 
 
 def build_context(
@@ -123,7 +130,7 @@ def build_context(
     rollup: CoverageRollup,
     retirement: RetirementIndex = NO_PLAN,
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
-    subset_checked: bool | None = None,
+    subset: SubsetCheck | None = None,
 ) -> AttackDeliverableContext:
     rows = list(coverage)
     rule = parents_computed(assessment)
@@ -151,14 +158,28 @@ def build_context(
         ai_mode=ai_mode,
         statuses_computed=computed,
         after=after_planned_changes(assessment, rows, retirement),
-        subset_checked=subset_checked,
+        subset=subset,
     )
 
 
 def subset_sentences(ctx: AttackDeliverableContext) -> list[str]:
-    """#851: the "not checked" sentence, only when the client has no security
-    tool list to check against; [] otherwise (and when nobody asked)."""
-    return [NOT_CHECKED_SENTENCE] if ctx.subset_checked is False else []
+    """#851 / #889: the "not checked" sentence when the client has no security
+    tool list to check against; the count of rows crediting a tool outside it
+    (C1) when there are any; [] otherwise, and when nobody asked.
+
+    The rows counted are this context's own rows, so the sentence counts the
+    rows the document prints."""
+    if ctx.subset is None:
+        return []
+    if not ctx.subset.checked:
+        return [NOT_CHECKED_SENTENCE]
+    rows = len(ctx.subset.outside_codes() & {c.technique_code for c in ctx.coverage})
+    return [outside_rows_sentence(rows)] if rows else []
+
+
+def outside_tools(ctx: AttackDeliverableContext) -> frozenset[str]:
+    """#889: the cited names to mark (C3); empty when nothing was checked."""
+    return ctx.subset.outside_tools() if ctx.subset is not None else frozenset()
 
 
 def _computed_leaf(cov: object) -> bool:
@@ -470,11 +491,16 @@ def outside_assessed_text(rollup: CoverageRollup) -> str:
 
 
 def _tools(
-    value: list | None, unconfirmed: frozenset[str], retirement: RetirementIndex = NO_PLAN
+    value: list | None,
+    unconfirmed: frozenset[str],
+    retirement: RetirementIndex = NO_PLAN,
+    outside: frozenset[str] = frozenset(),
 ) -> str:
-    # #686: the retirement mark stacks AFTER " (unconfirmed)".
+    # #686: the retirement mark stacks AFTER " (unconfirmed)"; #889 (C3): the
+    # security tool list mark stacks after both.
     return "; ".join(
         f"{t}{UNCONFIRMED_MARK if t in unconfirmed else ''}{retirement.mark(t)}"
+        f"{OUTSIDE_MARK if t in outside else ''}"
         for t in (value or [])
     )
 
@@ -623,7 +649,12 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
                 "for retirement is not known.",
             ]
         )
-    # #851: the third state, only when nothing could be checked.
+    # #889 (C4): a legend row only when the Coverage sheet carries the mark.
+    marked = outside_tools(ctx)
+    if any(t in marked for row in _delivered_rows(ctx) for t in row_tools(row)):
+        ws.append(list(OUTSIDE_LEGEND))
+    # #851: the third state, only when nothing could be checked; #889: the
+    # count of rows crediting a tool outside the list.
     for sentence in subset_sentences(ctx):
         ws.append([sentence])
     for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=1):
@@ -729,9 +760,9 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
                 reason.cell() if (reason := _row_reason(ctx, cov)) is not None else "",
                 *(in_place_cells(cov) if ctx.statuses_computed else []),
                 (own.rationale if own else None) or "",
-                _tools(own.detection_tools if own else None, unconfirmed, ctx.retirement),
-                _tools(own.prevention_tools if own else None, unconfirmed, ctx.retirement),
-                _tools(own.response_tools if own else None, unconfirmed, ctx.retirement),
+                _tools(own.detection_tools if own else None, unconfirmed, ctx.retirement, marked),
+                _tools(own.prevention_tools if own else None, unconfirmed, ctx.retirement, marked),
+                _tools(own.response_tools if own else None, unconfirmed, ctx.retirement, marked),
                 (cov.notes if cov else None) or "",
             ],
         )

@@ -68,6 +68,60 @@ NOT_CHECKED_SENTENCE = (
 )
 
 
+@dataclass(frozen=True)
+class SubsetCheck:
+    """#889 (Q7): whether the cited tools were checked against a security tool
+    list, and what the check found, as ONE value so the two cannot disagree.
+
+    `checked` False is the third state, "not checked" (the client has no list):
+    nothing can be outside a list that does not exist, so `outside` must then
+    be empty, and building one that is not raises here."""
+
+    checked: bool
+    outside: tuple[OutsideCitation, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.checked and self.outside:
+            raise ValueError(
+                f"a subset that was not checked cannot carry {len(self.outside)} tools "
+                "outside it; `outside` is the check's own finding"
+            )
+
+    def outside_tools(self) -> frozenset[str]:
+        """The cited names to mark, exactly as stored."""
+        return frozenset(o.tool for o in self.outside)
+
+    def outside_codes(self) -> frozenset[str]:
+        """The technique rows crediting at least one of them."""
+        return frozenset(o.technique_code for o in self.outside)
+
+
+#: #889 copy, approved verbatim (advisor, #736 comment 6090360421, on the plan
+#: at 6089903057). C3: the per-tool mark, after " (unconfirmed)" and after the
+#: retirement mark. COPIED to `apps/web/src/lib/attack/subset.ts`; change both.
+OUTSIDE_MARK = " (not in the security tool list)"
+#: C4: the XLSX legend row for that mark.
+OUTSIDE_LEGEND = (
+    f"Tools marked{OUTSIDE_MARK}",
+    "Not in the client's security tool list when this report was finalized, so "
+    "coverage may count a tool the client does not use.",
+)
+
+
+def outside_rows_sentence(rows: int) -> str:
+    """C1: #851's approved S1, with a period in place of its colon. Counts
+    ROWS, as the approve refusal does: one tool on two rows is two."""
+    if rows == 1:
+        return (
+            "1 technique row credits a tool that is not in the client's security tool "
+            "list, so its status may count a tool the client does not use."
+        )
+    return (
+        f"{rows} technique rows credit a tool that is not in the client's security "
+        "tool list, so their status may count a tool the client does not use."
+    )
+
+
 def subset_applies(list_statuses: Iterable[Any]) -> bool:
     """Whether there is a security tool list to judge a citation against: at
     least one Tech Debt list that is not DISCARDED feeds the subset.

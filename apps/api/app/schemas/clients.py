@@ -283,6 +283,16 @@ class AttackDashboardResponse(BaseModel):
     #: #801: the figure after planned changes with the current plan, and its
     #: counts. OMITTED where there is nothing to recount.
     after_planned_changes: list[str] | None = None
+    #: #889 (Q1): the security tool list check, read LIVE: the deliverable's
+    #: own sentences (`subset_sentences`). [C5] when the client has no list
+    #: ("not checked"), [C1] when rows credit a tool outside it, [] when checked
+    #: and none do. The web says beside it that the check is the current list's.
+    subset_notes: list[str] | None = None
+    #: #889 (Q2): the cited tools outside the client's CURRENT security tool
+    #: list, exact strings, sorted; the web marks each (C3). [] when checked
+    #: and none are; OMITTED when nothing could be checked, so an empty list
+    #: never reads as "checked" for a client with no list.
+    tool_outside_subset: list[str] | None = None
 
     @model_serializer(mode="wrap")
     def _drop_unset_rule_key(self, handler: Any) -> dict[str, Any]:
@@ -297,6 +307,8 @@ class AttackDashboardResponse(BaseModel):
                     "awaiting_review_sentence",
                     "statuses_computed",
                     "after_planned_changes",
+                    "subset_notes",
+                    "tool_outside_subset",
                 }
             ),
         )
@@ -830,6 +842,11 @@ class ValueSummaryResponse(BaseModel):
     #: an unverified assessment. None when `attack_uncovered_count` is, and when
     #: no released assessment behind it renders under #620's rules (option (a)).
     attack_not_verified_count: int | None
+    #: #889 (Q3, C7): True when a released ATT&CK assessment behind
+    #: `attack_uncovered_count` credits a tool outside the client's CURRENT
+    #: security tool list, so the total counts it. False: checked, none does.
+    #: None: the total is None, or the client has no list (not checked).
+    attack_counts_outside_subset: bool | None
     csf_gap_count: int | None
     csf_gap_unresolved: bool
     csf_services: int
