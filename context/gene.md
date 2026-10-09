@@ -1,5 +1,19 @@
 # Gene — in-flight status
 
+_2026-10-09 (track6): #474 D' (your PR D) is built on
+`track6/474-d-playbook-risk`, with no PR yet: #1002 goes first._
+
+**What it does:** the Risk Register's CSF risks now come from the Playbook
+score you chose (#736 5984218862), not the questionnaire tier. A subcategory is
+a risk when its Playbook level is below its Playbook target, and the register
+says on every screen and file, only when it has CSF risks: "CSF risks in this
+register come from Kentro's evidence-based assessment. They can differ from
+your self-assessment on the CSF dashboard." The client's CSF dashboard is
+unchanged. Two tests about the old CSF engagement-tier rule are deleted, with
+the advisor's approval, because your decision retired that rule. The Atlas demo
+gets Playbook rows in a small PR right after this one. When the PR opens it
+comes back to you (conditions 5 and 6).
+
 _2026-10-09 (track1): #775 and #972 are built on `track1/775-export-escape`,
 for #775 and #972, with `main` merged in at e3c962f0 after the run_batches PR
 (#978) landed; the PR is not yet open. Every PDF prints the
