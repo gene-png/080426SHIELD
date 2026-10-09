@@ -55,7 +55,11 @@ CATALOG_FIELDS: dict[str, CatalogBuilder] = {}
 
 class CatalogFieldMismatch(RuntimeError):
     """A registered catalog field is not the catalog's text. Raised before
-    anything egresses."""
+    anything egresses. `field` names the payload key, never its content."""
+
+    def __init__(self, field: str, message: str) -> None:
+        super().__init__(message)
+        self.field = field
 
 
 def register_catalog_field(field: str, builder: CatalogBuilder) -> None:
@@ -74,12 +78,13 @@ def _check(field: str, payload: Mapping[str, Any], value: Any, stage: str) -> No
         expected = CATALOG_FIELDS[field](payload, value)
     except Exception as exc:
         raise CatalogFieldMismatch(
+            field,
             f"payload field {field!r} could not be rebuilt from the catalog {stage} "
-            f"({type(exc).__name__}: {exc}); nothing was sent"
+            f"({type(exc).__name__}: {exc}); nothing was sent",
         ) from exc
     if _as_bytes(value) != _as_bytes(expected):
         raise CatalogFieldMismatch(
-            f"payload field {field!r} is not the catalog's text {stage}; nothing was sent"
+            field, f"payload field {field!r} is not the catalog's text {stage}; nothing was sent"
         )
 
 

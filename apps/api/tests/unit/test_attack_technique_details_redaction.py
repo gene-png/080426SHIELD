@@ -104,3 +104,34 @@ def test_the_preview_shows_the_same_unchanged_names_and_counts(app_client) -> No
     for code, d in details.items():
         assert d == _catalogue_details(code), code
     assert body["removed_counts"] == {"client_org": 1}
+
+
+def test_a_catalog_mismatch_in_the_preview_is_a_typed_refusal(
+    app_client, monkeypatch  # noqa: F811
+) -> None:
+    """D-016: the preview refuses with {reason, message}, naming the field and
+    never its content, not the global untyped 500."""
+    from app.ai.catalog_fields import CATALOG_FIELDS
+
+    c, TestSession, _provider = app_client
+    h, svc_id = _service_for_cloud(c, TestSession)
+    monkeypatch.setitem(
+        CATALOG_FIELDS,
+        "technique_details",
+        lambda _payload, value: {
+            code: {**d, "name": "Not the catalogue"} for code, d in value.items()
+        },
+    )
+
+    r = c.post("/ai/preview", headers=h, json={"service_id": svc_id})
+
+    assert r.status_code == 500, r.text
+    error = r.json()["error"]
+    assert {k: error[k] for k in ("reason", "message")} == {
+        "reason": "catalog_field_mismatch",
+        "message": (
+            "The technique_details SHIELD would send to the AI does not match its "
+            "catalog, so the preview was not built and nothing was sent."
+        ),
+    }
+    assert "Cloud Services" not in r.text and "Not the catalogue" not in r.text

@@ -18,7 +18,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.ai.catalog_fields import redact_ai_payload
+from app.ai.catalog_fields import CatalogFieldMismatch, redact_ai_payload
 from app.ai.engine import get_job
 from app.ai.preview import AiPreviewPayload
 from app.config import get_settings
@@ -89,12 +89,27 @@ def preview_ai_payload(
     mode = get_settings().shield_redaction_mode
     # The same call `LLMClient.invoke` makes (#984), so the preview shows the
     # catalog fields exactly as a run sends them.
-    cleaned, removed_counts = redact_ai_payload(
-        payload.inputs,
-        mode=mode,
-        client_org_name=payload.client_org_name,
-        name_hints=payload.name_hints,
-    )
+    try:
+        cleaned, removed_counts = redact_ai_payload(
+            payload.inputs,
+            mode=mode,
+            client_org_name=payload.client_org_name,
+            name_hints=payload.name_hints,
+        )
+    except CatalogFieldMismatch as exc:
+        # #984: typed (D-016), naming the field and never its content. Run-AI
+        # reaches the same refusal through `ai_call_boundary`.
+        _log.error("ai_preview_catalog_field_mismatch", service_id=str(svc.id), field=exc.field)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "reason": "catalog_field_mismatch",
+                "message": (
+                    f"The {exc.field} SHIELD would send to the AI does not match its "
+                    "catalog, so the preview was not built and nothing was sent."
+                ),
+            },
+        ) from exc
 
     purpose = get_job(payload.job_name).call_purpose
     _log.info(
