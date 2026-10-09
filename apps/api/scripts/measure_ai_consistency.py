@@ -2950,6 +2950,34 @@ def _dump_json(obj: Any, fh: Any) -> None:
     json.dump(obj, fh, indent=2, sort_keys=True)
 
 
+def _batch_workers() -> dict[str, int]:
+    """Each batched job's `max_workers`, READ from the route module the job
+    runs through (#978): never copied, so the note cannot drift from it."""
+    import app.routes.attack as attack_routes
+    import app.routes.csf as csf_routes
+
+    return {
+        "csf_score": csf_routes._CSF_MAX_WORKERS,
+        "mitre_map": attack_routes._MITRE_MAX_WORKERS,
+    }
+
+
+def _lower_bound_note(job: str) -> str:
+    """The aborted report's lower-bound note, naming the running job's own
+    worker count; a job that is not batched names both."""
+    workers = _batch_workers()
+    if job in workers:
+        n = str(workers[job])
+    else:
+        n = ", ".join(f"{name} {count}" for name, count in workers.items())
+    return (
+        "for a batched job (csf_score, mitre_map), queued batches are cancelled on "
+        "an interrupt, but the batches already handed to a worker (up to "
+        f"max_workers, {n}) can still finish, and bill, after this report was "
+        "written, so invoke_calls_started is a lower bound"
+    )
+
+
 class _ReportFile:
     """`--out`, replaced ATOMICALLY after every run (#952 review F2 and narrow
     review 2): each write goes to a temporary file in the same directory, is
@@ -2975,6 +3003,9 @@ class _ReportFile:
         self.counter: Any = None
         self.provider_built = False
         self.batched = job in _BATCHED_JOBS
+        # Built here, not in `abort`: the imports it needs fail loudly at
+        # start rather than inside the interrupt path.
+        self.lower_bound_note = _lower_bound_note(job)
         self.sdk_retries: dict | None = None
         self.records: list[RunRecord] = []
 
@@ -3045,9 +3076,7 @@ class _ReportFile:
             # (#806), but those already past its stop check, up to
             # `max_workers`, can still finish -- and bill -- after this report
             # is written.
-            "invoke_calls_started_is_a_lower_bound": "for a batched job (csf_score, "
-            "mitre_map), queued batches can still start, and bill, after an interrupt "
-            "and after this report was written, so invoke_calls_started is a lower bound",
+            "invoke_calls_started_is_a_lower_bound": self.lower_bound_note,
         }
         try:
             self.write(report)
