@@ -1,12 +1,15 @@
 # Gene — in-flight status
 
 _2026-10-09 (track1): #775 and #972 are built on `track1/775-export-escape`,
-for #775 and #972; the PR opens after the run_batches PR. Every PDF prints the
+for #775 and #972, with `main` merged in at e3c962f0 after the run_batches PR
+(#978) landed; the PR is not yet open. Every PDF prints the
 service title and the client's name as text (no more "ATT&CK;", and a name with
 "</b>" no longer fails finalize), and every free-text XLSX cell in CSF, Zero
 Trust, Tech Debt and Risk is stored as text, so a value opening with "=", "+",
 "-", "@", tab or carriage return is never a live formula. One golden word
-changes, declared. It comes back to you: conditions 5 and 6._
+changes, declared. Follow-up filed as #991 (tier-3): the `pdf_export.py`
+docstring states a greppable invariant that the other exporters do not meet
+and nothing checks. It comes back to you: conditions 5 and 6._
 
 _2026-10-09 (track1): the #806 run_batches fix is pushed on
 `track1/806-run-batches-cancel`, for #806, with `main` merged in after #952
