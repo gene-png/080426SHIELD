@@ -71,7 +71,12 @@ class RiskExportContext:
     #: and empty renders NOTHING rather than a zero -- "0 of 0 scored" would be
     #: a concrete false claim about a client's assessments, where silence is
     #: merely an absence. `CLAUDE.md`: missing data defaults to UNCONFIRMED.
-    link_scope: tuple[tuple[str, int, int], ...] = ()
+    #:
+    #: #415: each row is `(service, scored, total, pending_review)`, the fourth
+    #: the count of scored codes pending review (`attack/pending.py`), or None
+    #: where the service has no review queue or the register predates the
+    #: count. `build_context` accepts the older three-value rows as None.
+    link_scope: tuple[tuple[str, int, int, int | None], ...] = ()
     #: #646: ALWAYS "not recorded" today, deliberately. `risk_synthesize` runs
     #: synchronously, with no `ai_runs` row, and the register records no
     #: correlation id, so nothing ties a register to the calls that drafted it;
@@ -121,7 +126,7 @@ def build_context(
     client_legal_name: str | None,
     version: int,
     entries: Sequence[Any],
-    link_scope: Sequence[tuple[str, int, int]] = (),
+    link_scope: Sequence[tuple[str, int, int] | tuple[str, int, int, int | None]] = (),
     finding_counts: tuple[int, int, int] | None = None,
     draft: bool = False,
     source_states: dict[str, str] | None = None,
@@ -133,7 +138,9 @@ def build_context(
         client_legal_name=org_display_name(client_legal_name),
         version=version,
         entries=list(entries),
-        link_scope=tuple(link_scope),
+        link_scope=tuple(
+            (row[0], row[1], row[2], row[3] if len(row) > 3 else None) for row in link_scope
+        ),
         finding_counts=finding_counts,
         draft=draft,
         source_states=dict(source_states or {}),
@@ -305,13 +312,21 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
 
     if ctx.link_scope:
         sheet = wb.create_sheet("Scored coverage")
-        sheet.append(["Assessment", "Rows scored", "Rows total", "Not citable"])
-        for col in range(1, 5):
+        sheet.append(["Assessment", "Rows scored", "Rows total", "Not citable", "Pending review"])
+        for col in range(1, 6):
             cell = sheet.cell(row=1, column=col)
             cell.font = Font(bold=True)
             cell.fill = fill
-        for service, scored, total in sorted(ctx.link_scope):
-            sheet.append([scope_label(service), scored, total, total - scored])
+        for service, scored, total, pending in sorted(ctx.link_scope):
+            sheet.append(
+                [
+                    scope_label(service),
+                    scored,
+                    total,
+                    total - scored,
+                    _pending_cell(service, pending),
+                ]
+            )
         sheet.append([])
         sheet.append(
             [
@@ -324,6 +339,9 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
                 "Controls columns."
             ]
         )
+        # #415: the pending-review sentence, or that it was not recorded.
+        for line in _pending_review_lines(ctx):
+            sheet.append([line])
 
     out = io.BytesIO()
     add_xlsx_sheet(wb, ctx.ai_mode)  # #646: the LAST sheet
@@ -401,7 +419,7 @@ def _link_scope_lines(ctx: RiskExportContext) -> list[str]:
         return []
     parts = [
         f"{scope_label(service)} {scored} of {total}"
-        for service, scored, total in sorted(ctx.link_scope)
+        for service, scored, total, _pending in sorted(ctx.link_scope)
     ]
     return [
         "Scored coverage available to link — " + ", ".join(parts),
@@ -412,6 +430,60 @@ def _link_scope_lines(ctx: RiskExportContext) -> list[str]:
             "cannot appear in the two Linked columns."
         ),
     ]
+
+
+#: #415, ruling (b) (#736 6072976838): a register whose record holds no
+#: pending-review count says so, rather than reading as "none pending".
+PENDING_REVIEW_NOT_RECORDED = (
+    "Whether any linked technique was pending review was not recorded for this register."
+)
+
+
+def _is_attack_scope(service: str) -> bool:
+    """The ATT&CK row of a scope record, by the kind its scope key names (the
+    same reading `scope_label` makes). Only ATT&CK has a review queue."""
+    return service.partition(":")[0] == "attack"
+
+
+def _attack_pending(ctx: RiskExportContext) -> int | None:
+    """#415. The ATT&CK pending-review count, or None when not recorded: a
+    register with no ATT&CK scope row (one generated before #403) or one whose
+    ATT&CK row predates the count."""
+    for service, _scored, _total, pending in ctx.link_scope:
+        if _is_attack_scope(service):
+            return pending
+    return None
+
+
+def _pending_review_lines(ctx: RiskExportContext) -> list[str]:
+    """#415, the approved copy (#736 6069843323 C1; (a) and (b) in 6072976838).
+
+    Nothing at n = 0; the count when some are pending; the not-recorded
+    sentence when the register holds no count."""
+    n = _attack_pending(ctx)
+    if n is None:
+        return [PENDING_REVIEW_NOT_RECORDED]
+    if n == 0:
+        return []
+    if n == 1:
+        return [
+            "1 scored ATT&CK technique is pending review and is not linked: its status "
+            "rests on evidence not yet confirmed."
+        ]
+    return [
+        f"{n} scored ATT&CK techniques are pending review and are not linked: their "
+        "status rests on evidence not yet confirmed."
+    ]
+
+
+def _pending_cell(service: str, pending: int | None) -> int | str:
+    """#415, C2: the "Pending review" column. ATT&CK shows its count, 0
+    included (ruling (a)); CSF and ZT have no review queue and read "n/a"; an
+    ATT&CK row from before the count reads "not recorded" (#736 6073312727),
+    because a blank cell in a column that always shows a number reads as 0."""
+    if not _is_attack_scope(service):
+        return "n/a"
+    return "not recorded" if pending is None else pending
 
 
 def _summary_lines(ctx: RiskExportContext) -> list[str]:
@@ -455,6 +527,7 @@ def _summary_lines(ctx: RiskExportContext) -> list[str]:
         *_finding_lines(ctx.finding_counts),
         *_target_lines(ctx.targets),
         *_link_scope_lines(ctx),
+        *_pending_review_lines(ctx),
         # #915 (S3), beside the scored-coverage disclosure; one line, or none.
         *([ctx.zt_capped_target_note] if ctx.zt_capped_target_note else []),
     ]
