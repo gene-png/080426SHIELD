@@ -889,8 +889,9 @@ def _gather_findings(
     `_run_batches` told the reader it meant the opposite.
 
     The predicate lives in `app/risk/link_scope.py`, ONE table for three
-    services, for the reason the `resolve_target_tier` import below already
-    gives: a second copy is how two services come to disagree about one client.
+    services, for the reason the shared ZT resolver below (and, for CSF, the
+    Playbook roll-up it calls) already gives: a second copy is how two services
+    come to disagree about one client.
 
     **The `or set(attack_all_codes())` fallback is GONE, and deleting it is what
     makes the narrowing safe rather than a separate tidy.** It fired when `rows`
@@ -2502,7 +2503,7 @@ def _render_and_store(
     # consultant's screen -- read from the same persisted provenance the
     # response reads, so the PDF and the dashboard cannot disagree about one
     # register. `_link_scope_fields` is the single reader of that blob, for the
-    # reason this file already gives at its `resolve_target_tier` import: a
+    # reason this file gives where it calls the shared target resolvers: a
     # second parser is how two surfaces come to disagree about one client.
     _scope_rows = _link_scope_fields(reg.provenance)["excluded_unscored_links"]
     # #844, read through the same single reader `_serialize` uses.
