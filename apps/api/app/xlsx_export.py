@@ -31,6 +31,7 @@ the client's legal name, and other sheets open with a banner or a caption.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.logging import get_logger
@@ -44,12 +45,32 @@ _log = get_logger(__name__)
 FORMULA_TRIGGERS = ("=", "+", "-", "@", "\t", "\r")
 
 
-def safe_text_row(ws: Any, values: list) -> None:
-    """Append `values` to `ws` with every string stored as text, as typed."""
+#: The two characters XML 1.0 refuses that openpyxl's `ILLEGAL_CHARACTERS_RE`
+#: does not cover. Both python-docx and openpyxl raise ValueError on them, and
+#: Pydantic accepts them from JSON, so a legal name carrying one failed every
+#: export (#993, review of 185393fc). Added to openpyxl's set, not a restatement
+#: of it. A lone surrogate is the remaining gap and has no path: Pydantic
+#: refuses it at the API.
+_XML_NONCHARACTERS_RE = re.compile("[\ufffe\uffff]")
+
+
+def strip_illegal_characters(text: str) -> tuple[str, int]:
+    """`text` without the characters these formats refuse, and how many went.
+    ONE definition of the set, for this module and `app/docx_export.py` (#993):
+    openpyxl's `ILLEGAL_CHARACTERS_RE` (the C0 controls but tab, LF and CR)
+    plus U+FFFE and U+FFFF."""
     from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 
-    removed = [len(ILLEGAL_CHARACTERS_RE.findall(v)) if isinstance(v, str) else 0 for v in values]
-    ws.append([ILLEGAL_CHARACTERS_RE.sub("", v) if isinstance(v, str) else v for v in values])
+    clean, controls = ILLEGAL_CHARACTERS_RE.subn("", text)
+    clean, noncharacters = _XML_NONCHARACTERS_RE.subn("", clean)
+    return clean, controls + noncharacters
+
+
+def safe_text_row(ws: Any, values: list) -> None:
+    """Append `values` to `ws` with every string stored as text, as typed."""
+    stripped = [strip_illegal_characters(v) if isinstance(v, str) else (v, 0) for v in values]
+    removed = [count for _value, count in stripped]
+    ws.append([value for value, _count in stripped])
     row = ws.max_row
     for column, count in enumerate(removed, start=1):  # append starts at column A
         if count:

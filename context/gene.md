@@ -1,5 +1,16 @@
 # Gene — in-flight status
 
+_2026-10-09 (track1): #993 is built on `track1/993-docx-control-chars`, for
+#993; the PR is not yet open. A client legal name with a control character
+(for example a stray BEL byte, which the admin route accepts) no longer blocks
+every Word deliverable for that client: the DOCX path now drops the same
+characters the XLSX path drops, and logs one warning per string without the
+value. U+FFFE and U+FFFF are dropped too, and a very long service title plus
+legal name no longer fails: only the file's metadata title is cut, the visible
+heading is whole. A lone surrogate is refused by the API before it is stored.
+Refusing control characters at the admin route stays with the post-MVP
+input-validation item. It comes back to you: conditions 5 and 6._
+
 _2026-10-09 (track6): #997's code-list half is built on `track6/997-risk-code-lists`._
 
 **What it does:** the Risk Register's AI call now sends its two lists of
