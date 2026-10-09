@@ -109,6 +109,7 @@ def test_run_job_zt_score_cisa_is_parseable_without_overrides(db_session) -> Non
             "framework": "cisa_ztmm_2_0",
             "capabilities": ["CISA.ID.01", "CISA.ID.02", "CISA.DV.01"],
             # Catalog text, since the guard (#985) refuses anything else.
+            # Sound: input only; the asserts read codes, stages and keys, never this text.
             "capability_details": _zt_capability_details(
                 ZtFrameworkCode.CISA_ZTMM_2_0, ["CISA.ID.01", "CISA.ID.02", "CISA.DV.01"]
             ),
@@ -141,6 +142,7 @@ def test_zt_score_dod_respects_three_stage_clamp(db_session) -> None:
             "framework": "dod_ztra",
             "capabilities": ["DOD.USR.01", "DOD.USR.02", "DOD.APP.01"],
             # Catalog text, since the guard (#985) refuses anything else.
+            # Sound: input only; the asserts read codes, stages and keys, never this text.
             "capability_details": _zt_capability_details(
                 ZtFrameworkCode.DOD_ZTRA, ["DOD.USR.01", "DOD.USR.02", "DOD.APP.01"]
             ),
