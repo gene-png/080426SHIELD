@@ -130,6 +130,25 @@ def test_a_seeded_but_unscored_playbook_is_flagged(app_client) -> None:  # noqa:
     assert csf["no_playbook_scores"] is True
 
 
+def test_a_targets_only_playbook_is_flagged(app_client) -> None:  # noqa: F811
+    """#474 D' (advisor, #736 6090360421): a Playbook whose only recorded
+    values are target levels has no scores, so the Inputs panel says so, the
+    register's own `no_scores` state."""
+    c, _provider = app_client
+    bearer, cid = _admin(c)
+    _seed_attack_and_zt(c, bearer, cid)
+    h, sid, _code = _csf_service(c, bearer, cid)
+    seeded = c.post(f"/csf/services/{sid}/profiles/seed", headers=h, json={"tiers": ["high"]})
+    assert seeded.status_code in (200, 201), seeded.text
+    row = c.get(f"/csf/services/{sid}/profile/high", headers=h).json()["rows"][0]
+    r = c.patch(f"/csf/dimension-scores/{row['id']}", headers=h, json={"target_level": 4})
+    assert r.status_code == 200, r.text
+    assert r.json()["target_level"] == 4, r.json()  # the target landed: positive first
+    (csf,) = [x for x in _gate_rows(c, bearer, cid) if x["kind"] == "csf"]
+    assert csf["engaged"] is True
+    assert csf["no_playbook_scores"] is True
+
+
 def test_an_unengaged_csf_row_carries_no_flag(app_client) -> None:  # noqa: F811
     c, _provider = app_client
     bearer, cid = _admin(c)

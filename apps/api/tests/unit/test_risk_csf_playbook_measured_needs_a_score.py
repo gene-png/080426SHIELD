@@ -96,8 +96,11 @@ def _csf_source(c, bearer: str, cid: str) -> str:
         (True, None, "playbook_no_targets"),
         # Scored, and that row has a target.
         (True, SCORED, "playbook"),
+        # One row scored, a DIFFERENT row given a target: the Playbook has a
+        # recorded value and a target, so it measured; they need not share a row.
+        (True, TARGETED, "playbook"),
     ],
-    ids=["targets_only", "scores_no_targets", "scores_and_target"],
+    ids=["targets_only", "scores_no_targets", "scores_and_target", "score_and_target_on_two_rows"],
 )
 def test_the_recorded_csf_state(
     app_client, score: bool, target: str | None, expected: str  # noqa: F811
