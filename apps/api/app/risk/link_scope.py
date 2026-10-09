@@ -90,6 +90,18 @@ class LinkScope:
 
     codes: frozenset[str]
     total: int
+    #: #415 (Gene, #736 5986057990 item 14): the SCORED codes pending review,
+    #: `attack/pending.py::pending_codes`, which are not citable. A subset of
+    #: `codes`, counted apart from `excluded` because the remedies differ:
+    #: an unscored row is unfinished assessment work, a pending one is
+    #: evidence awaiting a reviewer. None for a service with no review queue
+    #: (CSF and ZT): "no queue" is not "nothing pending".
+    pending: frozenset[str] | None = None
+
+    @property
+    def citable(self) -> frozenset[str]:
+        """The codes a register may link: scored, and not pending review."""
+        return self.codes - (self.pending or frozenset())
 
     @property
     def excluded(self) -> int:

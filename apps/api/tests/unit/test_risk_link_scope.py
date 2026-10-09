@@ -461,9 +461,9 @@ def test_the_xlsx_carries_a_scored_coverage_sheet() -> None:
     wb = load_workbook(io.BytesIO(render_xlsx(ctx)))
     assert "Scored coverage" in wb.sheetnames
     rows = list(wb["Scored coverage"].iter_rows(values_only=True))
-    assert rows[0] == ("Assessment", "Rows scored", "Rows total", "Not citable")
+    assert rows[0] == ("Assessment", "Rows scored", "Rows total", "Not citable", "Pending review")
     # The excluded count is rendered BESIDE the population, not alone.
-    assert rows[1] == ("ATT&CK coverage", 12, 700, 688)
+    assert rows[1] == ("ATT&CK coverage", 12, 700, 688, "not recorded")
 
     # And the sheet is absent, not empty, when nothing was recorded.
     bare = build_context(client_legal_name="Atlas", version=1, entries=[])
@@ -513,9 +513,13 @@ def test_the_exported_xlsx_a_client_downloads_carries_the_scored_coverage(
         if r and isinstance(r[1], int)
     }
     assert set(by_service) == {"ATT&CK coverage", "Zero Trust"}
-    for _label, scored, total, not_citable in by_service.values():
+    for _label, scored, total, not_citable, _pending in by_service.values():
         assert total > scored > 0
         assert not_citable == total - scored
+    # #415: the "Pending review" column, through the download. ATT&CK carries
+    # its number (this world has none pending); Zero Trust has no review queue.
+    assert by_service["ATT&CK coverage"][4] == 0
+    assert by_service["Zero Trust"][4] == "n/a"
 
 
 # ---------------------------------------------------------------------------
