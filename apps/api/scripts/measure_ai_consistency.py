@@ -2643,6 +2643,21 @@ def measure_tech_debt(
     return report
 
 
+def _zt_stray_keys_by_run(report: dict) -> dict[int, int]:
+    """Each run's count of keys beside `current` on its rows, read from the
+    pairs' `unknown_fields` (`compare_pair`, zt_score only). A run's count is
+    the same in every pair it is in, since it counts that run's own response,
+    so it is taken per run, never summed across pairs."""
+    out: dict[int, int] = {}
+    for p in report.get("pairs", []):
+        uf = p.get("unknown_fields")
+        if uf is None:
+            continue
+        out[p["pair"][0]] = uf["a"]
+        out[p["pair"][1]] = uf["b"]
+    return out
+
+
 def _print_table(report: dict) -> None:
     print(f"job={report['job']} runs_ok={report['runs_ok']}/{report['runs_requested']}")
     for f in report["failed_runs"]:
@@ -2697,13 +2712,19 @@ def _print_table(report: dict) -> None:
                 f"pair {p['pair']} maturity level: equal {lv['equal']}/{lv['compared']} "
                 f"({lv['no_evidence_rows']} of those rows have no evidence: capped at Level 2)"
             )
+    stray = _zt_stray_keys_by_run(report)
     for d in report.get("downstream", []):
         if "total_gap_count" in d:
+            # #806: no "unusable targets" term. `zt_downstream` reads `current`
+            # only, so that list is always empty and a 0 would read as a
+            # measurement. The keys the model sent beside `current` (a stray
+            # `target` above all) are printed instead, from the pairs.
             print(
                 f"run {d['run']}: client-visible gaps {d['total_gap_count']}, "
                 f"unscored {d['unscored_count']}, non-integer values {d['non_integer_values']}, "
                 f"out-of-range values {d['out_of_range_values']}, "
-                f"unusable targets {len(d['unusable_target_codes'])}"
+                f"stray keys such as target (not applied, not measured) "
+                f"{stray.get(d['run'], 'n/a (in no pair)')}"
             )
         elif "computed_status_counts" in d:
             print(

@@ -11,6 +11,8 @@ from __future__ import annotations
 import pytest
 from scripts.measure_ai_consistency import ZT_DOWNSTREAM_TARGET_BASIS, zt_no_result_count
 
+from tests.unit.test_measure_ai_consistency import _zt_assessment, world  # noqa: F401  (fixture)
+
 pytestmark = pytest.mark.unit
 
 _ASKED = ["CISA.ID.01", "CISA.ID.02", "CISA.ID.03", "CISA.DV.01"]
@@ -59,3 +61,34 @@ def test_a_stray_target_in_a_measured_response_is_counted_not_compared() -> None
     # leave `current`'s agreement untouched.
     assert "target" not in r["fields"]
     assert (r["fields"]["current"]["compared"], r["fields"]["current"]["equal"]) == (2, 2)
+
+
+def test_the_console_table_prints_stray_keys_not_unusable_targets(
+    world, capsys  # noqa: F811
+) -> None:
+    """#981 review: with `zt_downstream` reading `current` only, "unusable
+    targets" would always print 0 and read as a measurement. Through
+    `measure_zt`, a model that sends a `target` on its one row in each of two
+    runs prints that count per run instead."""
+    from scripts.measure_ai_consistency import _print_table, measure_zt
+
+    from app.ai.llm import LLMClient, LLMResponse
+
+    c, TestSession, provider = world
+    code = _zt_assessment(c)
+    provider.register_static(
+        "zt_score",
+        LLMResponse('{"capabilities": [{"code": "' + code + '", "current": 2, "target": 3}]}'),
+    )
+    with TestSession() as db:
+        report = measure_zt(db, LLMClient(provider), framework="cisa", runs=2)
+        db.commit()
+    capsys.readouterr()
+
+    _print_table(report)
+
+    out = capsys.readouterr().out
+    for run in (1, 2):
+        assert f"run {run}: client-visible gaps" in out, out
+    assert out.count("stray keys such as target (not applied, not measured) 1") == 2, out
+    assert "unusable targets" not in out, out
