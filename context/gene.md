@@ -12,6 +12,14 @@ changes, declared. Follow-up filed as #991 (tier-3): the `pdf_export.py`
 docstring states a greppable invariant that the other exporters do not meet
 and nothing checks. It comes back to you: conditions 5 and 6._
 
+_2026-10-09: #984 and #986 (client-name redaction rewrote catalog text and
+catalog codes sent to the AI) are draft PR #985 on
+`track5/984-catalog-redaction`. Catalog fields and code lists are now sent
+as the catalog has them and guarded byte for byte; the client's own notes and
+tool names are still redacted. A client named "DoD" no longer turns every DoD
+capability code into "[CLIENT].USR.01". It comes back to you: conditions 5
+(`app/ai/`) and 6 (the model sees different text for such clients)._
+
 _2026-10-09 (track1): the #806 run_batches fix is pushed on
 `track1/806-run-batches-cancel`, for #806, with `main` merged in after #952
 landed, and opened as a draft PR.

@@ -29,6 +29,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
+from app.ai.catalog_fields import register_catalog_field
 from app.ai.diff import diff_keyed_rows
 from app.ai.engine import run_job
 from app.ai.failures import ai_call_boundary
@@ -108,6 +109,7 @@ from app.tenant import (
 from app.zt.catalog import (
     all_codes,
     capabilities,
+    capability_by_code,
     pillars,
 )
 from app.zt.exporters import build_context as build_zt_context
@@ -636,6 +638,17 @@ def build_zt_ai_request(db: Session, svc: Service, client: Client) -> ZtAiReques
             status_code=status.HTTP_404_NOT_FOUND, detail="Create an assessment first."
         )
     return _zt_ai_request_for(db, a, client)
+
+
+# #984, #986: the capability codes a request asks about are catalog text, and a
+# client named "DoD" turned every DoD code into "[CLIENT].USR.01" (one named
+# "CISA" did the same to CISA's), so the model was asked about codes that do not
+# exist. Measured on main 2f701f5b. Sent verbatim and guarded: each code is
+# rebuilt from the catalog, so an unknown one is refused, not sent. #981's
+# `capability_details` registers beside its builder the same way.
+register_catalog_field(
+    "capabilities", lambda _payload, value: [capability_by_code(c).code for c in value]
+)
 
 
 def _zt_ai_request_for(db: Session, a: ZtAssessment, client: Client) -> ZtAiRequest:
