@@ -29,6 +29,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.ai.batching import run_batches
+from app.ai.catalog_fields import register_catalog_field
 from app.ai.diff import diff_keyed_rows
 from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
@@ -1870,6 +1871,13 @@ def _technique_details(codes: list[str]) -> dict[str, dict[str, Any]]:
     return {
         c: {"name": technique_by_id(c).name, "not_preventable": c in NOT_PREVENTABLE} for c in codes
     }
+
+
+# #984: catalogue text, so it egresses unredacted and guarded: a client named
+# "Cloud" no longer turns "Cloud Accounts" into "[CLIENT] Accounts". The guard
+# rebuilds the value with the same function, for the codes it carries (a batch
+# carries only its own, `_batch_inputs`).
+register_catalog_field("technique_details", lambda _payload, value: _technique_details(list(value)))
 
 
 def _batch_inputs(inputs: dict[str, Any], batch: list[str]) -> dict[str, Any]:

@@ -7,7 +7,7 @@ service route module). That function returns a service-specific request object
 that carries an :class:`AiPreviewPayload` — the redaction-relevant inputs
 (``job_name``, ``inputs``, ``client_org_name``, ``name_hints``) that
 ``LLMClient.invoke`` would redact and send. The preview route runs that payload
-through ``redact_payload`` WITHOUT writing an ``llm_calls`` row or constructing a
+through ``redact_ai_payload`` WITHOUT writing an ``llm_calls`` row or constructing a
 provider; run-ai runs the identical payload through ``run_job``. Same source,
 never drifts.
 """

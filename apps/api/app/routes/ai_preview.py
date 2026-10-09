@@ -5,8 +5,9 @@ AFTER redaction — WITHOUT egressing and WITHOUT writing an ``llm_calls`` row.
 
 The payload is built by the SAME per-service ``build_*_ai_request`` function the
 real run-ai path uses (see ``app.ai.preview``), so a preview can never diverge
-from what actually egresses. This route only runs that payload through the pure
-``redact_payload`` and returns the redacted object + removed counts. It never
+from what actually egresses. This route only runs that payload through
+``redact_ai_payload``, the call ``LLMClient.invoke`` makes, and returns the
+redacted object + removed counts. It never
 constructs an LLM provider.
 """
 
@@ -17,9 +18,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.ai.catalog_fields import redact_ai_payload
 from app.ai.engine import get_job
 from app.ai.preview import AiPreviewPayload
-from app.ai.redact import redact_payload
 from app.config import get_settings
 from app.db.session import get_db
 from app.dependencies import current_client, require_role
@@ -86,7 +87,9 @@ def preview_ai_payload(
     # Match LLMClient.invoke's default: mode falls back to the configured
     # redaction mode when the run-ai caller passes none (all of them do).
     mode = get_settings().shield_redaction_mode
-    cleaned, removed_counts = redact_payload(
+    # The same call `LLMClient.invoke` makes (#984), so the preview shows the
+    # catalog fields exactly as a run sends them.
+    cleaned, removed_counts = redact_ai_payload(
         payload.inputs,
         mode=mode,
         client_org_name=payload.client_org_name,
