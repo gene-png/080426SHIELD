@@ -9,8 +9,11 @@ a risk when its Playbook level is below its Playbook target, and the register
 says on every screen and file, only when it has CSF risks: "CSF risks in this
 register come from Kentro's evidence-based assessment. They can differ from
 your self-assessment on the CSF dashboard." The client's CSF dashboard is
-unchanged. Two tests about the old CSF engagement-tier rule are deleted, with
-the advisor's approval, because your decision retired that rule. The Atlas demo
+unchanged. If the Playbook has no targets or no scores, the register says CSF
+was not measured instead of implying "no gaps", and if someone edits the
+Playbook after the register is generated, it must be regenerated before it can
+be published. Two tests about the old CSF engagement-tier rule are deleted,
+with the advisor's approval, because your decision retired that rule. The Atlas demo
 gets Playbook rows in a small PR right after this one. When the PR opens it
 comes back to you (conditions 5 and 6).
 
