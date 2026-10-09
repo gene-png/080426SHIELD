@@ -1,5 +1,15 @@
 # Gene — in-flight status
 
+_2026-10-09 (track1): #993 is built on `track1/993-docx-control-chars`, for
+#993; the PR is not yet open. A client legal name with a control character
+(for example a stray BEL byte, which the admin route accepts) no longer blocks
+every Word deliverable for that client: the DOCX path now drops the same
+characters the XLSX path drops, and logs one warning per string without the
+value. Still open for you: whether the admin route should refuse such a name
+with a typed error instead, and three characters (U+FFFE, U+FFFF, a lone
+surrogate) that neither format's strip covers. It comes back to you:
+conditions 5 and 6._
+
 _2026-10-09 (track1): #775 and #972 are built on `track1/775-export-escape`,
 for #775 and #972, with `main` merged in at e3c962f0 after the run_batches PR
 (#978) landed; the PR is not yet open. Every PDF prints the
