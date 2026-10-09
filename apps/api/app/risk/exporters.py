@@ -570,6 +570,23 @@ def target_label(kind: str, framework: str | None, *, name_framework: bool) -> s
     return label
 
 
+#: #474 D': the CSF Playbook baseline, by the target's recorded source token
+#: (`risk/baseline.py::PLAYBOOK_SOURCE_BY_STATE`). Approved verbatim: #736
+#: 6087027524 (Q1) for `playbook`, 6087786886 (item 4) for the other two.
+_PLAYBOOK_LINES = {
+    "playbook": (
+        "{label} findings are measured against each subcategory's target level in the CSF "
+        "Playbook."
+    ),
+    "playbook_no_targets": (
+        "{label} was not measured for this register: the CSF Playbook has no target levels set."
+    ),
+    "playbook_no_scores": (
+        "{label} was not measured for this register: the CSF Playbook has no scores."
+    ),
+}
+
+
 def _target_lines(
     targets: tuple[tuple[str, str | None, int | None, str, str], ...] | None,
 ) -> list[str]:
@@ -590,12 +607,9 @@ def _target_lines(
     lines = []
     for kind, framework, target, source, _origin in targets:
         label = target_label(kind, framework, name_framework=name_framework)
-        if source == "playbook":
-            # #474 D': approved, #736 6087027524 (Q1).
-            lines.append(
-                f"{label} findings are measured against each subcategory's target "
-                "level in the CSF Playbook."
-            )
+        if source in _PLAYBOOK_LINES:
+            # #474 D': approved, #736 6087027524 (Q1) and 6087786886 (item 4).
+            lines.append(_PLAYBOOK_LINES[source].format(label=label))
             continue
         unit = _TARGET_UNITS[kind]
         if source == "client":

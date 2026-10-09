@@ -56,8 +56,8 @@ from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.user import User, UserRole
 from app.models.zt_assessment import ZtAnswer, ZtAssessment
 from app.risk import exporters as risk_exporters
-from app.risk.baseline import targets_used
-from app.risk.csf_source import CSF_FINDINGS_KEY, csf_source_note
+from app.risk.baseline import PLAYBOOK_SOURCE_BY_STATE, targets_used
+from app.risk.csf_source import CSF_FINDINGS_KEY, csf_playbook_state, csf_source_note
 from app.risk.engine import (
     Impact,
     Likelihood,
@@ -510,13 +510,21 @@ def _input_states(db: Session, client_id: uuid.UUID) -> list[RiskInputState]:
 
 
 def _csf_has_no_playbook_scores(db: Session, r: InputRecord) -> bool:
-    """#474 D' (Gene, #736 5984218862): a CSF record with no in-scope Playbook
-    rows feeds no CSF finding, and the Inputs panel says so."""
+    """#474 D' (Gene, #736 5984218862): a CSF record whose Playbook has no
+    recorded score feeds no CSF finding, and the Inputs panel says so. The
+    SAME predicate as the register's `no_scores` state
+    (`csf_source.csf_playbook_state`, advisor #736 6087786886, item 4), so the
+    panel and the register cannot disagree; seeded rows nobody scored count
+    as none."""
     a = db.get(CsfAssessment, uuid.UUID(r.record_id))
     if a is None:
         raise RuntimeError(f"CSF input {r.record_id!r} has no assessment row")
-    ents, _tiers = csf_enterprise_subcategories(db, a)
-    return not ents
+    rows = csf_catalog_rows(
+        db.execute(select(CsfDimensionScore).where(CsfDimensionScore.assessment_id == a.id))
+        .scalars()
+        .all()
+    )
+    return csf_playbook_state(rows) == "no_scores"
 
 
 def _row_qualifiers(services: list[Service]) -> list[str | None]:
@@ -1017,17 +1025,21 @@ def _gather_findings(
         # #852: only the catalog's rows, both for the roll-up (it filters them
         # itself) and for the citable scope below. Migration 0065 KEEPS rows on
         # ID.AM-09, which CSF 2.0 does not have.
-        target_sources[src.scope_key] = {"target": None, "source": "playbook"}
-        ents, _tiers = csf_enterprise_subcategories(db, csf)
-        csf_scope = csf_playbook_scope(
-            csf_catalog_rows(
-                db.execute(
-                    select(CsfDimensionScore).where(CsfDimensionScore.assessment_id == csf.id)
-                )
-                .scalars()
-                .all()
-            )
+        csf_rows = csf_catalog_rows(
+            db.execute(select(CsfDimensionScore).where(CsfDimensionScore.assessment_id == csf.id))
+            .scalars()
+            .all()
         )
+        # #474 D' (advisor, #736 6087786886, item 4): which of the three
+        # Playbook states this source is in, recorded as the target's source
+        # token, so a Playbook with no targets or no scores is said to be
+        # unmeasured rather than read as "measured, no gaps".
+        target_sources[src.scope_key] = {
+            "target": None,
+            "source": PLAYBOOK_SOURCE_BY_STATE[csf_playbook_state(csf_rows)],
+        }
+        ents, _tiers = csf_enterprise_subcategories(db, csf)
+        csf_scope = csf_playbook_scope(csf_rows)
         valid_controls |= csf_scope.codes
         link_scopes[src.scope_key] = csf_scope
         for e in ents:

@@ -116,6 +116,20 @@ def test_a_csf_record_with_playbook_rows_is_not_flagged(app_client) -> None:  # 
     assert csf["no_playbook_scores"] is False
 
 
+def test_a_seeded_but_unscored_playbook_is_flagged(app_client) -> None:  # noqa: F811
+    """Seeded rows nobody scored are "no Playbook scores", the register's own
+    `no_scores` state (#736 6087786886, item 4), not a Playbook that has them."""
+    c, _provider = app_client
+    bearer, cid = _admin(c)
+    _seed_attack_and_zt(c, bearer, cid)
+    h, sid, _code = _csf_service(c, bearer, cid)
+    seeded = c.post(f"/csf/services/{sid}/profiles/seed", headers=h, json={"tiers": ["high"]})
+    assert seeded.status_code in (200, 201), seeded.text
+    (csf,) = [r for r in _gate_rows(c, bearer, cid) if r["kind"] == "csf"]
+    assert csf["engaged"] is True  # positive first
+    assert csf["no_playbook_scores"] is True
+
+
 def test_an_unengaged_csf_row_carries_no_flag(app_client) -> None:  # noqa: F811
     c, _provider = app_client
     bearer, cid = _admin(c)

@@ -43,18 +43,36 @@ export const TARGETS_NOT_RECORDED =
 
 /**
  * #474 D' (Gene, #736 5984218862): CSF findings are measured against each
- * subcategory's Playbook target, so the record names no single target.
- * Approved verbatim (#736 6087027524, Q1); `_target_lines` prints the same.
+ * subcategory's Playbook target, so the record names no single target. The
+ * recorded source token says which of the Playbook's three states it was in
+ * (advisor, #736 6087786886, item 4); for the two that measure nothing the CSF
+ * line is replaced. Approved verbatim: #736 6087027524 (Q1) and 6087786886
+ * (item 4); `_PLAYBOOK_LINES` in the export prints the same words.
  */
-const PLAYBOOK_SOURCE = "playbook";
+const PLAYBOOK_LINES: ReadonlyMap<string, (label: string) => string> = new Map([
+  [
+    "playbook",
+    (label: string) =>
+      `${label} findings are measured against each subcategory's target level in the CSF Playbook.`,
+  ],
+  [
+    "playbook_no_targets",
+    (label: string) =>
+      `${label} was not measured for this register: the CSF Playbook has no target levels set.`,
+  ],
+  [
+    "playbook_no_scores",
+    (label: string) =>
+      `${label} was not measured for this register: the CSF Playbook has no scores.`,
+  ],
+]);
 
 export function targetSentence(
   t: RiskTargetUsed,
   nameFramework: boolean,
 ): string {
-  if (t.source === PLAYBOOK_SOURCE) {
-    return `${targetLabel(t, nameFramework)} findings are measured against each subcategory's target level in the CSF Playbook.`;
-  }
+  const playbook = PLAYBOOK_LINES.get(t.source);
+  if (playbook) return playbook(targetLabel(t, nameFramework));
   const why =
     t.source === "client"
       ? "the engagement target when this register was generated"

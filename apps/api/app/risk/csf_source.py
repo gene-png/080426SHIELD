@@ -9,6 +9,9 @@ register, the client's Risk dashboard and the three exports.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
+from app.csf.retired import has_recorded_score
 from app.logging import get_logger
 
 _log = get_logger(__name__)
@@ -33,3 +36,24 @@ def csf_source_note(stored: object) -> str | None:
         return CSF_SOURCE_NOTE if raw > 0 else None
     _log.error("risk.csf_source.unreadable", got=type(raw).__name__)
     return None
+
+
+def csf_playbook_state(rows: Iterable[object]) -> str:
+    """#474 D' (advisor, #736 6087786886, item 4): what a CSF source's Playbook
+    could measure, over its catalog rows.
+
+    - `no_scores`: no in-scope row has a recorded score
+      (`csf/retired.py::has_recorded_score`, CALLED), including no rows at all;
+    - `no_targets`: rows are recorded, but no in-scope row has a target level,
+      so `is_gap` can raise nothing;
+    - `measured`: otherwise.
+
+    The same predicate decides which codes are citable
+    (`link_scope.csf_playbook_scope`), so a register cannot say "no scores"
+    while citing a scored code."""
+    in_scope = [r for r in rows if r.in_scope]
+    if not any(has_recorded_score(r) for r in in_scope):
+        return "no_scores"
+    if all(r.target_level is None for r in in_scope):
+        return "no_targets"
+    return "measured"
