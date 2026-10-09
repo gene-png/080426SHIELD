@@ -218,3 +218,50 @@ def test_a_tenant_users_name_in_a_capability_reaches_mitre_map_redacted(
         _no_person_in(payload)
         names = [c["name"] for c in payload["capability_list"]]
         assert DANA_TOOL_SHOWN in names, names
+
+
+def test_mitre_maps_citation_of_a_hint_redacted_tool_is_credited_to_it(
+    app_parts,  # noqa: F811
+) -> None:
+    """The model is shown "[NAME] Scanner" and, as the prompt asks, cites the
+    tool as shown. The run's citation resolver is given the same dictionary as
+    the egress, so the citation resolves to Dana Whitfield Scanner: credited,
+    and nothing rejected."""
+    w = _mitre_world(app_parts)
+    runner = defer_runs(w.app)
+    _tenant_user(w, DANA, "dana.whitfield@acme.example")
+    with w.sessions() as db:
+        td = db.execute(
+            select(Service).where(
+                Service.client_id == uuid.UUID(w.cid), Service.kind == ServiceKind.TECH_DEBT
+            )
+        ).scalar_one()
+        cl = db.execute(
+            select(CapabilityList).where(CapabilityList.service_id == td.id)
+        ).scalar_one()
+        db.add(CapabilityItem(capability_list_id=cl.id, name=DANA_TOOL))
+        db.commit()
+    code = w.codes[0]
+
+    def respond(payload: dict) -> LLMResponse:
+        sent = payload.get("technique_codes") or []
+        rows = [
+            {
+                "technique_code": code,
+                "status": "partial",
+                "detection_tools": ["[NAME] Scanner"],
+                "prevention_tools": [],
+                "response_tools": [],
+                "rationale": "The scanner detects it.",
+            }
+        ]
+        return LLMResponse(json.dumps({"techniques": rows if code in sent else []}))
+
+    w.provider.register("mitre_map", respond)
+    started = start_run(w.c, w.run_url, w.h)
+    assert runner.run_all() == 1
+    run = get_run(w.c, started["run_id"], w.h)
+    assert run["status"] == "completed", run
+    assert run["result"]["citations_rejected"] == 0, run["result"]
+    assert run["result"]["citations_confirmed"] == 1, run["result"]
+    assert w.row(code).detection_tools == ["Dana Whitfield Scanner"]
