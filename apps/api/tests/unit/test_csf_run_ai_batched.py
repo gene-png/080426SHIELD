@@ -17,8 +17,8 @@ the code under test. Every figure is restated here, from its source:
 
 So at most (8192 - 2048) / 575 = 10.7, i.e. 10, rows a batch.
 
-The fixture answers are written from the PROMPT ("for every subcategory code
-emit one row per tier listed in tiers"), never from the parser's constants.
+The fixture answers are written from the PROMPT ("Produce one score row for
+every (tier, Subcategory) pair"), never from the parser's constants.
 """
 
 from __future__ import annotations
