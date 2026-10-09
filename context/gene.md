@@ -1,5 +1,18 @@
 # Gene — in-flight status
 
+_2026-10-08: #862 (the Risk PDF printed "ATT&CK;") is built on
+`track6/862-risk-pdf-escape`, in review as PR #958; `main` 14db80a2 (#861) is merged in._
+
+**What it does:** the Risk Register PDF escapes the text it prints, so "ATT&CK",
+"&" and "<...>" in a client's legal name print as typed, and a name carrying
+"</b>" no longer fails the export. The Word file and workbook are unchanged.
+A file already published changes only when it is re-exported (accepted, #736
+comment 6067815887). One test on `main` is edited, as approved there: the "&"
+skip in `test_risk_export_unrated.py` is removed. You re-tiered #775 (the
+same defect in the other four services' PDFs) to `tier-2`, `mvp-blocking` (#736
+comment 6069566861); its plan is with the advisor. Trips merge-rule conditions 5 and 6, so it
+comes back to you.
+
 _2026-10-08: #836 (a CSF Run-AI row the model leaves out of its batch is now
 counted and named) is rebuilt on main as `track5/836-omitted-rows-v2`. The run
 result carries `omitted_count` and `omitted_rows`, the Playbook panel shows
