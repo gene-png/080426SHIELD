@@ -73,8 +73,8 @@ def test_an_untouched_register_still_publishes(app_client) -> None:  # noqa: F81
     ids=["score", "target"],
 )
 def test_a_playbook_edit_after_generate_blocks_publish(
-    app_client, edit: dict
-) -> None:  # noqa: F811
+    app_client, edit: dict  # noqa: F811
+) -> None:
     c, provider = app_client
     bearer, cid = _admin(c)
     h, row_id = _released_world(c, provider, bearer, cid)
