@@ -9,6 +9,22 @@ before this says the count was not recorded. Under R3 the exclusion only bites
 on ATT&CK assessments approved before R3. The client dashboard is filed as
 #970. Comes back to you: conditions 5 and 6.
 
+_2026-10-08: the Tech Debt prompt for #806 is draft PR #955 on
+`track3/806-tech-debt-prompt`; review findings F1, F4, F5 and F7 are built,
+and F2 and F3 are built as the advisor ruled (#736 comment 6069328834)._
+
+**What it does.** The extraction runs Tech Debt v3.2 as you approved it.
+Whatever the model still sends against v3.2's rules is kept and counted, and
+E1 says so above the list, in the copy the advisor approved on #736 (comment
+6068587667, `category_off_list` in the past tense). The counts are the
+extraction's own (ruling F2, comment 6069328834), so edits never change them,
+and they are not measured for a list an earlier prompt drafted.
+The offline fixture follows v3.2, including #845's not-in-use rule and e2e s47.
+**For #871:** the not-in-use group now fills from the AI, so Q2's "The AI found"
+is true for new extractions; close #871 by hand after merge. The existing-test
+edit in `test_tech_debt_not_in_use_signoff.py` and the s4 comment were approved
+in the same ruling. It comes back to you: conditions 5 and 6, no migration.
+
 _2026-10-08 (track2): #806, the ATT&CK `mitre_map` part, is pushed on
 `track2/806-mitre-map-prompt`. It runs the prompt you approved (comment
 5982555899) verbatim, with `prompt_version` "v2", per-batch

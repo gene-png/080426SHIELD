@@ -93,9 +93,34 @@ register generated before this says the count was not recorded. Under R3 an
 awaiting-review tool is scored as not in place, so the exclusion only applies
 to ATT&CK assessments approved before R3. Rulings: Gene, #736 comment
 5986057990 item 14; copy and (a) to (c), 6072976838 item 1 on the plan in
-6069843323. The client dashboard is filed as #970. The admin banner's remedy
-sentence and the not-recorded workbook cell wait on the advisor. Trips
-merge-rule conditions 5 and 6, so it comes back to Gene.
+6069843323. The client dashboard is filed as #970. Per #736 6073312727: the
+admin banner carries the count clause only (option (A), D-076: the confirm
+control is locked once the ATT&CK assessment is approved), and the workbook's
+not-recorded cell reads "not recorded". Trips merge-rule conditions 5 and 6, so
+it comes back to Gene.
+
+**2026-10-08: the Tech Debt v3.2 prompt for #806 lands with PR #955
+(`track3/806-tech-debt-prompt`).** The extraction prompt is Tech Debt v3.2 verbatim (#806 comment
+5983838515, sha256-pinned), `PROMPT_VERSION = "v3.2"`. What v3.2 closes and a
+model can still send is kept as sent and counted (C6): a missing name, a
+confidence off 100/90/60, a category off the closed list and a source row
+that produced a second item (also recorded in `extraction_findings` and the run
+result). The counts are taken at extraction and recorded in the list's
+extraction audit, and the list's `extraction_flags` reads that record, so a
+consultant's edit, an included row or a bundle part never changes them (advisor
+ruling F2, #736 comment 6069328834, which replaces item 3b of 6068587667). It
+is null ("not measured") for a list no extraction is on record for and for one
+an earlier prompt drafted. With no rows, the offline fixture returns no items,
+as v3.2 section 10 says (ruling F3). E1
+states each non-zero count in the workspace. The offline fixture is re-authored
+from v3.2's text, and carries #845's lifecycle rule and e2e s47 (s46 in #869's
+branch; s46 is taken on main), moved here from #869. With v3.2 in the tree the
+not-in-use group fills from the AI, so #871's Q2 advisory ("The AI found") is
+resolved for new extractions; #871 is closed by hand after PR #955 merges.
+Rulings: the plan, #806 comment 5984600764, approved on #736 5986057990 (item 4);
+E1 copy, the existing-test edit, the gating and the s4 comment on #736
+6068587667. Trips merge-rule conditions 5 and 6, so it comes back to Gene; no
+migration. No plan item changes and no total moves.
 
 **2026-10-08: #806, the ATT&CK `mitre_map` part, built on `track2/806-mitre-map-prompt`.** The `mitre_map` prompt is the text Gene approved (#806 comment 5982555899), verbatim and pinned by its sha256, with `prompt_version` "v2". Each batch now carries `technique_details` (name and `not_preventable`) for its own codes only. The AI path refuses the four partial reasons the prompt forbids into `reason_codes_rejected`; a consultant keeps all seven. The fixture is rewritten from the prompt, and the `prevention_limited` definition is the approved Q5 text. `_MITRE_BATCH_SIZE` is unchanged at 25, pending the authorized live probe that sets it (D2 (a), #736 comment 5986064696). One existing-test edit beyond the three declared was approved (#736 comment 6067815887). Routed to Gene rather than self-merged: merge-rule conditions 5 (`app/ai/`, a live prompt, tests) and 6 (the AI's statuses and partial reasons reach client coverage and deliverables).
 
