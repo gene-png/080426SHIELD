@@ -26,16 +26,20 @@ with the state at publish.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.csf.retired import catalog_rows as csf_catalog_rows
 from app.logging import get_logger
 from app.models.attack_assessment import AttackAssessment
 from app.models.capability import CapabilityList
 from app.models.csf_assessment import CsfAssessment
+from app.models.csf_profile import CsfDimensionScore
 from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.zt_assessment import ZtAssessment
 
@@ -67,15 +71,76 @@ class InputRecord:
     record_id: str
     version: int
     status: str
+    #: #474 D': CSF only, the content of its in-scope Playbook rows
+    #: (`csf_playbook_fingerprint`). None for every other kind.
+    playbook_fingerprint: str | None = None
 
     def as_json(self) -> dict:
-        return {
+        out = {
             "kind": self.kind,
             "service_id": self.service_id,
             "record_id": self.record_id,
             "version": self.version,
             "status": self.status,
         }
+        if self.playbook_fingerprint is not None:
+            out["playbook_fingerprint"] = self.playbook_fingerprint
+        return out
+
+
+#: Every Playbook field a CSF finding or its citability depends on: the
+#: roll-up's (`app/csf/enterprise.py`: tier, the five dimensions,
+#: `has_evidence`, `in_scope`, `target_level`) and
+#: `csf/retired.py::has_recorded_score`'s (those, plus `answer_source`,
+#: `rationale`, `what_we_found`, `evidence_artifact_id`).
+_PLAYBOOK_FIELDS = (
+    "tier",
+    "subcategory_code",
+    "governance",
+    "policy",
+    "implementation",
+    "monitoring",
+    "improvement",
+    "has_evidence",
+    "in_scope",
+    "target_level",
+    "answer_source",
+    "rationale",
+    "what_we_found",
+    "evidence_artifact_id",
+)
+
+
+def csf_playbook_fingerprint(db: Session, assessment_id: str) -> str:
+    """#474 D' (advisor, #736 6087786886, item 3, option (a)): a snapshot, not
+    a lock. The sha256 of the assessment's in-scope catalog Playbook rows,
+    every field above, sorted by (subcategory, tier). Playbook rows stay
+    editable after approval (#37 is Gene's open decision), so publish compares
+    this with the value recorded at generate and reports CSF `changed` when a
+    score, target, note or scope changed since. A row moved out of scope
+    leaves the set, so that changes it too."""
+    rows = csf_catalog_rows(
+        db.execute(
+            select(CsfDimensionScore).where(
+                CsfDimensionScore.assessment_id == uuid.UUID(assessment_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    content = sorted(
+        (
+            [
+                str(getattr(r, f)) if f == "evidence_artifact_id" else getattr(r, f)
+                for f in _PLAYBOOK_FIELDS
+            ]
+            for r in rows
+            if r.in_scope
+        ),
+        key=lambda v: (v[1], v[0]),
+    )
+    blob = json.dumps(content, separators=(",", ":"), ensure_ascii=False, default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
 def _status(value: object) -> str:
@@ -127,7 +192,14 @@ def current_inputs(db: Session, client_id: uuid.UUID) -> list[InputRecord]:
         rec = latest_record(db, kind, svc.id)
         if rec is not None:
             out.append(
-                InputRecord(kind, str(svc.id), str(rec.id), rec.version, _status(rec.status))
+                InputRecord(
+                    kind,
+                    str(svc.id),
+                    str(rec.id),
+                    rec.version,
+                    _status(rec.status),
+                    csf_playbook_fingerprint(db, str(rec.id)) if kind == "csf" else None,
+                )
             )
     return out
 
@@ -196,6 +268,10 @@ def publish_blockers(
             or was.get("record_id") != r.record_id
             or was.get("version") != r.version
             or was.get("status") != RELEASED
+            # #474 D': the CSF Playbook changed since generate. A register that
+            # recorded no fingerprint (generated before this) reads None here
+            # and is `changed` too: unconfirmed, never a match.
+            or (kind == "csf" and was.get("playbook_fingerprint") != r.playbook_fingerprint)
         ):
             blockers.append(Blocker(kind, "changed", r.status))
     # And every RECORDED input, so one whose service is no longer engaged
