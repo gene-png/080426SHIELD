@@ -313,11 +313,13 @@ def add_xlsx_sheet(wb: Any, stamp: AiModeStamp) -> None:
     """
     from openpyxl.styles import Font
 
+    from app.xlsx_export import safe_text_row  # #993: the #972 strip, twin of the DOCX
+
     ws = wb.create_sheet(XLSX_SHEET_TITLE)
     heading, rows = xlsx_rows(stamp)
-    ws.append(heading)
+    safe_text_row(ws, heading)
     for row in rows:
-        ws.append(row)
+        safe_text_row(ws, row)
     ws.cell(row=1, column=1).font = Font(bold=True)
     ws.cell(row=2, column=1).font = Font(bold=stamp.is_warning)
     ws.column_dimensions["A"].width = 24

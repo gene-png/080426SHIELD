@@ -31,6 +31,7 @@ the client's legal name, and other sheets open with a banner or a caption.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.logging import get_logger
@@ -44,17 +45,25 @@ _log = get_logger(__name__)
 FORMULA_TRIGGERS = ("=", "+", "-", "@", "\t", "\r")
 
 
-def strip_illegal_characters(text: str) -> tuple[str, int]:
-    """`text` without the control characters openpyxl refuses, and how many
-    went. ONE definition of the set, for this module and `app/docx_export.py`
-    (#993): XML 1.0, which python-docx enforces, refuses the same C0 controls.
+#: The two characters XML 1.0 refuses that openpyxl's `ILLEGAL_CHARACTERS_RE`
+#: does not cover. Both python-docx and openpyxl raise ValueError on them, and
+#: Pydantic accepts them from JSON, so a legal name carrying one failed every
+#: export (#993, review of 185393fc). Added to openpyxl's set, not a restatement
+#: of it. A lone surrogate is the remaining gap and has no path: Pydantic
+#: refuses it at the API.
+_XML_NONCHARACTERS_RE = re.compile("[\ufffe\uffff]")
 
-    It is openpyxl's `ILLEGAL_CHARACTERS_RE`, which does NOT cover U+FFFE,
-    U+FFFF or a lone surrogate; both formats still raise on those (#993's
-    report records the measurement)."""
+
+def strip_illegal_characters(text: str) -> tuple[str, int]:
+    """`text` without the characters these formats refuse, and how many went.
+    ONE definition of the set, for this module and `app/docx_export.py` (#993):
+    openpyxl's `ILLEGAL_CHARACTERS_RE` (the C0 controls but tab, LF and CR)
+    plus U+FFFE and U+FFFF."""
     from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 
-    return ILLEGAL_CHARACTERS_RE.subn("", text)
+    clean, controls = ILLEGAL_CHARACTERS_RE.subn("", text)
+    clean, noncharacters = _XML_NONCHARACTERS_RE.subn("", clean)
+    return clean, controls + noncharacters
 
 
 def safe_text_row(ws: Any, values: list) -> None:

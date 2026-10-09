@@ -244,3 +244,58 @@ def test_the_playbook_footer_and_function_heading_are_stripped(app_client, monke
     full = _docx_text(_playbook(app_client, "Plain Client")["full_docx"])
     assert "Govern (GV)" in full, full  # the function-detail heading
     assert "Notice text" in full, full  # the footer, and the cover line
+
+
+# --- U+FFFE and U+FFFF: refused by XML 1.0, missed by openpyxl's regex ----------------
+
+
+@pytest.mark.parametrize("char", ["￾", "￿"], ids=["U+FFFE", "U+FFFF"])
+def test_a_noncharacter_legal_name_finalizes_the_docx_and_the_xlsx(app_client, char) -> None:
+    """Pydantic accepts these from JSON; python-docx and openpyxl both raised on
+    them, so finalize failed in both formats (review of 185393fc)."""
+    c, provider = app_client
+    bearer, _cid, h = _tenant(c, f"Acme{char}")
+    fin = _FINALIZE["csf"](c, provider, bearer, h, "Plain title")
+    assert fin.status_code == 201, fin.text
+    text = _docx_text(_download(c, h, fin.json()["docx_artifact_id"]))
+    assert text[0] == "Plain title — Acme"  # the positive state first
+    assert not any(char in s for s in text)
+    wb = load_workbook(io.BytesIO(_download(c, h, fin.json()["xlsx_artifact_id"])))
+    values = [cell.value for ws in wb.worksheets for row in ws.iter_rows() for cell in row]
+    assert "Acme" in values, values
+    assert not any(isinstance(v, str) and char in v for v in values)
+
+
+# --- the core-properties length limit -------------------------------------------------
+
+
+def test_a_long_title_and_name_finalize_with_the_core_title_capped(app_client) -> None:
+    """python-docx refuses a core property over 255 characters, and its error
+    quotes the value. Each part may be 255 on its own, so the joined title is
+    capped; the visible heading keeps the whole title."""
+    title = "T" * 199 + "Z"  # 200 characters
+    name = "N" * 59 + "Q"  # 60 characters
+    docx = _finalized_docx(app_client, "csf", name=name, title=title)
+    text = _docx_text(docx)
+    assert len(text[0]) == 255, len(text[0])
+    assert text[0] == "T" * 199 + "Z — " + "N" * 52  # 200 + 3 + 52
+    assert title in text[1:], "the visible heading lost part of the title"
+
+
+# --- the AI-mode stamp: its DOCX paragraph and its XLSX sheet ---------------------------
+
+
+def test_the_ai_mode_stamp_is_stripped_in_the_docx_and_the_xlsx(app_client, monkeypatch) -> None:
+    """Only code writes the stamp's sentence today, so a byte is put into it.
+    Before #993 the XLSX sheet's bare `ws.append` raised first, so the DOCX
+    paragraph could not be reached through the route."""
+    from app.mode_stamp import AiModeStamp
+
+    monkeypatch.setattr(AiModeStamp, "sentence", lambda self: "Stamp\x07 sentence.")
+    c, provider = app_client
+    bearer, _cid, h = _tenant(c, "Plain Client")
+    fin = _FINALIZE["csf"](c, provider, bearer, h, "Plain title")
+    assert fin.status_code == 201, fin.text
+    assert "Stamp sentence." in _docx_text(_download(c, h, fin.json()["docx_artifact_id"]))
+    ws = load_workbook(io.BytesIO(_download(c, h, fin.json()["xlsx_artifact_id"])))["AI source"]
+    assert "Stamp sentence." in [cell.value for row in ws.iter_rows() for cell in row]

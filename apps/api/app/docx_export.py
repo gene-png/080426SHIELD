@@ -38,8 +38,9 @@ def _clean(
     locate: Callable[[], dict[str, int]] | None = None,
     **where: int,
 ) -> str:
-    """`text` without the characters XML 1.0 refuses; a strip is logged, the
-    value never is. `where` (or `locate`, called only when something was
+    """`text` without the characters `app.xlsx_export.strip_illegal_characters`
+    removes (that function is the exact set); a strip is logged, the value
+    never is. `where` (or `locate`, called only when something was
     stripped) places the string -- paragraph, table, row, column, 1-based -- so
     the warning finds it without quoting it."""
     clean, removed = strip_illegal_characters(text)
@@ -55,13 +56,38 @@ def _clean(
     return clean
 
 
+#: python-docx refuses a core property longer than this, and its error quotes
+#: the value.
+CORE_PROPERTY_LIMIT = 255
+
+
+def _core_property(text: str, *, field: str) -> str:
+    """A core property's value: cleaned, then cut to `CORE_PROPERTY_LIMIT`.
+
+    A plain truncation of the FILE'S METADATA only (#993): the title is
+    "<service title> — <legal name>", each of which may be 255 characters on
+    its own. The visible heading is written by `add_title`, which has no limit
+    and keeps the whole text. A cut logs one warning with the field and the
+    original length, never the value."""
+    clean = _clean(text, part="core_properties", field=field)
+    if len(clean) > CORE_PROPERTY_LIMIT:
+        _log.warning(
+            "docx_export.core_property_truncated",
+            field=field,
+            length=len(clean),
+            limit=CORE_PROPERTY_LIMIT,
+        )
+        return clean[:CORE_PROPERTY_LIMIT]
+    return clean
+
+
 def new_document(title: str, *, author: str = "SHIELD by Kentro") -> Any:
     from docx import Document
 
     doc = Document()
     props = doc.core_properties
-    props.title = _clean(title, part="core_properties", field="title")
-    props.author = _clean(author, part="core_properties", field="author")
+    props.title = _core_property(title, field="title")
+    props.author = _core_property(author, field="author")
     return doc
 
 

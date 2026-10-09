@@ -5,10 +5,11 @@ _2026-10-09 (track1): #993 is built on `track1/993-docx-control-chars`, for
 (for example a stray BEL byte, which the admin route accepts) no longer blocks
 every Word deliverable for that client: the DOCX path now drops the same
 characters the XLSX path drops, and logs one warning per string without the
-value. Still open for you: whether the admin route should refuse such a name
-with a typed error instead, and three characters (U+FFFE, U+FFFF, a lone
-surrogate) that neither format's strip covers. It comes back to you:
-conditions 5 and 6._
+value. U+FFFE and U+FFFF are dropped too, and a very long service title plus
+legal name no longer fails: only the file's metadata title is cut, the visible
+heading is whole. A lone surrogate is refused by the API before it is stored.
+Refusing control characters at the admin route stays with the post-MVP
+input-validation item. It comes back to you: conditions 5 and 6._
 
 _2026-10-09 (track1): #775 and #972 are built on `track1/775-export-escape`,
 for #775 and #972, with `main` merged in at e3c962f0 after the run_batches PR
