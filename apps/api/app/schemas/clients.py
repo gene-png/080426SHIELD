@@ -844,7 +844,9 @@ class ValueSummaryResponse(BaseModel):
     attack_not_verified_count: int | None
     #: #889 (Q3, C7): True when a released ATT&CK assessment behind
     #: `attack_uncovered_count` credits a tool outside the client's CURRENT
-    #: security tool list, so the total counts it. False: checked, none does.
+    #: security tool list, at any status. The total sums Gap only, so such a
+    #: row may be counted as covered and left OUT of it: the total may be
+    #: understated. False: checked, none does.
     #: None: the total is None, or the client has no list (not checked).
     attack_counts_outside_subset: bool | None
     csf_gap_count: int | None

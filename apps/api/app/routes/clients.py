@@ -874,7 +874,9 @@ def _attack_uncovered_total(
 
     The fourth value is #889's (Q3, C7): whether a summed assessment credits a
     tool outside the client's CURRENT security tool list (`subset_state`, the
-    dashboard's own read), so the total counts it. None with the total, and
+    dashboard's own read), at any status. The total sums Gap only, so such a
+    row may be counted as covered and left out of it: the total may be
+    understated (review F1, copy C7 as ruled). None with the total, and
     when the client has no list: not checked is not "none found"."""
     if not service_ids:
         return _KindTotal(None, False), False, None, None

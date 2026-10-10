@@ -7,12 +7,14 @@ import { ValueLoopCard, type ValueSummary } from "./ValueLoopCard";
 
 /**
  * #889 (Q3): the home card's ATT&CK total sums Gap over the same rows the
- * dashboard reads, so a tool outside the client's current security tool list
- * counts there too. Copy C7 approved verbatim (#736 6090360421), written out.
+ * dashboard reads. A row crediting a tool outside the client's current
+ * security tool list may read Covered instead of Gap, so the total may be
+ * understated, and the card says so. Copy C7 as reworded on review F1,
+ * written out.
  */
 
 const C7 =
-  "This total counts techniques credited to a tool that is not in the client's current security tool list.";
+  "Some techniques counted as covered rely on a tool that is not in the client's current security tool list, so this total may be understated.";
 
 function summary(over: Partial<ValueSummary> = {}): ValueSummary {
   return {
@@ -42,7 +44,7 @@ function summary(over: Partial<ValueSummary> = {}): ValueSummary {
 }
 
 describe("ValueLoopCard, tools outside the security tool list (#889)", () => {
-  it("says the total counts such a tool", () => {
+  it("says the total may be understated", () => {
     render(
       <ValueLoopCard
         summary={summary({ attack_counts_outside_subset: true })}

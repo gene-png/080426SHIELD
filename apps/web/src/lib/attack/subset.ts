@@ -17,9 +17,11 @@ export const OUTSIDE_MARK = " (not in the security tool list)";
 export const CURRENT_LIST_NOTE =
   "Security tool list checks reflect the client's current security tool list.";
 
-/** C7: on the home card, beside an ATT&CK total that counts such a tool. */
+/** C7: on the home card, beside an ATT&CK uncovered total when a released
+ *  assessment credits such a tool. The total sums Gap only, so a row that
+ *  credits one counts as covered and is NOT in it: the total may be low. */
 export const HOME_CARD_NOTE =
-  "This total counts techniques credited to a tool that is not in the client's current security tool list.";
+  "Some techniques counted as covered rely on a tool that is not in the client's current security tool list, so this total may be understated.";
 
 export function outsideMark(
   tool: string,
