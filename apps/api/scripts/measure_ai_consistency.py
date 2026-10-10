@@ -123,8 +123,12 @@ corpus that is missing, empty, malformed, for a job that reads no notes, or
 landing on no row the route sends; an `--out` that exists or cannot be written).
 
 `zt_score`, `csf_score`, `mitre_map` and `tech_debt_extract` are implemented
-(#806: the last two so the "before" runs use today's prompts). Any other job is
-refused rather than approximated.
+(#806: the last two so the "before" runs use today's prompts), and
+`risk_synthesize` (#474 E, ruling 8: after-only), over the one client whose
+Risk Register is unlocked, through `_gather_findings` and
+`_run_risk_synthesize_batched`, writing no register; it compares the four
+token fields and three lists as `generate` would store them, and the
+code-derived tier. Any other job is refused rather than approximated.
 """
 
 from __future__ import annotations
@@ -145,15 +149,15 @@ _log = get_logger(__name__)
 
 #: Jobs with an input builder here. `_job_shape` names each one's row list, key
 #: and compared fields.
-_IMPLEMENTED_JOBS = ("zt_score", "csf_score", "mitre_map", "tech_debt_extract")
+_IMPLEMENTED_JOBS = ("zt_score", "csf_score", "mitre_map", "tech_debt_extract", "risk_synthesize")
 
 #: Jobs `--probe-batches` applies to: the batched ones.
-_BATCHED_JOBS = ("csf_score", "mitre_map")
+_BATCHED_JOBS = ("csf_score", "mitre_map", "risk_synthesize")
 
 #: Jobs whose probe may run more than once and be COMPARED: the same probed
 #: batches every run, agreement reported like a full measurement. mitre_map's
 #: numbers back #479 and the cap re-derivation (#736 comment 6068587667).
-_COMPARED_PROBE_JOBS = ("mitre_map",)
+_COMPARED_PROBE_JOBS = ("mitre_map", "risk_synthesize")
 
 #: Free text, which differs in wording on every run, so never compared.
 _ATTACK_FREE_TEXT = ("rationale",)
@@ -518,7 +522,20 @@ def _job_shape(job: str) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
             and f.name not in _TECH_DEBT_NOT_JUDGEMENTS
         )
         return "items", ("source_row_index",), names
+    if job == "risk_synthesize":
+        # #474 E (ruling 8): the approved prompt's enum and list fields, as
+        # `generate` stores them; the free text (title, description,
+        # compensating controls, residual risk, rationale) is never compared.
+        # `source` is not compared either: `generate` stores the finding's own
+        # `source`, never the model's (#844).
+        return "entries", ("source_id",), _RISK_FIELDS
     raise Refused("job_not_implemented", f"{job!r} has no measure yet; see the module docstring.")
+
+
+#: risk_synthesize's compared fields: the four single-token fields `generate`
+#: resolves with `_coerce_enum`, then the three lists it stores.
+_RISK_ENUM_FIELDS = ("axis", "likelihood", "impact", "recommended_action")
+_RISK_FIELDS = (*_RISK_ENUM_FIELDS, "other_axes", "linked_techniques", "linked_controls")
 
 
 #: Per job, the compared fields that hold a LIST. Compared as sets: the order a
@@ -526,6 +543,7 @@ def _job_shape(job: str) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
 _LIST_FIELDS: dict[str, tuple[str, ...]] = {
     "mitre_map": ("detection_tools", "prevention_tools", "response_tools"),
     "tech_debt_extract": ("security_functions",),
+    "risk_synthesize": ("other_axes", "linked_techniques", "linked_controls"),
 }
 
 
@@ -553,7 +571,7 @@ def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
 #: null -- `source_row_index` the parser could not convert, or no
 #: `technique_code` -- is `unkeyable`: excluded, counted, never compared with
 #: another run's unkeyable row under the shared key "null".
-_OBJECTS_ONLY_UPSTREAM = ("mitre_map", "tech_debt_extract")
+_OBJECTS_ONLY_UPSTREAM = ("mitre_map", "tech_debt_extract", "risk_synthesize")
 
 
 def _is_whole(v: Any) -> bool:
@@ -606,6 +624,18 @@ class CsfScope:
     row_keys: frozenset[str]
 
 
+@dataclass(frozen=True)
+class RiskScope:
+    """What `routes/risk.py::generate`'s entry loop checks an entry against:
+    the findings' `source_id`s -- an entry naming none of them is stored with
+    no `source_id` (`_resolve_links`), so it answers no finding -- and the two
+    allow-lists its links are resolved against."""
+
+    source_ids: frozenset[str]
+    valid_techniques: frozenset[str]
+    valid_controls: frozenset[str]
+
+
 def _require_context(job: str, context: Any) -> None:
     """Refuse a comparison the apply path's refusals cannot be judged in. A
     missing context is "could not look", and must never share a branch with
@@ -624,6 +654,11 @@ def _require_context(job: str, context: Any) -> None:
         raise TypeError(
             "csf_score needs a CsfScope: the apply path refuses a row key the "
             f"assessment lacks; got {type(context).__name__}."
+        )
+    if job == "risk_synthesize" and not isinstance(context, RiskScope):
+        raise TypeError(
+            "risk_synthesize needs a RiskScope: generate drops a source_id no finding "
+            f"has and links outside the allow-lists; got {type(context).__name__}."
         )
 
 
@@ -750,7 +785,36 @@ def _key_refused(job: str, row: Mapping[str, Any], context: Any) -> bool:
         if not (isinstance(code, str) and code in context.assessment_codes):
             return True
         return is_computed_parent(code)
+    if job == "risk_synthesize":
+        sid = row.get("source_id")
+        return not (isinstance(sid, str) and sid in context.source_ids)
     return False
+
+
+def _risk_stored(field: str, row: Mapping[str, Any], context: RiskScope) -> Any:
+    """`field` as `generate` would STORE it, by `generate`'s own functions,
+    CALLED: an enum through `_coerce_enum` (None when refused), `other_axes`
+    through `_coerce_other_axes` against the entry's resolved `axis`, a link
+    list through `_resolve_links` against its allow-list (the kept half)."""
+    from app.risk.engine import Impact, Likelihood, RecommendedAction, RiskAxis
+    from app.routes.risk import _coerce_enum, _coerce_other_axes, _resolve_links
+
+    enums = {
+        "axis": RiskAxis,
+        "likelihood": Likelihood,
+        "impact": Impact,
+        "recommended_action": RecommendedAction,
+    }
+    if field in enums:
+        member = _coerce_enum(enums[field], row.get(field))[0]
+        return None if member is None else member.value
+    if field == "other_axes":
+        axis = _coerce_enum(RiskAxis, row.get("axis"))[0]
+        return _coerce_other_axes(dict(row), axis)[0]
+    universe = context.valid_techniques if field == "linked_techniques" else context.valid_controls
+    if not isinstance(row.get(field), list):
+        return None
+    return _resolve_links(row.get(field), set(universe))[0]
 
 
 def _resolved_tools(value: Any, resolver: Any) -> list[str] | None:
@@ -830,6 +894,13 @@ def _absence(job: str, field: str, row: Mapping[str, Any], context: Any = None) 
         cap = _zt_capability_max(field, row, context)
         if _validated_stage(value, context.max_stage, cap)[1] is not None:
             return "refused"
+    if job == "risk_synthesize":
+        # Stored as nothing by `generate`: an unresolvable token, an
+        # `other_axes` that is not a list, or a link list none of whose codes
+        # is on its allow-list. An EMPTY list falls through to `empty` below.
+        stored = _risk_stored(field, row, context)
+        if stored is None or (isinstance(value, list) and value and not stored):
+            return "refused"
     if field in _LIST_FIELDS.get(job, ()) and isinstance(value, list):
         if not value:
             return "empty"
@@ -906,6 +977,11 @@ def compare_pair(
                 # a maturity stage above it, so none reaches this line.
                 va = _validated_stage(va, context.max_stage)[0]
                 vb = _validated_stage(vb, context.max_stage)[0]
+            if job == "risk_synthesize":
+                # Compared as stored: "Very High" and "very_high" are one
+                # likelihood, and a link off the allow-list is no link.
+                va = _risk_stored(f, ra, context)
+                vb = _risk_stored(f, rb, context)
             if f in list_fields:
                 sa, sb = _str_set(va), _str_set(vb)
                 if sa is None or sb is None:
@@ -2363,6 +2439,266 @@ def measure_attack(
     return report
 
 
+def risk_tiers(data: Mapping[str, Any], scope: RiskScope) -> dict[str, str | None]:
+    """Each answered finding's TIER, as the client would see it: `tier_for`
+    over the likelihood and impact `generate` would store (`_risk_stored`),
+    None where either is unrated. Keyed by `source_id`; an entry answering no
+    finding, or a finding answered twice, is left out (`_index`)."""
+    from app.risk.engine import Impact, Likelihood, tier_for
+
+    _require_context("risk_synthesize", scope)
+    index, _unreadable, _dupes = _index(data.get("entries") or [], ("source_id",), unkeyable=[])
+    out: dict[str, str | None] = {}
+    for row in index.values():
+        if _key_refused("risk_synthesize", row, scope):
+            continue
+        lk = _risk_stored("likelihood", row, scope)
+        im = _risk_stored("impact", row, scope)
+        out[row["source_id"]] = (
+            None if lk is None or im is None else tier_for(Likelihood(lk), Impact(im)).value
+        )
+    return out
+
+
+def risk_tier_agreement(ta: Mapping[str, str | None], tb: Mapping[str, str | None]) -> dict:
+    """Tier agreement over the findings both runs answered. A pair where
+    either side is unrated is counted apart and adds nothing to `equal`, so a
+    prompt that rates LESS never reads as more consistent."""
+    both = sorted(set(ta) & set(tb))
+    judged = [k for k in both if ta[k] is not None and tb[k] is not None]
+    return {
+        "compared": len(both),
+        "judged": len(judged),
+        "equal": sum(1 for k in judged if ta[k] == tb[k]),
+        "both_unrated": sum(1 for k in both if ta[k] is None and tb[k] is None),
+        "one_unrated": sum(1 for k in both if (ta[k] is None) != (tb[k] is None)),
+    }
+
+
+def _risk_client(db: Any) -> Any:
+    """The one client whose Risk Register is unlocked (`routes/risk.py::_gate`).
+    Refused when none is, or several are: whose register is measured is never
+    guessed."""
+    from sqlalchemy import select
+
+    from app.models.client import Client
+    from app.routes.risk import _gate
+
+    ready = [c for c in db.execute(select(Client)).scalars() if _gate(db, c.id).unlocked]
+    if len(ready) != 1:
+        raise Refused(
+            "no_single_risk_client",
+            f"{len(ready)} clients have an unlocked Risk Register; a measurement needs "
+            "exactly one.",
+        )
+    return ready[0]
+
+
+def measure_risk(
+    db: Any,
+    llm: Any,
+    *,
+    runs: int,
+    reopen_released: bool = False,
+    max_output_tokens: int | None = None,
+    stop_on_failure: bool = False,
+    probe_batches: int | None = None,
+    max_usd: float | None = None,
+    price: Mapping[str, float] | None = None,
+    progress: Callable[[Sequence[RunRecord]], None] | None = None,
+) -> dict:
+    """Run risk_synthesize `runs` times for the one client whose register is
+    unlocked, through the route's own findings (`_gather_findings`, over the
+    snapshot `generate` takes) and batching (`_run_risk_synthesize_batched`),
+    and summarize. #474 E, ruling 8: after-only, within Risk's cap.
+
+    It WRITES NO REGISTER: the batched runner returns the parsed entries, and
+    nothing here stores them. The only writes are its `llm_calls` rows. A run
+    in which any batch failed is a failed run, never "0% agreement".
+
+    `--reopen-released` is refused: Risk reads FINAL inputs, so reopening one
+    would change what is measured rather than make it measurable."""
+    from fastapi import HTTPException
+
+    from app.routes.risk import (
+        _batches,
+        _duplicate_inputs_message,
+        _gather_findings,
+        _run_risk_synthesize_batched,
+        _take_input_snapshot,
+    )
+
+    if reopen_released:
+        raise Refused(
+            "reopen_not_applicable",
+            "risk_synthesize reads the client's approved and released inputs; there is "
+            "nothing to reopen.",
+        )
+    _require_sqlite_bind(db, "a risk_synthesize measurement")
+    admin = _admin_user(db)
+    client = _risk_client(db)
+    snap = _take_input_snapshot(db, client.id)
+    duplicate = _duplicate_inputs_message(list(snap.sources))
+    if duplicate is not None:
+        raise Refused("builder_refused", f"The route's generate refuses: {duplicate}")
+    findings, techniques, controls, _targets, _scopes = _gather_findings(db, client.id, snap)
+    keys = [snap.drafted_from[str(f["source_id"])].scope_key for f in findings]
+    batches = _batches(findings, keys)
+    all_batches = len(batches)
+    if not findings:
+        raise Refused("no_findings", "The client's inputs raise no Risk finding to synthesize.")
+    if probe_batches is not None:
+        if probe_batches >= all_batches:
+            raise Refused(
+                "probe_not_smaller",
+                f"--probe-batches {probe_batches} is not fewer than the "
+                f"{all_batches} batches of a full run.",
+            )
+        # The first N of the route's own batches, so the runner's own batching
+        # over these findings reproduces exactly them.
+        probed = {id(f) for b in batches[:probe_batches] for f in b}
+        kept = [(f, k) for f, k in zip(findings, keys, strict=True) if id(f) in probed]
+        findings, keys = [f for f, _ in kept], [k for _, k in kept]
+    sent_batches = len(_batches(findings, keys))
+    scope = RiskScope(
+        source_ids=frozenset(str(f["source_id"]) for f in findings),
+        valid_techniques=frozenset(techniques),
+        valid_controls=frozenset(controls),
+    )
+    _log.info(
+        "measure_ai_consistency.start",
+        job="risk_synthesize",
+        client_id=str(client.id),
+        findings=len(findings),
+        batches=sent_batches,
+        provider=llm.provider.name,
+        model=llm.provider.model,
+        runs=runs,
+    )
+
+    started_calls = _InvokeCounter(llm)
+
+    def one_run(n: int) -> RunRecord:
+        before = _call_ids(db)
+        started_before = started_calls.n
+        try:
+            entries, total, failed, discarded = _run_risk_synthesize_batched(
+                db,
+                llm,
+                findings,
+                valid_techniques=sorted(techniques),
+                valid_controls=sorted(controls),
+                requested_by=admin.id,
+                client_id=client.id,
+                client_org_name=client.legal_name,
+                batch_keys=keys,
+            )
+        except HTTPException as exc:
+            reason, cause, typed = _failure(exc)
+            tokens_in, tokens_out, complete = _tokens_since(db, before)
+            charged = _charged_likely(db, before, answered=0, typed=typed)
+            _log.error(
+                "measure_ai_consistency.run_failed",
+                run=n,
+                failure=reason,
+                cause=cause,
+                charged_likely=charged,
+            )
+            return RunRecord(
+                False,
+                None,
+                reason,
+                tokens_in,
+                tokens_out,
+                cause,
+                charged,
+                complete,
+                calls=_calls_since(db, before),
+                started=started_calls.n - started_before,
+            )
+        tokens_in, tokens_out, complete = _tokens_since(db, before)
+        calls = _calls_since(db, before)
+        if failed:
+            failure = f"batches_failed:{failed}/{total}"
+            charged = _charged_likely(db, before, answered=total - failed, typed=None)
+            _log.error(
+                "measure_ai_consistency.run_failed",
+                run=n,
+                failure=failure,
+                charged_likely=charged,
+            )
+            return RunRecord(
+                False,
+                None,
+                failure,
+                tokens_in,
+                tokens_out,
+                None,
+                charged,
+                complete,
+                calls=calls,
+                started=started_calls.n - started_before,
+            )
+        _log.info(
+            "measure_ai_consistency.run_ok",
+            run=n,
+            batches=total,
+            input_tokens=tokens_in,
+            output_tokens=tokens_out,
+            discarded_entries=sum(discarded.values()),
+        )
+        return RunRecord(
+            True,
+            {"entries": entries, "discarded": dict(discarded)},
+            None,
+            tokens_in,
+            tokens_out,
+            tokens_complete=complete,
+            calls=calls,
+            started=started_calls.n - started_before,
+        )
+
+    records = run_loop(
+        runs,
+        one_run,
+        max_output_tokens=max_output_tokens,
+        stop_on_failure=stop_on_failure,
+        max_usd=max_usd,
+        price=price,
+        progress=progress,
+    )
+    report = summarize(
+        "risk_synthesize",
+        records,
+        max_output_tokens=max_output_tokens,
+        min_ok_runs=1 if runs == 1 else 2,
+        context=scope,
+        max_usd=max_usd,
+        price=price,
+    )
+    tiers = {n: risk_tiers(data, scope) for n, data in _ok_runs(records)}
+    for pair in report["pairs"]:
+        pair["tier"] = risk_tier_agreement(tiers[pair["pair"][0]], tiers[pair["pair"][1]])
+    report["client_id"] = str(client.id)
+    report["findings_sent"] = len(findings)
+    report["batches_per_run"] = sent_batches
+    report["probe"] = (
+        None if probe_batches is None else {"batches": sent_batches, "of": all_batches}
+    )
+    report["input_setup"] = {"reopened_from": None}
+    report["provider"] = {"name": llm.provider.name, "model": llm.provider.model}
+    report["downstream"] = [
+        {
+            "run": n,
+            "tier_counts": _count_values({k: v or "unrated" for k, v in t.items()}),
+            "findings_without_entry": len(scope.source_ids - set(t)),
+            "discarded_entries": data.get("discarded", {}),
+        }
+        for (n, data), t in zip(_ok_runs(records), tiers.values(), strict=True)
+    ]
+    return report
+
+
 #: `--inventory` file suffix -> the MIME type the upload route would record for
 #: it. Only formats `tech_debt/parsers.py::SUPPORTED_MIME` reads.
 _INVENTORY_MIME = {
@@ -2636,6 +2972,12 @@ def _print_table(report: dict) -> None:
                     f"repeat the sent value ({c['nothing_sent']} rows were sent nothing)"
                 )
     for p in report["pairs"]:
+        if "tier" in p:
+            tr = p["tier"]
+            print(
+                f"pair {p['pair']} tier: equal {tr['equal']}/{tr['compared']} (unrated in "
+                f"both {tr['both_unrated']}, in one {tr['one_unrated']}: no agreement)"
+            )
         if "level" in p:
             lv = p["level"]
             print(
@@ -2654,6 +2996,11 @@ def _print_table(report: dict) -> None:
             print(
                 f"run {d['run']}: computed R3 statuses {d['computed_status_counts']}, "
                 f"AI status differs from computed on {d['ai_status_differs']}"
+            )
+        elif "tier_counts" in d:
+            print(
+                f"run {d['run']}: tiers {d['tier_counts']}, findings without an entry "
+                f"{d['findings_without_entry']}, discarded entries {d['discarded_entries']}"
             )
         elif "excluded_row_indexes" in d:
             print(
@@ -2971,6 +3318,14 @@ def _batch_workers() -> dict[str, int]:
 def _lower_bound_note(job: str) -> str:
     """The aborted report's lower-bound note, naming the running job's own
     worker count; a job that is not batched names both."""
+    if job == "risk_synthesize":
+        # Not `run_batches`: Risk's own loop (`_run_risk_synthesize_batched`)
+        # cancels nothing on an interrupt, so every batch of the run can bill.
+        return (
+            "risk_synthesize's batches are not cancelled on an interrupt: every batch "
+            "of the run in progress can still finish, and bill, after this report was "
+            "written, so invoke_calls_started is a lower bound"
+        )
     workers = _batch_workers()
     if job in workers:
         n = str(workers[job])
@@ -3158,6 +3513,8 @@ def _measure(
             )
         if args.job == "mitre_map":
             return measure_attack(db, llm, probe_batches=args.probe_batches, **common)
+        if args.job == "risk_synthesize":
+            return measure_risk(db, llm, probe_batches=args.probe_batches, **common)
         if args.job == "tech_debt_extract":
             # No assessment to reopen (refused above): the input is the file.
             common.pop("reopen_released")
