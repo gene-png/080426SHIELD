@@ -440,6 +440,37 @@ _RISK_LIKELIHOOD_CYCLE = ("low", "medium", "high", "medium", "very_high")
 _RISK_IMPACT_CYCLE = ("moderate", "major", "catastrophic", "minor", "major")
 _RISK_AXIS_CYCLE = ("detection", "prevention", "response")
 _RISK_ACTION_CYCLE = ("remediate", "mitigate", "transfer", "accept", "avoid")
+#: The approved prompt's exact sentence for "no compensating control".
+_RISK_NO_CONTROLS = "None identified in the supplied information."
+#: The approved prompt's axis order, which `other_axes` follows.
+_RISK_AXIS_ORDER = ("detection", "prevention", "response")
+
+
+def _risk_evidenced_controls(evidence: Any) -> str:
+    """The approved prompt's COMPENSATING CONTROLS rule, for an ATT&CK finding:
+    only confirmed tools in an `in_place` function, named, with what they do.
+    Never an invented control (#806 record, item 4). CSF and Zero Trust
+    evidence names no control the fixture can read, so it gets the exact
+    "none" sentence, as does a finding with no function in place."""
+    if not isinstance(evidence, dict):
+        return _RISK_NO_CONTROLS
+    named = [
+        f"{tool} provides {function} for this technique."
+        for function in _RISK_AXIS_ORDER
+        if isinstance(evidence.get(function), dict)
+        and evidence[function].get("state") == "in_place"
+        for tool in _strs(evidence[function].get("tools"))
+    ]
+    return " ".join(named) if named else _RISK_NO_CONTROLS
+
+
+def _risk_other_axes(evidence: Any, axis: str) -> list[str]:
+    """The approved prompt's `other_axes` rule, for an ATT&CK finding: each
+    function in `missing_functions` is directly affected, so every one but the
+    primary `axis`, in the prompt's order. Empty for CSF and Zero Trust, whose
+    evidence names no function."""
+    missing = _strs(evidence.get("missing_functions")) if isinstance(evidence, dict) else []
+    return [a for a in _RISK_AXIS_ORDER if a in missing and a != axis]
 
 
 def _fixture_risk_synthesize(payload: dict[str, Any]) -> LLMResponse:
@@ -447,11 +478,12 @@ def _fixture_risk_synthesize(payload: dict[str, Any]) -> LLMResponse:
     valid_techniques = set(_strs(payload.get("valid_techniques")))
     valid_controls = set(_strs(payload.get("valid_controls")))
     entries: list[dict[str, Any]] = []
-    if isinstance(findings, list):
-        for i, finding in enumerate(findings):
+    # #474 E, ruling 6: `findings` is an object keyed by `source_id`, and the
+    # prompt says to copy the key into the entry as `source_id`.
+    if isinstance(findings, dict):
+        for i, (source_id, finding) in enumerate(findings.items()):
             if not isinstance(finding, dict):
                 continue
-            source_id = finding.get("source_id")
             kind = finding.get("kind")
             # Only cite codes present in the supplied
             # valid_techniques / valid_controls lists, which since #403 are the
@@ -473,16 +505,19 @@ def _fixture_risk_synthesize(payload: dict[str, Any]) -> LLMResponse:
                 [source_id] if kind in ("csf", "zt") and source_id in valid_controls else []
             )
             label = finding.get("label") or source_id or f"finding {i + 1}"
+            evidence = finding.get("evidence")
+            axis = _RISK_AXIS_CYCLE[i % len(_RISK_AXIS_CYCLE)]
             entries.append(
                 {
                     "title": f"Gap: {label}",
                     "description": ("Fixture-mode candidate risk entry drafted from the finding."),
-                    "axis": _RISK_AXIS_CYCLE[i % len(_RISK_AXIS_CYCLE)],
+                    "axis": axis,
+                    "other_axes": _risk_other_axes(evidence, axis),
                     "linked_techniques": linked_techniques,
                     "linked_controls": linked_controls,
                     "likelihood": _RISK_LIKELIHOOD_CYCLE[i % len(_RISK_LIKELIHOOD_CYCLE)],
                     "impact": _RISK_IMPACT_CYCLE[i % len(_RISK_IMPACT_CYCLE)],
-                    "compensating_controls": "Interim monitoring in place.",
+                    "compensating_controls": _risk_evidenced_controls(evidence),
                     "residual_risk": "Elevated until remediated.",
                     "recommended_action": _RISK_ACTION_CYCLE[i % len(_RISK_ACTION_CYCLE)],
                     "rationale": "Fixture-mode rationale; validate against evidence.",

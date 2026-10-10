@@ -26,15 +26,17 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from app.ai.catalog_fields import register_catalog_field
+from app.ai.catalog_fields import register_catalog_field, register_catalog_keys
 from app.ai.engine import get_job, run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.attack.catalog import technique_by_id
 from app.attack.catalog_version import catalog_mismatch_message, require_current_catalog
-from app.attack.computed import effective_coverage
+from app.attack.computed import Capabilities, InPlace, effective_coverage
+from app.attack.computed import capabilities as attack_capabilities
 from app.attack.parents import is_computed_parent
 from app.attack.pending import pending_codes as attack_pending_codes
+from app.attack.pending import uncleared_tools
 from app.attack.release_readiness import unreviewed_codes as attack_unreviewed_codes
 from app.attack.rules import parents_computed
 from app.audit import audit
@@ -83,6 +85,8 @@ from app.risk.zt_capped import CAPPED_TARGET_KEY as ZT_CAPPED_TARGET_KEY
 from app.risk.zt_capped import capped_target_codes as zt_capped_target_codes
 from app.risk.zt_capped import capped_target_sentence as zt_capped_target_sentence
 from app.routes.artifacts import _storage_dep
+from app.routes.attack import _technique_details
+from app.routes.csf import _subcategory_definitions
 from app.schemas.risk import (
     LinkScopeDisclosure,
     RatingNotCarried,
@@ -102,9 +106,11 @@ from app.security.rate_limit import RateLimiter, get_rate_limiter
 # and this is an import repoint, not a behaviour change.
 from app.services.engagement_targets import client_target_stage as _client_target_stage
 from app.storage import StorageBackend
+from app.tech_debt.extract import name_hints_for_tenant
 from app.tech_debt.filename import SERVICE_SLUG_RISK_REGISTER, deliverable_filename
 from app.zt.catalog import all_codes
 from app.zt.catalog import capability_by_code as zt_capability_by_code
+from app.zt.catalog import pillar_by_code as zt_pillar_by_code
 from app.zt.maturity import ZtFrameworkCode
 from app.zt.scoring import capability_max_stage, resolve_target_stage
 
@@ -1008,6 +1014,7 @@ def _gather_findings(
                         "source_id": r.technique_code,
                         "kind": "attack",
                         "label": f"ATT&CK {r.technique_code}: {r.status}",
+                        "evidence": _attack_evidence(r),
                     }
                 )
 
@@ -1045,6 +1052,12 @@ def _gather_findings(
         csf_scope = csf_playbook_scope(csf_rows)
         valid_controls |= csf_scope.codes
         link_scopes[src.scope_key] = csf_scope
+        # #474 E, ruling 3: the notes sent are the Playbook rows' own, per
+        # in-scope tier. The questionnaire `CsfAnswer.notes` is not read.
+        in_scope_rows: dict[str, dict[str, CsfDimensionScore]] = {}
+        for row in csf_rows:
+            if row.in_scope:
+                in_scope_rows.setdefault(row.subcategory_code, {})[row.tier] = row
         for e in ents:
             if e.gap:
                 findings.append(
@@ -1056,6 +1069,7 @@ def _gather_findings(
                             f"CSF {e.subcategory_code}: level {e.enterprise_level} "
                             f"of target {e.target_level}"
                         ),
+                        "evidence": _csf_evidence(e, in_scope_rows[e.subcategory_code]),
                     }
                 )
 
@@ -1148,12 +1162,91 @@ def _gather_findings(
                         "source_id": r.capability_code,
                         "kind": "zt",
                         "label": f"ZT {r.capability_code}: stage {r.maturity_stage}",
+                        # #474 E, ruling 5: `tgt` is the CAPPED target this
+                        # finding was compared against, never the asked one.
+                        "evidence": {
+                            "stage": r.maturity_stage,
+                            "target_stage": tgt,
+                            "notes": r.notes,
+                        },
                     }
                 )
         snap.cap_lowered[src.scope_key] = lowered
         _record_drafted_from(snap, findings[start:], src)
 
     return findings, valid_techniques, valid_controls, target_sources, link_scopes
+
+
+#: #474 E (C11(1), #806 5983938383): the engine's capability names, spelled as
+#: the approved prompt spells the functions. One explicit table: a capability
+#: the table does not know RAISES in `_attack_evidence`, never dropped.
+_EVIDENCE_FUNCTION = {"detect": "detection", "prevent": "prevention", "respond": "response"}
+#: The tool list each engine capability reads (`attack/computed.py::capabilities`).
+_TOOL_FIELD = {
+    "detect": "detection_tools",
+    "prevent": "prevention_tools",
+    "respond": "response_tools",
+}
+#: Scored as not in place, so a missing function; `cannot_be_prevented` never is.
+_MISSING_STATES = (InPlace.NOT_IN_PLACE, InPlace.AWAITING_REVIEW)
+
+
+def _confirmed_tools(row: object, field: str) -> list[str]:
+    """The tools in `field` that count as confirmed, by the rule
+    `attack/computed.py::capability` applies (retirement ignored, as there):
+    a NULL citation record confirms nothing, and a tool `uncleared_tools`
+    names is awaiting review. CALLS `uncleared_tools`, never re-derives it."""
+    citations = row.unconfirmed_citations
+    if citations is None:
+        return []
+    flagged = uncleared_tools(citations)
+    names = getattr(row, field) or []
+    return [t for t in names if isinstance(t, str) and t.strip() and t not in flagged]
+
+
+def _attack_evidence(row: object) -> dict:
+    """The approved `attack` evidence (#474 E, ruling 6: the record's fields,
+    minus `name`, which `technique_details` carries). The states are the ones
+    the client's ATT&CK screens show: `attack_capabilities` is the function
+    `effective_coverage` computes them with."""
+    caps = attack_capabilities(row)
+    per_function: dict[str, dict] = {}
+    missing: list[str] = []
+    for f in dataclasses.fields(Capabilities):
+        name = _EVIDENCE_FUNCTION[f.name]  # KeyError for a capability nobody mapped
+        state: InPlace = getattr(caps, f.name)
+        per_function[name] = {
+            "state": state.value,
+            "tools": _confirmed_tools(row, _TOOL_FIELD[f.name]),
+        }
+        if state in _MISSING_STATES:
+            missing.append(name)
+    return {
+        "status": row.status,
+        "missing_functions": missing,
+        **per_function,
+        "rationale": row.rationale,
+        "notes": row.notes,
+    }
+
+
+def _csf_evidence(e: object, tier_rows: dict[str, CsfDimensionScore]) -> dict:
+    """The approved `csf` evidence (#474 E, rulings 2, 3 and 6), from the
+    Playbook roll-up `_gather_findings` already called. `evidence_capped` is
+    `tier_evidence_capped`, true only where the cap CHANGED that tier's result
+    (`csf/playbook.py::score_tier`), never "has no evidence". `tier_notes` are
+    the in-scope rows' own, keyed like `tier_levels`; a tier the roll-up scored
+    has a row by construction, so a missing one raises."""
+    return {
+        "enterprise_level": e.enterprise_level,
+        "target_level": e.target_level,
+        "tier_levels": dict(e.tier_levels),
+        "evidence_capped": {t: e.tier_evidence_capped[t] for t in e.tier_levels},
+        "tier_notes": {
+            t: {"rationale": tier_rows[t].rationale, "what_we_found": tier_rows[t].what_we_found}
+            for t in e.tier_levels
+        },
+    }
 
 
 def _record_drafted_from(snap: _InputSnapshot, findings: list[dict], src: _Source) -> None:
@@ -1223,6 +1316,45 @@ def _coerce_enum(enum_cls, value) -> tuple[object | None, str | None]:
         return enum_cls(normalised), None
     except (ValueError, KeyError):
         return None, raw
+
+
+#: Why an `other_axes` value, or one of its elements, was not stored (#806,
+#: build requirement 2). Per element: `invalid` (not an axis token),
+#: `duplicate`, `repeats_axis` (the entry's own `axis`). Per entry: `absent`
+#: (no key) and `not_a_list`, each stored as NULL, "not recorded".
+OTHER_AXES_DROP_REASONS = ("invalid", "duplicate", "repeats_axis", "absent", "not_a_list")
+
+
+def _coerce_other_axes(
+    entry: dict, axis: RiskAxis | None
+) -> tuple[list[str] | None, list[str], list[str]]:
+    """`(stored, drop reasons, rejected raw tokens)` for one entry's
+    `other_axes`, by the approved text: values from the `axis` list, never the
+    primary, no duplicates, ordered detection, prevention, response. Each
+    element resolves exactly as `axis` does (`_coerce_enum`), so "Response" is
+    `response` in both places. The order is the approved one whatever order the
+    model sent; that changes no claim, so it is not counted."""
+    if "other_axes" not in entry:
+        return None, ["absent"], []
+    raw = entry["other_axes"]
+    if not isinstance(raw, list):
+        return None, ["not_a_list"], []
+    kept: set[RiskAxis] = set()
+    drops: list[str] = []
+    rejected: list[str] = []
+    for value in raw:
+        member, bad = _coerce_enum(RiskAxis, value)
+        if member is None:
+            drops.append("invalid")
+            # An element sent as JSON null is not an axis token either.
+            rejected.append(bad if bad is not None else "(null)")
+        elif member is axis:
+            drops.append("repeats_axis")
+        elif member in kept:
+            drops.append("duplicate")
+        else:
+            kept.add(member)
+    return [a.value for a in RiskAxis if a in kept], drops, rejected
 
 
 #: #854 round 4. Why a consultant rating did not carry, one value per RATING
@@ -1414,6 +1546,78 @@ register_catalog_field(
 )
 
 
+def _catalog_finding_code(code: str) -> str:
+    """`code` as its catalog has it: an ATT&CK technique, or a CSF or Zero
+    Trust code (`_catalog_control_code`). The three never share a spelling;
+    KeyError for a code no catalog has."""
+    try:
+        return technique_by_id(code).id
+    except KeyError:
+        return _catalog_control_code(code)
+
+
+def _zt_capability_details(codes: list[str]) -> dict[str, dict[str, str]]:
+    """#474 E, ruling 6: each Zero Trust code's `framework`, `pillar` and
+    `name`, as the catalog has them. A Risk payload can carry CISA and DoD
+    capabilities together, so the framework is each capability's own. KeyError
+    for a code the catalog does not have."""
+    out: dict[str, dict[str, str]] = {}
+    for code in codes:
+        cap = zt_capability_by_code(code)
+        out[code] = {
+            "framework": cap.framework.value,
+            "pillar": zt_pillar_by_code(cap.framework, cap.pillar_code).name,
+            "name": cap.name,
+        }
+    return out
+
+
+# #474 E (#997's `findings` half; the advisor's ruling 6, #736 6087027524).
+# `findings` is keyed by `source_id`, and a dict key is never redacted, so each
+# key is GUARDED: it must rebuild from its catalog byte for byte, or nothing is
+# sent. Its values (labels, evidence, notes) stay redacted. The catalog text the
+# evidence used to need is in three top-level maps, sent verbatim and guarded:
+# `technique_details` and `subcategory_definitions` reuse the ATT&CK and CSF
+# registrations (the key is global, and the builder is the same function this
+# route calls), and `zt_capability_details` is Risk's own.
+register_catalog_keys("findings", _catalog_finding_code)
+register_catalog_field(
+    "zt_capability_details", lambda _payload, value: _zt_capability_details(list(value))
+)
+
+
+def _risk_batch_inputs(
+    batch: list[dict], *, valid_techniques: list[str], valid_controls: list[str]
+) -> dict:
+    """One batch's payload, in the approved text's order (ruling 6).
+
+    `findings` is keyed by `source_id`; a second finding with the same id would
+    silently overwrite the first, so it raises (`_record_drafted_from` already
+    refuses one id drafted from two sources). The three details maps carry only
+    this batch's codes (#806 C10), in the batch's order; empty when the batch
+    has no finding of that kind. The allow-lists go to every batch, as before."""
+    keyed: dict[str, dict] = {}
+    for f in batch:
+        sid = str(f["source_id"])
+        if sid in keyed:
+            raise RuntimeError(f"risk synthesis: finding {sid!r} appears twice in one batch")
+        keyed[sid] = {
+            "source": f["source"],
+            "kind": f["kind"],
+            "label": f["label"],
+            "evidence": f["evidence"],
+        }
+    by_kind = {k: [sid for sid, x in keyed.items() if x["kind"] == k] for k in _SYNTHESIS_KINDS}
+    return {
+        "findings": keyed,
+        "technique_details": _technique_details(by_kind["attack"]),
+        "subcategory_definitions": _subcategory_definitions(by_kind["csf"]),
+        "zt_capability_details": _zt_capability_details(by_kind["zt"]),
+        "valid_techniques": valid_techniques,
+        "valid_controls": valid_controls,
+    }
+
+
 def _run_risk_synthesize_batched(
     db: Session,
     llm: LLMClient,
@@ -1469,22 +1673,31 @@ def _run_risk_synthesize_batched(
     error stays typed and carries `charged_likely`.
     """
     batches = _batches(findings, batch_keys) or [[]]
+    # #1006's Risk half (advisor, #736 6090870696): the notes and rationales E
+    # sends are client text, so the redactor gets the tenant's name list, as
+    # Tech Debt's extraction and the ATT&CK what-if do. Read once, here, on the
+    # request's session: a worker must not be the first to query.
+    name_hints = name_hints_for_tenant(db, client_id)
+    # Built BEFORE any call, so a payload this route cannot build (a code no
+    # catalog has) raises here, loudly, rather than being counted as a failed
+    # AI batch after the others were paid for.
+    payloads = [
+        _risk_batch_inputs(b, valid_techniques=valid_techniques, valid_controls=valid_controls)
+        for b in batches
+    ]
 
-    def _one(batch: list[dict]) -> dict:
+    def _one(payload: dict) -> dict:
         session = Session(bind=db.get_bind())
         try:
             out = run_job(
                 session,
                 llm,
                 "risk_synthesize",
-                inputs={
-                    "findings": batch,
-                    "valid_techniques": valid_techniques,
-                    "valid_controls": valid_controls,
-                },
+                inputs=payload,
                 requested_by=requested_by,
                 client_id=client_id,
                 client_org_name=client_org_name,
+                name_hints=name_hints,
             )
             session.commit()
             # Guaranteed a dict by `parse_json_object`; a wrong shape raises
@@ -1520,7 +1733,7 @@ def _run_risk_synthesize_batched(
         # carried one (no live risk_synthesize row existed to measure). A fresh
         # copy per submit, because one Context cannot be entered by two threads
         # at once. `routes/attack.py` has the same runner and the same fix.
-        futures = [pool.submit(contextvars.copy_context().run, _one, b) for b in batches]
+        futures = [pool.submit(contextvars.copy_context().run, _one, p) for p in payloads]
         for fut in as_completed(futures):
             try:
                 data = fut.result()
@@ -1755,6 +1968,10 @@ def generate(
     # what makes that visible rather than impossible, which is the cheaper and
     # sufficient half.
     entries_per_finding: dict[str, int] = {}
+    # #806 build requirement 2: what `other_axes` could not store, by reason
+    # (`OTHER_AXES_DROP_REASONS`). `{}` is the positive claim that nothing was
+    # dropped; the audit row carries it either way.
+    other_axes_dropped: dict[str, int] = {}
     entries_total = 0
     entries_without_tier = 0
     # #132. `field -> [values]`, deduped across the whole run, so the audit row
@@ -1908,6 +2125,11 @@ def generate(
                 entries_unlinked_after_drops += 1
         axis, axis_bad = _coerce_enum(RiskAxis, raw.get("axis"))
         _record("axis", axis_bad)
+        other_axes, axes_drops, axes_rejected = _coerce_other_axes(raw, axis)
+        for reason in axes_drops:
+            other_axes_dropped[reason] = other_axes_dropped.get(reason, 0) + 1
+        for token in axes_rejected:
+            _record("other_axes", token)
         action, action_bad = _coerce_enum(RecommendedAction, raw.get("recommended_action"))
         _record("recommended_action", action_bad)
         db.add(
@@ -1917,6 +2139,7 @@ def generate(
                 title=str(raw["title"])[:512],
                 description=raw.get("description"),
                 axis=axis.value if axis else None,
+                other_axes=other_axes,
                 source=stored_source,
                 source_id=source_kept[0] if source_kept else None,
                 linked_techniques=techs,
@@ -2148,6 +2371,10 @@ def generate(
             # cause -- including a key the model simply omitted, which the
             # rejection map cannot see.
             "rejected_enum_values": rejected_enum_values,
+            # #806 build requirement 2: `other_axes` drops, by reason. Never a
+            # silent filter: a value the model sent and this run did not store
+            # is counted here, and an invalid token is also named above.
+            "other_axes_dropped": other_axes_dropped,
             # #330. RENAMED from `entries_total`, which named two different
             # quantities on two surfaces: this LOOP TALLY, and the table
             # read-back `_serialize` publishes under the same key. They agree

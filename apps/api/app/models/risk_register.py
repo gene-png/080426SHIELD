@@ -95,6 +95,11 @@ class RiskEntry(UUIDPKMixin, TimestampMixin, Base):
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     axis: Mapped[str | None] = mapped_column(String(16))  # detection/prevention/response
+    # #806 G1 option 3 (migration 0066): every OTHER axis the scenario directly
+    # affects, ordered detection, prevention, response; never holds `axis`.
+    # Never counted: `axis_counts` is primary-only (#313). NULL is "not
+    # recorded" (pre-0066, or no readable list from the model); `[]` is "none".
+    other_axes: Mapped[list | None] = mapped_column(JSON)
 
     # Where this entry came from (traceability — required, no orphan risks).
     source: Mapped[str | None] = mapped_column(

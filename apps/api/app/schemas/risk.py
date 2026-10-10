@@ -135,6 +135,9 @@ class RiskEntryResponse(BaseModel):
     title: str
     description: str | None
     axis: str | None
+    # #806 G1 option 3. None is "not recorded" (pre-0066, or the model sent no
+    # readable list); `[]` is the claim "no other axis". Never counted.
+    other_axes: list[str] | None = None
     source: str | None
     source_id: str | None
     linked_techniques: list[str] | None
