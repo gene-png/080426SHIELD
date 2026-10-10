@@ -25,6 +25,7 @@ can disagree on a vendor-shaped name, and that is stated there too.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -66,6 +67,175 @@ NOT_CHECKED_SENTENCE = (
     "The tools cited here were not checked against a security tool list, because "
     "the client has none."
 )
+
+
+#: R4, option (b) (#736): why nothing could be checked. No Tech Debt list at
+#: all; only lists with no security-scope row; or only discarded lists. Under
+#: R6b (#736 6094994432) "only lists with no security-scope row" is judged on
+#: the versions in force: a service's approved or released versions where it
+#: has any (its drafts ignored), else its drafts. A drafts-only client is
+#: therefore checked against its newest draft, never "no_list".
+NOT_CHECKED_NO_LIST = "no_list"
+NOT_CHECKED_EMPTY = "empty"
+NOT_CHECKED_DISCARDED = "discarded"
+
+
+@dataclass(frozen=True)
+class VersionFallback:
+    """R4 (b): one Tech Debt service whose current list is not simply its
+    newest version in force.
+
+    In force (R6b, #736 6094994432): the service's APPROVED and RELEASED
+    versions if it has any, its drafts ignored; else its drafts. `skipped`:
+    every version in force passed over for holding no security-scope row, as
+    (version, status), newest first by version number. So the statuses are
+    all "draft" (a drafts-only service, C8a) or all approved / released
+    (C8b), never mixed. `used_version`: the version that votes, or None when
+    the service contributes nothing, in which case `reason` says why
+    (`NOT_CHECKED_EMPTY`: every version in force is empty;
+    `NOT_CHECKED_DISCARDED`: every version is discarded, and `skipped` is then
+    empty). `reason` is None exactly when `used_version` is not."""
+
+    service_id: uuid.UUID
+    service_title: str
+    skipped: tuple[tuple[int, str], ...]
+    used_version: int | None
+    reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.used_version is None) != (self.reason is not None):
+            raise ValueError(
+                "a service records a reason exactly when it contributes no version "
+                f"(used_version={self.used_version!r}, reason={self.reason!r})"
+            )
+
+
+@dataclass(frozen=True)
+class SubsetCheck:
+    """#889 (Q7): whether the cited tools were checked against a security tool
+    list, and what the check found, as ONE value so the two cannot disagree.
+
+    `checked` False is the third state, "not checked": the client has no Tech
+    Debt list, only lists in force with no security tool, or only discarded lists
+    (`not_checked_reason`); a mix of the last two (one service empty, one
+    only discarded) reports "empty", by `_current_list_versions`' precedence.
+    Nothing can be outside a list that does not exist, so `outside` must then
+    be empty, and building one that is not raises here."""
+
+    checked: bool
+    outside: tuple[OutsideCitation, ...] = ()
+    #: R4 (b): the services whose newest version in force did not vote (R6b:
+    #: approved or released where any exists, else drafts). Additive.
+    fallbacks: tuple[VersionFallback, ...] = ()
+    #: R4 (b): why nothing was checked (`NOT_CHECKED_*`); None when checked.
+    not_checked_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.checked and self.outside:
+            raise ValueError(
+                f"a subset that was not checked cannot carry {len(self.outside)} tools "
+                "outside it; `outside` is the check's own finding"
+            )
+        if self.checked and self.not_checked_reason is not None:
+            raise ValueError(
+                f"a checked subset cannot carry a not-checked reason "
+                f"({self.not_checked_reason!r})"
+            )
+
+    def outside_tools(self) -> frozenset[str]:
+        """The cited names to mark, exactly as stored."""
+        return frozenset(o.tool for o in self.outside)
+
+    def outside_codes(self) -> frozenset[str]:
+        """The technique rows crediting at least one of them."""
+        return frozenset(o.technique_code for o in self.outside)
+
+
+#: #889 copy, approved verbatim (advisor, #736 comment 6090360421, on the plan
+#: at 6089903057). C3: the per-tool mark, after " (unconfirmed)" and after the
+#: retirement mark. COPIED to `apps/web/src/lib/attack/subset.ts`; change both.
+OUTSIDE_MARK = " (not in the security tool list)"
+#: C4: the XLSX legend row for that mark.
+OUTSIDE_LEGEND = (
+    f"Tools marked{OUTSIDE_MARK}",
+    "Not in the client's security tool list when this report was finalized, so "
+    "coverage may count a tool the client does not use.",
+)
+
+
+def outside_rows_sentence(rows: int) -> str:
+    """C1: #851's approved S1, with a period in place of its colon. Counts
+    ROWS, as the approve refusal does: one tool on two rows is two."""
+    if rows == 1:
+        return (
+            "1 technique row credits a tool that is not in the client's security tool "
+            "list, so its status may count a tool the client does not use."
+        )
+    return (
+        f"{rows} technique rows credit a tool that is not in the client's security "
+        "tool list, so their status may count a tool the client does not use."
+    )
+
+
+#: R4 copy, approved verbatim (advisor, #736 comment 6093188709). C5b replaces
+#: `NOT_CHECKED_SENTENCE` where the reason is `NOT_CHECKED_EMPTY`.
+NOT_CHECKED_EMPTY_SENTENCE = (
+    "The tools cited here were not checked against a security tool list, because "
+    "the client's security tool list has no security tools."
+)
+
+
+def not_checked_sentence(reason: str | None) -> str:
+    """The "not checked" sentence for `reason`: C5b when every list is empty,
+    C5 otherwise. "no_list" keeps C5 by the ruling, and "discarded" (only
+    discarded lists) keeps C5 too, as ruled by the advisor in #736 comment
+    6093549176."""
+    return NOT_CHECKED_EMPTY_SENTENCE if reason == NOT_CHECKED_EMPTY else NOT_CHECKED_SENTENCE
+
+
+def fallback_sentence(fallback: VersionFallback) -> str:
+    """C9, in the deliverable and on the client dashboard, one per service that
+    fell back. {m} is the version used. It names the service, so two services
+    falling back to the same version read as two different lines (C9 as
+    changed by the advisor, #736 comment 6093549176)."""
+    return (
+        f"In {fallback.service_title}, cited tools were checked against version "
+        f"{fallback.used_version} of the client's security tool list, because the newest "
+        "version has no security tools."
+    )
+
+
+def fallback_admin_sentence(fallback: VersionFallback) -> str:
+    """C8a (the newest skipped version is a DRAFT) or C8b (approved or
+    released), on the admin ATT&CK workspace only. {n} is the newest skipped
+    version, {m} the version used.
+
+    C8a is reachable only in a Tech Debt service with ONLY drafts (R6b, #736
+    6094994432): where a service has an approved or released version its
+    drafts are ignored, so none is ever skipped
+    (`test_r6b_c8a_only_in_a_drafts_only_service`).
+
+    C8b IS reachable: the Tech Debt approve route accepts a list with no
+    security row (`test_r4_an_approved_empty_newest_version_reads_c8b`)."""
+    n, status = fallback.skipped[0]
+    m = fallback.used_version
+    if status == "draft":
+        return (
+            f"In {fallback.service_title}, the newest security tool list (version {n}, a "
+            f"draft) has no security tools, so these checks use version {m}. If version "
+            f'{n} came from the wrong document, use "Discard draft" in that Tech Debt '
+            "workspace."
+        )
+    return (
+        f"In {fallback.service_title}, the newest security tool list (version {n}) has no "
+        f"security tools, so these checks use version {m}."
+    )
+
+
+def used_fallbacks(fallbacks: Iterable[VersionFallback]) -> list[VersionFallback]:
+    """The services that fell back to an earlier version (C8, C9): a service
+    that contributes nothing has no version to name."""
+    return [f for f in fallbacks if f.used_version is not None]
 
 
 def subset_applies(list_statuses: Iterable[Any]) -> bool:
