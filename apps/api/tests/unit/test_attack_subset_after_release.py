@@ -334,3 +334,81 @@ def test_t7_the_dashboard_lists_each_outside_tool_once(app_parts, tmp_path) -> N
     body = _dashboard(w)
     assert body["tool_outside_subset"] == [LEGACY], body.get("tool_outside_subset")
     assert body["subset_notes"] == [C1_TWO], body.get("subset_notes")
+
+
+# --- plan T2: the APPROVED list answers from its snapshot (D-053/D-064) -----------------
+
+
+def test_the_dashboard_reads_an_approved_lists_snapshot_until_it_is_approved_again(
+    app_parts, tmp_path  # noqa: F811
+) -> None:
+    """Approve the Tech Debt list BEFORE the ATT&CK approve. Confirming the
+    sign-off afterwards changes the live row but not the approved snapshot,
+    which IS the membership: nothing is listed. Approving the list again
+    refreshes the snapshot, and the tool is listed."""
+    _with_storage(app_parts, tmp_path)
+    w = _world(app_parts)
+    w.approve_list()
+    _cover(w, _codes(w)[0], [EDR, LEGACY])
+    _release(w, _approve_finalize(w))
+    w.confirm_not_security(LEGACY)
+    pinned = _dashboard(w)
+    assert pinned["tool_outside_subset"] == [], pinned.get("tool_outside_subset")
+    assert pinned["subset_notes"] == [], pinned.get("subset_notes")
+    w.approve_list()
+    refreshed = _dashboard(w)
+    assert refreshed["tool_outside_subset"] == [LEGACY], refreshed.get("tool_outside_subset")
+    assert refreshed["subset_notes"] == [C1_ONE], refreshed.get("subset_notes")
+
+
+# --- plan T4: a computed parent's own tools are not its evidence (D-094) ----------------
+
+
+def test_a_computed_parents_own_tools_are_neither_marked_nor_counted(
+    app_parts, tmp_path  # noqa: F811
+) -> None:
+    """Under the new rules a computed parent's own stored tools are not
+    delivered, so the dashboard neither names them in `tool_outside_subset`
+    nor counts the parent row in C1. Its child is checked like any row.
+
+    The parent's own "Shadow Scanner" was never on the list, so it would be
+    flagged if the parent were read; the child's "Legacy AV" leaves the list
+    after release."""
+    from tests.unit.test_attack_subset_drift import _legacy_parent_tools, _parent_with_child
+
+    _with_storage(app_parts, tmp_path)
+    w = _world(app_parts)
+    _parent, parent_id, child, child_id = _parent_with_child(w)
+    _legacy_parent_tools(w, parent_id, ["Shadow Scanner"])
+    w.rows[child] = child_id
+    _cover(w, child, [LEGACY])
+    _release(w, _approve_finalize(w))
+    w.confirm_not_security(LEGACY)
+    body = _dashboard(w)
+    assert body.get("parents_computed") is True, sorted(body)  # the new rules apply
+    # The parent row is in the context C1 counts over even where the matrix
+    # hides it (no status of its own until its children are scored).
+    assert child in {t["code"] for t in body["techniques"]}, child  # positive first
+    assert body["tool_outside_subset"] == [LEGACY], body.get("tool_outside_subset")
+    assert body["subset_notes"] == [C1_ONE], body.get("subset_notes")
+
+
+# --- plan T7: the delivered bytes keep the list as it stood at finalize ----------------
+
+
+def test_the_finalized_artifacts_are_byte_identical_after_the_drift(
+    app_parts, tmp_path  # noqa: F811
+) -> None:
+    """The ratchet: the v1 PDF, DOCX and XLSX downloaded after the tool leaves
+    the list (and after the live dashboard has disclosed it) are the bytes
+    downloaded before."""
+    _with_storage(app_parts, tmp_path)
+    w = _world(app_parts)
+    _cover(w, _codes(w)[0], [EDR, LEGACY])
+    fin = _approve_finalize(w)
+    _release(w, fin)
+    ids = [fin[f"{fmt}_artifact_id"] for fmt in ("pdf", "docx", "xlsx")]
+    before = [_download(w, i) for i in ids]
+    w.confirm_not_security(LEGACY)
+    assert _dashboard(w)["subset_notes"] == [C1_ONE]  # positive first: the drift is live
+    assert [_download(w, i) for i in ids] == before
