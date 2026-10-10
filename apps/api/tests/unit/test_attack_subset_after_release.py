@@ -467,3 +467,20 @@ def test_a_tool_dropped_from_an_approved_v2_is_flagged_though_v1_held_it(
     assert after["tool_outside_subset"] == [LEGACY], after.get("tool_outside_subset")
     assert after["subset_notes"] == [C1_ONE], after.get("subset_notes")
     assert _value_summary(w)["attack_counts_outside_subset"] is True
+
+
+def test_a_draft_v2_is_the_current_list(app_parts, tmp_path) -> None:  # noqa: F811
+    """R2 (advisor, #736 6091824874): a DRAFT latest version counts as the
+    current list. v2 is uploaded without "Legacy AV" and NOT approved; the
+    tool is flagged on the dashboard and the home card."""
+    _with_storage(app_parts, tmp_path)
+    w = _world(app_parts)
+    w.approve_list()
+    _cover(w, _codes(w)[0], [EDR, LEGACY])
+    _release(w, _approve_finalize(w))
+    assert _dashboard(w)["tool_outside_subset"] == []  # positive first: v1 holds it
+    _upload_v2_without(w, LEGACY)  # a DRAFT, never approved
+    body = _dashboard(w)
+    assert body["tool_outside_subset"] == [LEGACY], body.get("tool_outside_subset")
+    assert body["subset_notes"] == [C1_ONE], body.get("subset_notes")
+    assert _value_summary(w)["attack_counts_outside_subset"] is True
