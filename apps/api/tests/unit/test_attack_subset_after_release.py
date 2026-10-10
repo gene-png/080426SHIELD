@@ -750,6 +750,25 @@ def test_an_empty_latest_version_falls_back_to_the_previous_one(
     w = _world(app_parts)
     w.approve_list()
     _upload_v2_items(w, v2_items)
+    _fallback_asserts(w, "draft")
+
+
+def test_an_approved_empty_latest_version_falls_back_too(app_parts) -> None:  # noqa: F811
+    """An APPROVED v2 is judged by its snapshot, which holds no row: it does
+    not vote either."""
+    w = _world(app_parts)
+    w.approve_list()
+    v2 = _upload_v2_items(w, [])
+    r = w.c.post(f"/tech-debt/capability-lists/{v2}/approve", headers=w.h)
+    assert r.status_code == 200, r.text
+    with w.sessions() as db:
+        from app.models.capability import CapabilityList
+
+        assert db.get(CapabilityList, uuid.UUID(v2)).approved_membership == []
+    _fallback_asserts(w, "approved")
+
+
+def _fallback_asserts(w: World, skipped_status: str) -> None:
     code = _codes(w)[0]
     r = w.patch(code, {"detection_tools": [EDR, LEGACY]})
     assert r.status_code == 200, r.text
@@ -760,7 +779,7 @@ def test_an_empty_latest_version_falls_back_to_the_previous_one(
     assert [
         (f.service_title, f.skipped_version, f.skipped_status, f.used_version)
         for f in check.fallbacks
-    ] == [("Acme Tech Debt", 2, "draft", 1)]
+    ] == [("Acme Tech Debt", 2, skipped_status, 1)]
 
 
 def test_with_only_an_empty_list_nothing_is_checked_and_the_reason_is_empty(
