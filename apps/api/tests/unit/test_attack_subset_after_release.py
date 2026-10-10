@@ -1,0 +1,1407 @@
+"""#889 PR 1: after an ATT&CK assessment is approved, a tool can leave the
+client's security tool list. The client dashboard, the exports and the client
+home card disclose a row still crediting it. Disclosure only: no number moves.
+
+Plan: track4, #736 comment 6089903057. Ruling: the advisor, #736 comment
+6090360421 (the design, copy C1 to C7 verbatim, Q1 to Q7 as recommended).
+
+Sources, as approved: the dashboard and the home card read the CURRENT subset
+(the existing `subset_state`); the exports record it as of finalize, in the
+bytes.
+
+Every expected string below is the approved copy written out, never imported
+from the module that renders it.
+
+The world is #851's (`test_attack_subset_drift._world`): a Tech Debt list whose
+"Legacy AV" carries the model's provisional "not security" call. Confirming that
+call (`confirm_not_security`) takes the tool out of the subset AFTER approve,
+which is the drift this issue is about.
+
+Which version is in force (R6b, #736 6094994432), per Tech Debt service: the
+newest APPROVED or RELEASED version where the service has one, its drafts
+ignored; else the newest draft, as under R2. That world's v1 is a DRAFT and the
+service's only version, so it is in force, and the tests built on it read the
+drafts-only half of the rule.
+"""
+
+from __future__ import annotations
+
+import io
+import uuid
+
+import pytest
+
+from app.models.attack_assessment import AttackCoverage
+from tests.unit.test_ai_runs_attack import app_parts  # noqa: F401  (fixture)
+from tests.unit.test_attack_subset_drift import (
+    EDR,
+    LEGACY,
+    World,
+    _codes,
+    _format_text,
+    _no_list_world,
+    _with_storage,
+    _world,
+)
+
+pytestmark = pytest.mark.unit
+
+# C1, the approved singular and plural (#736 6089903057, approved 6090360421).
+C1_ONE = (
+    "1 technique row credits a tool that is not in the client's security tool list, "
+    "so its status may count a tool the client does not use."
+)
+C1_TWO = (
+    "2 technique rows credit a tool that is not in the client's security tool list, "
+    "so their status may count a tool the client does not use."
+)
+# C3, the per-tool mark.
+C3 = " (not in the security tool list)"
+# C4, the XLSX legend.
+C4_LABEL = "Tools marked (not in the security tool list)"
+C4_TEXT = (
+    "Not in the client's security tool list when this report was finalized, so "
+    "coverage may count a tool the client does not use."
+)
+# C5: #851's approved "not checked" sentence (#736 6040458893), verbatim.
+C5 = (
+    "The tools cited here were not checked against a security tool list, because "
+    "the client has none."
+)
+
+FORMATS = ["pdf", "docx", "xlsx", "summary"]
+
+
+def _cover(w: World, code: str, tools: list[str]) -> None:
+    """A Covered row naming `tools` in Detect, Prevent and Respond, so its
+    status survives #554 R3's computation and the dashboard shows the row."""
+    r = w.patch(
+        code,
+        {
+            "status": "covered",
+            "detection_tools": tools,
+            "prevention_tools": tools,
+            "response_tools": tools,
+        },
+    )
+    assert r.status_code == 200, r.text
+
+
+def _approve_finalize(w: World) -> dict:
+    assert w.approve().status_code == 200
+    fin = w.c.post(f"/attack/services/{w.svc_id}/deliverables/finalize", headers=w.h)
+    assert fin.status_code in (200, 201), fin.text
+    return fin.json()
+
+
+def _release(w: World, fin: dict) -> None:
+    r = w.c.post(f"/attack/deliverables/{fin['id']}/release", headers=w.h)
+    assert r.status_code == 200, r.text
+
+
+def _dashboard(w: World) -> dict:
+    r = w.c.get(f"/clients/{w.cid}/attack/{w.svc_id}/dashboard", headers=w.h)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _download(w: World, artifact_id: str) -> bytes:
+    r = w.c.get(f"/artifacts/{artifact_id}/download", headers=w.h)
+    assert r.status_code == 200, r.text
+    return r.content
+
+
+def _xlsx_tool_cells(raw: bytes) -> set[str]:
+    from openpyxl import load_workbook
+
+    ws = load_workbook(io.BytesIO(raw))["Coverage"]
+    col = [c.value for c in ws[1]].index("Detection tools") + 1
+    return {
+        str(ws.cell(row=r, column=col).value)
+        for r in range(2, ws.max_row + 1)
+        if ws.cell(row=r, column=col).value
+    }
+
+
+def _xlsx_legend(raw: bytes) -> dict:
+    from openpyxl import load_workbook
+
+    ws = load_workbook(io.BytesIO(raw))["Heatmap Summary"]
+    return {r[0].value: r[1].value for r in ws.iter_rows(max_row=40) if r and r[0].value}
+
+
+# --- T1: the client dashboard discloses a tool that left the list after release ---------
+
+
+def test_t1_the_dashboard_discloses_a_tool_that_left_the_list_after_release(
+    app_parts, tmp_path  # noqa: F811
+) -> None:
+    _with_storage(app_parts, tmp_path)
+    w = _world(app_parts)
+    one, two = _codes(w)[:2]
+    _cover(w, one, [EDR, LEGACY])
+    _cover(w, two, [EDR])
+    _release(w, _approve_finalize(w))
+
+    before = _dashboard(w)
+    # Positive first: the check ran and found nothing, so the keys are present
+    # and empty (the second state), not absent.
+    assert before["tool_outside_subset"] == [], before.get("tool_outside_subset")
+    assert before["subset_notes"] == [], before.get("subset_notes")
+
+    w.confirm_not_security(LEGACY)
+    after = _dashboard(w)
+    assert after["tool_outside_subset"] == [LEGACY], after.get("tool_outside_subset")
+    assert after["subset_notes"] == [C1_ONE], after.get("subset_notes")
+    # Disclosure only: the number the client reads does not move.
+    assert after["rollup"] == before["rollup"]
+
+
+# --- T2: "not checked" is the third state, said on the dashboard ----------------------
+
+
+def test_t2_the_dashboard_says_not_checked_when_the_client_has_no_list(
+    app_parts, tmp_path  # noqa: F811
+) -> None:
+    _with_storage(app_parts, tmp_path)
+    w = _no_list_world(app_parts)
+    _cover(w, _codes(w)[0], ["Tool A"])
+    _release(w, _approve_finalize(w))
+    body = _dashboard(w)
+    assert "techniques" in body, sorted(body)  # positive first: it rendered
+    assert body["subset_notes"] == [C5], body.get("subset_notes")
+    # Nothing could be looked at, so there is no list of tools at all: absent,
+    # never an empty list that would read as "checked, none found".
+    assert "tool_outside_subset" not in body, sorted(body)
+
+
+# --- T3: each export states the outside rows, as of finalize --------------------------
+
+
+@pytest.mark.parametrize("fmt", FORMATS)
+def test_t3_each_format_states_rows_outside_the_list_at_finalize(
+    app_parts, tmp_path, fmt: str  # noqa: F811
+) -> None:
+    """Approve accepts the row (the tool is still in the subset); the tool
+    leaves before finalize, which is what a re-finalize after drift is."""
+    _with_storage(app_parts, tmp_path)
+    w = _world(app_parts)
+    _cover(w, _codes(w)[0], [EDR, LEGACY])
+    assert w.approve().status_code == 200
+    w.confirm_not_security(LEGACY)
+    fin = w.c.post(f"/attack/services/{w.svc_id}/deliverables/finalize", headers=w.h)
+    assert fin.status_code in (200, 201), fin.text
+    text = _format_text(w, fin.json(), fmt)
+    assert C1_ONE in text, text[:3000]
+    assert C5 not in text, text[:3000]
+
+
+@pytest.mark.parametrize("fmt", FORMATS)
+def test_t3_the_document_keeps_the_list_as_it_stood_at_finalize(
+    app_parts, tmp_path, fmt: str  # noqa: F811
+) -> None:
+    """Finalized while the tool was still listed: the stored document says
+    nothing, and the dashboard (read live) is where the later change shows."""
+    _with_storage(app_parts, tmp_path)
+    w = _world(app_parts)
+    _cover(w, _codes(w)[0], [EDR, LEGACY])
+    fin = _approve_finalize(w)
+    w.confirm_not_security(LEGACY)
+    text = _format_text(w, fin, fmt)
+    assert ("Coverage:" if fmt == "summary" else "ATT&CK") in text, text[:3000]
+    assert "not in the client's security tool list" not in text, text[:3000]
+
+
+# --- T4: the per-tool mark, stacked last, and its legend ------------------------------
+
+
+def test_t4_the_xlsx_marks_the_tool_after_the_unconfirmed_and_retirement_marks(
+    app_parts, tmp_path  # noqa: F811
+) -> None:
+    """ "Homegrown Script" is on no list: outside the subset, and (with no
+    approved plan) carrying no retirement mark. "Legacy AV" leaves after
+    approve and carries an inferred, uncleared citation, so its mark stacks
+    after " (unconfirmed)"."""
+    _with_storage(app_parts, tmp_path)
+    w = _world(app_parts)
+    code = _codes(w)[0]
+    _cover(w, code, [EDR, LEGACY])
+    with w.sessions() as db:
+        row = db.get(AttackCoverage, uuid.UUID(w.rows[code]))
+        row.unconfirmed_citations = [
+            {
+                "tool": LEGACY,
+                "cited": "Legacy",
+                "reason": "substring",
+                "field": "detection_tools",
+                "cleared_at": None,
+            }
+        ]
+        db.commit()
+    assert w.approve().status_code == 200
+    w.confirm_not_security(LEGACY)
+    fin = w.c.post(f"/attack/services/{w.svc_id}/deliverables/finalize", headers=w.h)
+    assert fin.status_code in (200, 201), fin.text
+    raw = _download(w, fin.json()["xlsx_artifact_id"])
+    cells = _xlsx_tool_cells(raw)
+    assert f"{EDR}; {LEGACY} (unconfirmed){C3}" in cells, cells
+    assert _xlsx_legend(raw).get(C4_LABEL) == C4_TEXT
+
+
+def test_t4_the_mark_stacks_after_the_retirement_mark() -> None:
+    """The order on one tool carrying all three marks. A pure render over a
+    plan that cuts "Splunk": the route world above has no approved plan."""
+    from app.attack.exporters import _tools
+    from app.attack.retirement import Retirement, RetirementIndex
+
+    plan = RetirementIndex(
+        has_plan=True,
+        by_key={"splunk": Retirement.PLANNED, "okta": Retirement.NOT_RETIRING},
+    )
+    text = _tools(["Splunk", "Okta"], frozenset({"Splunk"}), plan, frozenset({"Splunk"}))
+    assert text == f"Splunk (unconfirmed) (planned retirement){C3}; Okta", text
+
+
+def test_t4_no_legend_row_without_a_marked_tool(app_parts, tmp_path) -> None:  # noqa: F811
+    _with_storage(app_parts, tmp_path)
+    w = _world(app_parts)
+    _cover(w, _codes(w)[0], [EDR])
+    fin = _approve_finalize(w)
+    raw = _download(w, fin["xlsx_artifact_id"])
+    legend = _xlsx_legend(raw)
+    assert "Tools marked (unconfirmed)" in legend, legend  # positive first
+    assert C4_LABEL not in legend, legend
+
+
+# --- T5: Q7, one subset parameter: the flag and the list cannot disagree --------------
+
+
+def test_t5_an_unchecked_subset_cannot_carry_outside_tools() -> None:
+    from app.attack.subset_drift import OutsideCitation, SubsetCheck
+
+    hit = OutsideCitation(technique_code="T1", field="detection_tools", tool="X", locked=False)
+    assert SubsetCheck(checked=True, outside=(hit,)).outside == (hit,)  # positive first
+    with pytest.raises(ValueError, match="not checked"):
+        SubsetCheck(checked=False, outside=(hit,))
+
+
+# --- T6: the client home card (C7, Q3) ------------------------------------------------
+
+
+def _value_summary(w: World) -> dict:
+    r = w.c.get(f"/clients/{w.cid}/value-summary", headers=w.h)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_t6_the_home_card_flags_a_covered_technique_relying_on_a_tool_outside_the_list(
+    app_parts, tmp_path  # noqa: F811
+) -> None:
+    _with_storage(app_parts, tmp_path)
+    w = _world(app_parts)
+    _cover(w, _codes(w)[0], [EDR, LEGACY])
+    _release(w, _approve_finalize(w))
+    before = _value_summary(w)
+    assert before["attack_uncovered_count"] is not None, before  # positive first
+    assert before["attack_covered_relies_on_outside_tool"] is False, before
+    w.confirm_not_security(LEGACY)
+    after = _value_summary(w)
+    assert after["attack_covered_relies_on_outside_tool"] is True, after
+    # Disclosure only: the total does not move.
+    assert after["attack_uncovered_count"] == before["attack_uncovered_count"]
+
+
+def test_t6_the_home_card_flag_is_null_with_no_list(app_parts, tmp_path) -> None:  # noqa: F811
+    """Not checked: the card has nothing to say, and says nothing, rather than
+    reading False ("checked, none found")."""
+    _with_storage(app_parts, tmp_path)
+    w = _no_list_world(app_parts)
+    _cover(w, _codes(w)[0], ["Tool A"])
+    _release(w, _approve_finalize(w))
+    body = _value_summary(w)
+    assert body["attack_uncovered_count"] is not None, body  # positive first
+    assert body["attack_covered_relies_on_outside_tool"] is None, body
+
+
+# --- T7: one tool on two rows is one name and two rows ---------------------------------
+
+
+def test_t7_the_dashboard_lists_each_outside_tool_once(app_parts, tmp_path) -> None:  # noqa: F811
+    """The same tool on two rows is one name in `tool_outside_subset` (the
+    per-tool mark) and two rows in the sentence (which counts rows), and a
+    tool still on the list is never named."""
+    _with_storage(app_parts, tmp_path)
+    w = _world(app_parts)
+    one, two = _codes(w)[:2]
+    _cover(w, one, [EDR, LEGACY])
+    _cover(w, two, [LEGACY])
+    _release(w, _approve_finalize(w))
+    w.confirm_not_security(LEGACY)
+    body = _dashboard(w)
+    assert body["tool_outside_subset"] == [LEGACY], body.get("tool_outside_subset")
+    assert body["subset_notes"] == [C1_TWO], body.get("subset_notes")
+
+
+# --- plan T2: the APPROVED list answers from its snapshot (D-053/D-064) -----------------
+
+
+def test_the_dashboard_reads_an_approved_lists_snapshot_until_it_is_approved_again(
+    app_parts, tmp_path  # noqa: F811
+) -> None:
+    """Approve the Tech Debt list BEFORE the ATT&CK approve. Confirming the
+    sign-off afterwards changes the live row but not the approved snapshot,
+    which IS the membership: nothing is listed. Approving the list again
+    refreshes the snapshot, and the tool is listed."""
+    _with_storage(app_parts, tmp_path)
+    w = _world(app_parts)
+    w.approve_list()
+    _cover(w, _codes(w)[0], [EDR, LEGACY])
+    _release(w, _approve_finalize(w))
+    w.confirm_not_security(LEGACY)
+    pinned = _dashboard(w)
+    assert pinned["tool_outside_subset"] == [], pinned.get("tool_outside_subset")
+    assert pinned["subset_notes"] == [], pinned.get("subset_notes")
+    w.approve_list()
+    refreshed = _dashboard(w)
+    assert refreshed["tool_outside_subset"] == [LEGACY], refreshed.get("tool_outside_subset")
+    assert refreshed["subset_notes"] == [C1_ONE], refreshed.get("subset_notes")
+
+
+# --- plan T4: a computed parent's own tools are not its evidence (D-094) ----------------
+
+
+def test_a_computed_parents_own_tools_are_neither_marked_nor_counted(
+    app_parts, tmp_path  # noqa: F811
+) -> None:
+    """Under the new rules a computed parent's own stored tools are not
+    delivered, so the dashboard neither names them in `tool_outside_subset`
+    nor counts the parent row in C1. Its child is checked like any row.
+
+    The parent's own "Shadow Scanner" was never on the list, so it would be
+    flagged if the parent were read; the child's "Legacy AV" leaves the list
+    after release."""
+    from tests.unit.test_attack_subset_drift import _legacy_parent_tools, _parent_with_child
+
+    _with_storage(app_parts, tmp_path)
+    w = _world(app_parts)
+    _parent, parent_id, child, child_id = _parent_with_child(w)
+    _legacy_parent_tools(w, parent_id, ["Shadow Scanner"])
+    w.rows[child] = child_id
+    _cover(w, child, [LEGACY])
+    _release(w, _approve_finalize(w))
+    w.confirm_not_security(LEGACY)
+    body = _dashboard(w)
+    assert body.get("parents_computed") is True, sorted(body)  # the new rules apply
+    # The parent row is in the context C1 counts over even where the matrix
+    # hides it (no status of its own until its children are scored).
+    assert child in {t["code"] for t in body["techniques"]}, child  # positive first
+    assert body["tool_outside_subset"] == [LEGACY], body.get("tool_outside_subset")
+    assert body["subset_notes"] == [C1_ONE], body.get("subset_notes")
+
+
+# --- plan T7: the delivered bytes keep the list as it stood at finalize ----------------
+
+
+def test_the_finalized_artifacts_are_byte_identical_after_the_drift(
+    app_parts, tmp_path  # noqa: F811
+) -> None:
+    """The ratchet: the v1 PDF, DOCX and XLSX downloaded after the tool leaves
+    the list (and after the live dashboard has disclosed it) are the bytes
+    downloaded before."""
+    _with_storage(app_parts, tmp_path)
+    w = _world(app_parts)
+    _cover(w, _codes(w)[0], [EDR, LEGACY])
+    fin = _approve_finalize(w)
+    _release(w, fin)
+    ids = [fin[f"{fmt}_artifact_id"] for fmt in ("pdf", "docx", "xlsx")]
+    before = [_download(w, i) for i in ids]
+    w.confirm_not_security(LEGACY)
+    assert _dashboard(w)["subset_notes"] == [C1_ONE]  # positive first: the drift is live
+    assert [_download(w, i) for i in ids] == before
+
+
+# --- review F2: a newer list version supersedes an older approved one -------------------
+
+
+def _upload_v2_without(w: World, dropped: str) -> str:
+    """A second version of the client's Tech Debt list, without `dropped`: the
+    world, written directly, as `test_attack_subset_drift._world` writes v1."""
+    names = [n for n in (EDR, "Acme Portal") if n != dropped]
+    return _upload_v2(w, names)
+
+
+def _upload_v2(w: World, names: list[str]) -> str:
+    """A DRAFT second version of the client's Tech Debt list holding `names`."""
+    from app.models.capability import (
+        CapabilityDisposition,
+        CapabilityItem,
+        CapabilityList,
+        CapabilityListStatus,
+    )
+
+    with w.sessions() as db:
+        v1 = db.get(CapabilityList, uuid.UUID(w.list_id))
+        v2 = CapabilityList(service_id=v1.service_id, version=2, status=CapabilityListStatus.DRAFT)
+        db.add(v2)
+        db.flush()
+        for name in names:
+            db.add(
+                CapabilityItem(
+                    capability_list_id=v2.id,
+                    name=name,
+                    security_related=True,
+                    disposition=CapabilityDisposition.KEEP,
+                )
+            )
+        db.commit()
+        return str(v2.id)
+
+
+def test_a_tool_dropped_from_an_approved_v2_is_flagged_though_v1_held_it(
+    app_parts, tmp_path  # noqa: F811
+) -> None:
+    """v1 is approved holding "Legacy AV"; ATT&CK is released; v2 is uploaded
+    without it and approved. Per Tech Debt service only the newest version in
+    force counts toward the security tool list (older versions do not vote), so the
+    dashboard and the home card flag it. v1's snapshot must not keep it in."""
+    _with_storage(app_parts, tmp_path)
+    w = _world(app_parts)
+    w.approve_list()
+    _cover(w, _codes(w)[0], [EDR, LEGACY])
+    _release(w, _approve_finalize(w))
+    before = _dashboard(w)
+    assert before["tool_outside_subset"] == [], before.get("tool_outside_subset")  # positive first
+    v2 = _upload_v2_without(w, LEGACY)
+    r = w.c.post(f"/tech-debt/capability-lists/{v2}/approve", headers=w.h)
+    assert r.status_code == 200, r.text
+    after = _dashboard(w)
+    assert after["tool_outside_subset"] == [LEGACY], after.get("tool_outside_subset")
+    assert after["subset_notes"] == [C1_ONE], after.get("subset_notes")
+    assert _value_summary(w)["attack_covered_relies_on_outside_tool"] is True
+
+
+def test_a_draft_v2_beside_an_approved_v1_does_not_vote(app_parts, tmp_path) -> None:  # noqa: F811
+    """R6b (advisor, #736 6094994432), which narrows R2: where a service has an
+    APPROVED or RELEASED version, its drafts are ignored. v2 is uploaded
+    without "Legacy AV" and NOT approved, so the approved v1 is still the list
+    in force and holds it: nothing is flagged on the dashboard or the home
+    card. (Approving that v2 flags it:
+    `test_a_tool_dropped_from_an_approved_v2_is_flagged_though_v1_held_it`.)"""
+    _with_storage(app_parts, tmp_path)
+    w = _world(app_parts)
+    w.approve_list()
+    _cover(w, _codes(w)[0], [EDR, LEGACY])
+    _release(w, _approve_finalize(w))
+    before = _dashboard(w)
+    assert before["tool_outside_subset"] == [], before.get("tool_outside_subset")
+    assert before["subset_notes"] == [], before.get("subset_notes")
+    assert _value_summary(w)["attack_covered_relies_on_outside_tool"] is False  # checked
+    _upload_v2_without(w, LEGACY)  # a DRAFT, never approved
+    body = _dashboard(w)
+    assert body["tool_outside_subset"] == [], body.get("tool_outside_subset")
+    assert body["subset_notes"] == [], body.get("subset_notes")
+    assert _value_summary(w)["attack_covered_relies_on_outside_tool"] is False
+
+
+def test_in_a_drafts_only_service_the_newest_draft_is_the_list(
+    app_parts, tmp_path  # noqa: F811
+) -> None:
+    """R6b, the other half: a service with ONLY drafts uses its newest draft,
+    as under R2. v1 and v2 are both DRAFTS and v2 drops "Legacy AV", so the
+    tool is flagged on the dashboard and the home card."""
+    _with_storage(app_parts, tmp_path)
+    w = _world(app_parts)  # v1 is a DRAFT
+    _cover(w, _codes(w)[0], [EDR, LEGACY])
+    _release(w, _approve_finalize(w))
+    assert _dashboard(w)["tool_outside_subset"] == []  # positive first: v1 holds it
+    _upload_v2_without(w, LEGACY)  # a DRAFT, never approved
+    body = _dashboard(w)
+    assert body["tool_outside_subset"] == [LEGACY], body.get("tool_outside_subset")
+    assert body["subset_notes"] == [C1_ONE], body.get("subset_notes")
+    assert _value_summary(w)["attack_covered_relies_on_outside_tool"] is True
+
+
+def test_in_a_drafts_only_service_approve_refuses_a_tool_the_newest_draft_dropped(
+    app_parts,  # noqa: F811
+) -> None:
+    """R6b keeps #851 working in the normal order of work (mapping ATT&CK
+    before the Tech Debt list is approved): a client whose only lists are
+    DRAFTS, v2 without "Legacy AV", and an ATT&CK row citing it is refused."""
+    w = _world(app_parts)  # v1 is a DRAFT
+    _upload_v2_without(w, LEGACY)  # and so is v2
+    code = _codes(w)[0]
+    _cover(w, code, [EDR, LEGACY])
+    body = w.get()
+    assert body["subset_checked"] is True, body["subset_checked"]  # positive first
+    r = w.approve()
+    assert r.status_code == 409, r.text
+    err = r.json()["error"]
+    assert err["reason"] == "attack_not_release_ready", err
+    assert {(o["technique_code"], o["tool"]) for o in err["cites_outside_subset"]} == {
+        (code, LEGACY)
+    }, err
+
+
+def test_an_open_draft_does_not_change_what_approve_accepts(app_parts) -> None:  # noqa: F811
+    """The s45 shape: the approved v1 holds "Legacy AV", and an open DRAFT v2
+    names the tools differently (here, without it). ATT&CK approve judges
+    against v1 and accepts the row. The refusal once v2 is APPROVED is
+    `test_approve_refuses_a_tool_the_latest_approved_version_dropped`."""
+    w = _world(app_parts)
+    w.approve_list()
+    _upload_v2_without(w, LEGACY)  # a DRAFT, never approved
+    _cover(w, _codes(w)[0], [EDR, LEGACY])
+    body = w.get()
+    assert body["subset_checked"] is True, body["subset_checked"]  # positive first
+    assert body["citations_outside_subset"] == [], body["citations_outside_subset"]
+    assert body["subset_fallback_notes"] == [], body["subset_fallback_notes"]
+    r = w.approve()
+    assert r.status_code == 200, r.text
+
+
+def _drift_surfaces(w: World) -> dict:
+    """Every surface an open draft must not move: the admin assessment, the
+    client dashboard and the home card."""
+    admin = w.get()
+    dash = _dashboard(w)
+    return {
+        "admin_checked": admin["subset_checked"],
+        "admin_outside": sorted((o["field"], o["tool"]) for o in admin["citations_outside_subset"]),
+        "admin_not_checked": admin["subset_not_checked_sentence"],
+        "admin_fallback_notes": admin["subset_fallback_notes"],
+        "dashboard_outside": dash.get("tool_outside_subset"),
+        "dashboard_notes": dash["subset_notes"],
+        "home_card_flag": _value_summary(w)["attack_covered_relies_on_outside_tool"],
+    }
+
+
+@pytest.mark.parametrize(
+    "draft_items",
+    [
+        # Under R2 this draft was the current list and held the tool back in.
+        pytest.param([EDR, LEGACY], id="draft_holds_the_tool"),
+        # Under R2 this draft was skipped as empty: C8a on admin, C9 on the
+        # dashboard.
+        pytest.param([], id="draft_is_empty"),
+    ],
+)
+def test_an_open_draft_changes_nothing_the_admin_or_the_client_sees(
+    app_parts, tmp_path, draft_items: list[str]  # noqa: F811
+) -> None:
+    """R6b: the service has an APPROVED version, so an open draft changes no
+    line on any surface. "Legacy AV" leaves the approved list (its "not
+    security" call confirmed, then the list approved again, which refreshes
+    the snapshot), and the disclosure that follows is pinned before and after
+    the draft."""
+    _with_storage(app_parts, tmp_path)
+    w = _world(app_parts)
+    w.approve_list()
+    _cover(w, _codes(w)[0], [EDR, LEGACY])
+    _release(w, _approve_finalize(w))
+    w.confirm_not_security(LEGACY)
+    w.approve_list()
+    expected = {
+        "admin_checked": True,
+        "admin_outside": [
+            ("detection_tools", LEGACY),
+            ("prevention_tools", LEGACY),
+            ("response_tools", LEGACY),
+        ],
+        "admin_not_checked": None,
+        "admin_fallback_notes": [],
+        "dashboard_outside": [LEGACY],
+        "dashboard_notes": [C1_ONE],
+        "home_card_flag": True,
+    }
+    assert _drift_surfaces(w) == expected  # positive first: the drift is disclosed
+    _upload_v2(w, draft_items)  # an open DRAFT v2, never approved
+    assert _drift_surfaces(w) == expected
+
+
+def test_r6b_newest_is_the_highest_version_not_the_latest_approval(
+    app_parts,  # noqa: F811
+) -> None:
+    """R6b: "newest" among approved versions is the highest VERSION NUMBER
+    (`_versions_in_force` says why). v1 holds "Legacy AV", v2 drops it, both
+    approved; then v1 is approved AGAIN, so v1 carries the later `approved_at`.
+    v2 is still the list in force, and the tool is outside it."""
+    from app.models.capability import CapabilityList
+
+    w = _world(app_parts)
+    w.approve_list()
+    v2 = _upload_v2_without(w, LEGACY)
+    _approve_list(w, v2)
+    w.approve_list()  # re-approve v1: the newer approval, on the older version
+    with w.sessions() as db:
+        v1_at = db.get(CapabilityList, uuid.UUID(w.list_id)).approved_at
+        v2_at = db.get(CapabilityList, uuid.UUID(v2)).approved_at
+    assert v1_at is not None and v2_at is not None, (v1_at, v2_at)
+    assert v1_at > v2_at, (v1_at, v2_at)  # the world: the older version, approved later
+    code = _codes(w)[0]
+    assert w.patch(code, {"detection_tools": [EDR, LEGACY]}).status_code == 200
+    assert _outside_tools(w) == [LEGACY]
+    assert _subset(w).fallbacks == ()
+
+
+def _approve_list(w: World, list_id: str) -> None:
+    r = w.c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=w.h)
+    assert r.status_code == 200, r.text
+
+
+def _add_draft_version(w: World, list_id: str, names: list[str], version: int = 2) -> str:
+    """A DRAFT `version` of the Tech Debt service that owns `list_id`, holding
+    `names` as security rows: the world, written directly, as `_upload_v2`."""
+    from app.models.capability import (
+        CapabilityDisposition,
+        CapabilityItem,
+        CapabilityList,
+        CapabilityListStatus,
+    )
+
+    with w.sessions() as db:
+        service_id = db.get(CapabilityList, uuid.UUID(list_id)).service_id
+        cl = CapabilityList(
+            service_id=service_id, version=version, status=CapabilityListStatus.DRAFT
+        )
+        db.add(cl)
+        db.flush()
+        for name in names:
+            db.add(
+                CapabilityItem(
+                    capability_list_id=cl.id,
+                    name=name,
+                    security_related=True,
+                    disposition=CapabilityDisposition.KEEP,
+                )
+            )
+        db.commit()
+        return str(cl.id)
+
+
+def _list_status(w: World, list_id: str) -> str:
+    from app.models.capability import CapabilityList
+
+    with w.sessions() as db:
+        return str(db.get(CapabilityList, uuid.UUID(list_id)).status.value)
+
+
+def _release_tech_debt_list(w: World) -> None:
+    """The world's v1 RELEASED through the real routes: approve the list,
+    finalize the Tech Debt deliverable, release it (the release flips the list
+    to RELEASED)."""
+    from app.models.capability import CapabilityList
+
+    with w.sessions() as db:
+        td_svc = str(db.get(CapabilityList, uuid.UUID(w.list_id)).service_id)
+    w.approve_list()
+    fin = w.c.post(f"/tech-debt/services/{td_svc}/deliverables/finalize", headers=w.h)
+    assert fin.status_code == 201, fin.text
+    r = w.c.post(f"/tech-debt/deliverables/{fin.json()['id']}/release", headers=w.h)
+    assert r.status_code == 200, r.text
+
+
+def test_r6b_a_released_version_is_in_force_over_an_open_draft(
+    app_parts, tmp_path  # noqa: F811
+) -> None:
+    """R6b: RELEASED counts as finished, as APPROVED does. v1 is RELEASED
+    holding "Legacy AV"; an open DRAFT v2 holds EDR and "Shadow Scanner" and
+    not "Legacy AV". v1 is in force: "Legacy AV" is NOT flagged, and "Shadow
+    Scanner", which only the draft holds, IS (so the draft was not read)."""
+    _with_storage(app_parts, tmp_path)
+    w = _world(app_parts)
+    _release_tech_debt_list(w)
+    assert _list_status(w, w.list_id) == "released"  # the world, positive first
+    v2 = _add_draft_version(w, w.list_id, [EDR, "Shadow Scanner"])
+    assert _list_status(w, v2) == "draft"
+    code = _codes(w)[0]
+    r = w.patch(code, {"detection_tools": [EDR, LEGACY, "Shadow Scanner"]})
+    assert r.status_code == 200, r.text
+    body = w.get()
+    assert body["subset_checked"] is True, body["subset_checked"]
+    assert body["citations_outside_subset"] == [
+        {
+            "technique_code": code,
+            "field": "detection_tools",
+            "tool": "Shadow Scanner",
+            "locked": False,
+        }
+    ], body["citations_outside_subset"]
+    assert body["subset_fallback_notes"] == [], body["subset_fallback_notes"]
+    assert body["subset_not_checked_sentence"] is None
+    assert _subset(w).fallbacks == ()
+
+
+def test_r6b_an_approved_empty_version_is_not_replaced_by_a_draft_with_tools(
+    app_parts, tmp_path  # noqa: F811
+) -> None:
+    """R6b: the service's only finished version, v1 APPROVED, has no security
+    row; v2 is an open DRAFT holding EDR. Drafts are NOT consulted: nothing is
+    checked, the reason is "empty", the admin assessment and the client
+    dashboard read C5b, no C8 or C9 line is written, and nothing is outside
+    (the row's "Shadow Scanner" would be outside v2 if v2 were read)."""
+    _with_storage(app_parts, tmp_path)
+    w = _no_list_world(app_parts)
+    v1 = _second_tech_debt_service(w, [], title="Acme Tech Debt")
+    _approve_list(w, v1)
+    v2 = _add_draft_version(w, v1, [EDR])
+    assert (_list_status(w, v1), _list_status(w, v2)) == ("approved", "draft")
+    _cover(w, _codes(w)[0], [EDR, "Shadow Scanner"])
+    admin = w.get()
+    assert admin["subset_not_checked_sentence"] == C5B, admin  # positive first
+    assert admin["subset_checked"] is False, admin["subset_checked"]
+    assert admin["subset_fallback_notes"] == [], admin["subset_fallback_notes"]
+    assert admin["citations_outside_subset"] == [], admin["citations_outside_subset"]
+    check = _subset(w)
+    assert (check.checked, check.not_checked_reason, check.outside) == (False, "empty", ())
+    assert [(f.service_title, f.skipped, f.used_version, f.reason) for f in check.fallbacks] == [
+        ("Acme Tech Debt", ((1, "approved"),), None, "empty")
+    ]
+    _release(w, _approve_finalize(w))
+    dash = _dashboard(w)
+    assert dash["subset_notes"] == [C5B], dash["subset_notes"]
+    assert "tool_outside_subset" not in dash, sorted(dash)
+    assert _value_summary(w)["attack_covered_relies_on_outside_tool"] is None
+
+
+def test_r6b_an_approved_service_and_a_drafts_only_service_are_read_independently(
+    app_parts,  # noqa: F811
+) -> None:
+    """One client, two Tech Debt services. A: v1 APPROVED (EDR, "Legacy AV",
+    "Acme Portal") and an open DRAFT v2 holding only EDR, so A's v1 is in force.
+    B: drafts only, v1 "Shadow Scanner" and v2 "Nessus", so B's v2 is in
+    force. Inside: EDR and "Legacy AV" (A's v1 alone holds it) and "Nessus"
+    (B's v2 alone holds it). Outside: "Shadow Scanner" (only B's older draft)
+    and "Homegrown Script" (no list)."""
+    w = _world(app_parts)
+    w.approve_list()
+    _add_draft_version(w, w.list_id, [EDR])
+    b_v1 = _second_tech_debt_service(w, ["Shadow Scanner"])
+    _add_draft_version(w, b_v1, ["Nessus"])
+    code = _codes(w)[0]
+    cited = [EDR, LEGACY, "Shadow Scanner", "Nessus", "Homegrown Script"]
+    r = w.patch(code, {"detection_tools": cited})
+    assert r.status_code == 200, r.text
+    row = next(c for c in w.get()["coverage"] if c["technique_code"] == code)
+    assert row["detection_tools"] == cited, row  # positive first
+    assert _outside_tools(w) == ["Homegrown Script", "Shadow Scanner"]
+    assert _subset(w).fallbacks == ()
+
+
+@pytest.mark.parametrize("v2_holds_it", [True, False])
+def test_approve_refuses_a_tool_the_latest_approved_version_dropped(
+    app_parts, v2_holds_it: bool  # noqa: F811
+) -> None:
+    """#851's approve refusal reads the same check (`subset_state`), so after
+    F2 it judges against each service's LATEST version: v1 APPROVED with the
+    tool, v2 APPROVED without it, and an ATT&CK row citing it is refused. The
+    same flow with v2 still holding it approves (the positive control)."""
+    w = _world(app_parts)
+    w.approve_list()
+    names = [EDR, LEGACY] if v2_holds_it else [EDR]
+    v2 = _upload_v2(w, names)
+    r = w.c.post(f"/tech-debt/capability-lists/{v2}/approve", headers=w.h)
+    assert r.status_code == 200, r.text
+    code = _codes(w)[0]
+    _cover(w, code, [EDR, LEGACY])
+    r = w.approve()
+    if v2_holds_it:
+        assert r.status_code == 200, r.text
+        return
+    assert r.status_code == 409, r.text
+    err = r.json()["error"]
+    assert err["reason"] == "attack_not_release_ready", err
+    assert {(o["technique_code"], o["tool"]) for o in err["cites_outside_subset"]} == {
+        (code, LEGACY)
+    }, err
+
+
+# --- round 2, F1: the home card flags only rows that credit coverage --------------------
+
+
+def _uncleared(w: World, code: str, tool: str) -> None:
+    """Every citation of `tool` on the row is inferred and uncleared (#102), so
+    under R3 Detect / Prevent / Respond are all awaiting review and the row
+    computes to Gap."""
+    from app.attack.pending import TOOL_FIELDS
+
+    with w.sessions() as db:
+        row = db.get(AttackCoverage, uuid.UUID(w.rows[code]))
+        row.unconfirmed_citations = [
+            {"tool": tool, "cited": tool, "reason": "substring", "field": f, "cleared_at": None}
+            for f in TOOL_FIELDS
+        ]
+        db.commit()
+
+
+@pytest.mark.parametrize(
+    ("case", "stored", "effective", "flag"),
+    [
+        # The positive control: a cleared citation, Covered stored and computed.
+        ("covered", "covered", "covered", True),
+        # Gap stored and computed: already in the uncovered total.
+        ("stored_gap", "gap", "gap", False),
+        # The usual production path (round-3 review): Run AI suggested
+        # "covered" with an uncleared citation, R3 computes Gap, and the
+        # consultant accepts it through the computed-status review, which
+        # writes only `reviewed_status`. STORED covered, EFFECTIVE gap.
+        ("reviewed_gap", "covered", "gap", False),
+    ],
+)
+def test_the_home_card_flag_needs_a_row_that_credits_coverage(
+    app_parts, tmp_path, case: str, stored: str, effective: str, flag: bool  # noqa: F811
+) -> None:
+    """R1's note says techniques COUNTED AS COVERED rely on the tool, so the
+    flag reads the EFFECTIVE status. A row whose only tool is an uncleared
+    citation computes to Gap and is already in the uncovered total: the tool
+    leaving the list must not raise the note, whatever status is stored."""
+    _with_storage(app_parts, tmp_path)
+    w = _world(app_parts)
+    code = _codes(w)[0]
+    _cover(w, code, [LEGACY])
+    if case == "stored_gap":
+        # The stored status agrees with the computed one, so release needs no
+        # computed-status review (`attack_computed_status_unreviewed`).
+        assert w.patch(code, {"status": "gap"}).status_code == 200
+    if case != "covered":
+        _uncleared(w, code, LEGACY)
+    assert w.approve().status_code == 200
+    if case == "reviewed_gap":
+        r = w.c.post(
+            f"/attack/assessments/{w.assessment_id}/computed-status-review",
+            headers=w.h,
+            json={"reviews": [{"code": code, "computed_status": "gap"}]},
+        )
+        assert r.status_code == 200, r.text
+    fin = w.c.post(f"/attack/services/{w.svc_id}/deliverables/finalize", headers=w.h)
+    assert fin.status_code in (200, 201), fin.text
+    _release(w, fin.json())
+    w.confirm_not_security(LEGACY)
+    dash = _dashboard(w)
+    # The world is what it says, positive first: the effective status the
+    # client reads, and the stored status underneath it.
+    assert {t["code"]: t["status"] for t in dash["techniques"]}[code] == effective
+    with w.sessions() as db:
+        assert db.get(AttackCoverage, uuid.UUID(w.rows[code])).status == stored
+    assert dash["tool_outside_subset"] == [LEGACY]  # the check ran and found it
+    body = _value_summary(w)
+    assert body["attack_covered_relies_on_outside_tool"] is flag, body
+
+
+# --- round 2, F2: `_current_list_versions`, one per service, and discards skipped -----
+
+
+def _second_tech_debt_service(w: World, names: list[str], title: str = "Acme Tech Debt B") -> str:
+    """Another Tech Debt service for the same client, its v1 a DRAFT holding
+    `names`: the world, written directly."""
+    from app.models.capability import (
+        CapabilityDisposition,
+        CapabilityItem,
+        CapabilityList,
+        CapabilityListStatus,
+    )
+    from app.models.service import Service, ServiceKind, ServiceStatus
+
+    with w.sessions() as db:
+        opened_by = db.get(Service, uuid.UUID(w.svc_id)).opened_by  # the ATT&CK service
+        svc = Service(
+            kind=ServiceKind.TECH_DEBT,
+            status=ServiceStatus.IN_PROGRESS,
+            title=title,
+            client_id=uuid.UUID(w.cid),
+            opened_by=opened_by,
+        )
+        db.add(svc)
+        db.flush()
+        cl = CapabilityList(service_id=svc.id, version=1, status=CapabilityListStatus.DRAFT)
+        db.add(cl)
+        db.flush()
+        for name in names:
+            db.add(
+                CapabilityItem(
+                    capability_list_id=cl.id,
+                    name=name,
+                    security_related=True,
+                    disposition=CapabilityDisposition.KEEP,
+                )
+            )
+        db.commit()
+        return str(cl.id)
+
+
+def _outside_tools(w: World) -> list[str]:
+    body = w.get()
+    assert body["subset_checked"] is True, body["subset_checked"]
+    return sorted({o["tool"] for o in body["citations_outside_subset"]})
+
+
+def test_each_tech_debt_service_has_its_own_latest_version(app_parts) -> None:  # noqa: F811
+    """Drafts-only services (R6b): service A's newest draft (v2) holds EDR and
+    not Legacy AV; service B's newest holds Legacy AV. One version in force PER
+    SERVICE: a row citing both is inside the list."""
+    w = _world(app_parts)
+    _upload_v2_without(w, LEGACY)
+    _second_tech_debt_service(w, [LEGACY])
+    code = _codes(w)[0]
+    r = w.patch(code, {"detection_tools": [EDR, LEGACY]})
+    assert r.status_code == 200, r.text
+    row = next(c for c in w.get()["coverage"] if c["technique_code"] == code)
+    assert row["detection_tools"] == [EDR, LEGACY], row  # positive first
+    assert _outside_tools(w) == []
+
+
+def _discard(w: World, list_id: str) -> None:
+    r = w.c.post(f"/tech-debt/capability-lists/{list_id}/discard", headers=w.h)
+    assert r.status_code == 200, r.text
+
+
+def test_a_discarded_v2_falls_back_to_the_approved_v1(app_parts) -> None:  # noqa: F811
+    """v1 APPROVED holds Legacy AV; v2 is DISCARDED without it. A discarded
+    list does not vote, so v1 is the current list: checked, and not flagged."""
+    w = _world(app_parts)
+    w.approve_list()
+    _discard(w, _upload_v2_without(w, LEGACY))
+    code = _codes(w)[0]
+    r = w.patch(code, {"detection_tools": [EDR, LEGACY]})
+    assert r.status_code == 200, r.text
+    row = next(c for c in w.get()["coverage"] if c["technique_code"] == code)
+    assert row["detection_tools"] == [EDR, LEGACY], row  # positive first
+    assert _outside_tools(w) == []
+
+
+def test_a_tool_only_on_a_discarded_v2_is_flagged(app_parts) -> None:  # noqa: F811
+    """v1 APPROVED does not hold "Shadow Scanner"; v2 is DISCARDED holding it.
+    v1 is the current list, so the tool is checked and flagged."""
+    w = _world(app_parts)
+    w.approve_list()
+    _discard(w, _upload_v2(w, [EDR, "Shadow Scanner"]))
+    code = _codes(w)[0]
+    w.patch(code, {"detection_tools": [EDR, "Shadow Scanner"]})
+    assert _outside_tools(w) == ["Shadow Scanner"]
+
+
+# --- R4 (b): a newest version in force with no security-scope rows does not vote -------
+# Ruled option (b) (#736). The API half only: the admin copy is with the advisor.
+
+
+def _upload_v2_items(w: World, items: list[tuple[str, bool, bool]], version: int = 2) -> str:
+    """A DRAFT version (v2 by default) of the client's Tech Debt list, each item
+    (name, security_related, security_class_confirmed)."""
+    from app.models.capability import (
+        CapabilityDisposition,
+        CapabilityItem,
+        CapabilityList,
+        CapabilityListStatus,
+    )
+
+    with w.sessions() as db:
+        v1 = db.get(CapabilityList, uuid.UUID(w.list_id))
+        v2 = CapabilityList(
+            service_id=v1.service_id, version=version, status=CapabilityListStatus.DRAFT
+        )
+        db.add(v2)
+        db.flush()
+        for name, security, confirmed in items:
+            db.add(
+                CapabilityItem(
+                    capability_list_id=v2.id,
+                    name=name,
+                    security_related=security,
+                    security_class_confirmed=confirmed,
+                    disposition=CapabilityDisposition.KEEP,
+                )
+            )
+        db.commit()
+        return str(v2.id)
+
+
+def _subset(w: World):
+    """`subset_state` itself, over the assessment's stored rows, for the
+    fields no response carries yet (the copy is pending)."""
+    from sqlalchemy import select
+
+    from app.routes.attack import subset_state
+
+    with w.sessions() as db:
+        rows = (
+            db.execute(
+                select(AttackCoverage).where(
+                    AttackCoverage.assessment_id == uuid.UUID(w.assessment_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return subset_state(db, uuid.UUID(w.cid), rows, parents_computed=True)
+
+
+@pytest.mark.parametrize(
+    "v2_items",
+    [
+        pytest.param([], id="empty"),
+        # Payroll, confirmed not security: out of scope, so v2 holds no
+        # security-scope row and counts as empty.
+        pytest.param([("Payroll", False, True)], id="only_out_of_scope"),
+    ],
+)
+def test_an_empty_latest_version_falls_back_to_the_previous_one(
+    app_parts, v2_items  # noqa: F811
+) -> None:
+    """A drafts-only service (R6b): v1 and v2 are DRAFTS and v2 is empty, so
+    the newest draft does not vote and v1 does (C8a's case)."""
+    w = _world(app_parts)  # v1 is a DRAFT
+    _upload_v2_items(w, v2_items)
+    _fallback_asserts(w, "draft")
+
+
+@pytest.mark.parametrize("v1_approved", [False, True])
+def test_r6b_c8a_only_in_a_drafts_only_service(app_parts, v1_approved: bool) -> None:  # noqa: F811
+    """The same empty DRAFT v2 over a v1 holding EDR. Drafts-only: v2 is
+    skipped for v1 and the admin reads C8a. With v1 APPROVED: the draft is
+    ignored, nothing is skipped and nothing is said."""
+    w = _world(app_parts)
+    if v1_approved:
+        w.approve_list()
+    _upload_v2_items(w, [])
+    _cover(w, _codes(w)[0], [EDR])
+    body = w.get()
+    assert body["subset_checked"] is True, body["subset_checked"]  # positive first
+    assert body["citations_outside_subset"] == [], body["citations_outside_subset"]
+    expected = [] if v1_approved else [C8A]
+    assert body["subset_fallback_notes"] == expected, body["subset_fallback_notes"]
+
+
+def test_an_approved_empty_latest_version_falls_back_too(app_parts) -> None:  # noqa: F811
+    """An APPROVED v2 is judged by its snapshot, which holds no row: it does
+    not vote either."""
+    w = _world(app_parts)
+    w.approve_list()
+    v2 = _upload_v2_items(w, [])
+    r = w.c.post(f"/tech-debt/capability-lists/{v2}/approve", headers=w.h)
+    assert r.status_code == 200, r.text
+    with w.sessions() as db:
+        from app.models.capability import CapabilityList
+
+        assert db.get(CapabilityList, uuid.UUID(v2)).approved_membership == []
+    _fallback_asserts(w, "approved")
+
+
+def _fallback_asserts(w: World, skipped_status: str) -> None:
+    code = _codes(w)[0]
+    r = w.patch(code, {"detection_tools": [EDR, LEGACY]})
+    assert r.status_code == 200, r.text
+    assert _outside_tools(w) == []  # v1 is the current list, and holds both
+    check = _subset(w)
+    assert check.checked is True
+    assert check.not_checked_reason is None
+    assert [(f.service_title, f.skipped, f.used_version, f.reason) for f in check.fallbacks] == [
+        ("Acme Tech Debt", ((2, skipped_status),), 1, None)
+    ]
+
+
+def test_with_only_an_empty_list_nothing_is_checked_and_the_reason_is_empty(
+    app_parts,  # noqa: F811
+) -> None:
+    w = _no_list_world(app_parts)
+    _second_tech_debt_service(w, [])  # one Tech Debt service, its only list empty
+    code = _codes(w)[0]
+    r = w.patch(code, {"detection_tools": ["Tool A"]})
+    assert r.status_code == 200, r.text
+    assert w.get()["subset_checked"] is False  # never "every tool is outside"
+    check = _subset(w)
+    assert (check.checked, check.not_checked_reason) == (False, "empty")
+    assert [(f.skipped, f.used_version, f.reason) for f in check.fallbacks] == [
+        (((1, "draft"),), None, "empty")
+    ]
+
+
+def test_with_no_list_the_reason_is_no_list(app_parts) -> None:  # noqa: F811
+    check = _subset(_no_list_world(app_parts))
+    assert (check.checked, check.not_checked_reason) == (False, "no_list")
+
+
+def test_with_only_discarded_lists_the_reason_is_discarded(app_parts) -> None:  # noqa: F811
+    w = _world(app_parts)
+    assert _subset(w).checked is True  # positive first: a live list is checked
+    _discard(w, w.list_id)
+    check = _subset(w)
+    assert (check.checked, check.not_checked_reason) == (False, "discarded")
+
+
+# --- round 4: what votes, and what is recorded ----------------------------------------
+
+
+def _set_scope(w: World, list_id: str, name: str, *, security: bool, confirmed: bool) -> None:
+    from sqlalchemy import select
+
+    from app.models.capability import CapabilityItem
+
+    with w.sessions() as db:
+        item = db.execute(
+            select(CapabilityItem).where(
+                CapabilityItem.capability_list_id == uuid.UUID(list_id),
+                CapabilityItem.name == name,
+            )
+        ).scalar_one()
+        item.security_related = security
+        item.security_class_confirmed = confirmed
+        db.commit()
+
+
+def test_an_approved_versions_snapshot_decides_whether_it_votes(app_parts) -> None:  # noqa: F811
+    """v2 is APPROVED with "Shadow Scanner" in its snapshot; afterwards the live
+    row is confirmed not-security. The snapshot is the membership, so v2 still
+    offers a security row and VOTES: nothing falls back, the snapshot's tool is
+    inside the list and v1's "Legacy AV" is outside it."""
+    w = _world(app_parts)
+    w.approve_list()
+    v2 = _upload_v2_items(w, [("Shadow Scanner", True, False)])
+    r = w.c.post(f"/tech-debt/capability-lists/{v2}/approve", headers=w.h)
+    assert r.status_code == 200, r.text
+    _set_scope(w, v2, "Shadow Scanner", security=False, confirmed=True)
+    code = _codes(w)[0]
+    r = w.patch(code, {"detection_tools": ["Shadow Scanner", LEGACY]})
+    assert r.status_code == 200, r.text
+    assert _outside_tools(w) == [LEGACY]
+    assert _subset(w).fallbacks == ()
+
+
+def test_an_unconfirmed_not_security_row_keeps_its_version_voting(
+    app_parts,  # noqa: F811
+) -> None:
+    """v2 holds only a row the model called not-security and nobody confirmed.
+    `in_security_scope` keeps it, so v2 votes and nothing falls back. A
+    drafts-only service (R6b), so v2, a draft with no snapshot, is in force
+    and is judged on its live rows: the branch this test is for."""
+    w = _world(app_parts)  # v1 is a DRAFT
+    _upload_v2_items(w, [("Shadow Scanner", False, False)])
+    code = _codes(w)[0]
+    r = w.patch(code, {"detection_tools": ["Shadow Scanner", LEGACY]})
+    assert r.status_code == 200, r.text
+    assert _outside_tools(w) == [LEGACY]
+    assert _subset(w).fallbacks == ()
+
+
+def test_every_skipped_version_is_recorded_newest_first(app_parts) -> None:  # noqa: F811
+    """A drafts-only service (R6b): every version is a DRAFT, so drafts are
+    the versions in force, and both empty ones are skipped for v1."""
+    w = _world(app_parts)  # v1 is a DRAFT
+    _upload_v2_items(w, [], version=2)
+    _upload_v2_items(w, [], version=3)
+    code = _codes(w)[0]
+    assert w.patch(code, {"detection_tools": [EDR]}).status_code == 200
+    assert _outside_tools(w) == []  # v1 votes
+    assert [(f.skipped, f.used_version, f.reason) for f in _subset(w).fallbacks] == [
+        (((3, "draft"), (2, "draft")), 1, None)
+    ]
+
+
+def test_each_service_that_contributes_nothing_is_recorded_with_its_reason(
+    app_parts,  # noqa: F811
+) -> None:
+    """Service A has only an empty list; service B only a discarded one. Each is
+    recorded with its own reason, and the top-level reason is "empty": it
+    outranks "discarded" (the documented precedence in `_current_list_versions`)."""
+    w = _no_list_world(app_parts)
+    _second_tech_debt_service(w, [], title="Tech Debt A")
+    _discard(w, _second_tech_debt_service(w, [EDR], title="Tech Debt B"))
+    check = _subset(w)
+    assert (check.checked, check.not_checked_reason) == (False, "empty")
+    assert sorted(
+        (f.service_title, f.skipped, f.used_version, f.reason) for f in check.fallbacks
+    ) == [
+        ("Tech Debt A", ((1, "draft"),), None, "empty"),
+        ("Tech Debt B", (), None, "discarded"),
+    ]
+
+
+# --- R4 copy (advisor, #736 6093188709): C5b, C8a, C8b, C9, written out --------------
+
+C5B = (
+    "The tools cited here were not checked against a security tool list, because "
+    "the client's security tool list has no security tools."
+)
+C8A = (
+    "In Acme Tech Debt, the newest security tool list (version 2, a draft) has no "
+    "security tools, so these checks use version 1. If version 2 came from the wrong "
+    'document, use "Discard draft" in that Tech Debt workspace.'
+)
+C8B = (
+    "In Acme Tech Debt, the newest security tool list (version 2) has no security "
+    "tools, so these checks use version 1."
+)
+#: C9 as CHANGED by the advisor (#736 6093549176): it names the service.
+C9 = (
+    "In Acme Tech Debt, cited tools were checked against version 1 of the client's "
+    "security tool list, because the newest version has no security tools."
+)
+C9_B = (
+    "In Acme Tech Debt B, cited tools were checked against version 1 of the client's "
+    "security tool list, because the newest version has no security tools."
+)
+
+
+def _r4_world(app_parts, reason: str) -> World:  # noqa: F811
+    """One world per reason, the ATT&CK row citing EDR:
+    - no_list: no Tech Debt list;
+    - empty: the only list has no security row;
+    - discarded: the only list is discarded;
+    - fallback: v1 holds EDR, v2 is empty, both DRAFTS (a drafts-only
+      service, R6b, so the fallback is C8a's case);
+    - mixed: fallback, plus a second service whose only list is empty.
+    C8b, the approved half of the fallback, is
+    `test_r4_an_approved_empty_newest_version_reads_c8b`."""
+    if reason == "no_list":
+        w = _no_list_world(app_parts)
+    elif reason == "empty":
+        w = _no_list_world(app_parts)
+        _second_tech_debt_service(w, [], title="Acme Tech Debt")
+    elif reason == "discarded":
+        # The only Tech Debt list is discarded.
+        w = _world(app_parts)
+        _discard(w, w.list_id)
+    else:
+        w = _world(app_parts)  # v1 is a DRAFT
+        _upload_v2_items(w, [])
+        if reason == "mixed":
+            # Service A ("Acme Tech Debt") falls back to v1; service B has only
+            # an empty list and contributes nothing.
+            _second_tech_debt_service(w, [], title="Acme Tech Debt B")
+    _cover(w, _codes(w)[0], [EDR])
+    return w
+
+
+#: (reason, the sentence that must appear, the sentences that must not)
+R4_CASES = [
+    ("no_list", C5, [C5B, C9]),
+    ("empty", C5B, [C5, C9]),
+    # Only discarded lists: C5, ruled by the advisor in #736 6093549176.
+    ("discarded", C5, [C5B, C9]),
+    ("fallback", C9, [C5, C5B]),
+    # A falls back, B has only empty lists: C9 for A only, nothing about B.
+    ("mixed", C9, [C5, C5B, "Acme Tech Debt B", "version None"]),
+]
+
+#: Admin-only copy that must never reach a client surface (the ratchet).
+ADMIN_ONLY = [C8A, C8B]
+
+
+@pytest.mark.parametrize("fmt", FORMATS)
+@pytest.mark.parametrize(("reason", "shown", "absent"), R4_CASES)
+def test_r4_each_format_says_the_right_sentence(
+    app_parts, tmp_path, fmt: str, reason: str, shown: str, absent: list[str]  # noqa: F811
+) -> None:
+    _with_storage(app_parts, tmp_path)
+    w = _r4_world(app_parts, reason)
+    text = _format_text(w, _approve_finalize(w), fmt)
+    assert shown in text, text[:3000]  # positive first
+    assert text.count(shown) == 1, text[:3000]  # one C9 for one service that fell back
+    for wrong in [*absent, *ADMIN_ONLY]:
+        assert wrong not in text, text[:3000]
+
+
+@pytest.mark.parametrize(("reason", "shown", "absent"), R4_CASES)
+def test_r4_the_client_dashboard_says_the_right_sentence(
+    app_parts, tmp_path, reason: str, shown: str, absent: list[str]  # noqa: F811
+) -> None:
+    _with_storage(app_parts, tmp_path)
+    w = _r4_world(app_parts, reason)
+    _release(w, _approve_finalize(w))
+    notes = _dashboard(w)["subset_notes"]
+    assert notes.count(shown) == 1, notes  # positive first, and only once
+    joined = " ".join(notes)
+    for wrong in [*absent, *ADMIN_ONLY]:
+        assert wrong not in joined, notes
+
+
+@pytest.mark.parametrize(
+    ("reason", "sentence", "notes"),
+    [
+        ("no_list", C5, []),
+        ("empty", C5B, []),
+        ("discarded", C5, []),
+        ("fallback", None, [C8A]),
+        # A's C8 only: B contributes nothing and has no version to name.
+        ("mixed", None, [C8A]),
+    ],
+)
+def test_r4_the_admin_assessment_carries_the_right_sentence(
+    app_parts, reason: str, sentence: str | None, notes: list[str]  # noqa: F811
+) -> None:
+    body = _r4_world(app_parts, reason).get()
+    assert body["subset_fallback_notes"] == notes, body["subset_fallback_notes"]
+    assert body["subset_not_checked_sentence"] == sentence, body["subset_not_checked_sentence"]
+
+
+def test_r4_an_approved_empty_newest_version_reads_c8b(app_parts) -> None:  # noqa: F811
+    """C8b is reachable: an empty list CAN be approved (the approve route
+    accepts it, `test_an_approved_empty_latest_version_falls_back_too`)."""
+    w = _world(app_parts)
+    w.approve_list()
+    v2 = _upload_v2_items(w, [])
+    r = w.c.post(f"/tech-debt/capability-lists/{v2}/approve", headers=w.h)
+    assert r.status_code == 200, r.text
+    body = w.get()
+    assert body["subset_fallback_notes"] == [C8B], body["subset_fallback_notes"]
+    assert body["subset_not_checked_sentence"] is None
+
+
+def _two_services_fall_back_to_v1(app_parts) -> World:  # noqa: F811
+    """Services A and B each hold EDR in v1 and an empty v2, every version a
+    DRAFT (drafts-only services, R6b): both fall back to the SAME version, 1."""
+    from app.models.capability import CapabilityList, CapabilityListStatus
+
+    w = _world(app_parts)  # v1 is a DRAFT
+    _upload_v2_items(w, [])
+    b_v1 = _second_tech_debt_service(w, [EDR], title="Acme Tech Debt B")
+    with w.sessions() as db:
+        b_service = db.get(CapabilityList, uuid.UUID(b_v1)).service_id
+        db.add(CapabilityList(service_id=b_service, version=2, status=CapabilityListStatus.DRAFT))
+        db.commit()
+    _cover(w, _codes(w)[0], [EDR])
+    return w
+
+
+@pytest.mark.parametrize("fmt", FORMATS)
+def test_two_services_falling_back_to_the_same_version_read_as_two_lines(
+    app_parts, tmp_path, fmt: str  # noqa: F811
+) -> None:
+    """C9 names its service (advisor, #736 6093549176), so two services that
+    fall back to the same version give two DIFFERENT lines."""
+    _with_storage(app_parts, tmp_path)
+    w = _two_services_fall_back_to_v1(app_parts)
+    text = _format_text(w, _approve_finalize(w), fmt)
+    assert text.count(C9) == 1, text[:3000]
+    assert text.count(C9_B) == 1, text[:3000]
+
+
+def test_two_services_falling_back_read_as_two_lines_on_every_screen(
+    app_parts, tmp_path  # noqa: F811
+) -> None:
+    _with_storage(app_parts, tmp_path)
+    w = _two_services_fall_back_to_v1(app_parts)
+    admin = w.get()["subset_fallback_notes"]
+    assert sorted(admin) == sorted([C8A, C8A.replace("Acme Tech Debt,", "Acme Tech Debt B,")])
+    _release(w, _approve_finalize(w))
+    notes = _dashboard(w)["subset_notes"]
+    assert sorted(notes) == sorted([C9, C9_B]), notes
+
+
+def test_fallback_lines_are_ordered_by_service_title(app_parts, tmp_path) -> None:  # noqa: F811
+    """C8 and C9 lines come in (service title, service id) order, not query
+    order, so two finalizes, and the admin and client surfaces, list them
+    alike. Service A is inserted first and renamed to sort LAST."""
+    from app.models.capability import CapabilityList
+    from app.models.service import Service
+
+    _with_storage(app_parts, tmp_path)
+    w = _two_services_fall_back_to_v1(app_parts)
+    with w.sessions() as db:
+        a_service = db.get(CapabilityList, uuid.UUID(w.list_id)).service_id
+        db.get(Service, a_service).title = "Zulu Tech Debt"
+        db.commit()
+    zulu = C9.replace("Acme Tech Debt,", "Zulu Tech Debt,")
+    zulu_c8 = C8A.replace("Acme Tech Debt,", "Zulu Tech Debt,")
+    b_c8 = C8A.replace("Acme Tech Debt,", "Acme Tech Debt B,")
+    assert w.get()["subset_fallback_notes"] == [b_c8, zulu_c8]
+    _release(w, _approve_finalize(w))
+    assert _dashboard(w)["subset_notes"] == [C9_B, zulu]

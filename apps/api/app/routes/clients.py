@@ -35,12 +35,14 @@ from app.attack.catalog_version import is_current as attack_catalog_is_current
 from app.attack.computed import IN_PLACE_TEXT as ATTACK_IN_PLACE_TEXT
 from app.attack.computed import effective_coverage as attack_effective_coverage
 from app.attack.coverage import ASSESSED
+from app.attack.coverage import CoverageStatus as AttackCoverageStatus
 from app.attack.exporters import awaiting_review_text as attack_awaiting_review_text
 from app.attack.exporters import build_context as attack_build_context
 from app.attack.exporters import coverage_measured
 from app.attack.exporters import coverage_pct_text as attack_coverage_pct_text
 from app.attack.exporters import partial_reason_counts as attack_partial_reason_counts
 from app.attack.exporters import retirement_sentences as attack_retirement_sentences
+from app.attack.exporters import subset_sentences as attack_subset_sentences
 from app.attack.parents import PARENT_CHILDREN as ATTACK_PARENT_CHILDREN
 from app.attack.parents import is_computed_parent as attack_is_computed_parent
 from app.attack.partial_reasons import partial_reason_for_row as attack_partial_reason_for_row
@@ -97,6 +99,7 @@ from app.risk.engine import (
 from app.risk.zt_capped import capped_target_codes as risk_capped_target_codes
 from app.risk.zt_capped import capped_target_sentence as risk_capped_target_sentence
 from app.routes.attack import client_retirement_index
+from app.routes.attack import subset_state as attack_subset_state
 from app.schemas.clients import (
     AttackDashboardResponse,
     AttackDashboardRollup,
@@ -858,7 +861,7 @@ def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _TargetedKindTot
 
 def _attack_uncovered_total(
     db: Session, service_ids: list[uuid.UUID]
-) -> tuple[_KindTotal, bool, int | None]:
+) -> tuple[_KindTotal, bool, int | None, bool | None]:
     """The ATT&CK total, whether it is unresolved because the report is
     WITHHELD (#556) rather than unmatched (#114) -- two causes, two sentences --
     and the NOT-VERIFIED count beside it (#554, #621 review).
@@ -869,11 +872,22 @@ def _attack_uncovered_total(
     released assessment behind it renders under #620's rules (option (a)): the
     card then reads as it did before #621. Summed over the services under the
     new rules only; a rule-1 assessment cannot hold an unverified row, since
-    nothing may write one."""
+    nothing may write one.
+
+    The fourth value is #889's (Q3, C7): whether a summed assessment has a row
+    whose EFFECTIVE status credits coverage (Covered or Partial) and which
+    credits a tool outside the client's CURRENT security tool list
+    (`subset_state`, the dashboard's own read). The total sums Gap only, so
+    such a row is left out of it: the total may be understated (review F1,
+    copy C7 as ruled). A Gap row crediting such a tool is already IN the total,
+    so it does not raise the flag (round-2 review). None with the total, and
+    when nothing could be checked (no Tech Debt list, only lists with no
+    security tool, or only discarded lists): not checked is not "none found"."""
     if not service_ids:
-        return _KindTotal(None, False), False, None
+        return _KindTotal(None, False), False, None, None
     total = 0
     not_verified: int | None = None
+    outside: bool | None = None
     for sid in service_ids:
         # #114: the released deliverable's parent, not the latest APPROVED row.
         # See `_csf_gap_total` above for why the `found` flag went with it.
@@ -887,7 +901,7 @@ def _attack_uncovered_total(
             # One unresolvable service makes the whole KIND unresolved. Summing
             # the rest would publish a floor as a figure — option 1 in
             # `_released_parent`, rejected there for this reason.
-            return _KindTotal(None, True), False, None
+            return _KindTotal(None, True), False, None, None
         # No `deliverable` here: an ATT&CK service has no engagement target of
         # #209's shape, so there is nothing to freeze. Stated because the two
         # helpers above this one DO freeze, and a reader sweeping for the twin
@@ -898,7 +912,7 @@ def _attack_uncovered_total(
             # unknown codes silently dropped by `attack_compute` below. Same
             # answer as an unresolvable service: the whole kind is unresolved,
             # and the card is told the cause.
-            return _KindTotal(None, True), True, None
+            return _KindTotal(None, True), True, None, None
         # #554 R3: computed statuses where they apply, so this gap count is the
         # dashboard's gap count.
         rows = attack_effective_coverage(
@@ -925,7 +939,29 @@ def _attack_uncovered_total(
         total += rollup.gap
         if attack_parents_computed(a):
             not_verified = (not_verified or 0) + rollup.unable_to_determine
-    return _KindTotal(total, False), False, not_verified
+        # #889: the dashboard's twin. Disclosure only; `total` is unchanged.
+        subset = attack_subset_state(
+            db, _service_client_id(db, sid), rows, parents_computed=attack_parents_computed(a)
+        )
+        if subset.checked:
+            # Only rows the rollup counts toward coverage: C7 says "counted as
+            # covered", and a Gap, N/A or unscored row is not.
+            credited = {r.technique_code for r in rows if r.status in _CREDITS_COVERAGE}
+            outside = bool(outside) or any(o.technique_code in credited for o in subset.outside)
+    return _KindTotal(total, False), False, not_verified, outside
+
+
+#: #889 round 2: the effective statuses the rollup counts toward coverage.
+_CREDITS_COVERAGE = frozenset(
+    {AttackCoverageStatus.COVERED.value, AttackCoverageStatus.PARTIAL.value}
+)
+
+
+def _service_client_id(db: Session, service_id: uuid.UUID) -> uuid.UUID:
+    svc = db.get(Service, service_id)
+    if svc is None:
+        raise ValueError(f"released ATT&CK service {service_id} does not exist")
+    return svc.client_id
 
 
 def _tech_debt_savings(db: Session, service_ids: list[uuid.UUID]) -> _TechDebtTotal:
@@ -989,7 +1025,7 @@ def value_summary(
         ServiceKind.ZERO_TRUST_DOD, []
     )
     zt = _zt_gap_total(db, zt_ids)
-    attack, attack_withheld, attack_not_verified = _attack_uncovered_total(
+    attack, attack_withheld, attack_not_verified, attack_outside = _attack_uncovered_total(
         db, by_kind.get(ServiceKind.ATTACK_COVERAGE, [])
     )
     csf = _csf_gap_total(db, by_kind.get(ServiceKind.NIST_CSF, []))
@@ -1033,6 +1069,7 @@ def value_summary(
         attack_uncovered_unresolved=attack.unresolved,
         attack_uncovered_withheld=attack_withheld,
         attack_not_verified_count=attack_not_verified,
+        attack_covered_relies_on_outside_tool=attack_outside,
         csf_gap_count=csf.value,
         csf_gap_unresolved=csf.unresolved,
         csf_services=csf.services,
@@ -1298,15 +1335,21 @@ def attack_dashboard(
     # from these rows and this rollup, so the dashboard and the document count
     # the same rows the same way.
     retirement = client_retirement_index(db, client.id)
-    # ONE context for both the retirement sentences and the reason table, so
-    # each is computed exactly as the deliverable computes it.
+    delivered = [r for r in rows if r.technique_code in valid]
+    # #889 (Q1): the security tool list check, read LIVE through the ONE
+    # function finalize and the admin workspace read; the web says beside it
+    # that it reflects the client's current list (C2).
+    subset = attack_subset_state(db, client.id, delivered, parents_computed=rule)
+    # ONE context for the retirement sentences, the subset sentences and the
+    # reason table, so each is computed exactly as the deliverable computes it.
     deliverable_ctx = attack_build_context(
         client_legal_name=client.legal_name,
         service_title=svc.title,
         assessment=assessment,
-        coverage=[r for r in rows if r.technique_code in valid],
+        coverage=delivered,
         rollup=rollup,
         retirement=retirement,
+        subset=subset,
     )
     tool_retirement = (
         retirement.marks(
@@ -1393,6 +1436,14 @@ def attack_dashboard(
         tool_retirement=tool_retirement,
         retirement_notes=retirement_notes,
         partial_reasons=partial_reasons,
+        # #889: all three states (Q1) and the per-tool mark (Q2). C1 counts
+        # EVERY row the deliverable prints that credits such a tool, at any
+        # status, NOT only rows credited as coverage like the home card's flag
+        # (`_attack_uncovered_total`): C1 says the row's status "may count" the
+        # tool, which is true of a Gap row's judgement too, and it is the
+        # document's own sentence, so the two surfaces stay the same claim.
+        subset_notes=attack_subset_sentences(deliverable_ctx),
+        tool_outside_subset=sorted(subset.outside_tools()) if subset.checked else None,
     )
 
 
