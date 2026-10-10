@@ -103,9 +103,17 @@ from app.attack.retirement import PlanEntry, RetirementIndex
 from app.attack.retirement import build_index as build_retirement_index
 from app.attack.rules import COMPUTED_STATUSES, NEW_RULES, parents_computed, statuses_computed
 from app.attack.subset_drift import (
+    NOT_CHECKED_DISCARDED,
+    NOT_CHECKED_EMPTY,
+    NOT_CHECKED_NO_LIST,
     OutsideCitation,
+    SubsetCheck,
+    VersionFallback,
     citations_outside_subset,
+    fallback_admin_sentence,
+    not_checked_sentence,
     subset_applies,
+    used_fallbacks,
 )
 from app.audit import audit
 from app.config import get_settings
@@ -251,7 +259,7 @@ def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentR
         .scalars()
         .all()
     )
-    checked, outside = subset_state(
+    subset = subset_state(
         db, _client_id_of(db, a.service_id), rows, parents_computed=parents_computed(a)
     )
     return AttackAssessmentResponse(
@@ -275,9 +283,15 @@ def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentR
             AttackOutsideCitation(
                 technique_code=o.technique_code, field=o.field, tool=o.tool, locked=o.locked
             )
-            for o in outside
+            for o in subset.outside
         ],
-        subset_checked=checked,
+        subset_checked=subset.checked,
+        subset_not_checked_sentence=(
+            None if subset.checked else not_checked_sentence(subset.not_checked_reason)
+        ),
+        subset_fallback_notes=[
+            fallback_admin_sentence(f) for f in used_fallbacks(subset.fallbacks)
+        ],
     )
 
 
@@ -315,8 +329,8 @@ def outside_subset_citations(
     parents_computed: bool,
 ) -> list[OutsideCitation]:
     """#851: the rows' tools outside the client's CURRENT security tool list;
-    [] when there is no list to check against (see `subset_state`)."""
-    return subset_state(db, client_id, rows, parents_computed=parents_computed)[1]
+    [] when nothing could be checked (see `subset_state`)."""
+    return list(subset_state(db, client_id, rows, parents_computed=parents_computed).outside)
 
 
 def subset_state(
@@ -325,11 +339,19 @@ def subset_state(
     rows: Iterable[AttackCoverage],
     *,
     parents_computed: bool,
-) -> tuple[bool, list[OutsideCitation]]:
+) -> SubsetCheck:
     """#851: the rows' tools outside the client's CURRENT security tool list,
-    checked by the resolver built from the SAME inputs Run AI's request uses
-    (`_attack_ai_request_for`: `_client_capability_inputs`, the client's
-    legal name, and no name hints for `mitre_map`).
+    checked by the resolver Run AI checks citations with
+    (`citation_resolver_for`, the client's legal name, and no name hints for
+    `mitre_map`), built over the SAME membership rules Run AI's request uses
+    (`_client_capability_membership`) with ONE difference: only each Tech Debt
+    service's current version counts (#889 review F2, R4, R6b): its newest
+    APPROVED or RELEASED version with a security row, or, in a service with
+    only drafts, its newest draft with one (`_current_list_versions`). Run
+    AI's allow-list keeps every non-discarded version, drafts included, so it
+    can still offer a tool this check reports outside the list (a superseded
+    version's, or one only an open draft holds beside an approved version);
+    that root is #1012.
 
     `parents_computed` is the assessment's rule set (`attack/rules.py`),
     required: a computed parent's own tools are not checked under D-094
@@ -337,18 +359,29 @@ def subset_state(
     client = db.get(Client, client_id)
     if client is None:
         raise ValueError(f"client {client_id} does not exist")
-    # ONE membership read: its `inputs()` IS `_client_capability_inputs`, and
-    # its lists decide whether there is a subset to judge against at all.
-    membership = _client_capability_membership(db, client_id)
+    # ONE membership read: its lists decide whether there is a subset to judge
+    # against at all. #889 review F2: the CURRENT list, so only each Tech Debt
+    # service's current version (`_current_list_versions`, R6b: drafts are
+    # ignored where an approved or released version exists); the allow-list
+    # (`_client_capability_inputs`) keeps every non-discarded version (#1012).
+    membership = _client_capability_membership(db, client_id, latest_versions_only=True)
     if not subset_applies(cl.status for cl in membership.lists):
         # NOT CHECKED, the third state: nothing is flagged because nothing
-        # could be, never because nothing was found.
-        return False, []
+        # could be, never because nothing was found. R4 (b): and why.
+        return SubsetCheck(
+            checked=False,
+            fallbacks=membership.version_fallbacks,
+            not_checked_reason=membership.not_checked_reason,
+        )
     subset = citation_resolver_for(
         [Candidate(name=c.name, vendor=c.vendor) for c in membership.inputs()],
         client_org_name=client.legal_name,
     )
-    return True, citations_outside_subset(rows, subset, parents_computed=parents_computed)
+    return SubsetCheck(
+        checked=True,
+        outside=tuple(citations_outside_subset(rows, subset, parents_computed=parents_computed)),
+        fallbacks=membership.version_fallbacks,
+    )
 
 
 def _tool_retirement_marks(
@@ -1072,6 +1105,11 @@ class CapabilityMembership:
     #: per name -- the disposition may differ on the list the dedupe dropped.
     #: Read by `attack/retirement.py`; see there for the rules.
     plan_entries: list[PlanEntry] = field(default_factory=list)
+    #: #889 R4 (b), for the security tool list check only
+    #: (`latest_versions_only`): services whose newest version in force (R6b)
+    #: did not vote, and why nothing could be checked when no version did.
+    version_fallbacks: tuple[VersionFallback, ...] = ()
+    not_checked_reason: str | None = None
 
     def inputs(self) -> list[CapabilityInput]:
         return [p.capability for p in self.sent]
@@ -1100,6 +1138,126 @@ def _latest_plan_ids(lists: Iterable[CapabilityList]) -> frozenset[uuid.UUID]:
         if held is None or cl.version > held.version:
             latest[cl.service_id] = cl
     return frozenset(cl.id for cl in latest.values())
+
+
+def _offers_security_rows(cap_list: CapabilityList, live_items: list[CapabilityItem]) -> bool:
+    """R4 (b): whether this list version would offer any security-scope row,
+    by `_client_capability_membership`'s own two branches: an approved list's
+    SNAPSHOT is its membership (it holds only rows in scope when approved), and
+    a list with no snapshot reads its live rows through `in_security_scope`."""
+    if cap_list.approved_membership is not None:
+        return bool(cap_list.approved_membership)
+    return any(in_security_scope(item) for item in live_items)
+
+
+def _service_title(svc: Service | None, service_id: uuid.UUID) -> str:
+    """The title C8 and C9 name. Unreachable when None: the caller's lists come
+    from a query that JOINS on Service, so every list's service exists; raised
+    loudly, as `_client_id_of` does, rather than printing "In , the newest...".
+    """
+    if svc is None:
+        raise ValueError(f"Tech Debt service {service_id} does not exist")
+    return svc.title
+
+
+#: #889 R6b (advisor, #736 6094994432): the statuses that make a Tech Debt
+#: service's list FINISHED. Where a service has any, only those versions vote
+#: and its drafts are ignored, so an open draft never changes the check for a
+#: client who already has an approved list. The same two statuses as
+#: `_PLAN_STATUSES`, by a separate ruling, so stated separately: neither should
+#: move because the other did.
+_SUBSET_FINISHED_STATUSES = frozenset(
+    {CapabilityListStatus.APPROVED, CapabilityListStatus.RELEASED}
+)
+
+
+def _versions_in_force(versions: list[CapabilityList]) -> list[CapabilityList]:
+    """#889 R6b: ONE Tech Debt service's candidate versions, newest first.
+
+    If the service has any APPROVED or RELEASED version, those alone; its
+    drafts are ignored (neither voting nor "skipped"). If it has ONLY drafts,
+    its drafts, as under R2. DISCARDED never counts (review F2).
+
+    NEWEST means the highest VERSION NUMBER, not the latest `approved_at`. The
+    version number is the order the lists were created in (each is minted
+    past `_max_list_version`, in `routes/tech_debt.py`), the one every
+    surface names ("version {n}"), and it is the same latest-version rule F2
+    and `_latest_plan_ids` use. Approval time is not: the approve route stamps
+    `approved_at` again on every re-approval of an APPROVED list, so ordering
+    by it would let re-approving an OLDER version make it "newest". Pinned by
+    `test_r6b_newest_is_the_highest_version_not_the_latest_approval`."""
+    live = [cl for cl in versions if cl.status != CapabilityListStatus.DISCARDED]
+    finished = [cl for cl in live if cl.status in _SUBSET_FINISHED_STATUSES]
+    return sorted(finished or live, key=lambda cl: cl.version, reverse=True)
+
+
+def _current_list_versions(
+    db: Session,
+    lists: Iterable[CapabilityList],
+    live_by_list: dict[uuid.UUID, list[CapabilityItem]],
+) -> tuple[list[CapabilityList], tuple[VersionFallback, ...], str | None]:
+    """#889: per Tech Debt SERVICE, the list version that IS the client's
+    current security tool list (R6b, #736 6094994432):
+
+    - if the service has any APPROVED or RELEASED version, the newest such
+      version; its drafts are ignored, so an open draft changes nothing;
+    - if it has ONLY drafts, the newest draft, as under R2.
+
+    DISCARDED versions never count (review F2). "Newest" is the highest
+    version number (`_versions_in_force` says why). Within that pool, a version
+    must offer at least one security-scope row (R4, option (b)): a newer one
+    with none does not vote, and the newest earlier one in the SAME pool that
+    has some does. Among approved and released versions that fallback is C8b;
+    in a drafts-only service it is C8a.
+
+    Returns the chosen lists; a `VersionFallback` for every service whose
+    newest in-force version did not vote, naming every version skipped, and
+    for every service that contributes nothing, with its own reason; and, when
+    nothing was chosen at all, the top-level reason.
+
+    TOP-LEVEL PRECEDENCE: `NOT_CHECKED_EMPTY` outranks `NOT_CHECKED_DISCARDED`.
+    If any service holds a non-discarded list (empty), the reason is "empty":
+    there is a list someone can fill. Only when every service's every version
+    is discarded is it "discarded". The per-service records keep both."""
+    by_service: dict[uuid.UUID, list[CapabilityList]] = {}
+    for cl in lists:
+        by_service.setdefault(cl.service_id, []).append(cl)
+    chosen: list[CapabilityList] = []
+    fallbacks: list[VersionFallback] = []
+    for service_id, versions in by_service.items():
+        live = _versions_in_force(versions)
+        used = next((cl for cl in live if _offers_security_rows(cl, live_by_list[cl.id])), None)
+        if used is not None:
+            chosen.append(used)
+        if live and used is live[0]:
+            continue
+        skipped = tuple(
+            (cl.version, str(cl.status.value))
+            for cl in live
+            if used is None or cl.version > used.version
+        )
+        svc = db.get(Service, service_id)
+        fallbacks.append(
+            VersionFallback(
+                service_id=service_id,
+                service_title=_service_title(svc, service_id),
+                skipped=skipped,
+                used_version=used.version if used is not None else None,
+                reason=(
+                    None
+                    if used is not None
+                    else NOT_CHECKED_EMPTY if live else NOT_CHECKED_DISCARDED
+                ),
+            )
+        )
+    reason = None
+    if not chosen:
+        reasons = {f.reason for f in fallbacks}
+        reason = NOT_CHECKED_EMPTY if NOT_CHECKED_EMPTY in reasons else NOT_CHECKED_DISCARDED
+    # A stable order for C8 and C9 (the list query has no ORDER BY), as
+    # `sources.sort(...)` below orders the AI-inputs panel: title, then id.
+    fallbacks.sort(key=lambda f: (f.service_title, str(f.service_id)))
+    return chosen, tuple(fallbacks), reason
 
 
 def _client_capabilities(db: Session, client_id: uuid.UUID) -> list[Candidate]:
@@ -1222,8 +1380,21 @@ def _may_donate_vendor(held: _MergeCandidate, donor: _MergeCandidate) -> bool:
     return donor.from_snapshot or not held.from_snapshot
 
 
-def _client_capability_membership(db: Session, client_id: uuid.UUID) -> CapabilityMembership:
+def _client_capability_membership(
+    db: Session, client_id: uuid.UUID, *, latest_versions_only: bool = False
+) -> CapabilityMembership:
     """Security capabilities from the client's Tech Debt capability list(s).
+
+    `latest_versions_only` (#889 review F2, R4, R6b) is for the SECURITY TOOL
+    LIST CHECK alone (`subset_state`): per Tech Debt service only the current
+    version counts (`_current_list_versions`). That is the newest APPROVED or
+    RELEASED version with a security row, its drafts ignored, so an open draft
+    changes nothing for a client who already has an approved list; or, in a
+    service with ONLY drafts, the newest draft with one, as under R2. So a tool
+    dropped in a newer version that counts is outside the client's CURRENT
+    list however an older approved version's snapshot reads. The default,
+    False, is the citation allow-list's rule below and is unchanged; that
+    superseded versions and drafts still count THERE is #1012.
 
     Returns name AND vendor: the citation resolver needs the vendor column to
     judge whether a cited string is unambiguous, and a MISSING vendor is itself
@@ -1296,7 +1467,12 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
         .all()
     )
     if not lists:
-        return CapabilityMembership(sent=[], withheld=[], lists=[])
+        return CapabilityMembership(
+            sent=[],
+            withheld=[],
+            lists=[],
+            not_checked_reason=NOT_CHECKED_NO_LIST if latest_versions_only else None,
+        )
 
     # ONE query for every live row on every contributing list — no scope
     # predicate, because both the survivors and the drops are decided from it.
@@ -1311,6 +1487,23 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
     ):
         live_by_list[item.capability_list_id].append(item)
         live_by_id[str(item.id)] = item
+
+    # #889 (F2, R4, R6b): the security tool list check reads each service's
+    # CURRENT version only (approved or released where one exists, else the
+    # newest draft). Chosen after the live rows load, because an empty version
+    # is judged on them. The citation allow-list (the default) keeps every
+    # non-discarded version (#1012).
+    fallbacks: tuple[VersionFallback, ...] = ()
+    if latest_versions_only:
+        lists, fallbacks, reason = _current_list_versions(db, lists, live_by_list)
+        if not lists:
+            return CapabilityMembership(
+                sent=[],
+                withheld=[],
+                lists=[],
+                version_fallbacks=fallbacks,
+                not_checked_reason=reason,
+            )
 
     # `_MergeCandidate(name, vendor, item_id, cap_list, from_snapshot)` —
     # `item_id` is present for snapshot rows and is what makes the descriptive
@@ -1680,6 +1873,7 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
         sent=sent,
         withheld=sorted(withheld.values(), key=lambda d: d.name),
         lists=list(lists),
+        version_fallbacks=fallbacks,
         # #686: from `pairs`, the rows the dedupe chose among, each followed by
         # its item_id to the LIVE disposition. A gone live row is `retiring=None`.
         #
@@ -3620,11 +3814,11 @@ def finalize_attack_deliverable(
         retirement=client_retirement_index(db, svc.client_id),
         # #646: the ONE derivation every surface calls.
         ai_mode=ai_mode_for(db, svc, assessment),
-        # #851: whether the cited tools could be checked at all, AS OF this
-        # finalize; the rendered bytes keep it.
-        subset_checked=subset_state(
+        # #851 / #889: whether the cited tools could be checked, and which are
+        # outside the list, AS OF this finalize; the rendered bytes keep both.
+        subset=subset_state(
             db, svc.client_id, coverage, parents_computed=parents_computed(assessment)
-        )[0],
+        ),
     )
     pdf_bytes = render_attack_pdf(ctx)
     xlsx_bytes = render_attack_xlsx(ctx)

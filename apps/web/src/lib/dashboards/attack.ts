@@ -158,6 +158,20 @@ export interface AttackDashboardData {
    *  and its counts, as the API words them. Absent where there is nothing to
    *  recount: before R3, or for a client with no consolidation plan. */
   after_planned_changes?: string[];
+  /**
+   * #889 (Q1): the security tool list check, the deliverable's own sentences,
+   * read LIVE. Not checked: C5 when the client has no Tech Debt list or only
+   * discarded ones, C5b when its lists in force have no security tool. Checked: the
+   * count of rows crediting a tool outside it (C1), and C9 per service that
+   * fell back to an earlier version; [] when there is neither.
+   */
+  subset_notes?: string[];
+  /**
+   * #889 (Q2): the cited tools outside the client's CURRENT security tool
+   * list, each marked. [] when checked and none are; absent when nothing
+   * could be checked.
+   */
+  tool_outside_subset?: string[];
 }
 
 /**

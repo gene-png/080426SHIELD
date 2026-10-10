@@ -283,6 +283,19 @@ class AttackDashboardResponse(BaseModel):
     #: #801: the figure after planned changes with the current plan, and its
     #: counts. OMITTED where there is nothing to recount.
     after_planned_changes: list[str] | None = None
+    #: #889 (Q1): the security tool list check, read LIVE: the deliverable's
+    #: own sentences (`subset_sentences`). Not checked: [C5] when the client
+    #: has no list or only discarded ones, [C5b] when its lists have no
+    #: security tools. Checked: C1 when
+    #: rows credit a tool outside it, and C9 per service that fell back to an
+    #: earlier version; [] when there is neither. The web says beside it that
+    #: the check is the current list's.
+    subset_notes: list[str] | None = None
+    #: #889 (Q2): the cited tools outside the client's CURRENT security tool
+    #: list, exact strings, sorted; the web marks each (C3). [] when checked
+    #: and none are; OMITTED when nothing could be checked, so an empty list
+    #: never reads as "checked" for a client with no list.
+    tool_outside_subset: list[str] | None = None
 
     @model_serializer(mode="wrap")
     def _drop_unset_rule_key(self, handler: Any) -> dict[str, Any]:
@@ -297,6 +310,8 @@ class AttackDashboardResponse(BaseModel):
                     "awaiting_review_sentence",
                     "statuses_computed",
                     "after_planned_changes",
+                    "subset_notes",
+                    "tool_outside_subset",
                 }
             ),
         )
@@ -830,6 +845,16 @@ class ValueSummaryResponse(BaseModel):
     #: an unverified assessment. None when `attack_uncovered_count` is, and when
     #: no released assessment behind it renders under #620's rules (option (a)).
     attack_not_verified_count: int | None
+    #: #889 (Q3, C7): True when a released ATT&CK assessment behind
+    #: `attack_uncovered_count` has a Covered or Partial row (effective status)
+    #: crediting a tool outside the client's CURRENT security tool list. The
+    #: total sums Gap only, so such a row is left OUT of it: the total may be
+    #: understated. A Gap row is already in it and does not count. False:
+    #: checked, none does.
+    #: None: the total is None, or nothing could be checked (no Tech Debt list,
+    #: only lists in force with no security tool, or only discarded lists, or a mix of
+    #: those last two).
+    attack_covered_relies_on_outside_tool: bool | None
     csf_gap_count: int | None
     csf_gap_unresolved: bool
     csf_services: int
