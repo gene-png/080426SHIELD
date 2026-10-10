@@ -2,7 +2,12 @@
 
 import * as React from "react";
 
-import type { AttackRunAiResponse } from "@/lib/attack/types";
+import type {
+  AttackOmittedTechnique,
+  AttackRunAiResponse,
+} from "@/lib/attack/types";
+
+import { statusLabel } from "./StatusBadge";
 
 /**
  * #806 C4 (PR #951 review, F2): the run refuses an AI Partial whose reason only
@@ -65,6 +70,111 @@ function joinCapped(items: string[]): string {
   const shown = items.slice(0, ITEM_CAP).join(", ");
   const rest = items.length - ITEM_CAP;
   return rest > 0 ? `${shown}, and ${rest} more` : shown;
+}
+
+type KeptTechnique = AttackOmittedTechnique & {
+  kept_status: NonNullable<AttackOmittedTechnique["kept_status"]>;
+};
+
+/**
+ * One group of omitted techniques, at most `ITEM_CAP`, then "and {rest} more"
+ * (A2's approved wording, used for A3 too). Per group: each group's heading
+ * already states its full count.
+ */
+function OmittedItems<T extends AttackOmittedTechnique>({
+  items,
+  describe,
+}: {
+  items: T[];
+  describe: (t: T) => string;
+}) {
+  const rest = items.length - ITEM_CAP;
+  return (
+    <ul className="list-disc pl-5">
+      {items.slice(0, ITEM_CAP).map((t) => (
+        <li key={t.technique_code}>{describe(t)}</li>
+      ))}
+      {rest > 0 ? <li>and {rest} more</li> : null}
+    </ul>
+  );
+}
+
+/**
+ * #853: the techniques a SUCCESSFUL batch was asked about and that no entry
+ * named. Copy A1 to A4 approved verbatim (#736 comment 6090870696); the twins
+ * are ZT's `ZtOmittedBlock` (#840) and CSF's playbook panel (#836).
+ *
+ * Not a refusal: an entry that names a technique and is refused is counted
+ * under its own line above. A failed batch's techniques are the failed-batch
+ * alert's, which is why this block sits directly after it.
+ *
+ * A2 (no status before the run) is neutral: the technique stays unscored and
+ * reads as unscored everywhere. A3 (a status kept) is danger and carries A4,
+ * because that status was not confirmed by this run and still reaches the
+ * coverage figures and the deliverable. A3 and A4 share one region: an alert
+ * when it is the panel's only alert, a polite `status` beside another, so two
+ * assertive regions never announce over each other.
+ *
+ * A4's remedies exist today (D-076): Run AI in `AttackWorkspace`, and the
+ * technique panel's status control.
+ *
+ * Absent (a run stored before #853) or 0 renders nothing.
+ */
+function AttackOmittedBlock({
+  result,
+  otherAlert,
+}: {
+  result: AttackRunAiResponse;
+  otherAlert: boolean;
+}) {
+  const n = result.omitted_count ?? 0;
+  if (n === 0) return null;
+  const items = result.omitted_techniques ?? [];
+  const unscored = items.filter((t) => t.kept_status === null);
+  const kept = items.filter((t): t is KeptTechnique => t.kept_status !== null);
+  return (
+    <div className="flex flex-col gap-1" data-testid="attack-omitted">
+      <p className="text-ink-secondary" data-testid="attack-omitted-count">
+        {n === 1
+          ? "1 technique got no status from the AI this run."
+          : `${n} techniques got no status from the AI this run.`}
+      </p>
+      {unscored.length > 0 ? (
+        <div
+          className="text-ink-secondary"
+          data-testid="attack-omitted-unscored"
+        >
+          <p>
+            No status before this run, so still unscored ({unscored.length}):
+          </p>
+          <OmittedItems items={unscored} describe={(t) => t.technique_code} />
+        </div>
+      ) : null}
+      {kept.length > 0 ? (
+        <div
+          className="flex flex-col gap-1 text-status-danger-fg"
+          role={otherAlert ? "status" : "alert"}
+          data-testid="attack-omitted-kept"
+        >
+          <div data-testid="attack-omitted-kept-list">
+            <p>Kept the status it had ({kept.length}):</p>
+            <OmittedItems
+              items={kept}
+              describe={(t) =>
+                `${t.technique_code} (${statusLabel(t.kept_status)})`
+              }
+            />
+          </div>
+          <p data-testid="attack-omitted-check">
+            Check these before approving. A status kept this way was not
+            confirmed by this run and reaches the coverage figures and the
+            deliverable as it is. Run AI again, or set the status in the
+            technique panel.
+          </p>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export function AttackCitationAccounting({
@@ -164,6 +274,15 @@ export function AttackCitationAccounting({
           place that says otherwise.
         </p>
       ) : null}
+
+      {/* #853, directly after the failed-batch alert: that alert covers the
+          techniques of the batches that failed, this block those of the
+          batches that answered. The rejected-citations alert below is the
+          other assertive region this one must not shout over. */}
+      <AttackOmittedBlock
+        result={result}
+        otherAlert={runIncomplete || rejected > 0}
+      />
 
       {pendingRows > 0 ? (
         <p
