@@ -1,5 +1,16 @@
 # Gene — in-flight status
 
+_2026-10-09 (track5): #865 is built on `track5/865-whatif-name-hints`, for
+#865; no PR yet. The ATT&CK what-if's AI run and the ATT&CK Run-AI now hide
+the names of the client's own users from the AI, as the Tech Debt extraction
+and the what-if chat box already did. A tool an admin names after a colleague
+(on the what-if panel, or on the capability list) reaches the provider as
+"[NAME] ...", and the what-if still credits it when the AI cites it that way.
+Two added tools that would both reach the AI as "[NAME] Scanner" are refused
+when the what-if is created. Zero Trust and CSF send typed notes without this
+dictionary too; those files belong to other open PRs, so they are reported to
+you, not changed. It comes back to you: conditions 5 and 6._
+
 _2026-10-09 (track1): #993 is built on `track1/993-docx-control-chars`, for
 #993; the PR is not yet open. A client legal name with a control character
 (for example a stray BEL byte, which the admin route accepts) no longer blocks
