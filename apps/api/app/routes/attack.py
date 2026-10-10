@@ -28,7 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from app.ai.batching import run_batches
+from app.ai.batching import Batched, run_batches
 from app.ai.catalog_fields import register_catalog_field
 from app.ai.diff import diff_keyed_rows
 from app.ai.llm import LLMClient
@@ -154,6 +154,7 @@ from app.schemas.attack import (
     AttackCoveragePatch,
     AttackCoverageResponse,
     AttackHeatmap,
+    AttackOmittedTechnique,
     AttackOutsideCitation,
     AttackRunAiResponse,
     AttackServiceCreateRequest,
@@ -1992,7 +1993,8 @@ def _attack_ai_request_for(db: Session, a: AttackAssessment, client: Client) -> 
                 "technique_codes": codes,
                 # #806 M2: the prompt judges a not-preventable technique on
                 # Detect and Respond only, so it has to be told which those are.
-                # Sliced per batch by `_run_mitre_map_batched`.
+                # Sliced per batch by `_batch_inputs`, which `_mitre_map_batches`
+                # calls for each batch.
                 "technique_details": _technique_details(codes),
             },
             client_org_name=client_org,
@@ -2086,8 +2088,42 @@ def _run_mitre_map_batched(
     deadline_at: datetime,
 ) -> tuple[list[dict], int, int]:
     """Run mitre_map as concurrent batches of `_MITRE_BATCH_SIZE` techniques.
-    Returns (suggestions, total, failed). How batches run, fail and are
-    accounted for is `app.ai.batching.run_batches`, shared with csf_score."""
+    Returns (suggestions, total, failed).
+
+    The contract `scripts/measure_ai_consistency.py` calls, so its signature is
+    unchanged by #853: the Run-AI route calls `_mitre_map_batches` itself,
+    because counting omitted techniques needs each batch's own inputs."""
+    out = _mitre_map_batches(
+        db,
+        llm,
+        req,
+        requested_by=requested_by,
+        service_id=service_id,
+        client_id=client_id,
+        deadline_at=deadline_at,
+    )
+    return _batch_suggestions(out), out.total, out.failed
+
+
+def _batch_suggestions(out: Batched) -> list[dict]:
+    """Every JSON object every successful batch returned, in batch order."""
+    return [
+        t for data in out.answers for t in (data.get("techniques") or []) if isinstance(t, dict)
+    ]
+
+
+def _mitre_map_batches(
+    db: Session,
+    llm: LLMClient,
+    req: AttackAiRequest,
+    *,
+    requested_by: uuid.UUID,
+    service_id: uuid.UUID,
+    client_id: uuid.UUID,
+    deadline_at: datetime,
+) -> Batched:
+    """The batched mitre_map call. How batches run, fail and are accounted for
+    is `app.ai.batching.run_batches`, shared with csf_score."""
     codes = [c for c in (req.preview.inputs.get("technique_codes") or []) if isinstance(c, str)]
     batches = [
         codes[i : i + _MITRE_BATCH_SIZE] for i in range(0, len(codes), _MITRE_BATCH_SIZE)
@@ -2110,10 +2146,42 @@ def _run_mitre_map_batched(
             "provider is answering too slowly for a full ATT&CK run."
         ),
     )
-    suggestions = [
-        t for data in out.answers for t in (data.get("techniques") or []) if isinstance(t, dict)
-    ]
-    return suggestions, out.total, out.failed
+    return out
+
+
+def _omitted_codes(out: Batched, locked: frozenset[str]) -> set[str]:
+    """#853: the techniques a SUCCESSFUL batch was asked for that no entry
+    named. `asked - answered - locked`, the rule CSF (#836) and ZT (#840) use.
+
+    - An entry that names a technique and is then REFUSED (a computed parent,
+      a status the run may not write, a mispaired or forbidden reason) is an
+      ANSWER. Its loss is itemized only in the audit row's `details`
+      (`statuses_rejected`, `parent_suggestions_refused`,
+      `reason_codes_rejected`), which reach no screen (#859); only the N/A and
+      forbidden-reason counts reach the panel.
+      So the omitted list is not every technique that got no result.
+    - `answered` is the union over every successful batch, NOT each batch's
+      own entries, and this is where ATT&CK must not copy CSF: ATT&CK's apply
+      loop writes an entry naming a real technique whichever batch returned
+      it, so a technique answered from another batch got a result this run.
+      Counting it omitted would say it got none.
+    - A failed batch is not in `out.inputs` (`run_batches` returns successful
+      batches only), so its techniques stay `batches_failed`'s.
+    - A locked row is left alone by design whether answered or not.
+    - A row EDITED during the run is NOT subtracted: the model still sent
+      nothing for it, so "got no result from the AI" stays true (as CSF and ZT).
+
+    Every asked code is a row: `_attack_ai_request_for` builds
+    `technique_codes` from the assessment's own rows.
+    """
+    asked = {c for inputs in out.inputs for c in inputs["technique_codes"]}
+    answered = {
+        t.get("technique_code")
+        for data in out.answers
+        for t in (data.get("techniques") or [])
+        if isinstance(t, dict)
+    }
+    return asked - answered - locked
 
 
 @router.post(
@@ -2375,7 +2443,7 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
             for code, r in rows.items()
         }
 
-    suggestions, batches_total, batches_failed = _run_mitre_map_batched(
+    batched = _mitre_map_batches(
         db,
         ctx.llm,
         req,
@@ -2384,7 +2452,8 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
         client_id=ctx.client_id,
         deadline_at=ctx.deadline_at,
     )
-    result = _BatchedResult(data={"techniques": suggestions})
+    batches_total, batches_failed = batched.total, batched.failed
+    result = _BatchedResult(data={"techniques": _batch_suggestions(batched)})
     # The snapshot is taken AFTER the provider calls, from the database as it
     # is now: a row edited while the batches ran (an edit that checked the lock
     # before this run existed) must be seen as edited, and the rows above were
@@ -2667,6 +2736,13 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
     # legacy-locked parent is unlocked by the recompute, so it leaves
     # `locked_keys` too -- or the diff would hide exactly the change it made.
     parents_recomputed, parents_unlocked = recompute_parents(rows)
+    # #853: read after the apply, so `kept_status` is what the row holds now,
+    # an edit that landed while the model answered included. Against the
+    # PRE-recompute `locked_keys`: an unlocked parent is never asked for.
+    omitted_techniques = [
+        AttackOmittedTechnique(technique_code=code, kept_status=rows[code].status)
+        for code in sorted(_omitted_codes(batched, locked_keys))
+    ]
     locked_keys = locked_keys - frozenset(parents_unlocked)
     db.flush()
     after = _snap()
@@ -2719,6 +2795,7 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
             "rejected": citations.rejected,
             "unusable": citations.unusable,
             "pending_review_rows": len(pending),
+            "omitted_count": len(omitted_techniques),
         },
     )
     audit(
@@ -2752,6 +2829,11 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
             "parents_recomputed": parents_recomputed,
             "parents_unlocked": parents_unlocked,
             "rows_skipped_edited": len(skipped_codes),
+            # #853: counts only, never the codes; the run result names them.
+            # `omitted_kept_status`: how many kept a status nobody confirmed
+            # this run, the ones that reach the deliverable.
+            "omitted_count": len(omitted_techniques),
+            "omitted_kept_status": sum(1 for t in omitted_techniques if t.kept_status is not None),
         },
     )
     # No commit: the framework commits this apply together with the
@@ -2788,6 +2870,8 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
         # the mispaired reasons that share `reason_codes_rejected`, and not a
         # technique the run applied ("keeps the status it had" would be false).
         forbidden_reason_refused=len(forbidden_reason_codes - applied_codes),
+        omitted_count=len(omitted_techniques),
+        omitted_techniques=omitted_techniques,
     )
     return RunOutcome(
         result=result_payload.model_dump(mode="json"),

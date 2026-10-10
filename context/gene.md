@@ -2,6 +2,17 @@
 
 _2026-10-09 (track4): #889 PR 1 is built on `track4/889-attack-subset-drift`, for #889; the PR is not yet open. When a tool leaves a client's security tool list after their ATT&CK report is approved, the client's dashboard now says so and marks the tool, the documents say so as of finalize, and the home card says its ATT&CK total may be understated when a technique counted as covered relies on such a tool. A client with no list sees "not checked" on the dashboard; one whose list has no security tools sees that said instead, and one whose newest list is empty is told which earlier version was used. No number changes. The check now reads only each Tech Debt service's latest list version that is not discarded, a draft included (R2), and a version with no security rows is skipped for the one before it (R4; its wording, approved in #736 6093188709, is now on the admin workspace, the deliverable and the client dashboard), so ATT&CK approve refuses a tool a newer version dropped, while Run AI can still offer it from an older version (#1012). The declared edit to `test_attack_planned_retirement.py` was approved in #736 6092259096. **One thing needs you:** the golden `dashboard.json` gains that "not checked" sentence; the advisor approved it (#736 6090360421) and your ratification is pending, as for #851's. The admin "finalize again" line is filed as #1005 (tier-3). The Risk half waits for D′. It comes back to you: conditions 5 and 6._
 
+_2026-10-09 (track1): #853 is implemented, PR #1014 from
+`track1/853-attack-omitted`, for #853. An ATT&CK technique a Run-AI batch leaves out is now
+counted and named on the run result (`omitted_count`, `omitted_techniques`,
+with the status each one kept), and the audit row carries counts only. The
+ATT&CK Run-AI panel now says how many techniques got no status, lists the
+ones still unscored, and lists in red the ones that kept an earlier status,
+with the approved line telling the consultant to check them before approving.
+The disclosure gate is green. Not on any screen yet: the techniques whose AI
+entry was refused for a reason other than N/A or a forbidden Partial reason
+(#859). It comes back to you: conditions 5 and 6._
+
 _2026-10-09 (track5): #865 is built on `track5/865-whatif-name-hints`, for
 #865; no PR yet. The ATT&CK what-if's AI run and the ATT&CK Run-AI now hide
 the names of the client's own users from the AI, as the Tech Debt extraction
