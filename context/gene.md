@@ -10,6 +10,39 @@ size stays at 10 until the authorized probe runs, which waits on a provider
 key. No live call was made. It comes back to you, not self-merged:
 conditions 5 and 6._
 
+_2026-10-09 (track5): #865 is built on `track5/865-whatif-name-hints`, for
+#865; no PR yet. The ATT&CK what-if's AI run and the ATT&CK Run-AI now hide
+the names of the client's own users from the AI, as the Tech Debt extraction
+and the what-if chat box already did. A tool an admin names after a colleague
+(on the what-if panel, or on the capability list) reaches the provider as
+"[NAME] ...", and the what-if still credits it when the AI cites it that way.
+Two added tools that would both reach the AI as "[NAME] Scanner" are refused
+when the what-if is created. Zero Trust and CSF send typed notes without this
+dictionary too; those files belong to other open PRs, so they are reported to
+you, not changed. It comes back to you: conditions 5 and 6._
+
+_2026-10-09 (track1): #993 is built on `track1/993-docx-control-chars`, for
+#993; the PR is not yet open. A client legal name with a control character
+(for example a stray BEL byte, which the admin route accepts) no longer blocks
+every Word deliverable for that client: the DOCX path now drops the same
+characters the XLSX path drops, and logs one warning per string without the
+value. U+FFFE and U+FFFF are dropped too, and a very long service title plus
+legal name no longer fails: only the file's metadata title is cut, the visible
+heading is whole. A lone surrogate is refused by the API before it is stored.
+Refusing control characters at the admin route stays with the post-MVP
+input-validation item. It comes back to you: conditions 5 and 6._
+
+_2026-10-09 (track6): #997's code-list half is built on `track6/997-risk-code-lists`._
+
+**What it does:** the Risk Register's AI call now sends its two lists of
+citable codes exactly as the catalogs have them. Before, a client whose name
+matched a code prefix ("GV", "DoD") had those codes rewritten to "[CLIENT]..."
+before the model saw them. A list entry that is not a real catalog code stops
+the call before anything is sent. The findings themselves are unchanged and
+still redacted; that half waits on the Risk E ruling. Held as track6's second
+branch, with no PR yet; when it is opened it comes back to you (conditions 5
+and 6).
+
 _2026-10-09 (track1): #775 and #972 are built on `track1/775-export-escape`,
 for #775 and #972, with `main` merged in at e3c962f0 after the run_batches PR
 (#978) landed; the PR is not yet open. Every PDF prints the
