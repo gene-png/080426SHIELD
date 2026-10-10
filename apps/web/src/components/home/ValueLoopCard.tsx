@@ -44,8 +44,9 @@ const USD = new Intl.NumberFormat("en-US", {
 const COUNT = new Intl.NumberFormat("en-US");
 
 interface Metric {
-  /** #889 (C7): the figure counts a tool outside the client's current
-   *  security tool list. A FACT about the figure, like `targetNote`. */
+  /** #889 (C7): techniques counted as covered rely on a tool outside the
+   *  client's current security tool list, so the figure may be understated.
+   *  A FACT about the figure, like `targetNote`. */
   subsetNote?: string | null;
   label: string;
   value: string | null; // null -> "Pending", unless `unresolved`

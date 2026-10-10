@@ -843,10 +843,11 @@ class ValueSummaryResponse(BaseModel):
     #: no released assessment behind it renders under #620's rules (option (a)).
     attack_not_verified_count: int | None
     #: #889 (Q3, C7): True when a released ATT&CK assessment behind
-    #: `attack_uncovered_count` credits a tool outside the client's CURRENT
-    #: security tool list, at any status. The total sums Gap only, so such a
-    #: row may be counted as covered and left OUT of it: the total may be
-    #: understated. False: checked, none does.
+    #: `attack_uncovered_count` has a Covered or Partial row (effective status)
+    #: crediting a tool outside the client's CURRENT security tool list. The
+    #: total sums Gap only, so such a row is left OUT of it: the total may be
+    #: understated. A Gap row is already in it and does not count. False:
+    #: checked, none does.
     #: None: the total is None, or the client has no list (not checked).
     attack_counts_outside_subset: bool | None
     csf_gap_count: int | None

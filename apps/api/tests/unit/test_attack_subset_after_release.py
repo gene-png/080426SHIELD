@@ -288,7 +288,7 @@ def _value_summary(w: World) -> dict:
     return r.json()
 
 
-def test_t6_the_home_card_says_its_total_counts_a_tool_outside_the_list(
+def test_t6_the_home_card_flags_a_covered_technique_relying_on_a_tool_outside_the_list(
     app_parts, tmp_path  # noqa: F811
 ) -> None:
     _with_storage(app_parts, tmp_path)
@@ -517,3 +517,134 @@ def test_approve_refuses_a_tool_the_latest_approved_version_dropped(
     assert {(o["technique_code"], o["tool"]) for o in err["cites_outside_subset"]} == {
         (code, LEGACY)
     }, err
+
+
+# --- round 2, F1: the home card flags only rows that credit coverage --------------------
+
+
+def _uncleared(w: World, code: str, tool: str) -> None:
+    """Every citation of `tool` on the row is inferred and uncleared (#102), so
+    under R3 Detect / Prevent / Respond are all awaiting review and the row
+    computes to Gap."""
+    from app.attack.pending import TOOL_FIELDS
+
+    with w.sessions() as db:
+        row = db.get(AttackCoverage, uuid.UUID(w.rows[code]))
+        row.unconfirmed_citations = [
+            {"tool": tool, "cited": tool, "reason": "substring", "field": f, "cleared_at": None}
+            for f in TOOL_FIELDS
+        ]
+        db.commit()
+
+
+@pytest.mark.parametrize("covered", [True, False])
+def test_the_home_card_flag_needs_a_row_that_credits_coverage(
+    app_parts, tmp_path, covered: bool  # noqa: F811
+) -> None:
+    """R1's note says techniques COUNTED AS COVERED rely on the tool. A row
+    whose only tool is an uncleared citation computes to Gap, so it is already
+    in the uncovered total: the tool leaving the list must not raise the note.
+    The positive control is the same row with the citation cleared (Covered)."""
+    _with_storage(app_parts, tmp_path)
+    w = _world(app_parts)
+    code = _codes(w)[0]
+    _cover(w, code, [LEGACY])
+    if not covered:
+        # The stored status agrees with the computed one, so release needs no
+        # computed-status review (`attack_computed_status_unreviewed`).
+        assert w.patch(code, {"status": "gap"}).status_code == 200
+        _uncleared(w, code, LEGACY)
+    _release(w, _approve_finalize(w))
+    w.confirm_not_security(LEGACY)
+    dash = _dashboard(w)
+    status = {t["code"]: t["status"] for t in dash["techniques"]}[code]
+    assert status == ("covered" if covered else "gap"), status  # the world is what it says
+    assert dash["tool_outside_subset"] == [LEGACY]  # the check ran and found it
+    body = _value_summary(w)
+    assert body["attack_counts_outside_subset"] is covered, body
+
+
+# --- round 2, F2: `_latest_list_versions`, one per service, and discards skipped -------
+
+
+def _second_tech_debt_service(w: World, names: list[str]) -> None:
+    """Another Tech Debt service for the same client, its v1 a DRAFT holding
+    `names`: the world, written directly."""
+    from app.models.capability import (
+        CapabilityDisposition,
+        CapabilityItem,
+        CapabilityList,
+        CapabilityListStatus,
+    )
+    from app.models.service import Service, ServiceKind, ServiceStatus
+
+    with w.sessions() as db:
+        first = db.get(CapabilityList, uuid.UUID(w.list_id))
+        opened_by = db.get(Service, first.service_id).opened_by
+        svc = Service(
+            kind=ServiceKind.TECH_DEBT,
+            status=ServiceStatus.IN_PROGRESS,
+            title="Acme Tech Debt B",
+            client_id=uuid.UUID(w.cid),
+            opened_by=opened_by,
+        )
+        db.add(svc)
+        db.flush()
+        cl = CapabilityList(service_id=svc.id, version=1, status=CapabilityListStatus.DRAFT)
+        db.add(cl)
+        db.flush()
+        for name in names:
+            db.add(
+                CapabilityItem(
+                    capability_list_id=cl.id,
+                    name=name,
+                    security_related=True,
+                    disposition=CapabilityDisposition.KEEP,
+                )
+            )
+        db.commit()
+
+
+def _outside_tools(w: World) -> list[str]:
+    body = w.get()
+    assert body["subset_checked"] is True, body["subset_checked"]
+    return sorted({o["tool"] for o in body["citations_outside_subset"]})
+
+
+def test_each_tech_debt_service_has_its_own_latest_version(app_parts) -> None:  # noqa: F811
+    """Service A's latest (v2) holds EDR and not Legacy AV; service B's latest
+    holds Legacy AV. One latest list PER SERVICE: a row citing both is
+    inside the list."""
+    w = _world(app_parts)
+    _upload_v2_without(w, LEGACY)
+    _second_tech_debt_service(w, [LEGACY])
+    code = _codes(w)[0]
+    w.patch(code, {"detection_tools": [EDR, LEGACY]})
+    assert _outside_tools(w) == []
+
+
+def _discard(w: World, list_id: str) -> None:
+    r = w.c.post(f"/tech-debt/capability-lists/{list_id}/discard", headers=w.h)
+    assert r.status_code == 200, r.text
+
+
+def test_a_discarded_v2_falls_back_to_the_approved_v1(app_parts) -> None:  # noqa: F811
+    """v1 APPROVED holds Legacy AV; v2 is DISCARDED without it. A discarded
+    list does not vote, so v1 is the current list: checked, and not flagged."""
+    w = _world(app_parts)
+    w.approve_list()
+    _discard(w, _upload_v2_without(w, LEGACY))
+    code = _codes(w)[0]
+    w.patch(code, {"detection_tools": [EDR, LEGACY]})
+    assert _outside_tools(w) == []
+
+
+def test_a_tool_only_on_a_discarded_v2_is_flagged(app_parts) -> None:  # noqa: F811
+    """v1 APPROVED does not hold "Shadow Scanner"; v2 is DISCARDED holding it.
+    v1 is the current list, so the tool is checked and flagged."""
+    w = _world(app_parts)
+    w.approve_list()
+    _discard(w, _upload_v2(w, [EDR, "Shadow Scanner"]))
+    code = _codes(w)[0]
+    w.patch(code, {"detection_tools": [EDR, "Shadow Scanner"]})
+    assert _outside_tools(w) == ["Shadow Scanner"]

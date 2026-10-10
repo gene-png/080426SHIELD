@@ -35,6 +35,7 @@ from app.attack.catalog_version import is_current as attack_catalog_is_current
 from app.attack.computed import IN_PLACE_TEXT as ATTACK_IN_PLACE_TEXT
 from app.attack.computed import effective_coverage as attack_effective_coverage
 from app.attack.coverage import ASSESSED
+from app.attack.coverage import CoverageStatus as AttackCoverageStatus
 from app.attack.exporters import awaiting_review_text as attack_awaiting_review_text
 from app.attack.exporters import build_context as attack_build_context
 from app.attack.exporters import coverage_measured
@@ -872,11 +873,13 @@ def _attack_uncovered_total(
     new rules only; a rule-1 assessment cannot hold an unverified row, since
     nothing may write one.
 
-    The fourth value is #889's (Q3, C7): whether a summed assessment credits a
-    tool outside the client's CURRENT security tool list (`subset_state`, the
-    dashboard's own read), at any status. The total sums Gap only, so such a
-    row may be counted as covered and left out of it: the total may be
-    understated (review F1, copy C7 as ruled). None with the total, and
+    The fourth value is #889's (Q3, C7): whether a summed assessment has a row
+    whose EFFECTIVE status credits coverage (Covered or Partial) and which
+    credits a tool outside the client's CURRENT security tool list
+    (`subset_state`, the dashboard's own read). The total sums Gap only, so
+    such a row is left out of it: the total may be understated (review F1,
+    copy C7 as ruled). A Gap row crediting such a tool is already IN the total,
+    so it does not raise the flag (round-2 review). None with the total, and
     when the client has no list: not checked is not "none found"."""
     if not service_ids:
         return _KindTotal(None, False), False, None, None
@@ -939,8 +942,17 @@ def _attack_uncovered_total(
             db, _service_client_id(db, sid), rows, parents_computed=attack_parents_computed(a)
         )
         if subset.checked:
-            outside = bool(outside) or bool(subset.outside)
+            # Only rows the rollup counts toward coverage: C7 says "counted as
+            # covered", and a Gap, N/A or unscored row is not.
+            credited = {r.technique_code for r in rows if r.status in _CREDITS_COVERAGE}
+            outside = bool(outside) or any(o.technique_code in credited for o in subset.outside)
     return _KindTotal(total, False), False, not_verified, outside
+
+
+#: #889 round 2: the effective statuses the rollup counts toward coverage.
+_CREDITS_COVERAGE = frozenset(
+    {AttackCoverageStatus.COVERED.value, AttackCoverageStatus.PARTIAL.value}
+)
 
 
 def _service_client_id(db: Session, service_id: uuid.UUID) -> uuid.UUID:
@@ -1422,7 +1434,12 @@ def attack_dashboard(
         tool_retirement=tool_retirement,
         retirement_notes=retirement_notes,
         partial_reasons=partial_reasons,
-        # #889: all three states (Q1) and the per-tool mark (Q2).
+        # #889: all three states (Q1) and the per-tool mark (Q2). C1 counts
+        # EVERY row the deliverable prints that credits such a tool, at any
+        # status, NOT only rows credited as coverage like the home card's flag
+        # (`_attack_uncovered_total`): C1 says the row's status "may count" the
+        # tool, which is true of a Gap row's judgement too, and it is the
+        # document's own sentence, so the two surfaces stay the same claim.
         subset_notes=attack_subset_sentences(deliverable_ctx),
         tool_outside_subset=sorted(subset.outside_tools()) if subset.checked else None,
     )
