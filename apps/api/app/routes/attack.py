@@ -103,8 +103,12 @@ from app.attack.retirement import PlanEntry, RetirementIndex
 from app.attack.retirement import build_index as build_retirement_index
 from app.attack.rules import COMPUTED_STATUSES, NEW_RULES, parents_computed, statuses_computed
 from app.attack.subset_drift import (
+    NOT_CHECKED_DISCARDED,
+    NOT_CHECKED_EMPTY,
+    NOT_CHECKED_NO_LIST,
     OutsideCitation,
     SubsetCheck,
+    VersionFallback,
     citations_outside_subset,
     subset_applies,
 )
@@ -343,13 +347,17 @@ def subset_state(
         raise ValueError(f"client {client_id} does not exist")
     # ONE membership read: its lists decide whether there is a subset to judge
     # against at all. #889 review F2: the CURRENT list, so only each Tech Debt
-    # service's latest non-discarded version (`_latest_list_versions`); the
+    # service's current version (`_current_list_versions`); the
     # allow-list (`_client_capability_inputs`) keeps every version (#1012).
     membership = _client_capability_membership(db, client_id, latest_versions_only=True)
     if not subset_applies(cl.status for cl in membership.lists):
         # NOT CHECKED, the third state: nothing is flagged because nothing
-        # could be, never because nothing was found.
-        return SubsetCheck(checked=False)
+        # could be, never because nothing was found. R4 (b): and why.
+        return SubsetCheck(
+            checked=False,
+            fallbacks=membership.version_fallbacks,
+            not_checked_reason=membership.not_checked_reason,
+        )
     subset = citation_resolver_for(
         [Candidate(name=c.name, vendor=c.vendor) for c in membership.inputs()],
         client_org_name=client.legal_name,
@@ -357,6 +365,7 @@ def subset_state(
     return SubsetCheck(
         checked=True,
         outside=tuple(citations_outside_subset(rows, subset, parents_computed=parents_computed)),
+        fallbacks=membership.version_fallbacks,
     )
 
 
@@ -1081,6 +1090,11 @@ class CapabilityMembership:
     #: per name -- the disposition may differ on the list the dedupe dropped.
     #: Read by `attack/retirement.py`; see there for the rules.
     plan_entries: list[PlanEntry] = field(default_factory=list)
+    #: #889 R4 (b), for the security tool list check only
+    #: (`latest_versions_only`): services whose latest version did not vote,
+    #: and why nothing could be checked when no version did.
+    version_fallbacks: tuple[VersionFallback, ...] = ()
+    not_checked_reason: str | None = None
 
     def inputs(self) -> list[CapabilityInput]:
         return [p.capability for p in self.sent]
@@ -1111,20 +1125,62 @@ def _latest_plan_ids(lists: Iterable[CapabilityList]) -> frozenset[uuid.UUID]:
     return frozenset(cl.id for cl in latest.values())
 
 
-def _latest_list_versions(lists: Iterable[CapabilityList]) -> list[CapabilityList]:
-    """#889 review F2: per Tech Debt SERVICE, the highest-version list that is
-    not DISCARDED. Older versions do not vote -- `_latest_plan_ids`'s rule,
-    over every live status rather than the plan's two, because a DRAFT feeds
-    the subset (`_client_capability_membership`'s list-status bullet). A
-    service whose every list is discarded contributes no list."""
-    latest: dict[uuid.UUID, CapabilityList] = {}
+def _offers_security_rows(cap_list: CapabilityList, live_items: list[CapabilityItem]) -> bool:
+    """R4 (b): whether this list version would offer any security-scope row,
+    by `_client_capability_membership`'s own two branches: an approved list's
+    SNAPSHOT is its membership (it holds only rows in scope when approved), and
+    a list with no snapshot reads its live rows through `in_security_scope`."""
+    if cap_list.approved_membership is not None:
+        return bool(cap_list.approved_membership)
+    return any(in_security_scope(item) for item in live_items)
+
+
+def _current_list_versions(
+    db: Session,
+    lists: Iterable[CapabilityList],
+    live_by_list: dict[uuid.UUID, list[CapabilityItem]],
+) -> tuple[list[CapabilityList], tuple[VersionFallback, ...], str | None]:
+    """#889: per Tech Debt SERVICE, the list version that IS the client's
+    current security tool list: the highest version that is not DISCARDED
+    (review F2; a DRAFT counts, R2) and offers at least one security-scope row
+    (R4, option (b)). A newer version with none does not vote; the newest
+    earlier one that has some does, and the skip is recorded.
+
+    Returns the chosen lists, the fallbacks, and, when nothing was chosen, why
+    (`NOT_CHECKED_EMPTY` or `NOT_CHECKED_DISCARDED`)."""
+    by_service: dict[uuid.UUID, list[CapabilityList]] = {}
     for cl in lists:
-        if cl.status == CapabilityListStatus.DISCARDED:
+        by_service.setdefault(cl.service_id, []).append(cl)
+    chosen: list[CapabilityList] = []
+    fallbacks: list[VersionFallback] = []
+    any_live = False
+    for service_id, versions in by_service.items():
+        live = sorted(
+            (cl for cl in versions if cl.status != CapabilityListStatus.DISCARDED),
+            key=lambda cl: cl.version,
+            reverse=True,
+        )
+        if not live:
             continue
-        held = latest.get(cl.service_id)
-        if held is None or cl.version > held.version:
-            latest[cl.service_id] = cl
-    return list(latest.values())
+        any_live = True
+        used = next((cl for cl in live if _offers_security_rows(cl, live_by_list[cl.id])), None)
+        if used is not None:
+            chosen.append(used)
+        if used is not live[0]:
+            svc = db.get(Service, service_id)
+            fallbacks.append(
+                VersionFallback(
+                    service_id=service_id,
+                    service_title=svc.title if svc is not None else "",
+                    skipped_version=live[0].version,
+                    skipped_status=str(live[0].status.value),
+                    used_version=used.version if used is not None else None,
+                )
+            )
+    reason = None
+    if not chosen:
+        reason = NOT_CHECKED_EMPTY if any_live else NOT_CHECKED_DISCARDED
+    return chosen, tuple(fallbacks), reason
 
 
 def _client_capabilities(db: Session, client_id: uuid.UUID) -> list[Candidate]:
@@ -1252,11 +1308,11 @@ def _client_capability_membership(
 ) -> CapabilityMembership:
     """Security capabilities from the client's Tech Debt capability list(s).
 
-    `latest_versions_only` (#889 review F2) is for the SECURITY TOOL LIST
-    CHECK alone (`subset_state`): per Tech Debt service only the highest-version
-    non-discarded list counts, so a tool dropped in a newer version is outside
-    the client's CURRENT list however an older approved version's snapshot
-    reads. The default, False, is the citation allow-list's rule below and is
+    `latest_versions_only` (#889 review F2, R2, R4) is for the SECURITY TOOL
+    LIST CHECK alone (`subset_state`): per Tech Debt service only the current
+    version counts (`_current_list_versions`), so a tool dropped in a newer
+    version is outside the client's CURRENT list however an older approved
+    version's snapshot reads. The default, False, is the citation allow-list's rule below and is
     unchanged; that superseded versions still count THERE is #1012.
 
     Returns name AND vendor: the citation resolver needs the vendor column to
@@ -1329,10 +1385,13 @@ def _client_capability_membership(
         .scalars()
         .all()
     )
-    if latest_versions_only:
-        lists = _latest_list_versions(lists)
     if not lists:
-        return CapabilityMembership(sent=[], withheld=[], lists=[])
+        return CapabilityMembership(
+            sent=[],
+            withheld=[],
+            lists=[],
+            not_checked_reason=NOT_CHECKED_NO_LIST if latest_versions_only else None,
+        )
 
     # ONE query for every live row on every contributing list — no scope
     # predicate, because both the survivors and the drops are decided from it.
@@ -1347,6 +1406,22 @@ def _client_capability_membership(
     ):
         live_by_list[item.capability_list_id].append(item)
         live_by_id[str(item.id)] = item
+
+    # #889 (F2, R2, R4): the security tool list check reads each service's
+    # CURRENT version only. Chosen after the live rows load, because an empty
+    # version is judged on them. The citation allow-list (the default) keeps
+    # every version (#1012).
+    fallbacks: tuple[VersionFallback, ...] = ()
+    if latest_versions_only:
+        lists, fallbacks, reason = _current_list_versions(db, lists, live_by_list)
+        if not lists:
+            return CapabilityMembership(
+                sent=[],
+                withheld=[],
+                lists=[],
+                version_fallbacks=fallbacks,
+                not_checked_reason=reason,
+            )
 
     # `_MergeCandidate(name, vendor, item_id, cap_list, from_snapshot)` —
     # `item_id` is present for snapshot rows and is what makes the descriptive
@@ -1716,6 +1791,7 @@ def _client_capability_membership(
         sent=sent,
         withheld=sorted(withheld.values(), key=lambda d: d.name),
         lists=list(lists),
+        version_fallbacks=fallbacks,
         # #686: from `pairs`, the rows the dedupe chose among, each followed by
         # its item_id to the LIVE disposition. A gone live row is `retiring=None`.
         #

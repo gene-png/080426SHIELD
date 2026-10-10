@@ -25,6 +25,7 @@ can disagree on a vendor-shaped name, and that is stated there too.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -68,6 +69,26 @@ NOT_CHECKED_SENTENCE = (
 )
 
 
+#: R4, option (b) (#736): why nothing could be checked. No Tech Debt list at
+#: all; only lists with no security-scope row; or only discarded lists.
+NOT_CHECKED_NO_LIST = "no_list"
+NOT_CHECKED_EMPTY = "empty"
+NOT_CHECKED_DISCARDED = "discarded"
+
+
+@dataclass(frozen=True)
+class VersionFallback:
+    """R4 (b): a Tech Debt service whose latest non-discarded list version has
+    no security-scope row, so it did not vote. `used_version` is the newest
+    earlier non-discarded version that has one, or None when none does."""
+
+    service_id: uuid.UUID
+    service_title: str
+    skipped_version: int
+    skipped_status: str
+    used_version: int | None
+
+
 @dataclass(frozen=True)
 class SubsetCheck:
     """#889 (Q7): whether the cited tools were checked against a security tool
@@ -79,12 +100,21 @@ class SubsetCheck:
 
     checked: bool
     outside: tuple[OutsideCitation, ...] = ()
+    #: R4 (b): the services whose latest version did not vote. Additive.
+    fallbacks: tuple[VersionFallback, ...] = ()
+    #: R4 (b): why nothing was checked (`NOT_CHECKED_*`); None when checked.
+    not_checked_reason: str | None = None
 
     def __post_init__(self) -> None:
         if not self.checked and self.outside:
             raise ValueError(
                 f"a subset that was not checked cannot carry {len(self.outside)} tools "
                 "outside it; `outside` is the check's own finding"
+            )
+        if self.checked and self.not_checked_reason is not None:
+            raise ValueError(
+                f"a checked subset cannot carry a not-checked reason "
+                f"({self.not_checked_reason!r})"
             )
 
     def outside_tools(self) -> frozenset[str]:

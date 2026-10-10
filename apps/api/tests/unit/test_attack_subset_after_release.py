@@ -591,7 +591,7 @@ def test_the_home_card_flag_needs_a_row_that_credits_coverage(
     assert body["attack_covered_relies_on_outside_tool"] is flag, body
 
 
-# --- round 2, F2: `_latest_list_versions`, one per service, and discards skipped -------
+# --- round 2, F2: `_current_list_versions`, one per service, and discards skipped -----
 
 
 def _second_tech_debt_service(w: World, names: list[str]) -> None:
@@ -606,8 +606,7 @@ def _second_tech_debt_service(w: World, names: list[str]) -> None:
     from app.models.service import Service, ServiceKind, ServiceStatus
 
     with w.sessions() as db:
-        first = db.get(CapabilityList, uuid.UUID(w.list_id))
-        opened_by = db.get(Service, first.service_id).opened_by
+        opened_by = db.get(Service, uuid.UUID(w.svc_id)).opened_by  # the ATT&CK service
         svc = Service(
             kind=ServiceKind.TECH_DEBT,
             status=ServiceStatus.IN_PROGRESS,
@@ -681,3 +680,111 @@ def test_a_tool_only_on_a_discarded_v2_is_flagged(app_parts) -> None:  # noqa: F
     code = _codes(w)[0]
     w.patch(code, {"detection_tools": [EDR, "Shadow Scanner"]})
     assert _outside_tools(w) == ["Shadow Scanner"]
+
+
+# --- R4 (b): a latest version with no security-scope rows does not vote ----------------
+# Ruled option (b) (#736). The API half only: the admin copy is with the advisor.
+
+
+def _upload_v2_items(w: World, items: list[tuple[str, bool, bool]]) -> str:
+    """A DRAFT v2 of the client's Tech Debt list, each item
+    (name, security_related, security_class_confirmed)."""
+    from app.models.capability import (
+        CapabilityDisposition,
+        CapabilityItem,
+        CapabilityList,
+        CapabilityListStatus,
+    )
+
+    with w.sessions() as db:
+        v1 = db.get(CapabilityList, uuid.UUID(w.list_id))
+        v2 = CapabilityList(service_id=v1.service_id, version=2, status=CapabilityListStatus.DRAFT)
+        db.add(v2)
+        db.flush()
+        for name, security, confirmed in items:
+            db.add(
+                CapabilityItem(
+                    capability_list_id=v2.id,
+                    name=name,
+                    security_related=security,
+                    security_class_confirmed=confirmed,
+                    disposition=CapabilityDisposition.KEEP,
+                )
+            )
+        db.commit()
+        return str(v2.id)
+
+
+def _subset(w: World):
+    """`subset_state` itself, over the assessment's stored rows, for the
+    fields no response carries yet (the copy is pending)."""
+    from sqlalchemy import select
+
+    from app.routes.attack import subset_state
+
+    with w.sessions() as db:
+        rows = (
+            db.execute(
+                select(AttackCoverage).where(
+                    AttackCoverage.assessment_id == uuid.UUID(w.assessment_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return subset_state(db, uuid.UUID(w.cid), rows, parents_computed=True)
+
+
+@pytest.mark.parametrize(
+    "v2_items",
+    [
+        pytest.param([], id="empty"),
+        # Payroll, confirmed not security: out of scope, so v2 holds no
+        # security-scope row and counts as empty.
+        pytest.param([("Payroll", False, True)], id="only_out_of_scope"),
+    ],
+)
+def test_an_empty_latest_version_falls_back_to_the_previous_one(
+    app_parts, v2_items  # noqa: F811
+) -> None:
+    w = _world(app_parts)
+    w.approve_list()
+    _upload_v2_items(w, v2_items)
+    code = _codes(w)[0]
+    r = w.patch(code, {"detection_tools": [EDR, LEGACY]})
+    assert r.status_code == 200, r.text
+    assert _outside_tools(w) == []  # v1 is the current list, and holds both
+    check = _subset(w)
+    assert check.checked is True
+    assert check.not_checked_reason is None
+    assert [
+        (f.service_title, f.skipped_version, f.skipped_status, f.used_version)
+        for f in check.fallbacks
+    ] == [("Acme Tech Debt", 2, "draft", 1)]
+
+
+def test_with_only_an_empty_list_nothing_is_checked_and_the_reason_is_empty(
+    app_parts,  # noqa: F811
+) -> None:
+    w = _no_list_world(app_parts)
+    _second_tech_debt_service(w, [])  # one Tech Debt service, its only list empty
+    code = _codes(w)[0]
+    r = w.patch(code, {"detection_tools": ["Tool A"]})
+    assert r.status_code == 200, r.text
+    assert w.get()["subset_checked"] is False  # never "every tool is outside"
+    check = _subset(w)
+    assert (check.checked, check.not_checked_reason) == (False, "empty")
+    assert [(f.skipped_version, f.used_version) for f in check.fallbacks] == [(1, None)]
+
+
+def test_with_no_list_the_reason_is_no_list(app_parts) -> None:  # noqa: F811
+    check = _subset(_no_list_world(app_parts))
+    assert (check.checked, check.not_checked_reason) == (False, "no_list")
+
+
+def test_with_only_discarded_lists_the_reason_is_discarded(app_parts) -> None:  # noqa: F811
+    w = _world(app_parts)
+    assert _subset(w).checked is True  # positive first: a live list is checked
+    _discard(w, w.list_id)
+    check = _subset(w)
+    assert (check.checked, check.not_checked_reason) == (False, "discarded")
