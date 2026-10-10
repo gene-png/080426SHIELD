@@ -642,8 +642,8 @@ export function AttackDashboard({
         ) : null}
         {/* #889: the security tool list check, all three states (Q1), and
             that the marks are the CURRENT list's (C2). */}
-        {(data.subset_notes ?? []).map((n) => (
-          <p key={n} style={{ margin: "0 0 6px", fontSize: 13 }}>
+        {(data.subset_notes ?? []).map((n, i) => (
+          <p key={`${i}:${n}`} style={{ margin: "0 0 6px", fontSize: 13 }}>
             {n}
           </p>
         ))}

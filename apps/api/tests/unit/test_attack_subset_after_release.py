@@ -913,9 +913,14 @@ C8B = (
     "In Acme Tech Debt, the newest security tool list (version 2) has no security "
     "tools, so these checks use version 1."
 )
+#: C9 as CHANGED by the advisor (#736 6093549176): it names the service.
 C9 = (
-    "Cited tools were checked against version 1 of the client's security tool list, "
-    "because the newest version has no security tools."
+    "In Acme Tech Debt, cited tools were checked against version 1 of the client's "
+    "security tool list, because the newest version has no security tools."
+)
+C9_B = (
+    "In Acme Tech Debt B, cited tools were checked against version 1 of the client's "
+    "security tool list, because the newest version has no security tools."
 )
 
 
@@ -1017,3 +1022,45 @@ def test_r4_an_approved_empty_newest_version_reads_c8b(app_parts) -> None:  # no
     body = w.get()
     assert body["subset_fallback_notes"] == [C8B], body["subset_fallback_notes"]
     assert body["subset_not_checked_sentence"] is None
+
+
+def _two_services_fall_back_to_v1(app_parts) -> World:  # noqa: F811
+    """Services A and B each hold EDR in v1 and an empty v2: both fall back to
+    the SAME version, 1."""
+    from app.models.capability import CapabilityList, CapabilityListStatus
+
+    w = _world(app_parts)
+    w.approve_list()
+    _upload_v2_items(w, [])
+    b_v1 = _second_tech_debt_service(w, [EDR], title="Acme Tech Debt B")
+    with w.sessions() as db:
+        b_service = db.get(CapabilityList, uuid.UUID(b_v1)).service_id
+        db.add(CapabilityList(service_id=b_service, version=2, status=CapabilityListStatus.DRAFT))
+        db.commit()
+    _cover(w, _codes(w)[0], [EDR])
+    return w
+
+
+@pytest.mark.parametrize("fmt", FORMATS)
+def test_two_services_falling_back_to_the_same_version_read_as_two_lines(
+    app_parts, tmp_path, fmt: str  # noqa: F811
+) -> None:
+    """C9 names its service (advisor, #736 6093549176), so two services that
+    fall back to the same version give two DIFFERENT lines."""
+    _with_storage(app_parts, tmp_path)
+    w = _two_services_fall_back_to_v1(app_parts)
+    text = _format_text(w, _approve_finalize(w), fmt)
+    assert text.count(C9) == 1, text[:3000]
+    assert text.count(C9_B) == 1, text[:3000]
+
+
+def test_two_services_falling_back_read_as_two_lines_on_every_screen(
+    app_parts, tmp_path  # noqa: F811
+) -> None:
+    _with_storage(app_parts, tmp_path)
+    w = _two_services_fall_back_to_v1(app_parts)
+    admin = w.get()["subset_fallback_notes"]
+    assert sorted(admin) == sorted([C8A, C8A.replace("Acme Tech Debt,", "Acme Tech Debt B,")])
+    _release(w, _approve_finalize(w))
+    notes = _dashboard(w)["subset_notes"]
+    assert sorted(notes) == sorted([C9, C9_B]), notes

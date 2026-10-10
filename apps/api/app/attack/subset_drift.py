@@ -108,9 +108,11 @@ class SubsetCheck:
     """#889 (Q7): whether the cited tools were checked against a security tool
     list, and what the check found, as ONE value so the two cannot disagree.
 
-    `checked` False is the third state, "not checked" (the client has no list):
-    nothing can be outside a list that does not exist, so `outside` must then
-    be empty, and building one that is not raises here."""
+    `checked` False is the third state, "not checked": the client has no Tech
+    Debt list, only lists with no security tool, or only discarded lists
+    (`not_checked_reason`). Nothing can be outside a list that does not
+    exist, so `outside` must then be empty, and building one that is not
+    raises here."""
 
     checked: bool
     outside: tuple[OutsideCitation, ...] = ()
@@ -176,18 +178,21 @@ NOT_CHECKED_EMPTY_SENTENCE = (
 
 def not_checked_sentence(reason: str | None) -> str:
     """The "not checked" sentence for `reason`: C5b when every list is empty,
-    C5 otherwise. "no_list" keeps C5 by the ruling. "discarded" (only
-    discarded lists) also keeps C5, because `main` already says that there;
-    that case is with the advisor (#736)."""
+    C5 otherwise. "no_list" keeps C5 by the ruling, and "discarded" (only
+    discarded lists) keeps C5 too, as ruled by the advisor in #736 comment
+    6093549176."""
     return NOT_CHECKED_EMPTY_SENTENCE if reason == NOT_CHECKED_EMPTY else NOT_CHECKED_SENTENCE
 
 
 def fallback_sentence(fallback: VersionFallback) -> str:
     """C9, in the deliverable and on the client dashboard, one per service that
-    fell back. {m} is the version used."""
+    fell back. {m} is the version used. It names the service, so two services
+    falling back to the same version read as two different lines (C9 as
+    changed by the advisor, #736 comment 6093549176)."""
     return (
-        f"Cited tools were checked against version {fallback.used_version} of the "
-        "client's security tool list, because the newest version has no security tools."
+        f"In {fallback.service_title}, cited tools were checked against version "
+        f"{fallback.used_version} of the client's security tool list, because the newest "
+        "version has no security tools."
     )
 
 

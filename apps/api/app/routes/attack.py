@@ -329,7 +329,7 @@ def outside_subset_citations(
     parents_computed: bool,
 ) -> list[OutsideCitation]:
     """#851: the rows' tools outside the client's CURRENT security tool list;
-    [] when there is no list to check against (see `subset_state`)."""
+    [] when nothing could be checked (see `subset_state`)."""
     return list(subset_state(db, client_id, rows, parents_computed=parents_computed).outside)
 
 
@@ -1145,6 +1145,16 @@ def _offers_security_rows(cap_list: CapabilityList, live_items: list[CapabilityI
     return any(in_security_scope(item) for item in live_items)
 
 
+def _service_title(svc: Service | None, service_id: uuid.UUID) -> str:
+    """The title C8 and C9 name. Unreachable when None: the caller's lists come
+    from a query that JOINS on Service, so every list's service exists; raised
+    loudly, as `_client_id_of` does, rather than printing "In , the newest...".
+    """
+    if svc is None:
+        raise ValueError(f"Tech Debt service {service_id} does not exist")
+    return svc.title
+
+
 def _current_list_versions(
     db: Session,
     lists: Iterable[CapabilityList],
@@ -1190,7 +1200,7 @@ def _current_list_versions(
         fallbacks.append(
             VersionFallback(
                 service_id=service_id,
-                service_title=svc.title if svc is not None else "",
+                service_title=_service_title(svc, service_id),
                 skipped=skipped,
                 used_version=used.version if used is not None else None,
                 reason=(

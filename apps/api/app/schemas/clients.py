@@ -285,7 +285,8 @@ class AttackDashboardResponse(BaseModel):
     after_planned_changes: list[str] | None = None
     #: #889 (Q1): the security tool list check, read LIVE: the deliverable's
     #: own sentences (`subset_sentences`). Not checked: [C5] when the client
-    #: has no list, [C5b] when its list has no security tools. Checked: C1 when
+    #: has no list or only discarded ones, [C5b] when its lists have no
+    #: security tools. Checked: C1 when
     #: rows credit a tool outside it, and C9 per service that fell back to an
     #: earlier version; [] when there is neither. The web says beside it that
     #: the check is the current list's.
@@ -850,7 +851,8 @@ class ValueSummaryResponse(BaseModel):
     #: total sums Gap only, so such a row is left OUT of it: the total may be
     #: understated. A Gap row is already in it and does not count. False:
     #: checked, none does.
-    #: None: the total is None, or the client has no list (not checked).
+    #: None: the total is None, or nothing could be checked (no Tech Debt list,
+    #: only lists with no security tool, or only discarded lists).
     attack_covered_relies_on_outside_tool: bool | None
     csf_gap_count: int | None
     csf_gap_unresolved: bool

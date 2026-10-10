@@ -155,8 +155,9 @@ export interface AttackAssessment {
   /** #851: every tool a row credits outside the client's CURRENT security
    *  tool list. Absent on an older payload: nothing is shown. */
   citations_outside_subset?: AttackOutsideCitation[];
-  /** #851: false when the client has no security tool list, so nothing
-   *  could be checked (a third state, never a pass). */
+  /** #851: false when nothing could be checked (a third state, never a
+   *  pass): the client has no Tech Debt list, only lists with no security
+   *  tool, or only discarded lists (#889 R4). */
   subset_checked?: boolean;
   /** #889 R4: when `subset_checked` is false, why, as the API words it (C5,
    *  or C5b when the client's list has no security tools). */

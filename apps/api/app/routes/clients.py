@@ -880,7 +880,8 @@ def _attack_uncovered_total(
     such a row is left out of it: the total may be understated (review F1,
     copy C7 as ruled). A Gap row crediting such a tool is already IN the total,
     so it does not raise the flag (round-2 review). None with the total, and
-    when the client has no list: not checked is not "none found"."""
+    when nothing could be checked (no Tech Debt list, only lists with no
+    security tool, or only discarded lists): not checked is not "none found"."""
     if not service_ids:
         return _KindTotal(None, False), False, None, None
     total = 0
