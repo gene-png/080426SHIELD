@@ -675,6 +675,9 @@ class RiskMatrixCell(BaseModel):
 class RiskDashboardEntry(BaseModel):
     title: str
     axis: str | None
+    # #806 G1 option 3, rendered on the client dashboard (#736 6094620397,
+    # Risk E item 4). None is "not recorded"; `[]` is "no other axis".
+    other_axes: list[str] | None
     likelihood: str | None
     impact: str | None
     tier: str | None

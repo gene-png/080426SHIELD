@@ -105,6 +105,12 @@ export interface RiskEntry {
   title: string;
   description: string | null;
   axis: string | null;
+  /**
+   * #806 G1 option 3. `null` is "not recorded" (pre-0066, or no readable list
+   * from the model); `[]` is the claim "no other axis". Optional so a payload
+   * without it reads as not recorded (`otherAxesCell`), never as none.
+   */
+  other_axes?: string[] | null;
   source: string | null;
   source_id: string | null;
   /**

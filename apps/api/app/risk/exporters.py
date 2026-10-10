@@ -169,6 +169,28 @@ def _li(e: Any) -> str:
     return f"{_rating(e.likelihood)} x {_rating(e.impact)}"
 
 
+#: #736 6094620397, Risk E item 4: the column heading on every surface.
+OTHER_AXES_HEADER = "Other axes"
+
+
+def _other_axes(e: Any) -> str:
+    """#806 G1 option 3, as approved for the client (#736 6094620397, item 4).
+
+    Three states, three renderings: NULL is "Not recorded" (a pre-0066 entry,
+    or a model response with no readable list), `[]` is an EMPTY cell (the
+    claim "no other axis"), and a list is its axis display names joined by
+    ", ", the way the Axis column titles its value. The web screens mirror this
+    in `lib/risk/otherAxes.ts`; change both.
+    """
+    # `getattr`, as `_consultant_rated` does: the renderers take duck-typed rows,
+    # and a row built before 0066's field existed carries no attribute. Absent
+    # reads as NULL, which is what every such row is.
+    axes = getattr(e, "other_axes", None)
+    if axes is None:
+        return "Not recorded"
+    return ", ".join(str(a).title() for a in axes)
+
+
 def _consultant_rated(e: Any) -> bool:
     """A consultant EDITED this entry's rating and at least one half is present.
 
@@ -276,6 +298,7 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
         "Weakness",
         "Description",
         "Axis",
+        OTHER_AXES_HEADER,
         "Source",
         "Linked Techniques",
         "Linked Controls",
@@ -305,6 +328,7 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
                 e.title,
                 e.description or "",
                 (e.axis or "").title(),
+                _other_axes(e),
                 _source(
                     e,
                     ctx.source_states,
@@ -822,13 +846,25 @@ def render_pdf(ctx: RiskExportContext) -> bytes:
 
     story.append(PageBreak())
     story.append(_text("Register", h2))
-    table = [["ID", "Weakness", "Axis", "L x I", "Tier", "Recommended", "Linked Source"]]
+    table = [
+        [
+            "ID",
+            "Weakness",
+            "Axis",
+            OTHER_AXES_HEADER,
+            "L x I",
+            "Tier",
+            "Recommended",
+            "Linked Source",
+        ]
+    ]
     for i, e in enumerate(ctx.entries, start=1):
         table.append(
             [
                 str(i),
                 e.title,
                 (e.axis or "").title(),
+                _other_axes(e),
                 _li(e),
                 _rating(e.tier),
                 (e.recommended_action or "").title(),
@@ -843,7 +879,17 @@ def render_pdf(ctx: RiskExportContext) -> bytes:
     story.append(
         _grid(
             table,
-            [0.4 * inch, 2.0 * inch, 0.8 * inch, 1.1 * inch, 0.8 * inch, 1.0 * inch, 1.2 * inch],
+            # 7.3 inches, as before: Weakness gives up the width Other axes takes.
+            [
+                0.4 * inch,
+                1.5 * inch,
+                0.8 * inch,
+                0.9 * inch,
+                1.0 * inch,
+                0.7 * inch,
+                0.9 * inch,
+                1.1 * inch,
+            ],
         )
     )
     doc.build(story)
@@ -883,6 +929,7 @@ def render_docx(ctx: RiskExportContext) -> bytes:
             str(i),
             e.title,
             (e.axis or "").title(),
+            _other_axes(e),
             _li(e),
             _rating(e.tier),
             (e.recommended_action or "").title(),
@@ -896,7 +943,18 @@ def render_docx(ctx: RiskExportContext) -> bytes:
         for i, e in enumerate(ctx.entries, start=1)
     ]
     add_table(
-        doc, ["ID", "Weakness", "Axis", "L x I", "Tier", "Recommended", "Linked Source"], rows
+        doc,
+        [
+            "ID",
+            "Weakness",
+            "Axis",
+            OTHER_AXES_HEADER,
+            "L x I",
+            "Tier",
+            "Recommended",
+            "Linked Source",
+        ],
+        rows,
     )
 
     return to_bytes(doc)

@@ -2018,6 +2018,7 @@ def risk_dashboard(
             RiskDashboardEntry(
                 title=e.title,
                 axis=e.axis,
+                other_axes=e.other_axes,
                 likelihood=e.likelihood,
                 impact=e.impact,
                 tier=e.tier,
