@@ -110,9 +110,10 @@ class SubsetCheck:
 
     `checked` False is the third state, "not checked": the client has no Tech
     Debt list, only lists with no security tool, or only discarded lists
-    (`not_checked_reason`). Nothing can be outside a list that does not
-    exist, so `outside` must then be empty, and building one that is not
-    raises here."""
+    (`not_checked_reason`); a mix of the last two (one service empty, one
+    only discarded) reports "empty", by `_current_list_versions`' precedence.
+    Nothing can be outside a list that does not exist, so `outside` must then
+    be empty, and building one that is not raises here."""
 
     checked: bool
     outside: tuple[OutsideCitation, ...] = ()

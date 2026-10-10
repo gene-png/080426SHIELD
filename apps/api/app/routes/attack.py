@@ -1214,6 +1214,9 @@ def _current_list_versions(
     if not chosen:
         reasons = {f.reason for f in fallbacks}
         reason = NOT_CHECKED_EMPTY if NOT_CHECKED_EMPTY in reasons else NOT_CHECKED_DISCARDED
+    # A stable order for C8 and C9 (the list query has no ORDER BY), as
+    # `sources.sort(...)` below orders the AI-inputs panel: title, then id.
+    fallbacks.sort(key=lambda f: (f.service_title, str(f.service_id)))
     return chosen, tuple(fallbacks), reason
 
 

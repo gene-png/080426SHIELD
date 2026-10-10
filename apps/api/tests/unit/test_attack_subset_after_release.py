@@ -926,8 +926,11 @@ C9_B = (
 
 def _r4_world(app_parts, reason: str) -> World:  # noqa: F811
     """One world per reason, the ATT&CK row citing EDR:
-    no_list (no Tech Debt list), empty (the only list has no security row), and
-    fallback (v1 approved holds EDR, v2 an empty draft)."""
+    - no_list: no Tech Debt list;
+    - empty: the only list has no security row;
+    - discarded: the only list is discarded;
+    - fallback: v1 approved holds EDR, v2 is an empty draft;
+    - mixed: fallback, plus a second service whose only list is empty."""
     if reason == "no_list":
         w = _no_list_world(app_parts)
     elif reason == "empty":
@@ -953,7 +956,7 @@ def _r4_world(app_parts, reason: str) -> World:  # noqa: F811
 R4_CASES = [
     ("no_list", C5, [C5B, C9]),
     ("empty", C5B, [C5, C9]),
-    # Only discarded lists: C5, as main already says (with the advisor).
+    # Only discarded lists: C5, ruled by the advisor in #736 6093549176.
     ("discarded", C5, [C5B, C9]),
     ("fallback", C9, [C5, C5B]),
     # A falls back, B has only empty lists: C9 for A only, nothing about B.
@@ -1064,3 +1067,24 @@ def test_two_services_falling_back_read_as_two_lines_on_every_screen(
     _release(w, _approve_finalize(w))
     notes = _dashboard(w)["subset_notes"]
     assert sorted(notes) == sorted([C9, C9_B]), notes
+
+
+def test_fallback_lines_are_ordered_by_service_title(app_parts, tmp_path) -> None:  # noqa: F811
+    """C8 and C9 lines come in (service title, service id) order, not query
+    order, so two finalizes, and the admin and client surfaces, list them
+    alike. Service A is inserted first and renamed to sort LAST."""
+    from app.models.capability import CapabilityList
+    from app.models.service import Service
+
+    _with_storage(app_parts, tmp_path)
+    w = _two_services_fall_back_to_v1(app_parts)
+    with w.sessions() as db:
+        a_service = db.get(CapabilityList, uuid.UUID(w.list_id)).service_id
+        db.get(Service, a_service).title = "Zulu Tech Debt"
+        db.commit()
+    zulu = C9.replace("Acme Tech Debt,", "Zulu Tech Debt,")
+    zulu_c8 = C8A.replace("Acme Tech Debt,", "Zulu Tech Debt,")
+    b_c8 = C8A.replace("Acme Tech Debt,", "Acme Tech Debt B,")
+    assert w.get()["subset_fallback_notes"] == [b_c8, zulu_c8]
+    _release(w, _approve_finalize(w))
+    assert _dashboard(w)["subset_notes"] == [C9_B, zulu]

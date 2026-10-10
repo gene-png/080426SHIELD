@@ -240,7 +240,8 @@ class AttackAssessmentResponse(BaseModel):
     citations_outside_subset: list[AttackOutsideCitation]
     #: #851: False when there is no security tool list to check against: the
     #: client has no Tech Debt list, only lists with no security tool, or only
-    #: discarded lists (#889 R4). `citations_outside_subset` is then empty
+    #: discarded lists (#889 R4); a mix of the last two (one service empty, one
+    #: only discarded) reads as the empty case, C5b. `citations_outside_subset` is then empty
     #: because nothing was checked, never because nothing was found (advisor:
     #: a third state). REQUIRED.
     subset_checked: bool

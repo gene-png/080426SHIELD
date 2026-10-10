@@ -59,8 +59,9 @@ export function AttackOutsideSubsetAlert({
         data-testid="attack-subset-fallback"
         className="flex flex-col gap-1 rounded-md border border-line bg-surface-sunken p-3 text-sm text-ink-secondary"
       >
-        {fallbacks.map((n) => (
-          <p key={n}>{n}</p>
+        {/* Keyed by index too: titles are not unique, so two lines can match. */}
+        {fallbacks.map((n, i) => (
+          <p key={`${i}:${n}`}>{n}</p>
         ))}
       </div>
     ) : null;

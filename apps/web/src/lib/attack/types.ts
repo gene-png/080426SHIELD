@@ -157,7 +157,8 @@ export interface AttackAssessment {
   citations_outside_subset?: AttackOutsideCitation[];
   /** #851: false when nothing could be checked (a third state, never a
    *  pass): the client has no Tech Debt list, only lists with no security
-   *  tool, or only discarded lists (#889 R4). */
+   *  tool, or only discarded lists (#889 R4); a mix of the last two (one
+   *  service empty, one only discarded) reads as the empty case, C5b. */
   subset_checked?: boolean;
   /** #889 R4: when `subset_checked` is false, why, as the API words it (C5,
    *  or C5b when the client's list has no security tools). */

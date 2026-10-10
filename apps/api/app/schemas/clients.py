@@ -852,7 +852,8 @@ class ValueSummaryResponse(BaseModel):
     #: understated. A Gap row is already in it and does not count. False:
     #: checked, none does.
     #: None: the total is None, or nothing could be checked (no Tech Debt list,
-    #: only lists with no security tool, or only discarded lists).
+    #: only lists with no security tool, or only discarded lists, or a mix of
+    #: those last two).
     attack_covered_relies_on_outside_tool: bool | None
     csf_gap_count: int | None
     csf_gap_unresolved: bool
