@@ -49,6 +49,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.ai.failures import friendly_reason
+from app.ai.isolation import RedactionRefused, release_run
 from app.ai.llm import LLMClient
 from app.ai.run_context import ai_run_id_var
 from app.logging import correlation_id_var, get_logger
@@ -184,6 +185,18 @@ def _charged_likely(db: Session, run_id: uuid.UUID, mode: LLMCallMode) -> bool |
     return None if mode == LLMCallMode.LIVE else False
 
 
+def _charged_likely_after(db: Session, ctx: RunContext, exc: BaseException) -> bool | None:
+    """`_charged_likely` for a run that raised, with one case it cannot see:
+    a run the redaction gate refused before ANY of its payloads cleared
+    (#552) sent nothing, so it is "not charged", False -- never None, which
+    the workspace prints as "may have made a live AI call" beside a refusal
+    saying nothing was sent. A refusal after a payload cleared is no such
+    proof, and falls through to the ledger like any other failure."""
+    if isinstance(exc, RedactionRefused) and not exc.sent_before:
+        return False
+    return _charged_likely(db, ctx.run_id, ctx.mode)
+
+
 def _fail_if_running(
     db: Session,
     run_id: uuid.UUID,
@@ -274,6 +287,11 @@ def reap(db: Session, *, service_id: uuid.UUID, purpose: str | None = None) -> N
             charged_likely=_charged_likely(db, run.id, run.mode),
         ):
             reaped += 1
+            # #552: the run's redaction place comes back at the reap, not when
+            # its job finally returns: a job stuck in a call would otherwise
+            # hold a place for as long as it is stuck. Its later calls are
+            # refused (`isolation` remembers the run as ended).
+            release_run(run.id)
             _log.warning(
                 "ai_runs.reaped",
                 run_id=str(run.id),
@@ -515,7 +533,7 @@ def _execute(bind: Engine | Connection, ctx: RunContext, work: Work) -> None:
             ctx.run_id,
             reason=reason,
             message=message,
-            charged_likely=_charged_likely(session, ctx.run_id, ctx.mode),
+            charged_likely=_charged_likely_after(session, ctx, exc),
             batches=exc.batches if isinstance(exc, RunFailed) else None,
         )
         session.commit()
@@ -535,6 +553,8 @@ def _execute(bind: Engine | Connection, ctx: RunContext, work: Work) -> None:
         # (The completion CAS is the backstop; this ordering is the guard.)
         session.close()
         _mark_done(ctx.run_id)
+        # #552: the run's redaction place, on every path through here.
+        release_run(ctx.run_id)
 
 
 # ---------------------------------------------------------------------------

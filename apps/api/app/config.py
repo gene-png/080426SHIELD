@@ -172,6 +172,23 @@ class Settings(BaseSettings):
 
     # Redaction (Master Spec §12)
     shield_redaction_mode: RedactionMode = "strict"
+    # Egress redaction runs in a short-lived child process (#552, D-111; see
+    # app/ai/isolation.py). The budget is per PAYLOAD: a child still redacting
+    # when it runs out is killed by PID and nothing is sent.
+    shield_redaction_budget_seconds: float = Field(default=30.0, gt=0)
+    # Child processes redacting at once, across every tenant.
+    shield_redaction_max_children: int = Field(default=2, ge=1)
+    # How long one call waits, in turn (FIFO), for a child slot before its run
+    # is refused with `redaction_capacity_busy`.
+    shield_redaction_slot_wait_seconds: float = Field(default=30.0, gt=0)
+    # Run PLACES. A run (a Run-AI, a Risk generate, or one call outside both)
+    # holds one place from its first redaction until it ends, and a run arriving
+    # with every place taken is refused, typed, before anything is sent.
+    # THIS CAPS THE WHOLE PLATFORM AT 4 CONCURRENT AI RUNS ACROSS ALL TENANTS.
+    # 4 is what the database pool sustains today (#736 6095152284: the 15-
+    # connection pool was full at 4 to 5 runs, #1025); raising it waits for
+    # #1025 and is re-measured then.
+    shield_redaction_max_runs: int = Field(default=4, ge=1)
 
     # Session security (Master Spec §4.5)
     # 3600, raised from 900 on 2026-08-08. The old 15 minutes was not itself the

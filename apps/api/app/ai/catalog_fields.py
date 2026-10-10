@@ -39,7 +39,8 @@ import json
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
-from app.ai.redact import RedactionMode, redact_payload
+from app.ai.isolation import redact_payload_isolated
+from app.ai.redact import RedactionMode
 from app.logging import get_logger
 
 _log = get_logger(__name__)
@@ -140,7 +141,10 @@ def redact_ai_payload(
     for field in exempt:
         _check(field, payload, payload[field], "before redaction")
     rest = {k: v for k, v in payload.items() if k not in exempt}
-    cleaned, counts = redact_payload(
+    # #552: computed in a child process under a budget (app/ai/isolation.py),
+    # so a slow redaction holds no GIL here and can be stopped. The catalog
+    # guard above and below stays in this process, so its refusal stays native.
+    cleaned, counts = redact_payload_isolated(
         rest, mode=mode, client_org_name=client_org_name, name_hints=name_hints
     )
     out = {k: (payload[k] if k in exempt else cleaned[k]) for k in payload}

@@ -266,6 +266,8 @@ class CitationResolver:
         The condition for aliasing is "did the redactor change this string", and
         the only way to know that is to ask it.
         """
+        # #552: in-process on purpose. One tool name, never a payload, and
+        # nothing here egresses; the egress redacts in a child (ai/isolation.py).
         redacted, counts = redact_for_ai(
             name,
             mode=self._redaction_mode,
