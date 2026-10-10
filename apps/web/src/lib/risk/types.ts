@@ -20,6 +20,12 @@ export interface RiskInputState {
    * Absent on every other kind.
    */
   no_playbook_scores?: boolean;
+  /**
+   * R10 (#736 6102665946): CSF rows only. When the Playbook measured, how many
+   * targeted subcategories have no tier row both scored and targeted, so
+   * raise no finding; 0 otherwise. Absent on every other kind.
+   */
+  unscored_targeted_subcategories?: number;
 }
 
 export interface RiskGate {

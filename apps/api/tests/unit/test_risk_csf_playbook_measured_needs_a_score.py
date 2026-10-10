@@ -2,8 +2,10 @@
 
 The advisor's ruling (#736 6090360421): a Playbook whose only recorded values
 are target levels -- targets set, nothing scored -- has measured nothing, so
-it must not read `measured`. Which rows raise findings is unchanged (Gene's
-`is_gap` rule, pending his row-level ruling).
+it must not read `measured`. Since R10 (#736 6102665946), `measured` needs one
+tier row that is both scored and targeted, so a score and a target on two
+different rows read `playbook_no_scores`; which rows raise findings is
+pinned in `test_risk_csf_scored_and_targeted_row.py`.
 
 Every row is written the way the product writes it: scores through the real
 CSF Run-AI (a registered provider response), targets through the
@@ -96,9 +98,9 @@ def _csf_source(c, bearer: str, cid: str) -> str:
         (True, None, "playbook_no_targets"),
         # Scored, and that row has a target.
         (True, SCORED, "playbook"),
-        # One row scored, a DIFFERENT row given a target: the Playbook has a
-        # recorded value and a target, so it measured; they need not share a row.
-        (True, TARGETED, "playbook"),
+        # One row scored, a DIFFERENT row given a target: no row is both
+        # scored and targeted, so nothing was measured against a target (R10).
+        (True, TARGETED, "playbook_no_scores"),
     ],
     ids=["targets_only", "scores_no_targets", "scores_and_target", "score_and_target_on_two_rows"],
 )

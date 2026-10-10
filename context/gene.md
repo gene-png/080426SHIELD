@@ -1,7 +1,7 @@
 # Gene — in-flight status
 
-_2026-10-09 (track6): #474 D' (your PR D) is built on
-`track6/474-d-playbook-risk`, with no PR yet: #1002 goes first._
+_2026-10-10 (track6): #474 D' (your PR D) is PR #1030, on
+`track6/474-d-playbook-risk`._
 
 **What it does:** the Risk Register's CSF risks now come from the Playbook
 score you chose (#736 5984218862), not the questionnaire tier. A subcategory is
@@ -9,11 +9,15 @@ a risk when its Playbook level is below its Playbook target, and the register
 says on every screen and file, only when it has CSF risks: "CSF risks in this
 register come from Kentro's evidence-based assessment. They can differ from
 your self-assessment on the CSF dashboard." The client's CSF dashboard is
-unchanged. If the Playbook has no targets or no scores, the register says CSF
-was not measured instead of implying "no gaps". Per your ruling (a) (#736
-6101751588), a row with a target and no score raises no CSF risk, so a
-Playbook with only targets reads "not measured" with no CSF risks and no source
-note. If someone edits the
+unchanged. Per your ruling (a) (#736 6101751588), made per tier row by R10
+(#736 6102665946), a subcategory can be a CSF risk only when one of its tier
+rows is both scored and targeted, and the register says CSF was measured only
+when at least one subcategory has such a row. Otherwise (no targets, only
+targets, or a score and a target on different rows) it says CSF was not
+measured, with no CSF risks and no source note, instead of implying "no gaps".
+When it measured, the other targeted subcategories are counted on the Inputs
+panel and in the files: "{n} targeted subcategories have no recorded scores and
+raise no finding." If someone edits the
 Playbook after the register is generated, it must be regenerated before it can
 be published. Two tests about the old CSF engagement-tier rule are deleted,
 with the advisor's approval, because your decision retired that rule. The Atlas demo

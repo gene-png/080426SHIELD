@@ -45,7 +45,24 @@ export function inputLine(row: RiskInputState): string {
     row.status === "released" && row.no_playbook_scores === true
       ? ", no Playbook scores"
       : "";
-  return `${label}: ${statusWord(row.status)}${noPlaybook}`;
+  const unscored =
+    row.status === "released"
+      ? unscoredTargetsSentence(row.unscored_targeted_subcategories ?? 0)
+      : null;
+  return `${label}: ${statusWord(row.status)}${noPlaybook}${unscored ? `. ${unscored}` : ""}`;
+}
+
+/**
+ * R10 (#736 6102665946), approved verbatim with its singular: targeted CSF
+ * subcategories with no tier row both scored and targeted. The files print the
+ * API's own sentence (`risk/csf_source.py`); null when n is 0.
+ */
+export function unscoredTargetsSentence(n: number): string | null {
+  if (n === 1)
+    return "1 targeted subcategory has no recorded scores and raises no finding.";
+  if (n > 1)
+    return `${n} targeted subcategories have no recorded scores and raise no finding.`;
+  return null;
 }
 
 /**

@@ -34,6 +34,10 @@ class RiskInputState(BaseModel):
     #: value other than a target, so it feeds no CSF finding (#736
     #: 6101751588); None for every other kind.
     no_playbook_scores: bool | None = None
+    #: R10 (#736 6102665946): CSF only. When the Playbook measured, how many
+    #: targeted subcategories have no tier row both scored and targeted, so
+    #: raise no finding; 0 otherwise. None for every other kind.
+    unscored_targeted_subcategories: int | None = None
 
     @model_serializer(mode="wrap")
     def _omit_unset_playbook_flag(self, handler):
@@ -42,6 +46,8 @@ class RiskInputState(BaseModel):
         data = handler(self)
         if self.no_playbook_scores is None:
             data.pop("no_playbook_scores", None)
+        if self.unscored_targeted_subcategories is None:
+            data.pop("unscored_targeted_subcategories", None)
         return data
 
 
