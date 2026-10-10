@@ -163,8 +163,10 @@ export interface AttackAssessment {
   /** #889 R4: when `subset_checked` is false, why, as the API words it (C5,
    *  or C5b when the client's list has no security tools). */
   subset_not_checked_sentence?: string | null;
-  /** #889 R4: C8a / C8b, one per Tech Debt service whose newest version has
-   *  no security tools, so an earlier version is used. */
+  /** #889 R4: C8a / C8b, one per Tech Debt service whose newest version in
+   *  force has no security tools, so an earlier version is used. C8a only
+   *  where the service has only drafts; C8b among approved or released
+   *  versions, whose service's drafts are ignored (#889 R6b). */
   subset_fallback_notes?: string[];
 }
 

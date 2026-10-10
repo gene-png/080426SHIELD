@@ -345,9 +345,13 @@ def subset_state(
     (`citation_resolver_for`, the client's legal name, and no name hints for
     `mitre_map`), built over the SAME membership rules Run AI's request uses
     (`_client_capability_membership`) with ONE difference: only each Tech Debt
-    service's latest non-discarded list version counts (#889 review F2). Run
-    AI's allow-list keeps every version, so it can still offer a tool this
-    check reports outside the list; that root is #1012.
+    service's current version counts (#889 review F2, R4, R6b): its newest
+    APPROVED or RELEASED version with a security row, or, in a service with
+    only drafts, its newest draft with one (`_current_list_versions`). Run
+    AI's allow-list keeps every non-discarded version, drafts included, so it
+    can still offer a tool this check reports outside the list (a superseded
+    version's, or one only an open draft holds beside an approved version);
+    that root is #1012.
 
     `parents_computed` is the assessment's rule set (`attack/rules.py`),
     required: a computed parent's own tools are not checked under D-094
@@ -357,8 +361,9 @@ def subset_state(
         raise ValueError(f"client {client_id} does not exist")
     # ONE membership read: its lists decide whether there is a subset to judge
     # against at all. #889 review F2: the CURRENT list, so only each Tech Debt
-    # service's current version (`_current_list_versions`); the
-    # allow-list (`_client_capability_inputs`) keeps every version (#1012).
+    # service's current version (`_current_list_versions`, R6b: drafts are
+    # ignored where an approved or released version exists); the allow-list
+    # (`_client_capability_inputs`) keeps every non-discarded version (#1012).
     membership = _client_capability_membership(db, client_id, latest_versions_only=True)
     if not subset_applies(cl.status for cl in membership.lists):
         # NOT CHECKED, the third state: nothing is flagged because nothing
@@ -1155,21 +1160,60 @@ def _service_title(svc: Service | None, service_id: uuid.UUID) -> str:
     return svc.title
 
 
+#: #889 R6b (advisor, #736 6094994432): the statuses that make a Tech Debt
+#: service's list FINISHED. Where a service has any, only those versions vote
+#: and its drafts are ignored, so an open draft never changes the check for a
+#: client who already has an approved list. The same two statuses as
+#: `_PLAN_STATUSES`, by a separate ruling, so stated separately: neither should
+#: move because the other did.
+_SUBSET_FINISHED_STATUSES = frozenset(
+    {CapabilityListStatus.APPROVED, CapabilityListStatus.RELEASED}
+)
+
+
+def _versions_in_force(versions: list[CapabilityList]) -> list[CapabilityList]:
+    """#889 R6b: ONE Tech Debt service's candidate versions, newest first.
+
+    If the service has any APPROVED or RELEASED version, those alone; its
+    drafts are ignored (neither voting nor "skipped"). If it has ONLY drafts,
+    its drafts, as under R2. DISCARDED never counts (review F2).
+
+    NEWEST means the highest VERSION NUMBER, not the latest `approved_at`. The
+    version number is the order the lists were created in (each is minted
+    past `_max_list_version`, in `routes/tech_debt.py`), the one every
+    surface names ("version {n}"), and it is the same latest-version rule F2
+    and `_latest_plan_ids` use. Approval time is not: the approve route stamps
+    `approved_at` again on every re-approval of an APPROVED list, so ordering
+    by it would let re-approving an OLDER version make it "newest". Pinned by
+    `test_r6b_newest_is_the_highest_version_not_the_latest_approval`."""
+    live = [cl for cl in versions if cl.status != CapabilityListStatus.DISCARDED]
+    finished = [cl for cl in live if cl.status in _SUBSET_FINISHED_STATUSES]
+    return sorted(finished or live, key=lambda cl: cl.version, reverse=True)
+
+
 def _current_list_versions(
     db: Session,
     lists: Iterable[CapabilityList],
     live_by_list: dict[uuid.UUID, list[CapabilityItem]],
 ) -> tuple[list[CapabilityList], tuple[VersionFallback, ...], str | None]:
     """#889: per Tech Debt SERVICE, the list version that IS the client's
-    current security tool list: the highest version that is not DISCARDED
-    (review F2; a DRAFT counts, R2) and offers at least one security-scope row
-    (R4, option (b)). Newer versions with none do not vote; the newest earlier
-    one that has some does.
+    current security tool list (R6b, #736 6094994432):
+
+    - if the service has any APPROVED or RELEASED version, the newest such
+      version; its drafts are ignored, so an open draft changes nothing;
+    - if it has ONLY drafts, the newest draft, as under R2.
+
+    DISCARDED versions never count (review F2). "Newest" is the highest
+    version number (`_versions_in_force` says why). Within that pool, a version
+    must offer at least one security-scope row (R4, option (b)): a newer one
+    with none does not vote, and the newest earlier one in the SAME pool that
+    has some does. Among approved and released versions that fallback is C8b;
+    in a drafts-only service it is C8a.
 
     Returns the chosen lists; a `VersionFallback` for every service whose
-    latest version did not vote, naming every version skipped, and for every
-    service that contributes nothing, with its own reason; and, when nothing
-    was chosen at all, the top-level reason.
+    newest in-force version did not vote, naming every version skipped, and
+    for every service that contributes nothing, with its own reason; and, when
+    nothing was chosen at all, the top-level reason.
 
     TOP-LEVEL PRECEDENCE: `NOT_CHECKED_EMPTY` outranks `NOT_CHECKED_DISCARDED`.
     If any service holds a non-discarded list (empty), the reason is "empty":
@@ -1181,11 +1225,7 @@ def _current_list_versions(
     chosen: list[CapabilityList] = []
     fallbacks: list[VersionFallback] = []
     for service_id, versions in by_service.items():
-        live = sorted(
-            (cl for cl in versions if cl.status != CapabilityListStatus.DISCARDED),
-            key=lambda cl: cl.version,
-            reverse=True,
-        )
+        live = _versions_in_force(versions)
         used = next((cl for cl in live if _offers_security_rows(cl, live_by_list[cl.id])), None)
         if used is not None:
             chosen.append(used)
@@ -1345,12 +1385,16 @@ def _client_capability_membership(
 ) -> CapabilityMembership:
     """Security capabilities from the client's Tech Debt capability list(s).
 
-    `latest_versions_only` (#889 review F2, R2, R4) is for the SECURITY TOOL
+    `latest_versions_only` (#889 review F2, R4, R6b) is for the SECURITY TOOL
     LIST CHECK alone (`subset_state`): per Tech Debt service only the current
-    version counts (`_current_list_versions`), so a tool dropped in a newer
-    version is outside the client's CURRENT list however an older approved
-    version's snapshot reads. The default, False, is the citation allow-list's rule below and is
-    unchanged; that superseded versions still count THERE is #1012.
+    version counts (`_current_list_versions`). That is the newest APPROVED or
+    RELEASED version with a security row, its drafts ignored, so an open draft
+    changes nothing for a client who already has an approved list; or, in a
+    service with ONLY drafts, the newest draft with one, as under R2. So a tool
+    dropped in a newer version that counts is outside the client's CURRENT
+    list however an older approved version's snapshot reads. The default,
+    False, is the citation allow-list's rule below and is unchanged; that
+    superseded versions and drafts still count THERE is #1012.
 
     Returns name AND vendor: the citation resolver needs the vendor column to
     judge whether a cited string is unambiguous, and a MISSING vendor is itself
@@ -1444,10 +1488,11 @@ def _client_capability_membership(
         live_by_list[item.capability_list_id].append(item)
         live_by_id[str(item.id)] = item
 
-    # #889 (F2, R2, R4): the security tool list check reads each service's
-    # CURRENT version only. Chosen after the live rows load, because an empty
-    # version is judged on them. The citation allow-list (the default) keeps
-    # every version (#1012).
+    # #889 (F2, R4, R6b): the security tool list check reads each service's
+    # CURRENT version only (approved or released where one exists, else the
+    # newest draft). Chosen after the live rows load, because an empty version
+    # is judged on them. The citation allow-list (the default) keeps every
+    # non-discarded version (#1012).
     fallbacks: tuple[VersionFallback, ...] = ()
     if latest_versions_only:
         lists, fallbacks, reason = _current_list_versions(db, lists, live_by_list)

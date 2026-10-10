@@ -70,7 +70,11 @@ NOT_CHECKED_SENTENCE = (
 
 
 #: R4, option (b) (#736): why nothing could be checked. No Tech Debt list at
-#: all; only lists with no security-scope row; or only discarded lists.
+#: all; only lists with no security-scope row; or only discarded lists. Under
+#: R6b (#736 6094994432) "only lists with no security-scope row" is judged on
+#: the versions in force: a service's approved or released versions where it
+#: has any (its drafts ignored), else its drafts. A drafts-only client is
+#: therefore checked against its newest draft, never "no_list".
 NOT_CHECKED_NO_LIST = "no_list"
 NOT_CHECKED_EMPTY = "empty"
 NOT_CHECKED_DISCARDED = "discarded"
@@ -79,15 +83,18 @@ NOT_CHECKED_DISCARDED = "discarded"
 @dataclass(frozen=True)
 class VersionFallback:
     """R4 (b): one Tech Debt service whose current list is not simply its
-    latest version.
+    newest version in force.
 
-    `skipped`: every non-discarded version passed over for holding no
-    security-scope row, as (version, status), newest first. `used_version`:
-    the version that votes, or None when the service contributes nothing, in
-    which case `reason` says why (`NOT_CHECKED_EMPTY`: every non-discarded
-    version is empty; `NOT_CHECKED_DISCARDED`: every version is discarded, and
-    `skipped` is then empty). `reason` is None exactly when `used_version` is
-    not."""
+    In force (R6b, #736 6094994432): the service's APPROVED and RELEASED
+    versions if it has any, its drafts ignored; else its drafts. `skipped`:
+    every version in force passed over for holding no security-scope row, as
+    (version, status), newest first by version number. So the statuses are
+    all "draft" (a drafts-only service, C8a) or all approved / released
+    (C8b), never mixed. `used_version`: the version that votes, or None when
+    the service contributes nothing, in which case `reason` says why
+    (`NOT_CHECKED_EMPTY`: every version in force is empty;
+    `NOT_CHECKED_DISCARDED`: every version is discarded, and `skipped` is then
+    empty). `reason` is None exactly when `used_version` is not."""
 
     service_id: uuid.UUID
     service_title: str
@@ -117,7 +124,8 @@ class SubsetCheck:
 
     checked: bool
     outside: tuple[OutsideCitation, ...] = ()
-    #: R4 (b): the services whose latest version did not vote. Additive.
+    #: R4 (b): the services whose newest version in force did not vote (R6b:
+    #: approved or released where any exists, else drafts). Additive.
     fallbacks: tuple[VersionFallback, ...] = ()
     #: R4 (b): why nothing was checked (`NOT_CHECKED_*`); None when checked.
     not_checked_reason: str | None = None
@@ -201,6 +209,11 @@ def fallback_admin_sentence(fallback: VersionFallback) -> str:
     """C8a (the newest skipped version is a DRAFT) or C8b (approved or
     released), on the admin ATT&CK workspace only. {n} is the newest skipped
     version, {m} the version used.
+
+    C8a is reachable only in a Tech Debt service with ONLY drafts (R6b, #736
+    6094994432): where a service has an approved or released version its
+    drafts are ignored, so none is ever skipped
+    (`test_r6b_c8a_only_in_a_drafts_only_service`).
 
     C8b IS reachable: the Tech Debt approve route accepts a list with no
     security row (`test_r4_an_approved_empty_newest_version_reads_c8b`)."""

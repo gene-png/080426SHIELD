@@ -249,8 +249,11 @@ class AttackAssessmentResponse(BaseModel):
     #: sentence saying why (C5, or C5b when the client's list has no security
     #: tools); None when checked. REQUIRED.
     subset_not_checked_sentence: str | None
-    #: #889 R4: C8a / C8b, one per Tech Debt service whose newest version has no
-    #: security tools, so an earlier one is used. Admin only. REQUIRED.
+    #: #889 R4: C8a / C8b, one per Tech Debt service whose newest version in
+    #: force has no security tools, so an earlier one is used. C8a only in a
+    #: service with only drafts; C8b among approved or released versions, a
+    #: service's drafts being ignored once it has one (R6b). Admin only.
+    #: REQUIRED.
     subset_fallback_notes: list[str]
 
 
