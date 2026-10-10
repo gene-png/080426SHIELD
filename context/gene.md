@@ -2,6 +2,17 @@
 
 _2026-10-09 (track4): #889 PR 1 is built on `track4/889-attack-subset-drift`, for #889; the PR is not yet open. When a tool leaves a client's security tool list after their ATT&CK report is approved, the client's dashboard now says so and marks the tool, the documents say so as of finalize, and the home card says its ATT&CK total may be understated when a technique counted as covered relies on such a tool. A client with no list sees "not checked" on the dashboard. No number changes. **One thing needs you:** the golden `dashboard.json` gains that "not checked" sentence; the advisor approved it (#736 6090360421) and your ratification is pending, as for #851's. The admin "finalize again" line is filed as #1005 (tier-3). The Risk half waits for D′. It comes back to you: conditions 5 and 6._
 
+_2026-10-09 (track5): #865 is built on `track5/865-whatif-name-hints`, for
+#865; no PR yet. The ATT&CK what-if's AI run and the ATT&CK Run-AI now hide
+the names of the client's own users from the AI, as the Tech Debt extraction
+and the what-if chat box already did. A tool an admin names after a colleague
+(on the what-if panel, or on the capability list) reaches the provider as
+"[NAME] ...", and the what-if still credits it when the AI cites it that way.
+Two added tools that would both reach the AI as "[NAME] Scanner" are refused
+when the what-if is created. Zero Trust and CSF send typed notes without this
+dictionary too; those files belong to other open PRs, so they are reported to
+you, not changed. It comes back to you: conditions 5 and 6._
+
 _2026-10-09 (track1): #993 is built on `track1/993-docx-control-chars`, for
 #993; the PR is not yet open. A client legal name with a control character
 (for example a stray BEL byte, which the admin route accepts) no longer blocks
