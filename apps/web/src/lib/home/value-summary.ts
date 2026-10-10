@@ -55,7 +55,7 @@ export interface ValueSummary {
    *  a Covered or Partial row (effective status) crediting a tool outside the
    *  client's CURRENT security tool list, so the total, which sums Gap only,
    *  may be understated. A Gap row is already in it and does not count.
-   *  False: checked, none does. Null: no total, or nothing could be checked (no Tech Debt list, only lists with no security tool, or only discarded lists). Optional
+   *  False: checked, none does. Null: no total, or nothing could be checked (no Tech Debt list, only lists in force with no security tool, or only discarded lists). Optional
    *  so an API that predates it reads as "nothing to say". */
   attack_covered_relies_on_outside_tool?: boolean | null;
   csf_gap_count: number | null;

@@ -1106,8 +1106,8 @@ class CapabilityMembership:
     #: Read by `attack/retirement.py`; see there for the rules.
     plan_entries: list[PlanEntry] = field(default_factory=list)
     #: #889 R4 (b), for the security tool list check only
-    #: (`latest_versions_only`): services whose latest version did not vote,
-    #: and why nothing could be checked when no version did.
+    #: (`latest_versions_only`): services whose newest version in force (R6b)
+    #: did not vote, and why nothing could be checked when no version did.
     version_fallbacks: tuple[VersionFallback, ...] = ()
     not_checked_reason: str | None = None
 

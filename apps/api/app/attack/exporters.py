@@ -117,7 +117,7 @@ class AttackDeliverableContext:
     after: AfterPlannedChanges | None = None
     #: #851 / #889 (Q7): the security tool list check, read at finalize (the
     #: rendered bytes keep it) or live (the client dashboard). Not checked: the
-    #: client has no list, only lists with no security tool, or only discarded
+    #: client has no list, only lists in force with no security tool, or only discarded
     #: lists, and every format says
     #: which (C5, C5b). Checked: the rows crediting a tool outside the list are
     #: counted (C1), each such tool is marked (C3), and a service that fell

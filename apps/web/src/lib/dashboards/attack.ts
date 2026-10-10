@@ -161,7 +161,7 @@ export interface AttackDashboardData {
   /**
    * #889 (Q1): the security tool list check, the deliverable's own sentences,
    * read LIVE. Not checked: C5 when the client has no Tech Debt list or only
-   * discarded ones, C5b when its lists have no security tool. Checked: the
+   * discarded ones, C5b when its lists in force have no security tool. Checked: the
    * count of rows crediting a tool outside it (C1), and C9 per service that
    * fell back to an earlier version; [] when there is neither.
    */

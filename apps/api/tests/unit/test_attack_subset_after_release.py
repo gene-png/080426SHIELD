@@ -461,8 +461,8 @@ def test_a_tool_dropped_from_an_approved_v2_is_flagged_though_v1_held_it(
     app_parts, tmp_path  # noqa: F811
 ) -> None:
     """v1 is approved holding "Legacy AV"; ATT&CK is released; v2 is uploaded
-    without it and approved. Per Tech Debt service only the latest version
-    counts toward the security tool list (older versions do not vote), so the
+    without it and approved. Per Tech Debt service only the newest version in
+    force counts toward the security tool list (older versions do not vote), so the
     dashboard and the home card flag it. v1's snapshot must not keep it in."""
     _with_storage(app_parts, tmp_path)
     w = _world(app_parts)
@@ -648,6 +648,145 @@ def _approve_list(w: World, list_id: str) -> None:
     assert r.status_code == 200, r.text
 
 
+def _add_draft_version(w: World, list_id: str, names: list[str], version: int = 2) -> str:
+    """A DRAFT `version` of the Tech Debt service that owns `list_id`, holding
+    `names` as security rows: the world, written directly, as `_upload_v2`."""
+    from app.models.capability import (
+        CapabilityDisposition,
+        CapabilityItem,
+        CapabilityList,
+        CapabilityListStatus,
+    )
+
+    with w.sessions() as db:
+        service_id = db.get(CapabilityList, uuid.UUID(list_id)).service_id
+        cl = CapabilityList(
+            service_id=service_id, version=version, status=CapabilityListStatus.DRAFT
+        )
+        db.add(cl)
+        db.flush()
+        for name in names:
+            db.add(
+                CapabilityItem(
+                    capability_list_id=cl.id,
+                    name=name,
+                    security_related=True,
+                    disposition=CapabilityDisposition.KEEP,
+                )
+            )
+        db.commit()
+        return str(cl.id)
+
+
+def _list_status(w: World, list_id: str) -> str:
+    from app.models.capability import CapabilityList
+
+    with w.sessions() as db:
+        return str(db.get(CapabilityList, uuid.UUID(list_id)).status.value)
+
+
+def _release_tech_debt_list(w: World) -> None:
+    """The world's v1 RELEASED through the real routes: approve the list,
+    finalize the Tech Debt deliverable, release it (the release flips the list
+    to RELEASED)."""
+    from app.models.capability import CapabilityList
+
+    with w.sessions() as db:
+        td_svc = str(db.get(CapabilityList, uuid.UUID(w.list_id)).service_id)
+    w.approve_list()
+    fin = w.c.post(f"/tech-debt/services/{td_svc}/deliverables/finalize", headers=w.h)
+    assert fin.status_code == 201, fin.text
+    r = w.c.post(f"/tech-debt/deliverables/{fin.json()['id']}/release", headers=w.h)
+    assert r.status_code == 200, r.text
+
+
+def test_r6b_a_released_version_is_in_force_over_an_open_draft(
+    app_parts, tmp_path  # noqa: F811
+) -> None:
+    """R6b: RELEASED counts as finished, as APPROVED does. v1 is RELEASED
+    holding "Legacy AV"; an open DRAFT v2 holds EDR and "Shadow Scanner" and
+    not "Legacy AV". v1 is in force: "Legacy AV" is NOT flagged, and "Shadow
+    Scanner", which only the draft holds, IS (so the draft was not read)."""
+    _with_storage(app_parts, tmp_path)
+    w = _world(app_parts)
+    _release_tech_debt_list(w)
+    assert _list_status(w, w.list_id) == "released"  # the world, positive first
+    v2 = _add_draft_version(w, w.list_id, [EDR, "Shadow Scanner"])
+    assert _list_status(w, v2) == "draft"
+    code = _codes(w)[0]
+    r = w.patch(code, {"detection_tools": [EDR, LEGACY, "Shadow Scanner"]})
+    assert r.status_code == 200, r.text
+    body = w.get()
+    assert body["subset_checked"] is True, body["subset_checked"]
+    assert body["citations_outside_subset"] == [
+        {
+            "technique_code": code,
+            "field": "detection_tools",
+            "tool": "Shadow Scanner",
+            "locked": False,
+        }
+    ], body["citations_outside_subset"]
+    assert body["subset_fallback_notes"] == [], body["subset_fallback_notes"]
+    assert body["subset_not_checked_sentence"] is None
+    assert _subset(w).fallbacks == ()
+
+
+def test_r6b_an_approved_empty_version_is_not_replaced_by_a_draft_with_tools(
+    app_parts, tmp_path  # noqa: F811
+) -> None:
+    """R6b: the service's only finished version, v1 APPROVED, has no security
+    row; v2 is an open DRAFT holding EDR. Drafts are NOT consulted: nothing is
+    checked, the reason is "empty", the admin assessment and the client
+    dashboard read C5b, no C8 or C9 line is written, and nothing is outside
+    (the row's "Shadow Scanner" would be outside v2 if v2 were read)."""
+    _with_storage(app_parts, tmp_path)
+    w = _no_list_world(app_parts)
+    v1 = _second_tech_debt_service(w, [], title="Acme Tech Debt")
+    _approve_list(w, v1)
+    v2 = _add_draft_version(w, v1, [EDR])
+    assert (_list_status(w, v1), _list_status(w, v2)) == ("approved", "draft")
+    _cover(w, _codes(w)[0], [EDR, "Shadow Scanner"])
+    admin = w.get()
+    assert admin["subset_not_checked_sentence"] == C5B, admin  # positive first
+    assert admin["subset_checked"] is False, admin["subset_checked"]
+    assert admin["subset_fallback_notes"] == [], admin["subset_fallback_notes"]
+    assert admin["citations_outside_subset"] == [], admin["citations_outside_subset"]
+    check = _subset(w)
+    assert (check.checked, check.not_checked_reason, check.outside) == (False, "empty", ())
+    assert [(f.service_title, f.skipped, f.used_version, f.reason) for f in check.fallbacks] == [
+        ("Acme Tech Debt", ((1, "approved"),), None, "empty")
+    ]
+    _release(w, _approve_finalize(w))
+    dash = _dashboard(w)
+    assert dash["subset_notes"] == [C5B], dash["subset_notes"]
+    assert "tool_outside_subset" not in dash, sorted(dash)
+    assert _value_summary(w)["attack_covered_relies_on_outside_tool"] is None
+
+
+def test_r6b_an_approved_service_and_a_drafts_only_service_are_read_independently(
+    app_parts,  # noqa: F811
+) -> None:
+    """One client, two Tech Debt services. A: v1 APPROVED (EDR, "Legacy AV",
+    "Acme Portal") and an open DRAFT v2 holding only EDR, so A's v1 is in force.
+    B: drafts only, v1 "Shadow Scanner" and v2 "Nessus", so B's v2 is in
+    force. Inside: EDR and "Legacy AV" (A's v1 alone holds it) and "Nessus"
+    (B's v2 alone holds it). Outside: "Shadow Scanner" (only B's older draft)
+    and "Homegrown Script" (no list)."""
+    w = _world(app_parts)
+    w.approve_list()
+    _add_draft_version(w, w.list_id, [EDR])
+    b_v1 = _second_tech_debt_service(w, ["Shadow Scanner"])
+    _add_draft_version(w, b_v1, ["Nessus"])
+    code = _codes(w)[0]
+    cited = [EDR, LEGACY, "Shadow Scanner", "Nessus", "Homegrown Script"]
+    r = w.patch(code, {"detection_tools": cited})
+    assert r.status_code == 200, r.text
+    row = next(c for c in w.get()["coverage"] if c["technique_code"] == code)
+    assert row["detection_tools"] == cited, row  # positive first
+    assert _outside_tools(w) == ["Homegrown Script", "Shadow Scanner"]
+    assert _subset(w).fallbacks == ()
+
+
 @pytest.mark.parametrize("v2_holds_it", [True, False])
 def test_approve_refuses_a_tool_the_latest_approved_version_dropped(
     app_parts, v2_holds_it: bool  # noqa: F811
@@ -796,9 +935,9 @@ def _outside_tools(w: World) -> list[str]:
 
 
 def test_each_tech_debt_service_has_its_own_latest_version(app_parts) -> None:  # noqa: F811
-    """Service A's latest (v2) holds EDR and not Legacy AV; service B's latest
-    holds Legacy AV. One latest list PER SERVICE: a row citing both is
-    inside the list."""
+    """Drafts-only services (R6b): service A's newest draft (v2) holds EDR and
+    not Legacy AV; service B's newest holds Legacy AV. One version in force PER
+    SERVICE: a row citing both is inside the list."""
     w = _world(app_parts)
     _upload_v2_without(w, LEGACY)
     _second_tech_debt_service(w, [LEGACY])
@@ -840,7 +979,7 @@ def test_a_tool_only_on_a_discarded_v2_is_flagged(app_parts) -> None:  # noqa: F
     assert _outside_tools(w) == ["Shadow Scanner"]
 
 
-# --- R4 (b): a latest version with no security-scope rows does not vote ----------------
+# --- R4 (b): a newest version in force with no security-scope rows does not vote -------
 # Ruled option (b) (#736). The API half only: the admin copy is with the advisor.
 
 
