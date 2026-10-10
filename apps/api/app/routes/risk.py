@@ -41,6 +41,7 @@ from app.audit import audit
 from app.csf.catalog import subcategory_by_code
 from app.csf.enterprise import enterprise_subcategories as csf_enterprise_subcategories
 from app.csf.retired import catalog_rows as csf_catalog_rows
+from app.csf.retired import has_recorded_value_besides_target
 from app.db.session import get_db
 from app.dependencies import require_role
 from app.docx_export import DOCX_MIME
@@ -515,9 +516,8 @@ def _csf_has_no_playbook_scores(db: Session, r: InputRecord) -> bool:
     register's `no_scores` state (`csf_source.csf_playbook_state`, advisor
     #736 6087786886 item 4 and 6090360421), so the panel and the register
     cannot disagree; seeded rows nobody scored count as none, and so does a
-    Playbook whose only recorded values are targets. Such a Playbook can still
-    feed CSF findings (`is_gap` on a targeted row at level 1): open, with
-    Gene's row-level ruling on target-only findings."""
+    Playbook whose only recorded values are targets. Such a Playbook feeds no
+    CSF finding (Gene, #736 6101751588, option (a))."""
     a = db.get(CsfAssessment, uuid.UUID(r.record_id))
     if a is None:
         raise RuntimeError(f"CSF input {r.record_id!r} has no assessment row")
@@ -910,9 +910,9 @@ def _gather_findings(
     None`), so a scored-nothing service contributes no findings either -- the
     model is asked to link nothing and drops nothing. CSF (#474 D') raises a
     finding where the Playbook roll-up's `is_gap` says so, which needs a
-    `target_level`; a target set on a row nobody scored is a finding whose own
-    code is not citable (`csf_playbook_scope`), and the dropped link is
-    recorded on the entry like any other. What must never happen is that
+    `target_level` and, since Gene's ruling (#736 6101751588, option (a)), a
+    recorded value other than the target on that subcategory; a target set on
+    a row nobody scored raises no finding. What must never happen is that
     state passing SILENTLY, which is what `link_scopes` is returned for.
 
     The fourth return value is not bookkeeping. Every finding here is "current
@@ -1045,8 +1045,18 @@ def _gather_findings(
         csf_scope = csf_playbook_scope(csf_rows)
         valid_controls |= csf_scope.codes
         link_scopes[src.scope_key] = csf_scope
+        # #474 D' (Gene, #736 6101751588, option (a)): a finding needs a
+        # recorded value other than its target, the predicate `measured` uses
+        # (CALLED). A target-only subcategory rolls up to the seed default,
+        # level 1, which is not an assessment; it raises no finding and is
+        # disclosed through the `no_scores` state and the Inputs panel.
+        measured_codes = {
+            r.subcategory_code
+            for r in csf_rows
+            if r.in_scope and has_recorded_value_besides_target(r)
+        }
         for e in ents:
-            if e.gap:
+            if e.gap and e.subcategory_code in measured_codes:
                 findings.append(
                     {
                         "source": "questionnaire_response",

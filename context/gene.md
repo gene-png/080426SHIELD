@@ -10,7 +10,10 @@ says on every screen and file, only when it has CSF risks: "CSF risks in this
 register come from Kentro's evidence-based assessment. They can differ from
 your self-assessment on the CSF dashboard." The client's CSF dashboard is
 unchanged. If the Playbook has no targets or no scores, the register says CSF
-was not measured instead of implying "no gaps", and if someone edits the
+was not measured instead of implying "no gaps". Per your ruling (a) (#736
+6101751588), a row with a target and no score raises no CSF risk, so a
+Playbook with only targets reads "not measured" with no CSF risks and no source
+note. If someone edits the
 Playbook after the register is generated, it must be regenerated before it can
 be published. Two tests about the old CSF engagement-tier rule are deleted,
 with the advisor's approval, because your decision retired that rule. The Atlas demo

@@ -52,9 +52,9 @@ def csf_playbook_state(rows: Iterable[object]) -> str:
 
     Citability (`link_scope.csf_playbook_scope`) calls the WIDER
     `has_recorded_score`, which also counts a target. So a targets-only
-    Playbook reads `no_scores` while its targeted codes are citable, and
-    `is_gap` may still raise findings on them: open, with Gene's row-level
-    ruling on target-only findings (#736 6090360421)."""
+    Playbook reads `no_scores` while its targeted codes are citable; it raises
+    no finding (Gene, #736 6101751588, option (a): a finding needs a recorded
+    value other than its target, `routes/risk.py`'s CSF loop)."""
     in_scope = [r for r in rows if r.in_scope]
     if not any(has_recorded_value_besides_target(r) for r in in_scope):
         return "no_scores"

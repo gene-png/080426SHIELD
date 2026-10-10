@@ -15,8 +15,9 @@ export interface RiskInputState {
    */
   qualifier?: string | null;
   /**
-   * #474 D': CSF rows only. True when the record has no in-scope Playbook
-   * rows, so it feeds no CSF finding. Absent on every other kind.
+   * #474 D': CSF rows only. True when no in-scope Playbook row records a
+   * value other than a target, so it feeds no CSF finding (#736 6101751588).
+   * Absent on every other kind.
    */
   no_playbook_scores?: boolean;
 }

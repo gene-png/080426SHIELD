@@ -30,8 +30,9 @@ class RiskInputState(BaseModel):
     # not separate them. None while a kind has one row (advisor, #736
     # 6019425290 Q3). Defaulted so an older client parses a newer response.
     qualifier: str | None = None
-    #: #474 D': CSF only. True when the record has no in-scope Playbook rows,
-    #: so it feeds no CSF finding; None for every other kind.
+    #: #474 D': CSF only. True when no in-scope Playbook row has a recorded
+    #: value other than a target, so it feeds no CSF finding (#736
+    #: 6101751588); None for every other kind.
     no_playbook_scores: bool | None = None
 
     @model_serializer(mode="wrap")

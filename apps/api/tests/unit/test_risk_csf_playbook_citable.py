@@ -107,7 +107,9 @@ def _csf_ids(codes) -> set[str]:
     return {c for c in codes if c in gv}
 
 
-def test_ai_scored_and_target_only_rows_are_findings_and_citable(app_client) -> None:  # noqa: F811
+def test_ai_scored_rows_are_findings_and_target_only_rows_are_citable_only(
+    app_client,  # noqa: F811
+) -> None:
     c, provider = app_client
     bearer, cid = _admin(c)
     _seed_attack_and_zt(c, bearer, cid)
@@ -116,10 +118,12 @@ def test_ai_scored_and_target_only_rows_are_findings_and_citable(app_client) -> 
 
     findings = _csf_ids(f["source_id"] for f in payload["findings"])
     citable = _csf_ids(payload["valid_controls"])
-    # Both rows carry a target above their level, so both are findings...
-    assert findings == {AI_SCORED, TARGET_ONLY}, findings
-    # ...and each finding's own code is citable.
+    # Both rows are citable: each carries a recorded value (a target counts).
     assert citable == {AI_SCORED, TARGET_ONLY}, citable
+    # Only the scored row is a finding. Gene's ruling (#736 6101751588, option
+    # (a)): a finding needs a recorded value other than its target, so the
+    # target-only row raises none.
+    assert findings == {AI_SCORED}, findings
 
 
 def test_an_ai_row_of_zeros_with_nothing_else_is_neither_a_finding_nor_citable(
