@@ -1352,6 +1352,13 @@ def test_live_run_ai_may_draft_over_a_consultant_score(app_client, monkeypatch) 
     rows = c.get(f"/csf/services/{svc_id}/profile/high", headers=h).json()["rows"]
     sid = next(x["id"] for x in rows if x["subcategory_code"] == code)
     c.patch(f"/csf/dimension-scores/{sid}", headers=h, json={"governance": 2})
+    # #1000: a LIVE run assesses only a row whose answer has notes (a row with
+    # none keeps its score, `no_notes`), so this row gets notes. What the test
+    # pins is unchanged.
+    latest = c.get(f"/csf/services/{svc_id}/assessments/latest", headers=h).json()
+    aid = next(x["id"] for x in latest["answers"] if x["subcategory_code"] == code)
+    noted = c.patch(f"/csf/answers/{aid}", headers=h, json={"notes": "Okta SSO in place."})
+    assert noted.status_code == 200, noted.text
 
     monkeypatch.setattr(type(provider), "name", "anthropic", raising=False)
     body = _run_ai(
