@@ -1,5 +1,16 @@
 # Gene — in-flight status
 
+_2026-10-09 (track1): #853 is implemented, PR #1014 from
+`track1/853-attack-omitted`, for #853. An ATT&CK technique a Run-AI batch leaves out is now
+counted and named on the run result (`omitted_count`, `omitted_techniques`,
+with the status each one kept), and the audit row carries counts only. The
+ATT&CK Run-AI panel now says how many techniques got no status, lists the
+ones still unscored, and lists in red the ones that kept an earlier status,
+with the approved line telling the consultant to check them before approving.
+The disclosure gate is green. Not on any screen yet: the techniques whose AI
+entry was refused for a reason other than N/A or a forbidden Partial reason
+(#859). It comes back to you: conditions 5 and 6._
+
 _2026-10-09 (track5): #865 is built on `track5/865-whatif-name-hints`, for
 #865; no PR yet. The ATT&CK what-if's AI run and the ATT&CK Run-AI now hide
 the names of the client's own users from the AI, as the Tech Debt extraction

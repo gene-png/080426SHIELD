@@ -258,6 +258,24 @@ export interface AttackRunAiResponse {
    * consultant may give, refused whole so the row keeps its status.
    */
   forbidden_reason_refused?: number;
+  /**
+   * #853. Techniques a SUCCESSFUL batch was asked about, not locked, that no
+   * entry named. A refused entry is an answer and is not here; a failed
+   * batch's techniques are `batches_failed`'s. Optional so a run stored before
+   * #853 parses unchanged (C0).
+   */
+  omitted_count?: number;
+  omitted_techniques?: AttackOmittedTechnique[];
+}
+
+/**
+ * #853. `kept_status` is what the row holds after the run: null reads as
+ * unscored, anything else is a status this run did not confirm, reaching the
+ * coverage figures and the deliverable as it is.
+ */
+export interface AttackOmittedTechnique {
+  technique_code: string;
+  kept_status: CoverageStatus | null;
 }
 
 export interface TacticHeatmapEntry {
