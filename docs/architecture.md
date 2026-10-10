@@ -12,7 +12,8 @@ client organizations. Every business table carries a `client_id` column and
 every data route filters by the resolved tenant. One Next.js app talks to one
 FastAPI service, with shared infrastructure (Postgres, Redis, MinIO/S3,
 Keycloak, MailHog). There is **no worker service** — AI jobs run synchronously
-inside the `api` process.
+inside the `api` process, and egress redaction runs in a short-lived child
+process forked for each payload (D-111, see the AI integration boundary below).
 
 Two user roles:
 
@@ -167,13 +168,31 @@ engines (`app/csf/playbook.py`, `app/risk/engine.py`, `app/zt/scoring.py`).
 
 ```
 route → engine.run_job(purpose, payload, client_id)
-          → redact_payload(payload)            # app/ai/redact.py, counts only
+          → redact_payload(payload)            # app/ai/redact.py, counts only,
+                                               # in a child process (app/ai/isolation.py)
           → llm_calls row opened (status=running, client_id, service_id)
           → provider call (Anthropic | OpenAI | Gemini | Vertex | runtime fixtures)
           → llm_calls row finalized (tokens, duration, redacted_counts)
           → route parses the draft and writes rows; engines compute totals
 ```
 
+- **Redaction runs in a child process (#552, D-111).** The redactor's regexes
+  hold the GIL for as long as a C-level match runs, so one tenant's slow
+  redaction used to stall every other tenant's requests, and nothing could
+  stop it. `app/ai/isolation.py` forks a short-lived child per payload from a
+  forkserver whose environment is scrubbed (no provider key, no database URL,
+  no `SHIELD_*` setting), hands it the payload and the hint set only, and
+  kills it by PID if it outlives `SHIELD_REDACTION_BUDGET_SECONDS` (30, per
+  payload). Concurrency is bounded and never queued without limit:
+  `SHIELD_REDACTION_MAX_CHILDREN` slots (2), waited for FIFO for at most
+  `SHIELD_REDACTION_SLOT_WAIT_SECONDS` (30), and `SHIELD_REDACTION_MAX_RUNS`
+  run places (4). A run (a Run-AI, a Risk generate, or one call outside both)
+  holds one place from its first redaction until it ends. **That caps the
+  platform at 4 concurrent AI runs across all tenants**; raising it waits for
+  #1025. Every refusal is typed and happens before egress
+  (`redaction_budget_exceeded`, `redaction_failed`, `redaction_capacity_busy`),
+  and a refusal fails the whole run, never one batch of it. The catalog guard
+  (`app/ai/catalog_fields.py`) stays in the api process.
 - The redactor is one-way. There is **no `unredact`** — redacted content
   never needs to come back, because the LLM's draft references stable codes
   (technique ids, subcategory codes), not the redacted prose.

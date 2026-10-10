@@ -1,5 +1,17 @@
 # Gene — in-flight status
 
+_2026-10-10 (track5): #552 is implemented, PR #NNN from
+`track5/552-redaction-stall`, for #552. One tenant's slow name check can no
+longer stall the others: the check runs in a separate short-lived process, is
+stopped after 30 seconds per payload, and nothing is sent when it is stopped.
+At most 4 AI runs proceed at once across every tenant; a fifth is refused with
+"The check for people's names is busy with other AI work, so this was stopped
+and nothing was sent to the AI provider. Try again in a minute." Any refusal
+fails the whole run, with nothing applied. Two kinds of sentence are drafted
+and waiting for your ruling: one for a check that crashed, and a "stopped
+part-way" form for a run that had already sent something, where "nothing was
+sent" would be false. It comes back to you: conditions 5 and 6._
+
 _2026-10-09 (track1): #853 is implemented, PR #1014 from
 `track1/853-attack-omitted`, for #853. An ATT&CK technique a Run-AI batch leaves out is now
 counted and named on the run result (`omitted_count`, `omitted_techniques`,
