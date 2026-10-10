@@ -420,6 +420,12 @@ def test_the_finalized_artifacts_are_byte_identical_after_the_drift(
 def _upload_v2_without(w: World, dropped: str) -> str:
     """A second version of the client's Tech Debt list, without `dropped`: the
     world, written directly, as `test_attack_subset_drift._world` writes v1."""
+    names = [n for n in (EDR, "Acme Portal") if n != dropped]
+    return _upload_v2(w, names)
+
+
+def _upload_v2(w: World, names: list[str]) -> str:
+    """A DRAFT second version of the client's Tech Debt list holding `names`."""
     from app.models.capability import (
         CapabilityDisposition,
         CapabilityItem,
@@ -432,8 +438,7 @@ def _upload_v2_without(w: World, dropped: str) -> str:
         v2 = CapabilityList(service_id=v1.service_id, version=2, status=CapabilityListStatus.DRAFT)
         db.add(v2)
         db.flush()
-        for name in (EDR, "Acme Portal"):
-            assert name != dropped
+        for name in names:
             db.add(
                 CapabilityItem(
                     capability_list_id=v2.id,
@@ -484,3 +489,31 @@ def test_a_draft_v2_is_the_current_list(app_parts, tmp_path) -> None:  # noqa: F
     assert body["tool_outside_subset"] == [LEGACY], body.get("tool_outside_subset")
     assert body["subset_notes"] == [C1_ONE], body.get("subset_notes")
     assert _value_summary(w)["attack_counts_outside_subset"] is True
+
+
+@pytest.mark.parametrize("v2_holds_it", [True, False])
+def test_approve_refuses_a_tool_the_latest_approved_version_dropped(
+    app_parts, v2_holds_it: bool  # noqa: F811
+) -> None:
+    """#851's approve refusal reads the same check (`subset_state`), so after
+    F2 it judges against each service's LATEST version: v1 APPROVED with the
+    tool, v2 APPROVED without it, and an ATT&CK row citing it is refused. The
+    same flow with v2 still holding it approves (the positive control)."""
+    w = _world(app_parts)
+    w.approve_list()
+    names = [EDR, LEGACY] if v2_holds_it else [EDR]
+    v2 = _upload_v2(w, names)
+    r = w.c.post(f"/tech-debt/capability-lists/{v2}/approve", headers=w.h)
+    assert r.status_code == 200, r.text
+    code = _codes(w)[0]
+    _cover(w, code, [EDR, LEGACY])
+    r = w.approve()
+    if v2_holds_it:
+        assert r.status_code == 200, r.text
+        return
+    assert r.status_code == 409, r.text
+    err = r.json()["error"]
+    assert err["reason"] == "attack_not_release_ready", err
+    assert {(o["technique_code"], o["tool"]) for o in err["cites_outside_subset"]} == {
+        (code, LEGACY)
+    }, err
