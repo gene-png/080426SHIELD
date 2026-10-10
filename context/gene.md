@@ -7,8 +7,13 @@ subcategory's NIST outcome text through #985's catalog guard, a batch's own
 codes only, and rewrites the offline fixture from the prompt. The test edits
 are A1 to A5 as approved on #736 (comment 6075712436), s7 included. The batch
 size stays at 10 until the authorized probe runs, which waits on a provider
-key. No live call was made. It comes back to you, not self-merged:
-conditions 5 and 6._
+key. No live call was made. It is draft PR #1000. Your ruling 2 is built
+on it (2026-10-10): a live run leaves a row with no notes as it was, and
+says so on the Run-AI panel, beside the row in the Enterprise table, and in
+every Playbook file, from the last live run. Offline runs are unchanged. Two
+small edits to existing live tests (they now give their row notes) wait for
+the advisor's look. It comes back to you, not self-merged: conditions 5 and
+6._
 
 _2026-10-09 (track4): #889 PR 1 is PR #1021 (a draft), for #889. When a tool leaves a client's security tool list after their ATT&CK report is approved, the client's dashboard says so and marks the tool, the documents say so as of finalize, and the home card says its ATT&CK total may be understated when a technique counted as covered relies on such a tool. When nothing could be checked, the dashboard says so: one sentence when the client has no list or only discarded ones, another when its lists in force have no security tools. The check reads, per Tech Debt service, its newest approved or released list version and ignores its drafts, so an open draft changes nothing the client sees; a service with only drafts uses its newest draft, so the check still works before anyone approves the list (R6b, #736 6094994432). "Newest" is the highest version number. A version with no security tools is skipped for the one before it, and the admin workspace, the deliverable and the client dashboard name the version used (R4, wording approved in #736 6093188709 and 6093549176; the admin line for a draft, C8a, applies only to a service with only drafts). So ATT&CK approve refuses a tool the version in force dropped, while Run AI can still offer it from an older version or a draft (#1012). Two declared test edits: the golden `dashboard.json` and `test_attack_planned_retirement.py` (approved in #736 6092259096). **One thing needs you:** the golden `dashboard.json` gains the "not checked" sentence; the advisor approved it (#736 6090360421) and your ratification is pending, as for #851's. Filed from review: #1005, #1010, #1011, #1019 and #1020. The Risk half waits for D′. It comes back to you: conditions 5 and 6._
 

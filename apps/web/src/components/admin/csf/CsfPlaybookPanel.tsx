@@ -113,6 +113,8 @@ const DROP_REASON_LABEL: Record<CsfDroppedSuggestion["reason"], string> = {
   // applied, so a row is only ever written from the batch that asked for it.
   not_in_batch:
     "answered for a row its batch was not asked about, so it was not applied",
+  // #1000: a live run does not assess a row whose answer has no notes.
+  no_notes: "row has no notes, so the AI does not assess it",
 };
 
 /**
@@ -131,6 +133,8 @@ const BY_DESIGN_SKIPS: ReadonlySet<string> = new Set([
   "locked",
   "protected",
   "edited",
+  // #1000: by design, and no re-run changes it; the count line says so.
+  "no_notes",
 ]);
 
 /**
@@ -256,6 +260,29 @@ function OmittedRows({
 }
 
 /**
+ * #1000 (Gene's ruling 2): rows a LIVE run did not assess because their
+ * interview answer has no notes. They keep their scores, so it is a count, not
+ * an alert. Shown at zero too; absent when the run counted nothing (`null` on
+ * an offline run, or a result stored before #1000). Copy approved on #1000,
+ * comment 6102665946.
+ */
+function NoNotesLine({
+  result,
+}: {
+  result: CsfRunAiResponse;
+}): JSX.Element | null {
+  const n = result.no_notes_count;
+  if (typeof n !== "number") return null;
+  return (
+    <p className="text-sm text-ink-secondary" data-testid="csf-run-no-notes">
+      {n === 1
+        ? "Not assessed by AI (no notes): 1 row. It keeps the score it had."
+        : `Not assessed by AI (no notes): ${n} rows. They keep the scores they had.`}
+    </p>
+  );
+}
+
+/**
  * What the run did with every suggestion it received (W1, issue #44).
  *
  * The applied/received line renders on EVERY run, including a clean one. A
@@ -335,6 +362,7 @@ function RunAiAccounting({
         {/* #836: a batch that answered nothing left every row out, and this
             branch returns before the main body. */}
         <OmittedRows result={result} />
+        <NoNotesLine result={result} />
         <p className="text-sm text-status-danger-fg" role="alert">
           The AI returned no suggestions at all, so nothing was applied. That is
           expected only if the model genuinely had nothing to say — otherwise
@@ -366,6 +394,8 @@ function RunAiAccounting({
       {incomplete}
 
       <OmittedRows result={result} />
+
+      <NoNotesLine result={result} />
 
       {failed.length > 0 ? (
         <div className="text-sm text-status-danger-fg" role="alert">
@@ -468,7 +498,25 @@ function tierLevels(row: EnterpriseSubcategory): string {
 }
 
 const COLUMNS: DataTableColumn<EnterpriseSubcategory>[] = [
-  { key: "code", header: "Subcategory", cell: (r) => r.subcategory_code },
+  {
+    key: "code",
+    header: "Subcategory",
+    cell: (r) => (
+      <>
+        {r.subcategory_code}
+        {/* #1000: from CURRENT notes, present tense on purpose, so it stays
+            true when the stored score came from an earlier AI run. */}
+        {r.no_notes === true ? (
+          <span
+            className="block text-xs text-ink-tertiary"
+            data-testid="csf-row-no-notes"
+          >
+            No notes: the AI does not assess this row.
+          </span>
+        ) : null}
+      </>
+    ),
+  },
   { key: "name", header: "Outcome", cell: (r) => r.name },
   { key: "tiers", header: "Tiers", cell: (r) => tierLevels(r) },
   {
