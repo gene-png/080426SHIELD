@@ -2013,8 +2013,9 @@ def _omitted_codes(out: Batched, locked: frozenset[str]) -> set[str]:
     - An entry that names a technique and is then REFUSED (a computed parent,
       a status the run may not write, a mispaired or forbidden reason) is an
       ANSWER. Its loss is itemized only in the audit row's `details`
-      (`statuses_rejected`, `parent_suggestions_refused`), which reach no
-      screen (#859); only the N/A and forbidden-reason counts reach the panel.
+      (`statuses_rejected`, `parent_suggestions_refused`,
+      `reason_codes_rejected`), which reach no screen (#859); only the N/A and
+      forbidden-reason counts reach the panel.
       So the omitted list is not every technique that got no result.
     - `answered` is the union over every successful batch, NOT each batch's
       own entries, and this is where ATT&CK must not copy CSF: ATT&CK's apply

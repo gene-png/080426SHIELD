@@ -213,8 +213,10 @@ def test_a_locked_technique_left_out_is_not_omitted(app_client) -> None:  # noqa
 def test_an_entry_that_named_the_technique_and_was_refused_is_an_answer(
     app_client,  # noqa: F811
 ) -> None:
-    """A refused entry's loss is already itemized under its own reason (#841's
-    `not_applicable_refused` here), so it is not counted again as omitted."""
+    """A refused entry is an answer, not an omission. This one is an N/A
+    refusal, which the panel counts as `not_applicable_refused` (#841); most
+    other refusals reach only the audit row's `details` (#859). Either way it
+    is not counted again as omitted."""
     w = _world(app_client, 2)
     refused, omitted = w.code(0), w.code(1)
     w.respond(omit={omitted}, status_for={refused: "not_applicable"})

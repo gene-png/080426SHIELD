@@ -104,8 +104,11 @@ function OmittedItems<T extends AttackOmittedTechnique>({
  * named. Copy A1 to A4 approved verbatim (#736 comment 6090870696); the twins
  * are ZT's `ZtOmittedBlock` (#840) and CSF's playbook panel (#836).
  *
- * Not a refusal: an entry that names a technique and is refused is counted
- * under its own line above. A failed batch's techniques are the failed-batch
+ * Not a refusal: an entry that names a technique and is refused is an answer,
+ * not an omission. Only the N/A and forbidden-reason refusals are counted in
+ * this panel, on their own lines further down (`not_applicable_refused`,
+ * `forbidden_reason_refused`); the rest are only in the audit row's `details`
+ * and reach no screen (#859). A failed batch's techniques are the failed-batch
  * alert's, which is why this block sits directly after it.
  *
  * A2 (no status before the run) is neutral: the technique stays unscored and

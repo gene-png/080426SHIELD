@@ -1,6 +1,6 @@
 # Gene — in-flight status
 
-_2026-10-09 (track1): #853 is implemented, PR #NNN from
+_2026-10-09 (track1): #853 is implemented, PR #1014 from
 `track1/853-attack-omitted`, for #853. An ATT&CK technique a Run-AI batch leaves out is now
 counted and named on the run result (`omitted_count`, `omitted_techniques`,
 with the status each one kept), and the audit row carries counts only. The
