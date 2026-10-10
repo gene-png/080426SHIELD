@@ -163,6 +163,7 @@ from app.schemas.attack import (
 from app.schemas.tech_debt import DeliverableResponse
 from app.security.rate_limit import enforce_ai_rate_limit
 from app.storage import StorageBackend
+from app.tech_debt.extract import name_hints_for_tenant
 from app.tech_debt.filename import SERVICE_SLUG_ATTACK, deliverable_filename
 from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.security_scope import awaiting_security_signoff, in_security_scope
@@ -1861,6 +1862,12 @@ def _attack_ai_request_for(db: Session, a: AttackAssessment, client: Client) -> 
                 "technique_details": _technique_details(codes),
             },
             client_org_name=client_org,
+            # The tenant's user names are the redactor's name dictionary (#865),
+            # as Tech Debt's extraction uses them: `capability_list` carries
+            # capability rows an admin can edit, so a name or vendor can name a
+            # person. The run's citation resolver reads these same hints from
+            # here, so a tool cited as shown still resolves.
+            name_hints=tuple(name_hints_for_tenant(db, client.id)),
         ),
     )
 
