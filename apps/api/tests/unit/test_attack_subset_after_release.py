@@ -317,7 +317,7 @@ def test_t6_the_home_card_flag_is_null_with_no_list(app_parts, tmp_path) -> None
     assert body["attack_counts_outside_subset"] is None, body
 
 
-# --- T7: the dashboard marks only rows the client can see -----------------------------
+# --- T7: one tool on two rows is one name and two rows ---------------------------------
 
 
 def test_t7_the_dashboard_lists_each_outside_tool_once(app_parts, tmp_path) -> None:  # noqa: F811
@@ -412,3 +412,58 @@ def test_the_finalized_artifacts_are_byte_identical_after_the_drift(
     w.confirm_not_security(LEGACY)
     assert _dashboard(w)["subset_notes"] == [C1_ONE]  # positive first: the drift is live
     assert [_download(w, i) for i in ids] == before
+
+
+# --- review F2: a newer list version supersedes an older approved one -------------------
+
+
+def _upload_v2_without(w: World, dropped: str) -> str:
+    """A second version of the client's Tech Debt list, without `dropped`: the
+    world, written directly, as `test_attack_subset_drift._world` writes v1."""
+    from app.models.capability import (
+        CapabilityDisposition,
+        CapabilityItem,
+        CapabilityList,
+        CapabilityListStatus,
+    )
+
+    with w.sessions() as db:
+        v1 = db.get(CapabilityList, uuid.UUID(w.list_id))
+        v2 = CapabilityList(service_id=v1.service_id, version=2, status=CapabilityListStatus.DRAFT)
+        db.add(v2)
+        db.flush()
+        for name in (EDR, "Acme Portal"):
+            assert name != dropped
+            db.add(
+                CapabilityItem(
+                    capability_list_id=v2.id,
+                    name=name,
+                    security_related=True,
+                    disposition=CapabilityDisposition.KEEP,
+                )
+            )
+        db.commit()
+        return str(v2.id)
+
+
+def test_a_tool_dropped_from_an_approved_v2_is_flagged_though_v1_held_it(
+    app_parts, tmp_path  # noqa: F811
+) -> None:
+    """v1 is approved holding "Legacy AV"; ATT&CK is released; v2 is uploaded
+    without it and approved. Per Tech Debt service only the latest version
+    counts toward the security tool list (older versions do not vote), so the
+    dashboard and the home card flag it. v1's snapshot must not keep it in."""
+    _with_storage(app_parts, tmp_path)
+    w = _world(app_parts)
+    w.approve_list()
+    _cover(w, _codes(w)[0], [EDR, LEGACY])
+    _release(w, _approve_finalize(w))
+    before = _dashboard(w)
+    assert before["tool_outside_subset"] == [], before.get("tool_outside_subset")  # positive first
+    v2 = _upload_v2_without(w, LEGACY)
+    r = w.c.post(f"/tech-debt/capability-lists/{v2}/approve", headers=w.h)
+    assert r.status_code == 200, r.text
+    after = _dashboard(w)
+    assert after["tool_outside_subset"] == [LEGACY], after.get("tool_outside_subset")
+    assert after["subset_notes"] == [C1_ONE], after.get("subset_notes")
+    assert _value_summary(w)["attack_counts_outside_subset"] is True

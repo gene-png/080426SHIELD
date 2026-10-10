@@ -326,9 +326,13 @@ def subset_state(
     parents_computed: bool,
 ) -> SubsetCheck:
     """#851: the rows' tools outside the client's CURRENT security tool list,
-    checked by the resolver built from the SAME inputs Run AI's request uses
-    (`_attack_ai_request_for`: `_client_capability_inputs`, the client's
-    legal name, and no name hints for `mitre_map`).
+    checked by the resolver Run AI checks citations with
+    (`citation_resolver_for`, the client's legal name, and no name hints for
+    `mitre_map`), built over the SAME membership rules Run AI's request uses
+    (`_client_capability_membership`) with ONE difference: only each Tech Debt
+    service's latest non-discarded list version counts (#889 review F2). Run
+    AI's allow-list keeps every version, so it can still offer a tool this
+    check reports outside the list; that root is #1012.
 
     `parents_computed` is the assessment's rule set (`attack/rules.py`),
     required: a computed parent's own tools are not checked under D-094
@@ -336,9 +340,11 @@ def subset_state(
     client = db.get(Client, client_id)
     if client is None:
         raise ValueError(f"client {client_id} does not exist")
-    # ONE membership read: its `inputs()` IS `_client_capability_inputs`, and
-    # its lists decide whether there is a subset to judge against at all.
-    membership = _client_capability_membership(db, client_id)
+    # ONE membership read: its lists decide whether there is a subset to judge
+    # against at all. #889 review F2: the CURRENT list, so only each Tech Debt
+    # service's latest non-discarded version (`_latest_list_versions`); the
+    # allow-list (`_client_capability_inputs`) keeps every version (#1012).
+    membership = _client_capability_membership(db, client_id, latest_versions_only=True)
     if not subset_applies(cl.status for cl in membership.lists):
         # NOT CHECKED, the third state: nothing is flagged because nothing
         # could be, never because nothing was found.
@@ -1104,6 +1110,22 @@ def _latest_plan_ids(lists: Iterable[CapabilityList]) -> frozenset[uuid.UUID]:
     return frozenset(cl.id for cl in latest.values())
 
 
+def _latest_list_versions(lists: Iterable[CapabilityList]) -> list[CapabilityList]:
+    """#889 review F2: per Tech Debt SERVICE, the highest-version list that is
+    not DISCARDED. Older versions do not vote -- `_latest_plan_ids`'s rule,
+    over every live status rather than the plan's two, because a DRAFT feeds
+    the subset (`_client_capability_membership`'s list-status bullet). A
+    service whose every list is discarded contributes no list."""
+    latest: dict[uuid.UUID, CapabilityList] = {}
+    for cl in lists:
+        if cl.status == CapabilityListStatus.DISCARDED:
+            continue
+        held = latest.get(cl.service_id)
+        if held is None or cl.version > held.version:
+            latest[cl.service_id] = cl
+    return list(latest.values())
+
+
 def _client_capabilities(db: Session, client_id: uuid.UUID) -> list[Candidate]:
     """Name + vendor only, for the citation resolver. See
     `_client_capability_membership`, which this projects from — one query, one
@@ -1224,8 +1246,17 @@ def _may_donate_vendor(held: _MergeCandidate, donor: _MergeCandidate) -> bool:
     return donor.from_snapshot or not held.from_snapshot
 
 
-def _client_capability_membership(db: Session, client_id: uuid.UUID) -> CapabilityMembership:
+def _client_capability_membership(
+    db: Session, client_id: uuid.UUID, *, latest_versions_only: bool = False
+) -> CapabilityMembership:
     """Security capabilities from the client's Tech Debt capability list(s).
+
+    `latest_versions_only` (#889 review F2) is for the SECURITY TOOL LIST
+    CHECK alone (`subset_state`): per Tech Debt service only the highest-version
+    non-discarded list counts, so a tool dropped in a newer version is outside
+    the client's CURRENT list however an older approved version's snapshot
+    reads. The default, False, is the citation allow-list's rule below and is
+    unchanged; that superseded versions still count THERE is #1012.
 
     Returns name AND vendor: the citation resolver needs the vendor column to
     judge whether a cited string is unambiguous, and a MISSING vendor is itself
@@ -1297,6 +1328,8 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
         .scalars()
         .all()
     )
+    if latest_versions_only:
+        lists = _latest_list_versions(lists)
     if not lists:
         return CapabilityMembership(sent=[], withheld=[], lists=[])
 
