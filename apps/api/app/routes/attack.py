@@ -1856,7 +1856,8 @@ def _attack_ai_request_for(db: Session, a: AttackAssessment, client: Client) -> 
                 "technique_codes": codes,
                 # #806 M2: the prompt judges a not-preventable technique on
                 # Detect and Respond only, so it has to be told which those are.
-                # Sliced per batch by `_run_mitre_map_batched`.
+                # Sliced per batch by `_batch_inputs`, which `_mitre_map_batches`
+                # calls for each batch.
                 "technique_details": _technique_details(codes),
             },
             client_org_name=client_org,
@@ -2011,7 +2012,10 @@ def _omitted_codes(out: Batched, locked: frozenset[str]) -> set[str]:
 
     - An entry that names a technique and is then REFUSED (a computed parent,
       a status the run may not write, a mispaired or forbidden reason) is an
-      ANSWER: its loss is already itemized under its own reason.
+      ANSWER. Its loss is itemized only in the audit row's `details`
+      (`statuses_rejected`, `parent_suggestions_refused`), which reach no
+      screen (#859); only the N/A and forbidden-reason counts reach the panel.
+      So the omitted list is not every technique that got no result.
     - `answered` is the union over every successful batch, NOT each batch's
       own entries, and this is where ATT&CK must not copy CSF: ATT&CK's apply
       loop writes an entry naming a real technique whichever batch returned

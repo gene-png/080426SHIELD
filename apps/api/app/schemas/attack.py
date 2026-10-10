@@ -274,9 +274,12 @@ class AttackOmittedTechnique(BaseModel):
     """A technique a successful batch was asked about and no entry named (#853).
 
     NOT a refusal: an entry that names the technique and is then refused is an
-    answer, already itemized under its own reason (`statuses_rejected` and the
-    rest). A technique in a FAILED batch is not here either; it is counted by
-    `batches_failed`.
+    answer. Its loss is itemized only in the audit row's `details`
+    (`statuses_rejected`, `parent_suggestions_refused`), which reach no screen
+    (#859); of the refusals, only the N/A and forbidden-reason counts reach the
+    panel. So the panel's omitted list is NOT the whole set of techniques that
+    got no result this run. A technique in a FAILED batch is not here either;
+    it is counted by `batches_failed`.
 
     `kept_status` is the status the row still holds, read after the apply:
     None reads as unscored, anything else is a status nobody confirmed this
