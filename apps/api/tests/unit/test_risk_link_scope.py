@@ -666,7 +666,7 @@ def test_every_findings_source_id_stays_inside_the_allow_list(app_client) -> Non
     universe = set(payload["valid_techniques"]) | set(payload["valid_controls"])
     findings = payload["findings"]
     assert findings, "no findings, so a subset assertion would hold vacuously"
-    orphans = [f["source_id"] for f in findings if f.get("source_id") not in universe]
+    orphans = [sid for sid in findings if sid not in universe]
     assert orphans == [], f"findings cite codes their own allow-list rejects: {orphans}"
 
 

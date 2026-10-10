@@ -217,7 +217,7 @@ with TestClient(app, headers={"X-Client-Id": CID}) as c:
 
     def spy(payload: dict) -> LLMResponse:
         sent.extend(
-            f["source_id"] for f in payload.get("findings", []) if f.get("kind") == "attack"
+            sid for sid, f in payload.get("findings", {}).items() if f.get("kind") == "attack"
         )
         return LLMResponse(json.dumps({"entries": []}))
 
