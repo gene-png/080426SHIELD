@@ -78,15 +78,29 @@ NOT_CHECKED_DISCARDED = "discarded"
 
 @dataclass(frozen=True)
 class VersionFallback:
-    """R4 (b): a Tech Debt service whose latest non-discarded list version has
-    no security-scope row, so it did not vote. `used_version` is the newest
-    earlier non-discarded version that has one, or None when none does."""
+    """R4 (b): one Tech Debt service whose current list is not simply its
+    latest version.
+
+    `skipped`: every non-discarded version passed over for holding no
+    security-scope row, as (version, status), newest first. `used_version`:
+    the version that votes, or None when the service contributes nothing, in
+    which case `reason` says why (`NOT_CHECKED_EMPTY`: every non-discarded
+    version is empty; `NOT_CHECKED_DISCARDED`: every version is discarded, and
+    `skipped` is then empty). `reason` is None exactly when `used_version` is
+    not."""
 
     service_id: uuid.UUID
     service_title: str
-    skipped_version: int
-    skipped_status: str
+    skipped: tuple[tuple[int, str], ...]
     used_version: int | None
+    reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.used_version is None) != (self.reason is not None):
+            raise ValueError(
+                "a service records a reason exactly when it contributes no version "
+                f"(used_version={self.used_version!r}, reason={self.reason!r})"
+            )
 
 
 @dataclass(frozen=True)

@@ -594,7 +594,7 @@ def test_the_home_card_flag_needs_a_row_that_credits_coverage(
 # --- round 2, F2: `_current_list_versions`, one per service, and discards skipped -----
 
 
-def _second_tech_debt_service(w: World, names: list[str]) -> None:
+def _second_tech_debt_service(w: World, names: list[str], title: str = "Acme Tech Debt B") -> str:
     """Another Tech Debt service for the same client, its v1 a DRAFT holding
     `names`: the world, written directly."""
     from app.models.capability import (
@@ -610,7 +610,7 @@ def _second_tech_debt_service(w: World, names: list[str]) -> None:
         svc = Service(
             kind=ServiceKind.TECH_DEBT,
             status=ServiceStatus.IN_PROGRESS,
-            title="Acme Tech Debt B",
+            title=title,
             client_id=uuid.UUID(w.cid),
             opened_by=opened_by,
         )
@@ -629,6 +629,7 @@ def _second_tech_debt_service(w: World, names: list[str]) -> None:
                 )
             )
         db.commit()
+        return str(cl.id)
 
 
 def _outside_tools(w: World) -> list[str]:
@@ -686,8 +687,8 @@ def test_a_tool_only_on_a_discarded_v2_is_flagged(app_parts) -> None:  # noqa: F
 # Ruled option (b) (#736). The API half only: the admin copy is with the advisor.
 
 
-def _upload_v2_items(w: World, items: list[tuple[str, bool, bool]]) -> str:
-    """A DRAFT v2 of the client's Tech Debt list, each item
+def _upload_v2_items(w: World, items: list[tuple[str, bool, bool]], version: int = 2) -> str:
+    """A DRAFT version (v2 by default) of the client's Tech Debt list, each item
     (name, security_related, security_class_confirmed)."""
     from app.models.capability import (
         CapabilityDisposition,
@@ -698,7 +699,9 @@ def _upload_v2_items(w: World, items: list[tuple[str, bool, bool]]) -> str:
 
     with w.sessions() as db:
         v1 = db.get(CapabilityList, uuid.UUID(w.list_id))
-        v2 = CapabilityList(service_id=v1.service_id, version=2, status=CapabilityListStatus.DRAFT)
+        v2 = CapabilityList(
+            service_id=v1.service_id, version=version, status=CapabilityListStatus.DRAFT
+        )
         db.add(v2)
         db.flush()
         for name, security, confirmed in items:
@@ -776,10 +779,9 @@ def _fallback_asserts(w: World, skipped_status: str) -> None:
     check = _subset(w)
     assert check.checked is True
     assert check.not_checked_reason is None
-    assert [
-        (f.service_title, f.skipped_version, f.skipped_status, f.used_version)
-        for f in check.fallbacks
-    ] == [("Acme Tech Debt", 2, skipped_status, 1)]
+    assert [(f.service_title, f.skipped, f.used_version, f.reason) for f in check.fallbacks] == [
+        ("Acme Tech Debt", ((2, skipped_status),), 1, None)
+    ]
 
 
 def test_with_only_an_empty_list_nothing_is_checked_and_the_reason_is_empty(
@@ -793,7 +795,9 @@ def test_with_only_an_empty_list_nothing_is_checked_and_the_reason_is_empty(
     assert w.get()["subset_checked"] is False  # never "every tool is outside"
     check = _subset(w)
     assert (check.checked, check.not_checked_reason) == (False, "empty")
-    assert [(f.skipped_version, f.used_version) for f in check.fallbacks] == [(1, None)]
+    assert [(f.skipped, f.used_version, f.reason) for f in check.fallbacks] == [
+        (((1, "draft"),), None, "empty")
+    ]
 
 
 def test_with_no_list_the_reason_is_no_list(app_parts) -> None:  # noqa: F811
@@ -807,3 +811,88 @@ def test_with_only_discarded_lists_the_reason_is_discarded(app_parts) -> None:  
     _discard(w, w.list_id)
     check = _subset(w)
     assert (check.checked, check.not_checked_reason) == (False, "discarded")
+
+
+# --- round 4: what votes, and what is recorded ----------------------------------------
+
+
+def _set_scope(w: World, list_id: str, name: str, *, security: bool, confirmed: bool) -> None:
+    from sqlalchemy import select
+
+    from app.models.capability import CapabilityItem
+
+    with w.sessions() as db:
+        item = db.execute(
+            select(CapabilityItem).where(
+                CapabilityItem.capability_list_id == uuid.UUID(list_id),
+                CapabilityItem.name == name,
+            )
+        ).scalar_one()
+        item.security_related = security
+        item.security_class_confirmed = confirmed
+        db.commit()
+
+
+def test_an_approved_versions_snapshot_decides_whether_it_votes(app_parts) -> None:  # noqa: F811
+    """v2 is APPROVED with "Shadow Scanner" in its snapshot; afterwards the live
+    row is confirmed not-security. The snapshot is the membership, so v2 still
+    offers a security row and VOTES: nothing falls back, the snapshot's tool is
+    inside the list and v1's "Legacy AV" is outside it."""
+    w = _world(app_parts)
+    w.approve_list()
+    v2 = _upload_v2_items(w, [("Shadow Scanner", True, False)])
+    r = w.c.post(f"/tech-debt/capability-lists/{v2}/approve", headers=w.h)
+    assert r.status_code == 200, r.text
+    _set_scope(w, v2, "Shadow Scanner", security=False, confirmed=True)
+    code = _codes(w)[0]
+    r = w.patch(code, {"detection_tools": ["Shadow Scanner", LEGACY]})
+    assert r.status_code == 200, r.text
+    assert _outside_tools(w) == [LEGACY]
+    assert _subset(w).fallbacks == ()
+
+
+def test_an_unconfirmed_not_security_row_keeps_its_version_voting(
+    app_parts,  # noqa: F811
+) -> None:
+    """v2 holds only a row the model called not-security and nobody confirmed.
+    `in_security_scope` keeps it, so v2 votes and nothing falls back."""
+    w = _world(app_parts)
+    w.approve_list()
+    _upload_v2_items(w, [("Shadow Scanner", False, False)])
+    code = _codes(w)[0]
+    r = w.patch(code, {"detection_tools": ["Shadow Scanner", LEGACY]})
+    assert r.status_code == 200, r.text
+    assert _outside_tools(w) == [LEGACY]
+    assert _subset(w).fallbacks == ()
+
+
+def test_every_skipped_version_is_recorded_newest_first(app_parts) -> None:  # noqa: F811
+    w = _world(app_parts)
+    w.approve_list()
+    _upload_v2_items(w, [], version=2)
+    _upload_v2_items(w, [], version=3)
+    code = _codes(w)[0]
+    assert w.patch(code, {"detection_tools": [EDR]}).status_code == 200
+    assert _outside_tools(w) == []  # v1 votes
+    assert [(f.skipped, f.used_version, f.reason) for f in _subset(w).fallbacks] == [
+        (((3, "draft"), (2, "draft")), 1, None)
+    ]
+
+
+def test_each_service_that_contributes_nothing_is_recorded_with_its_reason(
+    app_parts,  # noqa: F811
+) -> None:
+    """Service A has only an empty list; service B only a discarded one. Each is
+    recorded with its own reason, and the top-level reason is "empty": it
+    outranks "discarded" (the documented precedence in `_current_list_versions`)."""
+    w = _no_list_world(app_parts)
+    _second_tech_debt_service(w, [], title="Tech Debt A")
+    _discard(w, _second_tech_debt_service(w, [EDR], title="Tech Debt B"))
+    check = _subset(w)
+    assert (check.checked, check.not_checked_reason) == (False, "empty")
+    assert sorted(
+        (f.service_title, f.skipped, f.used_version, f.reason) for f in check.fallbacks
+    ) == [
+        ("Tech Debt A", ((1, "draft"),), None, "empty"),
+        ("Tech Debt B", (), None, "discarded"),
+    ]

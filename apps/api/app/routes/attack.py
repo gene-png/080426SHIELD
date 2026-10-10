@@ -1143,43 +1143,57 @@ def _current_list_versions(
     """#889: per Tech Debt SERVICE, the list version that IS the client's
     current security tool list: the highest version that is not DISCARDED
     (review F2; a DRAFT counts, R2) and offers at least one security-scope row
-    (R4, option (b)). A newer version with none does not vote; the newest
-    earlier one that has some does, and the skip is recorded.
+    (R4, option (b)). Newer versions with none do not vote; the newest earlier
+    one that has some does.
 
-    Returns the chosen lists, the fallbacks, and, when nothing was chosen, why
-    (`NOT_CHECKED_EMPTY` or `NOT_CHECKED_DISCARDED`)."""
+    Returns the chosen lists; a `VersionFallback` for every service whose
+    latest version did not vote, naming every version skipped, and for every
+    service that contributes nothing, with its own reason; and, when nothing
+    was chosen at all, the top-level reason.
+
+    TOP-LEVEL PRECEDENCE: `NOT_CHECKED_EMPTY` outranks `NOT_CHECKED_DISCARDED`.
+    If any service holds a non-discarded list (empty), the reason is "empty":
+    there is a list someone can fill. Only when every service's every version
+    is discarded is it "discarded". The per-service records keep both."""
     by_service: dict[uuid.UUID, list[CapabilityList]] = {}
     for cl in lists:
         by_service.setdefault(cl.service_id, []).append(cl)
     chosen: list[CapabilityList] = []
     fallbacks: list[VersionFallback] = []
-    any_live = False
     for service_id, versions in by_service.items():
         live = sorted(
             (cl for cl in versions if cl.status != CapabilityListStatus.DISCARDED),
             key=lambda cl: cl.version,
             reverse=True,
         )
-        if not live:
-            continue
-        any_live = True
         used = next((cl for cl in live if _offers_security_rows(cl, live_by_list[cl.id])), None)
         if used is not None:
             chosen.append(used)
-        if used is not live[0]:
-            svc = db.get(Service, service_id)
-            fallbacks.append(
-                VersionFallback(
-                    service_id=service_id,
-                    service_title=svc.title if svc is not None else "",
-                    skipped_version=live[0].version,
-                    skipped_status=str(live[0].status.value),
-                    used_version=used.version if used is not None else None,
-                )
+        if live and used is live[0]:
+            continue
+        skipped = tuple(
+            (cl.version, str(cl.status.value))
+            for cl in live
+            if used is None or cl.version > used.version
+        )
+        svc = db.get(Service, service_id)
+        fallbacks.append(
+            VersionFallback(
+                service_id=service_id,
+                service_title=svc.title if svc is not None else "",
+                skipped=skipped,
+                used_version=used.version if used is not None else None,
+                reason=(
+                    None
+                    if used is not None
+                    else NOT_CHECKED_EMPTY if live else NOT_CHECKED_DISCARDED
+                ),
             )
+        )
     reason = None
     if not chosen:
-        reason = NOT_CHECKED_EMPTY if any_live else NOT_CHECKED_DISCARDED
+        reasons = {f.reason for f in fallbacks}
+        reason = NOT_CHECKED_EMPTY if NOT_CHECKED_EMPTY in reasons else NOT_CHECKED_DISCARDED
     return chosen, tuple(fallbacks), reason
 
 
