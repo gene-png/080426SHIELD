@@ -928,10 +928,18 @@ def _r4_world(app_parts, reason: str) -> World:  # noqa: F811
     elif reason == "empty":
         w = _no_list_world(app_parts)
         _second_tech_debt_service(w, [], title="Acme Tech Debt")
+    elif reason == "discarded":
+        # The only Tech Debt list is discarded.
+        w = _world(app_parts)
+        _discard(w, w.list_id)
     else:
         w = _world(app_parts)
         w.approve_list()
         _upload_v2_items(w, [])
+        if reason == "mixed":
+            # Service A ("Acme Tech Debt") falls back to v1; service B has only
+            # an empty list and contributes nothing.
+            _second_tech_debt_service(w, [], title="Acme Tech Debt B")
     _cover(w, _codes(w)[0], [EDR])
     return w
 
@@ -940,8 +948,15 @@ def _r4_world(app_parts, reason: str) -> World:  # noqa: F811
 R4_CASES = [
     ("no_list", C5, [C5B, C9]),
     ("empty", C5B, [C5, C9]),
+    # Only discarded lists: C5, as main already says (with the advisor).
+    ("discarded", C5, [C5B, C9]),
     ("fallback", C9, [C5, C5B]),
+    # A falls back, B has only empty lists: C9 for A only, nothing about B.
+    ("mixed", C9, [C5, C5B, "Acme Tech Debt B", "version None"]),
 ]
+
+#: Admin-only copy that must never reach a client surface (the ratchet).
+ADMIN_ONLY = [C8A, C8B]
 
 
 @pytest.mark.parametrize("fmt", FORMATS)
@@ -953,7 +968,8 @@ def test_r4_each_format_says_the_right_sentence(
     w = _r4_world(app_parts, reason)
     text = _format_text(w, _approve_finalize(w), fmt)
     assert shown in text, text[:3000]  # positive first
-    for wrong in absent:
+    assert text.count(shown) == 1, text[:3000]  # one C9 for one service that fell back
+    for wrong in [*absent, *ADMIN_ONLY]:
         assert wrong not in text, text[:3000]
 
 
@@ -965,9 +981,10 @@ def test_r4_the_client_dashboard_says_the_right_sentence(
     w = _r4_world(app_parts, reason)
     _release(w, _approve_finalize(w))
     notes = _dashboard(w)["subset_notes"]
-    assert shown in notes, notes
-    for wrong in absent:
-        assert wrong not in notes, notes
+    assert notes.count(shown) == 1, notes  # positive first, and only once
+    joined = " ".join(notes)
+    for wrong in [*absent, *ADMIN_ONLY]:
+        assert wrong not in joined, notes
 
 
 @pytest.mark.parametrize(
@@ -975,7 +992,10 @@ def test_r4_the_client_dashboard_says_the_right_sentence(
     [
         ("no_list", C5, []),
         ("empty", C5B, []),
+        ("discarded", C5, []),
         ("fallback", None, [C8A]),
+        # A's C8 only: B contributes nothing and has no version to name.
+        ("mixed", None, [C8A]),
     ],
 )
 def test_r4_the_admin_assessment_carries_the_right_sentence(
