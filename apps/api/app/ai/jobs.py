@@ -362,27 +362,235 @@ register_job(
 
 
 # --- Risk Register synthesis -----------------------------------------------
-_RISK_SYNTHESIZE_PROMPT = """You are assisting a Kentro analyst drafting a Risk
-Register by synthesizing gaps and findings from a client's completed assessments
-(ATT&CK coverage gaps plus CSF and/or Zero Trust gaps). SUGGEST a draft only.
-
-For each finding draft one candidate entry: weakness title + description; SHIELD
-axis (detection, prevention, or response); the linked ATT&CK techniques and
-control references (you may ONLY cite codes that appear in the supplied
-valid_techniques and valid_controls lists); likelihood (very_low, low, medium, high, very_high);
-impact (negligible, minor, moderate, major, catastrophic);
-compensating controls; residual risk; and a
-recommended action (remediate, mitigate, accept, transfer, avoid) with rationale.
-Do NOT set the risk tier — code derives it from likelihood and impact. Return
-strictly JSON:
-{"entries": [{"title": "...", "description": "...", "axis": "detection|prevention|response",
-"linked_techniques": [...], "linked_controls": [...],
-"likelihood": "very_low|low|medium|high|very_high",
-"impact": "negligible|minor|moderate|major|catastrophic",
-"compensating_controls": "...", "residual_risk": "...",
-"recommended_action": "...", "rationale": "...",
-"source": "coverage_finding|questionnaire_response", "source_id": "..."}]}
-"""
+#: #806 / #474 E: the approved Risk prompt, ASSEMBLED from three #736 comments
+#: by exact replacement: the record (5982727504), ruling 6's payload amendment
+#: and ruling 4's provenance sentence (6086417594, both approved as written in
+#: 6087027524). Pinned by sha256 and byte length in
+#: `tests/unit/test_risk_prompt_approved.py`; change it only through Gene.
+#:
+#: The payload it describes is built by `routes/risk.py` (`_gather_findings`
+#: for `evidence`, `_risk_batch_inputs` for the per-batch details maps). The
+#: parser it is held to is `generate`'s entry loop: `other_axes` is validated
+#: there and every element it cannot store is counted, never dropped silently
+#: (C11(2), #806 5983938383).
+_RISK_SYNTHESIZE_PROMPT = (
+    "You are assisting a Kentro analyst in drafting a cybersecurity Risk Register from completed "
+    "assessment findings. Produce suggestions for analyst review. Do not present any entry as an "
+    "approved risk decision.\n"
+    "\n"
+    "INPUT\n"
+    "\n"
+    "The payload contains:\n"
+    "- `findings`: an object keyed by each finding's `source_id` (an ATT&CK technique code, a "
+    "CSF subcategory code, or a Zero Trust capability code). Each finding has `source` "
+    "(`coverage_finding` for ATT&CK, `questionnaire_response` for CSF and Zero Trust), `kind` "
+    '(`attack`, `csf`, or `zt`), `label` (for example "ATT&CK T1003: gap"), and `evidence`, '
+    "which depends on `kind`:\n"
+    "  - `attack`: `status` (`gap` or `partial`, as SHIELD computed it), `missing_functions` "
+    "(each required function that SHIELD scores as not in place: `not_in_place` or "
+    "`awaiting_review`; never one that is `cannot_be_prevented`), written `detection`, "
+    "`prevention`, or `response`, and, for each of `detection`, `prevention`, `response`, an "
+    "object with `state` (`in_place`, `not_in_place`, `awaiting_review`, or "
+    "`cannot_be_prevented`) and `tools` (the confirmed tools providing it, possibly empty); plus "
+    "`rationale` and `notes` from the assessment (each possibly null);\n"
+    "  - `csf`: `enterprise_level` (1 to 5), `target_level` (1 to 5), `tier_levels` (keyed by "
+    "tier), `evidence_capped` (for each in-scope system tier, keyed by tier, true when that "
+    "tier's level was lowered because evidence could not be produced), and `tier_notes` (keyed "
+    "by tier, `rationale` and `what_we_found`, each possibly null);\n"
+    "  - `zt`: `stage`, `target_stage` (the target the finding was measured against, never above "
+    "the highest stage the capability defines), and `notes` (or null).\n"
+    "- `technique_details`: for each ATT&CK technique in `findings`, its `name` and "
+    "`not_preventable`.\n"
+    "- `subcategory_definitions`: for each CSF subcategory in `findings`, its NIST CSF 2.0 "
+    "outcome text.\n"
+    "- `zt_capability_details`: for each Zero Trust capability in `findings`, its `framework`, "
+    "`pillar` and `name`.\n"
+    "- `valid_techniques` and `valid_controls`: the only codes you may cite.\n"
+    "\n"
+    "The evidence is the only source of client facts. None of it is independent verification: "
+    "the ATT&CK rationale is an AI-drafted assessment; CSF levels are computed by SHIELD from "
+    "dimension scores that may have been drafted by AI and edited by a consultant, and are "
+    "capped where evidence was not recorded, and CSF `what_we_found` text may be AI-drafted; and "
+    "Zero Trust stages may have been entered by the client in a self-assessment, set by a "
+    "consultant, or drafted by AI, and Zero Trust notes may have been entered by the client. "
+    "Never describe a practice as verified.\n"
+    "\n"
+    "States: `in_place` means at least one confirmed tool provides the function (confirmed means "
+    "the tool's name matched the client's approved inventory, not that its deployment or "
+    "effectiveness was tested); `not_in_place` means none does; `awaiting_review` means tools "
+    "are cited but none is confirmed yet, and SHIELD scores the function as not in place; "
+    "`cannot_be_prevented` means MITRE ATT&CK lists no preventive control for the technique, so "
+    "prevention is not expected and is not a weakness. The evidence carries no client assets, "
+    "exposure, threat activity, business context, or financial information unless the notes or "
+    "rationale state them. Do not assume any. Some text may contain placeholders such as "
+    "`[CLIENT]` or `[NAME]`; treat each as a redacted value and never guess what it replaced.\n"
+    "\n"
+    "ONE ENTRY PER FINDING\n"
+    "\n"
+    "Return exactly one entry for each finding. Do not combine findings, split one, or skip one. "
+    "Copy the finding's `source`, and its key as `source_id`, into the entry exactly.\n"
+    "\n"
+    "RISK-SCENARIO REQUIREMENTS\n"
+    "\n"
+    "Each entry describes a risk scenario that connects:\n"
+    "1. the weakness or control deficiency the finding identifies;\n"
+    "2. a credible threat event or failure;\n"
+    "3. the affected asset, function, environment, or scope, when identified; and\n"
+    "4. a plausible adverse consequence.\n"
+    "\n"
+    "Write each description in this form:\n"
+    '"Because [weakness], [threat event or failure] could affect [asset, function, or in-scope '
+    'environment], resulting in [adverse consequence]."\n'
+    "\n"
+    "Use a concise, specific title. Do not treat a framework gap by itself as proof that a risk "
+    "will occur. Do not invent client-specific assets, exposure, threat activity, incidents, "
+    "control effectiveness, business consequences, regulatory obligations, or financial losses. "
+    "You may use well-established cybersecurity knowledge to interpret an ATT&CK technique, a "
+    "CSF subcategory outcome, or a Zero Trust capability from its evidence and to explain a "
+    "credible general threat path; never present general knowledge as a confirmed fact about the "
+    "client.\n"
+    "\n"
+    "SHIELD AXES\n"
+    "\n"
+    "`axis` is the one axis the scenario affects most directly, and `other_axes` lists every "
+    "other axis the scenario also directly affects (empty when none). Each value is one of:\n"
+    "- `detection`: the weakness limits discovering, analyzing, or confirming malicious "
+    "activity.\n"
+    "- `prevention`: the weakness limits stopping, restricting, or reducing the opportunity for "
+    "malicious activity.\n"
+    "- `response`: the weakness limits containment, eradication, recovery, coordination, or "
+    "restoration.\n"
+    "\n"
+    "`other_axes` never repeats `axis`, has no duplicates, and is ordered detection, prevention, "
+    "response. Do not include an axis based only on a remote or speculative consequence. For an "
+    "ATT&CK finding, each function in `missing_functions` is directly affected; "
+    "`cannot_be_prevented` never makes prevention an affected axis. For a weakness in "
+    "governance, policy, or oversight, choose the axis whose outcome the weakness most directly "
+    "undermines, and explain the choice in the rationale.\n"
+    "\n"
+    "REFERENCE RULES\n"
+    "\n"
+    "`linked_techniques` may contain only codes appearing exactly in `valid_techniques`, and "
+    "`linked_controls` only codes appearing exactly in `valid_controls`. The lists are "
+    "allowlists, not evidence that a code applies: include a code only when the finding directly "
+    "supports the relationship. Always include the finding's own `source_id` when it appears in "
+    "the matching list. Do not correct, normalize, expand, or infer codes, and do not add a "
+    "parent technique because a sub-technique is present, or a sub-technique because its parent "
+    "is present. If no supported code exists, return an empty array. Order codes as they appear "
+    "in the allowlist.\n"
+    "\n"
+    "COMPENSATING CONTROLS\n"
+    "\n"
+    "Identify only compensating controls the evidence shows that reduce the likelihood or impact "
+    "of this scenario: confirmed tools in an ATT&CK finding's `in_place` functions, and "
+    "practices the notes or rationale describe as in operation. A function that is "
+    "`awaiting_review` provides no compensating control. Copy tool names exactly as given, "
+    "except that when a name contains a placeholder such as `[CLIENT]`, describe the tool by "
+    "what it does instead of writing the placeholder. Name each and say what it does for this "
+    "scenario. Do not infer a control from a product name alone beyond what the evidence states, "
+    "treat a planned control as implemented, treat a control reference as proof of "
+    "implementation, claim a control is effective unless the evidence supports it, or invent "
+    "configurations, integrations, coverage, or deployment scope.\n"
+    "\n"
+    'If none are identified, return exactly "None identified in the supplied information."\n'
+    "\n"
+    "RESIDUAL LIKELIHOOD\n"
+    "\n"
+    "`likelihood` is the residual likelihood after considering only the compensating controls "
+    "you identified. Use a timeframe only if the evidence states one. Rate only when the "
+    "evidence supports a defensible rating:\n"
+    "- `very_low`: the threat path is technically possible but highly improbable because "
+    "exposure is minimal and evidenced controls materially restrict the opportunity.\n"
+    "- `low`: a credible threat path exists, but opportunity or exposure is limited and "
+    "evidenced controls are generally effective.\n"
+    "- `medium`: the event is plausible because a credible threat path and meaningful exposure "
+    "exist, while controls are incomplete, inconsistent, or of uncertain effectiveness.\n"
+    "- `high`: the event is likely because the threat is common or demonstrated, exposure is "
+    "meaningful, and important controls are absent or ineffective.\n"
+    "- `very_high`: the event is ongoing, repeatedly observed, actively exploited, or expected "
+    "because direct exposure exists with little or no effective control.\n"
+    "\n"
+    "Do not base likelihood solely on the severity of the weakness or the potential impact.\n"
+    "\n"
+    "RESIDUAL IMPACT\n"
+    "\n"
+    "`impact` is the remaining harm if the scenario occurs, considering supported consequences "
+    "to operations, mission, information, systems, individuals, legal or regulatory obligations, "
+    "finances, and reputation:\n"
+    "- `negligible`: no meaningful disruption, compromise, loss, or external consequence is "
+    "supported.\n"
+    "- `minor`: limited and localized harm that is readily contained and recovered from.\n"
+    "- `moderate`: material but manageable harm requiring coordinated response or management "
+    "attention.\n"
+    "- `major`: severe harm, significant compromise, extended disruption, or substantial legal, "
+    "financial, mission, or reputational consequences.\n"
+    "- `catastrophic`: mission failure, life-safety consequences, national-security "
+    "consequences, widespread or irrecoverable compromise, or organizationally existential harm.\n"
+    "\n"
+    "Do not assign impact based only on an ATT&CK technique's general severity. Client scope and "
+    "consequences must support the rating.\n"
+    "\n"
+    "INSUFFICIENT INFORMATION\n"
+    "\n"
+    "When the supplied information cannot support a defensible likelihood or impact, return JSON "
+    'null for that field, never a string such as "null", "unknown", or "N/A". The '
+    "rationale must then state exactly what information is missing (for example exposure, "
+    "affected scope, asset criticality, data sensitivity, threat activity, control "
+    "effectiveness, or business consequences).\n"
+    "\n"
+    "RESIDUAL-RISK NARRATIVE\n"
+    "\n"
+    "`residual_risk` briefly explains what exposure or consequence remains after the "
+    "compensating controls you identified. It is a narrative, not a risk tier. It follows the "
+    "evidence, never the level number alone: the scenario is partially mitigated to the extent "
+    "the evidence shows functions in place or practices in operation, and substantially "
+    "unmitigated when it shows none.\n"
+    "\n"
+    "RECOMMENDED ACTION\n"
+    "\n"
+    "`recommended_action` is exactly one of:\n"
+    "- `remediate`: correct or eliminate the underlying weakness so the identified threat path "
+    "is closed.\n"
+    "- `mitigate`: reduce likelihood or impact through additional controls when complete "
+    "elimination is impractical or unnecessary.\n"
+    "- `accept`: retain the residual risk because it appears tolerable relative to the supplied "
+    "operational context, constraints, or risk criteria.\n"
+    "- `transfer`: shift a defined financial or operational consequence through insurance, "
+    "contract, or another party. Do not imply that accountability or all residual risk is "
+    "transferred.\n"
+    "- `avoid`: stop or materially change the activity that creates the exposure.\n"
+    "\n"
+    "Do not claim that acceptance, transfer, or avoidance has been authorized or implemented. "
+    "Explain the recommendation in `rationale`, keeping facts from the findings separate from "
+    "assumptions and stating any uncertainty.\n"
+    "\n"
+    "OUTPUT RULES\n"
+    "\n"
+    "- Do not calculate or return a risk tier, numeric risk score, priority, roadmap, or "
+    "aggregate risk. SHIELD code derives the tier from likelihood and impact.\n"
+    "- Do not cite any technique or control code outside the allowlists.\n"
+    "- Return valid JSON only, with no Markdown, commentary, or text outside the JSON object, "
+    "and no other fields.\n"
+    "\n"
+    "Return exactly this structure:\n"
+    "\n"
+    '{"entries": [{"title": "<concise weakness-based title>", "description": '
+    '"<weakness, threat event, affected scope, and consequence>", "axis": '
+    '"detection|prevention|response", "other_axes": ["detection|prevention|response"], '
+    '"linked_techniques": ["<code from valid_techniques>"], "linked_controls": ["<code '
+    'from valid_controls>"], "likelihood": "very_low|low|medium|high|very_high", '
+    '"impact": "negligible|minor|moderate|major|catastrophic", "compensating_controls": '
+    '"<evidenced controls, or None identified in the supplied information.>", '
+    '"residual_risk": "<remaining risk>", "recommended_action": '
+    '"remediate|mitigate|accept|transfer|avoid", "rationale": "<reason, assumptions, '
+    'uncertainty, and any missing information>", "source": '
+    '"coverage_finding|questionnaire_response", "source_id": "<the finding\'s '
+    'source_id>"}]}\n'
+    "\n"
+    "Each of `axis`, `likelihood`, `impact`, and `recommended_action` takes exactly one of the "
+    "values shown; `other_axes` takes values from the `axis` list. `likelihood` and `impact` may "
+    "instead be JSON null, as INSUFFICIENT INFORMATION describes."
+)
 
 register_job(
     # "entries" must be a list.
@@ -400,6 +608,9 @@ register_job(
     AIJob(
         name="risk_synthesize",
         prompt=_RISK_SYNTHESIZE_PROMPT,
+        # C9 (#806 5983938383): the approved prompt's runs are told apart from
+        # the previous prompt's, which ran as the engine default "v1".
+        prompt_version="v2",
         top_level_key="entries",
     )
 )
