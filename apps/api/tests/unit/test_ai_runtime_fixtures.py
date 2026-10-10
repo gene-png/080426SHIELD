@@ -30,6 +30,8 @@ from app.ai.fixtures import (
 from app.ai.llm import LLMClient
 from app.config import Settings
 from app.models.llm_call import LLMCall, LLMCallStatus
+from app.routes.zt import _zt_capability_details
+from app.zt.maturity import ZtFrameworkCode
 
 
 @pytest.fixture()
@@ -101,9 +103,20 @@ def test_run_job_zt_score_cisa_is_parseable_without_overrides(db_session) -> Non
         db_session,
         llm,
         "zt_score",
+        # The approved prompt's payload (#806, A2): `answers` with notes, since
+        # blank notes get no result (A5).
         inputs={
             "framework": "cisa_ztmm_2_0",
             "capabilities": ["CISA.ID.01", "CISA.ID.02", "CISA.DV.01"],
+            # Catalog text, since the guard (#985) refuses anything else.
+            # Sound: input only; the asserts read codes, stages and keys, never this text.
+            "capability_details": _zt_capability_details(
+                ZtFrameworkCode.CISA_ZTMM_2_0, ["CISA.ID.01", "CISA.ID.02", "CISA.DV.01"]
+            ),
+            "answers": {
+                code: {"notes": "MFA is enforced for every account.", "current": None}
+                for code in ("CISA.ID.01", "CISA.ID.02", "CISA.DV.01")
+            },
         },
         requested_by=uuid.uuid4(),
     )
@@ -112,7 +125,7 @@ def test_run_job_zt_score_cisa_is_parseable_without_overrides(db_session) -> Non
     assert {c["code"] for c in caps} == {"CISA.ID.01", "CISA.ID.02", "CISA.DV.01"}
     for c in caps:
         assert 1 <= c["current"] <= 4
-        assert 1 <= c["target"] <= 4
+        assert set(c) == {"code", "current"}, c  # A9: no `target` (A6)
 
 
 @pytest.mark.unit
@@ -123,9 +136,20 @@ def test_zt_score_dod_respects_three_stage_clamp(db_session) -> None:
         db_session,
         llm,
         "zt_score",
+        # The approved prompt's payload (#806, A2): notes, and each DoD
+        # capability's activities (C3: none means no result).
         inputs={
             "framework": "dod_ztra",
             "capabilities": ["DOD.USR.01", "DOD.USR.02", "DOD.APP.01"],
+            # Catalog text, since the guard (#985) refuses anything else.
+            # Sound: input only; the asserts read codes, stages and keys, never this text.
+            "capability_details": _zt_capability_details(
+                ZtFrameworkCode.DOD_ZTRA, ["DOD.USR.01", "DOD.USR.02", "DOD.APP.01"]
+            ),
+            "answers": {
+                code: {"notes": "MFA is enforced for every account.", "current": None}
+                for code in ("DOD.USR.01", "DOD.USR.02", "DOD.APP.01")
+            },
         },
         requested_by=uuid.uuid4(),
     )
@@ -133,7 +157,7 @@ def test_zt_score_dod_respects_three_stage_clamp(db_session) -> None:
     assert caps, "expected at least one drafted capability"
     for c in caps:
         assert 1 <= c["current"] <= 3
-        assert 1 <= c["target"] <= 3
+        assert set(c) == {"code", "current"}, c  # A9: no `target` (A6)
 
 
 @pytest.mark.unit

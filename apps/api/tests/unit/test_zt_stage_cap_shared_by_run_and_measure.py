@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
-from scripts.measure_ai_consistency import ZtScope, compare_pair, measure_zt
+from scripts.measure_ai_consistency import measure_zt
 
 from app.ai.llm import LLMClient, LLMResponse
 from app.routes.zt import _validated_stage
@@ -35,11 +35,11 @@ HAS_ADVANCED = "DOD.USR.02"  # 1.2 Conditional User Access
 DOD_LADDER = 3  # Basic, Target, Advanced
 REASON = "stage_above_capability_max"
 
-# Current 3 on both: refused on 1.1, applied on 1.2. Target 2 on 1.1 is within
-# its maximum and lands, so the row is not refused as a whole.
+# Current 3 on both: refused on 1.1, applied on 1.2. (Before #806, 1.1 also
+# carried a target of 2; the AI's target is no longer applied or measured.)
 RESPONSE = (
     '{"capabilities": ['
-    '{"code": "' + NO_ADVANCED + '", "current": 3, "target": 2},'
+    '{"code": "' + NO_ADVANCED + '", "current": 3},'
     '{"code": "' + HAS_ADVANCED + '", "current": 3}'
     "]}"
 )
@@ -103,13 +103,12 @@ def test_measure_zt_refuses_what_the_run_refuses(world) -> None:  # noqa: F811
     assert (current["compared"], current["equal"]) == (2, 1), current
     # 1.1's 3 is refused in both runs: compared, no agreement, both absent.
     assert current["both_absent"] == 1, current
-    target = report["pairs"][0]["fields"]["target"]
-    assert (target["compared"], target["equal"]) == (2, 1), target
+    assert set(report["pairs"][0]["fields"]) == {"current"}  # #806: no target measured
 
 
 def test_the_run_refuses_what_the_measure_refuses(app_client) -> None:  # noqa: F811
     """The same RESPONSE through the Run-AI route: 1.1's current is dropped
-    for the same reason, 1.2's current and 1.1's target land."""
+    for the same reason, and 1.2's current lands."""
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_dod")
     a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
@@ -118,25 +117,7 @@ def test_the_run_refuses_what_the_measure_refuses(app_client) -> None:  # noqa: 
     body = zt_run_ai(c, svc_id, h)
     by_code = {r["capability_code"]: r for r in body["answers"]}
     assert by_code[HAS_ADVANCED]["maturity_stage"] == 3
-    assert by_code[NO_ADVANCED]["target_stage"] == 2
     assert by_code[NO_ADVANCED]["maturity_stage"] is None
     assert [(d["key"], d["field"], d["reason"]) for d in body["dropped"]] == [
         (NO_ADVANCED, "current", REASON)
     ], body["dropped"]
-
-
-def test_a_target_above_the_capability_maximum_is_not_refused_by_the_measure() -> None:
-    """Scope 1 (6049667540): a target above the maximum is stored and
-    disclosed (C1), never refused, so the measure compares it as an answer."""
-    from app.zt.maturity import ZtFrameworkCode
-
-    scope = ZtScope(
-        max_stage=DOD_LADDER,
-        codes=frozenset({NO_ADVANCED}),
-        framework=ZtFrameworkCode.DOD_ZTRA,
-    )
-    a = {"capabilities": [{"code": NO_ADVANCED, "current": 2, "target": 3}]}
-    r = compare_pair("zt_score", a, a, context=scope)
-    assert (r["fields"]["target"]["compared"], r["fields"]["target"]["equal"]) == (1, 1)
-    assert r["fields"]["target"]["both_absent"] == 0
-    assert (r["fields"]["current"]["compared"], r["fields"]["current"]["equal"]) == (1, 1)

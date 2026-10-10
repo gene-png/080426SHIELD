@@ -288,9 +288,9 @@ describe("ZtRunAiAccounting, capabilities with no result (#840)", () => {
   it("a blank-notes capability that kept a stage brings Z6, in the one assertive region", () => {
     const { container } = render(
       <ZtRunAiAccounting
-        // A kept stage in the BLANK group: leaving it out is by design once
-        // the #806 ZT prompt ships; on today's prompt, a miss. Either way the
-        // stage reaches the deliverable unconfirmed (#736 comment 6071261772).
+        // A kept stage in the BLANK group: leaving it out is by design under
+        // the #806 ZT prompt (A5), and the stage still reaches the deliverable
+        // unconfirmed (#736 comment 6071261772).
         result={result([nr("DS.2", true, 2)])}
       />,
     );

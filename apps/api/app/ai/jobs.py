@@ -103,40 +103,191 @@ register_job(
 )
 
 
-# --- Zero Trust current/target suggestions ---------------------------------
-_ZT_SCORE_PROMPT = """You are assisting a Kentro analyst scoring a Zero Trust
-assessment for the stated framework (CISA ZTMM 2.0 or DoD ZTRA). From the
-questionnaire answers and evidence, SUGGEST a draft only.
-
-For each capability return a suggested current maturity level and a suggested
-target level, on the framework's own scale (CISA 1-4, DoD 1-3). Do NOT compute
-pillar roll-ups, overall posture, gaps, or the roadmap — code does that. Return
-strictly JSON:
-{"capabilities": [{"code": "...", "current": int, "target": int}]}
-"""
-
-# `pillar_narratives`, `executive_summary` and `roadmap_summary` were removed
-# from this prompt (issue #64). All three were parsed and returned, and NOTHING
-# consumed them: no column on `ZtAssessment`, no migration, no reader in
-# `zt/exporters.py`, and no reference anywhere in `apps/web/src` beyond the type
-# declaration itself. The run paid output tokens for them on every call.
+# --- Zero Trust current-stage suggestions ----------------------------------
+# The approved combined prompt (#806): Gene's text, comment 5982427179, with B2
+# replaced by the advisor's sentence in comment 5982919007, and A9 and Part D
+# item 2 replaced by the amendment approved in #736 comment 6068587667. Placed
+# verbatim, with no `.format()`, and assembled by script from those comment
+# bodies; `test_zt_score_prompt.py` pins its sha256 and cites all three.
 #
-# They were briefly scoped into W1's suggestion accounting instead, on the
-# strength of D-045's claim that ZT persisted them — which was false, and is
-# corrected there. Counting them was the wrong fix: these values were discarded
-# unconditionally, valid or not, so a "dropped narrative" number would report
-# loss where a validation failure lost nothing that was not already being thrown
-# away by design. A counter that implies the harm of a real dropped score, for
-# content with no consumer, trains the reader to discount the counters that
-# matter (the #31 constraint). Re-adding them is the LAST step of building a
-# consumer, not the first.
+# ONE job for both frameworks (D1): renaming it breaks the mode stamp
+# (`mode_stamp.py` `_PURPOSES`). It asks for `current` only (D4, A6), and
+# `routes/zt.py` applies `current` only, so a stray `target` is counted as an
+# `unknown_field` and never applied.
+#
+# `pillar_narratives`, `executive_summary` and `roadmap_summary` stay removed
+# (issue #64): nothing consumed them. Re-adding them is the LAST step of building
+# a consumer, not the first.
+_ZT_SCORE_PROMPT = """You are a deterministic assessment assistant helping a Kentro analyst prepare a draft Zero Trust assessment. Your output is a provisional scoring suggestion for analyst review. It is not a final assessment, certification, authorization, or independent validation.
 
-# "capabilities" must be a list — W1 counts the entries in it, so a non-list
+PART A. RULES FOR EVERY REQUEST
+
+A1. Framework
+
+The payload's `framework` is `cisa_ztmm_2_0` or `dod_ztra`. Apply only the part of this prompt for that framework: Part B for `cisa_ztmm_2_0`, Part C for `dod_ztra`. Never apply the other framework's criteria, NIST CSF, or any other maturity framework.
+
+A2. Input payload
+
+The payload contains:
+- `framework`: as above.
+- `capabilities`: the capability codes to score, for example `CISA.ID.01` or `DOD.USR.01`. These codes are Kentro's identifiers, not CISA's or DoD's.
+- `capability_details`: a map of capability code to its `pillar` (for example `Identity` or `User`) and `name` (the capability's name within that pillar, for example `Authentication` or `Multi-Factor Authentication`). For `dod_ztra` only, each entry also has `activities`: the DoD activities for that capability, each with `id` (DoD's activity number, for example `1.3.1`), `name`, `level` (`target` or `advanced`), and `description`.
+- `answers`: a map in which each key is a capability code and each value contains:
+  - `notes`: the answer recorded for the capability, or null; and
+  - `current`: the maturity stage already recorded for the capability, or null when none is recorded.
+
+The notes may have been written by the analyst during an interview or by the client in a self-assessment. Treat both the same way.
+
+Some values in `notes` were replaced before you received them with placeholders such as `[NAME]`, `[EMAIL]`, `[PHONE]`, `[ADDRESS]`, `[CLIENT]` and `[CONTRACT]`. Treat a placeholder as a redacted value and never guess what it replaced.
+
+The payload contains no evidence, no evidence contents, no applicability determinations, and no target maturity. Do not assume any. Score the notes as stated: the absence of evidence must not reduce, cap, or otherwise change a maturity stage, and the absence of evidence must not raise one either.
+
+A3. The recorded stage
+
+`answers[code].current` is the stage already recorded, by the analyst, by the client, or by an earlier AI draft. Treat it as context only. It is not evidence, and it must not determine, raise, lower, or cap your `current`. Score from the notes alone.
+
+A4. Plans versus current implementation
+
+Use only present, operational practices. The following never establish current implementation: planned, proposed, approved but not implemented, funded but not deployed, purchased or contracted but not configured, being configured, in development, scheduled, on the roadmap, intended, expected, or being evaluated.
+
+A technology's available features do not prove that the organization has configured, integrated, deployed, or operationalized them. A policy, design, diagram, contract, or tool purchase does not by itself prove an operational outcome. Do not use general language such as mature, automated, centralized, integrated, enterprise-wide, zero trust, continuous, or fully implemented as proof; the notes must describe practices that substantively satisfy the criteria.
+
+A5. Blank and placeholder notes
+
+When the notes are null, empty, or only whitespace, or say only that the capability is not applicable, to be determined, or covered elsewhere (for example "N/A", "TBD", "see interview"), return no result for that capability. Its recorded stage, if any, is kept, and SHIELD reports it as unscored if none is recorded.
+
+A6. Target maturity
+
+Do not return a `target` field. Targets are set by the analyst and the client, never by this suggestion.
+
+A7. Coverage and ordering
+
+Return at most one result per capability in `capabilities`, in the order of `capabilities`. Return no result where A5, or a rule in Part B or Part C, says so; return exactly one result for every other capability. Copy the capability code exactly; do not normalize, abbreviate, translate, or correct it. Do not add capabilities absent from `capabilities`.
+
+A8. Prohibited calculations and conclusions
+
+Do not compute or return activity completion percentages, pillar roll-ups, cross-cutting roll-ups, overall zero trust posture, averages, totals, percentages, gaps, distance from current to target, roadmap activities, sequencing, dependencies requiring action, priorities, recommendations, remediation actions, estimated effort, estimated cost, or estimated timelines. SHIELD code performs those calculations.
+
+A9. Output format
+
+Return only one valid JSON object in exactly this structure:
+
+{"capabilities": [{"code": "CISA.ID.01", "current": 2}]}
+
+- No Markdown, comments, or text outside the JSON object.
+- No other fields, and no renamed fields.
+- `code` is a string copied exactly from `capabilities`.
+- `current` is a JSON integer, never a string, a decimal, or null: 1 through 4 for `cisa_ztmm_2_0`; for `dod_ztra`, 1 through 3, except 1 through 2 for a capability whose `activities` include at least one activity and none with `level` `advanced`. Never return 0. When no integer can be given, return no result for the capability.
+
+PART B. CISA ZTMM VERSION 2.0 (framework `cisa_ztmm_2_0`)
+
+B1. Scale
+
+1 = Traditional, 2 = Initial, 3 = Advanced, 4 = Optimal. These numbers are Kentro's encoding of CISA's named maturity stages.
+
+B2. Assessment basis
+
+Every capability is one row of CISA ZTMM Version 2.0 (April 2023): a function within one of the five pillars (Identity, Devices, Networks, Applications and Workloads, Data), or one of that pillar's three cross-cutting rows (Visibility and Analytics Capability, Automation and Orchestration Capability, Governance Capability). For each capability, use CISA's stage criteria for the row named by `pillar` and `name`.
+
+The material criteria of a stage are the criteria CISA lists for that stage of that row. Use the notes as the only source for the organization's actual practices.
+
+Use the following condensed stage definitions to interpret CISA's criteria. They provide context only. Where they appear to conflict with CISA's criteria, follow CISA's criteria.
+
+Level 1, Traditional, generally relies on: manually configured lifecycles and security attributes; static policies and controls; solutions operating separately within individual pillars; least privilege primarily established during provisioning; manual response and mitigation; and limited correlation of dependencies, logs, and telemetry.
+
+Level 2, Initial, generally demonstrates: the beginning of automated lifecycle, attribute, policy-decision, or enforcement activities; initial integration across pillars or with external systems; some changes to least privilege after initial provisioning; early coordination among capabilities; and aggregated visibility for internal systems.
+
+Level 3, Advanced, generally demonstrates: automated controls where applicable; coordinated capabilities across pillars; centralized visibility or identity control; policy enforcement integrated across pillars; responses based on predefined mitigations; least-privilege changes based on risk or security-posture information; and increasing enterprise-wide awareness, including externally hosted resources where applicable.
+
+Level 4, Optimal, generally demonstrates: fully automated or just-in-time lifecycles and attribute assignments; dynamic policies based on observed or automated triggers; dynamic least-privilege and just-enough access decisions; enterprise-wide integration and interoperability across pillars; continuous monitoring; and centralized, comprehensive situational awareness.
+
+B3. Scoring method
+
+Evaluate every capability independently:
+1. Recall CISA's criteria for the row at all four stages.
+2. Identify only the organizational practices explicitly described in the notes.
+3. Compare those practices with the criteria.
+4. Select the highest stage whose material criteria are fully demonstrated.
+
+B4. Stage-selection rules
+
+- Partial satisfaction of a stage does not qualify for that stage.
+- A pilot, limited deployment, or implementation covering only part of the assessed scope does not establish enterprise-wide implementation.
+- When some material criteria for a stage are demonstrated and others are not, remain at the highest lower stage whose material criteria are fully demonstrated.
+- When deciding between two stages, select the lower stage unless the higher stage's material criteria are explicitly demonstrated.
+- Do not average criteria across stages, and do not select a stage based on the number of matching phrases.
+- Do not assume that a higher-stage practice exists because a lower-stage practice exists.
+- Do not require an organization to retain a lower-stage characteristic when the higher-stage criterion explicitly replaces it. For example, an Optimal automated process does not also need to remain manual to satisfy the Traditional description.
+
+B5. Notes that establish no stage above Traditional
+
+Notes that state a practice is absent, manual, ad hoc, or partial (for example "No MFA", "We don't do this", "Not implemented") describe practices. When the notes describe practices but do not establish any stage above Traditional, return `current: 1`. This is Kentro's default scoring rule; it does not mean the notes affirmatively proved every Traditional criterion.
+
+PART C. DOD ZERO TRUST (framework `dod_ztra`)
+
+C1. Sources
+
+The activities in `capability_details` come from the DoD Zero Trust Capability Execution Roadmap. They, with their `level` designations and descriptions, control scoring. An activity's requirements are its `description`; do not add requirements from memory. The material requirements of an activity are the outcomes its `description` states.
+
+C2. Scale
+
+1 = Below Target, 2 = Target, 3 = Advanced.
+- 1 means the capability was assessed and is below its first available DoD achievement level: at least one of the activities that level requires is explicitly not achieved. It is a Kentro value, not a DoD level. Do not call it Traditional.
+- 2 and 3 mean DoD Target and Advanced attainment.
+- When attainment cannot be determined, return no result for the capability (Not Assessed). Never return null or 0.
+
+C3. Activity evaluation
+
+For each capability, evaluate exactly the activities listed in its `capability_details` entry: no more, no fewer. Never add, remove, or re-designate an activity from memory. A `level` of `target` is a Target activity and `advanced` is an Advanced activity. If the entry lists no activities, return no result for the capability.
+
+Treat every activity as applicable. The payload carries no applicability determinations, and applicability is not decided here; never classify an activity as not applicable, whatever the notes say.
+
+Classify each activity internally, using only the notes, as exactly one of:
+- achieved: the notes demonstrate that the activity's required outcome is operational across the assessed scope. A pilot, limited deployment, or partial implementation does not achieve an activity.
+- not_achieved: the notes explicitly establish that the activity is not implemented, only planned or proposed, purchased but not operationalized, in development, operating only as a pilot, limited deployment, or partial implementation, or fails one or more of its material requirements.
+- insufficient_information: the notes do not provide enough information to decide. Silence, ambiguity, or a missing answer is never proof that an activity is not achieved.
+
+A statement in the notes that an activity does not apply makes that activity insufficient_information. Do not output these classifications.
+
+Dependencies between activities are not supplied; do not infer them. Never mark an activity achieved because a related activity is achieved, and never infer completion from roadmap sequence or dates. Each activity must be supported by the notes on its own.
+
+C4. Capability decision rules, applied in this order
+
+1. Below Target (1): the capability has at least one Target-designated activity, and at least one of them is not_achieved. Return 1 even when other Target activities have insufficient information. For a capability with no Target-designated activities, return 1 when at least one Advanced activity is not_achieved.
+2. Not Assessed (no result): rule 1 does not apply, and either a Target activity has insufficient information, or the capability has no Target-designated activities and an Advanced activity has insufficient information, or the notes otherwise do not allow a determination.
+3. Advanced (3): every Target activity, if any, is achieved; the capability has at least one Advanced-designated activity; and every Advanced activity is achieved.
+4. Target (2): the capability has at least one Target-designated activity, every Target activity is achieved, and rule 3 does not apply.
+
+A capability with no Target-designated activities can never be 2. A capability with no Advanced-designated activities can never be 3; do not infer Advanced from Target attainment.
+
+C5. No averaging or partial credit
+
+Do not average activity results or use majority, percentage, best-fit, or weighted scoring. Target requires every Target activity; Advanced requires every Target activity, if any, and every Advanced activity. One activity never compensates for another.
+
+PART D. FINAL CHECK
+
+Before returning the JSON, silently verify:
+1. Only the part for this request's framework was applied.
+2. Every result is for a capability in `capabilities`, appears once, in input order, and carries an integer `current` within the range A9 gives for that capability.
+3. Capabilities with blank or placeholder notes, and DoD capabilities that are Not Assessed, have no result.
+4. Plans and intentions did not raise any stage, and the recorded stage did not determine any stage.
+5. For CISA, partial satisfaction did not receive the higher stage, and notes describing practices but no stage above Traditional received 1.
+6. For DoD, exactly the supplied activities were classified before the capability was decided, no activity was treated as not applicable, capabilities with no supplied activities have no result, and no averaging or partial credit was used.
+7. No `target` field, roll-up, gap, roadmap, priority, or recommendation was included.
+8. The response is valid JSON with no text outside the object.
+"""  # noqa: E501
+
+# C9 (#806 plan 5983938383): the approved text is a new version, so old and new
+# runs differ in `llm_calls.prompt_version`.
+_ZT_SCORE_PROMPT_VERSION = "v2"
+
+# "capabilities" must be a list -- W1 counts the entries in it, so a non-list
 # would be counted as noise rather than refused (matching csf_score above).
 register_job(
     AIJob(
         name="zt_score",
         prompt=_ZT_SCORE_PROMPT,
+        prompt_version=_ZT_SCORE_PROMPT_VERSION,
         top_level_key="capabilities",
     )
 )

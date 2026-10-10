@@ -110,6 +110,7 @@ from app.zt.catalog import (
     all_codes,
     capabilities,
     capability_by_code,
+    pillar_by_code,
     pillars,
 )
 from app.zt.exporters import build_context as build_zt_context
@@ -147,7 +148,12 @@ _log = get_logger(__name__)
 # may carry `key`/`value` and the audit row and logs get reason codes and counts
 # ONLY. The information they held now reaches the admin through `dropped` on the
 # run response, where it belongs.
-_ZT_ROW_FIELDS = ("current", "target")
+#
+# `current` only (#806, ruling (a) in #736 comment 5963632707): the approved
+# prompt asks for no `target` (D4, A6), and the intake target governs. A stray
+# `target` lands as `unknown_field`: counted, disclosed, never applied. Per-row
+# `target_stage` values an earlier AI run wrote stay until someone edits them.
+_ZT_ROW_FIELDS = ("current",)
 _ROW_KEY_FIELDS = ("code",)
 # One capability entry's worth of suggestions. Used when an entry is too broken
 # to enumerate what it meant to set, so an unreadable entry is never cheaper to
@@ -640,6 +646,45 @@ def build_zt_ai_request(db: Session, svc: Service, client: Client) -> ZtAiReques
     return _zt_ai_request_for(db, a, client)
 
 
+def _zt_capability_details(framework: ZtFrameworkCode, codes: list[str]) -> dict[str, dict]:
+    """The approved prompt's `capability_details` (A2, build requirement 1):
+    for every code, its pillar's name and its own name, verbatim from the
+    catalog. A DoD entry also carries its activities, in the catalog's order,
+    which is sorted by DoD activity id; a CISA entry carries none.
+
+    Built here, in the one builder the run and `/ai/preview` share, so the two
+    cannot diverge."""
+    details: dict[str, dict] = {}
+    for code in codes:
+        cap = capability_by_code(code)
+        entry: dict[str, Any] = {
+            "pillar": pillar_by_code(framework, cap.pillar_code).name,
+            "name": cap.name,
+        }
+        if framework == ZtFrameworkCode.DOD_ZTRA:
+            entry["activities"] = [
+                {"id": act.id, "name": act.name, "level": act.level, "description": act.description}
+                for act in cap.activities
+            ]
+        details[code] = entry
+    return details
+
+
+# #984 for #981: `capability_details` is catalog text (pillar and capability
+# names, DoD roadmap activities), so it egresses unredacted and guarded like
+# `capabilities` below: a client named "DoD" or "Data" no longer rewrites it,
+# and any entry that is not the catalog's, byte for byte, is refused before the
+# provider is called. The guard CALLS the builder the request uses, with the
+# payload's own framework; a payload with no framework cannot be rebuilt, so
+# it is refused, never sent unguarded.
+register_catalog_field(
+    "capability_details",
+    lambda payload, value: _zt_capability_details(
+        ZtFrameworkCode(payload["framework"]), list(value)
+    ),
+)
+
+
 # #984, #986: the capability codes a request asks about are catalog text, and a
 # client named "DoD" turned every DoD code into "[CLIENT].USR.01" (one named
 # "CISA" did the same to CISA's), so the model was asked about codes that do not
@@ -679,6 +724,7 @@ def _zt_ai_request_for(db: Session, a: ZtAssessment, client: Client) -> ZtAiRequ
             inputs={
                 "framework": a.framework.value,
                 "capabilities": sorted(rows),
+                "capability_details": _zt_capability_details(cat_fw, sorted(rows)),
                 "answers": {
                     code: {"notes": r.notes, "current": r.maturity_stage}
                     for code, r in rows.items()
@@ -705,9 +751,10 @@ def run_ai(
     _rl: Annotated[None, Depends(enforce_ai_rate_limit)],
     body: RunAiRequest | None = None,
 ) -> AiRunStarted:
-    """The ZT 'Run AI'. Suggests a current and target maturity level per
-    capability, on the framework's own scale. AI suggests; locked rows are
-    untouched; code does the pillar roll-up + roadmap.
+    """The ZT 'Run AI'. Suggests a current maturity stage per capability, on
+    the framework's own scale, and no target (#806: the intake target governs).
+    AI suggests; locked rows are untouched; code does the pillar roll-up +
+    roadmap.
 
     #645: answers 202 with a run to poll. The refusals that need no AI are made
     here, synchronously; the work is `_zt_run_work`, in the background.
@@ -1005,7 +1052,8 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
                 )
                 applied -= 1
             written[slot] = raw
-            setattr(row, "maturity_stage" if field == "current" else "target_stage", stage)
+            # `current` is the only field a run applies (#806).
+            row.maturity_stage = stage
             applied += 1
             suggested.add(raw_code)
 
@@ -1035,13 +1083,12 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
     # `answer_source` has exactly one functional reader: `protected_keys`,
     # which protects a row when it is answered (`maturity_stage is not None`)
     # and its source is not AI. That protection exists to guard the MATURITY
-    # STAGE, so only a net change to the stage may claim it. A run that merely
-    # proposes a target has not answered the assessment and must not strip a
-    # stamp — and with it the protection — from a value it never wrote.
+    # STAGE, so only a net change to the stage may claim it.
     #
-    # `answered_by` / `answered_at` DO move on a target-only change, because
-    # the model did write something. They are the "who last touched this row"
-    # pair; `answer_source` is the narrower "who authored the stage" claim.
+    # Since #806 a run writes `current` only (`_ZT_ROW_FIELDS`), so every net
+    # change here is a stage change, and `answered_by` / `answered_at` and
+    # `answer_source` move together. The stage comparison below is kept as the
+    # statement of the rule, not because a target-only change can reach it.
     for code in suggested:
         if after[code] == before[code]:
             continue  # net no-op: agreement, or a duplicate that round-tripped

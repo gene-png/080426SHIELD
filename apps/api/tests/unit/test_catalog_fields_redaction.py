@@ -19,8 +19,8 @@ rewrite the text), so it cannot pass vacuously.
 ATT&CK's `technique_details` is on main and is tested through its run and
 `/ai/preview` in `test_attack_technique_details_redaction.py`. CSF's
 `subcategory_definitions` is registered here and built by the #806 CSF prompt
-PR; ZT's `capability_details` is built by #981, which registers it. The ZT test
-below registers a stand-in with the same shape for its own duration.
+PR; ZT's `capability_details` is built and registered by #981, and the ZT test
+below goes through that registration.
 """
 
 from __future__ import annotations
@@ -39,7 +39,6 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.ai.catalog_fields import (
-    CATALOG_FIELDS,
     CatalogFieldMismatch,
     redact_ai_payload,
     register_catalog_field,
@@ -135,8 +134,7 @@ def test_csf_definitions_reach_the_model_unchanged_for_a_client_named_critical(
 
 def _zt_details(codes: list[str]) -> dict[str, dict]:
     """The shape #981's `_zt_capability_details` sends for DoD, from the
-    catalog's public accessors. A stand-in for this test only: #981 registers
-    its own builder, so the run and the guard call one function."""
+    catalog's public accessors: the expected value, never the route's builder."""
     from app.zt.catalog import capability_by_code, pillar_by_code
     from app.zt.maturity import ZtFrameworkCode
 
@@ -155,13 +153,11 @@ def _zt_details(codes: list[str]) -> dict[str, dict]:
 
 
 @pytest.mark.parametrize("org", ["DoD", "Data"])
-def test_zt_capability_details_reach_the_model_unchanged(db_session, monkeypatch, org) -> None:
+def test_zt_capability_details_reach_the_model_unchanged(db_session, org) -> None:
+    import app.routes.zt  # noqa: F401  (registers the field, as the app does)
     from app.zt.catalog import capabilities
     from app.zt.maturity import ZtFrameworkCode
 
-    monkeypatch.setitem(
-        CATALOG_FIELDS, "capability_details", lambda _payload, value: _zt_details(list(value))
-    )
     codes = [c.code for c in capabilities(ZtFrameworkCode.DOD_ZTRA)]
     details = _zt_details(codes)
     assert _collides("capability_details", details, org)
