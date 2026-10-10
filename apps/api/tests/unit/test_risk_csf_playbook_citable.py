@@ -114,7 +114,7 @@ def test_ai_scored_and_target_only_rows_are_findings_and_citable(app_client) -> 
     _world(c, provider, bearer, cid)
     payload = _generate(c, provider, bearer, cid)
 
-    findings = _csf_ids(f["source_id"] for f in payload["findings"])
+    findings = _csf_ids(payload["findings"])
     citable = _csf_ids(payload["valid_controls"])
     # Both rows carry a target above their level, so both are findings...
     assert findings == {AI_SCORED, TARGET_ONLY}, findings
@@ -134,7 +134,7 @@ def test_an_ai_row_of_zeros_with_nothing_else_is_neither_a_finding_nor_citable(
     _world(c, provider, bearer, cid)
     payload = _generate(c, provider, bearer, cid)
 
-    findings = _csf_ids(f["source_id"] for f in payload["findings"])
+    findings = _csf_ids(payload["findings"])
     citable = _csf_ids(payload["valid_controls"])
     assert AI_SCORED in citable and AI_SCORED in findings  # positive first
     assert AI_ZEROS not in findings, findings
@@ -188,7 +188,7 @@ def test_a_playbook_scored_only_by_the_run_ai_counts_through_its_dimensions(
     payload = _generate(c, provider, bearer, cid)
     assert _csf_ids(payload["valid_controls"]) == {AI_SCORED}
     # No target anywhere, so nothing is below one: no CSF finding.
-    assert _csf_ids(f["source_id"] for f in payload["findings"]) == set()
+    assert _csf_ids(payload["findings"]) == set()
 
     latest = c.get(
         f"/risk/clients/{cid}/register/latest", headers={"Authorization": f"Bearer {bearer}"}
