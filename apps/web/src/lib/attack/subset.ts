@@ -2,7 +2,8 @@
  * #889: a cited tool that is not in the client's CURRENT security tool list.
  * The API decides which (`app/attack/subset_drift.py`, the same check the
  * admin workspace and finalize read) and sends the names it marks; an absent
- * list means nothing could be checked (the client has none).
+ * list means nothing could be checked: the client has no Tech Debt list, or
+ * none with a security tool (R4), and the API's sentence says which.
  *
  * The mark is COPIED from `app/attack/subset_drift.py` (`OUTSIDE_MARK`),
  * because the deliverable and these screens must print the same words. Change

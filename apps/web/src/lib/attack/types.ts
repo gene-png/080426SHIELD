@@ -158,6 +158,12 @@ export interface AttackAssessment {
   /** #851: false when the client has no security tool list, so nothing
    *  could be checked (a third state, never a pass). */
   subset_checked?: boolean;
+  /** #889 R4: when `subset_checked` is false, why, as the API words it (C5,
+   *  or C5b when the client's list has no security tools). */
+  subset_not_checked_sentence?: string | null;
+  /** #889 R4: C8a / C8b, one per Tech Debt service whose newest version has
+   *  no security tools, so an earlier version is used. */
+  subset_fallback_notes?: string[];
 }
 
 /** #851: one tool one row credits outside the security tool list. */

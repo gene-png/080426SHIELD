@@ -58,11 +58,13 @@ from app.attack.retirement import (
 )
 from app.attack.rules import parents_computed, statuses_computed
 from app.attack.subset_drift import (
-    NOT_CHECKED_SENTENCE,
     OUTSIDE_LEGEND,
     OUTSIDE_MARK,
     SubsetCheck,
+    fallback_sentence,
+    not_checked_sentence,
     outside_rows_sentence,
+    used_fallbacks,
 )
 from app.client_naming import org_display_name
 from app.mode_stamp import (
@@ -115,8 +117,10 @@ class AttackDeliverableContext:
     after: AfterPlannedChanges | None = None
     #: #851 / #889 (Q7): the security tool list check, read at finalize (the
     #: rendered bytes keep it) or live (the client dashboard). Not checked: the
-    #: client has none, and every format says so. Checked: the rows crediting a
-    #: tool outside the list are counted (C1) and each such tool is marked (C3).
+    #: client has no list, or none with a security tool, and every format says
+    #: which (C5, C5b). Checked: the rows crediting a tool outside the list are
+    #: counted (C1), each such tool is marked (C3), and a service that fell
+    #: back to an earlier version is named by version (C9).
     #: None: nobody asked, and nothing is said either way.
     subset: SubsetCheck | None = None
 
@@ -172,9 +176,13 @@ def subset_sentences(ctx: AttackDeliverableContext) -> list[str]:
     if ctx.subset is None:
         return []
     if not ctx.subset.checked:
-        return [NOT_CHECKED_SENTENCE]
+        # R4: C5b where every list is empty, C5 otherwise.
+        return [not_checked_sentence(ctx.subset.not_checked_reason)]
     rows = len(ctx.subset.outside_codes() & {c.technique_code for c in ctx.coverage})
-    return [outside_rows_sentence(rows)] if rows else []
+    # R4 (C9): one sentence per Tech Debt service that fell back.
+    return ([outside_rows_sentence(rows)] if rows else []) + [
+        fallback_sentence(f) for f in used_fallbacks(ctx.subset.fallbacks)
+    ]
 
 
 def outside_tools(ctx: AttackDeliverableContext) -> frozenset[str]:

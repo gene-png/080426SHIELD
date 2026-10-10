@@ -284,9 +284,11 @@ class AttackDashboardResponse(BaseModel):
     #: counts. OMITTED where there is nothing to recount.
     after_planned_changes: list[str] | None = None
     #: #889 (Q1): the security tool list check, read LIVE: the deliverable's
-    #: own sentences (`subset_sentences`). [C5] when the client has no list
-    #: ("not checked"), [C1] when rows credit a tool outside it, [] when checked
-    #: and none do. The web says beside it that the check is the current list's.
+    #: own sentences (`subset_sentences`). Not checked: [C5] when the client
+    #: has no list, [C5b] when its list has no security tools. Checked: C1 when
+    #: rows credit a tool outside it, and C9 per service that fell back to an
+    #: earlier version; [] when there is neither. The web says beside it that
+    #: the check is the current list's.
     subset_notes: list[str] | None = None
     #: #889 (Q2): the cited tools outside the client's CURRENT security tool
     #: list, exact strings, sorted; the web marks each (C3). [] when checked

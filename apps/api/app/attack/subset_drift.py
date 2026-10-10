@@ -166,6 +166,59 @@ def outside_rows_sentence(rows: int) -> str:
     )
 
 
+#: R4 copy, approved verbatim (advisor, #736 comment 6093188709). C5b replaces
+#: `NOT_CHECKED_SENTENCE` where the reason is `NOT_CHECKED_EMPTY`.
+NOT_CHECKED_EMPTY_SENTENCE = (
+    "The tools cited here were not checked against a security tool list, because "
+    "the client's security tool list has no security tools."
+)
+
+
+def not_checked_sentence(reason: str | None) -> str:
+    """The "not checked" sentence for `reason`: C5b when every list is empty,
+    C5 otherwise. "no_list" keeps C5 by the ruling. "discarded" (only
+    discarded lists) also keeps C5, because `main` already says that there;
+    that case is with the advisor (#736)."""
+    return NOT_CHECKED_EMPTY_SENTENCE if reason == NOT_CHECKED_EMPTY else NOT_CHECKED_SENTENCE
+
+
+def fallback_sentence(fallback: VersionFallback) -> str:
+    """C9, in the deliverable and on the client dashboard, one per service that
+    fell back. {m} is the version used."""
+    return (
+        f"Cited tools were checked against version {fallback.used_version} of the "
+        "client's security tool list, because the newest version has no security tools."
+    )
+
+
+def fallback_admin_sentence(fallback: VersionFallback) -> str:
+    """C8a (the newest skipped version is a DRAFT) or C8b (approved or
+    released), on the admin ATT&CK workspace only. {n} is the newest skipped
+    version, {m} the version used.
+
+    C8b IS reachable: the Tech Debt approve route accepts a list with no
+    security row (`test_r4_an_approved_empty_newest_version_reads_c8b`)."""
+    n, status = fallback.skipped[0]
+    m = fallback.used_version
+    if status == "draft":
+        return (
+            f"In {fallback.service_title}, the newest security tool list (version {n}, a "
+            f"draft) has no security tools, so these checks use version {m}. If version "
+            f'{n} came from the wrong document, use "Discard draft" in that Tech Debt '
+            "workspace."
+        )
+    return (
+        f"In {fallback.service_title}, the newest security tool list (version {n}) has no "
+        f"security tools, so these checks use version {m}."
+    )
+
+
+def used_fallbacks(fallbacks: Iterable[VersionFallback]) -> list[VersionFallback]:
+    """The services that fell back to an earlier version (C8, C9): a service
+    that contributes nothing has no version to name."""
+    return [f for f in fallbacks if f.used_version is not None]
+
+
 def subset_applies(list_statuses: Iterable[Any]) -> bool:
     """Whether there is a security tool list to judge a citation against: at
     least one Tech Debt list that is not DISCARDED feeds the subset.

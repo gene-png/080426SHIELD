@@ -110,7 +110,10 @@ from app.attack.subset_drift import (
     SubsetCheck,
     VersionFallback,
     citations_outside_subset,
+    fallback_admin_sentence,
+    not_checked_sentence,
     subset_applies,
+    used_fallbacks,
 )
 from app.audit import audit
 from app.config import get_settings
@@ -282,6 +285,12 @@ def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentR
             for o in subset.outside
         ],
         subset_checked=subset.checked,
+        subset_not_checked_sentence=(
+            None if subset.checked else not_checked_sentence(subset.not_checked_reason)
+        ),
+        subset_fallback_notes=[
+            fallback_admin_sentence(f) for f in used_fallbacks(subset.fallbacks)
+        ],
     )
 
 

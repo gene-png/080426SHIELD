@@ -242,6 +242,13 @@ class AttackAssessmentResponse(BaseModel):
     #: so `citations_outside_subset` is empty because nothing was checked,
     #: never because nothing was found (advisor: a third state). REQUIRED.
     subset_checked: bool
+    #: #889 R4 (advisor, #736 6093188709): when `subset_checked` is False, the
+    #: sentence saying why (C5, or C5b when the client's list has no security
+    #: tools); None when checked. REQUIRED.
+    subset_not_checked_sentence: str | None
+    #: #889 R4: C8a / C8b, one per Tech Debt service whose newest version has no
+    #: security tools, so an earlier one is used. Admin only. REQUIRED.
+    subset_fallback_notes: list[str]
 
 
 class ComputedStatusReviewItem(BaseModel):

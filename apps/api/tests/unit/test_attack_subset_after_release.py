@@ -896,3 +896,104 @@ def test_each_service_that_contributes_nothing_is_recorded_with_its_reason(
         ("Tech Debt A", ((1, "draft"),), None, "empty"),
         ("Tech Debt B", (), None, "discarded"),
     ]
+
+
+# --- R4 copy (advisor, #736 6093188709): C5b, C8a, C8b, C9, written out --------------
+
+C5B = (
+    "The tools cited here were not checked against a security tool list, because "
+    "the client's security tool list has no security tools."
+)
+C8A = (
+    "In Acme Tech Debt, the newest security tool list (version 2, a draft) has no "
+    "security tools, so these checks use version 1. If version 2 came from the wrong "
+    'document, use "Discard draft" in that Tech Debt workspace.'
+)
+C8B = (
+    "In Acme Tech Debt, the newest security tool list (version 2) has no security "
+    "tools, so these checks use version 1."
+)
+C9 = (
+    "Cited tools were checked against version 1 of the client's security tool list, "
+    "because the newest version has no security tools."
+)
+
+
+def _r4_world(app_parts, reason: str) -> World:  # noqa: F811
+    """One world per reason, the ATT&CK row citing EDR:
+    no_list (no Tech Debt list), empty (the only list has no security row), and
+    fallback (v1 approved holds EDR, v2 an empty draft)."""
+    if reason == "no_list":
+        w = _no_list_world(app_parts)
+    elif reason == "empty":
+        w = _no_list_world(app_parts)
+        _second_tech_debt_service(w, [], title="Acme Tech Debt")
+    else:
+        w = _world(app_parts)
+        w.approve_list()
+        _upload_v2_items(w, [])
+    _cover(w, _codes(w)[0], [EDR])
+    return w
+
+
+#: (reason, the sentence that must appear, the sentences that must not)
+R4_CASES = [
+    ("no_list", C5, [C5B, C9]),
+    ("empty", C5B, [C5, C9]),
+    ("fallback", C9, [C5, C5B]),
+]
+
+
+@pytest.mark.parametrize("fmt", FORMATS)
+@pytest.mark.parametrize(("reason", "shown", "absent"), R4_CASES)
+def test_r4_each_format_says_the_right_sentence(
+    app_parts, tmp_path, fmt: str, reason: str, shown: str, absent: list[str]  # noqa: F811
+) -> None:
+    _with_storage(app_parts, tmp_path)
+    w = _r4_world(app_parts, reason)
+    text = _format_text(w, _approve_finalize(w), fmt)
+    assert shown in text, text[:3000]  # positive first
+    for wrong in absent:
+        assert wrong not in text, text[:3000]
+
+
+@pytest.mark.parametrize(("reason", "shown", "absent"), R4_CASES)
+def test_r4_the_client_dashboard_says_the_right_sentence(
+    app_parts, tmp_path, reason: str, shown: str, absent: list[str]  # noqa: F811
+) -> None:
+    _with_storage(app_parts, tmp_path)
+    w = _r4_world(app_parts, reason)
+    _release(w, _approve_finalize(w))
+    notes = _dashboard(w)["subset_notes"]
+    assert shown in notes, notes
+    for wrong in absent:
+        assert wrong not in notes, notes
+
+
+@pytest.mark.parametrize(
+    ("reason", "sentence", "notes"),
+    [
+        ("no_list", C5, []),
+        ("empty", C5B, []),
+        ("fallback", None, [C8A]),
+    ],
+)
+def test_r4_the_admin_assessment_carries_the_right_sentence(
+    app_parts, reason: str, sentence: str | None, notes: list[str]  # noqa: F811
+) -> None:
+    body = _r4_world(app_parts, reason).get()
+    assert body["subset_fallback_notes"] == notes, body["subset_fallback_notes"]
+    assert body["subset_not_checked_sentence"] == sentence, body["subset_not_checked_sentence"]
+
+
+def test_r4_an_approved_empty_newest_version_reads_c8b(app_parts) -> None:  # noqa: F811
+    """C8b is reachable: an empty list CAN be approved (the approve route
+    accepts it, `test_an_approved_empty_latest_version_falls_back_too`)."""
+    w = _world(app_parts)
+    w.approve_list()
+    v2 = _upload_v2_items(w, [])
+    r = w.c.post(f"/tech-debt/capability-lists/{v2}/approve", headers=w.h)
+    assert r.status_code == 200, r.text
+    body = w.get()
+    assert body["subset_fallback_notes"] == [C8B], body["subset_fallback_notes"]
+    assert body["subset_not_checked_sentence"] is None
