@@ -51,11 +51,13 @@ export interface ValueSummary {
    *  "0 uncovered" cannot read as "nothing missing". Null exactly when
    *  `attack_uncovered_count` is. */
   attack_not_verified_count: number | null;
-  /** #889 (Q3): true when a released ATT&CK assessment behind the total
-   *  credits a tool outside the client's CURRENT security tool list. False:
-   *  checked, none does. Null: no total, or no list to check against. Optional
+  /** #889 (Q3): true when a released ATT&CK assessment behind the total has
+   *  a Covered or Partial row (effective status) crediting a tool outside the
+   *  client's CURRENT security tool list, so the total, which sums Gap only,
+   *  may be understated. A Gap row is already in it and does not count.
+   *  False: checked, none does. Null: no total, or no list to check against. Optional
    *  so an API that predates it reads as "nothing to say". */
-  attack_counts_outside_subset?: boolean | null;
+  attack_covered_relies_on_outside_tool?: boolean | null;
   csf_gap_count: number | null;
   csf_gap_unresolved: boolean;
   csf_services: number;

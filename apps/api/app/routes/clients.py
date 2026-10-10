@@ -1067,7 +1067,7 @@ def value_summary(
         attack_uncovered_unresolved=attack.unresolved,
         attack_uncovered_withheld=attack_withheld,
         attack_not_verified_count=attack_not_verified,
-        attack_counts_outside_subset=attack_outside,
+        attack_covered_relies_on_outside_tool=attack_outside,
         csf_gap_count=csf.value,
         csf_gap_unresolved=csf.unresolved,
         csf_services=csf.services,

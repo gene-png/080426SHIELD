@@ -297,10 +297,10 @@ def test_t6_the_home_card_flags_a_covered_technique_relying_on_a_tool_outside_th
     _release(w, _approve_finalize(w))
     before = _value_summary(w)
     assert before["attack_uncovered_count"] is not None, before  # positive first
-    assert before["attack_counts_outside_subset"] is False, before
+    assert before["attack_covered_relies_on_outside_tool"] is False, before
     w.confirm_not_security(LEGACY)
     after = _value_summary(w)
-    assert after["attack_counts_outside_subset"] is True, after
+    assert after["attack_covered_relies_on_outside_tool"] is True, after
     # Disclosure only: the total does not move.
     assert after["attack_uncovered_count"] == before["attack_uncovered_count"]
 
@@ -314,7 +314,7 @@ def test_t6_the_home_card_flag_is_null_with_no_list(app_parts, tmp_path) -> None
     _release(w, _approve_finalize(w))
     body = _value_summary(w)
     assert body["attack_uncovered_count"] is not None, body  # positive first
-    assert body["attack_counts_outside_subset"] is None, body
+    assert body["attack_covered_relies_on_outside_tool"] is None, body
 
 
 # --- T7: one tool on two rows is one name and two rows ---------------------------------
@@ -471,7 +471,7 @@ def test_a_tool_dropped_from_an_approved_v2_is_flagged_though_v1_held_it(
     after = _dashboard(w)
     assert after["tool_outside_subset"] == [LEGACY], after.get("tool_outside_subset")
     assert after["subset_notes"] == [C1_ONE], after.get("subset_notes")
-    assert _value_summary(w)["attack_counts_outside_subset"] is True
+    assert _value_summary(w)["attack_covered_relies_on_outside_tool"] is True
 
 
 def test_a_draft_v2_is_the_current_list(app_parts, tmp_path) -> None:  # noqa: F811
@@ -488,7 +488,7 @@ def test_a_draft_v2_is_the_current_list(app_parts, tmp_path) -> None:  # noqa: F
     body = _dashboard(w)
     assert body["tool_outside_subset"] == [LEGACY], body.get("tool_outside_subset")
     assert body["subset_notes"] == [C1_ONE], body.get("subset_notes")
-    assert _value_summary(w)["attack_counts_outside_subset"] is True
+    assert _value_summary(w)["attack_covered_relies_on_outside_tool"] is True
 
 
 @pytest.mark.parametrize("v2_holds_it", [True, False])
@@ -537,31 +537,58 @@ def _uncleared(w: World, code: str, tool: str) -> None:
         db.commit()
 
 
-@pytest.mark.parametrize("covered", [True, False])
+@pytest.mark.parametrize(
+    ("case", "stored", "effective", "flag"),
+    [
+        # The positive control: a cleared citation, Covered stored and computed.
+        ("covered", "covered", "covered", True),
+        # Gap stored and computed: already in the uncovered total.
+        ("stored_gap", "gap", "gap", False),
+        # The usual production path (round-3 review): Run AI suggested
+        # "covered" with an uncleared citation, R3 computes Gap, and the
+        # consultant accepts it through the computed-status review, which
+        # writes only `reviewed_status`. STORED covered, EFFECTIVE gap.
+        ("reviewed_gap", "covered", "gap", False),
+    ],
+)
 def test_the_home_card_flag_needs_a_row_that_credits_coverage(
-    app_parts, tmp_path, covered: bool  # noqa: F811
+    app_parts, tmp_path, case: str, stored: str, effective: str, flag: bool  # noqa: F811
 ) -> None:
-    """R1's note says techniques COUNTED AS COVERED rely on the tool. A row
-    whose only tool is an uncleared citation computes to Gap, so it is already
-    in the uncovered total: the tool leaving the list must not raise the note.
-    The positive control is the same row with the citation cleared (Covered)."""
+    """R1's note says techniques COUNTED AS COVERED rely on the tool, so the
+    flag reads the EFFECTIVE status. A row whose only tool is an uncleared
+    citation computes to Gap and is already in the uncovered total: the tool
+    leaving the list must not raise the note, whatever status is stored."""
     _with_storage(app_parts, tmp_path)
     w = _world(app_parts)
     code = _codes(w)[0]
     _cover(w, code, [LEGACY])
-    if not covered:
+    if case == "stored_gap":
         # The stored status agrees with the computed one, so release needs no
         # computed-status review (`attack_computed_status_unreviewed`).
         assert w.patch(code, {"status": "gap"}).status_code == 200
+    if case != "covered":
         _uncleared(w, code, LEGACY)
-    _release(w, _approve_finalize(w))
+    assert w.approve().status_code == 200
+    if case == "reviewed_gap":
+        r = w.c.post(
+            f"/attack/assessments/{w.assessment_id}/computed-status-review",
+            headers=w.h,
+            json={"reviews": [{"code": code, "computed_status": "gap"}]},
+        )
+        assert r.status_code == 200, r.text
+    fin = w.c.post(f"/attack/services/{w.svc_id}/deliverables/finalize", headers=w.h)
+    assert fin.status_code in (200, 201), fin.text
+    _release(w, fin.json())
     w.confirm_not_security(LEGACY)
     dash = _dashboard(w)
-    status = {t["code"]: t["status"] for t in dash["techniques"]}[code]
-    assert status == ("covered" if covered else "gap"), status  # the world is what it says
+    # The world is what it says, positive first: the effective status the
+    # client reads, and the stored status underneath it.
+    assert {t["code"]: t["status"] for t in dash["techniques"]}[code] == effective
+    with w.sessions() as db:
+        assert db.get(AttackCoverage, uuid.UUID(w.rows[code])).status == stored
     assert dash["tool_outside_subset"] == [LEGACY]  # the check ran and found it
     body = _value_summary(w)
-    assert body["attack_counts_outside_subset"] is covered, body
+    assert body["attack_covered_relies_on_outside_tool"] is flag, body
 
 
 # --- round 2, F2: `_latest_list_versions`, one per service, and discards skipped -------
@@ -619,7 +646,10 @@ def test_each_tech_debt_service_has_its_own_latest_version(app_parts) -> None:  
     _upload_v2_without(w, LEGACY)
     _second_tech_debt_service(w, [LEGACY])
     code = _codes(w)[0]
-    w.patch(code, {"detection_tools": [EDR, LEGACY]})
+    r = w.patch(code, {"detection_tools": [EDR, LEGACY]})
+    assert r.status_code == 200, r.text
+    row = next(c for c in w.get()["coverage"] if c["technique_code"] == code)
+    assert row["detection_tools"] == [EDR, LEGACY], row  # positive first
     assert _outside_tools(w) == []
 
 
@@ -635,7 +665,10 @@ def test_a_discarded_v2_falls_back_to_the_approved_v1(app_parts) -> None:  # noq
     w.approve_list()
     _discard(w, _upload_v2_without(w, LEGACY))
     code = _codes(w)[0]
-    w.patch(code, {"detection_tools": [EDR, LEGACY]})
+    r = w.patch(code, {"detection_tools": [EDR, LEGACY]})
+    assert r.status_code == 200, r.text
+    row = next(c for c in w.get()["coverage"] if c["technique_code"] == code)
+    assert row["detection_tools"] == [EDR, LEGACY], row  # positive first
     assert _outside_tools(w) == []
 
 

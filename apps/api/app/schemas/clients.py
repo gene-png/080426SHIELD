@@ -849,7 +849,7 @@ class ValueSummaryResponse(BaseModel):
     #: understated. A Gap row is already in it and does not count. False:
     #: checked, none does.
     #: None: the total is None, or the client has no list (not checked).
-    attack_counts_outside_subset: bool | None
+    attack_covered_relies_on_outside_tool: bool | None
     csf_gap_count: int | None
     csf_gap_unresolved: bool
     csf_services: int

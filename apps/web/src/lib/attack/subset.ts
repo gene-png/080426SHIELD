@@ -18,8 +18,10 @@ export const CURRENT_LIST_NOTE =
   "Security tool list checks reflect the client's current security tool list.";
 
 /** C7: on the home card, beside an ATT&CK uncovered total when a released
- *  assessment credits such a tool. The total sums Gap only, so a row that
- *  credits one counts as covered and is NOT in it: the total may be low. */
+ *  assessment has a Covered or Partial row (effective status) crediting such
+ *  a tool. The total sums Gap only, so that row is NOT in it: the total may
+ *  be understated. A Gap row crediting one is already in the total and does
+ *  not raise it (`attack_covered_relies_on_outside_tool`). */
 export const HOME_CARD_NOTE =
   "Some techniques counted as covered rely on a tool that is not in the client's current security tool list, so this total may be understated.";
 

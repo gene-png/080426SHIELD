@@ -169,7 +169,9 @@ function buildMetrics(summary: ValueSummary): Metric[] {
           : "Adversary techniques with no defensive coverage yet. Not verified techniques were not checked, so they are counted as neither.",
       // #889 (Q3): the dashboard's twin; disclosure only, the total is unchanged.
       subsetNote:
-        summary.attack_counts_outside_subset === true ? HOME_CARD_NOTE : null,
+        summary.attack_covered_relies_on_outside_tool === true
+          ? HOME_CARD_NOTE
+          : null,
       unresolved: summary.attack_uncovered_unresolved,
       unresolvedReason: summary.attack_uncovered_withheld
         ? "Your MITRE ATT&CK coverage report was produced against an earlier version of the ATT&CK framework than the current one, so its figures are withheld."

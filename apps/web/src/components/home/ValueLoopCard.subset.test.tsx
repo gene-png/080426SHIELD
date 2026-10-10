@@ -47,7 +47,7 @@ describe("ValueLoopCard, tools outside the security tool list (#889)", () => {
   it("says the total may be understated", () => {
     render(
       <ValueLoopCard
-        summary={summary({ attack_counts_outside_subset: true })}
+        summary={summary({ attack_covered_relies_on_outside_tool: true })}
       />,
     );
     expect(screen.getByText("3 techniques uncovered")).toBeInTheDocument();
@@ -61,7 +61,7 @@ describe("ValueLoopCard, tools outside the security tool list (#889)", () => {
     (flag) => {
       render(
         <ValueLoopCard
-          summary={summary({ attack_counts_outside_subset: flag })}
+          summary={summary({ attack_covered_relies_on_outside_tool: flag })}
         />,
       );
       // APPEAR before ABSENT.
