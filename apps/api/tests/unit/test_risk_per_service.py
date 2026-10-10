@@ -376,9 +376,9 @@ def test_a_single_service_client_sends_what_it_always_sent(app_client) -> None: 
     assert _generate(c, provider, bearer, cid, seen).status_code == 201
     assert len(seen) == 1, len(seen)
     findings = seen[0]["findings"]
-    assert {f["source_id"] for f in findings} >= {s.technique, s.capability}, findings
-    for f in findings:
-        assert set(f) == {"source", "source_id", "kind", "label"}, f
+    assert set(findings) >= {s.technique, s.capability}, findings
+    for f in findings.values():
+        assert set(f) == {"source", "kind", "label", "evidence"}, f
 
 
 def test_a_second_service_not_started_is_listed_on_the_draft(app_client) -> None:  # noqa: F811
