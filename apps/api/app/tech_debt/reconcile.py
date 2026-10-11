@@ -140,3 +140,20 @@ def exclusion_count_state(cap_list: Any) -> ExclusionCountState:
     if flag is None and getattr(cap_list, "excluded_rows", None):
         return "exact"
     return "unknown"
+
+
+def unconfirmed_exclusions(cap_list) -> list[int]:
+    """#850: the indexes of excluded rows nobody has confirmed, in list order.
+
+    An entry is confirmed only when its `confirmed` is exactly True. A missing
+    key is UNCONFIRMED: extraction writes entries without it, and a list from
+    before the confirm action has none, and missing data never defaults to
+    confirmed. A list whose extraction could not attribute its items stores no
+    entries, so it has nothing to confirm and is not gated (it stays disclosed
+    as an unknown exclusion count).
+    """
+    return [
+        int(e.get("index", -1))
+        for e in (getattr(cap_list, "excluded_rows", None) or [])
+        if e.get("confirmed") is not True
+    ]

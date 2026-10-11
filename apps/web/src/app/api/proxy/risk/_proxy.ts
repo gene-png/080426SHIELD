@@ -45,14 +45,19 @@ export async function proxyJson<T = unknown>(
     // `undefined` HERE means 204, and 204 is what goes back.
     //
     // MEASURED, AND THE BOUND MATTERS: at 5fbd0ca none of the six proxied
-    // routers emits a 204 (`HTTP_204_NO_CONTENT` count is 0 in attack, csf,
-    // zt, risk, tech_debt and ai), no route handler returns null, and an
-    // unparseable 200 throws in `res.json()` before reaching here. That makes
-    // the swallow LATENT rather than live. It is a measurement about what the
-    // ROUTERS emit, not about what `fetch` can receive -- a 204 from
-    // middleware, the dev server, or anything between is not covered by it,
-    // which is the reason this branch exists rather than an assertion that it
+    // routers emitted a 204 (`HTTP_204_NO_CONTENT` count was 0 in attack,
+    // csf, zt, risk, tech_debt and ai), no route handler returned null, and an
+    // unparseable 200 throws in `res.json()` before reaching here. That made
+    // the swallow LATENT rather than live at that commit. It was a measurement
+    // about what the ROUTERS emit, not about what `fetch` can receive -- a 204
+    // from middleware, the dev server, or anything between was never covered
+    // by it, which is why this branch exists rather than an assertion that it
     // is unreachable.
+    //
+    // NO LONGER LATENT as of #896: `POST /risk/clients/{cid}/services/{sid}/
+    // archive` answers 204 on success, so this branch is that route's success
+    // path (the duplicate banner's archive, through
+    // `risk/clients/[cid]/services/[sid]/archive/route.ts`).
     if (result === undefined) {
       return new NextResponse(null, { status: 204 });
     }

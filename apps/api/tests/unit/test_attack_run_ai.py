@@ -834,7 +834,7 @@ def _run_audit(TestSession) -> dict:
     ("status", "reason"),
     # #841: not `not_applicable` -- the AI may no longer write it
     # (`test_attack_ai_not_applicable_refused.py` pins the refusal).
-    [("partial", "reach_limited")],
+    [("partial", "prevention_limited")],
 )
 def test_run_ai_stores_a_reason_the_status_takes(app_client, status, reason) -> None:
     """#554 slice 2: the model's reason is stored when it belongs to the status."""

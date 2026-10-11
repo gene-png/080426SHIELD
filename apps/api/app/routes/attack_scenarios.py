@@ -63,7 +63,12 @@ from app.models.user import User, UserRole
 # way. It reads the client's CURRENT Tech Debt membership, NOT the set the
 # base assessment was offered when it ran: a tool added to or dropped from
 # the capability list since then is offered, or not, accordingly.
-from app.routes.attack import _capability_payload, _client_capability_membership, _llm_dep
+from app.routes.attack import (
+    _capability_payload,
+    _client_capability_membership,
+    _llm_dep,
+    outside_subset_citations,
+)
 from app.routes.tech_debt import SECURITY_CLASSIFICATION_OVERRIDDEN
 from app.schemas.ai_runs import AiRunStarted, RunAiRequest
 from app.schemas.attack_scenario import (
@@ -433,12 +438,16 @@ def create_scenario(
     # the client's capability lists, offered or withheld, and every tool the
     # base cites.
     client_tools = _client_tools(db, client, cited)
+    # The run's name dictionary (#865): an added name is judged by the form the
+    # model will be SHOWN, and a tenant user's name is shown as [NAME].
+    hints = name_hints_for_tenant(db, client.id)
     try:
         added = scenario.validate_added(
             (body.added if body else None) or [],
             client_tools=client_tools,
             client_org_name=client.legal_name,
             redaction_mode=mode,
+            name_hints=hints,
         )
     except (scenario.AddedToolRefused, scenario.TooMany) as exc:
         reason, message = _added_refusal(exc, cited=cited)
@@ -450,7 +459,7 @@ def create_scenario(
             status.HTTP_422_UNPROCESSABLE_ENTITY, "scenario_empty_change", EMPTY_MESSAGE
         ) from exc
     spellings = scenario.removed_spellings(
-        removed, client_org_name=client.legal_name, redaction_mode=mode
+        removed, client_org_name=client.legal_name, redaction_mode=mode, name_hints=hints
     )
     affected = sorted(
         set(scenario.affected_codes(base_rows, spellings))
@@ -790,6 +799,20 @@ def list_scenarios(
                 version=base.version,
                 approved_at=base.approved_at,
                 tools=scenario.cited_tools(_base_rows(db, base.id)),
+                # #851: the same count the workspace discloses, by the same
+                # function. Today's figure is not recomputed.
+                # ROWS, as the workspace's S1 counts them, not tool citations.
+                citations_outside_subset=len(
+                    {
+                        o.technique_code
+                        for o in outside_subset_citations(
+                            db,
+                            client.id,
+                            _base_rows(db, base.id),
+                            parents_computed=parents_computed(base),
+                        )
+                    }
+                ),
             )
         ),
         scenarios=[
@@ -871,6 +894,9 @@ def _added_collision(db: Session, s: AttackScenario, client: Client) -> str | No
             client_tools=current,
             client_org_name=client.legal_name,
             redaction_mode=get_settings().shield_redaction_mode,
+            # Today's dictionary, as the run will use it (#865): a user who
+            # joined since can make two added tools one placeholder.
+            name_hints=name_hints_for_tenant(db, client.id),
             # A stored row's characters are not a collision: a draft stored
             # before #826 may hold a line feed (only NUL failed to insert),
             # and calling it one gave a false message (#831 review, F1).
@@ -1033,11 +1059,18 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
     removed = list(s.change_list.get("removed") or [])
     affected = list(s.affected_codes)
     mode = get_settings().shield_redaction_mode
+    # The tenant's user names are the redactor's name dictionary (#865), as
+    # Tech Debt's extraction and the chat box (#863) use them: an added tool's
+    # name, vendor and category are typed by the admin, and the client's tools
+    # are capability rows an admin can edit, so either can name a person. The
+    # SAME hints go to the spellings, the call and the reading, so a tool the
+    # model cites in the form it was shown resolves to the tool it is.
+    hints = name_hints_for_tenant(db, client.id)
     # Every spelling of a removed tool goes, the redacted one included (F2),
     # from what the model is offered AND from what the resolver may confirm,
     # so a removed tool the AI names anyway is counted, never credited.
     spellings = scenario.removed_spellings(
-        removed, client_org_name=client.legal_name, redaction_mode=mode
+        removed, client_org_name=client.legal_name, redaction_mode=mode, name_hints=hints
     )
     membership = _client_capability_membership(db, ctx.client_id)
     kept_offers = [p for p in membership.sent if not spellings.covers(p.capability.name)]
@@ -1094,7 +1127,7 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
         service_id=ctx.service_id,
         client_id=ctx.client_id,
         client_org_name=client.legal_name,
-        name_hints=(),
+        name_hints=hints,
         deadline_at=ctx.deadline_at,
         max_workers=_MAX_WORKERS,
         deadline_message=(
@@ -1119,6 +1152,7 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
                 indistinct=indistinct,
                 client_org_name=client.legal_name,
                 redaction_mode=mode,
+                name_hints=tuple(hints),
             )
         except scenario.ScenarioShapeError:
             # Answered, but not in the contract's shape: its techniques are not

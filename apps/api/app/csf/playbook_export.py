@@ -27,6 +27,7 @@ from app.mode_stamp import (
     pdf_paragraph,
     xlsx_rows,
 )
+from app.xlsx_export import safe_text_row  # #972: every workbook append
 
 # ---------------------------------------------------------------------------
 # XLSX workbook
@@ -92,6 +93,23 @@ WORKING_NOTICE = (
 APPROVED_NOTICE = "Approved by Kentro."
 
 
+def no_notes_note(no_notes: int, total: int) -> str:
+    """#1000: the one sentence every Playbook file states about the last LIVE
+    Run-AI's rows with no notes (approved on #1000, comment 6102665946).
+
+    Both numbers come from that run's PERSISTED accounting (`ai_runs.result`),
+    never from current notes: notes typed since the run did not change what it
+    assessed. `total` is the in-scope subcategories the run covered -- a code
+    with at least one in-scope row, not locked, that a successful batch was
+    asked about -- and `no_notes` is how many of those had no notes in what was
+    sent (`routes/csf.py::_csf_run_work`). Stated at zero too. The route omits
+    the sentence when no live run has been made."""
+    return (
+        f"Not assessed by AI (no notes) in the last live AI run: {no_notes} of "
+        f"{total} subcategories."
+    )
+
+
 def _approval_notice(approved: bool) -> str:
     return APPROVED_NOTICE if approved else WORKING_NOTICE
 
@@ -126,7 +144,7 @@ def _banner(ws: Any, approved: bool) -> None:
     """
     from openpyxl.styles import Font, PatternFill
 
-    ws.append([_approval_notice(approved)])
+    safe_text_row(ws, [_approval_notice(approved)])
     cell = ws.cell(row=1, column=1)
     cell.font = Font(bold=True, color=_NOTICE_ARGB[approved])
     cell.fill = PatternFill(
@@ -140,6 +158,8 @@ def render_xlsx(
     *,
     approved: bool,
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
+    retired_note: str | None = None,
+    no_notes_note: str | None = None,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -166,7 +186,7 @@ def render_xlsx(
         # data. A hardcoded `1` here would have bolded the notice and left the
         # column headings plain, which looks like a styling slip and is
         # actually the banner being overwritten.
-        ws.append(cols)
+        safe_text_row(ws, cols)
         row = ws.max_row
         for i in range(1, len(cols) + 1):
             cell = ws.cell(row=row, column=i)
@@ -219,7 +239,8 @@ def render_xlsx(
     )
     for r in enterprise_rows:
         levels = r.tier_levels
-        ws.append(
+        safe_text_row(
+            ws,
             [
                 r.subcategory_code,
                 r.function,
@@ -232,7 +253,7 @@ def render_xlsx(
                 f"L{r.target_level}" if r.target_level else "",
                 _gap_cell(r),
                 r.priority or "",
-            ]
+            ],
         )
     # from_row=2: the banner is row 1 (#294).
     _autofit(ws, from_row=2)
@@ -260,7 +281,8 @@ def render_xlsx(
             ],
         )
         for row in rows:
-            ts.append(
+            safe_text_row(
+                ts,
                 [
                     row.subcategory_code,
                     row.governance,
@@ -273,7 +295,7 @@ def render_xlsx(
                     "Yes" if row.evidence_capped else "",
                     "Yes" if row.in_scope else "No",
                     f"L{row.target_level}" if row.target_level else "",
-                ]
+                ],
             )
         _autofit(ts, from_row=2)
 
@@ -304,7 +326,8 @@ def render_xlsx(
             continue
         act = actions.get(r.subcategory_code)
         override = getattr(act, "priority_override", None) if act else None
-        aps.append(
+        safe_text_row(
+            aps,
             [
                 r.subcategory_code,
                 r.name,
@@ -317,23 +340,28 @@ def render_xlsx(
                 getattr(act, "resources", "") or "" if act else "",
                 getattr(act, "success_criteria", "") or "" if act else "",
                 getattr(act, "poam_ref", "") or "" if act else "",
-            ]
+            ],
         )
     _autofit(aps, from_row=2)
 
     cover = wb.create_sheet("About", 0)
-    cover.append(["SHIELD by Kentro — CSF 2.0 Full Playbook"])
-    cover.append([f"Client: {client_name}"])
-    cover.append([f"Working profile version: {version}"])
+    safe_text_row(cover, ["SHIELD by Kentro — CSF 2.0 Full Playbook"])
+    safe_text_row(cover, [f"Client: {client_name}"])
+    safe_text_row(cover, [f"Working profile version: {version}"])
     # #277: on the SHEET, not only in the filename.
-    cover.append([_approval_notice(approved)])
-    cover.append([])
-    cover.append(
+    safe_text_row(cover, [_approval_notice(approved)])
+    if retired_note:
+        safe_text_row(cover, [retired_note])  # #852: kept rows, not on any sheet below
+    if no_notes_note:
+        safe_text_row(cover, [no_notes_note])  # #1000: see `no_notes_note`
+    safe_text_row(cover, [])
+    safe_text_row(
+        cover,
         [
             "Levels are code-computed: total = sum of the five dimensions (0-10); "
             "L1 0-2, L2 3-5, L3 6-7, L4 8-9, L5 10. Enterprise = weighted-floor "
             "roll-up across the tiers in use."
-        ]
+        ],
     )
     cover["A1"].font = Font(bold=True, size=14)
 
@@ -344,7 +372,7 @@ def render_xlsx(
     ai_heading, ai_rows = xlsx_rows(ai_mode)
     _header(ai_ws, ai_heading)
     for ai_row in ai_rows:
-        ai_ws.append(ai_row)
+        safe_text_row(ai_ws, ai_row)
     ai_ws.column_dimensions["A"].width = 24
 
     out = io.BytesIO()
@@ -759,6 +787,8 @@ def _cover(
     client_name: str,
     version: int,
     generated_on: str | None,
+    retired_note: str | None = None,
+    no_notes_note: str | None = None,
 ) -> None:
     from reportlab.lib.units import inch
     from reportlab.platypus import Paragraph, Spacer
@@ -774,6 +804,12 @@ def _cover(
     story.append(Paragraph(escape(_approval_notice(approved)), styles["body"]))
     # #646: beside the approval notice, for the same reason (#277).
     story.append(pdf_paragraph(ai_mode, styles["body"]))
+    if retired_note:
+        # #852: the cover, because no table in the document lists a kept row.
+        story.append(Paragraph(escape(retired_note), styles["body"]))
+    if no_notes_note:
+        # #1000: the cover, beside the other statements about the whole file.
+        story.append(Paragraph(escape(no_notes_note), styles["body"]))
     if generated_on:
         story.append(Paragraph(f"Generated: {escape(generated_on)}", styles["body"]))
     story.append(Spacer(1, 0.3 * inch))
@@ -902,6 +938,8 @@ def render_exec_pdf(
     *,
     approved: bool,
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
+    retired_note: str | None = None,
+    no_notes_note: str | None = None,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -922,6 +960,8 @@ def render_exec_pdf(
         generated_on=generated_on,
         approved=approved,
         ai_mode=ai_mode,
+        retired_note=retired_note,
+        no_notes_note=no_notes_note,
     )
     story.append(PageBreak())
 
@@ -945,6 +985,8 @@ def render_full_pdf(
     *,
     approved: bool,
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
+    retired_note: str | None = None,
+    no_notes_note: str | None = None,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -966,6 +1008,8 @@ def render_full_pdf(
         generated_on=generated_on,
         approved=approved,
         ai_mode=ai_mode,
+        retired_note=retired_note,
+        no_notes_note=no_notes_note,
     )
     story.append(PageBreak())
 
@@ -1105,6 +1149,8 @@ def _docx_cover(
     generated_on: str | None,
     approved: bool,
     ai_mode: AiModeStamp,
+    retired_note: str | None = None,
+    no_notes_note: str | None = None,
 ) -> None:
     from app.docx_export import add_paragraphs, add_title, set_footer
 
@@ -1118,6 +1164,12 @@ def _docx_cover(
     add_title(doc, "NIST CSF 2.0", subtitle)
     # #646: first thing under the title, before the cover metadata.
     add_docx_paragraph(doc, ai_mode)
+    if retired_note:
+        # #852: the cover, because no table in the document lists a kept row.
+        add_paragraphs(doc, [retired_note])
+    if no_notes_note:
+        # #1000: beside the kept-rows note, for the same reason.
+        add_paragraphs(doc, [no_notes_note])
     meta = [
         f"Prepared for: {client_name}",
         f"Working profile version: {version}",
@@ -1160,6 +1212,8 @@ def render_exec_docx(
     *,
     approved: bool,
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
+    retired_note: str | None = None,
+    no_notes_note: str | None = None,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -1176,6 +1230,8 @@ def render_exec_docx(
         generated_on=generated_on,
         approved=approved,
         ai_mode=ai_mode,
+        retired_note=retired_note,
+        no_notes_note=no_notes_note,
     )
 
     add_heading(doc, "Executive summary")
@@ -1215,6 +1271,8 @@ def render_full_docx(
     *,
     approved: bool,
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
+    retired_note: str | None = None,
+    no_notes_note: str | None = None,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -1238,6 +1296,8 @@ def render_full_docx(
         generated_on=generated_on,
         approved=approved,
         ai_mode=ai_mode,
+        retired_note=retired_note,
+        no_notes_note=no_notes_note,
     )
     add_page_break(doc)
 

@@ -15,6 +15,7 @@ from pydantic import BaseModel, model_serializer, model_validator
 
 from app.models.service import ServiceKind
 from app.schemas.ai_runs import AiSource
+from app.schemas.risk import RiskTargetUsed
 
 __all__ = [
     "AttackDashboardResponse",
@@ -282,6 +283,19 @@ class AttackDashboardResponse(BaseModel):
     #: #801: the figure after planned changes with the current plan, and its
     #: counts. OMITTED where there is nothing to recount.
     after_planned_changes: list[str] | None = None
+    #: #889 (Q1): the security tool list check, read LIVE: the deliverable's
+    #: own sentences (`subset_sentences`). Not checked: [C5] when the client
+    #: has no list or only discarded ones, [C5b] when its lists have no
+    #: security tools. Checked: C1 when
+    #: rows credit a tool outside it, and C9 per service that fell back to an
+    #: earlier version; [] when there is neither. The web says beside it that
+    #: the check is the current list's.
+    subset_notes: list[str] | None = None
+    #: #889 (Q2): the cited tools outside the client's CURRENT security tool
+    #: list, exact strings, sorted; the web marks each (C3). [] when checked
+    #: and none are; OMITTED when nothing could be checked, so an empty list
+    #: never reads as "checked" for a client with no list.
+    tool_outside_subset: list[str] | None = None
 
     @model_serializer(mode="wrap")
     def _drop_unset_rule_key(self, handler: Any) -> dict[str, Any]:
@@ -296,6 +310,8 @@ class AttackDashboardResponse(BaseModel):
                     "awaiting_review_sentence",
                     "statuses_computed",
                     "after_planned_changes",
+                    "subset_notes",
+                    "tool_outside_subset",
                 }
             ),
         )
@@ -443,6 +459,11 @@ class CsfDashboardResponse(BaseModel):
     # the reason is a precedent now, not a live defect. An earlier draft said
     # "is open", which sends the next reader to fix something already fixed.
     top_gaps: list[CsfGapDashboard]
+    # #852: answers on a subcategory the catalog no longer has (ID.AM-09), kept
+    # and not scored, so every figure above leaves them out. The approved
+    # sentence, from the derivation the deliverable calls (`csf/retired.py`).
+    retired_answers: int = 0
+    retired_answers_note: str | None = None
 
 
 class ZtDashboardResponse(BaseModel):
@@ -524,6 +545,18 @@ class ZtDashboardResponse(BaseModel):
     # Empty on an ordinary engagement. Codes rather than a count, so the UI can
     # name the rows and the count stays derivable.
     unusable_target_codes: list[str] = []
+    # #839: the approved C1/C2 sentences for the DoD target caps, the API's own
+    # (`zt/target_caps.py`), rendered as given.
+    target_cap_notes: list[str] = []
+    #: #914 (in #839): answers kept on rows the catalog no longer has (0063,
+    #: 0064), and the approved sentence saying they are not scored, from the
+    #: one derivation the workspace and the three files call (`zt/retired.py`).
+    #: 0 and None when there are none.
+    retired_answers: int = 0
+    retired_answers_note: str | None = None
+    #: #839 S1: one approved sentence per stored stage above its capability's
+    #: maximum, which every figure here counts at the maximum.
+    stage_above_max_notes: list[str] = []
 
     # The real total: every gap the engine found, not a rendered subset. The ZT
     # dashboard shows no truncated gap list today, and this is in the payload
@@ -602,7 +635,12 @@ class TechDebtDashboardResponse(BaseModel):
     # #646: which mode drafted the AI suggestions behind these figures, as the
     # deliverable states it. REQUIRED.
     ai_source: AiSource
+    # for #835: SOURCE items only. A split bundle's named parts are listed in
+    # `items` but are not applications; `bundle_part_count` says how many of
+    # `items` are parts, so the inventory can say so. REQUIRED: absent would
+    # read as "no parts", which is a claim.
     total_applications: int
+    bundle_part_count: int
     annual_spend_usd: float
     identified_savings_usd: float
     savings_cost_known: bool  # False when a counted (cut) item lacked a cost (savings is a floor)
@@ -652,6 +690,12 @@ class RiskMatrixCell(BaseModel):
 class RiskDashboardEntry(BaseModel):
     title: str
     axis: str | None
+    # #806 G1 option 3, rendered on the client dashboard (#736 6094620397,
+    # Risk E item 4). None is "not recorded"; `[]` is "no other axis".
+    # No `other_axes_dropped`, deliberately (ruling #736 6105137014): the kept
+    # axes are accurate as far as they go, and a parse failure is not a client
+    # fact. It is on the consultant's `RiskEntryResponse` only.
+    other_axes: list[str] | None
     likelihood: str | None
     impact: str | None
     tier: str | None
@@ -710,6 +754,24 @@ class RiskDashboardResponse(BaseModel):
     action_counts: dict[str, int]
     matrix: list[RiskMatrixCell]
     entries: list[RiskDashboardEntry]
+    #: #474. The target each service's findings were measured against, from
+    #: the register's own record (`app/risk/baseline.py`), so the client can
+    #: compare it with the target their CSF or ZT report states. REQUIRED, for
+    #: `entries_without_tier`'s reason: the one construction site supplies it,
+    #: and `targets_recorded` False means "not recorded", never "none".
+    targets: list[RiskTargetUsed]
+    targets_recorded: bool
+    #: #915 (S3): the approved sentence for the DoD target cap, from the
+    #: register's provenance through `risk/zt_capped.py`, the reader the
+    #: consultant's register and the three files use. None when nothing was
+    #: lowered or the register predates the record.
+    zt_capped_target_note: str | None = None
+    csf_source_note: str | None = None
+    #: Ruling #736 6104067136 (see #1033): which not-measured line the screen
+    #: prints for a `playbook_no_scores` CSF target, read by the files' reader
+    #: (`risk/csf_source.py::csf_no_shared_row`). False when the register
+    #: predates R11, so it keeps the original no-scores line.
+    csf_no_shared_row: bool = False
 
 
 class ValueSummaryResponse(BaseModel):
@@ -795,6 +857,16 @@ class ValueSummaryResponse(BaseModel):
     #: an unverified assessment. None when `attack_uncovered_count` is, and when
     #: no released assessment behind it renders under #620's rules (option (a)).
     attack_not_verified_count: int | None
+    #: #889 (Q3, C7): True when a released ATT&CK assessment behind
+    #: `attack_uncovered_count` has a Covered or Partial row (effective status)
+    #: crediting a tool outside the client's CURRENT security tool list. The
+    #: total sums Gap only, so such a row is left OUT of it: the total may be
+    #: understated. A Gap row is already in it and does not count. False:
+    #: checked, none does.
+    #: None: the total is None, or nothing could be checked (no Tech Debt list,
+    #: only lists in force with no security tool, or only discarded lists, or a mix of
+    #: those last two).
+    attack_covered_relies_on_outside_tool: bool | None
     csf_gap_count: int | None
     csf_gap_unresolved: bool
     csf_services: int

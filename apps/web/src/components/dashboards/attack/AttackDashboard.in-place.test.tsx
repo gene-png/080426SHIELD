@@ -355,7 +355,7 @@ describe("R3 copy beside the percentages (#554 R3)", () => {
     render(<AttackDashboard data={r3} />);
     expect(
       screen.getByText(
-        "Detection, prevention and response in place, or detection and response where it cannot be prevented",
+        "Detection, prevention and response in place, or detection and response where MITRE ATT&CK lists no preventive control",
       ),
     ).toBeInTheDocument();
     expect(

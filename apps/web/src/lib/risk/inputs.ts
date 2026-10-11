@@ -21,11 +21,60 @@ const STATES: Record<string, string> = {
   approved: "approved, not yet released",
 };
 
+/**
+ * The panel's word for a record status. Exported so the duplicate banner's
+ * line (#896 B1) says what the panel says, by calling this rather than
+ * copying the table.
+ */
+export function statusWord(status: string): string {
+  return STATES[status] ?? status;
+}
+
 export function inputLine(row: RiskInputState): string {
-  const label = LABELS[row.kind] ?? row.kind;
+  // #876: the framework (or service title) only when a kind has more than
+  // one row; the server decides, so the screen and the refusal agree.
+  const base = LABELS[row.kind] ?? row.kind;
+  const label = row.qualifier ? `${base} (${row.qualifier})` : base;
   if (!row.engaged) return `${label}: not engaged`;
   if (row.status === null) return `${label}: not started`;
-  return `${label}: ${STATES[row.status] ?? row.status}`;
+  // #474 D' (Gene, #736 5984218862): a released CSF record whose in-scope
+  // Playbook rows record nothing but targets feeds no CSF finding (#736
+  // 6101751588). Said only after "released" (#736 6087027524, Q3): Risk reads
+  // only released CSF.
+  // R11 (#736 6103383277): scores and targets that never share a row get
+  // their own fragment; the server sets at most one of the two flags.
+  const noPlaybook =
+    row.status !== "released"
+      ? ""
+      : row.no_playbook_scores === true
+        ? ", no Playbook scores"
+        : row.no_shared_playbook_row === true
+          ? ", no Playbook row with both a score and a target"
+          : "";
+  const unscored =
+    row.status === "released"
+      ? unscoredTargetsSentence(row.unscored_targeted_subcategories ?? 0)
+      : null;
+  // The tail is built OUTSIDE the template on purpose: a template nested
+  // inside the one holding `row.status` reads to the "no surface puts an HTTP
+  // status in a sentence" gate as prose around a status. `row.status` here is
+  // the record status ("released"), never HTTP; the copy is unchanged.
+  const tail = unscored ? ". " + unscored : "";
+  return `${label}: ${statusWord(row.status)}${noPlaybook}${tail}`;
+}
+
+/**
+ * R10 (#736 6102665946), reworded by R11 (#736 6103383277), approved verbatim
+ * with its singular: targeted CSF
+ * subcategories with no tier row both scored and targeted. The files print the
+ * API's own sentence (`risk/csf_source.py`); null when n is 0.
+ */
+export function unscoredTargetsSentence(n: number): string | null {
+  if (n === 1)
+    return "1 targeted subcategory has no row with both a score and a target, and raises no finding.";
+  if (n > 1)
+    return `${n} targeted subcategories have no row with both a score and a target, and raise no finding.`;
+  return null;
 }
 
 /**

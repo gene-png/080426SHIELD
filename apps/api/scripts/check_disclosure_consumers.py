@@ -110,13 +110,18 @@ DISCLOSURE_PREFIXES = (
     "unusable_",
     "source_rows_",
     "batches_",
+    # #836: rows a run was asked for and that the model never answered
+    # (`omitted_count`, `omitted_rows`). One prefix for all three services by
+    # the advisor's ruling on #736 (comment 6067815887): CSF first, then ZT
+    # (#840) and ATT&CK (#853).
+    "omitted_",
 )
 #: SUBSTRINGS, not prefixes, and #209 added the last two. `target_frozen_at`
 #: and `<kind>_targets_computed_live` are disclosure fields by the same
 #: definition as the rest -- each records what a figure could NOT be checked
-#: against -- and matched none of the eight prefixes above, so this gate was
-#: structurally blind to them. That is #373's prefix-anchoring residual,
-#: narrowed here for these two shapes rather than solved.
+#: against -- and matched none of the prefixes the tuple above held then, so
+#: this gate was structurally blind to them. That is #373's prefix-anchoring
+#: residual, narrowed here for these two shapes rather than solved.
 #:
 #: Measured before landing: adding them takes the gate from 25 of 25 to 29 of
 #: 29, still exit 0. Four fields, no false positives, and RED when the field

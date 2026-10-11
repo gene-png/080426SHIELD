@@ -96,6 +96,15 @@ def _world(env, *, with_plan: bool = True, bodies: list[dict] | None = None):  #
                 (KEPT_TOOL, CapabilityDisposition.KEEP),
             ],
         )
+        # #851: UNLISTED on a DRAFT list, so approve accepts it (a DRAFT list
+        # feeds the citable subset) while it stays UNKNOWN (a draft does not vote).
+        _tech_debt_list(
+            Sess,
+            client_id,
+            admin["user"]["id"],
+            status=CapabilityListStatus.DRAFT,
+            items=[(UNLISTED, None)],
+        )
     svc, a = _service_and_assessment(c, bearer)
     bodies = _BODIES if bodies is None else bodies
     rows = standalone_rows(a["coverage"], len(bodies))

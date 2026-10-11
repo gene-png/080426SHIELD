@@ -283,10 +283,11 @@ def pdf_paragraph(stamp: AiModeStamp, style: Any) -> Any:
 
 
 def add_docx_paragraph(doc: Any, stamp: AiModeStamp) -> None:
-    """The stamp as a DOCX paragraph, bold when it is a warning."""
-    para = doc.add_paragraph()
-    run = para.add_run(stamp.sentence())
-    run.bold = stamp.is_warning
+    """The stamp as a DOCX paragraph, bold when it is a warning. Through
+    `app.docx_export`, which strips what XML 1.0 refuses (#993)."""
+    from app.docx_export import add_paragraph
+
+    add_paragraph(doc, stamp.sentence(), bold=stamp.is_warning)
 
 
 def xlsx_rows(stamp: AiModeStamp) -> tuple[list[Any], list[list[Any]]]:
@@ -312,11 +313,13 @@ def add_xlsx_sheet(wb: Any, stamp: AiModeStamp) -> None:
     """
     from openpyxl.styles import Font
 
+    from app.xlsx_export import safe_text_row  # #993: the #972 strip, twin of the DOCX
+
     ws = wb.create_sheet(XLSX_SHEET_TITLE)
     heading, rows = xlsx_rows(stamp)
-    ws.append(heading)
+    safe_text_row(ws, heading)
     for row in rows:
-        ws.append(row)
+        safe_text_row(ws, row)
     ws.cell(row=1, column=1).font = Font(bold=True)
     ws.cell(row=2, column=1).font = Font(bold=stamp.is_warning)
     ws.column_dimensions["A"].width = 24

@@ -71,16 +71,42 @@ export interface ExcludedRow {
   confirmed?: boolean;
 }
 
+/** C6 (for #806): one count per rule, from the api's `extraction_flags`. */
+export interface ExtractionFlagCounts {
+  name_missing: number;
+  confidence_off_scale: number;
+  category_off_list: number;
+  source_row_duplicated: number;
+}
+
+/** #833 / #834: one value the extraction could not store as given. */
+export interface ExtractionFinding {
+  source_row_index: number | null;
+  item_name: string;
+  field: string;
+  reason: string;
+  value: string;
+  /** The column width a string was shortened to (reason "truncated"). */
+  width?: number;
+}
+
 export interface CapabilityList {
   /** #177: whether the extraction attributed every item to one uploaded row;
    *  null is "not recorded". */
   attribution_complete?: boolean | null;
+  /** #833 / #834: null is "not recorded" (a list from before the check);
+   *  [] is "checked, nothing to record". */
+  extraction_findings?: ExtractionFinding[] | null;
   /** #177/#193: from the api's one reader. "exact" licenses the excluded count
    *  as the count; "unknown" makes it a floor. Absent reads as unknown. */
   exclusion_count_state?: "not_recorded" | "exact" | "unknown" | null;
   /** #845: rows marked "Security tool not in use:" that were also given
    *  security functions, so they stay in the ATT&CK assessment. */
   not_in_use_contradictions?: number;
+  /** C6 (for #806): what Tech Debt prompt v3.2 closes and the AI still sent,
+   *  each value kept as sent. Null is "not measured": a list an earlier prompt
+   *  drafted, or one no extraction is on record for. */
+  extraction_flags?: ExtractionFlagCounts | null;
   /** #646: which mode drafted this list, as the API states it. Null only on
    *  a response built without it. */
   ai_source?: AiSource | null;

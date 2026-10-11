@@ -12,12 +12,24 @@ Each subcategory carries:
 
 Notes on counts (CSF 2.0 Final, Feb 2024):
   GOVERN   31 subcategories across 6 categories
-  IDENTIFY 22 subcategories across 3 categories
+  IDENTIFY 21 subcategories across 3 categories
   PROTECT  22 subcategories across 5 categories
   DETECT   11 subcategories across 2 categories
   RESPOND  13 subcategories across 4 categories
-  RECOVER   7 subcategories across 2 categories
+  RECOVER   8 subcategories across 2 categories
   Total    106 subcategories / 22 categories / 6 functions
+
+Source of record: NIST CSWP 29, The NIST Cybersecurity Framework (CSF) 2.0,
+February 26, 2024 (https://doi.org/10.6028/NIST.CSWP.29). #852 corrected two
+rows to match it: CSF 2.0 has no `ID.AM-09`, which this catalog used to hold,
+and it has `RC.CO-04`, which this catalog lacked. The total read 106 both before
+and after, which is why a count could not see it. A stored answer on `ID.AM-09`
+is kept, not scored, and disclosed (`app.csf.retired`, migration 0065).
+
+The code set is pinned to the PDF (`reference-docs/nist/NIST.CSWP.29.pdf`, by
+sha256) by `tests/unit/test_csf_catalog_source.py`, which reads every
+subcategory code out of the PDF's Appendix A and compares it with the catalog
+served and seeded.
 """
 
 from __future__ import annotations
@@ -259,17 +271,17 @@ SUBCATEGORIES: tuple[Subcategory, ...] = (
     _sc(
         "GV.OC-02",
         "Stakeholder expectations",
-        "Internal and external stakeholders are understood, and their needs and expectations regarding cybersecurity are considered.",
+        "Internal and external stakeholders are understood, and their needs and expectations regarding cybersecurity risk management are understood and considered.",
     ),
     _sc(
         "GV.OC-03",
         "Legal, regulatory, contractual",
-        "Legal, regulatory, and contractual requirements regarding cybersecurity are understood and managed.",
+        "Legal, regulatory, and contractual requirements regarding cybersecurity — including privacy and civil liberties obligations — are understood and managed.",
     ),
     _sc(
         "GV.OC-04",
         "Critical objectives, capabilities, services",
-        "Critical objectives, capabilities, and services that stakeholders depend on are understood and communicated.",
+        "Critical objectives, capabilities, and services that external stakeholders depend on or expect from the organization are understood and communicated.",
     ),
     _sc(
         "GV.OC-05",
@@ -295,12 +307,12 @@ SUBCATEGORIES: tuple[Subcategory, ...] = (
     _sc(
         "GV.RM-04",
         "Strategic direction",
-        "Strategic direction describing appropriate risk response options is established and communicated.",
+        "Strategic direction that describes appropriate risk response options is established and communicated.",
     ),
     _sc(
         "GV.RM-05",
         "Lines of communication",
-        "Lines of communication across the organization are established for cybersecurity risks.",
+        "Lines of communication across the organization are established for cybersecurity risks, including risks from suppliers and other third parties.",
     ),
     _sc(
         "GV.RM-06",
@@ -310,7 +322,7 @@ SUBCATEGORIES: tuple[Subcategory, ...] = (
     _sc(
         "GV.RM-07",
         "Strategic risk opportunities",
-        "Strategic opportunities (i.e., positive risks) are characterized and included in organizational cybersecurity risk discussions.",
+        "Strategic opportunities (i.e., positive risks) are characterized and are included in organizational cybersecurity risk discussions.",
     ),
     # GV.RR - Roles, Responsibilities, and Authorities (4)
     _sc(
@@ -412,7 +424,7 @@ SUBCATEGORIES: tuple[Subcategory, ...] = (
         "Cybersecurity supply chain risk management plans include provisions for activities that occur after the conclusion of a partnership or service agreement.",
     ),
     # ---- IDENTIFY --------------------------------------------------------
-    # ID.AM - Asset Management (8)
+    # ID.AM - Asset Management (7)
     _sc(
         "ID.AM-01",
         "Hardware inventory",
@@ -448,11 +460,6 @@ SUBCATEGORIES: tuple[Subcategory, ...] = (
         "Asset life cycle management",
         "Systems, hardware, software, services, and data are managed throughout their life cycles.",
     ),
-    _sc(
-        "ID.AM-09",
-        "Personnel inventories",
-        "Inventories of personnel with cybersecurity-related responsibilities are maintained.",
-    ),
     # ID.RA - Risk Assessment (10)
     _sc(
         "ID.RA-01",
@@ -462,7 +469,7 @@ SUBCATEGORIES: tuple[Subcategory, ...] = (
     _sc(
         "ID.RA-02",
         "Cyber threat intelligence",
-        "Cyber threat intelligence is received from information-sharing forums and sources.",
+        "Cyber threat intelligence is received from information sharing forums and sources.",
     ),
     _sc(
         "ID.RA-03",
@@ -783,11 +790,16 @@ SUBCATEGORIES: tuple[Subcategory, ...] = (
         "End of recovery declared",
         "The end of incident recovery is declared based on criteria, and incident-related documentation is completed.",
     ),
-    # RC.CO - Incident Recovery Communication (1)
+    # RC.CO - Incident Recovery Communication (2)
     _sc(
         "RC.CO-03",
-        "Public updates",
+        "Recovery progress communicated",
         "Recovery activities and progress in restoring operational capabilities are communicated to designated internal and external stakeholders.",
+    ),
+    _sc(
+        "RC.CO-04",
+        "Public recovery updates",
+        "Public updates on incident recovery are shared using approved methods and messaging.",
     ),
 )
 

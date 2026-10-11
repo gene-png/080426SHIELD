@@ -15,9 +15,14 @@ import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
  * answer (`attack_scenario_delta` in `app/ai/fixtures.py`), and a discard.
  */
 
-const DETECT = "E2E What-if Detect Tool";
-const PREVENT = "E2E What-if Prevent Tool";
-const RESPOND = "E2E What-if Respond Tool";
+// #851: approve refuses a row crediting a tool that is not in the client's
+// security tool list, so the base credits tools the seeded Atlas Tech Debt
+// list holds (`scripts/seed_demo.py::_TD_ITEMS`). That list is RELEASED, so no
+// other spec can edit it out of the subset, and each of these is "keep", so no
+// retirement mark (#686) enters the base either.
+const DETECT = "CrowdStrike Falcon";
+const PREVENT = "Okta Workforce Identity";
+const RESPOND = "Splunk Enterprise";
 
 test("an admin starts and discards an ATT&CK what-if against a confirmed assessment", async ({
   page,

@@ -48,6 +48,7 @@ drive both through the routes.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from fastapi import HTTPException, status
@@ -59,6 +60,7 @@ from app.attack.computed import effective_coverage, review_queue
 from app.attack.coverage import CoverageStatus
 from app.attack.parents import PARENT_CHILDREN
 from app.attack.rules import parents_computed, statuses_computed
+from app.attack.subset_drift import OutsideCitation
 from app.logging import get_logger
 from app.models.attack_assessment import AttackAssessment, AttackCoverage
 
@@ -196,24 +198,51 @@ def _what(found: BlockingRows) -> str:
     return " and ".join(parts)
 
 
-def refuse_approve(found: BlockingRows) -> HTTPException:
+def refuse_approve(found: BlockingRows, outside: Sequence[OutsideCitation] = ()) -> HTTPException:
     """At approve the draft is still editable, so the remedy is a control that
     exists: the technique panel's Reason select. Not verified has no writer
-    yet (`coverage.WRITABLE`), so it carries no imperative."""
+    yet (`coverage.WRITABLE`), so it carries no imperative.
+
+    #851: a row crediting a tool outside the client's CURRENT security tool
+    list also refuses approve, because an approved row cannot be edited and
+    there is no reopen. It is NOT part of `BlockingRows`: that predicate is
+    also the release flip's, and the ruling discloses at release rather than
+    blocking (advisor, #736 comment 5984022081). Its remedy is S3b, approved;
+    its clause is S4 in the "not in" wording, singular and plural, approved
+    (#736 comments of 18:56Z and 6024072042)."""
+    parts = [_what(found)] if found else []
+    if outside:
+        n = len({o.technique_code for o in outside})
+        parts.append(
+            "1 technique row credits a tool that is not in the client's security tool list"
+            if n == 1
+            else f"{n} technique rows credit a tool that is not in the client's security "
+            "tool list"
+        )
     remedy = (
         " Choose a reason for each Partial technique in its panel, then approve again."
         if found.partial_without_reason
         else ""
     )
-    return HTTPException(
-        status_code=status.HTTP_409_CONFLICT,
-        detail={
-            "reason": "attack_not_release_ready",
-            "message": f"This assessment cannot be approved: {_what(found)}.{remedy}",
-            "not_verified": list(found.not_verified),
-            "partial_without_reason": list(found.partial_without_reason),
-        },
-    )
+    if outside:
+        remedy += " Remove the tool in the technique's panel, or unlock the row and use Run AI."
+    detail = {
+        "reason": "attack_not_release_ready",
+        "message": f"This assessment cannot be approved: {' and '.join(parts)}.{remedy}",
+        "not_verified": list(found.not_verified),
+        "partial_without_reason": list(found.partial_without_reason),
+    }
+    if outside:
+        detail["cites_outside_subset"] = [
+            {
+                "technique_code": o.technique_code,
+                "field": o.field,
+                "tool": o.tool,
+                "locked": o.locked,
+            }
+            for o in outside
+        ]
+    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
 
 
 def refuse_release(db: Session, assessment_id: uuid.UUID) -> HTTPException:

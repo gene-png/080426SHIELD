@@ -152,7 +152,35 @@ export interface AttackAssessment {
   /** #686 (D-105): cited tool -> "planned_retirement" | "unknown"; a tool
    *  absent here is not retiring. Null: the client has no consolidation plan. */
   tool_retirement?: Record<string, string> | null;
+  /** #851: every tool a row credits outside the client's CURRENT security
+   *  tool list. Absent on an older payload: nothing is shown. */
+  citations_outside_subset?: AttackOutsideCitation[];
+  /** #851: false when nothing could be checked (a third state, never a
+   *  pass): the client has no Tech Debt list, only lists in force with no
+   *  security tool, or only discarded lists (#889 R4); a mix of the last two (one
+   *  service empty, one only discarded) reads as the empty case, C5b. */
+  subset_checked?: boolean;
+  /** #889 R4: when `subset_checked` is false, why, as the API words it (C5,
+   *  or C5b when the client's lists in force have no security tools). */
+  subset_not_checked_sentence?: string | null;
+  /** #889 R4: C8a / C8b, one per Tech Debt service whose newest version in
+   *  force has no security tools, so an earlier version is used. C8a only
+   *  where the service has only drafts; C8b among approved or released
+   *  versions, whose service's drafts are ignored (#889 R6b). */
+  subset_fallback_notes?: string[];
 }
+
+/** #851: one tool one row credits outside the security tool list. */
+export interface AttackOutsideCitation {
+  technique_code: string;
+  field: AttackToolField;
+  tool: string;
+  /** Run AI will not change this row. */
+  locked: boolean;
+}
+
+export type AttackToolField =
+  "detection_tools" | "prevention_tools" | "response_tools";
 
 export interface AttackCoveragePatch {
   status?: CoverageStatus | null;
@@ -165,6 +193,8 @@ export interface AttackCoveragePatch {
   prevention_tools?: string[] | null;
   response_tools?: string[] | null;
   rationale?: string | null;
+  /** #851 (D2): remove ONE name from one list; it confirms nothing else. */
+  remove_tool?: { field: AttackToolField; name: string };
 }
 
 export interface CoverageChange {
@@ -233,6 +263,29 @@ export interface AttackRunAiResponse {
    * may rule a technique N/A.
    */
   not_applicable_refused?: number;
+  /**
+   * #806 C4. Techniques the AI suggested as Partial with a reason only a
+   * consultant may give, refused whole so the row keeps its status.
+   */
+  forbidden_reason_refused?: number;
+  /**
+   * #853. Techniques a SUCCESSFUL batch was asked about, not locked, that no
+   * entry named. A refused entry is an answer and is not here; a failed
+   * batch's techniques are `batches_failed`'s. Optional so a run stored before
+   * #853 parses unchanged (C0).
+   */
+  omitted_count?: number;
+  omitted_techniques?: AttackOmittedTechnique[];
+}
+
+/**
+ * #853. `kept_status` is what the row holds after the run: null reads as
+ * unscored, anything else is a status this run did not confirm, reaching the
+ * coverage figures and the deliverable as it is.
+ */
+export interface AttackOmittedTechnique {
+  technique_code: string;
+  kept_status: CoverageStatus | null;
 }
 
 export interface TacticHeatmapEntry {
