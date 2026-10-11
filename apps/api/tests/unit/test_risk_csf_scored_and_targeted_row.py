@@ -36,6 +36,7 @@ from tests.unit.test_risk_register import (  # noqa: F401  (app_client is a fixt
     _entries_payload,
     _entry,
     _seed_attack_and_zt,
+    _session,
     app_client,
 )
 
@@ -287,3 +288,71 @@ def test_an_out_of_scope_scored_and_targeted_row_measures_nothing(
         out_of_scope=[("high", A)],
     )
     _assert_not_measured_and_no_finding(world, no_shared_row=False)
+
+
+def _store_no_shared_row(cid: str, value: object, *, present: bool) -> None:
+    """Rewrite the stored record as another writer left it. `present=False`:
+    the provenance an older (pre-R11) generate wrote, every key but
+    `csf_no_shared_row`. Otherwise the key holds `value` as stored."""
+    import uuid
+
+    from sqlalchemy import select
+
+    from app.models.risk_register import RiskRegister
+
+    with _session() as s:
+        reg = s.execute(
+            select(RiskRegister).where(RiskRegister.client_id == uuid.UUID(cid))
+        ).scalar_one()
+        prov = dict(reg.provenance)
+        assert prov["csf_no_shared_row"] is True, prov  # the world is the A/B case
+        if present:
+            prov["csf_no_shared_row"] = value
+        else:
+            del prov["csf_no_shared_row"]
+        reg.provenance = prov
+        s.commit()
+
+
+def _old_register_world(app_client):  # noqa: F811
+    """The A/B case (scores and targets on different rows), generated."""
+    return _world(app_client, tiers=["high"], scored=[("high", A)], targeted=[("high", B)])
+
+
+def _assert_original_no_scores_line(c, bearer: str, cid: str) -> None:
+    # Positive first: the register reads not measured, and the files print
+    # the ORIGINAL no-scores line; then the R11 line is absent.
+    assert _csf_target(_latest(c, bearer, cid))["source"] == "playbook_no_scores"
+    texts = _export_texts(c, bearer, cid)
+    for fmt in ("pdf", "docx", "xlsx"):
+        assert NO_SCORES in _flat(texts[fmt]), fmt
+    for fmt in ("pdf", "docx", "xlsx"):
+        assert NO_SHARED_ROW not in _flat(texts[fmt]), fmt
+
+
+def test_a_pre_r11_register_keeps_the_original_no_scores_line(
+    app_client, capsys  # noqa: F811
+) -> None:
+    """A register whose provenance has no `csf_no_shared_row` key, as every
+    register generated before R11 has: no claim either way, so the line it
+    always printed, and no error logged (absence is not a fault)."""
+    c, bearer, cid, _payload = _old_register_world(app_client)
+    _store_no_shared_row(cid, None, present=False)
+    capsys.readouterr()
+    _assert_original_no_scores_line(c, bearer, cid)
+    assert "risk.csf_no_shared_row.unreadable" not in capsys.readouterr().out
+
+
+def test_an_unreadable_no_shared_row_value_keeps_the_original_line_and_is_logged(
+    app_client, capsys  # noqa: F811
+) -> None:
+    """A non-bool stored value (the string "true") is unreadable: the original
+    line, never the R11 one read from truthiness, and the fault is logged.
+    `capsys`: structlog renders to stdout (`test_risk_link_scope.py`)."""
+    c, bearer, cid, _payload = _old_register_world(app_client)
+    _store_no_shared_row(cid, "true", present=True)
+    capsys.readouterr()
+    _assert_original_no_scores_line(c, bearer, cid)
+    out = capsys.readouterr().out
+    assert "risk.csf_no_shared_row.unreadable" in out, out[-2000:]
+    assert '"got": "str"' in out, out[-2000:]

@@ -47,7 +47,12 @@ export const TARGETS_NOT_RECORDED =
  * recorded source token says which of the Playbook's three states it was in
  * (advisor, #736 6087786886, item 4); for the two that measure nothing the CSF
  * line is replaced. Approved verbatim: #736 6087027524 (Q1) and 6087786886
- * (item 4); `_PLAYBOOK_LINES` in the export prints the same words.
+ * (item 4). `_PLAYBOOK_LINES` in the export prints these words, with one
+ * difference: where the Playbook had scores and targets that never shared a
+ * row, the files print R11's "no CSF Playbook row has both a score and a
+ * target." line, while these screens keep the original no-scores line,
+ * because R11 scoped the new line to the Inputs panel and the files only
+ * (#736 6103383277). Whether the consultant's screen should follow: see #1033.
  */
 const PLAYBOOK_LINES: ReadonlyMap<string, (label: string) => string> = new Map([
   [
