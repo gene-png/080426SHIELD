@@ -578,12 +578,12 @@ def _one_service_two_versions(
             opened_by=uuid.UUID(admin["user"]["id"]),
         )
         s.add(svc)
-        s.flush()
-        for version, items, status in (
-            (1, v1, CapabilityListStatus.APPROVED),
-            (2, v2, v2_status),
-        ):
-            cl = CapabilityList(service_id=svc.id, version=version, status=status)
+        s.commit()
+        svc_id = svc.id
+
+    def _write_list(version: int, items, status: CapabilityListStatus) -> None:
+        with Sess() as s:
+            cl = CapabilityList(service_id=svc_id, version=version, status=status)
             s.add(cl)
             s.flush()
             entries = []
@@ -599,7 +599,13 @@ def _one_service_two_versions(
                 entries.append({"item_id": str(it.id), "name": name, "vendor": None})
             if status in (CapabilityListStatus.APPROVED, CapabilityListStatus.RELEASED):
                 cl.approved_membership = entries
-        s.commit()
+            s.commit()
+
+    # #889 review F2: the security tool list is each service's LATEST version,
+    # and approve refuses a row crediting a tool outside it (#851). So the
+    # ATT&CK assessment is approved while v1 is the list, and v2 is written
+    # after, before finalize: the drift these tests read the plan across.
+    _write_list(1, v1, CapabilityListStatus.APPROVED)
     asvc, a = _service_and_assessment(c, bearer)
     row = standalone_rows(a["coverage"], 1)[0]
     r = c.patch(
@@ -608,7 +614,12 @@ def _one_service_two_versions(
         json={"status": "covered", **_all_three(["Splunk Enterprise"])},
     )
     assert r.status_code == 200, r.text
-    fin = _approve_finalize(c, bearer, asvc, a)
+    r = c.post(f"/attack/assessments/{a['id']}/approve", headers=_auth(bearer))
+    assert r.status_code == 200, r.text
+    _write_list(2, v2, v2_status)
+    fin = c.post(f"/attack/services/{asvc}/deliverables/finalize", headers=_auth(bearer))
+    assert fin.status_code in (200, 201), fin.text
+    fin = fin.json()
     assert (
         c.post(f"/attack/deliverables/{fin['id']}/release", headers=_auth(bearer)).status_code
         == 200
@@ -643,7 +654,11 @@ def test_a_tool_dropped_from_the_latest_version_is_unknown_not_retiring(env) -> 
     fin, dash, cells = _one_service_two_versions(
         env, v1=[("Splunk Enterprise", CUT)], v2=[("Okta", KEEP)]
     )
-    assert "Splunk Enterprise (retirement status unknown)" in cells, cells
+    # #889: absent from the latest version is also outside the security tool
+    # list, and that mark (C3) stacks after the retirement mark.
+    assert (
+        "Splunk Enterprise (retirement status unknown) (not in the security tool list)" in cells
+    ), cells
     assert dash["tool_retirement"] == {"Splunk Enterprise": "unknown"}, dash["tool_retirement"]
     assert dash["retirement_notes"] == [
         "Retirement status could not be determined for 1 cited tool."

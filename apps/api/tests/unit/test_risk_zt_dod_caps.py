@@ -73,7 +73,7 @@ def test_a_capped_capability_at_target_is_no_risk_finding(app_client) -> None:  
     )
     assert r.status_code == 201, r.text
     assert seen, "no risk_synthesize payload was captured"
-    finding_ids = {f["source_id"] for f in seen[0]["findings"]}
+    finding_ids = set(seen[0]["findings"])
     assert HAS_ADVANCED in finding_ids  # below its target of 3: what must appear, first
     assert NO_ADVANCED not in finding_ids  # at its capped target of 2
 
