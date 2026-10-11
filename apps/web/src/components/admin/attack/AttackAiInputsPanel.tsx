@@ -174,7 +174,7 @@ const REASON_COPY: Record<string, string> = {
   // #1012. No imperative remedy on purpose: the control depends on whether the
   // version is older (nothing to do) or a draft beside an approved one.
   version_not_in_force:
-    "On a version of its Tech Debt list that is not in force, so nothing on it is offered. Only each list's newest approved or released version that lists a security tool is offered, or, when none is approved, its newest draft that does.",
+    "On a version of its Tech Debt list that is not in force, so nothing on it is offered. Only each list's newest approved or released version that lists a security tool is offered, or, when the list has no approved or released version, its newest draft that does.",
 };
 
 /**
@@ -531,8 +531,8 @@ export function AttackAiInputsPanel({
         >
           Only the version in force of each Tech Debt list is offered to the
           model: its newest approved or released version that lists a security
-          tool, or, when none is approved, its newest draft that does. A tool
-          only another version holds is not offered.
+          tool, or, when it has no approved or released version, its newest
+          draft that does. A tool only another version holds is not offered.
         </p>
       ) : null}
 

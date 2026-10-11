@@ -118,7 +118,7 @@ describe("AttackAiInputsPanel, the version in force (#1012)", () => {
     expect(
       screen.getByTestId("attack-ai-inputs-not-in-force").textContent,
     ).toBe(
-      "Only the version in force of each Tech Debt list is offered to the model: its newest approved or released version that lists a security tool, or, when none is approved, its newest draft that does. A tool only another version holds is not offered.",
+      "Only the version in force of each Tech Debt list is offered to the model: its newest approved or released version that lists a security tool, or, when it has no approved or released version, its newest draft that does. A tool only another version holds is not offered.",
     );
     expect(screen.queryByText(/superseded/i)).toBeNull();
     expect(
@@ -143,7 +143,7 @@ describe("AttackAiInputsPanel, the version in force (#1012)", () => {
     await renderReady(PAYLOAD);
     const table = screen.getByTestId("attack-ai-inputs-not-sent-table");
     expect(table).toHaveTextContent(
-      "On a version of its Tech Debt list that is not in force, so nothing on it is offered. Only each list's newest approved or released version that lists a security tool is offered, or, when none is approved, its newest draft that does.",
+      "On a version of its Tech Debt list that is not in force, so nothing on it is offered. Only each list's newest approved or released version that lists a security tool is offered, or, when the list has no approved or released version, its newest draft that does.",
     );
     expect(table).not.toHaveTextContent(/does not recognise/);
   });
