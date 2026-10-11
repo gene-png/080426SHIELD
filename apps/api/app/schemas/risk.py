@@ -38,6 +38,10 @@ class RiskInputState(BaseModel):
     #: targeted subcategories have no tier row both scored and targeted, so
     #: raise no finding; 0 otherwise. None for every other kind.
     unscored_targeted_subcategories: int | None = None
+    #: R11 (#736 6103383277): CSF only. True when the Playbook's in-scope rows
+    #: carry scores and targets but no row carries both (not measured, and
+    #: `no_playbook_scores` False); None for every other kind.
+    no_shared_playbook_row: bool | None = None
 
     @model_serializer(mode="wrap")
     def _omit_unset_playbook_flag(self, handler):
@@ -46,6 +50,8 @@ class RiskInputState(BaseModel):
         data = handler(self)
         if self.no_playbook_scores is None:
             data.pop("no_playbook_scores", None)
+        if self.no_shared_playbook_row is None:
+            data.pop("no_shared_playbook_row", None)
         if self.unscored_targeted_subcategories is None:
             data.pop("unscored_targeted_subcategories", None)
         return data

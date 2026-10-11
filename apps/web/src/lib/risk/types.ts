@@ -26,6 +26,12 @@ export interface RiskInputState {
    * raise no finding; 0 otherwise. Absent on every other kind.
    */
   unscored_targeted_subcategories?: number;
+  /**
+   * R11 (#736 6103383277): CSF rows only. True when the Playbook's in-scope
+   * rows carry scores and targets but no row carries both, so it measured
+   * nothing (`no_playbook_scores` is then false). Absent on every other kind.
+   */
+  no_shared_playbook_row?: boolean;
 }
 
 export interface RiskGate {

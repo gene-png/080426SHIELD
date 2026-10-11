@@ -59,8 +59,10 @@ from app.risk import exporters as risk_exporters
 from app.risk.baseline import PLAYBOOK_SOURCE_BY_STATE, targets_used
 from app.risk.csf_source import (
     CSF_FINDINGS_KEY,
+    CSF_NO_SHARED_ROW_KEY,
     CSF_UNSCORED_TARGETS_KEY,
     CsfPlaybookMeasure,
+    csf_no_shared_row,
     csf_playbook_measure,
     csf_source_note,
     csf_unscored_targets_note,
@@ -443,6 +445,9 @@ class _InputSnapshot:
     #: `unscored_targeted` count; filled by `_gather_findings`, summed into
     #: provenance `csf_unscored_targets` by `generate`.
     csf_unscored_targets: dict[str, int] = dataclasses.field(default_factory=dict)
+    #: R11 (#736 6103383277): per CSF source, its Playbook's `no_shared_row`;
+    #: filled by `_gather_findings`, persisted as `csf_no_shared_row`.
+    csf_no_shared_row: dict[str, bool] = dataclasses.field(default_factory=dict)
 
     def of_kind(self, kind: str) -> list[_Source]:
         return [src for src in self.sources if src.kind == kind]
@@ -515,7 +520,11 @@ def _input_states(db: Session, client_id: uuid.UUID) -> list[RiskInputState]:
                     status=r.status if r else None,
                     version=r.version if r else None,
                     qualifier=qualifier,
-                    no_playbook_scores=(m.state == "no_scores") if m else None,
+                    # R11: the two not-measured cases are two flags, never both.
+                    no_playbook_scores=(
+                        (m.state == "no_scores" and not m.no_shared_row) if m else None
+                    ),
+                    no_shared_playbook_row=m.no_shared_row if m else None,
                     unscored_targeted_subcategories=m.unscored_targeted if m else None,
                 )
             )
@@ -527,8 +536,10 @@ def _csf_input_measure(db: Session, r: InputRecord) -> CsfPlaybookMeasure:
     record's Playbook measured, for the Inputs panel. The SAME reader as the
     register's state and findings (`csf_source.csf_playbook_measure`, CALLED),
     so the panel and the register cannot disagree: `no_scores` is the panel's
-    `no_playbook_scores`, including targets only and scores and targets that
-    never share a tier row; `unscored_targeted` is its disclosed count."""
+    `no_playbook_scores` when no in-scope row has a recorded non-target value
+    (targets only included), and its `no_shared_playbook_row` when scores and
+    targets never share a tier row (R11, #736 6103383277);
+    `unscored_targeted` is its disclosed count."""
     a = db.get(CsfAssessment, uuid.UUID(r.record_id))
     if a is None:
         raise RuntimeError(f"CSF input {r.record_id!r} has no assessment row")
@@ -1054,6 +1065,7 @@ def _gather_findings(
             "source": PLAYBOOK_SOURCE_BY_STATE[measure.state],
         }
         snap.csf_unscored_targets[src.scope_key] = measure.unscored_targeted
+        snap.csf_no_shared_row[src.scope_key] = measure.no_shared_row
         ents, _tiers = csf_enterprise_subcategories(db, csf)
         csf_scope = csf_playbook_scope(csf_rows)
         valid_controls |= csf_scope.codes
@@ -2109,6 +2121,8 @@ def generate(
         # for want of a scored-and-targeted tier row, read back by the files
         # (`csf_source.csf_unscored_targets_note`).
         _prov_with_count[CSF_UNSCORED_TARGETS_KEY] = sum(snap.csf_unscored_targets.values())
+        # R11 (#736 6103383277): which not-measured line the files print.
+        _prov_with_count[CSF_NO_SHARED_ROW_KEY] = any(snap.csf_no_shared_row.values())
         register.provenance = _prov_with_count
         db.add(register)
     else:
@@ -2567,6 +2581,7 @@ def _render_and_store(
         zt_capped_target_note=zt_capped_target_sentence(zt_capped_target_codes(reg.provenance)),
         csf_source_note=csf_source_note(reg.provenance),
         csf_unscored_targets_note=csf_unscored_targets_note(reg.provenance),
+        csf_no_shared_row=csf_no_shared_row(reg.provenance),
         # #646: `ai_mode` is left at "not recorded", deliberately -- see
         # `RiskExportContext.ai_mode`. Nothing ties a register to the calls
         # that drafted it until Risk runs through the run framework (#504).

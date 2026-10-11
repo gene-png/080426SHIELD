@@ -11,7 +11,9 @@ defaults (round 6, F1), and a score on code A beside a target on code B read
   recorded non-target value AND a target; the level stays the roll-up's;
 - `measured` needs at least one such code, otherwise `playbook_no_scores`;
 - when it measured, every other targeted code is counted, persisted, and
-  stated in approved copy on the Inputs panel and in the three files.
+  stated in approved copy on the Inputs panel and in the three files;
+- R11 (#736 6103383277): scores and targets that never share a row get their
+  own not-measured line; the true no-scores case keeps the original line.
 
 Driven through the real routes: scores through the CSF Run-AI (a registered
 provider response), targets through the consultant's target-only PATCH,
@@ -46,8 +48,15 @@ NO_SCORES = "NIST CSF was not measured for this register: the CSF Playbook has n
 MEASURED = (
     "NIST CSF findings are measured against each subcategory's target level in the CSF " "Playbook."
 )
-ONE = "1 targeted subcategory has no recorded scores and raises no finding."
-TWO = "2 targeted subcategories have no recorded scores and raise no finding."
+# R11 (#736 6103383277): scores and targets exist but never share a row.
+NO_SHARED_ROW = (
+    "NIST CSF was not measured for this register: no CSF Playbook row has both a score "
+    "and a target."
+)
+ONE = "1 targeted subcategory has no row with both a score and a target, and raises no " "finding."
+TWO = (
+    "2 targeted subcategories have no row with both a score and a target, and raise no " "finding."
+)
 
 
 def _world(
@@ -56,10 +65,13 @@ def _world(
     tiers: list[str],
     scored: list[tuple[str, str]],
     targeted: list[tuple[str, str]],
+    out_of_scope: list[tuple[str, str]] = (),
 ) -> tuple[Any, str, str, dict[str, Any]]:
     """A Playbook seeded with `tiers`. `scored`: (tier, code) rows the Run-AI
     scores at governance 2, policy 1. `targeted`: (tier, code) rows given
-    target level 4 by a target-only PATCH. Approved, then generated; returns
+    target level 4 by a target-only PATCH. `out_of_scope`: (tier, code) rows
+    then PATCHed `in_scope: false`, which keeps their values and target.
+    Approved, then generated; returns
     the client, bearer, client id and the synthesis payload."""
     c, provider = app_client
     bearer, cid = _admin(c)
@@ -103,6 +115,17 @@ def _world(
         )
         assert r.status_code == 200, r.text
         assert r.json()["target_level"] == 4, r.json()
+    for tier, code in out_of_scope:
+        rows = {
+            r["subcategory_code"]: r
+            for r in c.get(f"/csf/services/{sid}/profile/{tier}", headers=h).json()["rows"]
+        }
+        r = c.patch(
+            f"/csf/dimension-scores/{rows[code]['id']}", headers=h, json={"in_scope": False}
+        )
+        assert r.status_code == 200, r.text
+        # The PATCH keeps the row's target and score: only scope changes.
+        assert (r.json()["in_scope"], r.json()["target_level"]) == (False, 4), r.json()
     ap = c.post(f"/csf/assessments/{a.json()['id']}/approve", headers=h)
     assert ap.status_code == 200, ap.text
 
@@ -139,8 +162,12 @@ def _flat(text: str) -> str:
     return " ".join(text.split())
 
 
-def _assert_not_measured_and_no_finding(world) -> None:
+def _assert_not_measured_and_no_finding(world, *, no_shared_row: bool) -> None:
+    """`no_shared_row`: scores and targets exist but never share a row (R11's
+    line), rather than no in-scope row having a recorded non-target value
+    (the original no-scores line). Both record `playbook_no_scores`."""
     c, bearer, cid, payload = world
+    line, other = (NO_SHARED_ROW, NO_SCORES) if no_shared_row else (NO_SCORES, NO_SHARED_ROW)
     # Positive first: the register exists, other services fed findings, and
     # the not-measured state is recorded and stated in all three files.
     body = _latest(c, bearer, cid)
@@ -149,14 +176,16 @@ def _assert_not_measured_and_no_finding(world) -> None:
     assert _csf_target(body)["source"] == "playbook_no_scores"
     texts = _export_texts(c, bearer, cid)
     for fmt in ("pdf", "docx", "xlsx"):
-        assert NO_SCORES in _flat(texts[fmt]), fmt
+        assert line in _flat(texts[fmt]), fmt
     inp = _csf_input(c, bearer, cid)
-    assert inp["no_playbook_scores"] is True, inp
+    assert inp["no_playbook_scores"] is (not no_shared_row), inp
+    assert inp["no_shared_playbook_row"] is no_shared_row, inp
     assert inp["unscored_targeted_subcategories"] == 0, inp
     # Then the absences: no CSF finding, and no count sentence in any file.
     assert [f for f in payload["findings"] if f["kind"] == "csf"] == []
     for fmt in ("pdf", "docx", "xlsx"):
         assert MEASURED not in _flat(texts[fmt]), fmt
+        assert other not in _flat(texts[fmt]), fmt
         assert "targeted subcategor" not in _flat(texts[fmt]), fmt
 
 
@@ -170,7 +199,8 @@ def test_a_score_on_one_tier_and_a_target_on_another_raise_no_finding(
             tiers=["high", "moderate"],
             scored=[("high", A)],
             targeted=[("moderate", A)],
-        )
+        ),
+        no_shared_row=True,
     )
 
 
@@ -179,7 +209,8 @@ def test_a_score_on_code_a_and_a_target_on_code_b_read_not_measured(
 ) -> None:
     """F2: code A scored with no target, code B target-only."""
     _assert_not_measured_and_no_finding(
-        _world(app_client, tiers=["high"], scored=[("high", A)], targeted=[("high", B)])
+        _world(app_client, tiers=["high"], scored=[("high", A)], targeted=[("high", B)]),
+        no_shared_row=True,
     )
 
 
@@ -209,6 +240,7 @@ def test_the_partial_case_raises_the_finding_and_states_the_count(
     assert _csf_target(body)["source"] == "playbook"
     inp = _csf_input(c, bearer, cid)
     assert inp["no_playbook_scores"] is False, inp
+    assert inp["no_shared_playbook_row"] is False, inp
     assert inp["unscored_targeted_subcategories"] == len(target_only), inp
     texts = _export_texts(c, bearer, cid)
     for fmt in ("pdf", "docx", "xlsx"):
@@ -222,6 +254,7 @@ def test_the_partial_case_raises_the_finding_and_states_the_count(
     assert not {f["source_id"] for f in csf} & set(target_only)
     for fmt in ("pdf", "docx", "xlsx"):
         assert NO_SCORES not in _flat(texts[fmt]), fmt
+        assert NO_SHARED_ROW not in _flat(texts[fmt]), fmt
 
 
 def test_every_targeted_code_scored_and_targeted_states_no_count(
@@ -237,3 +270,20 @@ def test_every_targeted_code_scored_and_targeted_states_no_count(
     assert _csf_input(c, bearer, cid)["unscored_targeted_subcategories"] == 0
     for fmt in ("pdf", "docx", "xlsx"):
         assert "targeted subcategor" not in _flat(texts[fmt]), fmt
+
+
+def test_an_out_of_scope_scored_and_targeted_row_measures_nothing(
+    app_client,  # noqa: F811
+) -> None:
+    """Round 7, F1: A's only scored-and-targeted row is set out of scope. The
+    roll-up skips it, so it must not make the Playbook read measured. No
+    in-scope row then has a recorded value: the TRUE no-scores case, so the
+    original line (R11 keeps it)."""
+    world = _world(
+        app_client,
+        tiers=["high"],
+        scored=[("high", A)],
+        targeted=[("high", A)],
+        out_of_scope=[("high", A)],
+    )
+    _assert_not_measured_and_no_finding(world, no_shared_row=False)

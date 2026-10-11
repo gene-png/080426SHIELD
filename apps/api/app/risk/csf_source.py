@@ -48,11 +48,15 @@ class CsfPlaybookMeasure:
     the subcategories that may raise a finding. `unscored_targeted`: in the
     `measured` state, how many targeted subcategories have no tier row that is
     both scored and targeted, so raise no finding; 0 in the other two states,
-    whose own line already says nothing was measured."""
+    whose own line already says nothing was measured. `no_shared_row` (R11,
+    #736 6103383277): in the `no_scores` state, True when in-scope rows carry
+    recorded values and targets but no row carries both, so the files and the
+    Inputs panel name that case; False in every other case."""
 
     state: str
     finding_codes: frozenset[str]
     unscored_targeted: int
+    no_shared_row: bool = False
 
 
 def scored_and_targeted(row: Any) -> bool:
@@ -86,9 +90,11 @@ def csf_playbook_measure(rows: Iterable[Any]) -> CsfPlaybookMeasure:
     targeted = {r.subcategory_code for r in in_scope if r.target_level is not None}
     if finding_codes:
         return CsfPlaybookMeasure("measured", finding_codes, len(targeted - finding_codes))
-    if any(has_recorded_value_besides_target(r) for r in in_scope) and not targeted:
+    scored = any(has_recorded_value_besides_target(r) for r in in_scope)
+    if scored and not targeted:
         return CsfPlaybookMeasure("no_targets", frozenset(), 0)
-    return CsfPlaybookMeasure("no_scores", frozenset(), 0)
+    # R11: `scored` here means values and targets exist on different rows.
+    return CsfPlaybookMeasure("no_scores", frozenset(), 0, no_shared_row=scored)
 
 
 #: R10 (#736 6102665946): the provenance key holding the `measured` CSF
@@ -98,11 +104,18 @@ CSF_UNSCORED_TARGETS_KEY = "csf_unscored_targets"
 
 
 def csf_unscored_targets_sentence(n: int) -> str | None:
-    """Approved verbatim, #736 6102665946 (R10). None when n is 0."""
+    """Approved verbatim, #736 6103383277 (R11, rewording R10). None when n
+    is 0."""
     if n == 1:
-        return "1 targeted subcategory has no recorded scores and raises no finding."
+        return (
+            "1 targeted subcategory has no row with both a score and a target, and raises "
+            "no finding."
+        )
     if n > 1:
-        return f"{n} targeted subcategories have no recorded scores and raise no finding."
+        return (
+            f"{n} targeted subcategories have no row with both a score and a target, and "
+            "raise no finding."
+        )
     return None
 
 
@@ -117,3 +130,23 @@ def csf_unscored_targets_note(stored: object) -> str | None:
         return csf_unscored_targets_sentence(raw)
     _log.error("risk.csf_unscored_targets.unreadable", got=type(raw).__name__)
     return None
+
+
+#: R11 (#736 6103383277): the provenance key holding the CSF source's
+#: `no_shared_row`, written by `routes/risk.py::generate`. A sibling of
+#: `targets`, so the target's `source` token stays `playbook_no_scores` and
+#: every reader of it is unchanged; only the files' line differs.
+CSF_NO_SHARED_ROW_KEY = "csf_no_shared_row"
+
+
+def csf_no_shared_row(stored: object) -> bool:
+    """R11 from a register's provenance. False when the key is absent (a
+    register generated before R11 keeps the original no-scores line); an
+    unreadable value is logged and reads False, the original line."""
+    if not isinstance(stored, dict) or CSF_NO_SHARED_ROW_KEY not in stored:
+        return False
+    raw = stored[CSF_NO_SHARED_ROW_KEY]
+    if isinstance(raw, bool):
+        return raw
+    _log.error("risk.csf_no_shared_row.unreadable", got=type(raw).__name__)
+    return False
