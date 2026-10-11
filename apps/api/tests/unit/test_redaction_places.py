@@ -413,7 +413,9 @@ def test_run_batches_outside_any_run_takes_one_place(world, monkeypatch) -> None
     from app.models.user import User
 
     _settings(monkeypatch, MAX_RUNS="1")
-    batches = [{"findings": [], "valid_techniques": [], "valid_controls": []} for _ in range(6)]
+    # Risk E (#1036): `findings` is keyed by source_id, so it is an object;
+    # the keyed guard refuses a list before egress.
+    batches = [{"findings": {}, "valid_techniques": [], "valid_controls": []} for _ in range(6)]
     with world["Session"]() as db:
         admin = db.execute(
             select(User).where(User.email == "admin@kentro-consulting.com")
