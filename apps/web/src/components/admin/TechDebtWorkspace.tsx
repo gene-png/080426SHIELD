@@ -18,6 +18,7 @@ import type { AiServes } from "@/lib/aiRuns/types";
 import { useAiRun } from "@/lib/aiRuns/useAiRun";
 import { AiRunStatus } from "@/components/admin/AiRunStatus";
 import { splitLines } from "@/lib/text";
+import { sourceItems } from "@/lib/tech_debt/components";
 import { RedactionDisclosure } from "@/components/intake/RedactionDisclosure";
 import {
   addCapabilityComponents,
@@ -96,7 +97,7 @@ function exclusionUnknown(list: CapabilityList): boolean {
  *  unknown, "… · excluded count unknown (at least K)" -- K is a floor then. */
 function reconciliationHeading(list: CapabilityList): string {
   const received = list.source_rows_total ?? 0;
-  const included = list.items.filter((i) => !i.parent_item_id).length;
+  const included = sourceItems(list.items).length;
   const floor = Math.max(received - included, 0);
   const head = `${received} rows received · ${included} included · `;
   if (exclusionUnknown(list)) {
@@ -582,16 +583,21 @@ Components carry no cost of their own — this licence keeps its full value.`,
     }
   }
 
-  // KNOWN TWIN, deliberately left for #935 (for #835): this sum and the
-  // "Capabilities" card below (`list.items.length`) include a split bundle's
-  // named parts. A part has no cost by design, so the sum is right unless a
-  // cost has been typed onto a part (nothing refuses that; #927). The count
-  // reads parts as capabilities, while the client dashboard's Applications,
-  // the PDF and DOCX "Capabilities reviewed" and the deliverable summary on
-  // the client's Results page count source items only, through
-  // `tech_debt/components.py`. Admin only.
-  const totalCost =
-    list?.items.reduce((acc, i) => acc + (i.annual_cost_usd ?? 0), 0) ?? 0;
+  // for #935: source items only, as the client dashboard's Applications and
+  // spend, the PDF and DOCX "Capabilities reviewed" and the client's Results
+  // summary count them (`tech_debt/components.py`). A split bundle's named
+  // part is not a capability of its own, and a cost stored on one before #927
+  // refused it is not spend: the bundle row holds the licence value. The
+  // "items" pill and the discard summary below count table ROWS, parts
+  // included, on purpose; "Categories" counts a part in its own category (the
+  // #835 ruling), and "To cut" and the low-confidence count read every row
+  // because savings still see a part (advisor ruling on #736).
+  const sources = list ? sourceItems(list.items) : [];
+  const bundlePartCount = (list?.items.length ?? 0) - sources.length;
+  const totalCost = sources.reduce(
+    (acc, i) => acc + (i.annual_cost_usd ?? 0),
+    0,
+  );
   const lowConfidence =
     list?.items.filter(
       (i) => i.confidence_pct !== null && i.confidence_pct < 70,
@@ -785,7 +791,17 @@ Components carry no cost of their own — this licence keeps its full value.`,
 
       {list ? (
         <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
-          <NumberCard label="Capabilities" value={list.items.length} />
+          <NumberCard
+            label="Capabilities"
+            value={sources.length}
+            hint={
+              bundlePartCount > 0
+                ? `${bundlePartCount} bundle ${
+                    bundlePartCount === 1 ? "part" : "parts"
+                  } not counted`
+                : undefined
+            }
+          />
           <NumberCard label="Annual cost" value={costFmt} />
           <NumberCard label="Categories" value={categoryCount} />
           <NumberCard
@@ -879,9 +895,7 @@ Components carry no cost of their own — this licence keeps its full value.`,
               exporter decides it the same way. */}
             {typeof list.source_rows_total === "number" &&
             (exclusionUnknown(list) ||
-              list.source_rows_total -
-                list.items.filter((i) => !i.parent_item_id).length >
-                0) ? (
+              list.source_rows_total - sourceItems(list.items).length > 0) ? (
               <div
                 className="rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm"
                 role="status"
