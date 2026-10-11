@@ -75,7 +75,6 @@ def test_both_csf_versions_carry_a_measured_playbook(seeded) -> None:
             measure = csf_playbook_measure(rows)
             assert measure.state == "measured", (version, measure)
             assert measure.unscored_targeted == 0, (version, measure)
-            assert measure.no_shared_row is False, (version, measure)
             assert set(measure.finding_codes) == {r.subcategory_code for r in rows}, version
             # The product's own roll-up reports exactly the planned gaps.
             a = db.execute(
@@ -152,11 +151,23 @@ def test_a_regenerate_on_atlas_draws_csf_findings_from_the_playbook(seeded) -> N
         if f["kind"] == "csf"
     }
     assert csf_findings == {code: f"CSF {code}: level 1 of target 2" for code in V2_GAPS}
+    # And the regenerated register's entries carry them (the drafted entries,
+    # one per finding, as the fixture answers). Zero Trust entries share the
+    # `questionnaire_response` source, so CSF ones are told apart by code.
+    from app.csf.catalog import SUBCATEGORIES
+
+    csf_codes = {sc.code for sc in SUBCATEGORIES}
+    entry_ids = {e["source_id"] for e in body["entries"] if e["source_id"] in csf_codes}
+    assert entry_ids == V2_GAPS, sorted(entry_ids)
 
 
 def test_the_published_v1_register_is_left_as_hand_built(seeded) -> None:
     """6091824874: the published v1 register records no generate, so it
-    carries no D' provenance and its CSF entries stay the four hand-built ones."""
+    carries no generate-time provenance (`targets`, `csf_findings`) and its CSF
+    entries stay the four hand-built ones. Its `current_inputs` CSF record's
+    `playbook_fingerprint` does legitimately change with this seed: v1's
+    Playbook rows are written before the register's input snapshot, so the
+    snapshot now fingerprints them."""
     url, _storage = seeded
     with Session(create_engine(url, future=True)) as db:
         reg = db.execute(select(RiskRegister)).scalar_one()
@@ -186,3 +197,29 @@ def test_a_second_seed_run_still_skips_and_adds_no_playbook_rows(seeded) -> None
     with Session(create_engine(url, future=True)) as db:
         after = db.execute(select(func.count()).select_from(CsfDimensionScore)).scalar_one()
     assert after == before
+
+
+def test_the_seed_refuses_a_playbook_whose_roll_up_disagrees_with_its_plan(
+    tmp_path, monkeypatch
+) -> None:
+    """The seed's self-check, observed firing on a fresh DB. Every planned gap
+    row is written at target (the "below target" scores patched to the "at
+    target" ones), so `csf_playbook_measure` still reads `measured` with no
+    unscored code, and it is the LAST guard, the comparison of
+    `enterprise_subcategories`' gaps with the plan, that refuses."""
+    from scripts import seed_demo
+
+    url = f"sqlite:///{tmp_path / 'seed.db'}"
+    monkeypatch.setenv("DATABASE_URL", url)
+    monkeypatch.setattr(
+        seed_demo, "get_storage", lambda: LocalFilesystemStorage(tmp_path / "storage")
+    )
+    monkeypatch.setattr(
+        seed_demo, "_CSF_PLAYBOOK_BELOW_TARGET", dict(seed_demo._CSF_PLAYBOOK_AT_TARGET)
+    )
+    with pytest.raises(RuntimeError) as raised:
+        seed_demo.main()
+    assert str(raised.value) == (
+        "seed_demo: CSF Playbook v1 gaps are [], expected "
+        "['DE.AE-02', 'ID.AM-01', 'PR.AA-01', 'RS.MA-02']"
+    )

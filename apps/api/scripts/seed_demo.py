@@ -772,9 +772,10 @@ def _seed_csf_playbook(
     asks the product's OWN readers (`csf_playbook_measure`, the register's
     state and findings reader, and `enterprise_subcategories`, the roll-up)
     and refuses to continue if any answer differs from the plan: the state
-    must be `measured`, every targeted code must be able to raise a finding
-    (none counted as unscored, R10/R11), and the roll-up's gaps must be
-    exactly `gaps`."""
+    must be `measured` (which also excludes R11's no-shared-row case, a
+    not-measured state), every targeted code must be able to raise a finding
+    (none counted as unscored, R10), and the roll-up's gaps must be exactly
+    `gaps`."""
     unknown = gaps - {sc.code for sc in CSF_SUBS}
     if unknown:
         raise RuntimeError(f"seed_demo: CSF Playbook gaps not in the catalog: {sorted(unknown)}")
@@ -799,10 +800,12 @@ def _seed_csf_playbook(
     measure = csf_playbook_measure(rows)
     if measure.state != "measured":
         raise RuntimeError(f"seed_demo: CSF Playbook v{assessment.version} reads {measure.state!r}")
-    if measure.unscored_targeted or measure.no_shared_row:
+    # R11's no-shared-row case is a `no_scores` state, so the check above
+    # already refuses it; only the measured state's unscored count remains.
+    if measure.unscored_targeted:
         raise RuntimeError(
             f"seed_demo: CSF Playbook v{assessment.version}: {measure.unscored_targeted} "
-            f"targeted codes cannot raise a finding (no_shared_row={measure.no_shared_row})"
+            "targeted codes cannot raise a finding"
         )
     ents, _tiers = csf_enterprise(db, assessment)
     found = {e.subcategory_code for e in ents if e.gap}
