@@ -38,6 +38,7 @@ from alembic.config import Config  # noqa: E402
 from sqlalchemy import create_engine, select  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
+from app.ai.provenance import SOURCE_CONSULTANT  # noqa: E402
 from app.assessment_targets import target_source_sentence  # noqa: E402
 from app.attack.analytics import compute as compute_attack  # noqa: E402
 from app.attack.catalog import SOURCE_VERSION as ATTACK_SOURCE_VERSION  # noqa: E402
@@ -63,10 +64,12 @@ from app.attack.rules import NEW_RULES as ATTACK_NEW_RULES  # noqa: E402
 from app.attack.rules import parents_computed as attack_parents_computed  # noqa: E402
 from app.audit import audit  # noqa: E402
 from app.csf.catalog import SUBCATEGORIES as CSF_SUBS  # noqa: E402
+from app.csf.enterprise import enterprise_subcategories as csf_enterprise  # noqa: E402
 from app.csf.exporters import build_context as build_csf_context  # noqa: E402
 from app.csf.exporters import render_pdf as render_csf_pdf  # noqa: E402
 from app.csf.exporters import render_xlsx as render_csf_xlsx  # noqa: E402
 from app.csf.gap import analyze as analyze_csf_gap  # noqa: E402
+from app.csf.retired import has_recorded_value_besides_target  # noqa: E402
 from app.csf.scoring import compute as compute_csf  # noqa: E402
 from app.docx_export import DOCX_MIME  # noqa: E402
 from app.models import (  # noqa: E402  -- triggers metadata registration
@@ -83,6 +86,7 @@ from app.models import (  # noqa: E402  -- triggers metadata registration
     CsfAnswer,
     CsfAssessment,
     CsfAssessmentStatus,
+    CsfDimensionScore,
     Deliverable,
     RiskEntry,
     RiskRegister,
@@ -100,6 +104,7 @@ from app.models._common import utcnow  # noqa: E402
 from app.models.capability import CapabilityDisposition  # noqa: E402
 from app.models.deliverable import FROZEN_TARGET_AT_FINALIZE  # noqa: E402
 from app.risk import exporters as risk_exporters  # noqa: E402
+from app.risk.csf_source import csf_playbook_measure  # noqa: E402
 from app.risk.engine import (  # noqa: E402
     Impact,
     Likelihood,
@@ -708,9 +713,105 @@ def _seed_csf(
         stage="csf.deliverable",
     )
 
+    # #474 D': the Risk Register's CSF findings come from the Playbook, so v1
+    # carries one. Seeded HERE, before the register's input snapshot, so the
+    # snapshot's Playbook fingerprint is the one the published register saw.
+    _seed_csf_playbook(db, assessment, org, gaps=_csf_playbook_gaps_v1())
+
     # v2 is NOT seeded here: `main` seeds it after the Risk Register, so the
     # published register is generated from v1 released (#860 review B4).
     return svc, tier_map
+
+
+# ---------------------------------------------------------------------------
+# CSF Playbook (#474 D')
+# ---------------------------------------------------------------------------
+
+#: The Working Profile tier seeded, as `POST /csf/services/{id}/profiles/seed`
+#: with `{"tiers": ["high"]}` would: one row per catalog subcategory.
+_CSF_PLAYBOOK_TIER = "high"
+#: Every row's target. Level 2 needs no evidence (`score_tier` caps an
+#: unevidenced row at 2), so the seed attaches none and nothing is capped.
+_CSF_PLAYBOOK_TARGET = 2
+#: Total 3 (level 2, at target) and total 2 (level 1, a gap): `maturity_level`
+#: maps 3-5 to L2 and 0-2 to L1. Implementation stays at 1, the unevidenced cap.
+#: BOTH carry nonzero scores, so every targeted row is scored AND targeted on
+#: the same row: R10 (#736 6102665946) raises a finding only from such a row.
+_CSF_PLAYBOOK_AT_TARGET = {
+    "governance": 1,
+    "policy": 1,
+    "implementation": 1,
+    "monitoring": 0,
+    "improvement": 0,
+}
+_CSF_PLAYBOOK_BELOW_TARGET = {
+    "governance": 1,
+    "policy": 1,
+    "implementation": 0,
+    "monitoring": 0,
+    "improvement": 0,
+}
+#: The v1 gap v2 closes, so a regenerate (which reads v2, the latest record)
+#: visibly differs from the published v1 register.
+_CSF_PLAYBOOK_CLOSED_IN_V2 = "RS.MA-02"
+
+
+def _csf_playbook_gaps_v1() -> frozenset[str]:
+    """The CSF codes the hand-built register cites as findings: the published
+    register is "generated" from v1, so v1's Playbook gaps are exactly these.
+    Derived from `_RISK_ENTRIES`, never listed twice."""
+    return frozenset(e[4] for e in _RISK_ENTRIES if e[3] == "questionnaire_response")
+
+
+def _seed_csf_playbook(
+    db: Session, assessment: CsfAssessment, org: Client, *, gaps: frozenset[str]
+) -> None:
+    """One scored, targeted `high` row per catalog subcategory, written as a
+    consultant's PATCH writes them (scores and target together, `answer_source`
+    stamped). The codes in `gaps` sit one level below target. Then the seed
+    asks the product's OWN readers (`csf_playbook_measure`, the register's
+    state and findings reader, and `enterprise_subcategories`, the roll-up)
+    and refuses to continue if any answer differs from the plan: the state
+    must be `measured`, every targeted code must be able to raise a finding
+    (none counted as unscored, R10/R11), and the roll-up's gaps must be
+    exactly `gaps`."""
+    unknown = gaps - {sc.code for sc in CSF_SUBS}
+    if unknown:
+        raise RuntimeError(f"seed_demo: CSF Playbook gaps not in the catalog: {sorted(unknown)}")
+    rows = [
+        CsfDimensionScore(
+            assessment_id=assessment.id,
+            client_id=org.id,
+            tier=_CSF_PLAYBOOK_TIER,
+            subcategory_code=sc.code,
+            target_level=_CSF_PLAYBOOK_TARGET,
+            answer_source=SOURCE_CONSULTANT,
+            **(_CSF_PLAYBOOK_BELOW_TARGET if sc.code in gaps else _CSF_PLAYBOOK_AT_TARGET),
+        )
+        for sc in CSF_SUBS
+    ]
+    db.add_all(rows)
+    db.flush()
+
+    unscored = [r.subcategory_code for r in rows if not has_recorded_value_besides_target(r)]
+    if unscored:
+        raise RuntimeError(f"seed_demo: CSF Playbook rows with a target and no score: {unscored}")
+    measure = csf_playbook_measure(rows)
+    if measure.state != "measured":
+        raise RuntimeError(f"seed_demo: CSF Playbook v{assessment.version} reads {measure.state!r}")
+    if measure.unscored_targeted or measure.no_shared_row:
+        raise RuntimeError(
+            f"seed_demo: CSF Playbook v{assessment.version}: {measure.unscored_targeted} "
+            f"targeted codes cannot raise a finding (no_shared_row={measure.no_shared_row})"
+        )
+    ents, _tiers = csf_enterprise(db, assessment)
+    found = {e.subcategory_code for e in ents if e.gap}
+    if found != gaps:
+        raise RuntimeError(
+            f"seed_demo: CSF Playbook v{assessment.version} gaps are {sorted(found)}, "
+            f"expected {sorted(gaps)}"
+        )
+    print(f"  CSF Playbook v{assessment.version}: {len(rows)} rows, gaps {sorted(found)}")
 
 
 def _seed_csf_v2_approved(
@@ -783,6 +884,13 @@ def _seed_csf_v2_approved(
         ]
     )
     db.flush()
+    # #474 D': v2's Playbook. A regenerate reads v2 (the latest record), so
+    # this is what keeps CSF findings on a regenerated Atlas register. One v1
+    # gap is closed, so a regenerate differs visibly from the published v1.
+    v1_gaps = _csf_playbook_gaps_v1()
+    if _CSF_PLAYBOOK_CLOSED_IN_V2 not in v1_gaps:
+        raise RuntimeError(f"seed_demo: {_CSF_PLAYBOOK_CLOSED_IN_V2} is not a v1 Playbook gap")
+    _seed_csf_playbook(db, v2, org, gaps=v1_gaps - {_CSF_PLAYBOOK_CLOSED_IN_V2})
     audit(
         db,
         action="csf.assessment.approved",
@@ -1130,6 +1238,11 @@ def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client)
 # "AI suggests, code computes" contract. Technique + control links reference
 # real codes present in the seeded ATT&CK / CSF assessments so traceability is
 # genuine.
+#
+# #474 D': the `questionnaire_response` rows (the stored token for a CSF
+# finding) are exactly CSF v1's Playbook gaps -- `_csf_playbook_gaps_v1`
+# derives the gaps FROM them, and `_seed_csf_playbook` checks the product's
+# roll-up agrees. Their likelihood and impact stay hand-authored, as before.
 # ---------------------------------------------------------------------------
 
 
