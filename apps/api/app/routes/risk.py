@@ -23,8 +23,8 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy import func, null, select, update
+from sqlalchemy.orm import Session, undefer_group
 
 from app.ai.catalog_fields import register_catalog_field, register_catalog_keys
 from app.ai.engine import get_job, run_job
@@ -53,7 +53,7 @@ from app.models.attack_assessment import AttackAssessment, AttackCoverage
 from app.models.client import Client
 from app.models.csf_assessment import CsfAssessment
 from app.models.csf_profile import CsfDimensionScore
-from app.models.risk_register import RiskEntry, RiskRegister
+from app.models.risk_register import OTHER_AXES_GROUP, RiskEntry, RiskRegister
 from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.user import User, UserRole
 from app.models.zt_assessment import ZtAnswer, ZtAssessment
@@ -2202,8 +2202,12 @@ def generate(
                 title=str(raw["title"])[:512],
                 description=raw.get("description"),
                 axis=axis.value if axis else None,
-                other_axes=other_axes,
-                other_axes_dropped=entry_axes_dropped,
+                # SQL NULL, never the JSON text 'null', for "not recorded"
+                # (`models/risk_register.py`, the note on `other_axes`).
+                other_axes=other_axes if other_axes is not None else null(),
+                other_axes_dropped=(
+                    entry_axes_dropped if entry_axes_dropped is not None else null()
+                ),
                 source=stored_source,
                 source_id=source_kept[0] if source_kept else None,
                 linked_techniques=techs,
@@ -2792,7 +2796,10 @@ def _render_and_store(
     """
     entries = (
         db.execute(
-            select(RiskEntry).where(RiskEntry.register_id == reg.id).order_by(RiskEntry.created_at)
+            select(RiskEntry)
+            .where(RiskEntry.register_id == reg.id)
+            .order_by(RiskEntry.created_at)
+            .options(undefer_group(OTHER_AXES_GROUP))
         )
         .scalars()
         .all()
@@ -3664,6 +3671,7 @@ def _serialize(
             select(RiskEntry)
             .where(RiskEntry.register_id == register.id)
             .order_by(RiskEntry.created_at)
+            .options(undefer_group(OTHER_AXES_GROUP))
         )
         .scalars()
         .all()
