@@ -124,6 +124,12 @@ export interface RiskEntry {
    * without it reads as not recorded (`otherAxesCell`), never as none.
    */
   other_axes?: string[] | null;
+  /**
+   * Ruling #736 6105137014: this entry's `other_axes` element drops by reason
+   * (`invalid`, `duplicate`, `repeats_axis`). `null` is "not recorded", `{}`
+   * "none dropped". On the consultant's register only.
+   */
+  other_axes_dropped?: Record<string, number> | null;
   source: string | null;
   source_id: string | null;
   /**

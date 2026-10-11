@@ -151,6 +151,10 @@ class RiskEntryResponse(BaseModel):
     # #806 G1 option 3. None is "not recorded" (pre-0066, or the model sent no
     # readable list); `[]` is the claim "no other axis". Never counted.
     other_axes: list[str] | None = None
+    # Ruling #736 6105137014: this entry's element drops by reason; None is
+    # "not recorded", `{}` "none dropped". Consultant only: the client
+    # dashboard's entry schema does not carry it.
+    other_axes_dropped: dict[str, int] | None = None
     source: str | None
     source_id: str | None
     linked_techniques: list[str] | None

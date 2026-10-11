@@ -392,7 +392,11 @@ _RISK_SYNTHESIZE_PROMPT = (
     "`prevention`, or `response`, and, for each of `detection`, `prevention`, `response`, an "
     "object with `state` (`in_place`, `not_in_place`, `awaiting_review`, or "
     "`cannot_be_prevented`) and `tools` (the confirmed tools providing it, possibly empty); plus "
-    "`rationale` and `notes` from the assessment (each possibly null);\n"
+    "`rationale` and `notes` from the assessment (each possibly null); "
+    # Ruling #736 6105137014 (finding 1, option (a)), verbatim: v3.
+    "`status_basis` is `computed` when SHIELD derived the status from the function states "
+    "given, and `stored` when the status was recorded directly, with no function states; treat "
+    "a stored status as given and do not infer missing functions from it.\n"
     "  - `csf`: `enterprise_level` (1 to 5), `target_level` (1 to 5), `tier_levels` (keyed by "
     "tier), `evidence_capped` (for each in-scope system tier, keyed by tier, true when that "
     "tier's level was lowered because evidence could not be produced), and `tier_notes` (keyed "
@@ -609,8 +613,9 @@ register_job(
         name="risk_synthesize",
         prompt=_RISK_SYNTHESIZE_PROMPT,
         # C9 (#806 5983938383): the approved prompt's runs are told apart from
-        # the previous prompt's, which ran as the engine default "v1".
-        prompt_version="v2",
+        # the previous prompt's, which ran as the engine default "v1". v3: the
+        # `status_basis` sentence, ruling #736 6105137014.
+        prompt_version="v3",
         top_level_key="entries",
     )
 )

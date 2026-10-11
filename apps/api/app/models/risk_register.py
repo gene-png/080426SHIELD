@@ -100,6 +100,11 @@ class RiskEntry(UUIDPKMixin, TimestampMixin, Base):
     # Never counted: `axis_counts` is primary-only (#313). NULL is "not
     # recorded" (pre-0066, or no readable list from the model); `[]` is "none".
     other_axes: Mapped[list | None] = mapped_column(JSON)
+    # Ruling #736 6105137014 (migration 0066): this entry's `other_axes`
+    # element drops by reason (`invalid`, `duplicate`, `repeats_axis`). NULL is
+    # "not recorded" (pre-0066, or no readable list); `{}` is "none dropped".
+    # Shown on the consultant's screen only.
+    other_axes_dropped: Mapped[dict | None] = mapped_column(JSON)
 
     # Where this entry came from (traceability — required, no orphan risks).
     source: Mapped[str | None] = mapped_column(

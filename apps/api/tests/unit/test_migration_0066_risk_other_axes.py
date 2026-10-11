@@ -82,11 +82,14 @@ def test_0066_adds_a_nullable_column_and_leaves_an_existing_row_unrecorded(tmp_p
 
     command.upgrade(_cfg(url), "0066")
 
-    column = _columns(engine)["other_axes"]
-    assert column["nullable"] is True
-    assert column["default"] is None
+    for name in ("other_axes", "other_axes_dropped"):
+        column = _columns(engine)[name]
+        assert column["nullable"] is True, name
+        assert column["default"] is None, name
     after = _row(engine, entry_id)
     assert after.pop("other_axes") is None
+    # Ruling #736 6105137014: NULL is "not recorded" on every pre-0066 row.
+    assert after.pop("other_axes_dropped") is None
     assert after == before
 
 
@@ -101,11 +104,13 @@ def test_0066_downgrade_drops_the_column_when_nothing_is_recorded_and_round_trip
 
     command.downgrade(_cfg(url), "0065")
     assert "other_axes" not in _columns(engine)
+    assert "other_axes_dropped" not in _columns(engine)
     assert _row(engine, entry_id)["title"] == "Ransomware recovery untested"
 
     command.upgrade(_cfg(url), "0066")
     assert "other_axes" in _columns(engine)
     assert _row(engine, entry_id)["other_axes"] is None
+    assert _row(engine, entry_id)["other_axes_dropped"] is None
 
 
 @pytest.mark.unit
@@ -129,3 +134,24 @@ def test_0066_downgrade_refuses_while_an_entry_records_other_axes(tmp_path, stor
         command.downgrade(_cfg(url), "0065")
     assert "other_axes" in _columns(engine)
     assert _row(engine, entry_id)["other_axes"] == stored
+
+
+@pytest.mark.unit
+def test_0066_downgrade_refuses_while_an_entry_records_its_dropped_axes(tmp_path) -> None:
+    """Ruling #736 6105137014: `other_axes_dropped` is a record too; `{}` is
+    the claim "none dropped", so dropping it deletes that claim."""
+    url = f"sqlite:///{tmp_path / 'm0066-refuse-dropped.db'}"
+    command.upgrade(_cfg(url), "0066")
+    engine = sa.create_engine(url, future=True)
+    entry_id = _insert_entry(engine, title="Phishing response has no owner")
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text("UPDATE risk_entries SET other_axes_dropped = :v WHERE id = :id"),
+            {"v": "{}", "id": entry_id},
+        )
+
+    with pytest.raises(
+        RuntimeError, match="Refusing to downgrade 0066: 1 Risk Register entry records"
+    ):
+        command.downgrade(_cfg(url), "0065")
+    assert _row(engine, entry_id)["other_axes_dropped"] == "{}"

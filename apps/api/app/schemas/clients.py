@@ -692,6 +692,9 @@ class RiskDashboardEntry(BaseModel):
     axis: str | None
     # #806 G1 option 3, rendered on the client dashboard (#736 6094620397,
     # Risk E item 4). None is "not recorded"; `[]` is "no other axis".
+    # No `other_axes_dropped`, deliberately (ruling #736 6105137014): the kept
+    # axes are accurate as far as they go, and a parse failure is not a client
+    # fact. It is on the consultant's `RiskEntryResponse` only.
     other_axes: list[str] | None
     likelihood: str | None
     impact: str | None

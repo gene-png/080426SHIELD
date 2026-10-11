@@ -53,6 +53,9 @@ pytestmark = pytest.mark.unit
 #: The approved text's `evidence` fields, per kind (ruling 6), as literals.
 ATTACK_KEYS = {
     "status",
+    # Ruling #736 6105137014: "computed" here; a stored-status assessment's
+    # shape is pinned in test_risk_attack_evidence_stored_status.py.
+    "status_basis",
     "missing_functions",
     "detection",
     "prevention",
@@ -271,6 +274,7 @@ def test_attack_evidence_names_states_and_confirmed_tools(app_client) -> None:  
 
     assert findings[PREVENTABLE]["evidence"] == {
         "status": "partial",
+        "status_basis": "computed",
         "missing_functions": ["prevention", "response"],
         "detection": {"state": "in_place", "tools": ["Tool D"]},
         "prevention": {"state": "not_in_place", "tools": []},
@@ -282,6 +286,7 @@ def test_attack_evidence_names_states_and_confirmed_tools(app_client) -> None:  
     # Prevention is not expected, so it is never a missing function.
     assert findings[NOT_PREVENTABLE]["evidence"] == {
         "status": "gap",
+        "status_basis": "computed",
         "missing_functions": ["detection", "response"],
         "detection": {"state": "not_in_place", "tools": []},
         "prevention": {"state": "cannot_be_prevented", "tools": []},

@@ -452,7 +452,7 @@ def _risk_evidenced_controls(evidence: Any) -> str:
     Never an invented control (#806 record, item 4). CSF and Zero Trust
     evidence names no control the fixture can read, so it gets the exact
     "none" sentence, as does a finding with no function in place."""
-    if not isinstance(evidence, dict):
+    if not isinstance(evidence, dict) or _risk_status_is_stored(evidence):
         return _RISK_NO_CONTROLS
     named = [
         f"{tool} provides {function} for this technique."
@@ -464,12 +464,23 @@ def _risk_evidenced_controls(evidence: Any) -> str:
     return " ".join(named) if named else _RISK_NO_CONTROLS
 
 
+def _risk_status_is_stored(evidence: dict) -> bool:
+    """The v3 text (ruling #736 6105137014): "`stored` when the status was
+    recorded directly, with no function states; treat a stored status as given
+    and do not infer missing functions from it." So a stored-status finding
+    names no affected function and no tool as a control."""
+    return evidence.get("status_basis") == "stored"
+
+
 def _risk_other_axes(evidence: Any, axis: str) -> list[str]:
     """The approved prompt's `other_axes` rule, for an ATT&CK finding: each
     function in `missing_functions` is directly affected, so every one but the
     primary `axis`, in the prompt's order. Empty for CSF and Zero Trust, whose
-    evidence names no function."""
-    missing = _strs(evidence.get("missing_functions")) if isinstance(evidence, dict) else []
+    evidence names no function, and for a stored status, from which v3 says
+    not to infer missing functions."""
+    if not isinstance(evidence, dict) or _risk_status_is_stored(evidence):
+        return []
+    missing = _strs(evidence.get("missing_functions"))
     return [a for a in _RISK_AXIS_ORDER if a in missing and a != axis]
 
 

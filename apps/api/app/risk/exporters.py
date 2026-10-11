@@ -191,6 +191,11 @@ def _other_axes(e: Any) -> str:
     claim "no other axis"), and a list is its axis display names joined by
     ", ", the way the Axis column titles its value. The web screens mirror this
     in `lib/risk/otherAxes.ts`; change both.
+
+    No note for dropped axes, deliberately (ruling #736 6105137014): these are
+    the client's files, the kept axes are accurate as far as they go, and a
+    parse failure is not a client fact. `other_axes_dropped` is shown on the
+    consultant's register only.
     """
     # `getattr`, as `_consultant_rated` does: the renderers take duck-typed rows,
     # and a row built before 0066's field existed carries no attribute. Absent

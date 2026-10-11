@@ -32,9 +32,15 @@ from app.ai.engine import get_job
 
 pytestmark = pytest.mark.unit
 
-#: The assembled text: 12406 ASCII bytes, 106 lines, no trailing newline.
-APPROVED_SHA256 = "9927b960730b468f8e6605cc012befb440b43c783fa2a68f175283f0a675bd48"
-APPROVED_BYTES = 12406
+#: v2, the assembled text above: 12406 ASCII bytes, sha256 9927b960730b468f
+#: 8e6605cc012befb440b43c783fa2a68f175283f0a675bd48. v3 (ruling #736
+#: 6105137014): v2 with `STATUS_BASIS_SENTENCE` appended, after one space, to
+#: the `attack` evidence item's last line, "`rationale` and `notes` from the
+#: assessment (each possibly null);". Derived by script from v2 and the
+#: ruling's sentence, not read from the module: 12650 ASCII bytes, 106 lines,
+#: no trailing newline.
+APPROVED_SHA256 = "66f73a5bc39a5ca6c4647227cb86665682b1bd50a457057c2829a58ed1476bb2"
+APPROVED_BYTES = 12650
 
 
 def _prompt() -> str:
@@ -47,10 +53,29 @@ def test_the_risk_prompt_is_the_approved_text() -> None:
     assert hashlib.sha256(raw).hexdigest() == APPROVED_SHA256
 
 
-def test_the_risk_job_is_prompt_version_v2() -> None:
-    """C9 (#806 5983938383): `llm_calls` tells the approved prompt's runs from
-    the previous prompt's, which ran as the engine default "v1"."""
-    assert get_job("risk_synthesize").prompt_version == "v2"
+def test_the_risk_job_is_prompt_version_v3() -> None:
+    """C9 (#806 5983938383): `llm_calls` tells each approved prompt's runs
+    apart. v2 was the assembly above; v3 adds ruling #736 6105137014's
+    `status_basis` sentence."""
+    assert get_job("risk_synthesize").prompt_version == "v3"
+
+
+#: Ruling #736 6105137014 (finding 1, option (a)), verbatim.
+STATUS_BASIS_SENTENCE = (
+    "`status_basis` is `computed` when SHIELD derived the status from the function "
+    "states given, and `stored` when the status was recorded directly, with no function "
+    "states; treat a stored status as given and do not infer missing functions from it."
+)
+
+
+def test_the_status_basis_sentence_is_the_ruling_and_follows_missing_functions() -> None:
+    prompt = " ".join(_prompt().split())
+    assert prompt.count(STATUS_BASIS_SENTENCE) == 1
+    attack = prompt.index("- `attack`: `status`")
+    csf = prompt.index("- `csf`: `enterprise_level`")
+    # Where `missing_functions` is described: inside the `attack` evidence item.
+    assert attack < prompt.index("`missing_functions` (each required function") < csf
+    assert attack < prompt.index(STATUS_BASIS_SENTENCE) < csf
 
 
 def test_the_label_example_stays_the_attack_one() -> None:

@@ -10,6 +10,10 @@ also directly affects. It never changes a total: `axis_counts` and
 
 - `other_axes`: JSON list of `detection` / `prevention` / `response`, ordered
   and de-duplicated by `generate`, never holding the entry's own `axis`.
+- `other_axes_dropped` (ruling #736 6105137014, finding 2, option (i)): JSON
+  object, this entry's element drops by reason (`invalid`, `duplicate`,
+  `repeats_axis`). NULL is "not recorded" (every pre-0066 row, and a row whose
+  `other_axes` is NULL); `{}` is "none dropped". Shown to the consultant only.
 
 NULL means "not recorded": every pre-0066 row, and a new row whose model
 response carried no readable list (counted in the generate audit row's
@@ -41,19 +45,26 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     with op.batch_alter_table("risk_entries") as batch:
         batch.add_column(sa.Column("other_axes", sa.JSON(), nullable=True))
+        batch.add_column(sa.Column("other_axes_dropped", sa.JSON(), nullable=True))
 
 
 def downgrade() -> None:
     recorded = (
         op.get_bind()
-        .execute(sa.text("SELECT COUNT(*) FROM risk_entries WHERE other_axes IS NOT NULL"))
+        .execute(
+            sa.text(
+                "SELECT COUNT(*) FROM risk_entries "
+                "WHERE other_axes IS NOT NULL OR other_axes_dropped IS NOT NULL"
+            )
+        )
         .scalar_one()
     )
     if recorded:
         raise RuntimeError(
             f"Refusing to downgrade 0066: {recorded} Risk Register entr"
-            f"{'y records' if recorded == 1 else 'ies record'} other axes. "
+            f"{'y records' if recorded == 1 else 'ies record'} other axes or their dropped axes. "
             "Dropping the column would delete them without a trace."
         )
     with op.batch_alter_table("risk_entries") as batch:
+        batch.drop_column("other_axes_dropped")
         batch.drop_column("other_axes")

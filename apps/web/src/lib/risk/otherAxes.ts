@@ -22,3 +22,22 @@ export function otherAxesCell(
   if (axes === null || axes === undefined) return "Not recorded";
   return axes.map((a) => titleCase(a)).join(", ");
 }
+
+/**
+ * Ruling #736 6105137014 (finding 2, option (i)): the CONSULTANT's note when
+ * an entry's `other_axes` lost tokens the parser could not read (`invalid`
+ * drops). A duplicate or the primary axis repeated loses nothing, so it is not
+ * "could not be read". Approved copy, with its plural; null when nothing
+ * unreadable was dropped, or nothing is recorded. Never on the client's
+ * screens or files: the kept axes are accurate as far as they go, and a parse
+ * failure is not a client fact.
+ */
+export function otherAxesDroppedNote(
+  dropped: Readonly<Record<string, number>> | null | undefined,
+): string | null {
+  const n = dropped?.invalid ?? 0;
+  if (n === 1) return "1 AI-suggested axis could not be read and was dropped.";
+  if (n > 1)
+    return `${n} AI-suggested axes could not be read and were dropped.`;
+  return null;
+}

@@ -38,7 +38,7 @@ from app.attack.parents import is_computed_parent
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.pending import uncleared_tools
 from app.attack.release_readiness import unreviewed_codes as attack_unreviewed_codes
-from app.attack.rules import parents_computed
+from app.attack.rules import parents_computed, statuses_computed
 from app.audit import audit
 from app.csf.catalog import subcategory_by_code
 from app.csf.enterprise import enterprise_subcategories as csf_enterprise_subcategories
@@ -1019,6 +1019,9 @@ def _gather_findings(
         # takes its findings through sub-techniques; one approved before #620
         # keeps the findings it would always have produced.
         skip_parents = parents_computed(attack)
+        # Ruling #736 6105137014: which `attack` evidence shape each finding
+        # takes. Raises on an unknown `status_rules`, never defaulted.
+        computed = statuses_computed(attack)
         for r in rows:
             # #620 round 3 (D-094, condition 6; the coordinator's call, pending
             # Gene): a computed parent's status is arithmetic over its
@@ -1036,7 +1039,7 @@ def _gather_findings(
                         "source_id": r.technique_code,
                         "kind": "attack",
                         "label": f"ATT&CK {r.technique_code}: {r.status}",
-                        "evidence": _attack_evidence(r),
+                        "evidence": _attack_evidence(r, computed=computed),
                     }
                 )
 
@@ -1235,11 +1238,26 @@ def _confirmed_tools(row: object, field: str) -> list[str]:
     return [t for t in names if isinstance(t, str) and t.strip() and t not in flagged]
 
 
-def _attack_evidence(row: object) -> dict:
+def _attack_evidence(row: object, *, computed: bool) -> dict:
     """The approved `attack` evidence (#474 E, ruling 6: the record's fields,
     minus `name`, which `technique_details` carries). The states are the ones
     the client's ATT&CK screens show: `attack_capabilities` is the function
-    `effective_coverage` computes them with."""
+    `effective_coverage` computes them with.
+
+    `computed` is `attack/rules.py::statuses_computed` for the row's
+    assessment (ruling #736 6105137014, finding 1, option (a)). An assessment
+    approved before R3 (`status_rules` 1) renders its STORED statuses and shows
+    no capabilities, and the computed states can contradict the stored status
+    (a stored gap whose tools are all confirmed reads "in place" everywhere),
+    so such a row sends the stored status, `status_basis: "stored"` and the
+    record's text, and nothing computed."""
+    if not computed:
+        return {
+            "status": row.status,
+            "status_basis": "stored",
+            "rationale": row.rationale,
+            "notes": row.notes,
+        }
     caps = attack_capabilities(row)
     per_function: dict[str, dict] = {}
     missing: list[str] = []
@@ -1254,6 +1272,7 @@ def _attack_evidence(row: object) -> dict:
             missing.append(name)
     return {
         "status": row.status,
+        "status_basis": "computed",
         "missing_functions": missing,
         **per_function,
         "rationale": row.rationale,
@@ -1354,6 +1373,8 @@ def _coerce_enum(enum_cls, value) -> tuple[object | None, str | None]:
 #: `duplicate`, `repeats_axis` (the entry's own `axis`). Per entry: `absent`
 #: (no key) and `not_a_list`, each stored as NULL, "not recorded".
 OTHER_AXES_DROP_REASONS = ("invalid", "duplicate", "repeats_axis", "absent", "not_a_list")
+#: The per-ELEMENT reasons, the ones an entry records (`RiskEntry.other_axes_dropped`).
+OTHER_AXES_ELEMENT_DROPS = ("invalid", "duplicate", "repeats_axis")
 
 
 def _coerce_other_axes(
@@ -2157,6 +2178,17 @@ def generate(
         axis, axis_bad = _coerce_enum(RiskAxis, raw.get("axis"))
         _record("axis", axis_bad)
         other_axes, axes_drops, axes_rejected = _coerce_other_axes(raw, axis)
+        # Ruling #736 6105137014 (finding 2, option (i)): the entry records its
+        # own element drops, so the consultant's screen can say a list is
+        # partial. NULL when no list was readable (`other_axes` NULL too), `{}`
+        # when nothing was dropped. Shown to the CONSULTANT only: the kept axes
+        # are accurate as far as they go, and a parse failure is not a client
+        # fact, so the client dashboard and the client files carry no note.
+        entry_axes_dropped = (
+            None
+            if other_axes is None
+            else {r: axes_drops.count(r) for r in OTHER_AXES_ELEMENT_DROPS if r in axes_drops}
+        )
         for reason in axes_drops:
             other_axes_dropped[reason] = other_axes_dropped.get(reason, 0) + 1
         for token in axes_rejected:
@@ -2171,6 +2203,7 @@ def generate(
                 description=raw.get("description"),
                 axis=axis.value if axis else None,
                 other_axes=other_axes,
+                other_axes_dropped=entry_axes_dropped,
                 source=stored_source,
                 source_id=source_kept[0] if source_kept else None,
                 linked_techniques=techs,
