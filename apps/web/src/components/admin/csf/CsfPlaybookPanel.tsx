@@ -511,7 +511,7 @@ const COLUMNS: DataTableColumn<EnterpriseSubcategory>[] = [
             className="block text-xs text-ink-tertiary"
             data-testid="csf-row-no-notes"
           >
-            No notes: the AI does not assess this row.
+            No notes: a live AI run does not assess this row.
           </span>
         ) : null}
       </>

@@ -104,7 +104,10 @@ def no_notes_note(no_notes: int, total: int) -> str:
     asked about -- and `no_notes` is how many of those had no notes in what was
     sent (`routes/csf.py::_csf_run_work`). Stated at zero too. The route omits
     the sentence when no live run has been made."""
-    return f"Not assessed by AI (no notes) in the last AI run: {no_notes} of {total} subcategories."
+    return (
+        f"Not assessed by AI (no notes) in the last live AI run: {no_notes} of "
+        f"{total} subcategories."
+    )
 
 
 def _approval_notice(approved: bool) -> str:

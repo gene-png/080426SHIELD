@@ -245,7 +245,7 @@ describe("CsfPlaybookPanel, rows a live run did not assess (#1000)", () => {
     const labels = screen.getAllByTestId("csf-row-no-notes");
     expect(labels).toHaveLength(1);
     expect(labels[0]).toHaveTextContent(
-      "No notes: the AI does not assess this row.",
+      "No notes: a live AI run does not assess this row.",
     );
     expect(labels[0].closest("td")).toHaveTextContent("GV.OC-02");
   });

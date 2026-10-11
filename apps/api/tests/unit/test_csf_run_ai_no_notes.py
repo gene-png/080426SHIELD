@@ -384,7 +384,9 @@ def test_the_files_state_the_last_live_runs_count_in_every_artifact(
     _go_live(provider, monkeypatch)
     _run(c, provider, h, svc, codes, [{"tier": "high", "subcategory_code": codes[0], "policy": 1}])
 
-    expected = f"Not assessed by AI (no notes) in the last AI run: {n} of {total} subcategories."
+    expected = (
+        f"Not assessed by AI (no notes) in the last live AI run: {n} of {total} subcategories."
+    )
     for kind, text in _texts(_export(c, h, svc)).items():
         assert expected in text, f"{kind}: {text[:600]}"
 
@@ -402,7 +404,7 @@ def test_the_files_read_the_persisted_count_not_current_notes(app_client, monkey
     _run(c, provider, h, svc, codes, [{"tier": "high", "subcategory_code": codes[1], "policy": 1}])
 
     expected = (
-        f"Not assessed by AI (no notes) in the last AI run: {len(codes)} of "
+        f"Not assessed by AI (no notes) in the last live AI run: {len(codes)} of "
         f"{len(codes)} subcategories."
     )
     for kind, text in _texts(_export(c, h, svc)).items():
@@ -418,7 +420,9 @@ def test_the_files_state_zero_when_every_row_had_notes(app_client, monkeypatch) 
     body = _run(c, provider, h, svc, codes, [])
     assert body["no_notes_count"] == 0
 
-    expected = f"Not assessed by AI (no notes) in the last AI run: 0 of {len(codes)} subcategories."
+    expected = (
+        f"Not assessed by AI (no notes) in the last live AI run: 0 of {len(codes)} subcategories."
+    )
     for kind, text in _texts(_export(c, h, svc)).items():
         assert expected in text, f"{kind}: {text[:600]}"
 
@@ -436,7 +440,7 @@ def test_the_files_read_the_latest_live_run(app_client, monkeypatch) -> None:
     assert second["no_notes_count"] == len(codes) - 1
 
     expected = (
-        f"Not assessed by AI (no notes) in the last AI run: {len(codes) - 1} of "
+        f"Not assessed by AI (no notes) in the last live AI run: {len(codes) - 1} of "
         f"{len(codes)} subcategories."
     )
     for kind, text in _texts(_export(c, h, svc)).items():
