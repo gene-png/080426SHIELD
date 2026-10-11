@@ -2,7 +2,7 @@ import { Card, CardBody, CardHeader, CardTitle } from "@shield/design-system";
 
 import type { JSX } from "react";
 
-import { HOME_CARD_NOTE } from "@/lib/attack/subset";
+import { HOME_CARD_NOTE, homeCardNotCheckedNote } from "@/lib/attack/subset";
 import {
   targetNotes,
   gapHint,
@@ -48,6 +48,9 @@ interface Metric {
    *  client's current security tool list, so the figure may be understated.
    *  A FACT about the figure, like `targetNote`. */
   subsetNote?: string | null;
+  /** #1011: the tools behind the figure could not be checked, and why.
+   *  Neutral rather than a warning: unchecked is unknown, not found. */
+  notCheckedNote?: string | null;
   label: string;
   value: string | null; // null -> "Pending", unless `unresolved`
   hint: string;
@@ -172,6 +175,11 @@ function buildMetrics(summary: ValueSummary): Metric[] {
         summary.attack_covered_relies_on_outside_tool === true
           ? HOME_CARD_NOTE
           : null,
+      // #1011: state C. The API sends a reason only beside a figure whose
+      // tools were not checked, so B ("checked, none found") and D stay silent.
+      notCheckedNote: homeCardNotCheckedNote(
+        summary.attack_subset_not_checked_reason,
+      ),
       unresolved: summary.attack_uncovered_unresolved,
       unresolvedReason: summary.attack_uncovered_withheld
         ? "Your MITRE ATT&CK coverage report was produced against an earlier version of the ATT&CK framework than the current one, so its figures are withheld."
@@ -284,6 +292,13 @@ export function ValueLoopCard({
               {!m.unresolved && m.subsetNote ? (
                 <p className="mt-1 text-xs text-status-warning-fg">
                   {m.subsetNote}
+                </p>
+              ) : null}
+              {/* #1011: only beside a figure, written rather than inherited
+                  from the API's promise to send null without one. */}
+              {!m.unresolved && m.value !== null && m.notCheckedNote ? (
+                <p className="mt-1 text-xs text-ink-tertiary">
+                  {m.notCheckedNote}
                 </p>
               ) : null}
             </div>

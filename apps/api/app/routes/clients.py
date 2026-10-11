@@ -862,7 +862,7 @@ def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _TargetedKindTot
 
 def _attack_uncovered_total(
     db: Session, service_ids: list[uuid.UUID]
-) -> tuple[_KindTotal, bool, int | None, bool | None]:
+) -> tuple[_KindTotal, bool, int | None, bool | None, str | None]:
     """The ATT&CK total, whether it is unresolved because the report is
     WITHHELD (#556) rather than unmatched (#114) -- two causes, two sentences --
     and the NOT-VERIFIED count beside it (#554, #621 review).
@@ -883,12 +883,19 @@ def _attack_uncovered_total(
     copy C7 as ruled). A Gap row crediting such a tool is already IN the total,
     so it does not raise the flag (round-2 review). None with the total, and
     when nothing could be checked (no Tech Debt list, only lists with no
-    security tool, or only discarded lists): not checked is not "none found"."""
+    security tool, or only discarded lists): not checked is not "none found".
+
+    The fifth value is #1011's: WHY nothing could be checked
+    (`SubsetCheck.not_checked_reason`), exactly when the fourth is None beside
+    a total, so the card can say "not checked" instead of reading as clean.
+    The check is per CLIENT, so every service reports the same reason; two
+    different ones raise rather than pick."""
     if not service_ids:
-        return _KindTotal(None, False), False, None, None
+        return _KindTotal(None, False), False, None, None, None
     total = 0
     not_verified: int | None = None
     outside: bool | None = None
+    not_checked: set[str | None] = set()
     for sid in service_ids:
         # #114: the released deliverable's parent, not the latest APPROVED row.
         # See `_csf_gap_total` above for why the `found` flag went with it.
@@ -902,7 +909,7 @@ def _attack_uncovered_total(
             # One unresolvable service makes the whole KIND unresolved. Summing
             # the rest would publish a floor as a figure — option 1 in
             # `_released_parent`, rejected there for this reason.
-            return _KindTotal(None, True), False, None, None
+            return _KindTotal(None, True), False, None, None, None
         # No `deliverable` here: an ATT&CK service has no engagement target of
         # #209's shape, so there is nothing to freeze. Stated because the two
         # helpers above this one DO freeze, and a reader sweeping for the twin
@@ -913,7 +920,7 @@ def _attack_uncovered_total(
             # unknown codes silently dropped by `attack_compute` below. Same
             # answer as an unresolvable service: the whole kind is unresolved,
             # and the card is told the cause.
-            return _KindTotal(None, True), True, None, None
+            return _KindTotal(None, True), True, None, None, None
         # #554 R3: computed statuses where they apply, so this gap count is the
         # dashboard's gap count.
         rows = attack_effective_coverage(
@@ -949,7 +956,24 @@ def _attack_uncovered_total(
             # covered", and a Gap, N/A or unscored row is not.
             credited = {r.technique_code for r in rows if r.status in _CREDITS_COVERAGE}
             outside = bool(outside) or any(o.technique_code in credited for o in subset.outside)
-    return _KindTotal(total, False), False, not_verified, outside
+        else:
+            not_checked.add(subset.not_checked_reason)
+    return _KindTotal(total, False), False, not_verified, outside, _one_reason(outside, not_checked)
+
+
+def _one_reason(outside: bool | None, not_checked: set[str | None]) -> str | None:
+    """#1011: the not-checked reason for the card, or None when a service was
+    checked (`outside` is a bool). Raises on two reasons, or on a reason-less
+    not-checked subset: the card would otherwise pick one, or read as clean."""
+    if outside is not None:
+        return None
+    if len(not_checked) != 1 or None in not_checked:
+        raise ValueError(
+            f"ATT&CK value summary: expected one not-checked reason per client, "
+            f"got {sorted(map(repr, not_checked))} (#1011)"
+        )
+    (reason,) = not_checked
+    return reason
 
 
 #: #889 round 2: the effective statuses the rollup counts toward coverage.
@@ -1026,8 +1050,8 @@ def value_summary(
         ServiceKind.ZERO_TRUST_DOD, []
     )
     zt = _zt_gap_total(db, zt_ids)
-    attack, attack_withheld, attack_not_verified, attack_outside = _attack_uncovered_total(
-        db, by_kind.get(ServiceKind.ATTACK_COVERAGE, [])
+    attack, attack_withheld, attack_not_verified, attack_outside, attack_not_checked = (
+        _attack_uncovered_total(db, by_kind.get(ServiceKind.ATTACK_COVERAGE, []))
     )
     csf = _csf_gap_total(db, by_kind.get(ServiceKind.NIST_CSF, []))
 
@@ -1055,6 +1079,9 @@ def value_summary(
         csf_targets_defaulted=csf.targets_defaulted,
         csf_targets_unusable=csf.targets_unusable,
         csf_targets_computed_live=csf.targets_computed_live,
+        # #1011: which of the card's ATT&CK states this was (None: checked, or
+        # no figure).
+        attack_subset_not_checked_reason=attack_not_checked,
     )
     return ValueSummaryResponse(
         tech_debt_savings_usd=td.value,
@@ -1071,6 +1098,7 @@ def value_summary(
         attack_uncovered_withheld=attack_withheld,
         attack_not_verified_count=attack_not_verified,
         attack_covered_relies_on_outside_tool=attack_outside,
+        attack_subset_not_checked_reason=attack_not_checked,
         csf_gap_count=csf.value,
         csf_gap_unresolved=csf.unresolved,
         csf_services=csf.services,

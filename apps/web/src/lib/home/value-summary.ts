@@ -58,6 +58,11 @@ export interface ValueSummary {
    *  False: checked, none does. Null: no total, or nothing could be checked (no Tech Debt list, only lists in force with no security tool, or only discarded lists). Optional
    *  so an API that predates it reads as "nothing to say". */
   attack_covered_relies_on_outside_tool?: boolean | null;
+  /** #1011: why the tools behind the ATT&CK figure could not be checked
+   *  ("no_list", "empty" or "discarded"), sent EXACTLY when there is a figure
+   *  and the flag above is null; null otherwise. Optional so an API that
+   *  predates it reads as "nothing to say". */
+  attack_subset_not_checked_reason?: string | null;
   csf_gap_count: number | null;
   csf_gap_unresolved: boolean;
   csf_services: number;
