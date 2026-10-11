@@ -1,5 +1,7 @@
 # Gene — in-flight status
 
+_2026-10-11 (trackB): TD-3 is a draft PR on `trackB/1050-admin-width`, for #1050._ The admin shell no longer caps service workspaces at `max-w-6xl`, so the Tech Debt Step 2 table gets the screen's width; queue, deliverables, management, messages, health, audit and the Risk Register keep the cap. The Name column and Notes widths in `TechDebtWorkspace.tsx` are a separate change on the track that holds that file.
+
 _2026-10-11 (track6): #474 E is a draft PR on `track6/474-e-risk-evidence`,
 on top of D' (merged as dd6a788a) and #1000 (merged as b7a44039)._
 

@@ -13,6 +13,8 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**2026-10-11: TD-3 built on `trackB/1050-admin-width`, a draft PR (not on `main`), for #1050.** Admin service workspaces run full-width; other admin pages keep `max-w-6xl`. Status: the 2026-10-11 TD-3 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
 **2026-10-09: #930 built on `track6/930-published-amber`, a draft PR (not on
 `main`).** A published Risk Register's carried-ratings block drops the "Rate
 it/them again" instruction and keeps its amber style. Status and rulings (#736
