@@ -507,15 +507,17 @@ def test_an_archived_approved_assessment_does_not_count_as_finalized(
 
 
 def _seed_csf_low(c, bearer: str, cid: str) -> str:
-    """A CSF service with one subcategory at tier 1 (a finding at any target)."""
+    """A CSF service with one Playbook subcategory at Level 1 against target 5
+    (a finding at any target; #474 D': Risk reads the Playbook)."""
+    from tests._csf_playbook_rows import score_csf_playbook
+
     h = _h(bearer, cid)
     svc = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "CSF"})
     assert svc.status_code in (200, 201), svc.text
     sid = svc.json()["id"]
     assert c.post(f"/csf/services/{sid}/assessments", headers=h).status_code in (200, 201)
     ans = c.get(f"/csf/services/{sid}/assessments/latest", headers=h).json()["answers"][0]
-    r = c.patch(f"/csf/answers/{ans['id']}", headers=h, json={"maturity_tier": 1})
-    assert r.status_code == 200, r.text
+    score_csf_playbook(c, h, sid, {ans["subcategory_code"]: (1, 5)})
     return ans["subcategory_code"]
 
 

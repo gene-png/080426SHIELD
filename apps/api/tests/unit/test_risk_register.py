@@ -1858,13 +1858,19 @@ def test_a_null_excluded_value_is_not_read_as_nothing_was_withheld(app_client) -
     assert body["excluded_inputs"] == []
 
 
-def _seed_csf_answer_at_tier(c, bearer: str, cid: str, *, tier: int) -> str:
-    """One APPROVED CSF assessment with a single subcategory at `tier`.
+def _seed_csf_playbook_at_level(
+    c, bearer: str, cid: str, *, level: int, target: int | None = 3
+) -> str:
+    """One APPROVED CSF assessment whose Playbook has a single subcategory at
+    Enterprise `level` against `target` (#474 D': Risk reads the Playbook, not
+    the questionnaire `maturity_tier`).
 
     Approved deliberately: `_finalized_for_synthesis` filters on approved or
     released, so a draft contributes no findings at all and every assertion
     below would pass over an empty list.
     """
+    from tests._csf_playbook_rows import score_csf_playbook
+
     h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
     svc = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "CSF"})
     assert svc.status_code in (200, 201), svc.text
@@ -1872,24 +1878,16 @@ def _seed_csf_answer_at_tier(c, bearer: str, cid: str, *, tier: int) -> str:
     a = c.post(f"/csf/services/{svc_id}/assessments", headers=h)
     assert a.status_code in (200, 201), a.text
     latest = c.get(f"/csf/services/{svc_id}/assessments/latest", headers=h).json()
-    ans = latest["answers"][0]
-    r = c.patch(f"/csf/answers/{ans['id']}", headers=h, json={"maturity_tier": tier})
-    assert r.status_code == 200, r.text
-
-    # A SECOND subcategory, deliberately at tier 1 -- below every target the
-    # intake schema allows (`ge=2`). It exists so the finding set is never
-    # EMPTY, which is what lets a `not in` assertion mean "this code was
-    # excluded" rather than "nothing was produced".
-    #
-    # Measured, and this is why it is here: without it,
-    # `test_a_control_at_the_clients_target_is_not_a_finding` asserted
-    # `code not in []` and passed over a run that produced no findings at all.
-    floor = latest["answers"][1]
-    r2 = c.patch(f"/csf/answers/{floor['id']}", headers=h, json={"maturity_tier": 1})
-    assert r2.status_code == 200, r2.text
+    code = latest["answers"][0]["subcategory_code"]
+    # A SECOND subcategory, at Level 1 against target 5 -- below every target a
+    # Playbook row can carry. It exists so the finding set is never EMPTY,
+    # which is what lets a `not in` assertion mean "this code was excluded"
+    # rather than "nothing was produced".
+    floor = latest["answers"][1]["subcategory_code"]
+    score_csf_playbook(c, h, svc_id, {code: (level, target), floor: (1, 5)})
     ap = c.post(f"/csf/assessments/{a.json()['id']}/approve", headers=h)
     assert ap.status_code == 200, ap.text
-    return ans["subcategory_code"]
+    return code
 
 
 # ---------------------------------------------------------------------------
@@ -1977,108 +1975,46 @@ def _csf_targets(cid: str) -> dict:
 
 
 @pytest.mark.unit
-def test_a_control_at_the_clients_target_is_not_a_finding(app_client) -> None:
-    """THE DEFECT, from the side a client feels.
-
-    A subcategory answered at tier 2, for a client who engaged for tier 2, is
-    AT its goal. The old code compared against a hardcoded 3 and reported it as
-    a gap -- a finding in the client's Risk Register for work they never
-    committed to doing.
-
-    Goes RED against the old baseline: `2 < 3` is true, so the code appears.
-    """
+def test_a_control_at_its_playbook_target_is_not_a_finding(app_client) -> None:
+    """#474 D' (Gene, #736 5984218862): a subcategory whose Playbook Enterprise
+    level equals its Playbook target is AT its goal and is no finding."""
     c, _provider = app_client
     bearer, cid = _admin(c)
-    code = _seed_csf_answer_at_tier(c, bearer, cid, tier=2)
+    code = _seed_csf_playbook_at_level(c, bearer, cid, level=2, target=2)
 
-    _set_csf_target(cid, 2)
-    # APPEAR before ABSENT. The `not in` below is genuinely discriminating --
-    # if the target failed to write, it would resolve to the default 3, `2 < 3`
-    # would put the code back in the list and this goes red -- but that
-    # reasoning is invisible at the site, so it is asserted rather than
-    # inferred.
-    assert _csf_targets(cid) == {"target": 2, "source": "client"}
-    # APPEAR BEFORE ABSENT. `not in` is satisfied by an EMPTY list, so it
-    # would pass over a `_gather_findings` that returned nothing at all --
-    # measured, by forcing `return []` and watching this test stay green while
-    # its positive twin went red. The ATT&CK gap and the stage-1 ZT capability
-    # that `_seed_attack_and_zt` creates are unaffected by the CSF target, so
-    # findings MUST exist; what must not is this code among them.
-    all_codes = [f["source_id"] for f in _all_findings(cid)]
-    assert all_codes, "no findings at all -- the absence below would be vacuous"
-    assert code not in _csf_finding_codes(cid), (
-        "a control AT the client's engagement target is not a gap; it was "
-        "reported as one because the comparison used a hardcoded tier 3"
-    )
+    assert _csf_targets(cid) == {"target": None, "source": "playbook"}
+    # APPEAR BEFORE ABSENT: the floor row is always a finding, so the list is
+    # not empty and the `not in` below excludes rather than passes vacuously.
+    assert _csf_finding_codes(cid), "no CSF findings at all -- the absence below would be vacuous"
+    assert code not in _csf_finding_codes(cid), "a control AT its Playbook target is not a gap"
 
 
 @pytest.mark.unit
-def test_a_control_below_a_higher_target_is_still_a_finding(app_client) -> None:
-    """THE OTHER HALF, without which the fix above is just 'report less'.
-
-    Same stored answer, a client targeting tier 4. The control IS below goal
-    and must appear. The old code stopped at 3 and missed the tier-3 shortfall
-    entirely for every client aiming higher than the hardcode.
-    """
+def test_a_control_below_its_playbook_target_is_a_finding(app_client) -> None:
+    """THE OTHER HALF: the same comparison, one level short of the target."""
     c, _provider = app_client
     bearer, cid = _admin(c)
-    code = _seed_csf_answer_at_tier(c, bearer, cid, tier=3)
+    code = _seed_csf_playbook_at_level(c, bearer, cid, level=3, target=4)
 
-    _set_csf_target(cid, 4)
-    assert code in _csf_finding_codes(cid), (
-        "a control BELOW the client's target must be reported; the old "
-        "hardcoded 3 could never see a tier-3 answer as a gap"
-    )
+    assert code in _csf_finding_codes(cid), "a control BELOW its Playbook target must be reported"
 
 
 @pytest.mark.unit
-def test_the_target_and_its_source_are_recorded_beside_the_findings(app_client) -> None:
-    """The baseline is recorded, so the next wrong one is falsifiable.
-
-    Asserts the SOURCE too, not just the number: "the client chose nothing" and
-    "the client's choice could not be used" resolve to the same number and are
-    different facts. A run that fell back to the engine default must not be
-    indistinguishable from one that honoured a client's explicit choice.
-    """
+def test_the_engagement_target_does_not_decide_a_csf_finding(app_client) -> None:
+    """Risk's CSF half no longer reads the client's engagement tier (#474 D'):
+    the Playbook target is per subcategory. A chosen, a missing, an unusable
+    and a below-floor engagement target all leave the CSF findings and the
+    recorded target unchanged."""
     c, _provider = app_client
     bearer, cid = _admin(c)
-    _seed_csf_answer_at_tier(c, bearer, cid, tier=1)
+    code = _seed_csf_playbook_at_level(c, bearer, cid, level=3, target=4)
 
-    _set_csf_target(cid, 2)
-    assert _csf_targets(cid) == {"target": 2, "source": "client"}
-
-    _set_csf_target(cid, None)
-    fell_back = _csf_targets(cid)
-    # The literal 3, taken from the SPEC -- CSF's engine default is Tier 3
-    # (Repeatable) -- and not imported from `DEFAULT_TARGET_TIER`. A test that
-    # reads its expected value out of the module under test agrees with it by
-    # construction, and `check_test_integrity` flags exactly that import.
-    #
-    # A first draft wrote `assert fell_back["target"] != 2 or fell_back["source"]
-    # == "default"`. The right operand was asserted TRUE on the line above, so
-    # the whole thing was a tautology -- it passed for `None`, for `2`, for a
-    # string. It was the only assertion on the fallback NUMBER and it asserted
-    # nothing about it.
-    assert fell_back == {"target": 3, "source": "default"}, fell_back
-
-
-@pytest.mark.unit
-def test_an_unusable_stored_target_is_named_rather_than_silently_defaulted(
-    app_client,
-) -> None:
-    """A stored value that is not a tier is a THIRD state.
-
-    `resolve_target_tier` separates "chose nothing" from "chose something
-    unusable" because the second is answerable by re-asking the client. If this
-    collapses to `default`, that distinction is lost at the one place it was
-    recorded -- and the register silently uses a target nobody picked.
-    """
-    c, _provider = app_client
-    bearer, cid = _admin(c)
-    _seed_csf_answer_at_tier(c, bearer, cid, tier=1)
-
-    _set_csf_target(cid, 99)
-    assert _csf_targets(cid)["source"] == "client_out_of_range"
+    expected = _csf_finding_codes(cid)
+    assert code in expected  # the positive state first
+    for chosen in (2, None, 99, 1):
+        _set_csf_target(cid, chosen)
+        assert _csf_targets(cid) == {"target": None, "source": "playbook"}, chosen
+        assert _csf_finding_codes(cid) == expected, chosen
 
 
 @pytest.mark.unit
@@ -2619,17 +2555,6 @@ def test_a_computed_parent_is_never_a_register_finding_of_its_own(app_client) ->
     assert r.status_code == 201, r.text
     # The parent is a gap too (all children are), and still not a finding.
     assert sorted(sent) == sorted(children)
-
-
-@pytest.mark.unit
-def test_a_stored_csf_tier_1_is_named_below_the_floor_not_used(app_client) -> None:
-    """#85. Tier 1 is a tier CSF has and not a target: its own third state."""
-    c, _provider = app_client
-    bearer, cid = _admin(c)
-    _seed_csf_answer_at_tier(c, bearer, cid, tier=1)
-
-    _set_csf_target(cid, 1)
-    assert _csf_targets(cid) == {"target": 3, "source": "client_below_floor"}
 
 
 @pytest.mark.unit

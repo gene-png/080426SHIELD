@@ -14,6 +14,24 @@ export interface RiskInputState {
    * server's response parses.
    */
   qualifier?: string | null;
+  /**
+   * #474 D': CSF rows only. True when no in-scope Playbook row records a
+   * value other than a target, so it feeds no CSF finding (#736 6101751588).
+   * Absent on every other kind.
+   */
+  no_playbook_scores?: boolean;
+  /**
+   * R10 (#736 6102665946): CSF rows only. When the Playbook measured, how many
+   * targeted subcategories have no tier row both scored and targeted, so
+   * raise no finding; 0 otherwise. Absent on every other kind.
+   */
+  unscored_targeted_subcategories?: number;
+  /**
+   * R11 (#736 6103383277): CSF rows only. True when the Playbook's in-scope
+   * rows carry scores and targets but no row carries both, so it measured
+   * nothing (`no_playbook_scores` is then false). Absent on every other kind.
+   */
+  no_shared_playbook_row?: boolean;
 }
 
 export interface RiskGate {
@@ -369,6 +387,17 @@ export interface RiskRegister {
   capped_target_codes?: Record<string, string[]> | null;
   /** #915 (S3): the API's own sentence built from it, rendered as given. */
   zt_capped_target_note?: string | null;
+  /**
+   * #474 D': the API's own CSF source note (`risk/csf_source.py`), rendered
+   * as given. Null when the register has no CSF findings.
+   */
+  csf_source_note?: string | null;
+  /**
+   * Ruling #736 6104067136 (see #1033): true when the CSF Playbook had scores
+   * and targets that never shared a row, so the not-measured line is R11's.
+   * Read by the files' reader; absent or false keeps the original line.
+   */
+  csf_no_shared_row?: boolean;
   id: string;
   client_id: string;
   version: number;

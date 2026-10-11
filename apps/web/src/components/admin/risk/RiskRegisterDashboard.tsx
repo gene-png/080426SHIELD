@@ -1236,11 +1236,13 @@ export function RiskRegisterDashboard(): JSX.Element {
             className="rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
             data-testid="risk-targets-used"
           >
-            {targetSentences(register.targets, register.targets_recorded).map(
-              (line) => (
-                <p key={line}>{line}</p>
-              ),
-            )}
+            {targetSentences(
+              register.targets,
+              register.targets_recorded,
+              register.csf_no_shared_row,
+            ).map((line) => (
+              <p key={line}>{line}</p>
+            ))}
           </div>
           {/* #915 (S3): the API's own sentence for the DoD target cap
               (`risk/zt_capped.py`), rendered as given. The files and the
@@ -1253,6 +1255,18 @@ export function RiskRegisterDashboard(): JSX.Element {
               data-testid="risk-zt-capped-target"
             >
               {register.zt_capped_target_note}
+            </p>
+          ) : null}
+          {/* #474 D' (Gene, #736 5984256202): where the register's CSF risks
+              come from, in the API's own sentence (`risk/csf_source.py`),
+              rendered as given. Null when the register has no CSF findings.
+              The files and the client dashboard print the same sentence. */}
+          {register.csf_source_note ? (
+            <p
+              className="rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
+              data-testid="risk-csf-source"
+            >
+              {register.csf_source_note}
             </p>
           ) : null}
           <div className="grid grid-cols-2 gap-4 md:grid-cols-5">

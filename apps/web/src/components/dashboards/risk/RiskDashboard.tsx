@@ -300,7 +300,11 @@ export function RiskDashboard({
         style={{ color: C.muted }}
         data-testid="risk-targets-used"
       >
-        {targetSentences(data.targets, data.targets_recorded).map((line) => (
+        {targetSentences(
+          data.targets,
+          data.targets_recorded,
+          data.csf_no_shared_row,
+        ).map((line) => (
           <p key={line}>{line}</p>
         ))}
       </div>
@@ -314,6 +318,17 @@ export function RiskDashboard({
           data-testid="risk-zt-capped-target"
         >
           {data.zt_capped_target_note}
+        </p>
+      ) : null}
+      {/* #474 D' (Gene, #736 5984256202): where the register's CSF risks come
+          from, in the API's own sentence (`risk/csf_source.py`), rendered as
+          given. Null when the register has no CSF findings. */}
+      {data.csf_source_note ? (
+        <p
+          className="mb-4 rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
+          data-testid="risk-csf-source"
+        >
+          {data.csf_source_note}
         </p>
       ) : null}
       <KpiRow>

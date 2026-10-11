@@ -365,6 +365,9 @@ class EnterpriseSubcategory(BaseModel):
     #: override that differs from the computed one. Never serialized, so the
     #: Enterprise Profile endpoint's JSON is unchanged.
     priority_overridden: bool = Field(default=False, exclude=True)
+    #: #474 D': per tier, whether the evidence cap CHANGED that tier's result
+    #: (`score_tier(...).evidence_capped`). Never serialized.
+    tier_evidence_capped: dict[str, bool] = Field(default_factory=dict, exclude=True)
 
 
 class EnterpriseProfileResponse(BaseModel):

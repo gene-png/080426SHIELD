@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.client_naming import org_display_name
+from app.csf.catalog import all_codes as csf_all_codes
 from app.mode_stamp import (
     UNKNOWN_AI_MODE_REGISTER,
     AiModeStamp,
@@ -22,6 +23,7 @@ from app.mode_stamp import (
     pdf_paragraph,
 )
 from app.pdf_export import pdf_text
+from app.risk.baseline import PLAYBOOK_SOURCES
 from app.risk.engine import (
     IMPACT_ORDER,
     LIKELIHOOD_ORDER,
@@ -104,10 +106,17 @@ class RiskExportContext:
     #: `(kind, framework)` (`app/risk/baseline.py`), or None when the
     #: register did not record them -- which the summary STATES, because a
     #: deliverable that silently omits its baseline reads as having none.
-    targets: tuple[tuple[str, str | None, int, str, str], ...] | None = None
+    targets: tuple[tuple[str, str | None, int | None, str, str], ...] | None = None
     #: #915 (S3): the approved sentence for the DoD target cap, from
     #: `risk/zt_capped.py`, or None when nothing was lowered or recorded.
     zt_capped_target_note: str | None = None
+    csf_source_note: str | None = None
+    #: R10 (#736 6102665946): the approved count sentence from
+    #: `risk/csf_source.py`, printed after the CSF Playbook line, or None.
+    csf_unscored_targets_note: str | None = None
+    #: R11 (#736 6103383277): the CSF Playbook had scores and targets that
+    #: never shared a row, so the not-measured line says that instead.
+    csf_no_shared_row: bool = False
 
 
 def _enum_list(values, enum_cls):
@@ -132,8 +141,11 @@ def build_context(
     draft: bool = False,
     source_states: dict[str, str] | None = None,
     review_pending: frozenset[str] = frozenset(),
-    targets: Sequence[tuple[str, str | None, int, str, str]] | None = None,
+    targets: Sequence[tuple[str, str | None, int | None, str, str]] | None = None,
     zt_capped_target_note: str | None = None,
+    csf_source_note: str | None = None,
+    csf_unscored_targets_note: str | None = None,
+    csf_no_shared_row: bool = False,
 ) -> RiskExportContext:
     return RiskExportContext(
         client_legal_name=org_display_name(client_legal_name),
@@ -148,6 +160,9 @@ def build_context(
         review_pending=review_pending,
         targets=tuple(targets) if targets is not None else None,
         zt_capped_target_note=zt_capped_target_note,
+        csf_source_note=csf_source_note,
+        csf_unscored_targets_note=csf_unscored_targets_note,
+        csf_no_shared_row=csf_no_shared_row,
     )
 
 
@@ -198,10 +213,41 @@ def _joined(v) -> str:
     return ", ".join(v) if isinstance(v, list) else ""
 
 
+#: #474 D': a CSF entry is a questionnaire-response entry whose code is a
+#: CSF subcategory; ZT capability codes never share a CSF spelling.
+_CSF_SOURCE = "questionnaire_response"
+_CSF_CODES = csf_all_codes()
+
+
+def _csf_from_playbook(
+    targets: tuple[tuple[str, str | None, int | None, str, str], ...] | None,
+) -> bool:
+    """#474 D': whether this register RECORDED its CSF findings as measured on
+    the Playbook -- its CSF target's source is a Playbook token
+    (`risk/baseline.py::PLAYBOOK_SOURCES`). A register generated before D'
+    recorded the engagement tier, or no targets at all, and stays
+    re-exportable; its CSF findings came from the questionnaire, so its Source
+    cells must not say Playbook. Keyed on the record, never on the code's
+    shape, which is the same for both."""
+    return targets is not None and any(
+        kind == "csf" and source in PLAYBOOK_SOURCES for kind, _fw, _t, source, _o in targets
+    )
+
+
 def _source(
-    e: Any, states: dict[str, str] | None = None, pending: frozenset[str] = frozenset()
+    e: Any,
+    states: dict[str, str] | None = None,
+    pending: frozenset[str] = frozenset(),
+    *,
+    csf_playbook: bool,
 ) -> str:
-    if e.source and e.source_id:
+    if csf_playbook and e.source == _CSF_SOURCE and e.source_id in _CSF_CODES:
+        # #474 D' (advisor, #736 6087786886, item 5): CSF findings come from
+        # the Playbook. The stored token stays `questionnaire_response` (E's
+        # approved prompt and parser use it); only the files say Playbook,
+        # and only for a register that recorded the Playbook as its basis.
+        cell = f"CSF Playbook:{e.source_id}"
+    elif e.source and e.source_id:
         cell = f"{e.source}:{e.source_id}"
     else:
         cell = e.source_id or e.source or ""
@@ -269,7 +315,12 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
                 e.title,
                 e.description or "",
                 (e.axis or "").title(),
-                _source(e, ctx.source_states, ctx.review_pending),
+                _source(
+                    e,
+                    ctx.source_states,
+                    ctx.review_pending,
+                    csf_playbook=_csf_from_playbook(ctx.targets),
+                ),
                 _joined(e.linked_techniques),
                 _joined(e.linked_controls),
                 _rating(e.likelihood),
@@ -531,13 +582,18 @@ def _summary_lines(ctx: RiskExportContext) -> list[str]:
         "By recommended action — " + ", ".join(f"{k} {v}" for k, v in acts.items() if v),
         *_missing_line(total, total - len(actions), "no recommended action"),
         *_finding_lines(ctx.finding_counts),
-        *_target_lines(ctx.targets),
+        *_target_lines(
+            ctx.targets,
+            csf_unscored_note=ctx.csf_unscored_targets_note,
+            csf_no_shared_row=ctx.csf_no_shared_row,
+        ),
         # #915 (S3), one line or none. #944: immediately after the target
         # lines. Their last line is a Zero Trust one whenever the register has
         # one, and the DoD one when both ZT frameworks are engaged, because
         # `risk/baseline.py` sorts by kind, then framework. So the cap and the
         # target it lowers read as one baseline, not two.
         *([ctx.zt_capped_target_note] if ctx.zt_capped_target_note else []),
+        *([ctx.csf_source_note] if ctx.csf_source_note else []),
         *_link_scope_lines(ctx),
         *_pending_review_lines(ctx),
     ]
@@ -566,8 +622,35 @@ def target_label(kind: str, framework: str | None, *, name_framework: bool) -> s
     return label
 
 
+#: #474 D': the CSF Playbook baseline, by the target's recorded source token
+#: (`risk/baseline.py::PLAYBOOK_SOURCE_BY_STATE`). Approved verbatim: #736
+#: 6087027524 (Q1) for `playbook`, 6087786886 (item 4) for the other two.
+_PLAYBOOK_LINES = {
+    "playbook": (
+        "{label} findings are measured against each subcategory's target level in the CSF "
+        "Playbook."
+    ),
+    "playbook_no_targets": (
+        "{label} was not measured for this register: the CSF Playbook has no target levels set."
+    ),
+    "playbook_no_scores": (
+        "{label} was not measured for this register: the CSF Playbook has no scores."
+    ),
+}
+
+#: R11 (#736 6103383277), approved verbatim: `playbook_no_scores` where the
+#: Playbook had scores and targets that never shared a row.
+_PLAYBOOK_NO_SHARED_ROW_LINE = (
+    "{label} was not measured for this register: no CSF Playbook row has both a score and "
+    "a target."
+)
+
+
 def _target_lines(
-    targets: tuple[tuple[str, str | None, int, str, str], ...] | None,
+    targets: tuple[tuple[str, str | None, int | None, str, str], ...] | None,
+    *,
+    csf_unscored_note: str | None = None,
+    csf_no_shared_row: bool = False,
 ) -> list[str]:
     """#474. Which target each service's findings were measured against.
 
@@ -586,6 +669,17 @@ def _target_lines(
     lines = []
     for kind, framework, target, source, _origin in targets:
         label = target_label(kind, framework, name_framework=name_framework)
+        if source in _PLAYBOOK_LINES:
+            # #474 D': approved, #736 6087027524 (Q1) and 6087786886 (item 4).
+            if source == "playbook_no_scores" and csf_no_shared_row:
+                lines.append(_PLAYBOOK_NO_SHARED_ROW_LINE.format(label=label))
+            else:
+                lines.append(_PLAYBOOK_LINES[source].format(label=label))
+            # R10 (#736 6102665946): with the CSF line, and only when the
+            # Playbook measured (the other two lines already say nothing was).
+            if source == "playbook" and csf_unscored_note:
+                lines.append(csf_unscored_note)
+            continue
         unit = _TARGET_UNITS[kind]
         if source == "client":
             why = "the engagement target when this register was generated"
@@ -769,7 +863,12 @@ def render_pdf(ctx: RiskExportContext) -> bytes:
                 _li(e),
                 _rating(e.tier),
                 (e.recommended_action or "").title(),
-                _source(e, ctx.source_states, ctx.review_pending),
+                _source(
+                    e,
+                    ctx.source_states,
+                    ctx.review_pending,
+                    csf_playbook=_csf_from_playbook(ctx.targets),
+                ),
             ]
         )
     story.append(
@@ -818,7 +917,12 @@ def render_docx(ctx: RiskExportContext) -> bytes:
             _li(e),
             _rating(e.tier),
             (e.recommended_action or "").title(),
-            _source(e, ctx.source_states, ctx.review_pending),
+            _source(
+                e,
+                ctx.source_states,
+                ctx.review_pending,
+                csf_playbook=_csf_from_playbook(ctx.targets),
+            ),
         ]
         for i, e in enumerate(ctx.entries, start=1)
     ]
