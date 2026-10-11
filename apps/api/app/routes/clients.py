@@ -17,7 +17,7 @@ from typing import Annotated, NamedTuple
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, undefer_group
 
 from app.attack.after import sentences as attack_after_sentences
 from app.attack.analytics import compute as attack_compute
@@ -74,7 +74,7 @@ from app.models.capability import (
 from app.models.client import Client
 from app.models.csf_assessment import CsfAnswer, CsfAssessment, CsfAssessmentStatus
 from app.models.deliverable import Deliverable
-from app.models.risk_register import RiskEntry, RiskRegister
+from app.models.risk_register import OTHER_AXES_GROUP, RiskEntry, RiskRegister
 from app.models.service import Service, ServiceKind
 from app.models.user import User, UserRole
 from app.models.zt_assessment import (
@@ -1963,7 +1963,10 @@ def risk_dashboard(
 
     entries = (
         db.execute(
-            select(RiskEntry).where(RiskEntry.register_id == reg.id).order_by(RiskEntry.created_at)
+            select(RiskEntry)
+            .where(RiskEntry.register_id == reg.id)
+            .order_by(RiskEntry.created_at)
+            .options(undefer_group(OTHER_AXES_GROUP))
         )
         .scalars()
         .all()
@@ -2070,6 +2073,7 @@ def risk_dashboard(
             RiskDashboardEntry(
                 title=e.title,
                 axis=e.axis,
+                other_axes=e.other_axes,
                 likelihood=e.likelihood,
                 impact=e.impact,
                 tier=e.tier,

@@ -146,7 +146,7 @@ def test_all_purposes_return_valid_json_for_their_parser(db_session) -> None:
         "csf_score": {"tiers": ["high"], "subcategories": ["GV.OC-01"]},
         "tech_debt_extract": {"rows": [{"name": "Okta"}], "context": {}},
         "risk_synthesize": {
-            "findings": [{"source": "coverage_finding", "source_id": "T1003", "kind": "attack"}],
+            "findings": {"T1003": {"source": "coverage_finding", "kind": "attack"}},
             "valid_techniques": ["T1003"],
             "valid_controls": [],
         },

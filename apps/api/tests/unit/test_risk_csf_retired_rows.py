@@ -92,7 +92,7 @@ def test_a_kept_csf_row_below_target_is_no_finding_and_not_citable(
     assert seen, "no risk_synthesize payload was captured"
 
     controls = set(seen[0]["valid_controls"])
-    finding_ids = {f["source_id"] for f in seen[0]["findings"]}
+    finding_ids = set(seen[0]["findings"])
     # The scored catalog row still flows: what must appear, first.
     assert subcategory in controls
     assert subcategory in finding_ids

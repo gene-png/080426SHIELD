@@ -136,14 +136,15 @@ def test_the_run_sends_the_real_codes_and_still_redacts_the_findings(
 
     assert sent[0]["valid_controls"] == controls
     assert sent[0]["valid_techniques"] == sorted(techniques)
-    # `findings` is not registered: a finding on a colliding code still goes
-    # out redacted, exactly as before this change (the Risk E half of #997).
+    # #474 E (the Risk E half of #997): `findings` is keyed by source_id and
+    # its keys are guarded, so a finding on a colliding code now goes out as
+    # the real code, never redacted.
     colliding = [code for code in controls if _redacted(code, org) != code]
     assert colliding, "at least one scored code collides with the client name"
-    finding_ids = {f["source_id"] for f in sent[0]["findings"]}
+    finding_ids = set(sent[0]["findings"])
     for code in colliding:
-        assert _redacted(code, org) in finding_ids
-        assert code not in finding_ids
+        assert code in finding_ids
+        assert _redacted(code, org) not in finding_ids
 
 
 @pytest.mark.parametrize("field", ["valid_controls", "valid_techniques"])

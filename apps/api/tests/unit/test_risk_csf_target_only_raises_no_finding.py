@@ -81,7 +81,8 @@ def test_a_target_only_row_raises_no_csf_finding_and_reads_not_measured(
     # and the not-measured state is recorded and stated.
     body = _latest(c, bearer, cid)
     assert body["entries"], "the register exists and has entries"
-    assert any(f["kind"] != "csf" for f in payload["findings"]), payload["findings"]
+    # #474 E: `findings` is keyed by `source_id` (ruling 6).
+    assert any(f["kind"] != "csf" for f in payload["findings"].values()), payload["findings"]
     (csf,) = [t for t in body["targets"] if t["kind"] == "csf"]
     assert (csf["target"], csf["source"]) == (None, "playbook_no_scores"), csf
     texts = _export_texts(c, bearer, cid)
@@ -94,7 +95,7 @@ def test_a_target_only_row_raises_no_csf_finding_and_reads_not_measured(
     assert inp["no_playbook_scores"] is True
 
     # Then the absences: no CSF finding, so no source note on any surface.
-    assert [f for f in payload["findings"] if f["kind"] == "csf"] == []
+    assert [sid for sid, f in payload["findings"].items() if f["kind"] == "csf"] == []
     assert body["csf_source_note"] is None
     for fmt in ("pdf", "docx", "xlsx"):
         assert SOURCE_NOTE not in " ".join(texts[fmt].split()), fmt

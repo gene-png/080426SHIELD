@@ -118,6 +118,18 @@ export interface RiskEntry {
   title: string;
   description: string | null;
   axis: string | null;
+  /**
+   * #806 G1 option 3. `null` is "not recorded" (pre-0066, or no readable list
+   * from the model); `[]` is the claim "no other axis". Optional so a payload
+   * without it reads as not recorded (`otherAxesCell`), never as none.
+   */
+  other_axes?: string[] | null;
+  /**
+   * Ruling #736 6105137014: this entry's `other_axes` element drops by reason
+   * (`invalid`, `duplicate`, `repeats_axis`). `null` is "not recorded", `{}`
+   * "none dropped". On the consultant's register only.
+   */
+  other_axes_dropped?: Record<string, number> | null;
   source: string | null;
   source_id: string | null;
   /**

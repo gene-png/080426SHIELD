@@ -644,11 +644,11 @@ def _entry_per_finding(payload: dict) -> LLMResponse:
     """A response shaped like the real prompt's: one candidate entry per finding."""
     entries = [
         {
-            "title": f"Risk for {f['source_id']}",
+            "title": f"Risk for {sid}",
             "description": "d",
             "axis": "detection",
             "source": f["source"],
-            "source_id": f["source_id"],
+            "source_id": sid,
             "linked_techniques": [],
             "linked_controls": [],
             "likelihood": "high",
@@ -656,7 +656,7 @@ def _entry_per_finding(payload: dict) -> LLMResponse:
             "recommended_action": "remediate",
             "rationale": "r",
         }
-        for f in payload.get("findings", [])
+        for sid, f in payload.get("findings", {}).items()
     ]
     return LLMResponse(json.dumps({"entries": entries}))
 
@@ -2543,7 +2543,7 @@ def test_a_computed_parent_is_never_a_register_finding_of_its_own(app_client) ->
 
     def fixture(payload: dict) -> LLMResponse:
         sent.extend(
-            f["source_id"] for f in payload.get("findings", []) if f.get("kind") == "attack"
+            sid for sid, f in payload.get("findings", {}).items() if f.get("kind") == "attack"
         )
         return _entry_per_finding(payload)
 

@@ -503,6 +503,83 @@ _RISK_LIKELIHOOD_CYCLE = ("low", "medium", "high", "medium", "very_high")
 _RISK_IMPACT_CYCLE = ("moderate", "major", "catastrophic", "minor", "major")
 _RISK_AXIS_CYCLE = ("detection", "prevention", "response")
 _RISK_ACTION_CYCLE = ("remediate", "mitigate", "transfer", "accept", "avoid")
+#: The approved prompt's exact sentence for "no compensating control".
+_RISK_NO_CONTROLS = "None identified in the supplied information."
+#: The approved prompt's axis order, which `other_axes` follows.
+_RISK_AXIS_ORDER = ("detection", "prevention", "response")
+
+
+def _risk_evidenced_controls(evidence: Any) -> str:
+    """The approved prompt's COMPENSATING CONTROLS rule, for an ATT&CK finding:
+    only confirmed tools in an `in_place` function, named, with what they do.
+    Never an invented control (#806 record, item 4). CSF and Zero Trust
+    evidence names no control the fixture can read, so it gets the exact
+    "none" sentence, as does a finding with no function in place."""
+    if not isinstance(evidence, dict) or _risk_status_is_stored(evidence):
+        return _RISK_NO_CONTROLS
+    named = [
+        f"{tool} provides {function} for this technique."
+        for function in _RISK_AXIS_ORDER
+        if isinstance(evidence.get(function), dict)
+        and evidence[function].get("state") == "in_place"
+        for tool in _strs(evidence[function].get("tools"))
+    ]
+    return " ".join(named) if named else _RISK_NO_CONTROLS
+
+
+def _risk_status_is_stored(evidence: dict) -> bool:
+    """The v3 text (ruling #736 6105137014): "`stored` when the status was
+    recorded directly, with no function states; treat a stored status as given
+    and do not infer missing functions from it." So a stored-status finding
+    names no affected function and no tool as a control.
+
+    Two of its three callers are AN UNREACHABLE RATCHET, and no test can fail
+    without the check there: the only writer, `routes/risk.py::_attack_evidence`,
+    sends no function states and no `missing_functions` with `status_basis:
+    "stored"`, so `_risk_evidenced_controls` and `_risk_other_axes` reach the
+    same answer without it. It would matter there only if that writer began
+    sending function states for a stored status. The third caller,
+    `_risk_residual`, depends on it (v4: a stored `partial` is partly
+    mitigated), and `test_the_fixture_reads_a_stored_partial_as_partly_mitigated`
+    goes red without it."""
+    return evidence.get("status_basis") == "stored"
+
+
+def _risk_residual(kind: Any, evidence: Any) -> str:
+    """The approved RESIDUAL-RISK NARRATIVE, for an ATT&CK finding (v4, ruling
+    #736 6105759625): "partially mitigated to the extent the evidence shows
+    functions in place ..., and substantially unmitigated when it shows none.
+    For a stored status, judge mitigation from the rationale and notes only; a
+    stored `partial` is partly mitigated." The fixture reads no rationale or
+    notes, so a stored `gap` claims nothing beyond its status. CSF and Zero
+    Trust evidence keeps the earlier generic sentence: the fixture reads no
+    practice from it."""
+    if kind != "attack" or not isinstance(evidence, dict):
+        return "Elevated until remediated."
+    if _risk_status_is_stored(evidence):
+        if evidence.get("status") == "partial":
+            return "Partly mitigated: the recorded status is partial."
+        return "Not judged mitigated: the recorded status is a gap."
+    in_place = [
+        f
+        for f in _RISK_AXIS_ORDER
+        if isinstance(evidence.get(f), dict) and evidence[f].get("state") == "in_place"
+    ]
+    if in_place:
+        return f"Partially mitigated: {', '.join(in_place)} in place."
+    return "Substantially unmitigated: no function is in place."
+
+
+def _risk_other_axes(evidence: Any, axis: str) -> list[str]:
+    """The approved prompt's `other_axes` rule, for an ATT&CK finding: each
+    function in `missing_functions` is directly affected, so every one but the
+    primary `axis`, in the prompt's order. Empty for CSF and Zero Trust, whose
+    evidence names no function, and for a stored status, from which v3 says
+    not to infer missing functions."""
+    if not isinstance(evidence, dict) or _risk_status_is_stored(evidence):
+        return []
+    missing = _strs(evidence.get("missing_functions"))
+    return [a for a in _RISK_AXIS_ORDER if a in missing and a != axis]
 
 
 def _fixture_risk_synthesize(payload: dict[str, Any]) -> LLMResponse:
@@ -510,11 +587,12 @@ def _fixture_risk_synthesize(payload: dict[str, Any]) -> LLMResponse:
     valid_techniques = set(_strs(payload.get("valid_techniques")))
     valid_controls = set(_strs(payload.get("valid_controls")))
     entries: list[dict[str, Any]] = []
-    if isinstance(findings, list):
-        for i, finding in enumerate(findings):
+    # #474 E, ruling 6: `findings` is an object keyed by `source_id`, and the
+    # prompt says to copy the key into the entry as `source_id`.
+    if isinstance(findings, dict):
+        for i, (source_id, finding) in enumerate(findings.items()):
             if not isinstance(finding, dict):
                 continue
-            source_id = finding.get("source_id")
             kind = finding.get("kind")
             # Only cite codes present in the supplied
             # valid_techniques / valid_controls lists, which since #403 are the
@@ -536,17 +614,20 @@ def _fixture_risk_synthesize(payload: dict[str, Any]) -> LLMResponse:
                 [source_id] if kind in ("csf", "zt") and source_id in valid_controls else []
             )
             label = finding.get("label") or source_id or f"finding {i + 1}"
+            evidence = finding.get("evidence")
+            axis = _RISK_AXIS_CYCLE[i % len(_RISK_AXIS_CYCLE)]
             entries.append(
                 {
                     "title": f"Gap: {label}",
                     "description": ("Fixture-mode candidate risk entry drafted from the finding."),
-                    "axis": _RISK_AXIS_CYCLE[i % len(_RISK_AXIS_CYCLE)],
+                    "axis": axis,
+                    "other_axes": _risk_other_axes(evidence, axis),
                     "linked_techniques": linked_techniques,
                     "linked_controls": linked_controls,
                     "likelihood": _RISK_LIKELIHOOD_CYCLE[i % len(_RISK_LIKELIHOOD_CYCLE)],
                     "impact": _RISK_IMPACT_CYCLE[i % len(_RISK_IMPACT_CYCLE)],
-                    "compensating_controls": "Interim monitoring in place.",
-                    "residual_risk": "Elevated until remediated.",
+                    "compensating_controls": _risk_evidenced_controls(evidence),
+                    "residual_risk": _risk_residual(kind, evidence),
                     "recommended_action": _RISK_ACTION_CYCLE[i % len(_RISK_ACTION_CYCLE)],
                     "rationale": "Fixture-mode rationale; validate against evidence.",
                     "source": finding.get("source") or "coverage_finding",

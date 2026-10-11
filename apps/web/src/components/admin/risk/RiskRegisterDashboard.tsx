@@ -45,6 +45,11 @@ import { targetSentences } from "@/lib/risk/baseline";
 // web copy of the export's `scope_label`. A service token the labeller does not
 // know renders as itself, so a new service cannot vanish from the disclosure.
 import { scopeLabel } from "@/lib/risk/labels";
+import {
+  OTHER_AXES_HEADER,
+  otherAxesCell,
+  otherAxesDroppedNote,
+} from "@/lib/risk/otherAxes";
 import { carriedSentences } from "@/lib/risk/carry";
 import {
   INPUTS_RULE,
@@ -212,6 +217,28 @@ function columnsFor(
   return [
     { key: "title", header: "Weakness", cell: (r) => r.title },
     { key: "axis", header: "Axis", cell: (r) => titleCase(r.axis) },
+    {
+      key: "other_axes",
+      header: OTHER_AXES_HEADER,
+      cell: (r) => {
+        // Ruling #736 6105137014: the consultant sees when the list lost
+        // unreadable tokens; the client's screens and files never do.
+        const dropped = otherAxesDroppedNote(r.other_axes_dropped);
+        return (
+          <>
+            {otherAxesCell(r.other_axes)}
+            {dropped ? (
+              <p
+                className="text-xs text-ink-secondary"
+                data-testid="risk-other-axes-dropped"
+              >
+                {dropped}
+              </p>
+            ) : null}
+          </>
+        );
+      },
+    },
     {
       key: "li",
       header: "Likelihood × Impact",
