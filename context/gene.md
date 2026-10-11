@@ -1,7 +1,7 @@
 # Gene — in-flight status
 
-_2026-10-09 (track6): #474 D' (your PR D) is built on
-`track6/474-d-playbook-risk`, with no PR yet: #1002 goes first._
+_2026-10-10 (track6): #474 D' (your PR D) is PR #1030, on
+`track6/474-d-playbook-risk`._
 
 **What it does:** the Risk Register's CSF risks now come from the Playbook
 score you chose (#736 5984218862), not the questionnaire tier. A subcategory is
@@ -9,13 +9,58 @@ a risk when its Playbook level is below its Playbook target, and the register
 says on every screen and file, only when it has CSF risks: "CSF risks in this
 register come from Kentro's evidence-based assessment. They can differ from
 your self-assessment on the CSF dashboard." The client's CSF dashboard is
-unchanged. If the Playbook has no targets or no scores, the register says CSF
-was not measured instead of implying "no gaps", and if someone edits the
+unchanged. Per your ruling (a) (#736 6101751588), made per tier row by R10
+(#736 6102665946), a subcategory can be a CSF risk only when one of its tier
+rows is both scored and targeted, and the register says CSF was measured only
+when at least one subcategory has such a row. Otherwise (no targets, only
+targets, or a score and a target on different rows) it says CSF was not
+measured, with no CSF risks and no source note, instead of implying "no gaps";
+for scores and targets on different rows the files and both dashboards say
+"no CSF Playbook row has both a score and a target" (R11, #736 6103383277;
+the dashboards by #736 6104067136). When it measured, the
+other targeted subcategories are counted on the Inputs panel and in the files:
+"{n} targeted subcategories have no row with both a score and a target, and
+raise no finding." If someone edits the
 Playbook after the register is generated, it must be regenerated before it can
 be published. Two tests about the old CSF engagement-tier rule are deleted,
 with the advisor's approval, because your decision retired that rule. The Atlas demo
 gets Playbook rows in a small PR right after this one. When the PR opens it
 comes back to you (conditions 5 and 6).
+
+_2026-10-09 (track4): #889 PR 1 is PR #1021 (a draft), for #889. When a tool leaves a client's security tool list after their ATT&CK report is approved, the client's dashboard says so and marks the tool, the documents say so as of finalize, and the home card says its ATT&CK total may be understated when a technique counted as covered relies on such a tool. When nothing could be checked, the dashboard says so: one sentence when the client has no list or only discarded ones, another when its lists in force have no security tools. The check reads, per Tech Debt service, its newest approved or released list version and ignores its drafts, so an open draft changes nothing the client sees; a service with only drafts uses its newest draft, so the check still works before anyone approves the list (R6b, #736 6094994432). "Newest" is the highest version number. A version with no security tools is skipped for the one before it, and the admin workspace, the deliverable and the client dashboard name the version used (R4, wording approved in #736 6093188709 and 6093549176; the admin line for a draft, C8a, applies only to a service with only drafts). So ATT&CK approve refuses a tool the version in force dropped, while Run AI can still offer it from an older version or a draft (#1012). Two declared test edits: the golden `dashboard.json` and `test_attack_planned_retirement.py` (approved in #736 6092259096). **One thing needs you:** the golden `dashboard.json` gains the "not checked" sentence; the advisor approved it (#736 6090360421) and your ratification is pending, as for #851's. Filed from review: #1005, #1010, #1011, #1019 and #1020. The Risk half waits for D′. It comes back to you: conditions 5 and 6._
+
+_2026-10-09 (track1): #853 is implemented, PR #1014 from
+`track1/853-attack-omitted`, for #853. An ATT&CK technique a Run-AI batch leaves out is now
+counted and named on the run result (`omitted_count`, `omitted_techniques`,
+with the status each one kept), and the audit row carries counts only. The
+ATT&CK Run-AI panel now says how many techniques got no status, lists the
+ones still unscored, and lists in red the ones that kept an earlier status,
+with the approved line telling the consultant to check them before approving.
+The disclosure gate is green. Not on any screen yet: the techniques whose AI
+entry was refused for a reason other than N/A or a forbidden Partial reason
+(#859). It comes back to you: conditions 5 and 6._
+
+_2026-10-09 (track5): #865 is built on `track5/865-whatif-name-hints`, for
+#865; no PR yet. The ATT&CK what-if's AI run and the ATT&CK Run-AI now hide
+the names of the client's own users from the AI, as the Tech Debt extraction
+and the what-if chat box already did. A tool an admin names after a colleague
+(on the what-if panel, or on the capability list) reaches the provider as
+"[NAME] ...", and the what-if still credits it when the AI cites it that way.
+Two added tools that would both reach the AI as "[NAME] Scanner" are refused
+when the what-if is created. Zero Trust and CSF send typed notes without this
+dictionary too; those files belong to other open PRs, so they are reported to
+you, not changed. It comes back to you: conditions 5 and 6._
+
+_2026-10-09 (track1): #993 is built on `track1/993-docx-control-chars`, for
+#993; the PR is not yet open. A client legal name with a control character
+(for example a stray BEL byte, which the admin route accepts) no longer blocks
+every Word deliverable for that client: the DOCX path now drops the same
+characters the XLSX path drops, and logs one warning per string without the
+value. U+FFFE and U+FFFF are dropped too, and a very long service title plus
+legal name no longer fails: only the file's metadata title is cut, the visible
+heading is whole. A lone surrogate is refused by the API before it is stored.
+Refusing control characters at the admin route stays with the post-MVP
+input-validation item. It comes back to you: conditions 5 and 6._
 
 _2026-10-09 (track6): #997's code-list half is built on `track6/997-risk-code-lists`._
 

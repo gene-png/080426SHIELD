@@ -2,6 +2,7 @@ import { Card, CardBody, CardHeader, CardTitle } from "@shield/design-system";
 
 import type { JSX } from "react";
 
+import { HOME_CARD_NOTE } from "@/lib/attack/subset";
 import {
   targetNotes,
   gapHint,
@@ -43,6 +44,10 @@ const USD = new Intl.NumberFormat("en-US", {
 const COUNT = new Intl.NumberFormat("en-US");
 
 interface Metric {
+  /** #889 (C7): techniques counted as covered rely on a tool outside the
+   *  client's current security tool list, so the figure may be understated.
+   *  A FACT about the figure, like `targetNote`. */
+  subsetNote?: string | null;
   label: string;
   value: string | null; // null -> "Pending", unless `unresolved`
   hint: string;
@@ -162,6 +167,11 @@ function buildMetrics(summary: ValueSummary): Metric[] {
         summary.attack_not_verified_count == null
           ? "Adversary techniques with no defensive coverage yet."
           : "Adversary techniques with no defensive coverage yet. Not verified techniques were not checked, so they are counted as neither.",
+      // #889 (Q3): the dashboard's twin; disclosure only, the total is unchanged.
+      subsetNote:
+        summary.attack_covered_relies_on_outside_tool === true
+          ? HOME_CARD_NOTE
+          : null,
       unresolved: summary.attack_uncovered_unresolved,
       unresolvedReason: summary.attack_uncovered_withheld
         ? "Your MITRE ATT&CK coverage report was produced against an earlier version of the ATT&CK framework than the current one, so its figures are withheld."
@@ -268,6 +278,12 @@ export function ValueLoopCard({
                   data-testid="value-target-note"
                 >
                   {m.targetNote}
+                </p>
+              ) : null}
+              {/* Only beside a figure, for the reason stated above. */}
+              {!m.unresolved && m.subsetNote ? (
+                <p className="mt-1 text-xs text-status-warning-fg">
+                  {m.subsetNote}
                 </p>
               ) : null}
             </div>

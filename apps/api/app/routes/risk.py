@@ -59,7 +59,16 @@ from app.models.user import User, UserRole
 from app.models.zt_assessment import ZtAnswer, ZtAssessment
 from app.risk import exporters as risk_exporters
 from app.risk.baseline import PLAYBOOK_SOURCE_BY_STATE, targets_used
-from app.risk.csf_source import CSF_FINDINGS_KEY, csf_playbook_state, csf_source_note
+from app.risk.csf_source import (
+    CSF_FINDINGS_KEY,
+    CSF_NO_SHARED_ROW_KEY,
+    CSF_UNSCORED_TARGETS_KEY,
+    CsfPlaybookMeasure,
+    csf_no_shared_row,
+    csf_playbook_measure,
+    csf_source_note,
+    csf_unscored_targets_note,
+)
 from app.risk.engine import (
     Impact,
     Likelihood,
@@ -438,6 +447,13 @@ class _InputSnapshot:
     #: of the audit row's `targets`, not a key inside its entries, whose exact
     #: shape tests pin.
     cap_lowered: dict[str, list[str]] = dataclasses.field(default_factory=dict)
+    #: R10 (#736 6102665946): per CSF source (`scope_key`), its Playbook's
+    #: `unscored_targeted` count; filled by `_gather_findings`, summed into
+    #: provenance `csf_unscored_targets` by `generate`.
+    csf_unscored_targets: dict[str, int] = dataclasses.field(default_factory=dict)
+    #: R11 (#736 6103383277): per CSF source, its Playbook's `no_shared_row`;
+    #: filled by `_gather_findings`, persisted as `csf_no_shared_row`.
+    csf_no_shared_row: dict[str, bool] = dataclasses.field(default_factory=dict)
 
     def of_kind(self, kind: str) -> list[_Source]:
         return [src for src in self.sources if src.kind == kind]
@@ -500,6 +516,9 @@ def _input_states(db: Session, client_id: uuid.UUID) -> list[RiskInputState]:
         qualifiers = _row_qualifiers(services)
         for svc, qualifier in zip(services, qualifiers, strict=True):
             r = current.get((kind, str(svc.id)))
+            # R10: the flag and the count come from ONE measure, the reader
+            # the register's state and findings use.
+            m = _csf_input_measure(db, r) if kind == "csf" and r else None
             rows.append(
                 RiskInputState(
                     kind=kind,
@@ -507,23 +526,26 @@ def _input_states(db: Session, client_id: uuid.UUID) -> list[RiskInputState]:
                     status=r.status if r else None,
                     version=r.version if r else None,
                     qualifier=qualifier,
+                    # R11: the two not-measured cases are two flags, never both.
                     no_playbook_scores=(
-                        _csf_has_no_playbook_scores(db, r) if kind == "csf" and r else None
+                        (m.state == "no_scores" and not m.no_shared_row) if m else None
                     ),
+                    no_shared_playbook_row=m.no_shared_row if m else None,
+                    unscored_targeted_subcategories=m.unscored_targeted if m else None,
                 )
             )
     return rows
 
 
-def _csf_has_no_playbook_scores(db: Session, r: InputRecord) -> bool:
-    """#474 D' (Gene, #736 5984218862): a CSF record whose Playbook has no
-    recorded score, and the Inputs panel says so. The SAME predicate as the
-    register's `no_scores` state (`csf_source.csf_playbook_state`, advisor
-    #736 6087786886 item 4 and 6090360421), so the panel and the register
-    cannot disagree; seeded rows nobody scored count as none, and so does a
-    Playbook whose only recorded values are targets. Such a Playbook can still
-    feed CSF findings (`is_gap` on a targeted row at level 1): open, with
-    Gene's row-level ruling on target-only findings."""
+def _csf_input_measure(db: Session, r: InputRecord) -> CsfPlaybookMeasure:
+    """#474 D' (Gene, #736 5984218862; R10, #736 6102665946): what a CSF
+    record's Playbook measured, for the Inputs panel. The SAME reader as the
+    register's state and findings (`csf_source.csf_playbook_measure`, CALLED),
+    so the panel and the register cannot disagree: `no_scores` is the panel's
+    `no_playbook_scores` when no in-scope row has a recorded non-target value
+    (targets only included), and its `no_shared_playbook_row` when scores and
+    targets never share a tier row (R11, #736 6103383277);
+    `unscored_targeted` is its disclosed count."""
     a = db.get(CsfAssessment, uuid.UUID(r.record_id))
     if a is None:
         raise RuntimeError(f"CSF input {r.record_id!r} has no assessment row")
@@ -532,7 +554,7 @@ def _csf_has_no_playbook_scores(db: Session, r: InputRecord) -> bool:
         .scalars()
         .all()
     )
-    return csf_playbook_state(rows) == "no_scores"
+    return csf_playbook_measure(rows)
 
 
 def _row_qualifiers(services: list[Service]) -> list[str | None]:
@@ -916,9 +938,9 @@ def _gather_findings(
     None`), so a scored-nothing service contributes no findings either -- the
     model is asked to link nothing and drops nothing. CSF (#474 D') raises a
     finding where the Playbook roll-up's `is_gap` says so, which needs a
-    `target_level`; a target set on a row nobody scored is a finding whose own
-    code is not citable (`csf_playbook_scope`), and the dropped link is
-    recorded on the entry like any other. What must never happen is that
+    `target_level` and, since Gene's ruling (#736 6101751588, option (a)), a
+    recorded value other than the target on that subcategory; a target set on
+    a row nobody scored raises no finding. What must never happen is that
     state passing SILENTLY, which is what `link_scopes` is returned for.
 
     The fourth return value is not bookkeeping. Every finding here is "current
@@ -1044,10 +1066,13 @@ def _gather_findings(
         # Playbook states this source is in, recorded as the target's source
         # token, so a Playbook with no targets or no scores is said to be
         # unmeasured rather than read as "measured, no gaps".
+        measure = csf_playbook_measure(csf_rows)
         target_sources[src.scope_key] = {
             "target": None,
-            "source": PLAYBOOK_SOURCE_BY_STATE[csf_playbook_state(csf_rows)],
+            "source": PLAYBOOK_SOURCE_BY_STATE[measure.state],
         }
+        snap.csf_unscored_targets[src.scope_key] = measure.unscored_targeted
+        snap.csf_no_shared_row[src.scope_key] = measure.no_shared_row
         ents, _tiers = csf_enterprise_subcategories(db, csf)
         csf_scope = csf_playbook_scope(csf_rows)
         valid_controls |= csf_scope.codes
@@ -1058,8 +1083,14 @@ def _gather_findings(
         for row in csf_rows:
             if row.in_scope:
                 in_scope_rows.setdefault(row.subcategory_code, {})[row.tier] = row
+        # #474 D' (Gene, #736 6101751588, option (a); R10, #736 6102665946):
+        # a finding needs a subcategory with at least one in-scope tier row
+        # carrying BOTH a recorded value other than its target AND a target
+        # (`measure.finding_codes`, the reader `measured` uses). The level is
+        # still the roll-up's and `is_gap` decides. Any other targeted code is
+        # counted (`unscored_targeted`) and disclosed beside the CSF line.
         for e in ents:
-            if e.gap:
+            if e.gap and e.subcategory_code in measure.finding_codes:
                 findings.append(
                     {
                         "source": "questionnaire_response",
@@ -2309,6 +2340,12 @@ def generate(
         # key sets of `targets` are unchanged.
         _prov_with_count[ZT_CAPPED_TARGET_KEY] = snap.cap_lowered
         _prov_with_count[CSF_FINDINGS_KEY] = sum(1 for f in findings if f["kind"] == "csf")
+        # R10 (#736 6102665946): targeted subcategories that raised no finding
+        # for want of a scored-and-targeted tier row, read back by the files
+        # (`csf_source.csf_unscored_targets_note`).
+        _prov_with_count[CSF_UNSCORED_TARGETS_KEY] = sum(snap.csf_unscored_targets.values())
+        # R11 (#736 6103383277): which not-measured line the files print.
+        _prov_with_count[CSF_NO_SHARED_ROW_KEY] = any(snap.csf_no_shared_row.values())
         register.provenance = _prov_with_count
         db.add(register)
     else:
@@ -2770,6 +2807,8 @@ def _render_and_store(
         # #915: the same reader and sentence the register response uses.
         zt_capped_target_note=zt_capped_target_sentence(zt_capped_target_codes(reg.provenance)),
         csf_source_note=csf_source_note(reg.provenance),
+        csf_unscored_targets_note=csf_unscored_targets_note(reg.provenance),
+        csf_no_shared_row=csf_no_shared_row(reg.provenance),
         # #646: `ai_mode` is left at "not recorded", deliberately -- see
         # `RiskExportContext.ai_mode`. Nothing ties a register to the calls
         # that drafted it until Risk runs through the run framework (#504).
@@ -3678,6 +3717,8 @@ def _serialize(
         capped_target_codes=_capped,
         zt_capped_target_note=zt_capped_target_sentence(_capped),
         csf_source_note=csf_source_note(stored),
+        # #736 6104067136: the files' reader, so the screen and the files agree.
+        csf_no_shared_row=csf_no_shared_row(stored),
         excluded_inputs=resolved_excluded,
         excluded_inputs_recorded=excluded_recorded,
         entries_total=len(entries),

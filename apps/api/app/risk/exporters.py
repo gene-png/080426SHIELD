@@ -111,6 +111,12 @@ class RiskExportContext:
     #: `risk/zt_capped.py`, or None when nothing was lowered or recorded.
     zt_capped_target_note: str | None = None
     csf_source_note: str | None = None
+    #: R10 (#736 6102665946): the approved count sentence from
+    #: `risk/csf_source.py`, printed after the CSF Playbook line, or None.
+    csf_unscored_targets_note: str | None = None
+    #: R11 (#736 6103383277): the CSF Playbook had scores and targets that
+    #: never shared a row, so the not-measured line says that instead.
+    csf_no_shared_row: bool = False
 
 
 def _enum_list(values, enum_cls):
@@ -138,6 +144,8 @@ def build_context(
     targets: Sequence[tuple[str, str | None, int | None, str, str]] | None = None,
     zt_capped_target_note: str | None = None,
     csf_source_note: str | None = None,
+    csf_unscored_targets_note: str | None = None,
+    csf_no_shared_row: bool = False,
 ) -> RiskExportContext:
     return RiskExportContext(
         client_legal_name=org_display_name(client_legal_name),
@@ -153,6 +161,8 @@ def build_context(
         targets=tuple(targets) if targets is not None else None,
         zt_capped_target_note=zt_capped_target_note,
         csf_source_note=csf_source_note,
+        csf_unscored_targets_note=csf_unscored_targets_note,
+        csf_no_shared_row=csf_no_shared_row,
     )
 
 
@@ -596,7 +606,11 @@ def _summary_lines(ctx: RiskExportContext) -> list[str]:
         "By recommended action — " + ", ".join(f"{k} {v}" for k, v in acts.items() if v),
         *_missing_line(total, total - len(actions), "no recommended action"),
         *_finding_lines(ctx.finding_counts),
-        *_target_lines(ctx.targets),
+        *_target_lines(
+            ctx.targets,
+            csf_unscored_note=ctx.csf_unscored_targets_note,
+            csf_no_shared_row=ctx.csf_no_shared_row,
+        ),
         # #915 (S3), one line or none. #944: immediately after the target
         # lines. Their last line is a Zero Trust one whenever the register has
         # one, and the DoD one when both ZT frameworks are engaged, because
@@ -648,9 +662,19 @@ _PLAYBOOK_LINES = {
     ),
 }
 
+#: R11 (#736 6103383277), approved verbatim: `playbook_no_scores` where the
+#: Playbook had scores and targets that never shared a row.
+_PLAYBOOK_NO_SHARED_ROW_LINE = (
+    "{label} was not measured for this register: no CSF Playbook row has both a score and "
+    "a target."
+)
+
 
 def _target_lines(
     targets: tuple[tuple[str, str | None, int | None, str, str], ...] | None,
+    *,
+    csf_unscored_note: str | None = None,
+    csf_no_shared_row: bool = False,
 ) -> list[str]:
     """#474. Which target each service's findings were measured against.
 
@@ -671,7 +695,14 @@ def _target_lines(
         label = target_label(kind, framework, name_framework=name_framework)
         if source in _PLAYBOOK_LINES:
             # #474 D': approved, #736 6087027524 (Q1) and 6087786886 (item 4).
-            lines.append(_PLAYBOOK_LINES[source].format(label=label))
+            if source == "playbook_no_scores" and csf_no_shared_row:
+                lines.append(_PLAYBOOK_NO_SHARED_ROW_LINE.format(label=label))
+            else:
+                lines.append(_PLAYBOOK_LINES[source].format(label=label))
+            # R10 (#736 6102665946): with the CSF line, and only when the
+            # Playbook measured (the other two lines already say nothing was).
+            if source == "playbook" and csf_unscored_note:
+                lines.append(csf_unscored_note)
             continue
         unit = _TARGET_UNITS[kind]
         if source == "client":

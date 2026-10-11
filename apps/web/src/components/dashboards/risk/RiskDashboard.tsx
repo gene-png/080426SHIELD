@@ -301,7 +301,11 @@ export function RiskDashboard({
         style={{ color: C.muted }}
         data-testid="risk-targets-used"
       >
-        {targetSentences(data.targets, data.targets_recorded).map((line) => (
+        {targetSentences(
+          data.targets,
+          data.targets_recorded,
+          data.csf_no_shared_row,
+        ).map((line) => (
           <p key={line}>{line}</p>
         ))}
       </div>

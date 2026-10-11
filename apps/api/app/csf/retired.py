@@ -60,7 +60,7 @@ def has_recorded_score(row: Any) -> bool:
     count.
 
     Defined as the two halves below, so a reader that needs "recorded, other
-    than a target" (`risk/csf_source.py::csf_playbook_state`) shares this
+    than a target" (`risk/csf_source.py::csf_playbook_measure`) shares this
     definition rather than restating it."""
     return has_recorded_value_besides_target(row) or row.target_level is not None
 

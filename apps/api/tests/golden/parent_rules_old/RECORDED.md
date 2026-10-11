@@ -99,3 +99,24 @@ above before replacing it, by a throwaway script that asserted each difference:
   The other four sheets are unchanged.
 - `dashboard.json` is unchanged: the client dashboard does not ask whether the
   tools were checked (#889), so it says nothing either way.
+
+## Amendment, 2026-10-09: the #889 "not checked" sentence on the dashboard (Gene's ratification pending)
+
+The advisor's ruling on #889 Q1 (#736 comment 6090360421, on track4's plan
+at 6089903057): the client dashboard reports all three states of the security
+tool list check, including "not checked". This world holds no Tech Debt list,
+so Golden A's dashboard now says #851's approved sentence (#736 6040458893),
+verbatim. It is an ADDED disclosure, not a reworded number. Approved by the
+advisor under his delegation, in that comment. **Gene's ratification is
+pending**, as the plan recommended: until he ratifies, this amendment stands
+on the advisor's approval alone.
+
+Re-rendered from this world by the current code and checked against the file
+above before replacing it, by a throwaway script that asserted the difference:
+
+- `dashboard.json`: deleting
+  `,"subset_notes":["The tools cited here were not checked against a security tool list, because the client has none."]`
+  from the new bytes gives the file as the #554 R1 table amendment above left
+  it EXACTLY, byte for byte. One key was added, last. `tool_outside_subset`
+  is absent, because nothing could be checked.
+- `finalize_b.json` is unchanged: finalize already said it (#851, above).

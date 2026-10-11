@@ -238,10 +238,25 @@ class AttackAssessmentResponse(BaseModel):
     #: tool list (`attack/subset_drift.py`). REQUIRED: a default would turn
     #: missing wiring into a confident "none".
     citations_outside_subset: list[AttackOutsideCitation]
-    #: #851: False when the client has no security tool list to check against,
-    #: so `citations_outside_subset` is empty because nothing was checked,
-    #: never because nothing was found (advisor: a third state). REQUIRED.
+    #: #851: False when there is no security tool list to check against: the
+    #: client has no Tech Debt list, only lists in force with no security tool,
+    #: or only discarded lists (#889 R4); a mix of the last two (one service
+    #: empty, one only discarded) reads as the empty case, C5b. A client is not
+    #: checked while a draft holds tools beside an approved version with none
+    #: (R6b: the draft is not in force). `citations_outside_subset` is then
+    #: empty because nothing was checked, never because nothing was found
+    #: (advisor: a third state). REQUIRED.
     subset_checked: bool
+    #: #889 R4 (advisor, #736 6093188709): when `subset_checked` is False, the
+    #: sentence saying why (C5, or C5b when the client's lists in force have no
+    #: security tools); None when checked. REQUIRED.
+    subset_not_checked_sentence: str | None
+    #: #889 R4: C8a / C8b, one per Tech Debt service whose newest version in
+    #: force has no security tools, so an earlier one is used. C8a only in a
+    #: service with only drafts; C8b among approved or released versions, a
+    #: service's drafts being ignored once it has one (R6b). Admin only.
+    #: REQUIRED.
+    subset_fallback_notes: list[str]
 
 
 class ComputedStatusReviewItem(BaseModel):
@@ -268,6 +283,27 @@ class CoverageChange(BaseModel):
     field: str
     old: Any = None
     new: Any = None
+
+
+class AttackOmittedTechnique(BaseModel):
+    """A technique a successful batch was asked about and no entry named (#853).
+
+    NOT a refusal: an entry that names the technique and is then refused is an
+    answer. Its loss is itemized only in the audit row's `details`
+    (`statuses_rejected`, `parent_suggestions_refused`,
+    `reason_codes_rejected`), which reach no screen (#859); of the refusals,
+    only the N/A and forbidden-reason counts reach the panel. So the panel's
+    omitted list is NOT the whole set of techniques that got no result this
+    run. A technique in a FAILED batch is not here either; it is counted by
+    `batches_failed`.
+
+    `kept_status` is the status the row still holds, read after the apply:
+    None reads as unscored, anything else is a status nobody confirmed this
+    run, reaching the coverage figures and the deliverable as if it had been.
+    """
+
+    technique_code: str
+    kept_status: str | None = None
 
 
 class AttackRunAiResponse(BaseModel):
@@ -346,6 +382,11 @@ class AttackRunAiResponse(BaseModel):
     # are in the audit row's `reason_codes_rejected`; the count is what the
     # workspace says.
     forbidden_reason_refused: int = 0
+    # #853: every technique a SUCCESSFUL batch asked for, not locked, that no
+    # entry named (twins: CSF #836, ZT #840). Both optional, so a stored run
+    # result written before them parses unchanged (C0).
+    omitted_count: int = 0
+    omitted_techniques: list[AttackOmittedTechnique] = Field(default_factory=list)
 
 
 class AttackCoveragePatch(BaseModel):
