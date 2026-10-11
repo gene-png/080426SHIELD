@@ -7,6 +7,11 @@ import {
   withRetirementMark,
   type ToolRetirement,
 } from "@/lib/attack/retirement";
+import {
+  anyOutsideMark,
+  CURRENT_LIST_NOTE,
+  outsideMark,
+} from "@/lib/attack/subset";
 import dynamic from "next/dynamic";
 import * as React from "react";
 
@@ -635,6 +640,18 @@ export function AttackDashboard({
             {CURRENT_PLAN_NOTE}
           </p>
         ) : null}
+        {/* #889: the security tool list check, all three states (Q1), and
+            that the marks are the CURRENT list's (C2). */}
+        {(data.subset_notes ?? []).map((n, i) => (
+          <p key={`${i}:${n}`} style={{ margin: "0 0 6px", fontSize: 13 }}>
+            {n}
+          </p>
+        ))}
+        {anyOutsideMark(data.tool_outside_subset) ? (
+          <p style={{ margin: "0 0 12px", fontSize: 13 }}>
+            {CURRENT_LIST_NOTE}
+          </p>
+        ) : null}
         <div
           style={{
             display: "flex",
@@ -734,7 +751,12 @@ export function AttackDashboard({
             </thead>
             <tbody>
               {rows.map((t) => (
-                <MatrixRow key={t.code} t={t} marks={data.tool_retirement} />
+                <MatrixRow
+                  key={t.code}
+                  t={t}
+                  marks={data.tool_retirement}
+                  outside={data.tool_outside_subset}
+                />
               ))}
               {rows.length === 0 ? (
                 <tr>
@@ -854,16 +876,28 @@ function TriadCard({
   );
 }
 
-/** #554 R3 copy, approved by the advisor 01:35Z (#808 copy, items 1 and 2). */
+/** #554 R3 copy, approved by the advisor 01:35Z (#808 copy, items 1 and 2).
+ * The KPI sub was aligned to the triad's wording for #842 (#736, comment
+ * 6053562002): it states what MITRE lists, never that prevention is impossible. */
 const FULLY_COVERED_SUB_R3 =
-  "Detection, prevention and response in place, or detection and response where it cannot be prevented";
+  "Detection, prevention and response in place, or detection and response where MITRE ATT&CK lists no preventive control";
 const TRIAD_DESC_R3 =
   "A technique is fully covered when detection, prevention and response are all in place, or detection and response where MITRE ATT&CK lists no preventive control.";
 
-function toolCell(tools: string[], marks: ToolRetirement): string {
-  // #686: each tool carries its retirement label, the deliverable's words.
+function toolCell(
+  tools: string[],
+  marks: ToolRetirement,
+  outside: readonly string[] | undefined,
+): string {
+  // #686: each tool carries its retirement label, the deliverable's words;
+  // #889 (C3): the security tool list mark stacks after it.
   return tools.length
-    ? tools.map((tool) => withRetirementMark(tool, marks)).join(", ")
+    ? tools
+        .map(
+          (tool) =>
+            `${withRetirementMark(tool, marks)}${outsideMark(tool, outside)}`,
+        )
+        .join(", ")
     : "—";
 }
 
@@ -963,9 +997,11 @@ function CannotBePreventedSection({
 function MatrixRow({
   t,
   marks,
+  outside,
 }: {
   t: DashTechnique;
   marks: ToolRetirement;
+  outside: readonly string[] | undefined;
 }): JSX.Element {
   // #620 round 3: a computed parent has no tools of its own (D-094). Drawing
   // its legs would show a covered parent as having none of the three.
@@ -1017,12 +1053,14 @@ function MatrixRow({
         </span>
       </td>
       <td style={cell({ muted: true })}>
-        {toolCell(t.detection_tools, marks)}
+        {toolCell(t.detection_tools, marks, outside)}
       </td>
       <td style={cell({ muted: true })}>
-        {toolCell(t.prevention_tools, marks)}
+        {toolCell(t.prevention_tools, marks, outside)}
       </td>
-      <td style={cell({ muted: true })}>{toolCell(t.response_tools, marks)}</td>
+      <td style={cell({ muted: true })}>
+        {toolCell(t.response_tools, marks, outside)}
+      </td>
     </tr>
   );
 }

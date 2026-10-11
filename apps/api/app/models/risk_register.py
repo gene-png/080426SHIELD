@@ -82,6 +82,11 @@ class RiskRegister(UUIDPKMixin, TimestampMixin, Base):
     )
 
 
+#: The deferred group holding `RiskEntry.other_axes` and `other_axes_dropped`
+#: (migration 0066); a query that renders them undefers it.
+OTHER_AXES_GROUP = "other_axes"
+
+
 class RiskEntry(UUIDPKMixin, TimestampMixin, Base):
     __tablename__ = "risk_entries"
 
@@ -95,6 +100,35 @@ class RiskEntry(UUIDPKMixin, TimestampMixin, Base):
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     axis: Mapped[str | None] = mapped_column(String(16))  # detection/prevention/response
+    # #806 G1 option 3 (migration 0066): every OTHER axis the scenario directly
+    # affects, ordered detection, prevention, response; never holds `axis`.
+    # Never counted: `axis_counts` is primary-only (#313). NULL is "not
+    # recorded" (pre-0066, or no readable list from the model); `[]` is "none".
+    #
+    # SQL NULL for "not recorded" (review of 655184cc, F3): a plain `JSON`
+    # writes None as the JSON text 'null', which 0066's downgrade `IS NOT NULL`
+    # counted as a record. `generate` therefore writes `sqlalchemy.null()`.
+    # NOT `JSON(none_as_null=True)`: that makes SQLAlchemy emit the column as
+    # NULL in EVERY insert, set or not (`should_evaluate_none` False puts it in
+    # the mapper's insert-as-None set), which breaks any ORM insert against a
+    # pre-0066 schema (the 0063 to 0065 migration tests). A plain `JSON` is left
+    # out of an insert when unset, as `linked_techniques` and `dropped_links`
+    # are.
+    #
+    # DEFERRED, in the "other_axes" group, for the same reason on reads: a
+    # `select(RiskEntry)` against a pre-0066 schema would otherwise name the
+    # column. Every route that renders it undefers the group in its query
+    # (`undefer_group(OTHER_AXES_GROUP)`), so there is no per-row load.
+    other_axes: Mapped[list | None] = mapped_column(
+        JSON, deferred=True, deferred_group="other_axes"
+    )
+    # Ruling #736 6105137014 (migration 0066): this entry's `other_axes`
+    # element drops by reason (`invalid`, `duplicate`, `repeats_axis`). NULL is
+    # "not recorded" (pre-0066, or no readable list); `{}` is "none dropped".
+    # Shown on the consultant's screen only.
+    other_axes_dropped: Mapped[dict | None] = mapped_column(
+        JSON, deferred=True, deferred_group="other_axes"
+    )
 
     # Where this entry came from (traceability — required, no orphan risks).
     source: Mapped[str | None] = mapped_column(

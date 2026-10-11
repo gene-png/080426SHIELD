@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.client_naming import org_display_name
+from app.csf.catalog import all_codes as csf_all_codes
 from app.mode_stamp import (
     UNKNOWN_AI_MODE_REGISTER,
     AiModeStamp,
@@ -21,6 +22,8 @@ from app.mode_stamp import (
     add_xlsx_sheet,
     pdf_paragraph,
 )
+from app.pdf_export import pdf_text
+from app.risk.baseline import PLAYBOOK_SOURCES
 from app.risk.engine import (
     IMPACT_ORDER,
     LIKELIHOOD_ORDER,
@@ -35,6 +38,7 @@ from app.risk.engine import (
     matrix_counts,
     tier_counts,
 )
+from app.xlsx_export import safe_text_row
 
 #: #737, Gene's ruling (#736, 5986057990 item 13), verbatim.
 DRAFT_MARKER = "Draft: not published"
@@ -70,7 +74,12 @@ class RiskExportContext:
     #: and empty renders NOTHING rather than a zero -- "0 of 0 scored" would be
     #: a concrete false claim about a client's assessments, where silence is
     #: merely an absence. `CLAUDE.md`: missing data defaults to UNCONFIRMED.
-    link_scope: tuple[tuple[str, int, int], ...] = ()
+    #:
+    #: #415: each row is `(service, scored, total, pending_review)`, the fourth
+    #: the count of scored codes pending review (`attack/pending.py`), or None
+    #: where the service has no review queue or the register predates the
+    #: count. `build_context` accepts the older three-value rows as None.
+    link_scope: tuple[tuple[str, int, int, int | None], ...] = ()
     #: #646: ALWAYS "not recorded" today, deliberately. `risk_synthesize` runs
     #: synchronously, with no `ai_runs` row, and the register records no
     #: correlation id, so nothing ties a register to the calls that drafted it;
@@ -93,6 +102,21 @@ class RiskExportContext:
     #: #554 R3, option (b): ATT&CK codes whose computed status awaited review
     #: at generate; the source cell says so.
     review_pending: frozenset[str] = frozenset()
+    #: #474. `(kind, framework, target, source, origin)` per service, sorted by
+    #: `(kind, framework)` (`app/risk/baseline.py`), or None when the
+    #: register did not record them -- which the summary STATES, because a
+    #: deliverable that silently omits its baseline reads as having none.
+    targets: tuple[tuple[str, str | None, int | None, str, str], ...] | None = None
+    #: #915 (S3): the approved sentence for the DoD target cap, from
+    #: `risk/zt_capped.py`, or None when nothing was lowered or recorded.
+    zt_capped_target_note: str | None = None
+    csf_source_note: str | None = None
+    #: R10 (#736 6102665946): the approved count sentence from
+    #: `risk/csf_source.py`, printed after the CSF Playbook line, or None.
+    csf_unscored_targets_note: str | None = None
+    #: R11 (#736 6103383277): the CSF Playbook had scores and targets that
+    #: never shared a row, so the not-measured line says that instead.
+    csf_no_shared_row: bool = False
 
 
 def _enum_list(values, enum_cls):
@@ -112,21 +136,33 @@ def build_context(
     client_legal_name: str | None,
     version: int,
     entries: Sequence[Any],
-    link_scope: Sequence[tuple[str, int, int]] = (),
+    link_scope: Sequence[tuple[str, int, int] | tuple[str, int, int, int | None]] = (),
     finding_counts: tuple[int, int, int] | None = None,
     draft: bool = False,
     source_states: dict[str, str] | None = None,
     review_pending: frozenset[str] = frozenset(),
+    targets: Sequence[tuple[str, str | None, int | None, str, str]] | None = None,
+    zt_capped_target_note: str | None = None,
+    csf_source_note: str | None = None,
+    csf_unscored_targets_note: str | None = None,
+    csf_no_shared_row: bool = False,
 ) -> RiskExportContext:
     return RiskExportContext(
         client_legal_name=org_display_name(client_legal_name),
         version=version,
         entries=list(entries),
-        link_scope=tuple(link_scope),
+        link_scope=tuple(
+            (row[0], row[1], row[2], row[3] if len(row) > 3 else None) for row in link_scope
+        ),
         finding_counts=finding_counts,
         draft=draft,
         source_states=dict(source_states or {}),
         review_pending=review_pending,
+        targets=tuple(targets) if targets is not None else None,
+        zt_capped_target_note=zt_capped_target_note,
+        csf_source_note=csf_source_note,
+        csf_unscored_targets_note=csf_unscored_targets_note,
+        csf_no_shared_row=csf_no_shared_row,
     )
 
 
@@ -141,6 +177,33 @@ def _rating(value: str | None) -> str:
 
 def _li(e: Any) -> str:
     return f"{_rating(e.likelihood)} x {_rating(e.impact)}"
+
+
+#: #736 6094620397, Risk E item 4: the column heading on every surface.
+OTHER_AXES_HEADER = "Other axes"
+
+
+def _other_axes(e: Any) -> str:
+    """#806 G1 option 3, as approved for the client (#736 6094620397, item 4).
+
+    Three states, three renderings: NULL is "Not recorded" (a pre-0066 entry,
+    or a model response with no readable list), `[]` is an EMPTY cell (the
+    claim "no other axis"), and a list is its axis display names joined by
+    ", ", the way the Axis column titles its value. The web screens mirror this
+    in `lib/risk/otherAxes.ts`; change both.
+
+    No note for dropped axes, deliberately (ruling #736 6105137014): these are
+    the client's files, the kept axes are accurate as far as they go, and a
+    parse failure is not a client fact. `other_axes_dropped` is shown on the
+    consultant's register only.
+    """
+    # `getattr`, as `_consultant_rated` does: the renderers take duck-typed rows,
+    # and a row built before 0066's field existed carries no attribute. Absent
+    # reads as NULL, which is what every such row is.
+    axes = getattr(e, "other_axes", None)
+    if axes is None:
+        return "Not recorded"
+    return ", ".join(str(a).title() for a in axes)
 
 
 def _consultant_rated(e: Any) -> bool:
@@ -177,10 +240,41 @@ def _joined(v) -> str:
     return ", ".join(v) if isinstance(v, list) else ""
 
 
+#: #474 D': a CSF entry is a questionnaire-response entry whose code is a
+#: CSF subcategory; ZT capability codes never share a CSF spelling.
+_CSF_SOURCE = "questionnaire_response"
+_CSF_CODES = csf_all_codes()
+
+
+def _csf_from_playbook(
+    targets: tuple[tuple[str, str | None, int | None, str, str], ...] | None,
+) -> bool:
+    """#474 D': whether this register RECORDED its CSF findings as measured on
+    the Playbook -- its CSF target's source is a Playbook token
+    (`risk/baseline.py::PLAYBOOK_SOURCES`). A register generated before D'
+    recorded the engagement tier, or no targets at all, and stays
+    re-exportable; its CSF findings came from the questionnaire, so its Source
+    cells must not say Playbook. Keyed on the record, never on the code's
+    shape, which is the same for both."""
+    return targets is not None and any(
+        kind == "csf" and source in PLAYBOOK_SOURCES for kind, _fw, _t, source, _o in targets
+    )
+
+
 def _source(
-    e: Any, states: dict[str, str] | None = None, pending: frozenset[str] = frozenset()
+    e: Any,
+    states: dict[str, str] | None = None,
+    pending: frozenset[str] = frozenset(),
+    *,
+    csf_playbook: bool,
 ) -> str:
-    if e.source and e.source_id:
+    if csf_playbook and e.source == _CSF_SOURCE and e.source_id in _CSF_CODES:
+        # #474 D' (advisor, #736 6087786886, item 5): CSF findings come from
+        # the Playbook. The stored token stays `questionnaire_response` (E's
+        # approved prompt and parser use it); only the files say Playbook,
+        # and only for a register that recorded the Playbook as its basis.
+        cell = f"CSF Playbook:{e.source_id}"
+    elif e.source and e.source_id:
         cell = f"{e.source}:{e.source_id}"
     else:
         cell = e.source_id or e.source or ""
@@ -219,6 +313,7 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
         "Weakness",
         "Description",
         "Axis",
+        OTHER_AXES_HEADER,
         "Source",
         "Linked Techniques",
         "Linked Controls",
@@ -233,7 +328,7 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
         "Trust",
         *_GOVERNANCE_COLUMNS,
     ]
-    ws.append(header)
+    safe_text_row(ws, header)
     fill = PatternFill(start_color="FFEEF2F7", end_color="FFEEF2F7", fill_type="solid")
     for col in range(1, len(header) + 1):
         cell = ws.cell(row=1, column=col)
@@ -241,13 +336,20 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
         cell.fill = fill
 
     for i, e in enumerate(ctx.entries, start=1):
-        ws.append(
+        safe_text_row(
+            ws,
             [
                 i,
                 e.title,
                 e.description or "",
                 (e.axis or "").title(),
-                _source(e, ctx.source_states, ctx.review_pending),
+                _other_axes(e),
+                _source(
+                    e,
+                    ctx.source_states,
+                    ctx.review_pending,
+                    csf_playbook=_csf_from_playbook(ctx.targets),
+                ),
                 _joined(e.linked_techniques),
                 _joined(e.linked_controls),
                 _rating(e.likelihood),
@@ -261,7 +363,7 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
                 e.trust or "",
                 # Blank governance columns for the client.
                 *["" for _ in _GOVERNANCE_COLUMNS],
-            ]
+            ],
         )
 
     # #403, the XLSX half. The PDF and Word carry this in `_summary_lines`;
@@ -284,23 +386,35 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
     # formats cannot drift apart.
     summary = wb.create_sheet("Summary")
     if ctx.draft:
-        summary.append([DRAFT_MARKER])
-    summary.append(["Summary"])
+        safe_text_row(summary, [DRAFT_MARKER])
+    safe_text_row(summary, ["Summary"])
     summary.cell(row=1, column=1).font = Font(bold=True)
     for line in _summary_lines(ctx):
-        summary.append([line])
+        safe_text_row(summary, [line])
 
     if ctx.link_scope:
         sheet = wb.create_sheet("Scored coverage")
-        sheet.append(["Assessment", "Rows scored", "Rows total", "Not citable"])
-        for col in range(1, 5):
+        safe_text_row(
+            sheet, ["Assessment", "Rows scored", "Rows total", "Not citable", "Pending review"]
+        )
+        for col in range(1, 6):
             cell = sheet.cell(row=1, column=col)
             cell.font = Font(bold=True)
             cell.fill = fill
-        for service, scored, total in sorted(ctx.link_scope):
-            sheet.append([_SERVICE_LABELS.get(service, service), scored, total, total - scored])
-        sheet.append([])
-        sheet.append(
+        for service, scored, total, pending in sorted(ctx.link_scope):
+            safe_text_row(
+                sheet,
+                [
+                    scope_label(service),
+                    scored,
+                    total,
+                    total - scored,
+                    _pending_cell(service, pending),
+                ],
+            )
+        safe_text_row(sheet, [])
+        safe_text_row(
+            sheet,
             [
                 # #554: "Not verified" is the ATT&CK deliverable's word for
                 # these rows. Two client documents naming the same rows two
@@ -309,8 +423,11 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
                 "assessment has scored, so unscored rows and techniques marked "
                 "Not verified cannot appear in the Linked Techniques or Linked "
                 "Controls columns."
-            ]
+            ],
         )
+        # #415: the pending-review sentence, or that it was not recorded.
+        for line in _pending_review_lines(ctx):
+            safe_text_row(sheet, [line])
 
     out = io.BytesIO()
     add_xlsx_sheet(wb, ctx.ai_mode)  # #646: the LAST sheet
@@ -327,21 +444,46 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
 #: disclosure.
 #:
 #: DUPLICATED, unavoidably: `SERVICE_LABELS` in
-#: `apps/web/src/components/admin/risk/RiskRegisterDashboard.tsx` holds the same
-#: three strings for the consultant's screen. There is no shared label map in
-#: this repo to reuse (searched) and no way to share a Python dict with TSX, so
-#: this is a synchronization rather than a derivation -- which `CLAUDE.md` says
-#: to avoid where possible and otherwise to NAME, with the window stated.
+#: `apps/web/src/lib/risk/labels.ts` is the one web copy of the target and
+#: scope-key labels; `lib/risk/inputs.ts` and `components/admin/zt/ZtWorkspace.tsx`
+#: repeat these strings (#946). There is no way to share a Python
+#: dict with TSX, so this is a synchronization rather than a derivation --
+#: which `CLAUDE.md` says to avoid where possible and otherwise to NAME, with
+#: the window stated.
 #:
 #: The window: a label changed in one place and not the other makes the client's
-#: PDF and the consultant's screen disagree about which assessment a count
-#: belongs to. Cosmetic rather than numeric -- the counts themselves come from
-#: one parser -- but it is the kind of drift nobody notices. Change both.
+#: PDF and the screens disagree about which assessment a count belongs to.
+#: Cosmetic rather than numeric -- the counts themselves come from one parser --
+#: but it is the kind of drift nobody notices. Change both.
 _SERVICE_LABELS = {
     "attack": "ATT&CK coverage",
     "csf": "NIST CSF",
     "zt": "Zero Trust",
 }
+
+#: The ZT frameworks by the names the ZT deliverable already prints
+#: (`app/zt/exporters.py`), so the Risk Register names a framework the way the
+#: client's own Zero Trust report does (advisor, #736 6019425290, Q3).
+#: `ZT_FRAMEWORK_NAMES` in `apps/web/src/lib/risk/labels.ts` is the one web copy
+#: of the target and scope-key labels; `lib/risk/inputs.ts` and
+#: `components/admin/zt/ZtWorkspace.tsx` repeat these strings (#946). Change
+#: both.
+ZT_FRAMEWORK_NAMES = {
+    "cisa_ztmm_2_0": "CISA ZTMM 2.0",
+    "dod_ztra": "DoD ZT Reference Architecture",
+}
+
+
+def scope_label(key: str) -> str:
+    """A scored-coverage row's label (#876). "zt" while a kind has one source;
+    "zt:cisa_ztmm_2_0" -> "Zero Trust (CISA ZTMM 2.0)" when it has two. An
+    unknown key renders as itself, for the reason `_link_scope_lines` gives."""
+    if key in _SERVICE_LABELS:
+        return _SERVICE_LABELS[key]
+    kind, _, qualifier = key.partition(":")
+    if kind in _SERVICE_LABELS and qualifier in ZT_FRAMEWORK_NAMES:
+        return f"{_SERVICE_LABELS[kind]} ({ZT_FRAMEWORK_NAMES[qualifier]})"
+    return key
 
 
 def _link_scope_lines(ctx: RiskExportContext) -> list[str]:
@@ -362,8 +504,8 @@ def _link_scope_lines(ctx: RiskExportContext) -> list[str]:
     if not ctx.link_scope:
         return []
     parts = [
-        f"{_SERVICE_LABELS.get(service, service)} {scored} of {total}"
-        for service, scored, total in sorted(ctx.link_scope)
+        f"{scope_label(service)} {scored} of {total}"
+        for service, scored, total, _pending in sorted(ctx.link_scope)
     ]
     return [
         "Scored coverage available to link — " + ", ".join(parts),
@@ -374,6 +516,60 @@ def _link_scope_lines(ctx: RiskExportContext) -> list[str]:
             "cannot appear in the two Linked columns."
         ),
     ]
+
+
+#: #415, ruling (b) (#736 6072976838): a register whose record holds no
+#: pending-review count says so, rather than reading as "none pending".
+PENDING_REVIEW_NOT_RECORDED = (
+    "Whether any linked technique was pending review was not recorded for this register."
+)
+
+
+def _is_attack_scope(service: str) -> bool:
+    """The ATT&CK row of a scope record, by the kind its scope key names (the
+    same reading `scope_label` makes). Only ATT&CK has a review queue."""
+    return service.partition(":")[0] == "attack"
+
+
+def _attack_pending(ctx: RiskExportContext) -> int | None:
+    """#415. The ATT&CK pending-review count, or None when not recorded: a
+    register with no ATT&CK scope row (one generated before #403) or one whose
+    ATT&CK row predates the count."""
+    for service, _scored, _total, pending in ctx.link_scope:
+        if _is_attack_scope(service):
+            return pending
+    return None
+
+
+def _pending_review_lines(ctx: RiskExportContext) -> list[str]:
+    """#415, the approved copy (#736 6069843323 C1; (a) and (b) in 6072976838).
+
+    Nothing at n = 0; the count when some are pending; the not-recorded
+    sentence when the register holds no count."""
+    n = _attack_pending(ctx)
+    if n is None:
+        return [PENDING_REVIEW_NOT_RECORDED]
+    if n == 0:
+        return []
+    if n == 1:
+        return [
+            "1 scored ATT&CK technique is pending review and is not linked: its status "
+            "rests on evidence not yet confirmed."
+        ]
+    return [
+        f"{n} scored ATT&CK techniques are pending review and are not linked: their "
+        "status rests on evidence not yet confirmed."
+    ]
+
+
+def _pending_cell(service: str, pending: int | None) -> int | str:
+    """#415, C2: the "Pending review" column. ATT&CK shows its count, 0
+    included (ruling (a)); CSF and ZT have no review queue and read "n/a"; an
+    ATT&CK row from before the count reads "not recorded" (#736 6073312727),
+    because a blank cell in a column that always shows a number reads as 0."""
+    if not _is_attack_scope(service):
+        return "n/a"
+    return "not recorded" if pending is None else pending
 
 
 def _summary_lines(ctx: RiskExportContext) -> list[str]:
@@ -415,8 +611,113 @@ def _summary_lines(ctx: RiskExportContext) -> list[str]:
         "By recommended action — " + ", ".join(f"{k} {v}" for k, v in acts.items() if v),
         *_missing_line(total, total - len(actions), "no recommended action"),
         *_finding_lines(ctx.finding_counts),
+        *_target_lines(
+            ctx.targets,
+            csf_unscored_note=ctx.csf_unscored_targets_note,
+            csf_no_shared_row=ctx.csf_no_shared_row,
+        ),
+        # #915 (S3), one line or none. #944: immediately after the target
+        # lines. Their last line is a Zero Trust one whenever the register has
+        # one, and the DoD one when both ZT frameworks are engaged, because
+        # `risk/baseline.py` sorts by kind, then framework. So the cap and the
+        # target it lowers read as one baseline, not two.
+        *([ctx.zt_capped_target_note] if ctx.zt_capped_target_note else []),
+        *([ctx.csf_source_note] if ctx.csf_source_note else []),
         *_link_scope_lines(ctx),
+        *_pending_review_lines(ctx),
     ]
+
+
+#: #474. Which word each kind's target takes.
+_TARGET_UNITS = {"csf": "tier", "zt": "stage"}
+
+
+def target_label(kind: str, framework: str | None, *, name_framework: bool) -> str:
+    """#474. What a target line calls a service: its kind's label, and the ZT
+    framework only when `name_framework` (the record holds more than one ZT
+    entry, Q3, ruling 2a). Built from the record's `kind` and `framework`,
+    never from a scope key.
+
+    `kind` and `framework` are the reader's validated values, so a missing
+    label raises rather than printing a token. Two services of one kind AND
+    framework cannot reach here (generate refuses them, 409
+    `risk_register_duplicate_inputs`, and the reader refuses a record holding
+    two). If per-service keying (post-MVP) lifts that refusal, a third
+    discriminator, the service title, is needed here.
+    """
+    label = _SERVICE_LABELS[kind]
+    if name_framework and framework is not None:
+        return f"{label} ({ZT_FRAMEWORK_NAMES[framework]})"
+    return label
+
+
+#: #474 D': the CSF Playbook baseline, by the target's recorded source token
+#: (`risk/baseline.py::PLAYBOOK_SOURCE_BY_STATE`). Approved verbatim: #736
+#: 6087027524 (Q1) for `playbook`, 6087786886 (item 4) for the other two.
+_PLAYBOOK_LINES = {
+    "playbook": (
+        "{label} findings are measured against each subcategory's target level in the CSF "
+        "Playbook."
+    ),
+    "playbook_no_targets": (
+        "{label} was not measured for this register: the CSF Playbook has no target levels set."
+    ),
+    "playbook_no_scores": (
+        "{label} was not measured for this register: the CSF Playbook has no scores."
+    ),
+}
+
+#: R11 (#736 6103383277), approved verbatim: `playbook_no_scores` where the
+#: Playbook had scores and targets that never shared a row.
+_PLAYBOOK_NO_SHARED_ROW_LINE = (
+    "{label} was not measured for this register: no CSF Playbook row has both a score and "
+    "a target."
+)
+
+
+def _target_lines(
+    targets: tuple[tuple[str, str | None, int | None, str, str], ...] | None,
+    *,
+    csf_unscored_note: str | None = None,
+    csf_no_shared_row: bool = False,
+) -> list[str]:
+    """#474. Which target each service's findings were measured against.
+
+    Two states: recorded (one line per service, in the reader's order) and not
+    recorded (one line saying so). A record with no CSF or ZT entry cannot
+    occur: generate requires a CSF or ZT input, and the reader reads an empty
+    record as not recorded (ruling 2d). ATT&CK has no target and never
+    appears here.
+    """
+    if targets is None:
+        return [
+            "The targets these findings were measured against were not recorded for "
+            "this register."
+        ]
+    name_framework = sum(1 for kind, *_ in targets if kind == "zt") > 1
+    lines = []
+    for kind, framework, target, source, _origin in targets:
+        label = target_label(kind, framework, name_framework=name_framework)
+        if source in _PLAYBOOK_LINES:
+            # #474 D': approved, #736 6087027524 (Q1) and 6087786886 (item 4).
+            if source == "playbook_no_scores" and csf_no_shared_row:
+                lines.append(_PLAYBOOK_NO_SHARED_ROW_LINE.format(label=label))
+            else:
+                lines.append(_PLAYBOOK_LINES[source].format(label=label))
+            # R10 (#736 6102665946): with the CSF line, and only when the
+            # Playbook measured (the other two lines already say nothing was).
+            if source == "playbook" and csf_unscored_note:
+                lines.append(csf_unscored_note)
+            continue
+        unit = _TARGET_UNITS[kind]
+        if source == "client":
+            why = "the engagement target when this register was generated"
+        elif source == "default":
+            why = "SHIELD's default: no engagement target was set"
+        else:
+            why = "SHIELD's default: the engagement target could not be used"
+        lines.append(f"{label} findings are measured against target {unit} {target}, {why}.")
+    return lines
 
 
 def _finding_lines(counts: tuple[int, int, int] | None) -> list[str]:
@@ -525,18 +826,28 @@ def render_pdf(ctx: RiskExportContext) -> bytes:
         )
         return t
 
+    def _text(s: str, style) -> Paragraph:
+        """#862. `Paragraph` parses its input as markup: unescaped, "ATT&CK"
+        printed as "ATT&CK;", "<Labs>" was dropped in silence, and "</b>" in a
+        client's name made the export fail. `html.escape(s, quote=False)`
+        escapes exactly `&`, `<` and `>`, the three characters the markup
+        reads, so every string prints as itself. Here and not in
+        `_summary_lines`, which also feeds the DOCX and XLSX: those are plain
+        text and would print `&amp;`."""
+        return pdf_text(s, style)  # #775: the shared helper, app/pdf_export.py
+
     story: list = [
-        Paragraph(f"Risk Register (v{ctx.version})", h1),
-        Paragraph(ctx.client_legal_name, body),
+        _text(f"Risk Register (v{ctx.version})", h1),
+        _text(ctx.client_legal_name, body),
         pdf_paragraph(ctx.ai_mode, body),  # #646, under the title
-        *([Paragraph(DRAFT_MARKER, body)] if ctx.draft else []),
+        *([_text(DRAFT_MARKER, body)] if ctx.draft else []),
         Spacer(1, 0.2 * inch),
-        Paragraph("Summary", h2),
+        _text("Summary", h2),
     ]
     for line in _summary_lines(ctx):
-        story.append(Paragraph(line, body))
+        story.append(_text(line, body))
 
-    story.append(Paragraph("Likelihood x Impact matrix", h2))
+    story.append(_text("Likelihood x Impact matrix", h2))
     matrix = matrix_counts(
         [
             (Likelihood(e.likelihood), Impact(e.impact))
@@ -559,35 +870,62 @@ def render_pdf(ctx: RiskExportContext) -> bytes:
     left_out = len(ctx.entries) - sum(c.count for c in matrix)
     if left_out:
         story.append(
-            Paragraph(
+            _text(
                 f"{left_out} unrated {_entries_noun(left_out)} "
                 f"{'is' if left_out == 1 else 'are'} not in this matrix.",
                 body,
             )
         )
 
-    story.append(Paragraph("Tier legend (review cadence)", h2))
+    story.append(_text("Tier legend (review cadence)", h2))
     story.append(_grid([["Tier", "Suggested cadence"], *_legend_rows()], [1.2 * inch, 5.0 * inch]))
 
     story.append(PageBreak())
-    story.append(Paragraph("Register", h2))
-    table = [["ID", "Weakness", "Axis", "L x I", "Tier", "Recommended", "Linked Source"]]
+    story.append(_text("Register", h2))
+    table = [
+        [
+            "ID",
+            "Weakness",
+            "Axis",
+            OTHER_AXES_HEADER,
+            "L x I",
+            "Tier",
+            "Recommended",
+            "Linked Source",
+        ]
+    ]
     for i, e in enumerate(ctx.entries, start=1):
         table.append(
             [
                 str(i),
                 e.title,
                 (e.axis or "").title(),
+                _other_axes(e),
                 _li(e),
                 _rating(e.tier),
                 (e.recommended_action or "").title(),
-                _source(e, ctx.source_states, ctx.review_pending),
+                _source(
+                    e,
+                    ctx.source_states,
+                    ctx.review_pending,
+                    csf_playbook=_csf_from_playbook(ctx.targets),
+                ),
             ]
         )
     story.append(
         _grid(
             table,
-            [0.4 * inch, 2.0 * inch, 0.8 * inch, 1.1 * inch, 0.8 * inch, 1.0 * inch, 1.2 * inch],
+            # 7.3 inches, as before: Weakness gives up the width Other axes takes.
+            [
+                0.4 * inch,
+                1.5 * inch,
+                0.8 * inch,
+                0.9 * inch,
+                1.0 * inch,
+                0.7 * inch,
+                0.9 * inch,
+                1.1 * inch,
+            ],
         )
     )
     doc.build(story)
@@ -627,15 +965,32 @@ def render_docx(ctx: RiskExportContext) -> bytes:
             str(i),
             e.title,
             (e.axis or "").title(),
+            _other_axes(e),
             _li(e),
             _rating(e.tier),
             (e.recommended_action or "").title(),
-            _source(e, ctx.source_states, ctx.review_pending),
+            _source(
+                e,
+                ctx.source_states,
+                ctx.review_pending,
+                csf_playbook=_csf_from_playbook(ctx.targets),
+            ),
         ]
         for i, e in enumerate(ctx.entries, start=1)
     ]
     add_table(
-        doc, ["ID", "Weakness", "Axis", "L x I", "Tier", "Recommended", "Linked Source"], rows
+        doc,
+        [
+            "ID",
+            "Weakness",
+            "Axis",
+            OTHER_AXES_HEADER,
+            "L x I",
+            "Tier",
+            "Recommended",
+            "Linked Source",
+        ],
+        rows,
     )
 
     return to_bytes(doc)

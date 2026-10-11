@@ -23,7 +23,7 @@ import { stageAxis } from "./stageAxis";
 describe("stageAxis", () => {
   it("gives DoD ZTRA its own three-stage ladder", () => {
     expect(stageAxis("dod_ztra")).toEqual([
-      "Not Started",
+      "Below Target",
       "Target",
       "Advanced",
     ]);

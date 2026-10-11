@@ -11,6 +11,7 @@ import type {
 import { ZtMaturityReference } from "@/components/zt/ZtMaturityReference";
 
 import { ZtStagePicker } from "./ZtStagePicker";
+import { CrossCuttingHeading, startsCrossCutting } from "./CrossCuttingHeading";
 
 import type { JSX } from "react";
 
@@ -104,99 +105,101 @@ export function ZtQuestionnaire({
         >
           <p className="text-sm text-ink-secondary">{activePillar.purpose}</p>
           <ul className="flex flex-col gap-3">
-            {activePillar.capabilities.map((cap) => {
+            {activePillar.capabilities.map((cap, i, all) => {
               const ans = answersByCode[cap.code];
               if (!ans) return null;
               return (
-                <li
-                  key={cap.code}
-                  className="rounded-md border border-border-subtle bg-surface-card p-3"
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs font-mono text-ink-tertiary">
-                        {cap.code}
-                      </p>
-                      <p className="text-sm font-medium text-ink-primary">
-                        {cap.name}
-                      </p>
-                      <p className="mt-1 text-sm text-ink-secondary">
-                        {cap.outcome}
-                      </p>
-                    </div>
-                    <div className="flex flex-col items-end gap-2">
-                      <ZtStagePicker
-                        value={ans.maturity_stage}
-                        stages={catalog.stages}
-                        disabled={readOnly}
-                        ariaLabel={`Maturity stage for ${cap.code}`}
-                        onChange={(next) => {
-                          void onAnswerUpdate(ans.id, { maturity_stage: next });
-                        }}
-                      />
-                      <label className="flex items-center gap-1 text-xs text-ink-tertiary">
-                        Target
-                        <select
-                          value={ans.target_stage ?? ""}
+                <React.Fragment key={cap.code}>
+                  {startsCrossCutting(all, i) ? <CrossCuttingHeading /> : null}
+                  <li className="rounded-md border border-border-subtle bg-surface-card p-3">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-mono text-ink-tertiary">
+                          {cap.code}
+                        </p>
+                        <p className="text-sm font-medium text-ink-primary">
+                          {cap.name}
+                        </p>
+                        <p className="mt-1 text-sm text-ink-secondary">
+                          {cap.outcome}
+                        </p>
+                      </div>
+                      <div className="flex flex-col items-end gap-2">
+                        <ZtStagePicker
+                          value={ans.maturity_stage}
+                          stages={catalog.stages}
                           disabled={readOnly}
-                          aria-label={`Target stage for ${cap.code}`}
-                          onChange={(e) =>
+                          ariaLabel={`Maturity stage for ${cap.code}`}
+                          onChange={(next) => {
                             void onAnswerUpdate(ans.id, {
-                              target_stage: e.target.value
-                                ? Number(e.target.value)
-                                : null,
-                            })
-                          }
-                          className="rounded-md border border-border bg-surface-card px-1.5 py-1 text-xs text-ink-primary"
-                        >
-                          <option value="">—</option>
-                          {catalog.stages.map((s) => (
-                            <option key={s.stage} value={s.stage}>
-                              L{s.stage}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                              maturity_stage: next,
+                            });
+                          }}
+                        />
+                        <label className="flex items-center gap-1 text-xs text-ink-tertiary">
+                          Target
+                          <select
+                            value={ans.target_stage ?? ""}
+                            disabled={readOnly}
+                            aria-label={`Target stage for ${cap.code}`}
+                            onChange={(e) =>
+                              void onAnswerUpdate(ans.id, {
+                                target_stage: e.target.value
+                                  ? Number(e.target.value)
+                                  : null,
+                              })
+                            }
+                            className="rounded-md border border-border bg-surface-card px-1.5 py-1 text-xs text-ink-primary"
+                          >
+                            <option value="">—</option>
+                            {catalog.stages.map((s) => (
+                              <option key={s.stage} value={s.stage}>
+                                L{s.stage}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
                     </div>
-                  </div>
-                  <details className="mt-2">
-                    <summary className="cursor-pointer text-xs font-medium text-ink-tertiary hover:text-ink-secondary">
-                      Notes {ans.notes ? "·" : ""}{" "}
-                      {ans.notes ? (
-                        <span className="font-normal text-ink-secondary">
-                          {ans.notes.length > 60
-                            ? `${ans.notes.slice(0, 60)}…`
-                            : ans.notes}
-                        </span>
-                      ) : null}
-                    </summary>
-                    <textarea
-                      aria-label={`Notes for ${cap.code}`}
-                      // KEYED ON THE CONFIRMED VALUE (#283). `defaultValue`
-                      // makes this uncontrolled, and React does not reset a
-                      // user-dirtied textarea when that prop changes -- so a
-                      // failed save left the REFUSED text on screen while the
-                      // alert said it had been restored.
-                      //
-                      // This component is rendered by the CLIENT
-                      // self-assessment as well as the admin workspace, which
-                      // is why a client-facing fix reaches an admin file. The
-                      // admin path gets the same correction, incidentally and
-                      // correctly -- it reverts by re-fetch too.
-                      key={`${ans.id}:${ans.notes ?? ""}`}
-                      defaultValue={ans.notes ?? ""}
-                      disabled={readOnly}
-                      rows={3}
-                      onBlur={(e) => {
-                        const v = e.currentTarget.value.trim();
-                        if (v === (ans.notes ?? "")) return;
-                        void onAnswerUpdate(ans.id, { notes: v });
-                      }}
-                      className="mt-2 w-full rounded-md border border-border bg-surface-card p-2 text-sm text-ink-primary focus:border-brand-500 focus:outline-hidden"
-                      placeholder="Evidence, references, exceptions…"
-                    />
-                  </details>
-                </li>
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-xs font-medium text-ink-tertiary hover:text-ink-secondary">
+                        Notes {ans.notes ? "·" : ""}{" "}
+                        {ans.notes ? (
+                          <span className="font-normal text-ink-secondary">
+                            {ans.notes.length > 60
+                              ? `${ans.notes.slice(0, 60)}…`
+                              : ans.notes}
+                          </span>
+                        ) : null}
+                      </summary>
+                      <textarea
+                        aria-label={`Notes for ${cap.code}`}
+                        // KEYED ON THE CONFIRMED VALUE (#283). `defaultValue`
+                        // makes this uncontrolled, and React does not reset a
+                        // user-dirtied textarea when that prop changes -- so a
+                        // failed save left the REFUSED text on screen while the
+                        // alert said it had been restored.
+                        //
+                        // This component is rendered by the CLIENT
+                        // self-assessment as well as the admin workspace, which
+                        // is why a client-facing fix reaches an admin file. The
+                        // admin path gets the same correction, incidentally and
+                        // correctly -- it reverts by re-fetch too.
+                        key={`${ans.id}:${ans.notes ?? ""}`}
+                        defaultValue={ans.notes ?? ""}
+                        disabled={readOnly}
+                        rows={3}
+                        onBlur={(e) => {
+                          const v = e.currentTarget.value.trim();
+                          if (v === (ans.notes ?? "")) return;
+                          void onAnswerUpdate(ans.id, { notes: v });
+                        }}
+                        className="mt-2 w-full rounded-md border border-border bg-surface-card p-2 text-sm text-ink-primary focus:border-brand-500 focus:outline-hidden"
+                        placeholder="Evidence, references, exceptions…"
+                      />
+                    </details>
+                  </li>
+                </React.Fragment>
               );
             })}
           </ul>

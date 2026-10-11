@@ -55,6 +55,7 @@ import { DiscardDraftButton } from "./DiscardDraftButton";
 import { DispositionHelp } from "./DispositionHelp";
 import { EditableCapabilityTable } from "./EditableCapabilityTable";
 import { ExtractionFindings } from "./ExtractionFindings";
+import { ExtractionFlags } from "./ExtractionFlags";
 import { IntakeDocumentsPanel } from "./IntakeDocumentsPanel";
 import { OverlapDashboard } from "./OverlapDashboard";
 
@@ -581,6 +582,14 @@ Components carry no cost of their own — this licence keeps its full value.`,
     }
   }
 
+  // KNOWN TWIN, deliberately left for #935 (for #835): this sum and the
+  // "Capabilities" card below (`list.items.length`) include a split bundle's
+  // named parts. A part has no cost by design, so the sum is right unless a
+  // cost has been typed onto a part (nothing refuses that; #927). The count
+  // reads parts as capabilities, while the client dashboard's Applications,
+  // the PDF and DOCX "Capabilities reviewed" and the deliverable summary on
+  // the client's Results page count source items only, through
+  // `tech_debt/components.py`. Admin only.
   const totalCost =
     list?.items.reduce((acc, i) => acc + (i.annual_cost_usd ?? 0), 0) ?? 0;
   const lowConfidence =
@@ -942,6 +951,7 @@ Components carry no cost of their own — this licence keeps its full value.`,
                 )}
               </div>
             ) : null}
+            <ExtractionFlags flags={list.extraction_flags} />
             <ExtractionFindings
               findings={list.extraction_findings}
               readOnly={readOnly}

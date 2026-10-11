@@ -750,6 +750,18 @@ export function CsfWorkspace({
               assessment.status !== "draft" && assessment.status !== "submitted"
             }
           >
+            {/* #852: the API's own sentence, from the derivation the
+                deliverable and the client dashboard call (`csf/retired.py`),
+                never rebuilt here. The questionnaire below iterates the
+                catalog, so this is the only place a kept answer shows. */}
+            {assessment.retired_answers_note ? (
+              <p
+                className="mb-3 text-sm text-ink-secondary"
+                data-testid="csf-retired-answers"
+              >
+                {assessment.retired_answers_note}
+              </p>
+            ) : null}
             <CsfQuestionnaire
               catalog={catalog}
               answersByCode={answersByCode}

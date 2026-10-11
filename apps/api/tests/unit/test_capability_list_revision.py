@@ -176,11 +176,23 @@ def _revision(w: World) -> int:
 
 
 def _decide_all(w: World) -> None:
-    for item in _latest(w)["items"]:
+    latest = _latest(w)
+    for item in latest["items"]:
         r = w.c.patch(
             f"/tech-debt/capability-items/{item['id']}", headers=w.h, json={"disposition": "keep"}
         )
         assert r.status_code == 200, r.text
+    # #850: approve refuses an excluded row nobody confirmed, so deciding the
+    # review includes confirming the exclusions. Setup only: nothing here is
+    # about exclusions, and the edit drivers below still include row 1 and
+    # re-confirm row 3 after approval.
+    for row in latest["excluded_rows"]:
+        if row.get("confirmed") is not True:
+            r = w.c.post(
+                f"/tech-debt/capability-lists/{w.list_id}/excluded-rows/{row['index']}/confirm",
+                headers=w.h,
+            )
+            assert r.status_code == 200, r.text
 
 
 def _approve(w: World):

@@ -1,5 +1,327 @@
 # Gene — in-flight status
 
+_2026-10-11 (track6): #474 E is a draft PR on `track6/474-e-risk-evidence`,
+on top of D' (merged as dd6a788a) and #1000 (merged as b7a44039)._
+
+**What E does:** the Risk Register's AI is now told each finding's evidence,
+and its prompt is the approved text (v4), pinned. For ATT&CK it gets the
+status, which of Detect, Prevent and Respond are in place and with which
+confirmed tools, and the rationale and notes; for CSF, the Playbook levels per
+tier, whether evidence capped them, and the Playbook notes; for Zero Trust, the
+stage, the target it was compared against, and the notes. An ATT&CK assessment
+approved before statuses were computed sends only its stored status, so the AI
+is never shown function states its screens do not show. Entries can name other
+axes they affect (a new column on both screens and in the files); when the AI
+sent axes that could not be read, only the consultant's register says so,
+because the kept axes are accurate and a parse failure is not a client fact.
+One open question is with the advisor for you, #1031: unscored seed tiers pull
+a scored tier's Enterprise level down, and E's evidence now shows that to the
+AI as well. It needs migration 0066 and comes back to you (conditions 4, 5
+and 6).
+
+_2026-10-09 (track5): the #806 CSF prompt is built on `track5/806-csf-prompt`;
+the PR is not yet open. It ships your approved CSF text (#806 comment
+5982122270, sha256-pinned) as `prompt_version` "v2", sends each
+subcategory's NIST outcome text through #985's catalog guard, a batch's own
+codes only, and rewrites the offline fixture from the prompt. The test edits
+are A1 to A5 as approved on #736 (comment 6075712436), s7 included. The batch
+size stays at 10 until the authorized probe runs, which waits on a provider
+key. No live call was made. It merged as PR #1000 (squash b7a44039, 2026-10-11). Your ruling 2 is built
+on it (2026-10-10): a live run leaves a row with no notes as it was, and
+says so on the Run-AI panel, beside the row in the Enterprise table, and in
+every Playbook file, from the last live run. Offline runs are unchanged. Two
+small edits to existing live tests (they now give their row notes) were
+approved by the advisor (#736 6103383277), and the copy now says "live"
+(#736 6104067136). Main, with D', is merged in (2026-10-11). It comes back to you, not self-merged: conditions 5 and
+6._
+
+_2026-10-10 (track6): #474 D' (your PR D) merged as PR #1030 (squash
+dd6a788a), from `track6/474-d-playbook-risk`._
+
+**What it does:** the Risk Register's CSF risks now come from the Playbook
+score you chose (#736 5984218862), not the questionnaire tier. A subcategory is
+a risk when its Playbook level is below its Playbook target, and the register
+says on every screen and file, only when it has CSF risks: "CSF risks in this
+register come from Kentro's evidence-based assessment. They can differ from
+your self-assessment on the CSF dashboard." The client's CSF dashboard is
+unchanged. Per your ruling (a) (#736 6101751588), made per tier row by R10
+(#736 6102665946), a subcategory can be a CSF risk only when one of its tier
+rows is both scored and targeted, and the register says CSF was measured only
+when at least one subcategory has such a row. Otherwise (no targets, only
+targets, or a score and a target on different rows) it says CSF was not
+measured, with no CSF risks and no source note, instead of implying "no gaps";
+for scores and targets on different rows the files and both dashboards say
+"no CSF Playbook row has both a score and a target" (R11, #736 6103383277;
+the dashboards by #736 6104067136). When it measured, the
+other targeted subcategories are counted on the Inputs panel and in the files:
+"{n} targeted subcategories have no row with both a score and a target, and
+raise no finding." If someone edits the
+Playbook after the register is generated, it must be regenerated before it can
+be published. Two tests about the old CSF engagement-tier rule are deleted,
+with the advisor's approval, because your decision retired that rule. The Atlas demo
+gets Playbook rows in a small PR right after this one. When the PR opens it
+comes back to you (conditions 5 and 6).
+
+_2026-10-09 (track4): #889 PR 1 is PR #1021 (a draft), for #889. When a tool leaves a client's security tool list after their ATT&CK report is approved, the client's dashboard says so and marks the tool, the documents say so as of finalize, and the home card says its ATT&CK total may be understated when a technique counted as covered relies on such a tool. When nothing could be checked, the dashboard says so: one sentence when the client has no list or only discarded ones, another when its lists in force have no security tools. The check reads, per Tech Debt service, its newest approved or released list version and ignores its drafts, so an open draft changes nothing the client sees; a service with only drafts uses its newest draft, so the check still works before anyone approves the list (R6b, #736 6094994432). "Newest" is the highest version number. A version with no security tools is skipped for the one before it, and the admin workspace, the deliverable and the client dashboard name the version used (R4, wording approved in #736 6093188709 and 6093549176; the admin line for a draft, C8a, applies only to a service with only drafts). So ATT&CK approve refuses a tool the version in force dropped, while Run AI can still offer it from an older version or a draft (#1012). Two declared test edits: the golden `dashboard.json` and `test_attack_planned_retirement.py` (approved in #736 6092259096). **One thing needs you:** the golden `dashboard.json` gains the "not checked" sentence; the advisor approved it (#736 6090360421) and your ratification is pending, as for #851's. Filed from review: #1005, #1010, #1011, #1019 and #1020. The Risk half waits for D′. It comes back to you: conditions 5 and 6._
+
+_2026-10-09 (track1): #853 is implemented, PR #1014 from
+`track1/853-attack-omitted`, for #853. An ATT&CK technique a Run-AI batch leaves out is now
+counted and named on the run result (`omitted_count`, `omitted_techniques`,
+with the status each one kept), and the audit row carries counts only. The
+ATT&CK Run-AI panel now says how many techniques got no status, lists the
+ones still unscored, and lists in red the ones that kept an earlier status,
+with the approved line telling the consultant to check them before approving.
+The disclosure gate is green. Not on any screen yet: the techniques whose AI
+entry was refused for a reason other than N/A or a forbidden Partial reason
+(#859). It comes back to you: conditions 5 and 6._
+
+_2026-10-09 (track5): #865 is built on `track5/865-whatif-name-hints`, for
+#865; no PR yet. The ATT&CK what-if's AI run and the ATT&CK Run-AI now hide
+the names of the client's own users from the AI, as the Tech Debt extraction
+and the what-if chat box already did. A tool an admin names after a colleague
+(on the what-if panel, or on the capability list) reaches the provider as
+"[NAME] ...", and the what-if still credits it when the AI cites it that way.
+Two added tools that would both reach the AI as "[NAME] Scanner" are refused
+when the what-if is created. Zero Trust and CSF send typed notes without this
+dictionary too; those files belong to other open PRs, so they are reported to
+you, not changed. It comes back to you: conditions 5 and 6._
+
+_2026-10-09 (track1): #993 is built on `track1/993-docx-control-chars`, for
+#993; the PR is not yet open. A client legal name with a control character
+(for example a stray BEL byte, which the admin route accepts) no longer blocks
+every Word deliverable for that client: the DOCX path now drops the same
+characters the XLSX path drops, and logs one warning per string without the
+value. U+FFFE and U+FFFF are dropped too, and a very long service title plus
+legal name no longer fails: only the file's metadata title is cut, the visible
+heading is whole. A lone surrogate is refused by the API before it is stored.
+Refusing control characters at the admin route stays with the post-MVP
+input-validation item. It comes back to you: conditions 5 and 6._
+
+_2026-10-09 (track6): #997's code-list half is built on `track6/997-risk-code-lists`._
+
+**What it does:** the Risk Register's AI call now sends its two lists of
+citable codes exactly as the catalogs have them. Before, a client whose name
+matched a code prefix ("GV", "DoD") had those codes rewritten to "[CLIENT]..."
+before the model saw them. A list entry that is not a real catalog code stops
+the call before anything is sent. The findings themselves are unchanged and
+still redacted; that half waits on the Risk E ruling. Held as track6's second
+branch, with no PR yet; when it is opened it comes back to you (conditions 5
+and 6).
+
+_2026-10-09 (track1): #775 and #972 are built on `track1/775-export-escape`,
+for #775 and #972, with `main` merged in at e3c962f0 after the run_batches PR
+(#978) landed; the PR is not yet open. Every PDF prints the
+service title and the client's name as text (no more "ATT&CK;", and a name with
+"</b>" no longer fails finalize), and every free-text XLSX cell in CSF, Zero
+Trust, Tech Debt and Risk is stored as text, so a value opening with "=", "+",
+"-", "@", tab or carriage return is shown as typed and not evaluated in the
+.xlsx (a CSV saved from it carries the raw value, for #992). One golden word
+changes, declared. Follow-up filed as #991 (tier-3): the `pdf_export.py`
+docstring states a greppable invariant that the other exporters do not meet
+and nothing checks. It comes back to you: conditions 5 and 6._
+
+_2026-10-09: #944 is built on `track6/944-cap-note-order`._
+
+**What it does:** the DoD cap note now sits directly under the Zero Trust
+target line in the Risk Register's three files and on the admin screen, so
+the two no longer read as two baselines. The client dashboard already had it
+there and needed no code change; its test was shown able to fail by a hand
+mutation, not a revert. Tested with a single DoD target and with CISA plus
+DoD, where the note follows the DoD line; "targets not recorded" is not
+tested. Order only, no wording changed, as the advisor ruled on #736
+comment 6069566861. Comes back to you: conditions 5 and 6.
+
+_2026-10-09: #984 and #986 (client-name redaction rewrote catalog text and
+catalog codes sent to the AI) are draft PR #985 on
+`track5/984-catalog-redaction`. Catalog fields and code lists are now sent
+as the catalog has them and guarded byte for byte; the client's own notes and
+tool names are still redacted. A client named "DoD" no longer turns every DoD
+capability code into "[CLIENT].USR.01". It comes back to you: conditions 5
+(`app/ai/`) and 6 (the model sees different text for such clients)._
+
+_2026-10-09 (track1): the #806 run_batches fix is pushed on
+`track1/806-run-batches-cancel`, for #806, with `main` merged in after #952
+landed, and opened as a draft PR.
+A batched Run-AI now cancels its queued batches on any exception, not only its
+run deadline, and re-raises the original exception unchanged, so a Ctrl-C no
+longer leaves queued batches to bill. It also corrects the consistency
+measure's docstring and comments: after an interrupt only a batch already past
+the stop check, up to `max_workers` of them, can still bill. The report's own
+lower-bound string says the same, with the job's worker count read from its
+constant; the edit to the test on `main` was approved. It comes back
+to you under merge-rule condition 5 (`app/ai/`, `apps/api/tests/**`)._
+
+_2026-10-09: #930 is built on `track6/930-published-amber`, a draft PR (opened
+after #974 merged)._
+
+**What it does:** on a published Risk Register version, the carried-ratings
+block no longer tells the consultant to rate entries again in a table that is
+no longer editable; the sentence ends at the finding codes and the amber style
+stays (advisor, #736 comment 6067815887). Drafts read as before. The draft-side
+follow-up is #950. Comes back to you under condition 5 only.
+
+_2026-10-09: #415 is built on `track6/415-pending-links`, a draft PR._
+
+**What it does:** an ATT&CK technique pending review is no longer citable in
+the Risk Register, as you ruled (#736 comment 5986057990 item 14), and every
+file and the admin banner count it apart from "unscored". A register generated
+before this says the count was not recorded. Under R3 the exclusion only bites
+on ATT&CK assessments approved before R3. The client dashboard is filed as
+#970. Comes back to you: conditions 5 and 6.
+
+_2026-10-08: #806 C1 (seven CSF outcome strings made NIST CSWP 29 verbatim:
+GV.OC-02, GV.OC-03, GV.OC-04, GV.RM-04, GV.RM-05, GV.RM-07, ID.RA-02) is on
+`track5/806-csf-c1`. A test reads each from the pinned PDF under the advisor's
+comparison rules (#736 comment 6070708992). GV.OC-03 keeps its two em dashes
+as printed. The client sees the new wording in the questionnaire and every
+catalog surface, so it comes back to you: conditions 5 and 6. The
+character-only rows are filed separately as tier-3._
+
+_2026-10-08: #840 (a Zero Trust capability the AI returns no result for is now
+counted and shown) is draft PR #963 on `track4/840-zt-no-result`, merged with
+main at 5ef7f700. The run result carries `omitted_count` and
+`omitted_capabilities`, the consultant's panel shows them with the approved
+Z1 to Z6 copy, and the audit row carries counts only. Step 1 `done` is
+unchanged. It comes back to you, not self-merged: conditions 5 and 6. The
+adversarial review is pending._
+
+_2026-10-08 (track1): the #806 corpus PR is draft #952 on
+`track1/806-measure-corpus`, for #806. It adds the measure's synthetic corpus
+(`--notes-corpus` and a synthetic Tech Debt XLSX), the per-service cost caps, and
+two fixes: `--out` is opened before any paid call, and `charged_likely` is read
+from the `llm_calls` rows. After review it also replaces the report atomically
+after every run (so it is always either empty or one whole report holding every
+completed run), counts a started call with no row as unknown spend, refuses a
+model with no recorded price (a hard kill still writes nothing, so `--out` can stay
+empty after paid calls; after an interrupt during a batched job, queued batches
+can still bill, so the aborted report is always kept and its call count is a
+lower bound, even at 0; the
+`app/ai/batching.py` fix is with the advisor) (superseded 2026-10-09, see above), records the DATABASE_URL query parameters, and
+compares two mitre_map probe runs of the same batches. No live call was made.
+What the money guard enforces: each side of a service's before/after pair gets
+half that service's cap from the $25 the advisor approved (#736 comments
+5984022081 item 8 and 6067815887); a run after the first is not started if the
+spend so far plus the largest run so far, input and output at list price, would
+cross it. That is a projection, not a guarantee, and the first run is not bounded
+in advance. Spend is reported per run. The paid "before" runs start only after
+it lands and is re-reviewed. It comes back to you under merge-rule condition 5
+(`apps/api/tests/**`)._
+
+_2026-10-08: the Tech Debt prompt for #806 is draft PR #955 on
+`track3/806-tech-debt-prompt`; review findings F1, F4, F5 and F7 are built,
+and F2 and F3 are built as the advisor ruled (#736 comment 6069328834)._
+
+**What it does.** The extraction runs Tech Debt v3.2 as you approved it.
+Whatever the model still sends against v3.2's rules is kept and counted, and
+E1 says so above the list, in the copy the advisor approved on #736 (comment
+6068587667, `category_off_list` in the past tense). The counts are the
+extraction's own (ruling F2, comment 6069328834), so edits never change them,
+and they are not measured for a list an earlier prompt drafted.
+The offline fixture follows v3.2, including #845's not-in-use rule and e2e s47.
+**For #871:** the not-in-use group now fills from the AI, so Q2's "The AI found"
+is true for new extractions; close #871 by hand after merge. The existing-test
+edit in `test_tech_debt_not_in_use_signoff.py` and the s4 comment were approved
+in the same ruling. It comes back to you: conditions 5 and 6, no migration.
+
+_2026-10-08 (track2): #806, the ATT&CK `mitre_map` part, is pushed on
+`track2/806-mitre-map-prompt`. It runs the prompt you approved (comment
+5982555899) verbatim, with `prompt_version` "v2", per-batch
+`technique_details`, the four forbidden partial reasons refused on the AI
+path, and the fixture rewritten from the prompt. `_MITRE_BATCH_SIZE` stays at
+25 until the authorized live probe sets it (D2 (a)); if a full run then needs
+more than about 100 calls, it comes to you first. The PR comes back to you
+under merge-rule conditions 5 and 6._
+
+_2026-10-08: #862 (the Risk PDF printed "ATT&CK;") is built on
+`track6/862-risk-pdf-escape`, in review as PR #958; `main` 14db80a2 (#861) is merged in._
+
+**What it does:** the Risk Register PDF escapes the text it prints, so "ATT&CK",
+"&" and "<...>" in a client's legal name print as typed, and a name carrying
+"</b>" no longer fails the export. The Word file and workbook are unchanged.
+A file already published changes only when it is re-exported (accepted, #736
+comment 6067815887). One test on `main` is edited, as approved there: the "&"
+skip in `test_risk_export_unrated.py` is removed. You re-tiered #775 (the
+same defect in the other four services' PDFs) to `tier-2`, `mvp-blocking` (#736
+comment 6069566861); its plan is with the advisor. Trips merge-rule conditions 5 and 6, so it
+comes back to you.
+
+_2026-10-08: #836 (a CSF Run-AI row the model leaves out of its batch is now
+counted and named) is rebuilt on main as `track5/836-omitted-rows-v2`. The run
+result carries `omitted_count` and `omitted_rows`, the Playbook panel shows
+them with the approved O1/O2 copy, and the audit row carries the count only.
+`check_disclosure_consumers.py` now matches `omitted_*` (a condition-5 gate
+change). #840 (ZT) and #853 (ATT&CK) follow under the same design, approved on
+#736 (comment 6067815887). It comes back to you, not self-merged: conditions
+5 and 6._
+
+_2026-10-08: #474 option 2 is PR #861 (`track6/474-415-risk-baseline`), in
+review._ A Risk Register states which target its CSF and Zero Trust findings
+were measured against, in the strings the advisor approved on #736 (6053630989,
+ruled in 6054419744); the framework is named only when there are two Zero Trust
+services. #474 option 1 (freeze each source's target at release): you
+approved it and deferred it to post-MVP as the first post-MVP fix (#736
+comment 6069875345), so #474 stays open. **Correction, 2026-10-09:** this line
+also listed #415 as yours. You approved that exclusion on 2026-10-05 (#736
+comment 5986057990 item 14), and it is built in the #415 PR. Comes back to
+you: conditions 5 and 6.
+
+_2026-10-08: #852 (CSF catalog corrected to NIST CSWP 29, pinned to the PDF
+you supplied) landed as PR #940 (`d70b6e62`); D-110, migration 0065. #852 and
+#941 were closed by hand (#736 comment 6066989098). The D-107 confirmation is
+recorded in D-110. `apps/api/scripts/count_csf_retired_rows.py` (read-only)
+measures the reach on the dev database._
+
+_2026-10-08 (track4): #839, the DoD catalog (#838 PR 3), is pushed on
+`track4/zt-dod-catalog` with the F1 guard, S1 to S4 and the demo seed fix
+(#736 comments 6048561596 and 6049667540), and is waiting for a full
+adversarial review before its PR opens as a draft. It comes back to you under
+conditions 4, 5 and 6. The nine earlier existing-test edits were approved in
+#736 comment 6046898402, the two F1 test edits in 6049667540, and ruling 4's
+source-note line in 6047873969. D-109 records the decisions._
+
+_2026-10-08: #835 (with #927 folded in) built on
+`track3/835-bundle-components`, draft PR #936; review in progress, not merged._
+
+A split bundle's parts are now one rule, `tech_debt/components.py`, which every
+reader calls: they never add to spend or make it a floor, they are not counted
+as Applications or "Capabilities reviewed", and buckets count licenses. The item
+PATCH refuses a cost on a part with the copy approved on #736 (comment
+6056012075); a null cost is allowed, which is how a cost stored before the
+refusal is cleared. Savings are unchanged by ruling (#736 comment 5986057990),
+so a legacy costed part marked Cut still counts there. Follow-ups #929 and #935
+are open. Comes back to you: conditions 5 and 6.
+
+_2026-10-08: #743 landed as PR #855 (`track6/743-risk-count-nouns`,
+99279cb8)._
+
+**What it does:** count words agree with their numbers on both Risk screens,
+`carry.ts` included; the admin still-linked banner counts K = D - U - S
+(rulings on #736, comment 6054419744). **Remedy line:** you ruled it on #736
+(comment 6060627178) and tightened it for #943 (#736 comment 6064328745), and the PR
+for #939 swaps it: "Ask your consultant to complete each entry counted as
+missing above." replaces "Ask your consultant to complete
+those entries." in the constant `WITHHELD_REMEDY` and in its two pinned test
+literals. Filed from the reviews: #930, #931, #932,
+#939, #943. Trips merge-rule conditions 5 and 6, so it comes back to you.
+
+_2026-10-08: #842 (ATT&CK copy after R3) is PR #933; the advisor merges it once the re-ready line is posted._
+
+**What it does.** The Covered definition consultants see follows R3.
+`prevention_limited` now tells the client "Detected, no blocking control" /
+"This activity can be detected, but no control in place blocks it." (Option B),
+so a missing control no longer reads as a technique that cannot be prevented.
+A stored Partial reason on a computed row is shown only when its sentence is
+true of the computed Detect / Prevent / Respond line; otherwise the row reads
+"Set by what is in place". The client "Fully covered" tile says "where MITRE
+ATT&CK lists no preventive control". Rulings: #736 comments 6053562002 and
+6056012075.
+
+**What it does not do.** Already-released deliverables keep the old sentence
+(stored files, not re-finalized; the advisor's Q3 ruling). The consultant reason-code
+definition (Q5) lands in #951, the #806 ATT&CK prompt PR. #928 and #934 are filed.
+It trips conditions 5 and 6. The advisor merges it once the re-ready line is
+posted (#736 comment 6056012075), and #842 is then closed by hand.
+
 _2026-09-22 — #254 merged as #444 (`d5f97eb`); a FOLLOW-UP is open for what
 round 4 found after the merge._
 

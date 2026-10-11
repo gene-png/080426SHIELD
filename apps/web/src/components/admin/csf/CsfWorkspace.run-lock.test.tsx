@@ -206,7 +206,20 @@ describe("CsfWorkspace re-reads the assessment's AI source when a run ends (#646
       latest: RUNNING,
       last_completed: null,
     } as never);
-    vi.mocked(csfClient.fetchCsfRun).mockResolvedValue({
+    // #793: the run is HELD until the load state has been observed. Resolved
+    // at once, the run-end re-read could land before the first match, so the
+    // "none" check raced it and failed about a quarter of the time in CI.
+    let finishRun: (run: unknown) => void = () => {};
+    const heldRun = new Promise((resolve) => {
+      finishRun = resolve;
+    });
+    vi.mocked(csfClient.fetchCsfRun).mockReturnValue(heldRun as never);
+    render(<CsfWorkspace serviceId="svc-645-csf" serviceTitle="Atlas CSF" />);
+    expect(await screen.findByTestId("ai-source")).toHaveAttribute(
+      "data-state",
+      "none",
+    );
+    finishRun({
       ...RUNNING,
       status: "completed",
       finished_at: "2026-10-01T12:05:00Z",
@@ -217,12 +230,7 @@ describe("CsfWorkspace re-reads the assessment's AI source when a run ends (#646
         suggestions_applied: 0,
         dropped: [],
       },
-    } as never);
-    render(<CsfWorkspace serviceId="svc-645-csf" serviceTitle="Atlas CSF" />);
-    expect(await screen.findByTestId("ai-source")).toHaveAttribute(
-      "data-state",
-      "none",
-    );
+    });
     await waitFor(() =>
       expect(screen.getByTestId("ai-source")).toHaveAttribute(
         "data-state",

@@ -26,16 +26,20 @@ with the state at publish.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.csf.retired import catalog_rows as csf_catalog_rows
 from app.logging import get_logger
 from app.models.attack_assessment import AttackAssessment
 from app.models.capability import CapabilityList
 from app.models.csf_assessment import CsfAssessment
+from app.models.csf_profile import CsfDimensionScore
 from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.zt_assessment import ZtAssessment
 
@@ -54,6 +58,9 @@ _ASSESSMENTS = {"attack": AttackAssessment, "csf": CsfAssessment, "zt": ZtAssess
 
 RELEASED = "released"
 
+#: The kinds findings are drawn from; Tech Debt feeds ATT&CK and publication only.
+SYNTHESIS_KINDS = ("attack", "csf", "zt")
+
 
 @dataclass(frozen=True)
 class InputRecord:
@@ -64,15 +71,76 @@ class InputRecord:
     record_id: str
     version: int
     status: str
+    #: #474 D': CSF only, the content of its in-scope Playbook rows
+    #: (`csf_playbook_fingerprint`). None for every other kind.
+    playbook_fingerprint: str | None = None
 
     def as_json(self) -> dict:
-        return {
+        out = {
             "kind": self.kind,
             "service_id": self.service_id,
             "record_id": self.record_id,
             "version": self.version,
             "status": self.status,
         }
+        if self.playbook_fingerprint is not None:
+            out["playbook_fingerprint"] = self.playbook_fingerprint
+        return out
+
+
+#: Every Playbook field a CSF finding or its citability depends on: the
+#: roll-up's (`app/csf/enterprise.py`: tier, the five dimensions,
+#: `has_evidence`, `in_scope`, `target_level`) and
+#: `csf/retired.py::has_recorded_score`'s (those, plus `answer_source`,
+#: `rationale`, `what_we_found`, `evidence_artifact_id`).
+_PLAYBOOK_FIELDS = (
+    "tier",
+    "subcategory_code",
+    "governance",
+    "policy",
+    "implementation",
+    "monitoring",
+    "improvement",
+    "has_evidence",
+    "in_scope",
+    "target_level",
+    "answer_source",
+    "rationale",
+    "what_we_found",
+    "evidence_artifact_id",
+)
+
+
+def csf_playbook_fingerprint(db: Session, assessment_id: str) -> str:
+    """#474 D' (advisor, #736 6087786886, item 3, option (a)): a snapshot, not
+    a lock. The sha256 of the assessment's in-scope catalog Playbook rows,
+    every field above, sorted by (subcategory, tier). Playbook rows stay
+    editable after approval (#37 is Gene's open decision), so publish compares
+    this with the value recorded at generate and reports CSF `changed` when a
+    score, target, note or scope changed since. A row moved out of scope
+    leaves the set, so that changes it too."""
+    rows = csf_catalog_rows(
+        db.execute(
+            select(CsfDimensionScore).where(
+                CsfDimensionScore.assessment_id == uuid.UUID(assessment_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    content = sorted(
+        (
+            [
+                str(getattr(r, f)) if f == "evidence_artifact_id" else getattr(r, f)
+                for f in _PLAYBOOK_FIELDS
+            ]
+            for r in rows
+            if r.in_scope
+        ),
+        key=lambda v: (v[1], v[0]),
+    )
+    blob = json.dumps(content, separators=(",", ":"), ensure_ascii=False, default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
 def _status(value: object) -> str:
@@ -100,7 +168,10 @@ def engaged_services(db: Session, client_id: uuid.UUID) -> list[tuple[str, Servi
     return [(k, svc) for k in INPUT_KINDS for svc in _engaged_services(db, client_id, k)]
 
 
-def _latest_record(db: Session, kind: str, service_id: uuid.UUID):
+def latest_record(db: Session, kind: str, service_id: uuid.UUID):
+    """One engaged service's current record: its latest non-discarded
+    assessment (or Tech Debt list), or None. Synthesis reads THIS too
+    (#876), so the record publish checks is the one findings came from."""
     model = CapabilityList if kind == "tech_debt" else _ASSESSMENTS[kind]
     return db.execute(
         select(model)
@@ -118,10 +189,17 @@ def current_inputs(db: Session, client_id: uuid.UUID) -> list[InputRecord]:
     """
     out: list[InputRecord] = []
     for kind, svc in engaged_services(db, client_id):
-        rec = _latest_record(db, kind, svc.id)
+        rec = latest_record(db, kind, svc.id)
         if rec is not None:
             out.append(
-                InputRecord(kind, str(svc.id), str(rec.id), rec.version, _status(rec.status))
+                InputRecord(
+                    kind,
+                    str(svc.id),
+                    str(rec.id),
+                    rec.version,
+                    _status(rec.status),
+                    csf_playbook_fingerprint(db, str(rec.id)) if kind == "csf" else None,
+                )
             )
     return out
 
@@ -135,11 +213,13 @@ class Blocker:
     status: str | None
 
 
-def publish_blockers(db: Session, client_id: uuid.UUID, recorded: object) -> list[Blocker]:
+def publish_blockers(
+    db: Session, client_id: uuid.UUID, recorded: object, synthesized: object
+) -> list[Blocker]:
     """What stops this register being published, per input. Empty = publishable
     as far as its inputs go.
 
-    FOUR CHECKS, and none of them may pass by absence:
+    FIVE CHECKS, and none of them may pass by absence:
       * every engaged SERVICE has a current input (else `not_started`);
       * every current input is RELEASED (else `not_released`);
       * every current input is the one the register was generated from, at the
@@ -152,8 +232,16 @@ def publish_blockers(db: Session, client_id: uuid.UUID, recorded: object) -> lis
         silence -- an approved assessment's findings would then publish
         (#860 review F1). Released or not, the register no longer matches
         what the client has engaged, so it is regenerated.
+      * every recorded ATT&CK, CSF or ZT input was SYNTHESIZED, by service
+        (else `not_recorded`; #891 review B1). A register generated before
+        #876 read one assessment per kind, so a client with CISA and DoD both
+        released recorded both in `current_inputs` but drew findings from one
+        -- and every check above passes for it. Its `inputs` rows carry no
+        `service_id`, so the match fails closed and the consultant
+        regenerates; publishing it would deliver #876's own gap after its fix.
 
-    `recorded` is the register's provenance `current_inputs` list. When it is
+    `recorded` is the register's provenance `current_inputs` list and
+    `synthesized` its `inputs` list (what findings were drawn from). When it is
     absent or unreadable the register cannot be certified (`not_recorded`):
     missing data defaults to UNCONFIRMED.
     """
@@ -180,6 +268,10 @@ def publish_blockers(db: Session, client_id: uuid.UUID, recorded: object) -> lis
             or was.get("record_id") != r.record_id
             or was.get("version") != r.version
             or was.get("status") != RELEASED
+            # #474 D': the CSF Playbook changed since generate. A register that
+            # recorded no fingerprint (generated before this) reads None here
+            # and is `changed` too: unconfirmed, never a match.
+            or (kind == "csf" and was.get("playbook_fingerprint") != r.playbook_fingerprint)
         ):
             blockers.append(Blocker(kind, "changed", r.status))
     # And every RECORDED input, so one whose service is no longer engaged
@@ -188,6 +280,25 @@ def publish_blockers(db: Session, client_id: uuid.UUID, recorded: object) -> lis
     for (kind, service_id), _was in then.items():
         if (kind, service_id) not in engaged_keys:
             blockers.append(Blocker(str(kind), "changed", None))
+    drawn_from = (
+        {
+            str(i.get("service_id"))
+            for i in synthesized
+            if isinstance(i, dict) and i.get("service_id")
+        }
+        if isinstance(synthesized, list)
+        else set()
+    )
+    # A register with NO `inputs` key at all (pre-0047, or the old seed shape)
+    # is refused by publish's next guard, `_require_certifiable_inputs`, with
+    # its own reason (`register_inputs_not_recorded`), which
+    # `test_publish_refuses_inputs_that_cannot_be_certified` pins. So this
+    # check runs only over a recorded `inputs` value; anything recorded that
+    # is not a list counts as naming no service and fails closed above.
+    if synthesized is not None:
+        for (kind, service_id), _was in then.items():
+            if kind in SYNTHESIS_KINDS and str(service_id) not in drawn_from:
+                blockers.append(Blocker(str(kind), "not_recorded", None))
     if blockers:
         _log.info(
             "risk_publish_inputs_blocked",

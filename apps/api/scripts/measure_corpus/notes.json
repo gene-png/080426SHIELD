@@ -1,0 +1,66 @@
+{
+  "corpus": "measure-notes-v1",
+  "about": [
+    "Synthetic interview notes for the #806 consistency measure (comment 5983938383, section 2): one class per kind of note, written generically so any CSF subcategory or Zero Trust capability can carry it. Invented text only: no client data, no person's name and no secret.",
+    "`--notes-corpus` writes these notes over the measured assessment's answer rows in the throwaway database, in sorted row order, class by class in turn, before the route's own payload builder runs. Stored stages, tiers and evidence are left as they are.",
+    "{{CLIENT_NAME}} is replaced by the assessment's client legal name, so the redactor sees a real client name to replace."
+  ],
+  "classes": [
+    {
+      "class": "practice",
+      "notes": [
+        "Documented procedure with a named owner; reviewed annually, last review March 2026.",
+        "{{CLIENT_NAME}} security team runs this daily; logs are kept 12 months and reviewed weekly.",
+        "In place enterprise-wide and checked by internal audit in FY26 with no findings."
+      ]
+    },
+    {
+      "class": "negative",
+      "notes": [
+        "No MFA.",
+        "Not in place. No owner and no procedure.",
+        "None today; handled ad hoc by whoever is on call."
+      ]
+    },
+    {
+      "class": "plan",
+      "notes": [
+        "Planned FY27; budget requested, not yet approved.",
+        "On the roadmap for Q3 FY27; vendor selection has not started."
+      ]
+    },
+    {
+      "class": "pilot_or_partial",
+      "notes": [
+        "Pilot running in one business unit, about 15% of users; no date for the wider rollout.",
+        "Partially deployed: covers on-premises servers but not cloud workloads."
+      ]
+    },
+    {
+      "class": "tier_limited",
+      "notes": [
+        "In place only on high-impact systems; moderate and low systems are not covered.",
+        "Applied only to the production enclave; development and test are out of scope."
+      ]
+    },
+    {
+      "class": "blank",
+      "notes": [""]
+    },
+    {
+      "class": "not_applicable",
+      "notes": ["N/A"]
+    },
+    {
+      "class": "tbd",
+      "notes": ["TBD"]
+    },
+    {
+      "class": "placeholder",
+      "notes": [
+        "See interview notes.",
+        "Copied from the template; replace before review."
+      ]
+    }
+  ]
+}

@@ -794,7 +794,9 @@ describe("RiskRegisterDashboard scored-coverage disclosure (#403)", () => {
     const text =
       screen.getByTestId("risk-entries-unlinked-after-drops").textContent ?? "";
     expect(text).not.toContain("named something that is not in");
-    expect(text).toContain("misnamed or names a control");
+    expect(text).toContain(
+      "misnamed, names a control this client's assessments have not scored, or names an ATT&CK technique pending review",
+    );
     expect(text).toContain("have not scored");
   });
 

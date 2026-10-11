@@ -72,6 +72,7 @@ from app.models.capability import (
 )
 from app.models.client import Client
 from app.models.deliverable import Deliverable
+from app.models.llm_call import LLMCall
 from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.user import User, UserRole
 from app.routes.artifacts import _storage_dep
@@ -84,6 +85,7 @@ from app.schemas.tech_debt import (
     CapabilityListResponse,
     ConsolidationPlanSummary,
     DeliverableResponse,
+    ExtractionFlags,
     ExtractRequest,
     IncludeExcludedRowRequest,
     OverlapAnalysisResponse,
@@ -97,6 +99,8 @@ from app.schemas.tech_debt import (
 )
 from app.security.rate_limit import enforce_ai_rate_limit
 from app.storage import StorageBackend
+from app.tech_debt.bounds import NOT_WHOLE_CENTS, cost_problem, license_problem
+from app.tech_debt.components import is_component
 from app.tech_debt.exporters import (
     build_context,
     cost_label,
@@ -105,8 +109,11 @@ from app.tech_debt.exporters import (
     render_xlsx,
 )
 from app.tech_debt.extract import (
+    PROMPT_VERSIONS_WITH_CLOSED_SCALES,
     client_org_name_for_tenant,
+    duplicated_source_rows,
     extract_from_rows,
+    extraction_flags,
     name_hints_for_tenant,
     read_inventory,
 )
@@ -116,7 +123,7 @@ from app.tech_debt.filename import (
 )
 from app.tech_debt.overlap import analyze_overlap
 from app.tech_debt.parsers import SUPPORTED_MIME, UnsupportedInventoryFormat
-from app.tech_debt.reconcile import exclusion_count_state
+from app.tech_debt.reconcile import exclusion_count_state, unconfirmed_exclusions
 from app.tech_debt.savings import estimated_savings
 from app.tech_debt.security_scope import (
     PROMPT_VERSIONS_WITH_PREFIX,
@@ -356,6 +363,117 @@ def _not_in_use_contradictions(db: Session, items: list[CapabilityItem]) -> int:
     return sum(1 for c in candidates if c not in overridden)
 
 
+def _extraction_record(db: Session, cap_list: CapabilityList) -> dict | None:
+    """The details of this list's own `capability_list.extracted` audit, or None
+    when no extraction is on record for it (a seeded list)."""
+    entry = db.execute(
+        select(AuditEntry)
+        .where(
+            AuditEntry.action == "capability_list.extracted",
+            AuditEntry.target_id == cap_list.id,
+        )
+        .order_by(AuditEntry.at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    return (entry.details or {}) if entry is not None else None
+
+
+def _extraction_prompt_version(db: Session, record: dict) -> str | None:
+    """The prompt version of the `llm_calls` row the extraction audit names, or
+    None when the call is not on record."""
+    call_id = record.get("llm_call_id")
+    if not call_id:
+        return None
+    call = db.get(LLMCall, uuid.UUID(call_id))
+    return call.prompt_version if call is not None else None
+
+
+def _extraction_flags(db: Session, cap_list: CapabilityList) -> dict[str, int] | None:
+    """C6 (for #806): what v3.2 closes and the model still sent, as recorded
+    at extraction in the list's own `capability_list.extracted` audit.
+
+    Advisor ruling F2 (issue 736, comment 6069328834, option (a)): E1 says the
+    rows "came back" this way, which is exactly true of the extraction and
+    stays true whatever a consultant edits afterwards, so the counts are the
+    extraction's and never a live read of the rows. That also leaves out, by
+    construction, a row a consultant included and a bundle part a consultant
+    added (review finding F1 on PR #955), and it does not depend on the source
+    document's link (it replaces item 3b of 6068587667).
+
+    None ("not measured"), never a count, when no extraction is on record for
+    the list, or when the extraction ran on an earlier prompt, which followed
+    that prompt's rules (the version of the call the list's own audit names).
+    """
+    record = _extraction_record(db, cap_list)
+    if record is None:
+        return None
+    if _extraction_prompt_version(db, record) not in PROMPT_VERSIONS_WITH_CLOSED_SCALES:
+        return None
+    return record.get("extraction_flags")
+
+
+def _component_cost_refusal(parent_name: str | None) -> HTTPException:
+    """for #927 (inside #835): a bundle part's cost is held by its bundle.
+
+    Copy approved verbatim by the advisor on #736 (comment 6056012075). The
+    remedy names the bundle's row, whose Annual cost cell is editable whenever
+    this can fire (a released or discarded list is refused with 409 first).
+    With no bundle row to name, or a name that is blank once stripped (the
+    item PATCH accepts a whitespace-only name), it names none rather than
+    printing a blank or inventing one.
+    """
+    parent_name = parent_name.strip() if parent_name else None
+    if parent_name:
+        message = (
+            f"The annual cost of a bundle part is held by its bundle, {parent_name}. "
+            f"Enter the cost on the {parent_name} row instead."
+        )
+    else:
+        message = (
+            "The annual cost of a bundle part is held by its bundle. "
+            "Enter the cost on the bundle's row instead."
+        )
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={"reason": "component_cost_held_by_bundle", "message": message},
+    )
+
+
+def _refuse_unstorable_values(cost: float | None, licenses: int | None) -> None:
+    """#879: a consultant's cost and licence count, bounded as the extraction
+    bounds the model's (`tech_debt/bounds.py`), refused typed BEFORE anything is
+    written. Without it a value the column cannot hold was an untyped 500 on
+    Postgres, and a negative was stored. Copy V1-V3 (#850/#879 plan).
+    """
+    if cost is not None:
+        problem = cost_problem(cost)
+        if problem is not None:
+            _log.info("tech_debt.capability_value_refused", field="annual_cost_usd", reason=problem)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    {
+                        "reason": "capability_cost_not_whole_cents",
+                        "message": "Annual cost can have at most two decimal places.",
+                    }
+                    if problem == NOT_WHOLE_CENTS
+                    else {
+                        "reason": "capability_cost_out_of_range",
+                        "message": "Annual cost must be between $0 and $999,999,999,999.99.",
+                    }
+                ),
+            )
+    if licenses is not None and license_problem(licenses) is not None:
+        _log.info("tech_debt.capability_value_refused", field="license_count")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "capability_license_count_out_of_range",
+                "message": "License count must be a whole number between 0 and 2,147,483,647.",
+            },
+        )
+
+
 def _serialize_list_with_items(db: Session, cap_list: CapabilityList) -> CapabilityListResponse:
     items = (
         db.execute(select(CapabilityItem).where(CapabilityItem.capability_list_id == cap_list.id))
@@ -373,6 +491,8 @@ def _serialize_list_with_items(db: Session, cap_list: CapabilityList) -> Capabil
     # #177/#193: the one reader, as the deliverable and the dashboard call it.
     resp.exclusion_count_state = exclusion_count_state(cap_list)
     resp.not_in_use_contradictions = _not_in_use_contradictions(db, items)
+    flags = _extraction_flags(db, cap_list)
+    resp.extraction_flags = None if flags is None else ExtractionFlags.model_validate(flags)
     # #646: the ONE derivation every surface calls.
     resp.ai_source = AiSource.model_validate(
         ai_mode_for(db, db.get(Service, cap_list.service_id), cap_list).as_api()
@@ -610,8 +730,9 @@ def _extract_run_work(
                 notes=item.notes,
                 confidence_pct=item.confidence_pct,
                 source_artifact_id=artifact_id,
-                # Prompt v2 classifies rather than filters. None stays None: an
-                # unclassified row is not a negative one.
+                # Since prompt v2 (v3.2 keeps it) the extraction classifies rather
+                # than filters. None stays None: an unclassified row is not a
+                # negative one.
                 security_related=item.security_related,
                 security_functions=list(item.security_functions),
             )
@@ -639,6 +760,13 @@ def _extract_run_work(
             ),
             # #833 / #834: counts only; the entries are on the list.
             "findings_by_reason": dict(Counter(f["reason"] for f in result.findings)),
+            # C6 (for #806), at extraction, before any consultant edit. None for a
+            # prompt whose rules these are not ("not measured").
+            "extraction_flags": (
+                extraction_flags(result.items, result.findings)
+                if result.llm_call.prompt_version in PROMPT_VERSIONS_WITH_CLOSED_SCALES
+                else None
+            ),
             "llm_call_id": str(result.llm_call.id),
             "run_id": str(ctx.run_id),
         },
@@ -655,6 +783,9 @@ def _extract_run_work(
             # attribution was complete: 0 when it failed, so this is NOT the
             # excluded count (#193). No surface renders it.
             "excluded_rows": len(result.reconciliation.excluded_rows),
+            # C6 (6), for #806: source rows the model turned into more than one
+            # item. Both items are kept; the list's findings name the later ones.
+            "source_row_duplicated": duplicated_source_rows(result.findings),
         },
         applied_count=len(result.items),
     )
@@ -787,6 +918,7 @@ def include_excluded_row(
         # `confirm_excluded_row` needs nothing: it never removes an entry.
         cap_list.attribution_complete = True
 
+    _refuse_unstorable_values(body.annual_cost_usd, body.license_count)
     item = CapabilityItem(
         capability_list_id=cap_list.id,
         name=body.name,
@@ -1102,7 +1234,7 @@ def add_capability_components(
         )
     # One level only: a component of a component has no real-world counterpart
     # here and would make the cost story ambiguous.
-    if item.parent_item_id is not None:
+    if is_component(item):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -1236,6 +1368,19 @@ def patch_capability_item(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Patch body is empty.",
         )
+    _refuse_unstorable_values(data.get("annual_cost_usd"), data.get("license_count"))
+    # for #927: a part carries no cost; its bundle holds the license value
+    # (`tech_debt/components.py`). Null stays allowed: it is the state a part is
+    # born in, and the way a cost stored before this refusal is cleared.
+    if is_component(item) and data.get("annual_cost_usd") is not None:
+        parent = db.get(CapabilityItem, item.parent_item_id)
+        _log.info(
+            "tech_debt.component_cost_refused",
+            item_id=str(item.id),
+            parent_item_id=str(item.parent_item_id),
+            parent_found=parent is not None,
+        )
+        raise _component_cost_refusal(parent.name if parent is not None else None)
     if data.get("consolidation_target_id") is not None:
         _check_consolidation_target(db, item, data["consolidation_target_id"])
     # Lock/unlock is a meta-action handled separately so a NULL never reaches
@@ -1429,6 +1574,37 @@ def _refuse_undecided(count: int, *, then: str = "approve again") -> HTTPExcepti
     )
 
 
+def _refuse_unconfirmed_exclusions(cap_list: CapabilityList, *, then: str) -> HTTPException:
+    """#850: rows the AI excluded that nobody has confirmed. Typed, like #639's
+    undecided rows, at the same three gates. Copy X1, approved (736/5986057990,
+    item 3), quoting the step-2 control as it renders: its count is ALL the
+    excluded rows (`TechDebtWorkspace.tsx`), not only the unconfirmed ones."""
+    unconfirmed = len(unconfirmed_exclusions(cap_list))
+    total = len(cap_list.excluded_rows or [])
+    control = f"Show the {total} excluded row{'' if total == 1 else 's'}"
+    if unconfirmed == 1:
+        head, each = "1 row the AI excluded is not confirmed yet.", "for it"
+    else:
+        head, each = f"{unconfirmed} rows the AI excluded are not confirmed yet.", "for each"
+    _log.info(
+        "tech_debt.refused_unconfirmed_exclusions",
+        capability_list_id=str(cap_list.id),
+        unconfirmed=unconfirmed,
+        then=then,
+    )
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "reason": "capability_list_unconfirmed_exclusions",
+            "message": (
+                f"{head} In step 2, Review and correct the extracted list, open "
+                f'"{control}" and choose "Include…" or "Correctly excluded" {each}, '
+                f"then {then}."
+            ),
+        },
+    )
+
+
 def _refuse_edited_since_approval(*, then: str) -> HTTPException:
     """#640: the list was edited after step 3 approved it. Typed (D-016), naming
     step 3 by the title the workspace shows, whose Approve button is enabled
@@ -1588,6 +1764,11 @@ def approve_capability_list(
     undecided = undecided_row_count(db, cap_list.id)
     if undecided:
         raise _refuse_undecided(undecided)
+    # #850: no unconfirmed AI exclusion. Not in the UPDATE's WHERE: confirming or
+    # including a row is the only way one changes, it only ever REDUCES the set,
+    # and it bumps `revision`, which the WHERE below already requires unchanged.
+    if unconfirmed_exclusions(cap_list):
+        raise _refuse_unconfirmed_exclusions(cap_list, then="approve again")
     # #640: the revision this approval covers, read BEFORE the membership is
     # built from the rows. The UPDATE below matches only while the list is
     # still at it, so an edit landing between the read and the write refuses
@@ -1627,6 +1808,8 @@ def approve_capability_list(
             undecided = undecided_row_count(db, cap_list.id)
             if undecided:
                 raise _refuse_undecided(undecided)
+            if unconfirmed_exclusions(cap_list):
+                raise _refuse_unconfirmed_exclusions(cap_list, then="approve again")
             raise _refuse_changed_during_approval()
         raise _refuse_approval(cap_list.status)
     db.refresh(cap_list)
@@ -2117,6 +2300,9 @@ def finalize_deliverable(
         undecided = sum(1 for it in items if it.disposition is None)
         if undecided:
             raise _refuse_undecided(undecided, then="generate the deliverable again")
+        # #850: a list approved before the exclusion gate can hold one.
+        if unconfirmed_exclusions(cap_list):
+            raise _refuse_unconfirmed_exclusions(cap_list, then="generate the deliverable again")
         # #640: step 3 must run again after any edit. Judged on a revision read
         # AFTER `items` was loaded: if the list is still at its approved revision
         # now, no edit had committed before the rows were read, so the render
@@ -2199,7 +2385,14 @@ def finalize_deliverable(
     )
 
     summary_line = (
-        f"{len(items)} capabilities reviewed; "
+        # for #835: the client's Results and Home pages show this beside the
+        # files, so it counts what the PDF's "Capabilities reviewed" counts:
+        # source items, never a split bundle's parts. `ctx.included_count` is
+        # that derivation (`source_items`), read rather than recomputed.
+        # `scripts/seed_demo.py` builds the same sentence from `len(items)`;
+        # the seed creates no parts, so its count is already right and it is
+        # left alone.
+        f"{ctx.included_count} capabilities reviewed; "
         f"{'≥ ' if not ctx.savings_cost_known else ''}"
         f"${ctx.estimated_savings:,.0f} estimated annual savings."
     )
@@ -2291,6 +2484,7 @@ def release_tech_debt_deliverable(
 ) -> DeliverableResponse:
     guard = _release_guard_for(require_deliverable_in_tenant(db, deliverable_id, client.id))
     _refuse_a_deliverable_the_flip_guard_cannot_reach(db, deliverable_id, client.id)
+    _refuse_release_over_unconfirmed_exclusions(db, deliverable_id, client.id)
     deliv = release_deliverable(
         db,
         deliverable_id=deliverable_id,
@@ -2301,6 +2495,37 @@ def release_tech_debt_deliverable(
         parent_guard=guard,
     )
     return _serialize_deliverable(db, deliv)
+
+
+def _refuse_release_over_unconfirmed_exclusions(
+    db: Session, deliverable_id: uuid.UUID, client_id: uuid.UUID
+) -> None:
+    """#850: release freezes the list, so it must not freeze one holding an
+    exclusion nobody confirmed. Checked before the flip rather than in its WHERE:
+    the set only shrinks, and every change to it bumps `revision`, which the
+    flip already requires equal to `approved_revision` -- so a confirm landing
+    between this read and the flip makes the flip miss, not pass wrongly.
+    APPROVED lists only: a RELEASED list refuses the remedy (#639's carve-out).
+    """
+    deliv = require_deliverable_in_tenant(db, deliverable_id, client_id)
+    if deliv.parent_version is None:
+        return
+    cap_list = (
+        db.execute(
+            select(CapabilityList).where(
+                CapabilityList.service_id == deliv.service_id,
+                CapabilityList.version == deliv.parent_version,
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if cap_list is None or cap_list.status != CapabilityListStatus.APPROVED:
+        return
+    if unconfirmed_exclusions(cap_list):
+        raise _refuse_unconfirmed_exclusions(
+            cap_list, then="generate the deliverable again before releasing"
+        )
 
 
 def _release_guard_for(deliv: Deliverable) -> ParentGuard:

@@ -56,6 +56,10 @@ draft-only cut as "not retiring": "the plan does not list it" cannot support
     after the AI cited the old name, a tool only on a draft, or one dropped
     from the latest version. The plan cannot be read for it, and saying
     nothing would be a silent "not retiring".
+    Since #851, approve refuses a row citing a name on no live list while a
+    list that is not discarded exists, so in an approved assessment the
+    free-text case arises only through drift AFTER approval (#889); the
+    other causes are unchanged.
 
 **"No consolidation plan" is not "could not determine".** A client with no
 APPROVED or RELEASED Tech Debt list has no plan in which a tool could be cut,
