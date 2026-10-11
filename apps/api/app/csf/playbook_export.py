@@ -93,6 +93,23 @@ WORKING_NOTICE = (
 APPROVED_NOTICE = "Approved by Kentro."
 
 
+def no_notes_note(no_notes: int, total: int) -> str:
+    """#1000: the one sentence every Playbook file states about the last LIVE
+    Run-AI's rows with no notes (approved on #1000, comment 6102665946).
+
+    Both numbers come from that run's PERSISTED accounting (`ai_runs.result`),
+    never from current notes: notes typed since the run did not change what it
+    assessed. `total` is the in-scope subcategories the run covered -- a code
+    with at least one in-scope row, not locked, that a successful batch was
+    asked about -- and `no_notes` is how many of those had no notes in what was
+    sent (`routes/csf.py::_csf_run_work`). Stated at zero too. The route omits
+    the sentence when no live run has been made."""
+    return (
+        f"Not assessed by AI (no notes) in the last live AI run: {no_notes} of "
+        f"{total} subcategories."
+    )
+
+
 def _approval_notice(approved: bool) -> str:
     return APPROVED_NOTICE if approved else WORKING_NOTICE
 
@@ -142,6 +159,7 @@ def render_xlsx(
     approved: bool,
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
     retired_note: str | None = None,
+    no_notes_note: str | None = None,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -334,6 +352,8 @@ def render_xlsx(
     safe_text_row(cover, [_approval_notice(approved)])
     if retired_note:
         safe_text_row(cover, [retired_note])  # #852: kept rows, not on any sheet below
+    if no_notes_note:
+        safe_text_row(cover, [no_notes_note])  # #1000: see `no_notes_note`
     safe_text_row(cover, [])
     safe_text_row(
         cover,
@@ -768,6 +788,7 @@ def _cover(
     version: int,
     generated_on: str | None,
     retired_note: str | None = None,
+    no_notes_note: str | None = None,
 ) -> None:
     from reportlab.lib.units import inch
     from reportlab.platypus import Paragraph, Spacer
@@ -786,6 +807,9 @@ def _cover(
     if retired_note:
         # #852: the cover, because no table in the document lists a kept row.
         story.append(Paragraph(escape(retired_note), styles["body"]))
+    if no_notes_note:
+        # #1000: the cover, beside the other statements about the whole file.
+        story.append(Paragraph(escape(no_notes_note), styles["body"]))
     if generated_on:
         story.append(Paragraph(f"Generated: {escape(generated_on)}", styles["body"]))
     story.append(Spacer(1, 0.3 * inch))
@@ -915,6 +939,7 @@ def render_exec_pdf(
     approved: bool,
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
     retired_note: str | None = None,
+    no_notes_note: str | None = None,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -936,6 +961,7 @@ def render_exec_pdf(
         approved=approved,
         ai_mode=ai_mode,
         retired_note=retired_note,
+        no_notes_note=no_notes_note,
     )
     story.append(PageBreak())
 
@@ -960,6 +986,7 @@ def render_full_pdf(
     approved: bool,
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
     retired_note: str | None = None,
+    no_notes_note: str | None = None,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -982,6 +1009,7 @@ def render_full_pdf(
         approved=approved,
         ai_mode=ai_mode,
         retired_note=retired_note,
+        no_notes_note=no_notes_note,
     )
     story.append(PageBreak())
 
@@ -1122,6 +1150,7 @@ def _docx_cover(
     approved: bool,
     ai_mode: AiModeStamp,
     retired_note: str | None = None,
+    no_notes_note: str | None = None,
 ) -> None:
     from app.docx_export import add_paragraphs, add_title, set_footer
 
@@ -1138,6 +1167,9 @@ def _docx_cover(
     if retired_note:
         # #852: the cover, because no table in the document lists a kept row.
         add_paragraphs(doc, [retired_note])
+    if no_notes_note:
+        # #1000: beside the kept-rows note, for the same reason.
+        add_paragraphs(doc, [no_notes_note])
     meta = [
         f"Prepared for: {client_name}",
         f"Working profile version: {version}",
@@ -1181,6 +1213,7 @@ def render_exec_docx(
     approved: bool,
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
     retired_note: str | None = None,
+    no_notes_note: str | None = None,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -1198,6 +1231,7 @@ def render_exec_docx(
         approved=approved,
         ai_mode=ai_mode,
         retired_note=retired_note,
+        no_notes_note=no_notes_note,
     )
 
     add_heading(doc, "Executive summary")
@@ -1238,6 +1272,7 @@ def render_full_docx(
     approved: bool,
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
     retired_note: str | None = None,
+    no_notes_note: str | None = None,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -1262,6 +1297,7 @@ def render_full_docx(
         approved=approved,
         ai_mode=ai_mode,
         retired_note=retired_note,
+        no_notes_note=no_notes_note,
     )
     add_page_break(doc)
 

@@ -1,9 +1,11 @@
 """The CSF Playbook's weighted-floor Enterprise roll-up, public (#474 D').
 
-Moved unchanged from `routes/csf.py` (`_enterprise_subcategories`, `_dims`),
-so the Risk Register can CALL it rather than re-derive it (Gene, #736
-5984218862). The one addition is `tier_evidence_capped`, taken from the same
-`score_tier` call that produces `tier_levels`.
+Moved from `routes/csf.py` (`_enterprise_subcategories`, `_dims`), so the
+Risk Register can CALL it rather than re-derive it (Gene, #736 5984218862).
+Two additions since the move: `tier_evidence_capped` (#474 D'), taken from
+the same `score_tier` call that produces `tier_levels`; and `no_notes`
+(#1000), read through `codes_with_notes`, which moved here with `has_notes`
+so the live run and this roll-up keep ONE statement of "has notes".
 """
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ from app.csf.playbook import (
     weighted_floor_rollup,
 )
 from app.csf.retired import catalog_rows
-from app.models.csf_assessment import CsfAssessment
+from app.models.csf_assessment import CsfAnswer, CsfAssessment
 from app.models.csf_profile import CsfDimensionScore
 from app.schemas.csf import EnterpriseSubcategory
 
@@ -39,6 +41,19 @@ def dimensions_of(row: CsfDimensionScore) -> DimensionScores:
         monitoring=row.monitoring,
         improvement=row.improvement,
     )
+
+
+def has_notes(notes: str | None) -> bool:
+    """#1000: ONE statement of "this answer has notes", read by the live run
+    and the Enterprise table alike. Blank or whitespace-only is no notes."""
+    return bool(notes and notes.strip())
+
+
+def codes_with_notes(db: Session, a: CsfAssessment) -> set[str]:
+    """The subcategory codes whose CURRENT interview answer has notes. A code
+    with no answer row has none."""
+    answers = db.execute(select(CsfAnswer).where(CsfAnswer.assessment_id == a.id)).scalars()
+    return {ans.subcategory_code for ans in answers if has_notes(ans.notes)}
 
 
 def enterprise_subcategories(
@@ -63,6 +78,7 @@ def enterprise_subcategories(
         by_subcat.setdefault(r.subcategory_code, {})[r.tier] = r
         tiers_in_use.add(r.tier)
 
+    noted = codes_with_notes(db, a)
     out: list[EnterpriseSubcategory] = []
     for code in sorted(by_subcat):
         tier_rows = by_subcat[code]
@@ -104,6 +120,7 @@ def enterprise_subcategories(
                 target_level=target,
                 gap=gap,
                 priority=priority,
+                no_notes=code not in noted,
             )
         )
     return out, tiers_in_use

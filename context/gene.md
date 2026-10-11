@@ -1,5 +1,21 @@
 # Gene — in-flight status
 
+_2026-10-09 (track5): the #806 CSF prompt is built on `track5/806-csf-prompt`;
+the PR is not yet open. It ships your approved CSF text (#806 comment
+5982122270, sha256-pinned) as `prompt_version` "v2", sends each
+subcategory's NIST outcome text through #985's catalog guard, a batch's own
+codes only, and rewrites the offline fixture from the prompt. The test edits
+are A1 to A5 as approved on #736 (comment 6075712436), s7 included. The batch
+size stays at 10 until the authorized probe runs, which waits on a provider
+key. No live call was made. It is draft PR #1000. Your ruling 2 is built
+on it (2026-10-10): a live run leaves a row with no notes as it was, and
+says so on the Run-AI panel, beside the row in the Enterprise table, and in
+every Playbook file, from the last live run. Offline runs are unchanged. Two
+small edits to existing live tests (they now give their row notes) were
+approved by the advisor (#736 6103383277), and the copy now says "live"
+(#736 6104067136). Main, with D', is merged in (2026-10-11). It comes back to you, not self-merged: conditions 5 and
+6._
+
 _2026-10-10 (track6): #474 D' (your PR D) is PR #1030, on
 `track6/474-d-playbook-risk`._
 
