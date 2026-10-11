@@ -1511,7 +1511,8 @@ def _client_capability_membership(
     # CURRENT version only (approved or released where one exists, else the
     # newest draft). Chosen after the live rows load, because an empty version
     # is judged on them. The citation allow-list (the default) keeps every
-    # non-discarded version (#1012).
+    # list, so the panel can name what the others hold, but OFFERS only the
+    # same version in force (#1012).
     fallbacks: tuple[VersionFallback, ...] = ()
     if latest_versions_only:
         lists, fallbacks, reason = _current_list_versions(db, lists, live_by_list)

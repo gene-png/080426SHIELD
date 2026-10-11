@@ -233,3 +233,40 @@ def test_the_version_in_force_decides_why_a_tool_is_withheld(app_parts) -> None:
     assert [c["name"] for c in body["capabilities"]] == [NEW_TOOL], body["capabilities"]
     withheld = {d["name"]: (d["reason"], d["source_list_version"]) for d in body["not_sent"]}
     assert withheld == {V1_TOOL: ("security_scope", 2)}, body["not_sent"]
+
+
+def test_a_superseded_versions_approved_snapshot_is_withheld_too(app_parts) -> None:  # noqa: F811
+    """The post-0043 path: v1 approved THROUGH THE ROUTE, so its membership is
+    the recorded snapshot (`from_snapshot`), not its live rows. Superseded by
+    an approved v2, its snapshot entry is withheld, not offered."""
+    from app.models.capability import CapabilityDisposition
+
+    w = _runs_world(app_parts)
+    v1 = _v1(w)
+    with w.sessions() as db:
+        cl = db.get(CapabilityList, v1.id)
+        cl.status = CapabilityListStatus.DRAFT
+        for item in db.execute(
+            select(CapabilityItem).where(CapabilityItem.capability_list_id == v1.id)
+        ).scalars():
+            item.disposition = CapabilityDisposition.KEEP
+            item.security_related = True
+        db.commit()
+    r = w.c.post(f"/tech-debt/capability-lists/{v1.id}/approve", headers=w.h)
+    assert r.status_code == 200, r.text
+    with w.sessions() as db:
+        snapshot = db.get(CapabilityList, v1.id).approved_membership
+    assert [e["name"] for e in snapshot] == [V1_TOOL], snapshot  # the snapshot path
+    positive = _inputs(w)
+    assert [c["name"] for c in positive["capabilities"]] == [V1_TOOL], positive
+    _add_version(w, [NEW_TOOL], status=CapabilityListStatus.APPROVED)
+    body = _inputs(w)
+    assert [c["name"] for c in body["capabilities"]] == [NEW_TOOL], body["capabilities"]
+    assert {d["name"]: d["reason"] for d in body["not_sent"]} == {V1_TOOL: NOT_IN_FORCE}
+    sources = {
+        s["version"]: (s["in_force"], s["membership_from_snapshot"]) for s in body["sources"]
+    }
+    assert sources == {1: (False, True), 2: (True, False)}, body["sources"]
+    result = _run(w, V1_TOOL)
+    assert result["citations_confirmed"] == 0, result
+    assert result["citations_rejected"] == len(w.codes), result

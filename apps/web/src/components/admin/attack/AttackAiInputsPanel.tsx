@@ -132,7 +132,7 @@ function withheldBreakdown(totals: AttackAiInputTotals): string {
       : null,
   ].filter((c): c is string => c !== null);
   // A RESIDUAL, because the clauses above are a floor and `not_sent` is the
-  // truth. Today the three reasons partition it exactly, so this emits nothing
+  // truth. Today the four reasons partition it exactly, so this emits nothing
   // — but `REASON_COPY` already anticipates an unrecognised reason and this
   // function assumed none could exist, which is a guard applied to one branch
   // and forgotten in its twin, in the same file.

@@ -1100,8 +1100,12 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
             .group_by(AuditEntry.target_id)
         ).all()
     }
+    # #1012: only the versions IN FORCE offer tools, so only they decide
+    # whether the check can be made. A superseded version approved before
+    # 0043 offers nothing and must not make the whole answer unknowable.
+    in_force_lists = [cl for cl in membership.lists if cl.id in membership.in_force_list_ids]
     added = scenario.tools_added_since(
-        kept_offers, membership.lists, created, base.approved_at, overridden
+        kept_offers, in_force_lists, created, base.approved_at, overridden
     )
     # Slice B: the admin's added tools are offered beside the client's and
     # may be credited, but they are NOT the client's list: the drift check
