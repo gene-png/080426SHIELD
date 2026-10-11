@@ -590,8 +590,9 @@ Components carry no cost of their own — this licence keeps its full value.`,
   // refused it is not spend: the bundle row holds the licence value. The
   // "items" pill and the discard summary below count table ROWS, parts
   // included, on purpose; "Categories" counts a part in its own category (the
-  // #835 ruling), and "To cut" and the low-confidence count read every row
-  // because savings still see a part (advisor ruling on #736).
+  // #835 ruling); "To cut" reads every row because savings still see a part
+  // (advisor ruling on #736); and the low-confidence count is unaffected,
+  // because a part carries no AI confidence (`confidence_pct` is None).
   const sources = list ? sourceItems(list.items) : [];
   const bundlePartCount = (list?.items.length ?? 0) - sources.length;
   const totalCost = sources.reduce(

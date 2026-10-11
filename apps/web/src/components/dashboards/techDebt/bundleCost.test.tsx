@@ -42,7 +42,23 @@ const BLANK_PART = row("Defender for Cloud Apps", null, "");
 const LEGACY_PART = row("Microsoft Entra ID P2", 20000, "Microsoft 365 E5");
 const UNCOSTED_TOOL = row("Homegrown EDR", null, null);
 const TOOL = row("CrowdStrike Falcon", 120000, null);
-const ROWS = [TOOL, PART, BLANK_PART, LEGACY_PART, UNCOSTED_TOOL];
+// A row with NO `bundle` key at all: an API older than the web, or a fixture
+// written before the field existed. Not a part, so its cost renders as usual.
+function withoutBundle(name: string, cost: number | null): TechDebtItem {
+  const { bundle: _omitted, ...rest } = row(name, cost, null);
+  return rest as TechDebtItem;
+}
+const KEYLESS_TOOL = withoutBundle("Legacy SIEM", 50000);
+const KEYLESS_UNCOSTED = withoutBundle("Legacy Proxy", null);
+const ROWS = [
+  TOOL,
+  PART,
+  BLANK_PART,
+  LEGACY_PART,
+  UNCOSTED_TOOL,
+  KEYLESS_TOOL,
+  KEYLESS_UNCOSTED,
+];
 
 function data(): TechDebtDashboardData {
   return {
@@ -123,6 +139,19 @@ describe("a bundle part's cost names its bundle (#929)", () => {
     render(<TechDebtDashboard data={data()} />);
     expect(costCell(TOOL.name)).toHaveTextContent(/^\$120K$/);
     expect(costCell(UNCOSTED_TOOL.name)).toHaveTextContent(/^—$/);
+  });
+
+  it("a row without the bundle key is not a part: its cost, or —, never undefined", () => {
+    render(<TechDebtDashboard data={data()} />);
+    expect(costCell(KEYLESS_TOOL.name)).toHaveTextContent(/^\$50K$/);
+    expect(costCell(KEYLESS_UNCOSTED.name)).toHaveTextContent(/^—$/);
+    expect(
+      within(redundancyRow(KEYLESS_TOOL.name)).getByText("$50K"),
+    ).toBeInTheDocument();
+    expect(
+      within(redundancyRow(KEYLESS_UNCOSTED.name)).getByText("—"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/undefined/)).toBeNull();
   });
 
   it("redundancy card: parts name their bundle, tools keep their cost", () => {

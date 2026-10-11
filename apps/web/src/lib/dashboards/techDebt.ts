@@ -86,11 +86,13 @@ export function usdCompact(n: number | null): string {
  * part has no cost of its own: its bundle holds the licence value and the
  * spend figure counts it there, so the cell says where the cost is rather than
  * "—", which reads as unknown. A cost stored on a part before #927 refused one
- * is not shown, because spend does not count it. Tested on `bundle !== null`,
- * never on truthiness: "" is a part whose bundle has a blank name.
+ * is not shown, because spend does not count it. Only a STRING marks a part:
+ * "" is a part whose bundle has a blank name, so this never tests truthiness,
+ * and a missing key (an API older than this field) is not a part, so it never
+ * tests `!== null` either, which would print "Included in undefined".
  */
 export function itemCost(it: TechDebtItem): string {
-  if (it.bundle !== null) {
+  if (typeof it.bundle === "string") {
     return it.bundle === ""
       ? "Included in its bundle"
       : `Included in ${it.bundle}`;
