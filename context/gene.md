@@ -1,7 +1,26 @@
 # Gene — in-flight status
 
-_2026-10-10 (track6): #474 D' (your PR D) is PR #1030, on
-`track6/474-d-playbook-risk`._
+_2026-10-11 (track6): #474 E is a draft PR on `track6/474-e-risk-evidence`,
+on top of D', which merged as dd6a788a._
+
+**What E does:** the Risk Register's AI is now told each finding's evidence,
+and its prompt is the approved text (v4), pinned. For ATT&CK it gets the
+status, which of Detect, Prevent and Respond are in place and with which
+confirmed tools, and the rationale and notes; for CSF, the Playbook levels per
+tier, whether evidence capped them, and the Playbook notes; for Zero Trust, the
+stage, the target it was compared against, and the notes. An ATT&CK assessment
+approved before statuses were computed sends only its stored status, so the AI
+is never shown function states its screens do not show. Entries can name other
+axes they affect (a new column on both screens and in the files); when the AI
+sent axes that could not be read, only the consultant's register says so,
+because the kept axes are accurate and a parse failure is not a client fact.
+One open question is with the advisor for you, #1031: unscored seed tiers pull
+a scored tier's Enterprise level down, and E's evidence now shows that to the
+AI as well. It needs migration 0066 and comes back to you (conditions 4, 5
+and 6).
+
+_2026-10-10 (track6): #474 D' (your PR D) merged as PR #1030 (squash
+dd6a788a), from `track6/474-d-playbook-risk`._
 
 **What it does:** the Risk Register's CSF risks now come from the Playbook
 score you chose (#736 5984218862), not the questionnaire tier. A subcategory is
