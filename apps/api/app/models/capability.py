@@ -121,6 +121,10 @@ class CapabilityList(UUIDPKMixin, TimestampMixin, Base):
     # RECORDED -- a list written before 0058, or one no extraction wrote --
     # and is never read as complete (`reconcile.exclusion_count_state`).
     attribution_complete: Mapped[bool | None] = mapped_column(Boolean)
+    # #833 / #834 (migration 0062): what the extraction could not store as given,
+    # each {source_row_index, item_name, field, reason, value}. NULL means NOT
+    # RECORDED (a list from before 0062); [] means checked, nothing to record.
+    extraction_findings: Mapped[list | None] = mapped_column(JSON)
 
     # [{item_id, name}] — the security-scope membership as it stood at approval
     # (migration 0043, W3). An APPROVED list stays editable through five doors

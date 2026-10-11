@@ -14,7 +14,7 @@ suggestions line up with the live assessment and Run AI actually changes rows.
 All six job purposes are registered:
   mitre_map            -> ATT&CK coverage status + validated D/P/R tool citations
   zt_score             -> Zero Trust current/target (DoD respects the <=3 clamp)
-  csf_score            -> NIST CSF five dimension scores (0-2) + narrative
+  csf_score            -> NIST CSF five dimension scores (0-2) + narrative (#806 prompt)
   extract.capabilities -> Tech Debt capability extraction (with confidence_pct)
   risk_synthesize      -> Risk Register candidate entries (catalog-valid links)
   attack_scenario_delta -> the ATT&CK what-if's replacement credits
@@ -30,11 +30,14 @@ its dependency overrides take precedence over this runtime provider.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.ai.llm import FixtureProvider, LLMResponse
+from app.tech_debt.extract import CATEGORIES as TECH_DEBT_CATEGORIES
+from app.tech_debt.security_scope import NOT_IN_USE_PREFIX
 
 # Job purposes (== FixtureProvider keys). Tech Debt keeps its historical
 # "extract.capabilities" purpose for llm_calls + fixture compatibility.
@@ -133,57 +136,88 @@ def _capability_names(value: object) -> list[str]:
     return out
 
 
-#: #841: no `not_applicable`. #841 refuses an AI N/A (the run refuses it and
-#: counts it); the #806 ATT&CK prompt, not yet in the tree, stops offering it.
-#: Today's `_MITRE_MAP_PROMPT` still offers it, so the fixture no longer
-#: suggesting it is the refusal's world, not the prompt's. The fifth slot is a
-#: gap, keeping the cycle's length and so the Partial reasons' cadence.
+#: The #806 prompt (#806 comment 5982555899) is what this is written from
+#: (CLAUDE.md: author fixtures from the PROMPT, never from the parser):
+#: - section 7: the status follows from the three arrays. `covered` has every
+#:   required function, `partial` some, `gap` none; never `not_applicable`;
+#: - section 6: a not-preventable technique has an empty `prevention_tools` and
+#:   is covered on Detect and Respond;
+#: - section 8: a partial row's one reason names its missing function, from the
+#:   three the prompt offers; covered and gap rows carry null;
+#: - section 11: only `techniques`, and only the seven row keys.
+#: The cycle keeps the old fixture's statuses and length, so rows land where
+#: they did; a status the arrays cannot support (no tools) is a gap instead.
 _MITRE_STATUS_CYCLE = ("covered", "partial", "gap", "covered", "gap")
-#: #554: the reason each fixture status carries, copied from what the mitre_map
-#: PROMPT offers (CLAUDE.md: author fixtures from the prompt, never from the
-#: parser). A Partial cycles through three of the prompt's seven codes.
-_MITRE_PARTIAL_REASONS = ("reach_limited", "detection_weak", "missing_control_category")
+#: The partial reasons the prompt offers (section 8), in the order the fixture
+#: cycles through them.
+_MITRE_PARTIAL_REASONS = ("prevention_limited", "recovery_absent", "missing_control_category")
+
+
+def _mitre_not_preventable(payload: dict[str, Any], code: str) -> bool:
+    """`technique_details[code].not_preventable`, as the prompt reads it.
+
+    C0: a payload stored before #806 (an `llm_calls` row replayed, an older
+    preview) carries no `technique_details`, and the prompt it was sent with
+    made no such distinction, so the code is judged preventable: all three
+    functions required, the stricter reading."""
+    details = payload.get("technique_details")
+    entry = details.get(code) if isinstance(details, dict) else None
+    return isinstance(entry, dict) and entry.get("not_preventable") is True
+
+
+def _mitre_arrays(
+    status: str, reason: str | None, not_preventable: bool, tools: list[str], i: int
+) -> tuple[list[str], list[str], list[str]]:
+    """Detection, prevention and response for a row the fixture means to be
+    `status` with `reason`, built so the prompt's section 7 and 8 rules hold.
+    One tool may fill more than one array (section 5)."""
+    if status == "gap" or not tools:
+        return [], [], []
+    d = [tools[i % len(tools)]]
+    r = [tools[(i + 1) % len(tools)]]
+    p = [] if not_preventable else [tools[(i + 2) % len(tools)]]
+    if status == "covered":
+        return d, p, r
+    if reason == "prevention_limited":
+        return d, [], r
+    if reason == "recovery_absent":
+        return d, p, []
+    # missing_control_category: missing Detect when not preventable, else
+    # missing Prevent and Respond.
+    return ([], [], r) if not_preventable else (d, [], [])
 
 
 def _fixture_mitre_map(payload: dict[str, Any]) -> LLMResponse:
-    codes = sorted(_strs(payload.get("technique_codes")))
+    # Section 11: one entry per code, in the order given.
+    codes = _strs(payload.get("technique_codes"))
     tools = _capability_names(payload.get("capability_list"))
     techniques: list[dict[str, Any]] = []
     for i, code in enumerate(codes):
-        status = _MITRE_STATUS_CYCLE[i % len(_MITRE_STATUS_CYCLE)]
-        detection: list[str] = []
-        response: list[str] = []
+        status = _MITRE_STATUS_CYCLE[i % len(_MITRE_STATUS_CYCLE)] if tools else "gap"
+        not_preventable = _mitre_not_preventable(payload, code)
+        reason = None
+        if status == "partial":
+            reason = _MITRE_PARTIAL_REASONS[
+                (i // len(_MITRE_STATUS_CYCLE)) % len(_MITRE_PARTIAL_REASONS)
+            ]
+            if reason == "prevention_limited" and not_preventable:
+                # Section 8: prevention_limited needs prevention to be required.
+                reason = "recovery_absent"
         # Cite tools ONLY from the supplied capability list; the route re-validates
         # every cited tool against the client's approved capability list.
-        if status in ("covered", "partial") and tools:
-            detection = [tools[i % len(tools)]]
-            if status == "covered" and len(tools) > 1:
-                response = [tools[(i + 1) % len(tools)]]
-        reason = (
-            _MITRE_PARTIAL_REASONS[(i // len(_MITRE_STATUS_CYCLE)) % len(_MITRE_PARTIAL_REASONS)]
-            if status == "partial"
-            else None
-        )
+        detection, prevention, response = _mitre_arrays(status, reason, not_preventable, tools, i)
         techniques.append(
             {
                 "technique_code": code,
                 "status": status,
                 "reason_code": reason,
                 "detection_tools": detection,
-                "prevention_tools": [],
+                "prevention_tools": prevention,
                 "response_tools": response,
                 "rationale": f"Fixture-mode draft coverage assessment for {code}.",
             }
         )
-    body: dict[str, Any] = {
-        "techniques": techniques,
-        "executive_summary": (
-            "Fixture-mode ATT&CK coverage draft. Statuses and tool citations are "
-            "deterministic placeholders for offline demo; confirm before release."
-        ),
-        "top_blind_spots": [t["technique_code"] for t in techniques if t["status"] == "gap"][:5],
-    }
-    return _resp(body)
+    return _resp({"techniques": techniques})
 
 
 # ---------------------------------------------------------------------------
@@ -217,65 +251,109 @@ def _fixture_zt_score(payload: dict[str, Any]) -> LLMResponse:
 
 _CSF_DIMENSIONS = ("governance", "policy", "implementation", "monitoring", "improvement")
 
+# The prompt's own words (#806 comment 5982122270), copied, never paraphrased:
+# section 10's dimension names, section 7's rating sentences, section 8's
+# evidence sentences and section 9's no-answer `what_we_found`.
+_CSF_DIMENSION_NAMES = (
+    "Governance",
+    "Policy and Process",
+    "Implementation",
+    "Monitoring and Measurement",
+    "Continuous Improvement",
+)
+_CSF_RATING_SENTENCES = {
+    1: "The recorded maturity rating is Tier 1 (Partial).",
+    2: "The recorded maturity rating is Tier 2 (Risk Informed).",
+    3: "The recorded maturity rating is Tier 3 (Repeatable).",
+    4: "The recorded maturity rating is Tier 4 (Adaptive).",
+}
+_CSF_NO_RATING = "No maturity rating was recorded."
+_CSF_EVIDENCE_ATTACHED = (
+    "Supporting evidence was attached to the answer; its contents were not provided "
+    "and were not evaluated."
+)
+_CSF_NO_EVIDENCE = "No supporting evidence was attached to the answer."
+_CSF_NO_ANSWER = (
+    "No answer was recorded. No assessment dimension was demonstrated. "
+    "No maturity rating was recorded. No supporting evidence was attached to the answer."
+)
+
+
+def _csf_what_we_found(practices: str, missing: list[str], answer: dict[str, Any]) -> str:
+    """Section 10's order: the practices, the dimensions not demonstrated, the
+    rating sentence (section 7), the evidence sentence last (section 8)."""
+    parts = [practices] if practices else []
+    if missing:
+        parts.append(f"Not demonstrated by the notes: {', '.join(missing)}.")
+    parts.append(_CSF_RATING_SENTENCES.get(answer.get("maturity_tier"), _CSF_NO_RATING))
+    parts.append(_CSF_EVIDENCE_ATTACHED if answer.get("has_evidence") is True else _CSF_NO_EVIDENCE)
+    return " ".join(parts)
+
 
 def _fixture_csf_score(payload: dict[str, Any]) -> LLMResponse:
-    tiers = sorted(_strs(payload.get("tiers")))
-    subcategories = sorted(_strs(payload.get("subcategories")))
+    """Written from the approved prompt (#806), never from the parser.
+
+    - Section 3: one row per (tier, Subcategory), in `subcategories` order and,
+      within each, `tiers` order; no row for a code outside `subcategories`.
+    - Section 9: no `answers` entry gets 0 on all five and the exact no-answer
+      sentence; blank notes get 0 on all five, the rating and the evidence.
+    - Noted answers: deterministic 0/1/2 by position; every 0 is named as not
+      demonstrated (section 9), then the rating and evidence sentences.
+    - Section 12: no other fields, so no `executive_summary`.
+    """
+    tiers = _strs(payload.get("tiers"))
+    answers = payload.get("answers")
+    answers = answers if isinstance(answers, dict) else {}
     scores: list[dict[str, Any]] = []
-    for ti, tier in enumerate(tiers):
-        for si, code in enumerate(subcategories):
-            base = (ti + si) % 3
+    for si, code in enumerate(_strs(payload.get("subcategories"))):
+        answer = answers.get(code)
+        for ti, tier in enumerate(tiers):
             row: dict[str, Any] = {"tier": tier, "subcategory_code": code}
-            for di, dim in enumerate(_CSF_DIMENSIONS):
-                row[dim] = (base + di) % 3  # deterministic 0/1/2
-            row["what_we_found"] = f"Fixture-mode finding for {code} in the {tier} tier profile."
+            notes = answer.get("notes") if isinstance(answer, dict) else None
+            if not isinstance(answer, dict):
+                row.update(dict.fromkeys(_CSF_DIMENSIONS, 0))
+                row["what_we_found"] = _CSF_NO_ANSWER
+            elif not isinstance(notes, str) or not notes.strip():
+                row.update(dict.fromkeys(_CSF_DIMENSIONS, 0))
+                row["what_we_found"] = _csf_what_we_found(
+                    "No assessment dimension was demonstrated by the notes.", [], answer
+                )
+            else:
+                base = (ti + si) % 3
+                for di, dim in enumerate(_CSF_DIMENSIONS):
+                    row[dim] = (base + di) % 3  # deterministic 0/1/2
+                missing = [
+                    name
+                    for dim, name in zip(_CSF_DIMENSIONS, _CSF_DIMENSION_NAMES, strict=True)
+                    if row[dim] == 0
+                ]
+                row["what_we_found"] = _csf_what_we_found(
+                    f"Fixture-mode finding for {code} in the {tier} tier profile.", missing, answer
+                )
             scores.append(row)
-    body: dict[str, Any] = {
-        "scores": scores,
-        "executive_summary": ("Fixture-mode NIST CSF draft across the seeded working profile."),
-    }
-    return _resp(body)
+    return _resp({"scores": scores})
 
 
 # ---------------------------------------------------------------------------
 # extract.capabilities: Tech Debt capability extraction from inventory rows
 # ---------------------------------------------------------------------------
-
-_DEMO_TECH_DEBT_ITEMS: list[dict[str, Any]] = [
-    {
-        "name": "CrowdStrike Falcon",
-        "vendor": "CrowdStrike",
-        "category": "EDR",
-        "function": "Endpoint detection and response.",
-        "annual_cost_usd": 120000,
-        "license_count": 500,
-        "notes": "Fixture-mode demo capability.",
-        "confidence_pct": 90,
-        "source_row_index": 0,
-    },
-    {
-        "name": "Splunk Enterprise",
-        "vendor": "Splunk",
-        "category": "SIEM",
-        "function": "Log aggregation and security analytics.",
-        "annual_cost_usd": 200000,
-        "license_count": None,
-        "notes": "Fixture-mode demo capability.",
-        "confidence_pct": 80,
-        "source_row_index": 1,
-    },
-    {
-        "name": "Okta",
-        "vendor": "Okta",
-        "category": "IAM",
-        "function": "Identity and single sign-on.",
-        "annual_cost_usd": 60000,
-        "license_count": 500,
-        "notes": "Fixture-mode demo capability.",
-        "confidence_pct": 70,
-        "source_row_index": 2,
-    },
-]
+#
+# Authored from Tech Debt prompt v3.2's TEXT (issue 806, comment 5983838515; for
+# #806), never from the parser. What the prompt says, and so what this does:
+#   - section 1: skip a total line and a retired row that states no cost; keep an
+#     inactive, planned or no-longer-used row that still carries a cost, its
+#     status in `notes` and confidence 60;
+#   - section 6: `category` is one of the closed list or null, with the actual
+#     category in `notes` when it is known but not on the list;
+#   - section 6, `notes`: plain facts about the row, never an instruction to a
+#     reviewer ("confirm before approving" was one, and is gone);
+#   - section 7 (for #845): a security tool the row describes as planned, not
+#     yet deployed, inactive or no longer used is `security_related: false` with
+#     no functions, its note beginning with exactly the not-in-use prefix;
+#   - section 8: confidence is 100, 90 or 60, and every 60 has a note.
+#   - section 10: no rows (missing, not an array, or empty) is {"items":[]}.
+# Costs and licence counts stay null, as before: the fixture drafts the
+# classification, and offline demo totals are not its job.
 
 _TECH_DEBT_NAME_KEYS = ("name", "product", "tool", "capability", "vendor_product", "item")
 
@@ -283,65 +361,137 @@ _TECH_DEBT_NAME_KEYS = ("name", "product", "tool", "capability", "vendor_product
 # Deterministic per-row function so offline output is stable across runs.
 _TECH_DEBT_FUNCTION_CYCLE = ("prevent", "detect", "respond")
 
+#: v3.2 section 1, "a total, subtotal, or summary line that adds up other rows".
+_TECH_DEBT_TOTAL_LINE = re.compile(r"^\s*(sub|grand\s+)?totals?\b", re.IGNORECASE)
+#: v3.2 section 1, exclusion 6: "retired, removed, or decommissioned".
+_TECH_DEBT_RETIRED_WORDS = ("retired", "removed", "decommissioned")
+#: v3.2 sections 1 and 7: "inactive, planned, and no-longer-used", "not yet
+#: deployed". Retired-with-a-cost rows are kept and read as no longer used.
+_TECH_DEBT_NOT_IN_USE_WORDS = ("not yet deployed", "no longer used", "inactive", "planned")
+#: v3.2 section 6, `annual_cost_usd` and `license_count`: a header naming cost,
+#: price, spend or fees, or a license, seat or user count.
+_TECH_DEBT_COST_HEADER_WORDS = ("cost", "price", "spend", "fee", "licen", "seat")
+
+
+def _row_cells(row: dict[str, Any]) -> list[str]:
+    return [v.strip() for v in row.values() if isinstance(v, str) and v.strip()]
+
+
+def _lifecycle(row: dict[str, Any]) -> tuple[str, str] | None:
+    """(word, the cell as the row states it) for the first lifecycle word any
+    cell carries, retired words first, or None."""
+    for word in (*_TECH_DEBT_RETIRED_WORDS, *_TECH_DEBT_NOT_IN_USE_WORDS):
+        for cell in _row_cells(row):
+            if word in cell.lower():
+                return word, cell.rstrip(".")
+    return None
+
+
+def _states_a_cost(row: dict[str, Any]) -> bool:
+    return any(
+        isinstance(k, str)
+        and any(w in k.lower() for w in _TECH_DEBT_COST_HEADER_WORDS)
+        and str(v).strip() != ""
+        for k, v in row.items()
+        if v is not None
+    )
+
+
+def _v32_category(row: dict[str, Any]) -> tuple[str | None, str | None]:
+    """(category, note): the row's own category when it names a value on v3.2's
+    list (whole, or the part before its "/", so "EDR" is "EDR/XDR"); otherwise
+    null, with the actual category stated in a note."""
+    stated = row.get("category")
+    if not isinstance(stated, str) or not stated.strip():
+        return None, None
+    word = stated.strip().lower()
+    for listed in TECH_DEBT_CATEGORIES:
+        if word in (listed.lower(), listed.split("/")[0].lower()):
+            return listed, None
+    return None, f"Category: {stated.strip()}."
+
 
 def _fixture_tech_debt(payload: dict[str, Any]) -> LLMResponse:
     rows = payload.get("rows")
-    if isinstance(rows, list) and rows:
-        items: list[dict[str, Any]] = []
-        for i, row in enumerate(rows):
-            row = row if isinstance(row, dict) else {}
-            name: str | None = None
-            for key in _TECH_DEBT_NAME_KEYS:
-                value = row.get(key)
-                if isinstance(value, str) and value.strip():
-                    name = value.strip()
-                    break
-            if name is None:
-                # No usable name in any known column: a note, a blank, a
-                # section header, a totals line. The real prompt tells the
-                # model to skip exactly these, so the fixture does too.
-                #
-                # It used to invent "Capability N" instead, which meant the
-                # fixture ALWAYS returned one item per uploaded row — so
-                # `excluded_rows` was always empty and the reconciliation
-                # banner and its review queue could never appear offline.
-                # An unreachable review surface is an untested one; this is the
-                # same unlock that made the security sign-off queue testable.
-                continue
+    if not (isinstance(rows, list) and rows):
+        # v3.2 section 10: "If `rows` is missing, is not an array, or contains no
+        # identifiable capabilities, return exactly: {"items":[]}". This branch
+        # used to invent three costed demo capabilities (advisor ruling F3,
+        # issue 736 comment 6069328834).
+        return _resp({"items": []})
+    items: list[dict[str, Any]] = []
+    for i, row in enumerate(rows):
+        row = row if isinstance(row, dict) else {}
+        name: str | None = None
+        for key in _TECH_DEBT_NAME_KEYS:
+            value = row.get(key)
+            if isinstance(value, str) and value.strip():
+                name = value.strip()
+                break
+        if name is None or _TECH_DEBT_TOTAL_LINE.match(name):
+            # No usable name in any known column (a note, a blank, a section
+            # header), or a totals line: v3.2 section 1 excludes exactly these,
+            # so the fixture does too. Skipping keeps `excluded_rows` and its
+            # review queue reachable offline; an unreachable review surface is
+            # an untested one.
+            continue
+        lifecycle = _lifecycle(row)
+        retired = lifecycle is not None and lifecycle[0] in _TECH_DEBT_RETIRED_WORDS
+        if retired and not _states_a_cost(row):
+            # v3.2 section 1, exclusion 6: retired AND no current cost.
+            continue
 
-            vendor = row.get("vendor")
-            # Prompt v2 classifies every row instead of dropping the
-            # non-security ones. Cycle the call so offline mode exercises BOTH
-            # branches — otherwise the sign-off queue could never appear in a
-            # demo or an e2e run, and an unreachable review surface is an
-            # untested one (the excluded-rows queue had exactly this problem:
-            # the fixture echoed every row, so no exclusion could ever exist).
-            security_related = i % 4 != 3
-            items.append(
-                {
-                    "name": name or f"Capability {i + 1}",
-                    "vendor": vendor if isinstance(vendor, str) and vendor.strip() else None,
-                    "category": None,
-                    "function": (
-                        "Security capability (fixture-mode draft)."
-                        if security_related
-                        else "Business capability (fixture-mode draft)."
-                    ),
-                    "annual_cost_usd": None,
-                    "license_count": None,
-                    "notes": "Drafted offline in fixture mode; confirm before approving.",
-                    "confidence_pct": 60 + (i % 4) * 10,  # 60..90
-                    "source_row_index": i,
-                    "security_related": security_related,
-                    "security_functions": (
-                        [_TECH_DEBT_FUNCTION_CYCLE[i % len(_TECH_DEBT_FUNCTION_CYCLE)]]
-                        if security_related
-                        else []
-                    ),
-                }
-            )
-    else:
-        items = _DEMO_TECH_DEBT_ITEMS
+        vendor = row.get("vendor")
+        vendor = vendor.strip() if isinstance(vendor, str) and vendor.strip() else None
+        # Cycle the security call so offline mode exercises BOTH branches;
+        # otherwise the sign-off queue could never appear in a demo or an e2e
+        # run.
+        security_tool = i % 4 != 3
+        not_in_use = lifecycle is not None and security_tool
+        security_related = security_tool and not not_in_use
+        category, category_note = _v32_category(row)
+
+        notes: list[str] = []
+        if lifecycle is not None:
+            # v3.2 sections 1 and 7: the status as the row states it, and for a
+            # security tool, a note beginning with exactly the prefix.
+            status = lifecycle[1]
+            notes.append(f"{NOT_IN_USE_PREFIX} {status}." if not_in_use else f"Status: {status}.")
+            confidence = 60
+        elif i % 4 == 0:
+            # One row in four needs review, with the reason v3.2's own example
+            # gives, so the low-confidence flag is reachable offline (s4).
+            notes.append("Edition not stated.")
+            confidence = 60
+        else:
+            # v3.2 section 8: 100 when the row states name and vendor.
+            confidence = 100 if vendor else 90
+        if category_note:
+            notes.append(category_note)
+
+        items.append(
+            {
+                "name": name,
+                "vendor": vendor,
+                "category": category,
+                "function": (
+                    "Security capability (fixture-mode draft)."
+                    if security_tool
+                    else "Business capability (fixture-mode draft)."
+                ),
+                "annual_cost_usd": None,
+                "license_count": None,
+                "notes": " ".join(notes) or None,
+                "confidence_pct": confidence,
+                "source_row_index": i,
+                "security_related": security_related,
+                "security_functions": (
+                    [_TECH_DEBT_FUNCTION_CYCLE[i % len(_TECH_DEBT_FUNCTION_CYCLE)]]
+                    if security_related
+                    else []
+                ),
+            }
+        )
     return _resp({"items": items})
 
 
@@ -353,6 +503,83 @@ _RISK_LIKELIHOOD_CYCLE = ("low", "medium", "high", "medium", "very_high")
 _RISK_IMPACT_CYCLE = ("moderate", "major", "catastrophic", "minor", "major")
 _RISK_AXIS_CYCLE = ("detection", "prevention", "response")
 _RISK_ACTION_CYCLE = ("remediate", "mitigate", "transfer", "accept", "avoid")
+#: The approved prompt's exact sentence for "no compensating control".
+_RISK_NO_CONTROLS = "None identified in the supplied information."
+#: The approved prompt's axis order, which `other_axes` follows.
+_RISK_AXIS_ORDER = ("detection", "prevention", "response")
+
+
+def _risk_evidenced_controls(evidence: Any) -> str:
+    """The approved prompt's COMPENSATING CONTROLS rule, for an ATT&CK finding:
+    only confirmed tools in an `in_place` function, named, with what they do.
+    Never an invented control (#806 record, item 4). CSF and Zero Trust
+    evidence names no control the fixture can read, so it gets the exact
+    "none" sentence, as does a finding with no function in place."""
+    if not isinstance(evidence, dict) or _risk_status_is_stored(evidence):
+        return _RISK_NO_CONTROLS
+    named = [
+        f"{tool} provides {function} for this technique."
+        for function in _RISK_AXIS_ORDER
+        if isinstance(evidence.get(function), dict)
+        and evidence[function].get("state") == "in_place"
+        for tool in _strs(evidence[function].get("tools"))
+    ]
+    return " ".join(named) if named else _RISK_NO_CONTROLS
+
+
+def _risk_status_is_stored(evidence: dict) -> bool:
+    """The v3 text (ruling #736 6105137014): "`stored` when the status was
+    recorded directly, with no function states; treat a stored status as given
+    and do not infer missing functions from it." So a stored-status finding
+    names no affected function and no tool as a control.
+
+    Two of its three callers are AN UNREACHABLE RATCHET, and no test can fail
+    without the check there: the only writer, `routes/risk.py::_attack_evidence`,
+    sends no function states and no `missing_functions` with `status_basis:
+    "stored"`, so `_risk_evidenced_controls` and `_risk_other_axes` reach the
+    same answer without it. It would matter there only if that writer began
+    sending function states for a stored status. The third caller,
+    `_risk_residual`, depends on it (v4: a stored `partial` is partly
+    mitigated), and `test_the_fixture_reads_a_stored_partial_as_partly_mitigated`
+    goes red without it."""
+    return evidence.get("status_basis") == "stored"
+
+
+def _risk_residual(kind: Any, evidence: Any) -> str:
+    """The approved RESIDUAL-RISK NARRATIVE, for an ATT&CK finding (v4, ruling
+    #736 6105759625): "partially mitigated to the extent the evidence shows
+    functions in place ..., and substantially unmitigated when it shows none.
+    For a stored status, judge mitigation from the rationale and notes only; a
+    stored `partial` is partly mitigated." The fixture reads no rationale or
+    notes, so a stored `gap` claims nothing beyond its status. CSF and Zero
+    Trust evidence keeps the earlier generic sentence: the fixture reads no
+    practice from it."""
+    if kind != "attack" or not isinstance(evidence, dict):
+        return "Elevated until remediated."
+    if _risk_status_is_stored(evidence):
+        if evidence.get("status") == "partial":
+            return "Partly mitigated: the recorded status is partial."
+        return "Not judged mitigated: the recorded status is a gap."
+    in_place = [
+        f
+        for f in _RISK_AXIS_ORDER
+        if isinstance(evidence.get(f), dict) and evidence[f].get("state") == "in_place"
+    ]
+    if in_place:
+        return f"Partially mitigated: {', '.join(in_place)} in place."
+    return "Substantially unmitigated: no function is in place."
+
+
+def _risk_other_axes(evidence: Any, axis: str) -> list[str]:
+    """The approved prompt's `other_axes` rule, for an ATT&CK finding: each
+    function in `missing_functions` is directly affected, so every one but the
+    primary `axis`, in the prompt's order. Empty for CSF and Zero Trust, whose
+    evidence names no function, and for a stored status, from which v3 says
+    not to infer missing functions."""
+    if not isinstance(evidence, dict) or _risk_status_is_stored(evidence):
+        return []
+    missing = _strs(evidence.get("missing_functions"))
+    return [a for a in _RISK_AXIS_ORDER if a in missing and a != axis]
 
 
 def _fixture_risk_synthesize(payload: dict[str, Any]) -> LLMResponse:
@@ -360,11 +587,12 @@ def _fixture_risk_synthesize(payload: dict[str, Any]) -> LLMResponse:
     valid_techniques = set(_strs(payload.get("valid_techniques")))
     valid_controls = set(_strs(payload.get("valid_controls")))
     entries: list[dict[str, Any]] = []
-    if isinstance(findings, list):
-        for i, finding in enumerate(findings):
+    # #474 E, ruling 6: `findings` is an object keyed by `source_id`, and the
+    # prompt says to copy the key into the entry as `source_id`.
+    if isinstance(findings, dict):
+        for i, (source_id, finding) in enumerate(findings.items()):
             if not isinstance(finding, dict):
                 continue
-            source_id = finding.get("source_id")
             kind = finding.get("kind")
             # Only cite codes present in the supplied
             # valid_techniques / valid_controls lists, which since #403 are the
@@ -386,17 +614,20 @@ def _fixture_risk_synthesize(payload: dict[str, Any]) -> LLMResponse:
                 [source_id] if kind in ("csf", "zt") and source_id in valid_controls else []
             )
             label = finding.get("label") or source_id or f"finding {i + 1}"
+            evidence = finding.get("evidence")
+            axis = _RISK_AXIS_CYCLE[i % len(_RISK_AXIS_CYCLE)]
             entries.append(
                 {
                     "title": f"Gap: {label}",
                     "description": ("Fixture-mode candidate risk entry drafted from the finding."),
-                    "axis": _RISK_AXIS_CYCLE[i % len(_RISK_AXIS_CYCLE)],
+                    "axis": axis,
+                    "other_axes": _risk_other_axes(evidence, axis),
                     "linked_techniques": linked_techniques,
                     "linked_controls": linked_controls,
                     "likelihood": _RISK_LIKELIHOOD_CYCLE[i % len(_RISK_LIKELIHOOD_CYCLE)],
                     "impact": _RISK_IMPACT_CYCLE[i % len(_RISK_IMPACT_CYCLE)],
-                    "compensating_controls": "Interim monitoring in place.",
-                    "residual_risk": "Elevated until remediated.",
+                    "compensating_controls": _risk_evidenced_controls(evidence),
+                    "residual_risk": _risk_residual(kind, evidence),
                     "recommended_action": _RISK_ACTION_CYCLE[i % len(_RISK_ACTION_CYCLE)],
                     "rationale": "Fixture-mode rationale; validate against evidence.",
                     "source": finding.get("source") or "coverage_finding",

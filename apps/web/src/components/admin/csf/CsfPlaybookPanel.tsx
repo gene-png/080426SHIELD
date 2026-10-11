@@ -113,6 +113,8 @@ const DROP_REASON_LABEL: Record<CsfDroppedSuggestion["reason"], string> = {
   // applied, so a row is only ever written from the batch that asked for it.
   not_in_batch:
     "answered for a row its batch was not asked about, so it was not applied",
+  // #1000: a live run does not assess a row whose answer has no notes.
+  no_notes: "row has no notes, so the AI does not assess it",
 };
 
 /**
@@ -131,6 +133,8 @@ const BY_DESIGN_SKIPS: ReadonlySet<string> = new Set([
   "locked",
   "protected",
   "edited",
+  // #1000: by design, and no re-run changes it; the count line says so.
+  "no_notes",
 ]);
 
 /**
@@ -212,6 +216,72 @@ function groupByReason(
   return [...groups.entries()];
 }
 
+function tierLabel(tier: string): string {
+  return tier.charAt(0).toUpperCase() + tier.slice(1);
+}
+
+/**
+ * #836: rows a batch was asked for and left out. They keep the scores they had,
+ * which on a Playbook nobody scored is all zeros, read as Level 1 -- so the
+ * Playbook looks scored when it is not. Keyed on the COUNT, never on whether the
+ * field exists: a run stored before #836 carries neither and says nothing here.
+ * Copy O1/O2 approved on #836.
+ */
+function OmittedRows({
+  result,
+}: {
+  result: CsfRunAiResponse;
+}): JSX.Element | null {
+  const count = result.omitted_count ?? 0;
+  if (count <= 0) return null;
+  const rows = result.omitted_rows ?? [];
+  const rest = rows.length - ITEM_CAP;
+  return (
+    <div
+      className="text-sm text-status-danger-fg"
+      role="alert"
+      data-testid="csf-run-omitted"
+    >
+      <p className="font-semibold">
+        {count === 1
+          ? "1 row got no answer from the AI, so it keeps the scores it had. On a Playbook that was not scored before, that is all zeros, which reads as Level 1. Re-run before relying on this draft:"
+          : `${count} rows got no answer from the AI, so they keep the scores they had. On a Playbook that was not scored before, that is all zeros, which reads as Level 1. Re-run before relying on this draft:`}
+      </p>
+      <ul className="list-disc pl-5">
+        {rows.slice(0, ITEM_CAP).map((r) => (
+          <li key={`${r.tier}|${r.subcategory_code}`}>
+            {`${tierLabel(r.tier)} tier, ${r.subcategory_code}`}
+          </li>
+        ))}
+        {rest > 0 ? <li>{`and ${rest} more`}</li> : null}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * #1000 (Gene's ruling 2): rows a LIVE run did not assess because their
+ * interview answer has no notes. They keep their scores, so it is a count, not
+ * an alert. Shown at zero too; absent when the run counted nothing (`null` on
+ * an offline run, or a result stored before #1000). Copy approved on #1000,
+ * comment 6102665946.
+ */
+function NoNotesLine({
+  result,
+}: {
+  result: CsfRunAiResponse;
+}): JSX.Element | null {
+  const n = result.no_notes_count;
+  if (typeof n !== "number") return null;
+  return (
+    <p className="text-sm text-ink-secondary" data-testid="csf-run-no-notes">
+      {n === 1
+        ? "Not assessed by AI (no notes): 1 row. It keeps the score it had."
+        : `Not assessed by AI (no notes): ${n} rows. They keep the scores they had.`}
+    </p>
+  );
+}
+
 /**
  * What the run did with every suggestion it received (W1, issue #44).
  *
@@ -289,6 +359,10 @@ function RunAiAccounting({
     return (
       <div className="space-y-2">
         {incomplete}
+        {/* #836: a batch that answered nothing left every row out, and this
+            branch returns before the main body. */}
+        <OmittedRows result={result} />
+        <NoNotesLine result={result} />
         <p className="text-sm text-status-danger-fg" role="alert">
           The AI returned no suggestions at all, so nothing was applied. That is
           expected only if the model genuinely had nothing to say — otherwise
@@ -318,6 +392,10 @@ function RunAiAccounting({
       </p>
 
       {incomplete}
+
+      <OmittedRows result={result} />
+
+      <NoNotesLine result={result} />
 
       {failed.length > 0 ? (
         <div className="text-sm text-status-danger-fg" role="alert">
@@ -420,7 +498,25 @@ function tierLevels(row: EnterpriseSubcategory): string {
 }
 
 const COLUMNS: DataTableColumn<EnterpriseSubcategory>[] = [
-  { key: "code", header: "Subcategory", cell: (r) => r.subcategory_code },
+  {
+    key: "code",
+    header: "Subcategory",
+    cell: (r) => (
+      <>
+        {r.subcategory_code}
+        {/* #1000: from CURRENT notes, present tense on purpose, so it stays
+            true when the stored score came from an earlier AI run. */}
+        {r.no_notes === true ? (
+          <span
+            className="block text-xs text-ink-tertiary"
+            data-testid="csf-row-no-notes"
+          >
+            No notes: a live AI run does not assess this row.
+          </span>
+        ) : null}
+      </>
+    ),
+  },
   { key: "name", header: "Outcome", cell: (r) => r.name },
   { key: "tiers", header: "Tiers", cell: (r) => tierLevels(r) },
   {
@@ -719,6 +815,18 @@ export function CsfPlaybookPanel({
               </span>
             ) : null}
           </div>
+
+          {/* #852: the API's own sentence (`csf/retired.py`), the one the
+              playbook files carry. The table below lists the catalog's rows
+              only, so this is where a kept row shows. */}
+          {enterprise?.retired_rows_note ? (
+            <p
+              className="text-sm text-ink-secondary"
+              data-testid="csf-retired-rows"
+            >
+              {enterprise.retired_rows_note}
+            </p>
+          ) : null}
 
           {seeded ? (
             <AiPreviewButton serviceId={serviceId} disabled={busy !== null} />

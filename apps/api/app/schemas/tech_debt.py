@@ -14,7 +14,7 @@ from app.models.capability import (
     SecurityFunction,
 )
 from app.models.service import ServiceKind, ServiceStatus
-from app.schemas._numeric import IntNotBool
+from app.schemas._numeric import FloatNotBool, IntNotBool
 from app.schemas.ai_runs import AiSource
 from app.tech_debt.security_scope import signoff_kind
 
@@ -109,9 +109,18 @@ class IncludeExcludedRowRequest(BaseModel):
     vendor: str | None = Field(default=None, max_length=255)
     category: str | None = Field(default=None, max_length=128)
     function: str | None = Field(default=None, max_length=255)
-    annual_cost_usd: float | None = None
+    annual_cost_usd: FloatNotBool | None = None
     license_count: IntNotBool | None = None
     notes: str | None = None
+
+
+class ExtractionFlags(BaseModel):
+    """`app.tech_debt.extract.extraction_flags`, one count per C6 rule (#806)."""
+
+    name_missing: int
+    confidence_off_scale: int
+    category_off_list: int
+    source_row_duplicated: int
 
 
 class CapabilityListResponse(BaseModel):
@@ -149,6 +158,9 @@ class CapabilityListResponse(BaseModel):
     # #177: whether the extraction attributed every item to one uploaded row.
     # NULL is "not recorded" (pre-0058, or no extraction), never complete.
     attribution_complete: bool | None = None
+    # #833 / #834: what the extraction could not store as given. None is "not
+    # recorded" (a list from before 0062); [] is "checked, nothing to record".
+    extraction_findings: list[dict] | None = None
     # #177/#193: `reconcile.exclusion_count_state` -- whether the excluded count
     # is exact or only a floor, from the one reader every surface calls.
     exclusion_count_state: Literal["not_recorded", "exact", "unknown"] | None = None
@@ -156,6 +168,12 @@ class CapabilityListResponse(BaseModel):
     # security-related -- the model contradicting itself, kept in ATT&CK scope.
     # Derived by the route from the stored rows, a consultant's override excluded.
     not_in_use_contradictions: int = 0
+    # C6, for #806: what Tech Debt v3.2 closes and the model still sent, each
+    # value kept as sent, as counted AT EXTRACTION (the list's own extraction
+    # audit); a consultant's later edit does not change it. None is "not
+    # measured": a list an earlier prompt drafted, or one no extraction is on
+    # record for.
+    extraction_flags: ExtractionFlags | None = None
 
     @field_validator("excluded_rows", mode="before")
     @classmethod
@@ -203,7 +221,7 @@ class CapabilityItemPatch(BaseModel):
     vendor: str | None = Field(default=None, max_length=255)
     category: str | None = Field(default=None, max_length=128)
     function: str | None = Field(default=None, max_length=255)
-    annual_cost_usd: float | None = None
+    annual_cost_usd: FloatNotBool | None = None
     license_count: IntNotBool | None = None
     notes: str | None = None
     disposition: CapabilityDisposition | None = None

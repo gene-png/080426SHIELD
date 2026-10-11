@@ -80,11 +80,11 @@ def test_subcategory_function_matches_code_prefix() -> None:
     "function_code,expected",
     [
         (FunctionCode.GV, 31),
-        (FunctionCode.ID, 22),
+        (FunctionCode.ID, 21),
         (FunctionCode.PR, 22),
         (FunctionCode.DE, 11),
         (FunctionCode.RS, 13),
-        (FunctionCode.RC, 7),
+        (FunctionCode.RC, 8),
     ],
 )
 def test_subcategory_counts_per_function(function_code: FunctionCode, expected: int) -> None:

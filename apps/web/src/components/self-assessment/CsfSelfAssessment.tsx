@@ -371,6 +371,16 @@ export function CsfSelfAssessment({
               profile.
             </p>
           ) : null}
+          {/* #852: the API's own sentence (`csf/retired.py`), the one the
+              consultant's workspace renders. Never rebuilt here. */}
+          {assessment.retired_answers_note ? (
+            <p
+              className="mb-4 text-sm text-ink-secondary"
+              data-testid="csf-retired-answers"
+            >
+              {assessment.retired_answers_note}
+            </p>
+          ) : null}
           <CsfQuestionnaire
             catalog={filteredCatalog}
             answersByCode={answersByCode}

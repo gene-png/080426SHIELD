@@ -139,11 +139,11 @@ def test_unknown_subcategory_codes_in_answers_ignored() -> None:
 def test_each_function_totals_match_catalog() -> None:
     expected = {
         FunctionCode.GV: 31,
-        FunctionCode.ID: 22,
+        FunctionCode.ID: 21,
         FunctionCode.PR: 22,
         FunctionCode.DE: 11,
         FunctionCode.RS: 13,
-        FunctionCode.RC: 7,
+        FunctionCode.RC: 8,
     }
     score = compute({})
     for fs in score.by_function:

@@ -433,6 +433,17 @@ export function AttackScenarioPanel({
             {phase.list.base.version}, approved{" "}
             {approvedText(phase.list.base.approved_at)}.
           </p>
+          {(phase.list.base.citations_outside_subset ?? 0) > 0 ? (
+            // #851: the workspace's disclosure, for the base. Copy approved (#736, 6024072042).
+            <p
+              className="text-sm text-status-warning-fg"
+              data-testid="attack-scenario-base-outside-subset"
+            >
+              {phase.list.base.citations_outside_subset === 1
+                ? "1 technique row in this assessment credits a tool that is not in the client's security tool list, so today's figure may count a tool the client does not use."
+                : `${phase.list.base.citations_outside_subset} technique rows in this assessment credit a tool that is not in the client's security tool list, so today's figure may count tools the client does not use.`}
+            </p>
+          ) : null}
           <ChatBox
             key={serviceId}
             serviceId={serviceId}

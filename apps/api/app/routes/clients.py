@@ -17,7 +17,7 @@ from typing import Annotated, NamedTuple
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, undefer_group
 
 from app.attack.after import sentences as attack_after_sentences
 from app.attack.analytics import compute as attack_compute
@@ -35,21 +35,25 @@ from app.attack.catalog_version import is_current as attack_catalog_is_current
 from app.attack.computed import IN_PLACE_TEXT as ATTACK_IN_PLACE_TEXT
 from app.attack.computed import effective_coverage as attack_effective_coverage
 from app.attack.coverage import ASSESSED
+from app.attack.coverage import CoverageStatus as AttackCoverageStatus
 from app.attack.exporters import awaiting_review_text as attack_awaiting_review_text
 from app.attack.exporters import build_context as attack_build_context
 from app.attack.exporters import coverage_measured
 from app.attack.exporters import coverage_pct_text as attack_coverage_pct_text
 from app.attack.exporters import partial_reason_counts as attack_partial_reason_counts
 from app.attack.exporters import retirement_sentences as attack_retirement_sentences
+from app.attack.exporters import subset_sentences as attack_subset_sentences
 from app.attack.parents import PARENT_CHILDREN as ATTACK_PARENT_CHILDREN
 from app.attack.parents import is_computed_parent as attack_is_computed_parent
-from app.attack.partial_reasons import partial_reason as attack_partial_reason
+from app.attack.partial_reasons import partial_reason_for_row as attack_partial_reason_for_row
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.rules import parents_computed as attack_parents_computed
 from app.attack.rules import statuses_computed as attack_statuses_computed
 from app.csf.gap import MAX_TIER as CSF_MAX_TIER
 from app.csf.gap import analyze as csf_analyze_gaps
 from app.csf.gap import resolve_target_tier as csf_resolve_target_tier
+from app.csf.retired import answers_sentence as csf_retired_sentence
+from app.csf.retired import retired_answers as csf_retired_answers
 from app.csf.scoring import _label_from_average as csf_label_from_average
 from app.csf.scoring import compute as csf_compute
 from app.db.session import get_db
@@ -70,7 +74,7 @@ from app.models.capability import (
 from app.models.client import Client
 from app.models.csf_assessment import CsfAnswer, CsfAssessment, CsfAssessmentStatus
 from app.models.deliverable import Deliverable
-from app.models.risk_register import RiskEntry, RiskRegister
+from app.models.risk_register import OTHER_AXES_GROUP, RiskEntry, RiskRegister
 from app.models.service import Service, ServiceKind
 from app.models.user import User, UserRole
 from app.models.zt_assessment import (
@@ -79,6 +83,9 @@ from app.models.zt_assessment import (
     ZtAssessmentStatus,
     ZtFramework,
 )
+from app.risk.baseline import targets_used
+from app.risk.csf_source import csf_no_shared_row as risk_csf_no_shared_row
+from app.risk.csf_source import csf_source_note as risk_csf_source_note
 from app.risk.engine import (
     Impact,
     Likelihood,
@@ -90,7 +97,10 @@ from app.risk.engine import (
     matrix_counts,
     tier_counts,
 )
+from app.risk.zt_capped import capped_target_codes as risk_capped_target_codes
+from app.risk.zt_capped import capped_target_sentence as risk_capped_target_sentence
 from app.routes.attack import client_retirement_index
+from app.routes.attack import subset_state as attack_subset_state
 from app.schemas.clients import (
     AttackDashboardResponse,
     AttackDashboardRollup,
@@ -116,12 +126,16 @@ from app.schemas.clients import (
     ZtDashboardResponse,
     ZtPillarDashboard,
 )
+from app.schemas.risk import RiskTargetUsed
 from app.services.engagement_targets import client_target_stage, client_target_tier
+from app.tech_debt.components import is_component, license_count, source_items
 from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.savings import estimated_savings
 from app.zt.catalog import capability_by_code as zt_capability_by_code
 from app.zt.maturity import ZtFrameworkCode
 from app.zt.maturity import stage_label as zt_stage_label
+from app.zt.retired import retired_answer_count as zt_retired_answer_count
+from app.zt.retired import retired_sentence as zt_retired_sentence
 from app.zt.scoring import analyze_gaps as zt_analyze_gaps
 from app.zt.scoring import compute as zt_compute
 from app.zt.scoring import effective_target_stages as zt_effective_target_stages
@@ -129,6 +143,8 @@ from app.zt.scoring import (
     engagement_target_capability_count as zt_engagement_target_capability_count,
 )
 from app.zt.scoring import resolve_target_stage as zt_resolve_target_stage
+from app.zt.target_caps import stage_above_max_sentences as zt_stage_above_max_sentences
+from app.zt.target_caps import target_cap_sentences as zt_target_cap_sentences
 
 router = APIRouter(prefix="/clients", tags=["clients"])
 
@@ -846,7 +862,7 @@ def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _TargetedKindTot
 
 def _attack_uncovered_total(
     db: Session, service_ids: list[uuid.UUID]
-) -> tuple[_KindTotal, bool, int | None]:
+) -> tuple[_KindTotal, bool, int | None, bool | None]:
     """The ATT&CK total, whether it is unresolved because the report is
     WITHHELD (#556) rather than unmatched (#114) -- two causes, two sentences --
     and the NOT-VERIFIED count beside it (#554, #621 review).
@@ -857,11 +873,22 @@ def _attack_uncovered_total(
     released assessment behind it renders under #620's rules (option (a)): the
     card then reads as it did before #621. Summed over the services under the
     new rules only; a rule-1 assessment cannot hold an unverified row, since
-    nothing may write one."""
+    nothing may write one.
+
+    The fourth value is #889's (Q3, C7): whether a summed assessment has a row
+    whose EFFECTIVE status credits coverage (Covered or Partial) and which
+    credits a tool outside the client's CURRENT security tool list
+    (`subset_state`, the dashboard's own read). The total sums Gap only, so
+    such a row is left out of it: the total may be understated (review F1,
+    copy C7 as ruled). A Gap row crediting such a tool is already IN the total,
+    so it does not raise the flag (round-2 review). None with the total, and
+    when nothing could be checked (no Tech Debt list, only lists with no
+    security tool, or only discarded lists): not checked is not "none found"."""
     if not service_ids:
-        return _KindTotal(None, False), False, None
+        return _KindTotal(None, False), False, None, None
     total = 0
     not_verified: int | None = None
+    outside: bool | None = None
     for sid in service_ids:
         # #114: the released deliverable's parent, not the latest APPROVED row.
         # See `_csf_gap_total` above for why the `found` flag went with it.
@@ -875,7 +902,7 @@ def _attack_uncovered_total(
             # One unresolvable service makes the whole KIND unresolved. Summing
             # the rest would publish a floor as a figure — option 1 in
             # `_released_parent`, rejected there for this reason.
-            return _KindTotal(None, True), False, None
+            return _KindTotal(None, True), False, None, None
         # No `deliverable` here: an ATT&CK service has no engagement target of
         # #209's shape, so there is nothing to freeze. Stated because the two
         # helpers above this one DO freeze, and a reader sweeping for the twin
@@ -886,7 +913,7 @@ def _attack_uncovered_total(
             # unknown codes silently dropped by `attack_compute` below. Same
             # answer as an unresolvable service: the whole kind is unresolved,
             # and the card is told the cause.
-            return _KindTotal(None, True), True, None
+            return _KindTotal(None, True), True, None, None
         # #554 R3: computed statuses where they apply, so this gap count is the
         # dashboard's gap count.
         rows = attack_effective_coverage(
@@ -913,7 +940,29 @@ def _attack_uncovered_total(
         total += rollup.gap
         if attack_parents_computed(a):
             not_verified = (not_verified or 0) + rollup.unable_to_determine
-    return _KindTotal(total, False), False, not_verified
+        # #889: the dashboard's twin. Disclosure only; `total` is unchanged.
+        subset = attack_subset_state(
+            db, _service_client_id(db, sid), rows, parents_computed=attack_parents_computed(a)
+        )
+        if subset.checked:
+            # Only rows the rollup counts toward coverage: C7 says "counted as
+            # covered", and a Gap, N/A or unscored row is not.
+            credited = {r.technique_code for r in rows if r.status in _CREDITS_COVERAGE}
+            outside = bool(outside) or any(o.technique_code in credited for o in subset.outside)
+    return _KindTotal(total, False), False, not_verified, outside
+
+
+#: #889 round 2: the effective statuses the rollup counts toward coverage.
+_CREDITS_COVERAGE = frozenset(
+    {AttackCoverageStatus.COVERED.value, AttackCoverageStatus.PARTIAL.value}
+)
+
+
+def _service_client_id(db: Session, service_id: uuid.UUID) -> uuid.UUID:
+    svc = db.get(Service, service_id)
+    if svc is None:
+        raise ValueError(f"released ATT&CK service {service_id} does not exist")
+    return svc.client_id
 
 
 def _tech_debt_savings(db: Session, service_ids: list[uuid.UUID]) -> _TechDebtTotal:
@@ -977,7 +1026,7 @@ def value_summary(
         ServiceKind.ZERO_TRUST_DOD, []
     )
     zt = _zt_gap_total(db, zt_ids)
-    attack, attack_withheld, attack_not_verified = _attack_uncovered_total(
+    attack, attack_withheld, attack_not_verified, attack_outside = _attack_uncovered_total(
         db, by_kind.get(ServiceKind.ATTACK_COVERAGE, [])
     )
     csf = _csf_gap_total(db, by_kind.get(ServiceKind.NIST_CSF, []))
@@ -1021,6 +1070,7 @@ def value_summary(
         attack_uncovered_unresolved=attack.unresolved,
         attack_uncovered_withheld=attack_withheld,
         attack_not_verified_count=attack_not_verified,
+        attack_covered_relies_on_outside_tool=attack_outside,
         csf_gap_count=csf.value,
         csf_gap_unresolved=csf.unresolved,
         csf_services=csf.services,
@@ -1251,13 +1301,10 @@ def attack_dashboard(
                 partial_reason=(
                     AttackPartialReason(label=reason.label, sentence=reason.sentence)
                     if (
-                        reason := attack_partial_reason(
-                            r.status,
-                            r.reason_code,
-                            computed_parent=bool(parent),
-                            # #554 R3: the exporters' `_row_reason` twin.
-                            computed_leaf=getattr(r, "is_computed", False),
-                        )
+                        # #842: the exporters' `_row_reason` calls the same entry
+                        # point, so a stored reason is shown only when it is true
+                        # of the computed Detect / Prevent / Respond line.
+                        reason := attack_partial_reason_for_row(r, computed_parent=bool(parent))
                     )
                     is not None
                     else None
@@ -1289,15 +1336,21 @@ def attack_dashboard(
     # from these rows and this rollup, so the dashboard and the document count
     # the same rows the same way.
     retirement = client_retirement_index(db, client.id)
-    # ONE context for both the retirement sentences and the reason table, so
-    # each is computed exactly as the deliverable computes it.
+    delivered = [r for r in rows if r.technique_code in valid]
+    # #889 (Q1): the security tool list check, read LIVE through the ONE
+    # function finalize and the admin workspace read; the web says beside it
+    # that it reflects the client's current list (C2).
+    subset = attack_subset_state(db, client.id, delivered, parents_computed=rule)
+    # ONE context for the retirement sentences, the subset sentences and the
+    # reason table, so each is computed exactly as the deliverable computes it.
     deliverable_ctx = attack_build_context(
         client_legal_name=client.legal_name,
         service_title=svc.title,
         assessment=assessment,
-        coverage=[r for r in rows if r.technique_code in valid],
+        coverage=delivered,
         rollup=rollup,
         retirement=retirement,
+        subset=subset,
     )
     tool_retirement = (
         retirement.marks(
@@ -1384,6 +1437,14 @@ def attack_dashboard(
         tool_retirement=tool_retirement,
         retirement_notes=retirement_notes,
         partial_reasons=partial_reasons,
+        # #889: all three states (Q1) and the per-tool mark (Q2). C1 counts
+        # EVERY row the deliverable prints that credits such a tool, at any
+        # status, NOT only rows credited as coverage like the home card's flag
+        # (`_attack_uncovered_total`): C1 says the row's status "may count" the
+        # tool, which is true of a Gap row's judgement too, and it is the
+        # document's own sentence, so the two surfaces stay the same claim.
+        subset_notes=attack_subset_sentences(deliverable_ctx),
+        tool_outside_subset=sorted(subset.outside_tools()) if subset.checked else None,
     )
 
 
@@ -1579,6 +1640,13 @@ def zt_dashboard(
         # would be worse than most -- the screen and the PDF would be stating
         # different facts about one assessment.
         unusable_target_codes=list(gap_analysis.unusable_target_codes),
+        # #839: off the same GapAnalysis, as #188's field above.
+        target_cap_notes=zt_target_cap_sentences(gap_analysis),
+        # #914: the same derivation the workspace and the three files call.
+        retired_answers=zt_retired_answer_count(fw, rows),
+        retired_answers_note=zt_retired_sentence(fw, zt_retired_answer_count(fw, rows)),
+        # #839 S1: from the same stored answers every figure above read.
+        stage_above_max_notes=zt_stage_above_max_sentences(fw, answers),
         total_gap_count=gap_analysis.total_gap_count,
         largest_gap_pillar=largest.name if largest else None,
         largest_gap_pct=largest.gap_pct if largest else 0.0,
@@ -1661,7 +1729,13 @@ def tech_debt_dashboard(
     )
 
     annual_spend = 0.0
-    # #804: the deliverable's own derivation, not a copy of it.
+    # for #835: the ONE rule for what counts as an application. A split
+    # bundle's parts are listed in the inventory but are not tools of their own.
+    sources = source_items(items)
+    bundle_part_count = len(items) - len(sources)
+    # #804: the deliverable's own derivation, not a copy of it. Savings still
+    # see a part (advisor ruling on #736): a part marked Cut with no cost is a
+    # genuinely unknown saving.
     found = estimated_savings((it.disposition, it.annual_cost_usd) for it in items)
     savings = found.amount
     savings_cost_known = found.known
@@ -1670,18 +1744,27 @@ def tech_debt_dashboard(
     # `total_applications`, so the spend figure was a floor and said so nowhere
     # while `savings` beside it carried a flag for exactly this.
     spend_cost_known = True
-    # category -> {"total": float, "count": int, "items": [CapabilityItem]}
+    # category -> {"total": float, "items": [CapabilityItem]}; "count" is
+    # derived below as the number of distinct LICENSES in the bucket.
     by_cat: dict[str, dict] = {}
     for it in items:
-        cost = float(it.annual_cost_usd) if it.annual_cost_usd is not None else 0.0
-        if it.annual_cost_usd is None:
+        # for #835: a bundle's part is not a cost. Its parent holds the license
+        # value, so the part neither adds to spend nor, by having no cost of its
+        # own, makes spend a floor. A real uncosted source row still does.
+        part = is_component(it)
+        cost = float(it.annual_cost_usd) if it.annual_cost_usd is not None and not part else 0.0
+        if it.annual_cost_usd is None and not part:
             spend_cost_known = False
         annual_spend += cost
+        # A part DOES sit in its own category (UX finding 5: Defender beside
+        # CrowdStrike is a real redundancy), but a bundle and its parts are one
+        # license, so the bucket counts licenses rather than rows.
         cat = it.category or _UNCATEGORIZED
-        bucket = by_cat.setdefault(cat, {"total": 0.0, "count": 0, "items": []})
+        bucket = by_cat.setdefault(cat, {"total": 0.0, "items": []})
         bucket["total"] += cost
-        bucket["count"] += 1
         bucket["items"].append(it)
+    for bucket in by_cat.values():
+        bucket["count"] = license_count(bucket["items"])
 
     spend_by_category = [
         TechDebtCategorySpend(category=cat, total_usd=round(b["total"], 2), count=b["count"])
@@ -1714,7 +1797,8 @@ def tech_debt_dashboard(
         client_id=str(client.id),
         service_id=str(service_id),
         actor_user_id=str(user.id),
-        applications=len(items),
+        applications=len(sources),
+        bundle_parts=bundle_part_count,
         savings=savings,
     )
 
@@ -1724,7 +1808,7 @@ def tech_debt_dashboard(
     # way as the exporter -- source-derived items only, so decomposing a bundle
     # into children can never move the arithmetic.
     source_rows_total = getattr(cl, "source_rows_total", None)
-    included_count = sum(1 for it in items if getattr(it, "parent_item_id", None) is None)
+    included_count = len(sources)
     excluded_count = (
         max(source_rows_total - included_count, 0) if source_rows_total is not None else 0
     )
@@ -1781,7 +1865,8 @@ def tech_debt_dashboard(
         deliverable_version=deliv.version,
         # #646: the ONE derivation every surface calls, for the released list.
         ai_source=ai_mode_for(db, svc, cl).as_api(),
-        total_applications=len(items),
+        total_applications=len(sources),
+        bundle_part_count=bundle_part_count,
         annual_spend_usd=round(annual_spend, 2),
         identified_savings_usd=round(savings, 2),
         savings_cost_known=savings_cost_known,
@@ -1878,7 +1963,10 @@ def risk_dashboard(
 
     entries = (
         db.execute(
-            select(RiskEntry).where(RiskEntry.register_id == reg.id).order_by(RiskEntry.created_at)
+            select(RiskEntry)
+            .where(RiskEntry.register_id == reg.id)
+            .order_by(RiskEntry.created_at)
+            .options(undefer_group(OTHER_AXES_GROUP))
         )
         .scalars()
         .all()
@@ -1898,6 +1986,7 @@ def risk_dashboard(
         a for a in (_safe_enum(RecommendedAction, e.recommended_action) for e in entries) if a
     ]
     tc = tier_counts(tiers)
+    _risk_targets, _risk_targets_recorded = targets_used(reg.provenance)
 
     _log.info(
         "client.risk_dashboard.built",
@@ -1959,6 +2048,18 @@ def risk_dashboard(
         tier_counts=tc,
         axis_counts=axis_counts(axes),
         action_counts=action_counts(actions),
+        # #474, through the one reader of the register's record.
+        targets=[
+            RiskTargetUsed(
+                kind=t.kind,
+                framework=t.framework,
+                target=t.target,
+                source=t.source,
+                origin=t.origin,
+            )
+            for t in _risk_targets
+        ],
+        targets_recorded=_risk_targets_recorded,
         matrix=[
             RiskMatrixCell(
                 likelihood=cell.likelihood,
@@ -1972,6 +2073,7 @@ def risk_dashboard(
             RiskDashboardEntry(
                 title=e.title,
                 axis=e.axis,
+                other_axes=e.other_axes,
                 likelihood=e.likelihood,
                 impact=e.impact,
                 tier=e.tier,
@@ -1979,6 +2081,11 @@ def risk_dashboard(
             )
             for e in entries
         ],
+        # #915: the same reader and sentence as the register and its files.
+        zt_capped_target_note=risk_capped_target_sentence(risk_capped_target_codes(reg.provenance)),
+        csf_source_note=risk_csf_source_note(reg.provenance),
+        # #736 6104067136: the files' reader, so the screen and the files agree.
+        csf_no_shared_row=risk_csf_no_shared_row(reg.provenance),
     )
 
 
@@ -2137,6 +2244,11 @@ def csf_dashboard(
         largest_gap_function=largest_gap_function,
         largest_gap_pct=largest_gap_pct,
         functions=functions,
+        # #852: the engines above iterate the catalog, so an answer kept on
+        # ID.AM-09 is in no figure here; this is where the client is told. The
+        # same derivation and sentence as the released document.
+        retired_answers=len(csf_retired_answers(rows)),
+        retired_answers_note=csf_retired_sentence(rows),
         top_gaps=[
             CsfGapDashboard(
                 code=g.code,

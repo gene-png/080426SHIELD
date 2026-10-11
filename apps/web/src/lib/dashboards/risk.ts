@@ -1,3 +1,4 @@
+import type { RiskTargetUsed } from "@/lib/risk/baseline";
 import type { AiSource } from "@/lib/aiSource/types";
 
 /**
@@ -16,6 +17,12 @@ export interface RiskMatrixCell {
 export interface RiskEntry {
   title: string;
   axis: string | null;
+  /**
+   * #806 G1 option 3. `null` is "not recorded" (pre-0066, or no readable list
+   * from the model); `[]` is the claim "no other axis". Optional so a payload
+   * without it reads as not recorded (`otherAxesCell`), never as none.
+   */
+  other_axes?: string[] | null;
   likelihood: string | null;
   impact: string | null;
   tier: string | null;
@@ -68,6 +75,26 @@ export interface RiskDashboardData {
    */
   entries_without_axis: number;
   entries_without_action: number;
+  /** #474. Optional so an older response parses; absent reads as not recorded. */
+  targets?: RiskTargetUsed[];
+  targets_recorded?: boolean;
+  /**
+   * #915 (S3): the API's own sentence for the DoD target cap
+   * (`risk/zt_capped.py`), rendered as given. Null when no target was capped
+   * or the register predates the record.
+   */
+  zt_capped_target_note?: string | null;
+  /**
+   * #474 D': the API's own CSF source note (`risk/csf_source.py`), rendered
+   * as given. Null when the register has no CSF findings.
+   */
+  csf_source_note?: string | null;
+  /**
+   * Ruling #736 6104067136 (see #1033): true when the CSF Playbook had scores
+   * and targets that never shared a row, so the not-measured line is R11's.
+   * Read by the files' reader; absent or false keeps the original line.
+   */
+  csf_no_shared_row?: boolean;
 }
 
 // Display order. Likelihood is shown high→low down the rows so the most severe

@@ -144,28 +144,30 @@ _CONTRADICTION = [
 def test_the_contradiction_is_counted_and_kept_in_scope(app_client) -> None:  # noqa: F811
     """The prefix with functions: the parser keeps it security-related (the safe
     direction) and the list counts it, from the stored notes. The in-tree prompt
-    (v2) never asks for the prefix, so the extraction's audit records the count
-    as NOT MEASURED (None), never as a measured 0."""
+    is v3.2 (for #806), which asks for the prefix, so the extraction's audit
+    records the measured count."""
     _c, Sess, _h, _svc, body = _extract(app_client, _CONTRADICTION)
     assert body["not_in_use_contradictions"] == 1
     odd = _by_name(body)["Odd EDR"]
     assert (odd["security_related"], odd["signoff_kind"]) == (True, None)
     details = _extracted_details(Sess)
     assert "not_in_use_contradictions" in details
-    assert details["not_in_use_contradictions"] is None
+    assert details["not_in_use_contradictions"] == 1
 
 
-def test_a_prompt_that_asks_for_the_prefix_records_the_count(
+def test_a_prompt_that_does_not_ask_for_the_prefix_records_none(
     app_client, monkeypatch  # noqa: F811
 ) -> None:
-    """Once the extraction prompt asks for the prefix (v3.2), the audit records
-    the measured count. Simulated by treating the in-tree version as one."""
+    """An earlier prompt (v2) never asked for the prefix, so its extraction's
+    audit records the count as NOT MEASURED (None), never as a measured 0.
+    Simulated by treating no version as one that asks for it."""
     import app.routes.tech_debt as routes
-    from app.tech_debt.extract import PROMPT_VERSION
 
-    monkeypatch.setattr(routes, "PROMPT_VERSIONS_WITH_PREFIX", frozenset({PROMPT_VERSION}))
+    monkeypatch.setattr(routes, "PROMPT_VERSIONS_WITH_PREFIX", frozenset())
     _c, Sess, _h, _svc, _body = _extract(app_client, _CONTRADICTION)
-    assert _extracted_details(Sess)["not_in_use_contradictions"] == 1
+    details = _extracted_details(Sess)
+    assert "not_in_use_contradictions" in details
+    assert details["not_in_use_contradictions"] is None
 
 
 def test_an_override_is_not_counted_as_a_contradiction(app_client) -> None:  # noqa: F811

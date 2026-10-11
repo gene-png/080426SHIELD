@@ -9,7 +9,8 @@ Two modes:
   live    - real provider call. Production default for v1 is Anthropic.
 
 The client's `invoke(...)` method:
-  1. Redacts the input payload via app.ai.redact.redact_payload.
+  1. Redacts the input payload via app.ai.catalog_fields.redact_ai_payload
+     (`redact_payload`, with registered catalog fields sent verbatim, #984).
   2. Writes an `llm_calls` row with status=running BEFORE the provider
      call so a crash mid-call still leaves a record.
   3. Calls the provider (fixture or live).
@@ -30,7 +31,8 @@ from typing import Any, Literal, Protocol
 import httpx
 from sqlalchemy.orm import Session
 
-from app.ai.redact import RedactionMode, redact_payload
+from app.ai.catalog_fields import redact_ai_payload
+from app.ai.redact import RedactionMode
 from app.ai.run_context import ai_run_id_var
 from app.config import Settings, get_settings
 from app.logging import correlation_id_var, get_logger
@@ -303,7 +305,7 @@ _MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
     # one live run failed on stop_reason=max_tokens and the retry finished at
     # 8117 of 8192.
     "extract.capabilities": 64000,
-    # zt_score is small: 37-50 capabilities, three short fields each, no
+    # zt_score is small: 37-45 capabilities, three short fields each, no
     # narrative since #64 removed three unconsumed ones. Its 2026-08-04 overrun
     # at 4096 was with those narratives, and the 2026-07-15 one at 8192 was
     # unbounded gemini thinking, now capped at _THINKING_BUDGET_TOKENS. So 8192
@@ -780,7 +782,9 @@ class LLMClient:
     ) -> tuple[LLMResponse, LLMCall]:
         """Redact, write the llm_calls row, call the provider, finalize the row."""
         mode = redaction_mode or self._settings.shield_redaction_mode  # type: ignore[assignment]
-        cleaned_payload, removed_counts = redact_payload(
+        # #984: registered catalog fields are sent as the catalog has them, and
+        # guarded; everything else is redacted as before.
+        cleaned_payload, removed_counts = redact_ai_payload(
             payload,
             mode=mode,
             client_org_name=client_org_name,

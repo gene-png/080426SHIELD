@@ -95,7 +95,7 @@ describe("ZtDashboard maturity legend (wiring)", () => {
 
   it("shows the DoD ladder to a DoD engagement", () => {
     render(<ZtDashboard data={dashboard("dod_ztra")} />);
-    expect(screen.getByText("Not Started")).toBeInTheDocument();
+    expect(screen.getByText("Below Target")).toBeInTheDocument();
     expect(screen.getByText("Target")).toBeInTheDocument();
   });
 
@@ -116,7 +116,7 @@ describe("ZtDashboard maturity legend (wiring)", () => {
       "Initial",
       "Advanced",
       "Optimal",
-      "Not Started",
+      "Below Target",
       "Target",
     ]) {
       expect(screen.queryByText(label)).not.toBeInTheDocument();

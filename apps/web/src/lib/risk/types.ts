@@ -1,3 +1,4 @@
+import type { RiskTargetUsed } from "./baseline";
 import type { RatingNotCarried } from "./carry";
 export interface RiskInputState {
   kind: string;
@@ -6,6 +7,31 @@ export interface RiskInputState {
   /** null with `engaged`: a service exists and nothing is started. */
   status: string | null;
   version: number | null;
+  /**
+   * #876: what tells this row from another of its kind -- the ZT
+   * framework's name, or the service title. null/absent while the kind
+   * has one row (advisor, #736 6019425290 Q3). Optional so an older
+   * server's response parses.
+   */
+  qualifier?: string | null;
+  /**
+   * #474 D': CSF rows only. True when no in-scope Playbook row records a
+   * value other than a target, so it feeds no CSF finding (#736 6101751588).
+   * Absent on every other kind.
+   */
+  no_playbook_scores?: boolean;
+  /**
+   * R10 (#736 6102665946): CSF rows only. When the Playbook measured, how many
+   * targeted subcategories have no tier row both scored and targeted, so
+   * raise no finding; 0 otherwise. Absent on every other kind.
+   */
+  unscored_targeted_subcategories?: number;
+  /**
+   * R11 (#736 6103383277): CSF rows only. True when the Playbook's in-scope
+   * rows carry scores and targets but no row carries both, so it measured
+   * nothing (`no_playbook_scores` is then false). Absent on every other kind.
+   */
+  no_shared_playbook_row?: boolean;
 }
 
 export interface RiskGate {
@@ -56,6 +82,35 @@ export interface RiskGate {
    * always sends it.
    */
   inputs: RiskInputState[];
+  /**
+   * #876 Q2 (a): two engaged services of one kind and framework would
+   * produce the same findings, so generating is refused. The server's
+   * own sentence; null when there is no such pair. Optional so an
+   * older server's response parses.
+   */
+  duplicate_inputs?: string | null;
+  /**
+   * #896: the services behind `duplicate_inputs`, in the order its sentence
+   * names them; [] when there is no such pair. The duplicate banner offers
+   * one archive button per row. Optional so an older server's response
+   * parses.
+   */
+  duplicate_services?: RiskDuplicateService[];
+}
+
+/** #896: one service behind the duplicate refusal. */
+export interface RiskDuplicateService {
+  service_id: string;
+  title: string;
+  /**
+   * Review B1: what tells two rows with the SAME title apart. When the
+   * service was opened (ISO, UTC), and the status and version the Inputs
+   * panel shows for it. Required: a server that sends `duplicate_services`
+   * at all sends these.
+   */
+  started_at: string;
+  status: string;
+  version: number;
 }
 
 export interface RiskEntry {
@@ -63,6 +118,18 @@ export interface RiskEntry {
   title: string;
   description: string | null;
   axis: string | null;
+  /**
+   * #806 G1 option 3. `null` is "not recorded" (pre-0066, or no readable list
+   * from the model); `[]` is the claim "no other axis". Optional so a payload
+   * without it reads as not recorded (`otherAxesCell`), never as none.
+   */
+  other_axes?: string[] | null;
+  /**
+   * Ruling #736 6105137014: this entry's `other_axes` element drops by reason
+   * (`invalid`, `duplicate`, `repeats_axis`). `null` is "not recorded", `{}`
+   * "none dropped". On the consultant's register only.
+   */
+  other_axes_dropped?: Record<string, number> | null;
   source: string | null;
   source_id: string | null;
   /**
@@ -132,6 +199,13 @@ export interface LinkScopeDisclosure {
   service: string;
   scored: number;
   total: number;
+  /**
+   * #415: how many of the `scored` codes are pending review, and so not
+   * citable, counted apart from the unscored rows. Null where the service has
+   * no review queue (CSF, ZT) or the ATT&CK record predates the count. Optional
+   * so an older response parses; absent reads as not recorded.
+   */
+  pending_review?: number | null;
 }
 
 export interface RiskRegister {
@@ -224,6 +298,9 @@ export interface RiskRegister {
   ratings_carried: number | null;
   ratings_carried_from_version: number | null;
   ratings_not_carried: RatingNotCarried[];
+  /** #474. Optional so an older response parses; absent reads as not recorded. */
+  targets?: RiskTargetUsed[];
+  targets_recorded?: boolean;
 
   /**
    * #330. The generate loop's INTENDED tally.
@@ -315,6 +392,24 @@ export interface RiskRegister {
    * trap `excluded_inputs_recorded` exists for.
    */
   excluded_unscored_links_recorded: boolean;
+  /**
+   * #915: per ZT source, the capabilities whose target the #839 DoD cap
+   * lowered, read from the register's provenance. Null when not recorded.
+   */
+  capped_target_codes?: Record<string, string[]> | null;
+  /** #915 (S3): the API's own sentence built from it, rendered as given. */
+  zt_capped_target_note?: string | null;
+  /**
+   * #474 D': the API's own CSF source note (`risk/csf_source.py`), rendered
+   * as given. Null when the register has no CSF findings.
+   */
+  csf_source_note?: string | null;
+  /**
+   * Ruling #736 6104067136 (see #1033): true when the CSF Playbook had scores
+   * and targets that never shared a row, so the not-measured line is R11's.
+   * Read by the files' reader; absent or false keeps the original line.
+   */
+  csf_no_shared_row?: boolean;
   id: string;
   client_id: string;
   version: number;

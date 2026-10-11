@@ -54,6 +54,7 @@ import { AttackComputedReviewPanel } from "./AttackComputedReviewPanel";
 import { AttackDeliverableCard } from "./AttackDeliverableCard";
 import { AttackHeatmapCard } from "./AttackHeatmapCard";
 import { AttackMatrix } from "./AttackMatrix";
+import { AttackOutsideSubsetAlert } from "./AttackOutsideSubsetAlert";
 import { AttackScenarioPanel } from "./AttackScenarioPanel";
 import { AttackTechniquePanel } from "./AttackTechniquePanel";
 
@@ -126,6 +127,21 @@ function errorReason(err: unknown): string | null {
 const PARENT_INPUTS: readonly (keyof AttackCoveragePatch)[] = [
   "status",
   "reason_code",
+  "detection_tools",
+  "prevention_tools",
+  "response_tools",
+];
+
+/** #851 (F2): the patch keys that can change `citations_outside_subset`, an
+ *  ASSESSMENT-level list the server derives from every row's tools. The PATCH
+ *  returns only the row, so a write to a tool list -- a Remove included --
+ *  re-reads the assessment rather than re-deriving the list here: the rule
+ *  lives once, in `app/attack/subset_drift.py`. `locked` is in it because each
+ *  entry carries the row's lock, and the alert's "(locked, ...)" marker reads
+ *  it -- "unlock the row" is the S3b remedy itself (review N1). */
+const SUBSET_INPUTS: readonly (keyof AttackCoveragePatch)[] = [
+  "remove_tool",
+  "locked",
   "detection_tools",
   "prevention_tools",
   "response_tools",
@@ -462,6 +478,7 @@ export function AttackWorkspace({
       ) {
         refetchWanted.current = true;
       }
+      if (SUBSET_INPUTS.some((k) => k in patch)) refetchWanted.current = true;
       ok = true;
     } catch (err) {
       setActionError(describeError(err));
@@ -957,6 +974,10 @@ export function AttackWorkspace({
               </p>
             ) : (
               <div className="flex flex-col gap-4">
+                <AttackOutsideSubsetAlert
+                  assessment={assessment}
+                  phase="draft"
+                />
                 <AttackTechniquePanel
                   technique={selectedTechnique}
                   subTechniqueCount={selectedSubTechniqueCount}
@@ -1048,6 +1069,10 @@ export function AttackWorkspace({
                 onReview={onReview}
               />
               <StaleDocsNudge stale={assessment.documents_stale} />
+              <AttackOutsideSubsetAlert
+                assessment={assessment}
+                phase="approved"
+              />
               <AttackDeliverableCard
                 serviceId={serviceId}
                 assessmentStatus={assessment.status}
