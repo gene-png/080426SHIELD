@@ -45,6 +45,12 @@ export interface AdminArtifactRow {
   size_bytes: number;
   uploaded_by: string;
   uploaded_at: string;
+  /**
+   * #1054: the stored `Artifact.origin`. A released deliverable's files are
+   * artifacts too (`consultant_approved`); only `client_upload` is something
+   * the client attached. Mirrors `ArtifactOrigin` in `app/models/artifact.py`.
+   */
+  origin: "client_upload" | "automated_draft" | "consultant_approved";
 }
 
 export interface AdminIntakeQueueResponse {

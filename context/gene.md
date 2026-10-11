@@ -1,5 +1,12 @@
 # Gene — in-flight status
 
+_2026-10-11 (trackC): #1054 (IN-2) is a draft PR on `trackC/1054-intake-docs`._
+The admin org page no longer lists the generated deliverables as the client's
+uploads: they get their own "Generated reports" section, decided by the stored
+artifact origin rather than the filename, and the "Supporting documents
+uploaded" check no longer ticks on reports alone. The new heading and empty
+state wait on the advisor's approval of the wording.
+
 _2026-10-11 (track6): #474 E is a draft PR on `track6/474-e-risk-evidence`,
 on top of D' (merged as dd6a788a) and #1000 (merged as b7a44039)._
 

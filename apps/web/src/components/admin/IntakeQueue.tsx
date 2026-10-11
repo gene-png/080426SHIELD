@@ -230,6 +230,35 @@ function ReadinessItem({
   );
 }
 
+/** One artifact per row: title, size and date. Shared by both lists. */
+function ArtifactList({
+  artifacts,
+}: {
+  artifacts: AdminIntakeQueueResponse["artifacts"];
+}): JSX.Element {
+  return (
+    <ul className="flex flex-col gap-1">
+      {artifacts.map((a) => (
+        <li
+          key={a.id}
+          className="flex items-center justify-between gap-3 rounded-md border border-border-subtle bg-surface-card px-3 py-2 text-sm"
+        >
+          <span
+            className="truncate font-medium text-ink-primary"
+            title={a.title}
+          >
+            {a.title}
+          </span>
+          <span className="shrink-0 text-xs text-ink-tertiary">
+            {(a.size_bytes / 1024).toFixed(1)} KB ·{" "}
+            {new Date(a.uploaded_at).toLocaleDateString()}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /**
  * One service request, with the admin's review checklist + publish action.
  * "Publish for processing" opens the assessment workspace; the readiness
@@ -544,7 +573,18 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
   const hasContext = Boolean(
     c?.prompting_context && c.prompting_context.trim(),
   );
-  const hasDocuments = state.artifacts.length > 0;
+  // #1054: split on the STORED origin, never on a filename. A released
+  // deliverable's PDF/XLSX/DOCX files are artifacts of this tenant too, so the
+  // unsplit list showed generated reports as client uploads -- and the
+  // readiness line below ticked "Supporting documents uploaded" for a client
+  // who had attached nothing. Only `client_upload` counts as evidence.
+  const clientUploads = state.artifacts.filter(
+    (a) => a.origin === "client_upload",
+  );
+  const generatedReports = state.artifacts.filter(
+    (a) => a.origin !== "client_upload",
+  );
+  const hasDocuments = clientUploads.length > 0;
   const visibleRequests = filterServiceRequests(
     state.service_requests,
     filters,
@@ -715,33 +755,35 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
 
       <section aria-labelledby="artifacts" className="flex flex-col gap-3">
         <h2 id="artifacts" className="text-lg font-semibold text-ink-primary">
-          Uploaded documents ({state.artifacts.length})
+          Uploaded documents ({clientUploads.length})
         </h2>
-        {state.artifacts.length === 0 ? (
+        {clientUploads.length === 0 ? (
           <EmptyState
             title="No documents uploaded yet"
             description="Files the client attaches during intake will appear here."
           />
         ) : (
-          <ul className="flex flex-col gap-1">
-            {state.artifacts.map((a) => (
-              <li
-                key={a.id}
-                className="flex items-center justify-between gap-3 rounded-md border border-border-subtle bg-surface-card px-3 py-2 text-sm"
-              >
-                <span
-                  className="truncate font-medium text-ink-primary"
-                  title={a.title}
-                >
-                  {a.title}
-                </span>
-                <span className="shrink-0 text-xs text-ink-tertiary">
-                  {(a.size_bytes / 1024).toFixed(1)} KB ·{" "}
-                  {new Date(a.uploaded_at).toLocaleDateString()}
-                </span>
-              </li>
-            ))}
-          </ul>
+          <ArtifactList artifacts={clientUploads} />
+        )}
+      </section>
+
+      <section
+        aria-labelledby="generated-reports"
+        className="flex flex-col gap-3"
+      >
+        <h2
+          id="generated-reports"
+          className="text-lg font-semibold text-ink-primary"
+        >
+          Generated reports ({generatedReports.length})
+        </h2>
+        {generatedReports.length === 0 ? (
+          <EmptyState
+            title="No reports generated yet"
+            description="Deliverable files exported from this organization's assessments will appear here."
+          />
+        ) : (
+          <ArtifactList artifacts={generatedReports} />
         )}
       </section>
     </div>

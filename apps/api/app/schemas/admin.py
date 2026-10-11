@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr
 
+from app.models.artifact import ArtifactOrigin
 from app.models.service import ServiceKind, ServiceStatus
 from app.models.service_request import ServiceType
 from app.models.user import UserRole
@@ -99,6 +100,11 @@ class AdminArtifactRow(BaseModel):
     size_bytes: int
     uploaded_by: uuid.UUID
     uploaded_at: datetime
+    # #1054: a released deliverable's files are Artifact rows too, so the org
+    # page splits client uploads from generated reports on this STORED value
+    # rather than on a filename. Additive: the only consumer is IntakeQueue.tsx,
+    # which reads it by value.
+    origin: ArtifactOrigin
 
 
 class AdminIntakeQueueResponse(BaseModel):

@@ -13,6 +13,12 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**2026-10-11: #1054 built on `trackC/1054-intake-docs`, a draft PR (not on
+`main`).** The admin org page splits client uploads from generated reports on
+the stored artifact `origin`, and "Supporting documents uploaded" counts client
+uploads only. Status: the 2026-10-11 #1054 entry in `DELIVERY_PLAN.md`'s MVP
+completion path.
+
 **2026-10-09: #930 built on `track6/930-published-amber`, a draft PR (not on
 `main`).** A published Risk Register's carried-ratings block drops the "Rate
 it/them again" instruction and keeps its amber style. Status and rulings (#736
