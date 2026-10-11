@@ -99,12 +99,15 @@ class RiskEntry(UUIDPKMixin, TimestampMixin, Base):
     # affects, ordered detection, prevention, response; never holds `axis`.
     # Never counted: `axis_counts` is primary-only (#313). NULL is "not
     # recorded" (pre-0066, or no readable list from the model); `[]` is "none".
-    other_axes: Mapped[list | None] = mapped_column(JSON)
+    # `none_as_null=True` (review of 655184cc, F3): without it SQLAlchemy writes
+    # None as the JSON text 'null', which `IS NULL` does not match, so 0066's
+    # downgrade counted "not recorded" rows as records and refused falsely.
+    other_axes: Mapped[list | None] = mapped_column(JSON(none_as_null=True))
     # Ruling #736 6105137014 (migration 0066): this entry's `other_axes`
     # element drops by reason (`invalid`, `duplicate`, `repeats_axis`). NULL is
     # "not recorded" (pre-0066, or no readable list); `{}` is "none dropped".
     # Shown on the consultant's screen only.
-    other_axes_dropped: Mapped[dict | None] = mapped_column(JSON)
+    other_axes_dropped: Mapped[dict | None] = mapped_column(JSON(none_as_null=True))
 
     # Where this entry came from (traceability — required, no orphan risks).
     source: Mapped[str | None] = mapped_column(

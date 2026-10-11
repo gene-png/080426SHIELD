@@ -117,10 +117,15 @@ def test_a_computed_status_finding_keeps_its_function_states(
         assert ev[name] == {"state": "not_in_place", "tools": []}, (name, ev)
 
 
-def test_the_fixture_infers_nothing_from_a_stored_status(app_client) -> None:  # noqa: F811
-    """The fixture, re-authored from the v3 text: "treat a stored status as
-    given and do not infer missing functions from it". No function is named as
-    affected and no tool as a control, though the row lists confirmed tools."""
+def test_the_fixture_answer_for_a_stored_finding_names_no_axis_or_control(
+    app_client,  # noqa: F811
+) -> None:
+    """What fixture mode answers for a stored-status finding whose row lists
+    confirmed tools: no other axis and the exact "none" sentence. That holds
+    because the evidence above carries no function states. It does NOT test
+    the fixture's own `_risk_status_is_stored` guard (`app/ai/fixtures.py`):
+    deleting that guard leaves this green, since no current writer sends
+    function states with a stored status (see the guard's docstring)."""
     code, ev, body = _world(app_client, status_rules=1, tools=["Tool A"], fixture_mode=True)
     assert ev["status_basis"] == "stored", ev
     (entry,) = [e for e in body["entries"] if e["source_id"] == code]

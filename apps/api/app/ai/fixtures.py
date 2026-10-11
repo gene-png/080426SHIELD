@@ -468,7 +468,13 @@ def _risk_status_is_stored(evidence: dict) -> bool:
     """The v3 text (ruling #736 6105137014): "`stored` when the status was
     recorded directly, with no function states; treat a stored status as given
     and do not infer missing functions from it." So a stored-status finding
-    names no affected function and no tool as a control."""
+    names no affected function and no tool as a control.
+
+    AN UNREACHABLE RATCHET, and no test can fail without it: the only writer,
+    `routes/risk.py::_attack_evidence`, sends no function states and no
+    `missing_functions` with `status_basis: "stored"`, so the two callers below
+    reach the same answer without this check. It would matter only if that
+    writer began sending function states for a stored status."""
     return evidence.get("status_basis") == "stored"
 
 

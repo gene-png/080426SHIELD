@@ -117,3 +117,75 @@ def test_the_client_dashboard_and_files_carry_no_drop_note(app_client) -> None: 
         assert "other_axes" in e, e
         assert "other_axes_dropped" not in e, e
     assert "could not be read" not in json.dumps(dash)
+
+
+def _raw_nulls(cid: str) -> list[tuple[int, int]]:
+    """`(other_axes IS NULL, other_axes_dropped IS NULL)` per entry, read with
+    raw SQL: the ORM decodes JSON `'null'` and SQL NULL to the same None."""
+    import sqlalchemy as sa
+
+    from .test_risk_register import _session
+
+    with _session() as s:
+        return [
+            (int(a), int(d))
+            for a, d in s.execute(
+                sa.text(
+                    "SELECT other_axes IS NULL, other_axes_dropped IS NULL FROM risk_entries "
+                    "WHERE client_id = :cid"
+                ),
+                {"cid": cid.replace("-", "")},
+            ).all()
+        ]
+
+
+def _downgrade_to_0065() -> None:
+    import os
+
+    from alembic import command
+
+    from .test_migration_0066_risk_other_axes import _cfg
+
+    command.downgrade(_cfg(os.environ["DATABASE_URL"]), "0065")
+
+
+def test_not_recorded_is_sql_null_so_the_downgrade_is_not_blocked(
+    app_client,  # noqa: F811
+) -> None:
+    """Review of 655184cc, F3: "not recorded" written by GENERATE is SQL NULL,
+    not the JSON text 'null', so 0066's downgrade (which refuses while a row
+    records anything) is not blocked by rows that record nothing."""
+    import sqlalchemy as sa
+
+    from .test_risk_register import _session
+
+    _c, _b, cid, by_sid = _generate(
+        app_client,
+        lambda t, z: [
+            _entry(t, axis="detection"),  # no `other_axes`
+            _entry(z, axis="prevention", other_axes="response"),  # not a list
+        ],
+    )
+    # Positive first: both entries exist and read as "not recorded".
+    assert [e["other_axes"] for e in by_sid.values()] == [None, None]
+    assert _raw_nulls(cid) == [(1, 1), (1, 1)]
+    _downgrade_to_0065()
+    with _session() as s:
+        cols = {r[1] for r in s.execute(sa.text("PRAGMA table_info(risk_entries)")).all()}
+    assert "title" in cols
+    assert not {"other_axes", "other_axes_dropped"} & cols, cols
+
+
+def test_a_recorded_list_from_generate_blocks_the_downgrade(app_client) -> None:  # noqa: F811
+    _c, _b, cid, by_sid = _generate(
+        app_client,
+        lambda t, z: [
+            _entry(t, axis="detection", other_axes=["response"]),
+            _entry(z, axis="prevention"),  # no `other_axes`
+        ],
+    )
+    assert sorted(_raw_nulls(cid)) == [(0, 0), (1, 1)]
+    with pytest.raises(
+        RuntimeError, match="Refusing to downgrade 0066: 1 Risk Register entry records"
+    ):
+        _downgrade_to_0065()
