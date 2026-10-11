@@ -20,7 +20,7 @@ weaker than one that calls the endpoint that reaches it.
 
 ## The discriminator these rely on
 
-`_seed_attack_and_zt` and `_seed_csf_answer_at_tier` score a HANDFUL of rows and
+`_seed_attack_and_zt` and `_seed_csf_playbook_at_level` score a HANDFUL of rows and
 leave the rest of each catalog pre-seeded and unscored. So a real, catalog-valid,
 UNSCORED code is available in every fixture, and citing one separates the two
 readings cleanly: under the defect it is kept, under the fix it is dropped. A
@@ -42,7 +42,7 @@ from app.ai.llm import LLMResponse
 from .test_risk_register import (
     _admin,
     _seed_attack_and_zt,
-    _seed_csf_answer_at_tier,
+    _seed_csf_playbook_at_level,
     _session,
     app_client,  # noqa: F401  -- the fixture, used by name below.
 )
@@ -158,28 +158,40 @@ def test_zt_capability_allow_list_equals_the_scored_answers(app_client) -> None:
     assert set(seen[0]["valid_controls"]) == expected
 
 
+def _csf_scenario_codes(c, bearer: str, cid: str) -> list[str]:
+    """The two subcategories `_seed_csf_playbook_at_level` writes: the CSF
+    assessment's first two answers, read back through the API."""
+    from app.models.service import Service
+
+    db = _session()
+    svc = db.execute(
+        select(Service).where(Service.client_id == uuid.UUID(cid), Service.kind == "nist_csf")
+    ).scalar_one()
+    db.close()
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    latest = c.get(f"/csf/services/{svc.id}/assessments/latest", headers=h).json()
+    return [a["subcategory_code"] for a in latest["answers"][:2]]
+
+
 @pytest.mark.unit
 def test_csf_control_allow_list_equals_the_scored_answers(app_client) -> None:  # noqa: F811
     c, provider = app_client
     bearer, cid = _admin(c)
-    # ATT&CK first: the gate needs it, and `_seed_csf_answer_at_tier` alone
+    # ATT&CK first: the gate needs it, and `_seed_csf_playbook_at_level` alone
     # leaves the register locked.
     _seed_attack_and_zt(c, bearer, cid)
-    _seed_csf_answer_at_tier(c, bearer, cid, tier=1)
+    code = _seed_csf_playbook_at_level(c, bearer, cid, level=1)
     seen = _capture(provider)
     _generate(c, bearer, cid)
 
-    from app.models.csf_assessment import CsfAnswer
     from app.models.zt_assessment import ZtAnswer
 
+    # #474 D': the expected CSF set is the SCENARIO's, never a predicate: the
+    # helper scores exactly two Playbook rows, its subcategory and its floor
+    # row (the assessment's first two answers), and nothing else.
+    csf = set(_csf_scenario_codes(c, bearer, cid))
+    assert code in csf and len(csf) == 2, csf
     db = _session()
-    csf = {
-        r.subcategory_code
-        for r in db.execute(
-            select(CsfAnswer).where(CsfAnswer.client_id == uuid.UUID(cid))
-        ).scalars()
-        if r.maturity_tier is not None
-    }
     zt = {
         r.capability_code
         for r in db.execute(select(ZtAnswer).where(ZtAnswer.client_id == uuid.UUID(cid))).scalars()
@@ -232,19 +244,14 @@ def test_an_unscored_csf_subcategory_is_dropped_and_recorded(app_client) -> None
     c, provider = app_client
     bearer, cid = _admin(c)
     scored_technique, _cap = _seed_attack_and_zt(c, bearer, cid)
-    _seed_csf_answer_at_tier(c, bearer, cid, tier=1)
+    _seed_csf_playbook_at_level(c, bearer, cid, level=1)
 
-    from app.models.csf_assessment import CsfAnswer
+    from app.csf.catalog import SUBCATEGORIES
 
-    db = _session()
-    unscored = next(
-        r.subcategory_code
-        for r in db.execute(
-            select(CsfAnswer).where(CsfAnswer.client_id == uuid.UUID(cid))
-        ).scalars()
-        if r.maturity_tier is None
-    )
-    db.close()
+    # #474 D': unscored is a catalog subcategory the scenario never wrote: the
+    # helper writes only its two rows, so any other code is one.
+    written = set(_csf_scenario_codes(c, bearer, cid))
+    unscored = next(s.code for s in SUBCATEGORIES if s.code not in written)
 
     _cited(provider, techniques=[], controls=[unscored], source_id=scored_technique)
     body = _generate(c, bearer, cid)
@@ -637,7 +644,7 @@ def test_every_findings_source_id_stays_inside_the_allow_list(app_client) -> Non
     """The narrowing must not orphan a finding from its own citation.
 
     Every finding already requires a judgement -- `status in ("gap","partial")`,
-    `maturity_tier is not None`, `maturity_stage is not None` -- and the
+    a Playbook gap on a written row (#474 D'), `maturity_stage is not None` -- and the
     allow-lists are now exactly the judged rows, so findings are a SUBSET by
     construction. That is a new invariant this change creates, and it is worth
     pinning rather than reasoning about: loosening any findings predicate (say,
@@ -651,7 +658,7 @@ def test_every_findings_source_id_stays_inside_the_allow_list(app_client) -> Non
     c, provider = app_client
     bearer, cid = _admin(c)
     _seed_attack_and_zt(c, bearer, cid)
-    _seed_csf_answer_at_tier(c, bearer, cid, tier=1)
+    _seed_csf_playbook_at_level(c, bearer, cid, level=1)
     seen = _capture(provider)
     _generate(c, bearer, cid)
 

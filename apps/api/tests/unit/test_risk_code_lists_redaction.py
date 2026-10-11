@@ -34,6 +34,7 @@ from app.csf.catalog import SUBCATEGORIES
 from app.models.llm_call import LLMCall
 from app.zt.catalog import DOD_CAPABILITIES
 from tests._attack_rows import standalone_rows
+from tests._csf_playbook_rows import score_csf_playbook
 
 from .test_risk_register import app_client  # noqa: F401  -- the fixture, used by name below.
 
@@ -77,10 +78,8 @@ def _seed(c, bearer: str, cid: str) -> list[str]:
 
     csvc = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "CSF"})
     ca = c.post(f"/csf/services/{csvc.json()['id']}/assessments", headers=h).json()
-    for ans in ca["answers"]:
-        if ans["subcategory_code"] in CSF_CODES:
-            r = c.patch(f"/csf/answers/{ans['id']}", headers=h, json={"maturity_tier": 1})
-            assert r.status_code == 200, r.text
+    # #474 D': Risk reads the Playbook, so the CSF codes are scored there.
+    score_csf_playbook(c, h, csvc.json()["id"], dict.fromkeys(CSF_CODES, (1, 5)))
     r = c.post(f"/csf/assessments/{ca['id']}/approve", headers=h)
     assert r.status_code == 200, r.text
 
