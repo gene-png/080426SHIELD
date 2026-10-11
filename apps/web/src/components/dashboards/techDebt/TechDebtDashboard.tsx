@@ -13,6 +13,7 @@ import {
 } from "@/components/dashboards/shared";
 import {
   filterItems,
+  itemCost,
   usdCompact,
   usdFull,
   type Redundancy,
@@ -210,7 +211,7 @@ function RedundancyCard({ r }: { r: Redundancy }): JSX.Element {
             <DispositionChip value={it.disposition} />
             <span>{it.name}</span>
             <span style={{ marginLeft: "auto", color: C.muted }}>
-              {usdCompact(it.annual_cost_usd)}
+              {itemCost(it)}
             </span>
           </div>
         ))}
@@ -367,7 +368,7 @@ export function TechDebtDashboard({
                   <td style={cell(true)}>{it.category ?? "—"}</td>
                   <td style={cell(true)}>{it.function ?? "—"}</td>
                   <td style={{ ...cell(), textAlign: "right" }}>
-                    {usdCompact(it.annual_cost_usd)}
+                    {itemCost(it)}
                   </td>
                   <td style={{ ...cell(true), textAlign: "right" }}>
                     {it.license_count ?? "—"}

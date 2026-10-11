@@ -1657,7 +1657,18 @@ def zt_dashboard(
 _UNCATEGORIZED = "Uncategorized"
 
 
-def _td_item(it: CapabilityItem) -> TechDebtItem:
+def _td_bundle(it: CapabilityItem, names: dict[uuid.UUID, str]) -> str | None:
+    """for #929: the name of the bundle carrying a part's cost, stripped; ""
+    when that name is blank; None for a row that is not a part. A part's
+    bundle is always in the same list (the split route writes both, and the
+    foreign key cascades), so a missing parent is a broken list: the lookup
+    raises KeyError rather than inventing a name."""
+    if not is_component(it):
+        return None
+    return names[it.parent_item_id].strip()
+
+
+def _td_item(it: CapabilityItem, names: dict[uuid.UUID, str]) -> TechDebtItem:
     return TechDebtItem(
         name=it.name,
         vendor=it.vendor,
@@ -1667,6 +1678,7 @@ def _td_item(it: CapabilityItem) -> TechDebtItem:
         license_count=it.license_count,
         disposition=(it.disposition.value if it.disposition is not None else None),
         notes=it.notes,
+        bundle=_td_bundle(it, names),
     )
 
 
@@ -1728,6 +1740,8 @@ def tech_debt_dashboard(
         .all()
     )
 
+    # for #929: every row's name by id, so a part can name its bundle.
+    names = {it.id: it.name for it in items}
     annual_spend = 0.0
     # for #835: the ONE rule for what counts as an application. A split
     # bundle's parts are listed in the inventory but are not tools of their own.
@@ -1786,7 +1800,7 @@ def tech_debt_dashboard(
                 estimated_savings((i.disposition, i.annual_cost_usd) for i in b["items"]).amount,
                 2,
             ),
-            items=[_td_item(i) for i in b["items"]],
+            items=[_td_item(i, names) for i in b["items"]],
         )
         for cat, b in sorted(by_cat.items(), key=lambda kv: kv[1]["count"], reverse=True)
         if b["count"] > 1
@@ -1879,7 +1893,7 @@ def tech_debt_dashboard(
         spend_by_category=spend_by_category,
         sprawl_by_category=sprawl_by_category,
         redundancies=redundancies,
-        items=[_td_item(i) for i in items],
+        items=[_td_item(i, names) for i in items],
     )
 
 
