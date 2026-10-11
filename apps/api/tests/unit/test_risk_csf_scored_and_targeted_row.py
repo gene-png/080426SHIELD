@@ -173,7 +173,8 @@ def _assert_not_measured_and_no_finding(world, *, no_shared_row: bool) -> None:
     # the not-measured state is recorded and stated in all three files.
     body = _latest(c, bearer, cid)
     assert body["entries"], "the register exists and has entries"
-    assert any(f["kind"] != "csf" for f in payload["findings"]), payload["findings"]
+    # #474 E: `findings` is keyed by `source_id` (ruling 6).
+    assert any(f["kind"] != "csf" for f in payload["findings"].values()), payload["findings"]
     assert _csf_target(body)["source"] == "playbook_no_scores"
     texts = _export_texts(c, bearer, cid)
     for fmt in ("pdf", "docx", "xlsx"):
@@ -183,7 +184,7 @@ def _assert_not_measured_and_no_finding(world, *, no_shared_row: bool) -> None:
     assert inp["no_shared_playbook_row"] is no_shared_row, inp
     assert inp["unscored_targeted_subcategories"] == 0, inp
     # Then the absences: no CSF finding, and no count sentence in any file.
-    assert [f for f in payload["findings"] if f["kind"] == "csf"] == []
+    assert [sid for sid, f in payload["findings"].items() if f["kind"] == "csf"] == []
     for fmt in ("pdf", "docx", "xlsx"):
         assert MEASURED not in _flat(texts[fmt]), fmt
         assert other not in _flat(texts[fmt]), fmt
@@ -233,7 +234,8 @@ def test_the_partial_case_raises_the_finding_and_states_the_count(
     )
     # Positive first: A's finding, the measured state, and the count with the
     # CSF line on the Inputs panel and in all three files.
-    csf = [f for f in payload["findings"] if f["kind"] == "csf"]
+    # #474 E: `findings` is keyed by `source_id` (ruling 6).
+    csf = [{"source_id": sid, **f} for sid, f in payload["findings"].items() if f["kind"] == "csf"]
     assert [f["source_id"] for f in csf] == [A], csf
     assert csf[0]["label"].startswith(f"CSF {A}: level "), csf
     assert csf[0]["label"].endswith(" of target 4"), csf
