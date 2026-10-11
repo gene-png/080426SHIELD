@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_serializer
 
 from app.risk.engine import Impact, Likelihood
 
@@ -30,6 +30,31 @@ class RiskInputState(BaseModel):
     # not separate them. None while a kind has one row (advisor, #736
     # 6019425290 Q3). Defaulted so an older client parses a newer response.
     qualifier: str | None = None
+    #: #474 D': CSF only. True when no in-scope Playbook row has a recorded
+    #: value other than a target, so it feeds no CSF finding (#736
+    #: 6101751588); None for every other kind.
+    no_playbook_scores: bool | None = None
+    #: R10 (#736 6102665946): CSF only. When the Playbook measured, how many
+    #: targeted subcategories have no tier row both scored and targeted, so
+    #: raise no finding; 0 otherwise. None for every other kind.
+    unscored_targeted_subcategories: int | None = None
+    #: R11 (#736 6103383277): CSF only. True when the Playbook's in-scope rows
+    #: carry scores and targets but no row carries both (not measured, and
+    #: `no_playbook_scores` False); None for every other kind.
+    no_shared_playbook_row: bool | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_playbook_flag(self, handler):
+        # Present on CSF rows only: no other kind has a Playbook, and a None
+        # on every row would change the shape of the panel's rows for nothing.
+        data = handler(self)
+        if self.no_playbook_scores is None:
+            data.pop("no_playbook_scores", None)
+        if self.no_shared_playbook_row is None:
+            data.pop("no_shared_playbook_row", None)
+        if self.unscored_targeted_subcategories is None:
+            data.pop("unscored_targeted_subcategories", None)
+        return data
 
 
 class RiskDuplicateService(BaseModel):
@@ -197,7 +222,7 @@ class RiskTargetUsed(BaseModel):
 
     kind: str
     framework: str | None
-    target: int
+    target: int | None
     source: str
     origin: str
 
@@ -515,3 +540,10 @@ class RiskRegisterResponse(BaseModel):
     capped_target_codes: dict[str, list[str]] | None = None
     #: #915 (S3): the approved sentence built from it, rendered as given.
     zt_capped_target_note: str | None = None
+    #: #474 D': the approved CSF source note, or None (no CSF findings).
+    csf_source_note: str | None = None
+    #: Ruling #736 6104067136 (see #1033): which not-measured line the screen
+    #: prints for a `playbook_no_scores` CSF target, read by the files' reader
+    #: (`risk/csf_source.py::csf_no_shared_row`). False when the register
+    #: predates R11, so it keeps the original no-scores line.
+    csf_no_shared_row: bool = False
