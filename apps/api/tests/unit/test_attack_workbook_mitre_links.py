@@ -54,6 +54,8 @@ def _ctx(status: str | None, *, extra_codes: tuple[str, ...] = ()):
         version=1,
         status=AttackAssessmentStatus.APPROVED,
         parent_rules=2,
+        # #554 R3: models an approved/released pre-R3 assessment, backfilled by 0059.
+        status_rules=1,
     )
     codes = [t.id for t in TECHNIQUES] + list(extra_codes)
     rows = [

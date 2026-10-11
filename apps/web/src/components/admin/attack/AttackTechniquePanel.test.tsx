@@ -541,3 +541,48 @@ describe("AttackTechniquePanel — a computed parent's evidence (#620 round 2)",
     ).toBeInTheDocument();
   });
 });
+
+describe("AttackTechniquePanel, planned retirements (#686)", () => {
+  it("labels a tool the consolidation plan retires, and one it cannot answer for", () => {
+    render(
+      <AttackTechniquePanel
+        technique={TECHNIQUE}
+        coverage={row({
+          detection_tools: ["CrowdStrike Falcon", "Splunk Enterprise"],
+          prevention_tools: ["Homegrown Script"],
+        })}
+        coverageDefinitions={[]}
+        toolRetirement={{
+          "Splunk Enterprise": "planned_retirement",
+          "Homegrown Script": "unknown",
+        }}
+        onPatch={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText("Splunk Enterprise (planned retirement)"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Homegrown Script (retirement status unknown)"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("CrowdStrike Falcon")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Retirement labels reflect the current consolidation plan.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("labels nothing when the client has no consolidation plan", () => {
+    render(
+      <AttackTechniquePanel
+        technique={TECHNIQUE}
+        coverage={row({ detection_tools: ["Splunk Enterprise"] })}
+        coverageDefinitions={[]}
+        onPatch={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Splunk Enterprise")).toBeInTheDocument();
+    expect(screen.queryByText(/retirement/i)).toBeNull();
+  });
+});

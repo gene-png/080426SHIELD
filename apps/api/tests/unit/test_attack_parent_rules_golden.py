@@ -2,7 +2,11 @@
 
 A released assessment keeps rendering what was delivered. `main`'s rendering
 of a fixed world was recorded ONCE (`tests/golden/parent_rules_old/`, see its
-RECORDED.md) and is compared here, never regenerated. This test loads that
+RECORDED.md) and is compared here, never regenerated -- amended twice on
+2026-10-02, each time adding a field and nothing else: `dashboard.json` gained
+#489's `coverage_measured`, and `dashboard.json` and `finalize_b.json` gained
+#646's AI-source stamp (RECORDED.md has both checks); and once more the same
+day for #554 R1's Partial reason, added keys and a column (RECORDED.md). This test loads that
 world's database -- recorded at `main`'s migration head -- and runs `alembic
 upgrade head` on it, so migration 0054's backfill is the path under test, as it
 will be in production.
@@ -137,15 +141,23 @@ def test_the_risk_register_takes_the_findings_main_took(world) -> None:
 
     def spy(payload: dict) -> LLMResponse:
         sent.extend(
-            f["source_id"] for f in payload.get("findings", []) if f.get("kind") == "attack"
+            sid for sid, f in payload.get("findings", {}).items() if f.get("kind") == "attack"
         )
         return LLMResponse(json.dumps({"entries": []}))
 
     provider.register("risk_synthesize", spy)
-    c.post(
-        f"/risk/clients/{ids['cid']}/register/generate",
-        headers=_login(c, "admin@example.com", ids["cid"]),
-    )
+    h = _login(c, "admin@example.com", ids["cid"])
+    # #876 (advisor, #736 6039558116, option (1)): this world engages TWO
+    # ATT&CK services, and since #876 two services of one kind refuse generate
+    # (their findings would share codes). `main` synthesized Golden B -- the
+    # latest -- so Golden A is archived through the real route first, leaving
+    # exactly the assessment main read. The world and the golden files are
+    # unchanged; the status is asserted so a refusal can no longer read as an
+    # empty finding list.
+    archived = c.delete(f"/admin/services/{ids['Golden A']}", headers=h)
+    assert archived.status_code == 204, archived.text
+    r = c.post(f"/risk/clients/{ids['cid']}/register/generate", headers=h)
+    assert r.status_code == 201, r.text
     assert sorted(sent) == json.loads((GOLDEN / "risk_findings.json").read_text(encoding="utf-8"))
 
 

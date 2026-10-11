@@ -20,7 +20,19 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from app.client_naming import org_display_name
+from app.mode_stamp import (
+    UNKNOWN_AI_MODE,
+    AiModeStamp,
+    add_docx_paragraph,
+    add_xlsx_sheet,
+    pdf_paragraph,
+)
 from app.models.capability import CapabilityDisposition, CapabilityItem, CapabilityList
+from app.pdf_export import pdf_text
+from app.tech_debt.components import is_component, source_items
+from app.tech_debt.reconcile import exclusion_count_state
+from app.tech_debt.savings import estimated_savings as estimated_savings_of
+from app.xlsx_export import safe_text_row
 
 
 @dataclass(frozen=True)
@@ -59,6 +71,18 @@ class DeliverableContext:
     # without this field is one whose items were never checked, and the
     # pre-existing behaviour for those is the unqualified label.
     spend_cost_known: bool = True
+    #: #177/#193: `reconcile.exclusion_count_state` for the list -- whether
+    #: `excluded_count` is exact or only a floor. Defaulted to "unknown", never
+    #: "exact": a context built without the reader must not claim an exact count.
+    exclusion_state: str = "unknown"
+    #: #646: which mode drafted the AI suggestions behind this document. The
+    #: default is "not recorded", never live: a context built without a lookup
+    #: must not read as a clean one.
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE
+
+
+#: #193: why the exclusion count is unknown, as every surface states it.
+UNKNOWN_EXCLUSION_CAUSE = "the AI could not match every extracted capability to one uploaded row"
 
 
 def reconciliation_line(ctx: DeliverableContext) -> str | None:
@@ -69,7 +93,20 @@ def reconciliation_line(ctx: DeliverableContext) -> str | None:
     has to carry the same reconciliation the workspace shows, or it states a
     partial figure as a total.
     """
-    if not ctx.excluded_count or ctx.source_rows_total is None:
+    if ctx.source_rows_total is None:
+        return None
+    if ctx.exclusion_state == "unknown":
+        # #193: the attribution failed, so `excluded_count` is a FLOOR -- the
+        # rows the items actually claimed are fewer than the items -- and it is
+        # 0 when items are as many as rows, which used to print nothing here
+        # and "Total annual cost" beside it. Said even at 0, and never as the
+        # count.
+        floor = f" (at least {ctx.excluded_count})" if ctx.excluded_count else ""
+        return (
+            f"{ctx.source_rows_total} rows received · {ctx.included_count} included · "
+            f"excluded count unknown{floor}: {UNKNOWN_EXCLUSION_CAUSE}"
+        )
+    if not ctx.excluded_count:
         return None
     line = (
         f"{ctx.source_rows_total} rows received · {ctx.included_count} included · "
@@ -77,9 +114,10 @@ def reconciliation_line(ctx: DeliverableContext) -> str | None:
     )
     if not ctx.excluded_rows_named:
         # A count with no accompanying list reads as a rendering bug unless it
-        # says why. `reconcile.py` withholds the names rather than guessing when
-        # the provider did not attribute every item to a source row; the count is
-        # still exact, and saying so is what keeps it usable.
+        # says why. Since 0058 (#193) no writer reaches this: an exact count
+        # comes from a complete attribution, which names every excluded row,
+        # and a failed one takes the unknown branch above. Kept as a ratchet
+        # in case `exclusion_count_state` is ever loosened.
         line += " (excluded rows were not attributed individually)"
     return line
 
@@ -126,6 +164,12 @@ def cost_label(ctx: DeliverableContext) -> str:
     sits exactly where a reader would check and describes a NARROWER case than
     they would assume it covers.
     """
+    if ctx.source_rows_total is not None and ctx.exclusion_state == "unknown":
+        # #193: how many rows were excluded is not known (the extraction could
+        # not attribute every item), so neither "Total" nor "Included" can be
+        # claimed. Covers the unbalanced case below too: more items than rows
+        # can only come from a failed attribution, which is "unknown".
+        return "Annual cost (may not be complete)"
     if ctx.source_rows_total is not None and ctx.included_count > ctx.source_rows_total:
         # THE UNBALANCED CASE. More items than there were source rows, so
         # `excluded_count` floored to 0 and the two branches below both fall
@@ -167,7 +211,9 @@ def _disposition_label(d: CapabilityDisposition | None) -> str:
         return "Undecided"
     return {
         CapabilityDisposition.KEEP: "Keep",
-        CapabilityDisposition.CONSOLIDATE: "Consolidate",
+        # #804: the stored value stays `consolidate`; its label changed (Gene,
+        # 2026-10-02). The web twin is `lib/tech_debt/dispositionLabels.ts`.
+        CapabilityDisposition.CONSOLIDATE: "Cut, covered by another tool",
         CapabilityDisposition.CUT: "Cut",
     }[d]
 
@@ -178,31 +224,36 @@ def build_context(
     service_title: str,
     cap_list: CapabilityList,
     items: Iterable[CapabilityItem],
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
 ) -> DeliverableContext:
     items_list = list(items)
     total_cost = 0.0
-    estimated_savings = 0.0
-    savings_known = True
+    # #804: the one savings derivation, shared with the plan card, the client
+    # dashboard, the home value card and the savings what-if.
+    savings = estimated_savings_of((it.disposition, it.annual_cost_usd) for it in items_list)
+    estimated_savings = savings.amount
+    savings_known = savings.known
     # `total_cost` SKIPS an uncosted item rather than failing, which makes the
     # figure a floor. Nothing recorded that, so `cost_label` had no way to know
     # and printed "Total annual cost" over it (#126, exporter half).
     spend_known = True
     for it in items_list:
+        # for #835: a split bundle's part is not a cost. Its parent holds the
+        # license value, so the part neither adds to the total nor, by having
+        # no cost of its own, makes the total a floor.
+        if is_component(it):
+            continue
         if it.annual_cost_usd is not None:
             total_cost += float(it.annual_cost_usd)
         else:
             spend_known = False
-        if it.disposition == CapabilityDisposition.CUT:
-            if it.annual_cost_usd is None:
-                savings_known = False
-            else:
-                estimated_savings += float(it.annual_cost_usd)
     named = list(getattr(cap_list, "excluded_rows", None) or [])
     received = getattr(cap_list, "source_rows_total", None)
     # Rows that came from the upload. Children of a decomposed bundle carry a
     # parent and are NOT source rows — counting them made `28 > 32` false in the
     # workspace and unmounted the whole disclosure until 2026-08-07.
-    included = sum(1 for it in items_list if getattr(it, "parent_item_id", None) is None)
+    # Since #835 this is also what "Capabilities reviewed" prints.
+    included = len(source_items(items_list))
     # Derive the count; do not measure the NAMED list. `reconcile.py` withholds
     # the names when the provider did not attribute every item to a source row,
     # so `len(named)` is 0 in exactly the case where rows WERE excluded and
@@ -233,6 +284,7 @@ def build_context(
     # the superseded sentence first.
     excluded_count = max(received - included, 0) if received is not None else 0
     return DeliverableContext(
+        ai_mode=ai_mode,
         source_rows_total=received,
         excluded_count=excluded_count,
         included_count=included,
@@ -245,6 +297,8 @@ def build_context(
         estimated_savings=estimated_savings,
         savings_cost_known=savings_known,
         spend_cost_known=spend_known,
+        # #177: THE ONE READER, as the dashboard and the admin list call it.
+        exclusion_state=exclusion_count_state(cap_list),
     )
 
 
@@ -276,7 +330,7 @@ def render_xlsx(ctx: DeliverableContext) -> bytes:
         "Notes",
         "AI Confidence %",
     ]
-    ws.append(header)
+    safe_text_row(ws, header)
     header_fill = PatternFill(start_color="FFEEF2F7", end_color="FFEEF2F7", fill_type="solid")
     for col in range(1, len(header) + 1):
         cell = ws.cell(row=1, column=col)
@@ -285,7 +339,8 @@ def render_xlsx(ctx: DeliverableContext) -> bytes:
         cell.alignment = Alignment(horizontal="left", vertical="center")
 
     for item in ctx.items:
-        ws.append(
+        safe_text_row(
+            ws,
             [
                 item.name,
                 item.vendor or "",
@@ -297,7 +352,7 @@ def render_xlsx(ctx: DeliverableContext) -> bytes:
                 item.disposition_rationale or "",
                 item.notes or "",
                 item.confidence_pct if item.confidence_pct is not None else "",
-            ]
+            ],
         )
 
     # Summary row at the bottom.
@@ -330,6 +385,7 @@ def render_xlsx(ctx: DeliverableContext) -> bytes:
         ws.column_dimensions[get_column_letter(i)].width = w
 
     out = io.BytesIO()
+    add_xlsx_sheet(wb, ctx.ai_mode)  # #646: the LAST sheet
     wb.save(out)
     return out.getvalue()
 
@@ -369,8 +425,9 @@ def render_pdf(ctx: DeliverableContext) -> bytes:
     body = styles["BodyText"]
 
     story: list = []
-    story.append(Paragraph(ctx.service_title, h1))
-    story.append(Paragraph(ctx.client_legal_name, body))
+    story.append(pdf_text(ctx.service_title, h1))  # #775
+    story.append(pdf_text(ctx.client_legal_name, body))  # #775
+    story.append(pdf_paragraph(ctx.ai_mode, body))  # #646, under the title
     story.append(Spacer(1, 0.2 * inch))
 
     story.append(Paragraph("Summary", h2))
@@ -391,7 +448,8 @@ def render_pdf(ctx: DeliverableContext) -> bytes:
     )
     story.append(
         Paragraph(
-            f"Capabilities reviewed: <b>{len(ctx.items)}</b> · "
+            # for #835: source items, not a split bundle's parts.
+            f"Capabilities reviewed: <b>{ctx.included_count}</b> · "
             f"{cost_label(ctx)}: <b>${ctx.total_cost:,.0f}</b> · "
             f"Estimated annual savings: <b>{savings}</b>",
             body,
@@ -400,7 +458,8 @@ def render_pdf(ctx: DeliverableContext) -> bytes:
     if not ctx.savings_cost_known:
         story.append(
             Paragraph(
-                "Note: at least one row marked <i>Cut</i> is missing an annual cost. "
+                "Note: at least one row marked <i>Cut</i> or <i>Cut, covered by another "
+                "tool</i> is missing an annual cost. "
                 "The savings figure is a lower bound.",
                 body,
             )
@@ -463,6 +522,7 @@ def render_docx(ctx: DeliverableContext) -> bytes:
 
     doc = new_document(f"{ctx.service_title} — {ctx.client_legal_name}")
     add_title(doc, ctx.service_title, ctx.client_legal_name)
+    add_docx_paragraph(doc, ctx.ai_mode)  # #646, under the title
 
     savings = (
         f"${ctx.estimated_savings:,.0f}"
@@ -476,13 +536,15 @@ def render_docx(ctx: DeliverableContext) -> bytes:
         if recon
         else []
     ) + [
-        f"Capabilities reviewed: {len(ctx.items)}",
+        # for #835: source items, not a split bundle's parts.
+        f"Capabilities reviewed: {ctx.included_count}",
         f"{cost_label(ctx)}: ${ctx.total_cost:,.0f}",
         f"Estimated annual savings: {savings}",
     ]
     if not ctx.savings_cost_known:
         lines.append(
-            "Note: at least one row marked Cut is missing an annual cost. "
+            "Note: at least one row marked Cut or Cut, covered by another tool is "
+            "missing an annual cost. "
             "The savings figure is a lower bound."
         )
     add_paragraphs(doc, lines)

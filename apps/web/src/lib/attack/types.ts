@@ -1,3 +1,5 @@
+import type { AiSource } from "@/lib/aiSource/types";
+
 /** Wire types mirroring apps/api/app/schemas/attack.py. */
 
 /** Every status the API can store (#554). The two new ones are not WRITABLE
@@ -80,7 +82,33 @@ export interface AttackCoverageRow {
   // the status survives underneath so clearing a flag can put the technique
   // back into whichever of covered/partial/gap it says.
   pending_review?: boolean;
+  /** #554 R3: the status every surface counts, or null when the assessment
+   *  was approved before R3 and `status` is what renders. On an R3 assessment
+   *  `status` is the stored (AI) suggestion. */
+  computed_status?: CoverageStatus | null;
+  /** #554 R3: what is in place, on a row whose status was computed. */
+  capabilities?: AttackCapabilities | null;
+  /** #554 R3: this row's computed status awaits a consultant's review, which
+   *  holds back release. */
+  in_review_queue?: boolean;
+  reviewed_status?: CoverageStatus | null;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
 }
+
+/** #554 R3: which of Detect / Prevent / Respond are in place. */
+export interface AttackCapabilities {
+  detect: InPlace;
+  prevent: InPlace;
+  respond: InPlace;
+  /** The approved client line, built by the API. */
+  line: string;
+  awaiting_review: boolean;
+  cannot_be_prevented: boolean;
+}
+
+export type InPlace =
+  "in_place" | "not_in_place" | "awaiting_review" | "cannot_be_prevented";
 
 export interface UnconfirmedCitation {
   /** The capability this was applied as, or null when it resolved to nothing. */
@@ -103,6 +131,8 @@ export interface UnconfirmedCitation {
 }
 
 export interface AttackAssessment {
+  /** #646: which mode drafted the AI suggestions, as the API states it. */
+  ai_source: AiSource;
   id: string;
   service_id: string;
   version: number;
@@ -116,8 +146,41 @@ export interface AttackAssessment {
    *  (`attack_catalog_mismatch`). Read with `!== true`: an absent value is
    *  NOT current, because missing data defaults to unconfirmed. */
   catalog_current: boolean;
+  /** #554 R3: statuses are computed from Detect / Prevent / Respond. */
+  statuses_computed?: boolean;
   coverage: AttackCoverageRow[];
+  /** #686 (D-105): cited tool -> "planned_retirement" | "unknown"; a tool
+   *  absent here is not retiring. Null: the client has no consolidation plan. */
+  tool_retirement?: Record<string, string> | null;
+  /** #851: every tool a row credits outside the client's CURRENT security
+   *  tool list. Absent on an older payload: nothing is shown. */
+  citations_outside_subset?: AttackOutsideCitation[];
+  /** #851: false when nothing could be checked (a third state, never a
+   *  pass): the client has no Tech Debt list, only lists in force with no
+   *  security tool, or only discarded lists (#889 R4); a mix of the last two (one
+   *  service empty, one only discarded) reads as the empty case, C5b. */
+  subset_checked?: boolean;
+  /** #889 R4: when `subset_checked` is false, why, as the API words it (C5,
+   *  or C5b when the client's lists in force have no security tools). */
+  subset_not_checked_sentence?: string | null;
+  /** #889 R4: C8a / C8b, one per Tech Debt service whose newest version in
+   *  force has no security tools, so an earlier version is used. C8a only
+   *  where the service has only drafts; C8b among approved or released
+   *  versions, whose service's drafts are ignored (#889 R6b). */
+  subset_fallback_notes?: string[];
 }
+
+/** #851: one tool one row credits outside the security tool list. */
+export interface AttackOutsideCitation {
+  technique_code: string;
+  field: AttackToolField;
+  tool: string;
+  /** Run AI will not change this row. */
+  locked: boolean;
+}
+
+export type AttackToolField =
+  "detection_tools" | "prevention_tools" | "response_tools";
 
 export interface AttackCoveragePatch {
   status?: CoverageStatus | null;
@@ -130,6 +193,8 @@ export interface AttackCoveragePatch {
   prevention_tools?: string[] | null;
   response_tools?: string[] | null;
   rationale?: string | null;
+  /** #851 (D2): remove ONE name from one list; it confirms nothing else. */
+  remove_tool?: { field: AttackToolField; name: string };
 }
 
 export interface CoverageChange {
@@ -139,6 +204,11 @@ export interface CoverageChange {
   new: unknown;
 }
 
+/**
+ * What a mitre_map Run-AI did. Since #645 this is the run's stored `result`,
+ * every field the synchronous response carried, read from the run rather than
+ * from the POST, which is what lets it survive a reload (#271).
+ */
 export interface AttackRunAiResponse {
   tools_available: number;
   changed: CoverageChange[];
@@ -183,6 +253,39 @@ export interface AttackRunAiResponse {
    */
   rows_left_unresolved?: number;
   unresolved_fields?: string[];
+  /**
+   * #645. Rows a consultant edited after this run started, which the run kept
+   * as edited rather than overwrite.
+   */
+  rows_skipped_edited?: number;
+  /**
+   * #841. Techniques the AI suggested as N/A, refused because only a consultant
+   * may rule a technique N/A.
+   */
+  not_applicable_refused?: number;
+  /**
+   * #806 C4. Techniques the AI suggested as Partial with a reason only a
+   * consultant may give, refused whole so the row keeps its status.
+   */
+  forbidden_reason_refused?: number;
+  /**
+   * #853. Techniques a SUCCESSFUL batch was asked about, not locked, that no
+   * entry named. A refused entry is an answer and is not here; a failed
+   * batch's techniques are `batches_failed`'s. Optional so a run stored before
+   * #853 parses unchanged (C0).
+   */
+  omitted_count?: number;
+  omitted_techniques?: AttackOmittedTechnique[];
+}
+
+/**
+ * #853. `kept_status` is what the row holds after the run: null reads as
+ * unscored, anything else is a status this run did not confirm, reaching the
+ * coverage figures and the deliverable as it is.
+ */
+export interface AttackOmittedTechnique {
+  technique_code: string;
+  kept_status: CoverageStatus | null;
 }
 
 export interface TacticHeatmapEntry {
@@ -201,6 +304,10 @@ export interface TacticHeatmapEntry {
   outside_control_surface: number | null;
   unable_to_determine: number | null;
   coverage_pct: number;
+  /** #489: false where nothing is Covered, Partial, Gap or pending review, so
+   *  `coverage_pct` (0.0 there) is shown as "not measured", as the deliverable
+   *  says. Decided by the API with the exporter's own rule; never re-derived. */
+  coverage_measured: boolean;
 }
 
 export interface AttackHeatmap {
@@ -227,7 +334,17 @@ export interface AttackHeatmap {
   outside_control_surface: number | null;
   unable_to_determine: number | null;
   coverage_pct: number;
+  /** #489: false where nothing is Covered, Partial, Gap or pending review, so
+   *  `coverage_pct` (0.0 there) is shown as "not measured", as the deliverable
+   *  says. Decided by the API with the exporter's own rule; never re-derived. */
+  coverage_measured: boolean;
   by_tactic: TacticHeatmapEntry[];
+  /** #554 R3 (Q4): the sentence printed beside the percentage; absent before
+   *  R3 and when nothing awaits review. */
+  awaiting_review_sentence?: string | null;
+  /** #801 (H1): the figure after planned changes and its counts, as the API
+   *  words them; absent or null where there is nothing to recount. */
+  after_planned_changes?: string[] | null;
 }
 
 export interface AttackDeliverable {

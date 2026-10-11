@@ -9,6 +9,7 @@ import { NextResponse } from "next/server";
 
 import { ApiError, apiFetch } from "@/lib/api";
 import { auth } from "@/lib/auth/options";
+import { upstreamOutcomeUnknown } from "@/lib/upstream-outcome-unknown";
 
 export async function GET(request: Request): Promise<NextResponse> {
   const session = await auth();
@@ -32,9 +33,6 @@ export async function GET(request: Request): Promise<NextResponse> {
         status: err.status,
       });
     }
-    return NextResponse.json(
-      { error: { message: "Upstream llm-calls call failed." } },
-      { status: 502 },
-    );
+    return upstreamOutcomeUnknown(err, "Upstream llm-calls call");
   }
 }

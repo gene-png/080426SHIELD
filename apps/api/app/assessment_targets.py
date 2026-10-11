@@ -14,29 +14,22 @@ Duplicated across the LANGUAGE boundary rather than derived, because there is
 no build step shared by this app and the web bundle -- the same conclusion
 `SCHEMA_REASON_PREFIX` reached one module over, for the same reason.
 
-**What closes the window, stated exactly rather than implied.** Each side's own
-suite spells the number and names the other file in its failure message:
-`tests/unit/test_intake_target_floor.py` here, and
-`lib/intake/target-options-are-derived.test.ts` there. So a unilateral change
-goes RED on the side that made it, pointing at the side that did not.
+**What closes the window, since #422.** `tests/unit/test_target_floor_parity.py`
+reads `assessment-targets.ts` itself -- through a read-only one-file mount at
+`/web-parity/` in the api container (`docker-compose.yml`), or in place on a CI
+checkout -- and asserts the floors, `BELOW_FLOOR` and `TARGET_SOURCE_NOTES`
+below EQUAL the TypeScript ones, failing hard (never skipping) when it cannot
+read the file. The per-side spelled literals (`tests/unit/test_intake_target_floor.py`
+here, `lib/intake/target-options-are-derived.test.ts` there) still turn a
+unilateral edit red on the side that made it; the parity test is what proves
+the two agree. A local green from a long-running container is not evidence:
+a single-file bind pins the inode, so CI's fresh checkout is.
 
-That is all it does. It does **not** prove the two agree. An author who edits
-the number here, updates the assertion here, and stops has not been stopped.
-
-**A REAL PARITY GATE IS BUILDABLE AND THIS PARAGRAPH USED TO SAY IT WAS NOT.**
-The claim was that neither container can read the other's tree, so a parity
-check "would pass in CI and fail on every developer's machine". False, and the
-counter-example is one line further down the file it appealed to:
-`docker-compose.yml` mounts `./packages/zt-data:/packages/zt-data:ro` on the
-api service, commented "read-only, for the questionnaire contract test" -- a
-read-only single-path mount added so a contract test can read a tree outside
-the app, working identically in CI and locally. That is exactly the mechanism
-the old sentence said did not exist.
-
-So the deferral rests on SCOPE, not impossibility: the mount is a
-`docker-compose.yml` edit, which merge-rule condition 5 sends to a human, and
-it did not belong in the change that created the second constant. Tracked in
-**#422**, whose body carries the mount as the cheapest of its options.
+**A REAL PARITY GATE WAS ALWAYS BUILDABLE, AND THIS PARAGRAPH ONCE SAID IT WAS
+NOT.** The claim was that neither container can read the other's tree. False:
+`docker-compose.yml` already mounted `./packages/zt-data` read-only so a
+contract test could read a tree outside the app, which is the mechanism #422
+then used.
 
 Recorded rather than quietly replaced, because the false version is the more
 instructive one: it was a per-file check ("what does the api service mount for
@@ -54,31 +47,33 @@ either here would be a third spelling of a number those modules already own.
 ROUTES, because a pydantic field constraint cannot see `service_type`. It is
 not the only comparison in the system -- see the next section.
 
-## TWO WRITERS OF THESE COLUMNS ARE DELIBERATELY NOT WIRED TO THIS
+## EVERY WRITER OF THE ENGAGEMENT TARGET ENFORCES THIS, SINCE #85
 
-Intake is not the only door. `ServiceRequest.csf_target_tier` and
-`.zt_target_stage` are also written by the self-assessment SUBMIT routes, and
-both accept a target of 1 today:
+`ServiceRequest.csf_target_tier` and `.zt_target_stage` have three writers, and
+all three refuse a target below the floor with a typed `{reason, message}`:
 
-    routes/csf.py   CsfSelfAssessmentSubmit.target_tier    ge=1, le=4
-                    -- and NO range check in the route at all; the schema
-                       bound is the only thing between the body and
-                       `sr.csf_target_tier = body.target_tier`.
-    routes/zt.py    ZtSelfAssessmentSubmit.target_stage    ge=1, le=4
-                    -- the route DOES guard, `if not 1 <= ... <= max_stage`,
-                       so its floor of 1 is a written decision rather than an
-                       omission.
+    routes/intake.py  `_validate_targets`
+    routes/csf.py     `submit_self_assessment` (`_refuse_submitted_target_tier`)
+    routes/zt.py      `submit_self_assessment`
 
-That is **#85**, filed long before #406 and re-measured at `1281cbd`. It is
-left alone here on purpose: reversing a deliberate floor is a product question
-about whether a client may re-confirm a target of 1 after intake, and the two
-routes need different edits. An unstated exemption reads as an oversight to
-whoever greps `MIN_TARGET_TIER` next, which is why it is written down.
+Until #85 the two submit routes accepted 1: CSF had no range check at all
+behind a schema `ge=1, le=4`, and ZT guarded `1 <= stage` as a written
+decision. That decision is REVERSED by #85, a product call assumed by the
+Phase 2 plan and flagged for the owner: a client may not choose a target of 1
+after intake, the same as at intake. All three call `floor_refusal` below for
+the sentence, so the client reads one rule in one wording at every door.
 
-**So closing the intake door does not retire a stored 1.** `routes/zt.py`'s own
-comment records that the ZT self-assessment UI re-persists whatever is stored
-when a client submits without touching the control — refreshing a legacy value
-straight past the new guard.
+**A 1 ALREADY STORED is not a client's target either.** Both resolvers
+(`csf/gap.py::resolve_target_tier`, `zt/scoring.py::resolve_target_stage`)
+report it as `BELOW_FLOOR` and fall back to the engine default rather than
+calling it the client's choice. That covers a deliverable target frozen as 1
+too, because the freeze stores the raw choice and the dashboard re-resolves it
+on read.
+
+**NOT covered, deliberately (#85's Q4):** a consultant's per-capability
+`zt_answers.target_stage`, which still accepts 1 on PATCH, on the AI apply
+path and in `effective_target_stages`; and the gap-analysis what-if query
+parameter, which is not persisted.
 
 ## Why the floor is NOT a `Field(ge=2)` bound
 
@@ -99,3 +94,82 @@ MIN_TARGET_STAGE = 2
 
 #: NIST CSF 2.0. Tier 1 ("Partial") is a starting point, not a goal.
 MIN_TARGET_TIER = 2
+
+#: The resolver source for a stored target that is a real level but below the
+#: floor (#85). Its own state: not "client" (it is not a target), and not
+#: "client_out_of_range" (the ladder HAS a level 1, so "not a tier CSF has"
+#: would be false). The web dashboards and workspaces render it as "a starting
+#: point, not a target" (`apps/web/src/lib/assessment-targets.ts`).
+BELOW_FLOOR = "client_below_floor"
+
+
+def floor_refusal(rung: str, value: int, floor: int) -> str:
+    """The sentence every target door refuses a below-floor value with.
+
+    `rung` is "Tier" or "Stage". One builder, CALLED by intake and by both
+    self-assessment submit routes, so the rule cannot be worded three ways.
+    The control it names is real: every client target picker offers `floor`
+    and up.
+    """
+    return (
+        f"{rung} {value} is where an organization starts, not a target to "
+        f"aim at. Choose {rung} {floor} or higher."
+    )
+
+
+#: Why the engagement target is a default, per resolver source, in the client
+#: dashboard's own words (#783). Keyed by rung because CSF says "tier" and ZT
+#: says "stage", and an out-of-range CSF tier is "not one CSF has" while ZT
+#: names no framework (two ladders, one module). `UNRECOGNISED` is not a
+#: resolver source: it is the row a source this build does not know reads,
+#: the dashboards' default arm -- a value nobody recognises is not evidence
+#: that the client chose it.
+#:
+#: THE WEB BUNDLE HAS THE SAME TABLE, `TARGET_SOURCE_NOTES` in
+#: `apps/web/src/lib/assessment-targets.ts`, and the dashboards DERIVE from it
+#: (`csf.ts::targetFaultNote`, `zt.ts::targetFault`, the below-floor notes).
+#: This copy is asserted EQUAL to that one by
+#: `tests/unit/test_target_floor_parity.py`, which reads the TS file through
+#: the api container's read-only mount (or a CI checkout), and #783's
+#: deliverable tests build their expected sentences from the TS table, not
+#: from this one. #422 closed the window: a reword on either side alone goes
+#: red. Reword both.
+UNRECOGNISED = "unrecognised"
+
+TARGET_SOURCE_NOTES: dict[str, dict[str, str]] = {
+    "tier": {
+        "default": "no tier chosen at intake",
+        "client_out_of_range": "the tier on file is not one CSF has",
+        BELOW_FLOOR: "the tier on file is a starting point, not a target",
+        "client_unparseable": "the tier on file could not be read",
+        UNRECOGNISED: "the tier on file was not usable",
+    },
+    "stage": {
+        "default": "no stage chosen at intake",
+        "client_out_of_range": "the stage on file is not one this framework has",
+        BELOW_FLOOR: "the stage on file is a starting point, not a target",
+        "client_unparseable": "the stage on file could not be read",
+        UNRECOGNISED: "the stage on file was not usable",
+    },
+}
+
+
+def target_source_sentence(
+    rung: str, source: str, *, engagement_target_used: bool = True
+) -> str | None:
+    """The sentence a deliverable states beside its target when the resolver
+    did not use the client's own choice (#783), or None when it did.
+
+    `rung` is "tier" (CSF) or "stage" (ZT). `engagement_target_used` is False
+    when every ZT capability carried its own target, so the engagement target
+    decided nothing: then "no stage chosen" is neither a fault nor actionable
+    and is omitted, as the dashboard's `targetNote` omits it, while a choice
+    the client MADE that could not be used is still stated.
+    """
+    if source == "client":
+        return None
+    if source == "default" and not engagement_target_used:
+        return None
+    notes = TARGET_SOURCE_NOTES[rung]
+    note = notes.get(source, notes[UNRECOGNISED])
+    return f"Default target — {note}."

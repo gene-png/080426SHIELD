@@ -6,11 +6,17 @@ against `Base.metadata`, which Alembic autogenerate relies on.
 
 from __future__ import annotations
 
+from app.models.ai_run import AiRun, AiRunStatus
 from app.models.artifact import Artifact, ArtifactOrigin
 from app.models.attack_assessment import (
     AttackAssessment,
     AttackAssessmentStatus,
     AttackCoverage,
+)
+from app.models.attack_scenario import (
+    AttackScenario,
+    AttackScenarioRow,
+    AttackScenarioState,
 )
 from app.models.audit_entry import AuditEntry
 from app.models.capability import (
@@ -46,11 +52,16 @@ from app.models.zt_assessment import (
 )
 
 __all__ = [
+    "AiRun",
+    "AiRunStatus",
     "Artifact",
     "ArtifactOrigin",
     "AttackAssessment",
     "AttackAssessmentStatus",
     "AttackCoverage",
+    "AttackScenario",
+    "AttackScenarioRow",
+    "AttackScenarioState",
     "AuditEntry",
     "CapabilityItem",
     "CapabilityList",

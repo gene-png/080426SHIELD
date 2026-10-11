@@ -81,13 +81,14 @@ def _ctx(framework: ZtFrameworkCode, stage: int | None = 3, *, target: int | Non
 
 
 @pytest.mark.unit
-def test_cisa_xlsx_has_three_sheets() -> None:
+def test_cisa_xlsx_sheets_are_exactly_these() -> None:
     from openpyxl import load_workbook
 
     raw = render_xlsx(_ctx(ZtFrameworkCode.CISA_ZTMM_2_0))
     assert raw[:2] == b"PK"
     wb = load_workbook(io.BytesIO(raw))
-    assert set(wb.sheetnames) == {"Score Summary", "Answers", "Gap Plan"}
+    # #646 (coordinator's verdict, Batch F): plus the "AI source" sheet, last.
+    assert set(wb.sheetnames) == {"Score Summary", "Answers", "Gap Plan", "AI source"}
 
 
 @pytest.mark.unit
@@ -120,8 +121,8 @@ def test_dod_xlsx_answers_sheet_row_count() -> None:
 
     wb = load_workbook(io.BytesIO(render_xlsx(_ctx(ZtFrameworkCode.DOD_ZTRA))))
     ws = wb["Answers"]
-    # 50 capabilities + 1 header.
-    assert ws.max_row == 51
+    # 45 capabilities (#839) + 1 header.
+    assert ws.max_row == 46
 
 
 @pytest.mark.unit

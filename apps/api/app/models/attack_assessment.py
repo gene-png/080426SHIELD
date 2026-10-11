@@ -83,6 +83,11 @@ class AttackAssessment(UUIDPKMixin, TimestampMixin, Base):
     # under. 1 = before #620, 2 = D-094; NULL = a draft. Read ONLY through
     # `app/attack/rules.py::parents_computed`, which raises on anything else.
     parent_rules: Mapped[int | None] = mapped_column(Integer)
+    # #554 R3 (migration 0059): whether this assessment's statuses are computed
+    # from Detect / Prevent / Respond. 1 = approved before R3 (stored statuses),
+    # 2 = R3; NULL = a draft. Read ONLY through
+    # `app/attack/rules.py::statuses_computed`, which raises on anything else.
+    status_rules: Mapped[int | None] = mapped_column(Integer)
 
 
 class AttackCoverage(UUIDPKMixin, TimestampMixin, Base):
@@ -151,3 +156,13 @@ class AttackCoverage(UUIDPKMixin, TimestampMixin, Base):
         ForeignKey("users.id", ondelete="SET NULL")
     )
     answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # #554 R3 (migration 0059): the computed status a consultant accepted as
+    # reviewed where it differs from the stored (AI-suggested) status, and who
+    # and when. The row is back in the review queue whenever its computed status
+    # moves away from `reviewed_status`. See `app/attack/computed.py`.
+    reviewed_status: Mapped[str | None] = mapped_column(String(32))
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

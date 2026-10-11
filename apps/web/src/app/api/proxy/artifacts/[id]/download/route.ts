@@ -9,6 +9,7 @@ import { NextResponse } from "next/server";
 
 import { ACTIVE_CLIENT_COOKIE } from "@/lib/api";
 import { auth } from "@/lib/auth/options";
+import { upstreamOutcomeUnknown } from "@/lib/upstream-outcome-unknown";
 
 const BASE_URL = process.env.API_BASE_URL ?? "http://api:8000";
 
@@ -34,12 +35,29 @@ export async function GET(
   if (activeClient) {
     reqHeaders["X-Client-Id"] = activeClient;
   }
-  const upstream = await fetch(`${BASE_URL}/artifacts/${params.id}/download`, {
-    headers: reqHeaders,
-    cache: "no-store",
-  });
+  // #550: a rejected fetch was an unhandled throw here; the same typed 504 as
+  // every other proxy. Found by the glob, not named in the plan.
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${BASE_URL}/artifacts/${params.id}/download`, {
+      headers: reqHeaders,
+      cache: "no-store",
+    });
+  } catch (err) {
+    return upstreamOutcomeUnknown(err, "artifact download");
+  }
   if (!upstream.ok) {
-    const text = await upstream.text();
+    // The refusal's body is read here, so a reset mid-body is the same "we
+    // did not see the answer" as a rejected fetch (review of #752, finding 3:
+    // this read sat outside any try and threw unhandled). The 200 branch
+    // below streams the body instead of reading it; a reset there happens
+    // after the status is sent, which no response can repair.
+    let text: string;
+    try {
+      text = await upstream.text();
+    } catch (err) {
+      return upstreamOutcomeUnknown(err, "artifact download");
+    }
     return new NextResponse(text, {
       status: upstream.status,
       headers: {

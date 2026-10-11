@@ -30,6 +30,15 @@ const LABEL: Record<CoverageStatus, string> = {
 // then it must render as unknown, never throw and never borrow another label.
 // The client chip's twin (`AttackDashboard.tsx`) does the same.
 const UNKNOWN_LABEL = "Unknown status";
+
+/**
+ * A status's label as the badge shows it, so a line naming a status in prose
+ * (#853's "T1005 (Gap)") says the word the matrix shows. `Object.hasOwn`, so an
+ * unknown string from the API is "Unknown status", never an inherited member.
+ */
+export function statusLabel(status: CoverageStatus): string {
+  return Object.hasOwn(LABEL, status) ? LABEL[status] : UNKNOWN_LABEL;
+}
 const UNKNOWN_TONE = "bg-surface-sunken text-ink-tertiary border-border";
 
 export interface StatusBadgeProps {

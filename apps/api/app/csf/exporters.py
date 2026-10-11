@@ -26,10 +26,21 @@ from typing import TYPE_CHECKING
 from app.csf.catalog import FUNCTIONS, SUBCATEGORIES, FunctionCode, Subcategory
 from app.csf.gap import GapAnalysis
 from app.csf.maturity import tier_label
+from app.csf.retired import answers_sentence
 from app.csf.scoring import ScoreResult
+from app.mode_stamp import (
+    UNKNOWN_AI_MODE,
+    AiModeStamp,
+    add_docx_paragraph,
+    add_xlsx_sheet,
+    pdf_paragraph,
+)
+from app.pdf_export import pdf_text
+from app.xlsx_export import safe_text_row
 
 if TYPE_CHECKING:
     from reportlab.platypus import TableStyle
+from app.assessment_targets import target_source_sentence
 from app.client_naming import org_display_name
 from app.models.csf_assessment import CsfAnswer, CsfAssessment
 
@@ -44,6 +55,15 @@ class CsfDeliverableContext:
     answers: list[CsfAnswer]
     score: ScoreResult
     gap: GapAnalysis
+    #: #646: which mode drafted the AI suggestions behind this document. The
+    #: default is "not recorded", never live: a context built without a lookup
+    #: must not read as a clean one.
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE
+    #: #783: the resolver's verdict on the engagement target -- "client", or
+    #: why a default stands in for it. Defaulted to "client" for the callers
+    #: that predate it (tests building a context directly); both finalize
+    #: routes and the seed pass the real verdict.
+    target_source: str = "client"
 
 
 def build_context(
@@ -54,8 +74,12 @@ def build_context(
     answers: Iterable[CsfAnswer],
     score: ScoreResult,
     gap: GapAnalysis,
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
+    target_source: str = "client",
 ) -> CsfDeliverableContext:
     return CsfDeliverableContext(
+        ai_mode=ai_mode,
+        target_source=target_source,
         client_legal_name=org_display_name(client_legal_name),
         service_title=service_title,
         assessment=assessment,
@@ -79,7 +103,7 @@ def _subcategory_meta(code: str) -> Subcategory | None:
     return None
 
 
-def _gap_plan_caption(gap: GapAnalysis) -> str:
+def _gap_plan_caption(gap: GapAnalysis, target_note: str | None = None) -> str:
     """What the Gap Plan is showing, and what it is NOT (#75).
 
     The twin of `app.zt.exporters._gap_plan_caption`. #75 was filed against Zero
@@ -96,13 +120,45 @@ def _gap_plan_caption(gap: GapAnalysis) -> str:
     """
     shown, total = len(gap.gaps), gap.total_gap_count
     remaining = total - shown
+    # #783: why the target is a default, directly after the sentence stating
+    # it, so the number and its provenance are read together.
+    note = f" {target_note}" if target_note else ""
     if shown >= total:
-        return f"All {total} gap{'' if total == 1 else 's'} at target T{gap.target_tier}."
-    return (
-        f"Showing the {shown} highest-priority of {total} gaps at target "
-        f"T{gap.target_tier}; {remaining} further gap"
-        f"{'' if remaining == 1 else 's'} not listed."
-    )
+        listed = f"All {total} gap{'' if total == 1 else 's'} at target T{gap.target_tier}."
+    else:
+        listed = (
+            f"Showing the {shown} highest-priority of {total} gaps at target "
+            f"T{gap.target_tier}; {remaining} further gap"
+            f"{'' if remaining == 1 else 's'} not listed."
+        )
+    return listed + note + _unscored_sentence(len(gap.unscored_codes))
+
+
+def _target_note(ctx: CsfDeliverableContext) -> str | None:
+    """#783: the dashboard's sentence for a target the client did not choose."""
+    return target_source_sentence("tier", ctx.target_source)
+
+
+def _retired_note(ctx: CsfDeliverableContext) -> str | None:
+    """#852: answers kept on a subcategory the catalog no longer has are not
+    scored, and the document says so. The one derivation is `csf/retired.py`,
+    which the workspace and the client dashboard call too, so the screen and
+    the document cannot disagree. Every sheet and table here iterates the
+    catalog, so without this the kept answer vanishes in silence."""
+    return answers_sentence(ctx.answers)
+
+
+def _unscored_sentence(unscored: int) -> str:
+    """#699: `analyze_gaps` skips an unscored subcategory, so a gap count says
+    nothing about it. Without this a mostly-unscored assessment delivered "All 0
+    gaps" with no mention of what was never looked at. Disclosed rather than
+    blocked, because a partial self-assessment is allowed. The twin of
+    `app.zt.exporters._unscored_sentence`."""
+    if unscored == 0:
+        return ""
+    if unscored == 1:
+        return " 1 subcategory was not scored and is not in this plan."
+    return f" {unscored} subcategories were not scored and are not in this plan."
 
 
 def _fmt_tier(value: float | None) -> str:
@@ -133,23 +189,26 @@ def render_xlsx(ctx: CsfDeliverableContext) -> bytes:
 
     # --- Sheet 1: Score Summary ---
     ws = wb.create_sheet("Score Summary")
-    ws.append(["Engagement", ctx.client_legal_name])
-    ws.append(["Service", ctx.service_title])
-    ws.append(["Assessment version", ctx.assessment.version])
-    ws.append(["Overall maturity", ctx.score.overall_maturity_label])
-    ws.append(["Average tier", _fmt_tier(ctx.score.average_tier)])
-    ws.append(["Coverage", f"{ctx.score.answered_subcategories}/{ctx.score.total_subcategories}"])
+    safe_text_row(ws, ["Engagement", ctx.client_legal_name])
+    safe_text_row(ws, ["Service", ctx.service_title])
+    safe_text_row(ws, ["Assessment version", ctx.assessment.version])
+    safe_text_row(ws, ["Overall maturity", ctx.score.overall_maturity_label])
+    safe_text_row(ws, ["Average tier", _fmt_tier(ctx.score.average_tier)])
+    safe_text_row(
+        ws, ["Coverage", f"{ctx.score.answered_subcategories}/{ctx.score.total_subcategories}"]
+    )
     for row in ws.iter_rows(min_row=1, max_row=6, min_col=1, max_col=1):
         for cell in row:
             cell.font = bold
-    ws.append([])
-    ws.append(["Function", "Name", "Answered", "Total", "Coverage %", "Average tier"])
+    safe_text_row(ws, [])
+    safe_text_row(ws, ["Function", "Name", "Answered", "Total", "Coverage %", "Average tier"])
     for col_idx in range(1, 7):
         cell = ws.cell(row=ws.max_row, column=col_idx)
         cell.font = bold
         cell.fill = header_fill
     for fs in ctx.score.by_function:
-        ws.append(
+        safe_text_row(
+            ws,
             [
                 fs.function.value,
                 fs.function_name,
@@ -157,8 +216,12 @@ def render_xlsx(ctx: CsfDeliverableContext) -> bytes:
                 fs.subcategory_count,
                 fs.coverage_pct,
                 _fmt_tier(fs.average_tier),
-            ]
+            ],
         )
+    retired = _retired_note(ctx)
+    if retired:
+        safe_text_row(ws, [])
+        safe_text_row(ws, ["Not scored", retired])  # #852: a subcategory CSF 2.0 does not have
     for w, col in zip([10, 28, 12, 10, 14, 16], range(1, 7), strict=True):
         ws.column_dimensions[get_column_letter(col)].width = w
 
@@ -174,7 +237,7 @@ def render_xlsx(ctx: CsfDeliverableContext) -> bytes:
         "Tier label",
         "Notes",
     ]
-    ws2.append(headers)
+    safe_text_row(ws2, headers)
     for col in range(1, len(headers) + 1):
         cell = ws2.cell(row=1, column=col)
         cell.font = bold
@@ -188,7 +251,8 @@ def render_xlsx(ctx: CsfDeliverableContext) -> bytes:
         ans = answers_by_code.get(sc.code)
         tier = ans.maturity_tier if ans else None
         notes = ans.notes if ans else None
-        ws2.append(
+        safe_text_row(
+            ws2,
             [
                 sc.code,
                 sc.function.value,
@@ -198,7 +262,7 @@ def render_xlsx(ctx: CsfDeliverableContext) -> bytes:
                 tier if tier is not None else "",
                 tier_label(tier) if tier is not None else "Unscored",
                 notes or "",
-            ]
+            ],
         )
     for w, col in zip([14, 10, 10, 32, 60, 8, 16, 60], range(1, 9), strict=True):
         ws2.column_dimensions[get_column_letter(col)].width = w
@@ -219,14 +283,15 @@ def render_xlsx(ctx: CsfDeliverableContext) -> bytes:
     # Caption first, so a client reading top-down learns the list is a slice
     # BEFORE reading it. That puts the header on row 2 — every row index below
     # is offset accordingly.
-    ws3.append([_gap_plan_caption(ctx.gap)])
-    ws3.append(headers3)
+    safe_text_row(ws3, [_gap_plan_caption(ctx.gap, _target_note(ctx))])
+    safe_text_row(ws3, headers3)
     for col in range(1, len(headers3) + 1):
         cell = ws3.cell(row=2, column=col)
         cell.font = bold
         cell.fill = header_fill
     for g in ctx.gap.gaps:
-        ws3.append(
+        safe_text_row(
+            ws3,
             [
                 g.code,
                 g.function.value,
@@ -237,10 +302,11 @@ def render_xlsx(ctx: CsfDeliverableContext) -> bytes:
                 g.gap_size,
                 g.priority_score,
                 g.notes or "",
-            ]
+            ],
         )
     if not ctx.gap.gaps:
-        ws3.append(
+        safe_text_row(
+            ws3,
             [
                 "—",
                 "",
@@ -251,7 +317,7 @@ def render_xlsx(ctx: CsfDeliverableContext) -> bytes:
                 0,
                 0,
                 "",
-            ]
+            ],
         )
         # Row 1 is the caption, row 2 the header, so the placeholder is row 3.
         ws3.cell(row=3, column=4).font = italic
@@ -259,6 +325,7 @@ def render_xlsx(ctx: CsfDeliverableContext) -> bytes:
         ws3.column_dimensions[get_column_letter(col)].width = w
 
     out = io.BytesIO()
+    add_xlsx_sheet(wb, ctx.ai_mode)  # #646: the LAST sheet
     wb.save(out)
     return out.getvalue()
 
@@ -281,6 +348,10 @@ def render_docx(ctx: CsfDeliverableContext) -> bytes:
 
     doc = new_document(f"{ctx.service_title} — {ctx.client_legal_name}")
     add_title(doc, ctx.service_title, ctx.client_legal_name)
+    add_docx_paragraph(doc, ctx.ai_mode)  # #646, under the title
+    retired = _retired_note(ctx)
+    if retired:
+        add_paragraphs(doc, [retired])  # #852, beside the mode stamp
 
     add_heading(doc, "Maturity summary")
     add_paragraphs(
@@ -309,7 +380,7 @@ def render_docx(ctx: CsfDeliverableContext) -> bytes:
     )
 
     add_heading(doc, f"Top remediation gaps (target T{ctx.gap.target_tier})")
-    add_paragraphs(doc, [_gap_plan_caption(ctx.gap)])
+    add_paragraphs(doc, [_gap_plan_caption(ctx.gap, _target_note(ctx))])
     if not ctx.gap.gaps:
         add_paragraphs(
             doc,
@@ -363,8 +434,12 @@ def render_pdf(ctx: CsfDeliverableContext) -> bytes:
     body = styles["BodyText"]
 
     story: list = []
-    story.append(Paragraph(ctx.service_title, h1))
-    story.append(Paragraph(ctx.client_legal_name, body))
+    story.append(pdf_text(ctx.service_title, h1))  # #775
+    story.append(pdf_text(ctx.client_legal_name, body))  # #775
+    story.append(pdf_paragraph(ctx.ai_mode, body))  # #646, under the title
+    retired = _retired_note(ctx)
+    if retired:
+        story.append(Paragraph(retired, body))  # #852, beside the mode stamp
     story.append(Spacer(1, 0.2 * inch))
 
     story.append(Paragraph("Maturity summary", h2))
@@ -401,7 +476,7 @@ def render_pdf(ctx: CsfDeliverableContext) -> bytes:
     story.append(PageBreak())
 
     story.append(Paragraph(f"Top remediation gaps (target T{ctx.gap.target_tier})", h2))
-    story.append(Paragraph(_gap_plan_caption(ctx.gap), body))
+    story.append(Paragraph(_gap_plan_caption(ctx.gap, _target_note(ctx)), body))
     if not ctx.gap.gaps:
         story.append(
             Paragraph(

@@ -2,7 +2,33 @@
 
 import * as React from "react";
 
-import type { AttackRunAiResponse } from "@/lib/attack/types";
+import type {
+  AttackOmittedTechnique,
+  AttackRunAiResponse,
+} from "@/lib/attack/types";
+
+import { statusLabel } from "./StatusBadge";
+
+/**
+ * #806 C4 (PR #951 review, F2): the run refuses an AI Partial whose reason only
+ * a consultant may give, and the row keeps the status it had. Said here so a
+ * row the new prompt disputed is not read as one the AI agreed with.
+ *
+ * Copy approved verbatim, singular and plural (advisor, #736 comment
+ * 6068587667). Both forms live here so a later ruling is a one-line change.
+ *
+ * D-076, the remedy it names exists today: the technique panel's `ReasonField`
+ * select offers every catalogue reason for the row's status
+ * (`reasonCodes.filter((r) => r.status === status)`, fed `catalog.reason_codes`
+ * by `AttackWorkspace`), and the PATCH accepts any reason `is_valid_reason`
+ * gives that status, so a consultant can set all seven Partial reasons. Only
+ * the Run-AI apply loop refuses the four (`_AI_FORBIDDEN_PARTIAL_REASONS`).
+ */
+export const FORBIDDEN_REASON_REFUSED_COPY = {
+  one: "1 technique was suggested as Partial with a reason only a consultant can give, so it was not applied and keeps the status it had. A consultant can set that reason in the technique panel.",
+  many: (n: number) =>
+    `${n} techniques were suggested as Partial with a reason only a consultant can give, so they were not applied and keep the status they had. A consultant can set that reason in the technique panel.`,
+} as const;
 
 /**
  * What happened to the tools the model cited (W2).
@@ -44,6 +70,114 @@ function joinCapped(items: string[]): string {
   const shown = items.slice(0, ITEM_CAP).join(", ");
   const rest = items.length - ITEM_CAP;
   return rest > 0 ? `${shown}, and ${rest} more` : shown;
+}
+
+type KeptTechnique = AttackOmittedTechnique & {
+  kept_status: NonNullable<AttackOmittedTechnique["kept_status"]>;
+};
+
+/**
+ * One group of omitted techniques, at most `ITEM_CAP`, then "and {rest} more"
+ * (A2's approved wording, used for A3 too). Per group: each group's heading
+ * already states its full count.
+ */
+function OmittedItems<T extends AttackOmittedTechnique>({
+  items,
+  describe,
+}: {
+  items: T[];
+  describe: (t: T) => string;
+}) {
+  const rest = items.length - ITEM_CAP;
+  return (
+    <ul className="list-disc pl-5">
+      {items.slice(0, ITEM_CAP).map((t) => (
+        <li key={t.technique_code}>{describe(t)}</li>
+      ))}
+      {rest > 0 ? <li>and {rest} more</li> : null}
+    </ul>
+  );
+}
+
+/**
+ * #853: the techniques a SUCCESSFUL batch was asked about and that no entry
+ * named. Copy A1 to A4 approved verbatim (#736 comment 6090870696); the twins
+ * are ZT's `ZtOmittedBlock` (#840) and CSF's playbook panel (#836).
+ *
+ * Not a refusal: an entry that names a technique and is refused is an answer,
+ * not an omission. Only the N/A and forbidden-reason refusals are counted in
+ * this panel, on their own lines further down (`not_applicable_refused`,
+ * `forbidden_reason_refused`); the rest are only in the audit row's `details`
+ * and reach no screen (#859). A failed batch's techniques are the failed-batch
+ * alert's, which is why this block sits directly after it.
+ *
+ * A2 (no status before the run) is neutral: the technique stays unscored and
+ * reads as unscored everywhere. A3 (a status kept) is danger and carries A4,
+ * because that status was not confirmed by this run and still reaches the
+ * coverage figures and the deliverable. A3 and A4 share one region: an alert
+ * when it is the panel's only alert, a polite `status` beside another, so two
+ * assertive regions never announce over each other.
+ *
+ * A4's remedies exist today (D-076): Run AI in `AttackWorkspace`, and the
+ * technique panel's status control.
+ *
+ * Absent (a run stored before #853) or 0 renders nothing.
+ */
+function AttackOmittedBlock({
+  result,
+  otherAlert,
+}: {
+  result: AttackRunAiResponse;
+  otherAlert: boolean;
+}) {
+  const n = result.omitted_count ?? 0;
+  if (n === 0) return null;
+  const items = result.omitted_techniques ?? [];
+  const unscored = items.filter((t) => t.kept_status === null);
+  const kept = items.filter((t): t is KeptTechnique => t.kept_status !== null);
+  return (
+    <div className="flex flex-col gap-1" data-testid="attack-omitted">
+      <p className="text-ink-secondary" data-testid="attack-omitted-count">
+        {n === 1
+          ? "1 technique got no status from the AI this run."
+          : `${n} techniques got no status from the AI this run.`}
+      </p>
+      {unscored.length > 0 ? (
+        <div
+          className="text-ink-secondary"
+          data-testid="attack-omitted-unscored"
+        >
+          <p>
+            No status before this run, so still unscored ({unscored.length}):
+          </p>
+          <OmittedItems items={unscored} describe={(t) => t.technique_code} />
+        </div>
+      ) : null}
+      {kept.length > 0 ? (
+        <div
+          className="flex flex-col gap-1 text-status-danger-fg"
+          role={otherAlert ? "status" : "alert"}
+          data-testid="attack-omitted-kept"
+        >
+          <div data-testid="attack-omitted-kept-list">
+            <p>Kept the status it had ({kept.length}):</p>
+            <OmittedItems
+              items={kept}
+              describe={(t) =>
+                `${t.technique_code} (${statusLabel(t.kept_status)})`
+              }
+            />
+          </div>
+          <p data-testid="attack-omitted-check">
+            Check these before approving. A status kept this way was not
+            confirmed by this run and reaches the coverage figures and the
+            deliverable as it is. Run AI again, or set the status in the
+            technique panel.
+          </p>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export function AttackCitationAccounting({
@@ -144,6 +278,15 @@ export function AttackCitationAccounting({
         </p>
       ) : null}
 
+      {/* #853, directly after the failed-batch alert: that alert covers the
+          techniques of the batches that failed, this block those of the
+          batches that answered. The rejected-citations alert below is the
+          other assertive region this one must not shout over. */}
+      <AttackOmittedBlock
+        result={result}
+        otherAlert={runIncomplete || rejected > 0}
+      />
+
       {pendingRows > 0 ? (
         <p
           className="text-status-warning-fg"
@@ -240,6 +383,50 @@ export function AttackCitationAccounting({
             : `${unusable} entries were not usable tool names`}{" "}
           (the model sent the wrong shape). Those tool lists were overwritten
           with nothing — re-run before relying on this draft.
+        </p>
+      ) : null}
+
+      {/* #645. An edit that checked the run's lock before the run existed can
+          land after it started. The run keeps that edit rather than overwrite
+          it, and says how many it kept, so a row the run "skipped" is not
+          mistaken for one it looked at and agreed with. */}
+      {(result.rows_skipped_edited ?? 0) > 0 ? (
+        <p
+          className="text-ink-secondary"
+          data-testid="attack-rows-skipped-edited"
+        >
+          {result.rows_skipped_edited === 1
+            ? "1 technique was edited after this run started, so the run left it as edited"
+            : `${result.rows_skipped_edited} techniques were edited after this run started, so the run left them as edited`}
+          .
+        </p>
+      ) : null}
+
+      {/* #841. Only a consultant may rule a technique N/A, so the run refused
+          every N/A the AI suggested. Said here so a refusal is not mistaken for
+          the AI having no view on that technique. Copy approved verbatim
+          (issue 841, comment 5983735013). */}
+      {(result.not_applicable_refused ?? 0) > 0 ? (
+        <p
+          className="text-ink-secondary"
+          data-testid="attack-not-applicable-refused"
+        >
+          {result.not_applicable_refused === 1
+            ? "1 technique was suggested as N/A and not applied. Only a consultant can mark a technique N/A, in the technique panel."
+            : `${result.not_applicable_refused} techniques were suggested as N/A and not applied. Only a consultant can mark a technique N/A, in the technique panel.`}
+        </p>
+      ) : null}
+
+      {(result.forbidden_reason_refused ?? 0) > 0 ? (
+        <p
+          className="text-ink-secondary"
+          data-testid="attack-forbidden-reason-refused"
+        >
+          {result.forbidden_reason_refused === 1
+            ? FORBIDDEN_REASON_REFUSED_COPY.one
+            : FORBIDDEN_REASON_REFUSED_COPY.many(
+                result.forbidden_reason_refused ?? 0,
+              )}
         </p>
       ) : null}
     </div>

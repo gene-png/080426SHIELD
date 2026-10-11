@@ -141,7 +141,9 @@ def test_csf_tier_profile_endpoints_are_tenant_scoped(c: TestClient) -> None:
     assert c.get(f"/csf/services/{svc_id}/profile/high", headers=bh).status_code == 404
     assert c.get(f"/csf/services/{svc_id}/enterprise-profile", headers=bh).status_code == 404
     assert c.post(f"/csf/services/{svc_id}/playbook/export", headers=bh).status_code == 404
-    assert c.post(f"/csf/services/{svc_id}/run-ai", headers=bh).status_code in (404, 409)
+    assert c.post(
+        f"/csf/services/{svc_id}/run-ai", headers=bh, json={"serves": "offline"}
+    ).status_code in (404, 409)
     # As client A it resolves.
     assert c.get(f"/csf/services/{svc_id}/profile/high", headers=ah).status_code == 200
 

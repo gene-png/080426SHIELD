@@ -928,3 +928,67 @@ def test_a_commented_out_audit_renderer_is_not_a_renderer(tmp_path, capsys) -> N
     )
     assert main(["x", str(seed)]) == 1
     assert "nothing renders the audit `details` payload generically" in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_an_omission_is_a_disclosure() -> None:
+    """`omitted_*` records rows the model was asked for and never answered
+    (#836, #840, #853; the advisor's ruling on #736, comment 6067815887)."""
+    assert is_disclosure("omitted_count")
+    assert is_disclosure("omitted_rows")
+
+
+_OMITTED_SCHEMA = """
+class GammaRunAiResponse:
+    omitted_count: int
+    omitted_rows: list
+"""
+
+
+@pytest.mark.unit
+def test_an_omission_count_nobody_renders_is_a_violation(tmp_path, capsys) -> None:
+    """The negative control for the new prefix: the panel reads the rows but
+    not the count, and the count is named as unconsumed."""
+    seed = _tree(
+        tmp_path,
+        schema=_OMITTED_SCHEMA,
+        web="const r: GammaRunAi = d;\nconst n = r.omitted_rows.length;",
+    )
+    assert main(["x", str(seed)]) == 1
+    out = capsys.readouterr().out
+    assert "GammaRunAiResponse.omitted_count" in out
+    assert "GammaRunAiResponse.omitted_rows" not in out
+
+
+@pytest.mark.unit
+def test_an_omission_rendered_on_a_screen_passes(tmp_path) -> None:
+    seed = _tree(
+        tmp_path,
+        schema=_OMITTED_SCHEMA,
+        web="const r: GammaRunAi = d;\nconst n = r.omitted_count;\nr.omitted_rows.map(f);",
+    )
+    assert main(["x", str(seed)]) == 0
+
+
+@pytest.mark.unit
+def test_the_csf_run_omission_fields_are_checked_on_the_real_tree() -> None:
+    """The first real `omitted_*` fields (#836) are SEEN by the gate and
+    reach the CSF Playbook panel. Seen is the half a prefix change can lose
+    silently: a field the predicate misses is a field nobody checks."""
+    import scripts.check_disclosure_consumers as gate
+
+    root = repo_root_for(pathlib.Path(gate.__file__).resolve())
+    if root is None:
+        pytest.skip(
+            "no repo root above the gate -- the api container mounts apps/api at /app (#314)."
+        )
+    fields, problems = gate.response_disclosure_fields(root / "apps" / "api" / "app" / "schemas")
+    assert not problems, problems
+    ours = [f for f in fields if f[1] == "CsfRunAiResponse" and f[2].startswith("omitted_")]
+    assert sorted(ours) == [
+        ("csf.py", "CsfRunAiResponse", "omitted_count"),
+        ("csf.py", "CsfRunAiResponse", "omitted_rows"),
+    ]
+    readers, problems = gate.reader_text(root)
+    assert not problems, problems
+    assert unconsumed(ours, readers) == []

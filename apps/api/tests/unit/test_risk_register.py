@@ -375,8 +375,16 @@ def test_generate_records_what_it_was_built_from(app_client) -> None:
 
 
 @pytest.mark.unit
-def test_export_refuses_a_register_built_from_unapproved_work(app_client) -> None:
-    """The export half of #237, closed against the SNAPSHOT.
+def test_publish_refuses_a_register_built_from_unapproved_work(app_client) -> None:
+    """#737 MOVED THIS GUARD FROM EXPORT TO PUBLISH (advisor, #736 5998764095):
+    export is now the consultant's internal copy and renders drafts; publish is
+    what reaches the client, so the #240 guard runs there. The inputs are
+    released first, so Gene's input gate passes and the #240 guard is the one
+    under test.
+
+    The original rationale, unchanged in substance:
+
+    The export half of #237, closed against the SNAPSHOT.
 
     The status is read from what was recorded at generate, never recomputed --
     recomputing would read TODAY's statuses, so an assessment approved after
@@ -403,9 +411,11 @@ def test_export_refuses_a_register_built_from_unapproved_work(app_client) -> Non
     Two different registers, two different branches, and conflating them was
     the error this docstring now exists to prevent.
     """
+    from tests._risk_inputs import seed_released
+
     c, provider = app_client
     bearer, cid = _admin(c)
-    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    technique = seed_released(c, bearer, cid).technique
     bh = {"Authorization": f"Bearer {bearer}"}
     provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
     assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
@@ -424,7 +434,7 @@ def test_export_refuses_a_register_built_from_unapproved_work(app_client) -> Non
     db.add(reg)
     db.commit()
 
-    r = c.post(f"/risk/clients/{cid}/register/export", headers=bh)
+    r = c.post(f"/risk/clients/{cid}/register/publish", headers=bh)
     assert r.status_code == 409, r.text
     msg = r.json()["error"]["message"]
     assert "not approved" in msg, msg
@@ -465,9 +475,21 @@ def test_export_refuses_a_pre_provenance_register_that_was_never_delivered(
     db.add(reg)
     db.commit()
 
-    r = c.post(f"/risk/clients/{cid}/register/export", headers=bh)
+    # #737 (declared and approved on #860): export renders it now -- it is the
+    # consultant's internal copy -- and does NOT publish it...
+    ex = c.post(f"/risk/clients/{cid}/register/export", headers=bh)
+    assert ex.status_code == 200, ex.text
+    assert ex.json()["finalized_at"] is None
+    # ...and PUBLISH refuses it. The input gate meets the NULL provenance first:
+    # nothing on file says what it was built from.
+    r = c.post(f"/risk/clients/{cid}/register/publish", headers=bh)
     assert r.status_code == 409, r.text
-    assert "predates provenance recording" in r.json()["error"]["message"]
+    assert r.json()["error"]["reason"] == "risk_register_inputs_not_final", r.text
+    assert r.json()["error"]["blockers"] == [
+        {"input": "register", "reason": "not_recorded", "status": None}
+    ]
+    db.refresh(reg)
+    assert reg.finalized_at is None
 
 
 @pytest.mark.unit
@@ -622,11 +644,11 @@ def _entry_per_finding(payload: dict) -> LLMResponse:
     """A response shaped like the real prompt's: one candidate entry per finding."""
     entries = [
         {
-            "title": f"Risk for {f['source_id']}",
+            "title": f"Risk for {sid}",
             "description": "d",
             "axis": "detection",
             "source": f["source"],
-            "source_id": f["source_id"],
+            "source_id": sid,
             "linked_techniques": [],
             "linked_controls": [],
             "likelihood": "high",
@@ -634,7 +656,7 @@ def _entry_per_finding(payload: dict) -> LLMResponse:
             "recommended_action": "remediate",
             "rationale": "r",
         }
-        for f in payload.get("findings", [])
+        for sid, f in payload.get("findings", {}).items()
     ]
     return LLMResponse(json.dumps({"entries": entries}))
 
@@ -768,8 +790,9 @@ def test_generate_object_entries_is_refused_not_iterated_as_keys(app_client) -> 
     assert r.json()["error"]["reason"] == "ai_call_failed"
 
 
-def _seed_drafts_only(c: TestClient, bearer: str, cid: str) -> None:
-    """ATT&CK + ZT assessments that EXIST and are not approved."""
+def _seed_drafts_only(c: TestClient, bearer: str, cid: str) -> str:
+    """ATT&CK + ZT assessments that EXIST and are not approved. Returns the
+    ATT&CK gap technique, so a test can match an entry to its finding."""
     h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
     asvc = c.post(
         "/attack/services",
@@ -787,6 +810,7 @@ def _seed_drafts_only(c: TestClient, bearer: str, cid: str) -> None:
         headers=h,
         json={"maturity_stage": 1},
     )
+    return cov["technique_code"]
 
 
 @pytest.mark.unit
@@ -815,40 +839,42 @@ def test_the_gate_path_must_not_filter_on_finalized(app_client) -> None:
 
 
 @pytest.mark.unit
-def test_the_synthesis_path_must_filter_on_finalized(app_client) -> None:
-    """Synthesis refuses unapproved work, and says which input and why.
+def test_a_draft_input_is_synthesized_and_each_finding_says_so(app_client) -> None:
+    """#737, Gene's ruling (#736, 5986057990 item 13), REVERSING #237.
 
-    The other half. What synthesis produces is exported under the client's name,
-    so a DRAFT reaching it is unreviewed content leaving as a deliverable — a
-    different and worse failure than a correct number under a wrong label.
+    This test used to pin "synthesis refuses unapproved work". Gene ruled that a
+    register may be DRAFTED from in-progress work, with each finding labelled by
+    its source assessment's state, and that PUBLICATION is what protects the
+    client. So: the gate still names the unapproved inputs, generate succeeds,
+    the finding from the draft ATT&CK mapping says "draft", and publish refuses
+    and names both inputs.
     """
-    c, _ = app_client
+    c, provider = app_client
     bearer, cid = _admin(c)
-    _seed_drafts_only(c, bearer, cid)
+    technique = _seed_drafts_only(c, bearer, cid)
     bh = {"Authorization": f"Bearer {bearer}"}
 
     g = c.get(f"/risk/clients/{cid}/gate", headers=bh).json()
     assert set(g["not_finalized"]) == {
         "the MITRE ATT&CK coverage mapping",
         "the Zero Trust assessment",
-    }, "the gate must NAME the unapproved inputs, not merely refuse later"
-    assert g["missing"] == [], (
-        "'absent' and 'exists but unapproved' are separate fields -- collapsing "
-        "them would make the API say an assessment does not exist when it does"
-    )
+    }, "the gate must still NAME the unapproved inputs"
+    assert g["missing"] == []
 
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
     r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
-    assert r.status_code == 409, "a draft-sourced register must be REFUSED"
-    body = r.json()["error"]["message"]
-    assert "unapproved" in body and "MITRE ATT&CK" in body
-    # NOT an empty register generated successfully, which would read to a client
-    # as "no risks found" -- a confident absence in place of unreviewed content.
-    #
-    # `/register/latest`, NOT `/register`. The first version asserted 404 on
-    # `/register`, which IS NOT A ROUTE -- the 404 came from FastAPI's router and
-    # passed identically whether or not a register had been created. A vacuous
-    # assertion carrying the sentence above it.
-    assert c.get(f"/risk/clients/{cid}/register/latest", headers=bh).status_code == 404
+    assert r.status_code == 201, r.text
+    [entry] = r.json()["entries"]
+    assert entry["source_id"] == technique
+    assert entry["source_state"] == "draft"
+    # Read back, so the label is the STORED one.
+    latest = c.get(f"/risk/clients/{cid}/register/latest", headers=bh).json()
+    assert latest["entries"][0]["source_state"] == "draft"
+
+    pub = c.post(f"/risk/clients/{cid}/register/publish", headers=bh)
+    assert pub.status_code == 409, pub.text
+    assert pub.json()["error"]["reason"] == "risk_register_inputs_not_final"
+    assert {b["input"] for b in pub.json()["error"]["blockers"]} == {"attack", "zt"}
 
 
 @pytest.mark.unit
@@ -886,118 +912,64 @@ def test_approving_the_same_inputs_lets_synthesis_through(app_client) -> None:
 
 
 @pytest.mark.unit
-def test_a_draft_sourced_register_is_never_generated(app_client) -> None:
-    """No 201 from unapproved inputs, whatever the reason for the refusal.
+def test_a_draft_sourced_register_is_generated_and_never_published(app_client) -> None:
+    """#737, Gene's ruling, REVERSING #237: the half of #237 that survives.
 
-    This exists to make the two merge directions DISCRIMINABLE, and that gap was
-    real: with only the two tests above, direction B's red set was a strict
-    SUBSET of direction A's. `synthesis_path` died under both — under A because
-    the gate reports the assessments as absent, which is a side effect of the
-    gate change rather than an independent signal — so nothing failed under B
-    alone. A shared red set cannot tell you which of two merges happened, which
-    is the collapse #213 is about, one level up in the evidence rather than in
-    the code.
-
-    This one is deliberately indifferent to WHICH refusal fires. Merge the
-    helpers so the gate filters on finalized and the register is refused as
-    locked: this still passes. Merge them so synthesis stops filtering and a
-    draft-sourced register generates: this is the only test that fails.
+    This used to assert that no register is generated from unapproved inputs.
+    Under the ruling it is generated -- as a draft -- and the protection #237
+    gave the client moves to publication: the register stays unpublished, so
+    the client dashboard (gated on `finalized_at`) never shows it.
     """
     c, provider = app_client
     bearer, cid = _admin(c)
-    _seed_drafts_only(c, bearer, cid)
+    technique = _seed_drafts_only(c, bearer, cid)
     bh = {"Authorization": f"Bearer {bearer}"}
-
-    # A WORKING fixture, and it is what makes the assertion below mean anything.
-    # Without it this test registers no `risk_synthesize` response, so if the
-    # provenance filter is ever removed the run reaches the provider, every
-    # batch raises `KeyError`, and generate returns 502 -- so `!= 201` passed BY
-    # CONSTRUCTION under every possible mutation, while carrying the sentence
-    # "a register was generated from unapproved assessments". The test could not
-    # reach a successful synthesis, which is the one outcome it exists to forbid.
-    provider.register_static(
-        "risk_synthesize",
-        LLMResponse(
-            '{"entries": [{"title": "Credential theft exposure",'
-            ' "description": "EDR gap", "axis": "detection",'
-            ' "source": "coverage_finding", "source_id": "T1078",'
-            ' "linked_techniques": [], "linked_controls": [],'
-            ' "likelihood": "high", "impact": "catastrophic",'
-            ' "recommended_action": "remediate", "rationale": "..."}]}'
-        ),
-    )
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
     r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
-    assert r.status_code != 201, (
-        "a register was generated from unapproved assessments -- its contents "
-        "are exported under the client's name"
-    )
-    # 4xx, not 409 specifically. The docstring says this test is "deliberately
-    # indifferent to WHICH refusal fires", and `== 409` contradicted that: under
-    # a merge that locks the gate the refusal is still a 409, but pinning the
-    # exact code made the claim false of its own assertion.
-    assert 400 <= r.status_code < 500, f"expected a refusal, got {r.status_code}"
+    assert r.status_code == 201, r.text
+    assert r.json()["finalized_at"] is None
+
+    pub = c.post(f"/risk/clients/{cid}/register/publish", headers=bh)
+    assert pub.status_code == 409, pub.text
+    latest = c.get(f"/risk/clients/{cid}/register/latest", headers=bh).json()
+    assert latest["finalized_at"] is None, "a draft-sourced register was published"
 
 
 @pytest.mark.unit
-def test_an_unapproved_OPTIONAL_input_does_not_block_generation(app_client) -> None:
-    """The refusal must mirror the UNLOCK, not exceed it.
+def test_an_unapproved_OPTIONAL_input_is_included_as_a_draft(app_client) -> None:
+    """#737, Gene's ruling, REVERSING #237's exclusion.
 
-    Unlock is `has_attack and (has_csf or has_zt)` — CSF and ZT are
-    ALTERNATIVES. The first version of the provenance refusal blocked on any
-    present-but-unapproved input regardless of whether it was needed, so:
-
-        ATT&CK approved + CSF approved + ZT draft  ->  409
-
-    Two assessments that fully satisfy the unlock rule produced nothing, and the
-    only remedies were to approve unfinished work — the exact thing this change
-    exists to prevent — or discard it.
-
-    Live rather than exotic: `_FINALIZED` deliberately excludes `submitted`, and
-    submitted is the routine transient state of a CSF or ZT engagement sitting
-    in a consultant's review queue. A client answering their questionnaire would
-    have blocked the Risk Register.
+    This used to assert that a present-but-unapproved CSF assessment was
+    EXCLUDED and named in `excluded_inputs`. Drafts are now synthesized, so it
+    is INCLUDED, the register records it with its state, and nothing is
+    excluded. Generation is still not blocked by it.
     """
     c, provider = app_client
     bearer, cid = _admin(c)
     technique, capability = _seed_attack_and_zt(c, bearer, cid)  # both approved
     h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
     bh = {"Authorization": f"Bearer {bearer}"}
-
-    # A THIRD assessment, started and not approved. CSF here, so ATT&CK+ZT
-    # already satisfy the unlock rule without it.
     csvc = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "CSF"})
     c.post(f"/csf/services/{csvc.json()['id']}/assessments", headers=h)
 
     g = c.get(f"/risk/clients/{cid}/gate", headers=bh).json()
     assert g["unlocked"] is True
-    assert (
-        "the CSF assessment" in g["not_finalized"]
-    ), "an unapproved input must still be REPORTED even when it does not block"
+    assert "the CSF assessment" in g["not_finalized"]
 
-    provider.register_static(
-        "risk_synthesize",
-        LLMResponse(
-            '{"entries": [{"title": "Credential theft exposure",'
-            ' "description": "EDR gap", "axis": "detection",'
-            ' "source": "coverage_finding", "source_id": "' + technique + '",'
-            ' "linked_techniques": ["' + technique + '"],'
-            ' "linked_controls": ["' + capability + '"],'
-            ' "likelihood": "high", "impact": "catastrophic",'
-            ' "recommended_action": "remediate", "rationale": "..."}]}'
-        ),
-    )
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
     r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
-    assert r.status_code == 201, (
-        "an unapproved OPTIONAL input must not block a register the unlock rule "
-        f"already permits -- got {r.status_code}: {r.text}"
-    )
-    # ...and the exclusion is DISCLOSED rather than silent. Without this the
-    # register is a figure over a withheld population, which is the trade this
-    # fix must not make: a hard block replaced by a quiet partial.
-    assert "the CSF assessment" in r.json()["excluded_inputs"], (
-        "a present-but-unapproved assessment contributed nothing and the "
-        "register does not say so"
-    )
+    assert r.status_code == 201, r.text
+    assert r.json()["excluded_inputs"] == []
+    assert r.json()["excluded_inputs_recorded"] is True
+
+    from app.models.risk_register import RiskRegister
+
+    db = _session()
+    reg = db.execute(
+        select(RiskRegister).where(RiskRegister.client_id == uuid.UUID(cid))
+    ).scalar_one()
+    statuses = {i["kind"]: i["status"] for i in reg.provenance["inputs"]}
+    assert statuses == {"attack": "approved", "csf": "draft", "zt": "approved"}
 
 
 # ---------------------------------------------------------------------------
@@ -1698,30 +1670,18 @@ def test_a_register_that_predates_provenance_says_nobody_looked(app_client) -> N
 def test_the_withheld_set_is_persisted_by_generate_not_just_returned(
     app_client,
 ) -> None:
-    """The WRITE half, which had no test and whose absence was argued for.
+    """The WRITE half of `excluded_inputs`, after #737.
 
-    `generate` used to compute `g.not_finalized`, store it via
-    `_provenance_snapshot`, AND pass the same expression to `_serialize`. Two
-    answers to one question. Every assertion on the generate response was green
-    off the parameter, so the third argument to `_provenance_snapshot` was
-    replaceable with `[]` and nothing went red — and the resulting reload
-    reported `excluded_inputs: []` with `excluded_inputs_recorded=True`. A
-    positive certificate that the server looked and nothing was withheld is
-    WORSE than the empty list #244 was filed for.
-
-    `_serialize` no longer takes the parameter, so this asserts the same
-    property twice over: the generate response is itself a read-back, and
-    `latest` reads it again in a new request.
+    Under Gene's ruling (#736 item 13, reversing #237) generate synthesizes
+    drafts, so it records an EMPTY excluded set -- and records it, so a reload
+    reports `excluded_inputs_recorded=True` with `[]`, an observed "nothing was
+    left out", not the "nobody recorded" of a register predating 0047. The
+    draft CSF assessment that #237 used to withhold is now in `inputs`.
     """
     c, provider = app_client
     bearer, cid = _admin(c)
     technique, _ = _seed_attack_and_zt(c, bearer, cid)
     bh = {"Authorization": f"Bearer {bearer}"}
-
-    # A THIRD assessment, started and not approved. CSF here, because ATT&CK +
-    # ZT already satisfy the unlock rule without it -- so generation proceeds
-    # and the CSF assessment is withheld and NAMED. Same setup as
-    # `test_an_unapproved_OPTIONAL_input_does_not_block_generation`.
     h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
     csvc = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "CSF"})
     c.post(f"/csf/services/{csvc.json()['id']}/assessments", headers=h)
@@ -1729,18 +1689,10 @@ def test_the_withheld_set_is_persisted_by_generate_not_just_returned(
     provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
     gen = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
     assert gen.status_code == 201, gen.text
-    withheld = gen.json()["excluded_inputs"]
-    assert withheld, (
-        "this test needs a run that actually withheld something -- if the "
-        "fixture stopped producing an unfinalized input it proves nothing"
-    )
 
     r = c.get(f"/risk/clients/{cid}/register/latest", headers=bh)
     assert r.status_code == 200, r.text
-    assert r.json()["excluded_inputs"] == withheld, (
-        "generate reported a withheld set that was never STORED -- the "
-        "snapshot's third argument is not carrying it"
-    )
+    assert r.json()["excluded_inputs"] == []
     assert r.json()["excluded_inputs_recorded"] is True
 
 
@@ -1812,7 +1764,11 @@ def test_export_allows_the_seeded_shape_a_finalized_register_with_no_inputs_key(
 def test_export_still_refuses_that_shape_when_it_was_never_finalized(
     app_client,
 ) -> None:
-    """THE OTHER HALF, without which the test above is a hole rather than a fix.
+    """#737: the refusal MOVED TO PUBLISH (export renders drafts now, advisor
+    #736 5998764095), and there the input gate meets this shape first: a
+    provenance with no input record cannot be certified (`not_recorded`).
+
+    THE OTHER HALF, without which the test above is a hole rather than a fix.
 
     The carve-out is for a register that was ALREADY delivered. An UNFINALIZED
     register whose provenance records what was excluded but not what was used
@@ -1840,9 +1796,14 @@ def test_export_still_refuses_that_shape_when_it_was_never_finalized(
     db.add(reg)
     db.commit()
 
-    r = c.post(f"/risk/clients/{cid}/register/export", headers=bh)
+    r = c.post(f"/risk/clients/{cid}/register/publish", headers=bh)
     assert r.status_code == 409, r.text
-    assert r.json()["error"]["reason"] == "register_inputs_not_recorded", r.text
+    assert r.json()["error"]["reason"] == "risk_register_inputs_not_final", r.text
+    assert r.json()["error"]["blockers"] == [
+        {"input": "register", "reason": "not_recorded", "status": None}
+    ]
+    db.refresh(reg)
+    assert reg.finalized_at is None
 
 
 @pytest.mark.unit
@@ -1897,13 +1858,19 @@ def test_a_null_excluded_value_is_not_read_as_nothing_was_withheld(app_client) -
     assert body["excluded_inputs"] == []
 
 
-def _seed_csf_answer_at_tier(c, bearer: str, cid: str, *, tier: int) -> str:
-    """One APPROVED CSF assessment with a single subcategory at `tier`.
+def _seed_csf_playbook_at_level(
+    c, bearer: str, cid: str, *, level: int, target: int | None = 3
+) -> str:
+    """One APPROVED CSF assessment whose Playbook has a single subcategory at
+    Enterprise `level` against `target` (#474 D': Risk reads the Playbook, not
+    the questionnaire `maturity_tier`).
 
     Approved deliberately: `_finalized_for_synthesis` filters on approved or
     released, so a draft contributes no findings at all and every assertion
     below would pass over an empty list.
     """
+    from tests._csf_playbook_rows import score_csf_playbook
+
     h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
     svc = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "CSF"})
     assert svc.status_code in (200, 201), svc.text
@@ -1911,24 +1878,16 @@ def _seed_csf_answer_at_tier(c, bearer: str, cid: str, *, tier: int) -> str:
     a = c.post(f"/csf/services/{svc_id}/assessments", headers=h)
     assert a.status_code in (200, 201), a.text
     latest = c.get(f"/csf/services/{svc_id}/assessments/latest", headers=h).json()
-    ans = latest["answers"][0]
-    r = c.patch(f"/csf/answers/{ans['id']}", headers=h, json={"maturity_tier": tier})
-    assert r.status_code == 200, r.text
-
-    # A SECOND subcategory, deliberately at tier 1 -- below every target the
-    # intake schema allows (`ge=2`). It exists so the finding set is never
-    # EMPTY, which is what lets a `not in` assertion mean "this code was
-    # excluded" rather than "nothing was produced".
-    #
-    # Measured, and this is why it is here: without it,
-    # `test_a_control_at_the_clients_target_is_not_a_finding` asserted
-    # `code not in []` and passed over a run that produced no findings at all.
-    floor = latest["answers"][1]
-    r2 = c.patch(f"/csf/answers/{floor['id']}", headers=h, json={"maturity_tier": 1})
-    assert r2.status_code == 200, r2.text
+    code = latest["answers"][0]["subcategory_code"]
+    # A SECOND subcategory, at Level 1 against target 5 -- below every target a
+    # Playbook row can carry. It exists so the finding set is never EMPTY,
+    # which is what lets a `not in` assertion mean "this code was excluded"
+    # rather than "nothing was produced".
+    floor = latest["answers"][1]["subcategory_code"]
+    score_csf_playbook(c, h, svc_id, {code: (level, target), floor: (1, 5)})
     ap = c.post(f"/csf/assessments/{a.json()['id']}/approve", headers=h)
     assert ap.status_code == 200, ap.text
-    return ans["subcategory_code"]
+    return code
 
 
 # ---------------------------------------------------------------------------
@@ -2016,108 +1975,46 @@ def _csf_targets(cid: str) -> dict:
 
 
 @pytest.mark.unit
-def test_a_control_at_the_clients_target_is_not_a_finding(app_client) -> None:
-    """THE DEFECT, from the side a client feels.
-
-    A subcategory answered at tier 2, for a client who engaged for tier 2, is
-    AT its goal. The old code compared against a hardcoded 3 and reported it as
-    a gap -- a finding in the client's Risk Register for work they never
-    committed to doing.
-
-    Goes RED against the old baseline: `2 < 3` is true, so the code appears.
-    """
+def test_a_control_at_its_playbook_target_is_not_a_finding(app_client) -> None:
+    """#474 D' (Gene, #736 5984218862): a subcategory whose Playbook Enterprise
+    level equals its Playbook target is AT its goal and is no finding."""
     c, _provider = app_client
     bearer, cid = _admin(c)
-    code = _seed_csf_answer_at_tier(c, bearer, cid, tier=2)
+    code = _seed_csf_playbook_at_level(c, bearer, cid, level=2, target=2)
 
-    _set_csf_target(cid, 2)
-    # APPEAR before ABSENT. The `not in` below is genuinely discriminating --
-    # if the target failed to write, it would resolve to the default 3, `2 < 3`
-    # would put the code back in the list and this goes red -- but that
-    # reasoning is invisible at the site, so it is asserted rather than
-    # inferred.
-    assert _csf_targets(cid) == {"target": 2, "source": "client"}
-    # APPEAR BEFORE ABSENT. `not in` is satisfied by an EMPTY list, so it
-    # would pass over a `_gather_findings` that returned nothing at all --
-    # measured, by forcing `return []` and watching this test stay green while
-    # its positive twin went red. The ATT&CK gap and the stage-1 ZT capability
-    # that `_seed_attack_and_zt` creates are unaffected by the CSF target, so
-    # findings MUST exist; what must not is this code among them.
-    all_codes = [f["source_id"] for f in _all_findings(cid)]
-    assert all_codes, "no findings at all -- the absence below would be vacuous"
-    assert code not in _csf_finding_codes(cid), (
-        "a control AT the client's engagement target is not a gap; it was "
-        "reported as one because the comparison used a hardcoded tier 3"
-    )
+    assert _csf_targets(cid) == {"target": None, "source": "playbook"}
+    # APPEAR BEFORE ABSENT: the floor row is always a finding, so the list is
+    # not empty and the `not in` below excludes rather than passes vacuously.
+    assert _csf_finding_codes(cid), "no CSF findings at all -- the absence below would be vacuous"
+    assert code not in _csf_finding_codes(cid), "a control AT its Playbook target is not a gap"
 
 
 @pytest.mark.unit
-def test_a_control_below_a_higher_target_is_still_a_finding(app_client) -> None:
-    """THE OTHER HALF, without which the fix above is just 'report less'.
-
-    Same stored answer, a client targeting tier 4. The control IS below goal
-    and must appear. The old code stopped at 3 and missed the tier-3 shortfall
-    entirely for every client aiming higher than the hardcode.
-    """
+def test_a_control_below_its_playbook_target_is_a_finding(app_client) -> None:
+    """THE OTHER HALF: the same comparison, one level short of the target."""
     c, _provider = app_client
     bearer, cid = _admin(c)
-    code = _seed_csf_answer_at_tier(c, bearer, cid, tier=3)
+    code = _seed_csf_playbook_at_level(c, bearer, cid, level=3, target=4)
 
-    _set_csf_target(cid, 4)
-    assert code in _csf_finding_codes(cid), (
-        "a control BELOW the client's target must be reported; the old "
-        "hardcoded 3 could never see a tier-3 answer as a gap"
-    )
+    assert code in _csf_finding_codes(cid), "a control BELOW its Playbook target must be reported"
 
 
 @pytest.mark.unit
-def test_the_target_and_its_source_are_recorded_beside_the_findings(app_client) -> None:
-    """The baseline is recorded, so the next wrong one is falsifiable.
-
-    Asserts the SOURCE too, not just the number: "the client chose nothing" and
-    "the client's choice could not be used" resolve to the same number and are
-    different facts. A run that fell back to the engine default must not be
-    indistinguishable from one that honoured a client's explicit choice.
-    """
+def test_the_engagement_target_does_not_decide_a_csf_finding(app_client) -> None:
+    """Risk's CSF half no longer reads the client's engagement tier (#474 D'):
+    the Playbook target is per subcategory. A chosen, a missing, an unusable
+    and a below-floor engagement target all leave the CSF findings and the
+    recorded target unchanged."""
     c, _provider = app_client
     bearer, cid = _admin(c)
-    _seed_csf_answer_at_tier(c, bearer, cid, tier=1)
+    code = _seed_csf_playbook_at_level(c, bearer, cid, level=3, target=4)
 
-    _set_csf_target(cid, 2)
-    assert _csf_targets(cid) == {"target": 2, "source": "client"}
-
-    _set_csf_target(cid, None)
-    fell_back = _csf_targets(cid)
-    # The literal 3, taken from the SPEC -- CSF's engine default is Tier 3
-    # (Repeatable) -- and not imported from `DEFAULT_TARGET_TIER`. A test that
-    # reads its expected value out of the module under test agrees with it by
-    # construction, and `check_test_integrity` flags exactly that import.
-    #
-    # A first draft wrote `assert fell_back["target"] != 2 or fell_back["source"]
-    # == "default"`. The right operand was asserted TRUE on the line above, so
-    # the whole thing was a tautology -- it passed for `None`, for `2`, for a
-    # string. It was the only assertion on the fallback NUMBER and it asserted
-    # nothing about it.
-    assert fell_back == {"target": 3, "source": "default"}, fell_back
-
-
-@pytest.mark.unit
-def test_an_unusable_stored_target_is_named_rather_than_silently_defaulted(
-    app_client,
-) -> None:
-    """A stored value that is not a tier is a THIRD state.
-
-    `resolve_target_tier` separates "chose nothing" from "chose something
-    unusable" because the second is answerable by re-asking the client. If this
-    collapses to `default`, that distinction is lost at the one place it was
-    recorded -- and the register silently uses a target nobody picked.
-    """
-    c, _provider = app_client
-    bearer, cid = _admin(c)
-    _seed_csf_answer_at_tier(c, bearer, cid, tier=1)
-
-    _set_csf_target(cid, 99)
-    assert _csf_targets(cid)["source"] == "client_out_of_range"
+    expected = _csf_finding_codes(cid)
+    assert code in expected  # the positive state first
+    for chosen in (2, None, 99, 1):
+        _set_csf_target(cid, chosen)
+        assert _csf_targets(cid) == {"target": None, "source": "playbook"}, chosen
+        assert _csf_finding_codes(cid) == expected, chosen
 
 
 @pytest.mark.unit
@@ -2232,12 +2129,14 @@ def _zt_finding_codes(cid: str) -> list[str]:
     return [f["source_id"] for f in findings if f["kind"] == "zt"]
 
 
-def _zt_targets(cid: str) -> dict:
+def _zt_targets(cid: str, key: str = "zt") -> dict:
+    """The ZT target a run compared against. `key` is the source's scope key:
+    "zt" while the client has one ZT service, "zt:<framework>" with two (#876)."""
     from app.routes.risk import _gather_findings
 
     db = _session()
     _f, _t, _c, targets, _scopes = _gather_findings(db, uuid.UUID(cid))
-    return targets.get("zt", {})
+    return targets.get(key, {})
 
 
 @pytest.mark.unit
@@ -2317,7 +2216,10 @@ def test_a_stored_stage_the_framework_does_not_have_is_named_not_used(app_client
     assert c.post(f"/zt/assessments/{da.json()['id']}/approve", headers=h).status_code == 200
 
     _set_zt_target(cid, 4, kind="zero_trust_dod")
-    resolved = _zt_targets(cid)
+    # #876: CISA and DoD are both engaged, so each has its own target record;
+    # this test is about DoD's. Before #876 the bare "zt" key held whichever ONE
+    # assessment per-kind synthesis picked (DoD, as the latest).
+    resolved = _zt_targets(cid, "zt:dod_ztra")
     assert resolved["source"] == "client_out_of_range", (
         "stage 4 is not a stage DoD ZTRA has, so it must be NAMED as unusable "
         f"rather than silently applied. got {resolved}"
@@ -2641,7 +2543,7 @@ def test_a_computed_parent_is_never_a_register_finding_of_its_own(app_client) ->
 
     def fixture(payload: dict) -> LLMResponse:
         sent.extend(
-            f["source_id"] for f in payload.get("findings", []) if f.get("kind") == "attack"
+            sid for sid, f in payload.get("findings", {}).items() if f.get("kind") == "attack"
         )
         return _entry_per_finding(payload)
 
@@ -2653,3 +2555,14 @@ def test_a_computed_parent_is_never_a_register_finding_of_its_own(app_client) ->
     assert r.status_code == 201, r.text
     # The parent is a gap too (all children are), and still not a finding.
     assert sorted(sent) == sorted(children)
+
+
+@pytest.mark.unit
+def test_a_stored_zt_stage_1_is_named_below_the_floor_not_used(app_client) -> None:
+    """#85, the ZT twin."""
+    c, _provider = app_client
+    bearer, cid = _admin(c)
+    _seed_attack_and_zt(c, bearer, cid)
+
+    _set_zt_target(cid, 1)
+    assert _zt_targets(cid) == {"target": 3, "source": "client_below_floor"}

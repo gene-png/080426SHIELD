@@ -3,6 +3,9 @@
  * Mirrors the backend `ZtDashboardResponse` (apps/api/app/schemas/clients.py).
  */
 
+import type { AiSource } from "@/lib/aiSource/types";
+import { targetSourceNote } from "@/lib/assessment-targets";
+
 import { renderedAgainstNote } from "./frozenTarget";
 
 export interface ZtPillar {
@@ -19,6 +22,8 @@ export interface ZtPillar {
 }
 
 export interface ZtDashboardData {
+  /** #646: which mode drafted the AI suggestions, as the API states it. */
+  ai_source: AiSource;
   service_id: string;
   service_title: string;
   released_at: string;
@@ -55,6 +60,17 @@ export interface ZtDashboardData {
    * and abbreviating one is what #75/#79 were filed about.
    */
   unusable_target_codes: string[];
+  /**
+   * #839: the API's own sentences (approved copy C1/C2) for each DoD
+   * capability whose target was capped at its highest level, or that cannot
+   * score the target level. Rendered as given, never rebuilt here.
+   */
+  target_cap_notes?: string[];
+  /** #839 S1: the API's own sentence per stored stage above its maximum. */
+  stage_above_max_notes?: string[];
+  /** #914 (S2): answers on rows the catalog no longer has, and the note. */
+  retired_answers?: number;
+  retired_answers_note?: string | null;
   /**
    * How many capabilities the engagement stage actually decided. Zero means
    * every capability carried its own target and the intake choice contributed
@@ -97,6 +113,24 @@ export function radarData(pillars: ZtPillar[]): RadarData {
     current: pillars.map((p) => p.current_pct ?? 0),
     target: pillars.map((p) => p.target_pct ?? 0),
   };
+}
+
+/**
+ * How many capabilities the maturity percentage covers (#700).
+ *
+ * The percentage is computed over SCORED capabilities only, so on its own it
+ * says nothing about how many were left out; the API has returned
+ * `answered_count` per pillar all along and nothing rendered it. Summed from
+ * the pillars the page already shows, so the overall line and the per-pillar
+ * lines cannot disagree.
+ */
+export function scoredNote(pillars: ZtPillar[]): string {
+  const total = pillars.reduce((n, p) => n + p.capability_count, 0);
+  const scored = pillars.reduce((n, p) => n + p.answered_count, 0);
+  const unscored = total - scored;
+  return unscored === 0
+    ? `all ${total} capabilit${total === 1 ? "y" : "ies"} scored`
+    : `${scored} of ${total} capabilit${total === 1 ? "y" : "ies"} scored; ${unscored} not scored`;
 }
 
 /** Pillars ordered by the largest current→target gap first (focus ordering). */
@@ -159,16 +193,26 @@ export function targetNote(data: ZtDashboardData): string {
     // chose nothing, which is not a fault and not actionable — and when the
     // engagement stage decided no capability either, saying so is noise about
     // a value that did not reach the page.
-    return (
-      isChoiceFailure(data.target_stage_source) ? `${base} — ${fault}` : base
+    return sentence(
+      isChoiceFailure(data.target_stage_source) ? `${base} — ${fault}` : base,
     ).concat(discarded, rendered);
   }
 
-  return (
+  return sentence(
     fault === null
       ? "Your target, chosen at intake"
-      : `Default target — ${fault}`
+      : `Default target — ${fault}`,
   ).concat(discarded, rendered);
+}
+
+/**
+ * The lead-in as a sentence (#741). Every clause `targetNote` appends is its
+ * own sentence starting with a space, so a lead-in without a full stop ran on:
+ * "Your target, chosen at intake A per-capability target was recorded ...".
+ * One helper for both branches, so neither can lose the stop alone.
+ */
+function sentence(lead: string): string {
+  return `${lead}.`;
 }
 
 /**
@@ -191,18 +235,13 @@ function isChoiceFailure(source: string): boolean {
  * the same fault in the same words: two copies of this mapping would be two
  * places for the wording to drift, and the drift would be invisible because
  * each branch is reached by a different fixture.
+ *
+ * #783 / #422: the words are the `stage` rows of `TARGET_SOURCE_NOTES` in
+ * `lib/assessment-targets.ts`, the ONE table. The client's documents state the
+ * same rows from the api's copy (`assessment_targets.py::target_source_sentence`),
+ * which the api's `test_target_floor_parity.py` asserts equal to that table.
+ * Reword the table, never here. Exported for `target-source-sentences.test.ts`.
  */
-function targetFault(source: string): string | null {
-  switch (source) {
-    case "client":
-      return null;
-    case "default":
-      return "no stage chosen at intake";
-    case "client_out_of_range":
-      return "the stage on file is not one this framework has";
-    case "client_unparseable":
-      return "the stage on file could not be read";
-    default:
-      return "the stage on file was not usable";
-  }
+export function targetFault(source: string): string | null {
+  return targetSourceNote("stage", source);
 }

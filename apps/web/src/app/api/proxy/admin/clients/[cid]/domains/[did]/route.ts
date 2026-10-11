@@ -7,6 +7,7 @@ import { NextResponse } from "next/server";
 
 import { ApiError, apiFetch } from "@/lib/api";
 import { auth } from "@/lib/auth/options";
+import { upstreamOutcomeUnknown } from "@/lib/upstream-outcome-unknown";
 
 export async function DELETE(
   _request: Request,
@@ -33,9 +34,6 @@ export async function DELETE(
         status: err.status,
       });
     }
-    return NextResponse.json(
-      { error: { message: "Upstream admin/domains call failed." } },
-      { status: 502 },
-    );
+    return upstreamOutcomeUnknown(err, "Upstream admin/domains call");
   }
 }

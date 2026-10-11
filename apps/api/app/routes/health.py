@@ -147,20 +147,39 @@ def _probe_keycloak(settings: Settings) -> DependencyStatus:
         )
 
 
-def _probe_llm(settings: Settings) -> DependencyStatus:
-    # Fixture mode is a fully valid running state (deterministic offline
-    # suggestions), so LLM readiness is informational and never gates /ready.
-    # In live mode the boot preflight (D-026) already refuses to start unless a
-    # real call would succeed, so a running live process is ready by
-    # construction; we still surface the detail for the operator view.
-    if settings.shield_llm_mode != "live":
+def _probe_llm(settings: Settings, db: Session) -> DependencyStatus:
+    """What a Run-AI will do, as `/admin/ai-status` says it (#508).
+
+    It CALLS `_ai_readiness`, the function `/admin/ai-status` calls, so the two
+    surfaces cannot disagree. Reading `SHIELD_LLM_MODE` alone reported
+    "fixture mode (AI suggestions are deterministic offline)" while a key an
+    admin had stored made every Run-AI call the provider with the client's data
+    (D-037, #755).
+
+    Informational, as before: never gates /ready. `broken` is "down"; live and
+    offline are "ok", each with the reason `/admin/ai-status` gives.
+
+    The keystore lives in the database, and /ready must answer while that is
+    down. A readiness that cannot be read is "down", saying it could not look,
+    and never "offline": that would be a claim about where the client's data
+    goes, made without looking.
+    """
+    from app.routes import admin as admin_routes
+
+    try:
+        _ready, detail, _source, serves = admin_routes._ai_readiness(db, settings)
+    except Exception as exc:  # noqa: BLE001 - reported as "could not look", not swallowed
+        log.warning("ready.llm_unreadable", error=f"{type(exc).__name__}: {exc}")
+        # Leave the session usable for the checks after this one.
+        db.rollback()
         return DependencyStatus(
-            status="ok",
+            status="down",
             required=False,
-            detail="fixture mode (AI suggestions are deterministic offline)",
+            detail=f"unknown — could not read the AI configuration ({type(exc).__name__}: {exc})",
         )
-    ready, detail = settings.live_llm_readiness()
-    return DependencyStatus(status="ok" if ready else "down", required=False, detail=detail)
+    return DependencyStatus(
+        status="down" if serves == "broken" else "ok", required=False, detail=detail
+    )
 
 
 def _caller_may_see_detail(request: Request, db: Session) -> bool:
@@ -222,7 +241,7 @@ def ready(
         "redis": _probe_redis(settings),
         "minio": _probe_minio(settings),
         "keycloak": _probe_keycloak(settings),
-        "llm": _probe_llm(settings),
+        "llm": _probe_llm(settings, db),
     }
     offenders = [name for name, c in checks.items() if c.required and c.status != "ok"]
     is_ready = not offenders

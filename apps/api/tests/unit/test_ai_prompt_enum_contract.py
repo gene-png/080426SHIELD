@@ -90,6 +90,9 @@ ENUM_FIELDS: dict[str, dict[str, type]] = {
         "impact": Impact,
         "axis": RiskAxis,
         "recommended_action": RecommendedAction,
+        # #806 Risk record, build requirement 2: each ELEMENT of `other_axes`
+        # is parsed with `_coerce_enum(RiskAxis, ...)`.
+        "other_axes": RiskAxis,
     },
 }
 
@@ -120,6 +123,16 @@ def _tokens_offered(prompt: str, field: str) -> list[str]:
     # 1. The JSON example: "field": "a|b|c"
     for match in re.finditer(
         rf'"{re.escape(field)}"\s*:\s*"([^"]*)"',
+        prompt,
+    ):
+        value = match.group(1)
+        if "|" in value:
+            tokens.extend(part.strip() for part in value.split("|") if part.strip())
+
+    # 1b. The JSON example of an ARRAY field: "field": ["a|b|c"] (#806 Risk
+    #     record: `other_axes` is the first). Read the same way, element-wise.
+    for match in re.finditer(
+        rf'"{re.escape(field)}"\s*:\s*\[\s*"([^"]*)"',
         prompt,
     ):
         value = match.group(1)

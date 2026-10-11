@@ -45,7 +45,10 @@ function BucketList({
             <p className="text-sm font-semibold text-ink-primary">{b.key}</p>
             <div className="flex flex-wrap items-center gap-2">
               <StatusPill tone="warning">
-                {b.item_count} overlapping items
+                {/* for #835: `item_count` counts LICENSES (a bundle and its
+                    parts are one); copy approved on #736, comment 6056012075. */}
+                {b.item_count} overlapping{" "}
+                {b.item_count === 1 ? "license" : "licenses"}
               </StatusPill>
               <StatusPill tone="neutral">
                 {b.cost_known
@@ -116,8 +119,11 @@ export function OverlapDashboard({
       </header>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {/* #781: the api's label, never a hard-coded "Total" -- the figure is
+            a total only when every row is accounted for and costed, and the
+            released document says the same thing about this list. */}
         <NumberCard
-          label="Total annual cost"
+          label={analysis.total_cost_label}
           value={fmtUsd(analysis.total_cost)}
         />
         <NumberCard

@@ -12,6 +12,7 @@ import { NextResponse } from "next/server";
 
 import { ApiError, apiFetch } from "@/lib/api";
 import { auth } from "@/lib/auth/options";
+import { upstreamOutcomeUnknown } from "@/lib/upstream-outcome-unknown";
 
 async function bearerOrUnauthorized(): Promise<string | NextResponse> {
   const session = await auth();
@@ -66,8 +67,5 @@ function mapError(err: unknown): NextResponse {
       status: err.status,
     });
   }
-  return NextResponse.json(
-    { error: { message: "Upstream assessments call failed." } },
-    { status: 502 },
-  );
+  return upstreamOutcomeUnknown(err, "Upstream assessments call");
 }

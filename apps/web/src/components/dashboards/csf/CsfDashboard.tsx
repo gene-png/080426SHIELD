@@ -115,6 +115,7 @@ export function CsfDashboard({
 
   return (
     <DashShell
+      aiSource={data.ai_source}
       title={data.service_title}
       subtitle="NIST CSF 2.0 · Current state vs target profile"
       releasedAt={data.released_at}
@@ -145,9 +146,11 @@ export function CsfDashboard({
                how that target was chosen, so an early return on either
                branch would swallow it -- the mistake `zt.ts::targetNote`
                has been repaired for twice. */
+            /* #741's twin: the lead-in ends with a full stop, because the
+               appended sentence starts with a space and ran on from it. */
             (assumedTarget
-              ? `Default target — ${targetFaultNote(data.target_tier_source) ?? "the tier on file was not usable"}`
-              : "Your target, chosen at intake"
+              ? `Default target — ${targetFaultNote(data.target_tier_source) ?? "the tier on file was not usable"}.`
+              : "Your target, chosen at intake."
             ).concat(renderedAgainstNote(data.target_frozen_at))
           }
           accent={C.green}
@@ -159,6 +162,18 @@ export function CsfDashboard({
           accent={C.amber}
         />
       </KpiRow>
+
+      {/* #852: the API's own approved sentence (`csf/retired.py`), the one the
+          released document carries, under the maturity header. Never rebuilt
+          here. */}
+      {data.retired_answers_note ? (
+        <p
+          data-testid="csf-retired-answers"
+          style={{ margin: "0 0 16px", fontSize: 13, lineHeight: 1.5 }}
+        >
+          {data.retired_answers_note}
+        </p>
+      ) : null}
 
       <Section
         title="Maturity by function"

@@ -31,6 +31,35 @@ import { useIntakeAutoSave } from "./useIntakeAutoSave";
 import type { JSX } from "react";
 import { clientFacingError } from "@/lib/describe-save-error";
 
+/**
+ * The client fields `onSubmit` sends, and so the ONLY fields `enteredClient`
+ * may hold (review of #757, finding 1). Step 3's contact override is saved
+ * through `client` too but is never sent at submit, so laying it over the
+ * server's copy showed a failed override on revisit as if it were stored. One
+ * list feeds both, so the overlay and the submit cannot drift apart.
+ */
+const SUBMITTED_CLIENT_FIELDS = [
+  "legal_name",
+  "dba_name",
+  "website",
+  "size_band",
+  "industry",
+  "address_line1",
+  "address_line2",
+  "city",
+  "state",
+  "postal_code",
+  "country",
+  "prompting_context",
+  "service_interests",
+] as const satisfies readonly (keyof ClientProfilePatch)[];
+
+type SubmittedClientField = (typeof SUBMITTED_CLIENT_FIELDS)[number];
+
+function isSubmittedField(key: string): key is SubmittedClientField {
+  return (SUBMITTED_CLIENT_FIELDS as readonly string[]).includes(key);
+}
+
 const STEP_INDEX: Record<WizardStepKey, number> = WIZARD_STEPS.reduce(
   (acc, step, i) => {
     acc[step.key] = i;
@@ -57,7 +86,57 @@ export function IntakeWizard(): JSX.Element {
   const [submitError, setSubmitError] = React.useState<string | null>(null);
   const [submitted, setSubmitted] = React.useState(false);
 
-  const autoSave = useIntakeAutoSave((next) => setState(next));
+  // What was entered, per `SUBMITTED_CLIENT_FIELDS`; see `viewState` below.
+  const [enteredClient, setEnteredClient] = React.useState<ClientProfilePatch>(
+    {},
+  );
+
+  const autoSave = useIntakeAutoSave(
+    (next) => setState(next),
+    // An answered refusal: the server does not hold the value and will not, so
+    // the review must show what it does hold (review of #757, finding 2). Only
+    // a key still holding THIS save's value is dropped; a newer typed value
+    // stays. The save's error stays in the header (`useIntakeAutoSave`).
+    (patch) =>
+      setEnteredClient((prev) => {
+        const nextEntered = { ...prev };
+        for (const [key, value] of Object.entries(patch.client ?? {})) {
+          if (isSubmittedField(key) && nextEntered[key] === value) {
+            delete nextEntered[key];
+          }
+        }
+        return nextEntered;
+      }),
+  );
+
+  // #252: the client fields as this person last ENTERED them, from every save
+  // this page has sent. The server's copy (`state.client`) changes only when a
+  // save's answer arrives, so it lags an in-flight save, keeps the old value
+  // after an unanswered one (#550), and can end on an older value when two
+  // answers land out of order. Submit and the steps read `viewState`, the
+  // server's copy with these entries laid over it, so what is shown and sent
+  // is what was typed. A key sent as `undefined` is left out, because JSON
+  // drops it and the server never saw it. Only `SUBMITTED_CLIENT_FIELDS` are
+  // held, and a value the server ANSWERED with a refusal is dropped again.
+  const viewState = React.useMemo<IntakeStateResponse | null>(
+    () =>
+      state && state.client
+        ? { ...state, client: { ...state.client, ...enteredClient } }
+        : state,
+    [state, enteredClient],
+  );
+
+  function saveEntered(patch: IntakePatchRequest): void {
+    const entered = Object.fromEntries(
+      Object.entries(patch.client ?? {}).filter(
+        ([k, v]) => isSubmittedField(k) && v !== undefined,
+      ),
+    ) as ClientProfilePatch;
+    if (Object.keys(entered).length > 0) {
+      setEnteredClient((prev) => ({ ...prev, ...entered }));
+    }
+    void autoSave.save(patch);
+  }
 
   React.useEffect(() => {
     let cancelled = false;
@@ -115,28 +194,29 @@ export function IntakeWizard(): JSX.Element {
   }
 
   function onServicesChange(services: ServiceType[]): void {
-    void autoSave.save({ client: { service_interests: services } });
+    saveEntered({ client: { service_interests: services } });
   }
 
   function onClientFieldChange(patch: ClientProfilePatch): void {
-    void autoSave.save({ client: patch });
+    saveEntered({ client: patch });
   }
 
   function onProfileFieldChange(patch: IntakePatchRequest): void {
-    void autoSave.save(patch);
+    saveEntered(patch);
   }
 
   function onSystemsChange(prompting_context: string): void {
-    void autoSave.save({
+    saveEntered({
       client: { prompting_context: prompting_context || undefined },
     });
   }
 
   async function onSubmit(): Promise<void> {
-    if (!state?.client) return;
+    const client = viewState?.client;
+    if (!client) return;
     setSubmitting(true);
     setSubmitError(null);
-    const picks = (state.client.service_interests ?? []) as ServiceType[];
+    const picks = (client.service_interests ?? []) as ServiceType[];
     const requests = picks.map((svc) => ({
       ...(serviceInputs[svc] ?? { service_type: svc }),
       service_type: svc,
@@ -144,29 +224,21 @@ export function IntakeWizard(): JSX.Element {
     try {
       const next = await submitIntake({
         client: {
-          // `?? undefined` like every sibling field below. Since D-080 an
-          // unnamed org is NULL rather than a sentinel, and submitting one is
-          // refused by the API with a typed 422 ("Organization legal name is
-          // required to submit intake.") — the wizard does not pre-empt that
-          // check, so the user gets the server's message rather than a silent
-          // no-op.
-          legal_name: state.client.legal_name ?? undefined,
-          dba_name: state.client.dba_name ?? undefined,
-          website: state.client.website ?? undefined,
-          size_band: state.client.size_band ?? undefined,
-          industry: state.client.industry ?? undefined,
-          address_line1: state.client.address_line1 ?? undefined,
-          address_line2: state.client.address_line2 ?? undefined,
-          city: state.client.city ?? undefined,
-          state: state.client.state ?? undefined,
-          postal_code: state.client.postal_code ?? undefined,
-          country: state.client.country ?? undefined,
-          prompting_context: state.client.prompting_context ?? undefined,
+          // Every field `?? undefined`. Since D-080 an unnamed org is NULL
+          // rather than a sentinel, and submitting one is refused by the API
+          // with a typed 422 ("Organization legal name is required to submit
+          // intake.") — the wizard does not pre-empt that check, so the user
+          // gets the server's message rather than a silent no-op.
+          ...(Object.fromEntries(
+            SUBMITTED_CLIENT_FIELDS.map((k) => [k, client[k] ?? undefined]),
+          ) as ClientProfilePatch),
           service_interests: picks,
         },
         service_requests: requests,
       });
       setState(next);
+      // What was entered is now what the server holds; read its copy again.
+      setEnteredClient({});
       setSubmitted(true);
     } catch (err) {
       setSubmitError(clientFacingError(err, "Failed to submit intake."));
@@ -215,51 +287,52 @@ export function IntakeWizard(): JSX.Element {
           </div>
         </CardHeader>
         <CardBody>
-          {!state ? (
+          {!viewState ? (
             <p className="text-sm text-ink-tertiary">Loading your intake…</p>
           ) : step === "services" ? (
-            <Step1Services state={state} onSave={onServicesChange} />
+            <Step1Services state={viewState} onSave={onServicesChange} />
           ) : step === "organization" ? (
-            <Step2Organization state={state} onSave={onClientFieldChange} />
+            <Step2Organization state={viewState} onSave={onClientFieldChange} />
           ) : step === "contact" ? (
             <Step3Contact
               // Read what the API actually returns. These were hardcoded nulls,
               // so a title or phone typed here came back blank on the next
               // visit even though it had saved (UX finding 9).
               defaults={{
-                display_name: state.contact?.display_name ?? userName,
-                title: state.contact?.title ?? null,
-                phone: state.contact?.phone ?? null,
-                timezone: state.contact?.timezone ?? null,
+                display_name: viewState.contact?.display_name ?? userName,
+                title: viewState.contact?.title ?? null,
+                phone: viewState.contact?.phone ?? null,
+                timezone: viewState.contact?.timezone ?? null,
                 email: userEmail,
               }}
               override={{
                 primary_contact_name:
-                  state.client?.primary_contact_name ?? null,
+                  viewState.client?.primary_contact_name ?? null,
                 primary_contact_email:
-                  state.client?.primary_contact_email ?? null,
+                  viewState.client?.primary_contact_email ?? null,
                 primary_contact_title:
-                  state.client?.primary_contact_title ?? null,
+                  viewState.client?.primary_contact_title ?? null,
                 primary_contact_phone:
-                  state.client?.primary_contact_phone ?? null,
+                  viewState.client?.primary_contact_phone ?? null,
               }}
               onSave={onProfileFieldChange}
             />
           ) : step === "systems" ? (
-            <Step4Systems state={state} onSave={onSystemsChange} />
+            <Step4Systems state={viewState} onSave={onSystemsChange} />
           ) : step === "notes" ? (
             <Step5Notes
-              state={state}
+              state={viewState}
               serviceInputs={serviceInputs}
               onChange={setServiceInputs}
             />
           ) : (
             <Step6Review
-              state={state}
+              state={viewState}
               serviceInputs={serviceInputs}
               submitting={submitting}
+              savesInFlight={autoSave.savesInFlight}
               submitError={submitError}
-              alreadySubmittedAt={state.intake_completed_at}
+              alreadySubmittedAt={viewState.intake_completed_at}
               onSubmit={onSubmit}
             />
           )}

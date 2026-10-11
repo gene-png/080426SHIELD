@@ -300,6 +300,62 @@ describe("ZtSelfAssessment — a save that fails", () => {
     expect(alert).not.toHaveTextContent("at most 8000 characters");
   });
 
+  it("does not say 'was not saved' when the proxy never saw the answer (#550)", async () => {
+    // The proxy's typed 504: the save may have landed. The re-fetch that
+    // follows shows which it was, so the restored sentence still applies.
+    vi.mocked(ztClient.patchSelfAssessmentAnswer).mockRejectedValue(
+      proxyError(504, {
+        error: {
+          code: 504,
+          reason: "upstream_outcome_unknown",
+          message:
+            "We couldn't confirm whether this finished. It may still complete; check before trying again.",
+        },
+      }),
+    );
+
+    await editNotes("a note whose save is never confirmed");
+
+    const alert = await screen.findByRole("alert");
+    await waitFor(() =>
+      expect(alert).toHaveTextContent(
+        "CISA.ID.01: we couldn't confirm whether it was saved. The value on screen has been restored to what the server has. Your consultant can help if this keeps happening.",
+      ),
+    );
+    expect(alert).not.toHaveTextContent("was not saved");
+  });
+
+  it("does not claim a restore after an unknown outcome when the re-fetch fails (#550)", async () => {
+    // The other half of the case above: the restored sentence is only for the
+    // path where the re-fetch ran and succeeded. Here it fails, so the client
+    // is told the outcome is unknown and nothing more.
+    vi.mocked(ztClient.patchSelfAssessmentAnswer).mockRejectedValue(
+      proxyError(504, {
+        error: {
+          code: 504,
+          reason: "upstream_outcome_unknown",
+          message:
+            "We couldn't confirm whether this finished. It may still complete; check before trying again.",
+        },
+      }),
+    );
+    vi.mocked(ztClient.fetchSelfAssessment)
+      .mockResolvedValueOnce(assessment("original"))
+      .mockRejectedValueOnce(new Error("network"));
+
+    await editNotes("a note whose save is never confirmed");
+
+    const alert = await screen.findByRole("alert");
+    await waitFor(() =>
+      expect(ztClient.fetchSelfAssessment).toHaveBeenCalledTimes(2),
+    );
+    expect(alert).toHaveTextContent(
+      "CISA.ID.01: we couldn't confirm whether it was saved. Your consultant can help if this keeps happening.",
+    );
+    expect(alert).not.toHaveTextContent("has been restored");
+    expect(alert).not.toHaveTextContent("was not saved");
+  });
+
   it("says nothing when the save succeeds", async () => {
     // The positive control. Without it, rendering the alert unconditionally
     // would satisfy both tests above.

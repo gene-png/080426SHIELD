@@ -14,16 +14,22 @@ import {
 import {
   CsfProxyError,
   exportPlaybook,
+  fetchCsfRun,
+  fetchCsfRunSummary,
   fetchEnterpriseProfile,
   runCsfAi,
   seedProfiles,
 } from "@/lib/csf/client";
+import type { AiServes } from "@/lib/aiRuns/types";
+import { useAiRun } from "@/lib/aiRuns/useAiRun";
+import { AiRunStatus, LastRunNote } from "@/components/admin/AiRunStatus";
 
 import { AiPreviewButton } from "../AiPreviewButton";
 import { AiDraftProvenanceNotice } from "@/components/admin/AiDraftProvenanceNotice";
 import { RunAiGuard } from "../RunAiGuard";
 import { CsfDimensionEditor } from "./CsfDimensionEditor";
 import { CsfGapActionEditor } from "./CsfGapActionEditor";
+import { isUpstreamOutcomeUnknown } from "@/lib/describe-save-error";
 import type {
   CsfDroppedSuggestion,
   CsfPlaybookExport,
@@ -37,7 +43,38 @@ import type { JSX } from "react";
 export interface CsfPlaybookPanelProps {
   serviceId: string;
   readOnly?: boolean;
+  /**
+   * #550: an earlier Run AI's outcome is unknown, so Run AI stays off. Owned
+   * by `CsfWorkspace`, not this panel: the workspace mounts the panel only
+   * while an assessment exists, so a lock held here was cleared by Discard
+   * then Start assessment (review of #752, finding 2).
+   */
+  runOutcomeUnknown?: boolean;
+  /** Called when a Run AI's own answer never arrived. */
+  onRunOutcomeUnknown?: () => void;
+  /**
+   * #271: the assessment this panel describes, so a past run's disclosures
+   * show only for it. `null` while there is none; left out, unscoped.
+   */
+  assessmentId?: string | null;
+  /**
+   * #645: told whenever a run starts or stops holding the lock, so the
+   * workspace can lock Approve, which it renders outside this panel.
+   */
+  onRunInProgressChange?: (running: boolean) => void;
+  /** #646: called when a run this panel follows COMPLETES, so the workspace
+   *  can re-read what the run changed outside these rows (the assessment's AI
+   *  source). */
+  onRunCompleted?: () => void;
 }
+
+/**
+ * #550: what to say when the proxy never saw Run AI's answer. Not a failure:
+ * the api may have finished and written the dimension scores, and a retry
+ * sends the client's data out again.
+ */
+const RUN_OUTCOME_UNKNOWN =
+  "We couldn't confirm whether the AI run finished. It may still complete and fill in dimension scores. Reload the page later and check the dimension scores in Full Playbook — Working Profiles before running it again. Run AI stays off on this page until you reload.";
 
 function describeError(err: unknown): string {
   if (err instanceof CsfProxyError) {
@@ -70,6 +107,14 @@ const DROP_REASON_LABEL: Record<CsfDroppedSuggestion["reason"], string> = {
   superseded: "overwritten by a later suggestion for the same field",
   locked: "row is locked",
   protected: "score was typed by hand, and an offline run left it",
+  // #645: an edit that landed after the run started is kept, never overwritten.
+  edited: "row was edited after this run started, so the run left it",
+  // #479: a batch answered a real row another batch was asked for. Not
+  // applied, so a row is only ever written from the batch that asked for it.
+  not_in_batch:
+    "answered for a row its batch was not asked about, so it was not applied",
+  // #1000: a live run does not assess a row whose answer has no notes.
+  no_notes: "row has no notes, so the AI does not assess it",
 };
 
 /**
@@ -83,7 +128,14 @@ const DROP_REASON_LABEL: Record<CsfDroppedSuggestion["reason"], string> = {
  */
 // Named allow-list, so adding a by-design skip server-side is a deliberate
 // choice about which side it belongs on. `protected` joined it with #67.
-const BY_DESIGN_SKIPS: ReadonlySet<string> = new Set(["locked", "protected"]);
+// `edited` joined it with #645.
+const BY_DESIGN_SKIPS: ReadonlySet<string> = new Set([
+  "locked",
+  "protected",
+  "edited",
+  // #1000: by design, and no re-run changes it; the count line says so.
+  "no_notes",
+]);
 
 /**
  * Reasons that mean "we did not understand this", not "we lost a value you
@@ -164,6 +216,72 @@ function groupByReason(
   return [...groups.entries()];
 }
 
+function tierLabel(tier: string): string {
+  return tier.charAt(0).toUpperCase() + tier.slice(1);
+}
+
+/**
+ * #836: rows a batch was asked for and left out. They keep the scores they had,
+ * which on a Playbook nobody scored is all zeros, read as Level 1 -- so the
+ * Playbook looks scored when it is not. Keyed on the COUNT, never on whether the
+ * field exists: a run stored before #836 carries neither and says nothing here.
+ * Copy O1/O2 approved on #836.
+ */
+function OmittedRows({
+  result,
+}: {
+  result: CsfRunAiResponse;
+}): JSX.Element | null {
+  const count = result.omitted_count ?? 0;
+  if (count <= 0) return null;
+  const rows = result.omitted_rows ?? [];
+  const rest = rows.length - ITEM_CAP;
+  return (
+    <div
+      className="text-sm text-status-danger-fg"
+      role="alert"
+      data-testid="csf-run-omitted"
+    >
+      <p className="font-semibold">
+        {count === 1
+          ? "1 row got no answer from the AI, so it keeps the scores it had. On a Playbook that was not scored before, that is all zeros, which reads as Level 1. Re-run before relying on this draft:"
+          : `${count} rows got no answer from the AI, so they keep the scores they had. On a Playbook that was not scored before, that is all zeros, which reads as Level 1. Re-run before relying on this draft:`}
+      </p>
+      <ul className="list-disc pl-5">
+        {rows.slice(0, ITEM_CAP).map((r) => (
+          <li key={`${r.tier}|${r.subcategory_code}`}>
+            {`${tierLabel(r.tier)} tier, ${r.subcategory_code}`}
+          </li>
+        ))}
+        {rest > 0 ? <li>{`and ${rest} more`}</li> : null}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * #1000 (Gene's ruling 2): rows a LIVE run did not assess because their
+ * interview answer has no notes. They keep their scores, so it is a count, not
+ * an alert. Shown at zero too; absent when the run counted nothing (`null` on
+ * an offline run, or a result stored before #1000). Copy approved on #1000,
+ * comment 6102665946.
+ */
+function NoNotesLine({
+  result,
+}: {
+  result: CsfRunAiResponse;
+}): JSX.Element | null {
+  const n = result.no_notes_count;
+  if (typeof n !== "number") return null;
+  return (
+    <p className="text-sm text-ink-secondary" data-testid="csf-run-no-notes">
+      {n === 1
+        ? "Not assessed by AI (no notes): 1 row. It keeps the score it had."
+        : `Not assessed by AI (no notes): ${n} rows. They keep the scores they had.`}
+    </p>
+  );
+}
+
 /**
  * What the run did with every suggestion it received (W1, issue #44).
  *
@@ -206,6 +324,31 @@ function RunAiAccounting({
   const unrecognizedValues = unrecognized.reduce((n, d) => n + d.values, 0);
   const changedRows = new Set(result.changed.map((c) => c.subcategory_code))
     .size;
+  // #479. The trigger is the failure counter alone, as ATT&CK's is
+  // (`AttackCitationAccounting`): a failure count with no total must not read
+  // as a clean run. The total only turns "2" into "2 of 33".
+  const batchesFailed = result.batches_failed ?? 0;
+  const runIncomplete = batchesFailed > 0;
+  const incomplete = runIncomplete ? (
+    <p
+      className="text-sm text-status-danger-fg"
+      role="alert"
+      data-testid="csf-run-incomplete"
+    >
+      <span className="font-semibold">
+        {result.batches_total === undefined
+          ? `${batchesFailed} batches failed`
+          : `${batchesFailed} of ${result.batches_total} batches failed`}
+      </span>
+      , so their rows were not scored and the counts here do not include them. A
+      batch can fail after the model answered &mdash; a malformed response is
+      refused on arrival &mdash; so check the AI spend for this run rather than
+      assuming nothing was sent. Re-run before relying on this draft. On a
+      re-run over a Playbook that was already scored, the rows a failed batch
+      missed keep the scores they had, so the Playbook will look complete either
+      way &mdash; this line is the only place that says otherwise.
+    </p>
+  ) : null;
 
   // A run that received NOTHING is not a clean run. The response parsed, so no
   // error path fired, and "applied 0 of 0" reads as calmly as "applied 12 of
@@ -214,12 +357,19 @@ function RunAiAccounting({
   // still yields an empty list); the accounting must not bless it.
   if (result.suggestions_received === 0) {
     return (
-      <p className="text-sm text-status-danger-fg" role="alert">
-        The AI returned no suggestions at all, so nothing was applied. That is
-        expected only if the model genuinely had nothing to say — otherwise its
-        response did not match the shape this job expects. Re-run, and if it
-        repeats, the prompt and the parser have drifted apart.
-      </p>
+      <div className="space-y-2">
+        {incomplete}
+        {/* #836: a batch that answered nothing left every row out, and this
+            branch returns before the main body. */}
+        <OmittedRows result={result} />
+        <NoNotesLine result={result} />
+        <p className="text-sm text-status-danger-fg" role="alert">
+          The AI returned no suggestions at all, so nothing was applied. That is
+          expected only if the model genuinely had nothing to say — otherwise
+          its response did not match the shape this job expects. Re-run, and if
+          it repeats, the prompt and the parser have drifted apart.
+        </p>
+      </div>
     );
   }
 
@@ -237,8 +387,15 @@ function RunAiAccounting({
         {result.suggestions_received === 1 ? "" : "s"}, changing{" "}
         {result.changed.length} field
         {result.changed.length === 1 ? "" : "s"} across {changedRows} subcategor
-        {changedRows === 1 ? "y" : "ies"}.
+        {changedRows === 1 ? "y" : "ies"}
+        {runIncomplete ? ", from the batches that completed" : ""}.
       </p>
+
+      {incomplete}
+
+      <OmittedRows result={result} />
+
+      <NoNotesLine result={result} />
 
       {failed.length > 0 ? (
         <div className="text-sm text-status-danger-fg" role="alert">
@@ -341,7 +498,25 @@ function tierLevels(row: EnterpriseSubcategory): string {
 }
 
 const COLUMNS: DataTableColumn<EnterpriseSubcategory>[] = [
-  { key: "code", header: "Subcategory", cell: (r) => r.subcategory_code },
+  {
+    key: "code",
+    header: "Subcategory",
+    cell: (r) => (
+      <>
+        {r.subcategory_code}
+        {/* #1000: from CURRENT notes, present tense on purpose, so it stays
+            true when the stored score came from an earlier AI run. */}
+        {r.no_notes === true ? (
+          <span
+            className="block text-xs text-ink-tertiary"
+            data-testid="csf-row-no-notes"
+          >
+            No notes: a live AI run does not assess this row.
+          </span>
+        ) : null}
+      </>
+    ),
+  },
   { key: "name", header: "Outcome", cell: (r) => r.name },
   { key: "tiers", header: "Tiers", cell: (r) => tierLevels(r) },
   {
@@ -384,15 +559,17 @@ const COLUMNS: DataTableColumn<EnterpriseSubcategory>[] = [
 export function CsfPlaybookPanel({
   serviceId,
   readOnly = false,
+  runOutcomeUnknown = false,
+  onRunOutcomeUnknown,
+  assessmentId,
+  onRunInProgressChange,
+  onRunCompleted,
 }: CsfPlaybookPanelProps): JSX.Element {
   const [enterprise, setEnterprise] = React.useState<EnterpriseProfile | null>(
     null,
   );
   const [loading, setLoading] = React.useState(true);
   const [busy, setBusy] = React.useState<"seed" | "run" | "export" | null>(
-    null,
-  );
-  const [runResult, setRunResult] = React.useState<CsfRunAiResponse | null>(
     null,
   );
   const [exportResult, setExportResult] =
@@ -445,15 +622,67 @@ export function CsfPlaybookPanel({
     }
   }
 
-  async function onRunAi(): Promise<void> {
+  // #645. A run this page did not start -- found in progress on load --
+  // ends here: re-read what it applied.
+  const onRunFinishedElsewhere = React.useCallback(
+    (run: { status: string }) => {
+      if (run.status !== "completed") return;
+      onRunCompleted?.();
+      reload().catch((err: unknown) => setError(describeError(err)));
+    },
+    [reload, onRunCompleted],
+  );
+  const aiRun = useAiRun<CsfRunAiResponse>({
+    serviceId,
+    // #271: only this assessment's runs describe it.
+    subjectId: assessmentId,
+    fetchSummary: fetchCsfRunSummary,
+    fetchRun: fetchCsfRun,
+    onFinished: onRunFinishedElsewhere,
+  });
+  /** #645: a run holds the edit lock; the api refuses edits until it ends. */
+  const runInProgress = aiRun.running !== null;
+  React.useEffect(() => {
+    onRunInProgressChange?.(runInProgress);
+  }, [onRunInProgressChange, runInProgress]);
+  /** What the last COMPLETED run did, read from the run: survives a reload. */
+  const runResult = aiRun.lastCompleted?.result ?? null;
+
+  async function onRunAi(serves: AiServes): Promise<void> {
     setBusy("run");
     setError(null);
-    setRunResult(null);
     try {
-      setRunResult(await runCsfAi(serviceId));
-      await reload();
-    } catch (err) {
-      setError(describeError(err));
+      // #550 review, finding 1: two tries, not one. Only the POST's own
+      // rejection can mean "the run's outcome is unknown"; a reload that
+      // fails after the run answered is that reload's error and must not
+      // lock Run AI.
+      let started: Awaited<ReturnType<typeof runCsfAi>>;
+      try {
+        started = await runCsfAi(serviceId, serves);
+      } catch (err) {
+        if (isUpstreamOutcomeUnknown(err)) {
+          // Its own alert, not `error`: every other action on this panel
+          // clears that, and the button would stay off with nothing saying
+          // why.
+          onRunOutcomeUnknown?.();
+          // #645: a run may have started. Look once, and follow it if so; the
+          // lock and the copy above stand either way.
+          void aiRun.reconcile();
+        } else {
+          setError(describeError(err));
+        }
+        return;
+      }
+      // #645: the POST started the run; its result arrives on the run.
+      const finished = await aiRun.follow(started);
+      // A failed run applied nothing; `AiRunStatus` says why.
+      if (finished.status !== "completed") return;
+      onRunCompleted?.();
+      try {
+        await reload();
+      } catch (err) {
+        setError(describeError(err));
+      }
     } finally {
       setBusy(null);
     }
@@ -485,6 +714,11 @@ export function CsfPlaybookPanel({
 
   const seeded = (enterprise?.subcategories.length ?? 0) > 0;
   const gapCount = enterprise?.subcategories.filter((s) => s.gap).length ?? 0;
+  // #762: a row with no target is not a gap, and not "met" either. Counted
+  // beside the gaps so the line does not read as covering every row.
+  const untargetedCount =
+    enterprise?.subcategories.filter((s) => s.target_level === null).length ??
+    0;
 
   return (
     <div className="flex flex-col gap-6">
@@ -504,28 +738,42 @@ export function CsfPlaybookPanel({
               {error}
             </p>
           ) : null}
+          {runOutcomeUnknown ? (
+            <p className="text-sm text-status-warning-fg" role="alert">
+              {RUN_OUTCOME_UNKNOWN}
+            </p>
+          ) : null}
 
           <div className="flex flex-wrap items-center gap-2">
             {!seeded ? (
               <button
                 type="button"
                 onClick={() => void onSeed()}
-                disabled={busy !== null || readOnly}
+                disabled={busy !== null || readOnly || runInProgress}
                 className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {busy === "seed" ? "Seeding…" : "Seed Working Profiles"}
               </button>
             ) : (
               /* Issue 2: warn before producing canned output when offline. */
-              <RunAiGuard onProceed={() => void onRunAi()}>
-                {({ onClick }) => (
+              <RunAiGuard onProceed={(serves) => void onRunAi(serves)}>
+                {({ onClick, statusUnknown }) => (
                   <button
                     type="button"
                     onClick={onClick}
-                    disabled={busy !== null || readOnly}
+                    disabled={
+                      // #645: an unreadable AI status fails closed.
+                      statusUnknown ||
+                      busy !== null ||
+                      readOnly ||
+                      runInProgress ||
+                      runOutcomeUnknown
+                    }
                     className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {busy === "run" ? "Running…" : "Run AI (csf_score)"}
+                    {busy === "run" || runInProgress
+                      ? "Running…"
+                      : "Run AI (csf_score)"}
                   </button>
                 )}
               </RunAiGuard>
@@ -534,7 +782,7 @@ export function CsfPlaybookPanel({
               <button
                 type="button"
                 onClick={() => void onExport()}
-                disabled={busy !== null}
+                disabled={busy !== null || runInProgress}
                 className="rounded-md border border-border px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {busy === "export" ? "Exporting…" : "Export XLSX"}
@@ -561,14 +809,31 @@ export function CsfPlaybookPanel({
                   {gapCount}
                 </span>{" "}
                 subcategor{gapCount === 1 ? "y" : "ies"} with a gap
+                {untargetedCount > 0
+                  ? ` · ${untargetedCount} with no target`
+                  : ""}
               </span>
             ) : null}
           </div>
+
+          {/* #852: the API's own sentence (`csf/retired.py`), the one the
+              playbook files carry. The table below lists the catalog's rows
+              only, so this is where a kept row shows. */}
+          {enterprise?.retired_rows_note ? (
+            <p
+              className="text-sm text-ink-secondary"
+              data-testid="csf-retired-rows"
+            >
+              {enterprise.retired_rows_note}
+            </p>
+          ) : null}
 
           {seeded ? (
             <AiPreviewButton serviceId={serviceId} disabled={busy !== null} />
           ) : null}
 
+          <AiRunStatus run={aiRun} />
+          <LastRunNote run={aiRun.lastCompleted} />
           {runResult ? <RunAiAccounting result={runResult} /> : null}
           {/* CSF's prompt carries the client's interview answers, so the
               provenance vector is identical to ZT's (#68). */}
@@ -594,7 +859,7 @@ export function CsfPlaybookPanel({
       {seeded ? (
         <CsfDimensionEditor
           serviceId={serviceId}
-          readOnly={readOnly}
+          readOnly={readOnly || runInProgress}
           onChanged={() => void onDimensionChanged()}
         />
       ) : null}

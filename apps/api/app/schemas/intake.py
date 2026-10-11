@@ -202,4 +202,9 @@ class EngagementResponse(BaseModel):
     # Self-assessment lifecycle for CSF/ZT engagements (draft / submitted /
     # approved / released); None for non-questionnaire services.
     assessment_status: str | None
+    # #588: every report released for this service is withheld from the client
+    # (#556, `is_stale_attack_deliverable`), so "released" must not read as
+    # readable. False when nothing is released. REQUIRED: a default would turn
+    # missing wiring into a confident "readable".
+    withheld: bool
     created_at: datetime

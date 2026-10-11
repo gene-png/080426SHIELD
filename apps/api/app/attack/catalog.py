@@ -20,7 +20,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.attack._catalog_data import SOURCE, TACTICS_DATA, TECHNIQUES_DATA
+from app.attack._catalog_data import (
+    NOT_PREVENTABLE_DATA,
+    SOURCE,
+    TACTICS_DATA,
+    TECHNIQUES_DATA,
+)
 
 
 @dataclass(frozen=True)
@@ -56,6 +61,18 @@ TECHNIQUES: tuple[Technique, ...] = tuple(
     for code, name, tactic_ids, parent in TECHNIQUES_DATA
 )
 
+#: The bases on which MITRE ATT&CK lists no preventive control for a technique
+#: (#554 R3, the advisor's Q2): it maps M1056 "Pre-compromise" to it, or it
+#: maps no mitigation at all. Read from MITRE's `mitigates` relationships by the
+#: generator, never curated by hand.
+NOT_PREVENTABLE_PRE_COMPROMISE = "pre_compromise"
+NOT_PREVENTABLE_NO_MITIGATION = "no_mitigation"
+
+_NOT_PREVENTABLE_BASIS: dict[str, str] = dict(NOT_PREVENTABLE_DATA)
+
+#: The technique codes that cannot be prevented.
+NOT_PREVENTABLE: frozenset[str] = frozenset(_NOT_PREVENTABLE_BASIS)
+
 _TACTIC_BY_ID = {t.id: t for t in TACTICS}
 _TECHNIQUE_BY_ID = {t.id: t for t in TECHNIQUES}
 
@@ -89,6 +106,14 @@ def all_codes() -> frozenset[str]:
     return frozenset(t.id for t in TECHNIQUES)
 
 
+def not_preventable_basis(code: str) -> str | None:
+    """Why MITRE lists no preventive control for `code`, or None when it lists
+    one. A code the catalogue does not carry raises KeyError: "preventable" is a
+    claim about a technique nobody has looked up otherwise."""
+    technique_by_id(code)
+    return _NOT_PREVENTABLE_BASIS.get(code)
+
+
 def technique_url(code: str) -> str:
     """MITRE's page for a catalogue technique (#647).
 
@@ -104,6 +129,9 @@ def technique_url(code: str) -> str:
 
 
 __all__ = [
+    "NOT_PREVENTABLE",
+    "NOT_PREVENTABLE_NO_MITIGATION",
+    "NOT_PREVENTABLE_PRE_COMPROMISE",
     "SOURCE",
     "SOURCE_VERSION",
     "TACTICS",
@@ -111,6 +139,7 @@ __all__ = [
     "Tactic",
     "Technique",
     "all_codes",
+    "not_preventable_basis",
     "parent_techniques",
     "sub_techniques",
     "tactic_by_id",

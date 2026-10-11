@@ -6427,6 +6427,33 @@ The shared dev database, read-only: DRAFT 2, RELEASED 2, APPROVED 0, at migratio
   3. **Migrations land in number order:** #620 takes 0054, then #640 0055, then #658 0056, renumbered at landing (with `down_revision`) if the order changes. `test_alembic_single_head.py` reads Alembic's `ScriptDirectory` and fails unless there is one head and an unbroken chain from base. It was shown red on a forked chain. The chain order is not the number order: on `main` it runs 0051 → 0053 → 0052, so 0054 chains from 0052.
 - **Conditions 4 and 6** both apply: this is a migration, and it changes client-visible numbers.
 
+## D-102 — A capability list counts its edits, and an edited approval must be given again
+
+**Date:** 2026-09-26 · **Issue:** #640 · **Decided by:** the owner (the rule, on #640, 2026-09-25); the coordinator (the design, on #640); track1 (the two calls marked below, overturnable)
+
+**The rule (owner):** Tech Debt classifications stay editable until release. Every edit is audited, and step 3 runs again after any edit. After release, a correction is a new version, as for ATT&CK (#558).
+
+**The mechanism (coordinator's design, migration 0056):** `capability_lists.revision` and `approved_revision`. Every step-2 edit route increments `revision` in SQL, in the transaction that writes its audit row. Approve's compare-and-swap copies the revision it read into `approved_revision`, and it matches only while the list is still at that revision. An edit that lands while the approval is being computed therefore refuses the approval rather than stamping unreviewed rows. The approval is current iff the two are equal. Finalize refuses a stale approval with a typed 409 `capability_list_edited_since_approval` naming step 3. Backfill: `revision = 0`, and `approved_revision = 0` for lists already APPROVED or RELEASED.
+
+**The edit routes are derived, not listed.** `test_capability_list_revision.py` reads the Tech Debt router's mutating routes under the list and item prefixes. Each one needs either a driver proving it moves the revision or a stated exemption (approve, discard). A new edit route fails that test until it has a driver. The bulk-disposition route from #709 is one. #709 landed first, and this PR added its driver and its `_record_edit` call. The derived test was red on that route until both were in.
+
+**Two calls, track1's, overturnable:**
+
+- **Release refuses a stale approval too**, not only finalize. Release freezes the list, so it must not freeze one edited since step 3. The condition is in the release flip's own WHERE (`ParentGuard`), beside #657's undecided-row check.
+- **Locking or unlocking a row is not an edit of the review.** It changes what an AI rerun may touch, not what the list says, so a lock-only PATCH does not move the revision.
+
+**Residuals, stated rather than fixed here:**
+
+- The progress bar (`routes/service_stages.py`) still shows `approve` complete for a stale approval. The bar is monotonic, and a deliverable generated before the edit keeps every earlier stage reached. The site says so. The workspace's step 3 and the finalize and release refusals are what act on the flag.
+
+**A released deliverable matches the approved rows (the coordinator's call, 2026-09-26).** Before this, a list could be edited, approved again, and the deliverable generated BEFORE the edit released: the approval was current, and the deliverable recorded no revision. #640 introduced that path, because before it a list could not change after approval, so it is closed here rather than filed. Migration 0056 adds `deliverables.capability_list_revision`, stamped at finalize. Release refuses, with a typed 409 `deliverable_predates_approval` naming Re-finalize in step 4, any deliverable whose revision is not the list's `approved_revision`. The condition is in the release flip's own WHERE while the list is APPROVED. The flip never runs once the list is RELEASED, or for a deliverable finalized before 0041 (no `parent_version`), so the release route checks those two cases itself before releasing (advisor review of #730, F1: without it, an older deliverable could be released after a newer one had released the list). One residual is not closed: two releases of one list's deliverables racing each other. A deliverable finalized before 0056 records NULL and is refused: missing data defaults to unconfirmed. Its message does not say it predates the approval, because finalize needed an approved list and nothing records when it was rendered; it says nothing confirms its rows. When the flip misses, the refusal is judged on what is true after it: an undecided row or a stale approval first, then the deliverable's own revision, and otherwise `capability_list_changed_during_release` (#657's race test goes red without this order). Measured read-only on the shared dev database (at revision 0054) on 2026-09-27: two Tech Debt deliverables are finalized, both released, both lists RELEASED, where release does not re-check the list. None would be refused. That is one developer database, not a deployment.
+
+**Independent review of #730 at `2a35fa1b` (round 3), fixed on this branch:**
+
+- **A report already released before 0056 can be re-released to repair its list.** The re-release is W4's repair of a list a pre-W4 release left APPROVED, and the backfill gives that list `approved_revision = 0`, so matching a NULL deliverable revision refused it. An already-released deliverable with no recorded revision is now released under the list checks alone (no undecided row, approval current). A deliverable not yet released with no revision is still refused.
+- **An edit cannot land on a released list.** `_record_edit`'s increment matches only a list that is neither RELEASED nor DISCARDED, and a miss refuses the edit (typed 409 `capability_list_released`). Otherwise an edit racing the release flip left `revision > approved_revision` on a RELEASED list, and every later release of it was refused with a remedy that loops.
+- **The workspace does not apply an overtaken approve response.** Approve's response is the only list a write returns that can claim a current approval; when a newer list operation has started, the workspace reads the list again instead.
+
 ## D-103 — Archiving a client ends every session its users hold
 
 **2026-09-26 · auth** (Gene's decision, relayed by the coordinator; #652)
@@ -6436,3 +6463,131 @@ The shared dev database, read-only: DRAFT 2, RELEASED 2, APPROVED 0, at migratio
 **One helper.** `app/security/sessions.py::end_user_sessions` is now the only place a session is ended. It is called by the password reset, by deactivation in `PATCH /admin/users/{id}`, and by `DELETE /admin/clients/{cid}`. Deactivation now also stamps the cutoff. Before, it relied on the `is_active` check alone, so a reactivated user's pre-deactivation access tokens worked again until their TTL.
 
 **Not decided here.** Signing in AFTER the archive is not refused: nothing on the login path reads `Client.archived_at`, which is #652's other half. A password reset still ends sessions without blocking a later sign-in, and this decision matches that and goes no further.
+
+## D-104 — Run-AI runs in the background, and the run row is what the page reads
+
+**2026-10-01 · ai** (plan of record v3.1, section 3, approved by Gene 2026-09-27; #645, with #504 and #271)
+
+**Decision.** A Run-AI POST makes every refusal that needs no AI synchronously, inserts an `ai_runs` row (migration 0057) and answers 202 with the run. A background job does the work in its own session bound to the request's engine, inside a copy of the request's context, and finishes the run with a compare-and-swap on `status = 'RUNNING'` in the same transaction as the apply. The workspace polls the run, and reads every disclosure from the last COMPLETED run, so they survive a reload. ATT&CK, Tech Debt extraction, CSF and ZT run this way; Risk does not (set aside by Gene, 2026-09-27).
+
+**Gene's three product calls, as the plan assumed them.** `serves` is required on the POST; acknowledged offline while the provider would go live is a typed 409 `ai_status_changed`, and the reverse is allowed. A running run in the other mode is refused, not joined. Row edits, approve and finalize are locked while a run is in progress and discard is not. A row edited at or after the run's start is kept and counted, never overwritten.
+
+**Decided in the build, each overturnable:**
+
+- **Reap on read, not at boot.** The reaper runs wherever a run is read (the POST, the edit lock, the status reads) through the request's session. A lifespan sweep would have needed a reachable database at startup, which `tests/conftest.py`'s default `DATABASE_URL` is not, so it would have either crashed every test that builds the app without overriding `get_db` or swallowed the error. Nothing can be locked by an orphaned run, because every surface that consults the lock reaps first. The one-process precondition is written at the reaper.
+- **`ai_runs.subject_id`.** What the run works on: the assessment, or the Tech Debt inventory document. A second POST naming a different subject is refused with 409 `ai_run_in_progress_other_input` rather than handed someone else's run, which is #644's shape one layer down.
+- **No edit lock for Tech Debt.** An extraction writes a new list version and never an existing list's rows, and none runs while a draft is open. Every mutating Tech Debt route is classified with that reason by a router-derived test.
+- **ZT locks the client's own self-assessment routes.** The ZT run writes the answers themselves, so the client's answer PATCH and submit are refused while it runs, with the same typed message.
+- **A status outage proceeds as `live`.** When RunAiGuard could not read the AI status it fails open, as before; the run then asks the api for no promise that it stays offline.
+- **A row edited mid-run is a new by-design drop reason, `edited`,** for CSF and ZT, inside the received == applied + dropped invariant; ATT&CK counts it as `rows_skipped_edited`.
+
+## D-105 — A Tech Debt tool marked `cut` is a planned retirement on every ATT&CK surface
+
+**2026-10-02 · attack** (Gene's decision, 2026-09-26, recorded on #686; slice R2 of #554; join and copy approved by the coordinator, 2026-10-02)
+
+**Decision.** A Tech Debt tool whose disposition is `cut` is a PLANNED RETIREMENT. It still counts toward ATT&CK coverage, because it is still deployed, and every surface that shows or counts it labels it, so the client can see which coverage will drop. Coverage is not recomputed: `attack/analytics.py` and the percentage are unchanged.
+
+**The join** (`app/attack/retirement.py`, which carries the rules and their reasons). An ATT&CK row stores tool NAMES. Each cited name is matched by `strip().casefold()` against every entry `_client_capability_membership` was built from, before its de-duplication, and each entry is followed by its `item_id` to the live item's disposition:
+
+- **"The consolidation plan" is each Tech Debt service's LATEST (highest-version) APPROVED or RELEASED capability list, and only it votes** (#787 review, F1). A DRAFT is a consultant's unreviewed disposition, and an older approved version is superseded by the next extraction, so neither votes. A cited tool on no service's latest plan (a draft only, an older version only, or nowhere) is **retirement status unknown**: "the plan does not list it" cannot support "not retiring". This refines the first verdict, which read a draft-only cut as not retiring. The citation membership itself still unions every non-discarded version; retirement deliberately narrows to the latest plan.
+- Across DIFFERENT Tech Debt services the latest plans are unioned, and disagreement is unknown.
+- Cut on every voting entry: planned retirement. Known on every one with none cut: not retiring (undecided counts as not cut). **Only `cut` counts**: Gene's decision names `cut`, so `consolidate` reads as not retiring. Whether a consolidation should count is an open question to the owner (#787 review, F2).
+- Voting entries that disagree, a voting entry whose live item is gone, or a name with no voting entry: **retirement status unknown**, never a silent "not retiring".
+- **No approved or released Tech Debt list at all: nothing is marked and no unknown count is printed.** "No consolidation plan" is not "could not determine".
+- A rename after approval still joins, through the snapshot's `item_id`. A redacted alias never reaches the stored name (#133).
+
+**The copy.** Each tool carries " (planned retirement)" or " (retirement status unknown)", after " (unconfirmed)" when both apply, on the XLSX Coverage sheet, the client dashboard and the admin technique panel. The XLSX legend explains each mark it uses. The PDF, DOCX, finalize summary and dashboard state "N of the M covered or partial techniques cite a tool marked for planned retirement; K rely on such tools alone." and "Retirement status could not be determined for U cited tools.", each only when non-zero. M is the rollup's own covered + partial, so the sentence cannot disagree with the percentage.
+
+**Freshness.** A deliverable holds the disposition as of its finalize, because it is rendered then. The dashboard and the admin panel read the CURRENT plan and say so beside the labels ("Retirement labels reflect the current consolidation plan."). Freezing the labels for the dashboard is a follow-up, filed by the coordinator.
+
+**Overturnable:** whether `consolidate` should count, and whether a free-text tool should read "unknown" rather than unmarked.
+
+## D-106 — A Risk Register is drafted any time and published only from final inputs; export no longer publishes
+
+**2026-10-05 · risk** (#737, DELIVERY_PLAN item 8; in the MVP by Gene's decision on #736. Gene's rule: #736 comments 5984159954 and 5986057990 item 13. Reverses the export-is-release behaviour D-035's Risk half was built on, AND reverses #237's approved-only synthesis.)
+
+**Export no longer publishes.** `POST .../register/export` renders and stores the XLSX, PDF and Word files and does NOT set `finalized_at`. `POST .../register/publish` is the one API writer of `finalized_at`, which is what `clients.py::risk_dashboard` gates the client's dashboard on. Publish re-renders the files at the moment of publication, under the register row lock export also takes, so the published files cannot predate the published data.
+
+**#237 REVERSED, deliberately (Gene's ruling 13).** #237 refused to synthesize from any input not APPROVED or RELEASED, because at the time exporting was publishing. Generate now reads the latest non-discarded assessment of each kind from the client's non-archived services, drafts included, and the register is a DRAFT: every file rendered while it is unpublished carries "Draft: not published" (Gene's wording, verbatim), and each finding drafted from an input that was not released records that input's state (`provenance.source_states`, `RiskEntryResponse.source_state`, the export's source cell). What protected the client under #237 now sits at publication.
+
+**Publish refuses**, typed, and the input gate runs first:
+
+- `risk_register_inputs_not_final`, with a `blockers` list, unless every ENGAGED SERVICE (each non-archived ATT&CK, CSF, Zero Trust or Tech Debt Service, so two Zero Trust services are two inputs) has a current record that is RELEASED and is still the record and version the register was generated from (`app/risk/inputs.py`, provenance `current_inputs`). A register generated before an input was released is not publishable after it is: its findings were drafted from unreleased work. A kind the client has not engaged does not block, and an archived service is not an input, for synthesis and for unlock as well as for publish (advisor, #736 6003051981 and 6003941445; a change from main, where an archived service's assessment fed the register). Two consequences are intended: (a) a client whose only Zero Trust service is archived gets no Zero Trust findings, and without a CSF engagement the register is locked; (b) an archived service holding a newer version than the live one is no longer the source, and the live service's assessment is. An input RECORDED at generate whose service has since been archived blocks as `changed`: its findings are still in the register, so the register is regenerated (#860 review F1). The record is taken in ONE read before synthesis (`_take_input_snapshot`), so an input released while the model call runs is recorded as it was when the findings were drafted (#860 review B1).
+- the #240 input-shape guards (`_require_certifiable_inputs`), for registers predating the input record;
+- an already-published version;
+- any entry with no tier (#844 D1).
+
+**What did not change.** `finalized_at` keeps one meaning, "published", for every reader, so the client dashboard needs no change and no migration is needed. `seed_demo.py` DID change (#860 review B4): it sets `finalized_at` itself, so it now asks `publish_blockers` first and refuses to seed a register publish would refuse, and it seeds CSF v2 APPROVED after the register rather than before, so the published demo register is built from CSF v1 released. A Risk export artifact is not a `Deliverable`, so `/artifacts` never serves it to a client user (measured: `test_a_client_user_cannot_download_an_unpublished_export`).
+
+**Ruled by the advisor, 2026-10-05 (#736 5998764095):** export drops the #240 input guards, which now run only in publish, and the client 404 on an unpublished export through `/artifacts` is the pinned guard. #554 R3's unreviewed computed statuses no longer refuse a DRAFT: each affected finding is labelled, and publish refuses through the input gate, because an assessment with unreviewed codes cannot be released. The stale-catalog refusal still blocks at generate (D-091).
+
+## D-107 — The MVP's catalog corrections all land before the first real client
+
+**2026-10-06 · zero trust, csf** (#838 PR 2, #881 review item 1; the advisor's ruling, #736 comment 6021049361. The general defect is #885, mvp-blocking tier-2.)
+
+**The fact this rests on.** Every client view of a RELEASED assessment recomputes against the LIVE catalog: the ZT dashboard (`clients.py::zt_dashboard`) and the client home's ZT gap total (`_zt_gap_total`) read the stored answers and iterate the current catalog, and CSF, ATT&CK and Tech Debt do the same. The stored PDF, DOCX and XLSX do not change. So when a catalog changes, a released client view changes under the client, still stamped released. Migration 0063 (#838 PR 2) does exactly that to a released CISA assessment: 8 pillars become 5, and the retired rows stop being scored.
+
+**The ruling, for the MVP: accept it (option iv).** SHIELD has no real client yet: it runs only on Gene's development machine, so no client population is affected today. The catalog corrections in this MVP all land before the first real client:
+
+- the CISA catalog to CISA ZTMM 2.0 (#838 PR 2, #881);
+- the DoD catalog to the DoD Zero Trust Execution Roadmap (#839, #838 PR 3);
+- the CSF catalog correction.
+
+**What this does NOT license.** A catalog change after the first real client must not ship under this record. The general defect is #885 (mvp-blocking, tier-2): option (i), a snapshot taken at release that client views render from, is the fix, and option (ii), disclosing on the client surfaces that the view reflects the current catalog, is the interim. Gene decides its timing with the post-MVP plan.
+
+**Overturnable:** if a real client is onboarded before any of the three corrections lands, that correction needs (ii) at least, before it merges.
+
+## D-108 — A Risk Register draws findings from every engaged service, not one per kind
+
+**2026-10-06 · risk** (#876, mvp-blocking tier-1. Gene's ruling: #736 6018510340. Advisor's answers to track6's plan: 6019425290 (Q1 to Q4), 6020214342 (the refusal's wording). Amends D-106, which read one assessment per kind.)
+
+**Every engaged service is read.** Synthesis reads the current assessment of each non-archived ATT&CK, CSF and Zero Trust service (`_synthesis_sources`), drafts included as D-106 ruled. A client engaged for both CISA ZTMM 2.0 and DoD ZT Reference Architecture now gets both frameworks' findings. Until now it got the latest one's only, and the other framework was dropped in silence. Each Zero Trust finding already names its framework in its code (`CISA.ID.01`, `DOD.USR.01`), so no source naming changed.
+
+**Per service, everything that was per kind.**
+
+- Each source is held to its own target: a CISA engagement target is never applied to DoD's three-stage ladder.
+- Each finding's draft label comes from its own service's status.
+- The provenance `inputs` list has one row per service, naming its service and framework.
+- The scored-coverage disclosure and the Inputs panel name the framework ("Zero Trust (CISA ZTMM 2.0)", "Zero Trust (DoD ZT Reference Architecture)", the names the ZT deliverable already prints), but only when a kind has more than one row. A single-service client's records and wording are unchanged.
+
+**Batching.** No batch holds findings from two services of one kind. Different kinds still share a batch as before, so only a client with a second service of a kind (the two-Zero-Trust client) pays an extra model request.
+
+**Two services of one kind AND framework are refused** (Q2, option (a)). They would produce the same finding codes, and `source_id` is the key the per-finding count, the rating carry-forward and the draft labels join on, so their findings would merge in silence. Generate refuses with a typed 409 (`risk_register_duplicate_inputs`), and the gate carries the same sentence so Generate is not offered: "Two engaged services of the same kind would produce the same findings: {titles}. The register cannot be generated while both are engaged." It names no remedy, because no screen can archive a service today (D-076). Keying findings by service, and a screen control to archive a service, are filed post-MVP.
+
+## D-109 — The DoD Zero Trust catalog is the 2025 DoD CIO roadmap, and a capability's target never exceeds what it can score
+
+**2026-10-07 · zero trust, risk** (#839, #838 PR 3, mvp-blocking tier-2. Plan: #838 comments 6022742677 and 6023694715. Rulings on #736: the plan approval 5982917066, the cap 5984159954, rulings 1-6 6023235322, the source note 6040458893, ruling 4's line 6047873969. Builds on D-107, which already decided the timing.)
+
+**Source of record.** The DoD catalog is the DoD CIO's 2025 roadmap, 25-T-1465 (`reference-docs/dod/ZT-CapabilitiesActivities.pdf`). `test_zt_dod_catalog_source.py` pins that PDF by sha256, requires the extraction `dod_zt_2025_rows.json` to record the same hash, and holds the served catalog to the 45 capability names typed from the PDF. The extraction gives 45 capabilities and 152 activities, each activity Target or Advanced (`python apps/api/scripts/count_dod_levels.py`, 2026-10-07: 91 Target, 61 Advanced). Codes stay `DOD.<PILLAR>.<NN>`. Migration 0064 swaps DAT.06 and DAT.07 (DoD 4.6 is Data Loss Prevention), inserts the missing `DOD.USR.09` (1.9, Integrated ICAM Platform), and KEEPS the answers on the six rows the roadmap does not have, unscored and disclosed (decision 4, option B, as 0063 does for CISA). Risk `source_id` and `linked_controls` are re-keyed both ways. Released assessments are migrated, under D-107.
+
+**The levels are 2025's.** The 2022 Roadmap tabulates per-activity levels only for 1.2.1 to 1.2.5. Everywhere else it shows a level only as a Gantt bar's colour, and its two copies of those pages disagree with each other, so no reliable activity-level comparison exists. Every DoD deliverable says so in the approved source note (6040458893). Directly after it comes ruling 4's line, "Activity descriptions are reproduced as published." (6047873969), because 1.2.1's description is word for word 1.1.1's in the published document and is kept that way. No CI test pins a 2022 level (ruling 5).
+
+**A capability with no Advanced activity has its effective target capped at Target (2)** (5984159954). It defines no level above Target, so an engagement target of 3 would make it a permanent gap and a permanent Risk finding. **The store is held to the same maximum** (F1, option (a), 6048561596): both PATCH routes refuse a maturity stage above `capability_max_stage` with a typed 422 (`stage_above_capability_max`, "{DoD number} {name} has no DoD {level} activities, so it cannot be scored {stage}."), and Run-AI drops such a suggestion as `stage_above_capability_max`. This is a guard on writes, not a fact about the store: a stage written before it existed is not rewritten. `capability_max_stage` is the one rule. The gap engine applies it, and so does Risk synthesis, inside D-108's per-source loop with each service's own framework. Each capped capability is disclosed in the approved copy C1, on the workspace gap list, the client ZT dashboard and all three files. `GapAnalysis.capped_target_codes` carries it.
+
+**A capability with no Target activity is disclosed only, never raised** (ruling 1, reading (a)): raising it would change a number the client chose. A target of 2 is met only by 3, which gap analysis already treats as met. Copy C2 says so. `GapAnalysis.no_target_level_codes` carries it. Which capabilities fall in each group is read from the extraction, never the catalog (`test_zt_dod_target_caps.py`).
+
+**DoD stage 1 is "Below Target"** (decision E2, copy C3), replacing "Not Started". It is a Kentro value, not a DoD level: assessed below the capability's first DoD level.
+
+**What would reopen this:** a new DoD edition (re-extract, re-pin the hash, re-derive both groups), or Advanced activities added to a capped capability, which lifts its cap with no code change because the cap is read from the catalog.
+
+## D-110 — The CSF catalog is corrected to NIST CSWP 29 and pinned to its PDF: ID.AM-09 is retired and kept, RC.CO-04 is added
+
+**2026-10-08 · csf, risk** (#852, mvp-blocking tier-1, client-reaching. Plan: track5's build plan for #852. Approval: the advisor, #736 comment 6054419744, except the CSWP 29 source test, which was built once Gene supplied the PDF. Builds on D-107, which already decided the timing.)
+
+**What was wrong.** The CSF catalog held `ID.AM-09` ("Inventories of personnel with cybersecurity-related responsibilities are maintained."), which is not a CSF 2.0 subcategory, and lacked `RC.CO-04` ("Public updates on incident recovery are shared using approved methods and messaging."), which is. Its total read 106 either way, so a count could not see it. **The source of record is the PDF, and a test pins it.** Gene supplied NIST CSWP 29 (`reference-docs/nist/NIST.CSWP.29.pdf`, sha256 `3c31f46fee98cac0c4323453e5109291a213b4de7fef8c058af9bf67f717433c`; nvlpubs was unreachable from the build session). `test_csf_catalog_source.py` pins that hash, reads every subcategory code out of the PDF's Appendix A (pypdf, `<code>:` entries), and requires the set to equal both the catalog the app serves (`GET /csf/catalog`) and the answer rows it seeds into a new assessment. The expected set comes only from the PDF. It agrees with the issue's comparison (2026-10-04) and with the Kentro Working Profile toolkit (`reference-docs/Step_2_*_Working_Profile_*.xlsx`), which has `RC.CO-04` with that text and no `ID.AM-09`. CSF 1.1's `DE.AE-01` and `DE.AE-05` are not in CSWP 29 and not in the catalog; the test asserts their absence from the PDF. `_IG_METADATA` still carries both as keys no catalog code reaches, untouched here. #852 is closed by hand once this lands.
+
+**Retire and disclose** (option B, the pattern 0063 used for retired CISA rows, and 0064 uses for DoD, #925 and D-109). Migration 0065 (after #925's 0064) keeps every stored `ID.AM-09` row in `csf_answers`, `csf_dimension_scores` and `csf_gap_actions`, untouched. The scoring and gap engines already iterate the catalog. Every reader of STORED rows now filters to it through `app.csf.retired.catalog_rows`: the Working Profile (`get_profile`, `_enterprise_subcategories`, the gap actions, the playbook export), Run-AI (`_csf_ai_request_for`) and Risk synthesis (the CSF block of `_gather_findings`). Before the filter, a single kept Working Profile row made `_enterprise_subcategories` raise `KeyError` in `subcategory_by_code`: a 500 on the enterprise profile, the gap actions and the playbook export. `app/csf/retired.py` is the one derivation of the approved sentences, rendered as given:
+
+- S1, answers (workspace, self-assessment, CSF deliverable PDF, DOCX and XLSX, client CSF dashboard): "1 recorded answer belongs to ID.AM-09, a subcategory NIST CSF 2.0 does not have, so it is not scored."
+- S2, Working Profile (the Playbook panel, all five playbook files): "1 recorded Working Profile row belongs to ID.AM-09, a subcategory NIST CSF 2.0 does not have, so it is not scored or rolled up." with the tail " 1 action plan recorded for it is kept and not listed." when action plans exist, and plural forms.
+- The action-only sentence (the Playbook panel, all five playbook files), approved with its commas in #736 comment 6056012075, for an action plan on a kept code with no recorded Working Profile row under it: "1 action plan recorded for ID.AM-09, a subcategory NIST CSF 2.0 does not have, is kept and not listed."; several: "{m} action plans recorded for {codes}, subcategories NIST CSF 2.0 does not have, are kept and not listed.", or with a single code "{m} action plans recorded for ID.AM-09, a subcategory NIST CSF 2.0 does not have, are kept and not listed." The singular is reachable in stored data (before #852 the gap-action upsert accepted any catalog code, and ID.AM-09 was one); the plural is not reachable today, because a plan is unique per assessment and code and ID.AM-09 is the only retired code.
+
+A row is an answer when someone recorded something on it. A seeded Working Profile row that nobody wrote (all zeros, `answer_source` NULL) is not.
+
+**`RC.CO-04` is inserted** into every non-discarded assessment (draft, submitted, approved, released) as an empty answer row, and as an empty Working Profile row for each tier the assessment had already seeded. Without the answer row the questionnaire cannot show the subcategory (it renders a catalog code only when a row exists). Without the profile row a seeded profile could never get one. Released assessments are migrated under D-107, whose precondition Gene confirmed for this PR: "no real client data has been onboarded" (his words, relayed by the advisor on #736, comment 6060587658, 2026-10-08). A released client view then reads Identify over 21 subcategories and Recover over 8. A CSF deliverable re-finalized after 0065 states the existing sentence "1 subcategory was not scored and is not in this plan." for an otherwise fully scored assessment, because `RC.CO-04` starts empty, unless `RC.CO-04` has been scored since.
+
+**Catalog content.** `RC.CO-04` inherits `RC.CO`'s profile tier (MOD) and was already in `_IG_METADATA` (Core, Supporting). Short names: `RC.CO-03` "Recovery progress communicated" (its old name, "Public updates", described `RC.CO-04`), `RC.CO-04` "Public recovery updates".
+
+**Not done here.** `risk_entries` are not re-keyed: CSF 2.0 has no successor for `ID.AM-09`. A regenerated register draws no finding from it, and a consultant rating on an old entry is reported as not carried. Refusing writes to a kept row is #937. `apps/api/scripts/count_csf_retired_rows.py` measures the reach, read-only; it has not been run on the dev database.
+
+**What would reopen this:** a new CSF edition (commit its PDF, re-pin the hash; the source test then names every difference).

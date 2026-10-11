@@ -50,14 +50,15 @@ def context_with_full_tier3():
 
 
 @pytest.mark.unit
-def test_xlsx_render_has_three_sheets(context_with_full_tier3) -> None:
+def test_xlsx_sheets_are_exactly_these(context_with_full_tier3) -> None:
     from openpyxl import load_workbook
 
     raw = render_xlsx(context_with_full_tier3)
     assert isinstance(raw, bytes)
     assert raw[:2] == b"PK"  # XLSX is a zip envelope
     wb = load_workbook(io.BytesIO(raw))
-    assert set(wb.sheetnames) == {"Score Summary", "Answers", "Gap Plan"}
+    # #646 (coordinator's verdict, Batch F): plus the "AI source" sheet, last.
+    assert set(wb.sheetnames) == {"Score Summary", "Answers", "Gap Plan", "AI source"}
 
 
 @pytest.mark.unit

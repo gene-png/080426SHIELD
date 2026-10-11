@@ -20,6 +20,10 @@ import { MIN_TARGET_STAGE } from "@/lib/assessment-targets";
 
 import { SelfAssessmentSubmitted } from "@/components/self-assessment/SelfAssessmentSubmitted";
 import { ZtStagePicker } from "@/components/admin/zt/ZtStagePicker";
+import {
+  CrossCuttingHeading,
+  startsCrossCutting,
+} from "@/components/admin/zt/CrossCuttingHeading";
 import { ZtMaturityReference } from "@/components/zt/ZtMaturityReference";
 import {
   fetchCatalog,
@@ -60,7 +64,26 @@ export function ZtSelfAssessment({
   // reload silently lost it. Core principle 2 — never a lie that something
   // succeeded — and the API half of that was fixed in #195/#282 while this
   // layer kept telling the client it had worked.
-  const [saveError, setSaveError] = React.useState<string | null>(null);
+  // #758: one error per answer FIELD, keyed `<answer id>:<field>`, kept until
+  // THAT field saves. A single slot cleared on any row's success let row B's
+  // save wipe row A's refusal -- the #757 shape, here on the client's own
+  // answers. Per field and not per row, because a row's fields save
+  // separately and the api applies only the fields sent (`exclude_unset`):
+  // a notes save says nothing about the tier beside it.
+  const [saveErrors, setSaveErrors] = React.useState<Record<string, string>>(
+    {},
+  );
+  // #758: answer saves sent and not yet answered. Submit waits for all of
+  // them: it moves the assessment out of draft, so a save still out is then
+  // refused, and by then the page has become `SelfAssessmentSubmitted` and the
+  // refusal has nowhere to show. A count, not a flag, so the first of two
+  // answers does not read as "nothing in flight".
+  const [savesInFlight, setSavesInFlight] = React.useState(0);
+  // Each field's newest save, keyed as `saveErrors` is. An older save cannot
+  // clear or set the error of a field a newer save has since sent; it still
+  // owns every field no newer save covers.
+  const latestSave = React.useRef(new Map<string, number>());
+  const saveCounter = React.useRef(0);
   // Guards the failure re-fetch below: a later save's truth must not be
   // overwritten by an earlier one's recovery. Same mechanism, and the same
   // reason, as `assessmentSeq` in the admin workspaces.
@@ -142,13 +165,40 @@ export function ZtSelfAssessment({
           }
         : curr,
     );
+    const saveId = ++saveCounter.current;
+    // A patch naming no field still gets a key, the row's own, so its failure
+    // is shown rather than recorded against nothing.
+    const fields = Object.keys(patch);
+    const keys = (fields.length > 0 ? fields : [""]).map(
+      (f) => `${answerId}:${f}`,
+    );
+    for (const k of keys) latestSave.current.set(k, saveId);
+    const owned = () =>
+      keys.filter((k) => latestSave.current.get(k) === saveId);
+    // Sets or clears the error of every field this save still owns, read NOW
+    // rather than inside the updater, which runs later.
+    const setOwnedErrors = (message: string | null) => {
+      const mine = owned();
+      if (mine.length === 0) return;
+      setSaveErrors((prev) => {
+        const next = { ...prev };
+        for (const k of mine) {
+          if (message === null) delete next[k];
+          else next[k] = message;
+        }
+        return next;
+      });
+    };
+    setSavesInFlight((n) => n + 1);
     try {
       const updated = await patchSelfAssessmentAnswer(answerId, patch);
       // Cleared HERE, on a confirmed success, and not at the top of this
       // function. A first draft cleared it before the request, so a client
       // whose answer to one row was refused lost the message the instant
-      // they touched another -- while that answer was still gone.
-      setSaveError(null);
+      // they touched another -- while that answer was still gone. And only
+      // the errors of the fields THIS save sent (#758), and only those no
+      // newer save has sent since.
+      setOwnedErrors(null);
       setAssessment((curr) =>
         curr
           ? {
@@ -174,14 +224,14 @@ export function ZtSelfAssessment({
       // to learn that. But say only that: the restoration sentence is opt-in
       // now, because it used to be printed here, before the restoration had
       // happened, and it stayed on screen when it never happened (#371).
-      setSaveError(describeSaveError(err, subject));
+      setOwnedErrors(describeSaveError(err, subject));
       const seq = ++saveSeq.current;
       try {
         const truth = await fetchSelfAssessment(serviceId);
         if (seq === saveSeq.current) {
           setAssessment(truth);
           // NOW the claim is true, so now it is made.
-          setSaveError(describeSaveError(err, subject, { restored: true }));
+          setOwnedErrors(describeSaveError(err, subject, { restored: true }));
         }
       } catch {
         // The re-fetch failed too, so the value on screen is still the
@@ -191,6 +241,8 @@ export function ZtSelfAssessment({
         // while the message said the value HAD BEEN restored. Silence here
         // would put us back where #283 started.
       }
+    } finally {
+      setSavesInFlight((n) => n - 1);
     }
   }
 
@@ -243,6 +295,16 @@ export function ZtSelfAssessment({
 
   return (
     <div className="flex flex-col gap-6">
+      {/* #838: the API's own sentence, from the derivation the workspace and
+          the deliverables call too (`zt/retired.py`), never rebuilt here. */}
+      {assessment.retired_answers_note ? (
+        <p
+          className="text-sm text-ink-secondary"
+          data-testid="zt-retired-answers"
+        >
+          {assessment.retired_answers_note}
+        </p>
+      ) : null}
       <Card>
         <CardHeader>
           <CardTitle>1. Your maturity target</CardTitle>
@@ -415,73 +477,82 @@ export function ZtSelfAssessment({
               </header>
 
               <ul className="flex flex-col gap-3">
-                {pillar.capabilities.map((cap) => {
+                {pillar.capabilities.map((cap, i, all) => {
                   const ans = answersByCode[cap.code];
                   if (!ans) return null;
                   return (
-                    <li
-                      key={cap.code}
-                      className="rounded-md border border-border-subtle bg-surface-sunken p-3"
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs font-mono text-ink-tertiary">
-                            {cap.code}
-                          </p>
-                          <p className="text-sm font-medium text-ink-primary">
-                            {cap.name}
-                          </p>
-                          <p className="mt-1 text-sm text-ink-secondary">
-                            {cap.outcome}
-                          </p>
+                    <React.Fragment key={cap.code}>
+                      {startsCrossCutting(all, i) ? (
+                        <CrossCuttingHeading />
+                      ) : null}
+                      <li className="rounded-md border border-border-subtle bg-surface-sunken p-3">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-mono text-ink-tertiary">
+                              {cap.code}
+                            </p>
+                            <p className="text-sm font-medium text-ink-primary">
+                              {cap.name}
+                            </p>
+                            <p className="mt-1 text-sm text-ink-secondary">
+                              {cap.outcome}
+                            </p>
+                          </div>
+                          <ZtStagePicker
+                            value={ans.maturity_stage}
+                            stages={catalog.stages}
+                            ariaLabel={`Maturity stage for ${cap.code}`}
+                            // #758 review: read-only while Submit is out. Submit
+                            // cannot start while a save is out, but a save
+                            // started DURING Submit went after the assessment
+                            // left draft, and its 409 landed after the page had
+                            // become `SelfAssessmentSubmitted`.
+                            disabled={submitting}
+                            onChange={(next) => {
+                              void onAnswerUpdate(ans.id, {
+                                maturity_stage: next,
+                              });
+                            }}
+                          />
                         </div>
-                        <ZtStagePicker
-                          value={ans.maturity_stage}
-                          stages={catalog.stages}
-                          ariaLabel={`Maturity stage for ${cap.code}`}
-                          onChange={(next) => {
-                            void onAnswerUpdate(ans.id, {
-                              maturity_stage: next,
-                            });
-                          }}
-                        />
-                      </div>
-                      <details className="mt-2">
-                        <summary className="cursor-pointer text-xs font-medium text-ink-tertiary hover:text-ink-secondary">
-                          Notes {ans.notes ? "·" : ""}{" "}
-                          {ans.notes ? (
-                            <span className="font-normal text-ink-secondary">
-                              {ans.notes.length > 60
-                                ? `${ans.notes.slice(0, 60)}…`
-                                : ans.notes}
-                            </span>
-                          ) : null}
-                        </summary>
-                        <textarea
-                          aria-label={`Notes for ${cap.code}`}
-                          // KEYED ON THE CONFIRMED VALUE. `defaultValue` makes
-                          // this an uncontrolled input, and React does not
-                          // reset a user-dirtied textarea when that prop
-                          // changes -- so reverting state left the REFUSED text
-                          // on screen under an alert saying it had been
-                          // restored. #283's own symptom, surviving its fix, on
-                          // the one field most likely to trip `max_length`.
-                          // Changing the key remounts the box, which is what
-                          // actually puts the server's value back in front of
-                          // the client.
-                          key={`${ans.id}:${ans.notes ?? ""}`}
-                          defaultValue={ans.notes ?? ""}
-                          rows={3}
-                          onBlur={(e) => {
-                            const v = e.currentTarget.value.trim();
-                            if (v === (ans.notes ?? "")) return;
-                            void onAnswerUpdate(ans.id, { notes: v });
-                          }}
-                          className="mt-2 w-full rounded-md border border-border bg-surface-card p-2 text-sm text-ink-primary focus:border-brand-500 focus:outline-hidden"
-                          placeholder="Evidence, references, exceptions…"
-                        />
-                      </details>
-                    </li>
+                        <details className="mt-2">
+                          <summary className="cursor-pointer text-xs font-medium text-ink-tertiary hover:text-ink-secondary">
+                            Notes {ans.notes ? "·" : ""}{" "}
+                            {ans.notes ? (
+                              <span className="font-normal text-ink-secondary">
+                                {ans.notes.length > 60
+                                  ? `${ans.notes.slice(0, 60)}…`
+                                  : ans.notes}
+                              </span>
+                            ) : null}
+                          </summary>
+                          <textarea
+                            aria-label={`Notes for ${cap.code}`}
+                            // KEYED ON THE CONFIRMED VALUE. `defaultValue` makes
+                            // this an uncontrolled input, and React does not
+                            // reset a user-dirtied textarea when that prop
+                            // changes -- so reverting state left the REFUSED text
+                            // on screen under an alert saying it had been
+                            // restored. #283's own symptom, surviving its fix, on
+                            // the one field most likely to trip `max_length`.
+                            // Changing the key remounts the box, which is what
+                            // actually puts the server's value back in front of
+                            // the client.
+                            key={`${ans.id}:${ans.notes ?? ""}`}
+                            defaultValue={ans.notes ?? ""}
+                            disabled={submitting}
+                            rows={3}
+                            onBlur={(e) => {
+                              const v = e.currentTarget.value.trim();
+                              if (v === (ans.notes ?? "")) return;
+                              void onAnswerUpdate(ans.id, { notes: v });
+                            }}
+                            className="mt-2 w-full rounded-md border border-border bg-surface-card p-2 text-sm text-ink-primary focus:border-brand-500 focus:outline-hidden"
+                            placeholder="Evidence, references, exceptions…"
+                          />
+                        </details>
+                      </li>
+                    </React.Fragment>
                   );
                 })}
               </ul>
@@ -522,12 +593,15 @@ export function ZtSelfAssessment({
         </CardBody>
       </Card>
 
-      {saveError ? (
+      {Object.keys(saveErrors).length > 0 ? (
         <div
           role="alert"
           className="rounded-md border border-status-danger-border bg-status-danger-bg px-4 py-3 text-sm text-status-danger-fg"
         >
-          {saveError}
+          {/* Two fields of one row refused alike read as ONE line. */}
+          {[...new Set(Object.values(saveErrors))].map((message) => (
+            <p key={message}>{message}</p>
+          ))}
         </div>
       ) : null}
       {submitError ? (
@@ -557,7 +631,7 @@ export function ZtSelfAssessment({
         <button
           type="button"
           onClick={() => void onSubmit()}
-          disabled={submitting || !everyPillarStarted}
+          disabled={submitting || !everyPillarStarted || savesInFlight > 0}
           title={
             everyPillarStarted
               ? undefined

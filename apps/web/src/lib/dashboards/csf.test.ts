@@ -44,6 +44,13 @@ function gap(over: Partial<CsfGap> = {}): CsfGap {
 
 function data(over: Partial<CsfDashboardData> = {}): CsfDashboardData {
   return {
+    // #646 (Batch F): required since; not under test here.
+    ai_source: {
+      state: "live",
+      sentence: "AI suggestions in this assessment came from a live AI model.",
+      live_runs: 1,
+      fixture_runs: 0,
+    },
     service_id: "s1",
     service_title: "Atlas — CSF",
     released_at: "2026-08-19T00:00:00Z",

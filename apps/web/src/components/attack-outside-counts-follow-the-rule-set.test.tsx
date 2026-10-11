@@ -47,6 +47,13 @@ function technique(code: string, status: string, tools = true): DashTechnique {
 function dashboard(newRules: boolean): AttackDashboardData {
   return {
     ...(newRules ? { parents_computed: true } : {}),
+    // #646 (Batch F): required since; not under test here.
+    ai_source: {
+      state: "live",
+      sentence: "AI suggestions in this assessment came from a live AI model.",
+      live_runs: 1,
+      fixture_runs: 0,
+    },
     service_id: "s1",
     service_title: "ATT&CK Coverage",
     released_at: "2026-09-01T12:00:00Z",
@@ -61,6 +68,7 @@ function dashboard(newRules: boolean): AttackDashboardData {
         ? { outside_control_surface: 0, unable_to_determine: 0 }
         : {}),
       coverage_pct: 100,
+      coverage_measured: true, // #489 (Batch A): required since; not under test here
       by_tactic: [],
     },
     techniques: [
@@ -186,6 +194,7 @@ function heatmap(newRules: boolean): AttackHeatmap {
     outside_control_surface: newRules ? 0 : null,
     unable_to_determine: newRules ? 0 : null,
     coverage_pct: 50,
+    coverage_measured: true, // #489 (Batch A): required since; not under test here
     by_tactic: [],
   };
 }
@@ -225,6 +234,7 @@ function entry(newRules: boolean): TacticHeatmapEntry {
     outside_control_surface: newRules ? 0 : null,
     unable_to_determine: newRules ? 0 : null,
     coverage_pct: 100,
+    coverage_measured: true, // #489 (Batch A): required since; not under test here
   };
 }
 

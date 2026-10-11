@@ -8,8 +8,8 @@ It has shipped once already, recorded in `jobs.py`: the CSF prompt asked for
 `{"subcategories": [...]}` while the parser read `{"scores": [...]}`, so LIVE
 mode discarded every schema-compliant response while fixture mode passed.
 
-**No fixture can catch this.** All five `_fixture_*` builders construct their
-response in Python and always use the correct key, so fixture mode agrees with
+**No fixture can catch this.** Every `_fixture_*` builder constructs its
+response in Python and always uses the correct key, so fixture mode agrees with
 the parser by construction. Only `csf_score` had a contract test; `zt_score`,
 `mitre_map` and `risk_synthesize` were unguarded.
 
@@ -31,6 +31,7 @@ for a different container, this goes red — which is the drift that shipped.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 
@@ -38,12 +39,18 @@ import pytest
 
 from app.ai.engine import AIResponseShapeError, get_job, registered_jobs
 
-# The four SUGGESTION jobs. `tech_debt_extract` is excluded deliberately and the
+# The five SUGGESTION jobs. `tech_debt_extract` is excluded deliberately and the
 # exclusion is stated rather than implied: its response is consumed by the
 # extraction path rather than by a `data[key]` suggestion loop, so it declares
 # no top-level list key and there is no contract of this shape to check. If it
 # ever gains one, `test_every_declared_key_is_covered` below fails.
-SUGGESTION_JOBS = ("csf_score", "zt_score", "mitre_map", "risk_synthesize")
+SUGGESTION_JOBS = (
+    "csf_score",
+    "zt_score",
+    "mitre_map",
+    "risk_synthesize",
+    "attack_scenario_delta",
+)
 
 
 def _prompt_top_level_key(prompt: str) -> str:
@@ -122,3 +129,64 @@ def test_every_declared_key_is_covered_by_this_file() -> None:
         "a job declares a top_level_key but is not covered here (or vice "
         f"versa): registry={sorted(declared)} covered={sorted(SUGGESTION_JOBS)}"
     )
+
+
+# --- the ATT&CK what-if chat box (#802), which has no top_level_key ---------------
+#
+# `attack_scenario_intent` answers an object with three keys, so it declares its
+# own parser and cannot sit in SUGGESTION_JOBS (like tech_debt_extract). Its
+# contract is checked the same way: the example is read out of the PROMPT TEXT,
+# never from the reader's constants.
+
+INTENT = "attack_scenario_intent"
+#: #802 comment 5981734020, section 7, approved by Gene as drafted (advisor,
+#: #802 comment 5982965933): 923 ASCII bytes, extracted by script from the live
+#: comment, blockquote markers removed, each bare ">" line a blank line.
+INTENT_PROMPT_SHA256 = "5ee568ada8230cf0bd99be1a5f339c6222c48ccebd630c2ee8f37515c24f3a77"
+
+
+def _prompt_example(prompt: str) -> dict:
+    """The JSON object the prompt instructs, as written between backticks."""
+    match = re.search(r"`(\{[^`]*\})`", prompt)
+    assert match is not None, "the prompt documents no JSON example"
+    return json.loads(match.group(1))
+
+
+@pytest.mark.unit
+def test_the_intent_prompt_is_the_approved_text() -> None:
+    assert hashlib.sha256(get_job(INTENT).prompt.encode("utf-8")).hexdigest() == (
+        INTENT_PROMPT_SHA256
+    )
+
+
+def _read(data: object) -> object:
+    from app.attack import scenario_intent
+
+    return scenario_intent.read(
+        data,
+        sent="",
+        cited=[],
+        client_tools=[],
+        client_org_name=None,
+        redaction_mode="strict",
+    )
+
+
+@pytest.mark.unit
+def test_the_intent_prompts_own_example_is_an_answer_the_reader_takes() -> None:
+    parsed = _read(_prompt_example(get_job(INTENT).prompt))
+    assert (parsed.removed, parsed.added, parsed.not_understood) == ([], [], [])
+
+
+@pytest.mark.unit
+def test_the_intent_answer_with_a_key_renamed_or_dropped_is_refused() -> None:
+    from app.attack.scenario_intent import IntentShapeError
+
+    example = _prompt_example(get_job(INTENT).prompt)
+    assert example, "the example names no keys"
+    for key in example:
+        dropped = {k: v for k, v in example.items() if k != key}
+        renamed = {**dropped, key + "s": example[key]}
+        for variant in (dropped, renamed):
+            with pytest.raises(IntentShapeError):
+                _read(variant)

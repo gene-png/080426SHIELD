@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.models.service import Service
 from app.storage.local import LocalFilesystemStorage
+from tests._ai_runs import tech_debt_extract
 
 
 @pytest.fixture()
@@ -119,13 +120,8 @@ def _extract(
     )
     svc_id = sr.json()["id"]
     artifact_id = _upload_csv(c, bearer, "inventory.csv", csv)
-    r = c.post(
-        f"/tech-debt/services/{svc_id}/capability-lists/extract",
-        headers={"Authorization": f"Bearer {bearer}"},
-        json={"artifact_id": artifact_id},
-    )
-    assert r.status_code == 201, r.text
-    return svc_id, r.json()
+    r = tech_debt_extract(c, svc_id, {"Authorization": f"Bearer {bearer}"}, artifact_id)
+    return svc_id, r
 
 
 # One security tool, one unambiguous non-security tool.

@@ -100,8 +100,9 @@ export function useAiStatus(): UseAiStatus {
     inFlight.current = request;
     void request.then((s) => {
       if (cancelled) return;
-      // Non-blocking: a status outage must not stop an admin working. The
-      // distinction from "loading" is the whole point of `phase`.
+      // An unreadable status is "error", not "loading": callers decide what
+      // it locks (RunAiGuard fails closed on it, #645), and the distinction
+      // from "loading" is the whole point of `phase`.
       setResult({ nonce, status: s, phase: s ? "loaded" : "error" });
     });
     return () => {

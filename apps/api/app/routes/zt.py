@@ -19,6 +19,7 @@ Endpoint surface:
 
 from __future__ import annotations
 
+import functools
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -28,17 +29,30 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
+from app.ai.catalog_fields import register_catalog_field
 from app.ai.diff import diff_keyed_rows
 from app.ai.engine import run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
 from app.ai.provenance import SOURCE_AI, SOURCE_CLIENT, protected_keys
+from app.ai.runs import (
+    RunContext,
+    RunFailed,
+    Runner,
+    RunOutcome,
+    get_ai_run_runner,
+    refuse_while_running,
+    require_serves,
+    start_run,
+)
+from app.assessment_targets import MIN_TARGET_STAGE, floor_refusal, target_source_sentence
 from app.audit import audit
 from app.db.session import get_db
 from app.deliverable_release import release_deliverable
 from app.dependencies import current_client, current_user, require_role
 from app.logging import get_logger
+from app.mode_stamp import ai_mode_for
 from app.models._common import utcnow
 from app.models.artifact import Artifact, ArtifactOrigin
 from app.models.client import Client
@@ -54,6 +68,7 @@ from app.models.zt_assessment import (
     ZtFramework,
 )
 from app.routes.artifacts import _storage_dep
+from app.schemas.ai_runs import AiRunStarted, RunAiRequest
 from app.schemas.tech_debt import DeliverableResponse
 from app.schemas.zt import (
     CatalogCapability,
@@ -70,6 +85,7 @@ from app.schemas.zt import (
     ZtCapabilityChange,
     ZtDroppedSuggestion,
     ZtInterviewQuestion,
+    ZtOmittedCapability,
     ZtQuestionnaireResponse,
     ZtRunAiResponse,
     ZtScoreSummary,
@@ -79,6 +95,7 @@ from app.schemas.zt import (
     ZtServiceResponse,
 )
 from app.security.rate_limit import enforce_ai_rate_limit
+from app.services.engagement_targets import client_target_stage
 from app.storage import StorageBackend
 from app.tech_debt.filename import (
     SERVICE_SLUG_ZT_CISA,
@@ -92,6 +109,7 @@ from app.tenant import (
 from app.zt.catalog import (
     all_codes,
     capabilities,
+    capability_by_code,
     pillars,
 )
 from app.zt.exporters import build_context as build_zt_context
@@ -99,8 +117,21 @@ from app.zt.exporters import render_docx as render_zt_docx
 from app.zt.exporters import render_pdf as render_zt_pdf
 from app.zt.exporters import render_xlsx as render_zt_xlsx
 from app.zt.maturity import ZtFrameworkCode, level_count, stage_definitions
-from app.zt.scoring import analyze_gaps, build_roadmap, resolve_target_stage
+from app.zt.retired import retired_answer_count, retired_sentence
+from app.zt.scoring import (
+    analyze_gaps,
+    build_roadmap,
+    engagement_target_capability_count,
+    resolve_target_stage,
+)
 from app.zt.scoring import compute as compute_score
+from app.zt.target_caps import (
+    STAGE_ABOVE_CAPABILITY_MAX,
+    max_stage_for,
+    stage_above_max_message,
+    stage_above_max_sentences,
+    target_cap_sentences,
+)
 
 router = APIRouter(prefix="/zt", tags=["zt"])
 
@@ -226,6 +257,42 @@ def _as_number(raw: Any) -> float | None:
     return None
 
 
+def _validated_stage(
+    raw: Any, max_stage: int, capability_max: int | None = None
+) -> tuple[int | None, str | None]:
+    """A suggested maturity stage as the zt_score apply path would STORE it:
+    `(stage, None)`, or `(None, reason)` with the `ZtDroppedSuggestion` reason
+    it is refused for. ONE statement of the rule, called by `_zt_run_work` and
+    by `scripts/measure_ai_consistency.py` (#867 review B-4), so the measure
+    counts as refused exactly what a run refuses. The twin of
+    `routes/csf.py::_validated_dimension`.
+
+    Parse (`_as_number`), then RANGE `1..max_stage`, then wholeness. Range
+    BEFORE wholeness: `4.9` on a 1-4 ladder is both out of range and not whole,
+    and out-of-range is the more useful thing to say. It also keeps `inf`/`nan`
+    away from `int()`. Extracted unchanged from the inline checks
+    `_zt_run_work` carried; the order and the reasons are the same.
+
+    `capability_max`, when given, is the capability's own maximum
+    (`target_caps.max_stage_for`), checked LAST: a whole stage on the ladder
+    but above it is refused as `stage_above_capability_max`, the reason the
+    PATCH routes give (#839 F1). Callers pass it for a maturity (`current`)
+    stage only; a target above it is stored and disclosed (C1). Both callers
+    pass it, so a run and the measure refuse the same values (the #867
+    hand-off, which #839 owed by merging second).
+    """
+    n = _as_number(raw)
+    if n is None:
+        return None, "unparseable"
+    if not 1 <= n <= max_stage:
+        return None, "out_of_range"
+    if n != int(n):
+        return None, "unparseable"
+    if capability_max is not None and int(n) > capability_max:
+        return None, STAGE_ABOVE_CAPABILITY_MAX
+    return int(n), None
+
+
 # ---------------------------------------------------------------------------
 # Framework <-> ServiceKind mapping
 # ---------------------------------------------------------------------------
@@ -246,6 +313,19 @@ def _framework_for_kind(kind: ServiceKind) -> ZtFramework:
         ) from exc
 
 
+def _refuse_stage_above_capability_max(fw: ZtFramework, code: str, stage: int) -> None:
+    """#839 F1 (#736 comment 6048561596): a maturity stage above the
+    capability's own maximum is refused with a typed 422 and stores nothing.
+    Called by BOTH stage-writing PATCH routes, after the framework range check;
+    `_zt_run_work` drops the same value as `stage_above_capability_max`."""
+    message = stage_above_max_message(_to_catalog_framework(fw), code, stage)
+    if message is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"reason": STAGE_ABOVE_CAPABILITY_MAX, "message": message},
+        )
+
+
 def _to_catalog_framework(fw: ZtFramework) -> ZtFrameworkCode:
     return (
         ZtFrameworkCode.CISA_ZTMM_2_0
@@ -264,21 +344,10 @@ def _serialize_answers(rows: Iterable[ZtAnswer]) -> list[ZtAnswerResponse]:
     return [ZtAnswerResponse.model_validate(r, from_attributes=True) for r in ordered]
 
 
-def _client_target_stage(db: Session, service_id: uuid.UUID) -> int | None:
-    """The ZT target stage the client chose at intake, via the source request.
-
-    Lets the admin workspace default its gap target to the client's goal
-    instead of a hardcoded stage.
-    """
-    svc = db.get(Service, service_id)
-    if svc is None or svc.source_request_id is None:
-        return None
-    sr = db.get(ServiceRequest, svc.source_request_id)
-    return sr.zt_target_stage if sr is not None else None
-
-
 def _serialize_assessment(db: Session, a: ZtAssessment) -> ZtAssessmentResponse:
     rows = db.execute(select(ZtAnswer).where(ZtAnswer.assessment_id == a.id)).scalars().all()
+    cat_fw = _to_catalog_framework(a.framework)
+    retired = retired_answer_count(cat_fw, rows)
     return ZtAssessmentResponse(
         id=a.id,
         service_id=a.service_id,
@@ -289,7 +358,11 @@ def _serialize_assessment(db: Session, a: ZtAssessment) -> ZtAssessmentResponse:
         approved_by=a.approved_by,
         documents_stale=a.documents_stale,
         answers=_serialize_answers(rows),
-        client_target_stage=_client_target_stage(db, a.service_id),
+        client_target_stage=client_target_stage(db, a.service_id),
+        # #646: the ONE derivation every surface calls.
+        ai_source=ai_mode_for(db, db.get(Service, a.service_id), a).as_api(),
+        retired_answers=retired,
+        retired_answers_note=retired_sentence(cat_fw, retired),
     )
 
 
@@ -446,6 +519,7 @@ def get_catalog(
                 pillar_code=c.pillar_code,
                 name=c.name,
                 outcome=c.outcome,
+                kind=c.kind,
             )
             for c in capabilities(cat_fw)
             if c.pillar_code == p.code
@@ -563,6 +637,23 @@ def build_zt_ai_request(db: Session, svc: Service, client: Client) -> ZtAiReques
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Create an assessment first."
         )
+    return _zt_ai_request_for(db, a, client)
+
+
+# #984, #986: the capability codes a request asks about are catalog text, and a
+# client named "DoD" turned every DoD code into "[CLIENT].USR.01" (one named
+# "CISA" did the same to CISA's), so the model was asked about codes that do not
+# exist. Measured on main 2f701f5b. Sent verbatim and guarded: each code is
+# rebuilt from the catalog, so an unknown one is refused, not sent. #981's
+# `capability_details` registers beside its builder the same way.
+register_catalog_field(
+    "capabilities", lambda _payload, value: [capability_by_code(c).code for c in value]
+)
+
+
+def _zt_ai_request_for(db: Session, a: ZtAssessment, client: Client) -> ZtAiRequest:
+    """The request for ONE assessment, named by id: the background job (#645)
+    re-loads the assessment its POST validated, never "the latest"."""
     if a.status in (ZtAssessmentStatus.APPROVED, ZtAssessmentStatus.RELEASED):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="This assessment is locked."
@@ -600,8 +691,9 @@ def build_zt_ai_request(db: Session, svc: Service, client: Client) -> ZtAiReques
 
 @router.post(
     "/services/{service_id}/run-ai",
-    response_model=ZtRunAiResponse,
-    summary="Run the zt_score AI job: suggest current + target per capability (admin)",
+    response_model=AiRunStarted,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Start the zt_score AI job in the background; poll the run it returns (admin)",
 )
 def run_ai(
     service_id: uuid.UUID,
@@ -609,42 +701,103 @@ def run_ai(
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],
     llm: Annotated[LLMClient, Depends(_llm_dep)],
+    runner: Annotated[Runner, Depends(get_ai_run_runner)],
     _rl: Annotated[None, Depends(enforce_ai_rate_limit)],
-) -> ZtRunAiResponse:
+    body: RunAiRequest | None = None,
+) -> AiRunStarted:
     """The ZT 'Run AI'. Suggests a current and target maturity level per
     capability, on the framework's own scale. AI suggests; locked rows are
     untouched; code does the pillar roll-up + roadmap.
-    Returns a 'what changed' list.
+
+    #645: answers 202 with a run to poll. The refusals that need no AI are made
+    here, synchronously; the work is `_zt_run_work`, in the background.
     """
+    serves = require_serves(body.serves if body else None)
     svc = require_service_in_tenant(db, service_id, client.id)
     if svc.kind not in _SERVICE_KIND_TO_FRAMEWORK:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Zero Trust service not found."
         )
     req = build_zt_ai_request(db, svc, client)
-    a, rows, locked_keys, max_stage = (
-        req.assessment,
-        req.rows,
-        req.locked_keys,
-        req.max_stage,
+    return start_run(
+        db,
+        llm=llm,
+        serves=serves,
+        service_id=svc.id,
+        client_id=client.id,
+        purpose=req.preview.job_name,
+        subject_id=req.assessment.id,
+        requested_by=user.id,
+        runner=runner,
+        work=functools.partial(_zt_run_work, assessment_id=req.assessment.id),
     )
+
+
+def _zt_omitted(
+    *,
+    asked: list[str],
+    rows: dict[str, ZtAnswer],
+    answered: set[str],
+    locked_keys: frozenset[str],
+) -> list[ZtOmittedCapability]:
+    """#840: the capabilities the run asked for that no entry named.
+
+    `(asked & rows) - answered - locked`. A locked row is untouched by design,
+    so it is never a missing answer. A row edited during the run is counted:
+    "got no stage from the AI this run" stays true of it. Call it after the
+    apply, so `kept_stage` is the stage the row holds now.
+    """
+    codes = (set(asked) & set(rows)) - answered - locked_keys
+    out: list[ZtOmittedCapability] = []
+    for code in sorted(codes):
+        notes = rows[code].notes
+        out.append(
+            ZtOmittedCapability(
+                capability_code=code,
+                # Whitespace-only is blank; "N/A" is a note.
+                notes_blank=notes is None or not notes.strip(),
+                kept_stage=rows[code].maturity_stage,
+            )
+        )
+    return out
+
+
+def _zt_omitted_counts(omitted_capabilities: list[ZtOmittedCapability]) -> dict[str, int]:
+    """Counts only, never a code (#44 constraint 1): the audit row and the
+    accounting line carry these, and the run result carries the codes."""
+    blank = sum(1 for n in omitted_capabilities if n.notes_blank)
+    return {
+        # #964: the total, beside its split, so the audit row states it.
+        "omitted_count": len(omitted_capabilities),
+        "omitted_blank_notes": blank,
+        "omitted_with_notes": len(omitted_capabilities) - blank,
+        "omitted_kept_stage": sum(1 for n in omitted_capabilities if n.kept_stage is not None),
+    }
+
+
+def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID) -> RunOutcome:
+    """The zt_score run, in the background job's own session (#645). Re-loads
+    by id; a refusal becomes the run's FAILED state with the same reason."""
+    db = session
+    a = db.get(ZtAssessment, assessment_id)
+    if a is None or a.status in (
+        ZtAssessmentStatus.DISCARDED,
+        ZtAssessmentStatus.APPROVED,
+        ZtAssessmentStatus.RELEASED,
+    ):
+        raise RunFailed(
+            "assessment_not_editable",
+            "This assessment was discarded or locked before the run started.",
+        )
+    req = _zt_ai_request_for(db, a, db.get(Client, ctx.client_id))
+    rows, max_stage = req.rows, req.max_stage
+    llm = ctx.llm
 
     def _snap() -> dict[str, dict]:
         return {
             code: {"maturity_stage": r.maturity_stage, "target_stage": r.target_stage}
             for code, r in rows.items()
         }
-
-    before = _snap()
-
-    # Fixture output must never overwrite what a client submitted (migration
-    # 0035). Client-sourced rows are treated exactly like locked rows for the
-    # duration of an offline run; a LIVE run may still draft over them, which is
-    # the consultant workflow and shows a diff for review.
-    protected = protected_keys(
-        ((code, r.answer_source, r.maturity_stage is not None) for code, r in rows.items()),
-        is_fixture=llm.provider.name == "fixture",
-    )
 
     # A provider failure here must stay typed and leave an llm_calls row.
     with ai_call_boundary(db, llm, purpose=req.preview.job_name):
@@ -653,12 +806,33 @@ def run_ai(
             llm,
             req.preview.job_name,
             inputs=req.preview.inputs,
-            requested_by=user.id,
-            service_id=svc.id,
-            client_id=client.id,
+            requested_by=ctx.requested_by,
+            service_id=ctx.service_id,
+            client_id=ctx.client_id,
             client_org_name=req.preview.client_org_name,
             name_hints=req.preview.name_hints,
         )
+    # The provider call is over: keep its `llm_calls` row whatever happens to
+    # the apply. Then read the rows as they are NOW -- an edit that landed while
+    # the model answered must be seen -- and take the PRE-WRITE stamps:
+    # `onupdate=utcnow` stamps every row this job writes.
+    db.commit()
+    edited = frozenset(code for code, r in rows.items() if ctx.edited_since_start(r.updated_at))
+    locked_keys = frozenset(code for code, r in rows.items() if r.locked)
+    before = _snap()
+
+    # Fixture output must never overwrite what a client submitted (migration
+    # 0035). Client-sourced rows are treated exactly like locked rows for the
+    # duration of an offline run; a LIVE run may still draft over them, which is
+    # the consultant workflow and shows a diff for review.
+    #
+    # CSF's twin of this site now drops a LIVE suggestion for a row with no
+    # notes (#1000, reason `no_notes`). Deliberately NOT ported here: ZT's
+    # no-notes behaviour is #981's prompt and decision.
+    protected = protected_keys(
+        ((code, r.answer_source, r.maturity_stage is not None) for code, r in rows.items()),
+        is_fixture=llm.provider.name == "fixture",
+    )
     # `parse_json_object` guarantees a dict or raises (issue #41). The old
     # `else {}` here discarded a whole unwrapped response and reported zero
     # changes, which read as the model agreeing with everything.
@@ -673,6 +847,9 @@ def run_ai(
     # invisible: `applied` counts both, the row holds the last, and the first is
     # gone with no record.
     written: dict[tuple[str, str], Any] = {}
+    # #840: every code a dict entry NAMED, whatever then happened to it. A
+    # refused entry is an answer: its loss is itemized under its own reason.
+    answered: set[str] = set()
 
     # `parse_json_object_with_list("capabilities")` guarantees the key is
     # PRESENT and holds a list, or raises a typed 502. A non-list `capabilities`
@@ -709,6 +886,8 @@ def run_ai(
             continue
 
         raw_code = sugg.get("code")
+        if isinstance(raw_code, str):
+            answered.add(raw_code)
         # Never the literal "None" — that fabricates a capability nobody named.
         key = _bounded_key(raw_code) if raw_code is not None else None
         fields = [f for f in _ZT_ROW_FIELDS if f in sugg]
@@ -775,6 +954,12 @@ def run_ai(
                 ZtDroppedSuggestion(reason="protected", key=key, values=recognized_values)
             )
             continue
+        if raw_code in edited:
+            # #645: an answer edited after the run started (an edit that checked
+            # the lock before the run existed). Kept, never overwritten, and
+            # itemized like the other by-design skips.
+            dropped.append(ZtDroppedSuggestion(reason="edited", key=key, values=recognized_values))
+            continue
 
         # Provenance follows the VALUE, not the attempt (issue #38), and is
         # settled after the loop from the before/after snapshot — see below.
@@ -783,8 +968,18 @@ def run_ai(
         # handing the settlement loop a row the model never wrote.
         for field in fields:
             raw = sugg[field]
-            n = _as_number(raw)
-            if n is None:
+            # Parse, range, wholeness, then the capability's own maximum for a
+            # maturity stage (#839 F1: the PATCH routes refuse a stage above
+            # it, so a suggestion of one is refused the same way, never
+            # stored). `_validated_stage`, the one statement of the rule, also
+            # called by the consistency measure with the same maximum.
+            capability_max = (
+                max_stage_for(_to_catalog_framework(a.framework), raw_code)
+                if field == "current"
+                else None
+            )
+            stage, refusal = _validated_stage(raw, max_stage, capability_max)
+            if refusal is not None:
                 # `values=field_values[field]`, NOT 1. `received` charged this
                 # key every leaf it hides, so a flat 1 here drops the rest out
                 # of both sides of the invariant with no record — the silent
@@ -793,7 +988,7 @@ def run_ai(
                 # adversarial pass; `csf.py` had it right and a test for it.
                 dropped.append(
                     ZtDroppedSuggestion(
-                        reason="unparseable",
+                        reason=refusal,
                         key=key,
                         field=field,
                         value=_bounded(raw),
@@ -801,32 +996,6 @@ def run_ai(
                     )
                 )
                 continue
-            # RANGE before wholeness: `4.9` on a 1-4 ladder is both out of range
-            # and not whole, and out-of-range is the more useful thing to say.
-            # It also keeps `inf`/`nan` away from `int()`.
-            if not 1 <= n <= max_stage:
-                dropped.append(
-                    ZtDroppedSuggestion(
-                        reason="out_of_range",
-                        key=key,
-                        field=field,
-                        value=_bounded(raw),
-                        values=field_values[field],
-                    )
-                )
-                continue
-            if n != int(n):
-                dropped.append(
-                    ZtDroppedSuggestion(
-                        reason="unparseable",
-                        key=key,
-                        field=field,
-                        value=_bounded(raw),
-                        values=field_values[field],
-                    )
-                )
-                continue
-
             slot = (raw_code, field)
             if slot in written:
                 # Names the value that was LOST, not the one that won.
@@ -840,7 +1009,7 @@ def run_ai(
                 )
                 applied -= 1
             written[slot] = raw
-            setattr(row, "maturity_stage" if field == "current" else "target_stage", int(n))
+            setattr(row, "maturity_stage" if field == "current" else "target_stage", stage)
             applied += 1
             suggested.add(raw_code)
 
@@ -852,6 +1021,15 @@ def run_ai(
 
     db.flush()
     after = _snap()
+    # #840: read AFTER the apply, so `kept_stage` is what the row holds now,
+    # including an edit that landed while the model answered.
+    omitted_capabilities = _zt_omitted(
+        asked=req.preview.inputs["capabilities"],
+        rows=rows,
+        answered=answered,
+        locked_keys=locked_keys,
+    )
+    omitted_counts = _zt_omitted_counts(omitted_capabilities)
 
     # Provenance follows the VALUE, not the attempt (issue #38). Settled here,
     # from the net before/after effect, so it cannot be fooled by a rejected
@@ -872,7 +1050,7 @@ def run_ai(
         if after[code] == before[code]:
             continue  # net no-op: agreement, or a duplicate that round-tripped
         row = rows[code]
-        row.answered_by = user.id
+        row.answered_by = ctx.requested_by
         row.answered_at = utcnow()
         if after[code]["maturity_stage"] != before[code]["maturity_stage"]:
             row.answer_source = SOURCE_AI
@@ -904,17 +1082,21 @@ def run_ai(
             },
         )
 
-    # BELOW the D-031 re-read on purpose. Above it, a run that lost the discard
-    # race logged "applied=N" for a transaction that then rolled back — a record
-    # asserting something the database does not contain. Counts only: no key, no
-    # model text (#44 constraint 1).
-    _log.info(
+    # NOT logged here: a run that lost the discard race once logged
+    # "applied=N" for a transaction that then rolled back. The apply commits
+    # with the run's completion compare-and-swap (#645), so the framework
+    # emits this only after that commit, or as `.voided` when it misses.
+    # Counts only: no key, no model text (#44 constraint 1).
+    accounting = (
         "zt_run_ai_suggestions_accounted",
-        service_id=str(svc.id),
-        assessment_id=str(a.id),
-        received=received,
-        applied=applied,
-        dropped_by_reason=dropped_by_reason,
+        {
+            "service_id": str(ctx.service_id),
+            "assessment_id": str(a.id),
+            "received": received,
+            "applied": applied,
+            "dropped_by_reason": dropped_by_reason,
+            **omitted_counts,
+        },
     )
 
     a.documents_stale = True  # Work Order C3
@@ -923,30 +1105,36 @@ def run_ai(
         action="zt.run_ai",
         target_type="zt_assessment",
         target_id=a.id,
-        actor_user_id=user.id,
+        actor_user_id=ctx.requested_by,
         # Reason codes and value counts only — never a capability code and never
         # model output (#44 constraint 1, Master Spec §12.1). The response
         # carries the verbatim key and value; the durable record does not.
         details={
+            "run_id": str(ctx.run_id),
             "changed_rows": len(diffs),
             "suggestions_received": received,
             "suggestions_applied": applied,
             "dropped_by_reason": dropped_by_reason,
+            # #840: counts only, never a capability code.
+            **omitted_counts,
         },
     )
-    db.commit()
-
-    answers_out = [
-        ZtAnswerResponse.model_validate(r, from_attributes=True)
-        for r in sorted(rows.values(), key=lambda r: r.capability_code)
-    ]
-    return ZtRunAiResponse(
+    # No commit: the framework commits this apply with the run's completion.
+    payload = ZtRunAiResponse(
         changed=changes,
-        answers=answers_out,
+        answers=[
+            ZtAnswerResponse.model_validate(r, from_attributes=True)
+            for r in sorted(rows.values(), key=lambda r: r.capability_code)
+        ],
         suggestions_received=received,
         suggestions_applied=applied,
         dropped=dropped,
         preserved_client_answers=len(protected),
+        omitted_count=len(omitted_capabilities),
+        omitted_capabilities=omitted_capabilities,
+    )
+    return RunOutcome(
+        result=payload.model_dump(mode="json"), applied_count=applied, accounting=accounting
     )
 
 
@@ -974,6 +1162,7 @@ def create_assessment(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Zero Trust service not found.",
         )
+    refuse_while_running(db, svc.id)  # #645: the edit lock
     framework = _framework_for_kind(svc.kind)
     cat_fw = _to_catalog_framework(framework)
 
@@ -1084,6 +1273,8 @@ def patch_answer(
             detail="Answer not found.",
         )
     a = db.get(ZtAssessment, row.assessment_id)
+    if a is not None:
+        refuse_while_running(db, a.service_id)  # #645: the edit lock
     if a is None or a.status in (
         ZtAssessmentStatus.APPROVED,
         ZtAssessmentStatus.RELEASED,
@@ -1102,6 +1293,7 @@ def patch_answer(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"maturity_stage must be 1-{max_stage}.",
             )
+        _refuse_stage_above_capability_max(a.framework, row.capability_code, s)
         row.maturity_stage = s
     elif "maturity_stage" in data:
         row.maturity_stage = None
@@ -1201,6 +1393,8 @@ def patch_self_assessment_answer(
             detail="Answer not found.",
         )
     a = db.get(ZtAssessment, row.assessment_id)
+    if a is not None:
+        refuse_while_running(db, a.service_id)  # #645: the edit lock
     if a is None or a.status != ZtAssessmentStatus.DRAFT:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1215,6 +1409,7 @@ def patch_self_assessment_answer(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"maturity_stage must be 1-{max_stage}.",
             )
+        _refuse_stage_above_capability_max(a.framework, row.capability_code, s)
         row.maturity_stage = s
     elif "maturity_stage" in data:
         row.maturity_stage = None
@@ -1245,6 +1440,7 @@ def submit_self_assessment(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Zero Trust service not found.",
         )
+    refuse_while_running(db, svc.id)  # #645: the edit lock
     a = _latest_assessment(db, svc.id)
     if a is None:
         raise HTTPException(
@@ -1257,10 +1453,10 @@ def submit_self_assessment(
             detail="This self-assessment has already been submitted.",
         )
     if body.target_stage is not None:
-        # RANGE, per framework. `ZtSelfAssessmentSubmit.target_stage` is bound
-        # `ge=1, le=4` for both frameworks -- a pydantic field constraint cannot
-        # see the service -- and DoD ZTRA ends at 3, so the schema admits a DoD
-        # Stage 4 and this is the only place that can refuse it FOR THIS ROUTE.
+        # RANGE, per framework. `ZtSelfAssessmentSubmit.target_stage` carries no
+        # bound since #85 (a pydantic field constraint cannot see the service,
+        # and DoD ZTRA ends at 3), so this is the only place that refuses an
+        # off-ladder stage FOR THIS ROUTE, at either end.
         #
         # The THIRD writer of the engagement target, and the one an earlier
         # draft of the #125 fix missed while its intake sibling carried a
@@ -1269,7 +1465,21 @@ def submit_self_assessment(
         # self-assessment UI re-persists whatever is stored when the client
         # submits without touching the control -- refreshing an invalid legacy
         # value straight past the new door.
+        #
+        # THE FLOOR (#85), checked before the ladder: Stage 1 is a stage both
+        # frameworks have and not a target. This route used to accept it, as a
+        # written decision; #85 reverses that, so a client may not choose 1
+        # after intake any more than at intake. The sentence is intake's,
+        # CALLED from `assessment_targets.floor_refusal`.
         max_stage = level_count(_to_catalog_framework(a.framework))
+        if 1 <= body.target_stage < MIN_TARGET_STAGE:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "reason": "target_stage_out_of_range",
+                    "message": floor_refusal("Stage", body.target_stage, MIN_TARGET_STAGE),
+                },
+            )
         if not 1 <= body.target_stage <= max_stage:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1332,6 +1542,8 @@ def approve_assessment(
     db: Annotated[Session, Depends(get_db)],
 ) -> ZtAssessmentResponse:
     a = require_zt_assessment_in_tenant(db, assessment_id, client.id)
+    # #645: approving mid-run would approve answers about to change.
+    refuse_while_running(db, a.service_id)
     if a.status == ZtAssessmentStatus.APPROVED:
         return _serialize_assessment(db, a)
     if a.status == ZtAssessmentStatus.RELEASED:
@@ -1615,6 +1827,10 @@ def gap_analysis(
         unscored_count=len(analysis.unscored_codes),
         # Off the same GapAnalysis the deliverable and the dashboard read.
         unusable_target_codes=list(analysis.unusable_target_codes),
+        # #839: from the same GapAnalysis the deliverable and dashboard read.
+        target_cap_notes=target_cap_sentences(analysis),
+        # #839 S1: from the same stored answers the analysis read.
+        stage_above_max_notes=stage_above_max_sentences(cat_fw, answers),
         gap_count_by_pillar=analysis.gap_count_by_pillar,
         gaps=[
             GapItem(
@@ -1740,6 +1956,7 @@ def finalize_zt_deliverable(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Zero Trust service not found.",
         )
+    refuse_while_running(db, svc.id)  # #645: the edit lock
     assessment = _latest_assessment(db, svc.id)
     if assessment is None:
         raise HTTPException(
@@ -1789,7 +2006,7 @@ def finalize_zt_deliverable(
     targets_map: dict[str, int | None] = {
         r.capability_code: r.target_stage for r in answers if r.capability_code in valid
     }
-    engagement_target = _client_target_stage(db, svc.id)
+    engagement_target = client_target_stage(db, svc.id)
     # #125: the stored value is resolved ONCE, here, and both the number and
     # its provenance come from that single call. They used to be derived
     # independently -- the number by a silent clamp inside `analyze_gaps`, the
@@ -1843,6 +2060,13 @@ def finalize_zt_deliverable(
         answers=answers,
         score=score,
         gap=gap,
+        # #646: the ONE derivation every surface calls.
+        ai_mode=ai_mode_for(db, svc, assessment),
+        # #783: the resolver's verdict travels with the number it produced,
+        # and whether that number decided any row (the dashboard asks the same
+        # function, `engagement_target_capability_count`).
+        target_source=target_stage_source,
+        engagement_target_used=engagement_target_capability_count(cat_fw, targets_map) > 0,
     )
     pdf_bytes = render_zt_pdf(ctx)
     xlsx_bytes = render_zt_xlsx(ctx)
@@ -1883,6 +2107,15 @@ def finalize_zt_deliverable(
         f"{score.answered_capabilities}/{score.total_capabilities} capabilities scored; "
         f"{gap.total_gap_count} gap(s) at target S{gap.target_stage}."
     )
+    # #783: `/results` shows this line to the client, so it says what the
+    # document says when the target is a default.
+    target_note = target_source_sentence(
+        "stage",
+        target_stage_source,
+        engagement_target_used=ctx.engagement_target_used,
+    )
+    if target_note:
+        summary_line += f" {target_note}"
 
     deliv = Deliverable(
         service_id=svc.id,

@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
-import { extractAfterUpload, watchUpload } from "../helpers/ai";
+import { apiExtract, extractAfterUpload, watchUpload } from "../helpers/ai";
 import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
 
 /**
@@ -76,7 +76,7 @@ test("the workspace discloses what the extraction dropped, and the row can be re
     extractDone,
     uploadWatch,
   );
-  const list = (await extractResponse.json()) as {
+  const list = extractResponse as unknown as {
     id: string;
     source_rows_total: number;
     items: unknown[];
@@ -162,12 +162,7 @@ test("an exclusion the consultant agrees with stays disclosed, not hidden", asyn
     })
   ).json();
 
-  const list = await (
-    await request.post(
-      `${API_BASE}/tech-debt/services/${svc.id}/capability-lists/extract`,
-      { headers: H, data: { artifact_id: artifact.id } },
-    )
-  ).json();
+  const list = await apiExtract(request, H, svc.id, artifact.id);
   expect(list.excluded_rows).toHaveLength(1);
   const rowIndex = list.excluded_rows[0].index as number;
   expect(list.excluded_rows[0].confirmed).toBe(false);
