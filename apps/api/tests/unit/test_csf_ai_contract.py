@@ -129,7 +129,7 @@ def test_prompt_schema_response_applies_changes(app_client) -> None:
     row = {"tier": "high", "subcategory_code": code, "what_we_found": "Grounded finding."}
     for i, dim in enumerate(_DIM_FIELDS):
         row[dim] = i % 3  # deterministic 0/1/2, on-schema
-    body = {_PARSER_TOP_LEVEL_KEY: [row], "executive_summary": "Contract check."}
+    body = {_PARSER_TOP_LEVEL_KEY: [row]}
     provider.register_static("csf_score", LLMResponse(json.dumps(body)))
 
     r = csf_run_ai(c, svc_id, h)

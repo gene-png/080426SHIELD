@@ -14,7 +14,7 @@ suggestions line up with the live assessment and Run AI actually changes rows.
 All six job purposes are registered:
   mitre_map            -> ATT&CK coverage status + validated D/P/R tool citations
   zt_score             -> Zero Trust current/target (DoD respects the <=3 clamp)
-  csf_score            -> NIST CSF five dimension scores (0-2) + narrative
+  csf_score            -> NIST CSF five dimension scores (0-2) + narrative (#806 prompt)
   extract.capabilities -> Tech Debt capability extraction (with confidence_pct)
   risk_synthesize      -> Risk Register candidate entries (catalog-valid links)
   attack_scenario_delta -> the ATT&CK what-if's replacement credits
@@ -251,24 +251,87 @@ def _fixture_zt_score(payload: dict[str, Any]) -> LLMResponse:
 
 _CSF_DIMENSIONS = ("governance", "policy", "implementation", "monitoring", "improvement")
 
+# The prompt's own words (#806 comment 5982122270), copied, never paraphrased:
+# section 10's dimension names, section 7's rating sentences, section 8's
+# evidence sentences and section 9's no-answer `what_we_found`.
+_CSF_DIMENSION_NAMES = (
+    "Governance",
+    "Policy and Process",
+    "Implementation",
+    "Monitoring and Measurement",
+    "Continuous Improvement",
+)
+_CSF_RATING_SENTENCES = {
+    1: "The recorded maturity rating is Tier 1 (Partial).",
+    2: "The recorded maturity rating is Tier 2 (Risk Informed).",
+    3: "The recorded maturity rating is Tier 3 (Repeatable).",
+    4: "The recorded maturity rating is Tier 4 (Adaptive).",
+}
+_CSF_NO_RATING = "No maturity rating was recorded."
+_CSF_EVIDENCE_ATTACHED = (
+    "Supporting evidence was attached to the answer; its contents were not provided "
+    "and were not evaluated."
+)
+_CSF_NO_EVIDENCE = "No supporting evidence was attached to the answer."
+_CSF_NO_ANSWER = (
+    "No answer was recorded. No assessment dimension was demonstrated. "
+    "No maturity rating was recorded. No supporting evidence was attached to the answer."
+)
+
+
+def _csf_what_we_found(practices: str, missing: list[str], answer: dict[str, Any]) -> str:
+    """Section 10's order: the practices, the dimensions not demonstrated, the
+    rating sentence (section 7), the evidence sentence last (section 8)."""
+    parts = [practices] if practices else []
+    if missing:
+        parts.append(f"Not demonstrated by the notes: {', '.join(missing)}.")
+    parts.append(_CSF_RATING_SENTENCES.get(answer.get("maturity_tier"), _CSF_NO_RATING))
+    parts.append(_CSF_EVIDENCE_ATTACHED if answer.get("has_evidence") is True else _CSF_NO_EVIDENCE)
+    return " ".join(parts)
+
 
 def _fixture_csf_score(payload: dict[str, Any]) -> LLMResponse:
-    tiers = sorted(_strs(payload.get("tiers")))
-    subcategories = sorted(_strs(payload.get("subcategories")))
+    """Written from the approved prompt (#806), never from the parser.
+
+    - Section 3: one row per (tier, Subcategory), in `subcategories` order and,
+      within each, `tiers` order; no row for a code outside `subcategories`.
+    - Section 9: no `answers` entry gets 0 on all five and the exact no-answer
+      sentence; blank notes get 0 on all five, the rating and the evidence.
+    - Noted answers: deterministic 0/1/2 by position; every 0 is named as not
+      demonstrated (section 9), then the rating and evidence sentences.
+    - Section 12: no other fields, so no `executive_summary`.
+    """
+    tiers = _strs(payload.get("tiers"))
+    answers = payload.get("answers")
+    answers = answers if isinstance(answers, dict) else {}
     scores: list[dict[str, Any]] = []
-    for ti, tier in enumerate(tiers):
-        for si, code in enumerate(subcategories):
-            base = (ti + si) % 3
+    for si, code in enumerate(_strs(payload.get("subcategories"))):
+        answer = answers.get(code)
+        for ti, tier in enumerate(tiers):
             row: dict[str, Any] = {"tier": tier, "subcategory_code": code}
-            for di, dim in enumerate(_CSF_DIMENSIONS):
-                row[dim] = (base + di) % 3  # deterministic 0/1/2
-            row["what_we_found"] = f"Fixture-mode finding for {code} in the {tier} tier profile."
+            notes = answer.get("notes") if isinstance(answer, dict) else None
+            if not isinstance(answer, dict):
+                row.update(dict.fromkeys(_CSF_DIMENSIONS, 0))
+                row["what_we_found"] = _CSF_NO_ANSWER
+            elif not isinstance(notes, str) or not notes.strip():
+                row.update(dict.fromkeys(_CSF_DIMENSIONS, 0))
+                row["what_we_found"] = _csf_what_we_found(
+                    "No assessment dimension was demonstrated by the notes.", [], answer
+                )
+            else:
+                base = (ti + si) % 3
+                for di, dim in enumerate(_CSF_DIMENSIONS):
+                    row[dim] = (base + di) % 3  # deterministic 0/1/2
+                missing = [
+                    name
+                    for dim, name in zip(_CSF_DIMENSIONS, _CSF_DIMENSION_NAMES, strict=True)
+                    if row[dim] == 0
+                ]
+                row["what_we_found"] = _csf_what_we_found(
+                    f"Fixture-mode finding for {code} in the {tier} tier profile.", missing, answer
+                )
             scores.append(row)
-    body: dict[str, Any] = {
-        "scores": scores,
-        "executive_summary": ("Fixture-mode NIST CSF draft across the seeded working profile."),
-    }
-    return _resp(body)
+    return _resp({"scores": scores})
 
 
 # ---------------------------------------------------------------------------

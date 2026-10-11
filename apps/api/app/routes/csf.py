@@ -42,6 +42,7 @@ from app.ai.runs import (
     Runner,
     RunOutcome,
     get_ai_run_runner,
+    provider_serves,
     refuse_while_running,
     require_serves,
     start_run,
@@ -91,6 +92,7 @@ from app.dependencies import current_client, current_user, require_role
 from app.logging import get_logger
 from app.mode_stamp import ai_mode_for
 from app.models._common import utcnow
+from app.models.ai_run import AiRun, AiRunStatus
 from app.models.artifact import Artifact, ArtifactOrigin
 from app.models.client import Client
 from app.models.csf_assessment import (
@@ -100,6 +102,7 @@ from app.models.csf_assessment import (
 )
 from app.models.csf_profile import CsfDimensionScore, CsfGapAction
 from app.models.deliverable import FROZEN_TARGET_AT_FINALIZE, Deliverable
+from app.models.llm_call import LLMCallMode
 from app.models.questionnaire import Question
 from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.service_request import ServiceRequest
@@ -1382,6 +1385,7 @@ def _enterprise_subcategories(
         by_subcat.setdefault(r.subcategory_code, {})[r.tier] = r
         tiers_in_use.add(r.tier)
 
+    noted = _codes_with_notes(db, a)
     out: list[EnterpriseSubcategory] = []
     for code in sorted(by_subcat):
         tier_rows = by_subcat[code]
@@ -1421,6 +1425,7 @@ def _enterprise_subcategories(
                 target_level=target,
                 gap=gap,
                 priority=priority,
+                no_notes=code not in noted,
             )
         )
     return out, tiers_in_use
@@ -1645,6 +1650,7 @@ def upsert_gap_action(
             target_level=None,
             gap=False,
             priority=None,
+            no_notes=subcategory_code not in _codes_with_notes(db, a),
         )
     return _gap_action_response(ent, row)
 
@@ -1819,6 +1825,7 @@ def _apply_suggestions(
     protected: frozenset[str] | set[str] = frozenset(),
     edited: frozenset[str] | set[str] = frozenset(),
     strays: list[Any] | None = None,
+    no_notes: frozenset[str] | set[str] = frozenset(),
 ) -> tuple[int, int, list[CsfDroppedSuggestion]]:
     """Apply the csf_score suggestions, accounting for every one of them (W1).
 
@@ -1854,6 +1861,9 @@ def _apply_suggestions(
     was NOT asked for. They are counted and itemized exactly like the rest, then
     dropped as `not_in_batch`: the batch that asked for the row answers it, and
     a stray must neither apply twice nor overwrite that answer from outside.
+
+    `no_notes` (#1000) are the rows a LIVE run does not assess: their interview
+    answer carried no notes. Empty on an offline run (`_csf_run_work`).
 
     Returns ``(received, applied, dropped)`` satisfying
     ``received == applied + sum(d.values for d in dropped)``.
@@ -1960,6 +1970,15 @@ def _apply_suggestions(
                 CsfDroppedSuggestion(reason="protected", key=key, values=recognized_values)
             )
             continue
+        if row_key in no_notes:
+            # #1000 (Gene's ruling 2): a LIVE run does not assess a row with no
+            # notes. The prompt scores such a row 0, which over a hand-typed
+            # score is a wrong number nobody asked for; the row keeps what it
+            # had and is disclosed. A by-design skip, like `locked`.
+            dropped.append(
+                CsfDroppedSuggestion(reason="no_notes", key=key, values=recognized_values)
+            )
+            continue
         if row_key in edited:
             # #645: a consultant edited this row after the run started (an edit
             # that checked the lock before the run existed). Kept, never
@@ -2050,12 +2069,11 @@ def build_csf_ai_request(db: Session, svc: Service, client: Client) -> CsfAiRequ
 def _subcategory_definitions(codes: list[str]) -> dict[str, str]:
     """Each code's NIST CSF 2.0 outcome text, as the catalog has it (#806 D2).
 
-    Not sent yet: the #806 CSF prompt PR adds it to the payload built below,
-    sliced per batch, by calling this function. It is registered now (#984), so
-    the moment it is sent it egresses unredacted and guarded: a client named
-    "Critical" would otherwise turn GV.OC-04's outcome into "[CLIENT]
-    objectives, ...". A code the catalog does not have raises KeyError, which
-    the guard reports as a mismatch."""
+    The request builder below sends it, and `_csf_batch_inputs` slices it per
+    batch. It is registered (#984), so it egresses unredacted and guarded: a
+    client named "Critical" would otherwise turn GV.OC-04's outcome into
+    "[CLIENT] objectives, ...". A code the catalog does not have raises
+    KeyError, which the guard reports as a mismatch."""
     return {code: subcategory_by_code(code).outcome for code in codes}
 
 
@@ -2124,6 +2142,7 @@ def _csf_ai_request_for(db: Session, a: CsfAssessment, client: Client) -> CsfAiR
         if ans.maturity_tier is not None or ans.notes or ans.evidence_artifact_id is not None
     }
     client_org = client.legal_name  # NULL when nobody has named the org (D-080)
+    codes = sorted({r.subcategory_code for r in rows.values()})
     return CsfAiRequest(
         assessment=a,
         rows=rows,
@@ -2132,7 +2151,11 @@ def _csf_ai_request_for(db: Session, a: CsfAssessment, client: Client) -> CsfAiR
             job_name="csf_score",
             inputs={
                 "tiers": sorted({r.tier for r in rows.values()}),
-                "subcategories": sorted({r.subcategory_code for r in rows.values()}),
+                "subcategories": codes,
+                # #806 D2: the outcome text the prompt scores against (its
+                # section 4, source 1). The preview shows the full map; each
+                # batch carries only its own codes' (`_csf_batch_inputs`).
+                "subcategory_definitions": _subcategory_definitions(codes),
                 "answers": answers,
             },
             client_org_name=client_org,
@@ -2154,7 +2177,7 @@ def _csf_ai_request_for(db: Session, a: CsfAssessment, client: Client) -> CsfAiR
 #     routes/attack.py), the high end of the range the llm.py comment gives
 #     for csf_score. No live csf_score has been measured.
 # (8192 - 2048) / 575 = 10.7, so 10 rows: ~5.75k tokens, leaving ~400 for the
-# JSON wrapper and the prompt's `executive_summary`. A tier's subcategories are
+# JSON wrapper. A tier's subcategories are
 # split in tens, so the 318-row profile is 3 x 11 = 33 batches, 6 short ones.
 # The streamed Anthropic adapter (64000) has room to spare at this size.
 _CSF_BATCH_ROWS = 10
@@ -2167,15 +2190,23 @@ def _csf_batch_inputs(inputs: dict[str, Any]) -> list[dict[str, Any]]:
     """The payload split into batches of at most `_CSF_BATCH_ROWS` rows: one
     tier per batch, that tier's subcategories in order, each batch carrying
     every interview answer (input tokens are the cheap side, and a batch must
-    not lose the grounding the prompt asks it to use). Every (tier,
-    subcategory) row the single-call payload asked for is asked for once."""
+    not lose the grounding the prompt asks it to use; the prompt says to ignore
+    answers for codes it was not asked about). Every (tier, subcategory) row
+    the single-call payload asked for is asked for once.
+
+    `subcategory_definitions` is sliced to the batch's own codes (#806 D2), in
+    the batch's code order, so no batch resends all 106 outcomes."""
     tiers = list(inputs.get("tiers") or [])
     codes = list(inputs.get("subcategories") or [])
-    batches = [
-        {**inputs, "tiers": [tier], "subcategories": codes[i : i + _CSF_BATCH_ROWS]}
-        for tier in tiers
-        for i in range(0, len(codes), _CSF_BATCH_ROWS)
-    ]
+    definitions = inputs.get("subcategory_definitions") or {}
+    batches = []
+    for tier in tiers:
+        for i in range(0, len(codes), _CSF_BATCH_ROWS):
+            batch_codes = codes[i : i + _CSF_BATCH_ROWS]
+            batch = {**inputs, "tiers": [tier], "subcategories": batch_codes}
+            if "subcategory_definitions" in inputs:
+                batch["subcategory_definitions"] = {c: definitions[c] for c in batch_codes}
+            batches.append(batch)
     return batches or [inputs]
 
 
@@ -2257,9 +2288,12 @@ def _omitted_keys(
     answers: Sequence[dict[str, Any]],
     rows: Mapping[str, Any],
     locked: AbstractSet[str],
+    *,
+    no_notes: AbstractSet[str],
 ) -> set[str]:
     """The `tier|code` ROWS a SUCCESSFUL batch was asked for that no entry of
-    THAT batch names (#836): `(asked & rows) - answered - locked`, per batch.
+    THAT batch names (#836): `(asked & rows) - answered - locked - no_notes`,
+    per batch.
 
     `& rows`: a batch asks for its tier x the PROFILE-WIDE subcategory list,
     so on a non-rectangular profile (an assessment provisioned before #852
@@ -2280,6 +2314,9 @@ def _omitted_keys(
     - A failed batch is not in `batch_inputs` (`run_batches` returns
       successful batches only), so its rows stay `batches_failed`'s.
     - A locked row is left alone by design whether answered or not.
+    - A row with no notes on a LIVE run (#1000) is not assessed whether
+      answered or not, and no re-run can answer it, so it is counted as
+      `no_notes_count` rather than alerted here.
     - A row EDITED during the run is NOT subtracted: the model still sent
       nothing for it, so "got no answer from the AI" stays true (approved
       on #736, comment 6067815887).
@@ -2295,8 +2332,35 @@ def _omitted_keys(
             for entry in answer["scores"]
             if isinstance(entry, dict)
         }
-        omitted |= (asked & rows.keys()) - answered - locked
+        omitted |= (asked & rows.keys()) - answered - locked - no_notes
     return omitted
+
+
+def _covered_keys(
+    batch_inputs: Sequence[dict[str, Any]],
+    rows: Mapping[str, Any],
+    locked: AbstractSet[str],
+) -> set[str]:
+    """The `tier|code` rows the run COVERED (#1000): asked for by a SUCCESSFUL
+    batch, a real row, and not locked. The population the no-notes counts are
+    taken over; `_omitted_keys` is the same set less the answered rows."""
+    covered: set[str] = set()
+    for inputs in batch_inputs:
+        covered |= {f"{t}|{c}" for t in inputs["tiers"] for c in inputs["subcategories"]}
+    return (covered & rows.keys()) - locked
+
+
+def _has_notes(notes: str | None) -> bool:
+    """#1000: ONE statement of "this answer has notes", read by the live run
+    and the Enterprise table alike. Blank or whitespace-only is no notes."""
+    return bool(notes and notes.strip())
+
+
+def _codes_with_notes(db: Session, a: CsfAssessment) -> set[str]:
+    """The subcategory codes whose CURRENT interview answer has notes. A code
+    with no answer row has none."""
+    answers = db.execute(select(CsfAnswer).where(CsfAnswer.assessment_id == a.id)).scalars()
+    return {ans.subcategory_code for ans in answers if _has_notes(ans.notes)}
 
 
 def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID) -> RunOutcome:
@@ -2360,8 +2424,23 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
     # out of the applied set and itemized as `not_in_batch`, so a row is only
     # ever written from the batch that asked for it.
     scores, strays = _split_strays(batched.inputs, batched.answers, rows)
+    # #1000: on a LIVE run, the rows whose answer had no notes IN WHAT WAS SENT
+    # -- the notes the model saw, not notes typed while it answered. Offline,
+    # none: fixture output still fills a blank Playbook (the demo and e2e).
+    #
+    # ZT is not touched: its twin (`routes/zt.py`, beside `protected_keys`)
+    # waits on #981's prompt.
+    live = provider_serves(llm) == "live"
+    covered = _covered_keys(batched.inputs, rows, locked_keys)
+    sent_answers = req.preview.inputs["answers"]
+    noted_codes = {code for code, ans in sent_answers.items() if _has_notes(ans.get("notes"))}
+    no_notes = (
+        frozenset(k for k, r in rows.items() if r.subcategory_code not in noted_codes)
+        if live
+        else frozenset()
+    )
     # #836: rows a successful batch was asked for and left out (`_omitted_keys`).
-    omitted = _omitted_keys(batched.inputs, batched.answers, rows, locked_keys)
+    omitted = _omitted_keys(batched.inputs, batched.answers, rows, locked_keys, no_notes=no_notes)
     data = {"scores": scores}
     omitted_rows = [
         CsfRowKey(tier=tier, subcategory_code=code)
@@ -2380,7 +2459,15 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
         ((k, r.answer_source, r.answer_source is not None) for k, r in rows.items()),
         is_fixture=llm.provider.name == "fixture",
     )
-    received, applied, dropped = _apply_suggestions(data, rows, protected, edited, strays)
+    received, applied, dropped = _apply_suggestions(
+        data, rows, protected, edited, strays, no_notes=no_notes
+    )
+    # #1000: the counts the panel and the client files state. None offline.
+    # The subcategory counts are over IN-SCOPE codes (see `CsfRunAiResponse`).
+    no_notes_count = len(covered & no_notes) if live else None
+    in_scope_codes = {rows[k].subcategory_code for k in covered if rows[k].in_scope}
+    no_notes_subcategories_total = len(in_scope_codes) if live else None
+    no_notes_subcategories = len(in_scope_codes - noted_codes) if live else None
 
     db.flush()
     after = _snap()
@@ -2473,6 +2560,7 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
             "batches_total": batched.total,
             "batches_failed": batched.failed,
             "omitted_count": len(omitted_rows),
+            "no_notes_count": no_notes_count,
         },
     )
 
@@ -2495,6 +2583,8 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
             "batches_failed": batched.failed,
             # #836: a count, never the row keys (codes and counts only).
             "omitted_count": len(omitted_rows),
+            # #1000: rows a live run did not assess (no notes); None offline.
+            "no_notes_count": no_notes_count,
         },
     )
     # No commit: the framework commits this apply with the run's completion.
@@ -2511,6 +2601,9 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
         batches_failed=batched.failed,
         omitted_count=len(omitted_rows),
         omitted_rows=omitted_rows,
+        no_notes_count=no_notes_count,
+        no_notes_subcategories=no_notes_subcategories,
+        no_notes_subcategories_total=no_notes_subcategories_total,
     )
     return RunOutcome(
         result=payload.model_dump(mode="json"),
@@ -2519,6 +2612,56 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
         batches_failed=batched.failed,
         accounting=accounting,
     )
+
+
+def _last_live_run_no_notes_note(
+    db: Session, service_id: uuid.UUID, assessment_id: uuid.UUID
+) -> str | None:
+    """#1000: the Playbook files' no-notes sentence, from the most recent LIVE
+    csf_score run on THIS assessment -- COMPLETED, `mode` LIVE, latest
+    `finished_at` -- and its stored `result`. Never from current notes: the
+    files say what that run did, and notes typed since did not change it.
+
+    None, and the sentence is omitted, when no live run has completed (an
+    offline run assesses every row, so it has nothing to state), or when the
+    latest live run was stored before #1000 and carries no count: "not
+    counted" is not zero, and a number we do not have is not printed."""
+    run = db.execute(
+        select(AiRun)
+        .where(
+            AiRun.service_id == service_id,
+            AiRun.purpose == "csf_score",
+            AiRun.subject_id == assessment_id,
+            AiRun.status == AiRunStatus.COMPLETED,
+            AiRun.mode == LLMCallMode.LIVE,
+        )
+        .order_by(AiRun.finished_at.desc(), AiRun.started_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if run is None:
+        _log.info("csf.playbook_no_notes_note.no_live_run", assessment_id=str(assessment_id))
+        return None
+    if not isinstance(run.result, dict):
+        # A COMPLETED run is written with its result in one statement
+        # (`app/ai/runs.py::_execute`), so this is corruption, not a state.
+        raise RuntimeError(f"completed csf_score run {run.id} has no stored result")
+    n = run.result.get("no_notes_subcategories")
+    total = run.result.get("no_notes_subcategories_total")
+    if n is None or total is None:
+        _log.warning(
+            "csf.playbook_no_notes_note.uncounted_live_run",
+            assessment_id=str(assessment_id),
+            run_id=str(run.id),
+        )
+        return None
+    _log.info(
+        "csf.playbook_no_notes_note",
+        assessment_id=str(assessment_id),
+        run_id=str(run.id),
+        no_notes=n,
+        total=total,
+    )
+    return csf_playbook_export.no_notes_note(n, total)
 
 
 @router.post(
@@ -2601,6 +2744,8 @@ def export_playbook(
     _approved = a.status in (CsfAssessmentStatus.APPROVED, CsfAssessmentStatus.RELEASED)
     # #646: the ONE derivation every surface calls; every file of the export.
     _ai_mode = ai_mode_for(db, svc, a)
+    # #1000: from the last LIVE run's persisted accounting; None omits it.
+    _no_notes_note = _last_live_run_no_notes_note(db, svc.id, a.id)
 
     def _pb_name(extension: str, variant: str | None = None) -> str:
         # §15.5: {Company}_CSF_Playbook{MMDDYY}[_v{n}][_variant].ext
@@ -2629,6 +2774,7 @@ def export_playbook(
                 approved=_approved,
                 ai_mode=_ai_mode,
                 retired_note=retired_note,
+                no_notes_note=_no_notes_note,
             ),
         ),
         (
@@ -2644,6 +2790,7 @@ def export_playbook(
                 approved=_approved,
                 ai_mode=_ai_mode,
                 retired_note=retired_note,
+                no_notes_note=_no_notes_note,
             ),
         ),
         (
@@ -2659,6 +2806,7 @@ def export_playbook(
                 approved=_approved,
                 ai_mode=_ai_mode,
                 retired_note=retired_note,
+                no_notes_note=_no_notes_note,
             ),
         ),
         (
@@ -2674,6 +2822,7 @@ def export_playbook(
                 approved=_approved,
                 ai_mode=_ai_mode,
                 retired_note=retired_note,
+                no_notes_note=_no_notes_note,
             ),
         ),
         (
@@ -2689,6 +2838,7 @@ def export_playbook(
                 approved=_approved,
                 ai_mode=_ai_mode,
                 retired_note=retired_note,
+                no_notes_note=_no_notes_note,
             ),
         ),
     ]

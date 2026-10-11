@@ -361,6 +361,11 @@ class EnterpriseSubcategory(BaseModel):
     target_level: int | None
     gap: bool
     priority: str | None
+    #: #1000: the subcategory's interview answer has no notes (none, blank, or
+    #: no answer), so a LIVE run does not assess its rows. From CURRENT notes,
+    #: at read time: it says what the AI does now, not what made the stored
+    #: score. Required, so no construction can leave it to a default.
+    no_notes: bool
     #: Set by the playbook export only (#707): `priority` is a consultant's
     #: override that differs from the computed one. Never serialized, so the
     #: Enterprise Profile endpoint's JSON is unchanged.
@@ -430,6 +435,9 @@ class CsfDroppedSuggestion(BaseModel):
         "protected",
         "edited",
         "not_in_batch",
+        # #1000: a LIVE run does not assess a row whose interview answer has
+        # no notes (none, blank, or no answer); it keeps what it had.
+        "no_notes",
     ]
     # "tier|subcategory_code" exactly as the model wrote it, or None when the
     # model omitted them. Never the literal "None|None" — that fabricates a row
@@ -487,6 +495,20 @@ class CsfRunAiResponse(BaseModel):
     # before this parses unchanged; the panel tests the VALUE, never presence.
     omitted_count: int = 0
     omitted_rows: list[CsfRowKey] = []
+    # #1000: a LIVE run leaves a row with no notes as stored (`no_notes`). None
+    # on an OFFLINE run, which still assesses every row, and on a result stored
+    # before #1000: "not counted", never "zero". The panel tests the VALUE.
+    #
+    # `no_notes_count` is ROWS (tier x subcategory): the covered rows, below,
+    # whose answer carried no notes. The other two are what the client files
+    # state (`playbook_export.no_notes_note`), in SUBCATEGORIES, because notes
+    # are kept per subcategory: `no_notes_subcategories_total` is the in-scope
+    # subcategories the run covered -- a code with at least one IN-SCOPE row,
+    # not locked, that a SUCCESSFUL batch was asked about -- and
+    # `no_notes_subcategories` is how many of those had no notes.
+    no_notes_count: int | None = None
+    no_notes_subcategories: int | None = None
+    no_notes_subcategories_total: int | None = None
 
 
 class ExportedArtifact(BaseModel):

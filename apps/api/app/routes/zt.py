@@ -825,6 +825,10 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
     # 0035). Client-sourced rows are treated exactly like locked rows for the
     # duration of an offline run; a LIVE run may still draft over them, which is
     # the consultant workflow and shows a diff for review.
+    #
+    # CSF's twin of this site now drops a LIVE suggestion for a row with no
+    # notes (#1000, reason `no_notes`). Deliberately NOT ported here: ZT's
+    # no-notes behaviour is #981's prompt and decision.
     protected = protected_keys(
         ((code, r.answer_source, r.maturity_stage is not None) for code, r in rows.items()),
         is_fixture=llm.provider.name == "fixture",
