@@ -15,8 +15,9 @@ rows is both scored and targeted, and the register says CSF was measured only
 when at least one subcategory has such a row. Otherwise (no targets, only
 targets, or a score and a target on different rows) it says CSF was not
 measured, with no CSF risks and no source note, instead of implying "no gaps";
-for scores and targets on different rows the files say "no CSF Playbook row
-has both a score and a target" (R11, #736 6103383277). When it measured, the
+for scores and targets on different rows the files and both dashboards say
+"no CSF Playbook row has both a score and a target" (R11, #736 6103383277;
+the dashboards by #736 6104067136). When it measured, the
 other targeted subcategories are counted on the Inputs panel and in the files:
 "{n} targeted subcategories have no row with both a score and a target, and
 raise no finding." If someone edits the

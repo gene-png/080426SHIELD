@@ -1236,11 +1236,13 @@ export function RiskRegisterDashboard(): JSX.Element {
             className="rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
             data-testid="risk-targets-used"
           >
-            {targetSentences(register.targets, register.targets_recorded).map(
-              (line) => (
-                <p key={line}>{line}</p>
-              ),
-            )}
+            {targetSentences(
+              register.targets,
+              register.targets_recorded,
+              register.csf_no_shared_row,
+            ).map((line) => (
+              <p key={line}>{line}</p>
+            ))}
           </div>
           {/* #915 (S3): the API's own sentence for the DoD target cap
               (`risk/zt_capped.py`), rendered as given. The files and the

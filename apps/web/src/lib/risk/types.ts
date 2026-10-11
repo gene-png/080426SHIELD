@@ -392,6 +392,12 @@ export interface RiskRegister {
    * as given. Null when the register has no CSF findings.
    */
   csf_source_note?: string | null;
+  /**
+   * Ruling #736 6104067136 (see #1033): true when the CSF Playbook had scores
+   * and targets that never shared a row, so the not-measured line is R11's.
+   * Read by the files' reader; absent or false keeps the original line.
+   */
+  csf_no_shared_row?: boolean;
   id: string;
   client_id: string;
   version: number;

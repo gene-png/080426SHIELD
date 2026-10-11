@@ -29,7 +29,7 @@ import pytest
 from app.ai.llm import LLMResponse
 from app.csf.catalog import SUBCATEGORIES
 from tests._ai_runs import csf_run_ai, csf_scores_by_batch
-from tests.unit.test_risk_baseline_disclosure import _latest
+from tests.unit.test_risk_baseline_disclosure import _client_dashboard, _latest
 from tests.unit.test_risk_per_service import _export_texts
 from tests.unit.test_risk_register import (  # noqa: F401  (app_client is a fixture)
     _admin,
@@ -356,3 +356,27 @@ def test_an_unreadable_no_shared_row_value_keeps_the_original_line_and_is_logged
     out = capsys.readouterr().out
     assert "risk.csf_no_shared_row.unreadable" in out, out[-2000:]
     assert '"got": "str"' in out, out[-2000:]
+
+
+@pytest.mark.parametrize(
+    ("strip_key", "expected"),
+    [(False, True), (True, False)],
+    ids=["generated_after_r11", "pre_r11_key_absent"],
+)
+def test_both_register_responses_carry_the_readers_no_shared_row(
+    app_client, strip_key: bool, expected: bool  # noqa: F811
+) -> None:
+    """Ruling #736 6104067136 (see #1033): the consultant's register and the
+    client's Risk dashboard read `csf_no_shared_row` through the files' reader,
+    so a register generated before R11 (key absent) keeps the no-scores line
+    on the screens as in the files."""
+    c, bearer, cid, _payload = _old_register_world(app_client)
+    if strip_key:
+        _store_no_shared_row(cid, None, present=False)
+    body = _latest(c, bearer, cid)
+    # Positive first: the register is the not-measured A/B one.
+    assert _csf_target(body)["source"] == "playbook_no_scores"
+    assert body["csf_no_shared_row"] is expected, body.get("csf_no_shared_row")
+    dash = _client_dashboard(c, bearer, cid)
+    assert {t["kind"]: t for t in dash["targets"]}["csf"]["source"] == "playbook_no_scores"
+    assert dash["csf_no_shared_row"] is expected, dash.get("csf_no_shared_row")

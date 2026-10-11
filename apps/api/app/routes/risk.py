@@ -3490,6 +3490,8 @@ def _serialize(
         capped_target_codes=_capped,
         zt_capped_target_note=zt_capped_target_sentence(_capped),
         csf_source_note=csf_source_note(stored),
+        # #736 6104067136: the files' reader, so the screen and the files agree.
+        csf_no_shared_row=csf_no_shared_row(stored),
         excluded_inputs=resolved_excluded,
         excluded_inputs_recorded=excluded_recorded,
         entries_total=len(entries),

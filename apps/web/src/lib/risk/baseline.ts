@@ -47,12 +47,11 @@ export const TARGETS_NOT_RECORDED =
  * recorded source token says which of the Playbook's three states it was in
  * (advisor, #736 6087786886, item 4); for the two that measure nothing the CSF
  * line is replaced. Approved verbatim: #736 6087027524 (Q1) and 6087786886
- * (item 4). `_PLAYBOOK_LINES` in the export prints these words, with one
- * difference: where the Playbook had scores and targets that never shared a
- * row, the files print R11's "no CSF Playbook row has both a score and a
- * target." line, while these screens keep the original no-scores line,
- * because R11 scoped the new line to the Inputs panel and the files only
- * (#736 6103383277). Whether the consultant's screen should follow: see #1033.
+ * (item 4). `_PLAYBOOK_LINES` in the export prints the same words. Where the
+ * Playbook had scores and targets that never shared a row (R11, #736
+ * 6103383277), the files and both dashboards print `NO_SHARED_ROW_LINE`
+ * instead of the no-scores line (#736 6104067136); the register response's
+ * `csf_no_shared_row` says which, read by the files' own reader.
  */
 const PLAYBOOK_LINES: ReadonlyMap<string, (label: string) => string> = new Map([
   [
@@ -72,10 +71,17 @@ const PLAYBOOK_LINES: ReadonlyMap<string, (label: string) => string> = new Map([
   ],
 ]);
 
+/** R11 (#736 6103383277), verbatim: `_PLAYBOOK_NO_SHARED_ROW_LINE` in the export. */
+const NO_SHARED_ROW_LINE = (label: string) =>
+  `${label} was not measured for this register: no CSF Playbook row has both a score and a target.`;
+
 export function targetSentence(
   t: RiskTargetUsed,
   nameFramework: boolean,
+  csfNoSharedRow: boolean = false,
 ): string {
+  if (t.source === "playbook_no_scores" && csfNoSharedRow)
+    return NO_SHARED_ROW_LINE(targetLabel(t, nameFramework));
   const playbook = PLAYBOOK_LINES.get(t.source);
   if (playbook) return playbook(targetLabel(t, nameFramework));
   const why =
@@ -97,9 +103,12 @@ export function targetSentence(
 export function targetSentences(
   targets: RiskTargetUsed[] | undefined,
   recorded: boolean | undefined,
+  csfNoSharedRow: boolean | undefined = false,
 ): string[] {
   if (recorded !== true) return [TARGETS_NOT_RECORDED];
   const rows = targets ?? [];
   const nameFramework = rows.filter((t) => t.kind === "zt").length > 1;
-  return rows.map((t) => targetSentence(t, nameFramework));
+  return rows.map((t) =>
+    targetSentence(t, nameFramework, csfNoSharedRow === true),
+  );
 }
