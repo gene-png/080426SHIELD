@@ -121,8 +121,8 @@ def test_dod_xlsx_answers_sheet_row_count() -> None:
 
     wb = load_workbook(io.BytesIO(render_xlsx(_ctx(ZtFrameworkCode.DOD_ZTRA))))
     ws = wb["Answers"]
-    # 50 capabilities + 1 header.
-    assert ws.max_row == 51
+    # 45 capabilities (#839) + 1 header.
+    assert ws.max_row == 46
 
 
 @pytest.mark.unit

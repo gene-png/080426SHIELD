@@ -149,10 +149,10 @@ def test_the_gate_lists_every_input_and_its_state(app_client) -> None:  # noqa: 
     g = c.get(f"/risk/clients/{cid}/gate", headers={"Authorization": f"Bearer {bearer}"})
     assert g.status_code == 200, g.text
     assert g.json()["inputs"] == [
-        {"kind": "attack", "engaged": True, "status": "approved", "version": 1},
-        {"kind": "csf", "engaged": False, "status": None, "version": None},
-        {"kind": "zt", "engaged": True, "status": "released", "version": 1},
-        {"kind": "tech_debt", "engaged": False, "status": None, "version": None},
+        {"kind": "attack", "engaged": True, "status": "approved", "version": 1, "qualifier": None},
+        {"kind": "csf", "engaged": False, "status": None, "version": None, "qualifier": None},
+        {"kind": "zt", "engaged": True, "status": "released", "version": 1, "qualifier": None},
+        {"kind": "tech_debt", "engaged": False, "status": None, "version": None, "qualifier": None},
     ]
 
 
@@ -313,7 +313,7 @@ def test_an_archived_service_is_not_an_input(app_client) -> None:  # noqa: F811
 
     g = c.get(f"/risk/clients/{cid}/gate", headers=h).json()
     assert [r for r in g["inputs"] if r["kind"] == "attack"] == [
-        {"kind": "attack", "engaged": True, "status": "draft", "version": 1}
+        {"kind": "attack", "engaged": True, "status": "draft", "version": 1, "qualifier": None}
     ]
     _gen(c, provider, bearer, cid)
     prov = _register_provenance()
@@ -335,8 +335,20 @@ def test_every_engaged_zero_trust_service_must_be_released(app_client) -> None: 
     _new_zt_dod(c, bearer, cid)
     g = c.get(f"/risk/clients/{cid}/gate", headers=_h(bearer, cid)).json()
     assert [r for r in g["inputs"] if r["kind"] == "zt"] == [
-        {"kind": "zt", "engaged": True, "status": "released", "version": 2},
-        {"kind": "zt", "engaged": True, "status": "draft", "version": 1},
+        {
+            "kind": "zt",
+            "engaged": True,
+            "status": "released",
+            "version": 2,
+            "qualifier": "CISA ZTMM 2.0",
+        },
+        {
+            "kind": "zt",
+            "engaged": True,
+            "status": "draft",
+            "version": 1,
+            "qualifier": "DoD ZT Reference Architecture",
+        },
     ]
     _gen(c, provider, bearer, cid)
     assert _blockers(_publish(c, bearer, cid)) == [
@@ -372,8 +384,14 @@ def test_a_second_tech_debt_service_with_no_list_blocks(app_client) -> None:  # 
         db.commit()
     g = c.get(f"/risk/clients/{cid}/gate", headers=h).json()
     assert [r for r in g["inputs"] if r["kind"] == "tech_debt"] == [
-        {"kind": "tech_debt", "engaged": True, "status": "released", "version": 1},
-        {"kind": "tech_debt", "engaged": True, "status": None, "version": None},
+        {
+            "kind": "tech_debt",
+            "engaged": True,
+            "status": "released",
+            "version": 1,
+            "qualifier": "TD1",
+        },
+        {"kind": "tech_debt", "engaged": True, "status": None, "version": None, "qualifier": "TD2"},
     ]
     _gen(c, provider, bearer, cid)
     assert _blockers(_publish(c, bearer, cid)) == [
@@ -489,15 +507,17 @@ def test_an_archived_approved_assessment_does_not_count_as_finalized(
 
 
 def _seed_csf_low(c, bearer: str, cid: str) -> str:
-    """A CSF service with one subcategory at tier 1 (a finding at any target)."""
+    """A CSF service with one Playbook subcategory at Level 1 against target 5
+    (a finding at any target; #474 D': Risk reads the Playbook)."""
+    from tests._csf_playbook_rows import score_csf_playbook
+
     h = _h(bearer, cid)
     svc = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "CSF"})
     assert svc.status_code in (200, 201), svc.text
     sid = svc.json()["id"]
     assert c.post(f"/csf/services/{sid}/assessments", headers=h).status_code in (200, 201)
     ans = c.get(f"/csf/services/{sid}/assessments/latest", headers=h).json()["answers"][0]
-    r = c.patch(f"/csf/answers/{ans['id']}", headers=h, json={"maturity_tier": 1})
-    assert r.status_code == 200, r.text
+    score_csf_playbook(c, h, sid, {ans["subcategory_code"]: (1, 5)})
     return ans["subcategory_code"]
 
 

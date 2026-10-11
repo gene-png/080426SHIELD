@@ -19,7 +19,6 @@ from __future__ import annotations
 import io
 from collections.abc import Iterable
 from dataclasses import dataclass
-from html import escape as html_escape
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
@@ -45,7 +44,7 @@ from app.attack.partial_reasons import (
     TABLE_ORDER,
     WHY_PARTIAL_LEGEND,
     PartialReason,
-    partial_reason,
+    partial_reason_for_row,
 )
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.pending import row_tools, uncleared_tools
@@ -58,6 +57,15 @@ from app.attack.retirement import (
     summary_sentences,
 )
 from app.attack.rules import parents_computed, statuses_computed
+from app.attack.subset_drift import (
+    OUTSIDE_LEGEND,
+    OUTSIDE_MARK,
+    SubsetCheck,
+    fallback_sentence,
+    not_checked_sentence,
+    outside_rows_sentence,
+    used_fallbacks,
+)
 from app.client_naming import org_display_name
 from app.mode_stamp import (
     UNKNOWN_AI_MODE,
@@ -67,6 +75,8 @@ from app.mode_stamp import (
     pdf_paragraph,
 )
 from app.models.attack_assessment import AttackAssessment, AttackCoverage
+from app.pdf_export import pdf_escape, pdf_text
+from app.xlsx_export import safe_text_row
 
 if TYPE_CHECKING:
     from reportlab.platypus import TableStyle
@@ -105,6 +115,15 @@ class AttackDeliverableContext:
     #: context (finalize freezes it into the bytes); None where there is nothing
     #: to recount (`attack/after.py`). Derived in `build_context`.
     after: AfterPlannedChanges | None = None
+    #: #851 / #889 (Q7): the security tool list check, read at finalize (the
+    #: rendered bytes keep it) or live (the client dashboard). Not checked: the
+    #: client has no list, only lists in force with no security tool, or only discarded
+    #: lists, and every format says
+    #: which (C5, C5b). Checked: the rows crediting a tool outside the list are
+    #: counted (C1), each such tool is marked (C3), and a service that fell
+    #: back to an earlier version is named with the version used (C9).
+    #: None: nobody asked, and nothing is said either way.
+    subset: SubsetCheck | None = None
 
 
 def build_context(
@@ -116,6 +135,7 @@ def build_context(
     rollup: CoverageRollup,
     retirement: RetirementIndex = NO_PLAN,
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
+    subset: SubsetCheck | None = None,
 ) -> AttackDeliverableContext:
     rows = list(coverage)
     rule = parents_computed(assessment)
@@ -143,7 +163,32 @@ def build_context(
         ai_mode=ai_mode,
         statuses_computed=computed,
         after=after_planned_changes(assessment, rows, retirement),
+        subset=subset,
     )
+
+
+def subset_sentences(ctx: AttackDeliverableContext) -> list[str]:
+    """#851 / #889: the "not checked" sentence when the client has no security
+    tool list to check against; the count of rows crediting a tool outside it
+    (C1) when there are any; [] otherwise, and when nobody asked.
+
+    The rows counted are this context's own rows, so the sentence counts the
+    rows the document prints."""
+    if ctx.subset is None:
+        return []
+    if not ctx.subset.checked:
+        # R4: C5b where every list is empty, C5 otherwise.
+        return [not_checked_sentence(ctx.subset.not_checked_reason)]
+    rows = len(ctx.subset.outside_codes() & {c.technique_code for c in ctx.coverage})
+    # R4 (C9): one sentence per Tech Debt service that fell back.
+    return ([outside_rows_sentence(rows)] if rows else []) + [
+        fallback_sentence(f) for f in used_fallbacks(ctx.subset.fallbacks)
+    ]
+
+
+def outside_tools(ctx: AttackDeliverableContext) -> frozenset[str]:
+    """#889: the cited names to mark (C3); empty when nothing was checked."""
+    return ctx.subset.outside_tools() if ctx.subset is not None else frozenset()
 
 
 def _computed_leaf(cov: object) -> bool:
@@ -266,11 +311,11 @@ def _row_reason(ctx: AttackDeliverableContext, cov: AttackCoverage | None) -> Pa
     parents directly, so its parent reads like any other row."""
     if cov is None:
         return None
-    return partial_reason(
-        cov.status,
-        cov.reason_code,
+    # #842: the client dashboard's twin (`routes/clients.py`) calls the same
+    # entry point, so a stored reason is checked against the computed line in both.
+    return partial_reason_for_row(
+        cov,
         computed_parent=ctx.parents_computed and is_computed_parent(cov.technique_code),
-        computed_leaf=_computed_leaf(cov),
     )
 
 
@@ -455,30 +500,25 @@ def outside_assessed_text(rollup: CoverageRollup) -> str:
 
 
 def _tools(
-    value: list | None, unconfirmed: frozenset[str], retirement: RetirementIndex = NO_PLAN
+    value: list | None,
+    unconfirmed: frozenset[str],
+    retirement: RetirementIndex = NO_PLAN,
+    outside: frozenset[str] = frozenset(),
 ) -> str:
-    # #686: the retirement mark stacks AFTER " (unconfirmed)".
+    # #686: the retirement mark stacks AFTER " (unconfirmed)"; #889 (C3): the
+    # security tool list mark stacks after both.
     return "; ".join(
         f"{t}{UNCONFIRMED_MARK if t in unconfirmed else ''}{retirement.mark(t)}"
+        f"{OUTSIDE_MARK if t in outside else ''}"
         for t in (value or [])
     )
 
 
 def _safe_text_row(ws, values: list) -> None:
-    """Append a row whose strings may be model output or client input.
-
-    openpyxl stores any string starting with "=" as a FORMULA, and raises on
-    control characters -- so a rationale of `=HYPERLINK(...)` would become a
-    live formula in a Kentro-branded workbook, and one stray control byte
-    would fail the whole finalize. Illegal characters are dropped and a
-    leading "=" is kept as text.
-    """
-    from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
-
-    ws.append([ILLEGAL_CHARACTERS_RE.sub("", v) if isinstance(v, str) else v for v in values])
-    for cell in ws[ws.max_row]:
-        if isinstance(cell.value, str) and cell.value.startswith("="):
-            cell.data_type = "s"
+    """Append a row whose strings may be model output or client input: the
+    shared guard, `app/xlsx_export.py::safe_text_row` (#972), which this
+    function was the pattern for. Kept under this name for its call sites."""
+    safe_text_row(ws, values)
 
 
 _CATALOGUE_CODES = all_codes()
@@ -618,6 +658,14 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
                 "for retirement is not known.",
             ]
         )
+    # #889 (C4): a legend row only when the Coverage sheet carries the mark.
+    marked = outside_tools(ctx)
+    if any(t in marked for row in _delivered_rows(ctx) for t in row_tools(row)):
+        ws.append(list(OUTSIDE_LEGEND))
+    # #851: the third state, only when nothing could be checked; #889: the
+    # count of rows crediting a tool outside the list.
+    for sentence in subset_sentences(ctx):
+        ws.append([sentence])
     for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=1):
         for cell in row:
             cell.font = bold
@@ -721,9 +769,9 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
                 reason.cell() if (reason := _row_reason(ctx, cov)) is not None else "",
                 *(in_place_cells(cov) if ctx.statuses_computed else []),
                 (own.rationale if own else None) or "",
-                _tools(own.detection_tools if own else None, unconfirmed, ctx.retirement),
-                _tools(own.prevention_tools if own else None, unconfirmed, ctx.retirement),
-                _tools(own.response_tools if own else None, unconfirmed, ctx.retirement),
+                _tools(own.detection_tools if own else None, unconfirmed, ctx.retirement, marked),
+                _tools(own.prevention_tools if own else None, unconfirmed, ctx.retirement, marked),
+                _tools(own.response_tools if own else None, unconfirmed, ctx.retirement, marked),
                 (cov.notes if cov else None) or "",
             ],
         )
@@ -837,6 +885,8 @@ def render_docx(ctx: AttackDeliverableContext) -> bytes:
             + (", " + outside_assessed_text(ctx.rollup) if outside else ""),
             # #686: only when non-zero, so nothing changes without a plan.
             *retirement_sentences(ctx),
+            # #851: the third state, only when nothing could be checked.
+            *subset_sentences(ctx),
             # #554 R3 (Q4): only when something awaits review.
             *([awaiting] if (awaiting := awaiting_review_text(ctx)) is not None else []),
         ],
@@ -985,8 +1035,8 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
 
     outside = states_outside_counts(ctx)
     story: list = []
-    story.append(Paragraph(ctx.service_title, h1))
-    story.append(Paragraph(ctx.client_legal_name, body))
+    story.append(pdf_text(ctx.service_title, h1))  # #775
+    story.append(pdf_text(ctx.client_legal_name, body))  # #775
     story.append(pdf_paragraph(ctx.ai_mode, body))  # #646, under the title
     story.append(Spacer(1, 0.2 * inch))
 
@@ -1000,8 +1050,7 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
                 # Escaped: a Paragraph is markup, and a bare "&" in "ATT&CK"
                 # renders as "ATT&CK;". quote=False escapes exactly &, < and >,
                 # what reportlab's markup needs; quotes are literal text there.
-                f"{ctx.rollup.catalogue_count} "
-                f"{html_escape(_catalog_phrase(ctx), quote=False)} · "
+                f"{ctx.rollup.catalogue_count} " f"{pdf_escape(_catalog_phrase(ctx))} · "
                 if outside
                 else f"Scored: <b>{_scored_total(ctx)}</b> · "
             )
@@ -1022,14 +1071,17 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
             after_document_sentence(_pct_text(ctx.after.rollup)),
             *after_counts(ctx.after),
         ]:
-            story.append(Paragraph(html_escape(sentence, quote=False), body))
+            story.append(pdf_text(sentence, body))
     story.append(Paragraph(_definition(ctx), body))
     # #686: only when non-zero, so nothing changes without a plan.
     for sentence in retirement_sentences(ctx):
-        story.append(Paragraph(html_escape(sentence, quote=False), body))
+        story.append(pdf_text(sentence, body))
+    # #851: the third state, only when nothing could be checked.
+    for sentence in subset_sentences(ctx):
+        story.append(pdf_text(sentence, body))
     # #554 R3 (Q4): only when something awaits review.
     if (awaiting := awaiting_review_text(ctx)) is not None:
-        story.append(Paragraph(html_escape(awaiting, quote=False), body))
+        story.append(pdf_text(awaiting, body))
 
     # #554 R1: the same table as the DOCX, and they MUST move together.
     reason_counts = partial_reason_counts(ctx)
@@ -1040,8 +1092,8 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
                 PARTIAL_TABLE_COLUMNS,
                 *[
                     [
-                        Paragraph(html_escape(reason.label, quote=False), body),
-                        Paragraph(html_escape(reason.sentence, quote=False), body),
+                        pdf_text(reason.label, body),
+                        pdf_text(reason.sentence, body),
                         str(n),
                     ]
                     for reason, n in reason_counts
@@ -1065,7 +1117,7 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
         )
         unpreventable_table.setStyle(_table_style())
         story.append(unpreventable_table)
-        story.append(Paragraph(html_escape(CANNOT_BE_PREVENTED_SENTENCE, quote=False), body))
+        story.append(pdf_text(CANNOT_BE_PREVENTED_SENTENCE, body))
 
     story.append(Paragraph("Per-tactic rollup", h2))
     tactic_table_data: list[list] = [

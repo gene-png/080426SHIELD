@@ -98,9 +98,13 @@ COVERAGE_DEFINITIONS: tuple[CoverageDefinition, ...] = (
     CoverageDefinition(
         status=CoverageStatus.COVERED,
         short_label="Covered",
+        # R3 (Gene, 2026-10-02, on #554); wording approved for #842 (#736,
+        # comment 6053562002). Reach is a Partial reason (`reach_limited`), not
+        # part of Covered.
         description=(
-            "Detection + response controls are in place for this technique "
-            "across the relevant attack surface."
+            "Detect, Prevent and Respond are all in place for this technique, or Detect "
+            "and Respond where MITRE ATT&CK lists no preventive control. In place means "
+            "at least one confirmed tool provides it."
         ),
     ),
     CoverageDefinition(
@@ -183,8 +187,11 @@ REASON_CODES: tuple[ReasonCode, ...] = (
     ReasonCode(
         "prevention_limited",
         CoverageStatus.PARTIAL,
-        "Detectable but not preventable, including where legitimate use needs the "
-        "same capability.",
+        # #806 Q5 (#736 comment 6053562002): the text proposed in comment
+        # 6053026654, approved. Under the #806 prompt it means prevention is
+        # required and is the only missing function, a control the client lacks.
+        "Detect is in place and Prevent is not, for a technique MITRE ATT&CK lists "
+        "a preventive control for.",
     ),
     ReasonCode(
         "evasive_variant_uncovered",

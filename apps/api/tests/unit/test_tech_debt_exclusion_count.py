@@ -90,6 +90,15 @@ def _released(
         assert ext["excluded_rows"] == []
     for it in ext["items"]:
         c.patch(f"/tech-debt/capability-items/{it['id']}", headers=h, json={"disposition": "keep"})
+    if not include_all:
+        # #850: approve refuses an excluded row nobody confirmed. A confirmed
+        # row stays in `excluded_rows`, so every count asserted here is the same.
+        for row in ext["excluded_rows"]:
+            r = c.post(
+                f"/tech-debt/capability-lists/{ext['id']}/excluded-rows/{row['index']}/confirm",
+                headers=h,
+            )
+            assert r.status_code == 200, r.text
     assert c.post(f"/tech-debt/capability-lists/{ext['id']}/approve", headers=h).status_code == 200
     fin = c.post(f"/tech-debt/services/{svc}/deliverables/finalize", headers=h)
     assert fin.status_code == 201, fin.text

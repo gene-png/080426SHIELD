@@ -15,6 +15,14 @@ export interface ModalProps {
   footer?: React.ReactNode;
   size?: "sm" | "md" | "lg";
   className?: string;
+  /**
+   * OPT-IN, default true (every caller's behaviour before #896). When false,
+   * Esc and a backdrop click do not close the dialog, and a close the browser
+   * forces anyway (a repeated Esc can close a dialog whose `cancel` was
+   * prevented) re-opens it, so `open` and what is on screen cannot disagree.
+   * For a dialog whose action is in flight (#896 round 3, R3-1).
+   */
+  dismissible?: boolean;
 }
 
 const SIZE: Record<NonNullable<ModalProps["size"]>, string> = {
@@ -39,10 +47,17 @@ export function Modal({
   footer,
   size = "md",
   className,
+  dismissible = true,
 }: ModalProps): JSX.Element {
   const ref = React.useRef<HTMLDialogElement | null>(null);
   const titleId = React.useId();
   const descId = React.useId();
+  // Read by the native listeners below, which outlive the render they were
+  // attached in.
+  const latest = React.useRef({ open, dismissible });
+  React.useEffect(() => {
+    latest.current = { open, dismissible };
+  }, [open, dismissible]);
 
   React.useEffect(() => {
     const dlg = ref.current;
@@ -57,13 +72,29 @@ export function Modal({
   React.useEffect(() => {
     const dlg = ref.current;
     if (!dlg) return;
-    const handleClose = () => onClose();
+    const handleClose = () => {
+      // Not dismissible and still meant to be open: whatever closed it, put
+      // it back rather than report a close the caller did not ask for.
+      if (!latest.current.dismissible && latest.current.open) {
+        dlg.showModal();
+        return;
+      }
+      onClose();
+    };
+    // Esc fires `cancel` first; preventing it keeps the dialog open.
+    const handleCancel = (e: Event) => {
+      if (!latest.current.dismissible) e.preventDefault();
+    };
     dlg.addEventListener("close", handleClose);
-    return () => dlg.removeEventListener("close", handleClose);
+    dlg.addEventListener("cancel", handleCancel);
+    return () => {
+      dlg.removeEventListener("close", handleClose);
+      dlg.removeEventListener("cancel", handleCancel);
+    };
   }, [onClose]);
 
   function handleBackdropClick(e: React.MouseEvent<HTMLDialogElement>): void {
-    if (e.target === ref.current) {
+    if (e.target === ref.current && dismissible) {
       ref.current?.close();
     }
   }

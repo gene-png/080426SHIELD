@@ -36,7 +36,18 @@ space (CISA's own hyphenated words broken across lines), except before "or" or
 near-real-time"); every other line break is a space. CISA's change markers, "(New Function)" and "(Formerly ...)", are
 recorded as `annotation` and are not part of the name.
 
-DoD (#839) is added when its PDFs are committed (`reference-docs/dod/`).
+`dod` reads `reference-docs/dod/ZT-CapabilitiesActivities.pdf` (DoD CIO, 2025,
+25-T-1465, the source of record per #839 comment 5983310584) and writes
+`reference-docs/dod/dod_zt_2025_rows.json`: the 45 capabilities and their 152
+activities. The 2022 Roadmap beside it is pinned too, for the record.
+
+How a DoD row is read. Both tables are drawn with cell rules. The columns are
+the vertical rules that cross the header row; a ROW is the band between two
+horizontal rules that cross the first ("ID") column, and a band whose ID cell
+is empty continues the previous row across a page break. A cell's text is
+built from its CHARACTERS, keeping the PDF's own space characters: the tables'
+justified text spreads letters apart, so a word-gap tolerance cannot tell a
+wide letter gap from a word break. Lines join as for CISA.
 """
 
 from __future__ import annotations
@@ -106,6 +117,32 @@ _COLUMNS = ("Function", "Traditional", "Initial", "Advanced", "Optimal")
 _ANNOTATION = re.compile(r"\s*\((New Function|Formerly [^)]*)\)\s*$")
 
 
+DOD_PDF_NAME = "ZT-CapabilitiesActivities.pdf"
+DOD_ROADMAP_NAME = "DoD-ZTExecutionRoadmap.pdf"
+DOD_JSON_NAME = "dod_zt_2025_rows.json"
+
+DOD_SOURCE = {
+    "title": "DOD Zero Trust Execution Roadmap (COAs 1-3)",
+    "publisher": "DoD Chief Information Officer",
+    "marking": "25-T-1465",
+    "date": "2025-08-21 (modified 2025-09-03)",
+    "url": "https://dodcio.defense.gov/Portals/0/Documents/Library/ZT-CapabilitiesActivities.pdf",
+    "bytes": 651809,
+    "sha256": "756abc470d22dfddf399bcf3264b23c23fecedd8ac32b98b4f3461c96ed43be1",
+}
+DOD_ROADMAP_SOURCE = {
+    "title": "DOD ZT Capability Execution Roadmap (COA 1)",
+    "publisher": "Department of Defense",
+    "date": "2022-11-21",
+    "url": "https://dodcio.defense.gov/Portals/0/Documents/Library/DoD-ZTExecutionRoadmap.pdf",
+    "bytes": 2505849,
+    "sha256": "0d013fdb00740f2221e8bd227e21b05f13a57ee6a88b7d301e828d3717b9d928",
+}
+_DOD_CAPABILITY = re.compile(r"[1-7]\.\d{1,2}")
+_DOD_ACTIVITY = re.compile(r"[1-7]\.\d{1,2}\.\d{1,2}")
+_DOD_PILLAR = re.compile(r"([1-7]) - (.+)")
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -117,6 +154,8 @@ def _join_lines(lines: list[str]) -> str:
             continue
         if not out:
             out = line
+        elif out.endswith(" -"):
+            out += " " + line  # a spaced dash ending the line, not a word break
         elif out.endswith("-") and not re.match(r"(or|and) ", line):
             out += line  # a hyphenated word broken across lines
         elif out.endswith("-"):
@@ -239,6 +278,158 @@ def _definitions(pdf) -> dict[str, str]:
     return out
 
 
+def _dod_columns(page, header_y: float) -> list[float]:
+    """x of each vertical rule crossing the header row, near-duplicates merged."""
+    xs = sorted(
+        r["x0"] for r in page.rects if r["top"] < header_y < r["bottom"] and (r["x1"] - r["x0"]) < 2
+    )
+    out: list[float] = []
+    for x in xs:
+        if not out or x - out[-1] > 3:
+            out.append(x)
+    return out
+
+
+def _dod_rules(page, x0: float, x1: float) -> list[float]:
+    """y of each horizontal rule crossing the ID column."""
+    return sorted(
+        {
+            round(r["top"], 1)
+            for r in page.rects
+            if r["x0"] <= x0 + 1 and r["x1"] >= x1 - 1 and (r["bottom"] - r["top"]) < 1.5
+        }
+    )
+
+
+def _dod_cell(chars, x0: float, x1: float, y0: float, y1: float) -> list[str]:
+    """One cell's lines, from its characters and their own spaces."""
+    inside = [
+        c
+        for c in chars
+        if x0 <= (c["x0"] + c["x1"]) / 2 < x1
+        and y0 <= (c["top"] + c["bottom"]) / 2 < y1
+        and c["size"] >= 4.0
+    ]
+    lines: list[list] = []
+    for c in sorted(inside, key=lambda c: (c["top"], c["x0"])):
+        for line in lines:
+            if abs(line[0] - c["top"]) < 2:
+                line[1].append(c)
+                break
+        else:
+            lines.append([c["top"], [c]])
+    out = []
+    for _, cs in sorted(lines, key=lambda line: line[0]):
+        text = re.sub(r"\s+", " ", "".join(c["text"] for c in sorted(cs, key=lambda c: c["x0"])))
+        if text.strip():
+            out.append(text.strip())
+    return out
+
+
+def _dod_table(pdf, title: str, header_y: float, columns: tuple[str, ...], row_id: re.Pattern):
+    """Every row of the table on the pages titled `title`, across page breaks."""
+    rows: list[dict] = []
+    pages = [p for p in pdf.pages if title in (p.extract_text() or "")[:200]]
+    if not pages:
+        raise SourceUnreadable(f"no page titled {title!r}")
+    for page in pages:
+        xs = _dod_columns(page, header_y)
+        if len(xs) != len(columns) + 1:
+            raise SourceUnreadable(f"{title!r} p{page.page_number}: {len(xs) - 1} columns")
+        rules = _dod_rules(page, xs[0], xs[1])
+        if len(rules) < 3:
+            raise SourceUnreadable(f"{title!r} p{page.page_number}: no rows")
+        # rules[0] is the table's top edge and rules[1] the header row's bottom.
+        for y0, y1 in zip(rules[1:], rules[2:], strict=False):
+            cells = {
+                c: _dod_cell(page.chars, xs[i], xs[i + 1], y0, y1) for i, c in enumerate(columns)
+            }
+            key = " ".join(cells[columns[0]])
+            if row_id.fullmatch(key):
+                rows.append({**cells, "id": key, "page": page.page_number})
+            elif not key and rows:
+                for c in columns[1:]:
+                    rows[-1][c] = rows[-1][c] + cells[c]
+            else:
+                raise SourceUnreadable(f"{title!r} p{page.page_number}: ID cell {key!r}")
+    return rows
+
+
+def extract_dod(pdf_path: Path) -> dict:
+    import pdfplumber
+
+    with pdfplumber.open(str(pdf_path)) as pdf:
+        caps = _dod_table(
+            pdf,
+            "DoD Zero Trust Capabilities",
+            54.0,
+            ("id", "name", "pillar", "description", "outcome", "impact", "activities"),
+            _DOD_CAPABILITY,
+        )
+        acts = _dod_table(
+            pdf,
+            "DoD Zero Trust Activities",
+            62.0,
+            (
+                "id",
+                "name",
+                "pillar",
+                "responsibility",
+                "type",
+                "duration",
+                "description",
+                "outcomes",
+                "end_state",
+                "predecessors",
+                "successors",
+            ),
+            _DOD_ACTIVITY,
+        )
+    capabilities = []
+    for r in caps:
+        m = _DOD_PILLAR.fullmatch(_join_lines(r["pillar"]))
+        if m is None:
+            raise SourceUnreadable(f"capability {r['id']}: pillar {r['pillar']!r}")
+        capabilities.append(
+            {
+                "id": r["id"],
+                "pillar_number": int(m.group(1)),
+                "pillar": m.group(2),
+                "name": _join_lines(r["name"]),
+                "description": _join_lines(r["description"]),
+                "outcome": _join_lines(r["outcome"]),
+                "page": r["page"],
+            }
+        )
+    activities = []
+    for r in acts:
+        kind = _join_lines(r["type"])
+        if "Target" in kind:
+            level = "target"
+        elif "Advanced" in kind:
+            level = "advanced"
+        else:
+            raise SourceUnreadable(f"activity {r['id']}: type {kind!r}")
+        activities.append(
+            {
+                "id": r["id"],
+                "name": _join_lines(r["name"]),
+                "level": level,
+                "description": _join_lines(r["description"]),
+                "outcomes": _join_lines(r["outcomes"]),
+                "end_state": _join_lines(r["end_state"]),
+                "page": r["page"],
+            }
+        )
+    return {
+        "source": DOD_SOURCE,
+        "roadmap_2022": DOD_ROADMAP_SOURCE,
+        "extracted_with": "apps/api/scripts/extract_zt_sources.py (pdfplumber)",
+        "capabilities": capabilities,
+        "activities": activities,
+    }
+
+
 def extract_cisa(pdf_path: Path) -> dict:
     import pdfplumber
 
@@ -274,28 +465,38 @@ def extract_cisa(pdf_path: Path) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    p.add_argument("source", choices=("cisa",))
+    p.add_argument("source", choices=("cisa", "dod"))
     p.add_argument("--write", action="store_true")
     args = p.parse_args(argv)
     repo = find_checkout(Path(__file__).resolve().parent)
     if repo is None:
         print("NO CHECKOUT: no reference-docs/ at or above this script", file=sys.stderr)
         return 2
-    cisa_pdf = repo / "reference-docs" / "cisa" / CISA_PDF_NAME
-    cisa_json = cisa_pdf.with_name(CISA_JSON_NAME)
-    if not cisa_pdf.is_file():
-        print(f"MISSING: {cisa_pdf}", file=sys.stderr)
-        return 2
+    if args.source == "cisa":
+        folder = repo / "reference-docs" / "cisa"
+        pinned = [(folder / CISA_PDF_NAME, CISA_SOURCE["sha256"])]
+        out_json, extract, unit = folder / CISA_JSON_NAME, extract_cisa, "rows"
+    else:
+        folder = repo / "reference-docs" / "dod"
+        pinned = [
+            (folder / DOD_PDF_NAME, DOD_SOURCE["sha256"]),
+            (folder / DOD_ROADMAP_NAME, DOD_ROADMAP_SOURCE["sha256"]),
+        ]
+        out_json, extract, unit = folder / DOD_JSON_NAME, extract_dod, "activities"
+    for pdf_path, sha in pinned:
+        if not pdf_path.is_file():
+            print(f"MISSING: {pdf_path}", file=sys.stderr)
+            return 2
+        try:
+            got = _sha256(pdf_path)
+        except OSError as exc:
+            print(f"COULD NOT READ the PDF: {type(exc).__name__}: {exc}", file=sys.stderr)
+            return 2
+        if got != sha:
+            print(f"NOT THE PINNED PDF: {pdf_path.name} sha256 {got}", file=sys.stderr)
+            return 2
     try:
-        got = _sha256(cisa_pdf)
-    except OSError as exc:
-        print(f"COULD NOT READ the PDF: {type(exc).__name__}: {exc}", file=sys.stderr)
-        return 2
-    if got != CISA_SOURCE["sha256"]:
-        print(f"NOT THE PINNED PDF: sha256 {got}", file=sys.stderr)
-        return 2
-    try:
-        data = extract_cisa(cisa_pdf)
+        data = extract(pinned[0][0])
     except Exception as exc:  # noqa: BLE001 - reported, never swallowed: exit 2
         # Could-not-look is exit 2, distinct from DIFFERS (exit 1): a reader
         # that fails (a moved heading, another pdfplumber, a damaged file) says
@@ -304,14 +505,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
     if args.write:
-        cisa_json.write_text(text, encoding="utf-8", newline="\n")
-        print(f"wrote {cisa_json} ({len(data['rows'])} rows)")
+        out_json.write_text(text, encoding="utf-8", newline="\n")
+        print(f"wrote {out_json} ({len(data[unit])} {unit})")
         return 0
-    if not cisa_json.is_file():
-        print(f"NO COMMITTED EXTRACTION at {cisa_json}", file=sys.stderr)
+    if not out_json.is_file():
+        print(f"NO COMMITTED EXTRACTION at {out_json}", file=sys.stderr)
         return 1
     try:
-        committed = cisa_json.read_text(encoding="utf-8")
+        committed = out_json.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         print(
             f"COULD NOT READ the committed extraction: {type(exc).__name__}: {exc}",
@@ -321,7 +522,7 @@ def main(argv: list[str] | None = None) -> int:
     if committed != text:
         print("DIFFERS from the committed extraction", file=sys.stderr)
         return 1
-    print(f"matches the committed extraction ({len(data['rows'])} rows)")
+    print(f"matches the committed extraction ({len(data[unit])} {unit})")
     return 0
 
 

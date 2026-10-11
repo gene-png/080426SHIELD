@@ -11,6 +11,8 @@ export interface CatalogCapability {
   pillar_code: string;
   name: string;
   outcome: string;
+  /** #838: a CISA pillar's cross-cutting rows. Absent reads as "function". */
+  kind?: "function" | "cross_cutting";
 }
 
 export interface CatalogPillar {
@@ -59,6 +61,10 @@ export interface ZtAssessment {
   documents_stale?: boolean;
   answers: ZtAnswer[];
   client_target_stage: number | null;
+  /** #838: answers kept on rows the catalog no longer has, so not scored,
+   *  with the approved sentence that says so (null when there are none). */
+  retired_answers?: number;
+  retired_answers_note?: string | null;
 }
 
 /** What an ADMIN may change on a ZT answer, via `PATCH /zt/answers/{id}`. */
@@ -114,7 +120,9 @@ export interface ZtDroppedSuggestion {
     | "superseded"
     | "locked"
     | "protected"
-    | "edited";
+    | "edited"
+    // #839 F1: a current stage above the capability's own maximum.
+    | "stage_above_capability_max";
   /** The capability code exactly as the model wrote it, or null. */
   key: string | null;
   /** "current" or "target", for drops attributable to one value. */
@@ -145,6 +153,24 @@ export interface ZtRunAiResponse {
    * in progress, or consultant-entered. 0 for a live run.
    */
   preserved_client_answers?: number;
+  /**
+   * #840: capabilities the run asked about, not locked, that no entry named.
+   * Not part of the values identity above: a capability with no entry sent no
+   * value. Optional, so a run stored before #840 reads as none.
+   */
+  omitted_count?: number;
+  omitted_capabilities?: ZtOmittedCapability[];
+}
+
+/**
+ * One capability a zt_score run got no entry for (#840). `notes_blank` is
+ * "no notes, or whitespace only"; "N/A" is a note. `kept_stage` is the stage
+ * the row still holds after the run, or null when it has none.
+ */
+export interface ZtOmittedCapability {
+  capability_code: string;
+  notes_blank: boolean;
+  kept_stage: number | null;
 }
 
 export interface PillarScore {
@@ -193,6 +219,10 @@ export interface GapAnalysis {
   gap_count_by_pillar: Record<string, number>;
   gaps: GapItem[];
   roadmap?: RoadmapEntry[];
+  /** #839: the API's own C1/C2 sentences for the DoD target caps. */
+  target_cap_notes?: string[];
+  /** #839 S1: the API's own sentence per stored stage above its maximum. */
+  stage_above_max_notes?: string[];
 }
 
 export interface RoadmapEntry {

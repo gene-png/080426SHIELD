@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_serializer
 
 from app.risk.engine import Impact, Likelihood
 
@@ -25,6 +25,55 @@ class RiskInputState(BaseModel):
     engaged: bool
     status: str | None = None
     version: int | None = None
+    # #876: what tells this row from another of the same kind -- the ZT
+    # framework's name ("CISA ZTMM 2.0"), or the service title where that does
+    # not separate them. None while a kind has one row (advisor, #736
+    # 6019425290 Q3). Defaulted so an older client parses a newer response.
+    qualifier: str | None = None
+    #: #474 D': CSF only. True when no in-scope Playbook row has a recorded
+    #: value other than a target, so it feeds no CSF finding (#736
+    #: 6101751588); None for every other kind.
+    no_playbook_scores: bool | None = None
+    #: R10 (#736 6102665946): CSF only. When the Playbook measured, how many
+    #: targeted subcategories have no tier row both scored and targeted, so
+    #: raise no finding; 0 otherwise. None for every other kind.
+    unscored_targeted_subcategories: int | None = None
+    #: R11 (#736 6103383277): CSF only. True when the Playbook's in-scope rows
+    #: carry scores and targets but no row carries both (not measured, and
+    #: `no_playbook_scores` False); None for every other kind.
+    no_shared_playbook_row: bool | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_playbook_flag(self, handler):
+        # Present on CSF rows only: no other kind has a Playbook, and a None
+        # on every row would change the shape of the panel's rows for nothing.
+        data = handler(self)
+        if self.no_playbook_scores is None:
+            data.pop("no_playbook_scores", None)
+        if self.no_shared_playbook_row is None:
+            data.pop("no_shared_playbook_row", None)
+        if self.unscored_targeted_subcategories is None:
+            data.pop("unscored_targeted_subcategories", None)
+        return data
+
+
+class RiskDuplicateService(BaseModel):
+    """#896: one service behind the duplicate refusal (`duplicate_inputs`).
+
+    The Risk Register's duplicate banner offers one archive button per row, so
+    it needs the id the archive route takes and the title the button names.
+    """
+
+    service_id: str
+    title: str
+    # Review B1 (advisor, #736 6046491381): what tells two rows with the SAME
+    # title apart. When the service was opened (its created_at, UTC), and the
+    # status and version the Inputs panel shows for it. Every member of a
+    # duplicate group has a current record (a group is built from synthesis
+    # sources, which exist only for a record), so both are required.
+    started_at: datetime
+    status: str
+    version: int
 
 
 class RiskGateStatus(BaseModel):
@@ -81,6 +130,15 @@ class RiskGateStatus(BaseModel):
     # #737: what the register would be drafted from, and whether each input is
     # final. Defaulted so an older client parses a newer response.
     inputs: list[RiskInputState] = []
+    # #876 Q2 (a): two engaged services of one kind and framework, which would
+    # produce the same findings. The sentence generate refuses with; None when
+    # there is no such pair. Defaulted so an older client parses.
+    duplicate_inputs: str | None = None
+    # #896: the services behind `duplicate_inputs`, read off the same groups
+    # the sentence is built from, in the order it names them; [] when there is
+    # no such pair. The banner offers one archive button per row (advisor, #736
+    # 6042801745). Defaulted so an older client parses.
+    duplicate_services: list[RiskDuplicateService] = []
 
 
 class RiskEntryResponse(BaseModel):
@@ -90,6 +148,13 @@ class RiskEntryResponse(BaseModel):
     title: str
     description: str | None
     axis: str | None
+    # #806 G1 option 3. None is "not recorded" (pre-0066, or the model sent no
+    # readable list); `[]` is the claim "no other axis". Never counted.
+    other_axes: list[str] | None = None
+    # Ruling #736 6105137014: this entry's element drops by reason; None is
+    # "not recorded", `{}` "none dropped". Consultant only: the client
+    # dashboard's entry schema does not carry it.
+    other_axes_dropped: dict[str, int] | None = None
     source: str | None
     source_id: str | None
     linked_techniques: list[str] | None
@@ -152,6 +217,23 @@ class RatingNotCarried(BaseModel):
     reason: Literal["ambiguous", "no_entry", "no_source_id"]
 
 
+class RiskTargetUsed(BaseModel):
+    """#474. The target one service's findings were measured against.
+
+    `kind` and `framework` say which service (`framework` is the ZT
+    framework, None for CSF); the stored scope key is never sent, so nothing
+    can render it. `source` is the resolver's word for whether the client's
+    choice was used; `origin` is when the target was read (`live_at_generate`
+    today).
+    """
+
+    kind: str
+    framework: str | None
+    target: int | None
+    source: str
+    origin: str
+
+
 class LinkScopeDisclosure(BaseModel):
     """How much of one assessment was SCORED, and therefore citable (#403).
 
@@ -172,6 +254,11 @@ class LinkScopeDisclosure(BaseModel):
     service: str
     scored: int
     total: int
+    #: #415: how many of the `scored` codes are pending review
+    #: (`attack/pending.py::pending_codes`) and so not citable, counted apart
+    #: from the unscored rows. None where the service has no review queue (CSF,
+    #: ZT) or where an ATT&CK register predates the count (not recorded).
+    pending_review: int | None = None
 
 
 class RiskRegisterResponse(BaseModel):
@@ -293,6 +380,12 @@ class RiskRegisterResponse(BaseModel):
     ratings_carried: int | None = None
     ratings_carried_from_version: int | None = None
     ratings_not_carried: list[RatingNotCarried] = []
+    # #474. The target each service's findings were measured against, read
+    # back from provenance by `app/risk/baseline.py`. `targets_recorded` False
+    # means a register generated before this was recorded: the empty list then
+    # says nothing, never "no target applied".
+    targets: list[RiskTargetUsed] = []
+    targets_recorded: bool = False
     findings_recorded: bool = False
     findings_total: int | None = None
     findings_without_entry: list[str] = []
@@ -448,3 +541,16 @@ class RiskRegisterResponse(BaseModel):
     #: default would let a future writer that forgets the field certify a fully
     #: scored assessment it never looked at.
     excluded_unscored_links_recorded: bool = False
+    #: #915: per ZT source, the capabilities whose target the #839 cap lowered,
+    #: read from provenance (`risk/zt_capped.py`). None when the register
+    #: records nothing, which is not "the cap lowered nothing" (an empty list).
+    capped_target_codes: dict[str, list[str]] | None = None
+    #: #915 (S3): the approved sentence built from it, rendered as given.
+    zt_capped_target_note: str | None = None
+    #: #474 D': the approved CSF source note, or None (no CSF findings).
+    csf_source_note: str | None = None
+    #: Ruling #736 6104067136 (see #1033): which not-measured line the screen
+    #: prints for a `playbook_no_scores` CSF target, read by the files' reader
+    #: (`risk/csf_source.py::csf_no_shared_row`). False when the register
+    #: predates R11, so it keeps the original no-scores line.
+    csf_no_shared_row: bool = False

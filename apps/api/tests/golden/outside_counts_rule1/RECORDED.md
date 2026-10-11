@@ -50,3 +50,17 @@ insertion and nothing else:
   review". With that column removed from every row, the sheet is identical.
   The Heatmap Summary gains one legend row, "Why partial". With it removed,
   the sheet is identical. The other sheets are unchanged.
+
+## Amendment, 2026-10-09: #775, the PDF title prints as text
+
+The advisor's ruling on #775 (#736 comment 6072976838, item 3 (d)): every
+service's PDF prints its title and the client's name through the shared
+`app/pdf_export.py::pdf_text`, so reportlab no longer reads them as markup.
+Before, the title "ATT&CK Coverage" printed as "ATT&CK; Coverage", while this
+golden's own `docx.json` and `xlsx.json` already said "ATT&CK Coverage".
+
+- `pdf.json`: exactly one word changed: page 1, word 1, `ATT&CK;` became
+  `ATT&CK`. Checked by a throwaway script that split every page on whitespace
+  and compared word by word: 3 pages, 444 words, 1 difference. The file was
+  edited by hand, not regenerated, and the current code renders it exactly.
+- `docx.json` and `xlsx.json`: unchanged.

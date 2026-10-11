@@ -145,6 +145,9 @@ class ScenarioBase(BaseModel):
     version: int
     approved_at: datetime | None
     tools: list[str]
+    #: #851: tool citations in the base outside the client's CURRENT security
+    #: tool list; today's figure still counts them. REQUIRED.
+    citations_outside_subset: int
 
 
 class ScenarioListResponse(BaseModel):

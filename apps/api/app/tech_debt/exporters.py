@@ -28,8 +28,11 @@ from app.mode_stamp import (
     pdf_paragraph,
 )
 from app.models.capability import CapabilityDisposition, CapabilityItem, CapabilityList
+from app.pdf_export import pdf_text
+from app.tech_debt.components import is_component, source_items
 from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.savings import estimated_savings as estimated_savings_of
+from app.xlsx_export import safe_text_row
 
 
 @dataclass(frozen=True)
@@ -235,6 +238,11 @@ def build_context(
     # and printed "Total annual cost" over it (#126, exporter half).
     spend_known = True
     for it in items_list:
+        # for #835: a split bundle's part is not a cost. Its parent holds the
+        # license value, so the part neither adds to the total nor, by having
+        # no cost of its own, makes the total a floor.
+        if is_component(it):
+            continue
         if it.annual_cost_usd is not None:
             total_cost += float(it.annual_cost_usd)
         else:
@@ -244,7 +252,8 @@ def build_context(
     # Rows that came from the upload. Children of a decomposed bundle carry a
     # parent and are NOT source rows — counting them made `28 > 32` false in the
     # workspace and unmounted the whole disclosure until 2026-08-07.
-    included = sum(1 for it in items_list if getattr(it, "parent_item_id", None) is None)
+    # Since #835 this is also what "Capabilities reviewed" prints.
+    included = len(source_items(items_list))
     # Derive the count; do not measure the NAMED list. `reconcile.py` withholds
     # the names when the provider did not attribute every item to a source row,
     # so `len(named)` is 0 in exactly the case where rows WERE excluded and
@@ -321,7 +330,7 @@ def render_xlsx(ctx: DeliverableContext) -> bytes:
         "Notes",
         "AI Confidence %",
     ]
-    ws.append(header)
+    safe_text_row(ws, header)
     header_fill = PatternFill(start_color="FFEEF2F7", end_color="FFEEF2F7", fill_type="solid")
     for col in range(1, len(header) + 1):
         cell = ws.cell(row=1, column=col)
@@ -330,7 +339,8 @@ def render_xlsx(ctx: DeliverableContext) -> bytes:
         cell.alignment = Alignment(horizontal="left", vertical="center")
 
     for item in ctx.items:
-        ws.append(
+        safe_text_row(
+            ws,
             [
                 item.name,
                 item.vendor or "",
@@ -342,7 +352,7 @@ def render_xlsx(ctx: DeliverableContext) -> bytes:
                 item.disposition_rationale or "",
                 item.notes or "",
                 item.confidence_pct if item.confidence_pct is not None else "",
-            ]
+            ],
         )
 
     # Summary row at the bottom.
@@ -415,8 +425,8 @@ def render_pdf(ctx: DeliverableContext) -> bytes:
     body = styles["BodyText"]
 
     story: list = []
-    story.append(Paragraph(ctx.service_title, h1))
-    story.append(Paragraph(ctx.client_legal_name, body))
+    story.append(pdf_text(ctx.service_title, h1))  # #775
+    story.append(pdf_text(ctx.client_legal_name, body))  # #775
     story.append(pdf_paragraph(ctx.ai_mode, body))  # #646, under the title
     story.append(Spacer(1, 0.2 * inch))
 
@@ -438,7 +448,8 @@ def render_pdf(ctx: DeliverableContext) -> bytes:
     )
     story.append(
         Paragraph(
-            f"Capabilities reviewed: <b>{len(ctx.items)}</b> · "
+            # for #835: source items, not a split bundle's parts.
+            f"Capabilities reviewed: <b>{ctx.included_count}</b> · "
             f"{cost_label(ctx)}: <b>${ctx.total_cost:,.0f}</b> · "
             f"Estimated annual savings: <b>{savings}</b>",
             body,
@@ -525,7 +536,8 @@ def render_docx(ctx: DeliverableContext) -> bytes:
         if recon
         else []
     ) + [
-        f"Capabilities reviewed: {len(ctx.items)}",
+        # for #835: source items, not a split bundle's parts.
+        f"Capabilities reviewed: {ctx.included_count}",
         f"{cost_label(ctx)}: ${ctx.total_cost:,.0f}",
         f"Estimated annual savings: {savings}",
     ]
