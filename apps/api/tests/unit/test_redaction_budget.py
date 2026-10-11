@@ -215,8 +215,8 @@ def test_child_output_equals_in_process_output(world, mode) -> None:
 
 @pytest.mark.unit
 @pytest.mark.parametrize("setting", ["BUDGET_SECONDS", "SLOT_WAIT_SECONDS"])
-@pytest.mark.parametrize("value", ["inf", "1e12"])
-def test_startup_refuses_a_redaction_time_that_is_infinite_or_huge(
+@pytest.mark.parametrize("value", ["inf", "1e12", "3300", "0", "-1", "nan"])
+def test_startup_refuses_a_redaction_time_that_is_not_a_short_positive_number(
     monkeypatch, setting: str, value: str
 ) -> None:
     """Accepted, either value reaches `poll` or `Event.wait` and raises
@@ -232,6 +232,32 @@ def test_startup_refuses_a_redaction_time_that_is_infinite_or_huge(
     try:
         with pytest.raises(ValidationError, match=f"shield_redaction_{setting.lower()}"):
             create_app()
+    finally:
+        monkeypatch.delenv(f"SHIELD_REDACTION_{setting}")
+        get_settings.cache_clear()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("setting", ["BUDGET_SECONDS", "SLOT_WAIT_SECONDS"])
+def test_a_redaction_time_must_be_shorter_than_a_runs_deadline(monkeypatch, setting: str) -> None:
+    """At the run's deadline it is refused; just under it, the api starts. A
+    longer budget would let one payload's child outlast its whole run, which is
+    reaped while the child still holds a slot (#1042 narrow review, item 1)."""
+    from pydantic import ValidationError
+
+    from app.ai.run_limits import RUN_DEADLINE
+    from app.config import get_settings
+    from app.main import create_app
+
+    deadline_s = RUN_DEADLINE.total_seconds()
+    try:
+        monkeypatch.setenv(f"SHIELD_REDACTION_{setting}", str(deadline_s))
+        get_settings.cache_clear()
+        with pytest.raises(ValidationError, match=f"shield_redaction_{setting.lower()}"):
+            create_app()
+        monkeypatch.setenv(f"SHIELD_REDACTION_{setting}", str(deadline_s - 1))
+        get_settings.cache_clear()
+        assert create_app() is not None
     finally:
         monkeypatch.delenv(f"SHIELD_REDACTION_{setting}")
         get_settings.cache_clear()

@@ -325,3 +325,49 @@ def test_a_child_that_hangs_up_and_keeps_running_is_killed(world, monkeypatch) -
     assert pid_file.is_file(), "the stand-in child never ran, so this proves nothing"
     _assert_failed_closed(world, svc_id, run)
     rw.assert_gone(int(pid_file.read_text()))
+
+
+class _RecvFailsOnceTheChildRuns:
+    """The read end of the answer pipe: `poll` says an answer is waiting as
+    soon as the child has written its PID, and `recv` then fails the way a
+    broken pipe does, with the child still running."""
+
+    def __init__(self, real: Any, pid_file: Any) -> None:
+        self._real = real
+        self._pid_file = pid_file
+
+    def poll(self, _timeout: float) -> bool:
+        rw.wait_for_file(self._pid_file)
+        return True
+
+    def recv(self) -> Any:
+        raise OSError(104, "Connection reset by peer")
+
+    def close(self) -> None:
+        self._real.close()
+
+
+@pytest.mark.unit
+def test_a_child_left_running_by_a_failed_read_is_killed(world, monkeypatch) -> None:
+    """`recv` raises while the child is alive. The run fails closed, typed, and
+    the child does not outlive the call (#1042 narrow review, item 2)."""
+    import app.ai.isolation as isolation
+
+    pid_file = world["tmp"] / "readfail.pid"
+    real_pipe = isolation._ctx.Pipe
+
+    def _pipe(duplex: bool = True) -> tuple[Any, Any]:
+        recv, send = real_pipe(duplex)
+        return _RecvFailsOnceTheChildRuns(recv, pid_file), send
+
+    monkeypatch.setattr(isolation, "_TARGET", targets.write_pid_then_spin)
+    monkeypatch.setattr(isolation._ctx, "Pipe", _pipe)
+    monkeypatch.setattr(isolation, "_KILL_JOIN_SECONDS", 1.0)
+    svc_id, artifact_id = rw.service_and_artifact(
+        world, f"Application,__pid_file__\nPayroll,{pid_file}\n"
+    )
+    run = rw.post_within(rw.HANG_GUARD_S, lambda: rw.extract(world, svc_id, artifact_id))
+
+    assert pid_file.is_file(), "the stand-in child never ran, so this proves nothing"
+    _assert_failed_closed(world, svc_id, run)
+    rw.assert_gone(int(pid_file.read_text()))

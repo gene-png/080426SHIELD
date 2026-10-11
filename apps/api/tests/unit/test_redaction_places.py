@@ -541,3 +541,45 @@ def test_the_place_is_released_when_closing_out_the_run_raises(world, monkeypatc
 
     assert seen == [1], "the run never held a place, so this proves nothing"
     assert isolation.places_in_use() == 0
+
+
+@pytest.mark.unit
+def test_an_answer_that_arrives_after_its_run_ended_is_not_sent(world, monkeypatch) -> None:
+    """The run is reaped while its child is still redacting. The child then
+    answers, correctly, and the answer is refused: nothing reaches the
+    provider and no `llm_calls` row is written for a run already recorded as
+    over (#1042 narrow review, item 3)."""
+    import app.ai.isolation as isolation
+
+    _settings(monkeypatch, BUDGET_SECONDS="30")
+    monkeypatch.setattr(isolation, "_TARGET", targets.write_pid_wait_for_go_then_redact)
+    runner = defer_runs(world["app"])
+    pid_file = world["tmp"] / "late.pid"
+    svc_id, artifact_id = rw.service_and_artifact(
+        world, f"Application,__pid_file__\nPayroll,{pid_file}\n"
+    )
+    run_id = rw.start_extract(world, svc_id, artifact_id)
+    job = threading.Thread(target=runner.run_all, daemon=True)
+    job.start()
+    rw.wait_for_file(pid_file)
+    assert isolation.places_in_use() == 1, "the run never took its place"
+
+    with world["Session"]() as db:
+        db.execute(
+            update(AiRun)
+            .where(AiRun.id == uuid.UUID(run_id))
+            .values(deadline_at=utcnow() - timedelta(hours=1))
+        )
+        db.commit()
+    run = get_run(world["c"], run_id, world["h"])
+    assert (run["status"], run["error_reason"]) == ("failed", "run_deadline_exceeded"), run
+    assert job.is_alive(), "the job ended before the reap, so this proves nothing"
+
+    pid_file.with_suffix(".go").write_text("go")
+    job.join(rw.HANG_GUARD_S)
+    assert not job.is_alive()
+
+    assert world["sent"] == [], "an answer that arrived after the run ended was sent"
+    assert rw.llm_rows(world) == 0
+    assert isolation.places_in_use() == 0
+    rw.assert_gone(int(pid_file.read_text()))

@@ -41,7 +41,8 @@ CONCURRENCY, design (ii) approved in R8 (#736 6096174390):
   needle); if it becomes reachable, record it on the place like the others.
 * The place is released when the run ends, on every path (`release_run`, called
   from the run framework's `finally` and from the reaper), and an ended run is
-  never admitted again.
+  never admitted again. A call of it still redacting when it ends is refused
+  when its child answers (`_end_place`): nothing clears for a run already over.
 
 ONE PROCESS. The places and slots are this process's. That is the reaper's
 precondition already (`app/ai/runs.py`); a multi-worker deploy would multiply
@@ -303,12 +304,28 @@ def release_run(run_id: uuid.UUID) -> None:
 def _release(key: Hashable) -> None:
     with _lock:
         place = _places.pop(key, None)
+        if place is not None:
+            _end_place(place)
         _refused_unplaced.pop(key, None)
         _ended[key] = None
         while len(_ended) > _ENDED_MEMORY:
             _ended.popitem(last=False)
     if place is not None:
         _log.info("redaction_isolation.place_released", run=str(key[1]), cleared=place.cleared)
+
+
+def _end_place(place: _Place) -> None:
+    """Refuse whatever of this run is still redacting, under `_lock`. A batch
+    whose child answers after its run ended (reaped, or failed on another
+    batch) must not clear and egress for a run already recorded as over: the
+    answer is refused like any call of an ended run (`_admit`)."""
+    if place.refused is None:
+        place.refused = RedactionRefused(
+            REDACTION_CAPACITY_BUSY,
+            busy_message(sent_before=True),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            sent_before=True,
+        )
 
 
 @contextmanager
@@ -450,6 +467,11 @@ def _run_child(
         return answer
     finally:
         recv.close()
+        if child.exitcode is None:
+            # Reached with the child alive only when something above raised
+            # (a `recv` error other than end-of-file, say): the docstring's
+            # "gone before this returns" holds on that path too.
+            _kill(child)
 
 
 def _kill(child: Any) -> None:

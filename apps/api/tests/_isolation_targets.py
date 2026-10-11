@@ -140,3 +140,19 @@ def write_pid_close_pipe_then_spin(payload: Any, **_kwargs: Any) -> tuple[Any, d
     x = 0
     while True:
         x += 1
+
+
+def write_pid_wait_for_go_then_redact(payload: Any, **kwargs: Any) -> tuple[Any, dict[str, int]]:
+    """Record this process's PID, wait until the test creates `<pid file>.go`,
+    then redact for real and answer: a slow child whose answer arrives when
+    the test chooses (after its run has ended, say)."""
+    from app.ai.redact import redact_payload
+
+    pid_file = _pid_file(payload)
+    if pid_file is None:
+        raise AssertionError("write_pid_wait_for_go_then_redact needs a '__pid_file__'")
+    pid_file.write_text(str(os.getpid()))
+    go = pid_file.with_suffix(".go")
+    while not go.exists():
+        time.sleep(0.01)
+    return redact_payload(payload, **kwargs)

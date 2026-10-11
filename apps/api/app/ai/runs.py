@@ -39,7 +39,7 @@ import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import BackgroundTasks, HTTPException, status
@@ -52,6 +52,7 @@ from app.ai.failures import friendly_reason
 from app.ai.isolation import RedactionRefused, release_run
 from app.ai.llm import LLMClient
 from app.ai.run_context import ai_run_id_var
+from app.ai.run_limits import REAP_MARGIN, RUN_DEADLINE
 from app.logging import correlation_id_var, get_logger
 from app.models._common import utcnow
 from app.models.ai_run import AiRun, AiRunStatus
@@ -64,17 +65,6 @@ _log = get_logger(__name__)
 #: process that no longer exists (see the module docstring's precondition).
 BOOT_ID = str(uuid.uuid4())
 
-#: How long a run may hold its service's edit lock. Sized above the longest
-#: measured run: ATT&CK's 26 batches at 5 workers, ~30s of generation each
-#: (`routes/attack.py`, `_MITRE_BATCH_SIZE`), is ~3 minutes when healthy, and a
-#: rate-limited provider has been seen to stretch a single batch to minutes.
-RUN_DEADLINE = timedelta(minutes=45)
-
-#: How far past its deadline a run THIS process is still executing may go
-#: before a status read ends it. The ATT&CK job checks its own deadline between
-#: batches; this margin is for a job blocked inside one provider call, which
-#: cannot check anything until the call returns.
-REAP_MARGIN = timedelta(minutes=5)
 
 RUN_ORPHANED = "run_orphaned"
 RUN_DEADLINE_EXCEEDED = "run_deadline_exceeded"

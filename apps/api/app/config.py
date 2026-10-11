@@ -12,6 +12,8 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.ai.run_limits import RUN_DEADLINE
+
 Environment = Literal["development", "staging", "production"]
 RedactionMode = Literal["strict", "standard", "off"]
 LLMProvider = Literal["anthropic", "openai", "azure_openai", "bedrock", "gemini", "vertex", "local"]
@@ -106,6 +108,10 @@ def _probe_adc() -> bool:
     return credentials is not None
 
 
+#: The redaction budget and slot wait must each be shorter than this (#552).
+_REDACTION_TIME_LIMIT_S = RUN_DEADLINE.total_seconds()
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -175,18 +181,23 @@ class Settings(BaseSettings):
     # Egress redaction runs in a short-lived child process (#552, D-111; see
     # app/ai/isolation.py). The budget is per PAYLOAD: a child still redacting
     # when it runs out is killed by PID and nothing is sent.
-    # Finite and at most an hour, or the api does not start: an infinite or
-    # huge value raises OverflowError in `poll` past every typed path. `le`
-    # alone refuses infinity (and `gt` refuses NaN); `allow_inf_nan=False` is
-    # the same rule said outright, so removing it changes nothing today.
-    shield_redaction_budget_seconds: float = Field(default=30.0, gt=0, le=3600, allow_inf_nan=False)
+    # Positive, finite and SHORTER THAN A RUN'S DEADLINE, or the api does not
+    # start. Longer, one payload's child could outlast its whole run: the run
+    # is reaped (`RUN_DEADLINE` + `REAP_MARGIN`) while the child still holds a
+    # slot. Infinite or huge, `poll` raises OverflowError past every typed
+    # path. The bound is read from `RUN_DEADLINE`, not written twice. `lt`
+    # alone refuses infinity and `gt` refuses NaN; `allow_inf_nan=False` says
+    # it outright, so removing it changes nothing today.
+    shield_redaction_budget_seconds: float = Field(
+        default=30.0, gt=0, lt=_REDACTION_TIME_LIMIT_S, allow_inf_nan=False
+    )
     # Child processes redacting at once, across every tenant.
     shield_redaction_max_children: int = Field(default=2, ge=1)
     # How long one call waits, in turn (FIFO), for a child slot before its run
     # is refused with `redaction_capacity_busy`.
-    # Bounded the same way, for `Event.wait`.
+    # Bounded the same way and for the same reasons, for `Event.wait`.
     shield_redaction_slot_wait_seconds: float = Field(
-        default=30.0, gt=0, le=3600, allow_inf_nan=False
+        default=30.0, gt=0, lt=_REDACTION_TIME_LIMIT_S, allow_inf_nan=False
     )
     # Run PLACES. A run (a Run-AI, a Risk generate, or one call outside both)
     # holds one place from its first redaction until it ends, and a run arriving
