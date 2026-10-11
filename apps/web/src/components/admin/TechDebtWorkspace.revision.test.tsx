@@ -1,0 +1,220 @@
+import "@testing-library/jest-dom/vitest";
+
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import * as techDebtClient from "@/lib/tech_debt/client";
+import type {
+  CapabilityList,
+  ConsolidationPlanSummary,
+  OverlapAnalysis,
+} from "@/lib/tech_debt/types";
+
+import { TechDebtWorkspace } from "./TechDebtWorkspace";
+
+// #640: an approved list edited afterwards is not approved any more. Step 3
+// offers "Approve again", step 4 says why it is blocked, and the classification
+// queue stays editable until release.
+vi.mock("@/lib/tech_debt/client", () => ({
+  TechDebtProxyError: class extends Error {},
+  proxyMessage: (err: unknown, fallback: string) =>
+    err instanceof Error ? err.message : fallback,
+  addCapabilityComponents: vi.fn(),
+  confirmExcludedRow: vi.fn(),
+  includeExcludedRow: vi.fn(),
+  approveCapabilityList: vi.fn(),
+  discardCapabilityList: vi.fn(),
+  extractCapabilities: vi.fn(),
+  // #645: the workspace reads the service's runs on load. No run, by default.
+  fetchTechDebtRun: vi.fn(),
+  fetchTechDebtRunSummary: vi.fn(() =>
+    Promise.resolve({ running: null, latest: null, last_completed: null }),
+  ),
+  fetchConsolidationPlan: vi.fn(),
+  fetchLatestDeliverable: vi.fn(),
+  fetchLatestList: vi.fn(),
+  fetchOverlapAnalysis: vi.fn(),
+}));
+vi.mock("@/lib/admin/aiStatus", () => ({
+  useAiStatus: () => ({ status: null }),
+  hasAcknowledgedOffline: () => true,
+}));
+vi.mock("@/lib/stages/client", () => ({
+  useServiceStages: () => ({ phase: { kind: "loading" }, stages: null }),
+}));
+vi.mock("@/components/intake/Dropzone", () => ({ Dropzone: () => null }));
+vi.mock("@/components/intake/RedactionDisclosure", () => ({
+  RedactionDisclosure: () => null,
+}));
+vi.mock("./ConsolidationPlanCard", () => ({
+  ConsolidationPlanCard: () => null,
+}));
+vi.mock("./DeliverableCard", () => ({ DeliverableCard: () => null }));
+vi.mock("./DiscardDraftButton", () => ({ DiscardDraftButton: () => null }));
+vi.mock("./IntakeDocumentsPanel", () => ({ IntakeDocumentsPanel: () => null }));
+vi.mock("./OverlapDashboard", () => ({ OverlapDashboard: () => null }));
+vi.mock("./ProgressStages", () => ({ ProgressStages: () => null }));
+vi.mock("./EditableCapabilityTable", () => ({
+  // Drives the one callback the #730 F2 test needs: the table reports a saved
+  // row edit exactly as the real one does after patchCapabilityItem resolves.
+  EditableCapabilityTable: ({
+    onItemUpdate,
+  }: {
+    onItemUpdate: (next: {
+      id: string;
+      name: string;
+      disposition: string;
+    }) => void;
+  }) => (
+    <button
+      type="button"
+      onClick={() =>
+        onItemUpdate({ id: "item-1", name: "One, edited", disposition: "keep" })
+      }
+    >
+      save row edit
+    </button>
+  ),
+}));
+vi.mock("./SecurityClassificationQueue", () => ({
+  SecurityClassificationQueue: ({ editable }: { editable: boolean }) => (
+    <p>{editable ? "queue editable" : "queue read-only"}</p>
+  ),
+}));
+
+const fetchLatestList = vi.mocked(techDebtClient.fetchLatestList);
+
+function list(status: string, approvalCurrent: boolean): CapabilityList {
+  return {
+    id: "list-1",
+    status,
+    version: 1,
+    items: [{ id: "item-1", name: "One", disposition: "keep" }],
+    excluded_rows: [],
+    approval_current: approvalCurrent,
+  } as unknown as CapabilityList;
+}
+
+function mount(l: CapabilityList): void {
+  fetchLatestList.mockResolvedValue(l);
+  vi.mocked(techDebtClient.fetchOverlapAnalysis).mockResolvedValue({
+    groups: [],
+  } as unknown as OverlapAnalysis);
+  vi.mocked(techDebtClient.fetchConsolidationPlan).mockResolvedValue({
+    items: [],
+  } as unknown as ConsolidationPlanSummary);
+  vi.mocked(techDebtClient.fetchLatestDeliverable).mockResolvedValue(null);
+  render(<TechDebtWorkspace serviceId="svc-640" serviceTitle="TD" />);
+}
+
+describe("TechDebtWorkspace after an edit to an approved list (#640)", () => {
+  afterEach(() => vi.clearAllMocks());
+
+  it("offers Approve again, and says why step 4 is blocked", async () => {
+    mount(list("approved", false));
+    const button = await screen.findByRole("button", { name: "Approve again" });
+    expect(button).toBeEnabled();
+    expect(
+      screen.getByText(
+        "The list was edited after it was approved. Approve it again in step 3 before generating a deliverable from it.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Edited since approval v1")).toBeInTheDocument();
+    expect(screen.getByText("queue editable")).toBeInTheDocument();
+  });
+
+  it("shows a current approval as done, with nothing to press", async () => {
+    mount(list("approved", true));
+    const button = await screen.findByRole("button", { name: "Approved" });
+    expect(button).toBeDisabled();
+    expect(screen.getByText("Approved v1")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/edited after it was approved/),
+    ).not.toBeInTheDocument();
+    // Still editable: an edit is what makes the approval stale.
+    expect(screen.getByText("queue editable")).toBeInTheDocument();
+  });
+
+  it("an inline row edit on an approved list re-enables Approve again (advisor review of #730, F2)", async () => {
+    // The PATCH response is one item and carries no approval state, so the
+    // workspace must re-read the list: the server is what knows the edit made
+    // the approval stale. Mount reads a current approval; the re-read after the
+    // edit reads the stale one.
+    mount(list("approved", true));
+    await screen.findByRole("button", { name: "Approved" });
+    fetchLatestList.mockResolvedValue(list("approved", false));
+
+    fireEvent.click(screen.getByRole("button", { name: "save row edit" }));
+
+    const button = await screen.findByRole("button", { name: "Approve again" });
+    expect(button).toBeEnabled();
+    expect(screen.getByText("Edited since approval v1")).toBeInTheDocument();
+  });
+
+  it("an approve response landing after a newer edit's re-read does not re-show Approved (independent review of #730, finding 4)", async () => {
+    // The approve request is answered only after a row edit and its re-read
+    // have landed. Its response says "approved and current", which was true
+    // when it was written and is not any more: the edit made it stale. The
+    // workspace must ask the server again rather than apply the older answer.
+    mount(list("approved", false));
+    await screen.findByRole("button", { name: "Approve again" });
+    let answerApprove: (l: CapabilityList) => void = () => {
+      throw new Error("approve was never requested");
+    };
+    vi.mocked(techDebtClient.approveCapabilityList).mockImplementation(
+      () =>
+        new Promise<CapabilityList>((resolve) => {
+          answerApprove = resolve;
+        }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Approve again" }));
+    await screen.findByRole("button", { name: "Approving…" });
+    // The edit lands while approve is in flight; its re-read sees it stale.
+    fetchLatestList.mockResolvedValue(list("approved", false));
+    const readsBeforeEdit = fetchLatestList.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "save row edit" }));
+    await waitFor(() =>
+      expect(fetchLatestList.mock.calls.length).toBe(readsBeforeEdit + 1),
+    );
+    await screen.findByText("Edited since approval v1");
+
+    answerApprove(list("approved", true));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Approving…" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Approve again" }),
+    ).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: "Approved" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Edited since approval v1")).toBeInTheDocument();
+  });
+
+  it("an approve response with nothing newer in flight shows Approved", async () => {
+    // The control for the test above: the guard discards only a response that
+    // a newer list operation has overtaken.
+    mount(list("approved", false));
+    await screen.findByRole("button", { name: "Approve again" });
+    vi.mocked(techDebtClient.approveCapabilityList).mockResolvedValue(
+      list("approved", true),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Approve again" }));
+
+    expect(
+      await screen.findByRole("button", { name: "Approved" }),
+    ).toBeDisabled();
+    expect(screen.getByText("Approved v1")).toBeInTheDocument();
+  });
+
+  it("keeps a released list read-only", async () => {
+    mount(list("released", true));
+    await screen.findByRole("button", { name: "Released" });
+    expect(screen.getByText("queue read-only")).toBeInTheDocument();
+  });
+});

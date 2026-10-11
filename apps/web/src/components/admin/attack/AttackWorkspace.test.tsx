@@ -29,6 +29,12 @@ vi.mock("@/lib/attack/client", () => ({
   patchCoverage: vi.fn(),
   confirmCoverageCitations: vi.fn(),
   runAttackAi: vi.fn(),
+  // #645: the workspace reads the service's runs on load and polls one it
+  // follows. No run, by default.
+  fetchAttackRun: vi.fn(),
+  fetchAttackRunSummary: vi.fn(() =>
+    Promise.resolve({ running: null, latest: null, last_completed: null }),
+  ),
 }));
 
 vi.mock("./AttackDeliverableCard", () => ({
@@ -68,8 +74,12 @@ vi.mock("./AttackTechniquePanel", () => ({
     coverage?: { notes?: string | null } | null;
     onPatch: (patch: Record<string, unknown>) => void;
     onConfirmCitations?: () => void;
+    toolRetirement?: Record<string, string> | null;
   }) => (
     <div>
+      <div data-testid="panel-retirement">
+        {JSON.stringify(props.toolRetirement ?? null)}
+      </div>
       <div data-testid="panel-reason-codes">
         {JSON.stringify(
           (props.reasonCodes ?? null) && props.reasonCodes?.map((r) => r.code),
@@ -189,6 +199,14 @@ function draft(): AttackAssessment {
     version: 1,
     coverage: [],
     documents_stale: false,
+    // #646 (Batch F): required since; not under test here. A fresh
+    // draft with no completed run on load: "none", its true state.
+    ai_source: {
+      state: "none",
+      sentence: "No AI suggestions were used in this assessment.",
+      live_runs: 0,
+      fixture_runs: 0,
+    },
     catalog_version: "19.2",
     catalog_current: true,
   } as unknown as AttackAssessment;
@@ -658,7 +676,7 @@ describe("AttackWorkspace, the parent re-read after round 3 (#620)", () => {
     fireEvent.click(screen.getByText("set gap"));
     expect(
       await screen.findByText(
-        "Your change was saved, but the assessment could not be re-read, so a parent technique's status may be out of date. Reload to see it.",
+        "The assessment could not be re-read, so what is shown may be out of date. Reload to see it.",
       ),
     ).toBeInTheDocument();
     await vi.waitFor(() =>
@@ -679,34 +697,105 @@ describe("AttackWorkspace, the parent re-read after round 3 (#620)", () => {
     ]);
     fetchLatestAssessment.mockResolvedValue(preRun);
     const edit = deferred<Patched>();
+    // #645: the run's write is the POST and then the run it starts, until that
+    // run completes. The POST answers at once; the run is what is held back.
     const run =
-      deferred<Awaited<ReturnType<typeof attackClient.runAttackAi>>>();
+      deferred<Awaited<ReturnType<typeof attackClient.fetchAttackRun>>>();
     patchCoverage.mockReturnValueOnce(edit.promise);
-    runAttackAi.mockReturnValueOnce(run.promise);
+    runAttackAi.mockResolvedValueOnce({
+      run_id: "run-r3b",
+      status: "running",
+      serves: "offline",
+      deadline_at: "2026-10-01T12:45:00Z",
+      lock_until: "2026-10-01T12:50:00Z",
+      joined: false,
+    });
+    vi.mocked(attackClient.fetchAttackRun).mockReturnValueOnce(run.promise);
     render(<AttackWorkspace serviceId="svc-r3b" serviceTitle="ATT&CK" />);
     fireEvent.click(await screen.findByText("select sub-technique"));
     fireEvent.click(screen.getByText("set gap"));
     fireEvent.click(screen.getByText("Run AI"));
-    await vi.waitFor(() => expect(runAttackAi).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() =>
+      expect(attackClient.fetchAttackRun).toHaveBeenCalledTimes(1),
+    );
     // The edit lands while the run is out: its re-read must NOT happen yet.
     await act(async () =>
       edit.resolve({ ...child, status: "gap" } as unknown as Patched),
     );
     const readsBeforeRunEnds = fetchLatestAssessment.mock.calls.length;
     fetchLatestAssessment.mockResolvedValue(postRun);
-    // The shape the workspace renders: the required fields of the response.
+    // The shape the workspace renders: a completed run and its result.
     await act(async () =>
       run.resolve({
-        tools_available: 1,
-        changed: [],
-        coverage: [],
-      } as unknown as Awaited<ReturnType<typeof attackClient.runAttackAi>>),
+        id: "run-r3b",
+        status: "completed",
+        result: { tools_available: 1, changed: [], coverage: [] },
+      } as unknown as Awaited<ReturnType<typeof attackClient.fetchAttackRun>>),
     );
     await vi.waitFor(() =>
       expect(screen.getByTestId("panel-notes")).toHaveTextContent("ran"),
     );
     expect(readsBeforeRunEnds).toBe(1);
   });
+
+  it("does not let a re-read taken while the run still polls RUNNING overwrite the run", async () => {
+    // #645, the coordinator's case: a poll comes back RUNNING (the run is not
+    // over) after the edit landed. The write is still open, so the edit's
+    // re-read must still wait for the run's own re-pull.
+    fetchCatalog.mockResolvedValue(FAMILY_CATALOG);
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+    const preRun = snapshot([parent, child]);
+    const postRun = snapshot([
+      { ...parent, notes: "ran" },
+      { ...child, notes: "ran" },
+    ]);
+    fetchLatestAssessment.mockResolvedValue(preRun);
+    const edit = deferred<Patched>();
+    const finalPoll =
+      deferred<Awaited<ReturnType<typeof attackClient.fetchAttackRun>>>();
+    patchCoverage.mockReturnValueOnce(edit.promise);
+    runAttackAi.mockResolvedValueOnce({
+      run_id: "run-r3c",
+      status: "running",
+      serves: "offline",
+      deadline_at: "2026-10-01T12:45:00Z",
+      lock_until: "2026-10-01T12:50:00Z",
+      joined: false,
+    });
+    vi.mocked(attackClient.fetchAttackRun)
+      .mockResolvedValueOnce({
+        id: "run-r3c",
+        status: "running",
+        deadline_at: "2026-10-01T12:45:00Z",
+        lock_until: "2026-10-01T12:50:00Z",
+        result: null,
+      } as unknown as Awaited<ReturnType<typeof attackClient.fetchAttackRun>>)
+      .mockReturnValueOnce(finalPoll.promise);
+    render(<AttackWorkspace serviceId="svc-r3c" serviceTitle="ATT&CK" />);
+    fireEvent.click(await screen.findByText("select sub-technique"));
+    fireEvent.click(screen.getByText("set gap"));
+    fireEvent.click(screen.getByText("Run AI"));
+    await act(async () =>
+      edit.resolve({ ...child, status: "gap" } as unknown as Patched),
+    );
+    // The second poll is out: the first came back RUNNING after the edit.
+    await vi.waitFor(
+      () => expect(attackClient.fetchAttackRun).toHaveBeenCalledTimes(2),
+      { timeout: 6000 },
+    );
+    expect(fetchLatestAssessment.mock.calls.length).toBe(1);
+    fetchLatestAssessment.mockResolvedValue(postRun);
+    await act(async () =>
+      finalPoll.resolve({
+        id: "run-r3c",
+        status: "completed",
+        result: { tools_available: 1, changed: [], coverage: [] },
+      } as unknown as Awaited<ReturnType<typeof attackClient.fetchAttackRun>>),
+    );
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("panel-notes")).toHaveTextContent("ran"),
+    );
+  }, 15000);
 });
 
 describe("AttackWorkspace, a refused approve (#622 round 1)", () => {
@@ -769,5 +858,22 @@ describe("AttackWorkspace, a refused approve (#622 round 1)", () => {
       await screen.findByRole("button", { name: "Approved" }),
     ).toBeInTheDocument();
     expect(screen.queryByText(REFUSAL)).toBeNull();
+  });
+});
+
+describe("AttackWorkspace hands the panel the consolidation plan's labels (#686)", () => {
+  it("passes the assessment's tool_retirement through", async () => {
+    fetchCatalog.mockResolvedValue(FAMILY_CATALOG);
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+    const marks = { "Splunk Enterprise": "planned_retirement" };
+    fetchLatestAssessment.mockResolvedValue({
+      ...draft(),
+      tool_retirement: marks,
+    } as unknown as AttackAssessment);
+    render(<AttackWorkspace serviceId="svc-686" serviceTitle="ATT&CK" />);
+    fireEvent.click(await screen.findByText("select sub-technique"));
+    expect(await screen.findByTestId("panel-retirement")).toHaveTextContent(
+      JSON.stringify(marks),
+    );
   });
 });

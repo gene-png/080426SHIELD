@@ -1,6 +1,11 @@
 /**
  * The lowest level a client may TARGET, for each self-assessment ladder.
  *
+ * **THIS FILE IS BIND-MOUNTED BY `docker-compose.yml`** into the api container
+ * (read-only, at `/web-parity/assessment-targets.ts`) so the api's parity test
+ * can read it (#422). Rename or move it and you must change the mount too, or
+ * that test fails hard -- by design, it never skips.
+ *
  * ## One product rule, two ladders
  *
  * Level 1 is where an organization starts, not something it sets out to
@@ -64,25 +69,22 @@
  * **`_validate_targets` is NOT the only comparison, and this docstring said it
  * was** — "the single place that compares against it", which is the kind of
  * true-sounding sentence that ends the next reader's search exactly where it
- * should have started. Two other routes write the same two columns and neither
- * enforces the FLOOR: `routes/csf.py::submit_self_assessment` has no range
- * check at all, and `routes/zt.py::submit_self_assessment` guards the ceiling
- * from a floor of 1. Both resolvers then report a stored Tier/Stage 1 as the
- * client's own choice. That is **#85**, deliberately out of scope for #406;
- * `assessment_targets.py` carries the reasoning.
+ * should have started. Two other routes write the same two columns, and since
+ * #85 both refuse a below-floor target too: `routes/csf.py::submit_self_assessment`
+ * through `_refuse_submitted_target_tier`, and `routes/zt.py::submit_self_assessment`.
+ * Both resolvers report a target ALREADY stored as 1 as `client_below_floor`
+ * rather than as the client's own choice. `assessment_targets.py` carries the
+ * reasoning.
  *
- * **What closes that window, and what it does not do.** Each language's own
- * suite spells the number and names the other file in its failure message —
- * `test_intake_target_floor.py` and `target-options-are-derived.test.ts`. So a
- * unilateral change goes RED on the side that made it. It does NOT prove the
- * two agree. `SCHEMA_REASON_PREFIX` in `lib/describe-save-error.ts` settled the
- * identical problem the same way.
- *
- * A real parity check is **buildable** — this paragraph used to say the
- * containers cannot read across, which is false: `docker-compose.yml` already
- * mounts `./packages/zt-data:/packages/zt-data:ro` on the api service so a
- * contract test can read a tree outside the app. It is deferred on scope, not
- * possibility, and tracked in **#422**.
+ * **What closes the window, since #422.** The api's
+ * `tests/unit/test_target_floor_parity.py` reads THIS file — through the
+ * read-only mount, or in place on a CI checkout — and asserts the floors,
+ * `BELOW_FLOOR_SOURCE` and `TARGET_SOURCE_NOTES` below equal the Python
+ * ones, failing hard when it cannot read it. The per-side spelled literals
+ * (`test_intake_target_floor.py`, `target-options-are-derived.test.ts`) still
+ * turn a unilateral edit red on the side that made it; the parity test is what
+ * proves the two agree. `SCHEMA_REASON_PREFIX` in `lib/describe-save-error.ts`
+ * is NOT covered: it lives in another file, outside the one-file mount.
  *
  * ## Why the constants live HERE rather than in a component
  *
@@ -114,3 +116,90 @@ export const MIN_TARGET_STAGE = 2;
 
 /** NIST CSF 2.0. Tier 1 ("Partial") is a starting point, not a goal. */
 export const MIN_TARGET_TIER = 2;
+
+/**
+ * #85: what a stored target BELOW the floor means, in one place.
+ *
+ * The API's resolvers (`csf/gap.py::resolve_target_tier`,
+ * `zt/scoring.py::resolve_target_stage`) report a stored 1 as
+ * `client_below_floor` and fall back to the engine default: Tier/Stage 1 is a
+ * level the ladder has and not a target. The dashboards render that source
+ * with these strings, and the consultant workspaces render the SAME strings
+ * beside the target select, so the screen that keeps 3 selected says why.
+ * Declared here rather than in a dashboard module so the workspace does not
+ * pull a dashboard into its bundle (the reason the floors live here too).
+ *
+ * #783: the two notes are also in the client's DOCUMENTS. They are rows of
+ * `TARGET_SOURCE_NOTES` below, which the api's copy is asserted equal to
+ * (#422).
+ */
+export const BELOW_FLOOR_SOURCE = "client_below_floor";
+
+/**
+ * #783: why the engagement target is a default, per resolver source, in the
+ * words the client reads on BOTH the dashboard and the deliverable. The ONE
+ * table: `dashboards/csf.ts::targetFaultNote`, `dashboards/zt.ts::targetFault`
+ * and the two below-floor notes below all derive from it.
+ *
+ * The api has the same table, `TARGET_SOURCE_NOTES` in
+ * `apps/api/app/assessment_targets.py`, which its deliverables state; the
+ * api's `test_target_floor_parity.py` reads THIS declaration through the mount
+ * and asserts the two are equal, so a reword here alone goes red there.
+ *
+ * Kept a plain object of double-quoted string literals so that parser can
+ * read it: no computed keys, no spreads, no references. `unrecognised` is not
+ * a resolver source; it is what a source this build does not know reads, so an
+ * unknown value still says something true rather than nothing.
+ */
+export const TARGET_SOURCE_NOTES = {
+  tier: {
+    default: "no tier chosen at intake",
+    client_out_of_range: "the tier on file is not one CSF has",
+    client_below_floor: "the tier on file is a starting point, not a target",
+    client_unparseable: "the tier on file could not be read",
+    unrecognised: "the tier on file was not usable",
+  },
+  stage: {
+    default: "no stage chosen at intake",
+    client_out_of_range: "the stage on file is not one this framework has",
+    client_below_floor: "the stage on file is a starting point, not a target",
+    client_unparseable: "the stage on file could not be read",
+    unrecognised: "the stage on file was not usable",
+  },
+} as const;
+
+/**
+ * Why the stored target could not be used, for one rung, or null when the
+ * client's own choice stands. Own-property lookup only: `source` is API data,
+ * and a value like "toString" must read as unrecognised, not as a function.
+ */
+export function targetSourceNote(
+  rung: keyof typeof TARGET_SOURCE_NOTES,
+  source: string,
+): string | null {
+  if (source === "client") return null;
+  const notes: Record<string, string> = TARGET_SOURCE_NOTES[rung];
+  return Object.prototype.hasOwnProperty.call(notes, source)
+    ? notes[source]
+    : notes.unrecognised;
+}
+
+export const TIER_BELOW_FLOOR_NOTE =
+  TARGET_SOURCE_NOTES.tier[BELOW_FLOOR_SOURCE];
+export const STAGE_BELOW_FLOOR_NOTE =
+  TARGET_SOURCE_NOTES.stage[BELOW_FLOOR_SOURCE];
+
+/**
+ * True when a stored engagement target is a real level below `floor` -- the
+ * case the API resolves as `client_below_floor`. Mirrors the resolvers'
+ * order: a non-number or a fraction is a different fault, and 0 or less is
+ * off the ladder rather than below the floor.
+ */
+export function isBelowTargetFloor(value: unknown, floor: number): boolean {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 1 &&
+    value < floor
+  );
+}

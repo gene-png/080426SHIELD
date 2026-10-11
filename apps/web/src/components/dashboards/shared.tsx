@@ -24,6 +24,7 @@ export const C = {
   red: "#ef4444",
   purple: "#a855f7",
 };
+import { aiSourceIsWarning, type AiSource } from "@/lib/aiSource/types";
 
 export const panel: React.CSSProperties = {
   background: `linear-gradient(180deg, ${C.panelFrom} 0%, ${C.panelTo} 100%)`,
@@ -59,6 +60,7 @@ export function DashShell({
   releasedAt,
   version,
   footer = "SHIELD · Confidential · Figures as of the released assessment.",
+  aiSource,
   children,
 }: {
   title: string;
@@ -67,8 +69,12 @@ export function DashShell({
   version: number;
   /** The closing line; ATT&CK says "Coverage", the others "Figures". */
   footer?: string;
+  /** #646: which mode drafted these figures, as the API states it. REQUIRED,
+   *  so no dashboard can leave it out. */
+  aiSource: AiSource;
   children: React.ReactNode;
 }): JSX.Element {
+  const aiWarning = aiSourceIsWarning(aiSource);
   return (
     <div style={{ background: C.bg, color: C.text, minHeight: "100vh" }}>
       <div
@@ -96,6 +102,21 @@ export function DashShell({
             </h1>
             <p style={{ margin: "2px 0 0", fontSize: 13, color: C.muted }}>
               {subtitle}
+            </p>
+            {/* #646: the API's own sentence, in every state -- live included,
+                so "no warning" is never read as "nobody looked". */}
+            <p
+              style={{
+                margin: "6px 0 0",
+                fontSize: 13,
+                color: aiWarning ? C.amber : C.muted,
+                fontWeight: aiWarning ? 600 : 400,
+              }}
+              role={aiWarning ? "alert" : undefined}
+              data-testid="ai-source"
+              data-state={aiSource.state}
+            >
+              {aiSource.sentence}
             </p>
           </div>
           <div

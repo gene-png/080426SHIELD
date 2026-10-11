@@ -47,6 +47,8 @@ export interface Step6ReviewProps {
   state: IntakeStateResponse;
   serviceInputs: Record<ServiceType, ServiceRequestInput>;
   submitting: boolean;
+  /** #252: saves sent and not yet answered. Submit waits for all of them. */
+  savesInFlight: number;
   submitError: string | null;
   alreadySubmittedAt: string | null;
   onSubmit: () => void;
@@ -73,6 +75,7 @@ export function Step6Review({
   state,
   serviceInputs,
   submitting,
+  savesInFlight,
   submitError,
   alreadySubmittedAt,
   onSubmit,
@@ -299,7 +302,11 @@ export function Step6Review({
         type="button"
         onClick={onSubmit}
         disabled={
-          submitting || picks.length === 0 || !legalName || targetsIncomplete
+          submitting ||
+          savesInFlight > 0 ||
+          picks.length === 0 ||
+          !legalName ||
+          targetsIncomplete
         }
         className="self-end rounded-md bg-brand-500 px-5 py-2.5 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
       >

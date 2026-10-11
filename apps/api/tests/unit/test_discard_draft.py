@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.models.audit_entry import AuditEntry
+from tests._ai_runs import tech_debt_extract
 from tests._attack_rows import first_standalone
 
 
@@ -142,21 +143,16 @@ def _td_extract(
         files={"file": ("inv.csv", io.BytesIO(b"Tool\nWiz\nSplunk\n"), "text/csv")},
     )
     artifact_id = up.json()["id"]
-    er = c.post(
-        f"/tech-debt/services/{svc_id}/capability-lists/extract",
-        headers=_hdr(bearer),
-        json={"artifact_id": artifact_id},
-    )
-    assert er.status_code == 201, er.text
+    er = tech_debt_extract(c, svc_id, _hdr(bearer), artifact_id)
     if decided:
-        for item in er.json()["items"]:
+        for item in er["items"]:
             r = c.patch(
                 f"/tech-debt/capability-items/{item['id']}",
                 headers=_hdr(bearer),
                 json={"disposition": "keep"},
             )
             assert r.status_code == 200, r.text
-    return svc_id, er.json()["id"], artifact_id
+    return svc_id, er["id"], artifact_id
 
 
 def _td_approve(c: TestClient, bearer: str, list_id: str) -> None:
@@ -284,27 +280,17 @@ def test_techdebt_version_trap_discard_non_v1_then_mint(app_client) -> None:
     _td_approve(c, bearer, list_v1)
 
     # Mint v2 draft.
-    r2 = c.post(
-        f"/tech-debt/services/{svc_id}/capability-lists/extract",
-        headers=_hdr(bearer),
-        json={"artifact_id": artifact_id},
-    )
-    assert r2.status_code == 201, r2.text
-    assert r2.json()["version"] == 2
-    list_v2 = r2.json()["id"]
+    r2 = tech_debt_extract(c, svc_id, _hdr(bearer), artifact_id)
+    assert r2["version"] == 2
+    list_v2 = r2["id"]
 
     # Discard v2.
     d = c.post(f"/tech-debt/capability-lists/{list_v2}/discard", headers=_hdr(bearer))
     assert d.status_code == 200, d.text
 
     # Next extract must mint v3 (max version + 1), never collide on v2.
-    r3 = c.post(
-        f"/tech-debt/services/{svc_id}/capability-lists/extract",
-        headers=_hdr(bearer),
-        json={"artifact_id": artifact_id},
-    )
-    assert r3.status_code == 201, r3.text
-    assert r3.json()["version"] == 3
+    r3 = tech_debt_extract(c, svc_id, _hdr(bearer), artifact_id)
+    assert r3["version"] == 3
 
 
 @pytest.mark.unit
@@ -313,12 +299,8 @@ def test_techdebt_latest_after_discard_returns_prior_approved(app_client) -> Non
     bearer = _admin(c)
     svc_id, list_v1, artifact_id = _td_extract(c, bearer, provider, decided=True)
     _td_approve(c, bearer, list_v1)
-    r2 = c.post(
-        f"/tech-debt/services/{svc_id}/capability-lists/extract",
-        headers=_hdr(bearer),
-        json={"artifact_id": artifact_id},
-    )
-    list_v2 = r2.json()["id"]
+    r2 = tech_debt_extract(c, svc_id, _hdr(bearer), artifact_id)
+    list_v2 = r2["id"]
     c.post(f"/tech-debt/capability-lists/{list_v2}/discard", headers=_hdr(bearer))
 
     latest = c.get(f"/tech-debt/services/{svc_id}/capability-lists/latest", headers=_hdr(bearer))
@@ -359,23 +341,13 @@ def test_techdebt_reextract_after_discard_reuses_artifact_fires_llm_once(app_cli
         files={"file": ("inv.csv", io.BytesIO(b"Tool\nWiz\n"), "text/csv")},
     )
     artifact_id = up.json()["id"]
-    r1 = c.post(
-        f"/tech-debt/services/{svc_id}/capability-lists/extract",
-        headers=_hdr(bearer),
-        json={"artifact_id": artifact_id},
-    )
-    assert r1.status_code == 201, r1.text
+    r1 = tech_debt_extract(c, svc_id, _hdr(bearer), artifact_id)
     assert calls["n"] == 1
-    c.post(f"/tech-debt/capability-lists/{r1.json()['id']}/discard", headers=_hdr(bearer))
+    c.post(f"/tech-debt/capability-lists/{r1['id']}/discard", headers=_hdr(bearer))
 
     # Same artifact still resolves; a fresh extraction runs (LLM fires again).
-    r2 = c.post(
-        f"/tech-debt/services/{svc_id}/capability-lists/extract",
-        headers=_hdr(bearer),
-        json={"artifact_id": artifact_id},
-    )
-    assert r2.status_code == 201, r2.text
-    assert r2.json()["version"] == 2
+    r2 = tech_debt_extract(c, svc_id, _hdr(bearer), artifact_id)
+    assert r2["version"] == 2
     assert calls["n"] == 2
 
 

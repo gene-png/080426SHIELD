@@ -62,6 +62,13 @@ describe("formatDate (the shared released badge)", () => {
 
 function attackData(releasedAt: string): AttackDashboardData {
   return {
+    // #646 (Batch F): required since; not under test here.
+    ai_source: {
+      state: "live",
+      sentence: "AI suggestions in this assessment came from a live AI model.",
+      live_runs: 1,
+      fixture_runs: 0,
+    },
     service_id: "svc-1",
     service_title: "Atlas ATT&CK",
     released_at: releasedAt,
@@ -75,6 +82,7 @@ function attackData(releasedAt: string): AttackDashboardData {
       outside_control_surface: 0,
       unable_to_determine: 0,
       coverage_pct: 0,
+      coverage_measured: true, // #489 (Batch A): required since; not under test here
       by_tactic: [],
     },
     techniques: [],

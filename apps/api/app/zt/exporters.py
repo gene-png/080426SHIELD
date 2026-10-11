@@ -13,11 +13,23 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from app.assessment_targets import target_source_sentence
 from app.client_naming import org_display_name
+from app.mode_stamp import (
+    UNKNOWN_AI_MODE,
+    AiModeStamp,
+    add_docx_paragraph,
+    add_xlsx_sheet,
+    pdf_paragraph,
+)
 from app.models.zt_assessment import ZtAnswer, ZtAssessment
+from app.pdf_export import pdf_escape, pdf_text
+from app.xlsx_export import safe_text_row
 from app.zt.catalog import capabilities, pillars
 from app.zt.maturity import ZtFrameworkCode, stage_label
+from app.zt.retired import retired_answer_count, retired_sentence
 from app.zt.scoring import GapAnalysis, ScoreResult
+from app.zt.target_caps import stage_above_max_sentences, target_cap_sentences
 
 if TYPE_CHECKING:
     from reportlab.platypus import TableStyle
@@ -32,9 +44,20 @@ class ZtDeliverableContext:
     answers: list[ZtAnswer]
     score: ScoreResult
     gap: GapAnalysis
+    #: #646: which mode drafted the AI suggestions behind this document. The
+    #: default is "not recorded", never live: a context built without a lookup
+    #: must not read as a clean one.
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE
+    #: #783: the resolver's verdict on the engagement target -- "client", or
+    #: why a default stands in for it -- and whether that target decided any
+    #: capability at all. Defaulted to "client" for the callers that predate
+    #: them (tests building a context directly); the finalize route and the
+    #: seed pass the real values.
+    target_source: str = "client"
+    engagement_target_used: bool = True
 
 
-def _gap_plan_caption(gap: GapAnalysis) -> str:
+def _gap_plan_caption(gap: GapAnalysis, target_note: str | None = None) -> str:
     """What the Gap Plan is showing, and what it is NOT (#75).
 
     `analyze_gaps` truncates to `top_n` while keeping the true count in
@@ -55,6 +78,11 @@ def _gap_plan_caption(gap: GapAnalysis) -> str:
         f"Engagement target S{gap.target_stage}; each row shows the target "
         f"applied to that capability."
     )
+    # #783: why the engagement target is a default, directly after the sentence
+    # stating it and BEFORE #188's sentence below, which must stay the
+    # caption's tail (both parity tests pin that tail).
+    if target_note:
+        target += f" {target_note}"
     # #188: a stored per-capability target that could not be used was replaced
     # by the engagement target, and until now nothing said so. The sentence
     # above is TRUE of such a row and misleading in the way `CLAUDE.md` warns
@@ -100,12 +128,30 @@ def _gap_plan_caption(gap: GapAnalysis) -> str:
             f" A per-capability target was recorded for {listed} but could not "
             f"be used, so the engagement target was applied to {rows} instead."
         )
+    # #699: the unscored sentence sits BETWEEN the count and the target
+    # sentences, so the target sentence stays the caption's tail -- the part
+    # the web copy (`targetNote`) transcribes and both parity tests pin.
+    unscored = _unscored_sentence(len(gap.unscored_codes))
     if shown >= total:
-        return f"All {total} gap{'' if total == 1 else 's'} listed. {target}"
+        return f"All {total} gap{'' if total == 1 else 's'} listed.{unscored} {target}"
     return (
         f"Showing the {shown} highest-priority of {total} gaps; "
-        f"{remaining} further gap{'' if remaining == 1 else 's'} not listed. {target}"
+        f"{remaining} further gap{'' if remaining == 1 else 's'} not listed.{unscored} "
+        f"{target}"
     )
+
+
+def _unscored_sentence(unscored: int) -> str:
+    """#699: `analyze_gaps` skips an unscored capability, so a gap count says
+    nothing about it. Without this a mostly-unscored assessment delivered "All 0
+    gaps listed" with no mention of what was never looked at. Disclosed rather
+    than blocked, because a partial self-assessment is allowed. The twin of
+    `app.csf.exporters._unscored_sentence`."""
+    if unscored == 0:
+        return ""
+    if unscored == 1:
+        return " 1 capability was not scored and is not in this plan."
+    return f" {unscored} capabilities were not scored and are not in this plan."
 
 
 def build_context(
@@ -117,8 +163,14 @@ def build_context(
     answers: Iterable[ZtAnswer],
     score: ScoreResult,
     gap: GapAnalysis,
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
+    target_source: str = "client",
+    engagement_target_used: bool = True,
 ) -> ZtDeliverableContext:
     return ZtDeliverableContext(
+        ai_mode=ai_mode,
+        target_source=target_source,
+        engagement_target_used=engagement_target_used,
         client_legal_name=org_display_name(client_legal_name),
         service_title=service_title,
         framework=framework,
@@ -126,6 +178,13 @@ def build_context(
         answers=list(answers),
         score=score,
         gap=gap,
+    )
+
+
+def _target_note(ctx: ZtDeliverableContext) -> str | None:
+    """#783: the dashboard's sentence for a target the client did not choose."""
+    return target_source_sentence(
+        "stage", ctx.target_source, engagement_target_used=ctx.engagement_target_used
     )
 
 
@@ -143,9 +202,45 @@ def _framework_label(framework: ZtFrameworkCode) -> str:
     )
 
 
+#: #839: the DoD catalog's source note, the advisor's re-ruling verbatim (#736,
+#: Oct 7 14:48Z, comment 6040458893). CISA's catalog needs none: its levels are
+#: tabulated in its one source document.
+_DOD_SOURCE_NOTE = (
+    "Levels are as published in the 2025 edition (25-T-1465). The 2022 Roadmap "
+    "shows levels only as colours in its timeline, which could not be matched to "
+    "activities reliably; only 1.2.1 to 1.2.5, which it tabulates, were checked, "
+    "and they agree."
+)
+
+
+#: #839, ruling 4's line, approved verbatim (#736 comment 6047873969). 1.2.1's
+#: description is word for word 1.1.1's in the published roadmap and is kept so.
+#: It renders directly after `_DOD_SOURCE_NOTE`, wherever that renders.
+_DOD_AS_PUBLISHED = "Activity descriptions are reproduced as published."
+
+
+def _stage_above_max_notes(ctx: ZtDeliverableContext) -> list[str]:
+    """#839 S1: the stored answers this document was rendered from, through the
+    one derivation the workspace and the dashboard call."""
+    return stage_above_max_sentences(
+        ctx.framework, {a.capability_code: a.maturity_stage for a in ctx.answers}
+    )
+
+
+def _source_note(framework: ZtFrameworkCode) -> str | None:
+    return _DOD_SOURCE_NOTE if framework == ZtFrameworkCode.DOD_ZTRA else None
+
+
 # ---------------------------------------------------------------------------
 # XLSX
 # ---------------------------------------------------------------------------
+
+
+def _retired_note(ctx: ZtDeliverableContext) -> str | None:
+    """#838: answers kept on rows the catalog no longer has are not scored, and
+    the document says how many. The one derivation is `zt/retired.py`, which
+    the workspace calls too, so the screen and the document cannot disagree."""
+    return retired_sentence(ctx.framework, retired_answer_count(ctx.framework, ctx.answers))
 
 
 def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
@@ -164,24 +259,38 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
 
     # --- Score Summary ---
     ws = wb.create_sheet("Score Summary")
-    ws.append(["Engagement", ctx.client_legal_name])
-    ws.append(["Service", ctx.service_title])
-    ws.append(["Framework", _framework_label(ctx.framework)])
-    ws.append(["Assessment version", ctx.assessment.version])
-    ws.append(["Overall stage", ctx.score.overall_stage_label])
-    ws.append(["Average stage", _fmt(ctx.score.average_stage)])
-    ws.append(["Coverage", f"{ctx.score.answered_capabilities}/{ctx.score.total_capabilities}"])
-    for row in ws.iter_rows(min_row=1, max_row=7, min_col=1, max_col=1):
+    safe_text_row(ws, ["Engagement", ctx.client_legal_name])
+    safe_text_row(ws, ["Service", ctx.service_title])
+    safe_text_row(ws, ["Framework", _framework_label(ctx.framework)])
+    source_note = _source_note(ctx.framework)
+    if source_note:
+        safe_text_row(ws, ["Source", source_note])  # #839
+        safe_text_row(ws, ["", _DOD_AS_PUBLISHED])  # #839, ruling 4
+    safe_text_row(ws, ["Assessment version", ctx.assessment.version])
+    safe_text_row(ws, ["Overall stage", ctx.score.overall_stage_label])
+    safe_text_row(ws, ["Average stage", _fmt(ctx.score.average_stage)])
+    safe_text_row(
+        ws, ["Coverage", f"{ctx.score.answered_capabilities}/{ctx.score.total_capabilities}"]
+    )
+    retired = _retired_note(ctx)
+    if retired:
+        safe_text_row(ws, ["Not scored", retired])  # #838: rows the catalog no longer has
+    for sentence in _stage_above_max_notes(ctx):
+        # #839 S1, one row per capability. The label cell is left empty: only
+        # the sentence is approved copy (#736 comment 6049667540).
+        safe_text_row(ws, ["", sentence])
+    for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=1):
         for cell in row:
             cell.font = bold
-    ws.append([])
-    ws.append(["Pillar", "Name", "Answered", "Total", "Coverage %", "Average stage"])
+    safe_text_row(ws, [])
+    safe_text_row(ws, ["Pillar", "Name", "Answered", "Total", "Coverage %", "Average stage"])
     for col_idx in range(1, 7):
         cell = ws.cell(row=ws.max_row, column=col_idx)
         cell.font = bold
         cell.fill = header_fill
     for ps in ctx.score.by_pillar:
-        ws.append(
+        safe_text_row(
+            ws,
             [
                 ps.pillar_code,
                 ps.pillar_name,
@@ -189,7 +298,7 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
                 ps.capability_count,
                 ps.coverage_pct,
                 _fmt(ps.average_stage),
-            ]
+            ],
         )
     for w, col in zip([10, 36, 12, 10, 14, 16], range(1, 7), strict=True):
         ws.column_dimensions[get_column_letter(col)].width = w
@@ -197,7 +306,7 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
     # --- Answers ---
     ws2 = wb.create_sheet("Answers")
     headers = ["Capability", "Pillar", "Name", "Outcome", "Stage", "Stage label", "Notes"]
-    ws2.append(headers)
+    safe_text_row(ws2, headers)
     for col in range(1, len(headers) + 1):
         cell = ws2.cell(row=1, column=col)
         cell.font = bold
@@ -211,7 +320,8 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
         ans = answers_by_code.get(cap.code)
         s = ans.maturity_stage if ans else None
         notes = ans.notes if ans else None
-        ws2.append(
+        safe_text_row(
+            ws2,
             [
                 cap.code,
                 f"{cap.pillar_code} · {pillar_lookup.get(cap.pillar_code, cap.pillar_code)}",
@@ -220,7 +330,7 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
                 s if s is not None else "",
                 stage_label(s, ctx.framework) if s is not None else "Unscored",
                 notes or "",
-            ]
+            ],
         )
     for w, col in zip([18, 30, 36, 60, 8, 16, 60], range(1, 8), strict=True):
         ws2.column_dimensions[get_column_letter(col)].width = w
@@ -243,14 +353,15 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
     # assumes row 1 is the header (`pandas.read_excel`, Excel's "Format as
     # Table") will take the caption as column names. Nothing in this repo reads
     # this sheet, and the disclosure is for a human, so visibility wins.
-    ws3.append([_gap_plan_caption(ctx.gap)])
-    ws3.append(headers3)
+    safe_text_row(ws3, [_gap_plan_caption(ctx.gap, _target_note(ctx))])
+    safe_text_row(ws3, headers3)
     for col in range(1, len(headers3) + 1):
         cell = ws3.cell(row=2, column=col)
         cell.font = bold
         cell.fill = header_fill
     for g in ctx.gap.gaps:
-        ws3.append(
+        safe_text_row(
+            ws3,
             [
                 g.code,
                 g.pillar_code,
@@ -260,19 +371,26 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
                 g.gap_size,
                 g.priority_score,
                 g.notes or "",
-            ]
+            ],
         )
     if not ctx.gap.gaps:
-        ws3.append(["—", "", "No gaps at target stage", "", ctx.gap.target_stage, 0, 0, ""])
+        safe_text_row(ws3, ["—", "", "No gaps at target stage", "", ctx.gap.target_stage, 0, 0, ""])
         # Row 1 is the caption and row 2 the header, so the placeholder is row 3.
         # This said row 2 until the caption was inserted above it — which styled
         # the "Name" HEADER italic and dropped its bold, because assigning
         # `.font` replaces the whole Font object rather than merging into it.
         ws3.cell(row=3, column=3).font = italic
+    # #839: below the plan, so the header stays row 2. One row per capability.
+    caps = target_cap_sentences(ctx.gap)
+    if caps:
+        safe_text_row(ws3, [])
+        for sentence in caps:
+            safe_text_row(ws3, [sentence])
     for w, col in zip([18, 10, 36, 14, 14, 12, 12, 50], range(1, 9), strict=True):
         ws3.column_dimensions[get_column_letter(col)].width = w
 
     out = io.BytesIO()
+    add_xlsx_sheet(wb, ctx.ai_mode)  # #646: the LAST sheet
     wb.save(out)
     return out.getvalue()
 
@@ -299,6 +417,14 @@ def render_docx(ctx: ZtDeliverableContext) -> bytes:
         ctx.service_title,
         f"{ctx.client_legal_name} · {_framework_label(ctx.framework)}",
     )
+    add_docx_paragraph(doc, ctx.ai_mode)  # #646, under the title
+    source_note = _source_note(ctx.framework)
+    if source_note:
+        add_paragraphs(doc, [source_note])  # #839, under the framework line
+        add_paragraphs(doc, [_DOD_AS_PUBLISHED])  # #839, ruling 4
+    retired = _retired_note(ctx)
+    if retired:
+        add_paragraphs(doc, [retired])  # #838, beside the mode stamp
 
     add_heading(doc, "Maturity summary")
     add_paragraphs(
@@ -327,7 +453,11 @@ def render_docx(ctx: ZtDeliverableContext) -> bytes:
     )
 
     add_heading(doc, f"Top remediation gaps (target S{ctx.gap.target_stage})")
-    doc.add_paragraph(_gap_plan_caption(ctx.gap))
+    # Through `add_paragraphs`, never `doc.add_paragraph`, so the strip of
+    # what XML 1.0 refuses reaches these lines too (#993).
+    add_paragraphs(doc, [_gap_plan_caption(ctx.gap, _target_note(ctx))])
+    add_paragraphs(doc, target_cap_sentences(ctx.gap))  # #839, per capability
+    add_paragraphs(doc, _stage_above_max_notes(ctx))  # #839 S1, after the cap sentences
     if not ctx.gap.gaps:
         add_paragraphs(
             doc,
@@ -381,8 +511,19 @@ def render_pdf(ctx: ZtDeliverableContext) -> bytes:
     body = styles["BodyText"]
 
     story: list = []
-    story.append(Paragraph(ctx.service_title, h1))
-    story.append(Paragraph(f"{ctx.client_legal_name} · {_framework_label(ctx.framework)}", body))
+    story.append(pdf_text(ctx.service_title, h1))  # #775
+    # #775: only the name is free text; the framework label is a literal.
+    story.append(
+        Paragraph(f"{pdf_escape(ctx.client_legal_name)} · {_framework_label(ctx.framework)}", body)
+    )
+    story.append(pdf_paragraph(ctx.ai_mode, body))  # #646, under the title
+    source_note = _source_note(ctx.framework)
+    if source_note:
+        story.append(Paragraph(source_note, body))  # #839, under the framework line
+        story.append(Paragraph(_DOD_AS_PUBLISHED, body))  # #839, ruling 4
+    retired = _retired_note(ctx)
+    if retired:
+        story.append(Paragraph(retired, body))  # #838, beside the mode stamp
     story.append(Spacer(1, 0.2 * inch))
 
     story.append(Paragraph("Maturity summary", h2))
@@ -419,7 +560,12 @@ def render_pdf(ctx: ZtDeliverableContext) -> bytes:
     story.append(PageBreak())
 
     story.append(Paragraph(f"Top remediation gaps (target S{ctx.gap.target_stage})", h2))
-    story.append(Paragraph(_gap_plan_caption(ctx.gap), styles["BodyText"]))
+    story.append(Paragraph(_gap_plan_caption(ctx.gap, _target_note(ctx)), styles["BodyText"]))
+    for sentence in target_cap_sentences(ctx.gap):  # #839, per capability
+        # #775: the sentences carry catalog names; printed as text.
+        story.append(pdf_text(sentence, styles["BodyText"]))
+    for sentence in _stage_above_max_notes(ctx):  # #839 S1, after the cap sentences
+        story.append(pdf_text(sentence, styles["BodyText"]))  # #775
     if not ctx.gap.gaps:
         story.append(
             Paragraph(

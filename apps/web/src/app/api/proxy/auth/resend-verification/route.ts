@@ -7,6 +7,7 @@
 import { NextResponse } from "next/server";
 
 import { ApiError, apiFetch } from "@/lib/api";
+import { upstreamOutcomeUnknown } from "@/lib/upstream-outcome-unknown";
 
 interface ProxyBody {
   email?: string;
@@ -34,9 +35,6 @@ export async function POST(request: Request): Promise<NextResponse> {
         status: err.status,
       });
     }
-    return NextResponse.json(
-      { error: { message: "Upstream resend-verification call failed." } },
-      { status: 502 },
-    );
+    return upstreamOutcomeUnknown(err, "Upstream resend-verification call");
   }
 }

@@ -1,3 +1,5 @@
+import type { AiSource } from "@/lib/aiSource/types";
+
 /** Wire types mirroring apps/api/app/schemas/csf.py. */
 
 export type CsfAssessmentStatus =
@@ -52,6 +54,8 @@ export interface CsfAnswer {
 }
 
 export interface CsfAssessment {
+  /** #646: which mode drafted the AI suggestions, as the API states it. */
+  ai_source: AiSource;
   id: string;
   service_id: string;
   version: number;
@@ -62,6 +66,13 @@ export interface CsfAssessment {
   answers: CsfAnswer[];
   client_target_tier: number | null;
   client_profile: string | null;
+  /**
+   * #852: answers kept on a subcategory the catalog no longer has (ID.AM-09),
+   * not scored, with the API's approved sentence (`csf/retired.py`). Render
+   * the sentence as given; never rebuild it here.
+   */
+  retired_answers?: number;
+  retired_answers_note?: string | null;
 }
 
 /**
@@ -224,11 +235,23 @@ export interface EnterpriseSubcategory {
   target_level: number | null;
   gap: boolean;
   priority: string | null;
+  /**
+   * #1000: the subcategory's interview answer has no notes, so a LIVE run does
+   * not assess its rows. From current notes, at read time. Read as
+   * `=== true`: a response without it says nothing.
+   */
+  no_notes?: boolean;
 }
 
 export interface EnterpriseProfile {
   tiers_in_use: string[];
   subcategories: EnterpriseSubcategory[];
+  /**
+   * #852: Working Profile rows kept on a subcategory the catalog no longer
+   * has, not rolled up, with the API's approved sentence (`csf/retired.py`).
+   */
+  retired_rows?: number;
+  retired_rows_note?: string | null;
 }
 
 export interface CsfDimensionChange {
@@ -262,7 +285,10 @@ export interface CsfDroppedSuggestion {
     | "wrong_type"
     | "superseded"
     | "locked"
-    | "protected";
+    | "protected"
+    | "edited"
+    | "not_in_batch"
+    | "no_notes";
   /** "tier|subcategory_code" as the model wrote it; null if it wrote neither. */
   key: string | null;
   field: string | null;
@@ -271,6 +297,11 @@ export interface CsfDroppedSuggestion {
   value: unknown;
 }
 
+/**
+ * What a csf_score Run-AI did: the run's stored `result` since #645, every
+ * field the synchronous response carried, read from the run so it survives a
+ * reload.
+ */
 export interface CsfRunAiResponse {
   changed: CsfDimensionChange[];
   rows: CsfDimensionScore[];
@@ -278,6 +309,29 @@ export interface CsfRunAiResponse {
   suggestions_received: number;
   suggestions_applied: number;
   dropped: CsfDroppedSuggestion[];
+  /**
+   * #479: csf_score runs in batches. A failed batch's rows were never
+   * answered, so they are in neither count above. Optional: a result stored
+   * before batching carries neither, and that is not "no batch failed".
+   */
+  batches_total?: number;
+  batches_failed?: number;
+  /**
+   * #836: rows a successful batch was asked for that no entry of that batch
+   * named; they keep their previous scores. Optional: a result stored before
+   * this carries neither. Read the VALUE, never the presence.
+   */
+  omitted_count?: number;
+  omitted_rows?: { tier: string; subcategory_code: string }[];
+  /**
+   * #1000: rows a LIVE run did not assess because their answer had no notes.
+   * null on an offline run and absent on a result stored before #1000: "not
+   * counted", never zero. Read the VALUE: shown only when it is a number.
+   */
+  no_notes_count?: number | null;
+  /** #1000: what the client Playbook files state, in subcategories. */
+  no_notes_subcategories?: number | null;
+  no_notes_subcategories_total?: number | null;
 }
 
 export interface ExportedArtifact {

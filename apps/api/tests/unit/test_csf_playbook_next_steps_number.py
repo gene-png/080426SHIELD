@@ -21,9 +21,9 @@ from app.csf.playbook_export import _next_steps
 
 def _rows(p1: int, p2: int, p3: int) -> list[SimpleNamespace]:
     return (
-        [SimpleNamespace(priority="P1")] * p1
-        + [SimpleNamespace(priority="P2")] * p2
-        + [SimpleNamespace(priority="P3")] * p3
+        [SimpleNamespace(priority="P1", target_level=3)] * p1
+        + [SimpleNamespace(priority="P2", target_level=3)] * p2
+        + [SimpleNamespace(priority="P3", target_level=3)] * p3
     )
 
 

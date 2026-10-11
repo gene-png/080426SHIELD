@@ -244,12 +244,21 @@ def test_the_heatmap_endpoint_carries_both_counts(api) -> None:
     from sqlalchemy import update
 
     from app.models.attack_assessment import AttackCoverage
+    from tests._attack_rows import _standalone_codes
 
     c, _, auth, svc, Sess = api
     with Sess() as s:
+        # #554 R3 (C4, ruled by the advisor 01:05Z): three STANDALONE rows. The
+        # first rows by table order were a parent and its children, and a parent
+        # set in the database apart from its children is a state no writer
+        # produces; R3 recomputes parents at read, so it would not survive.
         ids = (
             s.execute(
-                AttackCoverage.__table__.select().with_only_columns(AttackCoverage.id).limit(3)
+                AttackCoverage.__table__.select()
+                .with_only_columns(AttackCoverage.id)
+                .where(AttackCoverage.technique_code.in_(sorted(_standalone_codes())))
+                .order_by(AttackCoverage.technique_code)
+                .limit(3)
             )
             .scalars()
             .all()

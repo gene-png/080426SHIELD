@@ -12,6 +12,7 @@ from pydantic_core import PydanticCustomError
 from app.models.csf_assessment import CsfAssessmentStatus
 from app.models.service import ServiceKind, ServiceStatus
 from app.schemas._numeric import IntNotBool
+from app.schemas.ai_runs import AiSource
 
 # ---------------------------------------------------------------------------
 # Catalog
@@ -142,6 +143,14 @@ class CsfAssessmentResponse(BaseModel):
     # Impact profile the client picked at intake (LOW/MOD/HIGH), or null. Drives
     # which subcategories the client self-assessment shows.
     client_profile: str | None = None
+    # #646: which mode drafted this assessment's AI suggestions. REQUIRED.
+    ai_source: AiSource
+    # #852: answers stored against a subcategory the catalog no longer has
+    # (ID.AM-09), kept rather than deleted (migration 0065), and therefore not
+    # scored. With its approved sentence, or None when there are none
+    # (`csf/retired.py`).
+    retired_answers: int = 0
+    retired_answers_note: str | None = None
 
 
 class CsfAnswerPatch(BaseModel):
@@ -227,9 +236,14 @@ class CsfSelfAssessmentSubmit(BaseModel):
 
     `target_tier` lets the client confirm/adjust the maturity goal the gap
     engine measures against; persisted on the source request.
+
+    NO `ge`/`le` bound, deliberately (#85, as #406 did at intake): both ends are
+    refused in `routes/csf.py::submit_self_assessment` with a typed
+    `{reason, message}`. A schema bound arrives as a `schema_*` reason the web
+    layer withholds by design, so the client would read a generic fallback.
     """
 
-    target_tier: IntNotBool | None = Field(default=None, ge=1, le=4)
+    target_tier: IntNotBool | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -347,15 +361,28 @@ class EnterpriseSubcategory(BaseModel):
     target_level: int | None
     gap: bool
     priority: str | None
+    #: #1000: the subcategory's interview answer has no notes (none, blank, or
+    #: no answer), so a LIVE run does not assess its rows. From CURRENT notes,
+    #: at read time: it says what the AI does now, not what made the stored
+    #: score. Required, so no construction can leave it to a default.
+    no_notes: bool
     #: Set by the playbook export only (#707): `priority` is a consultant's
     #: override that differs from the computed one. Never serialized, so the
     #: Enterprise Profile endpoint's JSON is unchanged.
     priority_overridden: bool = Field(default=False, exclude=True)
+    #: #474 D': per tier, whether the evidence cap CHANGED that tier's result
+    #: (`score_tier(...).evidence_capped`). Never serialized.
+    tier_evidence_capped: dict[str, bool] = Field(default_factory=dict, exclude=True)
 
 
 class EnterpriseProfileResponse(BaseModel):
     tiers_in_use: list[str]
     subcategories: list[EnterpriseSubcategory]
+    # #852: Working Profile rows someone wrote on a subcategory the catalog no
+    # longer has (ID.AM-09), kept and not rolled up, with the approved sentence
+    # (which also counts kept action plans), or None when there are none.
+    retired_rows: int = 0
+    retired_rows_note: str | None = None
 
 
 class CsfDimensionChange(BaseModel):
@@ -388,6 +415,8 @@ class CsfDroppedSuggestion(BaseModel):
     | `superseded`   | a later entry in the same response overwrote this value  |
     | `locked`       | a human locked the row — a by-design skip, not a defect  |
     | `protected`    | an offline run declined to overwrite a hand-typed score  |
+    | `edited`       | a consultant edited the row after the run started (#645) |
+    | `not_in_batch` | answered a real row its batch was not asked for (#479)   |
 
     `locked` renders separately from the rest. Folding a by-design skip into one
     "N dropped" number rebuilds the alert-fatigue problem issue #31 rejected.
@@ -407,6 +436,11 @@ class CsfDroppedSuggestion(BaseModel):
         "superseded",
         "locked",
         "protected",
+        "edited",
+        "not_in_batch",
+        # #1000: a LIVE run does not assess a row whose interview answer has
+        # no notes (none, blank, or no answer); it keeps what it had.
+        "no_notes",
     ]
     # "tier|subcategory_code" exactly as the model wrote it, or None when the
     # model omitted them. Never the literal "None|None" — that fabricates a row
@@ -426,8 +460,17 @@ class CsfDroppedSuggestion(BaseModel):
     value: Any = None
 
 
+class CsfRowKey(BaseModel):
+    """One (tier, subcategory) row of the Working Profile, by its key."""
+
+    tier: str
+    subcategory_code: str
+
+
 class CsfRunAiResponse(BaseModel):
-    """Result of a csf_score Run-AI: what changed + the refreshed rows.
+    """What a csf_score Run-AI did, with the refreshed rows. Stored as
+    `ai_runs.result` (#645), every field the synchronous response carried, so
+    it survives a reload.
 
     The counts are in units of ONE SUGGESTED VALUE — one field the model asked
     to set on one row — and satisfy, for every response that parsed:
@@ -444,6 +487,31 @@ class CsfRunAiResponse(BaseModel):
     suggestions_received: int = 0
     suggestions_applied: int = 0
     dropped: list[CsfDroppedSuggestion] = []
+    # #479: csf_score runs in batches. A failed batch's rows were never
+    # answered, so they are in neither count above; `batches_failed` of
+    # `batches_total` is what says the run is partial.
+    batches_total: int = 0
+    batches_failed: int = 0
+    # #836: rows a SUCCESSFUL batch was asked for that no entry of that batch
+    # named. They keep their previous values and are in neither count above
+    # (the model sent nothing for them). Defaults so a stored run result written
+    # before this parses unchanged; the panel tests the VALUE, never presence.
+    omitted_count: int = 0
+    omitted_rows: list[CsfRowKey] = []
+    # #1000: a LIVE run leaves a row with no notes as stored (`no_notes`). None
+    # on an OFFLINE run, which still assesses every row, and on a result stored
+    # before #1000: "not counted", never "zero". The panel tests the VALUE.
+    #
+    # `no_notes_count` is ROWS (tier x subcategory): the covered rows, below,
+    # whose answer carried no notes. The other two are what the client files
+    # state (`playbook_export.no_notes_note`), in SUBCATEGORIES, because notes
+    # are kept per subcategory: `no_notes_subcategories_total` is the in-scope
+    # subcategories the run covered -- a code with at least one IN-SCOPE row,
+    # not locked, that a SUCCESSFUL batch was asked about -- and
+    # `no_notes_subcategories` is how many of those had no notes.
+    no_notes_count: int | None = None
+    no_notes_subcategories: int | None = None
+    no_notes_subcategories_total: int | None = None
 
 
 class ExportedArtifact(BaseModel):

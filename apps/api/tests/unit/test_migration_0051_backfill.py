@@ -150,11 +150,11 @@ def _freeze(svc_id: str) -> tuple[int | None, str | None]:
 
     with _session() as s:
         d = s.execute(
-            select(Deliverable)
+            select(Deliverable.frozen_target, Deliverable.frozen_target_source)
             .where(Deliverable.service_id == _uuid.UUID(svc_id))
             .order_by(Deliverable.version.desc())
             .limit(1)
-        ).scalar_one()
+        ).one()
         return d.frozen_target, d.frozen_target_source
 
 

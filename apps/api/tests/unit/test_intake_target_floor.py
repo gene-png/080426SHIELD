@@ -431,14 +431,10 @@ def test_the_floor_is_the_number_the_web_bundle_spells_out() -> None:
     so an author who updates both this number and this assertion and stops has
     not been stopped.
 
-    **What it is NOT is the best available check, and this docstring used to
-    claim otherwise** -- it said the api container "mounts `./apps/api` alone",
-    so no test on either side could read across. Measured: the api service also
-    mounts `./pyproject.toml:ro` and `./packages/zt-data:/packages/zt-data:ro`,
-    the latter added expressly so a contract test could read a tree outside the
-    app. A real parity check is a compose line away; it is deferred on SCOPE
-    (a `docker-compose.yml` edit is merge-rule condition 5) and tracked in
-    **#422**, not because it is impossible.
+    **The check that DOES prove they agree is `test_target_floor_parity.py`**
+    (#422): it reads `assessment-targets.ts` through the api container's
+    read-only mount, or in place on a CI checkout, and compares. This spelled
+    literal stays as the fast half that names the other file.
     """
     assert MIN_TARGET_TIER == 2, (
         "apps/web/src/lib/assessment-targets.ts spells this too, as "

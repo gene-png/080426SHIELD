@@ -141,6 +141,11 @@ def service_stages(
         kind=svc.kind,
         version=row.version,
         stages=_out(
+            # #640, a twin LEFT ALONE on purpose: a Tech Debt list edited since
+            # its approval still reports `approve` complete here, because the
+            # bar is monotonic and a deliverable generated before the edit
+            # keeps every earlier stage reached. The workspace's step 3 and the
+            # finalize/release refusals are what act on `approval_current`.
             derive_stages(
                 kind=svc.kind,
                 status=str(row.status),

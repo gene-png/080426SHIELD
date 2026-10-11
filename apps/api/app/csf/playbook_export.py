@@ -19,6 +19,16 @@ from collections.abc import Mapping, Sequence
 from html import escape
 from typing import Any
 
+from app.mode_stamp import (
+    UNKNOWN_AI_MODE,
+    XLSX_SHEET_TITLE,
+    AiModeStamp,
+    add_docx_paragraph,
+    pdf_paragraph,
+    xlsx_rows,
+)
+from app.xlsx_export import safe_text_row  # #972: every workbook append
+
 # ---------------------------------------------------------------------------
 # XLSX workbook
 # ---------------------------------------------------------------------------
@@ -83,6 +93,23 @@ WORKING_NOTICE = (
 APPROVED_NOTICE = "Approved by Kentro."
 
 
+def no_notes_note(no_notes: int, total: int) -> str:
+    """#1000: the one sentence every Playbook file states about the last LIVE
+    Run-AI's rows with no notes (approved on #1000, comment 6102665946).
+
+    Both numbers come from that run's PERSISTED accounting (`ai_runs.result`),
+    never from current notes: notes typed since the run did not change what it
+    assessed. `total` is the in-scope subcategories the run covered -- a code
+    with at least one in-scope row, not locked, that a successful batch was
+    asked about -- and `no_notes` is how many of those had no notes in what was
+    sent (`routes/csf.py::_csf_run_work`). Stated at zero too. The route omits
+    the sentence when no live run has been made."""
+    return (
+        f"Not assessed by AI (no notes) in the last live AI run: {no_notes} of "
+        f"{total} subcategories."
+    )
+
+
 def _approval_notice(approved: bool) -> str:
     return APPROVED_NOTICE if approved else WORKING_NOTICE
 
@@ -117,7 +144,7 @@ def _banner(ws: Any, approved: bool) -> None:
     """
     from openpyxl.styles import Font, PatternFill
 
-    ws.append([_approval_notice(approved)])
+    safe_text_row(ws, [_approval_notice(approved)])
     cell = ws.cell(row=1, column=1)
     cell.font = Font(bold=True, color=_NOTICE_ARGB[approved])
     cell.fill = PatternFill(
@@ -130,6 +157,9 @@ def _banner(ws: Any, approved: bool) -> None:
 def render_xlsx(
     *,
     approved: bool,
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
+    retired_note: str | None = None,
+    no_notes_note: str | None = None,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -156,7 +186,7 @@ def render_xlsx(
         # data. A hardcoded `1` here would have bolded the notice and left the
         # column headings plain, which looks like a styling slip and is
         # actually the banner being overwritten.
-        ws.append(cols)
+        safe_text_row(ws, cols)
         row = ws.max_row
         for i in range(1, len(cols) + 1):
             cell = ws.cell(row=row, column=i)
@@ -209,7 +239,8 @@ def render_xlsx(
     )
     for r in enterprise_rows:
         levels = r.tier_levels
-        ws.append(
+        safe_text_row(
+            ws,
             [
                 r.subcategory_code,
                 r.function,
@@ -220,9 +251,9 @@ def render_xlsx(
                 f"L{r.enterprise_level}",
                 f"#{r.rollup_rule}",
                 f"L{r.target_level}" if r.target_level else "",
-                "Yes" if r.gap else "",
+                _gap_cell(r),
                 r.priority or "",
-            ]
+            ],
         )
     # from_row=2: the banner is row 1 (#294).
     _autofit(ws, from_row=2)
@@ -250,7 +281,8 @@ def render_xlsx(
             ],
         )
         for row in rows:
-            ts.append(
+            safe_text_row(
+                ts,
                 [
                     row.subcategory_code,
                     row.governance,
@@ -263,7 +295,7 @@ def render_xlsx(
                     "Yes" if row.evidence_capped else "",
                     "Yes" if row.in_scope else "No",
                     f"L{row.target_level}" if row.target_level else "",
-                ]
+                ],
             )
         _autofit(ts, from_row=2)
 
@@ -294,7 +326,8 @@ def render_xlsx(
             continue
         act = actions.get(r.subcategory_code)
         override = getattr(act, "priority_override", None) if act else None
-        aps.append(
+        safe_text_row(
+            aps,
             [
                 r.subcategory_code,
                 r.name,
@@ -307,25 +340,40 @@ def render_xlsx(
                 getattr(act, "resources", "") or "" if act else "",
                 getattr(act, "success_criteria", "") or "" if act else "",
                 getattr(act, "poam_ref", "") or "" if act else "",
-            ]
+            ],
         )
     _autofit(aps, from_row=2)
 
     cover = wb.create_sheet("About", 0)
-    cover.append(["SHIELD by Kentro — CSF 2.0 Full Playbook"])
-    cover.append([f"Client: {client_name}"])
-    cover.append([f"Working profile version: {version}"])
+    safe_text_row(cover, ["SHIELD by Kentro — CSF 2.0 Full Playbook"])
+    safe_text_row(cover, [f"Client: {client_name}"])
+    safe_text_row(cover, [f"Working profile version: {version}"])
     # #277: on the SHEET, not only in the filename.
-    cover.append([_approval_notice(approved)])
-    cover.append([])
-    cover.append(
+    safe_text_row(cover, [_approval_notice(approved)])
+    if retired_note:
+        safe_text_row(cover, [retired_note])  # #852: kept rows, not on any sheet below
+    if no_notes_note:
+        safe_text_row(cover, [no_notes_note])  # #1000: see `no_notes_note`
+    safe_text_row(cover, [])
+    safe_text_row(
+        cover,
         [
             "Levels are code-computed: total = sum of the five dimensions (0-10); "
             "L1 0-2, L2 3-5, L3 6-7, L4 8-9, L5 10. Enterprise = weighted-floor "
             "roll-up across the tiers in use."
-        ]
+        ],
     )
     cover["A1"].font = Font(bold=True, size=14)
+
+    # #646: the "AI source" sheet, last, as every deliverable carries it -- and
+    # stamped like every data sheet here: banner, frozen heading (#294).
+    ai_ws = wb.create_sheet(XLSX_SHEET_TITLE)
+    _banner(ai_ws, approved)
+    ai_heading, ai_rows = xlsx_rows(ai_mode)
+    _header(ai_ws, ai_heading)
+    for ai_row in ai_rows:
+        safe_text_row(ai_ws, ai_row)
+    ai_ws.column_dimensions["A"].width = 24
 
     out = io.BytesIO()
     wb.save(out)
@@ -405,7 +453,8 @@ def _function_summary(rows: Sequence[Any]) -> list[dict[str, Any]]:
     groups: dict[str, dict[str, Any]] = {}
     for r in rows:
         code = _fn_code(r.function)
-        g = groups.setdefault(code, {"levels": [], "gaps": 0, "targets": []})
+        g = groups.setdefault(code, {"levels": [], "gaps": 0, "targets": [], "rows": []})
+        g["rows"].append(r)
         g["levels"].append(r.enterprise_level)
         if r.gap:
             g["gaps"] += 1
@@ -426,6 +475,8 @@ def _function_summary(rows: Sequence[Any]) -> list[dict[str, Any]]:
                 "avg": avg,
                 "gaps": g["gaps"],
                 "target": max(g["targets"]) if g["targets"] else None,
+                # #765: "Target" and "gaps" above are of TARGETED rows only.
+                "untargeted": _untargeted(g["rows"]),
             }
         )
     return out
@@ -445,14 +496,26 @@ def _overview_sentences(rows: Sequence[Any]) -> list[str]:
         if gaps == 1
         else "subcategories fall short of their target maturity"
     )
+    untargeted = _untargeted(rows)
+    if total and untargeted == total:
+        # #765 item 2: with no target anywhere, "0 subcategories fall short ...
+        # 0 Priority 1" counts shortfalls nothing was measured for.
+        shortfall = f"No gaps or priorities are assessed: {_subcats(untargeted)}."
+    else:
+        shortfall = (
+            f"{gaps} {short} — "
+            f"{pc['P1']} Priority 1 (critical), {pc['P2']} Priority 2, and "
+            f"{pc['P3']} Priority 3."
+            # #762: the count above is of TARGETED rows; the rest are not short
+            # of anything, they were never measured against a target.
+            + (f" {_subcats(untargeted)}." if untargeted else "")
+        )
     lines = [
         f"This assessment covers {total} in-scope NIST CSF 2.0 "
         f"{'subcategory' if total == 1 else 'subcategories'}. "
         f"Enterprise maturity, rolled up across the impact tiers in use, "
         f"averages Level {overall} of 5.",
-        f"{gaps} {short} — "
-        f"{pc['P1']} Priority 1 (critical), {pc['P2']} Priority 2, and "
-        f"{pc['P3']} Priority 3.",
+        shortfall,
     ]
     if len(fns) >= 2:
         strongest = max(fns, key=lambda f: f["avg"])
@@ -470,6 +533,69 @@ def _gaps(n: int) -> str:
     return "gap" if n == 1 else "gaps"
 
 
+# #762: the third state. `routes/csf.py::_enterprise_subcategories` sets
+# `gap=False` for an in-scope row with NO target, and nothing sets a target
+# except the per-row Target select -- seeding and Run AI leave every row
+# untargeted. So "not a gap" was two states, "meets its target" and "has no
+# target", and every sentence below that counts gaps said only the first. The
+# rows reaching this module are in-scope only, so "untargeted" is exactly
+# `target_level is None`.
+
+#: The Gap cell of an untargeted row, in every table that has a Gap column.
+NO_TARGET = "No target"
+
+
+def _untargeted(rows: Sequence[Any]) -> int:
+    return sum(1 for r in rows if r.target_level is None)
+
+
+def _gap_cell(r: Any) -> str:
+    """A row's Gap cell: "Yes", "" (meets its target) or "No target"."""
+    if r.target_level is None:
+        return NO_TARGET
+    return "Yes" if r.gap else ""
+
+
+def _scorecard_target(f: Mapping[str, Any]) -> str:
+    """A function's scorecard Target cell (#765): "No target" when none of its
+    rows has one, as `_gap_cell` says of a row."""
+    if f["untargeted"] == f["count"]:
+        return NO_TARGET
+    return f"L{f['target']}"
+
+
+def _scorecard_gaps(f: Mapping[str, Any]) -> str:
+    """A function's scorecard Gaps cell (#765): the count of its TARGETED rows'
+    gaps, with its untargeted rows beside it, or "—" when it has no target at
+    all. A bare "0" over untargeted rows read as the function meeting it."""
+    if f["untargeted"] == f["count"]:
+        return "—"
+    if f["untargeted"]:
+        return f"{f['gaps']} ({f['untargeted']} no target)"
+    return str(f["gaps"])
+
+
+def _subcats(n: int) -> str:
+    return f"{n} in-scope subcategor{'y has' if n == 1 else 'ies have'} no target set"
+
+
+def _no_gaps_sentence(rows: Sequence[Any]) -> str:
+    """What a gap list with nothing in it says. The original sentence only when
+    every in-scope row has a target; otherwise "no gaps" is said of the rows
+    that have one, and the rest are named as not assessed."""
+    untargeted = _untargeted(rows)
+    if untargeted == 0:
+        return "No gaps — every in-scope subcategory meets its target."
+    targeted = len(rows) - untargeted
+    if targeted == 0:
+        return "No in-scope subcategory has a target set, so none is assessed for gaps."
+    return (
+        f"No gaps among the {targeted} subcategor{'y' if targeted == 1 else 'ies'} with a "
+        f"target. {_subcats(untargeted)}, so {'it is' if untargeted == 1 else 'they are'} "
+        "not assessed for gaps."
+    )
+
+
 def _function_detail(frows: Sequence[Any]) -> str:
     """The per-function line of the full PDF and DOCX, built ONCE for both
     (#692 round 2): '1 subcategories … 1 gap(s)' read one as several."""
@@ -477,12 +603,31 @@ def _function_detail(frows: Sequence[Any]) -> str:
     avg = round(sum(r.enterprise_level for r in frows) / n)
     fgaps = sum(1 for r in frows if r.gap)
     what = "subcategory" if n == 1 else "subcategories"
-    return f"{n} {what} · average Level {avg} · {fgaps} {_gaps(fgaps)}."
+    # #765: the gap count is of the function's TARGETED rows only.
+    untargeted = _untargeted(frows)
+    if untargeted == n:
+        gaps = "no target set, so not assessed for gaps"
+    elif untargeted:
+        gaps = (
+            f"{fgaps} {_gaps(fgaps)} among the {n - untargeted} with a target · "
+            f"{untargeted} with no target set"
+        )
+    else:
+        gaps = f"{fgaps} {_gaps(fgaps)}"
+    return f"{n} {what} · average Level {avg} · {gaps}."
 
 
 def _next_steps(rows: Sequence[Any]) -> list[str]:
     pc = _priority_counts(rows)
     steps: list[str] = []
+    # #762: a statement, not an instruction. The executive briefing's reader is
+    # the client, who has no Target control.
+    untargeted = _untargeted(rows)
+    if untargeted:
+        steps.append(
+            f"{_subcats(untargeted)}; this plan does not cover "
+            f"{'it' if untargeted == 1 else 'them'}."
+        )
     # Each sentence agrees in number with its count (#682): "the 1 Priority 1
     # gap(s) first — these are ... weaknesses" read one gap as several.
     if pc["P1"]:
@@ -526,6 +671,8 @@ def _next_steps(rows: Sequence[Any]) -> list[str]:
         steps.append(
             f"Track the {pc['P3']} Priority 3 {_gaps(pc['P3'])} for continuous improvement."
         )
+    # "Maintain current controls" only when every in-scope row was measured
+    # against a target and none fell short (#762).
     if not steps:
         steps.append(
             "No gaps were identified — maintain current controls and re-assess on the next cycle."
@@ -537,6 +684,47 @@ def _gap_rows(rows: Sequence[Any], *, limit: int | None = None) -> list[Any]:
     gaps = [r for r in rows if r.gap]
     gaps.sort(key=lambda r: (_PRIORITY_ORDER.get(r.priority or "P3", 3), r.subcategory_code))
     return gaps[:limit] if limit else gaps
+
+
+#: The executive briefing's "Top priority gaps" list length.
+EXEC_GAP_LIMIT = 12
+
+
+def _untargeted_tail(rows: Sequence[Any]) -> str:
+    """#762: the sentence a list of gaps carries when some in-scope rows have no
+    target, with its leading space, or "". One place, so the executive list and
+    the full Playbook's roadmap (review of #764, F3) say it the same way."""
+    untargeted = _untargeted(rows)
+    if not untargeted:
+        return ""
+    return (
+        f" {_subcats(untargeted)} and {'is' if untargeted == 1 else 'are'} not "
+        "assessed for gaps."
+    )
+
+
+def _exec_gap_caption(rows: Sequence[Any]) -> str:
+    """What the exec "Top priority gaps" list shows and what it leaves out
+    (#718), or "" when there is no gap to list (the renderers say so already).
+
+    The list stops at `EXEC_GAP_LIMIT` rows; without this the client read a
+    slice with no way to tell anything was omitted, the #75/#79 shape that the
+    Gap Plan captions (`csf/exporters.py`, `zt/exporters.py`) already close.
+    Same wording as the ZT Gap Plan caption, which also names no single target
+    (each row carries its own)."""
+    total = sum(1 for r in rows if r.gap)
+    shown = min(total, EXEC_GAP_LIMIT)
+    if total == 0:
+        return ""
+    # #762: the gaps counted here are of TARGETED rows only.
+    tail = _untargeted_tail(rows)
+    if shown >= total:
+        return f"All {total} gap{'' if total == 1 else 's'} listed.{tail}"
+    remaining = total - shown
+    return (
+        f"Showing the {shown} highest-priority of {total} gaps; "
+        f"{remaining} further gap{'' if remaining == 1 else 's'} not listed.{tail}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -594,10 +782,13 @@ def _cover(
     styles: dict[str, Any],
     *,
     approved: bool,
+    ai_mode: AiModeStamp,
     subtitle: str,
     client_name: str,
     version: int,
     generated_on: str | None,
+    retired_note: str | None = None,
+    no_notes_note: str | None = None,
 ) -> None:
     from reportlab.lib.units import inch
     from reportlab.platypus import Paragraph, Spacer
@@ -611,6 +802,14 @@ def _cover(
     # #277: on the COVER, not only in the filename. A filename does not
     # survive being opened, printed, re-saved or pasted into a deck.
     story.append(Paragraph(escape(_approval_notice(approved)), styles["body"]))
+    # #646: beside the approval notice, for the same reason (#277).
+    story.append(pdf_paragraph(ai_mode, styles["body"]))
+    if retired_note:
+        # #852: the cover, because no table in the document lists a kept row.
+        story.append(Paragraph(escape(retired_note), styles["body"]))
+    if no_notes_note:
+        # #1000: the cover, beside the other statements about the whole file.
+        story.append(Paragraph(escape(no_notes_note), styles["body"]))
     if generated_on:
         story.append(Paragraph(f"Generated: {escape(generated_on)}", styles["body"]))
     story.append(Spacer(1, 0.3 * inch))
@@ -635,8 +834,8 @@ def _scorecard(story: list[Any], styles: dict[str, Any], rows: Sequence[Any]) ->
             f["name"],
             str(f["count"]),
             f"L{f['avg']}",
-            f"L{f['target']}" if f["target"] else "—",
-            str(f["gaps"]),
+            _scorecard_target(f),
+            _scorecard_gaps(f),
         ]
         for f in fns
     ]
@@ -645,21 +844,25 @@ def _scorecard(story: list[Any], styles: dict[str, Any], rows: Sequence[Any]) ->
         _pdf_table(
             ["Function", "Subcategories", "Maturity", "Target", "Gaps"],
             body,
-            [2.2 * inch, 1.3 * inch, 1.1 * inch, 1.0 * inch, 0.9 * inch],
+            # Gaps is wider than its header since #765: "0 (2 no target)", and
+            # a plain-string reportlab cell does not wrap.
+            [2.0 * inch, 1.3 * inch, 1.1 * inch, 1.0 * inch, 1.1 * inch],
             color_col=2,
             color_levels=levels,
         )
     )
 
 
-def _gap_table(story: list[Any], styles: dict[str, Any], gaps: Sequence[Any]) -> None:
+def _gap_table(
+    story: list[Any], styles: dict[str, Any], gaps: Sequence[Any], rows: Sequence[Any]
+) -> None:
+    """`rows` are every in-scope row, so an empty `gaps` can say whether that
+    means "all met" or "nothing was measured" (#762)."""
     from reportlab.lib.units import inch
     from reportlab.platypus import Paragraph
 
     if not gaps:
-        story.append(
-            Paragraph("No gaps — every in-scope subcategory meets its target.", styles["body"])
-        )
+        story.append(Paragraph(_no_gaps_sentence(rows), styles["body"]))
         return
     body = [
         [
@@ -734,6 +937,9 @@ def _build_pdf(doc: Any, story: list[Any], approved: bool) -> None:
 def render_exec_pdf(
     *,
     approved: bool,
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
+    retired_note: str | None = None,
+    no_notes_note: str | None = None,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -753,6 +959,9 @@ def render_exec_pdf(
         version=version,
         generated_on=generated_on,
         approved=approved,
+        ai_mode=ai_mode,
+        retired_note=retired_note,
+        no_notes_note=no_notes_note,
     )
     story.append(PageBreak())
 
@@ -761,7 +970,10 @@ def render_exec_pdf(
         story.append(Paragraph(line, styles["body"]))
     _scorecard(story, styles, enterprise_rows)
     story.append(Paragraph("Top priority gaps", styles["h2"]))
-    _gap_table(story, styles, _gap_rows(enterprise_rows, limit=12))
+    caption = _exec_gap_caption(enterprise_rows)
+    if caption:
+        story.append(Paragraph(caption, styles["body"]))
+    _gap_table(story, styles, _gap_rows(enterprise_rows, limit=EXEC_GAP_LIMIT), enterprise_rows)
     story.append(Paragraph("Recommended next steps", styles["h2"]))
     for step in _next_steps(enterprise_rows):
         story.append(Paragraph(f"• {step}", styles["body"]))
@@ -772,6 +984,9 @@ def render_exec_pdf(
 def render_full_pdf(
     *,
     approved: bool,
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
+    retired_note: str | None = None,
+    no_notes_note: str | None = None,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -792,6 +1007,9 @@ def render_full_pdf(
         version=version,
         generated_on=generated_on,
         approved=approved,
+        ai_mode=ai_mode,
+        retired_note=retired_note,
+        no_notes_note=no_notes_note,
     )
     story.append(PageBreak())
 
@@ -845,7 +1063,7 @@ def render_full_pdf(
                 Paragraph(escape(r.name), styles["cell"]),
                 f"L{r.enterprise_level}",
                 f"L{r.target_level}" if r.target_level else "—",
-                ("Yes" if r.gap else ""),
+                _gap_cell(r),
                 r.priority or "",
             ]
             for r in frows
@@ -862,7 +1080,12 @@ def render_full_pdf(
 
     story.append(PageBreak())
     story.append(Paragraph("5. Prioritized roadmap", styles["h2"]))
-    _gap_table(story, styles, _gap_rows(enterprise_rows))
+    roadmap = _gap_rows(enterprise_rows)
+    # #762 (review of #764, F3): the roadmap lists TARGETED gaps; with none,
+    # `_gap_table`'s own sentence already says why.
+    if roadmap and _untargeted_tail(enterprise_rows):
+        story.append(Paragraph(_untargeted_tail(enterprise_rows).strip(), styles["body"]))
+    _gap_table(story, styles, roadmap, enterprise_rows)
 
     story.append(PageBreak())
     story.append(Paragraph("6. Appendix — all subcategories", styles["h2"]))
@@ -875,7 +1098,7 @@ def render_full_pdf(
             r.tier_levels.get("low", "—"),
             f"L{r.enterprise_level}",
             f"#{r.rollup_rule}",
-            ("Yes" if r.gap else ""),
+            _gap_cell(r),
         ]
         for r in sorted(enterprise_rows, key=lambda r: r.subcategory_code)
     ]
@@ -925,6 +1148,9 @@ def _docx_cover(
     version: int,
     generated_on: str | None,
     approved: bool,
+    ai_mode: AiModeStamp,
+    retired_note: str | None = None,
+    no_notes_note: str | None = None,
 ) -> None:
     from app.docx_export import add_paragraphs, add_title, set_footer
 
@@ -936,6 +1162,14 @@ def _docx_cover(
     set_footer(doc, _approval_notice(approved), rgb=_NOTICE_DOCX_RGB[approved])
 
     add_title(doc, "NIST CSF 2.0", subtitle)
+    # #646: first thing under the title, before the cover metadata.
+    add_docx_paragraph(doc, ai_mode)
+    if retired_note:
+        # #852: the cover, because no table in the document lists a kept row.
+        add_paragraphs(doc, [retired_note])
+    if no_notes_note:
+        # #1000: beside the kept-rows note, for the same reason.
+        add_paragraphs(doc, [no_notes_note])
     meta = [
         f"Prepared for: {client_name}",
         f"Working profile version: {version}",
@@ -965,8 +1199,8 @@ def _docx_scorecard(doc: Any, rows: Sequence[Any]) -> None:
                 f["name"],
                 f["count"],
                 f"L{f['avg']}",
-                f"L{f['target']}" if f["target"] else "—",
-                f["gaps"],
+                _scorecard_target(f),
+                _scorecard_gaps(f),
             ]
             for f in fns
         ],
@@ -977,6 +1211,9 @@ def _docx_scorecard(doc: Any, rows: Sequence[Any]) -> None:
 def render_exec_docx(
     *,
     approved: bool,
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
+    retired_note: str | None = None,
+    no_notes_note: str | None = None,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -992,6 +1229,9 @@ def render_exec_docx(
         version=version,
         generated_on=generated_on,
         approved=approved,
+        ai_mode=ai_mode,
+        retired_note=retired_note,
+        no_notes_note=no_notes_note,
     )
 
     add_heading(doc, "Executive summary")
@@ -999,7 +1239,10 @@ def render_exec_docx(
     _docx_scorecard(doc, enterprise_rows)
 
     add_heading(doc, "Top priority gaps")
-    gaps = _gap_rows(enterprise_rows, limit=12)
+    caption = _exec_gap_caption(enterprise_rows)
+    if caption:
+        add_paragraphs(doc, [caption])
+    gaps = _gap_rows(enterprise_rows, limit=EXEC_GAP_LIMIT)
     if gaps:
         table = add_table(
             doc,
@@ -1017,7 +1260,7 @@ def render_exec_docx(
         )
         _shade_col(table, 2, [g.enterprise_level for g in gaps])
     else:
-        add_paragraphs(doc, ["No gaps — every in-scope subcategory meets its target."])
+        add_paragraphs(doc, [_no_gaps_sentence(enterprise_rows)])
 
     add_heading(doc, "Recommended next steps")
     add_paragraphs(doc, [f"• {s}" for s in _next_steps(enterprise_rows)])
@@ -1027,6 +1270,9 @@ def render_exec_docx(
 def render_full_docx(
     *,
     approved: bool,
+    ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
+    retired_note: str | None = None,
+    no_notes_note: str | None = None,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -1049,6 +1295,9 @@ def render_full_docx(
         version=version,
         generated_on=generated_on,
         approved=approved,
+        ai_mode=ai_mode,
+        retired_note=retired_note,
+        no_notes_note=no_notes_note,
     )
     add_page_break(doc)
 
@@ -1083,7 +1332,7 @@ def render_full_docx(
                     r.name,
                     f"L{r.enterprise_level}",
                     f"L{r.target_level}" if r.target_level else "—",
-                    ("Yes" if r.gap else ""),
+                    _gap_cell(r),
                     r.priority or "",
                 ]
                 for r in frows
@@ -1094,6 +1343,9 @@ def render_full_docx(
     add_page_break(doc)
     add_heading(doc, "5. Prioritized roadmap")
     gaps = _gap_rows(enterprise_rows)
+    # #762 (review of #764, F3), the DOCX twin of the PDF roadmap above.
+    if gaps and _untargeted_tail(enterprise_rows):
+        add_paragraphs(doc, [_untargeted_tail(enterprise_rows).strip()])
     if gaps:
         table = add_table(
             doc,
@@ -1111,7 +1363,7 @@ def render_full_docx(
         )
         _shade_col(table, 2, [g.enterprise_level for g in gaps])
     else:
-        add_paragraphs(doc, ["No gaps — every in-scope subcategory meets its target."])
+        add_paragraphs(doc, [_no_gaps_sentence(enterprise_rows)])
 
     add_page_break(doc)
     add_heading(doc, "6. Appendix — all subcategories")
@@ -1128,7 +1380,7 @@ def render_full_docx(
                 r.tier_levels.get("low", "—"),
                 f"L{r.enterprise_level}",
                 f"#{r.rollup_rule}",
-                ("Yes" if r.gap else ""),
+                _gap_cell(r),
             ]
             for r in ordered_rows
         ],

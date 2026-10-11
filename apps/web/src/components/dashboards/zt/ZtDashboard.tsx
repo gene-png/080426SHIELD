@@ -12,6 +12,7 @@ import {
 } from "@/components/dashboards/shared";
 import {
   pillarsByGap,
+  scoredNote,
   targetNote,
   type ZtDashboardData,
   type ZtPillar,
@@ -52,7 +53,9 @@ function MaturityBar({
           {pillar.target_label} · {pctText(pillar.target_pct)}
         </span>
         <span style={{ marginLeft: "auto", color: C.muted, fontSize: 11.5 }}>
-          +{Math.round(pillar.gap_pct)} pt move
+          {/* #700: the pillar's own scored count beside its percentage, as the
+              CSF dashboard does per function. */}
+          {`+${Math.round(pillar.gap_pct)} pt move · ${pillar.answered_count}/${pillar.capability_count} scored`}
         </span>
       </div>
       <div
@@ -126,6 +129,7 @@ export function ZtDashboard({ data }: { data: ZtDashboardData }): JSX.Element {
   const ordered = pillarsByGap(data.pillars);
   return (
     <DashShell
+      aiSource={data.ai_source}
       title={data.service_title}
       subtitle={`${data.framework_label} · Current state vs 12–18 month target`}
       releasedAt={data.released_at}
@@ -140,7 +144,7 @@ export function ZtDashboard({ data }: { data: ZtDashboardData }): JSX.Element {
         <KpiCard
           label="Current maturity"
           value={`${data.current_label} · ${pctText(data.current_pct)}`}
-          sub="Weighted across all pillars"
+          sub={`Weighted across all pillars · ${scoredNote(data.pillars)}`}
           accent={C.accent2}
         />
         <KpiCard
@@ -182,6 +186,55 @@ export function ZtDashboard({ data }: { data: ZtDashboardData }): JSX.Element {
           accent={C.amber}
         />
       </KpiRow>
+
+      {/* #914 (S2): the API's own approved sentence (`zt/retired.py`), the one
+          the workspace and the self-assessment render, under the maturity
+          header. Never rebuilt here. */}
+      {data.retired_answers_note ? (
+        <p
+          data-testid="zt-retired-answers"
+          style={{ margin: "0 0 16px", fontSize: 13, lineHeight: 1.5 }}
+        >
+          {data.retired_answers_note}
+        </p>
+      ) : null}
+
+      {/* #839: the API's own sentences (`zt/target_caps.py`), one per DoD
+          capability whose target was capped, rendered as given. */}
+      {data.target_cap_notes?.length ? (
+        <ul
+          data-testid="zt-target-caps"
+          style={{
+            margin: "0 0 16px",
+            paddingLeft: 20,
+            fontSize: 13,
+            lineHeight: 1.5,
+          }}
+        >
+          {data.target_cap_notes.map((s) => (
+            <li key={s}>{s}</li>
+          ))}
+        </ul>
+      ) : null}
+
+      {/* #839 S1: the API's own sentence per stored stage above its
+          capability's maximum (`zt/target_caps.py`), beside the cap notes.
+          Every figure above already counts that row at the maximum. */}
+      {data.stage_above_max_notes?.length ? (
+        <ul
+          data-testid="zt-stage-above-max"
+          style={{
+            margin: "0 0 16px",
+            paddingLeft: 20,
+            fontSize: 13,
+            lineHeight: 1.5,
+          }}
+        >
+          {data.stage_above_max_notes.map((s) => (
+            <li key={s}>{s}</li>
+          ))}
+        </ul>
+      ) : null}
 
       <Section
         title="Maturity across the model"

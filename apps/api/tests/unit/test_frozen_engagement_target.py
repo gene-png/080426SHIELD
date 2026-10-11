@@ -502,3 +502,52 @@ def test_an_unfrozen_summand_is_COUNTED_rather_than_hidden(app_client) -> None:
     # one: the client chose stage 4 and it was usable.
     assert data["zt_targets_defaulted"] == 0
     assert data["zt_targets_unusable"] == 0
+
+
+# ------------------------------------------- #85: a stored target below the floor
+#
+# A target of 1 is where an organization starts, not a target (`MIN_TARGET_TIER`
+# / `MIN_TARGET_STAGE`, both 2). Intake refuses it since #406 and the self-
+# assessment submit routes since #85; a 1 already stored, or frozen into a
+# deliverable, is reported as its own state rather than as the client's choice.
+# The freeze stores the CHOSEN value (0051), and the dashboard re-resolves it on
+# read, so these go through a released deliverable on purpose.
+
+
+@pytest.mark.unit
+def test_a_frozen_CSF_tier_1_reads_as_below_the_floor_not_as_the_clients_target(
+    app_client,
+) -> None:
+    bearer, client_id, svc_id = _released_csf(app_client, tier=1)
+    assert _deliverable_freeze(svc_id) == (1, "finalize")
+
+    data = _csf_dashboard(app_client, bearer, client_id, svc_id)
+    assert data["target_frozen_at"] is not None, data
+    assert data["target_tier_source"] == "client_below_floor", data
+    # The spec's fallback, Tier 3 (Repeatable), not the stored 1.
+    assert data["target_tier"] == 3, data
+
+
+@pytest.mark.unit
+def test_a_frozen_ZT_stage_1_reads_as_below_the_floor_not_as_the_clients_target(
+    app_client,
+) -> None:
+    bearer, client_id, svc_id = _released_zt(app_client, stage=1)
+    assert _deliverable_freeze(svc_id) == (1, "finalize")
+
+    data = _zt_dashboard(app_client, bearer, client_id, svc_id)
+    assert data["target_frozen_at"] is not None, data
+    assert data["target_stage_source"] == "client_below_floor", data
+    assert data["target_stage"] == 3, data
+
+
+@pytest.mark.unit
+def test_the_value_summary_counts_a_below_floor_target_as_unusable(app_client) -> None:
+    """The home card collapses every failed choice into one tally; a 1 is one."""
+    bearer, client_id, _svc_id = _released_zt(app_client, stage=1)
+    data = app_client.get(
+        f"/clients/{client_id}/value-summary",
+        headers={"Authorization": f"Bearer {bearer}"},
+    ).json()
+    assert data["zt_targets_unusable"] == 1, data
+    assert data["zt_targets_defaulted"] == 0, data

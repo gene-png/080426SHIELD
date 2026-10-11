@@ -1,4 +1,11 @@
-import type { Page, Request, Response } from "@playwright/test";
+import type {
+  APIRequestContext,
+  Page,
+  Request,
+  Response,
+} from "@playwright/test";
+
+import { API_BASE } from "./ids";
 
 /**
  * Acknowledge the offline Run-AI guard if it appears.
@@ -28,6 +35,47 @@ import type { Page, Request, Response } from "@playwright/test";
  * milliseconds); mis-reporting the cause cost an afternoon.
  */
 const GUARD_TIMEOUT_MS = 20000;
+
+/** How long a fixture-mode run may take to finish in CI. */
+const RUN_TIMEOUT_MS = 180_000;
+
+/** A Run-AI run as `/api/proxy/ai/runs/{id}` returns it (#645). */
+export interface PolledRun<R = Record<string, unknown>> {
+  id: string;
+  status: "running" | "completed" | "failed";
+  result: R | null;
+  error_reason: string | null;
+  error_message: string | null;
+}
+
+/**
+ * Follow a Run-AI run to its end (#645). The POST answers with a run id at
+ * once; the work happens in the background, so a spec that used to read the
+ * POST's body now reads the finished run.
+ *
+ * Polls through the same proxy the workspace uses, with the page's own
+ * session. Returns the run whatever it ended as -- the caller asserts which.
+ */
+export async function waitForRun<R = Record<string, unknown>>(
+  page: Page,
+  runId: string,
+): Promise<PolledRun<R>> {
+  const deadline = Date.now() + RUN_TIMEOUT_MS;
+  for (;;) {
+    const res = await page.request.get(`/api/proxy/ai/runs/${runId}`);
+    if (!res.ok()) {
+      throw new Error(
+        `polling run ${runId}: ${res.status()} ${await res.text()}`,
+      );
+    }
+    const run = (await res.json()) as PolledRun<R>;
+    if (run.status !== "running") return run;
+    if (Date.now() > deadline) {
+      throw new Error(`run ${runId} still running after ${RUN_TIMEOUT_MS}ms`);
+    }
+    await page.waitForTimeout(1000);
+  }
+}
 
 export async function acknowledgeOfflineAi(page: Page): Promise<void> {
   const dialog = page.getByRole("alertdialog", {
@@ -125,7 +173,7 @@ export async function extractAfterUpload(
   page: Page,
   extractDone: Promise<Response>,
   watch: UploadWatch,
-): Promise<Response> {
+): Promise<Record<string, unknown>> {
   const upload = await watch.upload;
   if (!upload.ok()) {
     throw new Error(`the upload itself failed: HTTP ${upload.status()}`);
@@ -167,5 +215,103 @@ export async function extractAfterUpload(
         `itself while this helper clicked "Extract from this"`,
     );
   }
-  return response;
+  return extractedList(page, response);
+}
+
+/**
+ * The capability list an extraction answer leads to (#645). The POST answers
+ * with a run to follow, or -- for an open draft from the same document -- the
+ * list itself. Follows the run to completion and reads the list it wrote.
+ */
+async function extractedList(
+  page: Page,
+  response: Response,
+): Promise<Record<string, unknown>> {
+  const body = (await response.json()) as Record<string, unknown>;
+  if (typeof body.run_id !== "string") return body;
+  const run = await waitForRun(page, body.run_id);
+  if (run.status !== "completed") {
+    throw new Error(
+      `extraction run ${run.id} ${run.status}: ${run.error_message}`,
+    );
+  }
+  const serviceId = /\/tech-debt\/services\/([^/]+)\//.exec(
+    response.url(),
+  )?.[1];
+  const latest = await page.request.get(
+    `/api/proxy/tech-debt/services/${serviceId}/capability-lists/latest`,
+  );
+  if (!latest.ok()) {
+    throw new Error(`reading the extracted list: ${latest.status()}`);
+  }
+  return (await latest.json()) as Record<string, unknown>;
+}
+
+/**
+ * Follow a run through the API with a spec's own headers (#645). Returns the
+ * run whatever it ended as; the caller asserts which.
+ */
+export async function apiWaitForRun<R = Record<string, unknown>>(
+  request: APIRequestContext,
+  headers: Record<string, string>,
+  runId: string,
+): Promise<PolledRun<R>> {
+  const deadline = Date.now() + RUN_TIMEOUT_MS;
+  for (;;) {
+    const poll = await request.get(`${API_BASE}/ai-runs/${runId}`, { headers });
+    if (!poll.ok()) {
+      throw new Error(
+        `polling run ${runId}: ${poll.status()} ${await poll.text()}`,
+      );
+    }
+    const run = (await poll.json()) as PolledRun<R>;
+    if (run.status !== "running") return run;
+    if (Date.now() > deadline) {
+      throw new Error(`run ${runId} still running after ${RUN_TIMEOUT_MS}ms`);
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+}
+
+/**
+ * Extract through the API, as a spec's setup does, and return the list (#645).
+ * Polls the run with the same headers, then reads the list it wrote.
+ */
+export async function apiExtract(
+  request: APIRequestContext,
+  headers: Record<string, string>,
+  serviceId: string,
+  artifactId: string,
+): Promise<ExtractedList> {
+  const res = await request.post(
+    `${API_BASE}/tech-debt/services/${serviceId}/capability-lists/extract`,
+    { headers, data: { artifact_id: artifactId, serves: "offline" } },
+  );
+  if (!res.ok()) {
+    throw new Error(`extract: ${res.status()} ${await res.text()}`);
+  }
+  const started = (await res.json()) as { run_id: string };
+  const run = await apiWaitForRun(request, headers, started.run_id);
+  if (run.status !== "completed") {
+    throw new Error(
+      `extraction run ${run.id} ${run.status}: ${run.error_message}`,
+    );
+  }
+  const latest = await request.get(
+    `${API_BASE}/tech-debt/services/${serviceId}/capability-lists/latest`,
+    { headers },
+  );
+  if (!latest.ok()) {
+    throw new Error(`reading the extracted list: ${latest.status()}`);
+  }
+  return (await latest.json()) as ExtractedList;
+}
+
+/** The fields of a capability list the specs read. */
+export interface ExtractedList {
+  id: string;
+  version: number;
+  source_rows_total: number;
+  items: { id: string; name: string }[];
+  excluded_rows: { index: number; summary: string; confirmed: boolean }[];
 }

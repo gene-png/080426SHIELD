@@ -19,6 +19,8 @@ import {
   type RiskDashboardData,
   type RiskEntry,
 } from "@/lib/dashboards/risk";
+import { targetSentences } from "@/lib/risk/baseline";
+import { OTHER_AXES_HEADER, otherAxesCell } from "@/lib/risk/otherAxes";
 
 import type { JSX } from "react";
 
@@ -28,7 +30,9 @@ const TierMixDonut = dynamic(
 );
 
 function TierChip({ tier }: { tier: string | null }): JSX.Element {
-  if (!tier) return <span style={{ color: C.muted }}>—</span>;
+  // #844: an entry with no tier is UNRATED, and says so. A dash read as a
+  // value nobody filled in; the export prints the same words.
+  if (!tier) return <span style={{ color: C.muted }}>Not rated</span>;
   const col = tierColor(tier);
   return (
     <span
@@ -194,6 +198,18 @@ function th(): React.CSSProperties {
   };
 }
 
+/**
+ * #854 F4, Gene's ruling (#736 item 9): the remedy names something the CLIENT
+ * can do. The wording holds at any count. Gene ruled it on #736 6060627178 and
+ * tightened it on 6064328745 (for #943), so that it cannot be read as every
+ * entry in "Of {total} entries" rather than only the missing ones. The first
+ * ruling replaced "Ask your consultant to complete those entries." Changing it
+ * is this one product line plus two pinned test literals: `REMEDY` in
+ * RiskDashboard.count-nouns.test.tsx and the regex in RiskDashboard.test.tsx.
+ */
+const WITHHELD_REMEDY =
+  "Ask your consultant to complete each entry counted as missing above.";
+
 export function RiskDashboard({
   data,
 }: {
@@ -227,14 +243,28 @@ export function RiskDashboard({
       ["the action breakdown", data.entries_without_action],
     ] as Array<[string, number]>
   ).filter(([, n]) => n > 0);
+  // #854 F4 (Gene's ruling, #736 item 9). The remedy names something the
+  // CLIENT can do; "Regenerate before exporting" named an admin control, and
+  // "as dashes" became false when unrated cells began to read "Not rated".
+  //
+  // A RATCHET UNDER D1: once #737 lands, publish refuses while any entry is
+  // unrated, so a published register can carry no untiered entry and the tier
+  // half of this banner cannot fire from any current writer. It stays, because
+  // a register published before that gate, or a future path that loosens it,
+  // would otherwise reach the client with nothing said.
   const withheldNote =
     gaps.length > 0 ? (
       <span>
+        {/* #743: the counts below overlap (one entry can be missing from two
+            breakdowns), so how many DISTINCT entries are affected is not
+            known here. "At least one" is true in every state that renders
+            (advisor, #736 6054419744). */}
         <span className="font-semibold">
-          Some entries are counted in Open risks and missing from a breakdown
-          below.
+          At least one entry is counted in Open risks and missing from a
+          breakdown below.
         </span>{" "}
-        Of {data.total_entries} entries:{" "}
+        Of {data.total_entries} {data.total_entries === 1 ? "entry" : "entries"}
+        :{" "}
         {gaps.map(([label, n], i) => (
           <span key={label}>
             {i > 0 ? "; " : ""}
@@ -243,12 +273,12 @@ export function RiskDashboard({
         ))}
         . Each is counted separately because each breakdown filters
         independently — an entry can carry a valid tier and still be missing
-        from the axis chart. Regenerate before exporting: a client reading this
-        register sees those rows as dashes.
+        from the axis chart. {WITHHELD_REMEDY}
       </span>
     ) : null;
   return (
     <DashShell
+      aiSource={data.ai_source}
       title="Risk Register"
       subtitle="Synthesized 5×5 NIST 800-30 register · inherent risk across your services"
       releasedAt={data.released_at}
@@ -262,6 +292,45 @@ export function RiskDashboard({
         >
           {withheldNote}
         </div>
+      ) : null}
+      {/* #474. Which target the findings were measured against, in the words
+          the exported register prints, so the client can compare it with the
+          target their CSF or Zero Trust report states. */}
+      <div
+        className="mb-4 text-sm"
+        style={{ color: C.muted }}
+        data-testid="risk-targets-used"
+      >
+        {targetSentences(
+          data.targets,
+          data.targets_recorded,
+          data.csf_no_shared_row,
+        ).map((line) => (
+          <p key={line}>{line}</p>
+        ))}
+      </div>
+      {/* #915 (S3): the API's own sentence for the DoD target cap
+          (`risk/zt_capped.py`), the one the register's files print, rendered
+          as given. #944: keep it immediately after the target lines, whose
+          last is the Zero Trust one, so the two read as one baseline. */}
+      {data.zt_capped_target_note ? (
+        <p
+          className="mb-4 rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
+          data-testid="risk-zt-capped-target"
+        >
+          {data.zt_capped_target_note}
+        </p>
+      ) : null}
+      {/* #474 D' (Gene, #736 5984256202): where the register's CSF risks come
+          from, in the API's own sentence (`risk/csf_source.py`), rendered as
+          given. Null when the register has no CSF findings. */}
+      {data.csf_source_note ? (
+        <p
+          className="mb-4 rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
+          data-testid="risk-csf-source"
+        >
+          {data.csf_source_note}
+        </p>
       ) : null}
       <KpiRow>
         <KpiCard
@@ -322,7 +391,10 @@ export function RiskDashboard({
         <AxisBars counts={data.axis_counts} />
       </Section>
 
-      <Section title="Full register" pill={`${data.entries.length} entries`}>
+      <Section
+        title="Full register"
+        pill={`${data.entries.length} ${data.entries.length === 1 ? "entry" : "entries"}`}
+      >
         <div
           style={{
             maxHeight: 560,
@@ -342,6 +414,7 @@ export function RiskDashboard({
               <tr>
                 <th style={th()}>Risk</th>
                 <th style={th()}>Axis</th>
+                <th style={th()}>{OTHER_AXES_HEADER}</th>
                 <th style={th()}>Likelihood</th>
                 <th style={th()}>Impact</th>
                 <th style={th()}>Tier</th>
@@ -355,11 +428,12 @@ export function RiskDashboard({
                     {e.title}
                   </td>
                   <td style={cell(true)}>{e.axis ? titleCase(e.axis) : "—"}</td>
+                  <td style={cell(true)}>{otherAxesCell(e.other_axes)}</td>
                   <td style={cell(true)}>
-                    {e.likelihood ? titleCase(e.likelihood) : "—"}
+                    {e.likelihood ? titleCase(e.likelihood) : "Not rated"}
                   </td>
                   <td style={cell(true)}>
-                    {e.impact ? titleCase(e.impact) : "—"}
+                    {e.impact ? titleCase(e.impact) : "Not rated"}
                   </td>
                   <td style={cell()}>
                     <TierChip tier={e.tier} />
@@ -374,7 +448,7 @@ export function RiskDashboard({
               {data.entries.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={6}
+                    colSpan={7}
                     style={{ padding: 16, color: C.muted, textAlign: "center" }}
                   >
                     No risk entries.

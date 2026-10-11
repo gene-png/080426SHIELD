@@ -1,3 +1,5 @@
+import type { AiSource } from "@/lib/aiSource/types";
+
 /**
  * Client Tech Debt (software portfolio) dashboard — types + pure transforms
  * (D-035). Mirrors the backend `TechDebtDashboardResponse`.
@@ -28,11 +30,16 @@ export interface Redundancy {
 }
 
 export interface TechDebtDashboardData {
+  /** #646: which mode drafted the AI suggestions, as the API states it. */
+  ai_source: AiSource;
   service_id: string;
   service_title: string;
   released_at: string;
   deliverable_version: number;
+  /** for #835: source items only; a split bundle's parts are not applications. */
   total_applications: number;
+  /** How many of `items` are named parts of a split bundle. */
+  bundle_part_count: number;
   annual_spend_usd: number;
   identified_savings_usd: number;
   savings_cost_known: boolean;
@@ -47,6 +54,12 @@ export interface TechDebtDashboardData {
   source_rows_total: number | null;
   included_count: number;
   excluded_count: number;
+  /**
+   * #177/#193: true only when the extraction attributed every item to one
+   * uploaded row, so `excluded_count` is the count. False makes it a FLOOR:
+   * the true number of excluded rows is unknown, and may be higher.
+   */
+  excluded_count_exact: boolean;
   redundant_category_count: number;
   spend_by_category: CategorySpend[];
   sprawl_by_category: CategorySpend[];

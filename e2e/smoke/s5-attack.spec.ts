@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
 import { atlasServiceId } from "../helpers/ids";
-import { acknowledgeOfflineAi } from "../helpers/ai";
+import { acknowledgeOfflineAi, waitForRun } from "../helpers/ai";
 
 /**
  * SMOKE_TEST.md section 5 (T6): the MITRE ATT&CK Coverage admin workspace.
@@ -80,9 +80,14 @@ async function openFreshDraft(page: Page): Promise<void> {
   await page.waitForLoadState("networkidle").catch(() => undefined);
 }
 
-/** Click Run AI and return the parsed run-ai response body. */
+/**
+ * Click Run AI, follow the run it starts to completion, and return what it
+ * did with the assessment's coverage as it stands afterwards. #645: the POST
+ * answers with a run id; the result is on the finished run, and the coverage
+ * is re-read the way the workspace re-reads it.
+ */
 async function runAi(page: Page): Promise<RunAiBody> {
-  const runDone = page.waitForResponse(
+  const runStarted = page.waitForResponse(
     (r) =>
       r.url().includes("/attack/services/") &&
       r.url().includes("/run-ai") &&
@@ -93,7 +98,20 @@ async function runAi(page: Page): Promise<RunAiBody> {
   await page.getByRole("button", { name: "Run AI" }).click();
   // The offline guard intercepts the first click when no key is loaded.
   await acknowledgeOfflineAi(page);
-  return (await (await runDone).json()) as RunAiBody;
+  const started = (await (await runStarted).json()) as { run_id: string };
+  const run = await waitForRun<Omit<RunAiBody, "coverage">>(
+    page,
+    started.run_id,
+  );
+  expect(run.status, `run ${run.id}: ${run.error_message}`).toBe("completed");
+  const serviceId = /\/admin\/services\/([^/]+)\//.exec(page.url())?.[1];
+  expect(serviceId, "the workspace URL names the service").toBeTruthy();
+  const latest = await page.request.get(
+    `/api/proxy/attack/services/${serviceId}/assessments/latest`,
+  );
+  expect(latest.ok()).toBeTruthy();
+  const { coverage } = (await latest.json()) as Pick<RunAiBody, "coverage">;
+  return { ...(run.result as Omit<RunAiBody, "coverage">), coverage };
 }
 
 /** Select a technique cell in the matrix by its exact code. */

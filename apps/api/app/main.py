@@ -19,8 +19,10 @@ from app.middleware.correlation import CorrelationIdMiddleware
 from app.routes import (
     admin,
     ai_preview,
+    ai_runs,
     artifacts,
     attack,
+    attack_scenarios,
     auth,
     clients,
     csf,
@@ -81,10 +83,12 @@ def create_app() -> FastAPI:
     app.include_router(csf.router)
     app.include_router(zt.router)
     app.include_router(attack.router)
+    app.include_router(attack_scenarios.router)
     app.include_router(messages.router)
     app.include_router(risk.router)
     app.include_router(clients.router)
     app.include_router(ai_preview.router)
+    app.include_router(ai_runs.router)
     app.include_router(service_stages.router)
 
     return app

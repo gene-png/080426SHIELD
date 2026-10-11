@@ -1,0 +1,342 @@
+{
+  "source": {
+    "title": "Zero Trust Maturity Model",
+    "publisher": "Cybersecurity and Infrastructure Security Agency (CISA)",
+    "version": "2.0",
+    "date": "April 2023",
+    "url": "https://www.cisa.gov/sites/default/files/2023-04/zero_trust_maturity_model_v2_508.pdf",
+    "bytes": 1466397,
+    "sha256": "4a95fdff55a64e2468b69af075b7f208176b88c751af92aefc3b7dacad26fdb4"
+  },
+  "extracted_with": "apps/api/scripts/extract_zt_sources.py (pdfplumber)",
+  "pillars": [
+    {
+      "section": "5.1",
+      "name": "Identity",
+      "table": "Table 2: Identity Pillar",
+      "definition": "An identity refers to an attribute or set of attributes that uniquely describes an agency user or entity, including non-person entities."
+    },
+    {
+      "section": "5.2",
+      "name": "Devices",
+      "table": "Table 3: Devices Pillar",
+      "definition": "A device refers to any asset (including its hardware, software, firmware, etc.) that can connect to a network, including servers, desktop and laptop machines, printers, mobile phones, IoT devices, networking equipment, and more."
+    },
+    {
+      "section": "5.3",
+      "name": "Networks",
+      "table": "Table 4: Networks Pillar",
+      "definition": "A network refers to an open communications medium including typical channels such as agency internal networks, wireless networks, and the Internet as well as other potential channels such as cellular and application-level channels used to transport messages."
+    },
+    {
+      "section": "5.4",
+      "name": "Applications and Workloads",
+      "table": "Table 5: Applications and Workloads",
+      "definition": "Applications and workloads include agency systems, computer programs, and services that execute on-premises, on mobile devices, and in cloud environments."
+    },
+    {
+      "section": "5.5",
+      "name": "Data",
+      "table": "Table 6: Data",
+      "definition": "Data includes all structured and unstructured files and fragments that reside or have resided in federal systems, devices, networks, applications, databases, infrastructure, and backups (including on-premises and virtual environments) as well as the associated metadata."
+    }
+  ],
+  "rows": [
+    {
+      "pillar": "Identity",
+      "name": "Authentication",
+      "annotation": null,
+      "kind": "function",
+      "page": 13,
+      "optimal": "Agency continuously validates identity with phishing-resistant MFA, not just when access is initially granted."
+    },
+    {
+      "pillar": "Identity",
+      "name": "Identity Stores",
+      "annotation": null,
+      "kind": "function",
+      "page": 14,
+      "optimal": "Agency securely integrates their identity stores across all partners and environments as appropriate."
+    },
+    {
+      "pillar": "Identity",
+      "name": "Risk Assessments",
+      "annotation": null,
+      "kind": "function",
+      "page": 14,
+      "optimal": "Agency determines identity risk in real time based on continuous analysis and dynamic rules to deliver ongoing protection."
+    },
+    {
+      "pillar": "Identity",
+      "name": "Access Management",
+      "annotation": "New Function",
+      "kind": "function",
+      "page": 14,
+      "optimal": "Agency uses automation to authorize just-in-time and just-enough access tailored to individual actions and individual resource needs."
+    },
+    {
+      "pillar": "Identity",
+      "name": "Visibility and Analytics Capability",
+      "annotation": null,
+      "kind": "cross_cutting",
+      "page": 15,
+      "optimal": "Agency maintains comprehensive visibility and situational awareness across enterprise by performing automated analysis over user activity log types, including behavior-based analytics."
+    },
+    {
+      "pillar": "Identity",
+      "name": "Automation and Orchestration Capability",
+      "annotation": null,
+      "kind": "cross_cutting",
+      "page": 15,
+      "optimal": "Agency automates orchestration of all identities with full integration across all environments based on behaviors, enrollments, and deployment needs."
+    },
+    {
+      "pillar": "Identity",
+      "name": "Governance Capability",
+      "annotation": null,
+      "kind": "cross_cutting",
+      "page": 15,
+      "optimal": "Agency implements and fully automates enterprise-wide identity policies for all users and entities across all systems with continuous enforcement and dynamic updates."
+    },
+    {
+      "pillar": "Devices",
+      "name": "Policy Enforcement & Compliance Monitoring",
+      "annotation": "New Function",
+      "kind": "function",
+      "page": 17,
+      "optimal": "Agency continuously verifies insights and enforces compliance throughout the lifetime of devices and virtual assets. Agency integrates device, software, configuration, and vulnerability management across all agency environments, including for virtual assets."
+    },
+    {
+      "pillar": "Devices",
+      "name": "Asset & Supply Chain Risk Management",
+      "annotation": "New Function",
+      "kind": "function",
+      "page": 17,
+      "optimal": "Agency has a comprehensive, at- or near-real-time view of all assets across vendors and service providers, automates its supply chain risk management as applicable, builds operations that tolerate supply chain failures, and incorporates best practices."
+    },
+    {
+      "pillar": "Devices",
+      "name": "Resource Access",
+      "annotation": "Formerly Data Access",
+      "kind": "function",
+      "page": 17,
+      "optimal": "Agency’s resource access considers real-time risk analytics within devices and virtual assets."
+    },
+    {
+      "pillar": "Devices",
+      "name": "Device Threat Protection",
+      "annotation": "New Function",
+      "kind": "function",
+      "page": 18,
+      "optimal": "Agency has a centralized threat protection security solution(s) deployed with advanced capabilities for all devices and virtual assets and a unified approach for device threat protection, policy enforcement, and compliance monitoring."
+    },
+    {
+      "pillar": "Devices",
+      "name": "Visibility and Analytics Capability",
+      "annotation": null,
+      "kind": "cross_cutting",
+      "page": 18,
+      "optimal": "Agency automates status collection of all network-connected devices and virtual assets while correlating with identities, conducting endpoint monitoring, and performing anomaly detection to inform resource access. Agency tracks patterns of provisioning and/or de-provisioning of virtual assets for anomalies."
+    },
+    {
+      "pillar": "Devices",
+      "name": "Automation and Orchestration Capability",
+      "annotation": null,
+      "kind": "cross_cutting",
+      "page": 18,
+      "optimal": "Agency has fully automated processes for provisioning, registering, monitoring, isolating, remediating, and deprovisioning devices and virtual assets."
+    },
+    {
+      "pillar": "Devices",
+      "name": "Governance Capability",
+      "annotation": null,
+      "kind": "cross_cutting",
+      "page": 19,
+      "optimal": "Agency automates policies for the lifecycle of all network-connected devices and virtual assets across the enterprise."
+    },
+    {
+      "pillar": "Networks",
+      "name": "Network Segmentation",
+      "annotation": null,
+      "kind": "function",
+      "page": 20,
+      "optimal": "Agency network architecture consists of fully distributed ingress/egress micro-perimeters and extensive micro-segmentation based around application profiles with dynamic just-in-time and just-enough connectivity for service-specific interconnections."
+    },
+    {
+      "pillar": "Networks",
+      "name": "Network Traffic Management",
+      "annotation": "New Function",
+      "kind": "function",
+      "page": 20,
+      "optimal": "Agency implements dynamic network rules and configurations that continuously evolve to meet application profile needs and reprioritize applications based on mission criticality, risk, etc."
+    },
+    {
+      "pillar": "Networks",
+      "name": "Traffic Encryption",
+      "annotation": "Formerly Encryption",
+      "kind": "function",
+      "page": 21,
+      "optimal": "Agency continues to encrypt traffic as appropriate, enforces least privilege principles for secure key management enterprise-wide, and incorporates best practices for cryptographic agility as widely as possible."
+    },
+    {
+      "pillar": "Networks",
+      "name": "Network Resilience",
+      "annotation": "New Function",
+      "kind": "function",
+      "page": 21,
+      "optimal": "Agency integrates holistic delivery and awareness in adapting to changes in availability demands for all workloads and provides proportionate resilience."
+    },
+    {
+      "pillar": "Networks",
+      "name": "Visibility and Analytics Capability",
+      "annotation": null,
+      "kind": "cross_cutting",
+      "page": 21,
+      "optimal": "Agency maintains visibility into communication across all agency networks and environments while enabling enterprise-wide situational awareness and advanced monitoring capabilities that automate telemetry correlation across all detection sources."
+    },
+    {
+      "pillar": "Networks",
+      "name": "Automation and Orchestration Capability",
+      "annotation": null,
+      "kind": "cross_cutting",
+      "page": 22,
+      "optimal": "Agency networks and environments are defined using infrastructure-as-code managed by automated change management methods, including automated initiation and expiration to align with changing needs."
+    },
+    {
+      "pillar": "Networks",
+      "name": "Governance Capability",
+      "annotation": null,
+      "kind": "cross_cutting",
+      "page": 22,
+      "optimal": "Agency implements enterprise-wide network policies that enable tailored, local controls; dynamic updates; and secure external connections based on application and user workflows."
+    },
+    {
+      "pillar": "Applications and Workloads",
+      "name": "Application Access",
+      "annotation": "Formerly Access Authorization",
+      "kind": "function",
+      "page": 23,
+      "optimal": "Agency continuously authorizes application access, incorporating real-time risk analytics and factors such as behavior or usage patterns."
+    },
+    {
+      "pillar": "Applications and Workloads",
+      "name": "Application Threat Protections",
+      "annotation": "Formerly Threat Protections",
+      "kind": "function",
+      "page": 23,
+      "optimal": "Agency integrates advanced threat protections into all application workflows, offering real-time visibility and content-aware protections against sophisticated attacks tailored to applications."
+    },
+    {
+      "pillar": "Applications and Workloads",
+      "name": "Accessible Applications",
+      "annotation": "Formerly Accessibility",
+      "kind": "function",
+      "page": 24,
+      "optimal": "Agency makes all applicable applications available over open public networks to authorized users and devices, where appropriate, as needed."
+    },
+    {
+      "pillar": "Applications and Workloads",
+      "name": "Secure Application Development and Deployment Workflow",
+      "annotation": "New Function",
+      "kind": "function",
+      "page": 24,
+      "optimal": "Agency leverages immutable workloads where feasible, only allowing changes to take effect through redeployment, and removes administrator access to deployment environments in favor of automated processes for code deployment."
+    },
+    {
+      "pillar": "Applications and Workloads",
+      "name": "Application Security Testing",
+      "annotation": "Formerly Application Security",
+      "kind": "function",
+      "page": 24,
+      "optimal": "Agency integrates application security testing throughout the software development lifecycle across the enterprise with routine automated testing of deployed applications."
+    },
+    {
+      "pillar": "Applications and Workloads",
+      "name": "Visibility and Analytics Capability",
+      "annotation": null,
+      "kind": "cross_cutting",
+      "page": 25,
+      "optimal": "Agency performs continuous and dynamic monitoring across all applications to maintain enterprise-wide comprehensive visibility."
+    },
+    {
+      "pillar": "Applications and Workloads",
+      "name": "Automation and Orchestration Capability",
+      "annotation": null,
+      "kind": "cross_cutting",
+      "page": 25,
+      "optimal": "Agency automates application configurations to continuously optimize for security and performance."
+    },
+    {
+      "pillar": "Applications and Workloads",
+      "name": "Governance Capability",
+      "annotation": null,
+      "kind": "cross_cutting",
+      "page": 25,
+      "optimal": "Agency fully automates policies governing applications development and deployment, including incorporating dynamic updates for applications through the CI/CD pipeline."
+    },
+    {
+      "pillar": "Data",
+      "name": "Data Inventory Management",
+      "annotation": null,
+      "kind": "function",
+      "page": 26,
+      "optimal": "Agency continuously inventories all applicable agency data and employs robust data loss prevention strategies that dynamically block suspected data exfiltration."
+    },
+    {
+      "pillar": "Data",
+      "name": "Data Categorization",
+      "annotation": "New Function",
+      "kind": "function",
+      "page": 26,
+      "optimal": "Agency automates data categorization and labeling enterprise-wide with robust techniques; granular, structured formats; and mechanisms to address all data types."
+    },
+    {
+      "pillar": "Data",
+      "name": "Data Availability",
+      "annotation": "New Function",
+      "kind": "function",
+      "page": 27,
+      "optimal": "Agency uses dynamic methods to optimize data availability, including historical data, according to user and entity need."
+    },
+    {
+      "pillar": "Data",
+      "name": "Data Access",
+      "annotation": null,
+      "kind": "function",
+      "page": 27,
+      "optimal": "Agency automates dynamic just-in-time and just-enough data access controls enterprise-wide with continuous review of permissions."
+    },
+    {
+      "pillar": "Data",
+      "name": "Data Encryption",
+      "annotation": null,
+      "kind": "function",
+      "page": 27,
+      "optimal": "Agency encrypts data in use where appropriate, enforces least privilege principles for secure key management enterprise-wide, and applies encryption using up-to-date standards and cryptographic agility to the extent possible."
+    },
+    {
+      "pillar": "Data",
+      "name": "Visibility and Analytics Capability",
+      "annotation": null,
+      "kind": "cross_cutting",
+      "page": 27,
+      "optimal": "Agency has visibility across the full data lifecycle with robust analytics, including predictive analytics, that support comprehensive views of agency data and continuous security posture assessment."
+    },
+    {
+      "pillar": "Data",
+      "name": "Automation and Orchestration Capability",
+      "annotation": null,
+      "kind": "cross_cutting",
+      "page": 28,
+      "optimal": "Agency automates, to the maximum extent possible, data lifecycles and security policies for all agency data across the enterprise."
+    },
+    {
+      "pillar": "Data",
+      "name": "Governance Capability",
+      "annotation": null,
+      "kind": "cross_cutting",
+      "page": 28,
+      "optimal": "Agency data lifecycle policies are unified to the maximum extent possible and dynamically enforced across the enterprise."
+    }
+  ]
+}

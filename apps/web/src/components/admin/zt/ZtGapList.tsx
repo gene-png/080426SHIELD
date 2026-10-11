@@ -21,6 +21,12 @@ export interface ZtGapListProps {
   targetStage: number;
   onChangeTargetStage: (next: number) => void;
   stages: CatalogStage[];
+  /**
+   * #85: why the select shows what it shows, when the target on file could not
+   * be used (a stored 1 is a starting point, not a target). Null renders
+   * nothing.
+   */
+  targetNote?: string | null;
 }
 
 function severityTone(gapSize: number): "warning" | "info" | "success" {
@@ -35,6 +41,7 @@ export function ZtGapList({
   targetStage,
   onChangeTargetStage,
   stages,
+  targetNote = null,
 }: ZtGapListProps): JSX.Element {
   return (
     <Card>
@@ -72,6 +79,33 @@ export function ZtGapList({
               {analysis.total_gap_count === 1 ? "" : "s"} ·{" "}
               {analysis.unscored_count} unscored
             </span>
+          ) : null}
+          {targetNote ? (
+            <p className="w-full text-xs text-ink-secondary" role="note">
+              {targetNote}
+            </p>
+          ) : null}
+          {/* #839: the API's own sentences, one per capped capability. */}
+          {analysis?.target_cap_notes?.length ? (
+            <ul
+              className="w-full list-disc pl-5 text-xs text-ink-secondary"
+              data-testid="zt-target-caps"
+            >
+              {analysis.target_cap_notes.map((s) => (
+                <li key={s}>{s}</li>
+              ))}
+            </ul>
+          ) : null}
+          {/* #839 S1: the API's own sentence per stored stage above its maximum. */}
+          {analysis?.stage_above_max_notes?.length ? (
+            <ul
+              className="w-full list-disc pl-5 text-xs text-ink-secondary"
+              data-testid="zt-stage-above-max"
+            >
+              {analysis.stage_above_max_notes.map((s) => (
+                <li key={s}>{s}</li>
+              ))}
+            </ul>
           ) : null}
         </div>
 

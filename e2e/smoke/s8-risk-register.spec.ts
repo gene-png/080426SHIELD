@@ -4,7 +4,7 @@ import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
-import { atlasClientId, atlasServiceId } from "../helpers/ids";
+import { atlasClientId } from "../helpers/ids";
 import { acknowledgeOfflineAi } from "../helpers/ai";
 
 /**
@@ -203,20 +203,20 @@ test("register is locked with only ATT&CK and unlocks once a ZT assessment exist
   await expect(page.getByText("Risk Register is locked")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Generate" })).toBeVisible();
 
-  // #237. The gate unlocks on EXISTENCE, so the page is fully rendered — but
-  // both assessments here are DRAFTS, and synthesis reads only approved work.
-  // The page must say so rather than let the consultant discover it by pressing
-  // Generate and meeting a 409.
+  // #737 (Gene's ruling, #736 item 13, reversing #237). The gate still unlocks
+  // on EXISTENCE, and both assessments here are DRAFTS: a register can now be
+  // drafted from them, and it cannot be published until they are released.
+  // The Inputs panel says which inputs are not final, before anyone presses
+  // Publish. These two lines pin DRAFT copy (with the advisor); if the wording
+  // is changed, this spec changes with it.
   //
-  // Asserted POSITIVELY first (the heading above) and only then the notice: a
-  // `toHaveCount(0)` on a page still fetching passes vacuously, and this spec's
-  // whole subject is a page whose state changed.
+  // Asserted POSITIVELY first (the heading above) and only then the panel, so
+  // nothing here passes on a page still fetching.
+  await expect(page.getByTestId("risk-register-inputs")).toBeVisible();
   await expect(
-    page.getByTestId("risk-register-unapproved-sources"),
+    page.getByText("ATT&CK coverage: in progress (draft)"),
   ).toBeVisible();
-  await expect(
-    page.getByText(/an approved MITRE ATT&CK coverage mapping/),
-  ).toBeVisible();
+  await expect(page.getByText("Zero Trust: in progress (draft)")).toBeVisible();
 });
 
 test("Generate derives tiers in code, renders KPIs + 5x5 heatmap, cites only the client's own techniques; Regenerate bumps version; exports download", async ({
@@ -225,10 +225,60 @@ test("Generate derives tiers in code, renders KPIs + 5x5 heatmap, cites only the
   test.slow();
   test.setTimeout(300_000);
   await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
-  // Seeded Atlas Defense tenant + its ATT&CK service (scripts/seed_demo.py).
-  const atlasClientIdValue = await atlasClientId(page);
-  const atlasAttackServiceId = await atlasServiceId(page, "attack_coverage");
-  await setActiveClient(page, atlasClientIdValue);
+  // #876: a THROWAWAY tenant, seeded here, rather than the seeded Atlas one.
+  // Specs that run before this one create extra ATT&CK, Zero Trust and CSF
+  // services on Atlas, and since #876 two services of one kind and framework
+  // refuse Generate (their findings would share codes). A test of generating
+  // must not depend on which services other specs left behind (the s30
+  // pattern; coordinator-approved on #876).
+  const createdClient = await page.request.post("/api/proxy/admin/clients", {
+    data: { legal_name: `QA Risk Generate ${Date.now()}` },
+  });
+  expect(createdClient.ok()).toBeTruthy();
+  const clientId = ((await createdClient.json()) as { id: string }).id;
+  await setActiveClient(page, clientId);
+
+  // ATT&CK with THREE gaps, so one batch carries at least three findings and
+  // the fixture's third entry is High x Catastrophic (asserted below). Each is
+  // a STANDALONE technique: a parent's status is computed since #554 and a
+  // PATCH to it is refused.
+  const attackSvc = await page.request.post("/api/proxy/attack/services", {
+    data: { kind: "attack_coverage", title: "QA Risk ATT&CK" },
+  });
+  expect(attackSvc.ok()).toBeTruthy();
+  const attackServiceId = ((await attackSvc.json()) as { id: string }).id;
+  const attackAssessment = await page.request.post(
+    `/api/proxy/attack/services/${attackServiceId}/assessments`,
+  );
+  expect(attackAssessment.ok()).toBeTruthy();
+  const rows = (
+    (await attackAssessment.json()) as {
+      coverage: { id: string; technique_code: string }[];
+    }
+  ).coverage;
+  const standalone = rows.filter(
+    (c) =>
+      !c.technique_code.includes(".") &&
+      !rows.some((o) => o.technique_code.startsWith(`${c.technique_code}.`)),
+  );
+  expect(standalone.length).toBeGreaterThanOrEqual(3);
+  for (const row of standalone.slice(0, 3)) {
+    const gap = await page.request.patch(
+      `/api/proxy/attack/coverage/${row.id}`,
+      { data: { status: "gap" } },
+    );
+    expect(gap.ok(), await gap.text()).toBeTruthy();
+  }
+  // A Zero Trust assessment, so the gate unlocks.
+  const ztSvc = await page.request.post("/api/proxy/zt/services", {
+    data: { kind: "zero_trust_cisa", title: "QA Risk Zero Trust" },
+  });
+  expect(ztSvc.ok()).toBeTruthy();
+  const ztSvcId = ((await ztSvc.json()) as { id: string }).id;
+  const ztAssessment = await page.request.post(
+    `/api/proxy/zt/services/${ztSvcId}/assessments`,
+  );
+  expect(ztAssessment.ok()).toBeTruthy();
 
   await page.goto("/admin/risk-register");
   await expect(
@@ -239,7 +289,7 @@ test("Generate derives tiers in code, renders KPIs + 5x5 heatmap, cites only the
   // Version assertions are delta-based: the shared DB may already hold a
   // register from earlier runs.
   const latest = await page.request.get(
-    `/api/proxy/risk/clients/${atlasClientIdValue}/register/latest`,
+    `/api/proxy/risk/clients/${clientId}/register/latest`,
   );
   const priorVersion = latest.ok()
     ? ((await latest.json()) as RiskRegisterResponse).version
@@ -279,7 +329,7 @@ test("Generate derives tiers in code, renders KPIs + 5x5 heatmap, cites only the
 
   // Cited technique links only reference the client's OWN ATT&CK assessment.
   const attackLatest = await page.request.get(
-    `/api/proxy/attack/services/${atlasAttackServiceId}/assessments/latest`,
+    `/api/proxy/attack/services/${attackServiceId}/assessments/latest`,
   );
   expect(attackLatest.ok()).toBeTruthy();
   const coverage = (

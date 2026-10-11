@@ -28,6 +28,8 @@ from app.tech_debt.exporters import (
 class _FakeList:
     source_rows_total: int | None
     excluded_rows: list | None
+    # #177 / migration 0058. None is the pre-0058 truth: not recorded.
+    attribution_complete: bool | None = None
 
 
 @dataclass
@@ -59,7 +61,9 @@ class _FakeItem:
     parent_item_id: object | None = None
 
 
-def _ctx(*, received: int | None, excluded: int, included: int) -> DeliverableContext:
+def _ctx(
+    *, received: int | None, excluded: int, included: int, attributed: bool | None = None
+) -> DeliverableContext:
     """Build through `build_context` rather than constructing the context directly.
 
     Changed deliberately, and worth stating: the previous version passed
@@ -76,7 +80,7 @@ def _ctx(*, received: int | None, excluded: int, included: int) -> DeliverableCo
     return build_context(
         client_legal_name="UX-E2E-Validation",
         service_title="Technical Debt Review",
-        cap_list=_FakeList(received, [{"index": i} for i in range(excluded)]),
+        cap_list=_FakeList(received, [{"index": i} for i in range(excluded)], attributed),
         items=[_FakeItem() for _ in range(included)],
     )
 
@@ -91,7 +95,8 @@ def test_reconciliation_is_stated_when_rows_were_excluded() -> None:
 @pytest.mark.unit
 def test_nothing_excluded_reads_as_a_plain_total() -> None:
     """No exclusions means the figure IS the whole upload — don't add noise."""
-    ctx = _ctx(received=26, excluded=0, included=26)
+    # A RECORDED clean run (#177): before 0058 an empty list proved nothing.
+    ctx = _ctx(received=26, excluded=0, included=26, attributed=True)
     assert reconciliation_line(ctx) is None
     assert cost_label(ctx) == "Total annual cost"
 

@@ -58,4 +58,51 @@ def parents_computed(assessment: Any) -> bool:
     )
 
 
-__all__ = ["NEW_RULES", "OLD_RULES", "UnknownParentRules", "parents_computed"]
+#: #554 R3 (migration 0059): approved before R3, so the stored statuses render.
+#: The migration backfilled every APPROVED and RELEASED row to this.
+STORED_STATUSES = 1
+#: Approved under R3: statuses are computed from Detect / Prevent / Respond.
+COMPUTED_STATUSES = 2
+
+
+class UnknownStatusRules(RuntimeError):
+    """A stored `status_rules` this code does not know. Never defaulted, for
+    the same reason as `UnknownParentRules`."""
+
+
+def statuses_computed(assessment: Any) -> bool:
+    """True when `assessment`'s statuses are computed from Detect / Prevent /
+    Respond (#554 R3), not read as stored.
+
+    The advisor's decision (d), 2026-10-02: R3 applies only to assessments
+    approved after it ships. NULL is a draft, which is approved under R3, so it
+    reads as computed. Any value other than NULL, 1 or 2 raises.
+    """
+    value = assessment.status_rules
+    if value is None:
+        return True
+    if type(value) is int and value == COMPUTED_STATUSES:
+        return True
+    if type(value) is int and value == STORED_STATUSES:
+        return False
+    _log.error(
+        "attack.status_rules.unknown",
+        assessment_id=str(getattr(assessment, "id", None)),
+        value=repr(value),
+    )
+    raise UnknownStatusRules(
+        f"ATT&CK assessment {getattr(assessment, 'id', '?')} has status_rules={value!r}; "
+        f"expected NULL, {STORED_STATUSES} or {COMPUTED_STATUSES}."
+    )
+
+
+__all__ = [
+    "COMPUTED_STATUSES",
+    "NEW_RULES",
+    "OLD_RULES",
+    "STORED_STATUSES",
+    "UnknownParentRules",
+    "UnknownStatusRules",
+    "parents_computed",
+    "statuses_computed",
+]

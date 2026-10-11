@@ -63,9 +63,20 @@ FALLBACK = DEFAULT_TARGET_TIER
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("chosen, expected", [(1, 1), (2, 2), (3, 3), (4, 4)])
+@pytest.mark.parametrize("chosen, expected", [(2, 2), (3, 3), (4, 4)])
 def test_a_valid_tier_is_the_clients_own_choice(chosen, expected) -> None:
     assert resolve_target_tier(chosen) == (expected, "client")
+
+
+@pytest.mark.unit
+def test_a_stored_tier_1_is_below_the_floor_not_the_clients_choice() -> None:
+    """#85. Tier 1 is a tier CSF has and not a target, so it is its own state.
+
+    The literal 3, from the SPEC (Tier 3, Repeatable), not `DEFAULT_TARGET_TIER`:
+    an expected value read from the module under test cannot catch a changed
+    default.
+    """
+    assert resolve_target_tier(1) == (3, "client_below_floor")
 
 
 @pytest.mark.unit

@@ -10,10 +10,30 @@ import { NextResponse } from "next/server";
 
 import { ApiError, apiFetch } from "@/lib/api";
 import { auth } from "@/lib/auth/options";
+import { upstreamOutcomeUnknown } from "@/lib/upstream-outcome-unknown";
 
 export async function proxyAiJson(
   request: Request,
   upstream: string,
+): Promise<NextResponse> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    body = undefined;
+  }
+  return forward(upstream, "POST", body);
+}
+
+/** A GET through the same path: the Run-AI run reads (#645). */
+export async function proxyAiGet(upstream: string): Promise<NextResponse> {
+  return forward(upstream, "GET", undefined);
+}
+
+async function forward(
+  upstream: string,
+  method: "GET" | "POST",
+  body: unknown,
 ): Promise<NextResponse> {
   const session = await auth();
   const token = session?.accessToken;
@@ -23,15 +43,9 @@ export async function proxyAiJson(
       { status: 401 },
     );
   }
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    body = undefined;
-  }
   try {
     const result = await apiFetch(upstream, {
-      method: "POST",
+      method,
       bearer: token,
       body: body as Record<string, unknown> | undefined,
     });
@@ -68,9 +82,6 @@ export async function proxyAiJson(
         status: err.status,
       });
     }
-    return NextResponse.json(
-      { error: { message: "Upstream AI call failed." } },
-      { status: 502 },
-    );
+    return upstreamOutcomeUnknown(err, "Upstream AI call");
   }
 }

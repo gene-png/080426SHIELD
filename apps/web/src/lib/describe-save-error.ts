@@ -57,6 +57,8 @@
  * stale on the third.
  */
 
+import { UPSTREAM_OUTCOME_UNKNOWN } from "@/lib/upstream-outcome";
+
 type ErrorPayload = {
   error?: { message?: unknown; reason?: unknown };
   detail?: unknown;
@@ -110,6 +112,17 @@ export function serverReasonCode(err: unknown): string | null {
 export function isCatalogWithheld(err: unknown): boolean {
   if (!hasPayload(err) || err.status !== 409) return false;
   return serverReasonCode(err) === "attack_catalog_mismatch";
+}
+
+/**
+ * #550: the proxy never saw the api's answer (its `fetch` rejected), so the
+ * write may have landed. ONE predicate for every surface that must not call
+ * this a failure, keyed on the code's VALUE (never on whether a reason
+ * arrived). The status is not checked: the reason is the contract, and the
+ * builder in `upstream-outcome-unknown.ts` is its only writer.
+ */
+export function isUpstreamOutcomeUnknown(err: unknown): boolean {
+  return serverReasonCode(err) === UPSTREAM_OUTCOME_UNKNOWN;
 }
 
 /**
@@ -324,6 +337,15 @@ export function describeSaveError(
   subject: string,
   opts: { restored?: boolean } = {},
 ): string {
+  const restored = opts.restored
+    ? " The value on screen has been restored to what the server has."
+    : "";
+  // #550: "was not saved" is false here -- the proxy never saw the answer, so
+  // the save may have landed. Say it is unknown. The re-fetch the callers run
+  // next is what shows which it was, so the restored sentence still applies.
+  if (isUpstreamOutcomeUnknown(err)) {
+    return `${subject}: we couldn't confirm whether it was saved.${restored} Your consultant can help if this keeps happening.`;
+  }
   const reason = serverReason(err);
   const because = reason ? ` ${reason}` : "";
 
@@ -347,8 +369,5 @@ export function describeSaveError(
   // re-fetch to learn their edit failed -- and replace it with
   // `{ restored: true }` only once the re-fetch has resolved. Each sentence is
   // then true at the moment it is on screen.
-  const restored = opts.restored
-    ? " The value on screen has been restored to what the server has."
-    : "";
   return `${subject} was not saved.${because}${restored} Your consultant can help if this keeps happening.`;
 }

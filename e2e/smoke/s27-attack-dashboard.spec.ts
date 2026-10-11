@@ -52,15 +52,21 @@ test("client views a released MITRE ATT&CK coverage dashboard", async ({
     const body: Record<string, unknown> = { status };
     if (status === "covered") {
       Object.assign(body, {
+        // #851: approve refuses a tool that is not in the client's security
+        // tool list, so every tool here is on the seeded Atlas Tech Debt list
+        // (`scripts/seed_demo.py::_TD_ITEMS`, RELEASED, so no spec edits it).
         detection_tools: ["CrowdStrike Falcon"],
-        prevention_tools: ["STIG baselines"],
-        response_tools: ["Cortex XSOAR"],
+        prevention_tools: ["Okta Workforce Identity"],
+        response_tools: ["Splunk Enterprise"],
         rationale: "Full detect/prevent/respond triad in place.",
       });
     } else if (status === "partial") {
       // #622: approve refuses a Partial with no reason, so a consultant now
       // picks one. A real Partial code from `coverage.REASON_CODES`.
       body.reason_code = "missing_control_category";
+      // #554 R3: a status is computed from Detect / Prevent / Respond, so a
+      // Partial needs something in place; detection alone makes it Partial.
+      body.detection_tools = ["CrowdStrike Falcon"];
     } else if (status === "gap") {
       body.rationale = "Container runtime detection gap — no coverage today.";
     }

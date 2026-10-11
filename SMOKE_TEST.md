@@ -44,7 +44,7 @@ documents, live AI). Work top-to-bottom in one sitting.
 ## 4. Tech Debt service (D1)
 
 - [x] Admin opens / extracts a Tech Debt capability list. (s4-techdebt.spec.ts)
-- [x] **Dashboard row** shows: capabilities count, annual cost, categories, to-consolidate/cut, low-confidence rows. (s4-techdebt.spec.ts — asserts the KPI cards render with their labels; the numeric values are not cross-checked against the uploaded data)
+- [x] **Dashboard row** shows: capabilities count, annual cost, categories, "To cut" (both kinds of cut), low-confidence rows. (s4-techdebt.spec.ts — asserts the KPI cards render with their labels; the numeric values are not cross-checked against the uploaded data)
 - [x] Edit a capability cell → its AI-confidence badge clears (human-curated). (s4-techdebt.spec.ts)
 - [x] After **release**, the CLIENT opens the software-portfolio dashboard from `/documents` ("View dashboard") → KPI cards, spend-by-category bar, tool-sprawl donut, functional-redundancy cards, and a searchable inventory table render (D-035). (s29-tech-debt-dashboard.spec.ts)
 

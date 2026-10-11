@@ -563,3 +563,84 @@ def test_gap_analysis_refuses_a_target_the_framework_does_not_have(app_client) -
 
     ok = c.get(f"/zt/services/{svc_id}/gap-analysis", headers=h, params={"target_stage": 3})
     assert ok.status_code == 200, ok.text
+
+
+# --- #85: a stored target of 1 --------------------------------------------
+#
+# Tier/Stage 1 is where an organization starts, not a target. A stored 1 used
+# to resolve as the client's own choice, so a finalized document read "0
+# gap(s) at target T1" -- the vacuous case that reads most like success. It now
+# resolves to the engine default (3, from the spec, not imported) and the audit
+# row names why.
+
+
+def _finalize_csf_and_read(c: TestClient, h: dict, svc_id: str) -> tuple[str, dict]:
+    """Finalize a CSF deliverable; return its summary line and audit details."""
+    from app.models.audit_entry import AuditEntry
+    from app.models.deliverable import Deliverable
+
+    fin = c.post(f"/csf/services/{svc_id}/deliverables/finalize", headers=h)
+    assert fin.status_code == 201, fin.text
+    eng = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=eng, future=True)() as s:
+        summary = s.get(Deliverable, uuid.UUID(fin.json()["id"])).summary or ""
+        row = (
+            s.query(AuditEntry)
+            .filter(AuditEntry.action == "csf.deliverable.finalized")
+            .order_by(AuditEntry.at.desc())
+            .first()
+        )
+        assert row is not None, "finalize wrote no audit row"
+        return summary, dict(row.details or {})
+
+
+@pytest.mark.unit
+def test_csf_finalize_does_not_build_a_document_against_a_stored_tier_1(app_client) -> None:
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    h = {"Authorization": f"Bearer {admin['tokens']['access_token']}"}
+    svc_id = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "CSF"}).json()[
+        "id"
+    ]
+    _attach_intake_target(svc_id, csf_tier=1)
+    a = c.post(f"/csf/services/{svc_id}/assessments", headers=h).json()
+    # Tier 2 everywhere: no gap against a target of 1, every row a gap against 3.
+    for ans in a["answers"]:
+        c.patch(f"/csf/answers/{ans['id']}", headers=h, json={"maturity_tier": 2})
+    c.post(f"/csf/assessments/{a['id']}/approve", headers=h)
+
+    summary, details = _finalize_csf_and_read(c, h, svc_id)
+
+    assert "at target T1" not in summary, summary
+    assert "at target T3" in summary, summary
+    assert "0 gap(s) at target" not in summary, summary
+    assert details["target_tier_source"] == "client_below_floor", details
+    assert details["target_tier"] == 3, details
+
+
+@pytest.mark.unit
+def test_zt_finalize_does_not_build_a_document_against_a_stored_stage_1(app_client) -> None:
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    h = {"Authorization": f"Bearer {admin['tokens']['access_token']}"}
+    svc_id = _seed_scored_zt_service(c, h, "zero_trust_cisa", 1)
+
+    details = _finalize_and_read_audit(c, h, svc_id)
+
+    assert details["target_stage_source"] == "client_below_floor", details
+    assert details["target_stage"] == 3, details
+
+    from app.models.deliverable import Deliverable
+
+    eng = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=eng, future=True)() as s:
+        deliv = (
+            s.query(Deliverable)
+            .filter(Deliverable.service_id == uuid.UUID(svc_id))
+            .order_by(Deliverable.version.desc())
+            .first()
+        )
+        summary = deliv.summary or ""
+    assert "at target S1" not in summary, summary
+    assert "at target S3" in summary, summary
+    assert "0 gap(s) at target" not in summary, summary

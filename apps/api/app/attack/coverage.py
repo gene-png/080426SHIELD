@@ -21,6 +21,10 @@ reporting surface renders them as of #621 (the client and admin dashboards, the
 exporters and finalize summary, the home value card, the risk link scope), and
 the release-readiness gate (#622) refuses approve and release over a Not
 verified row. What remains before the widening slice may add them to `WRITABLE`:
+  * decide whether the AI may write it. The AI writes `WRITABLE` minus
+    `not_applicable` (`routes/attack.py` `_AI_WRITABLE_STATUSES`, #841), so a
+    status added to `WRITABLE` becomes AI-writable unless it is subtracted
+    there too;
   * the owner's call on how the Risk Register treats an unverified technique
     (#621 keeps it uncitable and names it "Not verified"; not yet confirmed).
 The PATCH refuses them typed, and the AI write-back refuses a suggestion carrying
@@ -53,7 +57,8 @@ class CoverageStatus(enum.StrEnum):
     UNABLE_TO_DETERMINE = "unable_to_determine"
 
 
-#: What a consultant or the AI may write today. See "NOT YET WRITABLE" above.
+#: What a consultant may write today. The AI writes this minus `not_applicable`
+#: (`routes/attack.py` `_AI_WRITABLE_STATUSES`, #841). See "NOT YET WRITABLE" above.
 WRITABLE: frozenset[CoverageStatus] = frozenset(
     {
         CoverageStatus.COVERED,
@@ -93,9 +98,13 @@ COVERAGE_DEFINITIONS: tuple[CoverageDefinition, ...] = (
     CoverageDefinition(
         status=CoverageStatus.COVERED,
         short_label="Covered",
+        # R3 (Gene, 2026-10-02, on #554); wording approved for #842 (#736,
+        # comment 6053562002). Reach is a Partial reason (`reach_limited`), not
+        # part of Covered.
         description=(
-            "Detection + response controls are in place for this technique "
-            "across the relevant attack surface."
+            "Detect, Prevent and Respond are all in place for this technique, or Detect "
+            "and Respond where MITRE ATT&CK lists no preventive control. In place means "
+            "at least one confirmed tool provides it."
         ),
     ),
     CoverageDefinition(
@@ -178,8 +187,11 @@ REASON_CODES: tuple[ReasonCode, ...] = (
     ReasonCode(
         "prevention_limited",
         CoverageStatus.PARTIAL,
-        "Detectable but not preventable, including where legitimate use needs the "
-        "same capability.",
+        # #806 Q5 (#736 comment 6053562002): the text proposed in comment
+        # 6053026654, approved. Under the #806 prompt it means prevention is
+        # required and is the only missing function, a control the client lacks.
+        "Detect is in place and Prevent is not, for a technique MITRE ATT&CK lists "
+        "a preventive control for.",
     ),
     ReasonCode(
         "evasive_variant_uncovered",

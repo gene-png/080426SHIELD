@@ -156,6 +156,24 @@ def api(tmp_path) -> Iterator[tuple[TestClient, dict, dict, str, sessionmaker]]:
         yield c, auth, by_code, a["id"], Sess
 
 
+def _render_as_pre_r3(Sess, assessment_id: str) -> None:
+    """#554 R3 (C2, option (iii), ruled by the advisor 01:05Z). A parent's
+    PENDING state (#102, D-094) renders only for an assessment whose statuses are
+    stored: one approved before R3 (status_rules=1). Stamped before the children
+    are PATCHed, because confirming a row's citations by setting its status is
+    itself the pre-R3 rule (the review's API finding 3). Models a released
+    pre-R3 assessment's render path; no draft reaches it after 0059."""
+    from app.models.attack_assessment import AttackAssessment
+
+    with Sess() as s:
+        s.execute(
+            update(AttackAssessment)
+            .where(AttackAssessment.id == uuid.UUID(assessment_id))
+            .values(status_rules=1)
+        )
+        s.commit()
+
+
 def _set(c, auth, row_id: str, body: dict):
     return c.patch(f"/attack/coverage/{row_id}", headers=auth, json=body)
 
@@ -278,6 +296,7 @@ def test_a_computed_parent_with_confirmed_children_is_NOT_pending(api) -> None:
     hand-set status confirms them), the parent is not pending -- through the
     heatmap, on a fresh assessment, not the seed (which writes [] everywhere)."""
     c, auth, by_code, assessment_id, Sess = api
+    _render_as_pre_r3(Sess, assessment_id)
     for child in CHILDREN:
         assert _set(c, auth, by_code[child]["id"], {"status": "covered"}).status_code == 200
     assert _parent_now(c, auth, assessment_id, Sess) == ("covered", None)
@@ -300,6 +319,7 @@ def test_a_computed_parent_is_pending_when_a_child_is(api) -> None:
     from app.models.attack_assessment import AttackCoverage
 
     c, auth, by_code, assessment_id, Sess = api
+    _render_as_pre_r3(Sess, assessment_id)
     for child in CHILDREN:
         assert _set(c, auth, by_code[child]["id"], {"status": "covered"}).status_code == 200
     with Sess() as s:

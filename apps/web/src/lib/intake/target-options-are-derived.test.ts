@@ -102,17 +102,11 @@ describe("the cross-language copy", () => {
    * Spelled rather than imported, so an edit to `assessment-targets.ts` goes
    * red HERE with a message naming the Python file that must change with it.
    *
-   * This does not prove the two agree — the same remedy, for the same reason,
-   * as `SCHEMA_REASON_PREFIX` in `lib/describe-save-error.ts`.
-   *
-   * **It is not the best check available, and this comment used to claim it
-   * was.** It said no container can read the other's tree, so a real parity
-   * check "would pass in CI and fail on every developer's machine". False:
-   * `docker-compose.yml` already mounts `./packages/zt-data:/packages/zt-data:ro`
-   * on the api service precisely so a contract test can read a tree outside
-   * the app. A parity gate is a compose line away and is deferred on SCOPE —
-   * a `docker-compose.yml` edit is merge-rule condition 5 — not on
-   * possibility. Tracked in #422.
+   * This alone does not prove the two agree. What does, since #422: the
+   * api's `tests/unit/test_target_floor_parity.py` reads `assessment-targets.ts`
+   * through a read-only mount (or in place on a CI checkout) and asserts the
+   * floors equal the Python ones. This spelled literal stays as the fast,
+   * local half: it turns a unilateral TS edit red here, naming the file.
    */
   it("spells the floor the Python side spells too", () => {
     expect(MIN_TARGET_TIER).toBe(2);

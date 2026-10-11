@@ -17,8 +17,9 @@ from typing import Annotated, NamedTuple
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, undefer_group
 
+from app.attack.after import sentences as attack_after_sentences
 from app.attack.analytics import compute as attack_compute
 from app.attack.catalog import all_codes as attack_all_codes
 from app.attack.catalog import tactic_by_id as attack_tactic_by_id
@@ -31,19 +32,34 @@ from app.attack.catalog_version import (
     require_current_catalog_for_client,
 )
 from app.attack.catalog_version import is_current as attack_catalog_is_current
+from app.attack.computed import IN_PLACE_TEXT as ATTACK_IN_PLACE_TEXT
+from app.attack.computed import effective_coverage as attack_effective_coverage
 from app.attack.coverage import ASSESSED
+from app.attack.coverage import CoverageStatus as AttackCoverageStatus
+from app.attack.exporters import awaiting_review_text as attack_awaiting_review_text
+from app.attack.exporters import build_context as attack_build_context
+from app.attack.exporters import coverage_measured
+from app.attack.exporters import coverage_pct_text as attack_coverage_pct_text
+from app.attack.exporters import partial_reason_counts as attack_partial_reason_counts
+from app.attack.exporters import retirement_sentences as attack_retirement_sentences
+from app.attack.exporters import subset_sentences as attack_subset_sentences
 from app.attack.parents import PARENT_CHILDREN as ATTACK_PARENT_CHILDREN
 from app.attack.parents import is_computed_parent as attack_is_computed_parent
+from app.attack.partial_reasons import partial_reason_for_row as attack_partial_reason_for_row
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.rules import parents_computed as attack_parents_computed
+from app.attack.rules import statuses_computed as attack_statuses_computed
 from app.csf.gap import MAX_TIER as CSF_MAX_TIER
 from app.csf.gap import analyze as csf_analyze_gaps
 from app.csf.gap import resolve_target_tier as csf_resolve_target_tier
+from app.csf.retired import answers_sentence as csf_retired_sentence
+from app.csf.retired import retired_answers as csf_retired_answers
 from app.csf.scoring import _label_from_average as csf_label_from_average
 from app.csf.scoring import compute as csf_compute
 from app.db.session import get_db
 from app.dependencies import current_client, current_user
 from app.logging import get_logger
+from app.mode_stamp import UNKNOWN_AI_MODE_REGISTER, ai_mode_for
 from app.models.artifact import Artifact
 from app.models.attack_assessment import (
     AttackAssessment,
@@ -51,7 +67,6 @@ from app.models.attack_assessment import (
     AttackCoverage,
 )
 from app.models.capability import (
-    CapabilityDisposition,
     CapabilityItem,
     CapabilityList,
     CapabilityListStatus,
@@ -59,9 +74,8 @@ from app.models.capability import (
 from app.models.client import Client
 from app.models.csf_assessment import CsfAnswer, CsfAssessment, CsfAssessmentStatus
 from app.models.deliverable import Deliverable
-from app.models.risk_register import RiskEntry, RiskRegister
+from app.models.risk_register import OTHER_AXES_GROUP, RiskEntry, RiskRegister
 from app.models.service import Service, ServiceKind
-from app.models.service_request import ServiceRequest
 from app.models.user import User, UserRole
 from app.models.zt_assessment import (
     ZtAnswer,
@@ -69,6 +83,9 @@ from app.models.zt_assessment import (
     ZtAssessmentStatus,
     ZtFramework,
 )
+from app.risk.baseline import targets_used
+from app.risk.csf_source import csf_no_shared_row as risk_csf_no_shared_row
+from app.risk.csf_source import csf_source_note as risk_csf_source_note
 from app.risk.engine import (
     Impact,
     Likelihood,
@@ -80,10 +97,18 @@ from app.risk.engine import (
     matrix_counts,
     tier_counts,
 )
+from app.risk.zt_capped import capped_target_codes as risk_capped_target_codes
+from app.risk.zt_capped import capped_target_sentence as risk_capped_target_sentence
+from app.routes.attack import client_retirement_index
+from app.routes.attack import subset_state as attack_subset_state
 from app.schemas.clients import (
     AttackDashboardResponse,
     AttackDashboardRollup,
     AttackDashboardTechnique,
+    AttackInPlace,
+    AttackInPlaceState,
+    AttackPartialReason,
+    AttackPartialReasonCount,
     AttackTacticCoverage,
     ClientDeliverableListResponse,
     ClientDeliverableResponse,
@@ -101,9 +126,16 @@ from app.schemas.clients import (
     ZtDashboardResponse,
     ZtPillarDashboard,
 )
+from app.schemas.risk import RiskTargetUsed
+from app.services.engagement_targets import client_target_stage, client_target_tier
+from app.tech_debt.components import is_component, license_count, source_items
+from app.tech_debt.reconcile import exclusion_count_state
+from app.tech_debt.savings import estimated_savings
 from app.zt.catalog import capability_by_code as zt_capability_by_code
 from app.zt.maturity import ZtFrameworkCode
 from app.zt.maturity import stage_label as zt_stage_label
+from app.zt.retired import retired_answer_count as zt_retired_answer_count
+from app.zt.retired import retired_sentence as zt_retired_sentence
 from app.zt.scoring import analyze_gaps as zt_analyze_gaps
 from app.zt.scoring import compute as zt_compute
 from app.zt.scoring import effective_target_stages as zt_effective_target_stages
@@ -111,6 +143,8 @@ from app.zt.scoring import (
     engagement_target_capability_count as zt_engagement_target_capability_count,
 )
 from app.zt.scoring import resolve_target_stage as zt_resolve_target_stage
+from app.zt.target_caps import stage_above_max_sentences as zt_stage_above_max_sentences
+from app.zt.target_caps import target_cap_sentences as zt_target_cap_sentences
 
 router = APIRouter(prefix="/clients", tags=["clients"])
 
@@ -494,56 +528,6 @@ def _csf_function_label(average_tier: float | None) -> str:
     return csf_label_from_average(average_tier)
 
 
-def _csf_client_target_tier(db: Session, service_id: uuid.UUID) -> int | None:
-    """The CSF target tier the client chose at intake, via the source request.
-
-    Deliberately duplicated from `routes/csf.py::_client_target_tier` rather
-    than imported: that one is private to the admin router, and a router
-    importing another router's underscore helper is how import cycles start.
-    Three lines, one query, and the duplication is stated here so the next
-    reader does not "fix" it by reaching across.
-
-    THAT LAST CLAUSE IS NO LONGER TRUE OF THE CODEBASE, and saying so here is
-    the point of this paragraph. `routes/risk.py` DOES reach across now
-    (#84): it imports `_client_target_tier` and `_client_target_stage` rather
-    than adding a fourth copy. Two files asserting opposite conventions is
-    worse than either convention, so the split is stated rather than left for
-    a reader to trip over.
-
-    The distinction that makes both correct: the cycle hazard is real and was
-    MEASURED, not inherited. The `app/routes/*` import graph is a DAG --
-    `ai_preview -> attack, csf, zt`; `attack -> tech_debt`; `oidc -> auth`;
-    `risk -> csf, zt, artifacts`; and NOTHING imports `risk` or `clients`.
-    So `risk` is a leaf and may import upward safely; `clients` is imported
-    by nothing today but sits where a future importer is likelier.
-
-    THE REAL ANSWER IS NEITHER, and it is filed rather than done here: three
-    copies of one query plus one importer is past the point where a shared
-    non-router helper is speculative abstraction. That is #84's own argument
-    -- four sites disagreeing about one client's target is the defect #84 is
-    titled for. Tracked; not folded into the PR that closes #84, because a
-    four-router refactor is not what that PR is for.
-    """
-    svc = db.get(Service, service_id)
-    if svc is None or svc.source_request_id is None:
-        return None
-    sr = db.get(ServiceRequest, svc.source_request_id)
-    return sr.csf_target_tier if sr is not None else None
-
-
-def _zt_client_target_stage(db: Session, service_id: uuid.UUID) -> int | None:
-    """The ZT target stage the client chose at intake, via the source request.
-
-    Twin of `_csf_client_target_tier` above, and duplicated from
-    `routes/zt.py::_client_target_stage` for the same reason stated there.
-    """
-    svc = db.get(Service, service_id)
-    if svc is None or svc.source_request_id is None:
-        return None
-    sr = db.get(ServiceRequest, svc.source_request_id)
-    return sr.zt_target_stage if sr is not None else None
-
-
 def _frozen_or_live_target(
     deliv: Deliverable | None, live: int | None
 ) -> tuple[int | None, datetime | None]:
@@ -574,15 +558,17 @@ def _frozen_or_live_target(
     runs its own resolver over it exactly as it does today. The number and its
     caption stay one derivation rather than two stored values.
 
-    ## THE FOUR SITES, AND THE THREE DELIBERATE NON-SITES
+    ## THE FOUR SITES, AND THE DELIBERATE NON-SITES
 
     Four callers: `zt_dashboard`, `csf_dashboard`, `_zt_gap_total`,
-    `_csf_gap_total`. A sweep for `_csf_client_target_tier(` /
-    `_zt_client_target_stage(` and for `_client_target_tier(` /
-    `_client_target_stage(` across `app/` finds three more, and every one is
-    deliberately left reading LIVE. Written here rather than left for the next
-    sweeper to re-derive, because a site that SHOULD read live is
-    indistinguishable from one that was missed.
+    `_csf_gap_total`. Since #352 every reader of the intake target calls
+    `services/engagement_targets.py`, so the sweep is one grep: the callers of
+    `client_target_tier(` / `client_target_stage(` across `app/`. Every other
+    one is deliberately left reading LIVE. Written here rather than left for
+    the next sweeper to re-derive, because a site that SHOULD read live is
+    indistinguishable from one that was missed. (The admin workspaces' serializers also
+    read it live, as the consultant's working default; that is not a figure a
+    client reads.)
 
       * `routes/zt.py` and `routes/csf.py` at FINALIZE. This is the write side
         -- the value read there is what gets frozen. Freezing a frozen value
@@ -770,7 +756,7 @@ def _csf_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _TargetedKindTo
         # fallback, because a figure computed against today's target is not the
         # figure the delivered document states. Same call as the per-service
         # dashboard makes, so the card and the dashboard cannot disagree.
-        tier, frozen_at = _frozen_or_live_target(deliv, _csf_client_target_tier(db, sid))
+        tier, frozen_at = _frozen_or_live_target(deliv, client_target_tier(db, sid))
         if frozen_at is None:
             live += 1
         # #184: resolve rather than branch on `is not None`. An unusable stored
@@ -831,7 +817,7 @@ def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _TargetedKindTot
         # #209, the CSF twin's fix applied here in the same commit -- see
         # `_csf_gap_total`. Fixing one of these two and not the other is the
         # half-sweep this repo keeps paying for (#75/#79).
-        stage, frozen_at = _frozen_or_live_target(deliv, _zt_client_target_stage(db, sid))
+        stage, frozen_at = _frozen_or_live_target(deliv, client_target_stage(db, sid))
         if frozen_at is None:
             live += 1
         # #125: resolve rather than let `zt_analyze_gaps` clamp -- it now
@@ -876,7 +862,7 @@ def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _TargetedKindTot
 
 def _attack_uncovered_total(
     db: Session, service_ids: list[uuid.UUID]
-) -> tuple[_KindTotal, bool, int | None]:
+) -> tuple[_KindTotal, bool, int | None, bool | None]:
     """The ATT&CK total, whether it is unresolved because the report is
     WITHHELD (#556) rather than unmatched (#114) -- two causes, two sentences --
     and the NOT-VERIFIED count beside it (#554, #621 review).
@@ -887,11 +873,22 @@ def _attack_uncovered_total(
     released assessment behind it renders under #620's rules (option (a)): the
     card then reads as it did before #621. Summed over the services under the
     new rules only; a rule-1 assessment cannot hold an unverified row, since
-    nothing may write one."""
+    nothing may write one.
+
+    The fourth value is #889's (Q3, C7): whether a summed assessment has a row
+    whose EFFECTIVE status credits coverage (Covered or Partial) and which
+    credits a tool outside the client's CURRENT security tool list
+    (`subset_state`, the dashboard's own read). The total sums Gap only, so
+    such a row is left out of it: the total may be understated (review F1,
+    copy C7 as ruled). A Gap row crediting such a tool is already IN the total,
+    so it does not raise the flag (round-2 review). None with the total, and
+    when nothing could be checked (no Tech Debt list, only lists with no
+    security tool, or only discarded lists): not checked is not "none found"."""
     if not service_ids:
-        return _KindTotal(None, False), False, None
+        return _KindTotal(None, False), False, None, None
     total = 0
     not_verified: int | None = None
+    outside: bool | None = None
     for sid in service_ids:
         # #114: the released deliverable's parent, not the latest APPROVED row.
         # See `_csf_gap_total` above for why the `found` flag went with it.
@@ -905,7 +902,7 @@ def _attack_uncovered_total(
             # One unresolvable service makes the whole KIND unresolved. Summing
             # the rest would publish a floor as a figure — option 1 in
             # `_released_parent`, rejected there for this reason.
-            return _KindTotal(None, True), False, None
+            return _KindTotal(None, True), False, None, None
         # No `deliverable` here: an ATT&CK service has no engagement target of
         # #209's shape, so there is nothing to freeze. Stated because the two
         # helpers above this one DO freeze, and a reader sweeping for the twin
@@ -916,11 +913,14 @@ def _attack_uncovered_total(
             # unknown codes silently dropped by `attack_compute` below. Same
             # answer as an unresolvable service: the whole kind is unresolved,
             # and the card is told the cause.
-            return _KindTotal(None, True), True, None
-        rows = (
+            return _KindTotal(None, True), True, None, None
+        # #554 R3: computed statuses where they apply, so this gap count is the
+        # dashboard's gap count.
+        rows = attack_effective_coverage(
+            a,
             db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
             .scalars()
-            .all()
+            .all(),
         )
         coverage_map: dict[str, str | None] = {r.technique_code: r.status for r in rows}
         # No `pending_codes` here, and that is deliberate rather than an
@@ -940,13 +940,36 @@ def _attack_uncovered_total(
         total += rollup.gap
         if attack_parents_computed(a):
             not_verified = (not_verified or 0) + rollup.unable_to_determine
-    return _KindTotal(total, False), False, not_verified
+        # #889: the dashboard's twin. Disclosure only; `total` is unchanged.
+        subset = attack_subset_state(
+            db, _service_client_id(db, sid), rows, parents_computed=attack_parents_computed(a)
+        )
+        if subset.checked:
+            # Only rows the rollup counts toward coverage: C7 says "counted as
+            # covered", and a Gap, N/A or unscored row is not.
+            credited = {r.technique_code for r in rows if r.status in _CREDITS_COVERAGE}
+            outside = bool(outside) or any(o.technique_code in credited for o in subset.outside)
+    return _KindTotal(total, False), False, not_verified, outside
+
+
+#: #889 round 2: the effective statuses the rollup counts toward coverage.
+_CREDITS_COVERAGE = frozenset(
+    {AttackCoverageStatus.COVERED.value, AttackCoverageStatus.PARTIAL.value}
+)
+
+
+def _service_client_id(db: Session, service_id: uuid.UUID) -> uuid.UUID:
+    svc = db.get(Service, service_id)
+    if svc is None:
+        raise ValueError(f"released ATT&CK service {service_id} does not exist")
+    return svc.client_id
 
 
 def _tech_debt_savings(db: Session, service_ids: list[uuid.UUID]) -> _TechDebtTotal:
-    """(annual savings, cost_known). Savings = sum of annual cost over CUT
-    capabilities; cost_known is False when any CUT item lacked a cost (so the
-    figure is a floor). Mirrors routes/tech_debt.py:consolidation_plan_summary."""
+    """(annual savings, cost_known), summed over the released lists through
+    `tech_debt.savings.estimated_savings` -- the deliverable's own derivation
+    (#804). cost_known is False when a counted item lacked a cost (so the
+    figure is a floor)."""
     if not service_ids:
         return _TechDebtTotal(None, True, False)
     total = 0.0
@@ -971,12 +994,10 @@ def _tech_debt_savings(db: Session, service_ids: list[uuid.UUID]) -> _TechDebtTo
             .scalars()
             .all()
         )
-        for it in items:
-            if it.disposition == CapabilityDisposition.CUT:
-                if it.annual_cost_usd is None:
-                    cost_known = False
-                else:
-                    total += float(it.annual_cost_usd)
+        # #804: the deliverable's own derivation, per released list.
+        found = estimated_savings((it.disposition, it.annual_cost_usd) for it in items)
+        total += found.amount
+        cost_known = cost_known and found.known
     return _TechDebtTotal(total, cost_known, False)
 
 
@@ -1005,7 +1026,7 @@ def value_summary(
         ServiceKind.ZERO_TRUST_DOD, []
     )
     zt = _zt_gap_total(db, zt_ids)
-    attack, attack_withheld, attack_not_verified = _attack_uncovered_total(
+    attack, attack_withheld, attack_not_verified, attack_outside = _attack_uncovered_total(
         db, by_kind.get(ServiceKind.ATTACK_COVERAGE, [])
     )
     csf = _csf_gap_total(db, by_kind.get(ServiceKind.NIST_CSF, []))
@@ -1049,6 +1070,7 @@ def value_summary(
         attack_uncovered_unresolved=attack.unresolved,
         attack_uncovered_withheld=attack_withheld,
         attack_not_verified_count=attack_not_verified,
+        attack_covered_relies_on_outside_tool=attack_outside,
         csf_gap_count=csf.value,
         csf_gap_unresolved=csf.unresolved,
         csf_services=csf.services,
@@ -1227,10 +1249,12 @@ def attack_dashboard(
     require_current_catalog_for_client(assessment)
 
     valid = attack_all_codes()
-    rows = (
+    # #554 R3: computed statuses where they apply; the stored rows otherwise.
+    rows = attack_effective_coverage(
+        assessment,
         db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == assessment.id))
         .scalars()
-        .all()
+        .all(),
     )
     coverage_map: dict[str, str | None] = {
         r.technique_code: r.status for r in rows if r.technique_code in valid
@@ -1272,9 +1296,81 @@ def attack_dashboard(
                 prevention_tools=[] if parent else list(r.prevention_tools or []),
                 response_tools=[] if parent else list(r.response_tools or []),
                 rationale=None if parent else r.rationale,
+                # #554 R1: the deliverable's own wording (`partial_reasons`),
+                # so the dashboard and the document say the same thing.
+                partial_reason=(
+                    AttackPartialReason(label=reason.label, sentence=reason.sentence)
+                    if (
+                        # #842: the exporters' `_row_reason` calls the same entry
+                        # point, so a stored reason is shown only when it is true
+                        # of the computed Detect / Prevent / Respond line.
+                        reason := attack_partial_reason_for_row(r, computed_parent=bool(parent))
+                    )
+                    is not None
+                    else None
+                ),
+                # #554 R3: the deliverable's own words for each value.
+                in_place=(
+                    AttackInPlace(
+                        detect=ATTACK_IN_PLACE_TEXT[r.capabilities.detect],
+                        prevent=ATTACK_IN_PLACE_TEXT[r.capabilities.prevent],
+                        respond=ATTACK_IN_PLACE_TEXT[r.capabilities.respond],
+                        line=r.capabilities.line(),
+                        cannot_be_prevented=r.capabilities.cannot_be_prevented,
+                        state=AttackInPlaceState(
+                            detect=r.capabilities.detect.value,
+                            prevent=r.capabilities.prevent.value,
+                            respond=r.capabilities.respond.value,
+                        ),
+                    )
+                    if getattr(r, "is_computed", False)
+                    else None
+                ),
             )
         )
     techniques.sort(key=lambda t: t.code)
+
+    # #686 (D-105): the SAME join finalize renders from, read LIVE -- the web
+    # says beside the labels that they reflect the current consolidation plan.
+    # The sentences come from the exporters' own function over a context built
+    # from these rows and this rollup, so the dashboard and the document count
+    # the same rows the same way.
+    retirement = client_retirement_index(db, client.id)
+    delivered = [r for r in rows if r.technique_code in valid]
+    # #889 (Q1): the security tool list check, read LIVE through the ONE
+    # function finalize and the admin workspace read; the web says beside it
+    # that it reflects the client's current list (C2).
+    subset = attack_subset_state(db, client.id, delivered, parents_computed=rule)
+    # ONE context for the retirement sentences, the subset sentences and the
+    # reason table, so each is computed exactly as the deliverable computes it.
+    deliverable_ctx = attack_build_context(
+        client_legal_name=client.legal_name,
+        service_title=svc.title,
+        assessment=assessment,
+        coverage=delivered,
+        rollup=rollup,
+        retirement=retirement,
+        subset=subset,
+    )
+    tool_retirement = (
+        retirement.marks(
+            t
+            for tech_row in techniques
+            for t in (
+                *tech_row.detection_tools,
+                *tech_row.prevention_tools,
+                *tech_row.response_tools,
+            )
+        )
+        if retirement.has_plan
+        else None
+    )
+    retirement_notes = attack_retirement_sentences(deliverable_ctx) if retirement.has_plan else None
+    # #554 R1, ruling (i): the deliverable's own count table. Omitted when empty.
+    partial_reasons = [
+        AttackPartialReasonCount(label=reason.label, sentence=reason.sentence, count=n)
+        for reason, n in attack_partial_reason_counts(deliverable_ctx)
+    ] or None
 
     _log.info(
         "client.attack_dashboard.built",
@@ -1292,6 +1388,21 @@ def attack_dashboard(
         released=is_released,
         deliverable_version=deliv.version,
         parents_computed=True if rule else None,
+        # #554 R3 (Q4): the deliverable's own sentence, from the same context.
+        awaiting_review_sentence=attack_awaiting_review_text(deliverable_ctx),
+        # #801 (D1, D2, A1, A3): from the same context, over the LIVE plan.
+        after_planned_changes=(
+            attack_after_sentences(
+                deliverable_ctx.after,
+                attack_coverage_pct_text(deliverable_ctx.after.rollup),
+                current_plan=True,
+            )
+            if deliverable_ctx.after is not None
+            else None
+        ),
+        statuses_computed=True if attack_statuses_computed(assessment) else None,
+        # #646: the ONE derivation every surface calls, for the released assessment.
+        ai_source=ai_mode_for(db, svc, assessment).as_api(),
         rollup=AttackDashboardRollup(
             total_evaluated=sum(getattr(rollup, s.value) for s in ASSESSED),
             covered=rollup.covered,
@@ -1303,6 +1414,7 @@ def attack_dashboard(
             outside_control_surface=rollup.outside_control_surface if rule else None,
             unable_to_determine=rollup.unable_to_determine if rule else None,
             coverage_pct=rollup.coverage_pct,
+            coverage_measured=coverage_measured(rollup),
             by_tactic=[
                 AttackTacticCoverage(
                     tactic_id=tc.tactic_id,
@@ -1316,11 +1428,23 @@ def attack_dashboard(
                     outside_control_surface=tc.outside_control_surface if rule else None,
                     unable_to_determine=tc.unable_to_determine if rule else None,
                     coverage_pct=tc.coverage_pct,
+                    coverage_measured=coverage_measured(tc),
                 )
                 for tc in rollup.by_tactic
             ],
         ),
         techniques=techniques,
+        tool_retirement=tool_retirement,
+        retirement_notes=retirement_notes,
+        partial_reasons=partial_reasons,
+        # #889: all three states (Q1) and the per-tool mark (Q2). C1 counts
+        # EVERY row the deliverable prints that credits such a tool, at any
+        # status, NOT only rows credited as coverage like the home card's flag
+        # (`_attack_uncovered_total`): C1 says the row's status "may count" the
+        # tool, which is true of a Gap row's judgement too, and it is the
+        # document's own sentence, so the two surfaces stay the same claim.
+        subset_notes=attack_subset_sentences(deliverable_ctx),
+        tool_outside_subset=sorted(subset.outside_tools()) if subset.checked else None,
     )
 
 
@@ -1423,9 +1547,7 @@ def zt_dashboard(
     # to the live read only where nothing was frozen. The resolver call below
     # is UNCHANGED -- the freeze holds the client's CHOSEN value, so the number
     # and `target_stage_source` stay one derivation over it.
-    chosen, target_frozen_at = _frozen_or_live_target(
-        deliv, _zt_client_target_stage(db, service_id)
-    )
+    chosen, target_frozen_at = _frozen_or_live_target(deliv, client_target_stage(db, service_id))
     target_stage, target_stage_source = zt_resolve_target_stage(fw, chosen)
     effective_targets = zt_effective_target_stages(fw, targets, target_stage)
     # NOT `gap`: the per-pillar loop below binds that name to a float.
@@ -1494,6 +1616,8 @@ def zt_dashboard(
         released_at=_dashboard_stamp(deliv, is_released),
         released=is_released,
         deliverable_version=deliv.version,
+        # #646: the ONE derivation every surface calls, for the released assessment.
+        ai_source=ai_mode_for(db, svc, assessment).as_api(),
         framework=fw.value,
         framework_label=_ZT_FRAMEWORK_LABELS.get(fw, fw.value),
         current_label=current.overall_stage_label,
@@ -1516,6 +1640,13 @@ def zt_dashboard(
         # would be worse than most -- the screen and the PDF would be stating
         # different facts about one assessment.
         unusable_target_codes=list(gap_analysis.unusable_target_codes),
+        # #839: off the same GapAnalysis, as #188's field above.
+        target_cap_notes=zt_target_cap_sentences(gap_analysis),
+        # #914: the same derivation the workspace and the three files call.
+        retired_answers=zt_retired_answer_count(fw, rows),
+        retired_answers_note=zt_retired_sentence(fw, zt_retired_answer_count(fw, rows)),
+        # #839 S1: from the same stored answers every figure above read.
+        stage_above_max_notes=zt_stage_above_max_sentences(fw, answers),
         total_gap_count=gap_analysis.total_gap_count,
         largest_gap_pillar=largest.name if largest else None,
         largest_gap_pct=largest.gap_pct if largest else 0.0,
@@ -1598,30 +1729,42 @@ def tech_debt_dashboard(
     )
 
     annual_spend = 0.0
-    savings = 0.0
-    savings_cost_known = True
+    # for #835: the ONE rule for what counts as an application. A split
+    # bundle's parts are listed in the inventory but are not tools of their own.
+    sources = source_items(items)
+    bundle_part_count = len(items) - len(sources)
+    # #804: the deliverable's own derivation, not a copy of it. Savings still
+    # see a part (advisor ruling on #736): a part marked Cut with no cost is a
+    # genuinely unknown saving.
+    found = estimated_savings((it.disposition, it.annual_cost_usd) for it in items)
+    savings = found.amount
+    savings_cost_known = found.known
     # #126: the same floor question the SAVINGS figure has always asked, asked
     # of SPEND. An uncosted item contributes 0.0 below and is still counted in
     # `total_applications`, so the spend figure was a floor and said so nowhere
     # while `savings` beside it carried a flag for exactly this.
     spend_cost_known = True
-    # category -> {"total": float, "count": int, "items": [CapabilityItem]}
+    # category -> {"total": float, "items": [CapabilityItem]}; "count" is
+    # derived below as the number of distinct LICENSES in the bucket.
     by_cat: dict[str, dict] = {}
     for it in items:
-        cost = float(it.annual_cost_usd) if it.annual_cost_usd is not None else 0.0
-        if it.annual_cost_usd is None:
+        # for #835: a bundle's part is not a cost. Its parent holds the license
+        # value, so the part neither adds to spend nor, by having no cost of its
+        # own, makes spend a floor. A real uncosted source row still does.
+        part = is_component(it)
+        cost = float(it.annual_cost_usd) if it.annual_cost_usd is not None and not part else 0.0
+        if it.annual_cost_usd is None and not part:
             spend_cost_known = False
         annual_spend += cost
-        if it.disposition == CapabilityDisposition.CUT:
-            if it.annual_cost_usd is None:
-                savings_cost_known = False
-            else:
-                savings += cost
+        # A part DOES sit in its own category (UX finding 5: Defender beside
+        # CrowdStrike is a real redundancy), but a bundle and its parts are one
+        # license, so the bucket counts licenses rather than rows.
         cat = it.category or _UNCATEGORIZED
-        bucket = by_cat.setdefault(cat, {"total": 0.0, "count": 0, "items": []})
+        bucket = by_cat.setdefault(cat, {"total": 0.0, "items": []})
         bucket["total"] += cost
-        bucket["count"] += 1
         bucket["items"].append(it)
+    for bucket in by_cat.values():
+        bucket["count"] = license_count(bucket["items"])
 
     spend_by_category = [
         TechDebtCategorySpend(category=cat, total_usd=round(b["total"], 2), count=b["count"])
@@ -1636,12 +1779,11 @@ def tech_debt_dashboard(
         TechDebtRedundancy(
             category=cat,
             count=b["count"],
+            # #804: the same derivation, per category. Its `known` flag is not
+            # rendered per category today (pre-existing); the dashboard's
+            # headline savings carries it.
             savings_usd=round(
-                sum(
-                    float(i.annual_cost_usd)
-                    for i in b["items"]
-                    if i.disposition == CapabilityDisposition.CUT and i.annual_cost_usd is not None
-                ),
+                estimated_savings((i.disposition, i.annual_cost_usd) for i in b["items"]).amount,
                 2,
             ),
             items=[_td_item(i) for i in b["items"]],
@@ -1655,7 +1797,8 @@ def tech_debt_dashboard(
         client_id=str(client.id),
         service_id=str(service_id),
         actor_user_id=str(user.id),
-        applications=len(items),
+        applications=len(sources),
+        bundle_parts=bundle_part_count,
         savings=savings,
     )
 
@@ -1665,7 +1808,7 @@ def tech_debt_dashboard(
     # way as the exporter -- source-derived items only, so decomposing a bundle
     # into children can never move the arithmetic.
     source_rows_total = getattr(cl, "source_rows_total", None)
-    included_count = sum(1 for it in items if getattr(it, "parent_item_id", None) is None)
+    included_count = len(sources)
     excluded_count = (
         max(source_rows_total - included_count, 0) if source_rows_total is not None else 0
     )
@@ -1676,9 +1819,15 @@ def tech_debt_dashboard(
     # `getattr(cap_list, "source_rows_total", None) is not None`, already reads
     # NULL here as un-analysed and calls that the conservative direction; this
     # agrees with it rather than contradicting it.
+    # #177/#193: THE ONE READER, as the deliverable and the admin list call it.
+    # "exact" licenses `excluded_count` as the count; "unknown" makes it a
+    # FLOOR, and never "complete".
+    exclusion_state = exclusion_count_state(cl)
     if source_rows_total is None:
         spend_completeness = "unknown"
-    elif excluded_count or not spend_cost_known:
+    elif excluded_count or not spend_cost_known or exclusion_state == "unknown":
+        # An unknown exclusion count is never "complete": a row may have been
+        # excluded that the arithmetic floors to zero (#193).
         spend_completeness = "partial"
     elif included_count > source_rows_total:
         # THE UNBALANCED CASE, and it must not reach "complete".
@@ -1714,10 +1863,14 @@ def tech_debt_dashboard(
         released_at=_dashboard_stamp(deliv, is_released),
         released=is_released,
         deliverable_version=deliv.version,
-        total_applications=len(items),
+        # #646: the ONE derivation every surface calls, for the released list.
+        ai_source=ai_mode_for(db, svc, cl).as_api(),
+        total_applications=len(sources),
+        bundle_part_count=bundle_part_count,
         annual_spend_usd=round(annual_spend, 2),
         identified_savings_usd=round(savings, 2),
         savings_cost_known=savings_cost_known,
+        excluded_count_exact=exclusion_state == "exact",
         spend_completeness=spend_completeness,
         source_rows_total=source_rows_total,
         included_count=included_count,
@@ -1751,7 +1904,7 @@ def risk_dashboard(
     db: Annotated[Session, Depends(get_db)],
 ) -> RiskDashboardResponse:
     """The synthesized 5x5 Risk Register for the client. Client-level (not
-    per-service); gated on the register being FINALIZED (exported), tenant-scoped.
+    per-service); gated on the register being FINALIZED (published), tenant-scoped.
     """
     if client_id != client.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
@@ -1759,13 +1912,14 @@ def risk_dashboard(
     # The latest FINALIZED register, not the latest register (#123).
     #
     # This took the highest version and then 404'd if that one was unfinalized.
-    # `generate` always mints the next version and only `export` sets
-    # `finalized_at` -- so the moment a consultant clicked Generate to refresh
-    # a delivered register, the client's dashboard 404'd with "No finalized
-    # Risk Register for your organization yet". One existed, and they had been
-    # reading it a minute earlier. It also removed the Risk link from Results,
-    # which probes this endpoint to decide whether to show it, and it stayed
-    # gone for however long the review took, with nothing telling anyone.
+    # `generate` always mints the next version and only `publish` sets
+    # `finalized_at` (`export` did until #737) -- so the moment a consultant
+    # clicked Generate to refresh a delivered register, the client's dashboard
+    # 404'd with "No finalized Risk Register for your organization yet". One
+    # existed, and they had been reading it a minute earlier. It also removed
+    # the Risk link from Results, which probes this endpoint to decide whether
+    # to show it, and it stayed gone for however long the review took, with
+    # nothing telling anyone.
     #
     # Same root cause as #114: resolve the record being LABELLED, never
     # whatever row happens to be newest. Filtering in the QUERY rather than
@@ -1809,7 +1963,10 @@ def risk_dashboard(
 
     entries = (
         db.execute(
-            select(RiskEntry).where(RiskEntry.register_id == reg.id).order_by(RiskEntry.created_at)
+            select(RiskEntry)
+            .where(RiskEntry.register_id == reg.id)
+            .order_by(RiskEntry.created_at)
+            .options(undefer_group(OTHER_AXES_GROUP))
         )
         .scalars()
         .all()
@@ -1829,6 +1986,7 @@ def risk_dashboard(
         a for a in (_safe_enum(RecommendedAction, e.recommended_action) for e in entries) if a
     ]
     tc = tier_counts(tiers)
+    _risk_targets, _risk_targets_recorded = targets_used(reg.provenance)
 
     _log.info(
         "client.risk_dashboard.built",
@@ -1841,6 +1999,10 @@ def risk_dashboard(
         client_id=client.id,
         released_at=reg.finalized_at,
         version=reg.version,
+        # #646: "not recorded", deliberately -- nothing ties a register to the
+        # calls that drafted it until Risk runs through the run framework
+        # (#504). The register's own export says the same.
+        ai_source=UNKNOWN_AI_MODE_REGISTER.as_api(),
         # #330 TWIN, DELIBERATELY NOT FOLLOWED HERE -- and the reason is the ranking,
         # not the effort.
         #
@@ -1886,6 +2048,18 @@ def risk_dashboard(
         tier_counts=tc,
         axis_counts=axis_counts(axes),
         action_counts=action_counts(actions),
+        # #474, through the one reader of the register's record.
+        targets=[
+            RiskTargetUsed(
+                kind=t.kind,
+                framework=t.framework,
+                target=t.target,
+                source=t.source,
+                origin=t.origin,
+            )
+            for t in _risk_targets
+        ],
+        targets_recorded=_risk_targets_recorded,
         matrix=[
             RiskMatrixCell(
                 likelihood=cell.likelihood,
@@ -1899,6 +2073,7 @@ def risk_dashboard(
             RiskDashboardEntry(
                 title=e.title,
                 axis=e.axis,
+                other_axes=e.other_axes,
                 likelihood=e.likelihood,
                 impact=e.impact,
                 tier=e.tier,
@@ -1906,6 +2081,11 @@ def risk_dashboard(
             )
             for e in entries
         ],
+        # #915: the same reader and sentence as the register and its files.
+        zt_capped_target_note=risk_capped_target_sentence(risk_capped_target_codes(reg.provenance)),
+        csf_source_note=risk_csf_source_note(reg.provenance),
+        # #736 6104067136: the files' reader, so the screen and the files agree.
+        csf_no_shared_row=risk_csf_no_shared_row(reg.provenance),
     )
 
 
@@ -1976,9 +2156,7 @@ def csf_dashboard(
     # mistaken for a decision.
     # #209, the ZT twin's fix applied here in the same commit -- see
     # `zt_dashboard`. The resolver call below is unchanged.
-    chosen, target_frozen_at = _frozen_or_live_target(
-        deliv, _csf_client_target_tier(db, service_id)
-    )
+    chosen, target_frozen_at = _frozen_or_live_target(deliv, client_target_tier(db, service_id))
     # #184: one resolver, four sources. This was
     # `"client" if chosen is not None else "default"` -- keyed on whether a
     # value was OFFERED, never on whether it SURVIVED -- so a stored tier the
@@ -2040,6 +2218,8 @@ def csf_dashboard(
         released_at=_dashboard_stamp(deliv, is_released),
         released=is_released,
         deliverable_version=deliv.version,
+        # #646: the ONE derivation every surface calls, for the released assessment.
+        ai_source=ai_mode_for(db, svc, assessment).as_api(),
         overall_label=score.overall_maturity_label,
         current_tier=score.average_tier,
         current_pct=(
@@ -2064,6 +2244,11 @@ def csf_dashboard(
         largest_gap_function=largest_gap_function,
         largest_gap_pct=largest_gap_pct,
         functions=functions,
+        # #852: the engines above iterate the catalog, so an answer kept on
+        # ID.AM-09 is in no figure here; this is where the client is told. The
+        # same derivation and sentence as the released document.
+        retired_answers=len(csf_retired_answers(rows)),
+        retired_answers_note=csf_retired_sentence(rows),
         top_gaps=[
             CsfGapDashboard(
                 code=g.code,

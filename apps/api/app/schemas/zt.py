@@ -12,6 +12,7 @@ from pydantic_core import PydanticCustomError
 from app.models.service import ServiceKind, ServiceStatus
 from app.models.zt_assessment import ZtAssessmentStatus, ZtFramework
 from app.schemas._numeric import IntNotBool
+from app.schemas.ai_runs import AiSource
 
 # ---------------------------------------------------------------------------
 # Catalog
@@ -23,6 +24,9 @@ class CatalogCapability(BaseModel):
     pillar_code: str
     name: str
     outcome: str
+    #: "function", or "cross_cutting" for a CISA pillar's Visibility and
+    #: Analytics, Automation and Orchestration and Governance rows (#838).
+    kind: str = "function"
 
 
 class CatalogPillar(BaseModel):
@@ -98,6 +102,13 @@ class ZtAssessmentResponse(BaseModel):
     answers: list[ZtAnswerResponse]
     # Target stage the client picked at intake (2-4), or null if not set.
     client_target_stage: int | None = None
+    # #646: which mode drafted this assessment's AI suggestions. REQUIRED.
+    ai_source: AiSource
+    # #838: answers stored against rows the catalog no longer has, kept rather
+    # than deleted (migration 0063), and therefore not scored. With its
+    # approved sentence, or None when there are none (`zt/retired.py`).
+    retired_answers: int = 0
+    retired_answers_note: str | None = None
 
 
 class ZtAnswerPatch(BaseModel):
@@ -207,9 +218,13 @@ class ZtSelfAssessmentSubmit(BaseModel):
 
     `target_stage` lets the client confirm/adjust the maturity goal the gap
     engine measures against; persisted on the source request.
+
+    NO `ge`/`le` bound, deliberately (#85, as #406 did at intake): both ends are
+    refused in `routes/zt.py::submit_self_assessment` with a typed
+    `{reason, message}`, against the ladder of the assessment's own framework.
     """
 
-    target_stage: IntNotBool | None = Field(default=None, ge=1, le=4)
+    target_stage: IntNotBool | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +284,8 @@ class ZtDroppedSuggestion(BaseModel):
     | `superseded`   | a later entry in the same response overwrote this value  |
     | `locked`       | a human locked the row — a by-design skip, not a defect  |
     | `protected`    | an offline run declined to overwrite a non-AI answer     |
+    | `edited`       | the answer was edited after the run started (#645)       |
+    | `stage_above_capability_max` | a current stage above the capability's own maximum (#839) |
 
     `locked` and `protected` render separately from the rest. Both are by-design
     skips; folding them into one "N dropped" number rebuilds the alert-fatigue
@@ -291,6 +308,8 @@ class ZtDroppedSuggestion(BaseModel):
         "superseded",
         "locked",
         "protected",
+        "edited",
+        "stage_above_capability_max",
     ]
     # The capability code as the model wrote it (escaped and bounded), or None
     # when the model omitted it — never the literal "None", which fabricates a
@@ -317,8 +336,34 @@ class ZtDroppedSuggestion(BaseModel):
     value: Any = None
 
 
+class ZtOmittedCapability(BaseModel):
+    """A capability the run asked the model about and got no entry for (#840).
+
+    NOT a `ZtDroppedSuggestion`: `received == applied + sum(dropped)` counts
+    values the model SENT, and a capability with no entry sent none. An entry
+    that names the capability and is then refused is not here; its loss is
+    already itemized under its own reason.
+
+    `notes_blank` is the only part of the #806 ZT prompt's "nothing to score"
+    rule (A5) code can test: no notes, or whitespace only. "N/A" and "TBD" are
+    notes, and the panel says so instead of classifying them. Leaving a
+    blank-notes capability out is by design once the #806 ZT prompt ships; on
+    today's prompt, it is a miss.
+
+    `kept_stage` is the maturity stage the row still holds, read AFTER the
+    apply, so an edit that landed while the model answered is what it reports.
+    Not null means a stage nobody confirmed this run reaches the deliverable.
+    """
+
+    capability_code: str
+    notes_blank: bool
+    kept_stage: int | None = None
+
+
 class ZtRunAiResponse(BaseModel):
-    """Result of a zt_score Run-AI: what changed + the refreshed answers.
+    """What a zt_score Run-AI did, with the refreshed answers. Stored as
+    `ai_runs.result` (#645), every field the synchronous response carried, so
+    it survives a reload.
 
     `pillar_narratives`, `executive_summary` and `roadmap_summary` were removed
     in W1's ZT step (issue #64): all three were returned and none was ever
@@ -346,6 +391,10 @@ class ZtRunAiResponse(BaseModel):
     # `update_answer`, which never writes the field. The name is kept for
     # compatibility; the population is "answers the AI did not write".
     preserved_client_answers: int = 0
+    # #840: every capability asked for, not locked, that no entry named. Both
+    # optional, so a stored run result written before them parses unchanged.
+    omitted_count: int = 0
+    omitted_capabilities: list[ZtOmittedCapability] = []
 
 
 class ZtInterviewQuestion(BaseModel):
@@ -409,6 +458,12 @@ class GapAnalysisResponse(BaseModel):
     # client's dashboard but hidden from the person who can FIX it would be the
     # worst of the three places to leave silent.
     unusable_target_codes: list[str] = []
+    # #839: the approved C1/C2 sentences, one per capped DoD capability or per
+    # capability that cannot score the target level (`zt/target_caps.py`).
+    target_cap_notes: list[str] = []
+    # #839 S1: one approved sentence per stored stage above its capability's
+    # maximum, which every figure counts at the maximum (`zt/target_caps.py`).
+    stage_above_max_notes: list[str] = []
     gap_count_by_pillar: dict[str, int]
     gaps: list[GapItem]
     roadmap: list[RoadmapEntry] = []

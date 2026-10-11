@@ -174,8 +174,12 @@ def test_ready_marks_keycloak_dormant_and_not_required(ready_client: TestClient)
 
 
 @pytest.mark.unit
-def test_ready_llm_fixture_mode_ok_and_informational(ready_client: TestClient) -> None:
+def test_ready_llm_fixture_mode_ok_and_informational(ready_users) -> None:
     # Fixture mode is a valid running state, so LLM must not gate readiness.
+    # #508 (coordinator's verdict, Batch F): on the MIGRATED database. The LLM
+    # check now reads the keystore, as /admin/ai-status does, and over
+    # `ready_client`'s unmigrated one it correctly reports it could not look.
+    ready_client, _ = ready_users
     checks = ready_client.get("/ready").json()["checks"]
     assert checks["llm"]["required"] is False
     assert checks["llm"]["status"] == "ok"
@@ -229,7 +233,8 @@ def test_ready_stays_true_when_only_informational_check_off(
     monkeypatch.setattr(
         health_mod,
         "_probe_llm",
-        lambda settings: health_mod.DependencyStatus(
+        # #508: the probe takes the session too (coordinator's verdict, Batch F).
+        lambda settings, db: health_mod.DependencyStatus(
             status="down", required=False, detail="live mode misconfigured"
         ),
     )

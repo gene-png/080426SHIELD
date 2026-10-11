@@ -34,6 +34,8 @@ def _build_inputs(*, default_status: str | None = "covered"):
         version=1,
         status=AttackAssessmentStatus.APPROVED,
         parent_rules=2,  # what approve writes (#620, migration 0054)
+        # #554 R3: models an approved/released pre-R3 assessment, backfilled by 0059.
+        status_rules=1,
     )
     coverage: list[AttackCoverage] = []
     for t in TECHNIQUES:
@@ -62,7 +64,7 @@ def _ctx(*, default_status: str | None = "covered"):
 
 
 @pytest.mark.unit
-def test_xlsx_has_four_sheets() -> None:
+def test_xlsx_sheets_are_exactly_these() -> None:
     from openpyxl import load_workbook
 
     raw = render_xlsx(_ctx())
@@ -70,7 +72,8 @@ def test_xlsx_has_four_sheets() -> None:
     wb = load_workbook(io.BytesIO(raw))
     # Four since the Unscored sheet: an unscored technique used to be one
     # "Unscored" cell among 600+ rows, findable only by filtering.
-    assert set(wb.sheetnames) == {"Heatmap Summary", "Coverage", "Gaps", "Unscored"}
+    # #646 (coordinator's verdict, Batch F): plus the "AI source" sheet, last.
+    assert set(wb.sheetnames) == {"Heatmap Summary", "Coverage", "Gaps", "Unscored", "AI source"}
 
 
 @pytest.mark.unit
@@ -123,11 +126,12 @@ def _pdf_text(raw: bytes) -> str:
 
 @pytest.mark.unit
 def test_pdf_carries_title_client_and_a_known_tactic() -> None:
-    # SMOKE §10: upgrade from %PDF- magic to real content — the title prefix
-    # (the "&" in "ATT&CK" is reportlab-escaped, so match the stable "MITRE"),
-    # the client name, and one known per-tactic rollup row.
+    # SMOKE §10: upgrade from %PDF- magic to real content: the title, the
+    # client name, and one known per-tactic rollup row. #775: the title prints
+    # as typed, so it is matched exactly ("MITRE" was a workaround for the
+    # "ATT&CK;" it used to print).
     text = _pdf_text(render_pdf(_ctx()))
-    assert "MITRE" in text  # service title prefix
+    assert "MITRE ATT&CK Coverage" in text  # the service title, exactly
     assert "Atlas Defense Solutions" in text  # client name
     assert "Reconnaissance" in text  # a known tactic rollup row
 

@@ -59,6 +59,20 @@ def _rule(Sess, assessment_id: str, value: int | None) -> None:
         s.commit()
 
 
+def _stored_statuses(Sess, assessment_id: str) -> None:
+    """#554 R3 (C1, ruled by the advisor 01:05Z): status_rules=1, the reachable
+    state of an assessment approved before R3 (0059's backfill). The #622 reason
+    clause these tests pin applies only there now; under R3 a computed Partial
+    carries its reason in what is in place (Q6)."""
+    with Sess() as s:
+        s.execute(
+            update(AttackAssessment)
+            .where(AttackAssessment.id == uuid.UUID(assessment_id))
+            .values(status_rules=1)
+        )
+        s.commit()
+
+
 def _scored(c, bearer, a: dict, n: int = 2) -> list[dict]:
     """`n` standalone rows scored covered through the PATCH, so the draft is a
     real, approvable assessment."""
@@ -110,6 +124,7 @@ def test_a_partial_with_no_reason_refuses_the_release_under_the_new_rules(
     svc, a = _service_and_assessment(c, bearer)
     rows = _scored(c, bearer, a)
     deliv = _approve_and_finalize(c, bearer, svc, a)
+    _stored_statuses(Sess, a["id"])
     _set(Sess, rows[0]["id"], status="partial", reason_code=None)
 
     d = _detail(_release(c, bearer, deliv))
@@ -123,6 +138,7 @@ def test_a_partial_with_a_reason_is_released(env) -> None:  # noqa: F811
     svc, a = _service_and_assessment(c, bearer)
     rows = _scored(c, bearer, a)
     deliv = _approve_and_finalize(c, bearer, svc, a)
+    _stored_statuses(Sess, a["id"])
     _set(Sess, rows[0]["id"], status="partial", reason_code=reason_codes_for("partial")[0])
 
     r = _release(c, bearer, deliv)
@@ -140,6 +156,7 @@ def test_under_rule_1_a_reasonless_partial_does_not_block_but_not_verified_does(
     svc, a = _service_and_assessment(c, bearer)
     rows = _scored(c, bearer, a)
     deliv = _approve_and_finalize(c, bearer, svc, a)
+    _stored_statuses(Sess, a["id"])
     _rule(Sess, a["id"], 1)
     _set(Sess, rows[0]["id"], status="partial", reason_code=None)
     _set(Sess, rows[1]["id"], status="unable_to_determine")
@@ -178,6 +195,7 @@ def test_a_computed_parent_needs_no_reason_of_its_own(env) -> None:  # noqa: F81
     svc, a = _service_and_assessment(c, bearer)
     _scored(c, bearer, a)
     deliv = _approve_and_finalize(c, bearer, svc, a)
+    _stored_statuses(Sess, a["id"])
     _family(Sess, a, child_reason=True)
 
     r = _release(c, bearer, deliv)
@@ -190,6 +208,7 @@ def test_a_computed_parents_reasonless_children_block_it(env) -> None:  # noqa: 
     svc, a = _service_and_assessment(c, bearer)
     _scored(c, bearer, a)
     deliv = _approve_and_finalize(c, bearer, svc, a)
+    _stored_statuses(Sess, a["id"])
     parent, children = _family(Sess, a, child_reason=False)
 
     d = _detail(_release(c, bearer, deliv))
@@ -200,10 +219,35 @@ def test_a_computed_parents_reasonless_children_block_it(env) -> None:  # noqa: 
 # --- approve -------------------------------------------------------------------
 
 
+def test_approve_is_not_refused_for_a_reasonless_computed_partial(env) -> None:  # noqa: F811
+    """#554 R3, the advisor's Q6 (C3, ruled 01:05Z): a status computed from
+    Detect / Prevent / Respond carries its reason in what is in place, so a
+    computed Partial with no stored reason does not refuse approve."""
+    c, Sess = env
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    _svc, a = _service_and_assessment(c, bearer)
+    (row,) = standalone_rows(a["coverage"], 1)
+    r = c.patch(
+        f"/attack/coverage/{row['id']}",
+        headers=_auth(bearer),
+        json={"status": "partial", "detection_tools": ["Tool A"]},
+    )
+    assert r.status_code == 200, r.text
+    assert (r.json()["computed_status"], r.json()["reason_code"]) == ("partial", None)
+    assert (
+        c.post(f"/attack/assessments/{a['id']}/approve", headers=_auth(bearer)).status_code == 200
+    )
+
+
 def test_approve_refuses_a_partial_with_no_reason_and_names_the_control(env) -> None:  # noqa: F811
+    """The pre-R3 approve-side clause, kept pinned (C3, ruled 01:05Z). Only a
+    DRAFT is approved and every draft is computed after 0059, so the draft is
+    stamped status_rules=1 to reach the clause every pre-R3 assessment was
+    approved through."""
     c, Sess = env
     bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
     svc, a = _service_and_assessment(c, bearer)
+    _stored_statuses(Sess, a["id"])
     rows = _scored(c, bearer, a)
     r = c.patch(
         f"/attack/coverage/{rows[0]['id']}", headers=_auth(bearer), json={"status": "partial"}
