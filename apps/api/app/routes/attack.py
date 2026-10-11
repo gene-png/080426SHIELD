@@ -344,14 +344,14 @@ def subset_state(
     checked by the resolver Run AI checks citations with
     (`citation_resolver_for`, the client's legal name, and no name hints for
     `mitre_map`), built over the SAME membership rules Run AI's request uses
-    (`_client_capability_membership`) with ONE difference: only each Tech Debt
-    service's current version counts (#889 review F2, R4, R6b): its newest
-    APPROVED or RELEASED version with a security row, or, in a service with
-    only drafts, its newest draft with one (`_current_list_versions`). Run
-    AI's allow-list keeps every non-discarded version, drafts included, so it
-    can still offer a tool this check reports outside the list (a superseded
-    version's, or one only an open draft holds beside an approved version);
-    that root is #1012.
+    (`_client_capability_membership`): only each Tech Debt service's current
+    version counts (#889 review F2, R4, R6b): its newest APPROVED or RELEASED
+    version with a security row, or, in a service with only drafts, its newest
+    draft with one (`_current_list_versions`). Run AI's allow-list offers the
+    same versions since #1012, so it cannot offer a tool this check reports
+    outside the list; the one difference left is that `lists` here holds only
+    the versions in force, where the allow-list keeps every list to report
+    what the others withheld.
 
     `parents_computed` is the assessment's rule set (`attack/rules.py`),
     required: a computed parent's own tools are not checked under D-094
@@ -362,8 +362,8 @@ def subset_state(
     # ONE membership read: its lists decide whether there is a subset to judge
     # against at all. #889 review F2: the CURRENT list, so only each Tech Debt
     # service's current version (`_current_list_versions`, R6b: drafts are
-    # ignored where an approved or released version exists); the allow-list
-    # (`_client_capability_inputs`) keeps every non-discarded version (#1012).
+    # ignored where an approved or released version exists). The allow-list
+    # (`_client_capability_inputs`) offers the same versions (#1012).
     membership = _client_capability_membership(db, client_id, latest_versions_only=True)
     if not subset_applies(cl.status for cl in membership.lists):
         # NOT CHECKED, the third state: nothing is flagged because nothing
@@ -1085,6 +1085,12 @@ WITHHELD_NOT_IN_APPROVED_SNAPSHOT = "not_in_approved_snapshot"
 # to the discard and saying so would tell a reader that un-discarding restores
 # it (#197: a reason names the cause that is true of the row).
 WITHHELD_LIST_DISCARDED = "list_discarded"
+# #1012, also LIST-level and applied the same way: the rows a version that is
+# not in force for its Tech Debt service (R6b, `_current_list_versions`) would
+# otherwise have contributed. An older version, or a draft beside an approved
+# one, offers nothing, as the security tool list check that approve applies
+# already reads it.
+WITHHELD_VERSION_NOT_IN_FORCE = "version_not_in_force"
 
 
 @dataclass(frozen=True)
@@ -1110,6 +1116,10 @@ class CapabilityMembership:
     #: did not vote, and why nothing could be checked when no version did.
     version_fallbacks: tuple[VersionFallback, ...] = ()
     not_checked_reason: str | None = None
+    #: #1012: the lists in force (`_current_list_versions`), the only ones
+    #: whose rows are offered. Every other non-discarded list in `lists`
+    #: contributes withheld rows only.
+    in_force_list_ids: frozenset[uuid.UUID] = frozenset()
 
     def inputs(self) -> list[CapabilityInput]:
         return [p.capability for p in self.sent]
@@ -1392,9 +1402,14 @@ def _client_capability_membership(
     changes nothing for a client who already has an approved list; or, in a
     service with ONLY drafts, the newest draft with one, as under R2. So a tool
     dropped in a newer version that counts is outside the client's CURRENT
-    list however an older approved version's snapshot reads. The default,
-    False, is the citation allow-list's rule below and is unchanged; that
-    superseded versions and drafts still count THERE is #1012.
+    list however an older approved version's snapshot reads. `lists` then
+    holds only the versions in force.
+
+    The default, False, is the citation allow-list's, and since #1012 it
+    OFFERS the same versions: a row only a version not in force holds is
+    WITHHELD (`WITHHELD_VERSION_NOT_IN_FORCE`), never sent, so Run AI cannot
+    confirm a citation that approve then refuses as outside the list. `lists`
+    keeps every list, so the AI-inputs panel can name what the others held.
 
     Returns name AND vendor: the citation resolver needs the vendor column to
     judge whether a cited string is unambiguous, and a MISSING vendor is itself
@@ -1411,11 +1426,15 @@ def _client_capability_membership(
       rows whose non-security call is unconfirmed, because this list is a hard
       allow-list on what the model may cite: a tool missing from it cannot be
       named, and the technique it covers reads as uncovered.
-    * **List status.** A DISCARDED list contributes nothing citable. DRAFT still
-      counts, because mapping ATT&CK before approving the tech-debt list is a
-      normal order of work, and superseded versions still count, which is
-      arguably wrong but is pre-existing behaviour and not this change's
-      business.
+    * **List status and version.** A DISCARDED list contributes nothing
+      citable. Of the rest, only each Tech Debt service's version IN FORCE
+      (`_current_list_versions`, R6b) is offered, and every other version's
+      citable rows are withheld as `WITHHELD_VERSION_NOT_IN_FORCE` (#1012). A
+      DRAFT is in force in a drafts-only service, because mapping ATT&CK
+      before approving the tech-debt list is a normal order of work; beside an
+      APPROVED or RELEASED version it is not. Before #1012 every
+      non-discarded version counted here, superseded ones and open drafts
+      included, while approve's check read only the version in force.
 
       **The discard is now applied in PYTHON and reported, not applied in SQL
       and hidden** (#178). The query used to carry
@@ -1504,6 +1523,13 @@ def _client_capability_membership(
                 version_fallbacks=fallbacks,
                 not_checked_reason=reason,
             )
+        in_force = frozenset(cl.id for cl in lists)
+    else:
+        # #1012: the SAME choice, CALLED rather than restated, so the
+        # allow-list and approve's check cannot disagree about a version.
+        # `lists` is kept whole: the other versions' rows are withheld, named.
+        chosen, _fallbacks, _reason = _current_list_versions(db, lists, live_by_list)
+        in_force = frozenset(cl.id for cl in chosen)
 
     # `_MergeCandidate(name, vendor, item_id, cap_list, from_snapshot)` —
     # `item_id` is present for snapshot rows and is what makes the descriptive
@@ -1585,6 +1611,22 @@ def _client_capability_membership(
                     name=name,
                     vendor=vendor,
                     reason=WITHHELD_LIST_DISCARDED,
+                    capability_list_id=cap_list.id,
+                    list_version=cap_list.version,
+                    source_artifact_id=source_artifact_id,
+                )
+            )
+            return
+        if cap_list.id not in in_force:
+            # #1012: the version in force for this service is another one, so
+            # this row is not offered. Recorded, never silently skipped: the
+            # panel names it, and only a row that would otherwise be citable
+            # gets this reason (an out-of-scope row keeps its own).
+            dropped.append(
+                WithheldCapability(
+                    name=name,
+                    vendor=vendor,
+                    reason=WITHHELD_VERSION_NOT_IN_FORCE,
                     capability_list_id=cap_list.id,
                     list_version=cap_list.version,
                     source_artifact_id=source_artifact_id,
@@ -1860,6 +1902,15 @@ def _client_capability_membership(
         if seen is None:
             withheld[key] = drop
         # NOT re-derived for three reasons -- see #232 for the 3x3 this needs.
+        elif (
+            seen.reason == WITHHELD_VERSION_NOT_IN_FORCE
+            and drop.reason != WITHHELD_VERSION_NOT_IN_FORCE
+            and drop.capability_list_id in in_force
+        ):
+            # #1012: the version in force decides why a tool is withheld. An
+            # older version holding it in scope says nothing about why the
+            # current one does not offer it.
+            withheld[key] = drop
         elif seen.reason != drop.reason and drop.reason == WITHHELD_NOT_IN_APPROVED_SNAPSHOT:
             # Withheld for both reasons across two lists. `security_scope` says
             # a human decided this is not security tooling; the copy that is in
@@ -1874,15 +1925,17 @@ def _client_capability_membership(
         withheld=sorted(withheld.values(), key=lambda d: d.name),
         lists=list(lists),
         version_fallbacks=fallbacks,
+        in_force_list_ids=in_force,
         # #686: from `pairs`, the rows the dedupe chose among, each followed by
         # its item_id to the LIVE disposition. A gone live row is `retiring=None`.
         #
         # RETIREMENT DELIBERATELY NARROWS TO THE LATEST PLAN (#787 review, F1).
-        # The membership above unions every non-discarded version of every list
-        # -- pre-existing, "arguably wrong", and left alone here because it
-        # decides what may be CITED. "The consolidation plan" is narrower: only
-        # each Tech Debt service's latest APPROVED or RELEASED list votes, so an
-        # older version's `cut` cannot outvote, or outlive, the current one.
+        # Since #1012 `pairs` holds only the versions in force. "The
+        # consolidation plan" is each Tech Debt service's latest APPROVED or
+        # RELEASED list, so an older version's `cut` cannot outvote, or
+        # outlive, the current one. The two choices differ only where that
+        # latest plan offers no security row, and such a list contributes no
+        # entry to vote with either way, so no verdict moved with #1012.
         plan_entries=[
             PlanEntry(
                 name=p.name,
@@ -3469,9 +3522,9 @@ def ai_inputs(
         for d in membership.withheld
     ]
 
-    # A later version of the same tech-debt list does NOT retire an earlier one:
-    # every non-discarded version still feeds the mapping. Surfaced, not fixed —
-    # it is pre-existing behaviour and routinely surprises people.
+    # "Latest" is the highest non-discarded version. It is NOT "in force"
+    # (#1012, `in_force` below): an approved v1 beside an open draft v2 is not
+    # the latest and is still the version that feeds the mapping.
     #
     # A DISCARDED version is RETIRED from this computation, which is the same
     # rule `_latest_attack_assessment` applies to a discarded assessment (D-031,
@@ -3583,6 +3636,12 @@ def ai_inputs(
                     if cap_list.status == CapabilityListStatus.DISCARDED
                     else cap_list.version >= latest_version[cap_list.service_id]
                 ),
+                # #1012: the membership's own choice, read, never re-derived.
+                in_force=(
+                    None
+                    if cap_list.status == CapabilityListStatus.DISCARDED
+                    else cap_list.id in membership.in_force_list_ids
+                ),
                 membership_from_snapshot=from_snapshot,
                 # CALLED, not re-derived. The row-level split above answers a
                 # different question — "can the model cite this string?", keyed
@@ -3630,6 +3689,9 @@ def ai_inputs(
             1 for d in not_sent if d.reason == WITHHELD_NOT_IN_APPROVED_SNAPSHOT
         ),
         withheld_list_discarded=sum(1 for d in not_sent if d.reason == WITHHELD_LIST_DISCARDED),
+        withheld_version_not_in_force=sum(
+            1 for d in not_sent if d.reason == WITHHELD_VERSION_NOT_IN_FORCE
+        ),
         excluded_rows_named=len(excluded),
         lists_with_unknown_exclusions=sum(
             1 for s in sources if s.excluded_attribution == "unknown"

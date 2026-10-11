@@ -1,5 +1,11 @@
 # Gene — in-flight status
 
+_2026-10-11 (track4): #1012 is a draft PR on `track4/1012-citation-allowlist`._
+Run AI now offers ATT&CK only the Tech Debt list version that approve checks
+against (R6b), so it cannot cite a tool approve would refuse. Tools on other
+versions are listed as withheld on the AI-inputs panel. New panel copy is with
+the advisor. No migration; comes back to you (tests, condition 5).
+
 _2026-10-11 (track6): #474 E is a draft PR on `track6/474-e-risk-evidence`,
 on top of D' (merged as dd6a788a) and #1000 (merged as b7a44039)._
 
