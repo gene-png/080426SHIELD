@@ -358,23 +358,58 @@ def test_an_unreadable_no_shared_row_value_keeps_the_original_line_and_is_logged
     assert '"got": "str"' in out, out[-2000:]
 
 
+def _stored_no_shared_row(cid: str) -> object:
+    import uuid
+
+    from sqlalchemy import select
+
+    from app.models.risk_register import RiskRegister
+
+    with _session() as s:
+        reg = s.execute(
+            select(RiskRegister).where(RiskRegister.client_id == uuid.UUID(cid))
+        ).scalar_one()
+        return reg.provenance["csf_no_shared_row"]
+
+
 @pytest.mark.parametrize(
-    ("strip_key", "expected"),
-    [(False, True), (True, False)],
-    ids=["generated_after_r11", "pre_r11_key_absent"],
+    ("case", "expected"),
+    [
+        ("generated_after_r11", True),
+        ("pre_r11_key_absent", False),
+        ("true_no_scores_key_false", False),
+        ("unreadable_string_true", False),
+    ],
+    ids=lambda v: v if isinstance(v, str) else None,
 )
 def test_both_register_responses_carry_the_readers_no_shared_row(
-    app_client, strip_key: bool, expected: bool  # noqa: F811
+    app_client, case: str, expected: bool  # noqa: F811
 ) -> None:
     """Ruling #736 6104067136 (see #1033): the consultant's register and the
     client's Risk dashboard read `csf_no_shared_row` through the files' reader,
-    so a register generated before R11 (key absent) keeps the no-scores line
-    on the screens as in the files."""
-    c, bearer, cid, _payload = _old_register_world(app_client)
-    if strip_key:
-        _store_no_shared_row(cid, None, present=False)
+    so both responses carry what that reader returns, never the key's presence
+    or its truthiness:
+
+    - generated after R11, scores and targets on different rows: True;
+    - a register generated before R11 (key absent): False;
+    - a true no-scores Playbook (targets only), generated after R11, so the
+      key is present and False: False;
+    - an unreadable stored value (the string "true"): False, the reader's
+      fail-safe, as the files read it."""
+    if case == "true_no_scores_key_false":
+        c, bearer, cid, _payload = _world(
+            app_client, tiers=["high"], scored=[], targeted=[("high", B)]
+        )
+        assert _stored_no_shared_row(cid) is False
+    else:
+        c, bearer, cid, _payload = _old_register_world(app_client)
+        if case == "pre_r11_key_absent":
+            _store_no_shared_row(cid, None, present=False)
+        elif case == "unreadable_string_true":
+            _store_no_shared_row(cid, "true", present=True)
+            assert _stored_no_shared_row(cid) == "true"
     body = _latest(c, bearer, cid)
-    # Positive first: the register is the not-measured A/B one.
+    # Positive first: the register is a not-measured one.
     assert _csf_target(body)["source"] == "playbook_no_scores"
     assert body["csf_no_shared_row"] is expected, body.get("csf_no_shared_row")
     dash = _client_dashboard(c, bearer, cid)

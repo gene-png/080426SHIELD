@@ -50,8 +50,11 @@ export const TARGETS_NOT_RECORDED =
  * (item 4). `_PLAYBOOK_LINES` in the export prints the same words. Where the
  * Playbook had scores and targets that never shared a row (R11, #736
  * 6103383277), the files and both dashboards print `NO_SHARED_ROW_LINE`
- * instead of the no-scores line (#736 6104067136); the register response's
- * `csf_no_shared_row` says which, read by the files' own reader.
+ * instead of the no-scores line (#736 6104067136). `csf_no_shared_row` says
+ * which; it rides on both responses, the consultant's register response
+ * (`RiskRegisterResponse`, typed here as `RiskRegister`) and the client's
+ * Risk dashboard response (`RiskDashboardResponse`, typed here as
+ * `RiskDashboardData`), each read by the files' own reader.
  */
 const PLAYBOOK_LINES: ReadonlyMap<string, (label: string) => string> = new Map([
   [
