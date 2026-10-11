@@ -125,17 +125,26 @@ def test_a_computed_status_finding_keeps_its_function_states(
 def test_the_fixture_answer_for_a_stored_finding_names_no_axis_or_control(
     app_client,  # noqa: F811
 ) -> None:
-    """What fixture mode answers for a stored-status finding whose row lists
-    confirmed tools: no other axis and the exact "none" sentence. That holds
-    because the evidence above carries no function states. It does NOT test
-    the fixture's own `_risk_status_is_stored` guard (`app/ai/fixtures.py`):
-    deleting that guard leaves this green, since no current writer sends
-    function states with a stored status (see the guard's docstring)."""
+    """What fixture mode answers for a stored-status GAP whose row lists
+    confirmed tools: no other axis, the exact "none" sentence, and a residual
+    that claims nothing beyond the recorded status ("Not judged mitigated"),
+    never "Substantially unmitigated" (v4: "For a stored status, judge
+    mitigation from the rationale and notes only").
+
+    The residual assertion goes red if the stored-gap return in
+    `app/ai/fixtures.py::_risk_residual` is deleted: the answer then falls
+    through to the function-state branch. The axis and control assertions do
+    NOT test the `_risk_status_is_stored` checks in `_risk_other_axes` and
+    `_risk_evidenced_controls`: deleting those leaves them green, since no
+    current writer sends function states with a stored status (see the
+    guard's docstring)."""
     code, ev, body = _world(app_client, status_rules=1, tools=["Tool A"], fixture_mode=True)
-    assert ev["status_basis"] == "stored", ev
+    assert (ev["status"], ev["status_basis"]) == ("gap", "stored"), ev
     (entry,) = [e for e in body["entries"] if e["source_id"] == code]
     assert entry["other_axes"] == [], entry
     assert entry["compensating_controls"] == _NONE_SENTENCE, entry
+    assert entry["residual_risk"].startswith("Not judged mitigated"), entry
+    assert "unmitigated" not in entry["residual_risk"], entry
 
 
 def test_the_fixture_reads_a_stored_partial_as_partly_mitigated(app_client) -> None:  # noqa: F811
