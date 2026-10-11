@@ -386,7 +386,8 @@ _RISK_SYNTHESIZE_PROMPT = (
     "(`coverage_finding` for ATT&CK, `questionnaire_response` for CSF and Zero Trust), `kind` "
     '(`attack`, `csf`, or `zt`), `label` (for example "ATT&CK T1003: gap"), and `evidence`, '
     "which depends on `kind`:\n"
-    "  - `attack`: `status` (`gap` or `partial`, as SHIELD computed it), `missing_functions` "
+    # Ruling #736 6105759625, edit 1 (v4): "recorded", not "computed".
+    "  - `attack`: `status` (`gap` or `partial`, as SHIELD recorded it), `missing_functions` "
     "(each required function that SHIELD scores as not in place: `not_in_place` or "
     "`awaiting_review`; never one that is `cannot_be_prevented`), written `detection`, "
     "`prevention`, or `response`, and, for each of `detection`, `prevention`, `response`, an "
@@ -548,7 +549,9 @@ _RISK_SYNTHESIZE_PROMPT = (
     "compensating controls you identified. It is a narrative, not a risk tier. It follows the "
     "evidence, never the level number alone: the scenario is partially mitigated to the extent "
     "the evidence shows functions in place or practices in operation, and substantially "
-    "unmitigated when it shows none.\n"
+    # Ruling #736 6105759625, edit 2 (v4), verbatim.
+    "unmitigated when it shows none. For a stored status, judge mitigation from the rationale "
+    "and notes only; a stored `partial` is partly mitigated.\n"
     "\n"
     "RECOMMENDED ACTION\n"
     "\n"
@@ -614,8 +617,9 @@ register_job(
         prompt=_RISK_SYNTHESIZE_PROMPT,
         # C9 (#806 5983938383): the approved prompt's runs are told apart from
         # the previous prompt's, which ran as the engine default "v1". v3: the
-        # `status_basis` sentence, ruling #736 6105137014.
-        prompt_version="v3",
+        # `status_basis` sentence, ruling #736 6105137014. v4: ruling #736
+        # 6105759625's two edits ("recorded", and the stored residual sentence).
+        prompt_version="v4",
         top_level_key="entries",
     )
 )

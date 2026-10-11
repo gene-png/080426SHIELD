@@ -36,11 +36,15 @@ pytestmark = pytest.mark.unit
 #: 8e6605cc012befb440b43c783fa2a68f175283f0a675bd48. v3 (ruling #736
 #: 6105137014): v2 with `STATUS_BASIS_SENTENCE` appended, after one space, to
 #: the `attack` evidence item's last line, "`rationale` and `notes` from the
-#: assessment (each possibly null);". Derived by script from v2 and the
-#: ruling's sentence, not read from the module: 12650 ASCII bytes, 106 lines,
-#: no trailing newline.
-APPROVED_SHA256 = "66f73a5bc39a5ca6c4647227cb86665682b1bd50a457057c2829a58ed1476bb2"
-APPROVED_BYTES = 12650
+#: assessment (each possibly null);": 12650 bytes, sha256 66f73a5bc39a5ca6c46
+#: 47227cb86665682b1bd50a457057c2829a58ed1476bb2. v4 (ruling #736
+#: 6105759625): v3 with "as SHIELD computed it" replaced by "as SHIELD
+#: recorded it", and `STORED_RESIDUAL_SENTENCE` appended, after one space, to
+#: "unmitigated when it shows none.". Derived by script from v3 and the two
+#: edits, not read from the module: 12763 ASCII bytes, 106 lines, no trailing
+#: newline.
+APPROVED_SHA256 = "c9bdb3fe865d68c07f6bd9adc1c1021243bb912c0c33ad4c72faa8f27c55a797"
+APPROVED_BYTES = 12763
 
 
 def _prompt() -> str:
@@ -53,11 +57,33 @@ def test_the_risk_prompt_is_the_approved_text() -> None:
     assert hashlib.sha256(raw).hexdigest() == APPROVED_SHA256
 
 
-def test_the_risk_job_is_prompt_version_v3() -> None:
+def test_the_risk_job_is_prompt_version_v4() -> None:
     """C9 (#806 5983938383): `llm_calls` tells each approved prompt's runs
     apart. v2 was the assembly above; v3 adds ruling #736 6105137014's
-    `status_basis` sentence."""
-    assert get_job("risk_synthesize").prompt_version == "v3"
+    `status_basis` sentence; v4 makes ruling #736 6105759625's two edits."""
+    assert get_job("risk_synthesize").prompt_version == "v4"
+
+
+#: Ruling #736 6105759625, edit 2, verbatim.
+STORED_RESIDUAL_SENTENCE = (
+    "For a stored status, judge mitigation from the rationale and notes only; a stored "
+    "`partial` is partly mitigated."
+)
+
+
+def test_v4_says_recorded_not_computed_in_the_attack_item() -> None:
+    """Ruling #736 6105759625, edit 1."""
+    prompt = " ".join(_prompt().split())
+    assert "`status` (`gap` or `partial`, as SHIELD recorded it)" in prompt
+    assert "as SHIELD computed it" not in prompt
+
+
+def test_v4_adds_the_stored_residual_sentence_after_unmitigated() -> None:
+    """Ruling #736 6105759625, edit 2: directly after the sentence containing
+    "substantially unmitigated when it shows none"."""
+    prompt = " ".join(_prompt().split())
+    assert prompt.count(STORED_RESIDUAL_SENTENCE) == 1
+    assert ("substantially unmitigated when it shows none. " + STORED_RESIDUAL_SENTENCE) in prompt
 
 
 #: Ruling #736 6105137014 (finding 1, option (a)), verbatim.

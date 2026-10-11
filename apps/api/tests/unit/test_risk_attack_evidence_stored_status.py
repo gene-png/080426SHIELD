@@ -6,7 +6,7 @@ stored status can contradict what `attack_capabilities` would compute from the
 row's tools. So Risk's `attack` evidence for such a finding sends
 `{status, status_basis: "stored", rationale, notes}` and nothing computed; a
 computed-status finding keeps its shape plus `status_basis: "computed"`. The
-approved v3 text: "`status_basis` is `computed` when SHIELD derived the status
+approved text (v3, kept in v4): "`status_basis` is `computed` when SHIELD derived the status
 from the function states given, and `stored` when the status was recorded
 directly, with no function states; treat a stored status as given and do not
 infer missing functions from it."
@@ -40,7 +40,12 @@ _NONE_SENTENCE = "None identified in the supplied information."
 
 
 def _world(
-    app_client, *, status_rules: int, tools: list[str], fixture_mode: bool = False  # noqa: F811
+    app_client,  # noqa: F811
+    *,
+    status_rules: int,
+    tools: list[str],
+    fixture_mode: bool = False,
+    status: str = "gap",
 ) -> tuple[str, dict, dict]:
     """`(gap code, the gap finding's evidence as sent, generate's response)`.
     `tools`: each function's confirmed tool list on the gap row.
@@ -62,7 +67,7 @@ def _world(
     with _session() as s:
         s.get(AttackAssessment, uuid.UUID(a["id"])).status_rules = status_rules
         row = s.get(AttackCoverage, uuid.UUID(gap["id"]))
-        row.status = "gap"
+        row.status = status
         row.detection_tools = list(tools)
         row.prevention_tools = list(tools)
         row.response_tools = list(tools)
@@ -131,3 +136,30 @@ def test_the_fixture_answer_for_a_stored_finding_names_no_axis_or_control(
     (entry,) = [e for e in body["entries"] if e["source_id"] == code]
     assert entry["other_axes"] == [], entry
     assert entry["compensating_controls"] == _NONE_SENTENCE, entry
+
+
+def test_the_fixture_reads_a_stored_partial_as_partly_mitigated(app_client) -> None:  # noqa: F811
+    """Ruling #736 6105759625 (v4): "For a stored status, judge mitigation from
+    the rationale and notes only; a stored `partial` is partly mitigated."
+    Stored evidence carries no function states, so a residual judged from
+    function states would read "substantially unmitigated" (the text's case
+    "when it shows none"). Red if the fixture's stored check is removed from
+    `_risk_residual` in `app/ai/fixtures.py`: the answer falls to the
+    function-state branch, which finds no function in place."""
+    code, ev, body = _world(
+        app_client, status_rules=1, tools=[], fixture_mode=True, status="partial"
+    )
+    assert (ev["status"], ev["status_basis"]) == ("partial", "stored"), ev
+    (entry,) = [e for e in body["entries"] if e["source_id"] == code]
+    assert entry["residual_risk"].startswith("Partly mitigated"), entry
+    assert "unmitigated" not in entry["residual_risk"], entry
+
+
+def test_the_fixture_reads_a_computed_gap_with_nothing_in_place_as_unmitigated(
+    app_client,  # noqa: F811
+) -> None:
+    """The text's other case: "substantially unmitigated when it shows none"."""
+    code, ev, body = _world(app_client, status_rules=2, tools=[], fixture_mode=True)
+    assert (ev["status"], ev["status_basis"]) == ("gap", "computed"), ev
+    (entry,) = [e for e in body["entries"] if e["source_id"] == code]
+    assert entry["residual_risk"].startswith("Substantially unmitigated"), entry

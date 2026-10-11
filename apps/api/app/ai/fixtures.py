@@ -470,12 +470,41 @@ def _risk_status_is_stored(evidence: dict) -> bool:
     and do not infer missing functions from it." So a stored-status finding
     names no affected function and no tool as a control.
 
-    AN UNREACHABLE RATCHET, and no test can fail without it: the only writer,
-    `routes/risk.py::_attack_evidence`, sends no function states and no
-    `missing_functions` with `status_basis: "stored"`, so the two callers below
-    reach the same answer without this check. It would matter only if that
-    writer began sending function states for a stored status."""
+    Two of its three callers are AN UNREACHABLE RATCHET, and no test can fail
+    without the check there: the only writer, `routes/risk.py::_attack_evidence`,
+    sends no function states and no `missing_functions` with `status_basis:
+    "stored"`, so `_risk_evidenced_controls` and `_risk_other_axes` reach the
+    same answer without it. It would matter there only if that writer began
+    sending function states for a stored status. The third caller,
+    `_risk_residual`, depends on it (v4: a stored `partial` is partly
+    mitigated), and `test_the_fixture_reads_a_stored_partial_as_partly_mitigated`
+    goes red without it."""
     return evidence.get("status_basis") == "stored"
+
+
+def _risk_residual(kind: Any, evidence: Any) -> str:
+    """The approved RESIDUAL-RISK NARRATIVE, for an ATT&CK finding (v4, ruling
+    #736 6105759625): "partially mitigated to the extent the evidence shows
+    functions in place ..., and substantially unmitigated when it shows none.
+    For a stored status, judge mitigation from the rationale and notes only; a
+    stored `partial` is partly mitigated." The fixture reads no rationale or
+    notes, so a stored `gap` claims nothing beyond its status. CSF and Zero
+    Trust evidence keeps the earlier generic sentence: the fixture reads no
+    practice from it."""
+    if kind != "attack" or not isinstance(evidence, dict):
+        return "Elevated until remediated."
+    if _risk_status_is_stored(evidence):
+        if evidence.get("status") == "partial":
+            return "Partly mitigated: the recorded status is partial."
+        return "Not judged mitigated: the recorded status is a gap."
+    in_place = [
+        f
+        for f in _RISK_AXIS_ORDER
+        if isinstance(evidence.get(f), dict) and evidence[f].get("state") == "in_place"
+    ]
+    if in_place:
+        return f"Partially mitigated: {', '.join(in_place)} in place."
+    return "Substantially unmitigated: no function is in place."
 
 
 def _risk_other_axes(evidence: Any, axis: str) -> list[str]:
@@ -535,7 +564,7 @@ def _fixture_risk_synthesize(payload: dict[str, Any]) -> LLMResponse:
                     "likelihood": _RISK_LIKELIHOOD_CYCLE[i % len(_RISK_LIKELIHOOD_CYCLE)],
                     "impact": _RISK_IMPACT_CYCLE[i % len(_RISK_IMPACT_CYCLE)],
                     "compensating_controls": _risk_evidenced_controls(evidence),
-                    "residual_risk": "Elevated until remediated.",
+                    "residual_risk": _risk_residual(kind, evidence),
                     "recommended_action": _RISK_ACTION_CYCLE[i % len(_RISK_ACTION_CYCLE)],
                     "rationale": "Fixture-mode rationale; validate against evidence.",
                     "source": finding.get("source") or "coverage_finding",
