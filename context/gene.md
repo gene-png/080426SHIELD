@@ -1,5 +1,7 @@
 # Gene — in-flight status
 
+_2026-10-11 (track7): #935 and #929 are a draft PR on `track7/935-929-bundle-parts`._ Your Tech Debt workspace's Capabilities and cost figures stop counting a split bundle's parts, and the client's inventory says "Included in Microsoft 365 E5" where a part used to show "—". The same fix for the downloaded files is #1041, a separate PR. It comes back to you: conditions 5 and 6; no migration.
+
 _2026-10-11 (track6): #474 E is a draft PR on `track6/474-e-risk-evidence`,
 on top of D' (merged as dd6a788a) and #1000 (merged as b7a44039)._
 

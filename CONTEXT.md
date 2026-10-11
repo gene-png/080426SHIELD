@@ -13,6 +13,8 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**2026-10-11: #935 and #929 built on `track7/935-929-bundle-parts`, a draft PR (not on `main`).** The admin Tech Debt workspace counts source items, not a split bundle's parts, and the client dashboard's cost cell for a part reads "Included in {bundle}". Status and rulings (#736 6114570797): the 2026-10-11 #935/#929 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
 **2026-10-09: #930 built on `track6/930-published-amber`, a draft PR (not on
 `main`).** A published Risk Register's carried-ratings block drops the "Rate
 it/them again" instruction and keeps its amber style. Status and rulings (#736
