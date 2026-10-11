@@ -17,8 +17,11 @@ import { acknowledgeOfflineAi, waitForRun } from "../helpers/ai";
  *      LLM, T6b); the panel accounts for every suggestion — "AI applied X of Y
  *      suggested score values" — so a drop can never pass as agreement (W1,
  *      #44). The wording is "score values", not "values": the counts cover
- *      values suggested for scoring rows, and `executive_summary` is outside
- *      them. Keep this comment and the locator below in step with the panel.
+ *      values suggested for scoring rows. Keep this comment and the locator
+ *      below in step with the panel. Under the #806 prompt an unanswered
+ *      subcategory scores 0 everywhere, the defaults, so one answer's notes are
+ *      recorded first, and shown on screen, for the run to have something to
+ *      score.
  *   3. Dimension editor: the five 0/1/2 scores + the Evidence toggle update
  *      total/level/cap LIVE, and the no-evidence cap clamps the level to <= 2
  *      (and Implementation to <= 1, hence total 9 not 10).
@@ -219,6 +222,49 @@ test("Seed Working Profiles (~106 subcats), Run AI drafts dimensions + narrative
   await expect(
     page.locator("span", { hasText: /3 tier\(s\) in use/ }).first(),
   ).toBeVisible({ timeout: 30000 });
+
+  // --- One answer's notes, before Run AI (#806, #736 comment 6075712436) ----
+  // The approved prompt scores an unanswered subcategory 0 on every dimension,
+  // which is what seeding wrote, so a run over a fresh draft would change no
+  // dimension. Record notes on the first subcategory of the first function,
+  // the tab the questionnaire opens on, through the API its notes field saves
+  // to; the run under test is the AI's.
+  const csfServiceId = await atlasServiceId(page, "nist_csf");
+  const catalogRes = await page.request.get("/api/proxy/csf/catalog");
+  expect(catalogRes.ok()).toBeTruthy();
+  const catalog = (await catalogRes.json()) as {
+    functions: Array<{
+      categories: Array<{ subcategories: Array<{ code: string }> }>;
+    }>;
+  };
+  const notedCode = catalog.functions[0].categories[0].subcategories[0].code;
+  const latest = await page.request.get(
+    `/api/proxy/csf/services/${csfServiceId}/assessments/latest`,
+  );
+  expect(latest.ok()).toBeTruthy();
+  const draft = (await latest.json()) as {
+    answers: Array<{ id: string; subcategory_code: string }>;
+  };
+  const notedAnswer = draft.answers.find(
+    (a) => a.subcategory_code === notedCode,
+  );
+  expect(notedAnswer, `no answer row for ${notedCode}`).toBeTruthy();
+  const NOTE = "The CISO reviews the mission statement every quarter.";
+  const saved = await page.request.patch(
+    `/api/proxy/csf/answers/${notedAnswer!.id}`,
+    { data: { notes: NOTE } },
+  );
+  expect(saved.ok()).toBeTruthy();
+  await page.reload();
+  await expect(page.getByText(/Draft v\d+/)).toBeVisible({ timeout: 30000 });
+  // The setup reached the screen the run reads from: the note is visible in
+  // its subcategory's notes field, opened from its collapsed summary.
+  const notesField = page.getByLabel(`Notes for ${notedCode}`, {
+    exact: true,
+  });
+  await page.locator("details", { has: notesField }).locator("summary").click();
+  await expect(notesField).toBeVisible({ timeout: 30000 });
+  await expect(notesField).toHaveValue(NOTE);
 
   // --- Redaction preview gate (T6): look before you send --------------------
   // The OFFERED preview shows the redacted payload + removed counts WITHOUT

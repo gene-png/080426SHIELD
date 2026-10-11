@@ -18,9 +18,10 @@ rewrite the text), so it cannot pass vacuously.
 
 ATT&CK's `technique_details` is on main and is tested through its run and
 `/ai/preview` in `test_attack_technique_details_redaction.py`. CSF's
-`subcategory_definitions` is registered here and built by the #806 CSF prompt
-PR; ZT's `capability_details` is built by #981, which registers it. The ZT test
-below registers a stand-in with the same shape for its own duration.
+`subcategory_definitions` is registered in `app/routes/csf.py` and built by
+the #806 CSF payload on this branch; ZT's `capability_details` is built by
+#981, which registers it. The ZT test below registers a stand-in with the same
+shape for its own duration.
 """
 
 from __future__ import annotations

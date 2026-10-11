@@ -1,7 +1,7 @@
 # Gene — in-flight status
 
 _2026-10-11 (track6): #474 E is a draft PR on `track6/474-e-risk-evidence`,
-on top of D', which merged as dd6a788a._
+on top of D' (merged as dd6a788a) and #1000 (merged as b7a44039)._
 
 **What E does:** the Risk Register's AI is now told each finding's evidence,
 and its prompt is the approved text (v4), pinned. For ATT&CK it gets the
@@ -18,6 +18,22 @@ One open question is with the advisor for you, #1031: unscored seed tiers pull
 a scored tier's Enterprise level down, and E's evidence now shows that to the
 AI as well. It needs migration 0066 and comes back to you (conditions 4, 5
 and 6).
+
+_2026-10-09 (track5): the #806 CSF prompt is built on `track5/806-csf-prompt`;
+the PR is not yet open. It ships your approved CSF text (#806 comment
+5982122270, sha256-pinned) as `prompt_version` "v2", sends each
+subcategory's NIST outcome text through #985's catalog guard, a batch's own
+codes only, and rewrites the offline fixture from the prompt. The test edits
+are A1 to A5 as approved on #736 (comment 6075712436), s7 included. The batch
+size stays at 10 until the authorized probe runs, which waits on a provider
+key. No live call was made. It merged as PR #1000 (squash b7a44039, 2026-10-11). Your ruling 2 is built
+on it (2026-10-10): a live run leaves a row with no notes as it was, and
+says so on the Run-AI panel, beside the row in the Enterprise table, and in
+every Playbook file, from the last live run. Offline runs are unchanged. Two
+small edits to existing live tests (they now give their row notes) were
+approved by the advisor (#736 6103383277), and the copy now says "live"
+(#736 6104067136). Main, with D', is merged in (2026-10-11). It comes back to you, not self-merged: conditions 5 and
+6._
 
 _2026-10-10 (track6): #474 D' (your PR D) merged as PR #1030 (squash
 dd6a788a), from `track6/474-d-playbook-risk`._
