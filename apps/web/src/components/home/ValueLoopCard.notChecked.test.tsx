@@ -107,28 +107,61 @@ describe("ValueLoopCard, an ATT&CK figure whose tools were not checked (#1011)",
   });
 
   it.each([
+    ["no reason sent", {}],
+    [
+      "an API that predates the reason field",
+      { attack_subset_not_checked_reason: undefined },
+    ],
+  ])(
+    "falls back and logs when the flag is null beside a figure and %s",
+    (_label, over: Partial<ValueSummary>) => {
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      render(<ValueLoopCard summary={summary(over)} />);
+      // APPEAR before ABSENT. Missing data defaults to UNCONFIRMED: the
+      // unknown must not read as "checked, none found".
+      expect(screen.getByText("3 techniques uncovered")).toBeInTheDocument();
+      expect(screen.getByText(FALLBACK)).toBeInTheDocument();
+      expect(screen.queryByText(NO_LIST)).toBeNull();
+      expect(screen.queryByText(EMPTY)).toBeNull();
+      expect(err).toHaveBeenCalledWith(
+        "[home] ATT&CK figure not checked, but no reason was sent",
+      );
+    },
+  );
+
+  it.each([
     [
       "checked, none found (state B)",
       { attack_covered_relies_on_outside_tool: false },
     ],
-    ["no reason sent", {}],
     [
-      "an API that predates the field",
-      { attack_subset_not_checked_reason: undefined },
+      "an API that predates #889 (neither field sent)",
+      {
+        attack_covered_relies_on_outside_tool: undefined,
+        attack_subset_not_checked_reason: undefined,
+      },
     ],
   ])("says nothing for %s", (_label, over: Partial<ValueSummary>) => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
     render(<ValueLoopCard summary={summary(over)} />);
     expect(screen.getByText("3 techniques uncovered")).toBeInTheDocument();
     expect(screen.queryByText(/security tool list/)).toBeNull();
+    expect(err).not.toHaveBeenCalled();
   });
 
-  it("says nothing without a figure (state D)", () => {
+  it.each([
+    // What the API sends in D: flag and reason both null. Must not log.
+    ["as the API sends it", null],
+    // A reason beside no figure: still nothing to qualify.
+    ["even with a reason", "no_list"],
+  ])("says nothing without a figure (state D), %s", (_label, reason) => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
     render(
       <ValueLoopCard
         summary={summary({
           attack_uncovered_count: null,
           csf_gap_count: 2,
-          attack_subset_not_checked_reason: "no_list",
+          attack_subset_not_checked_reason: reason,
         })}
       />,
     );
@@ -136,6 +169,7 @@ describe("ValueLoopCard, an ATT&CK figure whose tools were not checked (#1011)",
     expect(screen.getByText("2 gaps to close")).toBeInTheDocument();
     expect(screen.getAllByText("Pending").length).toBeGreaterThan(0);
     expect(screen.queryByText(/security tool list/)).toBeNull();
+    expect(err).not.toHaveBeenCalled();
   });
 
   it("says nothing beside an unresolved figure", () => {

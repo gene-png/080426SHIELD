@@ -40,13 +40,31 @@ export const HOME_CARD_NOT_CHECKED_EMPTY =
 export const HOME_CARD_NOT_CHECKED_FALLBACK =
   "Tools credited for techniques counted as covered were not checked against a security tool list.";
 
-/** The not-checked line for `reason`, or null when there is none to state
- *  (checked, or no figure: the API sends null). An unknown value logs an error
- *  and falls back to string 3 rather than throwing: the home page must render. */
+/** The not-checked line for the ATT&CK figure, or null when there is none to
+ *  state. Never throws: the home page must render.
+ *
+ *  - No resolved figure (state D, or unresolved): nothing to qualify, null.
+ *  - A known reason: its sentence (state C).
+ *  - An unknown reason: string 3, and an error is logged.
+ *  - NO reason while `relies` is strictly `null` beside a figure: string 3, and
+ *    a distinct error is logged. The API sends a reason in exactly that state,
+ *    so its absence is version skew or a wiring slip, and missing data defaults
+ *    to UNCONFIRMED: silence here would read as "checked, none found".
+ *  - `relies === false` (state B, checked, none found) stays silent, as ruled.
+ *  - `relies === undefined` (an API that predates #889 sends neither field)
+ *    stays silent: such an API never said anything was checked, and the card
+ *    said nothing there before either. */
 export function homeCardNotCheckedNote(
   reason: string | null | undefined,
+  relies: boolean | null | undefined,
+  hasFigure: boolean,
 ): string | null {
-  if (reason == null) return null;
+  if (!hasFigure) return null;
+  if (reason == null) {
+    if (relies !== null) return null;
+    console.error("[home] ATT&CK figure not checked, but no reason was sent");
+    return HOME_CARD_NOT_CHECKED_FALLBACK;
+  }
   if (reason === "no_list" || reason === "discarded") {
     return HOME_CARD_NOT_CHECKED_NO_LIST;
   }

@@ -60,8 +60,9 @@ export interface ValueSummary {
   attack_covered_relies_on_outside_tool?: boolean | null;
   /** #1011: why the tools behind the ATT&CK figure could not be checked
    *  ("no_list", "empty" or "discarded"), sent EXACTLY when there is a figure
-   *  and the flag above is null; null otherwise. Optional so an API that
-   *  predates it reads as "nothing to say". */
+   *  and the flag above is null; null otherwise. Optional for version skew:
+   *  missing beside a figure whose flag is null, the card still says "not
+   *  checked" (string 3) and logs an error; see `homeCardNotCheckedNote`. */
   attack_subset_not_checked_reason?: string | null;
   csf_gap_count: number | null;
   csf_gap_unresolved: boolean;

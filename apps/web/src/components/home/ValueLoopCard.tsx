@@ -176,9 +176,14 @@ function buildMetrics(summary: ValueSummary): Metric[] {
           ? HOME_CARD_NOTE
           : null,
       // #1011: state C. The API sends a reason only beside a figure whose
-      // tools were not checked, so B ("checked, none found") and D stay silent.
+      // tools were not checked; B ("checked, none found") and D stay silent,
+      // and a missing reason in state C falls back rather than going silent
+      // (see `homeCardNotCheckedNote`).
       notCheckedNote: homeCardNotCheckedNote(
         summary.attack_subset_not_checked_reason,
+        summary.attack_covered_relies_on_outside_tool,
+        summary.attack_uncovered_count !== null &&
+          !summary.attack_uncovered_unresolved,
       ),
       unresolved: summary.attack_uncovered_unresolved,
       unresolvedReason: summary.attack_uncovered_withheld
