@@ -513,3 +513,31 @@ def test_a_call_from_a_run_that_has_ended_is_refused_and_takes_no_place(world) -
         ai_run_id_var.reset(token)
     assert refused.value.reason == "redaction_capacity_busy", refused.value.detail
     assert isolation.places_in_use() == 0, "an ended run was given a place"
+
+
+@pytest.mark.unit
+def test_the_place_is_released_when_closing_out_the_run_raises(world, monkeypatch) -> None:
+    """`_execute`'s `finally` closes the session and leaves the live set before
+    it gives the place back. If either raises, the place must still come back:
+    the reaper only covers RUNNING runs, so a leak here is for ever (#1042
+    review, finding 4)."""
+    import app.ai.isolation as isolation
+    import app.ai.runs as runs
+
+    real_mark_done = runs._mark_done
+
+    def _mark_done_then_raise(run_id: uuid.UUID) -> None:
+        real_mark_done(run_id)
+        raise RuntimeError("closing out the run failed")
+
+    monkeypatch.setattr(runs, "_mark_done", _mark_done_then_raise)
+    seen = _record_places(world, '{"items": []}')
+    runner = defer_runs(world["app"])
+    svc_id, artifact_id = rw.service_and_artifact(world, "Application\nPayroll\n")
+    rw.start_extract(world, svc_id, artifact_id)
+
+    with pytest.raises(RuntimeError, match="closing out the run failed"):
+        runner.run_all()
+
+    assert seen == [1], "the run never held a place, so this proves nothing"
+    assert isolation.places_in_use() == 0

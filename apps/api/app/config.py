@@ -175,12 +175,19 @@ class Settings(BaseSettings):
     # Egress redaction runs in a short-lived child process (#552, D-111; see
     # app/ai/isolation.py). The budget is per PAYLOAD: a child still redacting
     # when it runs out is killed by PID and nothing is sent.
-    shield_redaction_budget_seconds: float = Field(default=30.0, gt=0)
+    # Finite and at most an hour, or the api does not start: an infinite or
+    # huge value raises OverflowError in `poll` past every typed path. `le`
+    # alone refuses infinity (and `gt` refuses NaN); `allow_inf_nan=False` is
+    # the same rule said outright, so removing it changes nothing today.
+    shield_redaction_budget_seconds: float = Field(default=30.0, gt=0, le=3600, allow_inf_nan=False)
     # Child processes redacting at once, across every tenant.
     shield_redaction_max_children: int = Field(default=2, ge=1)
     # How long one call waits, in turn (FIFO), for a child slot before its run
     # is refused with `redaction_capacity_busy`.
-    shield_redaction_slot_wait_seconds: float = Field(default=30.0, gt=0)
+    # Bounded the same way, for `Event.wait`.
+    shield_redaction_slot_wait_seconds: float = Field(
+        default=30.0, gt=0, le=3600, allow_inf_nan=False
+    )
     # Run PLACES. A run (a Run-AI, a Risk generate, or one call outside both)
     # holds one place from its first redaction until it ends, and a run arriving
     # with every place taken is refused, typed, before anything is sent.

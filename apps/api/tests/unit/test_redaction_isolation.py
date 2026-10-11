@@ -240,3 +240,88 @@ def test_a_child_running_a_different_redactor_file_is_refused(world, monkeypatch
         )
     assert refused.value.detail["reason"] == "redaction_failed", refused.value.detail
     assert isolation.places_in_use() == 0
+
+
+# ---------------------------------------------------------------------------
+# Every other way the child call can go wrong is "died": typed, whole-run
+# (#1042 review, findings 2 and 5)
+# ---------------------------------------------------------------------------
+
+
+def _assert_failed_closed(world: dict, svc_id: str, run: dict) -> None:
+    import app.ai.isolation as isolation
+
+    assert run["status"] == "failed", run
+    assert run["error_reason"] == "redaction_failed", run
+    assert "nothing was sent" in (run["error_message"] or ""), run
+    assert run["charged_likely"] is False, run
+    assert world["sent"] == [], "the provider was called after the child call failed"
+    assert rw.llm_rows(world) == 0
+    assert rw.lists_for(world, svc_id) == 0
+    assert isolation.places_in_use() == 0
+
+
+class _ProcessThatCannotStart:
+    """`Process` whose `start()` fails the way fork does when the host is out of
+    processes or memory."""
+
+    def __init__(self, *_a: Any, **_k: Any) -> None:
+        self.pid = None
+        self.exitcode = None
+
+    def start(self) -> None:
+        raise OSError(11, "Resource temporarily unavailable")
+
+
+@pytest.mark.unit
+def test_a_child_that_cannot_start_fails_closed_typed(world, monkeypatch) -> None:
+    import app.ai.isolation as isolation
+
+    monkeypatch.setattr(isolation._ctx, "Process", _ProcessThatCannotStart)
+    svc_id, artifact_id = rw.service_and_artifact(world, "Application\nPayroll\n")
+    run = rw.post_within(rw.HANG_GUARD_S, lambda: rw.extract(world, svc_id, artifact_id))
+
+    _assert_failed_closed(world, svc_id, run)
+
+
+@pytest.mark.unit
+def test_a_child_that_survives_sigkill_fails_closed_typed(world, monkeypatch) -> None:
+    """`_kill` raises when a child is still there after SIGKILL. That raise is
+    a failure of the child call like any other, not an untyped crash."""
+    import app.ai.isolation as isolation
+
+    real_kill = isolation._kill
+
+    def _kill_then_report_a_survivor(child: Any) -> None:
+        real_kill(child)
+        raise RuntimeError(f"redaction child {child.pid} survived SIGKILL")
+
+    monkeypatch.setattr(isolation, "_TARGET", targets.write_pid_then_spin)
+    monkeypatch.setattr(isolation, "_kill", _kill_then_report_a_survivor)
+    pid_file = world["tmp"] / "survivor.pid"
+    svc_id, artifact_id = rw.service_and_artifact(
+        world, f"Application,__pid_file__\nPayroll,{pid_file}\n"
+    )
+    run = rw.post_within(rw.HANG_GUARD_S, lambda: rw.extract(world, svc_id, artifact_id))
+
+    assert pid_file.is_file(), "the stand-in child never ran, so this proves nothing"
+    _assert_failed_closed(world, svc_id, run)
+
+
+@pytest.mark.unit
+def test_a_child_that_hangs_up_and_keeps_running_is_killed(world, monkeypatch) -> None:
+    """The parent reads end-of-file, but the child has not exited: it is killed
+    by PID, as on the answered path, rather than left running."""
+    import app.ai.isolation as isolation
+
+    monkeypatch.setattr(isolation, "_TARGET", targets.write_pid_close_pipe_then_spin)
+    monkeypatch.setattr(isolation, "_KILL_JOIN_SECONDS", 1.0)
+    pid_file = world["tmp"] / "hangup.pid"
+    svc_id, artifact_id = rw.service_and_artifact(
+        world, f"Application,__pid_file__\nPayroll,{pid_file}\n"
+    )
+    run = rw.post_within(rw.HANG_GUARD_S, lambda: rw.extract(world, svc_id, artifact_id))
+
+    assert pid_file.is_file(), "the stand-in child never ran, so this proves nothing"
+    _assert_failed_closed(world, svc_id, run)
+    rw.assert_gone(int(pid_file.read_text()))

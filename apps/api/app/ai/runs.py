@@ -551,10 +551,14 @@ def _execute(bind: Engine | Connection, ctx: RunContext, work: Work) -> None:
         # status read in a gap between the two would find a RUNNING run this
         # process "is not executing" and reap a run that is about to complete.
         # (The completion CAS is the backstop; this ordering is the guard.)
-        session.close()
-        _mark_done(ctx.run_id)
-        # #552: the run's redaction place, on every path through here.
-        release_run(ctx.run_id)
+        try:
+            session.close()
+            _mark_done(ctx.run_id)
+        finally:
+            # #552: the run's redaction place, on every path through here,
+            # including one where closing out the run raises: the reaper
+            # covers only RUNNING runs, so a place leaked here never returns.
+            release_run(ctx.run_id)
 
 
 # ---------------------------------------------------------------------------

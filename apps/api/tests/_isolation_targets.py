@@ -126,3 +126,17 @@ def spin_forever(_payload: Any, **_kwargs: Any) -> tuple[Any, dict[str, int]]:
     x = 0
     while True:
         x += 1
+
+
+def write_pid_close_pipe_then_spin(payload: Any, **_kwargs: Any) -> tuple[Any, dict[str, int]]:
+    """Record this process's PID, close every inherited descriptor above
+    stderr (the answer pipe among them, so the parent reads end-of-file), then
+    never return: a child that hangs up without exiting."""
+    pid_file = _pid_file(payload)
+    if pid_file is None:
+        raise AssertionError("write_pid_close_pipe_then_spin needs a '__pid_file__' in the payload")
+    pid_file.write_text(str(os.getpid()))
+    os.closerange(3, 65536)
+    x = 0
+    while True:
+        x += 1

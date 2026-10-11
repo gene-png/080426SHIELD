@@ -31,9 +31,14 @@ CONCURRENCY, design (ii) approved in R8 (#736 6096174390):
   by `redaction_scope()`, and a call outside both (the preview, the what-if
   parse, the CLI scripts) is a one-call run. A run arriving with every place
   taken is refused at once.
-* A run refused for ANY of the reasons above is refused whole: every later call
-  of it is refused too, and none of its payloads clears after the refusal, so
-  the refusal can say exactly whether anything was sent.
+* A run refused over its budget, for a child that died, or for want of a place
+  or a slot is refused whole: every later call of it is refused too, and none
+  of its payloads clears after the refusal, so the refusal can say exactly
+  whether anything was sent. The redactor's own typed refusal is NOT recorded
+  on the place: it is raised as it came, and a later call of the same run is
+  not refused by it. That is unreachable today (`BlankRedactionLiteralError`'s
+  docstring in `app/ai/redact.py`: no current caller hands the redactor a blank
+  needle); if it becomes reachable, record it on the place like the others.
 * The place is released when the run ends, on every path (`release_run`, called
   from the run framework's `finally` and from the reaper), and an ended run is
   never admitted again.
@@ -435,6 +440,9 @@ def _run_child(
             answer = recv.recv()
         except EOFError:
             child.join(_KILL_JOIN_SECONDS)
+            if child.exitcode is None:
+                # Hung up without exiting: killed by PID, as on the answered path.
+                _kill(child)
             return "died", f"child {child.pid} exited {child.exitcode} without answering"
         child.join(_KILL_JOIN_SECONDS)
         if child.exitcode is None:
@@ -518,7 +526,17 @@ def _redact_in_place(
         with _lock:
             if place.refused is not None:
                 raise place.refused.again()
-        kind, value = _run_child(_target_ref(), payload, mode, client_org_name, name_hints, budget)
+        try:
+            kind, value = _run_child(
+                _target_ref(), payload, mode, client_org_name, name_hints, budget
+            )
+        except Exception as exc:  # noqa: BLE001 - typed below as "died", never swallowed
+            # A child that cannot start (fork's OSError, a payload that will not
+            # pickle), a pipe error other than end-of-file, a child that
+            # survived SIGKILL: nothing trustworthy came back, so it fails
+            # closed exactly as a child that died does, refused on the place.
+            _log.exception("redaction_isolation.child_call_raised", run=str(key[1]))
+            kind, value = "died", f"{type(exc).__name__}: {exc}"
     finally:
         slots.release()
     with _lock:

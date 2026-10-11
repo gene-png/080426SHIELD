@@ -205,3 +205,33 @@ def test_child_output_equals_in_process_output(world, mode) -> None:
     assert got == expected
     assert type(got[0]["shapes"]["tuple"]) is tuple, "a tuple came back as another type"
     assert got[1], "the corpus redacted nothing, so parity was checked over nothing"
+
+
+# ---------------------------------------------------------------------------
+# The time settings are finite and bounded, or the api does not start
+# (#1042 review, finding 3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("setting", ["BUDGET_SECONDS", "SLOT_WAIT_SECONDS"])
+@pytest.mark.parametrize("value", ["inf", "1e12"])
+def test_startup_refuses_a_redaction_time_that_is_infinite_or_huge(
+    monkeypatch, setting: str, value: str
+) -> None:
+    """Accepted, either value reaches `poll` or `Event.wait` and raises
+    OverflowError on the first redaction, past every typed path. Refused at
+    startup instead."""
+    from pydantic import ValidationError
+
+    from app.config import get_settings
+    from app.main import create_app
+
+    monkeypatch.setenv(f"SHIELD_REDACTION_{setting}", value)
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(ValidationError, match=f"shield_redaction_{setting.lower()}"):
+            create_app()
+    finally:
+        monkeypatch.delenv(f"SHIELD_REDACTION_{setting}")
+        get_settings.cache_clear()
