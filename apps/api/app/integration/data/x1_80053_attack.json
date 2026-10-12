@@ -12,7 +12,10 @@
     "revocations_sha256": "ae6ad7fa1eada7d46d683224651d2922b0474c3efe414fcb2b1062c935173a81",
     "mapping_objects_total": 5410,
     "skipped_non_mappable": 96,
+    "untranslated_rows": 1,
+    "duplicate_rows": 50,
     "rows": 5263,
+    "control_technique_pairs": 5236,
     "translated_rows": 173,
     "untranslated": [
       {

@@ -13,6 +13,20 @@ Every row keeps its path, so each mapped technique can be explained. Nothing is
 dropped silently: every skipped row, untranslated ID and unmatched control is
 counted in the output's header, with a reason.
 
+X1 ROWS ARE TRIPLES (control, 19.2 technique, 16.1 source ID): two 16.1 IDs
+revoked into one 19.2 technique stay two rows, so `rows` counts triples and
+`control_technique_pairs` counts what a reader would call mappings. A CTID
+object repeating an earlier one in every field is counted in `duplicate_rows`;
+one repeating its (control, technique) with any other field different refuses.
+`mapping_objects_total` = `skipped_non_mappable` + `untranslated_rows` +
+`duplicate_rows` + `rows`.
+
+X2 LINES. Every "SP 800-53" line is placed or refused: a control under a
+subcategory is composed; a whole FAMILY under a subcategory ("SP 800-53 Rev
+5.1.1: PT") and a control under a CATEGORY row are disclosed in C1's header and
+not composed (expanding either is an inference); anything else refuses. X2 rows
+with no subcategory are counted by kind (function, category, other).
+
 REVISION. X2 lists both "SP 800-53 Rev 5.1.1" and "Rev 5.2.0". Rev 5.1.1 is
 used (Gene's ruling: the revision matching X1's control set). The difference
 is recorded in C1's header: the controls only 5.2.0 lists, and whether X1 maps
@@ -35,6 +49,7 @@ import json
 import re
 import sys
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
 
 API_ROOT = Path(__file__).resolve().parents[1]
@@ -53,10 +68,11 @@ X2_NAME = "csf-2.0-reference-tool-export-2026-10-12.xlsx"
 X2_SHA256 = "d83fbc04ea146e3ed4cacd3594351beab2359ae835669d607228528b43bb31a7"
 REVISION = "5.1.1"
 OTHER_REVISION = "5.2.0"
-CONTAINER_NIST = Path("/zt-sources/nist")
 
 _SUBCATEGORY = re.compile(r"^([A-Z]{2}\.[A-Z]{2}-\d{2}):")
 _REF = re.compile(r"^SP 800-53 Rev (\d+\.\d+\.\d+): ([A-Z]{2}-\d{2}(?:\(\d{2}\))?)$")
+_FAMILY = re.compile(r"^SP 800-53 Rev (\d+\.\d+\.\d+): ([A-Z]{2})$")
+_CATEGORY = re.compile(r"^[^(]*\(([A-Z]{2}\.[A-Z]{2})\):")
 
 
 class Refused(Exception):
@@ -64,14 +80,14 @@ class Refused(Exception):
 
 
 def nist_dir(start: Path = API_ROOT) -> Path:
-    """`reference-docs/nist` in a checkout, else the api container's mount."""
-    for candidate in [start, *start.parents]:
-        directory = candidate / "reference-docs" / "nist"
-        if directory.is_dir():
-            return directory
-    if CONTAINER_NIST.is_dir():
-        return CONTAINER_NIST
-    raise Refused("reference-docs/nist not found in a checkout or at /zt-sources/nist")
+    """`reference-docs/nist` in a checkout, else the api container's mount, by
+    the tests' own finder (one search, not two to keep in step)."""
+    from tests._paths import ZT_SOURCES, find_zt_source
+
+    found = find_zt_source(start, "nist")
+    if found is None:
+        raise Refused(f"reference-docs/nist not found in a checkout or at {ZT_SOURCES / 'nist'}")
+    return found
 
 
 def _read_pinned(path: Path, sha256: str) -> bytes:
@@ -85,6 +101,10 @@ def _read_pinned(path: Path, sha256: str) -> bytes:
 
 
 def _translator(revocations: dict, active: frozenset[str]):
+    olds = [p["old"] for p in revocations["revoked_by"]]
+    forked = sorted({old for old in olds if olds.count(old) > 1})
+    if forked:
+        raise Refused(f"the revocations file names more than one replacement for {forked}")
     revoked = {p["old"]: p["new"] for p in revocations["revoked_by"]}
     deprecated = set(revocations["deprecated"])
 
@@ -109,8 +129,10 @@ def _translator(revocations: dict, active: frozenset[str]):
 def derive_x1(x1_bytes: bytes, revocations: dict) -> dict:
     x1 = json.loads(x1_bytes)
     translate = _translator(revocations, attack_codes())
-    rows: set[tuple[str, str, str]] = set()
+    first: dict[tuple[str, str, str], dict] = {}
     skipped_non_mappable = 0
+    untranslated_rows = 0
+    duplicate_rows = 0
     untranslated: dict[str, str] = {}
     for obj in x1["mapping_objects"]:
         if obj.get("mapping_type") != "mitigates":
@@ -120,8 +142,16 @@ def derive_x1(x1_bytes: bytes, revocations: dict) -> dict:
         technique, reason = translate(source)
         if technique is None:
             untranslated[source] = reason or "unknown"
+            untranslated_rows += 1
             continue
-        rows.add((control, technique, source))
+        key = (control, technique, source)
+        if key in first:
+            if first[key] != obj:
+                raise Refused(f"X1 maps {control} to {source} twice, differently")
+            duplicate_rows += 1
+            continue
+        first[key] = obj
+    rows = set(first)
     return {
         "header": {
             "crosswalk": "X1",
@@ -136,7 +166,10 @@ def derive_x1(x1_bytes: bytes, revocations: dict) -> dict:
             "revocations_sha256": hashlib.sha256(REVOCATIONS.read_bytes()).hexdigest(),
             "mapping_objects_total": len(x1["mapping_objects"]),
             "skipped_non_mappable": skipped_non_mappable,
+            "untranslated_rows": untranslated_rows,
+            "duplicate_rows": duplicate_rows,
             "rows": len(rows),
+            "control_technique_pairs": len({(c, t) for c, t, _s in rows}),
             "translated_rows": sum(1 for _c, t, s in rows if t != s),
             "untranslated": [{"id": i, "reason": r} for i, r in sorted(untranslated.items())],
             "script": "apps/api/scripts/derive_crosswalks.py",
@@ -145,35 +178,69 @@ def derive_x1(x1_bytes: bytes, revocations: dict) -> dict:
     }
 
 
-def _x2_references(x2_path: Path) -> tuple[dict[str, dict[str, set[str]]], int, int]:
-    """{subcategory: {revision: {controls}}}, third-party lines, other rows."""
+@dataclass
+class X2References:
+    """X2's SP 800-53 lines, placed: {code: {revision: {control or family}}}."""
+
+    refs: dict[str, dict[str, set[str]]]
+    families: dict[str, dict[str, set[str]]]
+    categories: dict[str, dict[str, set[str]]]
+    third_party: int
+    unplaced: dict[str, int]
+
+
+def _sp_lines(cell: object) -> tuple[list[str], int]:
+    """The "SP 800-53" lines of an Informative References cell, and how many
+    other (third-party) lines it holds."""
+    lines = [line.strip() for line in str(cell or "").splitlines() if line.strip()]
+    sp = [line for line in lines if line.startswith("SP 800-53")]
+    return sp, len(lines) - len(sp)
+
+
+def _add(into: dict[str, dict[str, set[str]]], code: str, revision: str, value: str) -> None:
+    into.setdefault(code, {}).setdefault(revision, set()).add(value)
+
+
+def _x2_references(x2_path: Path) -> X2References:
     import openpyxl  # runtime dependency; imported here so `--help` stays cheap
 
     with warnings.catch_warnings():
         # The export carries no default style; openpyxl says so on every load.
         warnings.filterwarnings("ignore", message="Workbook contains no default style")
         sheet = openpyxl.load_workbook(x2_path, read_only=True)["CSF 2.0"]
-    refs: dict[str, dict[str, set[str]]] = {}
-    third_party = 0
-    unplaced = 0
+    out = X2References({}, {}, {}, 0, {"other": 0, "function": 0, "category": 0})
     for row in sheet.iter_rows(values_only=True):
-        cell = row[2] if len(row) > 2 else None
-        match = _SUBCATEGORY.match(cell) if isinstance(cell, str) else None
-        if match is None:
-            unplaced += 1
+        cells = [*row, None, None, None, None, None][:5]
+        sub = _SUBCATEGORY.match(cells[2]) if isinstance(cells[2], str) else None
+        sp, other = _sp_lines(cells[4])
+        if sub is not None:
+            out.third_party += other
+            for line in sp:
+                if ref := _REF.match(line):
+                    _add(out.refs, sub.group(1), ref.group(1), ref.group(2))
+                elif family := _FAMILY.match(line):
+                    _add(out.families, sub.group(1), family.group(1), family.group(2))
+                else:
+                    raise Refused(f"unreadable SP 800-53 line {line!r} under {sub.group(1)}")
             continue
-        code = match.group(1)
-        for line in str(row[4] or "").splitlines():
-            ref = _REF.match(line.strip())
-            if ref is None:
-                third_party += 1
-                continue
-            refs.setdefault(code, {}).setdefault(ref.group(1), set()).add(ref.group(2))
-    return refs, third_party, unplaced
+        category = _CATEGORY.match(cells[1]) if isinstance(cells[1], str) else None
+        if category is not None and not cells[0]:
+            out.unplaced["category"] += 1
+            for line in sp:
+                ref = _REF.match(line)
+                if ref is None:
+                    raise Refused(f"unreadable SP 800-53 line {line!r} under {category.group(1)}")
+                _add(out.categories, category.group(1), ref.group(1), ref.group(2))
+            continue
+        out.unplaced["function" if cells[0] and not cells[1] else "other"] += 1
+        if sp:
+            raise Refused(f"SP 800-53 line {sp[0]!r} on an X2 row with no subcategory or category")
+    return out
 
 
 def derive_c1(x2_path: Path, x1: dict) -> dict:
-    refs, third_party, unplaced = _x2_references(x2_path)
+    x2 = _x2_references(x2_path)
+    refs = x2.refs
     known = csf_codes()
     strangers = sorted(set(refs) - known)
     if strangers:
@@ -194,6 +261,11 @@ def derive_c1(x2_path: Path, x1: dict) -> dict:
             rows.update((code, control, t) for t, _s in by_control[control])
     mapped = {s for s, _c, _t in rows}
     with_80053 = {c for c, r in refs.items() if r.get(REVISION)}
+    with_80053 |= {c for c, r in x2.families.items() if r.get(REVISION)}
+    unreached = {
+        code: sorted(c for c in revisions.get(REVISION, set()) if c not in by_control)
+        for code, revisions in refs.items()
+    }
     return {
         "header": {
             "crosswalk": "C1",
@@ -208,8 +280,21 @@ def derive_c1(x2_path: Path, x1: dict) -> dict:
             "x1_sha256": hashlib.sha256(
                 (json.dumps(x1, indent=2, ensure_ascii=False) + "\n").encode()
             ).hexdigest(),
-            "third_party_lines_ignored": third_party,
-            "x2_rows_without_a_subcategory": unplaced,
+            "third_party_lines_ignored": x2.third_party,
+            "x2_rows_without_a_subcategory": x2.unplaced,
+            "family_references_not_expanded": {
+                code: sorted(r[REVISION])
+                for code, r in sorted(x2.families.items())
+                if r.get(REVISION)
+            },
+            "category_references_not_composed": {
+                code: sorted(r[REVISION])
+                for code, r in sorted(x2.categories.items())
+                if r.get(REVISION)
+            },
+            "controls_without_techniques_by_subcategory": {
+                code: controls for code, controls in sorted(unreached.items()) if controls
+            },
             "subcategories_with_sp_800_53": len(with_80053),
             "subcategories_mapped": len(mapped),
             "subcategories_without_a_mapping": sorted(with_80053 - mapped),

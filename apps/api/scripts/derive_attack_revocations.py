@@ -13,7 +13,8 @@ SOURCE sha256 (read by import, never retyped), and writes
 `app/integration/data/attack_revocations_19.2.json`:
 
   header      source URL, sha256, attack-stix-data commit (given), generated date
-  revoked_by  [{"old": "T1086", "new": "T1059.001"}, ...], sorted by old, new
+  revoked_by  [{"old": "T1086", "new": "T1059.001"}, ...], sorted by old, new;
+              each old ID at most once (two replacements for one ID refuse)
   deprecated  ["T1064", ...], sorted
 
 Only attack-pattern objects (techniques) are read.
@@ -83,6 +84,11 @@ def derive(bundle: bytes, *, commit: str, generated: str) -> dict:
         if old_id is None or new_id is None:
             raise Refused(f"revoked-by {rel['id']} joins a technique with no ATT&CK ID")
         pairs.add((old_id, new_id))
+    olds = [old for old, _new in pairs]
+    forked = sorted({old for old in olds if olds.count(old) > 1})
+    if forked:
+        # One ID revoked into two techniques has no single translation.
+        raise Refused(f"revoked-by names more than one replacement for {forked}")
     deprecated = sorted(
         i
         for o in techniques.values()

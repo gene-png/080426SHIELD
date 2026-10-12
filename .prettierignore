@@ -15,9 +15,14 @@ reference-docs/
 
 # Generated
 *.tsbuildinfo
-# Crosswalk data, derived byte for byte by apps/api/scripts/derive_*.py and pinned
-# by sha256 (test_crosswalks.py re-derives it); a reformat would break the pin.
-apps/api/app/integration/data/
+# Crosswalk data, written byte for byte by a script and pinned by sha256; a
+# reformat would break the pin. X1 and C1 come from derive_crosswalks.py and are
+# pinned in app/integration/crosswalk.py (test_crosswalks.py re-derives them).
+# The revocations file comes from derive_attack_revocations.py, which needs the
+# network, so no test re-derives it; X1's header pins its sha256.
+apps/api/app/integration/data/x1_80053_attack.json
+apps/api/app/integration/data/c1_csf_attack.json
+apps/api/app/integration/data/attack_revocations_19.2.json
 next-env.d.ts
 
 # Coverage / artifacts
