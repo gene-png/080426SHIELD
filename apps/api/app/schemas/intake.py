@@ -14,13 +14,18 @@ schema's defaults of None are how that's encoded over the wire.
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 from app.models.service_request import CsfProfile, ServiceType
 from app.schemas._numeric import IntNotBool
+
+# A URL scheme, RFC 3986 section 3.1, followed by "://".
+_HAS_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
 
 
 class ClientProfilePatch(BaseModel):
@@ -34,6 +39,22 @@ class ClientProfilePatch(BaseModel):
     legal_name: str | None = Field(default=None, max_length=255)
     dba_name: str | None = Field(default=None, max_length=255)
     website: HttpUrl | None = None
+
+    @field_validator("website", mode="before")
+    @classmethod
+    def _website_scheme(cls, value: Any) -> Any:
+        """IN-1 (#1049), ruling A (#736 6115773247): a website typed without a
+        scheme ("kentro.com") gets `https://` in front instead of a schema 422.
+        Covers save and submit, which both validate through this model. A value
+        that already names a scheme, and anything that is not a string, is left
+        for `HttpUrl` to judge unchanged."""
+        if not isinstance(value, str):
+            return value
+        stripped = value.strip()
+        if stripped and not _HAS_SCHEME.match(stripped):
+            return f"https://{stripped}"
+        return stripped
+
     size_band: str | None = Field(default=None, max_length=64)
     industry: str | None = Field(default=None, max_length=128)
 

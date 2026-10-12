@@ -23,6 +23,9 @@ export interface AutoSaveHandle {
   setSaveState: React.Dispatch<React.SetStateAction<SaveState>>;
 }
 
+/** Approved verbatim on #736 (6115773247, ruling B). */
+const REFUSED_NOT_SAVED = "This value was not accepted, so it was not saved.";
+
 /** The fields a patch writes, keyed so a client field and a top-level
  *  profile field of the same name cannot collide. */
 function fieldsOf(patch: IntakePatchRequest): string[] {
@@ -95,7 +98,14 @@ export function useIntakeAutoSave(
         onUpdate?.(next);
         return next;
       } catch (err) {
-        const message = clientFacingError(err, "Network error.");
+        // IN-1 (#1049), ruling B (#736 6115773247): "Network error." only
+        // when no answer came back. A 4xx the api answered with no client copy
+        // (a `schema_*` 422) gets the approved refusal sentence instead. A 5xx
+        // keeps the old fallback: no copy is approved for it yet.
+        const message = clientFacingError(
+          err,
+          isAnsweredRefusal(err) ? REFUSED_NOT_SAVED : "Network error.",
+        );
         for (const f of own()) {
           // Re-inserted, so the newest error is the one shown.
           errors.current.delete(f);
