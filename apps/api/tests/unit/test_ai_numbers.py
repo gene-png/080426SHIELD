@@ -261,7 +261,10 @@ def test_protected_codes_and_names(text: str, payload: dict, refused: list[str])
     [
         # A comma joins only as a thousands separator.
         ("Techniques 3, 5 and 7 apply.", {"a": 3, "b": 5, "c": 7}, []),
-        ("Values 3,5 apply.", {"a": 3, "b": 5}, []),
+        # Round 3, finding 4: a comma that is NOT a thousands group still joins
+        # digit to digit with no space, because "3,5" is 3.5 in many locales
+        # (the locale class); the span is then refused as not a plain numeral.
+        ("Values 3,5 apply.", {"a": 3, "b": 5}, ["3,5"]),
         ("Spend was 1,200.", {"a": 1, "b": 200}, ["1,200"]),
         # A period joins only digit to digit, with no whitespace.
         ("We found 40. 5 more were added.", {"a": 40, "b": 5}, []),
@@ -402,3 +405,85 @@ def test_the_allow_list_is_a_value_object() -> None:
     assert "3" in allowed.values
     assert "PR.PS-01" in allowed.protected
     assert "40 percent" in allowed.displays
+
+
+# --- Review round 3 of #1088 (findings 1 to 6) -------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text,payload,refused",
+    [
+        # Finding 1: ordinals and fraction words beyond "third", and multipliers.
+        ("A fifth of controls lack owners.", {}, ["A fifth"]),
+        ("A fifth of controls lack owners.", {"share": "a fifth"}, []),
+        ("Two-fifths of rows lack notes.", {}, ["Two-fifths"]),
+        ("The tenth finding repeats.", {}, ["tenth"]),
+        ("The tenth finding repeats.", {"rank": "tenth"}, []),
+        ("The twelfth and twentieth rows apply.", {}, ["twelfth", "twentieth"]),
+        ("The hundredth row applies.", {}, ["hundredth"]),
+        ("Spend is doubling.", {}, ["doubling"]),
+        ("Spend is tripling.", {}, ["tripling"]),
+        ("Spend is halving.", {}, ["halving"]),
+        ("Risk grew thousandfold.", {}, ["thousandfold"]),
+        # Finding 2: a percent mark after ANY whitespace, and more percent marks.
+        ("Coverage is 40\u00a0%.", {"pct": 40}, ["40\u00a0%"]),
+        ("Coverage is 40\u202f%.", {"pct": 40}, ["40\u202f%"]),
+        ("Coverage is 40  %.", {"pct": 40}, ["40  %"]),
+        ("Coverage is 40\u00a0%.", {"pct": "40 %"}, []),
+        ("Coverage is 40\u066a.", {"pct": 40}, ["40\u066a"]),
+        ("Coverage is 40\u2030.", {"pct": 40}, ["40\u2030"]),
+        ("Coverage is 40 per-cent.", {"pct": "40%"}, ["40 per-cent"]),
+        ("It rose 5 percentage points.", {"n": 5}, ["5 percentage points"]),
+        ("It rose 5 percentage points.", {"rise": "5 percentage points"}, []),
+        # Finding 3: a separated scale or multiplier joins its numeral.
+        ("Spend was $5 bn.", {"s": 5}, ["$5 bn"]),
+        ("Spend was $5 bn.", {"s": "$5 bn"}, []),
+        ("Spend was $5 MM.", {"s": 5}, ["$5 MM"]),
+        ("Spend was $5 M.", {"s": 5}, ["$5 M"]),
+        ("Spend was 5 K.", {"s": 5}, ["5 K"]),
+        ("Spend was 5 trillion.", {"s": 5}, ["5 trillion"]),
+        ("Spend was 5 lakh.", {"s": 5}, ["5 lakh"]),
+        ("Spend was 5 crore.", {"s": 5}, ["5 crore"]),
+        # "5 m" is refused on purpose: minutes, metres or millions, unknowable.
+        ("It took 5 m.", {"s": 5}, ["5 m"]),
+        ("Risk grew 5-fold.", {"s": 5}, ["5-fold"]),
+        ("Risk grew \u00d73.", {"s": 3}, ["\u00d73"]),
+        ("Risk grew 3\u00d7.", {"s": 3}, ["3\u00d7"]),
+        ("Risk grew 3 x.", {"s": 3}, ["3 x"]),
+        # A "×" before a numeral joins it across whitespace too.
+        ("Risk grew \u00d7 3.", {"s": 3}, ["\u00d7 3"]),
+        # Finding 4: a non-thousands comma or a colon makes one span.
+        ("Values 1,20 apply.", {"a": 1, "b": 20}, ["1,20"]),
+        ("Values 1,2005 apply.", {"a": 1, "b": 2005}, ["1,2005"]),
+        ("A 3:1 ratio holds.", {"a": 3, "b": 1}, ["3:1"]),
+        ("It starts at 10:30.", {"a": 10, "b": 30}, ["10:30"]),
+        ("It starts at 10:30.", {"time": "10:30"}, []),
+        # Advisory 6: "single" and "pair" are number words.
+        ("A single tool covers it.", {}, ["single"]),
+        ("A pair of tools overlap.", {}, ["pair"]),
+    ],
+)
+def test_round_three_forms(text: str, payload: dict, refused: list[str]) -> None:
+    assert _refused(text, payload) == refused
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A magnitude letter with no numeral before it is prose.
+        "Press x to exit and M to mute.",
+        "A percentage of rows lack notes.",
+        # Advisory 6, deliberate exclusions: "none", "nil", "couple", "several",
+        # "score" and "gross" are prose far more often than counts.
+        "None of the several tools; a couple of nil results; score and gross margin.",
+    ],
+)
+def test_round_three_text_with_no_number(text: str) -> None:
+    assert _refused(text, {}) == []
+
+
+def test_an_all_numeric_protected_value_is_refused() -> None:
+    # Finding 5: a numeral is not a code. Protecting "40" would mask it
+    # everywhere and let "40%" and "$40" through.
+    with pytest.raises(ValueError, match="code"):
+        allowed_numbers({"code": "40"}, fact_fields=(), protected_fields=("code",))

@@ -23,17 +23,19 @@ never seen ("two dozen", "$5mn", "40 per cent", "–5%") is not a plain numeral
 and is not in a fact, so it is refused without anyone having listed it.
 
 JOINING RULES (where one span ends):
-  - a comma joins only as a thousands separator (digit, comma, exactly three
-    digits, then a non-digit): "3, 5 and 7" is three spans;
-  - a period joins only digit to digit with no whitespace (a decimal point);
+  - a comma, period or colon joins digit to digit with no whitespace: a
+    thousands group ("1,200") and a decimal ("40.5") are plain numerals; any
+    other ("3,5", "1,20", "3:1", "10:30") is one span refused unless a fact says
+    it verbatim. "3, 5 and 7" is three spans;
   - whitespace joins only where one side is a number WORD ("two dozen",
-    "40 per cent", "5 million"), never numeral to numeral ("40 5");
+    "40 per cent", "5 million"), or a magnitude follows a numeral ("$5 bn",
+    "5 M", "3 x") or "×" precedes one ("× 3"); never numeral to numeral;
   - a dash joins as a sign directly before a numeral, as a range between
-    numerals with no whitespace ("3–5"), or in a compound with a number word
-    ("twenty-one", "40-percent");
+    numerals with no whitespace ("3–5"), in a compound with a number word
+    ("twenty-one", "40-percent"), or before a magnitude ("5-fold");
   - a slash joins numerals only, with no whitespace ("1/3", "10/12/2026");
-  - a currency mark joins the numeral it touches; a percent mark joins the
-    numeral before it, across at most one space.
+  - a currency mark joins the numeral it touches; a percent mark ("%", "％",
+    "٪", "‰") joins the span before it across any whitespace.
 
 WHAT IT DOES NOT DO. It does not check which fact a number is attached to.
 
@@ -81,31 +83,69 @@ class NumberHit:
     end: int
 
 
-# The closed list of number WORDS (case-insensitive). Ordinals other than
-# "third" are left out on purpose: "first" and "second" ("a second review")
-# are ordinary prose far more often than counts.
+# The closed lists of number WORDS (case-insensitive), GENERATED from the
+# cardinal stems so an ordinal or fraction cannot silently drop out of a
+# hand-kept list again (#1088 round 3, finding 1).
+_CARDINALS: tuple[str, ...] = (
+    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
+    "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
+    "sixteen", "seventeen", "eighteen", "nineteen", "twenty", "thirty",
+    "forty", "fifty", "sixty", "seventy", "eighty", "ninety",
+)  # fmt: skip
+_SCALES: tuple[str, ...] = ("hundred", "thousand", "million", "billion", "trillion")
+_ORDINAL_IRREGULAR = {
+    "one": "first",
+    "two": "second",
+    "three": "third",
+    "five": "fifth",
+    "eight": "eighth",
+    "nine": "ninth",
+    "twelve": "twelfth",
+}
+
+
+def _ordinal(cardinal: str) -> str:
+    if cardinal in _ORDINAL_IRREGULAR:
+        return _ORDINAL_IRREGULAR[cardinal]
+    if cardinal.endswith("y"):
+        return cardinal[:-1] + "ieth"
+    return cardinal + "th"
+
+
+# "first" and "second" are left out on purpose: they are ordinary prose ("the
+# first step", "a second review") far more often than counts. "zeroth" is not
+# a word anyone writes.
+_ORDINALS = frozenset(_ordinal(c) for c in (*_CARDINALS[3:], *_SCALES)) | {"third"}
 _NUMBER_WORDS = frozenset(
     {
-        "zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
-        "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
-        "sixteen", "seventeen", "eighteen", "nineteen", "twenty", "thirty",
-        "forty", "fifty", "sixty", "seventy", "eighty", "ninety",
-        "hundred", "hundreds", "thousand", "thousands", "million", "millions",
-        "billion", "billions", "dozen", "dozens",
-        "half", "halves", "halved", "third", "thirds",
+        *_CARDINALS,
+        *_SCALES,
+        *(s + "s" for s in _SCALES),
+        "lakh", "lakhs", "crore", "crores",
+        *_ORDINALS,
+        *(o + "s" for o in _ORDINALS),  # fractions: "fifths", "tenths"
+        "dozen", "dozens", "single", "pair", "pairs",
+        "half", "halves", "halved", "halving",
         "percent", "pct",
-        "twice", "thrice", "double", "doubled", "doubles", "triple", "tripled",
-        "triples",
+        "twice", "thrice",
+        "double", "doubled", "doubles", "doubling",
+        "triple", "tripled", "triples", "tripling",
     }
 )  # fmt: skip
-_FOLD_PREFIXES = frozenset(
-    {"two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "hundred"}
-)
+# Deliberate exclusions (#1088 round 3, advisory 6): "none", "nil", "couple",
+# "several", "score" and "gross" are prose far more often than counts ("none of
+# the tools", "a couple of findings", "risk score", "gross margin").
+_FOLD_PREFIXES = frozenset((*_CARDINALS[2:], *_SCALES))
 # "quarter" counts only joined to another number token ("a quarter", "three
 # quarters"): alone it is a reporting period ("this quarter").
 _WEAK_WORDS = frozenset({"quarter", "quarters"})
-# "a" / "an" count only directly before one of these ("a dozen", "a third").
-_ARTICLE_TARGETS = frozenset({"dozen", "third", "quarter", "half"})
+# "a" / "an" count only directly before one of these ("a dozen", "a fifth").
+_ARTICLE_TARGETS = frozenset({"dozen", "half", "quarter", *_ORDINALS})
+# A magnitude or multiplier token AFTER a numeral, across whitespace or a dash
+# ("$5 bn", "5 M", "5 K", "5-fold", "3 x", "3×"), or "×" BEFORE one ("×3").
+# Case-sensitive. Alone it is prose ("press x", "M to mute"). "5 m" is joined
+# and therefore refused on purpose: minutes, metres or millions, unknowable.
+_MAGNITUDES = frozenset({"bn", "MM", "M", "K", "B", "T", "k", "m", "x", "fold", "\u00d7"})
 # Uppercase Roman numerals: two or more of I/V/X standalone, or any after one of
 # these words (any case). C, D, L and M are left out: "CD", "MD", "XL" and "CV"
 # are everyday acronyms. A lone "I" is a pronoun.
@@ -120,7 +160,8 @@ _EXEMPT_PHRASES: tuple[str, ...] = ("no one", "third-party", "third party")
 
 _DASHES = "-‐‑‒–—−"
 _CURRENCY = "$€£"
-_PERCENT = "%％"
+# "%", full-width "％", Arabic "٪" (U+066A) and per mille "‰" (U+2030).
+_PERCENT = "%\uff05\u066a\u2030"
 _TOKEN = re.compile(r"\w+|\S")
 # Accepted form A. `\d` is Unicode-aware, so full-width and other-script
 # digits are plain numerals; `Decimal` reads them.
@@ -131,10 +172,13 @@ _PLAIN = re.compile(
 _THOUSANDS = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
 
 # Token kinds.
-_NUM, _WORD, _ROMAN, _WEAK, _ART, _CUR, _PCT, _DASH, _OTHER = (
-    "num", "word", "roman", "weak", "art", "cur", "pct", "dash", "other"
+_NUM, _WORD, _ROMAN, _WEAK, _MAG, _ART, _CUR, _PCT, _DASH, _OTHER = (
+    "num", "word", "roman", "weak", "mag", "art", "cur", "pct", "dash", "other"
 )  # fmt: skip
-_BEARING = frozenset({_NUM, _WORD, _ROMAN, _WEAK})
+_BEARING = frozenset({_NUM, _WORD, _ROMAN, _WEAK, _MAG})
+# Tokens that make a span a number on their own; a span of only "quarter" or
+# only a magnitude letter is prose.
+_STRONG = frozenset({_NUM, _WORD, _ROMAN})
 _WORDISH = frozenset({_WORD, _WEAK})
 
 
@@ -195,20 +239,41 @@ def _is_roman(word: str, previous: str | None) -> bool:
     return len(word) >= 2 or (previous is not None and previous.casefold() in _ROMAN_CONTEXT)
 
 
-def _merges(t: _Tok, nxt: _Tok, masked: str) -> bool:
-    """ "per cent" is one word; "a"/"an" merges into a following fraction or
-    dozen word. Only across whitespace."""
-    if not masked[t.end : nxt.start].isspace():
-        return False
+def _merge_length(toks: list[_Tok], i: int, masked: str) -> int:
+    """How many tokens from `i` form one number word: "per cent" and
+    "per-cent", "percentage point(s)", and "a"/"an" before a fraction or
+    dozen word ("a fifth"). 0 when none does."""
+    t = toks[i]
+    nxt = toks[i + 1] if i + 1 < len(toks) else None
+    if nxt is None:
+        return 0
+    spaced = masked[t.end : nxt.start].isspace()
     if t.kind == "per":
-        return nxt.kind == "cent"
-    return t.kind == _ART and nxt.text.casefold() in _ARTICLE_TARGETS
+        if spaced and nxt.kind == "cent":
+            return 2
+        after = toks[i + 2] if i + 2 < len(toks) else None
+        if (
+            nxt.kind == _DASH
+            and after is not None
+            and after.kind == "cent"
+            and t.end == nxt.start
+            and nxt.end == after.start
+        ):
+            return 3
+        return 0
+    if t.kind == "percentage" and spaced and nxt.kind in ("point", "points"):
+        return 2
+    if t.kind == _ART and spaced and nxt.text.casefold() in _ARTICLE_TARGETS:
+        return 2
+    return 0
 
 
 def _word_kind(word: str, previous: str | None) -> str:
     low = word.casefold()
     if any(_is_numeric_char(c) for c in word):
         return _NUM
+    if word in _MAGNITUDES:
+        return _MAG
     if low in _NUMBER_WORDS:
         return _WORD
     if low.endswith("fold") and low[:-4] in _FOLD_PREFIXES:
@@ -219,10 +284,8 @@ def _word_kind(word: str, previous: str | None) -> str:
         return _ART
     if _is_roman(word, previous):
         return _ROMAN
-    if low == "per":
-        return "per"
-    if low == "cent":
-        return "cent"
+    if low in ("per", "cent", "percentage", "point", "points"):
+        return low
     return _OTHER
 
 
@@ -234,6 +297,8 @@ def _tokens(masked: str) -> list[_Tok]:
         if t[0].isalnum() or t[0] == "_" or _is_numeric_char(t[0]):
             kind = _word_kind(t, previous_word)
             previous_word = t
+        elif t in _MAGNITUDES:
+            kind = _MAG  # "×"
         elif t in _CURRENCY:
             kind = _CUR
         elif t in _PERCENT:
@@ -249,12 +314,13 @@ def _tokens(masked: str) -> list[_Tok]:
     i = 0
     while i < len(toks):
         t = toks[i]
-        nxt = toks[i + 1] if i + 1 < len(toks) else None
-        if nxt is not None and t.kind in ("per", _ART) and _merges(t, nxt, masked):
-            merged.append(_Tok(_WORD, t.start, nxt.end, masked[t.start : nxt.end]))
-            i += 2
+        n = _merge_length(toks, i, masked)
+        if n:
+            last = toks[i + n - 1]
+            merged.append(_Tok(_WORD, t.start, last.end, masked[t.start : last.end]))
+            i += n
             continue
-        if t.kind in ("per", "cent", _ART):
+        if t.kind in ("per", "cent", "percentage", "point", "points", _ART):
             t = _Tok(_OTHER, t.start, t.end, t.text)
         merged.append(t)
         i += 1
@@ -264,23 +330,27 @@ def _tokens(masked: str) -> list[_Tok]:
 def _joins(a: _Tok, gap: list[_Tok], gap_text: str, b: _Tok) -> bool:
     """Whether bearing tokens `a` and `b`, with `gap` between them, are one span."""
     wordish = a.kind in _WORDISH or b.kind in _WORDISH
+    # A magnitude joins the numeral before it ("5 bn", "3×", "5-fold"), and
+    # "×" joins the numeral after it ("×3"); never a word or another magnitude.
+    magnitude = (a.kind == _NUM and b.kind == _MAG) or (a.text == "\u00d7" and b.kind == _NUM)
     if not gap:
         if gap_text == "":
-            return True  # adjacent ("5" then "mn" cannot happen: \w+ is one token)
-        return gap_text.isspace() and wordish
+            return True  # adjacent: "3" then "×"
+        return gap_text.isspace() and (wordish or magnitude)
     if len(gap) != 1 or gap_text != gap[0].text:
         return False  # anything with whitespace around punctuation breaks a span
     sep = gap[0].text
     a_digit = a.text[-1:].isdecimal()
-    if sep == ",":
-        # Exactly three digits, then a non-digit ("1,200", "1,200k").
-        return a_digit and re.match(r"\d{3}(?!\d)", b.text) is not None
-    if sep == ".":
+    if sep in (",", ".", ":"):
+        # Digit to digit with no whitespace is ONE span: a thousands group
+        # ("1,200"), a decimal ("40.5"), or anything else ("3,5" is 3.5 in many
+        # locales; "1,20", "3:1", "10:30"), which is then refused as not a
+        # plain numeral unless a fact says it verbatim (#1088 round 3, F4).
         return a_digit and b.text[:1].isdecimal()
     if sep == "/":
         return a.kind == _NUM and b.kind == _NUM
     if gap[0].kind == _DASH:
-        return wordish or (a.kind == _NUM and b.kind == _NUM)
+        return wordish or (a.kind == _NUM and b.kind in (_NUM, _MAG))
     return False
 
 
@@ -299,15 +369,15 @@ def _spans(text: str, protected: frozenset[str]) -> list[tuple[int, int]]:
             gap = toks[last_bearing + 1 : i]
             if _joins(a, gap, masked[a.end : t.start], t):
                 spans[-1][1] = t.end
-                spans[-1][4] |= t.kind != _WEAK
+                spans[-1][4] |= t.kind in _STRONG
                 joined = True
         if not joined:
-            spans.append([t.start, t.end, i, 1, t.kind != _WEAK])
+            spans.append([t.start, t.end, i, 1, t.kind in _STRONG])
         last_bearing = i
     out: list[tuple[int, int]] = []
     for start, end, first, _n, strong in spans:
         if not strong:
-            continue  # a lone "quarter" is a period, not a number
+            continue  # a lone "quarter" or magnitude letter is prose, not a number
         # A sign directly before the first numeral, preceded by no word char.
         if first > 0 and toks[first].kind == _NUM:
             p = toks[first - 1]
@@ -326,9 +396,10 @@ def _spans(text: str, protected: frozenset[str]) -> list[tuple[int, int]]:
                         before = masked[q.start - 1] if q.start > 0 else " "
                         if not (before.isalnum() or before == "_"):
                             start = q.start
-        # A percent mark after the span, adjacent or after one space.
+        # A percent mark after the span, after ANY whitespace, including a
+        # no-break or narrow no-break space (#1088 round 3, finding 2).
         rest = masked[end:]
-        m = re.match(rf"( ?)([{_PERCENT}])", rest)
+        m = re.match(rf"\s*[{_PERCENT}]", rest)
         if m:
             end += m.end()
         out.append((start, end))
@@ -363,6 +434,13 @@ def _walk(value: Any, key: str | None, fields: dict[str, frozenset[str]], out: d
             _walk(v, key, fields, out)
     elif isinstance(value, str):
         if key in fields["protected"]:
+            if value.strip() and not any(c.isalpha() for c in value):
+                # A numeral is not a code: protecting "40" would mask it
+                # everywhere and let "40%" and "$40" through (#1088 round 3, F5).
+                raise ValueError(
+                    f"numbers: protected field {key!r} holds an all-numeric value; "
+                    "list it as a fact field instead"
+                )
             if value.strip():
                 out["protected"].add(value.strip())
         elif key in fields["facts"]:
