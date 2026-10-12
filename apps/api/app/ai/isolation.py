@@ -128,7 +128,20 @@ _WRAPPER_MODE = 0o700
 #: The probe the wrapper must pass before it is used: the interpreter starts,
 #: and its environment is exactly the allowlist.
 _ALLOWED_NAMES = ", ".join(repr(k) for k in sorted(_CHILD_ENVIRONMENT))
-_PROBE = f"import os, sys; sys.exit(0 if set(os.environ) == {{{_ALLOWED_NAMES}}} else 3)"
+#: Exit 3 says which names were wrong, extra or missing: NAMES only, never a
+#: value, so the operator reading the startup error sees the cause.
+_PROBE = "\n".join(
+    [
+        "import os, sys",
+        f"want = {{{_ALLOWED_NAMES}}}",
+        "have = set(os.environ)",
+        "if have != want:",
+        "    extra = ','.join(sorted(have - want)) or '-'",
+        "    missing = ','.join(sorted(want - have)) or '-'",
+        "    print(f'environment names: extra={extra} missing={missing}', file=sys.stderr)",
+        "    sys.exit(3)",
+    ]
+)
 _PROBE_SECONDS = 30.0
 
 

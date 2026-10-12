@@ -565,7 +565,26 @@ def test_startup_refuses_a_wrapper_whose_environment_is_not_the_allowlist(monkey
     monkeypatch.setattr(
         isolation, "_CHILD_ENVIRONMENT", {**isolation._CHILD_ENVIRONMENT, "EXTRA_PROBE": "1"}
     )
-    with pytest.raises(isolation.RedactionSetupError, match=r"exited 3"):
+    with pytest.raises(
+        isolation.RedactionSetupError, match=r"exited 3.*extra=EXTRA_PROBE missing=-"
+    ):
+        _start_the_api()
+
+
+@pytest.mark.unit
+def test_startup_refuses_a_wrapper_whose_environment_lacks_an_allowlisted_name(
+    monkeypatch,
+) -> None:
+    """A wrapper that passes one variable too FEW: the probe wants the
+    allowlist exactly, not merely nothing outside it, and names what is
+    missing. PATH, not LANG: without LANG, PEP 538 sets LC_CTYPE, and the
+    check would fail for an extra name as well, so it could not tell the two
+    apart."""
+    import app.ai.isolation as isolation
+
+    monkeypatch.setattr(isolation, "_wrapper_path", None)
+    monkeypatch.setattr(isolation, "_CHILD_ENVIRONMENT", {"LANG": "C.UTF-8"})
+    with pytest.raises(isolation.RedactionSetupError, match=r"exited 3.*extra=- missing=PATH"):
         _start_the_api()
 
 
