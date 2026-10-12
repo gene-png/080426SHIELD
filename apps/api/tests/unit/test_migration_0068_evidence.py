@@ -276,6 +276,36 @@ def test_a_pre_0068_artifact_and_profile_row_read_unchanged(tmp_path) -> None:
         assert score.evidence_basis is None
 
 
+def _csf_assessment(
+    db: Session, *, service_id: uuid.UUID, client_id: uuid.UUID, status: CsfAssessmentStatus
+) -> uuid.UUID:
+    """A CSF assessment written by a Core insert through the MODEL'S OWN TABLE,
+    so `status` is bound by the column's own type and stored as production
+    stores it (the member NAME; 0045's lesson), while naming only the columns
+    this test needs.
+
+    Not an ORM flush: that names every column the CURRENT model has, and
+    fires its mapper events, so a later migration adding a column to
+    `csf_assessments` (0070, #1077, adds `rollup_rules` with a before-insert
+    listener) would break every test here that seeds at a pinned older
+    revision."""
+    assessment_id = uuid.uuid4()
+    now = datetime.now(UTC)
+    db.execute(
+        sa.insert(CsfAssessment.__table__).values(
+            id=assessment_id,
+            service_id=service_id,
+            client_id=client_id,
+            version=1,
+            status=status,
+            documents_stale=False,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    return assessment_id
+
+
 def _seed_at_0066(tmp_path, name: str, statuses: set[str]) -> tuple[str, sa.Engine]:
     """At 0066, through the ORM: one CSF assessment per status, each with a
     ticked (`GV.OC-01`) and an unticked (`GV.OC-02`) Working Profile row, and
@@ -308,15 +338,13 @@ def _seed_at_0066(tmp_path, name: str, statuses: set[str]) -> tuple[str, sa.Engi
             )
             db.add(service)
             db.flush()
-            assessment = CsfAssessment(
-                service_id=service.id, client_id=client.id, status=CsfAssessmentStatus[status]
+            assessment_id = _csf_assessment(
+                db, service_id=service.id, client_id=client.id, status=CsfAssessmentStatus[status]
             )
-            db.add(assessment)
-            db.flush()
             for ticked in (True, False):
                 db.add(
                     CsfDimensionScore(
-                        assessment_id=assessment.id,
+                        assessment_id=assessment_id,
                         client_id=client.id,
                         tier="moderate",
                         subcategory_code="GV.OC-01" if ticked else "GV.OC-02",
@@ -788,11 +816,10 @@ def test_each_model_round_trips_and_stores_member_names(tmp_path) -> None:
         )
         db.add_all([art, service])
         db.flush()
-        assessment = CsfAssessment(service_id=service.id, client_id=client.id)
-        db.add(assessment)
-        db.flush()
         score = CsfDimensionScore(
-            assessment_id=assessment.id,
+            assessment_id=_csf_assessment(
+                db, service_id=service.id, client_id=client.id, status=CsfAssessmentStatus.DRAFT
+            ),
             client_id=client.id,
             tier="moderate",
             subcategory_code="PR.AA-01",
