@@ -33,6 +33,7 @@ from app.documents.text import (
     DocText,
     ExtractLimits,
     RedactionOffRefused,
+    TextOverCeiling,
     chunk_text,
     document_text,
     extract_limits,
@@ -328,15 +329,17 @@ def test_zero_byte_binary_types_are_unreadable(store, title, mime):
 
 
 def test_text_over_max_chars_keeps_whole_lines_and_says_truncated(store):
-    """Extraction stops at the first LINE that passes `max_chars`; the text is
-    never cut inside a line, where a name or a number could be split."""
-    limits = replace(LIMITS, max_chars=10)
+    """Extraction stops after the LINE that passes `max_chars`; a line no
+    longer than the limit is never cut inside, where a name or a number could
+    be split. (A single line longer than the whole limit is cut at
+    whitespace: see the round-5 tests.)"""
+    limits = replace(LIMITS, max_chars=25)
     data = b"Quebec Romeo Sierra\nTango Uniform\nVictor Whiskey\n"
     result = store.read(data, title="long.txt", mime=TXT, limits=limits)
     _assert_read(result)
     assert result.truncated is True
-    assert result.text == "Quebec Romeo Sierra"
-    assert result.chars_total == len("Quebec Romeo Sierra")
+    assert result.text == "Quebec Romeo Sierra\nTango Uniform"
+    assert result.chars_total == len("Quebec Romeo Sierra\nTango Uniform")
 
 
 def test_file_over_max_bytes_is_too_large(store):
@@ -530,6 +533,8 @@ def test_a_storage_failure_that_is_not_a_miss_raises(store):
 def _chunks(text: str, **kw) -> ChunkPlan:
     """chunk_text in strict mode with no client literals: for tests about where
     chunks break, on text the redactor leaves alone (asserted by each test)."""
+    kw.setdefault("source_truncated", False)
+    kw.setdefault("max_chars", 1_000_000)
     return chunk_text(text, mode="strict", client_org_name=None, name_hints=(), **kw)
 
 
@@ -608,7 +613,14 @@ def test_chunk_refuses_redaction_mode_off():
     configured mode says."""
     with pytest.raises(RedactionOffRefused, match="off"):
         chunk_text(
-            "text", chunk_chars=10, max_chunks=1, mode="off", client_org_name=None, name_hints=()
+            "text",
+            chunk_chars=10,
+            max_chunks=1,
+            mode="off",
+            client_org_name=None,
+            name_hints=(),
+            source_truncated=False,
+            max_chars=1_000,
         )
 
 
@@ -1458,7 +1470,14 @@ def test_no_chunk_carries_any_part_of_a_name_or_phone_cut_by_a_boundary():
     assert any("0199" in p or "410" in p for p in per_piece)
 
     plan = chunk_text(
-        text, chunk_chars=120, max_chunks=100, mode="strict", client_org_name=_ORG, name_hints=()
+        text,
+        chunk_chars=120,
+        max_chunks=100,
+        mode="strict",
+        client_org_name=_ORG,
+        name_hints=(),
+        source_truncated=False,
+        max_chars=1_000_000,
     )
     assert plan.skipped == 0
     assert plan.sent > 5
@@ -1483,6 +1502,8 @@ def test_chunk_text_sends_exactly_what_redact_for_ai_returns():
         mode="strict",
         client_org_name=_ORG,
         name_hints=["Dana Whitfield"],
+        source_truncated=False,
+        max_chars=1_000_000,
     )
     assert "".join(plan.chunks) == expected
     assert plan.redaction_counts == counts
@@ -1647,6 +1668,8 @@ def test_a_cut_at_max_chars_never_splits_a_name_or_a_number(store):
         mode="strict",
         client_org_name=None,
         name_hints=["Dana Whitfield"],
+        source_truncated=result.truncated,
+        max_chars=1_000_000,
     )
     sent = "".join(plan.chunks)
     for fragment in ("Dana", "Whitf", "410", "555", "0199"):
@@ -1665,4 +1688,92 @@ def test_a_redactor_that_disagrees_with_its_signature_step_is_raised(monkeypatch
 
     monkeypatch.setattr(text_module, "redact_for_ai", no_signature_count)
     with pytest.raises(RuntimeError, match="disagree"):
+        _chunks(_COVER_THEN_POLICY, chunk_chars=1000, max_chunks=5)
+
+
+# --------------------------------------------------------------------------
+# Review round 5 at 30a21a1d (#1089).
+# --------------------------------------------------------------------------
+
+
+def test_skipped_chunks_make_the_plan_incomplete():
+    plan = _chunks("Policy line about controls. " * 5000, chunk_chars=1000, max_chunks=3)
+    assert plan.sent == 3
+    assert plan.skipped > 0
+    assert plan.signature_cut is False
+    assert plan.complete is False
+
+
+def test_a_truncated_source_makes_the_plan_incomplete():
+    plan = _chunks("policy text", chunk_chars=1000, max_chunks=3, source_truncated=True)
+    assert plan.skipped == 0
+    assert plan.complete is False
+
+
+def test_an_unknown_source_is_never_complete():
+    """None means "the caller does not know whether the source was cut": the
+    plan cannot say the chunks are the whole document."""
+    plan = _chunks("policy text", chunk_chars=1000, max_chunks=3, source_truncated=None)
+    assert plan.complete is None
+
+
+def test_only_an_uncut_source_sent_whole_without_a_signature_cut_is_complete():
+    plan = _chunks("policy text", chunk_chars=1000, max_chunks=3, source_truncated=False)
+    assert plan.complete is True
+
+
+def test_a_document_text_result_carries_its_truncation_into_the_plan(store):
+    limits = replace(LIMITS, max_chars=10)
+    result = store.read(b"alpha bravo\ncharlie delta\n", title="t.txt", mime=TXT, limits=limits)
+    assert result.truncated is True
+    plan = _chunks(result.text, chunk_chars=1000, max_chunks=3, source_truncated=result.truncated)
+    assert plan.complete is False
+
+
+def test_one_line_txt_far_past_max_chars_is_cut_at_whitespace(store):
+    """A single line is one piece; past max_chars it is cut at the last
+    whitespace within the limit, never kept whole."""
+    data = ("word " * 10_000).encode()  # 50,000 characters, no newline
+    result = store.read(data, title="one.txt", mime=TXT, limits=replace(LIMITS, max_chars=100))
+    _assert_read(result)
+    assert result.truncated is True
+    assert len(result.text) <= 100
+    assert result.text == ("word " * 20).rstrip()
+
+
+def test_one_huge_docx_paragraph_is_cut_at_whitespace(store):
+    huge = store.read(
+        _docx_xml(_p("token " * 5_000)),
+        title="huge.docx",
+        mime=DOCX,
+        limits=replace(LIMITS, max_chars=200),
+    )
+    _assert_read(huge)
+    assert huge.truncated is True
+    assert len(huge.text) <= 200
+    assert huge.text.endswith("token")
+
+
+def test_chunk_text_refuses_text_past_its_ceiling():
+    """A ceiling the redactor will run over: twice max_chars, the most
+    document_text can return (max_chars plus one piece of at most
+    max_chars)."""
+    with pytest.raises(TextOverCeiling, match="ceiling"):
+        _chunks("x " * 1_001, chunk_chars=100, max_chunks=10, max_chars=1_000)
+    plan = _chunks("x " * 1_000, chunk_chars=100, max_chunks=100, max_chars=1_000)
+    assert plan.sent > 0
+
+
+def test_the_signature_guard_checks_the_placeholder_too(monkeypatch):
+    """When the step fired, the redacted text must end with the signature
+    placeholder; a redactor that fired without leaving it is raised."""
+    import app.documents.text as text_module
+    from app.ai.redact import PLACEHOLDER_SIGNATURE, redact_for_ai
+
+    def placeholder_dropped(text, **kw):
+        cleaned, counts = redact_for_ai(text, **kw)
+        return cleaned.replace(PLACEHOLDER_SIGNATURE, "[GONE]"), counts
+
+    monkeypatch.setattr(text_module, "redact_for_ai", placeholder_dropped)
+    with pytest.raises(RuntimeError, match="placeholder"):
         _chunks(_COVER_THEN_POLICY, chunk_chars=1000, max_chunks=5)

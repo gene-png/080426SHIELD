@@ -30,7 +30,10 @@ Extraction STOPS EARLY at `max_chars`, at `max_pages` and at `max_seconds`
 reached before any text is `too_large`.
 
 Extraction stops at a PIECE boundary (a page, row, paragraph or text line),
-never inside one, so `text` may run past `max_chars` by the last piece read.
+so `text` may run past `max_chars` by the last piece read. A single piece
+longer than `max_chars` on its own is cut at the last whitespace inside the
+limit. So `text` never exceeds twice `max_chars`, and `chunk_text` refuses
+anything longer (`TextOverCeiling`).
 
 **Redaction runs over the WHOLE text, before chunking, inside `chunk_text`.**
 It takes the raw text and the same inputs as `app.ai.redact.redact_for_ai`,
@@ -67,7 +70,7 @@ from pypdf import PdfReader
 from pypdf.errors import FileNotDecryptedError
 from pypdf.generic import NameObject
 
-from app.ai.redact import _redact_signature_blocks, redact_for_ai
+from app.ai.redact import PLACEHOLDER_SIGNATURE, _redact_signature_blocks, redact_for_ai
 from app.config import RedactionMode, Settings, get_settings
 from app.logging import get_logger
 from app.models.artifact import Artifact
@@ -150,6 +153,12 @@ class DocText:
             raise ValueError("a not_read result carries no text and no counts")
 
 
+class TextOverCeiling(ValueError):
+    """`chunk_text` was handed more than twice `max_chars`, which
+    `document_text` never returns. The redactor runs over the whole text in
+    one call, so an unbounded text is an unbounded redaction."""
+
+
 class RedactionOffRefused(ValueError):
     """`chunk_text` was asked to chunk with redaction mode "off". Text cut
     for an AI payload is never unredacted, whatever the configured mode."""
@@ -170,9 +179,15 @@ class ChunkPlan:
 
     `signature_cut` is True when the redactor's signature rule deleted the
     text from a sign-off to the end; `signature_chars_removed` and
-    `signature_lines_removed` measure what went. `complete` is False then:
-    the chunks are NOT the whole document, and nothing missing from them may
-    be read as absent from it.
+    `signature_lines_removed` measure what went.
+
+    `complete` is THREE-VALUED. It is True only when there was no signature
+    cut, no chunk was skipped, AND the source is known not to be truncated
+    (`source_truncated is False`). It is False when any of those failed. It is
+    None when nothing failed but the caller did not know whether the source
+    was cut (`source_truncated is None`). Only True means the chunks are the
+    whole document; under False or None, nothing missing from them may be
+    read as absent from it.
     """
 
     chunks: tuple[str, ...]
@@ -183,10 +198,15 @@ class ChunkPlan:
     signature_cut: bool
     signature_chars_removed: int
     signature_lines_removed: int
+    source_truncated: bool | None
 
     @property
-    def complete(self) -> bool:
-        return not self.signature_cut
+    def complete(self) -> bool | None:
+        if self.signature_cut or self.skipped or self.source_truncated:
+            return False
+        if self.source_truncated is None:
+            return None
+        return True
 
 
 @dataclass(frozen=True)
@@ -310,6 +330,10 @@ _clock = time.monotonic
 def document_text(storage: _Readable, artifact: Artifact, *, limits: ExtractLimits) -> DocText:
     """Extract one artifact's text, or say exactly why it was not read.
 
+    The text is UNREDACTED client content. It must reach an AI provider only
+    through `chunk_text` (which redacts it whole) or the egress client in
+    app/ai/llm.py, never directly.
+
     A storage MISS (`FileNotFoundError`, which every backend raises for one) is
     `storage_missing`. Any other storage failure propagates: an unreachable
     store is not a fact about the file and must not be recorded as one.
@@ -373,7 +397,17 @@ def _collect(pieces: Iterator[str], max_chars: int, tally: _Tally) -> tuple[str,
     try:
         for piece in pieces:
             clean = _sanitize(piece)
-            count += len(clean) + (1 if parts else 0)
+            sep = 1 if parts else 0
+            if len(clean) > max_chars:
+                # One piece longer than the whole limit (a one-line text file,
+                # a huge paragraph or row): cut it to what is left of the
+                # limit, at the last whitespace, so the text stays bounded by
+                # twice max_chars and no token but the one at the cut is split.
+                kept = _cut_at_whitespace(clean, max_chars - count - sep)
+                if kept:
+                    parts.append(kept)
+                return "\n".join(parts), True
+            count += len(clean) + sep
             parts.append(clean)
             if count > max_chars:
                 return "\n".join(parts), True
@@ -384,6 +418,17 @@ def _collect(pieces: Iterator[str], max_chars: int, tally: _Tally) -> tuple[str,
         if close is not None:
             close()
     return "\n".join(parts), False
+
+
+def _cut_at_whitespace(text: str, budget: int) -> str:
+    """At most `budget` characters of `text`, ending before the last
+    whitespace in that span; a span with no whitespace is cut at `budget`, and
+    that one token is then split (a name or number in it can be split too)."""
+    if budget <= 0:
+        return ""
+    window = text[:budget]
+    last = max(window.rfind(" "), window.rfind("\n"), window.rfind("\t"))
+    return window[:last] if last > 0 else window
 
 
 def _not_read(artifact: Artifact, reason: NotReadReason, detail: str) -> DocText:
@@ -977,9 +1022,16 @@ def chunk_text(
     mode: RedactionMode,
     client_org_name: str | None,
     name_hints: Iterable[str],
+    source_truncated: bool | None,
+    max_chars: int,
 ) -> ChunkPlan:
     """Redact the WHOLE text with `redact_for_ai`, then split the result into
     chunks of at most `chunk_chars` for per-payload AI calls.
+
+    `source_truncated` is the source's own truncation (`DocText.truncated`),
+    or None when the caller does not know it; None never yields a complete
+    plan. `max_chars` is the extraction limit the text came from; text longer
+    than twice it is refused with `TextOverCeiling`.
 
     Takes the same inputs `redact_for_ai` takes, and calls it, so there is no
     path to a chunk that has not been redacted (enforced by calling). Mode
@@ -1004,11 +1056,15 @@ def chunk_text(
         raise ValueError(f"chunk_chars must be at least 1, got {chunk_chars}")
     if max_chunks < 1:
         raise ValueError(f"max_chunks must be at least 1, got {max_chunks}")
+    if len(text) > 2 * max_chars:
+        raise TextOverCeiling(
+            f"{len(text)} characters is over the ceiling of {2 * max_chars} (twice max_chars)"
+        )
     hints = list(name_hints)
     redacted, counts = redact_for_ai(
         text, mode=mode, client_org_name=client_org_name, name_hints=hints
     )
-    cut_chars, cut_lines = _signature_cut(text, counts)
+    cut_chars, cut_lines = _signature_cut(text, redacted, counts)
     chunks: list[str] = []
     offsets: list[int] = []
     start = 0
@@ -1034,6 +1090,7 @@ def chunk_text(
         signature_cut=cut_chars > 0,
         signature_chars_removed=cut_chars,
         signature_lines_removed=cut_lines,
+        source_truncated=source_truncated,
     )
     _log.info(
         "documents.text.chunked",
@@ -1043,11 +1100,13 @@ def chunk_text(
         signature_cut=plan.signature_cut,
         signature_chars_removed=cut_chars,
         signature_lines_removed=cut_lines,
+        source_truncated=source_truncated,
+        complete=plan.complete,
     )
     return plan
 
 
-def _signature_cut(text: str, counts: Mapping[str, int]) -> tuple[int, int]:
+def _signature_cut(text: str, redacted: str, counts: Mapping[str, int]) -> tuple[int, int]:
     """Characters and lines the redactor's signature rule removed from `text`.
 
     Measured by CALLING the redactor's own signature step on the same input
@@ -1061,6 +1120,10 @@ def _signature_cut(text: str, counts: Mapping[str, int]) -> tuple[int, int]:
         raise RuntimeError(
             "signature step and redact_for_ai disagree: "
             f"step fired={fired}, counts={dict(counts)}"
+        )
+    if fired and not redacted.endswith(PLACEHOLDER_SIGNATURE + "\n"):
+        raise RuntimeError(
+            "signature step fired but the redacted text does not end with its placeholder"
         )
     if not removed:
         return 0, 0
