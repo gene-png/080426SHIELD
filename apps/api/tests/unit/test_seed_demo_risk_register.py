@@ -35,7 +35,18 @@ def test_the_seeded_register_was_publishable_when_published(tmp_path, monkeypatc
         reg = db.execute(select(RiskRegister)).scalar_one()
         assert reg.finalized_at is not None
         recorded = reg.provenance["current_inputs"]
-        assert sorted(r["kind"] for r in recorded) == ["attack", "csf", "tech_debt", "zt", "zt"]
+        # RR-1 (#1122): the seed selects CSF and CISA Zero Trust, so DoD is
+        # recorded as deselected rather than as an input publish checks. The
+        # selection lists carry no order, so they are compared sorted.
+        assert sorted(r["kind"] for r in recorded) == ["attack", "csf", "tech_debt", "zt"]
+        selection = reg.provenance["selection"]
+        included = sorted((r["kind"], r["framework"] or "") for r in selection["included"])
+        assert included == [("csf", ""), ("zt", "cisa_ztmm_2_0")], included
+        deselected = sorted((d["kind"], d["framework"] or "") for d in selection["deselected"])
+        assert deselected == [("zt", "dod_ztra")], deselected
+        # DoD is not also an input: the one ZT input is a different service.
+        (zt_input,) = [r for r in recorded if r["kind"] == "zt"]
+        assert zt_input["service_id"] != selection["deselected"][0]["service_id"]
         assert {r["status"] for r in recorded} == {"released"}, recorded
         csf = {r["kind"]: r for r in recorded}["csf"]
         assert csf["version"] == 1, csf

@@ -42,10 +42,14 @@ import {
   ArchiveServiceDialog,
 } from "@/components/admin/risk/ArchiveServiceButton";
 import { targetSentences } from "@/lib/risk/baseline";
-// #403 / #876: the scored-coverage banner labels its scope keys with the one
-// web copy of the export's `scope_label`. A service token the labeller does not
-// know renders as itself, so a new service cannot vanish from the disclosure.
-import { scopeLabel } from "@/lib/risk/labels";
+import { RiskSelectionBlock } from "@/components/admin/risk/RiskSelectionBlock";
+import {
+  defaultChoice,
+  includeFor,
+  selectionLines,
+  selectionModel,
+  type SelectionChoice,
+} from "@/lib/risk/selection";
 import {
   OTHER_AXES_HEADER,
   otherAxesCell,
@@ -54,8 +58,11 @@ import {
 import { carriedSentences } from "@/lib/risk/carry";
 import {
   INPUTS_RULE,
+  NOT_IN_REGISTER_HEADING,
   REVIEW_PENDING_NOTE,
   inputLine,
+  isNotInRegister,
+  notInRegisterLine,
   sourceStateNote,
 } from "@/lib/risk/inputs";
 
@@ -79,8 +86,9 @@ const PENDING_REVIEW_NOT_RECORDED =
 
 /**
  * #415: the ATT&CK row of the scored-coverage record, by the kind its scope
- * key names (the first-colon reading `scopeLabel` makes). Only ATT&CK has a
- * review queue, so only its row carries a pending-review count.
+ * key names (the first-colon reading the server's `scope_display_label`
+ * makes; RR-1 sends that label as `s.label`). Only ATT&CK has a review queue,
+ * so only its row carries a pending-review count.
  */
 function isAttackScope(key: string): boolean {
   return key.split(":", 1)[0] === "attack";
@@ -408,6 +416,12 @@ function RiskRegisterBody({
   // RR-2 (for #1121), §3.3: a click RunAiGuard is holding, or its offline
   // prompt, is work that has not started yet. It locks the picker too.
   const [guardBusy, setGuardBusy] = React.useState(false);
+  // RR-1 (for #1122), design note §2: the admin's selection. Null until the
+  // gate has loaded, then the eligible services' defaults.
+  const [choice, setChoice] = React.useState<SelectionChoice | null>(null);
+  const model = selectionModel(gate?.eligible ?? [], gate?.ineligible ?? []);
+  const effectiveChoice = choice ?? defaultChoice(model);
+  const selected = includeFor(model, effectiveChoice);
   // Every control that starts work is disabled while work is in flight AND
   // once Apply has been pressed (the page is about to unload).
   const locked = busy !== null || leaving;
@@ -458,10 +472,16 @@ function RiskRegisterBody({
   }
 
   async function onGenerate(): Promise<void> {
+    // RR-1 (for #1122): Generate is disabled while the choice is incomplete,
+    // so this cannot fire without a request to send; if it does, say so.
+    if (!selected.ok) {
+      console.error("[risk] generate without a complete selection");
+      return;
+    }
     setBusy("generate");
     setError(null);
     try {
-      const reg = await generateRiskRegister(cid);
+      const reg = await generateRiskRegister(cid, selected.include);
       setRegister(reg);
     } catch (err) {
       setError(describeRiskError(err));
@@ -675,11 +695,13 @@ function RiskRegisterBody({
           data-testid="risk-register-excluded-inputs"
         >
           {/* #683: in number with the list -- "Those assessments ... them ...
-              they" read one excluded assessment as several. */}
+              they" read one excluded assessment as several. RR-1 (for
+              #1122), copies 16a and 16b, approved verbatim: past tense, and no
+              claim about the files. */}
           Generated without {excludedInputs.join("; ")}.{" "}
           {excludedInputs.length === 1
-            ? "That assessment exists but is not approved, so nothing from it is in this register. The exported documents do not say so — re-generate after approving it if it should be included."
-            : "Those assessments exist but are not approved, so nothing from them is in this register. The exported documents do not say so — re-generate after approving them if they should be included."}
+            ? "That assessment was not approved when this register was generated, so nothing from it is in this register. Re-generate if it should be included."
+            : "Those assessments were not approved when this register was generated, so nothing from them is in this register. Re-generate if they should be included."}
         </p>
       ) : null}
 
@@ -701,10 +723,25 @@ function RiskRegisterBody({
         >
           <p className="font-semibold">{INPUTS_RULE}</p>
           <ul className="mt-1 list-disc pl-5">
-            {gate.inputs.map((row, i) => (
-              <li key={`${row.kind}-${i}`}>{inputLine(row)}</li>
-            ))}
+            {gate.inputs
+              .filter((row) => !isNotInRegister(row))
+              .map((row, i) => (
+                <li key={`${row.kind}-${i}`}>{inputLine(row)}</li>
+              ))}
           </ul>
+          {/* RR-1 (for #1122), design note §6.5: services that are not part
+              of the register on screen do not hold it in draft, so they sit
+              apart, with no status. */}
+          {gate.inputs.some(isNotInRegister) ? (
+            <div data-testid="risk-register-not-in-register">
+              <p className="mt-2 font-semibold">{NOT_IN_REGISTER_HEADING}</p>
+              <ul className="mt-1 list-disc pl-5">
+                {gate.inputs.filter(isNotInRegister).map((row, i) => (
+                  <li key={`${row.kind}-out-${i}`}>{notInRegisterLine(row)}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -784,6 +821,19 @@ function RiskRegisterBody({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {/* RR-1 (for #1122), design note §2: what the next version is
+              generated from, chosen above Generate. */}
+          {model.attack.length > 0 ? (
+            <div className="w-full">
+              <RiskSelectionBlock
+                model={model}
+                choice={effectiveChoice}
+                onChange={setChoice}
+                blocked={selected.ok ? null : selected.reason}
+                disabled={locked}
+              />
+            </div>
+          ) : null}
           {/* #854 F3: the warning BEFORE regenerating, beside the button, while
               the current version holds consultant ratings. */}
           {consultantEdited > 0 ? (
@@ -810,6 +860,8 @@ function RiskRegisterBody({
                 // banner above already explains, so the button is not offered.
                 disabled={
                   locked ||
+                  // RR-1: no request is built from an incomplete choice.
+                  !selected.ok ||
                   catalogMismatch !== null ||
                   duplicateInputs !== null ||
                   statusUnknown
@@ -1193,7 +1245,7 @@ function RiskRegisterBody({
               <ul className="mt-1 list-disc pl-5">
                 {register.excluded_unscored_links.map((s) => (
                   <li key={s.service}>
-                    {scopeLabel(s.service)}: {s.scored} of {s.total} scored
+                    {s.label}: {s.scored} of {s.total} scored
                     {s.total > s.scored
                       ? `, ${s.total - s.scored} not yet judged and therefore not citable`
                       : " — every row judged"}
@@ -1271,6 +1323,18 @@ function RiskRegisterBody({
               counts.
             </div>
           ) : null}
+          {/* RR-1 (for #1122), design note §6.1: what this register was
+              generated from, and what was left out (copy 8, 9a-9c), or copy
+              11 when it has no usable record of that. The files print the
+              same lines, directly before the target lines. */}
+          <div
+            className="rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
+            data-testid="risk-selection-lines"
+          >
+            {selectionLines(register).map((line) => (
+              <p key={line}>{line}</p>
+            ))}
+          </div>
           {/* #474. The baseline every CSF and ZT finding was measured
               against. Rendered in every state: "not recorded" is said, never
               left as silence, because the client's export says it too. */}

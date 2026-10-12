@@ -95,6 +95,15 @@ export interface RiskDashboardData {
    * Read by the files' reader; absent or false keeps the original line.
    */
   csf_no_shared_row?: boolean;
+  /**
+   * RR-1 (for #1122), design note §6.4: copy 8 (`covered_inputs`), 9a/9b
+   * (`deselected_inputs`), 9c (`ineligible_inputs`), or copy 11 when
+   * `selection_recorded` is false or absent. Display labels, as given.
+   */
+  covered_inputs?: string[];
+  deselected_inputs?: string[];
+  ineligible_inputs?: string[];
+  selection_recorded?: boolean;
 }
 
 // Display order. Likelihood is shown high→low down the rows so the most severe

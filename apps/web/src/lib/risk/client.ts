@@ -1,6 +1,6 @@
 "use client";
 
-import type { RiskGate, RiskRegister } from "./types";
+import type { RiskGate, RiskInclude, RiskRegister } from "./types";
 
 export class RiskProxyError extends Error {
   constructor(
@@ -98,10 +98,18 @@ export async function fetchRiskRegisterLatest(
   }
 }
 
-export async function generateRiskRegister(cid: string): Promise<RiskRegister> {
+/**
+ * RR-1 (for #1122), design note §3.1: ALWAYS sends the admin's selection.
+ * The page never relies on the absent-body default, which refuses a client
+ * with both Zero Trust frameworks rather than guess.
+ */
+export async function generateRiskRegister(
+  cid: string,
+  include: RiskInclude,
+): Promise<RiskRegister> {
   return jsonRequest<RiskRegister>(
     `/api/proxy/risk/clients/${cid}/register/generate`,
-    { method: "POST" },
+    { method: "POST", body: { include } },
   );
 }
 

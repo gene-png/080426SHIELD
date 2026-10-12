@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, model_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, StrictBool, model_serializer, model_validator
 
 from app.risk.engine import Impact, Likelihood
 
@@ -42,6 +42,12 @@ class RiskInputState(BaseModel):
     #: carry scores and targets but no row carries both (not measured, and
     #: `no_playbook_scores` False); None for every other kind.
     no_shared_playbook_row: bool | None = None
+    #: RR-1 (for #1122), design note §6.5: this service's place in the
+    #: register on screen. `input` rows sit under the all-inputs-final rule;
+    #: `deselected` and `ineligible` rows are not part of the register and do
+    #: not hold it in draft. None for an unengaged kind, with no register, or
+    #: when the register's selection is not recorded or unreadable.
+    in_register: Literal["input", "deselected", "ineligible"] | None = None
 
     @model_serializer(mode="wrap")
     def _omit_unset_playbook_flag(self, handler):
@@ -85,6 +91,42 @@ class RiskLockedInput(BaseModel):
     service_kind: str | None
     #: The approved sentence for this state.
     sentence: str
+
+
+class RiskSelectableService(BaseModel):
+    """RR-1 (for #1122), design note §3.4: one engaged service the admin's
+    selection block names. `label` is the server's (`target_label`, a ZT
+    service always named with its framework), so the page renders it as
+    given and holds no label table of its own."""
+
+    kind: Literal["attack", "csf", "zt"]
+    service_id: str
+    title: str
+    #: The ZT framework (`cisa_ztmm_2_0` or `dod_ztra`); None otherwise.
+    framework: str | None
+    label: str
+
+
+class RiskInclude(BaseModel):
+    """RR-1 (for #1122), design note §3.1: the services a register is
+    generated from. `zero_trust` is a STORED framework value, or None for no
+    Zero Trust. ATT&CK is always included; Tech Debt is not a choice."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: Strict: "yes", 1 or "true" is refused rather than read as a choice the
+    #: admin may not have made (a coercion is not a validator).
+    csf: StrictBool
+    zero_trust: Literal["cisa_ztmm_2_0", "dod_ztra"] | None
+
+
+class RiskGenerateRequest(BaseModel):
+    """The optional generate body. Absent: every eligible CSF and ZT service,
+    as before RR-1, refused when both ZT frameworks are eligible (§3.2)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    include: RiskInclude
 
 
 class RiskGateStatus(BaseModel):
@@ -156,6 +198,12 @@ class RiskGateStatus(BaseModel):
     # can never arrive without a reason.
     locked_inputs: list[RiskLockedInput] = []
     locked_message: str | None = None
+    #: RR-1 (for #1122), design note §3.4: the engaged ATT&CK, CSF and ZT
+    #: services with a current record, which the selection block offers.
+    eligible: list[RiskSelectableService] = []
+    #: Engaged CSF and ZT services with no record: shown disabled (copy 18).
+    #: Tech Debt is in neither list; it is not chosen on this page.
+    ineligible: list[RiskSelectableService] = []
 
     @model_validator(mode="after")
     def _locked_state_matches_unlocked(self) -> RiskGateStatus:
@@ -260,6 +308,10 @@ class RiskTargetUsed(BaseModel):
     target: int | None
     source: str
     origin: str
+    #: RR-1 (for #1122), design note §6.2: what the line calls this service,
+    #: built by the files' own helper and naming predicate, so the screens and
+    #: the files cannot disagree. Required: a missing label is an error.
+    label: str
 
 
 class LinkScopeDisclosure(BaseModel):
@@ -280,6 +332,9 @@ class LinkScopeDisclosure(BaseModel):
     """
 
     service: str
+    #: RR-1 (for #1122), design note §6.2: this row's display label, from
+    #: `scope_display_label`, the files' helper. Required, no default.
+    label: str
     scored: int
     total: int
     #: #415: how many of the `scored` codes are pending review
@@ -582,3 +637,13 @@ class RiskRegisterResponse(BaseModel):
     #: (`risk/csf_source.py::csf_no_shared_row`). False when the register
     #: predates R11, so it keeps the original no-scores line.
     csf_no_shared_row: bool = False
+    #: RR-1 (for #1122), design note §6.1 and §6.4: what the register was
+    #: generated from, as display labels, in `inputs` order (copy 8); the
+    #: eligible services the admin left out (9a/9b); and the engaged services
+    #: with no assessment at generate (9c). `selection_recorded` False means
+    #: the register has no usable record of its selection, and every surface
+    #: prints copy 11 instead of all three.
+    covered_inputs: list[str] = []
+    deselected_inputs: list[str] = []
+    ineligible_inputs: list[str] = []
+    selection_recorded: bool = False

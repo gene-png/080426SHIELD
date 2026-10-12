@@ -42,6 +42,7 @@ from app.models.csf_assessment import CsfAssessment
 from app.models.csf_profile import CsfDimensionScore
 from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.zt_assessment import ZtAssessment
+from app.risk.selection import Selection, SelectionRead, selection_roles
 
 _log = get_logger(__name__)
 
@@ -214,7 +215,12 @@ class Blocker:
 
 
 def publish_blockers(
-    db: Session, client_id: uuid.UUID, recorded: object, synthesized: object
+    db: Session,
+    client_id: uuid.UUID,
+    recorded: object,
+    synthesized: object,
+    *,
+    selection: SelectionRead,
 ) -> list[Blocker]:
     """What stops this register being published, per input. Empty = publishable
     as far as its inputs go.
@@ -244,18 +250,48 @@ def publish_blockers(
     `synthesized` its `inputs` list (what findings were drawn from). When it is
     absent or unreadable the register cannot be certified (`not_recorded`):
     missing data defaults to UNCONFIRMED.
+
+    RR-1 (for #1122), design note §5: `selection` is `selection_of(provenance)`,
+    REQUIRED with no default, so a caller that forgets it is a `TypeError`
+    rather than a silent fall-back to the pre-RR-1 rule.
+      * A register with no usable selection (`SELECTION_NOT_RECORDED` or
+        `SELECTION_UNREADABLE`) is refused for the WHOLE register, first,
+        before any row is looked up (§5.3).
+      * Otherwise each engaged service has a role (`selection_roles`). A
+        DESELECTED service, or an INELIGIBLE one that still has no record, is
+        not part of this register and is skipped (Q4: disclosed, not blocked).
+        Every other role runs the checks below, unchanged.
+
+    RATCHETS, stated: the register-level unreadable-`current_inputs` branch
+    and the per-input `not_recorded` check at the end are reached by no
+    register now, because `selection_of`'s check 5 and check 2 refuse those
+    shapes first. They stay, so a writer that bypasses the selection cannot
+    publish them.
     """
     blockers: list[Blocker] = []
+    if not isinstance(selection, Selection):
+        _log.info("risk_publish_selection_not_recorded", client_id=str(client_id))
+        return [Blocker("register", "not_recorded", None)]
     if not isinstance(recorded, list) or not all(isinstance(r, dict) for r in recorded):
         _log.info("risk_publish_inputs_not_recorded", client_id=str(client_id))
         return [Blocker("register", "not_recorded", None)]
     then = {(r.get("kind"), r.get("service_id")): r for r in recorded}
     now = {(r.kind, r.service_id): r for r in current_inputs(db, client_id)}
     engaged = engaged_services(db, client_id)
+    roles = selection_roles(
+        selection,
+        {(str(k), str(sid)) for (k, sid) in then},
+        [(kind, str(svc.id)) for kind, svc in engaged],
+    )
     # PER ENGAGED SERVICE, never per kind: a released record of one service
     # must not stand in for a draft (or nothing) in another of the same kind.
     for kind, svc in engaged:
         r = now.get((kind, str(svc.id)))
+        role = roles[(kind, str(svc.id))].name
+        # RR-1: not in this register by the admin's choice, or engaged with no
+        # assessment at generate and still none. Neither holds it up.
+        if role == "deselected" or (role == "ineligible" and r is None):
+            continue
         if r is None:
             blockers.append(Blocker(kind, "not_started", None))
             continue

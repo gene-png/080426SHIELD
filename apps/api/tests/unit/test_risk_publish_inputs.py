@@ -135,9 +135,17 @@ def test_a_register_with_no_input_record_blocks(app_client) -> None:  # noqa: F8
         prov.pop("current_inputs")
         reg.provenance = prov
         s.commit()
-    assert _blockers(_publish(c, bearer, cid)) == [
-        {"input": "register", "reason": "not_recorded", "status": None}
-    ]
+    r = _publish(c, bearer, cid)
+    assert _blockers(r) == [{"input": "register", "reason": "not_recorded", "status": None}]
+    # RR-1 (#1122), design note §4 check 5 and §5.3: a `selection` beside an
+    # unreadable `current_inputs` fails §4, so the register is refused with
+    # copy 19 (§8, pending the advisor), never with the pre-RR-1 "predates
+    # input recording" sentence.
+    assert r.json()["error"]["message"] == (
+        "This register has no usable record of how its services were chosen or "
+        "which were left out, so it cannot be published. Regenerate it, then "
+        "publish the new version."
+    )
 
 
 def test_the_gate_lists_every_input_and_its_state(app_client) -> None:  # noqa: F811

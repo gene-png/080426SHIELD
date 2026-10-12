@@ -12,6 +12,13 @@ generate refuses that case (Q2 option (a)) with the advisor's sentence.
 
 Everything goes through the real routes; inputs are released through the real
 finalize -> release endpoints (`tests/_risk_inputs.py`).
+
+RR-1 (#1122, reversing #876 Q1): a register draws on ONE Zero Trust framework,
+chosen at generate. A client with both frameworks now generates once per
+framework. Tests that pinned BOTH frameworks in one register are REPLACED with
+RR-1's claim, and say so (CLAUDE.md core principle 3). Tests that only needed a
+two-framework client generate twice, once per framework, and assert on each
+real register. No test builds a merged register: no writer produces one.
 """
 
 from __future__ import annotations
@@ -89,6 +96,20 @@ def _generate(c, provider, bearer: str, cid: str, seen: list[dict]):
     return c.post(f"/risk/clients/{cid}/register/generate", headers=_h(bearer, cid))
 
 
+CISA = "cisa_ztmm_2_0"
+DOD = "dod_ztra"
+
+
+def _generate_zt(c, provider, bearer: str, cid: str, seen: list[dict], framework: str):
+    """One generate naming its Zero Trust framework (RR-1), no CSF."""
+    provider.register("risk_synthesize", _per_finding(seen))
+    return c.post(
+        f"/risk/clients/{cid}/register/generate",
+        headers=_h(bearer, cid),
+        json={"include": {"csf": False, "zero_trust": framework}},
+    )
+
+
 def _both_frameworks(c, bearer: str, cid: str):
     s = seed_attack_and_zt(c, bearer, cid)
     dod_svc, dod_code = _seed_dod(c, bearer, cid)
@@ -119,22 +140,29 @@ def _export_texts(c, bearer: str, cid: str) -> dict[str, str]:
     return {"pdf": " ".join(_pdf_text(raw["pdf"]).split()), "docx": docx, "xlsx": xlsx}
 
 
-def test_both_zero_trust_frameworks_feed_the_register(app_client) -> None:  # noqa: F811
-    """CISA and DoD both engaged: findings from BOTH reach the register, each
-    entry names its framework's code, and every export carries both."""
+def test_with_both_frameworks_each_register_holds_only_its_frameworks_findings(
+    app_client,  # noqa: F811
+) -> None:
+    """REPLACES #876's `test_both_zero_trust_frameworks_feed_the_register`,
+    whose premise (both frameworks' findings in ONE register) RR-1 reverses.
+    CISA and DoD both engaged: each register, generated with one framework,
+    holds that framework's finding and none of the other's, and every export
+    carries it."""
     c, provider = app_client
     bearer, cid = _admin(c)
     s, _dod_svc, dod_code = _both_frameworks(c, bearer, cid)
     assert s.capability.startswith("CISA.") and dod_code.startswith("DOD."), (s, dod_code)
-    seen: list[dict] = []
-    r = _generate(c, provider, bearer, cid, seen)
-    assert r.status_code == 201, r.text
-    sources = {e["source_id"] for e in r.json()["entries"]}
-    assert s.technique in sources, sources  # the positive state first
-    assert {s.capability, dod_code} <= sources, sources
-    texts = _export_texts(c, bearer, cid)
-    for kind, text in texts.items():
-        assert s.capability in text and dod_code in text, kind
+    for framework, mine, theirs in ((CISA, s.capability, dod_code), (DOD, dod_code, s.capability)):
+        seen: list[dict] = []
+        r = _generate_zt(c, provider, bearer, cid, seen, framework)
+        assert r.status_code == 201, r.text
+        sources = {e["source_id"] for e in r.json()["entries"]}
+        assert s.technique in sources, sources  # the positive state first
+        assert mine in sources, (framework, sources)
+        assert theirs not in sources, (framework, sources)
+        texts = _export_texts(c, bearer, cid)
+        for kind, text in texts.items():
+            assert mine in text, (framework, kind)
 
 
 def test_one_zero_trust_framework_feeds_only_itself(app_client) -> None:  # noqa: F811
@@ -163,30 +191,35 @@ def test_each_framework_is_held_to_its_own_target(app_client) -> None:  # noqa: 
     _set_zt_target(cid, 4, kind="zero_trust_cisa")
     _set_zt_stage(cid, s.capability, 3)
     _set_zt_stage(cid, dod_code, 3)
+    # RR-1: one register per framework, each held to its own target.
     seen: list[dict] = []
-    gen = _generate(c, provider, bearer, cid, seen)
+    gen = _generate_zt(c, provider, bearer, cid, seen, CISA)
     assert gen.status_code == 201, gen.text
     sources = {e["source_id"] for e in gen.json()["entries"]}
     assert s.capability in sources, sources  # the positive state first
+    gen = _generate_zt(c, provider, bearer, cid, seen, DOD)
+    assert gen.status_code == 201, gen.text
+    sources = {e["source_id"] for e in gen.json()["entries"]}
+    assert s.technique in sources, sources  # the positive state first
     assert dod_code not in sources, sources
 
 
-def test_no_batch_mixes_two_zero_trust_services(app_client) -> None:  # noqa: F811
-    """Per-service batching (Q4): CISA's and DoD's findings never share a
-    request, however few there are."""
+def test_with_both_frameworks_no_request_carries_the_other_framework(
+    app_client,  # noqa: F811
+) -> None:
+    """REPLACES #876's `test_no_batch_mixes_two_zero_trust_services`. Its
+    premise (both frameworks' findings in one generate, kept in separate
+    batches) RR-1 reverses: a generate reads ONE framework, so no request of
+    that generate carries the other framework's findings at all."""
     c, provider = app_client
     bearer, cid = _admin(c)
     _both_frameworks(c, bearer, cid)
-    seen: list[dict] = []
-    assert _generate(c, provider, bearer, cid, seen).status_code == 201
-    assert len(seen) >= 2, len(seen)
-    for payload in seen:
-        frameworks = {
-            sid.split(".")[0] for sid in payload["findings"] if sid.startswith(("CISA.", "DOD."))
-        }
-        assert len(frameworks) <= 1, payload["findings"]
-    zt_batches = [p for p in seen if any(sid.startswith("DOD.") for sid in p["findings"])]
-    assert zt_batches, "no batch carried the DoD finding"
+    for framework, mine, theirs in ((CISA, "CISA.", "DOD."), (DOD, "DOD.", "CISA.")):
+        seen: list[dict] = []
+        assert _generate_zt(c, provider, bearer, cid, seen, framework).status_code == 201
+        sids = [sid for p in seen for sid in p["findings"]]
+        assert [x for x in sids if x.startswith(mine)], (framework, sids)  # positive first
+        assert not [x for x in sids if x.startswith(theirs)], (framework, sids)
 
 
 def test_a_finding_carries_its_own_services_state(app_client) -> None:  # noqa: F811
@@ -196,17 +229,35 @@ def test_a_finding_carries_its_own_services_state(app_client) -> None:  # noqa: 
     bearer, cid = _admin(c)
     s, _dod_svc, dod_code = _both_frameworks(c, bearer, cid)
     release(c, bearer, cid, "zt", s.zt_service)
+    # RR-1: one register per framework; each finding still carries its own
+    # service's state.
     seen: list[dict] = []
-    r = _generate(c, provider, bearer, cid, seen)
+    r = _generate_zt(c, provider, bearer, cid, seen, DOD)
     assert r.status_code == 201, r.text
     states = {e["source_id"]: e["source_state"] for e in r.json()["entries"]}
     assert states[dod_code] == "approved", states
+    r = _generate_zt(c, provider, bearer, cid, seen, CISA)
+    assert r.status_code == 201, r.text
+    states = {e["source_id"]: e["source_state"] for e in r.json()["entries"]}
+    assert s.capability in states, states  # the positive state first
     assert states[s.capability] is None, states
 
 
-def test_the_provenance_and_scored_coverage_name_each_framework(app_client) -> None:  # noqa: F811
-    """One provenance input per service, and the scored-coverage disclosure
-    gets one row per framework, labelled with the framework (Q3)."""
+@pytest.mark.parametrize(
+    "framework, name",
+    [(CISA, "Zero Trust (CISA ZTMM 2.0)"), (DOD, "Zero Trust (DoD ZT Reference Architecture)")],
+)
+def test_the_provenance_and_scored_coverage_name_the_chosen_framework(
+    app_client, framework: str, name: str  # noqa: F811
+) -> None:
+    """REPLACES #876's `test_the_provenance_and_scored_coverage_name_each_framework`,
+    whose register held both frameworks' inputs and scored-coverage rows; RR-1
+    reverses that. Per register: ONE Zero Trust input, of the chosen framework;
+    its scored-coverage key names the framework, because both frameworks have
+    a record (design note §3.3 step 5); and the XLSX "Scored coverage" sheet
+    labels that row with the framework (§6.2). The label alone also appears in
+    copy 8, so the needle is the sheet's ROW, not the bare label."""
+    from openpyxl import load_workbook
     from sqlalchemy import select
 
     from app.models.risk_register import RiskRegister
@@ -215,17 +266,19 @@ def test_the_provenance_and_scored_coverage_name_each_framework(app_client) -> N
     bearer, cid = _admin(c)
     _both_frameworks(c, bearer, cid)
     seen: list[dict] = []
-    assert _generate(c, provider, bearer, cid, seen).status_code == 201
+    assert _generate_zt(c, provider, bearer, cid, seen, framework).status_code == 201
     with _session() as db:
         prov = db.execute(select(RiskRegister)).scalar_one().provenance
     zt_inputs = sorted(i["framework"] for i in prov["inputs"] if i["kind"] == "zt")
-    assert zt_inputs == ["cisa_ztmm_2_0", "dod_ztra"], prov["inputs"]
-    assert sorted(prov["link_scope"]) == ["attack", "zt:cisa_ztmm_2_0", "zt:dod_ztra"]
-    xlsx = _export_texts(c, bearer, cid)["xlsx"]
-    assert (
-        "Zero Trust (CISA ZTMM 2.0)" in xlsx
-        and "Zero Trust (DoD ZT Reference Architecture)" in xlsx
-    )
+    assert zt_inputs == [framework], prov["inputs"]
+    assert sorted(prov["link_scope"]) == ["attack", f"zt:{framework}"], prov["link_scope"]
+    h = _h(bearer, cid)
+    ex = c.post(f"/risk/clients/{cid}/register/export", headers=h)
+    assert ex.status_code == 200, ex.text
+    raw = c.get(f"/artifacts/{ex.json()['xlsx_artifact_id']}/download", headers=h).content
+    rows = list(load_workbook(io.BytesIO(raw))["Scored coverage"].iter_rows(values_only=True))
+    labels = [row[0] for row in rows]
+    assert name in labels, rows
 
 
 def test_a_single_zero_trust_keeps_its_unqualified_label(app_client) -> None:  # noqa: F811
@@ -293,9 +346,12 @@ def test_one_service_per_kind_is_not_a_duplicate(app_client) -> None:  # noqa: F
 # #891 review round 1
 # ---------------------------------------------------------------------------
 
-_NOT_RECORDED = (
-    "This register predates input recording, so what it was built from cannot "
-    "be certified. Generate a new version before publishing."
+#: RR-1 (#1122), design note §8 copy 19 (pending the advisor): the publish
+#: refusal for a register whose `selection` is absent or fails §4.
+_SELECTION_NOT_RECORDED = (
+    "This register has no usable record of how its services were chosen or "
+    "which were left out, so it cannot be published. Regenerate it, then "
+    "publish the new version."
 )
 
 
@@ -312,15 +368,17 @@ def _released_both(c, bearer: str, cid: str):
 
 
 def test_a_per_service_register_with_both_frameworks_publishes(app_client) -> None:  # noqa: F811
-    """The positive half of B1: generated under #876 from CISA and DoD, both
-    released, the register publishes."""
+    """The positive half of B1: CISA and DoD both released. Under RR-1 each
+    register draws on one framework and records the other as deselected, so
+    each publishes: the deselected framework does not hold it back."""
     c, provider = app_client
     bearer, cid = _admin(c)
     _released_both(c, bearer, cid)
-    seen: list[dict] = []
-    assert _generate(c, provider, bearer, cid, seen).status_code == 201
-    r = _publish(c, bearer, cid)
-    assert r.status_code == 200, r.text
+    for framework in (CISA, DOD):
+        seen: list[dict] = []
+        assert _generate_zt(c, provider, bearer, cid, seen, framework).status_code == 201
+        r = _publish(c, bearer, cid)
+        assert r.status_code == 200, (framework, r.text)
 
 
 def test_a_register_from_before_per_service_reading_is_refused(app_client) -> None:  # noqa: F811
@@ -330,9 +388,18 @@ def test_a_register_from_before_per_service_reading_is_refused(app_client) -> No
     publishing it would deliver the gap #876 closes. Refused at PUBLISH,
     typed, and the consultant regenerates.
 
-    The legacy shape is written into the stored provenance: that is exactly
+    The legacy `inputs` rows are written into the stored provenance: that is
     what the pre-#876 writer stored (one `inputs` row per kind, no service),
-    and no current writer can produce it."""
+    and no current writer can produce it.
+
+    RR-1 (#1122): the register KEEPS the `selection` its generate wrote, so
+    the refusal comes from design note §4's check 2 (`included` must equal
+    the CSF and ZT service ids in `inputs`, and these rows name none), which
+    this test is now what pins. It is a register-level `not_recorded`, before
+    any row is read, with §8's copy 19. The pre-#876 per-input check that
+    used to answer here (`kind in SYNTHESIS_KINDS and str(service_id) not in
+    drawn_from`) is now reached by no register, so no test reaches it: it is
+    kept in the code as a ratchet (design note §0g)."""
     from sqlalchemy import select
 
     from app.models.risk_register import RiskRegister
@@ -341,12 +408,13 @@ def test_a_register_from_before_per_service_reading_is_refused(app_client) -> No
     bearer, cid = _admin(c)
     _released_both(c, bearer, cid)
     seen: list[dict] = []
-    assert _generate(c, provider, bearer, cid, seen).status_code == 201
+    assert _generate_zt(c, provider, bearer, cid, seen, CISA).status_code == 201
     with _session() as db:
         reg = db.execute(select(RiskRegister)).scalar_one()
         prov = dict(reg.provenance)
         zt_rows = [i for i in prov["inputs"] if i["kind"] == "zt"]
-        assert len(zt_rows) == 2, prov["inputs"]  # the per-service shape first
+        assert len(zt_rows) == 1, prov["inputs"]  # the per-service shape first
+        assert "selection" in prov, sorted(prov)  # kept: check 2 must refuse
         legacy = []
         for kind in ("attack", "zt"):
             row = dict(next(i for i in prov["inputs"] if i["kind"] == kind))
@@ -360,9 +428,9 @@ def test_a_register_from_before_per_service_reading_is_refused(app_client) -> No
     assert r.status_code == 409, r.text
     err = r.json()["error"]
     assert err["reason"] == "risk_register_inputs_not_final", err
-    assert sorted(b["input"] for b in err["blockers"]) == ["attack", "zt", "zt"], err
+    assert [b["input"] for b in err["blockers"]] == ["register"], err
     assert {b["reason"] for b in err["blockers"]} == {"not_recorded"}, err
-    assert err["message"] == _NOT_RECORDED
+    assert err["message"] == _SELECTION_NOT_RECORDED
 
 
 def test_a_single_service_client_sends_what_it_always_sent(app_client) -> None:  # noqa: F811
@@ -384,7 +452,12 @@ def test_a_single_service_client_sends_what_it_always_sent(app_client) -> None: 
 def test_a_second_service_not_started_is_listed_on_the_draft(app_client) -> None:  # noqa: F811
     """A2, the advisor's condition (#736 6024072042): a second engaged ZT
     service with no assessment does not stop a draft, and the Inputs panel
-    lists it, named, as not started; publish refuses it."""
+    lists it, named, as not started.
+
+    RR-1 (#1122) REPLACES A2's last clause, "publish refuses it": that
+    service is recorded as INELIGIBLE at generate, and RR-1 Q4 (#736
+    6131606581) discloses it (copy 9c) and does not block publish. The panel
+    row says so through `in_register` (design note §6.5)."""
     c, provider = app_client
     bearer, cid = _admin(c)
     seed_attack_and_zt(c, bearer, cid)
@@ -402,6 +475,7 @@ def test_a_second_service_not_started_is_listed_on_the_draft(app_client) -> None
             "status": "approved",
             "version": 1,
             "qualifier": "CISA ZTMM 2.0",
+            "in_register": "input",
         },
         {
             "kind": "zt",
@@ -409,10 +483,13 @@ def test_a_second_service_not_started_is_listed_on_the_draft(app_client) -> None
             "status": None,
             "version": None,
             "qualifier": "DoD ZT Reference Architecture",
+            "in_register": "ineligible",
         },
     ]
     blockers = _publish(c, bearer, cid).json()["error"]["blockers"]
-    assert {"input": "zt", "reason": "not_started", "status": None} in blockers, blockers
+    # Positive first: CISA is approved, not released, so publish still refuses.
+    assert {"input": "zt", "reason": "not_released", "status": "approved"} in blockers, blockers
+    assert {"input": "zt", "reason": "not_started", "status": None} not in blockers, blockers
 
 
 def _add_cisa(c, bearer: str, cid: str, title: str) -> None:
