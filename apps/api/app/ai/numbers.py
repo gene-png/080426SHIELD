@@ -153,6 +153,9 @@ _NUMBER_WORDS = frozenset(
 # Deliberate exclusions (#1088 round 3, advisory 6): "none", "nil", "couple",
 # "several", "score" and "gross" are prose far more often than counts ("none of
 # the tools", "a couple of findings", "risk score", "gross margin").
+_SCALE_WORDS = frozenset(
+    {*_SCALES, *(s + "s" for s in _SCALES), "lakh", "lakhs", "crore", "crores"}
+)
 _FOLD_PREFIXES = frozenset((*_CARDINALS[2:], *_SCALES))
 # "quarter" counts only joined to another number token ("a quarter", "three
 # quarters"): alone it is a reporting period ("this quarter").
@@ -270,8 +273,47 @@ def _protected_spans(text: str, protected: frozenset[str]) -> list[tuple[int, in
         pattern = (
             rf"(?<![^\W_])(?<![^\W_][{cont}]){re.escape(token)}" rf"(?![^\W_])(?![{cont}][^\W_])"
         )
-        spans.extend((m.start(), m.end()) for m in re.finditer(pattern, text))
+        spans.extend(
+            (m.start(), m.end())
+            for m in re.finditer(pattern, text)
+            if not _edge_touched(text, m.start(), m.end())
+        )
     return spans
+
+
+_NEXT_WORD = re.compile(r"[\s" + re.escape(_DASHES) + r"]+(\w+)")
+
+
+def _edge_touched(text: str, start: int, end: int) -> bool:
+    """Whether a protected match has a DIGIT at an edge that a number form
+    touches (#1088 round 8). Masking it would hide a number the text states:
+    "Windows 10%" for protected "Windows 10", "$40 hosts" for "40 hosts".
+    After a trailing digit: a percent mark (across any whitespace), or a
+    magnitude, unit or scale word. Before a leading digit: a currency mark or
+    a sign. Such a match is NOT masked, so the number is checked."""
+    if _is_numeric_char(text[end - 1]):
+        rest = text[end:]
+        if re.match(rf"\s*[{_PERCENT}]", rest):
+            return True
+        m = _NEXT_WORD.match(rest)
+        if m and _is_magnitude_like(m.group(1)):
+            return True
+    if _is_numeric_char(text[start]) and start > 0:
+        before = text[start - 1]
+        if before in _CURRENCY or before in _DASHES:
+            return True
+    return False
+
+
+def _is_magnitude_like(word: str) -> bool:
+    low = word.casefold()
+    return (
+        word in _MAGNITUDES
+        or low in _MAGNITUDES_ANY_CASE
+        or low in _SCALE_WORDS
+        or low in ("percent", "pct")
+        or _is_unit_shape(word)
+    )
 
 
 def _exempt_spans(text: str) -> list[tuple[int, int]]:
@@ -558,9 +600,13 @@ def _walk(
         return
     if isinstance(value, Mapping):
         for k, v in value.items():
-            if "." in str(k):
-                # A dot would be ambiguous with a dotted fact or protected path.
-                raise ValueError(f"numbers: payload key {str(k)!r} contains '.'")
+            if "." in str(k) and _ambiguous(str(k), fields["declared"]):
+                # A dotted key is allowed (CSF and ATT&CK codes are natural
+                # keys) unless it equals a declared dotted path or a prefix of
+                # one, where it could be read either way (#1088 round 8).
+                raise ValueError(
+                    f"numbers: payload key {str(k)!r} is ambiguous with a declared dotted path"
+                )
             child = (*path, str(k))
             out["paths"].add(child)
             _walk(v, str(k), child, fields, out, in_fact or child in fields["facts"])
@@ -602,6 +648,10 @@ def _walk(
         raise TypeError(f"numbers: cannot read a {type(value).__name__} at {key!r}")
 
 
+def _ambiguous(key: str, declared: frozenset[str]) -> bool:
+    return any(d == key or d.startswith(key + ".") for d in declared)
+
+
 def _field_paths(names: Iterable[str], what: str) -> frozenset[tuple[str, ...]]:
     """Each name as a path from the top level: "summary" -> ("summary",),
     "service.summary" -> ("service", "summary")."""
@@ -629,8 +679,9 @@ def allowed_numbers(
     Strings at a path in `protected_fields` (matched the same way) may be
     written as given and license nothing else; a protected path inside a fact
     takes precedence over the fact for that one value. Anything outside every
-    fact licenses nothing. A path that matches nothing, a payload key
-    containing ".", or a non-str entry in either list raises."""
+    fact licenses nothing. A path that matches nothing, a dotted payload key
+    that is ambiguous with a declared dotted path, or a non-str entry in either
+    list raises."""
     if not isinstance(payload, Mapping):
         raise TypeError(f"numbers: payload must be a mapping, not {type(payload).__name__}")
     fields = {
@@ -638,6 +689,7 @@ def allowed_numbers(
         "facts": _field_paths(fact_fields, "fact_fields"),
         "protected": _field_paths(protected_fields, "protected_fields"),
     }
+    fields["declared"] = frozenset(".".join(p) for p in fields["facts"] | fields["protected"])
     out: dict[str, Any] = {
         "values": set(),
         "protected": set(),

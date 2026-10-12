@@ -726,15 +726,68 @@ def test_a_protected_name_present_only_below_the_top_level_is_refused() -> None:
         allowed_numbers({"findings": [{"name": "x"}]}, fact_fields=(), protected_fields=("name",))
 
 
-def test_a_payload_key_containing_a_dot_is_refused() -> None:
-    with pytest.raises(ValueError, match="service.id"):
-        allowed_numbers({"service.id": 5}, fact_fields=(), protected_fields=())
+# Round 8, change 4: a dotted key is refused only when it is AMBIGUOUS, that is
+# when it equals a declared dotted path or a prefix of one. Natural dotted keys
+# (CSF and ATT&CK codes) are allowed and cannot be named by a dotted path.
+
+
+@pytest.mark.parametrize(
+    "payload,facts,protected",
+    [
+        # Equal to a declared path, at the top level and at depth.
+        ({"service.id": 5, "service": {"id": 5}}, ("service.id",), ()),
+        ({"outer": {"service.id": 5}, "service": {"id": 5}}, ("service.id",), ()),
+        ({"rows": [{"service.id": 5}], "service": {"id": 5}}, ("service.id",), ()),
+        ({"service": {"id": 5, "x": {"service.id": 1}}}, ("service.id",), ()),
+        ({"code": {"service.id": "T1"}, "service": {"id": "T2"}}, ("code",), ("service.id",)),
+        # A prefix of a declared dotted path.
+        ({"a.b": 1, "a": {"b": {"c": 2}}}, ("a.b.c",), ()),
+    ],
+)
+def test_an_ambiguous_dotted_key_is_refused(
+    payload: dict, facts: tuple[str, ...], protected: tuple[str, ...]
+) -> None:
+    with pytest.raises(ValueError, match="ambiguous"):
+        allowed_numbers(payload, fact_fields=facts, protected_fields=protected)
+
+
+def test_a_natural_dotted_key_is_allowed() -> None:
+    payload = {"scores": {"PR.PS-01": 3, "T1003.002": 4}}
+    allowed = allowed_numbers(payload, fact_fields=("scores",), protected_fields=())
+    assert unallowed_numbers("Scores 3 and 4.", allowed) == ()
 
 
 @pytest.mark.parametrize(
     "facts,protected",
-    [((1,), ()), ((), (None,)), (("ok", b"bytes"), ())],
+    # Each entry type would NOT raise TypeError on its own (`.split` is an
+    # AttributeError for these), so only the guard can make the row pass.
+    [((1,), ()), ((), (None,)), (("ok", ("a", "b")), ()), ((), (object(),))],
 )
 def test_a_field_list_entry_that_is_not_a_str_is_refused(facts: tuple, protected: tuple) -> None:
     with pytest.raises(TypeError):
         allowed_numbers({"ok": 1}, fact_fields=facts, protected_fields=protected)
+
+
+# --- Review round 8 of #1088: a protected value's digit edge ---------------------
+
+
+@pytest.mark.parametrize(
+    "text,payload,refused",
+    [
+        ("Windows 10 is deployed.", {"product": "Windows 10"}, []),
+        ("Windows 10% of endpoints run it.", {"product": "Windows 10"}, ["10%"]),
+        ("ISO 27001 applies.", {"std": "ISO 27001"}, []),
+        ("ISO 27001 % applies.", {"std": "ISO 27001"}, ["27001 %"]),
+        ("We saw 40 hosts.", {"tag": "40 hosts"}, []),
+        ("We saw $40 hosts.", {"tag": "40 hosts"}, ["$40"]),
+        ("We saw -40 hosts.", {"tag": "40 hosts"}, ["-40"]),
+        ("Windows 10 bn installs.", {"product": "Windows 10"}, ["10 bn"]),
+        ("Windows 10 million installs.", {"product": "Windows 10"}, ["10 million"]),
+    ],
+)
+def test_a_protected_value_with_a_touched_digit_edge_is_not_masked(
+    text: str, payload: dict, refused: list[str]
+) -> None:
+    protected = tuple(payload)
+    allowed = allowed_numbers(payload, fact_fields=(), protected_fields=protected)
+    assert [h.raw for h in unallowed_numbers(text, allowed)] == refused
