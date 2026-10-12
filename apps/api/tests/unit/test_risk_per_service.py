@@ -65,11 +65,11 @@ def _per_finding(seen: list[dict]):
         seen.append(payload)
         entries = [
             {
-                "title": f"Risk for {f['source_id']}",
+                "title": f"Risk for {sid}",
                 "description": "d",
                 "axis": "detection",
                 "source": f["source"],
-                "source_id": f["source_id"],
+                "source_id": sid,
                 "linked_techniques": [],
                 "linked_controls": [],
                 "likelihood": "high",
@@ -77,7 +77,7 @@ def _per_finding(seen: list[dict]):
                 "recommended_action": "remediate",
                 "rationale": "r",
             }
-            for f in payload.get("findings", [])
+            for sid, f in payload.get("findings", {}).items()
         ]
         return LLMResponse(json.dumps({"entries": entries}))
 
@@ -182,12 +182,10 @@ def test_no_batch_mixes_two_zero_trust_services(app_client) -> None:  # noqa: F8
     assert len(seen) >= 2, len(seen)
     for payload in seen:
         frameworks = {
-            f["source_id"].split(".")[0]
-            for f in payload["findings"]
-            if f["source_id"].startswith(("CISA.", "DOD."))
+            sid.split(".")[0] for sid in payload["findings"] if sid.startswith(("CISA.", "DOD."))
         }
         assert len(frameworks) <= 1, payload["findings"]
-    zt_batches = [p for p in seen if any(f["source_id"].startswith("DOD.") for f in p["findings"])]
+    zt_batches = [p for p in seen if any(sid.startswith("DOD.") for sid in p["findings"])]
     assert zt_batches, "no batch carried the DoD finding"
 
 
@@ -378,9 +376,9 @@ def test_a_single_service_client_sends_what_it_always_sent(app_client) -> None: 
     assert _generate(c, provider, bearer, cid, seen).status_code == 201
     assert len(seen) == 1, len(seen)
     findings = seen[0]["findings"]
-    assert {f["source_id"] for f in findings} >= {s.technique, s.capability}, findings
-    for f in findings:
-        assert set(f) == {"source", "source_id", "kind", "label"}, f
+    assert set(findings) >= {s.technique, s.capability}, findings
+    for f in findings.values():
+        assert set(f) == {"source", "kind", "label", "evidence"}, f
 
 
 def test_a_second_service_not_started_is_listed_on_the_draft(app_client) -> None:  # noqa: F811

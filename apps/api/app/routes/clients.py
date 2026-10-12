@@ -17,7 +17,7 @@ from typing import Annotated, NamedTuple
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, undefer_group
 
 from app.attack.after import sentences as attack_after_sentences
 from app.attack.analytics import compute as attack_compute
@@ -74,7 +74,7 @@ from app.models.capability import (
 from app.models.client import Client
 from app.models.csf_assessment import CsfAnswer, CsfAssessment, CsfAssessmentStatus
 from app.models.deliverable import Deliverable
-from app.models.risk_register import RiskEntry, RiskRegister
+from app.models.risk_register import OTHER_AXES_GROUP, RiskEntry, RiskRegister
 from app.models.service import Service, ServiceKind
 from app.models.user import User, UserRole
 from app.models.zt_assessment import (
@@ -84,6 +84,8 @@ from app.models.zt_assessment import (
     ZtFramework,
 )
 from app.risk.baseline import targets_used
+from app.risk.csf_source import csf_no_shared_row as risk_csf_no_shared_row
+from app.risk.csf_source import csf_source_note as risk_csf_source_note
 from app.risk.engine import (
     Impact,
     Likelihood,
@@ -1961,7 +1963,10 @@ def risk_dashboard(
 
     entries = (
         db.execute(
-            select(RiskEntry).where(RiskEntry.register_id == reg.id).order_by(RiskEntry.created_at)
+            select(RiskEntry)
+            .where(RiskEntry.register_id == reg.id)
+            .order_by(RiskEntry.created_at)
+            .options(undefer_group(OTHER_AXES_GROUP))
         )
         .scalars()
         .all()
@@ -2068,6 +2073,7 @@ def risk_dashboard(
             RiskDashboardEntry(
                 title=e.title,
                 axis=e.axis,
+                other_axes=e.other_axes,
                 likelihood=e.likelihood,
                 impact=e.impact,
                 tier=e.tier,
@@ -2077,6 +2083,9 @@ def risk_dashboard(
         ],
         # #915: the same reader and sentence as the register and its files.
         zt_capped_target_note=risk_capped_target_sentence(risk_capped_target_codes(reg.provenance)),
+        csf_source_note=risk_csf_source_note(reg.provenance),
+        # #736 6104067136: the files' reader, so the screen and the files agree.
+        csf_no_shared_row=risk_csf_no_shared_row(reg.provenance),
     )
 
 

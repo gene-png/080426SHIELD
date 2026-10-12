@@ -1,15 +1,75 @@
 # Gene — in-flight status
 
-_2026-10-09: the #806 Zero Trust prompt is draft PR #981 on
-`track4/806-zt-prompt`, merged with main at aac434ef, so #985 is in. It ships
-your approved text (sha256-pinned), sends `capability_details` with the DoD
-activities, and stops applying the AI's target, so the intake target governs
-new runs. `capability_details` now goes through #985's catalog guard: sent
-unredacted, rebuilt from the catalog and compared byte for byte, refused
-before any send if it differs. The test edits and the Step 1 copy are as
-approved on #736 (comment 6072976838). The DoD output-cap probe is authorized
-but still waits on a provider key in this environment, and #981 merges only
-after it. It comes back to you, not self-merged: conditions 5 and 6._
+_2026-10-12 (trackB): TD-2's intake banner is a draft PR on `trackB/1058-intake-banner`, for #1058._ Step 4 of intake now shows your suite-listing banner when Tech Debt or ATT&CK is selected (Tech Debt text when both are). It uses your drafts word for word, as you approved them in 6115464421. The Step 5 reminder line follows after IN-2 merges.
+
+_2026-10-11 (track6): the Atlas CSF Playbook seed is a draft PR on
+`track6/atlas-playbook-seed`, for #474._ The demo's Atlas client now has CSF
+Playbook rows (v1 and v2), so a Risk Register regenerated on Atlas shows CSF
+risks from the Playbook, with the source note: PR.AA-01, DE.AE-02 and ID.AM-01,
+each "level 1 of target 2". The published v1 register is unchanged, as the
+advisor ruled. Only the demo seed changes; it comes back to you (condition 5).
+
+_2026-10-11 (track6): #474 E is a draft PR on `track6/474-e-risk-evidence`,
+on top of D' (merged as dd6a788a) and #1000 (merged as b7a44039)._
+
+**What E does:** the Risk Register's AI is now told each finding's evidence,
+and its prompt is the approved text (v4), pinned. For ATT&CK it gets the
+status, which of Detect, Prevent and Respond are in place and with which
+confirmed tools, and the rationale and notes; for CSF, the Playbook levels per
+tier, whether evidence capped them, and the Playbook notes; for Zero Trust, the
+stage, the target it was compared against, and the notes. An ATT&CK assessment
+approved before statuses were computed sends only its stored status, so the AI
+is never shown function states its screens do not show. Entries can name other
+axes they affect (a new column on both screens and in the files); when the AI
+sent axes that could not be read, only the consultant's register says so,
+because the kept axes are accurate and a parse failure is not a client fact.
+One open question is with the advisor for you, #1031: unscored seed tiers pull
+a scored tier's Enterprise level down, and E's evidence now shows that to the
+AI as well. It needs migration 0066 and comes back to you (conditions 4, 5
+and 6).
+
+_2026-10-09 (track5): the #806 CSF prompt is built on `track5/806-csf-prompt`;
+the PR is not yet open. It ships your approved CSF text (#806 comment
+5982122270, sha256-pinned) as `prompt_version` "v2", sends each
+subcategory's NIST outcome text through #985's catalog guard, a batch's own
+codes only, and rewrites the offline fixture from the prompt. The test edits
+are A1 to A5 as approved on #736 (comment 6075712436), s7 included. The batch
+size stays at 10 until the authorized probe runs, which waits on a provider
+key. No live call was made. It merged as PR #1000 (squash b7a44039, 2026-10-11). Your ruling 2 is built
+on it (2026-10-10): a live run leaves a row with no notes as it was, and
+says so on the Run-AI panel, beside the row in the Enterprise table, and in
+every Playbook file, from the last live run. Offline runs are unchanged. Two
+small edits to existing live tests (they now give their row notes) were
+approved by the advisor (#736 6103383277), and the copy now says "live"
+(#736 6104067136). Main, with D', is merged in (2026-10-11). It comes back to you, not self-merged: conditions 5 and
+6._
+
+_2026-10-10 (track6): #474 D' (your PR D) merged as PR #1030 (squash
+dd6a788a), from `track6/474-d-playbook-risk`._
+
+**What it does:** the Risk Register's CSF risks now come from the Playbook
+score you chose (#736 5984218862), not the questionnaire tier. A subcategory is
+a risk when its Playbook level is below its Playbook target, and the register
+says on every screen and file, only when it has CSF risks: "CSF risks in this
+register come from Kentro's evidence-based assessment. They can differ from
+your self-assessment on the CSF dashboard." The client's CSF dashboard is
+unchanged. Per your ruling (a) (#736 6101751588), made per tier row by R10
+(#736 6102665946), a subcategory can be a CSF risk only when one of its tier
+rows is both scored and targeted, and the register says CSF was measured only
+when at least one subcategory has such a row. Otherwise (no targets, only
+targets, or a score and a target on different rows) it says CSF was not
+measured, with no CSF risks and no source note, instead of implying "no gaps";
+for scores and targets on different rows the files and both dashboards say
+"no CSF Playbook row has both a score and a target" (R11, #736 6103383277;
+the dashboards by #736 6104067136). When it measured, the
+other targeted subcategories are counted on the Inputs panel and in the files:
+"{n} targeted subcategories have no row with both a score and a target, and
+raise no finding." If someone edits the
+Playbook after the register is generated, it must be regenerated before it can
+be published. Two tests about the old CSF engagement-tier rule are deleted,
+with the advisor's approval, because your decision retired that rule. The Atlas demo
+gets Playbook rows in a small PR right after this one. When the PR opens it
+comes back to you (conditions 5 and 6).
 
 _2026-10-09 (track4): #889 PR 1 is PR #1021 (a draft), for #889. When a tool leaves a client's security tool list after their ATT&CK report is approved, the client's dashboard says so and marks the tool, the documents say so as of finalize, and the home card says its ATT&CK total may be understated when a technique counted as covered relies on such a tool. When nothing could be checked, the dashboard says so: one sentence when the client has no list or only discarded ones, another when its lists in force have no security tools. The check reads, per Tech Debt service, its newest approved or released list version and ignores its drafts, so an open draft changes nothing the client sees; a service with only drafts uses its newest draft, so the check still works before anyone approves the list (R6b, #736 6094994432). "Newest" is the highest version number. A version with no security tools is skipped for the one before it, and the admin workspace, the deliverable and the client dashboard name the version used (R4, wording approved in #736 6093188709 and 6093549176; the admin line for a draft, C8a, applies only to a service with only drafts). So ATT&CK approve refuses a tool the version in force dropped, while Run AI can still offer it from an older version or a draft (#1012). Two declared test edits: the golden `dashboard.json` and `test_attack_planned_retirement.py` (approved in #736 6092259096). **One thing needs you:** the golden `dashboard.json` gains the "not checked" sentence; the advisor approved it (#736 6090360421) and your ratification is pending, as for #851's. Filed from review: #1005, #1010, #1011, #1019 and #1020. The Risk half waits for D′. It comes back to you: conditions 5 and 6._
 

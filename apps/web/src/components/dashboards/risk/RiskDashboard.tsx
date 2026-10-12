@@ -20,6 +20,7 @@ import {
   type RiskEntry,
 } from "@/lib/dashboards/risk";
 import { targetSentences } from "@/lib/risk/baseline";
+import { OTHER_AXES_HEADER, otherAxesCell } from "@/lib/risk/otherAxes";
 
 import type { JSX } from "react";
 
@@ -300,7 +301,11 @@ export function RiskDashboard({
         style={{ color: C.muted }}
         data-testid="risk-targets-used"
       >
-        {targetSentences(data.targets, data.targets_recorded).map((line) => (
+        {targetSentences(
+          data.targets,
+          data.targets_recorded,
+          data.csf_no_shared_row,
+        ).map((line) => (
           <p key={line}>{line}</p>
         ))}
       </div>
@@ -314,6 +319,17 @@ export function RiskDashboard({
           data-testid="risk-zt-capped-target"
         >
           {data.zt_capped_target_note}
+        </p>
+      ) : null}
+      {/* #474 D' (Gene, #736 5984256202): where the register's CSF risks come
+          from, in the API's own sentence (`risk/csf_source.py`), rendered as
+          given. Null when the register has no CSF findings. */}
+      {data.csf_source_note ? (
+        <p
+          className="mb-4 rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
+          data-testid="risk-csf-source"
+        >
+          {data.csf_source_note}
         </p>
       ) : null}
       <KpiRow>
@@ -398,6 +414,7 @@ export function RiskDashboard({
               <tr>
                 <th style={th()}>Risk</th>
                 <th style={th()}>Axis</th>
+                <th style={th()}>{OTHER_AXES_HEADER}</th>
                 <th style={th()}>Likelihood</th>
                 <th style={th()}>Impact</th>
                 <th style={th()}>Tier</th>
@@ -411,6 +428,7 @@ export function RiskDashboard({
                     {e.title}
                   </td>
                   <td style={cell(true)}>{e.axis ? titleCase(e.axis) : "—"}</td>
+                  <td style={cell(true)}>{otherAxesCell(e.other_axes)}</td>
                   <td style={cell(true)}>
                     {e.likelihood ? titleCase(e.likelihood) : "Not rated"}
                   </td>
@@ -430,7 +448,7 @@ export function RiskDashboard({
               {data.entries.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={6}
+                    colSpan={7}
                     style={{ padding: 16, color: C.muted, textAlign: "center" }}
                   >
                     No risk entries.

@@ -13,7 +13,8 @@ import { SERVICE_LABELS, ZT_FRAMEWORK_NAMES } from "./labels";
 export interface RiskTargetUsed {
   kind: string;
   framework: string | null;
-  target: number;
+  /** #474 D': null for a CSF record measured against the Playbook. */
+  target: number | null;
   source: string;
   origin: string;
 }
@@ -40,10 +41,52 @@ function targetLabel(t: RiskTargetUsed, nameFramework: boolean): string {
 export const TARGETS_NOT_RECORDED =
   "The targets these findings were measured against were not recorded for this register.";
 
+/**
+ * #474 D' (Gene, #736 5984218862): CSF findings are measured against each
+ * subcategory's Playbook target, so the record names no single target. The
+ * recorded source token says which of the Playbook's three states it was in
+ * (advisor, #736 6087786886, item 4); for the two that measure nothing the CSF
+ * line is replaced. Approved verbatim: #736 6087027524 (Q1) and 6087786886
+ * (item 4). `_PLAYBOOK_LINES` in the export prints the same words. Where the
+ * Playbook had scores and targets that never shared a row (R11, #736
+ * 6103383277), the files and both dashboards print `NO_SHARED_ROW_LINE`
+ * instead of the no-scores line (#736 6104067136). `csf_no_shared_row` says
+ * which; it rides on both responses, the consultant's register response
+ * (`RiskRegisterResponse`, typed here as `RiskRegister`) and the client's
+ * Risk dashboard response (`RiskDashboardResponse`, typed here as
+ * `RiskDashboardData`), each read by the files' own reader.
+ */
+const PLAYBOOK_LINES: ReadonlyMap<string, (label: string) => string> = new Map([
+  [
+    "playbook",
+    (label: string) =>
+      `${label} findings are measured against each subcategory's target level in the CSF Playbook.`,
+  ],
+  [
+    "playbook_no_targets",
+    (label: string) =>
+      `${label} was not measured for this register: the CSF Playbook has no target levels set.`,
+  ],
+  [
+    "playbook_no_scores",
+    (label: string) =>
+      `${label} was not measured for this register: the CSF Playbook has no scores.`,
+  ],
+]);
+
+/** R11 (#736 6103383277), verbatim: `_PLAYBOOK_NO_SHARED_ROW_LINE` in the export. */
+const NO_SHARED_ROW_LINE = (label: string) =>
+  `${label} was not measured for this register: no CSF Playbook row has both a score and a target.`;
+
 export function targetSentence(
   t: RiskTargetUsed,
   nameFramework: boolean,
+  csfNoSharedRow: boolean = false,
 ): string {
+  if (t.source === "playbook_no_scores" && csfNoSharedRow)
+    return NO_SHARED_ROW_LINE(targetLabel(t, nameFramework));
+  const playbook = PLAYBOOK_LINES.get(t.source);
+  if (playbook) return playbook(targetLabel(t, nameFramework));
   const why =
     t.source === "client"
       ? "the engagement target when this register was generated"
@@ -63,9 +106,12 @@ export function targetSentence(
 export function targetSentences(
   targets: RiskTargetUsed[] | undefined,
   recorded: boolean | undefined,
+  csfNoSharedRow: boolean | undefined = false,
 ): string[] {
   if (recorded !== true) return [TARGETS_NOT_RECORDED];
   const rows = targets ?? [];
   const nameFramework = rows.filter((t) => t.kind === "zt").length > 1;
-  return rows.map((t) => targetSentence(t, nameFramework));
+  return rows.map((t) =>
+    targetSentence(t, nameFramework, csfNoSharedRow === true),
+  );
 }

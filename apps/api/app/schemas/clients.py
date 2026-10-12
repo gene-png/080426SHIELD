@@ -690,6 +690,12 @@ class RiskMatrixCell(BaseModel):
 class RiskDashboardEntry(BaseModel):
     title: str
     axis: str | None
+    # #806 G1 option 3, rendered on the client dashboard (#736 6094620397,
+    # Risk E item 4). None is "not recorded"; `[]` is "no other axis".
+    # No `other_axes_dropped`, deliberately (ruling #736 6105137014): the kept
+    # axes are accurate as far as they go, and a parse failure is not a client
+    # fact. It is on the consultant's `RiskEntryResponse` only.
+    other_axes: list[str] | None
     likelihood: str | None
     impact: str | None
     tier: str | None
@@ -760,6 +766,12 @@ class RiskDashboardResponse(BaseModel):
     #: consultant's register and the three files use. None when nothing was
     #: lowered or the register predates the record.
     zt_capped_target_note: str | None = None
+    csf_source_note: str | None = None
+    #: Ruling #736 6104067136 (see #1033): which not-measured line the screen
+    #: prints for a `playbook_no_scores` CSF target, read by the files' reader
+    #: (`risk/csf_source.py::csf_no_shared_row`). False when the register
+    #: predates R11, so it keeps the original no-scores line.
+    csf_no_shared_row: bool = False
 
 
 class ValueSummaryResponse(BaseModel):

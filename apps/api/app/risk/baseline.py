@@ -19,7 +19,12 @@ The dict key is the source's scope key, an id only: it is NEVER parsed and
 never rendered. What a line names comes from `kind` and `framework`.
 
 `source` is the resolver's (`resolve_target_tier` / `resolve_target_stage`):
-whether the client's choice was used, absent, or unusable. `origin` is WHEN
+whether the client's choice was used, absent, or unusable. Since #474 D' a CSF
+entry is `{"target": None, "source": "playbook"}`: its findings are measured
+against each subcategory's Playbook `target_level`, so it names no single
+target. Two more sources say the Playbook could measure nothing:
+`playbook_no_targets` and `playbook_no_scores`. Only CSF may carry the three,
+and only with no target. `origin` is WHEN
 the target was read; `live_at_generate` is the only value any writer produces
 today.
 
@@ -46,6 +51,21 @@ from app.models.zt_assessment import ZtFramework
 
 _log = get_logger(__name__)
 
+#: #474 D': a CSF record measured against each subcategory's Playbook
+#: `target_level`, so it names no single target.
+PLAYBOOK_SOURCE = "playbook"
+
+#: #474 D' (advisor, #736 6087786886, item 4): the three Playbook states, each
+#: recorded as the CSF target's `source` token. `measured` keeps the token the
+#: Playbook baseline shipped with; the other two say the Playbook could not
+#: measure anything, and every surface states which.
+PLAYBOOK_SOURCE_BY_STATE = {
+    "measured": PLAYBOOK_SOURCE,
+    "no_targets": "playbook_no_targets",
+    "no_scores": "playbook_no_scores",
+}
+PLAYBOOK_SOURCES = frozenset(PLAYBOOK_SOURCE_BY_STATE.values())
+
 #: The origins a reader can render. Anything else is unreadable.
 ORIGINS = ("live_at_generate",)
 
@@ -60,7 +80,7 @@ _FRAMEWORKS: dict[str, frozenset[str | None]] = {
 class TargetUsed:
     kind: str
     framework: str | None
-    target: int
+    target: int | None
     source: str
     origin: str
 
@@ -75,13 +95,22 @@ def _row(key: object, entry: object) -> TargetUsed | None:
     if not (
         isinstance(key, str)
         and isinstance(entry, dict)
-        and _plain_int(entry.get("target"))
+        and (
+            _plain_int(entry.get("target"))
+            or (entry.get("target") is None and entry.get("source") in PLAYBOOK_SOURCES)
+        )
         and isinstance(entry.get("source"), str)
         and entry.get("origin") in ORIGINS
     ):
         return None
     if "kind" in entry:
         kind, framework = entry["kind"], entry.get("framework", "absent")
+        # #474 D': only CSF measures per subcategory (the Playbook), and only
+        # it may carry no single target.
+        if (entry.get("source") in PLAYBOOK_SOURCES) != (
+            kind == "csf" and entry.get("target") is None
+        ):
+            return None
         if not isinstance(kind, str) or not (framework is None or isinstance(framework, str)):
             return None
         if framework not in _FRAMEWORKS.get(kind, frozenset()):

@@ -235,6 +235,12 @@ export interface EnterpriseSubcategory {
   target_level: number | null;
   gap: boolean;
   priority: string | null;
+  /**
+   * #1000: the subcategory's interview answer has no notes, so a LIVE run does
+   * not assess its rows. From current notes, at read time. Read as
+   * `=== true`: a response without it says nothing.
+   */
+  no_notes?: boolean;
 }
 
 export interface EnterpriseProfile {
@@ -281,7 +287,8 @@ export interface CsfDroppedSuggestion {
     | "locked"
     | "protected"
     | "edited"
-    | "not_in_batch";
+    | "not_in_batch"
+    | "no_notes";
   /** "tier|subcategory_code" as the model wrote it; null if it wrote neither. */
   key: string | null;
   field: string | null;
@@ -316,6 +323,15 @@ export interface CsfRunAiResponse {
    */
   omitted_count?: number;
   omitted_rows?: { tier: string; subcategory_code: string }[];
+  /**
+   * #1000: rows a LIVE run did not assess because their answer had no notes.
+   * null on an offline run and absent on a result stored before #1000: "not
+   * counted", never zero. Read the VALUE: shown only when it is a number.
+   */
+  no_notes_count?: number | null;
+  /** #1000: what the client Playbook files state, in subcategories. */
+  no_notes_subcategories?: number | null;
+  no_notes_subcategories_total?: number | null;
 }
 
 export interface ExportedArtifact {

@@ -58,6 +58,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 from app.attack.coverage import UNJUDGED as ATTACK_UNJUDGED
+from app.csf.retired import has_recorded_score
 from app.models.attack_assessment import AttackCoverage
 from app.models.csf_assessment import CsfAnswer
 from app.models.zt_assessment import ZtAnswer
@@ -162,4 +163,24 @@ def scope_for(model: type, rows: Sequence[object] | Iterable[object]) -> LinkSco
     return LinkScope(codes=frozenset(codes), total=total)
 
 
-__all__ = ["LinkScope", "SCORE_COLUMNS", "scope_for"]
+def csf_playbook_scope(rows: Iterable[object]) -> LinkScope:
+    """#474 D': the CSF scope once Risk reads the Playbook. A Working Profile
+    row has no unscored value (every dimension defaults to 0, a real score), so
+    "scored" is "something was recorded on it": an in-scope row for which
+    `csf/retired.py::has_recorded_score` is true -- CALLED, never restated
+    (advisor, #736 6087786886, item 1). It covers rows the CSF Run-AI wrote
+    (which stamps no `answer_source`) and target-only rows, which the first
+    rule, keyed on `answer_source`, left uncitable. Per SUBCATEGORY, since a
+    subcategory has one row per system tier. `total` is the distinct
+    subcategories the profile holds."""
+    codes: set[str] = set()
+    present: set[str] = set()
+    for row in rows:
+        code = row.subcategory_code
+        present.add(code)
+        if row.in_scope and has_recorded_score(row):
+            codes.add(code)
+    return LinkScope(codes=frozenset(codes), total=len(present))
+
+
+__all__ = ["LinkScope", "SCORE_COLUMNS", "csf_playbook_scope", "scope_for"]

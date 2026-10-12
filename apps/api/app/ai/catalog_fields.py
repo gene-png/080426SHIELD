@@ -31,6 +31,17 @@ guard and the payload cannot describe two different things.
 
 Every egress and preview path redacts through `redact_ai_payload`, so the
 preview shows exactly what a run sends.
+
+KEYED fields (#997's `findings` half, the advisor's ruling 6 on #736,
+6087027524). Some fields are an object whose KEYS are catalog codes and whose
+VALUES are client data: Risk's `findings` is keyed by each finding's
+`source_id`. `redact_payload` never rewrites a dict key, so the key would
+egress verbatim with nothing checking it was a code at all. Such a field is
+registered with `register_catalog_keys`: its values are redacted like every
+other client value, and each key must rebuild, byte for byte, from the catalog
+(before redaction and in the payload that egresses), or nothing is sent. A
+field is one or the other, never both: an exempt field's value is not redacted,
+and a keyed field's must be.
 """
 
 from __future__ import annotations
@@ -62,11 +73,31 @@ class CatalogFieldMismatch(RuntimeError):
         self.field = field
 
 
+#: A key as the catalog spells it; raises (KeyError, say) for a non-code.
+KeyBuilder = Callable[[str], str]
+
+#: Field name -> the builder each of its keys must rebuild through. Register
+#: through `register_catalog_keys`. Keyed by the payload key alone, as above.
+CATALOG_KEYS: dict[str, KeyBuilder] = {}
+
+
 def register_catalog_field(field: str, builder: CatalogBuilder) -> None:
     existing = CATALOG_FIELDS.get(field)
     if existing is not None and existing is not builder:
         raise ValueError(f"catalog field {field!r} is already registered with another builder")
+    if field in CATALOG_KEYS:
+        raise ValueError(f"catalog field {field!r} is already registered for its keys")
     CATALOG_FIELDS[field] = builder
+
+
+def register_catalog_keys(field: str, builder: KeyBuilder) -> None:
+    """Guard `field`'s keys as catalog codes while its values stay redacted."""
+    existing = CATALOG_KEYS.get(field)
+    if existing is not None and existing is not builder:
+        raise ValueError(f"catalog keys {field!r} are already registered with another builder")
+    if field in CATALOG_FIELDS:
+        raise ValueError(f"catalog field {field!r} is already registered as exempt")
+    CATALOG_KEYS[field] = builder
 
 
 def _as_bytes(value: Any) -> str:
@@ -137,8 +168,11 @@ def redact_ai_payload(
     unredacted and guarded. Returns the payload to send, in the input's key
     order, and the removal counts, which no longer count catalog text."""
     exempt = [k for k in payload if k in CATALOG_FIELDS]
+    keyed = [k for k in payload if k in CATALOG_KEYS]
     for field in exempt:
         _check(field, payload, payload[field], "before redaction")
+    for field in keyed:
+        _check_keys(field, payload[field], "before redaction")
     rest = {k: v for k, v in payload.items() if k not in exempt}
     cleaned, counts = redact_payload(
         rest, mode=mode, client_org_name=client_org_name, name_hints=name_hints
@@ -146,6 +180,34 @@ def redact_ai_payload(
     out = {k: (payload[k] if k in exempt else cleaned[k]) for k in payload}
     for field in exempt:
         _check(field, payload, out[field], "after redaction")
+    for field in keyed:
+        _check_keys(field, out[field], "after redaction")
     if exempt:
         _log.info("ai_payload_catalog_fields_sent_verbatim", fields=exempt)
+    if keyed:
+        _log.info("ai_payload_catalog_keys_checked", fields=keyed)
     return out, counts
+
+
+def _check_keys(field: str, value: Any, stage: str) -> None:
+    """Every key of `value` rebuilds from the catalog, byte for byte.
+
+    The refusal names the key's POSITION, never its text, for `_where`'s
+    reason: a key that is not a code may be client text."""
+    if not isinstance(value, dict):
+        raise CatalogFieldMismatch(
+            field,
+            f"payload field {field!r} is not an object {stage} "
+            f"(a {type(value).__name__}); nothing was sent",
+        )
+    builder = CATALOG_KEYS[field]
+    for i, key in enumerate(value):
+        try:
+            same = isinstance(key, str) and builder(key) == key
+        except Exception:  # noqa: BLE001 - refused below, without the exception's text
+            same = False
+        if not same:
+            raise CatalogFieldMismatch(
+                field,
+                f"payload field {field!r} key {i} is not a catalog code {stage}; nothing was sent",
+            )
