@@ -216,6 +216,14 @@ def _archived_live_kinds(db: Session, client_id: uuid.UUID) -> set[ServiceKind]:
                 model.client_id == client_id,
                 model.status != "discarded",
                 Service.kind == kind,
+                # Cannot fire today for a requirement that is unmet: the gate's
+                # `_exists_for_gate` already counts any live assessment under a
+                # non-archived service as meeting it, so every live assessment
+                # this query can see sits under an archived one, and the clause
+                # only states that. Kept as a ratchet: it becomes reachable if
+                # `_exists_for_gate` ever stops counting some live assessments
+                # under an engaged service (a status it skips, say), and D would
+                # then claim an archive that did not happen.
                 Service.status == ServiceStatus.ARCHIVED,
             )
             .limit(1)

@@ -459,3 +459,44 @@ def test_another_clients_services_and_requests_change_nothing(app_client) -> Non
         [("attack", "no_service", None), ("csf_or_zt", "no_service", None)],
         f"{B_ATTACK} {B_CSF_ZT} {CLOSING}",
     )
+
+
+# --- Review of #1100, round 3: two kinds in one arm ----------------------------------------
+
+
+def test_two_engaged_kinds_are_both_named_in_kind_order(app_client) -> None:  # noqa: F811
+    """Engaged NIST CSF and Zero Trust (CISA), neither with an assessment: both
+    remedies, in the requirement's kind order, never just the first."""
+    c, _ = app_client
+    bearer, cid = _admin(c)
+    _live_attack(c, bearer, cid)
+    _service(c, bearer, cid, "zt", "zero_trust_cisa")
+    _service(c, bearer, cid, "csf", "nist_csf")
+    _assert_locked(
+        c,
+        bearer,
+        cid,
+        [
+            ("csf_or_zt", "no_assessment", "nist_csf"),
+            ("csf_or_zt", "no_assessment", "zero_trust_cisa"),
+        ],
+        f"{_a(CSF)} {_a(ZT_CISA)} {CLOSING}",
+    )
+
+
+def test_two_waiting_requests_are_both_named_in_kind_order(app_client) -> None:  # noqa: F811
+    c, _ = app_client
+    bearer, cid = _admin(c)
+    _live_attack(c, bearer, cid)
+    _request(cid, ServiceType.ZERO_TRUST_CISA)
+    _request(cid, ServiceType.NIST_CSF)
+    _assert_locked(
+        c,
+        bearer,
+        cid,
+        [
+            ("csf_or_zt", "unpublished", "nist_csf"),
+            ("csf_or_zt", "unpublished", "zero_trust_cisa"),
+        ],
+        f"{_a_unpublished(CSF)} {_a_unpublished(ZT_CISA)} {CLOSING}",
+    )
