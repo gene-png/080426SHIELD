@@ -117,8 +117,14 @@ test("admin deliverables: an unreleased report is listed and marked not client-v
 
 test("admin deliverables: reachable from the admin sidebar", async ({
   page,
+  request,
 }) => {
   test.slow();
+  // RR-2 (for #1121): with exactly ONE client the page shows that client (the
+  // one-client rule), so "Pick a client first" holds only with two or more.
+  // Mint one here rather than relying on other specs having minted theirs:
+  // with the seeded Atlas tenant that makes at least two.
+  await createTenant(request, await adminApiToken(request));
   await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
 
   // Seed the precondition instead of inheriting it. This spec is about the

@@ -144,9 +144,11 @@ const DELIVERABLES_NO_CLIENT =
 /**
  * RR-2 (for #1121): scoped by the page's own client picker
  * (`ClientScopedPage`), not by the shared active-client cookie. The frame
- * renders the header in every state, and the "pick a client" state that used
- * to live here (the upstream answers a missing X-Client-Id with a 400, so
- * asking without a client could only show "Failed to load deliverables (400).").
+ * renders the header in every state, and it now owns the "pick a client"
+ * state that used to live here. That state matters because the upstream
+ * answers a missing X-Client-Id with a 400, so asking without a client could
+ * only show "Failed to load deliverables (400).": the body below is mounted
+ * only once a client is chosen, so it never asks without one.
  */
 export function DeliverablesTable(): JSX.Element {
   return (
