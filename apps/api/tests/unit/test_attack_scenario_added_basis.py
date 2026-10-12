@@ -258,11 +258,15 @@ def test_a_pre_0043_list_in_force_at_the_base_reads_null(app_parts) -> None:  # 
     assert body["tools_added_since_base"] is None, body["tools_added_since_base"]
 
 
-def test_an_approval_missing_from_the_trail_reads_null(app_parts) -> None:  # noqa: F811
-    """`approved_at` (the LAST approval) a day before the only audited one:
-    an earlier approval is missing from the audit trail, so when the list was
-    first approved is not on record. Null, never a reading of the partial
-    trail."""
+def test_a_self_contradicting_approval_trail_reads_null(app_parts) -> None:  # noqa: F811
+    """A RATCHET on `_SAME_APPROVAL`, not a live case. `approved_at` (the
+    LAST approval) is set a day before the only audited approval, so the
+    trail contradicts itself. No current writer produces this: the approve
+    route stamps `approved_at` and writes the audit row in one transaction,
+    so the state is built here by hand. It would become reachable if a
+    writer audited an approval without stamping `approved_at`, or stamped
+    `approved_at` from elsewhere; the answer must then be null, never a
+    reading of a trail that disagrees with itself."""
     w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
     v1 = _v1_approved_before_the_base(w)
     with w.sessions() as db:
@@ -332,6 +336,42 @@ def test_an_override_after_the_base_adds_a_tool_in_the_drafts_branch(
         )
         db.commit()
     _override(w, _item(w, _v1_id(w), MAIL))
+    body = _what_if(w, {w.cc: [_flags(w.cc, MAIL, d=True)]})
+    assert body["tools_added_since_base"] == 1, body["tools_added_since_base"]
+    marks = {d["technique_code"]: d["credited_added_tool"] for d in body["differences"]}
+    assert marks[w.cc] is True, marks
+
+
+def test_an_override_on_the_basis_row_counts_though_the_offered_row_has_none(
+    app_parts,  # noqa: F811
+) -> None:
+    """(ii) is judged on the row the drafts-branch basis reads, not on the
+    offered row. v1 was a DRAFT at the base with MAIL confirmed NOT security
+    (offered to nobody). After the base, v1's MAIL is overridden into scope,
+    then v2 is re-extracted with MAIL in scope by classification (no
+    override on v2's row) and approved. MAIL is new to the AI."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    with w.sessions() as db:
+        base_at = db.get(AttackAssessment, uuid.UUID(w.assessment_id)).approved_at
+        db.add(
+            CapabilityItem(
+                capability_list_id=_v1_id(w),
+                name=MAIL,
+                security_related=False,
+                security_class_confirmed=True,
+                created_at=base_at - timedelta(days=1),
+            )
+        )
+        db.commit()
+    _override(w, _item(w, _v1_id(w), MAIL))
+    v2 = _re_extracted_v2(w, [EDR, SIEM, SOAR, MAIL])
+    with w.sessions() as db:
+        offered_row = db.get(CapabilityItem, _item(w, v2, MAIL))
+        assert offered_row.security_related is None  # in scope by classification
+        overrides_on_v2 = db.execute(
+            select(AuditEntry).where(AuditEntry.target_id == offered_row.id)
+        ).all()
+    assert overrides_on_v2 == []  # the precondition: no override on the offered row
     body = _what_if(w, {w.cc: [_flags(w.cc, MAIL, d=True)]})
     assert body["tools_added_since_base"] == 1, body["tools_added_since_base"]
     marks = {d["technique_code"]: d["credited_added_tool"] for d in body["differences"]}

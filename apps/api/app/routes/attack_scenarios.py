@@ -270,8 +270,10 @@ def _list_history(
 ) -> list[added_since_base.ListVersion]:
     """#1012 (option A): every Tech Debt list version of the client, with
     what the record says about its past: its approval times and discard
-    time from the audit trail, and its live rows. Two queries for the
-    audit rows and one for the rows, whatever the number of versions."""
+    time from the audit trail, and its live rows, each with the time of its
+    latest security-classification override ((ii); the audit row is the
+    only record of WHEN, `updated_at` moves on every edit). Three queries,
+    whatever the number of versions."""
     lists = list(lists)
     ids = [cl.id for cl in lists]
     approvals: dict[uuid.UUID, list] = {i: [] for i in ids}
@@ -287,15 +289,30 @@ def _list_history(
             approvals[target].append(at)
         else:
             discarded[target] = max(at, discarded.get(target, at))
-    rows: dict[uuid.UUID, list] = {i: [] for i in ids}
-    for item in (
+    items = (
         db.execute(select(CapabilityItem).where(CapabilityItem.capability_list_id.in_(ids)))
         .scalars()
         .all()
-    ):
+    )
+    overridden = dict(
+        db.execute(
+            select(AuditEntry.target_id, func.max(AuditEntry.at))
+            .where(
+                AuditEntry.action == SECURITY_CLASSIFICATION_OVERRIDDEN,
+                AuditEntry.target_type == "capability_item",
+                AuditEntry.target_id.in_([i.id for i in items]),
+            )
+            .group_by(AuditEntry.target_id)
+        ).all()
+    )
+    rows: dict[uuid.UUID, list] = {i: [] for i in ids}
+    for item in items:
         rows[item.capability_list_id].append(
             added_since_base.DraftRow(
-                name=item.name, created_at=item.created_at, in_scope=in_security_scope(item)
+                name=item.name,
+                created_at=item.created_at,
+                in_scope=in_security_scope(item),
+                overridden_at=overridden.get(item.id),
             )
         )
     return [
@@ -1127,21 +1144,6 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
     kept = [p.capability for p in kept_offers]
     indistinct = [c.name for c in kept if spellings.shares_shown_form(c.name)]
     # (b2): which offered tools are newer than the base, or None if unknowable.
-    item_ids = [uuid.UUID(p.item_id) for p in kept_offers if p.item_id]
-    # (ii): the latest classification override per offered item. The audit
-    # row is the only record of WHEN; `updated_at` moves on every edit.
-    overridden = {
-        str(i): at
-        for i, at in db.execute(
-            select(AuditEntry.target_id, func.max(AuditEntry.at))
-            .where(
-                AuditEntry.action == SECURITY_CLASSIFICATION_OVERRIDDEN,
-                AuditEntry.target_type == "capability_item",
-                AuditEntry.target_id.in_(item_ids),
-            )
-            .group_by(AuditEntry.target_id)
-        ).all()
-    }
     # #1012, the advisor's option A (#736 6115773247): judged by NAME against
     # the list version in force when the base was approved, rebuilt from the
     # record (`attack/added_since_base.py`), plus the tools the base cites.
@@ -1151,7 +1153,6 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
         _list_history(db, membership.lists),
         scenario.cited_tools(base_rows),
         base.approved_at,
-        overridden,
     )
     _log.info(
         "attack_scenario.added_since_base",

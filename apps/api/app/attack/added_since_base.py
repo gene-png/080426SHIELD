@@ -26,15 +26,16 @@ that could decide it is not on record:
 * the version in force at the base was approved before migration 0043 (no
   recorded membership), or was approved AGAIN after the base, which
   overwrote the membership the base was offered;
-* an offered tool names no capability item, so an override cannot be read.
 
-A tool also counts as added when its security classification was overridden
-after the base (the advisor's (ii)), but ONLY where the base's basis for it
-came from the DRAFTS branch (#736 6116519635): there a draft row is read by
-its scope NOW, so an old row an override brought into scope since would
-otherwise read as one the base had. A tool in the recorded membership of the
-APPROVED version in force at the base was offered to the base, as frozen at
-approval, whatever happened to its classification afterwards.
+The advisor's (ii), in the DRAFTS branch only (#736 6116519635): a draft
+row is read by its scope NOW, so a row whose security classification was
+overridden after the base may have been out of scope then, and it does not
+join the basis. The override is judged on the BASIS row -- the row whose
+current scope the basis reads -- never on the offered row, which may be a
+re-extracted copy on another version with no override of its own. A tool in
+the recorded membership of the APPROVED version in force at the base was
+offered to the base as frozen at approval, whatever happened to its
+classification afterwards.
 
 Limits, stated rather than hidden:
 
@@ -50,7 +51,7 @@ Limits, stated rather than hidden:
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -74,12 +75,14 @@ def _aware(at: datetime) -> datetime:
 
 @dataclass(frozen=True)
 class DraftRow:
-    """A live row of a list version: its name, when it was created, and
-    whether it is in security scope now."""
+    """A live row of a list version: its name, when it was created, whether
+    it is in security scope now, and when its security classification was
+    last overridden (the audit record of (ii)), if ever."""
 
     name: str
     created_at: datetime
     in_scope: bool
+    overridden_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -103,6 +106,15 @@ class ListVersion:
 #: The approve route stamps `approved_at` and writes its audit row in ONE
 #: transaction, a few milliseconds apart (`approved_at` first). A gap wider
 #: than this is two different approvals, not one.
+#:
+#: A RATCHET, not a live case. It guards a trail in which `approved_at`, the
+#: LAST approval, is older than every audited approval. No current writer
+#: produces that: `approve_capability_list` stamps `approved_at` and writes
+#: the audit row together, so `approved_at` is never earlier than the last
+#: audited approval. It becomes reachable if a writer ever audits an
+#: approval without stamping `approved_at` (a restore or an import), or
+#: stamps `approved_at` from elsewhere (a backfill); the trail then
+#: contradicts itself, and the first approval time is not on record.
 _SAME_APPROVAL = timedelta(minutes=1)
 
 
@@ -120,8 +132,8 @@ def _approved_by(v: ListVersion, at: datetime) -> bool:
         first = min(_aware(t) for t in v.approvals)
         if v.approved_at is not None and _aware(v.approved_at) < first - _SAME_APPROVAL:
             # `approved_at` is the LAST approval, so it cannot precede the
-            # first audited one: an approval is missing from the trail, and
-            # the first approval may be the missing one.
+            # first audited one: the trail contradicts itself (see
+            # `_SAME_APPROVAL`), so its first approval is not read from it.
             raise _Unknown(f"version {v.version}: approval trail is incomplete")
         return first <= at
     if v.approved_at is not None and _aware(v.approved_at) <= at:
@@ -154,17 +166,7 @@ def _live_at(v: ListVersion, at: datetime) -> bool:
     return True
 
 
-@dataclass(frozen=True)
-class Basis:
-    """What the base was offered: every name, and the names read from an
-    APPROVED version's recorded membership (frozen at approval)."""
-
-    names: frozenset[str]
-    from_snapshot: frozenset[str]
-
-
-def _service_basis(versions: list[ListVersion], at: datetime) -> tuple[set[str], bool]:
-    """(names, whether they came from an approved version's snapshot)."""
+def _service_basis(versions: list[ListVersion], at: datetime) -> set[str]:
     newest_first = sorted(versions, key=lambda v: v.version, reverse=True)
     any_approved = False
     for v in newest_first:
@@ -173,23 +175,27 @@ def _service_basis(versions: list[ListVersion], at: datetime) -> tuple[set[str],
         any_approved = True
         names = _membership_at(v, at)
         if names:
-            return names, True
+            return names
     if any_approved:
-        return set(), True  # R6b: drafts are ignored beside an approved version
+        return set()  # R6b: drafts are ignored beside an approved version
     # No version was approved by then, so every version here was a DRAFT at
     # `at`, including one approved only later: that draft was in force then.
     for v in newest_first:
         if not _live_at(v, at):
             continue
-        names = {name_key(r.name) for r in v.rows if r.in_scope and _aware(r.created_at) <= at} - {
-            ""
-        }
+        names = {
+            name_key(r.name)
+            for r in v.rows
+            if r.in_scope
+            and _aware(r.created_at) <= at
+            and (r.overridden_at is None or _aware(r.overridden_at) <= at)
+        } - {""}
         if names:
-            return names, False
-    return set(), False
+            return names
+    return set()
 
 
-def basis_at(base_approved_at: datetime, versions: Iterable[ListVersion]) -> Basis | None:
+def basis_at(base_approved_at: datetime, versions: Iterable[ListVersion]) -> set[str] | None:
     """The tool names the base was offered, by `name_key`; None when the
     record cannot say."""
     at = _aware(base_approved_at)
@@ -197,16 +203,12 @@ def basis_at(base_approved_at: datetime, versions: Iterable[ListVersion]) -> Bas
     for v in versions:
         by_service.setdefault(v.service_id, []).append(v)
     names: set[str] = set()
-    from_snapshot: set[str] = set()
     try:
         for service_versions in by_service.values():
-            service_names, snapshot = _service_basis(service_versions, at)
-            names |= service_names
-            if snapshot:
-                from_snapshot |= service_names
+            names |= _service_basis(service_versions, at)
     except _Unknown:
         return None
-    return Basis(frozenset(names), frozenset(from_snapshot))
+    return names
 
 
 def tools_added(
@@ -214,7 +216,6 @@ def tools_added(
     versions: Iterable[ListVersion],
     base_cited: Iterable[str],
     base_approved_at: datetime | None,
-    overridden_at: Mapping[str, datetime] | None = None,
 ) -> list[str] | None:
     """The offered tools (`CapabilityProvenance`s) new since the base, by
     name, sorted case-insensitively; or None when that cannot be checked."""
@@ -224,18 +225,6 @@ def tools_added(
     basis = basis_at(at, versions)
     if basis is None:
         return None
-    had = basis.names | {name_key(t) for t in base_cited}
-    overrides = overridden_at or {}
-    added: list[str] = []
-    for p in offered:
-        if not p.item_id:
-            return None
-        key = name_key(p.capability.name)
-        override = overrides.get(p.item_id)
-        # (ii) only outside an approved snapshot (#736 6116519635).
-        late_override = (
-            override is not None and _aware(override) > at and key not in basis.from_snapshot
-        )
-        if key not in had or late_override:
-            added.append(p.capability.name)
+    had = basis | {name_key(t) for t in base_cited}
+    added = [p.capability.name for p in offered if name_key(p.capability.name) not in had]
     return sorted(added, key=str.casefold)
