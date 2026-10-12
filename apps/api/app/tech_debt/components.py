@@ -14,9 +14,11 @@ row keeps the whole license value. So a part is:
     is a real redundancy. But the parts of one bundle, and the bundle itself,
     are ONE license, so they count once in any category or vendor bucket.
 
-Savings are deliberately NOT routed through here (advisor ruling on #736): a
-part marked Cut with no cost really is an unknown saving, so
-`savings.estimated_savings` still sees it.
+Savings still SEE a part (advisor ruling on #736): a part marked Cut is an
+unknown saving, so `savings.estimated_savings` makes the figure a floor for it.
+But a part's STORED cost is never a saving (advisor ruling on #736, 6115773247,
+for #929): one written before #927 refused it is read as no cost, through
+`savings_cost`, which every savings caller uses.
 
 Every reader calls these rather than re-testing `parent_item_id`: the defect
 this module ends was a third reader that missed the rule two others had.
@@ -51,3 +53,11 @@ def license_key(item: Any) -> str:
 def license_count(items: Iterable[Any]) -> int:
     """How many distinct licenses `items` are paid under."""
     return len({license_key(it) for it in items})
+
+
+def savings_cost(item: Any) -> Any:
+    """The cost a savings figure may count for `item`: its own cost, or None
+    for a part. A part's cost is held by its bundle, so a figure stored on a
+    part (only possible before #927) is not a saving; None keeps a Cut part an
+    UNKNOWN saving, which makes the figure a floor, as it always has."""
+    return None if is_component(item) else item.annual_cost_usd

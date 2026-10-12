@@ -128,7 +128,7 @@ from app.schemas.clients import (
 )
 from app.schemas.risk import RiskTargetUsed
 from app.services.engagement_targets import client_target_stage, client_target_tier
-from app.tech_debt.components import is_component, license_count, source_items
+from app.tech_debt.components import is_component, license_count, savings_cost, source_items
 from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.savings import estimated_savings
 from app.zt.catalog import capability_by_code as zt_capability_by_code
@@ -995,7 +995,7 @@ def _tech_debt_savings(db: Session, service_ids: list[uuid.UUID]) -> _TechDebtTo
             .all()
         )
         # #804: the deliverable's own derivation, per released list.
-        found = estimated_savings((it.disposition, it.annual_cost_usd) for it in items)
+        found = estimated_savings((it.disposition, savings_cost(it)) for it in items)
         total += found.amount
         cost_known = cost_known and found.known
     return _TechDebtTotal(total, cost_known, False)
@@ -1750,7 +1750,7 @@ def tech_debt_dashboard(
     # #804: the deliverable's own derivation, not a copy of it. Savings still
     # see a part (advisor ruling on #736): a part marked Cut with no cost is a
     # genuinely unknown saving.
-    found = estimated_savings((it.disposition, it.annual_cost_usd) for it in items)
+    found = estimated_savings((it.disposition, savings_cost(it)) for it in items)
     savings = found.amount
     savings_cost_known = found.known
     # #126: the same floor question the SAVINGS figure has always asked, asked
@@ -1797,7 +1797,7 @@ def tech_debt_dashboard(
             # rendered per category today (pre-existing); the dashboard's
             # headline savings carries it.
             savings_usd=round(
-                estimated_savings((i.disposition, i.annual_cost_usd) for i in b["items"]).amount,
+                estimated_savings((i.disposition, savings_cost(i)) for i in b["items"]).amount,
                 2,
             ),
             items=[_td_item(i, names) for i in b["items"]],

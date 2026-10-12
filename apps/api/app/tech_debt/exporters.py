@@ -29,7 +29,7 @@ from app.mode_stamp import (
 )
 from app.models.capability import CapabilityDisposition, CapabilityItem, CapabilityList
 from app.pdf_export import pdf_text
-from app.tech_debt.components import is_component, source_items
+from app.tech_debt.components import is_component, savings_cost, source_items
 from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.savings import estimated_savings as estimated_savings_of
 from app.xlsx_export import safe_text_row
@@ -230,7 +230,7 @@ def build_context(
     total_cost = 0.0
     # #804: the one savings derivation, shared with the plan card, the client
     # dashboard, the home value card and the savings what-if.
-    savings = estimated_savings_of((it.disposition, it.annual_cost_usd) for it in items_list)
+    savings = estimated_savings_of((it.disposition, savings_cost(it)) for it in items_list)
     estimated_savings = savings.amount
     savings_known = savings.known
     # `total_cost` SKIPS an uncosted item rather than failing, which makes the
