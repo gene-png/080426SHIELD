@@ -34,8 +34,9 @@ from __future__ import annotations
 import functools
 import io
 import re
+import time
 import zipfile
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from itertools import zip_longest
 from typing import TYPE_CHECKING, Literal, Protocol, get_args
@@ -119,11 +120,18 @@ class DocText:
 @dataclass(frozen=True)
 class ChunkPlan:
     """The chunks to send, and how many were sent and skipped. `sent` is
-    `len(chunks)`; `skipped` is how many more the text needed past the cap."""
+    `len(chunks)`; `skipped` is how many more the text needed past the cap.
+
+    ADJACENT CHUNKS OVERLAP by `overlap_chars`, so a caller counting what the
+    chunks found must not count text in the overlap twice: `offsets[i]` is
+    where `chunks[i]` starts in the text, and chunk i+1 starts
+    `overlap_chars` or fewer characters before chunk i ends."""
 
     chunks: tuple[str, ...]
     sent: int
     skipped: int
+    overlap_chars: int
+    offsets: tuple[int, ...]
 
 
 @dataclass(frozen=True)
@@ -136,6 +144,7 @@ class ExtractLimits:
     chunk_chars: int
     max_chunks: int
     max_pages: int
+    max_seconds: float
 
 
 def extract_limits(settings: Settings | None = None) -> ExtractLimits:
@@ -148,6 +157,7 @@ def extract_limits(settings: Settings | None = None) -> ExtractLimits:
         chunk_chars=s.shield_document_chunk_chars,
         max_chunks=s.shield_document_max_chunks,
         max_pages=s.shield_document_max_pages,
+        max_seconds=s.shield_document_max_seconds,
     )
 
 
@@ -220,11 +230,24 @@ class _NotRead(Exception):
 
 @dataclass
 class _Tally:
-    """What a reader skipped inside a file it did read."""
+    """What a reader skipped inside a file it did read, and its deadline."""
 
+    deadline: float
     pages_without_text: int = 0
     parts_not_read: int = 0
     stopped_early: bool = False
+
+    def out_of_time(self) -> bool:
+        """True once the time limit has passed; it then marks the read as
+        stopped early."""
+        if _clock() > self.deadline:
+            self.stopped_early = True
+            return True
+        return False
+
+
+#: The clock the time limit reads; a module attribute so a test can drive it.
+_clock = time.monotonic
 
 
 def document_text(storage: _Readable, artifact: Artifact, *, limits: ExtractLimits) -> DocText:
@@ -238,9 +261,11 @@ def document_text(storage: _Readable, artifact: Artifact, *, limits: ExtractLimi
         data = storage.get(artifact.file_storage_key)
     except FileNotFoundError:
         return _not_read(artifact, "storage_missing", "no object at the storage key")
-    tally = _Tally()
+    tally = _Tally(deadline=_clock() + limits.max_seconds)
     try:
-        text, past_max_chars = _collect(_extract(data, artifact, limits, tally), limits.max_chars)
+        text, past_max_chars = _collect(
+            _extract(data, artifact, limits, tally), limits.max_chars, tally
+        )
     except _NotRead as nr:
         return _not_read(artifact, nr.reason, nr.detail)
     truncated = past_max_chars or tally.stopped_early
@@ -264,10 +289,15 @@ def document_text(storage: _Readable, artifact: Artifact, *, limits: ExtractLimi
     return result
 
 
-def _collect(pieces: Iterator[str], max_chars: int) -> tuple[str, bool]:
-    """Join a reader's pieces, sanitised, and STOP once past `max_chars`: no
-    further page, row or part is extracted. Returns the text read and whether
-    it stopped early."""
+def _collect(pieces: Iterator[str], max_chars: int, tally: _Tally) -> tuple[str, bool]:
+    """Join a reader's pieces, sanitised, and STOP once past `max_chars` or
+    past the time limit: no further page, row or part is extracted. Returns
+    the text read and whether `max_chars` stopped it (the time limit marks
+    `tally.stopped_early`).
+
+    The time limit is checked BETWEEN pieces (and between PDF pages), so one
+    piece that hangs inside a parser is not interrupted: bounding that needs
+    the parse in a killable child process, as #552 does for redaction."""
     parts: list[str] = []
     count = 0
     try:
@@ -277,6 +307,8 @@ def _collect(pieces: Iterator[str], max_chars: int) -> tuple[str, bool]:
             parts.append(clean)
             if count > max_chars:
                 return "\n".join(parts), True
+            if tally.out_of_time():
+                break
     finally:
         close = getattr(pieces, "close", None)
         if close is not None:
@@ -408,7 +440,11 @@ def _read_pdf(data: bytes, limits: ExtractLimits, tally: _Tally) -> Iterator[str
     pages = reader.pages
     total = len(pages)
     read_any = False
+    timed_out = False
     for i in range(min(total, limits.max_pages)):
+        if tally.out_of_time():
+            timed_out = True
+            break
         text = pages[i].extract_text() or ""
         if text.strip():
             read_any = True
@@ -422,6 +458,11 @@ def _read_pdf(data: bytes, limits: ExtractLimits, tally: _Tally) -> Iterator[str
         read_any = True
         yield value
     if not read_any:
+        if timed_out:
+            raise _NotRead(
+                "too_large",
+                f"no text before the {limits.max_seconds}s time limit, {total} pages",
+            )
         if capped:
             # The pages never looked at may hold text: not evidence of none.
             raise _NotRead(
@@ -670,26 +711,38 @@ def _sanitize(text: str) -> str:
     return _CONTROLS.sub(" ", _LINE_BREAKS.sub("\n", text.lstrip("\ufeff")))
 
 
-def chunk_text(text: str, *, chunk_chars: int, max_chunks: int) -> ChunkPlan:
-    """Split `text` into chunks of at most `chunk_chars`, breaking after the
-    last whitespace in a window where there is one, so a word is not split.
-    The chunks concatenate back to the text exactly. At most `max_chunks` are
-    returned; the count the rest of the text needed is `skipped`."""
+def chunk_text(
+    text: str, *, chunk_chars: int, max_chunks: int, name_hints: Iterable[str]
+) -> ChunkPlan:
+    """Split `text` into chunks of at most `chunk_chars` for per-payload calls.
+
+    A chunk ends at the last paragraph break in the second half of its
+    window, else the last whitespace there, else at `chunk_chars` exactly.
+    Adjacent chunks OVERLAP by the longest of `name_hints` plus one character
+    (the advisor's ruling on #736, 6116519635), so a name cut by a boundary is
+    still seen whole in the next chunk; with no hints there is no overlap. At
+    most `max_chunks` are returned; `skipped` counts the rest the text needed.
+    """
     if not isinstance(text, str):
         raise TypeError(f"chunk_text needs str, got {type(text).__name__}")
     if chunk_chars < 1:
         raise ValueError(f"chunk_chars must be at least 1, got {chunk_chars}")
     if max_chunks < 1:
         raise ValueError(f"max_chunks must be at least 1, got {max_chunks}")
+    hints = [h for h in name_hints if h]
+    overlap = max(len(h) for h in hints) + 1 if hints else 0
+    if overlap and overlap * 2 >= chunk_chars:
+        raise ValueError(
+            f"overlap of {overlap} (longest name hint + 1) needs chunk_chars above "
+            f"{overlap * 2}, got {chunk_chars}"
+        )
     chunks: list[str] = []
+    offsets: list[int] = []
     start = 0
     while start < len(text):
         end = min(start + chunk_chars, len(text))
         if end < len(text):
-            window = text[start:end]
-            cut = max(window.rfind(" "), window.rfind("\n"), window.rfind("\t"))
-            if cut > 0:
-                end = start + cut + 1
+            end = _chunk_end(text, start, end, chunk_chars)
         if end <= start:
             # Every pass must consume text. Without this a bad limit loops
             # forever instead of failing.
@@ -697,8 +750,32 @@ def chunk_text(text: str, *, chunk_chars: int, max_chunks: int) -> ChunkPlan:
                 f"chunk_text made no progress at {start} (chunk_chars={chunk_chars})"
             )
         chunks.append(text[start:end])
-        start = end
-    sent = chunks[:max_chunks]
-    plan = ChunkPlan(chunks=tuple(sent), sent=len(sent), skipped=len(chunks) - len(sent))
-    _log.info("documents.text.chunked", sent=plan.sent, skipped=plan.skipped)
+        offsets.append(start)
+        if end == len(text):
+            break
+        start = max(end - overlap, start + 1)
+    plan = ChunkPlan(
+        chunks=tuple(chunks[:max_chunks]),
+        sent=min(len(chunks), max_chunks),
+        skipped=max(len(chunks) - max_chunks, 0),
+        overlap_chars=overlap,
+        offsets=tuple(offsets[:max_chunks]),
+    )
+    _log.info(
+        "documents.text.chunked", sent=plan.sent, skipped=plan.skipped, overlap=plan.overlap_chars
+    )
     return plan
+
+
+def _chunk_end(text: str, start: int, end: int, chunk_chars: int) -> int:
+    """Where a full window should end: after the last paragraph break in its
+    second half, else after the last whitespace there, else at `end`."""
+    window = text[start:end]
+    floor = chunk_chars // 2
+    newline = window.rfind("\n")
+    if newline >= floor:
+        return start + newline + 1
+    space = max(window.rfind(" "), window.rfind("\t"))
+    if space >= floor:
+        return start + space + 1
+    return end

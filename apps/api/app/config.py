@@ -260,6 +260,10 @@ class Settings(BaseSettings):
     shield_document_max_chunks: int = Field(default=20, ge=1, le=1_000)
     # PDF pages read per file; past it the result says `truncated`.
     shield_document_max_pages: int = Field(default=2_000, ge=1, le=10_000)
+    # Seconds one file's extraction may take; past it the read stops and says
+    # `truncated`. Checked between pages and pieces, so it does not interrupt
+    # a single parse that hangs (that needs a killable child process).
+    shield_document_max_seconds: float = Field(default=60.0, gt=0, le=600, allow_inf_nan=False)
 
     @model_validator(mode="after")
     def _document_limits_agree(self) -> Settings:

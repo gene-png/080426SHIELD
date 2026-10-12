@@ -54,6 +54,7 @@ LIMITS = ExtractLimits(
     chunk_chars=4_000,
     max_chunks=10,
     max_pages=500,
+    max_seconds=600.0,
 )
 
 
@@ -524,29 +525,33 @@ def test_a_storage_failure_that_is_not_a_miss_raises(store):
 
 
 def test_chunk_exact_boundary_is_one_chunk():
-    plan = chunk_text("a" * 100, chunk_chars=100, max_chunks=5)
-    assert plan == ChunkPlan(chunks=("a" * 100,), sent=1, skipped=0)
+    plan = chunk_text("a" * 100, chunk_chars=100, max_chunks=5, name_hints=())
+    assert plan == ChunkPlan(chunks=("a" * 100,), sent=1, skipped=0, overlap_chars=0, offsets=(0,))
 
 
 def test_chunk_one_over_the_boundary_is_two_chunks():
-    plan = chunk_text("a" * 101, chunk_chars=100, max_chunks=5)
-    assert plan == ChunkPlan(chunks=("a" * 100, "a"), sent=2, skipped=0)
+    plan = chunk_text("a" * 101, chunk_chars=100, max_chunks=5, name_hints=())
+    assert plan == ChunkPlan(
+        chunks=("a" * 100, "a"), sent=2, skipped=0, overlap_chars=0, offsets=(0, 100)
+    )
 
 
 def test_chunk_max_chunks_exceeded_counts_the_skipped():
-    plan = chunk_text("b" * 1000, chunk_chars=100, max_chunks=3)
+    plan = chunk_text("b" * 1000, chunk_chars=100, max_chunks=3, name_hints=())
     assert plan.sent == 3
     assert plan.skipped == 7
     assert plan.chunks == ("b" * 100,) * 3
 
 
 def test_chunk_empty_text_sends_nothing_and_skips_nothing():
-    assert chunk_text("", chunk_chars=100, max_chunks=3) == ChunkPlan(chunks=(), sent=0, skipped=0)
+    assert chunk_text("", chunk_chars=100, max_chunks=3, name_hints=()) == ChunkPlan(
+        chunks=(), sent=0, skipped=0, overlap_chars=0, offsets=()
+    )
 
 
 def test_chunk_breaks_at_whitespace_and_loses_nothing():
     text = "Uniform victor whiskey xray yankee zulu " * 40
-    plan = chunk_text(text, chunk_chars=50, max_chunks=1000)
+    plan = chunk_text(text, chunk_chars=50, max_chunks=1000, name_hints=())
     assert plan.skipped == 0
     assert "".join(plan.chunks) == text
     assert all(len(c) <= 50 for c in plan.chunks)
@@ -555,7 +560,7 @@ def test_chunk_breaks_at_whitespace_and_loses_nothing():
 
 
 def test_chunk_hard_cuts_a_run_with_no_whitespace():
-    plan = chunk_text("c" * 250, chunk_chars=100, max_chunks=10)
+    plan = chunk_text("c" * 250, chunk_chars=100, max_chunks=10, name_hints=())
     assert [len(c) for c in plan.chunks] == [100, 100, 50]
 
 
@@ -565,12 +570,12 @@ def test_chunk_hard_cuts_a_run_with_no_whitespace():
 )
 def test_chunk_refuses_limits_that_cannot_hold_text(chunk_chars, max_chunks):
     with pytest.raises(ValueError):
-        chunk_text("text", chunk_chars=chunk_chars, max_chunks=max_chunks)
+        chunk_text("text", chunk_chars=chunk_chars, max_chunks=max_chunks, name_hints=())
 
 
 def test_chunk_refuses_a_non_string():
     with pytest.raises(TypeError):
-        chunk_text(b"bytes", chunk_chars=10, max_chunks=1)  # type: ignore[arg-type]
+        chunk_text(b"bytes", chunk_chars=10, max_chunks=1, name_hints=())  # type: ignore[arg-type]
 
 
 def test_a_large_file_chunks_end_to_end(store):
@@ -582,7 +587,9 @@ def test_a_large_file_chunks_end_to_end(store):
     result = store.read(data, title="big.txt", mime=TXT, limits=limits)
     _assert_read(result)
     assert result.chars_total == 43_000
-    plan = chunk_text(result.text, chunk_chars=limits.chunk_chars, max_chunks=limits.max_chunks)
+    plan = chunk_text(
+        result.text, chunk_chars=limits.chunk_chars, max_chunks=limits.max_chunks, name_hints=()
+    )
     assert plan.sent == 4
     assert plan.skipped == 6
     assert plan.chunks[0] == line * 100
@@ -642,6 +649,7 @@ def test_limits_are_read_from_settings():
         shield_document_chunk_chars=44,
         shield_document_max_chunks=5,
         shield_document_max_pages=66,
+        shield_document_max_seconds=7.5,
     )
     assert extract_limits(settings) == ExtractLimits(
         max_bytes=111,
@@ -650,6 +658,7 @@ def test_limits_are_read_from_settings():
         chunk_chars=44,
         max_chunks=5,
         max_pages=66,
+        max_seconds=7.5,
     )
 
 
@@ -1075,3 +1084,107 @@ def test_xlsx_without_defusedxml_refuses_to_parse(store, monkeypatch):
     artifact = store.put(_xlsx({"S": [["Victor"]]}), title="x.xlsx", mime=XLSX)
     with pytest.raises(RuntimeError, match="defusedxml"):
         document_text(store.storage, artifact, limits=LIMITS)
+
+
+# --------------------------------------------------------------------------
+# Advisor rulings on #1089 (#736, 6116519635): chunk boundaries and caps.
+# --------------------------------------------------------------------------
+
+
+def test_chunk_overlap_keeps_a_name_split_at_a_boundary_whole():
+    """A name hint cut by a chunk boundary still appears whole in a chunk,
+    because chunks overlap by the longest hint plus one character."""
+    name = "Northwind Traders"
+    text = ("word " * 8) + name + (" tail" * 30)
+    plan = chunk_text(text, chunk_chars=50, max_chunks=100, name_hints=[name, "Acme"])
+    start = text.index(name)
+    # The precondition: some chunk boundary falls strictly inside the name.
+    ends = [o + len(c) for o, c in zip(plan.offsets, plan.chunks, strict=True)]
+    assert any(start < e < start + len(name) for e in ends), ends
+    assert any(name in c for c in plan.chunks)
+    assert plan.overlap_chars == len(name) + 1
+
+
+def test_chunk_overlap_is_disclosed_and_offsets_locate_every_chunk():
+    """A caller de-duplicating across chunks reads `offsets` and
+    `overlap_chars`; each chunk is exactly the text at its offset."""
+    text = "alpha bravo charlie delta echo foxtrot golf hotel india juliet " * 20
+    plan = chunk_text(text, chunk_chars=60, max_chunks=1000, name_hints=["Kilo Lima"])
+    assert plan.overlap_chars == 10
+    for offset, chunk in zip(plan.offsets, plan.chunks, strict=True):
+        assert text[offset : offset + len(chunk)] == chunk
+    # Adjacent chunks share text, and the last chunk reaches the end.
+    assert all(
+        b < a + len(c)
+        for a, b, c in zip(plan.offsets[:-1], plan.offsets[1:], plan.chunks[:-1], strict=True)
+    )
+    assert plan.offsets[-1] + len(plan.chunks[-1]) == len(text)
+
+
+def test_chunk_prefers_a_paragraph_boundary_to_a_later_space():
+    first = "Mike paragraph one runs on for a while here"
+    text = first + "\n" + "November second paragraph words go on and on and on"
+    plan = chunk_text(text, chunk_chars=60, max_chunks=10, name_hints=())
+    assert plan.chunks[0] == first + "\n"
+
+
+def test_chunk_refuses_an_overlap_that_leaves_no_progress():
+    with pytest.raises(ValueError, match="overlap"):
+        chunk_text("x" * 100, chunk_chars=10, max_chunks=10, name_hints=["y" * 9])
+
+
+class _Clock:
+    """A fake monotonic clock: each read advances it by `step` seconds."""
+
+    def __init__(self, step: float) -> None:
+        self.now = 0.0
+        self.step = step
+
+    def __call__(self) -> float:
+        self.now += self.step
+        return self.now
+
+
+def test_time_cap_stops_extraction_and_says_truncated(store, monkeypatch):
+    import app.documents.text as text_module
+
+    monkeypatch.setattr(text_module, "_clock", _Clock(step=10.0))
+    data = _pdf([f"Oscar page {i}" for i in range(1, 8)])
+    result = store.read(data, title="slow.pdf", mime=PDF, limits=replace(LIMITS, max_seconds=25.0))
+    _assert_read(result)
+    assert result.truncated is True
+    assert "Oscar page 1" in result.text
+    assert "Oscar page 7" not in result.text
+
+
+def test_time_cap_before_any_text_is_too_large(store, monkeypatch):
+    import app.documents.text as text_module
+
+    monkeypatch.setattr(text_module, "_clock", _Clock(step=100.0))
+    data = _pdf([None, None, "Papa late page"])
+    result = store.read(data, title="slow2.pdf", mime=PDF, limits=replace(LIMITS, max_seconds=50.0))
+    _assert_not_read(result, "too_large")
+
+
+def test_a_time_limit_out_of_bounds_refuses_to_load():
+    from pydantic import ValidationError
+
+    for value in (0, -1, 601):
+        with pytest.raises(ValidationError, match="shield_document_max_seconds"):
+            Settings(shield_document_max_seconds=value)
+
+
+def test_time_cap_stops_between_pieces_for_any_reader(store, monkeypatch):
+    """The same limit stops an XLSX between rows, not only a PDF between
+    pages."""
+    import app.documents.text as text_module
+
+    monkeypatch.setattr(text_module, "_clock", _Clock(step=10.0))
+    data = _xlsx({"S": [[f"Quebec row {i}"] for i in range(1, 9)]})
+    result = store.read(
+        data, title="slow.xlsx", mime=XLSX, limits=replace(LIMITS, max_seconds=25.0)
+    )
+    _assert_read(result)
+    assert result.truncated is True
+    assert "Quebec row 1" in result.text
+    assert "Quebec row 8" not in result.text
