@@ -56,17 +56,16 @@ describe("ValueLoopCard, tools outside the security tool list (#889)", () => {
     ).toBeInTheDocument();
   });
 
-  it.each([false, null, undefined])(
-    "says nothing when the flag is %s",
-    (flag) => {
-      render(
-        <ValueLoopCard
-          summary={summary({ attack_covered_relies_on_outside_tool: flag })}
-        />,
-      );
-      // APPEAR before ABSENT.
-      expect(screen.getByText("3 techniques uncovered")).toBeInTheDocument();
-      expect(screen.queryByText(/security tool list/)).toBeNull();
-    },
-  );
+  // `null` beside a figure is #1011's "not checked" state: the card now says
+  // so (`ValueLoopCard.notChecked.test.tsx`), so it is not silent here.
+  it.each([false, undefined])("says nothing when the flag is %s", (flag) => {
+    render(
+      <ValueLoopCard
+        summary={summary({ attack_covered_relies_on_outside_tool: flag })}
+      />,
+    );
+    // APPEAR before ABSENT.
+    expect(screen.getByText("3 techniques uncovered")).toBeInTheDocument();
+    expect(screen.queryByText(/security tool list/)).toBeNull();
+  });
 });
