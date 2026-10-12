@@ -13,6 +13,8 @@ import { useIntakeAutoSave } from "./useIntakeAutoSave";
  */
 
 const REFUSED = "This value was not accepted, so it was not saved.";
+const SERVER_FAILED =
+  "The server could not save this value. Try again in a moment.";
 
 function respond(status: number, body: unknown): void {
   respondRaw(status, JSON.stringify(body));
@@ -92,13 +94,28 @@ describe("useIntakeAutoSave refusal copy", () => {
     expect(message).toBe("Intake was already submitted.");
   });
 
-  // The 4xx/5xx boundary (review of #1092, item 3). `isAnsweredRefusal` is
-  // `status >= 400 && status < 500`; widening it to `< 600` turns the 500
-  // test red, narrowing it turns the empty-body 4xx test red.
-  it("keeps today's Network error for a 500 with a non-JSON body (no 5xx copy is approved yet)", async () => {
+  // The 4xx/5xx boundary (review of #1092). A 4xx is a refusal; a 5xx with
+  // no usable server message gets the approved server sentence (#736
+  // 6116519635). Widening the refusal range to `< 600` turns the non-JSON 500
+  // test red; narrowing it turns the empty-body 4xx test red. The api's own
+  // JSON 500 carries a typed message, which is shown instead, and is not
+  // what these tests cover.
+  it("says the server could not save for a non-JSON 500", async () => {
     respondRaw(500, "Internal Server Error");
     const message = await saveWebsite();
-    expect(message).toBe("Network error.");
+    expect(message).toBe(SERVER_FAILED);
+  });
+
+  it("says the server could not save for a non-JSON 599 (top of the 5xx range)", async () => {
+    respondRaw(599, "bad gateway");
+    const message = await saveWebsite();
+    expect(message).toBe(SERVER_FAILED);
+  });
+
+  it("says the value was not accepted for a 499 (top of the 4xx range)", async () => {
+    respondRaw(499, null);
+    const message = await saveWebsite();
+    expect(message).toBe(REFUSED);
   });
 
   it("says the value was not accepted for a 4xx with an empty body", async () => {

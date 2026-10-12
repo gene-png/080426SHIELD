@@ -25,6 +25,10 @@ export interface AutoSaveHandle {
 
 /** Approved verbatim on #736 (6115773247, ruling B). */
 const REFUSED_NOT_SAVED = "This value was not accepted, so it was not saved.";
+/** Approved verbatim on #736 (6116519635): a 5xx came back with no usable
+ *  server message. */
+const SERVER_NOT_SAVED =
+  "The server could not save this value. Try again in a moment.";
 
 /** The fields a patch writes, keyed so a client field and a top-level
  *  profile field of the same name cannot collide. */
@@ -41,6 +45,19 @@ function fieldsOf(patch: IntakePatchRequest): string[] {
 function isAnsweredRefusal(err: unknown): boolean {
   const status = (err as { status?: unknown } | null)?.status;
   return typeof status === "number" && status >= 400 && status < 500;
+}
+
+/** A 5xx the proxy or api DID send. */
+function isAnsweredServerError(err: unknown): boolean {
+  const status = (err as { status?: unknown } | null)?.status;
+  return typeof status === "number" && status >= 500 && status < 600;
+}
+
+/** The sentence when the error carries no usable server message. */
+function fallbackFor(err: unknown): string {
+  if (isAnsweredRefusal(err)) return REFUSED_NOT_SAVED;
+  if (isAnsweredServerError(err)) return SERVER_NOT_SAVED;
+  return "Network error.";
 }
 
 /** Wraps `patchIntake` with save-status state + lightweight error handling.
@@ -98,14 +115,11 @@ export function useIntakeAutoSave(
         onUpdate?.(next);
         return next;
       } catch (err) {
-        // IN-1 (#1049), ruling B (#736 6115773247): "Network error." only
-        // when no answer came back. A 4xx the api answered with no client copy
-        // (a `schema_*` 422) gets the approved refusal sentence instead. A 5xx
-        // keeps the old fallback: no copy is approved for it yet.
-        const message = clientFacingError(
-          err,
-          isAnsweredRefusal(err) ? REFUSED_NOT_SAVED : "Network error.",
-        );
+        // IN-1 (#1049): "Network error." only when no answer came back. An
+        // answer with no usable server message gets copy for its class:
+        // a 4xx the approved refusal sentence (ruling B, 6115773247), a 5xx
+        // the approved server sentence (6116519635).
+        const message = clientFacingError(err, fallbackFor(err));
         for (const f of own()) {
           // Re-inserted, so the newest error is the one shown.
           errors.current.delete(f);

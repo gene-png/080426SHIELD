@@ -34,6 +34,12 @@ def _patch_website(client, bearer: str, website: str | None):
         ("kentro.com/about", "https://kentro.com/about"),
         ("  kentro.com  ", "https://kentro.com/"),
         ("example.com:8080", "https://example.com:8080/"),
+        # Review of #1092 round 2: an "@" after the host is a path or query,
+        # not userinfo, so the prefix still applies.
+        ("medium.com/@kentro", "https://medium.com/@kentro"),
+        ("example.com/a@b", "https://example.com/a@b"),
+        ("example.com?ref=a@b.com", "https://example.com/?ref=a@b.com"),
+        ("example.com#a@b", "https://example.com/#a@b"),
     ],
 )
 def test_save_adds_https_when_no_scheme(app_client, typed, stored) -> None:  # noqa: F811
