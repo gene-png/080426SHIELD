@@ -1,5 +1,7 @@
 # Gene — in-flight status
 
+_2026-10-12 (trackD): C-2 is a draft PR on `trackD/1056-csf-editor-help`, for #1056._ The CSF dimension editor explains how to score a row, in the approved copy. The evidence question (F5) is with Gene; H3 describes today's behaviour.
+
 _2026-10-11 (track6): #474 E is a draft PR on `track6/474-e-risk-evidence`,
 on top of D' (merged as dd6a788a) and #1000 (merged as b7a44039)._
 
