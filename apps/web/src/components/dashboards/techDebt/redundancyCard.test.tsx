@@ -26,6 +26,7 @@ function tool(name: string, cost: number | null): TechDebtItem {
     license_count: null,
     disposition: "keep",
     notes: null,
+    bundle: null,
   };
 }
 
