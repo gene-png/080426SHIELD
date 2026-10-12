@@ -210,8 +210,8 @@ def test_the_pdf_and_docx_name_the_bundle_in_a_parts_cost_cell(released) -> None
 
 
 def test_a_blank_bundle_name_reads_included_in_its_bundle_in_every_file(
-    app_client,
-) -> None:  # noqa: F811
+    app_client,  # noqa: F811
+) -> None:
     got = _release(app_client, bundle_name="   ")
     raw = got["files"]["xlsx"]
     for part in PARTS:
