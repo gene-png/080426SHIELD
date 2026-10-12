@@ -29,6 +29,15 @@ const NAV: NavItem[] = [
   { label: "Management", href: "/admin/management" },
 ];
 
+/**
+ * #1050: a service workspace (`/admin/services/<id>/...`) carries wide
+ * editable tables, so it runs full-width. List and form pages keep the
+ * readable `max-w-6xl` cap.
+ */
+function isWorkspace(pathname: string): boolean {
+  return /^\/admin\/services\/[^/]+\/.+/.test(pathname);
+}
+
 export function AdminShell({
   email,
   children,
@@ -107,7 +116,10 @@ export function AdminShell({
           <main
             id="main-content"
             tabIndex={-1}
-            className="mx-auto w-full max-w-6xl px-6 py-8 focus:outline-2 focus:outline-offset-4 focus:outline-brand-500"
+            className={
+              "mx-auto w-full px-6 py-8 focus:outline-2 focus:outline-offset-4 focus:outline-brand-500 " +
+              (isWorkspace(pathname) ? "" : "max-w-6xl")
+            }
           >
             {/* Issue 2: shell-level so the warning is visible on every admin
                 page including the landing one, not just one workspace. */}

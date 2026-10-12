@@ -131,11 +131,13 @@ def _parents(engine: sa.Engine) -> dict[str, str]:
 _REC_INSERT = sa.text(
     "INSERT INTO recommendations (id, scope, client_id, service_id, deliverable_id, kind, "
     "text, origin, status, created_at, updated_at) VALUES "
-    "(:id, :scope, :c, :s, :d, 'GENERAL', 'Do the thing.', 'ai', 'PENDING', :n, :n)"
+    "(:id, :scope, :c, :s, :d, 'GENERAL', 'Do the thing.', :origin, 'PENDING', :n, :n)"
 )
 
 
-def _rec(conn, p: dict[str, str], scope: str, *, service: bool, deliverable: bool) -> None:
+def _rec(
+    conn, p: dict[str, str], scope: str, *, service: bool, deliverable: bool, origin: str = "ai"
+) -> None:
     conn.execute(
         _REC_INSERT,
         {
@@ -144,6 +146,7 @@ def _rec(conn, p: dict[str, str], scope: str, *, service: bool, deliverable: boo
             "c": p["client"],
             "s": p["service"] if service else None,
             "d": p["deliverable"] if deliverable else None,
+            "origin": origin,
             "n": NOW,
         },
     )
@@ -276,6 +279,30 @@ def test_scope_check_refuses(tmp_path, scope, service, deliverable, constraint) 
     p = _parents(engine)
     with pytest.raises(sa.exc.IntegrityError, match=constraint), engine.begin() as conn:
         _rec(conn, p, scope, service=service, deliverable=deliverable)
+
+
+# --- the origin vocabulary (ruling #736 6128447366, (d)) -------------------------
+
+
+@pytest.mark.parametrize("origin", ["ai", "edited", "consultant"])
+def test_origin_accepts_the_ruled_vocabulary(tmp_path, origin) -> None:
+    _, engine = _at(tmp_path, f"m0067-origin-{origin}.db")
+    p = _parents(engine)
+    with engine.begin() as conn:
+        _rec(conn, p, "CLIENT", service=False, deliverable=False, origin=origin)
+        stored = conn.execute(sa.text("SELECT origin FROM recommendations")).scalar_one()
+    assert stored == origin
+
+
+@pytest.mark.parametrize("origin", ["AI", "human", "", "Edited"])
+def test_origin_check_refuses_anything_else(tmp_path, origin) -> None:
+    _, engine = _at(tmp_path, f"m0067-origin-bad-{origin or 'empty'}.db")
+    p = _parents(engine)
+    with (
+        pytest.raises(sa.exc.IntegrityError, match="ck_recommendations_origin_vocabulary"),
+        engine.begin() as conn,
+    ):
+        _rec(conn, p, "CLIENT", service=False, deliverable=False, origin=origin)
 
 
 # --- NOT NULL ----------------------------------------------------------------------
@@ -529,7 +556,7 @@ def test_each_model_round_trips_and_stores_member_names(tmp_path) -> None:
     assert report_status == "DRAFT"
 
 
-def test_the_orm_refuses_a_status_outside_the_vocabulary(tmp_path) -> None:
+def test_the_orm_refuses_a_scope_outside_the_vocabulary(tmp_path) -> None:
     _, engine = _at(tmp_path, "m0067-enum.db")
     with Session(engine) as db:
         db.add(
@@ -544,6 +571,55 @@ def test_the_orm_refuses_a_status_outside_the_vocabulary(tmp_path) -> None:
             db.flush()
 
 
+def test_not_recorded_json_is_sql_null_only_when_unset_or_written_as_sa_null(tmp_path) -> None:
+    """The models' "NULL is not recorded" needs SQL NULL. A plain `JSON` column
+    writes Python None as the JSON text 'null' (`risk_register.py`, 655184cc
+    F3), so a writer that means "not recorded" leaves the attribute unset or
+    writes `sqlalchemy.null()`, never None."""
+    _, engine = _at(tmp_path, "m0067-json-null.db")
+    with Session(engine) as db:
+        client = Client()
+        db.add(client)
+        db.flush()
+        rows = {
+            "unset": Recommendation(
+                scope=RecommendationScope.CLIENT, client_id=client.id, text="unset"
+            ),
+            "sa_null": Recommendation(
+                scope=RecommendationScope.CLIENT,
+                client_id=client.id,
+                text="sa_null",
+                expected_effect=sa.null(),
+                priority_inputs=sa.null(),
+            ),
+            "none": Recommendation(
+                scope=RecommendationScope.CLIENT,
+                client_id=client.id,
+                text="none",
+                expected_effect=None,
+                priority_inputs=None,
+            ),
+        }
+        db.add_all(rows.values())
+        db.commit()
+    with engine.connect() as conn:
+        got = {
+            text: (bool(effect_null), bool(inputs_null))
+            for text, effect_null, inputs_null in conn.execute(
+                sa.text(
+                    "SELECT text, expected_effect IS NULL, priority_inputs IS NULL "
+                    "FROM recommendations"
+                )
+            )
+        }
+    assert got == {
+        "unset": (True, True),
+        "sa_null": (True, True),
+        # The trap the docstrings warn about: the JSON text 'null', not NULL.
+        "none": (False, False),
+    }
+
+
 def test_the_model_declares_the_same_checks_the_migration_creates(tmp_path) -> None:
     _, engine = _at(tmp_path, "m0067-parity.db")
     created = {c["name"] for c in sa.inspect(engine).get_check_constraints("recommendations")}
@@ -553,5 +629,6 @@ def test_the_model_declares_the_same_checks_the_migration_creates(tmp_path) -> N
     assert created == {
         "ck_recommendations_client_scope_has_no_service",
         "ck_recommendations_service_scope_has_service",
+        "ck_recommendations_origin_vocabulary",
     }
     assert declared == created
