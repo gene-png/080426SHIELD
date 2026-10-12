@@ -28,6 +28,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.models.csf_assessment import CsfAssessment, CsfAssessmentStatus
+from app.models.csf_profile import CsfDimensionScore
 from scripts import measure_evidence_blast_radius as m
 from tests.unit.test_zt_run_ai import _admin_service, app_client  # noqa: F401  (fixture)
 
@@ -118,6 +119,24 @@ def world(app_client):  # noqa: F811
     _patch_row(c, h, r2, {"governance": 1, "has_evidence": True})
     # r3: ticked, all 2, but OUT of scope: not counted in scope at all.
     _patch_row(c, h, r3, {**_ALL_TWO, "has_evidence": True, "in_scope": False})
+    # A ticked all-2 row on ID.AM-09, a code the catalog no longer has (#852).
+    # Writer: `seed_profiles` before migration 0065, which KEEPS such rows; no
+    # current route can mint one, so it is inserted as 0065 left it. Today L5,
+    # launch L2: a move, on a row no surface rolls up.
+    _engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with Session(_engine) as db:
+        db.add(
+            CsfDimensionScore(
+                assessment_id=uuid.UUID(draft_aid),
+                client_id=uuid.UUID(acme),
+                tier="high",
+                subcategory_code="ID.AM-09",
+                has_evidence=True,
+                **_ALL_TWO,
+            )
+        )
+        db.commit()
+    _engine.dispose()
 
     # --- CSF, RELEASED. One ticked all-2 row: MOVES (L5 -> L2).
     _, rel_aid, rel_rows = _csf_service(c, h, "CSF released")
@@ -177,34 +196,49 @@ def test_known_answer_and_no_write(world) -> None:
     report = _json(r.stdout)
     n = world["csf_rows_per_assessment"]
 
-    # CSF tier rows, Python path, per status. DRAFT: n-1 in scope (r3 out),
-    # one move (r0), two ticked in scope (r0, r2). RELEASED: n in scope, one
-    # move, one ticked.
-    tiers = report["csf_tier_rows"]["by_status"]
+    # No deliverable was ever released in this world, so no version is read by
+    # a client surface: the headline is empty and every figure is in
+    # `all_versions`. A zero headline over a world with rows must say so.
+    assert report["csf_tier_rows"]["surfaced"]["by_status"]["draft"]["rows_read"] == 0
+    assert report["csf_tier_rows"]["surfaced"]["by_status"]["released"]["rows_read"] == 0
+    assert report["zt_assessments"]["surfaced"]["by_status"]["draft"]["assessments_evaluated"] == 0
+
+    # CSF tier rows, Python path, per status, ALL versions. DRAFT: n catalog
+    # rows plus the retired ID.AM-09 row; n in scope (r3 out, ID.AM-09 in);
+    # two moves (r0, ID.AM-09), one of them on the retired code; three ticked
+    # in scope (r0, r2, ID.AM-09). RELEASED: n in scope, one move, one ticked.
+    tiers = report["csf_tier_rows"]["all_versions"]["by_status"]
     assert tiers["draft"] == {
-        "rows_read": n,
-        "rows_in_scope": n - 1,
-        "rows_level_moves": 1,
-        "rows_ticked_today": 2,
+        "rows_read": n + 1,
+        "rows_in_scope": n,
+        "rows_level_moves": 2,
+        "rows_ticked_today": 3,
+        "rows_on_retired_code": 1,
+        "rows_level_moves_on_retired_code": 1,
     }
     assert tiers["released"] == {
         "rows_read": n,
         "rows_in_scope": n,
         "rows_level_moves": 1,
         "rows_ticked_today": 1,
+        "rows_on_retired_code": 0,
+        "rows_level_moves_on_retired_code": 0,
     }
+    assert report["csf_tier_rows_cross_check"]["independently_cross_checked"] == [
+        "rows_level_moves"
+    ]
     assert tiers["approved"]["rows_read"] == 0
     # The section 10.6 SQL path agrees, per status and per client.
     assert report["paths_agree"] is True
-    assert report["csf_tier_rows_sql"]["by_status"]["draft"]["rows_level_moves"] == 1
+    assert report["csf_tier_rows_sql"]["by_status"]["draft"]["rows_level_moves"] == 2
     assert report["csf_tier_rows_sql"]["by_status"]["released"]["rows_level_moves"] == 1
-    acme = report["csf_tier_rows"]["by_client"][world["acme"]]["by_status"]
-    assert acme["draft"]["rows_level_moves"] == 1
+    acme = report["csf_tier_rows"]["all_versions"]["by_client"][world["acme"]]["by_status"]
+    assert acme["draft"]["rows_level_moves"] == 2
 
     # CSF Enterprise (HIGH tier only, so each subcategory is its one row):
     # r0 L5 -> L2 against target 3 opens one gap on DRAFT; RELEASED moves a
     # level, no target, no gap.
-    ent = report["csf_enterprise"]["by_status"]
+    ent = report["csf_enterprise"]["all_versions"]["by_status"]
     assert ent["draft"]["subcategory_level_moves"] == 1
     assert ent["draft"]["gaps_today"] == 0
     assert ent["draft"]["gaps_launch"] == 1
@@ -220,7 +254,7 @@ def test_known_answer_and_no_write(world) -> None:
 
     # ZT answers. DRAFT (CISA): 3 evaluated, 1 move (4 -> 2), the rest NULL,
     # counted as NOT EVALUABLE (unscored), never as unchanged.
-    zt = report["zt_answers"]["by_status"]
+    zt = report["zt_answers"]["all_versions"]["by_status"]
     assert zt["draft"]["answers_evaluated"] == 3
     assert zt["draft"]["stage_moves"] == 1
     assert zt["draft"]["unchanged"] == 2
@@ -232,13 +266,13 @@ def test_known_answer_and_no_write(world) -> None:
 
     # ZT deliverable: CISA default target 3. Today: stages 4, 2, 1 -> two gaps.
     # Launch: 2, 2, 1 -> three gaps. Average (4+2+1)/3 -> (2+2+1)/3 moves.
-    za = report["zt_assessments"]["by_status"]
+    za = report["zt_assessments"]["all_versions"]["by_status"]
     assert za["draft"]["assessments_evaluated"] == 1
     assert za["draft"]["gaps_today"] == 2
     assert za["draft"]["gaps_launch"] == 3
     assert za["draft"]["average_stage_moves"] == 1
     assert report["zt_assessments"]["not_evaluable"] == []
-    beta = report["zt_answers"]["by_client"][world["beta"]]["by_status"]
+    beta = report["zt_answers"]["all_versions"]["by_client"][world["beta"]]["by_status"]
     assert beta["draft"]["stage_moves"] == 1
 
 
@@ -278,6 +312,47 @@ def test_unreadable_input_exits_2_and_names_the_cause(url, reason) -> None:
     assert r.returncode == 2, r.stdout + r.stderr
     assert reason in r.stderr
     assert m.JSON_MARKER not in r.stdout
+
+
+def test_a_malformed_database_url_exits_2_not_1() -> None:
+    """Exit 1 means "the two paths disagree". A URL that cannot even be parsed
+    is "could not look", which is 2, with the reason on stderr."""
+    r = _run("this is not a database url")
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "could not parse DATABASE_URL" in r.stderr
+    assert m.JSON_MARKER not in r.stdout
+
+
+def test_an_unexpected_failure_exits_2_not_1(world, monkeypatch, capsys) -> None:
+    """Any failure before figures are printed is "could not look" (2), never
+    the code that means "the two paths disagree" (1)."""
+
+    def boom(db, parents):
+        raise RuntimeError("an engine refactor nobody anticipated")
+
+    monkeypatch.setattr(m, "csf_enterprise", boom)
+    monkeypatch.setenv("DATABASE_URL", world["url"])
+    assert m.main() == 2
+    out = capsys.readouterr()
+    assert "could not measure" in out.err
+    assert m.JSON_MARKER not in out.out
+
+
+def test_a_zero_zt_read_is_flagged_even_when_csf_has_rows(world, monkeypatch, capsys) -> None:
+    """NOTHING TO MEASURE is per service: a database whose ZT tables are empty
+    must not let CSF's rows make ZT's zeros read as clean."""
+    monkeypatch.setenv("DATABASE_URL", world["url"])
+    real = m.zt
+
+    def no_zt_rows(db, parents):
+        answers, assessments, bad = real(db, parents)
+        return m.Views(answers.metrics), m.Views(assessments.metrics), bad
+
+    monkeypatch.setattr(m, "zt", no_zt_rows)
+    assert m.main() == 0
+    out = capsys.readouterr().out.split(m.JSON_MARKER)[0]
+    assert "NOTHING TO MEASURE (Zero Trust)" in out
+    assert "NOTHING TO MEASURE (CSF)" not in out
 
 
 def test_a_database_without_the_tables_exits_2(tmp_path) -> None:

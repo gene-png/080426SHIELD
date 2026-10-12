@@ -23,6 +23,12 @@ reads as Not sure. So at launch no target has a confirmed Current file, and:
   - ZT: no capability has a Current file supporting `implemented`, so every
     stage above the framework's lowest counts as the lowest plus one.
 
+`app.routes.clients` is imported INSIDE the functions that call its helpers,
+not at module level: importing it builds the app's own (writable) engine from
+DATABASE_URL, so a module-level import would fail on a malformed URL before
+`main` could report it as exit 2, and would do so before this script opened its
+read-only engine. The app engine is never connected by this script.
+
 HOW IT AVOIDS REIMPLEMENTING SCORING. Every number comes from the product's own
 engines, CALLED on the stored rows with the launch rule applied in memory:
 
@@ -33,18 +39,34 @@ engines, CALLED on the stored rows with the launch rule applied in memory:
     counts its calls and the count must equal the tier scores the roll-up
     produced, or the rule was not applied and the run exits 2.
   - ZT: `app.zt.scoring.compute` and `analyze_gaps`, today's stored stages and
-    the launch stages, with the client's target resolved by the same
-    `client_target_stage` + `resolve_target_stage` the finalize route calls.
-    A capability's counted stage is read from `compute` over that one answer.
+    the launch stages. A capability's counted stage is read from `compute`
+    over that one answer.
+
+WHICH VERSIONS, AND WHICH TARGET. Every figure is reported twice:
+  - HEADLINE (`surfaced`): per service, the assessment version its client
+    dashboard renders, resolved by the dashboard's own helpers
+    (`_latest_released_deliverable`, then `_deliverable_parent`). ZT gaps are
+    against the target that deliverable was FROZEN with, through the
+    dashboard's `_frozen_or_live_target` (#209), never the live intake read.
+  - secondary (`all_versions`): every stored version, drafts and superseded
+    versions included. A version no client surface reads takes the live intake
+    target (`client_target_stage` + `resolve_target_stage`, as finalize does).
   The one thing written here is the PROPOSED ZT rule, `proposed_launch_stage`,
   because it does not exist in the product yet: it is what is being measured.
 
 TWO PATHS FOR CSF TIER ROWS. Section 10.6's SQL is run as an independent second
 path (with `a.client_id` added to its SELECT and GROUP BY so per-client counts
 are cross-checked too, and `lvl()` inlined as 10.6 allows). Both paths read the
-same population, every `csf_dimension_scores` row joined to its assessment, and
-must agree per (status, client) on rows in scope, rows whose level moves and rows
-ticked today. A disagreement prints PATHS DISAGREE and exits 1.
+same population, every `csf_dimension_scores` row joined to its assessment (ALL
+versions), and must agree per (status, client). Only `rows_level_moves` is an
+independent cross-check of the scoring; `rows_in_scope` and `rows_ticked_today`
+are shared-population counts (both paths count the same column of the same
+rows), and are labelled so. A disagreement prints PATHS DISAGREE and exits 1.
+
+RETIRED CSF CODES. A kept row on a code the catalog no longer has (#852) is in
+both paths' population, so it is counted, and disclosed apart:
+`rows_on_retired_code` and `rows_level_moves_on_retired_code`. No surface rolls
+it up (`catalog_rows`).
 
 WHAT IS NOT EVALUATED, AND IS NEVER COUNTED AS UNCHANGED:
   - ZT answers: `unscored` (stage NULL), `out_of_ladder` (a stored stage the
@@ -59,9 +81,12 @@ move: it reads `CsfAnswer.maturity_tier`, which no proposed rule reads.
 
 Output: a table, then a line `--- JSON ---`, then the same figures as JSON.
 Exit 0: measured (including a database with nothing to measure, which says so).
-Exit 1: the two CSF paths disagree. Exit 2: the input could not be read
-(DATABASE_URL unset, no such file, no connection, no tables) or the launch rule
-could not be applied; the reason is on stderr and no figures are printed.
+Exit 1: the two CSF paths disagree, and nothing else. Exit 2: the input could
+not be read (DATABASE_URL unset or malformed, no such file, no connection, no
+tables), the launch rule could not be applied, or anything else failed before
+figures were printed; the reason is on stderr and no figures are printed.
+NOTHING TO MEASURE is reported PER SERVICE (CSF, Zero Trust), and so is a
+service with rows but no surfaced version.
 
 It never writes. SQLite is opened with `mode=ro`; Postgres with
 `default_transaction_read_only=on`; every session is rolled back.
@@ -72,6 +97,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import traceback
 import uuid
 from collections import Counter
 from collections.abc import Iterator, Mapping
@@ -87,10 +113,17 @@ from sqlalchemy.exc import SQLAlchemyError  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from app.csf import enterprise, playbook  # noqa: E402
+from app.csf.retired import catalog_rows  # noqa: E402
 from app.models.client import Client  # noqa: E402
 from app.models.csf_assessment import CsfAssessment, CsfAssessmentStatus  # noqa: E402
 from app.models.csf_profile import CsfDimensionScore  # noqa: E402
-from app.models.zt_assessment import ZtAnswer, ZtAssessment, ZtFramework  # noqa: E402
+from app.models.deliverable import Deliverable  # noqa: E402
+from app.models.zt_assessment import (  # noqa: E402
+    ZtAnswer,
+    ZtAssessment,
+    ZtAssessmentStatus,
+    ZtFramework,
+)
 from app.services.engagement_targets import client_target_stage  # noqa: E402
 from app.zt.catalog import all_codes, capabilities  # noqa: E402
 from app.zt.maturity import ZtFrameworkCode, level_count, stage_definitions  # noqa: E402
@@ -108,7 +141,14 @@ LAUNCH_HAS_CURRENT_IMPLEMENTATION = False
 
 STATUSES = tuple(s.value for s in CsfAssessmentStatus)
 
-TIER_METRICS = ("rows_read", "rows_in_scope", "rows_level_moves", "rows_ticked_today")
+TIER_METRICS = (
+    "rows_read",
+    "rows_in_scope",
+    "rows_level_moves",
+    "rows_ticked_today",
+    "rows_on_retired_code",
+    "rows_level_moves_on_retired_code",
+)
 SQL_METRICS = ("rows_in_scope", "rows_level_moves", "rows_ticked_today")
 
 
@@ -209,31 +249,104 @@ class Tally:
         return {"by_status": by_status, "by_client": by_client}
 
 
+class Views:
+    """Every count twice. `surfaced` (the HEADLINE): only the assessment versions
+    a client surface reads, one per service at most. `all_versions`: every
+    stored version, drafts and superseded versions included, which is what the
+    10.6 SQL reads and what the two-path cross-check compares."""
+
+    def __init__(self, metrics: tuple[str, ...]) -> None:
+        self.metrics = metrics
+        self.all = Tally(metrics)
+        self.surfaced = Tally(metrics)
+
+    def add(self, surfaced: bool, cid: str, status: str, metric: str, n: int = 1) -> None:
+        self.all.add(cid, status, metric, n)
+        if surfaced:
+            self.surfaced.add(cid, status, metric, n)
+
+    def reason(self, surfaced: bool, cid: str, status: str, why: str) -> None:
+        self.all.reason(cid, status, why)
+        if surfaced:
+            self.surfaced.reason(cid, status, why)
+
+    def report(self, names: Mapping[str, str | None], with_reasons: bool = False) -> dict:
+        return {
+            "surfaced": self.surfaced.report(names, with_reasons),
+            "all_versions": self.all.report(names, with_reasons),
+        }
+
+
+# ---------------------------------------------------------------- surfaced versions
+
+
+def surfaced_parents(
+    db: Session, model: Any, statuses: tuple[Any, ...]
+) -> tuple[dict[uuid.UUID, Deliverable], list[dict[str, str]]]:
+    """{assessment id: the deliverable a client dashboard renders it for}, plus
+    the services whose released deliverable names no resolvable parent.
+
+    The resolution is the client dashboards', CALLED: the service's latest
+    RELEASED deliverable (`_latest_released_deliverable`), then the assessment it
+    was built from (`_deliverable_parent`, with the statuses `zt_dashboard`
+    passes). An unresolved parent is refused by the dashboard
+    (`_unresolved_parent`), so it surfaces no version and is listed instead.
+    The admin's unreleased preview is not a client surface and is not here."""
+    from app.routes.clients import _deliverable_parent, _latest_released_deliverable
+
+    surfaced: dict[uuid.UUID, Deliverable] = {}
+    unresolved: list[dict[str, str]] = []
+    for sid in sorted(set(db.execute(select(model.service_id)).scalars()), key=str):
+        deliv = _latest_released_deliverable(db, sid)
+        if deliv is None:
+            continue
+        parent = _deliverable_parent(db, model, deliv, statuses)
+        if parent is None:
+            unresolved.append(
+                {
+                    "service_id": str(sid),
+                    "deliverable_id": str(deliv.id),
+                    "reason": "dashboard_version_unresolved: parent_version is NULL or names "
+                    "no APPROVED/RELEASED assessment, so the dashboard refuses",
+                }
+            )
+            continue
+        surfaced[parent.id] = deliv
+    return surfaced, unresolved
+
+
 # ---------------------------------------------------------------- CSF
 
 
-def csf_tier_rows_python(db: Session) -> Tally:
+def csf_tier_rows_python(db: Session, parents: Mapping[uuid.UUID, Deliverable]) -> Views:
     """Path 1: `score_tier` per stored row, today's tick against launch."""
-    tally = Tally(TIER_METRICS)
-    rows = db.execute(
-        select(CsfDimensionScore, CsfAssessment.status).join(
-            CsfAssessment, CsfAssessment.id == CsfDimensionScore.assessment_id
+    views = Views(TIER_METRICS)
+    for a in db.execute(select(CsfAssessment)).scalars().all():
+        cid, st, surfaced = _cid(a.client_id), _status(a.status), a.id in parents
+        rows = (
+            db.execute(select(CsfDimensionScore).where(CsfDimensionScore.assessment_id == a.id))
+            .scalars()
+            .all()
         )
-    ).all()
-    for row, raw_status in rows:
-        cid, st = _cid(row.client_id), _status(raw_status)
-        tally.add(cid, st, "rows_read")
-        if not row.in_scope:
-            continue
-        ds = enterprise.dimensions_of(row)
-        today = playbook.score_tier(ds, has_evidence=row.has_evidence).level
-        launch = playbook.score_tier(ds, has_evidence=LAUNCH_HAS_CURRENT_IMPLEMENTATION).level
-        tally.add(cid, st, "rows_in_scope")
-        if row.has_evidence:
-            tally.add(cid, st, "rows_ticked_today")
-        if today != launch:
-            tally.add(cid, st, "rows_level_moves")
-    return tally
+        on_catalog = {r.id for r in catalog_rows(rows)}
+        for row in rows:
+            views.add(surfaced, cid, st, "rows_read")
+            if not row.in_scope:
+                continue
+            retired = row.id not in on_catalog
+            ds = enterprise.dimensions_of(row)
+            today = playbook.score_tier(ds, has_evidence=row.has_evidence).level
+            launch = playbook.score_tier(ds, has_evidence=LAUNCH_HAS_CURRENT_IMPLEMENTATION).level
+            views.add(surfaced, cid, st, "rows_in_scope")
+            if retired:
+                views.add(surfaced, cid, st, "rows_on_retired_code")
+            if row.has_evidence:
+                views.add(surfaced, cid, st, "rows_ticked_today")
+            if today != launch:
+                views.add(surfaced, cid, st, "rows_level_moves")
+                if retired:
+                    views.add(surfaced, cid, st, "rows_level_moves_on_retired_code")
+    return views
 
 
 def _lvl(t: str) -> str:
@@ -270,7 +383,7 @@ FROM lv GROUP BY assessment_status, client_id ORDER BY assessment_status, client
 
 
 def csf_tier_rows_sql(conn: Connection) -> dict[tuple[str, str], dict[str, int]]:
-    """Path 2: section 10.6's SQL, keyed (client id, status)."""
+    """Path 2: section 10.6's SQL, keyed (client id, status), over ALL versions."""
     out: dict[tuple[str, str], dict[str, int]] = {}
     for status, cid, in_scope, moves, ticked in conn.execute(text(CSF_TIER_SQL)).all():
         key = (_cid(cid), _status(status))
@@ -338,8 +451,10 @@ def _launch_score_tier(calls: list[int]) -> Iterator[None]:
         enterprise.score_tier = real
 
 
-def csf_enterprise(db: Session) -> tuple[Tally, list[dict[str, str]]]:
-    tally = Tally(
+def csf_enterprise(
+    db: Session, parents: Mapping[uuid.UUID, Deliverable]
+) -> tuple[Views, list[dict[str, str]]]:
+    views = Views(
         (
             "assessments_evaluated",
             "subcategories",
@@ -353,7 +468,7 @@ def csf_enterprise(db: Session) -> tuple[Tally, list[dict[str, str]]]:
     )
     not_evaluable: list[dict[str, str]] = []
     for a in db.execute(select(CsfAssessment)).scalars().all():
-        cid, st = _cid(a.client_id), _status(a.status)
+        cid, st, surfaced = _cid(a.client_id), _status(a.status), a.id in parents
         try:
             today, _ = enterprise.enterprise_subcategories(db, a)
             calls = [0]
@@ -361,7 +476,12 @@ def csf_enterprise(db: Session) -> tuple[Tally, list[dict[str, str]]]:
                 launch, _ = enterprise.enterprise_subcategories(db, a)
         except (ValueError, KeyError) as exc:
             not_evaluable.append(
-                {"assessment_id": str(a.id), "status": st, "reason": f"{type(exc).__name__}: {exc}"}
+                {
+                    "assessment_id": str(a.id),
+                    "status": st,
+                    "surfaced": str(surfaced),
+                    "reason": f"{type(exc).__name__}: {exc}",
+                }
             )
             continue
         expected = sum(len(s.tier_levels) for s in today)
@@ -370,24 +490,24 @@ def csf_enterprise(db: Session) -> tuple[Tally, list[dict[str, str]]]:
                 f"the launch rule was not applied to CSF assessment {a.id}: the roll-up "
                 f"scored {expected} tier rows and the launch score_tier saw {calls[0]}"
             )
-        tally.add(cid, st, "assessments_evaluated")
+        views.add(surfaced, cid, st, "assessments_evaluated")
         by_code = {s.subcategory_code: s for s in launch}
         for t in today:
             n = by_code[t.subcategory_code]
-            tally.add(cid, st, "subcategories")
+            views.add(surfaced, cid, st, "subcategories")
             if t.enterprise_level != n.enterprise_level:
-                tally.add(cid, st, "subcategory_level_moves")
+                views.add(surfaced, cid, st, "subcategory_level_moves")
             if t.gap:
-                tally.add(cid, st, "gaps_today")
+                views.add(surfaced, cid, st, "gaps_today")
             if n.gap:
-                tally.add(cid, st, "gaps_launch")
+                views.add(surfaced, cid, st, "gaps_launch")
             if n.gap and not t.gap:
-                tally.add(cid, st, "gaps_opened")
+                views.add(surfaced, cid, st, "gaps_opened")
             if t.gap and not n.gap:
-                tally.add(cid, st, "gaps_closed")
+                views.add(surfaced, cid, st, "gaps_closed")
             if t.priority != n.priority:
-                tally.add(cid, st, "priority_changes")
-    return tally, not_evaluable
+                views.add(surfaced, cid, st, "priority_changes")
+    return views, not_evaluable
 
 
 # ---------------------------------------------------------------- ZT
@@ -425,11 +545,29 @@ def _why_not_evaluable(framework: ZtFrameworkCode, code: str, stage: int | None)
     return None
 
 
-def zt(db: Session) -> tuple[Tally, Tally, list[dict[str, str]]]:
-    answers_tally = Tally(("answers_read", "answers_evaluated", "stage_moves", "unchanged"))
-    assessments_tally = Tally(
+def _zt_target(db: Session, a: ZtAssessment, deliv: Deliverable | None) -> tuple[object, bool]:
+    """(the client's CHOSEN target, whether it was frozen). A surfaced version
+    takes the target its deliverable was rendered with, through the dashboard's
+    own `_frozen_or_live_target` (#209); any other version takes the live
+    intake read, as finalize would."""
+    from app.routes.clients import _frozen_or_live_target
+
+    live = client_target_stage(db, a.service_id)
+    if deliv is None:
+        return live, False
+    chosen, frozen_at = _frozen_or_live_target(deliv, live)
+    return chosen, frozen_at is not None
+
+
+def zt(
+    db: Session, parents: Mapping[uuid.UUID, Deliverable]
+) -> tuple[Views, Views, list[dict[str, str]]]:
+    answers_views = Views(("answers_read", "answers_evaluated", "stage_moves", "unchanged"))
+    assessments_views = Views(
         (
             "assessments_evaluated",
+            "targets_frozen",
+            "targets_live",
             "overall_label_moves",
             "average_stage_moves",
             "pillar_average_moves",
@@ -440,25 +578,25 @@ def zt(db: Session) -> tuple[Tally, Tally, list[dict[str, str]]]:
     )
     not_evaluable: list[dict[str, str]] = []
     for a in db.execute(select(ZtAssessment)).scalars().all():
-        cid, st = _cid(a.client_id), _status(a.status)
+        cid, st, surfaced = _cid(a.client_id), _status(a.status), a.id in parents
         fw = _catalog_framework(a.framework)
         rows = db.execute(select(ZtAnswer).where(ZtAnswer.assessment_id == a.id)).scalars().all()
         for r in rows:
-            answers_tally.add(cid, st, "answers_read")
+            answers_views.add(surfaced, cid, st, "answers_read")
             why = _why_not_evaluable(fw, r.capability_code, r.maturity_stage)
             if why is not None:
-                answers_tally.reason(cid, st, why)
+                answers_views.reason(surfaced, cid, st, why)
                 continue
-            answers_tally.add(cid, st, "answers_evaluated")
+            answers_views.add(surfaced, cid, st, "answers_evaluated")
             stage = int(r.maturity_stage)  # type: ignore[arg-type]
             launch = proposed_launch_stage(fw, stage)
             assert launch is not None
             if _counted_stage(fw, r.capability_code, stage) != _counted_stage(
                 fw, r.capability_code, launch
             ):
-                answers_tally.add(cid, st, "stage_moves")
+                answers_views.add(surfaced, cid, st, "stage_moves")
             else:
-                answers_tally.add(cid, st, "unchanged")
+                answers_views.add(surfaced, cid, st, "unchanged")
 
         # The deliverable's inputs, as the finalize route builds them.
         valid = all_codes(fw)
@@ -467,8 +605,9 @@ def zt(db: Session) -> tuple[Tally, Tally, list[dict[str, str]]]:
         }
         launch_map = {c: proposed_launch_stage(fw, s) for c, s in today_map.items()}
         targets = {r.capability_code: r.target_stage for r in rows if r.capability_code in valid}
+        chosen, frozen = _zt_target(db, a, parents.get(a.id))
         try:
-            target_stage, _source = resolve_target_stage(fw, client_target_stage(db, a.service_id))
+            target_stage, _source = resolve_target_stage(fw, chosen)
             every = len(capabilities(fw))  # no DEFAULT_TOP_N truncation
             s_today, s_launch = compute(fw, today_map), compute(fw, launch_map)
             g_today = analyze_gaps(
@@ -479,37 +618,54 @@ def zt(db: Session) -> tuple[Tally, Tally, list[dict[str, str]]]:
             )
         except (ValueError, KeyError) as exc:
             not_evaluable.append(
-                {"assessment_id": str(a.id), "status": st, "reason": f"{type(exc).__name__}: {exc}"}
+                {
+                    "assessment_id": str(a.id),
+                    "status": st,
+                    "surfaced": str(surfaced),
+                    "reason": f"{type(exc).__name__}: {exc}",
+                }
             )
             continue
-        assessments_tally.add(cid, st, "assessments_evaluated")
+        assessments_views.add(surfaced, cid, st, "assessments_evaluated")
+        assessments_views.add(surfaced, cid, st, "targets_frozen" if frozen else "targets_live")
         if s_today.overall_stage_label != s_launch.overall_stage_label:
-            assessments_tally.add(cid, st, "overall_label_moves")
+            assessments_views.add(surfaced, cid, st, "overall_label_moves")
         if s_today.average_stage != s_launch.average_stage:
-            assessments_tally.add(cid, st, "average_stage_moves")
+            assessments_views.add(surfaced, cid, st, "average_stage_moves")
         for p_today, p_launch in zip(s_today.by_pillar, s_launch.by_pillar, strict=True):
             if p_today.average_stage != p_launch.average_stage:
-                assessments_tally.add(cid, st, "pillar_average_moves")
-        assessments_tally.add(cid, st, "gaps_today", g_today.total_gap_count)
-        assessments_tally.add(cid, st, "gaps_launch", g_launch.total_gap_count)
+                assessments_views.add(surfaced, cid, st, "pillar_average_moves")
+        assessments_views.add(surfaced, cid, st, "gaps_today", g_today.total_gap_count)
+        assessments_views.add(surfaced, cid, st, "gaps_launch", g_launch.total_gap_count)
         if g_today.total_gap_count != g_launch.total_gap_count:
-            assessments_tally.add(cid, st, "assessments_gap_count_moves")
-    return answers_tally, assessments_tally, not_evaluable
+            assessments_views.add(surfaced, cid, st, "assessments_gap_count_moves")
+    return answers_views, assessments_views, not_evaluable
 
 
 # ---------------------------------------------------------------- measure
 
 
 def measure(url: str) -> dict[str, Any]:
-    engine = open_readonly(url)
+    try:
+        engine = open_readonly(url)
+    except SQLAlchemyError as exc:
+        # `make_url` refuses a malformed URL with ArgumentError. Still "could
+        # not look", never exit 1 ("the paths disagree").
+        raise CouldNotRead(f"could not parse DATABASE_URL: {exc!r}") from exc
     try:
         with Session(engine) as db:
             try:
                 names = {_cid(c.id): c.legal_name for c in db.execute(select(Client)).scalars()}
-                tiers = csf_tier_rows_python(db)
+                csf_parents, csf_unresolved = surfaced_parents(
+                    db, CsfAssessment, (CsfAssessmentStatus.APPROVED, CsfAssessmentStatus.RELEASED)
+                )
+                zt_parents, zt_unresolved = surfaced_parents(
+                    db, ZtAssessment, (ZtAssessmentStatus.APPROVED, ZtAssessmentStatus.RELEASED)
+                )
+                tiers = csf_tier_rows_python(db, csf_parents)
                 sql = csf_tier_rows_sql(db.connection())
-                ent, ent_bad = csf_enterprise(db)
-                zt_answers, zt_assessments, zt_bad = zt(db)
+                ent, ent_bad = csf_enterprise(db, csf_parents)
+                zt_answers, zt_assessments, zt_bad = zt(db, zt_parents)
             finally:
                 db.rollback()
     except SQLAlchemyError as exc:
@@ -517,15 +673,30 @@ def measure(url: str) -> dict[str, Any]:
     finally:
         engine.dispose()
 
-    disagreements = compare_paths(tiers, sql)
+    disagreements = compare_paths(tiers.all, sql)
     return {
         "scope": {
             "launch": "no CONFIRMED links (the backfill writes SUGGESTED); doc_status NULL "
             "reads as not_sure (design note rev 4, 10.6)",
+            "surfaced": "HEADLINE: per service, the assessment version its client dashboard "
+            "renders (latest released deliverable's parent); ZT gaps against that "
+            "deliverable's frozen target",
+            "all_versions": "every stored assessment version; versions no client surface "
+            "reads take the live intake target",
             "statuses_frozen_by_q9_grace_proposal": ["approved", "released"],
         },
         "csf_tier_rows": tiers.report(names),
         "csf_tier_rows_sql": _sql_report(sql, names),
+        "csf_tier_rows_cross_check": {
+            "independently_cross_checked": ["rows_level_moves"],
+            "shared_population": ["rows_in_scope", "rows_ticked_today"],
+            "python_only": [
+                "rows_read",
+                "rows_on_retired_code",
+                "rows_level_moves_on_retired_code",
+            ],
+            "population": "all_versions",
+        },
         "paths_agree": not disagreements,
         "disagreements": disagreements,
         "csf_rules": {
@@ -536,14 +707,22 @@ def measure(url: str) -> dict[str, Any]:
             },
             "R3": {"rows_affected": 0, "basis": "by definition: R3 has no score effect"},
         },
-        "csf_enterprise": {**ent.report(names), "not_evaluable": ent_bad},
+        "csf_enterprise": {
+            **ent.report(names),
+            "not_evaluable": ent_bad,
+            "parents_unresolved": csf_unresolved,
+        },
         "csf_deliverable": {
             "rows_moved": 0,
             "basis": "by construction, not measured: the CSF deliverable reads "
             "CsfAnswer.maturity_tier, which no proposed rule reads",
         },
         "zt_answers": zt_answers.report(names, with_reasons=True),
-        "zt_assessments": {**zt_assessments.report(names), "not_evaluable": zt_bad},
+        "zt_assessments": {
+            **zt_assessments.report(names),
+            "not_evaluable": zt_bad,
+            "parents_unresolved": zt_unresolved,
+        },
     }
 
 
@@ -572,32 +751,77 @@ def _table(title: str, section: Mapping[str, Any]) -> list[str]:
     return lines
 
 
+_HEADLINE = "HEADLINE, versions a client surface reads"
+_ALL = "secondary, ALL assessment versions"
+
+
+def _both(title: str, section: Mapping[str, Any]) -> list[str]:
+    return _table(f"{title} [{_HEADLINE}]", section["surfaced"]) + _table(
+        f"{title} [{_ALL}]", section["all_versions"]
+    )
+
+
+def _read(section: Mapping[str, Any], metric: str, view: str = "all_versions") -> int:
+    return sum(c[metric] for c in section[view]["by_status"].values())
+
+
+def _nothing_to_measure(report: Mapping[str, Any]) -> list[str]:
+    """Per SERVICE: one service's rows never make another's zeros read clean."""
+    out = []
+    for service, section, metric in (
+        ("CSF", report["csf_tier_rows"], "rows_read"),
+        ("Zero Trust", report["zt_answers"], "answers_read"),
+    ):
+        if _read(section, metric) == 0:
+            out.append(
+                f"{PREFIX}: NOTHING TO MEASURE ({service}): no rows were read, so its zeros "
+                "below are not a clean result"
+            )
+        elif _read(section, metric, "surfaced") == 0:
+            out.append(
+                f"{PREFIX}: NO SURFACED VERSION ({service}): rows exist but no client surface "
+                "reads any of them (no released deliverable resolves to a parent), so its "
+                "HEADLINE zeros are not a clean result"
+            )
+    return out
+
+
 def render(report: Mapping[str, Any]) -> str:
     out = [f"{PREFIX}: evidence rules at launch, design note rev 4 10.4/10.6 (read-only)"]
-    read = sum(c["rows_read"] for c in report["csf_tier_rows"]["by_status"].values())
-    zt_read = sum(c["answers_read"] for c in report["zt_answers"]["by_status"].values())
-    out.append(f"{PREFIX} read: CSF tier rows {read}, ZT answer rows {zt_read}")
-    if read == 0 and zt_read == 0:
-        out.append(
-            f"{PREFIX}: NOTHING TO MEASURE: no CSF tier rows and no ZT answers were read, "
-            "so the zeros below are not a clean result"
-        )
+    out.append(
+        f"{PREFIX} read (all versions): CSF tier rows "
+        f"{_read(report['csf_tier_rows'], 'rows_read')}, ZT answer rows "
+        f"{_read(report['zt_answers'], 'answers_read')}"
+    )
+    out += _nothing_to_measure(report)
     if report["paths_agree"]:
-        out.append(f"{PREFIX}: CSF tier rows: the score_tier path and the 10.6 SQL path AGREE")
+        out.append(
+            f"{PREFIX}: CSF tier rows, all versions: the score_tier path and the 10.6 SQL "
+            "path AGREE"
+        )
     else:
         out.append(f"{PREFIX}: PATHS DISAGREE on CSF tier rows: {report['disagreements']}")
-    out += _table("CSF tier rows (score_tier path)", report["csf_tier_rows"])
-    out += _table("CSF tier rows (10.6 SQL path)", report["csf_tier_rows_sql"])
-    out += _table("CSF Enterprise (enterprise_subcategories)", report["csf_enterprise"])
-    if report["csf_enterprise"]["not_evaluable"]:
-        out.append(f"  not evaluable: {report['csf_enterprise']['not_evaluable']}")
+    check = report["csf_tier_rows_cross_check"]
+    out.append(
+        f"  independently cross-checked: {', '.join(check['independently_cross_checked'])}; "
+        f"shared-population counts (both paths count the same column of the same rows): "
+        f"{', '.join(check['shared_population'])}; score_tier path only: "
+        f"{', '.join(check['python_only'])}"
+    )
+    out += _both("CSF tier rows (score_tier path)", report["csf_tier_rows"])
+    out += _table(f"CSF tier rows (10.6 SQL path) [{_ALL}]", report["csf_tier_rows_sql"])
+    out += _both("CSF Enterprise (enterprise_subcategories)", report["csf_enterprise"])
+    for key in ("not_evaluable", "parents_unresolved"):
+        if report["csf_enterprise"][key]:
+            out.append(f"  CSF {key}: {report['csf_enterprise'][key]}")
     out.append(f"\nCSF R2: {report['csf_rules']['R2']['basis']}")
     out.append(f"CSF R3: {report['csf_rules']['R3']['basis']}")
     out.append(f"CSF deliverable: {report['csf_deliverable']['basis']}")
-    out += _table("ZT answers (counted stage, compute)", report["zt_answers"])
-    out += _table("ZT assessments (deliverable: compute + analyze_gaps)", report["zt_assessments"])
-    if report["zt_assessments"]["not_evaluable"]:
-        out.append(f"  not evaluable: {report['zt_assessments']['not_evaluable']}")
+    out += _both("ZT answers (counted stage, compute)", report["zt_answers"])
+    out += _both("ZT assessments (deliverable: compute + analyze_gaps)", report["zt_assessments"])
+    for key in ("not_evaluable", "parents_unresolved"):
+        if report["zt_assessments"][key]:
+            out.append(f"  ZT {key}: {report['zt_assessments'][key]}")
     return "\n".join(out)
 
 
@@ -608,12 +832,20 @@ def main() -> int:
         return EXIT_UNREADABLE
     try:
         report = measure(url)
+        table = render(report)
+        payload = json.dumps(report, indent=2, sort_keys=True)
     except (CouldNotRead, RuleNotApplied) as exc:
         print(f"{PREFIX}: {exc}", file=sys.stderr)
         return EXIT_UNREADABLE
-    print(render(report))
+    except Exception as exc:  # noqa: BLE001 -- any failure before figures is "could not look"
+        # Exit 1 means "the two paths disagree"; an unexpected failure must not
+        # borrow it. The traceback goes to stderr, and no figures are printed.
+        traceback.print_exc()
+        print(f"{PREFIX}: could not measure, nothing is reported: {exc!r}", file=sys.stderr)
+        return EXIT_UNREADABLE
+    print(table)
     print(JSON_MARKER)
-    print(json.dumps(report, indent=2, sort_keys=True))
+    print(payload)
     if not report["paths_agree"]:
         print(
             f"{PREFIX}: PATHS DISAGREE: the CSF counts above are not trustworthy", file=sys.stderr
