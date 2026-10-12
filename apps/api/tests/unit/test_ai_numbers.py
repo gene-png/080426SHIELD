@@ -987,26 +987,61 @@ def test_a_protected_path_naming_a_dict_or_a_number_is_refused(payload: dict) ->
 @pytest.mark.parametrize(
     "n,protected,text,unprotected",
     [
-        # #1088 round 12, F1: a protected value that is itself the magnitude,
-        # unit or number word making a numeral composite would hide that word,
-        # and `_touched` reads only the match's DIGITS, so nothing unmasks it.
-        (5, "M", "$5 M exposure.", ["$5 M"]),
+        # #1088 round 12, F1, and the coordinator's ruling: a protected value
+        # with no digit made only of NUMBER WORDS or Roman numerals can only
+        # hide a number, since the edge (`_touched`) unmasks through digits.
         (40, "percent", "40 percent of hosts.", ["40 percent"]),
-        (5, "GB", "5 GB used.", ["5 GB"]),
+        (40, "per cent", "40 per cent of hosts.", ["40 per cent"]),
         (5, "hundred thousand", "5 hundred thousand rows.", ["5 hundred thousand"]),
-        (5, "Mn", "$5 Mn spent.", ["$5 Mn"]),
+        (12, "dozen", "a dozen hosts.", ["a dozen"]),
+        (5, "five", "five hosts.", ["five"]),
         (5, "XII", "XII hosts.", ["XII"]),
     ],
 )
 def test_a_protected_value_made_only_of_number_words_is_refused(
     n: int, protected: str, text: str, unprotected: list[str]
 ) -> None:
-    # Unprotected, the composite is refused...
+    # Unprotected, the text is refused...
     plain = allowed_numbers({"n": n}, fact_fields=("n",), protected_fields=())
     assert [h.raw for h in unallowed_numbers(text, plain)] == unprotected
-    # ...so protecting the word that makes it composite must not be possible.
+    # ...so protecting the number word that it hinges on must not be possible.
     with pytest.raises(ValueError, match=f"protected field 'p' holds {protected!r}"):
         allowed_numbers({"n": n, "p": protected}, fact_fields=("n",), protected_fields=("p",))
+
+
+@pytest.mark.parametrize(
+    "n,protected,text,refused",
+    [
+        # The coordinator's ruling: a single magnitude or unit-shaped word with
+        # no digit is client data ("EDR", "MFA"), so it never raises; it has no
+        # digit to let through, so it is NOT MASKED and the text is judged as
+        # if unprotected. "$5 M" and "5 GB" stay refused.
+        (5, "M", "$5 M exposure.", ["$5 M"]),
+        (5, "Mn", "$5 Mn spent.", ["$5 Mn"]),
+        (5, "GB", "5 GB used.", ["5 GB"]),
+        (5, "EDR", "5 EDR agents.", ["5 EDR"]),
+        (5, "MFA", "5 MFA prompts.", ["5 MFA"]),
+        (5, "MFA", "MFA is on for 5 hosts.", []),
+        # A unit joins a numeral, not a magnitude, so the span ends at "M".
+        (5, "M GB", "$5 M GB used.", ["$5 M"]),
+    ],
+)
+def test_a_protected_magnitude_or_unit_word_is_not_masked(
+    n: int, protected: str, text: str, refused: list[str]
+) -> None:
+    plain = allowed_numbers({"n": n}, fact_fields=("n",), protected_fields=())
+    allowed = allowed_numbers({"n": n, "p": protected}, fact_fields=("n",), protected_fields=("p",))
+    assert protected not in allowed.protected
+    assert [h.raw for h in unallowed_numbers(text, allowed)] == refused
+    assert [h.raw for h in unallowed_numbers(text, plain)] == refused
+
+
+def test_a_licensed_number_beside_an_unmasked_unit_word_is_still_judged() -> None:
+    # "5 EDR" is refused as a composite; licensing it verbatim admits it.
+    allowed = allowed_numbers(
+        {"n": "5 EDR", "p": "EDR"}, fact_fields=("n",), protected_fields=("p",)
+    )
+    assert unallowed_numbers("5 EDR agents.", allowed) == ()
 
 
 @pytest.mark.parametrize(

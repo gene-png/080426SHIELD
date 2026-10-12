@@ -62,16 +62,19 @@ PCs" stays masked), and a protected match is touched iff some joined span
 containing one of the match's DIGITS extends past either end of it ("Windows
 10%", "1'400 hosts"). A touched value is checked like any other number. A
 protected path naming a mapping, a number, None or a bool raises: protecting a
-whole subtree would exempt strings nobody listed. So does a protected value
-made only of magnitudes, units or number words ("M", "GB",
-"percent"): it would mask the word that makes a numeral composite.
+whole subtree would exempt strings nobody listed. A protected value with no
+digit has nothing to let through: made only of number words or Roman numerals
+("percent", "XII") it raises, since masking it could only hide a number; a
+single magnitude or unit-shaped word ("M", "GB", "EDR") is client data, so it
+does not raise and is simply not masked ("$5 M" stays refused).
 
 WHAT IT DOES NOT DO. It does not check which fact a number is attached to.
 
 FAIL LOUDLY. A hit is returned, never raised. Input it cannot read raises: a
 non-string text, a non-mapping payload, a field list given as a str, a listed
 field matching no key, a value of an unknown type, a non-finite number, a protected path naming a
-mapping, a number, None or a bool, a protected value made only of number words.
+mapping, a number, None or a bool, a protected value made only of number words
+or Roman numerals.
 
 Owned by whichever of #1063 and EV-2 lands first; the other imports it. Nothing
 calls it yet: no prompt and no egress path changes.
@@ -667,16 +670,17 @@ def _walk(
                     f"numbers: protected field {key!r} holds an all-numeric value; "
                     "list it as a fact field instead"
                 )
-            if value.strip() and _only_number_bearing(value):
-                # Protecting "M", "GB" or "percent" would mask the very word
-                # that makes "$5 M" composite, and the edge (`_touched`) reads
-                # only the match's digits, so nothing would unmask it (#1088
-                # round 12).
+            protection = _protection(value) if value.strip() else "mask"
+            if protection == "refused":
+                # Masking "percent" or "XII" could only hide a number: the edge
+                # unmasks through digits and there are none (#1088 round 12).
                 raise ValueError(
                     f"numbers: protected field {key!r} holds {value.strip()!r}, which is "
-                    "made only of magnitudes, units or number words"
+                    "made only of number words or Roman numerals"
                 )
-            if value.strip():
+            if protection == "unmasked":
+                _log.debug("numbers.protected_not_masked", field=key, value=value.strip())
+            elif value.strip():
                 out["protected"].add(value.strip())
         elif in_fact:
             out["strings"].append(value)
@@ -699,22 +703,32 @@ def _walk(
         raise TypeError(f"numbers: cannot read a {type(value).__name__} at {key!r}")
 
 
-def _only_number_bearing(value: str) -> bool:
-    """Whether `value` has no digit and every word in it is number-bearing as
-    the span builder reads it: a magnitude, a unit, a number word (including a
-    merged "per cent") or a Roman numeral ("M", "GB", "percent"). Only such a
-    value can hide a composite: the edge (`_touched`) unmasks a match through
-    its DIGITS, so a value WITH a digit ("Windows 10", "PR.PS-01", "ISO 27001")
-    is governed by the edge, and a value with an ordinary word in it
-    ("Phase two") is a name. Unit SHAPE is a guess about one word after a
-    numeral, so several words that are only unit-shaped ("Acme Corp") are a
-    name too; one such word alone ("GB", and so also "EDR") is refused."""
-    # No digit test is needed: a token with a digit is NUM ("10", "Q3",
-    # "01" in "PR.PS-01"), never one of the four kinds below.
+def _protection(value: str) -> str:
+    """What protecting `value` means: "mask", "unmasked" or "refused".
+
+    Protection exists to let the DIGITS inside a code or name through (the
+    edge, `_touched`, unmasks a match through its digits). So a value WITH a
+    digit ("Windows 10", "PR.PS-01", "ISO 27001", "Q3": a token with a digit
+    is NUM) is masked, and so is a name with an ordinary word in it ("Phase
+    two"). A value with no digit has nothing to let through, and (the
+    coordinator's ruling, #1088 round 13):
+      - made only of number words or Roman numerals, possibly with
+        magnitudes or units ("percent", "hundred thousand", "XII"): REFUSED,
+        because masking it can only hide a number;
+      - a single magnitude or unit-shaped word ("M", "GB", "EDR", "MFA"), or
+        several with a magnitude among them: NOT MASKED, so the text is
+        judged as if unprotected ("$5 M" stays refused). It never raises:
+        it is client data, which the caller cannot correct;
+      - several words that are only unit-SHAPED ("Acme Corp"): masked, as a
+        name. Unit shape is a guess about one word after a numeral."""
     words = [t for t in _tokens(value) if t.text[0].isalnum()]
     if not words or not all(t.kind in (_MAG, _UNIT, _WORD, _ROMAN) for t in words):
-        return False
-    return len(words) == 1 or any(t.kind != _UNIT for t in words)
+        return "mask"
+    if any(t.kind in (_WORD, _ROMAN) for t in words):
+        return "refused"
+    if len(words) == 1 or any(t.kind == _MAG for t in words):
+        return "unmasked"
+    return "mask"
 
 
 def _ambiguous(key: str, declared: frozenset[str]) -> bool:
