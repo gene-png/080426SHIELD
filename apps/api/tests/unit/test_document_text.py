@@ -32,11 +32,10 @@ from app.documents.text import (
     ChunkPlan,
     DocText,
     ExtractLimits,
-    RedactedText,
+    RedactionOffRefused,
     chunk_text,
     document_text,
     extract_limits,
-    redact_text,
 )
 from app.models.artifact import Artifact
 from app.storage.local import LocalFilesystemStorage
@@ -328,15 +327,16 @@ def test_zero_byte_binary_types_are_unreadable(store, title, mime):
     _assert_not_read(store.read(b"", title=title, mime=mime), "unreadable")
 
 
-def test_text_over_max_chars_is_truncated_and_counts_what_it_read(store):
-    """A TXT file is one piece (it is bounded by `max_bytes`), so what it read
-    is the whole of it."""
+def test_text_over_max_chars_keeps_whole_lines_and_says_truncated(store):
+    """Extraction stops at the first LINE that passes `max_chars`; the text is
+    never cut inside a line, where a name or a number could be split."""
     limits = replace(LIMITS, max_chars=10)
-    result = store.read(b"Quebec Romeo Sierra", title="long.txt", mime=TXT, limits=limits)
+    data = b"Quebec Romeo Sierra\nTango Uniform\nVictor Whiskey\n"
+    result = store.read(data, title="long.txt", mime=TXT, limits=limits)
     _assert_read(result)
     assert result.truncated is True
-    assert result.text == "Quebec Rom"
-    assert result.chars_total == 19
+    assert result.text == "Quebec Romeo Sierra"
+    assert result.chars_total == len("Quebec Romeo Sierra")
 
 
 def test_file_over_max_bytes_is_too_large(store):
@@ -527,38 +527,42 @@ def test_a_storage_failure_that_is_not_a_miss_raises(store):
 # --------------------------------------------------------------------------
 
 
-def _unredacted(text: str) -> RedactedText:
-    """A RedactedText from `redact_text` with mode "off": these tests are about
-    where chunks break, and must not depend on what the redactor rewrites.
-    Redaction itself is tested below, through `redact_for_ai`."""
-    return redact_text(text, mode="off", client_org_name=None, name_hints=())
+def _chunks(text: str, **kw) -> ChunkPlan:
+    """chunk_text in strict mode with no client literals: for tests about where
+    chunks break, on text the redactor leaves alone (asserted by each test)."""
+    return chunk_text(text, mode="strict", client_org_name=None, name_hints=(), **kw)
 
 
 def test_chunk_exact_boundary_is_one_chunk():
-    plan = chunk_text(_unredacted("a" * 100), chunk_chars=100, max_chunks=5)
-    assert plan == ChunkPlan(chunks=("a" * 100,), sent=1, skipped=0, offsets=(0,))
+    plan = _chunks("a" * 100, chunk_chars=100, max_chunks=5)
+    assert (plan.chunks, plan.sent, plan.skipped, plan.offsets) == (("a" * 100,), 1, 0, (0,))
 
 
 def test_chunk_one_over_the_boundary_is_two_chunks():
-    plan = chunk_text(_unredacted("a" * 101), chunk_chars=100, max_chunks=5)
-    assert plan == ChunkPlan(chunks=("a" * 100, "a"), sent=2, skipped=0, offsets=(0, 100))
+    plan = _chunks("a" * 101, chunk_chars=100, max_chunks=5)
+    assert (plan.chunks, plan.sent, plan.skipped, plan.offsets) == (
+        ("a" * 100, "a"),
+        2,
+        0,
+        (0, 100),
+    )
 
 
 def test_chunk_max_chunks_exceeded_counts_the_skipped():
-    plan = chunk_text(_unredacted("b" * 1000), chunk_chars=100, max_chunks=3)
+    plan = _chunks("b" * 1000, chunk_chars=100, max_chunks=3)
     assert plan.sent == 3
     assert plan.skipped == 7
     assert plan.chunks == ("b" * 100,) * 3
 
 
 def test_chunk_empty_text_sends_nothing_and_skips_nothing():
-    plan = chunk_text(_unredacted(""), chunk_chars=100, max_chunks=3)
-    assert plan == ChunkPlan(chunks=(), sent=0, skipped=0, offsets=())
+    plan = _chunks("", chunk_chars=100, max_chunks=3)
+    assert (plan.chunks, plan.sent, plan.skipped, plan.offsets) == ((), 0, 0, ())
 
 
 def test_chunk_breaks_at_whitespace_and_loses_nothing():
     text = "Uniform victor whiskey xray yankee zulu " * 40
-    plan = chunk_text(_unredacted(text), chunk_chars=50, max_chunks=1000)
+    plan = _chunks(text, chunk_chars=50, max_chunks=1000)
     assert plan.skipped == 0
     assert "".join(plan.chunks) == text
     assert all(len(c) <= 50 for c in plan.chunks)
@@ -568,7 +572,7 @@ def test_chunk_breaks_at_whitespace_and_loses_nothing():
 
 def test_chunk_offsets_locate_every_chunk():
     text = "alpha bravo charlie delta echo foxtrot golf hotel india juliet " * 20
-    plan = chunk_text(_unredacted(text), chunk_chars=60, max_chunks=1000)
+    plan = _chunks(text, chunk_chars=60, max_chunks=1000)
     for offset, chunk in zip(plan.offsets, plan.chunks, strict=True):
         assert text[offset : offset + len(chunk)] == chunk
 
@@ -576,12 +580,12 @@ def test_chunk_offsets_locate_every_chunk():
 def test_chunk_prefers_a_paragraph_boundary_to_a_later_space():
     first = "Mike paragraph one runs on for a while here"
     text = first + "\n" + "November second paragraph words go on and on and on"
-    plan = chunk_text(_unredacted(text), chunk_chars=60, max_chunks=10)
+    plan = _chunks(text, chunk_chars=60, max_chunks=10)
     assert plan.chunks[0] == first + "\n"
 
 
 def test_chunk_hard_cuts_a_run_with_no_whitespace():
-    plan = chunk_text(_unredacted("c" * 250), chunk_chars=100, max_chunks=10)
+    plan = _chunks("c" * 250, chunk_chars=100, max_chunks=10)
     assert [len(c) for c in plan.chunks] == [100, 100, 50]
 
 
@@ -591,14 +595,21 @@ def test_chunk_hard_cuts_a_run_with_no_whitespace():
 )
 def test_chunk_refuses_limits_that_cannot_hold_text(chunk_chars, max_chunks):
     with pytest.raises(ValueError):
-        chunk_text(_unredacted("text"), chunk_chars=chunk_chars, max_chunks=max_chunks)
+        _chunks("text", chunk_chars=chunk_chars, max_chunks=max_chunks)
 
 
-@pytest.mark.parametrize("raw", ["plain unredacted text", b"bytes"])
-def test_chunk_refuses_anything_but_redacted_text(raw):
-    """chunk_text never sees text that has not been through the redactor."""
-    with pytest.raises(TypeError, match="RedactedText"):
-        chunk_text(raw, chunk_chars=10, max_chunks=1)  # type: ignore[arg-type]
+def test_chunk_refuses_a_non_string():
+    with pytest.raises(TypeError):
+        _chunks(b"bytes", chunk_chars=10, max_chunks=1)  # type: ignore[arg-type]
+
+
+def test_chunk_refuses_redaction_mode_off():
+    """Text for an AI payload is never chunked unredacted, whatever the
+    configured mode says."""
+    with pytest.raises(RedactionOffRefused, match="off"):
+        chunk_text(
+            "text", chunk_chars=10, max_chunks=1, mode="off", client_org_name=None, name_hints=()
+        )
 
 
 def test_a_large_file_chunks_end_to_end(store):
@@ -610,9 +621,8 @@ def test_a_large_file_chunks_end_to_end(store):
     result = store.read(data, title="big.txt", mime=TXT, limits=limits)
     _assert_read(result)
     assert result.chars_total == 43_000
-    plan = chunk_text(
-        _unredacted(result.text), chunk_chars=limits.chunk_chars, max_chunks=limits.max_chunks
-    )
+    plan = _chunks(result.text, chunk_chars=limits.chunk_chars, max_chunks=limits.max_chunks)
+    assert plan.redaction_counts == {}
     assert plan.sent == 4
     assert plan.skipped == 6
     assert plan.chunks[0] == line * 100
@@ -1016,7 +1026,8 @@ def test_max_chars_stops_pdf_extraction_early(store, monkeypatch):
     result = store.read(data, title="early.pdf", mime=PDF, limits=replace(LIMITS, max_chars=40))
     _assert_read(result)
     assert result.truncated is True
-    assert len(result.text) == 40
+    assert "Sierra page 1 " in result.text
+    assert "Sierra page 3 " not in result.text
     assert calls["n"] <= 2
 
 
@@ -1421,57 +1432,61 @@ def _leaks_org(chunk: str) -> bool:
 
 
 def test_redacting_each_chunk_leaks_a_name_cut_by_a_boundary():
-    """The defect, reproduced with the real redactor: chunk first and redact
-    each chunk, and a boundary leaves part of the legal name unredacted."""
+    """The defect, reproduced with the real redactor: cut the text first and
+    redact each piece, and a cut inside the name leaves part of it."""
     from app.ai.redact import redact_for_ai
 
     text = ("Lorem ipsum dolor sit amet " * 3 + _ORG + " ") * 8
-    raw_chunks = chunk_text(_unredacted(text), chunk_chars=120, max_chunks=100).chunks
-    per_chunk = [redact_for_ai(c, client_org_name=_ORG)[0] for c in raw_chunks]
-    assert any(_leaks_org(c) for c in per_chunk)
+    cut_at = text.index("International")
+    pieces = [text[:cut_at], text[cut_at:]]
+    per_piece = [redact_for_ai(p, client_org_name=_ORG)[0] for p in pieces]
+    assert any(_leaks_org(p) for p in per_piece)
 
 
 def test_no_chunk_carries_any_part_of_a_name_or_phone_cut_by_a_boundary():
-    """Redaction runs over the WHOLE text before chunking, so no boundary can
-    hide a name or a phone number from it."""
+    """chunk_text redacts the WHOLE text before chunking, so no boundary can
+    hide a name or a phone number from the redactor."""
     from app.ai.redact import redact_for_ai
 
     phone = "(410) 555-0199"
     base = ("Lorem ipsum dolor sit amet " * 3 + _ORG + " ") * 8
-    # The phone's inner space is the last whitespace before character 120, so
-    # a 120-character chunk boundary falls inside the number.
     text = "Lorem ipsum dolor sit amet " * 4 + " call " + phone + " now " + base
-    assert text.index(phone) == 114
+    # Control: cut at character 120, inside the number, and redacted per
+    # piece, part of the number reaches the provider.
+    assert text.index(phone) < 120 < text.index(phone) + len(phone)
+    per_piece = [redact_for_ai(p, client_org_name=_ORG)[0] for p in (text[:120], text[120:])]
+    assert any("0199" in p or "410" in p for p in per_piece)
 
-    # Control: chunked first and redacted per chunk, the number is cut in two
-    # and part of it reaches the provider.
-    raw = chunk_text(_unredacted(text), chunk_chars=120, max_chunks=100).chunks
-    assert raw[0].endswith("(410) ")
-    per_chunk = [redact_for_ai(c, client_org_name=_ORG)[0] for c in raw]
-    assert any("0199" in c or "410" in c for c in per_chunk)
-
-    redacted = redact_text(text, mode="strict", client_org_name=_ORG, name_hints=())
-    plan = chunk_text(redacted, chunk_chars=120, max_chunks=100)
+    plan = chunk_text(
+        text, chunk_chars=120, max_chunks=100, mode="strict", client_org_name=_ORG, name_hints=()
+    )
     assert plan.skipped == 0
     assert plan.sent > 5
     assert not any(_leaks_org(c) for c in plan.chunks)
     assert not any(d in c for c in plan.chunks for d in ("410", "555", "0199"))
-    assert redacted.counts
+    assert plan.redaction_counts.get("client_org", 0) >= 8
 
 
-def test_redact_text_is_redact_for_ai_over_the_whole_text():
-    """Same inputs, same output: redact_text calls redact_for_ai, it does
-    not reimplement it."""
+def test_chunk_text_sends_exactly_what_redact_for_ai_returns():
+    """Enforced by calling: the chunks join back to redact_for_ai's own
+    output for the same inputs, and carry its counts."""
     from app.ai.redact import redact_for_ai
 
     text = "Contact Dana Whitfield at Northwind Traders International Holdings, (410) 555-0199."
     expected, counts = redact_for_ai(
         text, mode="strict", client_org_name=_ORG, name_hints=["Dana Whitfield"]
     )
-    got = redact_text(text, mode="strict", client_org_name=_ORG, name_hints=["Dana Whitfield"])
-    assert got.text == expected
-    assert got.counts == counts
-    assert "Dana" not in got.text
+    plan = chunk_text(
+        text,
+        chunk_chars=1000,
+        max_chunks=5,
+        mode="strict",
+        client_org_name=_ORG,
+        name_hints=["Dana Whitfield"],
+    )
+    assert "".join(plan.chunks) == expected
+    assert plan.redaction_counts == counts
+    assert "Dana" not in "".join(plan.chunks)
 
 
 def _docx_body_only(body: str) -> bytes:
@@ -1562,3 +1577,92 @@ def test_a_timed_out_pdf_does_not_walk_its_form(store, monkeypatch):
     result = store.read(data, title="tform.pdf", mime=PDF, limits=replace(LIMITS, max_seconds=5.0))
     _assert_not_read(result, "too_large")
     assert calls == []
+
+
+# --------------------------------------------------------------------------
+# Review round 4 at ca84b198 (#1089).
+# --------------------------------------------------------------------------
+
+_COVER_THEN_POLICY = (
+    "Cover letter.\nSincerely,\nJohn Smith\nChief Information Security Officer\n\n"
+    "Section 1. Access Control\nAll accounts use MFA. Backups are tested quarterly.\n"
+)
+
+
+def test_a_signature_cut_marks_the_plan_incomplete_and_measures_it():
+    """The redactor's signature rule deletes from the sign-off to the END of
+    the text. The plan says the text it sends is NOT the whole document, and
+    how much went, so the policy after a cover letter is never taken as
+    absent evidence."""
+    from app.ai.redact import redact_for_ai
+
+    plan = _chunks(_COVER_THEN_POLICY, chunk_chars=1000, max_chunks=5)
+    # The redactor's own behaviour, which this PR does not change:
+    assert redact_for_ai(_COVER_THEN_POLICY)[1].get("signature_block") == 1
+    assert "Backups are tested" not in "".join(plan.chunks)
+    assert plan.signature_cut is True
+    assert plan.complete is False
+    tail = _COVER_THEN_POLICY[_COVER_THEN_POLICY.index("Sincerely,") :]
+    assert plan.signature_chars_removed == len(tail)
+    assert plan.signature_lines_removed == len(tail.splitlines())
+
+
+def test_an_email_thread_signature_cut_is_measured_to_the_end():
+    thread = (
+        "Re: quarterly access review\n\nThe review is done.\n\nRegards,\nPriya Raman\n"
+        "IT Director\n\n-----Original Message-----\nFrom: Sam Lee\nSent: Monday\n"
+        "Please confirm the firewall rules were reviewed.\nThanks,\nSam Lee\n"
+    )
+    plan = _chunks(thread, chunk_chars=1000, max_chunks=5)
+    assert plan.signature_cut is True
+    assert plan.complete is False
+    tail = thread[thread.index("Regards,") :]
+    assert plan.signature_chars_removed == len(tail)
+    assert plan.signature_lines_removed == len(tail.splitlines())
+    assert "firewall rules" not in "".join(plan.chunks)
+
+
+def test_a_document_without_a_sign_off_is_complete():
+    plan = _chunks("Policy text.\nAll accounts use MFA.\n", chunk_chars=1000, max_chunks=5)
+    assert plan.signature_cut is False
+    assert plan.complete is True
+    assert plan.signature_chars_removed == 0
+    assert plan.signature_lines_removed == 0
+
+
+def test_a_cut_at_max_chars_never_splits_a_name_or_a_number(store):
+    """The max_chars stop keeps whole lines, so the redactor still sees the
+    whole name and the whole number on the last line read."""
+    line = "Owner: Dana Whitfield, phone (410) 555-0199, reviews access.\n"
+    data = ("Intro line with nothing in it.\n" * 3 + line + "Later line.\n" * 20).encode()
+    cut_inside = len("Intro line with nothing in it.\n" * 3) + line.index("Whitf") + 2
+    result = store.read(data, title="c.txt", mime=TXT, limits=replace(LIMITS, max_chars=cut_inside))
+    _assert_read(result)
+    assert result.truncated is True
+    assert "Dana Whitfield" in result.text
+    plan = chunk_text(
+        result.text,
+        chunk_chars=60,
+        max_chunks=100,
+        mode="strict",
+        client_org_name=None,
+        name_hints=["Dana Whitfield"],
+    )
+    sent = "".join(plan.chunks)
+    for fragment in ("Dana", "Whitf", "410", "555", "0199"):
+        assert fragment not in sent, fragment
+
+
+def test_a_redactor_that_disagrees_with_its_signature_step_is_raised(monkeypatch):
+    """The signature measurement calls the redactor's own step. If the step
+    and redact_for_ai stop agreeing, chunk_text raises rather than guess."""
+    import app.documents.text as text_module
+    from app.ai.redact import redact_for_ai
+
+    def no_signature_count(text, **kw):
+        cleaned, counts = redact_for_ai(text, **kw)
+        return cleaned, {k: v for k, v in counts.items() if k != "signature_block"}
+
+    monkeypatch.setattr(text_module, "redact_for_ai", no_signature_count)
+    with pytest.raises(RuntimeError, match="disagree"):
+        _chunks(_COVER_THEN_POLICY, chunk_chars=1000, max_chunks=5)

@@ -29,12 +29,21 @@ Extraction STOPS EARLY at `max_chars`, at `max_pages` and at `max_seconds`
 (checked per page, row and paragraph); `truncated` says so, and a time limit
 reached before any text is `too_large`.
 
-**Redaction runs over the WHOLE text, before chunking.** `redact_text` calls
-`app.ai.redact.redact_for_ai` on the full extracted text and returns a
-`RedactedText`; `chunk_text` accepts nothing else. Redacting chunk by chunk is
-NOT safe: the redactor matches whole literals and whole shapes, so a boundary
-inside a name, a phone number or an address leaves fragments it cannot see
-(review round 3 of #1089).
+Extraction stops at a PIECE boundary (a page, row, paragraph or text line),
+never inside one, so `text` may run past `max_chars` by the last piece read.
+
+**Redaction runs over the WHOLE text, before chunking, inside `chunk_text`.**
+It takes the raw text and the same inputs as `app.ai.redact.redact_for_ai`,
+calls it once on the whole text, and only then cuts chunks; it refuses mode
+"off". Redacting chunk by chunk is NOT safe: the redactor matches whole
+literals and whole shapes, so a boundary inside a name, a phone number or an
+address leaves fragments it cannot see (review round 3 of #1089).
+
+**A signature cut makes the plan INCOMPLETE.** The redactor's signature rule
+deletes from a sign-off to the END of the text. `ChunkPlan.signature_cut` and
+`complete` say so, with the characters and lines removed, so a consumer never
+reads the missing tail (a policy after a cover letter, an earlier message in
+an email thread) as absent evidence (review round 4 of #1089).
 
 Wired to nothing yet: no route and no AI call reads it.
 """
@@ -58,7 +67,7 @@ from pypdf import PdfReader
 from pypdf.errors import FileNotDecryptedError
 from pypdf.generic import NameObject
 
-from app.ai.redact import redact_for_ai
+from app.ai.redact import _redact_signature_blocks, redact_for_ai
 from app.config import RedactionMode, Settings, get_settings
 from app.logging import get_logger
 from app.models.artifact import Artifact
@@ -86,25 +95,30 @@ NOT_READ_REASONS: tuple[str, ...] = get_args(NotReadReason)
 class DocText:
     """What one file yielded.
 
-    `chars_total` counts the characters EXTRACTED, and `text` is cut to
-    `max_chars`. When `truncated` is False, `text` is the whole document's
-    text and `chars_total` its length. When it is True, `text` is not the
-    whole document: it was cut at `max_chars`, or extraction stopped at the
-    page or time limit, so `chars_total` is a lower bound on the document's
-    length, not its total.
+    `chars_total` is `len(text)`, the characters EXTRACTED. When `truncated`
+    is False, `text` is the whole document's text. When it is True, it is
+    not: extraction stopped after the piece (page, row, paragraph or line)
+    that passed `max_chars`, or at the page or time limit, so `chars_total`
+    is a lower bound on the document's length. `text` is never cut inside a
+    piece, so it may run past `max_chars` by up to one piece; a name or a
+    number split across two pieces (a page break, a line wrap) can still be
+    cut by the stop.
 
     `pages_without_text` counts PDF pages read that gave no text (a partly
     scanned file). `parts_not_read` counts content in a read file that no
     reader opened or that is deliberately not quoted: in a PDF, an XFA form,
     an unreadable AcroForm, an embedded file or a media annotation; in a DOCX,
-    an altChunk, an embedded object, a picture, SmartArt, a chart, a hidden
-    run, a ruby (pronunciation) annotation, or an unparseable header, footer,
-    footnotes, endnotes or comments part; in an XLSX, each cell comment, each
-    worksheet drawing and each chartsheet. Both are additions to section
-    15.2's shape, and both are 0 when nothing was skipped.
+    an altChunk, an embedded object, a picture, SmartArt, a chart, any other
+    drawing or VML graphic that gives no text, an OMML equation, a symbol
+    (`w:sym`) with no known character, a hidden run, a ruby (pronunciation)
+    annotation, or an unparseable header, footer, footnotes, endnotes or
+    comments part; in an XLSX, each cell comment, each worksheet drawing and
+    each chartsheet. Both are additions to section 15.2's shape, and both are
+    0 when nothing was skipped.
 
     A file whose only content is of those kinds is never an empty `read`: it
-    is `not_read: no_text_layer` (the reason the PDF reader gives a scan).
+    is `not_read: no_text_layer`, meaning "no readable text; the content is in
+    parts not read" (pictures, charts, equations), not only "a scan".
     """
 
     status: Literal["read", "not_read"]
@@ -136,51 +150,43 @@ class DocText:
             raise ValueError("a not_read result carries no text and no counts")
 
 
+class RedactionOffRefused(ValueError):
+    """`chunk_text` was asked to chunk with redaction mode "off". Text cut
+    for an AI payload is never unredacted, whatever the configured mode."""
+
+
 @dataclass(frozen=True)
 class ChunkPlan:
-    """The chunks to send, and how many were sent and skipped. `sent` is
+    """What `chunk_text` produced from one document's text.
+
+    `chunks` are cut from the REDACTED text; they do not overlap and join back
+    to it, and `offsets[i]` is where `chunks[i]` starts in it. `sent` is
     `len(chunks)`; `skipped` is how many more the text needed past the cap.
-    Chunks do not overlap and concatenate back to the redacted text;
-    `offsets[i]` is where `chunks[i]` starts in it."""
+
+    `redaction_counts` is `redact_for_ai`'s count for the WHOLE text, skipped
+    chunks included. A caller wiring this to a live AI call records it: the
+    egress client's own redaction pass will find almost nothing left in each
+    chunk, so its per-call count is not the document's.
+
+    `signature_cut` is True when the redactor's signature rule deleted the
+    text from a sign-off to the end; `signature_chars_removed` and
+    `signature_lines_removed` measure what went. `complete` is False then:
+    the chunks are NOT the whole document, and nothing missing from them may
+    be read as absent from it.
+    """
 
     chunks: tuple[str, ...]
     sent: int
     skipped: int
     offsets: tuple[int, ...]
+    redaction_counts: Mapping[str, int]
+    signature_cut: bool
+    signature_chars_removed: int
+    signature_lines_removed: int
 
-
-@dataclass(frozen=True)
-class RedactedText:
-    """Text that has been through `redact_for_ai` WHOLE, the only input
-    `chunk_text` accepts. `counts` is the redactor's own count of what it
-    replaced; `mode` is the mode it ran in."""
-
-    text: str
-    counts: Mapping[str, int]
-    mode: RedactionMode
-
-
-def redact_text(
-    text: str,
-    *,
-    mode: RedactionMode,
-    client_org_name: str | None,
-    name_hints: Iterable[str],
-) -> RedactedText:
-    """Redact the WHOLE extracted text with `redact_for_ai`, before any
-    chunking, so no chunk boundary can split a name, a phone number, an
-    address or a signature block out of the redactor's sight.
-
-    This calls the redactor in the calling process. A caller wiring it into
-    a live AI path must run it inside #552's redaction isolation (the child
-    process with a per-payload time budget), as every other egress does."""
-    if not isinstance(text, str):
-        raise TypeError(f"redact_text needs str, got {type(text).__name__}")
-    cleaned, counts = redact_for_ai(
-        text, mode=mode, client_org_name=client_org_name, name_hints=name_hints
-    )
-    _log.info("documents.text.redacted", mode=mode, chars=len(cleaned), counts=counts)
-    return RedactedText(text=cleaned, counts=dict(counts), mode=mode)
+    @property
+    def complete(self) -> bool:
+        return not self.signature_cut
 
 
 @dataclass(frozen=True)
@@ -336,7 +342,7 @@ def document_text(storage: _Readable, artifact: Artifact, *, limits: ExtractLimi
     result = DocText(
         status="read",
         reason=None,
-        text=text[: limits.max_chars],
+        text=text,
         chars_total=len(text),
         truncated=truncated,
         pages_without_text=tally.pages_without_text,
@@ -944,7 +950,9 @@ def _read_txt(data: bytes, *, declared_text: bool) -> Iterator[str]:
         text = data.decode(encoding)
     except UnicodeDecodeError as exc:
         raise _NotRead(failure, f"text: not {encoding} ({exc})") from exc
-    yield text
+    # One piece per line, so the max_chars stop lands between lines, never
+    # inside one. Joined back with "\n", the lines rebuild the text exactly.
+    yield from _LINE_BREAKS.sub("\n", text).split("\n")
 
 
 #: Line separators other than "\n", including "\r\n" as one: CR, VT, FF, the
@@ -961,39 +969,60 @@ def _sanitize(text: str) -> str:
     return _CONTROLS.sub(" ", _LINE_BREAKS.sub("\n", text.lstrip("\ufeff")))
 
 
-def chunk_text(redacted: RedactedText, *, chunk_chars: int, max_chunks: int) -> ChunkPlan:
-    """Split already-redacted text into chunks of at most `chunk_chars` for
-    per-payload AI calls. It takes only a `RedactedText` (from `redact_text`),
-    never raw text: redacting per chunk is not safe (see the module docstring).
+def chunk_text(
+    text: str,
+    *,
+    chunk_chars: int,
+    max_chunks: int,
+    mode: RedactionMode,
+    client_org_name: str | None,
+    name_hints: Iterable[str],
+) -> ChunkPlan:
+    """Redact the WHOLE text with `redact_for_ai`, then split the result into
+    chunks of at most `chunk_chars` for per-payload AI calls.
+
+    Takes the same inputs `redact_for_ai` takes, and calls it, so there is no
+    path to a chunk that has not been redacted (enforced by calling). Mode
+    "off" is refused with `RedactionOffRefused`. Redacting per chunk is not
+    safe (see the module docstring).
 
     A chunk ends at the last paragraph break in the second half of its
     window, else the last whitespace there, else at `chunk_chars` exactly.
-    Chunks do not overlap. At most `max_chunks` are returned; `skipped`
-    counts the rest the text needed.
+    At most `max_chunks` are returned; `skipped` counts the rest.
+
+    This calls the redactor in the calling process. A caller wiring it into
+    a live AI path must run it inside #552's redaction isolation (the child
+    process with a per-payload time budget), as every other egress does.
     """
-    if not isinstance(redacted, RedactedText):
-        raise TypeError(
-            f"chunk_text needs a RedactedText from redact_text, got {type(redacted).__name__}"
+    if not isinstance(text, str):
+        raise TypeError(f"chunk_text needs str, got {type(text).__name__}")
+    if mode == "off":
+        raise RedactionOffRefused(
+            'chunk_text refuses redaction mode "off": AI payload text is always redacted'
         )
     if chunk_chars < 1:
         raise ValueError(f"chunk_chars must be at least 1, got {chunk_chars}")
     if max_chunks < 1:
         raise ValueError(f"max_chunks must be at least 1, got {max_chunks}")
-    text = redacted.text
+    hints = list(name_hints)
+    redacted, counts = redact_for_ai(
+        text, mode=mode, client_org_name=client_org_name, name_hints=hints
+    )
+    cut_chars, cut_lines = _signature_cut(text, counts)
     chunks: list[str] = []
     offsets: list[int] = []
     start = 0
-    while start < len(text):
-        end = min(start + chunk_chars, len(text))
-        if end < len(text):
-            end = _chunk_end(text, start, end, chunk_chars)
+    while start < len(redacted):
+        end = min(start + chunk_chars, len(redacted))
+        if end < len(redacted):
+            end = _chunk_end(redacted, start, end, chunk_chars)
         if end <= start:
             # Every pass must consume text. Without this a bad limit loops
             # forever instead of failing.
             raise RuntimeError(
                 f"chunk_text made no progress at {start} (chunk_chars={chunk_chars})"
             )
-        chunks.append(text[start:end])
+        chunks.append(redacted[start:end])
         offsets.append(start)
         start = end
     plan = ChunkPlan(
@@ -1001,9 +1030,42 @@ def chunk_text(redacted: RedactedText, *, chunk_chars: int, max_chunks: int) -> 
         sent=min(len(chunks), max_chunks),
         skipped=max(len(chunks) - max_chunks, 0),
         offsets=tuple(offsets[:max_chunks]),
+        redaction_counts=dict(counts),
+        signature_cut=cut_chars > 0,
+        signature_chars_removed=cut_chars,
+        signature_lines_removed=cut_lines,
     )
-    _log.info("documents.text.chunked", sent=plan.sent, skipped=plan.skipped)
+    _log.info(
+        "documents.text.chunked",
+        sent=plan.sent,
+        skipped=plan.skipped,
+        redaction_counts=plan.redaction_counts,
+        signature_cut=plan.signature_cut,
+        signature_chars_removed=cut_chars,
+        signature_lines_removed=cut_lines,
+    )
     return plan
+
+
+def _signature_cut(text: str, counts: Mapping[str, int]) -> tuple[int, int]:
+    """Characters and lines the redactor's signature rule removed from `text`.
+
+    Measured by CALLING the redactor's own signature step on the same input
+    (it is the first pass `redact_for_ai` runs, so it sees exactly this text)
+    rather than by re-deriving where it cut. app/ai/redact.py is not changed
+    here (#552's hold). If the step and `redact_for_ai`'s count disagree, the
+    redactor has changed under this module, and that is raised, not guessed.
+    """
+    _, fired, removed = _redact_signature_blocks(text)
+    if bool(fired) != bool(counts.get("signature_block", 0)):
+        raise RuntimeError(
+            "signature step and redact_for_ai disagree: "
+            f"step fired={fired}, counts={dict(counts)}"
+        )
+    if not removed:
+        return 0, 0
+    tail = text[len(text) - removed :]
+    return removed, len(tail.splitlines())
 
 
 def _chunk_end(text: str, start: int, end: int, chunk_chars: int) -> int:
