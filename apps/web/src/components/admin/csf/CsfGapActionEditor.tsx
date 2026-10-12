@@ -149,9 +149,16 @@ export function CsfGapActionEditor({
                     ) : null}
                   </div>
                   <span className="text-xs text-ink-tertiary">
-                    L{a.enterprise_level}
-                    {a.target_level ? ` → target L${a.target_level}` : ""} ·
-                    priority{" "}
+                    {/* #1077 review, F2: a kept entry with nothing rolled up
+                        (out of scope) shows no level, never "L0". */}
+                    {a.enterprise_level > 0 ? `L${a.enterprise_level}` : ""}
+                    {/* F1: "Not measured", approved (#736 6127667643). */}
+                    {a.target_not_measured === true
+                      ? " → target Not measured"
+                      : a.target_level
+                        ? ` → target L${a.target_level}`
+                        : ""}{" "}
+                    · priority{" "}
                     <span className="font-semibold text-ink-primary">
                       {a.effective_priority ?? "—"}
                     </span>

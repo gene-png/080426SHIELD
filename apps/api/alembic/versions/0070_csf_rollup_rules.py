@@ -67,5 +67,22 @@ def downgrade() -> None:
             "rollup_rules = 2 (approved under #1031). Dropping the column would lose "
             "that, and re-upgrading would backfill them to the every-tier rule (1)."
         )
+    # Review of #1077, F3: NULL reads as the scored-tiers rule, so an APPROVED
+    # or RELEASED row left NULL was approved under it too, and the re-upgrade
+    # would backfill it to 1 just the same. Matched on the stored NAME, as the
+    # backfill is.
+    unrecorded = bind.execute(
+        sa.text(
+            "SELECT COUNT(*) FROM csf_assessments "
+            "WHERE rollup_rules IS NULL AND status IN ('APPROVED', 'RELEASED')"
+        )
+    ).scalar_one()
+    if unrecorded:
+        raise RuntimeError(
+            f"Refusing to downgrade 0070: {unrecorded} APPROVED or RELEASED CSF "
+            "assessment(s) have no rollup_rules recorded, which reads as the "
+            "scored-tiers rule; re-upgrading would backfill them to the every-tier "
+            "rule (1)."
+        )
     with op.batch_alter_table("csf_assessments") as batch:
         batch.drop_column("rollup_rules")

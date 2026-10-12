@@ -286,3 +286,24 @@ def test_a_row_with_no_target_at_all_still_reads_no_target(app_client) -> None: 
     assert (sub["target_level"], sub["target_not_measured"]) == (None, False), sub
     ent = _row(_xlsx(_export(c, h, svc)["xlsx"])["Enterprise Profile"], CODE)
     assert (ent["Target"], ent["Gap"]) == (None, "No target"), ent
+
+
+# --- Review of #1077: a kept entry keeps "Not measured" (F1) -------------------------------
+
+
+def test_a_kept_entry_on_an_unmeasured_target_reads_not_measured(app_client) -> None:  # noqa: F811
+    """HIGH scored with no target, MODERATE target-only at 4, and a POA&M entry
+    on the code: the Enterprise Profile reads "Not measured", and so do the
+    gap-actions response and the Action Plan sheet."""
+    c, h = app_client
+    svc, _aid = _world(c, h, tiers=["high", "moderate"], high=LEVEL_3)
+    _patch(c, h, svc, "moderate", {"target_level": 4})
+    r = c.put(f"/csf/services/{svc}/gap-actions/{CODE}", headers=h, json={"owner": "Ops lead"})
+    assert r.status_code == 200, r.text
+    kept = _gap_actions(c, h, svc)[CODE]
+    assert (kept["no_longer_gap"], kept["target_not_measured"]) == (True, True), kept
+    files = _export(c, h, svc)
+    book = _xlsx(files["xlsx"])
+    assert _row(book["Enterprise Profile"], CODE)["Target"] == "Not measured"
+    plan = _row(book["Action Plan"], CODE)
+    assert (plan["Owner"], plan["Target"]) == ("Ops lead", "Not measured"), plan

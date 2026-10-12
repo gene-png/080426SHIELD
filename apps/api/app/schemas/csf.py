@@ -585,6 +585,9 @@ class CsfGapActionResponse(BaseModel):
     #: the record ("No longer a gap: kept for the record"). Required: every
     #: construction goes through `_gap_action_response`.
     no_longer_gap: bool
+    #: #1077 review, F1: the code's only targets sit on unscored tiers, so
+    #: its target reads "Not measured" here as on the Enterprise Profile.
+    target_not_measured: bool
 
 
 class CsfGapActionsResponse(BaseModel):

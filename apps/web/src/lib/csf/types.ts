@@ -381,6 +381,11 @@ export interface CsfGapAction {
    * record. Optional so an older API parses.
    */
   no_longer_gap?: boolean;
+  /**
+   * #1077 review, F1: the code's only targets sit on unscored tiers; the
+   * target reads "Not measured". Optional so an older API parses.
+   */
+  target_not_measured?: boolean;
 }
 
 export interface CsfGapActions {

@@ -335,7 +335,7 @@ def render_xlsx(
                 r.subcategory_code,
                 r.name,
                 f"L{r.enterprise_level}" if r.enterprise_level else "",
-                f"L{r.target_level}" if r.target_level else "",
+                _target_cell(r, ""),
                 (override or (r.priority or "")) if is_gap else KEPT_FOR_THE_RECORD,
                 getattr(act, "characterization", "") or "" if act else "",
                 getattr(act, "owner", "") or "" if act else "",
@@ -487,6 +487,8 @@ def _function_summary(rows: Sequence[Any]) -> list[dict[str, Any]]:
                 "target": max(g["targets"]) if g["targets"] else None,
                 # #765: "Target" and "gaps" above are of TARGETED rows only.
                 "untargeted": _untargeted(g["rows"]),
+                # #1031: rows whose target was not measured, apart.
+                "unmeasured": _unmeasured(g["rows"]),
             }
         )
     return out
@@ -507,10 +509,15 @@ def _overview_sentences(rows: Sequence[Any], *, scored_only: bool = False) -> li
         else "subcategories fall short of their target maturity"
     )
     untargeted = _untargeted(rows)
-    if total and untargeted == total:
+    unmeasured = _unmeasured(rows)
+    shortfall: str | None
+    if total and untargeted + unmeasured == total:
         # #765 item 2: with no target anywhere, "0 subcategories fall short ...
-        # 0 Priority 1" counts shortfalls nothing was measured for.
-        shortfall = f"No gaps or priorities are assessed: {_subcats(untargeted)}."
+        # 0 Priority 1" counts shortfalls nothing was measured for. #1031: the
+        # unmeasured count line below says the rest.
+        shortfall = (
+            f"No gaps or priorities are assessed: {_subcats(untargeted)}." if untargeted else None
+        )
     else:
         shortfall = (
             f"{gaps} {short} — "
@@ -520,28 +527,30 @@ def _overview_sentences(rows: Sequence[Any], *, scored_only: bool = False) -> li
             # of anything, they were never measured against a target.
             + (f" {_subcats(untargeted)}." if untargeted else "")
         )
-    lines = [
+    lines: list[str | None] = [
         f"This assessment covers {total} in-scope NIST CSF 2.0 "
         f"{'subcategory' if total == 1 else 'subcategories'}. "
         f"Enterprise maturity, rolled up across the "
         f"{'scored impact tiers in use' if scored_only else 'impact tiers in use'}, "
         f"averages Level {overall} of 5.",
         shortfall,
+        _unmeasured_line(unmeasured) if unmeasured else None,
     ]
     # #1031: where the roll-up is shown, how many tier rows it left out.
     unscored = _unscored_line(rows) if scored_only else None
     if unscored:
         lines.insert(1, unscored)
+    out = [line for line in lines if line]
     if len(fns) >= 2:
         strongest = max(fns, key=lambda f: f["avg"])
         weakest = min(fns, key=lambda f: f["avg"])
         if strongest["code"] != weakest["code"]:
-            lines.append(
+            out.append(
                 f"The strongest function is {strongest['name']} "
                 f"(avg Level {strongest['avg']}); the area needing the most "
                 f"attention is {weakest['name']} (avg Level {weakest['avg']})."
             )
-    return lines
+    return out
 
 
 def _gaps(n: int) -> str:
@@ -604,7 +613,30 @@ NO_TARGET = "No target"
 
 
 def _untargeted(rows: Sequence[Any]) -> int:
-    return sum(1 for r in rows if r.target_level is None)
+    """Rows with no target set. #1031 (#736 6128447366): a row whose only
+    targets sit on unscored tiers HAS a target, which was not measured, so it
+    is counted by `_unmeasured` instead. Under the every-tier rule nothing is
+    unmeasured, so frozen assessments keep the old counts and copy."""
+    return sum(
+        1 for r in rows if r.target_level is None and not getattr(r, "target_not_measured", False)
+    )
+
+
+def _unmeasured(rows: Sequence[Any]) -> int:
+    return sum(1 for r in rows if getattr(r, "target_not_measured", False))
+
+
+def _unmeasured_line(n: int) -> str:
+    """The count line, approved verbatim (#736 6128447366)."""
+    if n == 1:
+        return (
+            "1 in-scope subcategory has a target only on tiers that were not scored, "
+            "so it was not measured."
+        )
+    return (
+        f"{n} in-scope subcategories have a target only on tiers that were not scored, "
+        "so it was not measured."
+    )
 
 
 def _gap_cell(r: Any) -> str:
@@ -619,8 +651,10 @@ def _gap_cell(r: Any) -> str:
 def _scorecard_target(f: Mapping[str, Any]) -> str:
     """A function's scorecard Target cell (#765): "No target" when none of its
     rows has one, as `_gap_cell` says of a row."""
-    if f["untargeted"] == f["count"]:
-        return NO_TARGET
+    if f["untargeted"] + f.get("unmeasured", 0) == f["count"]:
+        # #1031: no measured target at all; "Not measured" when any row has a
+        # target that was not measured, else "No target".
+        return NOT_MEASURED if f.get("unmeasured", 0) else NO_TARGET
     return f"L{f['target']}"
 
 
@@ -628,10 +662,16 @@ def _scorecard_gaps(f: Mapping[str, Any]) -> str:
     """A function's scorecard Gaps cell (#765): the count of its TARGETED rows'
     gaps, with its untargeted rows beside it, or "—" when it has no target at
     all. A bare "0" over untargeted rows read as the function meeting it."""
-    if f["untargeted"] == f["count"]:
+    unmeasured = f.get("unmeasured", 0)
+    if f["untargeted"] + unmeasured == f["count"]:
         return "—"
-    if f["untargeted"]:
-        return f"{f['gaps']} ({f['untargeted']} no target)"
+    # #1031: the unmeasured rows apart from the untargeted ones.
+    beside = [
+        *([f"{f['untargeted']} no target"] if f["untargeted"] else []),
+        *([f"{unmeasured} not measured"] if unmeasured else []),
+    ]
+    if beside:
+        return f"{f['gaps']} ({', '.join(beside)})"
     return str(f["gaps"])
 
 
@@ -644,15 +684,30 @@ def _no_gaps_sentence(rows: Sequence[Any]) -> str:
     every in-scope row has a target; otherwise "no gaps" is said of the rows
     that have one, and the rest are named as not assessed."""
     untargeted = _untargeted(rows)
-    if untargeted == 0:
+    unmeasured = _unmeasured(rows)
+    # #1031: "every ... meets its target" only when BOTH counts are 0.
+    if untargeted == 0 and unmeasured == 0:
         return "No gaps — every in-scope subcategory meets its target."
-    targeted = len(rows) - untargeted
-    if targeted == 0:
+    tail = f" {_unmeasured_line(unmeasured)}" if unmeasured else ""
+    targeted = len(rows) - untargeted - unmeasured
+    if targeted == 0 and untargeted and not unmeasured:
         return "No in-scope subcategory has a target set, so none is assessed for gaps."
+    if targeted == 0 and not untargeted:
+        return _unmeasured_line(unmeasured)
+    if targeted == 0:
+        return (
+            f"{_subcats(untargeted)}, so {'it is' if untargeted == 1 else 'they are'} "
+            f"not assessed for gaps.{tail}"
+        )
+    if not untargeted:
+        return (
+            f"No gaps among the {targeted} subcategor{'y' if targeted == 1 else 'ies'} with a "
+            f"target.{tail}"
+        )
     return (
         f"No gaps among the {targeted} subcategor{'y' if targeted == 1 else 'ies'} with a "
         f"target. {_subcats(untargeted)}, so {'it is' if untargeted == 1 else 'they are'} "
-        "not assessed for gaps."
+        f"not assessed for gaps.{tail}"
     )
 
 
@@ -688,6 +743,10 @@ def _next_steps(rows: Sequence[Any]) -> list[str]:
             f"{_subcats(untargeted)}; this plan does not cover "
             f"{'it' if untargeted == 1 else 'them'}."
         )
+    # #1031: a row whose target was not measured is not covered either.
+    unmeasured = _unmeasured(rows)
+    if unmeasured:
+        steps.append(_unmeasured_line(unmeasured))
     # Each sentence agrees in number with its count (#682): "the 1 Priority 1
     # gap(s) first — these are ... weaknesses" read one gap as several.
     if pc["P1"]:
@@ -755,11 +814,14 @@ def _untargeted_tail(rows: Sequence[Any]) -> str:
     target, with its leading space, or "". One place, so the executive list and
     the full Playbook's roadmap (review of #764, F3) say it the same way."""
     untargeted = _untargeted(rows)
+    unmeasured = _unmeasured(rows)
+    # #1031: the unmeasured rows are not in the gap list either.
+    tail = f" {_unmeasured_line(unmeasured)}" if unmeasured else ""
     if not untargeted:
-        return ""
+        return tail
     return (
         f" {_subcats(untargeted)} and {'is' if untargeted == 1 else 'are'} not "
-        "assessed for gaps."
+        f"assessed for gaps.{tail}"
     )
 
 

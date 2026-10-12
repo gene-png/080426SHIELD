@@ -1399,6 +1399,7 @@ def _gap_action_response(
         # #1031: the editor and the Action Plan say so ("No longer a gap: kept
         # for the record").
         no_longer_gap=not ent.gap,
+        target_not_measured=ent.target_not_measured,
     )
 
 
