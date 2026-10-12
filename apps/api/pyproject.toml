@@ -44,6 +44,12 @@ dependencies = [
     # Used by apps/api/scripts/extract_csf_questionnaires.py to parse the
     # Kentro Step 1.x interview .docx files into packages/csf-data/source/*.json.
     "python-docx>=1.1",
+    # PDF text extraction (app/documents/text.py, N2 for #1071), shared by
+    # EV-1's evidence linking and EV-2's summary. Moved here from the dev extra
+    # (approved on #736, 6115903398); the export-content tests read rendered
+    # PDFs back with it too. Rebuild the api image after changing this; a plain
+    # restart does not install it (the Sprint 7 google-auth lesson).
+    "pypdf>=5",
 ]
 
 [project.optional-dependencies]
@@ -70,12 +76,6 @@ dev = [
     "black==26.5.1",
     "mypy>=1.11",
     "bandit[toml]>=1.7",
-    # Test-only: parse rendered PDF bytes back to text so the export-content
-    # tests assert real content (client name / title / a known row value), not
-    # just the %PDF- magic. Imported ONLY in tests/unit/*, never in app/.
-    # Rebuild the api image after adding this — a plain restart does not install
-    # it (the Sprint 7 google-auth lesson).
-    "pypdf>=5",
 ]
 
 [build-system]

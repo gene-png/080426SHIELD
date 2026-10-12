@@ -238,6 +238,24 @@ class Settings(BaseSettings):
     email_verify_token_ttl_seconds: int = Field(default=86400, ge=300)
     password_reset_token_ttl_seconds: int = Field(default=3600, ge=300)
 
+    # Document text extraction (app/documents/text.py, N2 for #1071): the ONE
+    # set of limits EV-1's evidence-link job and EV-2's summary both read.
+    # A file over `max_bytes`, or a DOCX/XLSX whose parts inflate past
+    # `max_unzipped_bytes`, is "not read: too_large" before any parser runs.
+    # `max_bytes` matches routes/artifacts.py's MAX_UPLOAD_BYTES today.
+    shield_document_max_bytes: int = Field(default=50 * 1024 * 1024, ge=1)
+    shield_document_max_unzipped_bytes: int = Field(default=200 * 1024 * 1024, ge=1)
+    # Characters kept from one file; past it the text is cut and `truncated`.
+    shield_document_max_chars: int = Field(default=2_000_000, ge=1)
+    # One chunk is one AI payload, so it must redact inside #552's per-payload
+    # budget. That budget is TIME (`shield_redaction_budget_seconds`, #1042)
+    # and redaction cost grows with the name hints as well as the text, so no
+    # character count is derivable from it. 12,000 is NOT measured against it:
+    # measure it when #1042 lands and the first caller is wired.
+    shield_document_chunk_chars: int = Field(default=12_000, ge=1)
+    # Chunks sent per file; the rest are counted as skipped and disclosed.
+    shield_document_max_chunks: int = Field(default=20, ge=1)
+
     def is_development(self) -> bool:
         """True only on a developer's machine.
 
