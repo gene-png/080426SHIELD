@@ -99,7 +99,7 @@ const H2_BANDS = [
 const H3 =
   'Tick "Evidence on file" only when evidence for this subcategory and tier is held. Without it, Implementation counts as no more than 1 and the level cannot exceed L2, whatever the scores. Run AI never ticks this box, and a file the client attached to the questionnaire does not tick it either: a consultant has to.';
 const H4 =
-  'Target is the level the client should reach for this subcategory in this tier. The Enterprise profile compares its rolled-up level, usually the lowest of the in-scope tiers, with the highest target set on any in-scope tier. Below the target is a gap. With no target on any tier, the subcategory is not checked for a gap: it is counted as "with no target", not as met.';
+  'Target is the level the client should reach for this subcategory in this tier. The Enterprise profile compares its rolled-up level, usually the lowest of the in-scope tiers, with the highest target set on any in-scope tier. Below the target is a gap. With no target on any in-scope tier, the subcategory is not checked for a gap: it is counted as "with no target", not as met.';
 const H5 =
   'Untick "In scope" when this subcategory does not apply to the systems in this tier. An out-of-scope row is left out of the Enterprise level, the gaps and their priorities. If every tier is out of scope, the subcategory leaves the Enterprise profile.';
 const H6 =
@@ -163,8 +163,9 @@ const RUBRIC: string[][] = [
 ];
 
 const S1 =
-  "No evidence is on file, so Implementation counts as 1 in the total, whatever is selected, and the level stops at L2.";
-const S2 = "No target: this row is not checked for a gap.";
+  "Without evidence, Implementation counts as no more than 1 in the total, and the level cannot go above L2.";
+const S2 =
+  "No target on this tier. The subcategory is still checked for a gap if another in-scope tier has a target.";
 
 beforeEach(() => {
   vi.mocked(csfClient.fetchProfile).mockReset();
@@ -218,12 +219,21 @@ describe("CsfDimensionEditor instructions (C-2, #1056)", () => {
     expect(screen.getByText(S1)).toBeVisible();
   });
 
+  it("explains the cap on a row capped by the level clamp alone", async () => {
+    // #1076 finding 1: `score_tier` also caps a row whose Implementation is
+    // already 0 or 1, through the level clamp alone. G2 P2 I0 M2 C2 without
+    // evidence: total 8 (L4 by the bands), held at L2, Implementation still 0
+    // (pinned engine-side in test_csf_playbook.py). S1 must hold here too.
+    await renderWith(row({ ...CAPPED, implementation: 0, total: 8, level: 2 }));
+    expect(screen.getByText(S1)).toBeVisible();
+  });
+
   it("says nothing about the cap on an uncapped row", async () => {
     await renderWith(row());
     expect(screen.queryByText(S1)).toBeNull();
   });
 
-  it("says a row with no target is not checked for a gap, and only then", async () => {
+  it("explains a row with no target on its tier, and only then", async () => {
     await renderWith(row({ target_level: null }));
     expect(screen.getByText(S2)).toBeVisible();
   });

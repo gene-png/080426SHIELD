@@ -48,7 +48,7 @@ export const HELP_EVIDENCE =
   'Tick "Evidence on file" only when evidence for this subcategory and tier is held. Without it, Implementation counts as no more than 1 and the level cannot exceed L2, whatever the scores. Run AI never ticks this box, and a file the client attached to the questionnaire does not tick it either: a consultant has to.';
 
 export const HELP_TARGET =
-  'Target is the level the client should reach for this subcategory in this tier. The Enterprise profile compares its rolled-up level, usually the lowest of the in-scope tiers, with the highest target set on any in-scope tier. Below the target is a gap. With no target on any tier, the subcategory is not checked for a gap: it is counted as "with no target", not as met.';
+  'Target is the level the client should reach for this subcategory in this tier. The Enterprise profile compares its rolled-up level, usually the lowest of the in-scope tiers, with the highest target set on any in-scope tier. Below the target is a gap. With no target on any in-scope tier, the subcategory is not checked for a gap: it is counted as "with no target", not as met.';
 
 export const HELP_IN_SCOPE =
   'Untick "In scope" when this subcategory does not apply to the systems in this tier. An out-of-scope row is left out of the Enterprise level, the gaps and their priorities. If every tier is out of scope, the subcategory leaves the Enterprise profile.';
@@ -114,9 +114,19 @@ export const RUBRIC_ROWS: readonly (readonly [
   ],
 ];
 
-/** S1: beside "(capped — no evidence)", only on a capped row. */
+/**
+ * S1: beside "(capped — no evidence)", only on a capped row. "No more than 1"
+ * because `score_tier` caps on two paths: the Implementation clamp, and the
+ * level clamp alone on a row whose Implementation is already 0 or 1 (#1076).
+ */
 export const CAPPED_NOTE =
-  "No evidence is on file, so Implementation counts as 1 in the total, whatever is selected, and the level stops at L2.";
+  "Without evidence, Implementation counts as no more than 1 in the total, and the level cannot go above L2.";
 
-/** S2: under Target, only when the row has none. */
-export const NO_TARGET_NOTE = "No target: this row is not checked for a gap.";
+/**
+ * S2: under Target, only when this tier's row has none. The gap is judged per
+ * subcategory against the highest target on any in-scope tier
+ * (`enterprise_subcategories`: `max(targets)`), so an untargeted tier is still
+ * checked when another tier has a target (#1076).
+ */
+export const NO_TARGET_NOTE =
+  "No target on this tier. The subcategory is still checked for a gap if another in-scope tier has a target.";
