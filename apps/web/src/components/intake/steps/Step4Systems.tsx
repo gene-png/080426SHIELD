@@ -1,5 +1,6 @@
 "use client";
 import { Field, textareaClasses } from "../Field";
+import { SuiteListingBanner, suiteBannerVariant } from "../SuiteListingBanner";
 import type { IntakeStateResponse } from "@/lib/intake/types";
 
 import type { JSX } from "react";
@@ -13,8 +14,10 @@ export function Step4Systems({
   state,
   onSave,
 }: Step4SystemsProps): JSX.Element {
+  const bannerVariant = suiteBannerVariant(state.client?.service_interests);
   return (
     <div className="flex flex-col gap-5">
+      {bannerVariant ? <SuiteListingBanner variant={bannerVariant} /> : null}
       <p className="text-sm text-ink-secondary">
         Give us a one-paragraph picture of the systems in scope. Categorization,
         ATO status, hosting, and POAM volume can wait — we&apos;ll capture those
