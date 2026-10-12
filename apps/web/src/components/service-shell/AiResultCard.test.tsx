@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
+import { Fragment } from "react";
 import type * as React from "react";
 
 import { AiResultCard } from "./AiResultCard";
@@ -237,6 +238,21 @@ const EMPTY_FRAGMENTS: [string, React.ReactNode][] = [
       <>{""}</>
     </>,
   ],
+  ['<Fragment key="k">{null}</Fragment>', <Fragment key="k">{null}</Fragment>],
+  ['<>{[null, ""]}</>', <>{[null, ""]}</>],
+];
+
+// Content that must be ACCEPTED: only Fragments are looked inside. Any other
+// element counts as content, even one that renders nothing (round 5 review:
+// widening the recursion to every element would throw on these).
+function RendersNothing(): null {
+  return null;
+}
+const REAL_CONTENT: [string, React.ReactNode][] = [
+  ["<div>{null}</div>", <div key="d">{null}</div>],
+  ["<RendersNothing />, a component element", <RendersNothing key="c" />],
+  ['<Fragment key="k">REAL</Fragment>', <Fragment key="k">REAL</Fragment>],
+  ['<>{[null, <p key="a">REAL</p>]}</>', <>{[null, <p key="a">REAL</p>]}</>],
 ];
 
 describe("AiResultCard next step looks inside fragments (for #1087)", () => {
@@ -289,4 +305,22 @@ describe("AiResultCard figures partition what was asked (ruling, for #1087)", ()
     );
     expect(screen.getByTestId("ai-result-figures")).toBeInTheDocument();
   });
+});
+
+describe("AiResultCard next step looks inside Fragments only (for #1087)", () => {
+  it.each(REAL_CONTENT)("accepts next step %s", (_name, nextStep) => {
+    render(<AiResultCard tone="success" outcome="X" nextStep={nextStep} />);
+    expect(screen.getByTestId("ai-result-next")).toBeInTheDocument();
+  });
+});
+
+describe("AiResultCard's outcome on a missing value (for #1087)", () => {
+  it.each([[null], [undefined]])(
+    "refuses outcome %s by name, not with a TypeError",
+    (outcome) => {
+      expect(() =>
+        render(<AiResultCard tone="success" outcome={outcome as never} />),
+      ).toThrow(/a blank outcome/);
+    },
+  );
 });

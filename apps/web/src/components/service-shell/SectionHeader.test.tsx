@@ -221,6 +221,9 @@ describe("SectionHeader refuses blank text it would render (for #1087)", () => {
     "2026-10-12Z",
     "2026-10-12+05:30",
     "Oct 12 2026 +0000",
+    // Lowercase t and z parse differently across engines.
+    "2026-10-12t15:00:00z",
+    "2026-10-12T15:00:00z",
   ])(
     "refuses a release instant with no zone, %s (it would parse in local time)",
     (releasedAt) => {
@@ -238,6 +241,8 @@ describe("SectionHeader refuses blank text it would render (for #1087)", () => {
     "2026-10-12T15:00:00.123Z",
     "2026-10-12T11:00:00-04:00",
     "2026-10-12T20:30:00+0530",
+    // Seconds are optional.
+    "2026-10-12T22:30Z",
   ])("accepts a zoned instant, %s", (releasedAt) => {
     renderHeader("released", ["DO-ONE"], "overview", {
       version: 2,
@@ -263,4 +268,18 @@ describe("SectionHeader requireText on a missing value (for #1087)", () => {
       ),
     ).toThrow(/a blank purpose/);
   });
+});
+
+describe("SectionHeader release date on a missing value (for #1087)", () => {
+  it.each([[null], [undefined]])(
+    "refuses releasedAt %s by name, not with a TypeError",
+    (releasedAt) => {
+      expect(() =>
+        renderHeader("released", ["DO-ONE"], "overview", {
+          version: 2,
+          releasedAt: releasedAt as never,
+        }),
+      ).toThrow(/a blank release date/);
+    },
+  );
 });

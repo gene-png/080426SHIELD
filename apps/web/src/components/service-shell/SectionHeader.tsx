@@ -65,14 +65,17 @@ const MONTHS = [
  */
 // An instant must be an ISO date and time ending in a zone: without one,
 // `new Date` reads the string in the viewer's local time, and the UTC date
-// shown could be a day off. Z, +hh:mm or +hhmm, after a time.
+// shown could be a day off. YYYY-MM-DDThh:mm, seconds and fractions optional
+// (22:30Z is accepted), then Z, +hh:mm or +hhmm. Case-sensitive: a lowercase
+// "t" or "z" parses differently across engines.
 const ZONED =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/i;
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/;
 
 export function releaseDateText(releasedAt: string): string {
+  requireText("SectionHeader", "release date", releasedAt);
   if (!ZONED.test(releasedAt.trim())) {
     throw new Error(
-      `SectionHeader: release date "${releasedAt}" has no zone after an ISO time (Z, ±hh:mm or ±hhmm), so it is not an instant.`,
+      `SectionHeader: release date "${releasedAt}" has no zone after an ISO time (YYYY-MM-DDThh:mm, seconds optional, then Z, ±hh:mm or ±hhmm; uppercase T and Z), so it is not an instant.`,
     );
   }
   const d = new Date(releasedAt);

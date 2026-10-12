@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
+import { Fragment } from "react";
 import type * as React from "react";
 
 import { InternalOnlyBand } from "./InternalOnlyBand";
@@ -72,6 +73,21 @@ const EMPTY_FRAGMENTS: [string, React.ReactNode][] = [
       <>{""}</>
     </>,
   ],
+  ['<Fragment key="k">{null}</Fragment>', <Fragment key="k">{null}</Fragment>],
+  ['<>{[null, ""]}</>', <>{[null, ""]}</>],
+];
+
+// Content that must be ACCEPTED: only Fragments are looked inside. Any other
+// element counts as content, even one that renders nothing (round 5 review:
+// widening the recursion to every element would throw on these).
+function RendersNothing(): null {
+  return null;
+}
+const REAL_CONTENT: [string, React.ReactNode][] = [
+  ["<div>{null}</div>", <div key="d">{null}</div>],
+  ["<RendersNothing />, a component element", <RendersNothing key="c" />],
+  ['<Fragment key="k">REAL</Fragment>', <Fragment key="k">REAL</Fragment>],
+  ['<>{[null, <p key="a">REAL</p>]}</>', <>{[null, <p key="a">REAL</p>]}</>],
 ];
 
 describe("InternalOnlyBand looks inside fragments (for #1087)", () => {
@@ -93,5 +109,12 @@ describe("InternalOnlyBand looks inside fragments (for #1087)", () => {
       </InternalOnlyBand>,
     );
     expect(screen.getByText("ADMIN ROW")).toBeInTheDocument();
+  });
+});
+
+describe("InternalOnlyBand looks inside Fragments only (for #1087)", () => {
+  it.each(REAL_CONTENT)("accepts %s", (_name, children) => {
+    render(<InternalOnlyBand>{children}</InternalOnlyBand>);
+    expect(screen.getByTestId("internal-only-band")).toBeInTheDocument();
   });
 });

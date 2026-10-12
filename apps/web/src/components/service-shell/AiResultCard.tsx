@@ -117,9 +117,8 @@ export function AiResultCard({
   if (!Object.hasOwn(TONE_CLASS, tone)) {
     throw new Error(`AiResultCard: unknown tone "${tone}".`);
   }
-  if (!outcome.trim()) {
-    throw new Error("AiResultCard: a blank outcome; the card leads with it.");
-  }
+  // The card leads with the outcome; type-first, so null gets this refusal.
+  requireText("AiResultCard", "outcome", outcome);
   if (figures) checkFigures(figures);
   if (nextStep !== undefined && !hasContent(nextStep)) {
     throw new Error("AiResultCard: empty next-step content.");
