@@ -29,6 +29,15 @@ from app.models._common import TimestampMixin, UUIDPKMixin
 
 _JSON = JSON().with_variant(JSONB, "postgresql")
 
+#: "NULL IS NOT RECORDED" MEANS SQL NULL, and a plain `JSON` column writes
+#: Python None as the JSON text 'null' (`risk_register.py`, review of
+#: 655184cc, F3). A writer meaning "not recorded" leaves the attribute UNSET
+#: (JSON evaluates None, so an unset column is left out of the INSERT) or
+#: writes `sqlalchemy.null()`; never None. Pinned by
+#: `test_not_recorded_json_is_sql_null_only_when_unset_or_written_as_sa_null`.
+#: Not `JSON(none_as_null=True)`: that makes SQLAlchemy name the column in
+#: EVERY insert, set or not (the reason `RiskEntry.other_axes` avoids it).
+
 
 class FindingsReportStatus(enum.StrEnum):
     DRAFT = "draft"
@@ -45,11 +54,11 @@ class FindingsReport(UUIDPKMixin, TimestampMixin, Base):
         ForeignKey("deliverables.id", ondelete="CASCADE"), nullable=False, index=True
     )
     # Per `finding_id`: {text, origin ("ai" | "edited"), refused_numbers,
-    # accepted_by, accepted_at}. NULL is "not recorded" (the run has not
+    # accepted_by, accepted_at}. SQL NULL (see `_JSON`) is "not recorded" (the run has not
     # written the code fact lines yet); {} is "no findings".
     sections: Mapped[dict | None] = mapped_column(_JSON)
     # The code-computed cross-service facts used (section 12.5), each with its
-    # `integration_run_id`. NULL is "not recorded"; [] is "none used".
+    # `integration_run_id`. SQL NULL (see `_JSON`) is "not recorded"; [] is "none used".
     cross_facts: Mapped[list | None] = mapped_column(_JSON)
     prompt_version: Mapped[str | None] = mapped_column(String(64))
     ai_run_id: Mapped[uuid.UUID | None] = mapped_column(

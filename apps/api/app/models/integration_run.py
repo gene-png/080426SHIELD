@@ -10,7 +10,7 @@ changes a score.
 `inputs` per service: `{kind, version_id, version, approved_at}`, or
 `{"not_included": "<reason>"}`; a service is never skipped silently.
 
-NULL in any JSON column is "not recorded", never "none".
+NULL in any JSON column is "not recorded", never "none" (SQL NULL: see `_JSON`).
 
 Nothing reads or writes this table yet (N4 is schema only).
 """
@@ -27,6 +27,15 @@ from app.db.base import Base
 from app.models._common import TimestampMixin, UUIDPKMixin
 
 _JSON = JSON().with_variant(JSONB, "postgresql")
+
+#: "NULL IS NOT RECORDED" MEANS SQL NULL, and a plain `JSON` column writes
+#: Python None as the JSON text 'null' (`risk_register.py`, review of
+#: 655184cc, F3). A writer meaning "not recorded" leaves the attribute UNSET
+#: (JSON evaluates None, so an unset column is left out of the INSERT) or
+#: writes `sqlalchemy.null()`; never None. Pinned by
+#: `test_not_recorded_json_is_sql_null_only_when_unset_or_written_as_sa_null`.
+#: Not `JSON(none_as_null=True)`: that makes SQLAlchemy name the column in
+#: EVERY insert, set or not (the reason `RiskEntry.other_axes` avoids it).
 
 
 class IntegrationRun(UUIDPKMixin, TimestampMixin, Base):

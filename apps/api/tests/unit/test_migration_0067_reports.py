@@ -529,7 +529,7 @@ def test_each_model_round_trips_and_stores_member_names(tmp_path) -> None:
     assert report_status == "DRAFT"
 
 
-def test_the_orm_refuses_a_status_outside_the_vocabulary(tmp_path) -> None:
+def test_the_orm_refuses_a_scope_outside_the_vocabulary(tmp_path) -> None:
     _, engine = _at(tmp_path, "m0067-enum.db")
     with Session(engine) as db:
         db.add(
@@ -542,6 +542,55 @@ def test_the_orm_refuses_a_status_outside_the_vocabulary(tmp_path) -> None:
         )
         with pytest.raises(sa.exc.StatementError, match="EVERYONE"):
             db.flush()
+
+
+def test_not_recorded_json_is_sql_null_only_when_unset_or_written_as_sa_null(tmp_path) -> None:
+    """The models' "NULL is not recorded" needs SQL NULL. A plain `JSON` column
+    writes Python None as the JSON text 'null' (`risk_register.py`, 655184cc
+    F3), so a writer that means "not recorded" leaves the attribute unset or
+    writes `sqlalchemy.null()`, never None."""
+    _, engine = _at(tmp_path, "m0067-json-null.db")
+    with Session(engine) as db:
+        client = Client()
+        db.add(client)
+        db.flush()
+        rows = {
+            "unset": Recommendation(
+                scope=RecommendationScope.CLIENT, client_id=client.id, text="unset"
+            ),
+            "sa_null": Recommendation(
+                scope=RecommendationScope.CLIENT,
+                client_id=client.id,
+                text="sa_null",
+                expected_effect=sa.null(),
+                priority_inputs=sa.null(),
+            ),
+            "none": Recommendation(
+                scope=RecommendationScope.CLIENT,
+                client_id=client.id,
+                text="none",
+                expected_effect=None,
+                priority_inputs=None,
+            ),
+        }
+        db.add_all(rows.values())
+        db.commit()
+    with engine.connect() as conn:
+        got = {
+            text: (bool(effect_null), bool(inputs_null))
+            for text, effect_null, inputs_null in conn.execute(
+                sa.text(
+                    "SELECT text, expected_effect IS NULL, priority_inputs IS NULL "
+                    "FROM recommendations"
+                )
+            )
+        }
+    assert got == {
+        "unset": (True, True),
+        "sa_null": (True, True),
+        # The trap the docstrings warn about: the JSON text 'null', not NULL.
+        "none": (False, False),
+    }
 
 
 def test_the_model_declares_the_same_checks_the_migration_creates(tmp_path) -> None:
