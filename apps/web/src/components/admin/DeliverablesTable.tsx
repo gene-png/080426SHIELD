@@ -10,7 +10,11 @@ import {
   type StatusTone,
 } from "@shield/design-system";
 
-import { getActiveClientId } from "@/lib/active-client";
+import {
+  ClientScopedPage,
+  type ClientScopedBodyProps,
+} from "@/components/admin/ClientScopedPage";
+import type { ClientOption } from "@/lib/admin/client-choice";
 import {
   fetchAdminDeliverables,
   type AdminDeliverableRow,
@@ -109,45 +113,70 @@ function groupByService(
  * to show. It also stops s40's heading assertion from being a proxy for
  * "the page works" when it is not.
  */
-function PageHeader(): JSX.Element {
+function PageHeader({ chosen }: { chosen: ClientOption | null }): JSX.Element {
+  // RR-2 (for #1121): the heading names the chosen client, and the subtitle
+  // ("this organization") shows only when one is chosen. In every other state
+  // there is no organization, and that state's own line says why.
   return (
     <header className="space-y-1">
       <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">
         Admin
       </p>
-      <h1 className="text-3xl font-semibold text-ink-primary">Deliverables</h1>
-      <p className="max-w-prose text-sm text-ink-secondary">
-        Every report produced for this organization, including the ones the
-        client cannot see yet. Only{" "}
-        <strong className="font-semibold text-ink-primary">Released</strong>{" "}
-        rows are visible to the client.
-      </p>
+      <h1 className="text-3xl font-semibold text-ink-primary">
+        {chosen ? `Deliverables for ${chosen.label}` : "Deliverables"}
+      </h1>
+      {chosen ? (
+        <p className="max-w-prose text-sm text-ink-secondary">
+          Every report produced for this organization, including the ones the
+          client cannot see yet. Only{" "}
+          <strong className="font-semibold text-ink-primary">Released</strong>{" "}
+          rows are visible to the client.
+        </p>
+      ) : null}
     </header>
   );
 }
 
+/** §7 string 5, approved verbatim (#736 6130838759). */
+const DELIVERABLES_NO_CLIENT =
+  "Deliverables are listed per client. Choose a client above, then select Show this client.";
+
+/**
+ * RR-2 (for #1121): scoped by the page's own client picker
+ * (`ClientScopedPage`), not by the shared active-client cookie. The frame
+ * renders the header in every state, and the "pick a client" state that used
+ * to live here (the upstream answers a missing X-Client-Id with a 400, so
+ * asking without a client could only show "Failed to load deliverables (400).").
+ */
 export function DeliverablesTable(): JSX.Element {
+  return (
+    <ClientScopedPage
+      header={(chosen) => <PageHeader chosen={chosen} />}
+      noClient={
+        <EmptyState
+          title="Pick a client first"
+          description={DELIVERABLES_NO_CLIENT}
+        />
+      }
+      loadingText="Loading deliverables…"
+    >
+      {(props) => <DeliverablesBody {...props} />}
+    </ClientScopedPage>
+  );
+}
+
+/** Read-only, so there is no work in flight to lock the picker with. */
+function DeliverablesBody({ client }: ClientScopedBodyProps): JSX.Element {
+  const clientId = client.id;
   const [rows, setRows] = React.useState<AdminDeliverableRow[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
-  // Distinct from "this tenant has no deliverables". An admin who has not
-  // picked a client yet has no tenant to scope the request to, and the upstream
-  // dependency answers a missing X-Client-Id with a 400 — so asking at all can
-  // only produce "Failed to load deliverables (400)." on a page whose real
-  // answer is "pick a client".
-  const [needsClient, setNeedsClient] = React.useState(false);
 
   React.useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
     (async () => {
       try {
-        const activeClientId = await getActiveClientId();
-        if (cancelled) return;
-        if (!activeClientId) {
-          setNeedsClient(true);
-          return;
-        }
-        const data = await fetchAdminDeliverables(controller.signal);
+        const data = await fetchAdminDeliverables(clientId, controller.signal);
         if (!cancelled) setRows(data.items);
       } catch (err: unknown) {
         // An aborted request was superseded, not failed.
@@ -163,16 +192,14 @@ export function DeliverablesTable(): JSX.Element {
       cancelled = true;
       controller.abort();
     };
-  }, []);
+  }, [clientId]);
 
   if (error) {
-    // Keep the page header. This used to return the bare error card, so a
-    // failed fetch erased the page's own identity: no "Deliverables" heading,
-    // no explanation of what the page is, nothing to orient on — a dead end
-    // that looked like a broken app rather than a failed request.
+    // The page header stays: the frame renders it above this body. It used to
+    // return the bare error card, so a failed fetch erased the page's own
+    // identity: no "Deliverables" heading, nothing to orient on.
     return (
       <div className="flex flex-col gap-6">
-        <PageHeader />
         <Card>
           <CardBody>
             <p className="text-sm text-status-danger-fg" role="alert">
@@ -184,35 +211,11 @@ export function DeliverablesTable(): JSX.Element {
     );
   }
 
-  if (needsClient) {
-    // Not an error and not an empty tenant: nothing has been asked for yet.
-    // Mirrors the Risk Register, which is also generated per client.
-    return (
-      <div className="flex flex-col gap-6">
-        <PageHeader />
-        <EmptyState
-          title="Pick a client first"
-          description="Deliverables are listed per client. Choose a client from the switcher, then return here."
-          action={
-            <Link
-              href="/admin/management"
-              className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600"
-            >
-              Go to Management
-            </Link>
-          }
-        />
-      </div>
-    );
-  }
-
   const groups = rows ? groupByService(rows) : [];
   const releasedCount = rows?.filter((r) => r.client_visible).length ?? 0;
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader />
-
       {rows === null ? (
         <p className="text-sm text-ink-secondary">Loading deliverables…</p>
       ) : rows.length === 0 ? (
@@ -303,7 +306,9 @@ export function DeliverablesTable(): JSX.Element {
                                 .map(([label, id]) => (
                                   <a
                                     key={label}
-                                    href={`/api/proxy/artifacts/${id}/download`}
+                                    // RR-2 (for #1121), §3.2a: the picker's
+                                    // client, never the cookie's.
+                                    href={`/api/proxy/artifacts/${id}/download?client_id=${encodeURIComponent(clientId)}`}
                                     className="font-semibold text-brand-600 hover:text-brand-500"
                                   >
                                     {label}

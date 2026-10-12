@@ -1,6 +1,5 @@
 "use client";
 import * as React from "react";
-import Link from "next/link";
 
 import {
   Card,
@@ -21,9 +20,7 @@ import {
   fetchRiskGate,
   fetchRiskRegisterLatest,
   generateRiskRegister,
-  getActiveClientId,
   publishRiskRegister,
-  getClientName,
 } from "@/lib/risk/client";
 import {
   IMPACTS,
@@ -36,6 +33,10 @@ import {
   type RiskTier,
 } from "@/lib/risk/matrix";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
+import {
+  ClientScopedPage,
+  type ClientScopedBodyProps,
+} from "@/components/admin/ClientScopedPage";
 import {
   ArchiveServiceButton,
   ArchiveServiceDialog,
@@ -321,17 +322,20 @@ function columnsFor(
 
 function DownloadLink({
   id,
+  clientId,
   filename,
   label,
 }: {
   id: string | null;
+  /** RR-2 (for #1121), §3.2a: the picker's client, never the cookie's. */
+  clientId: string;
   filename: string | null;
   label: string;
 }): JSX.Element | null {
   if (!id) return null;
   return (
     <a
-      href={`/api/proxy/artifacts/${id}/download`}
+      href={`/api/proxy/artifacts/${id}/download?client_id=${encodeURIComponent(clientId)}`}
       className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-ink-primary hover:bg-surface-sunken"
     >
       {label}
@@ -342,9 +346,40 @@ function DownloadLink({
   );
 }
 
+/** §7 string 4, approved verbatim (#736 6130838759). */
+const RISK_NO_CLIENT =
+  "The Risk Register is generated per client. Choose a client above, then select Show this client.";
+
+/**
+ * RR-2 (for #1121): the page, scoped by its own client picker
+ * (`ClientScopedPage`), not by the shared active-client cookie. The header,
+ * the picker and the no-client lines are the frame's; everything below is
+ * keyed on the chosen client.
+ */
 export function RiskRegisterDashboard(): JSX.Element {
-  const [cid, setCid] = React.useState<string | null>(null);
-  const [clientName, setClientName] = React.useState("Client");
+  return (
+    <ClientScopedPage
+      header={(chosen) => (
+        <h1 className="text-2xl font-semibold text-ink-primary">
+          {chosen ? `Risk Register for ${chosen.label}` : "Risk Register"}
+        </h1>
+      )}
+      noClient={
+        <EmptyState title="Pick a client first" description={RISK_NO_CLIENT} />
+      }
+    >
+      {(props) => <RiskRegisterBody {...props} />}
+    </ClientScopedPage>
+  );
+}
+
+function RiskRegisterBody({
+  client,
+  leaving,
+  onBusyChange,
+}: ClientScopedBodyProps): JSX.Element {
+  const cid = client.id;
+  const clientName = client.label;
   const [gate, setGate] = React.useState<RiskGate | null>(null);
   const [register, setRegister] = React.useState<RiskRegister | null>(null);
   // #244: DERIVED from `register`, not held beside it.
@@ -370,25 +405,27 @@ export function RiskRegisterDashboard(): JSX.Element {
   // #896: the duplicate service whose archive dialog is open, if any.
   const [archiveTarget, setArchiveTarget] =
     React.useState<RiskDuplicateService | null>(null);
+  // RR-2 (for #1121), §3.3: a click RunAiGuard is holding, or its offline
+  // prompt, is work that has not started yet. It locks the picker too.
+  const [guardBusy, setGuardBusy] = React.useState(false);
+  // Every control that starts work is disabled while work is in flight AND
+  // once Apply has been pressed (the page is about to unload).
+  const locked = busy !== null || leaving;
+
+  React.useEffect(() => {
+    onBusyChange(busy !== null || guardBusy);
+    return () => onBusyChange(false);
+  }, [busy, guardBusy, onBusyChange]);
 
   React.useEffect(() => {
     let active = true;
     (async () => {
       try {
-        const id = await getActiveClientId();
-        if (!active) return;
-        setCid(id);
-        if (!id) {
-          setLoading(false);
-          return;
-        }
-        const [name, g, reg] = await Promise.all([
-          getClientName(id),
-          fetchRiskGate(id),
-          fetchRiskRegisterLatest(id),
+        const [g, reg] = await Promise.all([
+          fetchRiskGate(cid),
+          fetchRiskRegisterLatest(cid),
         ]);
         if (!active) return;
-        setClientName(name);
         setGate(g);
         setRegister(reg);
       } catch (err) {
@@ -400,7 +437,7 @@ export function RiskRegisterDashboard(): JSX.Element {
     return () => {
       active = false;
     };
-  }, []);
+  }, [cid]);
 
   // #896: after any archive attempt from the duplicate banner (review B2:
   // success OR failure), read the gate again -- the refusal, the banner and
@@ -410,12 +447,6 @@ export function RiskRegisterDashboard(): JSX.Element {
   // dialog must not say the list was refreshed when it was not. The failure is
   // still shown on the page, as before.
   async function reloadGate(): Promise<boolean> {
-    if (!cid) {
-      // The dialog is only rendered with a client id, so this cannot be hit
-      // from it; if it is, nothing was re-read, and that is what we say.
-      console.error("[risk] gate reload without an active client");
-      return false;
-    }
     setError(null);
     try {
       setGate(await fetchRiskGate(cid));
@@ -427,7 +458,6 @@ export function RiskRegisterDashboard(): JSX.Element {
   }
 
   async function onGenerate(): Promise<void> {
-    if (!cid) return;
     setBusy("generate");
     setError(null);
     try {
@@ -441,7 +471,6 @@ export function RiskRegisterDashboard(): JSX.Element {
   }
 
   async function onExport(): Promise<void> {
-    if (!cid) return;
     setBusy("export");
     setError(null);
     try {
@@ -470,7 +499,6 @@ export function RiskRegisterDashboard(): JSX.Element {
   }
 
   async function onPublish(): Promise<void> {
-    if (!cid) return;
     setBusy("publish");
     setError(null);
     try {
@@ -487,7 +515,6 @@ export function RiskRegisterDashboard(): JSX.Element {
     field: RatingField,
     value: string | null,
   ): Promise<void> {
-    if (!cid) return;
     setBusy("rate");
     setError(null);
     try {
@@ -503,23 +530,6 @@ export function RiskRegisterDashboard(): JSX.Element {
 
   if (loading) {
     return <p className="text-sm text-ink-secondary">Loading…</p>;
-  }
-
-  if (!cid) {
-    return (
-      <EmptyState
-        title="Pick a client first"
-        description="The Risk Register is generated per client. Choose a client from the switcher, then return here."
-        action={
-          <Link
-            href="/admin/management"
-            className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600"
-          >
-            Go to Management
-          </Link>
-        }
-      />
-    );
   }
 
   // UNLOCKED but not synthesizable: the inputs exist and are unapproved (#237).
@@ -724,7 +734,7 @@ export function RiskRegisterDashboard(): JSX.Element {
                 key={svc.service_id}
                 service={svc}
                 onOpen={setArchiveTarget}
-                disabled={busy !== null}
+                disabled={locked}
               />
             ))}
           </div>
@@ -732,14 +742,12 @@ export function RiskRegisterDashboard(): JSX.Element {
       ) : null}
       {/* Hosted here, not by a button: the reload after an attempt can remove
           the button that opened it (#896 review B2). */}
-      {cid ? (
-        <ArchiveServiceDialog
-          clientId={cid}
-          service={archiveTarget}
-          onClose={() => setArchiveTarget(null)}
-          onSettled={reloadGate}
-        />
-      ) : null}
+      <ArchiveServiceDialog
+        clientId={cid}
+        service={archiveTarget}
+        onClose={() => setArchiveTarget(null)}
+        onSettled={reloadGate}
+      />
 
       {catalogMismatch !== null ? (
         <p
@@ -753,10 +761,8 @@ export function RiskRegisterDashboard(): JSX.Element {
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-ink-primary">
-            Risk Register
-          </h1>
-          <p className="mt-1 text-sm text-ink-secondary">
+          {/* The page's h1 is the frame's ("Risk Register for {client}"). */}
+          <p className="text-sm text-ink-secondary">
             {clientName}
             {register
               ? ` · version ${register.version}`
@@ -792,7 +798,10 @@ export function RiskRegisterDashboard(): JSX.Element {
           ) : null}
           {/* Issue 2: risk_synthesize is an AI job — warn before producing
               canned output when no key is loaded. */}
-          <RunAiGuard onProceed={() => void onGenerate()}>
+          <RunAiGuard
+            onProceed={() => void onGenerate()}
+            onBusyChange={setGuardBusy}
+          >
             {({ onClick, statusUnknown }) => (
               <button
                 type="button"
@@ -800,7 +809,7 @@ export function RiskRegisterDashboard(): JSX.Element {
                 // #556: a stale ATT&CK input's only outcome is the 409 the
                 // banner above already explains, so the button is not offered.
                 disabled={
-                  busy !== null ||
+                  locked ||
                   catalogMismatch !== null ||
                   duplicateInputs !== null ||
                   statusUnknown
@@ -819,7 +828,7 @@ export function RiskRegisterDashboard(): JSX.Element {
             <button
               type="button"
               onClick={onExport}
-              disabled={busy !== null}
+              disabled={locked}
               className="rounded-md border border-border px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-sunken disabled:opacity-50"
             >
               {busy === "export" ? "Exporting…" : "Export XLSX / PDF / Word"}
@@ -833,7 +842,7 @@ export function RiskRegisterDashboard(): JSX.Element {
             <button
               type="button"
               onClick={() => void onPublish()}
-              disabled={busy !== null || register.entries_without_tier > 0}
+              disabled={locked || register.entries_without_tier > 0}
               className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:opacity-50"
             >
               {busy === "publish" ? "Publishing…" : "Publish to client"}
@@ -1342,7 +1351,7 @@ export function RiskRegisterDashboard(): JSX.Element {
               <DataTable
                 columns={columnsFor(
                   register.finalized_at === null,
-                  busy !== null,
+                  locked,
                   (entry, field, value) => void onRate(entry, field, value),
                 )}
                 rows={register.entries}
@@ -1359,16 +1368,19 @@ export function RiskRegisterDashboard(): JSX.Element {
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm text-ink-secondary">Downloads:</span>
                   <DownloadLink
+                    clientId={cid}
                     id={register.xlsx_artifact_id}
                     filename={register.xlsx_filename}
                     label="XLSX"
                   />
                   <DownloadLink
+                    clientId={cid}
                     id={register.pdf_artifact_id}
                     filename={register.pdf_filename}
                     label="PDF"
                   />
                   <DownloadLink
+                    clientId={cid}
                     id={register.docx_artifact_id}
                     filename={register.docx_filename}
                     label="Word"

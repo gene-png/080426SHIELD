@@ -75,40 +75,11 @@ export async function archiveDuplicateService(
   throw new RiskProxyError(res.status, payload);
 }
 
-/**
- * Re-exported from the neutral module: the active tenant is not a risk concern,
- * and /admin/deliverables needs the same lookup. `describeRiskError` already
- * falls back to `err.message` for a non-RiskProxyError, so callers here are
- * unaffected by the plain Error it throws.
- */
-export { getActiveClientId } from "@/lib/active-client";
-import { orgDisplayName } from "@/lib/org-name";
-
-export async function getClientName(cid: string): Promise<string> {
-  try {
-    const clients = await jsonRequest<
-      { id: string; legal_name: string | null }[]
-    >("/api/proxy/admin/clients");
-    // THREE absences, and they are NOT one fallback -- the earlier version of
-    // this comment claimed parity with the server side and that claim is now
-    // false. `|| "Client"` was satisfied by `"   "`, so a blank name rendered
-    // as a blank heading, and it invented a SECOND label for "unnamed" ("Client")
-    // while every other web reader says "(pending intake)".
-    //
-    //   * no such client        -> "Client": we could not identify the tenant
-    //   * the fetch failed      -> "Client" (the catch below): same, we do not know
-    //   * the client is UNNAMED -> orgDisplayName, the one label the rest of
-    //                              the web uses for exactly this state
-    //
-    // The first two are "we cannot say who this is"; the third is "we know who
-    // it is and nobody has named them". Collapsing the third into the other two
-    // is what put a different word on the same state.
-    const found = clients.find((c) => c.id === cid);
-    return found ? orgDisplayName(found.legal_name) : "Client";
-  } catch {
-    return "Client";
-  }
-}
+// RR-2 (for #1121): `getActiveClientId` and `getClientName` were here. The
+// Risk Register now takes its client, and the client's name, from the page's
+// own picker (`lib/admin/client-choice.ts`), which reads the list as the
+// `{clients: [...]}` the route returns. `getClientName` read it as a bare
+// array, so its silent catch always answered "Client".
 
 export async function fetchRiskGate(cid: string): Promise<RiskGate> {
   return jsonRequest<RiskGate>(`/api/proxy/risk/clients/${cid}/gate`);
