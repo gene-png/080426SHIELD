@@ -1819,13 +1819,11 @@ def tech_debt_dashboard(
         TechDebtRedundancy(
             category=cat,
             count=b["count"],
-            # #804: the same derivation, per category. Its `known` flag is not
-            # rendered per category today (pre-existing); the dashboard's
-            # headline savings carries it.
+            # #804: the same derivation, per category.
             savings_usd=round(b["savings"].amount, 2),
-            # for #1044: the category's own floor flag, so a category whose
-            # counted row has no usable cost reads as a floor where its figure
-            # is shown, as the headline does.
+            # for #1044: the category's own floor flag. The redundancy card
+            # renders it ("≥ "), even at $0, so a category whose counted row
+            # has no usable cost reads as a floor, as the headline does.
             savings_cost_known=b["savings"].known,
             items=[_td_item(i, names) for i in b["items"]],
         )

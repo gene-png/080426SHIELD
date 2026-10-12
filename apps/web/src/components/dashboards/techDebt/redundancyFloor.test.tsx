@@ -85,4 +85,33 @@ describe("a redundancy card marks floor savings (#1044)", () => {
     render(<TechDebtDashboard data={data({})} />);
     expect(screen.getByText("≥ $120K/yr")).toBeInTheDocument();
   });
+
+  // Three values at a known amount of 0. "Unknown" must not collapse into
+  // "nothing to save": the floor line shows at $0 unless the flag is exactly
+  // true. (The API sends (0.0, false) for a category whose only counted row is
+  // a Cut part.)
+  it("shows a $0 floor when the amount is 0 and a counted cost is unknown", () => {
+    render(
+      <TechDebtDashboard
+        data={data({ savings_usd: 0, savings_cost_known: false })}
+      />,
+    );
+    expect(screen.getByText("≥ $0/yr")).toBeInTheDocument();
+  });
+
+  it("shows a $0 floor when the amount is 0 and the flag is missing", () => {
+    render(<TechDebtDashboard data={data({ savings_usd: 0 })} />);
+    expect(screen.getByText("≥ $0/yr")).toBeInTheDocument();
+  });
+
+  it("shows no savings line when the amount is 0 and every cost is known", () => {
+    render(
+      <TechDebtDashboard
+        data={data({ savings_usd: 0, savings_cost_known: true })}
+      />,
+    );
+    // The card itself is there (positive state first), with no savings line.
+    expect(screen.getByText("· 2 licenses")).toBeInTheDocument();
+    expect(screen.queryByText(/\/yr$/)).toBeNull();
+  });
 });

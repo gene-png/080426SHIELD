@@ -55,7 +55,7 @@ SAVINGS = 120_000.0
 
 
 PARTS = [c["name"] for c in SPLIT_BESIDE_TOOLS]
-#: The XLSX floor note beside the savings cell (`exporters.build_xlsx`).
+#: The XLSX floor note beside the savings cell (`exporters.render_xlsx`).
 XLSX_FLOOR_NOTE = "≥ (one or more cut rows missing a cost)"
 
 

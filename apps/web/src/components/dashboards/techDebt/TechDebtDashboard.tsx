@@ -191,12 +191,16 @@ function RedundancyCard({ r }: { r: Redundancy }): JSX.Element {
             {redundancyLicenses(r.count)}
           </span>
         </div>
-        {r.savings_usd > 0 ? (
+        {/* for #1044: three values. An unknown saving shows its floor even
+            at $0, so it never reads as "nothing to save"; the line is hidden
+            only when the amount is 0 AND every counted cost is known. */}
+        {r.savings_usd > 0 || r.savings_cost_known !== true ? (
           <span style={{ color: "#a7f3d0", fontWeight: 700, fontSize: 12.5 }}>
-            {/* for #1044: "≥ " is the floor marker the admin plan card and
-                the what-if use; only an explicit true reads as exact. */}
+            {/* "≥ " is the floor marker the admin plan card and the what-if
+                use; only an explicit true reads as exact. `usdCompact` reads 0
+                as "—", so a $0 floor is written in full. */}
             {r.savings_cost_known === true ? "" : "≥ "}
-            {usdCompact(r.savings_usd)}/yr
+            {r.savings_usd > 0 ? usdCompact(r.savings_usd) : usdFull(0)}/yr
           </span>
         ) : null}
       </div>
