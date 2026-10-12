@@ -895,3 +895,86 @@ def test_round_ten_locale_group_separators(text: str, refused: list[str]) -> Non
         {"a": 1, "b": 500, "c": 50}, fact_fields=("a", "b", "c"), protected_fields=()
     )
     assert [h.raw for h in unallowed_numbers(text, allowed)] == refused
+
+
+# --- Review round 11 of #1088: the protected edge, DERIVED ------------------------
+# Truth table, written before the code: each side of a protected value x each
+# join kind `_joins` knows x an exempt phrase adjacent or not. A protected match
+# is "touched" iff a span the real span builder joins (on the exempt-masked
+# text, with the value unmasked) contains one of its digits and extends past
+# either end of it. Touched: the number is checked. Not touched: it stays masked.
+# A short unit is the one join that does not touch (round 9: "Windows 10 PCs").
+# Every payload licenses 500, so a separate "500" is never the hit.
+
+_AFTER = "Windows 10"
+_BEFORE = "400 hosts"
+
+
+@pytest.mark.parametrize(
+    "text,protected,refused",
+    [
+        # Trailing edge ("Windows 10" ...).
+        ("Windows 10% on.", _AFTER, ["10%"]),
+        ("Windows 10 % on.", _AFTER, ["10 %"]),
+        ("Windows 10× on.", _AFTER, ["10×"]),
+        ("Windows 10 × on.", _AFTER, ["10 ×"]),
+        ("Windows 10,5 on.", _AFTER, ["10,5"]),
+        ("Windows 10.5 on.", _AFTER, ["10.5"]),
+        ("Windows 10:30 on.", _AFTER, ["10:30"]),
+        ("Windows 10'500 on.", _AFTER, ["10'500"]),
+        ("Windows 10 500 on.", _AFTER, ["10 500"]),
+        ("Windows 10 bn on.", _AFTER, ["10 bn"]),
+        ("Windows 10 million on.", _AFTER, ["10 million"]),
+        ("Windows 10 two on.", _AFTER, ["10 two"]),
+        ("Windows 10-11 on.", _AFTER, ["10-11"]),
+        ("Windows 10/11 on.", _AFTER, ["10/11"]),
+        # ...and what does NOT touch it.
+        ("Windows 10 PCs on.", _AFTER, []),
+        ("Windows 10 500 on.", _AFTER, []),
+        ("Windows 10 – million on.", _AFTER, ["million"]),
+        ("Windows 10 Zero Trust on.", _AFTER, []),
+        ("Windows 10 single sign-on.", _AFTER, []),
+        ("Microsoft 365 Zero Trust rollout.", "Microsoft 365", []),
+        # Leading edge (... "400 hosts").
+        ("$400 hosts.", _BEFORE, ["$400"]),
+        ("-400 hosts.", _BEFORE, ["-400"]),
+        ("×400 hosts.", _BEFORE, ["×400"]),
+        ("1,400 hosts.", _BEFORE, ["1,400"]),
+        ("1.400 hosts.", _BEFORE, ["1.400"]),
+        ("1'400 hosts.", _BEFORE, ["1'400"]),
+        ("1’400 hosts.", _BEFORE, ["1’400"]),
+        ("1٬400 hosts.", _BEFORE, ["1٬400"]),
+        ("1 400 hosts.", _BEFORE, ["1 400"]),
+        ("two 400 hosts.", _BEFORE, ["two 400"]),
+        ("399-400 hosts.", _BEFORE, ["399-400"]),
+        ("1/400 hosts.", _BEFORE, ["1/400"]),
+        # ...and what does NOT touch it.
+        ("The 400 hosts.", _BEFORE, []),
+        ("Zero Trust 400 hosts.", _BEFORE, []),
+        ("500 400 hosts.", _BEFORE, []),
+        # Only the match's DIGITS count: a protected value with no digit (a
+        # spelled word) is never unmasked by what follows it.
+        ("Phase two 500 rows.", "Phase two", []),
+    ],
+)
+def test_the_protected_edge_truth_table(text: str, protected: str, refused: list[str]) -> None:
+    payload = {"n": 500, "p": protected}
+    allowed = allowed_numbers(payload, fact_fields=("n",), protected_fields=("p",))
+    assert [h.raw for h in unallowed_numbers(text, allowed)] == refused
+
+
+def test_a_group_mark_needs_exactly_three_digits_after_it() -> None:
+    allowed = allowed_numbers({"a": 1, "b": 5000}, fact_fields=("a", "b"), protected_fields=())
+    assert unallowed_numbers("1'5000 users.", allowed) == ()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"summary": {"product": {"name": "Windows 10"}}},
+        {"summary": {"product": 10}},
+    ],
+)
+def test_a_protected_path_naming_a_dict_or_a_number_is_refused(payload: dict) -> None:
+    with pytest.raises(ValueError, match="summary.product"):
+        allowed_numbers(payload, fact_fields=("summary",), protected_fields=("summary.product",))

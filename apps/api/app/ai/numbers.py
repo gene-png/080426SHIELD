@@ -36,7 +36,14 @@ JOINING RULES (where one span ends):
     "40 per cent", "5 million"), where a magnitude or a short unit follows a
     numeral ("$5 bn", "5 M", "3 x", "$5 Bn", "50 bps"; see THE UNIT RULE) or
     "×" precedes one ("× 3"), or across "and" after a scale word ("one
-    hundred and five"); never numeral to numeral;
+    hundred and five"). A PLAIN space never joins numeral to numeral ("page
+    1 500 users" is two spans); the only whitespace that does is a locale
+    GROUP SPACE (U+00A0 no-break, U+202F narrow no-break, U+2009 thin) between
+    a digit and exactly three digits ("1 500" written with one is one span,
+    refused unless a fact says it verbatim);
+  - a group MARK (apostrophe "'", right single quote U+2019, Arabic thousands
+    separator U+066C) joins a digit to exactly three digits with no whitespace
+    ("1'500"); before any other digit count ("1'5000") it joins nothing;
   - a dash joins as a sign directly before a numeral, as a range between
     numerals with no whitespace ("3–5"), in a compound with a number word
     ("twenty-one", "twenty-first", "40-percent"), or before a magnitude or
@@ -45,11 +52,21 @@ JOINING RULES (where one span ends):
   - a currency mark joins the numeral it touches; a percent mark ("%", "％",
     "٪", "‰") joins the span before it across any whitespace.
 
+PROTECTED VALUES. A protected value is masked unless it is TOUCHED. The edge
+is derived, not listed: on the exempt-masked text with every protected value
+unmasked, the span builder above runs (without the unit rule, so "Windows 10
+PCs" stays masked), and a protected match is touched iff some joined span
+containing one of the match's DIGITS extends past either end of it ("Windows
+10%", "1'400 hosts"). A touched value is checked like any other number. A
+protected path naming a mapping or a number raises: protecting a whole subtree
+would exempt strings nobody listed.
+
 WHAT IT DOES NOT DO. It does not check which fact a number is attached to.
 
 FAIL LOUDLY. A hit is returned, never raised. Input it cannot read raises: a
 non-string text, a non-mapping payload, a field list given as a str, a listed
-field matching no key, a value of an unknown type, a non-finite number.
+field matching no key, a value of an unknown type, a non-finite number, a protected path naming a
+mapping or a number.
 
 Owned by whichever of #1063 and EV-2 lands first; the other imports it. Nothing
 calls it yet: no prompt and no egress path changes.
@@ -273,44 +290,22 @@ def _protected_spans(text: str, protected: frozenset[str]) -> list[tuple[int, in
         pattern = (
             rf"(?<![^\W_])(?<![^\W_][{cont}]){re.escape(token)}" rf"(?![^\W_])(?![{cont}][^\W_])"
         )
-        spans.extend(
-            (m.start(), m.end())
-            for m in re.finditer(pattern, text)
-            if not _edge_touched(text, m.start(), m.end())
-        )
+        spans.extend((m.start(), m.end()) for m in re.finditer(pattern, text))
     return spans
 
 
-def _edge_touched(text: str, start: int, end: int) -> bool:
-    """Whether a protected match has a DIGIT at an edge that a number form
-    touches (#1088 rounds 8 to 10). Masking it would hide a number the text
-    states: "Windows 10%" for protected "Windows 10", "$40 hosts" for
-    "40 hosts". Such a match is NOT masked, so the number is checked.
-
-    After a trailing digit, touched by: a percent mark or "×" (attached or
-    across whitespace); a digit separator then a digit ("365,000", "10,5",
-    "1'500"); or, across whitespace only, the first token `_tokens` reads there
-    being a magnitude or a number word (the SAME classification `_joins` uses,
-    so the two cannot drift: "365 Mn", "10 million", "365 per cent"). A short
-    unit or acronym does NOT touch it ("Microsoft 365 MFA", "Windows 10 PCs"),
-    and a spaced dash does not reach the next word.
-    Before a leading digit, touched by: a currency mark, a sign, or "×"."""
-    if _is_numeric_char(text[end - 1]):
-        rest = text[end:]
-        if re.match(rf"\s*[{_PERCENT}\u00d7]", rest):
-            return True
-        if re.match(r"[,.:'\u2019\u066c]\d", rest):
-            return True
-        space = re.match(r"\s+", rest)
-        if space:
-            following = _tokens(rest[space.end() : space.end() + 40])
-            if following and following[0].start == 0 and following[0].kind in (_MAG, _WORD, _WEAK):
-                return True
-    if _is_numeric_char(text[start]) and start > 0:
-        before = text[start - 1]
-        if before in _CURRENCY or before in _DASHES or before == "\u00d7":
-            return True
-    return False
+def _touched(match: tuple[int, int], probe: list[tuple[int, int]], text: str) -> bool:
+    """THE PROTECTED EDGE, derived (#1088 round 11). A protected match is
+    touched iff a span the real span builder joins (`probe`: built on the
+    exempt-masked text with every protected value UNmasked, units excluded)
+    contains one of the match's digits and extends past either end of it.
+    There is no separate list of touching forms: whatever `_joins` and the
+    sign, currency and percent attachments join is what touches. The one
+    exclusion is a short unit ("Windows 10 PCs"), by the round-9 ruling, which
+    the probe makes by building without unit joins."""
+    start, end = match
+    digits = [i for i in range(start, end) if _is_numeric_char(text[i])]
+    return any((a < start or b > end) and any(a <= i < b for i in digits) for a, b in probe)
 
 
 def _exempt_spans(text: str) -> list[tuple[int, int]]:
@@ -465,8 +460,10 @@ def _digit_group(a: _Tok, b: _Tok) -> bool:
     return a.text[-1:].isdecimal() and re.match(r"\d{3}(?!\d)", b.text) is not None
 
 
-def _joins(a: _Tok, gap: list[_Tok], gap_text: str, b: _Tok) -> bool:
-    """Whether bearing tokens `a` and `b`, with `gap` between them, are one span."""
+def _joins(a: _Tok, gap: list[_Tok], gap_text: str, b: _Tok, units: bool = True) -> bool:
+    """Whether bearing tokens `a` and `b`, with `gap` between them, are one span.
+    `units=False` builds without the unit rule (the protected-edge probe)."""
+    unit_kinds = (_UNIT,) if units else ()
     # A number word joins a number-bearing neighbour, never a unit or magnitude
     # ("hundredth row" is a word and a noun, not a unit).
     loose = (_UNIT,)  # a magnitude DOES join a number word ("five bn", "five-fold")
@@ -476,7 +473,7 @@ def _joins(a: _Tok, gap: list[_Tok], gap_text: str, b: _Tok) -> bool:
     # A magnitude or unit joins the numeral before it ("5 bn", "3×", "5-fold"),
     # and "×" joins the numeral after it ("×3"). A magnitude also joins a
     # number WORD through `wordish` above ("five bn"); a unit never does.
-    magnitude = (a.kind == _NUM and b.kind in (_MAG, _UNIT)) or (
+    magnitude = (a.kind == _NUM and b.kind in (_MAG, *unit_kinds)) or (
         a.text == "\u00d7" and b.kind == _NUM
     )
     if not gap:
@@ -507,13 +504,26 @@ def _joins(a: _Tok, gap: list[_Tok], gap_text: str, b: _Tok) -> bool:
     if sep == "/":
         return a.kind == _NUM and b.kind == _NUM
     if gap[0].kind == _DASH:
-        return wordish or (a.kind == _NUM and b.kind in (_NUM, _MAG, _UNIT))
+        return wordish or (a.kind == _NUM and b.kind in (_NUM, _MAG, *unit_kinds))
     return False
 
 
 def _spans(text: str, protected: frozenset[str]) -> list[tuple[int, int]]:
-    """The number-bearing spans of `text`, as (start, end), in order."""
-    masked = _mask(text, _protected_spans(text, protected) + _exempt_spans(text))
+    """The number-bearing spans of `text`, as (start, end), in order. Exempt
+    phrases are masked; a protected value is masked unless it is touched
+    (`_touched`), in which case its number is checked like any other."""
+    base = _mask(text, _exempt_spans(text))
+    matches = _protected_spans(base, protected)
+    if not matches:
+        return _build_spans(base, units=True)
+    probe = _build_spans(base, units=False)
+    kept = [m for m in matches if not _touched(m, probe, base)]
+    return _build_spans(_mask(base, kept), units=True)
+
+
+def _build_spans(masked: str, *, units: bool) -> list[tuple[int, int]]:
+    """The spans of already-masked text: tokens joined by `_joins`, then the
+    sign, currency and percent attachments."""
     toks = _tokens(masked)
     spans: list[list[int]] = []  # [start, end, first_bearing_index, n_bearing, has_strong]
     last_bearing: int | None = None
@@ -524,7 +534,7 @@ def _spans(text: str, protected: frozenset[str]) -> list[tuple[int, int]]:
         if last_bearing is not None and spans:
             a = toks[last_bearing]
             gap = toks[last_bearing + 1 : i]
-            if _joins(a, gap, masked[a.end : t.start], t):
+            if _joins(a, gap, masked[a.end : t.start], t, units):
                 spans[-1][1] = t.end
                 spans[-1][4] |= t.kind in _STRONG
                 joined = True
@@ -613,6 +623,15 @@ def _walk(
     if value is None or isinstance(value, bool):
         # `int(True)` is 1 (CLAUDE.md): a flag licenses no number.
         return
+    if path and path in fields["protected"] and not isinstance(value, (str, list, tuple)):
+        # A protected path names one string value (or a list of them). A dict
+        # or a number there protects nothing, so it is refused rather than
+        # silently ignored (#1088 round 11); a whole subtree is not protected,
+        # because that would exempt strings nobody listed (fail open).
+        raise ValueError(
+            f"numbers: protected path {'.'.join(path)!r} names a "
+            f"{type(value).__name__}, not a string"
+        )
     if isinstance(value, Mapping):
         for k, v in value.items():
             full = ".".join((*path, str(k)))
