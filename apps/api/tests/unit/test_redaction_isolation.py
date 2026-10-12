@@ -520,13 +520,18 @@ def test_startup_refuses_a_host_with_no_env_and_says_why(monkeypatch) -> None:
 
 @pytest.mark.unit
 def test_a_wrapper_a_temp_cleaner_deleted_is_made_again(world) -> None:
-    """The wrapper is gone (a host temp cleaner removed its directory). The
-    next redaction makes it again before it starts a child, and succeeds."""
+    """The wrapper is gone (a host temp cleaner removed its directory) and the
+    forkserver is down, so the next child needs a new forkserver, which execs
+    the wrapper. The redaction makes the wrapper again before that, and
+    succeeds. Read from the module, not by calling `prepare` here: calling it
+    would perform the step under test."""
     import shutil
+    from multiprocessing import forkserver
 
     import app.ai.isolation as isolation
 
     first = isolation.prepare_redaction_executable()
+    forkserver._forkserver._stop()
     shutil.rmtree(os.path.dirname(first))
     assert not os.path.exists(first)
 
@@ -534,6 +539,46 @@ def test_a_wrapper_a_temp_cleaner_deleted_is_made_again(world) -> None:
     run = rw.post_within(rw.HANG_GUARD_S, lambda: rw.extract(world, svc_id, artifact_id))
 
     assert run["status"] == "completed", run
-    second = isolation.prepare_redaction_executable()
-    assert second != first
+    second = isolation._wrapper_path
+    assert second is not None and second != first
     assert os.path.isfile(second)
+
+
+@pytest.mark.unit
+def test_startup_refuses_a_wrapper_whose_probe_fails_and_says_why(monkeypatch) -> None:
+    """The wrapper runs but its interpreter does not pass the probe."""
+    import app.ai.isolation as isolation
+
+    monkeypatch.setattr(isolation, "_wrapper_path", None)
+    monkeypatch.setattr(isolation, "_PROBE", "import sys; sys.exit(5)")
+    with pytest.raises(isolation.RedactionSetupError, match=r"exited 5"):
+        _start_the_api()
+
+
+@pytest.mark.unit
+def test_startup_refuses_a_wrapper_whose_environment_is_not_the_allowlist(monkeypatch) -> None:
+    """A wrapper that passes one variable too many: the probe's environment
+    check, not just its exit, is what refuses it."""
+    import app.ai.isolation as isolation
+
+    monkeypatch.setattr(isolation, "_wrapper_path", None)
+    monkeypatch.setattr(
+        isolation, "_CHILD_ENVIRONMENT", {**isolation._CHILD_ENVIRONMENT, "EXTRA_PROBE": "1"}
+    )
+    with pytest.raises(isolation.RedactionSetupError, match=r"exited 3"):
+        _start_the_api()
+
+
+@pytest.mark.unit
+def test_startup_refuses_an_unwritable_temp_directory_and_says_why(monkeypatch) -> None:
+    import tempfile
+
+    import app.ai.isolation as isolation
+
+    def _refuse(*_a: Any, **_k: Any) -> str:
+        raise OSError(30, "Read-only file system")
+
+    monkeypatch.setattr(isolation, "_wrapper_path", None)
+    monkeypatch.setattr(tempfile, "mkdtemp", _refuse)
+    with pytest.raises(isolation.RedactionSetupError, match=r"temp directory writable"):
+        _start_the_api()

@@ -128,7 +128,7 @@ _WRAPPER_MODE = 0o700
 #: The probe the wrapper must pass before it is used: the interpreter starts,
 #: and its environment is exactly the allowlist.
 _ALLOWED_NAMES = ", ".join(repr(k) for k in sorted(_CHILD_ENVIRONMENT))
-_PROBE = f"import os, sys; sys.exit(0 if set(os.environ) <= {{{_ALLOWED_NAMES}}} else 3)"
+_PROBE = f"import os, sys; sys.exit(0 if set(os.environ) == {{{_ALLOWED_NAMES}}} else 3)"
 _PROBE_SECONDS = 30.0
 
 
