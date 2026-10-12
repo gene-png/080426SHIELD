@@ -27,10 +27,13 @@ from app.csf.playbook import (
     score_tier,
     weighted_floor_rollup,
 )
-from app.csf.retired import catalog_rows
+from app.csf.retired import catalog_rows, has_recorded_value_besides_target
+from app.logging import get_logger
 from app.models.csf_assessment import CsfAnswer, CsfAssessment
 from app.models.csf_profile import CsfDimensionScore
 from app.schemas.csf import EnterpriseSubcategory
+
+_log = get_logger(__name__)
 
 
 def dimensions_of(row: CsfDimensionScore) -> DimensionScores:
@@ -84,7 +87,7 @@ def enterprise_subcategories(
         tier_rows = by_subcat[code]
         results = {
             tier: score_tier(dimensions_of(row), has_evidence=row.has_evidence)
-            for tier, row in tier_rows.items()
+            for tier, row in _scored_tiers(tier_rows).items()
         }
         tier_levels = {tier: r.level for tier, r in results.items()}
         rollup = weighted_floor_rollup(
@@ -108,6 +111,12 @@ def enterprise_subcategories(
             else None
         )
         sc = subcategory_by_code(code)
+        _log.debug(
+            "csf.enterprise.rolled_up",
+            subcategory_code=code,
+            tiers_rolled_up=sorted(results),
+            tiers_unscored=sorted(set(tier_rows) - set(results)),
+        )
         out.append(
             EnterpriseSubcategory(
                 subcategory_code=code,
@@ -124,3 +133,18 @@ def enterprise_subcategories(
             )
         )
     return out, tiers_in_use
+
+
+def _scored_tiers(tier_rows: dict[str, CsfDimensionScore]) -> dict[str, CsfDimensionScore]:
+    """#1031 (Gene, #736 6115464421): the tier rows the roll-up reads. A row
+    nobody scored (`has_recorded_value_besides_target` False: a seed default,
+    or a target alone, per ruling (a)) would score level 1 and pull a scored
+    tier down. Known limit, by that predicate: an AI row scored 0 everywhere
+    with nothing else written is indistinguishable from a seed row and is left
+    out with it.
+
+    When NO tier is scored every row is kept, so the subcategory still reads
+    the seed rows' level 1, as before #1031. "Not measured" for that case needs
+    `enterprise_level` to be None on every reader, and is #1073."""
+    scored = {t: r for t, r in tier_rows.items() if has_recorded_value_besides_target(r)}
+    return scored or tier_rows
