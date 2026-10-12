@@ -14,8 +14,8 @@ exactly as `test_frozen_engagement_target.py` does (its own reason: the
 freezes the target and stamps `parent_version`) and `POST .../release`.
 
 CSF is different (round-2 review): `csf_dashboard` reads `CsfAnswer`, which
-no proposed rule touches, and every reader of the Playbook rows --
-`enterprise_subcategories`, `export_playbook` -- takes
+no proposed rule touches, and the Playbook and its exports
+(`export_playbook`, through `enterprise_subcategories`) take
 `routes.csf._latest_assessment`, the latest NON-DISCARDED version. So CSF's
 headline is that version, released or not.
 
@@ -100,7 +100,7 @@ def test_the_released_version_is_measured_against_its_FROZEN_target(
     n = len(a["answers"])
     assert n > 0
 
-    report = _run(_url(tmp_path))
+    report, table = _run_full(_url(tmp_path))
     headline = report["zt_assessments"]["surfaced"]["by_status"]
 
     # Advisor ruling, option (a): the rule does not reach a RELEASED
@@ -124,6 +124,11 @@ def test_the_released_version_is_measured_against_its_FROZEN_target(
     assert would_answers["released"]["stage_moves"] == n
     # The v2 draft is not released, so it never enters the without-freeze line.
     assert would["draft"]["assessments_evaluated"] == 0
+    # And that line is never labelled the headline, in either view.
+    titles = [line for line in table.splitlines() if "IF NOT FROZEN" in line]
+    assert len(titles) == 4, titles
+    assert all("HEADLINE" not in line for line in titles), titles
+    assert report["scope"]["released_without_freeze"].startswith("NOT the headline")
     # The v2 draft is not a surfaced version: absent from the headline, present
     # in the all-versions line.
     assert headline["draft"]["assessments_evaluated"] == 0
@@ -227,4 +232,58 @@ def test_the_csf_headline_is_the_version_the_playbook_reads(
     assert ent["draft"]["assessments_evaluated"] == 1
     assert ent["released"]["assessments_evaluated"] == 0
     assert report["surfaced_versions"]["csf"] == 1
+    assert "NO SURFACED VERSION (CSF)" not in table
+
+
+def _csf_v1_released(c, h: dict) -> str:
+    """A CSF service whose v1 is seeded, one row ticked, approved, finalized
+    and released, through the routes."""
+    svc = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "CSF"}).json()["id"]
+    v1 = c.post(f"/csf/services/{svc}/assessments", headers=h).json()
+    _csf_seed_and_tick(c, h, svc, ticked=1)
+    for ans in v1["answers"]:
+        assert c.patch(f"/csf/answers/{ans['id']}", headers=h, json={"maturity_tier": 2}).is_success
+    assert c.post(f"/csf/assessments/{v1['id']}/approve", headers=h).is_success
+    deliv = c.post(f"/csf/services/{svc}/deliverables/finalize", headers=h)
+    assert deliv.is_success, deliv.text
+    assert c.post(f"/csf/deliverables/{deliv.json()['id']}/release", headers=h).is_success
+    return svc
+
+
+def test_csf_with_every_version_discarded_is_flagged_no_surfaced_version(
+    app_client, tmp_path  # noqa: F811
+) -> None:
+    """Writer: `POST /csf/assessments/{id}/discard` (D-031). `_latest_assessment`
+    then returns nothing, so no CSF version is read by the Playbook, and its
+    headline zeros must say so."""
+    c = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "CSF"}).json()["id"]
+    a = c.post(f"/csf/services/{svc}/assessments", headers=h).json()
+    _csf_seed_and_tick(c, h, svc, ticked=1)
+    assert c.post(f"/csf/assessments/{a['id']}/discard", headers=h).is_success
+
+    report, table = _run_full(_url(tmp_path))
+    assert report["surfaced_versions"]["csf"] == 0
+    assert report["csf_tier_rows"]["all_versions"]["by_status"]["discarded"]["rows_read"] > 0
+    assert "NO SURFACED VERSION (CSF)" in table
+    assert "SURFACED VERSION HAS NO ROWS (CSF)" not in table
+
+
+def test_a_surfaced_csf_version_with_no_rows_is_flagged(app_client, tmp_path) -> None:  # noqa: F811
+    """v1 released with Playbook rows; v2 opened and never seeded. The Playbook
+    reads v2, which holds no tier rows, so the headline zeros must say so."""
+    c = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc = _csf_v1_released(c, h)
+    v2 = c.post(f"/csf/services/{svc}/assessments", headers=h).json()
+    assert v2["status"] == "draft"
+
+    report, table = _run_full(_url(tmp_path))
+    assert report["surfaced_versions"]["csf"] == 1
+    assert report["csf_tier_rows"]["surfaced"]["by_status"]["draft"]["rows_read"] == 0
+    assert report["csf_tier_rows"]["all_versions"]["by_status"]["released"]["rows_read"] > 0
+    assert "SURFACED VERSION HAS NO ROWS (CSF)" in table
     assert "NO SURFACED VERSION (CSF)" not in table

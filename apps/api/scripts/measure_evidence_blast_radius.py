@@ -56,10 +56,12 @@ engines, CALLED on the stored rows with the launch rule applied in memory:
 WHICH VERSIONS, AND WHICH TARGET. Every figure is reported twice. The HEADLINE
 (`surfaced`) is chosen PER SERVICE, because the two services' readers differ:
   - CSF: the version the Playbook and its exports read. `csf_dashboard` reads
-    `CsfAnswer.maturity_tier`, which no rule touches; every reader of the rows
-    measured here (`enterprise_subcategories`, `export_playbook` and its client
-    artifacts) takes `routes.csf._latest_assessment`, the latest NON-DISCARDED
-    version, released or not. Called, not re-derived.
+    `CsfAnswer.maturity_tier`, which no rule touches. The Playbook and its
+    exports (`export_playbook` and its client artifacts, through
+    `enterprise_subcategories`) take `routes.csf._latest_assessment`, the latest
+    NON-DISCARDED version, released or not. Called, not re-derived. NOT every
+    reader of these rows does: `routes/risk.py`'s finalized CSF input reads a
+    different version, and the Risk Register is not measured here.
   - ZT: the version the client dashboard renders, resolved by the dashboard's
     own helpers (`_latest_released_deliverable`, then `_deliverable_parent`).
     Its gaps are against the target that deliverable was FROZEN with, through
@@ -619,7 +621,15 @@ def _stored_stage(_framework: ZtFrameworkCode, stage: int | None) -> int | None:
 
 
 def zt_rule_applies(status: str) -> bool:
-    """Option (a): the ZT rule applies only to assessments not yet released."""
+    """Option (a): the ZT rule applies only to assessments not yet released.
+
+    The ASSESSMENT's status stands in for "released". That holds because
+    releasing a deliverable flips the assessment it was built from to RELEASED
+    (`deliverable_release._release_parent`, keyed on the `parent_version`
+    stamped at finalize), so a released report's assessment is RELEASED. A
+    deliverable finalized before migration 0041 has no `parent_version`, its
+    parent is never flipped, and that assessment stays APPROVED here: the rule
+    then applies to it, which errs toward reporting a move, not hiding one."""
     return status != ZtAssessmentStatus.RELEASED.value
 
 
@@ -778,11 +788,14 @@ def measure(url: str) -> dict[str, Any]:
                 "dashboard reads CsfAnswer.maturity_tier, which no rule touches",
                 "zt": "HEADLINE: per ZT service, the version the client dashboard renders "
                 "(latest released deliverable's parent), gaps against that deliverable's "
-                "frozen target",
+                "frozen target; RELEASED held at the stored stage (option (a))",
             },
+            "released_without_freeze": "NOT the headline: zt_released_without_freeze_* "
+            "count RELEASED ZT a second time under the rule, to show what WOULD have moved "
+            "without the freeze; its `surfaced` view is the subset a client dashboard renders",
             "all_versions": "every stored assessment version; versions no client surface "
             "reads take the live intake target",
-            "statuses_frozen_by_q9_grace_proposal": ["approved", "released"],
+            "zt_statuses_held_at_stored_stage": ["released"],
         },
         "csf_tier_rows": tiers.report(names),
         "csf_tier_rows_sql": _sql_report(sql, names),
@@ -869,10 +882,17 @@ _ZT_HEADLINE = "HEADLINE, the version the client dashboard renders"
 _ALL = "secondary, ALL assessment versions"
 
 
-def _both(title: str, headline: str, section: Mapping[str, Any]) -> list[str]:
+def _both(
+    title: str, headline: str, section: Mapping[str, Any], secondary: str = _ALL
+) -> list[str]:
     return _table(f"{title} [{headline}]", section["surfaced"]) + _table(
-        f"{title} [{_ALL}]", section["all_versions"]
+        f"{title} [{secondary}]", section["all_versions"]
     )
+
+
+#: The would-have-moved tables are never the headline, in either view.
+_NOT_HEADLINE_SURFACED = "NOT the headline: released, IF NOT FROZEN; surfaced versions"
+_NOT_HEADLINE_ALL = "NOT the headline: released, IF NOT FROZEN; all versions"
 
 
 def _read(section: Mapping[str, Any], metric: str, view: str = "all_versions") -> int:
@@ -963,13 +983,15 @@ def render(report: Mapping[str, Any]) -> str:
     )
     out += _both(
         "ZT answers, released, IF NOT FROZEN",
-        _ZT_HEADLINE,
+        _NOT_HEADLINE_SURFACED,
         report["zt_released_without_freeze_answers"],
+        _NOT_HEADLINE_ALL,
     )
     out += _both(
         "ZT assessments, released, IF NOT FROZEN",
-        _ZT_HEADLINE,
+        _NOT_HEADLINE_SURFACED,
         report["zt_released_without_freeze_assessments"],
+        _NOT_HEADLINE_ALL,
     )
     return "\n".join(out)
 

@@ -65,7 +65,7 @@ def _csf_service(c, h, title: str) -> tuple[str, str, list[dict]]:
         f"/csf/services/{svc}/profiles/seed", headers=h, json={"tiers": ["high"]}
     ).is_success
     rows = c.get(f"/csf/services/{svc}/profile/high", headers=h).json()["rows"]
-    assert len(rows) > 5  # the selector selected something before it is read
+    assert len(rows) > 7  # the selector selected something before it is read
     return svc, aid, rows
 
 
@@ -109,7 +109,7 @@ def world(app_client):  # noqa: F811
     # --- CSF, DRAFT. Section 10.4 R1 at launch = today's cap for every row,
     # because no CONFIRMED Current link exists at launch (10.6).
     _, draft_aid, rows = _csf_service(c, h, "CSF draft")
-    r0, r1, r2, r3, r4 = rows[0], rows[1], rows[2], rows[3], rows[4]
+    r0, r1, r2, r3, r4, r5, r6 = (rows[i] for i in range(7))
     # r0: ticked, all 2. Today total 10 -> L5. Launch: implementation 1, total
     # 9 -> L4, then level <= 2 -> L2. MOVES. Target 3: no gap today, a gap at launch.
     _patch_row(c, h, r0, {**_ALL_TWO, "has_evidence": True, "target_level": 3})
@@ -122,6 +122,26 @@ def world(app_client):  # noqa: F811
     # r4: ticked, implementation 2 only. Today total 2 -> L1. Launch:
     # implementation 1, total 1 -> L1. The TOTAL moves and the level does not.
     _patch_row(c, h, r4, {"implementation": 2, "has_evidence": True})
+    # r6: a second total-only row, as r4. It makes the level and total counts
+    # DIFFER (3 levels, 4 totals), so a count that read one for the other
+    # cannot pass.
+    _patch_row(c, h, r6, {"implementation": 2, "has_evidence": True})
+    # r5: ticked, G2 P2 M2 C2 and implementation 0. Today total 8 -> L4.
+    # Launch: implementation is already <= 1, so the total stays 8, and the
+    # level is capped at 2. The LEVEL moves and the total does not.
+    _patch_row(
+        c,
+        h,
+        r5,
+        {
+            "governance": 2,
+            "policy": 2,
+            "monitoring": 2,
+            "improvement": 2,
+            "implementation": 0,
+            "has_evidence": True,
+        },
+    )
     # A ticked all-2 row on ID.AM-09, a code the catalog no longer has (#852).
     # Writer: `seed_profiles` before migration 0065, which KEEPS such rows; no
     # current route can mint one, so it is inserted as 0065 left it. Today L5,
@@ -213,16 +233,17 @@ def test_known_answer_and_no_write(world) -> None:
 
     # CSF tier rows, Python path, per status, ALL versions. DRAFT: n catalog
     # rows plus the retired ID.AM-09 row; n in scope (r3 out, ID.AM-09 in);
-    # two level moves (r0, ID.AM-09), one of them on the retired code; three
-    # total moves (r0, ID.AM-09, r4); four ticked in scope (r0, r2, r4,
+    # three level moves (r0, r5, ID.AM-09), one of them on the retired code;
+    # four total moves (r0, r4, r6, ID.AM-09) -- r4 and r6 move only their
+    # total, r5 only its level; six ticked in scope (r0, r2, r4, r5, r6,
     # ID.AM-09). RELEASED: n in scope, one move of each kind, one ticked.
     tiers = report["csf_tier_rows"]["all_versions"]["by_status"]
     assert tiers["draft"] == {
         "rows_read": n + 1,
         "rows_in_scope": n,
-        "rows_level_moves": 2,
-        "rows_ticked_today": 4,
-        "rows_total_moves": 3,
+        "rows_level_moves": 3,
+        "rows_ticked_today": 6,
+        "rows_total_moves": 4,
         "rows_on_retired_code": 1,
         "rows_level_moves_on_retired_code": 1,
     }
@@ -241,16 +262,17 @@ def test_known_answer_and_no_write(world) -> None:
     assert tiers["approved"]["rows_read"] == 0
     # The section 10.6 SQL path agrees, per status and per client.
     assert report["paths_agree"] is True
-    assert report["csf_tier_rows_sql"]["by_status"]["draft"]["rows_level_moves"] == 2
+    assert report["csf_tier_rows_sql"]["by_status"]["draft"]["rows_level_moves"] == 3
     assert report["csf_tier_rows_sql"]["by_status"]["released"]["rows_level_moves"] == 1
     acme = report["csf_tier_rows"]["all_versions"]["by_client"][world["acme"]]["by_status"]
-    assert acme["draft"]["rows_level_moves"] == 2
+    assert acme["draft"]["rows_level_moves"] == 3
 
     # CSF Enterprise (HIGH tier only, so each subcategory is its one row):
-    # r0 L5 -> L2 against target 3 opens one gap on DRAFT; RELEASED moves a
-    # level, no target, no gap.
+    # r0 L5 -> L2 against target 3 opens one gap on DRAFT; r5 L4 -> L2 has no
+    # target, so it moves a level and opens nothing; RELEASED moves a level,
+    # no target, no gap.
     ent = report["csf_enterprise"]["all_versions"]["by_status"]
-    assert ent["draft"]["subcategory_level_moves"] == 1
+    assert ent["draft"]["subcategory_level_moves"] == 2
     assert ent["draft"]["gaps_today"] == 0
     assert ent["draft"]["gaps_launch"] == 1
     assert ent["draft"]["gaps_opened"] == 1
