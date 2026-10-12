@@ -30,6 +30,7 @@ from datetime import datetime
 
 from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy import Enum as SAEnum
+from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql.elements import conv
@@ -126,13 +127,24 @@ class Recommendation(UUIDPKMixin, TimestampMixin, Base):
     configuration: Mapped[str | None] = mapped_column(Text)
     # SQL NULL (see `_JSON`) is "not recorded"; [] is "no effect named".
     expected_effect: Mapped[list | None] = mapped_column(_JSON)
-    effect_status: Mapped[RecommendationEffectStatus | None] = mapped_column(
+    # The consultant's verdict on `expected_effect`. NOT NULL, DEFAULT
+    # SUGGESTED (review of 006882cc): missing data is UNCONFIRMED, so an effect
+    # nobody has confirmed reads SUGGESTED whatever the list holds, including
+    # an empty or unrecorded one. Only CONFIRMED may feed a projection
+    # (section 13). The server default is the stored member NAME, the spelling
+    # the scope CHECKs use, so a writer that never names the column gets it too.
+    effect_status: Mapped[RecommendationEffectStatus] = mapped_column(
         SAEnum(
             RecommendationEffectStatus,
             name="recommendation_effect_status",
             native_enum=False,
             length=16,
-        )
+        ),
+        nullable=False,
+        default=RecommendationEffectStatus.SUGGESTED,
+        # `sql_text`, not `text`: the class has a `text` column, which would
+        # shadow the function inside the class body.
+        server_default=sql_text("'SUGGESTED'"),
     )
     # SQL NULL (see `_JSON`) is "not computed".
     priority_inputs: Mapped[dict | None] = mapped_column(_JSON)

@@ -14,6 +14,8 @@ The design note rev 4, section 5 (schema approved by the advisor, #736
   SERVICE or CLIENT; two CHECKs hold a client-scope row to no service and no
   deliverable, and a service-scope row to a service. A third CHECK holds
   `origin` to `ai` | `edited` | `consultant` (ruling #736 6128447366, (d)).
+  `effect_status` is NOT NULL with a server default of `'SUGGESTED'`: missing
+  data is unconfirmed, never NULL.
   No artifact column.
 
 Enum columns follow the `ai_runs` convention (`native_enum=False`, no
@@ -139,7 +141,9 @@ def upgrade() -> None:
         sa.Column("axis", sa.String(16)),
         sa.Column("configuration", sa.Text),
         _json("expected_effect"),
-        sa.Column("effect_status", sa.String(16)),
+        sa.Column(
+            "effect_status", sa.String(16), nullable=False, server_default=sa.text("'SUGGESTED'")
+        ),
         _json("priority_inputs"),
         sa.Column("priority_rank", sa.Integer),
         sa.Column("origin", sa.String(16), nullable=False),

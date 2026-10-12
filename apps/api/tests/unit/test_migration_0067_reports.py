@@ -317,6 +317,7 @@ def test_origin_check_refuses_anything_else(tmp_path, origin) -> None:
         ("recommendations", "text"),
         ("recommendations", "origin"),
         ("recommendations", "status"),
+        ("recommendations", "effect_status"),
         ("findings_reports", "service_id"),
         ("findings_reports", "deliverable_id"),
         ("findings_reports", "status"),
@@ -538,7 +539,9 @@ def test_each_model_round_trips_and_stores_member_names(tmp_path) -> None:
         assert crec.integration_run_id == ids[3]
         # NULL is "not recorded", and reads back as None, never [] or {}.
         assert crec.expected_effect is None and crec.priority_inputs is None
-        assert crec.effect_status is None
+        # Missing data is UNCONFIRMED: an effect nobody has confirmed reads
+        # SUGGESTED, never NULL.
+        assert crec.effect_status is RecommendationEffectStatus.SUGGESTED
         run = db.get(IntegrationRun, ids[3])
         assert run.inputs == {"nist_csf": {"not_included": "not approved yet"}}
         assert run.findings == []
@@ -550,10 +553,35 @@ def test_each_model_round_trips_and_stores_member_names(tmp_path) -> None:
         report_status = conn.execute(sa.text("SELECT status FROM findings_reports")).scalar_one()
     # The repo's enum convention: the stored value is the member NAME.
     assert [tuple(r) for r in stored] == [
-        ("CLIENT", "CROSS_SERVICE", "PENDING", None),
+        ("CLIENT", "CROSS_SERVICE", "PENDING", "SUGGESTED"),
         ("SERVICE", "OWNED_TOOL", "PENDING", "SUGGESTED"),
     ]
     assert report_status == "DRAFT"
+
+
+def test_an_effect_status_left_unset_is_stored_as_suggested(tmp_path) -> None:
+    """CLAUDE.md: missing data defaults to UNCONFIRMED. A writer that never
+    names `effect_status` (raw SQL here, so it is the DATABASE default that is
+    tested, not only the model's) gets SUGGESTED, the member NAME."""
+    url, engine = _at(tmp_path, "m0067-effect-default.db")
+    p = _parents(engine)
+    with engine.begin() as conn:
+        _rec(conn, p, "CLIENT", service=False, deliverable=False)
+        stored = conn.execute(sa.text("SELECT effect_status FROM recommendations")).scalar_one()
+    assert stored == "SUGGESTED"
+    # And through the model (its Python-side default). Foreign keys OFF for this
+    # half: the parent was written by raw SQL, whose UUID spelling the ORM's
+    # does not match on SQLite; this is about the default, not the FK.
+    with Session(sa.create_engine(url, future=True)) as db:
+        db.add(
+            Recommendation(
+                scope=RecommendationScope.CLIENT, client_id=uuid.UUID(p["client"]), text="orm"
+            )
+        )
+        db.commit()
+    with engine.connect() as conn:
+        values = conn.execute(sa.text("SELECT effect_status FROM recommendations")).scalars().all()
+    assert values == ["SUGGESTED", "SUGGESTED"]
 
 
 def test_the_orm_refuses_a_scope_outside_the_vocabulary(tmp_path) -> None:
@@ -620,15 +648,29 @@ def test_not_recorded_json_is_sql_null_only_when_unset_or_written_as_sa_null(tmp
     }
 
 
+def _sql(text: str) -> str:
+    return " ".join(str(text).split())
+
+
 def test_the_model_declares_the_same_checks_the_migration_creates(tmp_path) -> None:
+    """Names AND the SQL each CHECK enforces, whitespace-normalised: a model and
+    a migration that agree on a name but not on the predicate would pass a
+    name-only comparison."""
     _, engine = _at(tmp_path, "m0067-parity.db")
-    created = {c["name"] for c in sa.inspect(engine).get_check_constraints("recommendations")}
-    declared = {
-        c.name for c in Recommendation.__table__.constraints if isinstance(c, sa.CheckConstraint)
+    created = {
+        c["name"]: _sql(c["sqltext"])
+        for c in sa.inspect(engine).get_check_constraints("recommendations")
     }
-    assert created == {
+    declared = {
+        c.name: _sql(c.sqltext)
+        for c in Recommendation.__table__.constraints
+        if isinstance(c, sa.CheckConstraint)
+    }
+    assert set(created) == {
         "ck_recommendations_client_scope_has_no_service",
         "ck_recommendations_service_scope_has_service",
         "ck_recommendations_origin_vocabulary",
     }
+    # Positive first: each reflected predicate is a real, non-empty text.
+    assert all(created.values()), created
     assert declared == created
