@@ -29,8 +29,12 @@ that could decide it is not on record:
 * an offered tool names no capability item, so an override cannot be read.
 
 A tool also counts as added when its security classification was overridden
-after the base (the advisor's (ii)): an old row an override brought into
-scope is as new to the AI as a new row.
+after the base (the advisor's (ii)), but ONLY where the base's basis for it
+came from the DRAFTS branch (#736 6116519635): there a draft row is read by
+its scope NOW, so an old row an override brought into scope since would
+otherwise read as one the base had. A tool in the recorded membership of the
+APPROVED version in force at the base was offered to the base, as frozen at
+approval, whatever happened to its classification afterwards.
 
 Limits, stated rather than hidden:
 
@@ -150,7 +154,17 @@ def _live_at(v: ListVersion, at: datetime) -> bool:
     return True
 
 
-def _service_basis(versions: list[ListVersion], at: datetime) -> set[str]:
+@dataclass(frozen=True)
+class Basis:
+    """What the base was offered: every name, and the names read from an
+    APPROVED version's recorded membership (frozen at approval)."""
+
+    names: frozenset[str]
+    from_snapshot: frozenset[str]
+
+
+def _service_basis(versions: list[ListVersion], at: datetime) -> tuple[set[str], bool]:
+    """(names, whether they came from an approved version's snapshot)."""
     newest_first = sorted(versions, key=lambda v: v.version, reverse=True)
     any_approved = False
     for v in newest_first:
@@ -159,9 +173,9 @@ def _service_basis(versions: list[ListVersion], at: datetime) -> set[str]:
         any_approved = True
         names = _membership_at(v, at)
         if names:
-            return names
+            return names, True
     if any_approved:
-        return set()  # R6b: drafts are ignored beside an approved version
+        return set(), True  # R6b: drafts are ignored beside an approved version
     # No version was approved by then, so every version here was a DRAFT at
     # `at`, including one approved only later: that draft was in force then.
     for v in newest_first:
@@ -171,24 +185,28 @@ def _service_basis(versions: list[ListVersion], at: datetime) -> set[str]:
             ""
         }
         if names:
-            return names
-    return set()
+            return names, False
+    return set(), False
 
 
-def basis_at(base_approved_at: datetime, versions: Iterable[ListVersion]) -> set[str] | None:
+def basis_at(base_approved_at: datetime, versions: Iterable[ListVersion]) -> Basis | None:
     """The tool names the base was offered, by `name_key`; None when the
     record cannot say."""
     at = _aware(base_approved_at)
     by_service: dict[Any, list[ListVersion]] = {}
     for v in versions:
         by_service.setdefault(v.service_id, []).append(v)
-    basis: set[str] = set()
+    names: set[str] = set()
+    from_snapshot: set[str] = set()
     try:
         for service_versions in by_service.values():
-            basis |= _service_basis(service_versions, at)
+            service_names, snapshot = _service_basis(service_versions, at)
+            names |= service_names
+            if snapshot:
+                from_snapshot |= service_names
     except _Unknown:
         return None
-    return basis
+    return Basis(frozenset(names), frozenset(from_snapshot))
 
 
 def tools_added(
@@ -206,15 +224,18 @@ def tools_added(
     basis = basis_at(at, versions)
     if basis is None:
         return None
-    had = basis | {name_key(t) for t in base_cited}
+    had = basis.names | {name_key(t) for t in base_cited}
     overrides = overridden_at or {}
     added: list[str] = []
     for p in offered:
         if not p.item_id:
             return None
+        key = name_key(p.capability.name)
         override = overrides.get(p.item_id)
-        if name_key(p.capability.name) not in had or (
-            override is not None and _aware(override) > at
-        ):
+        # (ii) only outside an approved snapshot (#736 6116519635).
+        late_override = (
+            override is not None and _aware(override) > at and key not in basis.from_snapshot
+        )
+        if key not in had or late_override:
             added.append(p.capability.name)
     return sorted(added, key=str.casefold)

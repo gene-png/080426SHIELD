@@ -272,3 +272,67 @@ def test_an_approval_missing_from_the_trail_reads_null(app_parts) -> None:  # no
     body = _what_if(w, {w.cc: [_flags(w.cc, SIEM, d=True)]})
     assert body["run_status"] == "completed", body["run_status"]
     assert body["tools_added_since_base"] is None, body["tools_added_since_base"]
+
+
+def _override(w: World, item_id: uuid.UUID) -> None:
+    """The real override endpoint, after the base."""
+    r = w.c.post(
+        f"/tech-debt/capability-items/{item_id}/security-classification/override",
+        headers=w.h,
+        json={"security_functions": ["detect"]},
+    )
+    assert r.status_code == 200, r.text
+
+
+def _item(w: World, list_id: uuid.UUID, name: str) -> uuid.UUID:
+    with w.sessions() as db:
+        return db.execute(
+            select(CapabilityItem.id).where(
+                CapabilityItem.capability_list_id == list_id, CapabilityItem.name == name
+            )
+        ).scalar_one()
+
+
+def test_an_override_after_the_base_does_not_add_a_tool_in_the_approved_snapshot(
+    app_parts,  # noqa: F811
+) -> None:
+    """#736 6116519635: (ii) does not apply where the base's basis is an
+    APPROVED version's recorded membership. MAIL (cited by no base row) was in
+    v1's snapshot in force at the base; re-extracted into v2 and overridden
+    after the base, it is still not new."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    with w.sessions() as db:
+        db.add(CapabilityItem(capability_list_id=_v1_id(w), name=MAIL))
+        db.commit()
+    _v1_approved_before_the_base(w)
+    v2 = _re_extracted_v2(w, [EDR, SIEM, SOAR, MAIL])
+    _override(w, _item(w, v2, MAIL))
+    body = _what_if(w, {w.cc: [_flags(w.cc, MAIL, d=True)]})
+    assert body["tools_added_since_base"] == 0, body["tools_added_since_base"]
+    assert all(d["credited_added_tool"] is False for d in body["differences"])
+
+
+def test_an_override_after_the_base_adds_a_tool_in_the_drafts_branch(
+    app_parts,  # noqa: F811
+) -> None:
+    """(ii) in the DRAFTS branch: MAIL was on the draft in force at the base
+    but confirmed NOT security, so offered to nobody. The override endpoint
+    brings it into scope after the base: it is new to the AI."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    with w.sessions() as db:
+        base_at = db.get(AttackAssessment, uuid.UUID(w.assessment_id)).approved_at
+        db.add(
+            CapabilityItem(
+                capability_list_id=_v1_id(w),
+                name=MAIL,
+                security_related=False,
+                security_class_confirmed=True,
+                created_at=base_at - timedelta(days=1),
+            )
+        )
+        db.commit()
+    _override(w, _item(w, _v1_id(w), MAIL))
+    body = _what_if(w, {w.cc: [_flags(w.cc, MAIL, d=True)]})
+    assert body["tools_added_since_base"] == 1, body["tools_added_since_base"]
+    marks = {d["technique_code"]: d["credited_added_tool"] for d in body["differences"]}
+    assert marks[w.cc] is True, marks
