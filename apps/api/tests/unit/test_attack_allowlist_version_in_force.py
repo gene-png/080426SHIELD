@@ -391,8 +391,14 @@ def _report(reason: str, list_id: uuid.UUID):
 
 
 def test_the_precedence_table_covers_every_pair() -> None:
-    assert len(_KEPT) == 16
-    assert {a for a, _ in _KEPT} == {_SNAP, _NIF, _DISC, _SCOPE}
+    # test-integrity: only the module table's KEYS are read, and they are
+    # compared to `_KEPT`, written from the ruling; the kept VALUES are judged
+    # through `_withheld_replaces` below, never read from the table.
+    from app.routes.attack import _WITHHELD_PRECEDENCE
+
+    reasons = {_SNAP, _NIF, _DISC, _SCOPE}
+    assert set(_KEPT) == {(a, b) for a in reasons for b in reasons}
+    assert set(_WITHHELD_PRECEDENCE) == set(_KEPT), set(_KEPT) ^ set(_WITHHELD_PRECEDENCE)
 
 
 @pytest.mark.parametrize(("held", "later"), sorted(_KEPT))
