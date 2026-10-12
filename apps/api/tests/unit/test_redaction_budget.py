@@ -245,10 +245,14 @@ def test_a_redaction_time_must_be_shorter_than_a_runs_deadline(monkeypatch, sett
     reaped while the child still holds a slot (#1042 narrow review, item 1)."""
     from pydantic import ValidationError
 
-    from app.ai.run_limits import RUN_DEADLINE
+    import app.ai.run_limits as run_limits
+    from app.ai.runs import RUN_DEADLINE
     from app.config import get_settings
     from app.main import create_app
 
+    # The deadline a run is actually given (`runs.py`: `started_at +
+    # RUN_DEADLINE`) must be the one the config bound is read from.
+    assert RUN_DEADLINE is run_limits.RUN_DEADLINE
     deadline_s = RUN_DEADLINE.total_seconds()
     try:
         monkeypatch.setenv(f"SHIELD_REDACTION_{setting}", str(deadline_s))

@@ -182,12 +182,15 @@ class Settings(BaseSettings):
     # app/ai/isolation.py). The budget is per PAYLOAD: a child still redacting
     # when it runs out is killed by PID and nothing is sent.
     # Positive, finite and SHORTER THAN A RUN'S DEADLINE, or the api does not
-    # start. Longer, one payload's child could outlast its whole run: the run
-    # is reaped (`RUN_DEADLINE` + `REAP_MARGIN`) while the child still holds a
-    # slot. Infinite or huge, `poll` raises OverflowError past every typed
-    # path. The bound is read from `RUN_DEADLINE`, not written twice. `lt`
-    # alone refuses infinity and `gt` refuses NaN; `allow_inf_nan=False` says
-    # it outright, so removing it changes nothing today.
+    # start; read from `RUN_DEADLINE`, not written twice. Infinite or huge,
+    # `poll` raises OverflowError past every typed path. The bound is per
+    # VALUE, not per call: a call that starts late in its run, or waits a whole
+    # slot wait and then runs a whole budget, can still outlast the reap
+    # (`RUN_DEADLINE` + `REAP_MARGIN`). Its answer is then refused, so it sends
+    # nothing (`isolation._end_place`), but its child can hold a slot past the
+    # reap for up to one budget. `lt` alone refuses infinity and NaN fails
+    # every comparison; `allow_inf_nan=False` says it outright, so removing it
+    # changes nothing today.
     shield_redaction_budget_seconds: float = Field(
         default=30.0, gt=0, lt=_REDACTION_TIME_LIMIT_S, allow_inf_nan=False
     )

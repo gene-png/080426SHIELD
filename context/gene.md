@@ -1,18 +1,5 @@
 # Gene — in-flight status
 
-_2026-10-10 (track5): #552 is implemented, PR #NNN from
-`track5/552-redaction-stall`, for #552. One tenant's slow name check can no
-longer stall the others: the check runs in a separate short-lived process, is
-stopped after 30 seconds per payload, and nothing is sent when it is stopped.
-At most 4 AI runs proceed at once across every tenant; a fifth is refused with
-"The check for people's names is busy with other AI work, so this was stopped
-and nothing was sent to the AI provider. Try again in a minute." Any refusal
-fails the whole run, with nothing applied. Two kinds of sentence are drafted
-and waiting for your ruling: one for a check that crashed, and a "stopped
-part-way" form for a run that had already sent something, where "nothing was
-sent" would be false. Main, with D′, #1000 and Risk E, is merged in
-(2026-10-11). It comes back to you: conditions 5 and 6._
-
 _2026-10-11 (track6): #474 E is a draft PR on `track6/474-e-risk-evidence`,
 on top of D' (merged as dd6a788a) and #1000 (merged as b7a44039)._
 
