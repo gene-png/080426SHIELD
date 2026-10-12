@@ -22,9 +22,9 @@ import { CsfDimensionEditor } from "./CsfDimensionEditor";
  * Level 4 ... 10 -> Level 5", and "Evidence rule: If evidence cannot be
  * produced, Implementation cannot exceed 1 AND total maturity cannot exceed
  * Level 2." The engine side is pinned to the same spec literals,
- * independently, by `test_maturity_level_mapping` and
- * `test_evidence_cap_clamps_implementation_and_level` in
- * apps/api/tests/unit/test_csf_playbook.py.
+ * independently, by `test_maturity_level_mapping`,
+ * `test_evidence_cap_clamps_implementation_and_level` and
+ * `test_evidence_cap_by_level_clamp` in apps/api/tests/unit/test_csf_playbook.py.
  */
 
 vi.mock("@/lib/csf/client", () => ({
@@ -223,7 +223,9 @@ describe("CsfDimensionEditor instructions (C-2, #1056)", () => {
     // #1076 finding 1: `score_tier` also caps a row whose Implementation is
     // already 0 or 1, through the level clamp alone. G2 P2 I0 M2 C2 without
     // evidence: total 8 (L4 by the bands), held at L2, Implementation still 0
-    // (pinned engine-side in test_csf_playbook.py). S1 must hold here too.
+    // (pinned engine-side by the `((2, 2, 0, 2, 2), False, 8, 2, True)` case
+    // of `test_evidence_cap_by_level_clamp` in test_csf_playbook.py). S1 must
+    // hold here too.
     await renderWith(row({ ...CAPPED, implementation: 0, total: 8, level: 2 }));
     expect(screen.getByText(S1)).toBeVisible();
   });
