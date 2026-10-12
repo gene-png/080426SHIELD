@@ -1,5 +1,7 @@
 # Gene — in-flight status
 
+_2026-10-12 (trackB): TD-2's intake banner is a draft PR on `trackB/1058-intake-banner`, for #1058._ Step 4 of intake now shows your suite-listing banner when Tech Debt or ATT&CK is selected (Tech Debt text when both are). It uses your drafts word for word and waits on your final OK on the copy. The Step 5 reminder line follows after IN-2 merges.
+
 _2026-10-11 (track6): #474 E is a draft PR on `track6/474-e-risk-evidence`,
 on top of D' (merged as dd6a788a) and #1000 (merged as b7a44039)._
 
