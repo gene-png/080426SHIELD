@@ -18,9 +18,12 @@ is licensed in exactly two ways, and everything else is a hit:
      commas removed, whitespace collapsed, case folded), a span found in a
      declared fact field.
 
-So the module writes code only for the forms it ACCEPTS. A composition it has
-never seen ("two dozen", "$5mn", "40 per cent", "–5%") is not a plain numeral
-and is not in a fact, so it is refused without anyone having listed it.
+So the module writes code only for the forms it ACCEPTS. A composition ("two
+dozen", "40 per cent", "–5%") or an ATTACHED unit ("$5mn") is not a plain
+numeral and is not in a fact, so it is refused without a list. A SEPARATED unit
+("$5 Bn", "50 bps") is caught by SHAPE: any short alphabetic token after a
+numeral joins it (see the unit rule below), so it too needs no list. Only the
+stoplist of short function words that may follow a number is enumerated.
 
 JOINING RULES (where one span ends):
   - a comma, period or colon joins digit to digit with no whitespace: a
@@ -28,11 +31,14 @@ JOINING RULES (where one span ends):
     other ("3,5", "1,20", "3:1", "10:30") is one span refused unless a fact says
     it verbatim. "3, 5 and 7" is three spans;
   - whitespace joins only where one side is a number WORD ("two dozen",
-    "40 per cent", "5 million"), or a magnitude follows a numeral ("$5 bn",
-    "5 M", "3 x") or "×" precedes one ("× 3"); never numeral to numeral;
+    "40 per cent", "5 million"), where a magnitude or a short unit follows a
+    numeral ("$5 bn", "5 M", "3 x", "$5 Bn", "50 bps"; see THE UNIT RULE) or
+    "×" precedes one ("× 3"), or across "and" after a scale word ("one
+    hundred and five"); never numeral to numeral;
   - a dash joins as a sign directly before a numeral, as a range between
     numerals with no whitespace ("3–5"), in a compound with a number word
-    ("twenty-one", "40-percent"), or before a magnitude ("5-fold");
+    ("twenty-one", "twenty-first", "40-percent"), or before a magnitude or
+    short unit ("5-fold", "5-day");
   - a slash joins numerals only, with no whitespace ("1/3", "10/12/2026");
   - a currency mark joins the numeral it touches; a percent mark ("%", "％",
     "٪", "‰") joins the span before it across any whitespace.
@@ -116,6 +122,17 @@ def _ordinal(cardinal: str) -> str:
 # first step", "a second review") far more often than counts. "zeroth" is not
 # a word anyone writes.
 _ORDINALS = frozenset(_ordinal(c) for c in (*_CARDINALS[3:], *_SCALES)) | {"third"}
+# The multiplier family, generated like the ordinals (#1088 round 4, F2):
+# base, -d, -s and -ing for each stem ("quadruple", "quadrupled",
+# "quadruples", "quadrupling").
+_MULTIPLIER_STEMS: tuple[str, ...] = (
+    "double", "triple", "treble", "quadruple", "quintuple", "sextuple",
+    "septuple", "octuple",
+)  # fmt: skip
+_MULTIPLIERS = frozenset(
+    form for stem in _MULTIPLIER_STEMS for form in (stem, stem + "d", stem + "s", stem[:-1] + "ing")
+)
+_TENS: frozenset[str] = frozenset(_CARDINALS[20:])
 _NUMBER_WORDS = frozenset(
     {
         *_CARDINALS,
@@ -125,11 +142,10 @@ _NUMBER_WORDS = frozenset(
         *_ORDINALS,
         *(o + "s" for o in _ORDINALS),  # fractions: "fifths", "tenths"
         "dozen", "dozens", "single", "pair", "pairs",
-        "half", "halves", "halved", "halving",
+        "half", "halves", "halve", "halved", "halving",
         "percent", "pct",
         "twice", "thrice",
-        "double", "doubled", "doubles", "doubling",
-        "triple", "tripled", "triples", "tripling",
+        *_MULTIPLIERS,
     }
 )  # fmt: skip
 # Deliberate exclusions (#1088 round 3, advisory 6): "none", "nil", "couple",
@@ -145,7 +161,28 @@ _ARTICLE_TARGETS = frozenset({"dozen", "half", "quarter", *_ORDINALS})
 # ("$5 bn", "5 M", "5 K", "5-fold", "3 x", "3×"), or "×" BEFORE one ("×3").
 # Case-sensitive. Alone it is prose ("press x", "M to mute"). "5 m" is joined
 # and therefore refused on purpose: minutes, metres or millions, unknowable.
-_MAGNITUDES = frozenset({"bn", "MM", "M", "K", "B", "T", "k", "m", "x", "fold", "\u00d7"})
+_MAGNITUDES = frozenset({"bn", "MM", "M", "K", "B", "T", "k", "m", "x", "fold", "grand", "\u00d7"})
+# THE UNIT RULE (#1088 round 4, F1). Any other short alphabetic token after a
+# numeral (across whitespace or a dash) is treated as a unit and joins it, so a
+# list of units cannot leak ("$5 Bn", "$5 tn", "50 bps", "40 pc", "5-day").
+# "Short" is one to three letters in any case, or four letters with a capital
+# ("GBPS", "Gbps"; five-letter "MMBTU" is out). Four lowercase letters are left out on
+# purpose: "12 rows", "4 tools", "7 apps" are counts followed by nouns, and
+# joining them would refuse ordinary prose.
+# The stoplist below holds the short FUNCTION words that follow a number in
+# prose. "per" never joins either: it is its own token kind, merged only into
+# "per cent" / "per-cent"; in "2 per user" the rate word does not change the
+# value, and the numeral alone is what the payload licenses. "rev" is here because
+# "800-53 rev 5" names a revision, not a unit.
+_UNIT_STOPWORDS = frozenset(
+    {
+        "a", "an", "the", "of", "in", "on", "at", "to", "and", "or", "nor",
+        "for", "by", "is", "are", "was", "be", "as", "if", "so", "but",
+        "out", "off", "up", "via", "vs", "new", "old", "all", "any", "few",
+        "key", "top", "not", "no", "its", "our", "who", "has", "had", "may",
+        "can", "now", "i", "we", "it", "rev",
+    }
+)  # fmt: skip
 # Uppercase Roman numerals: two or more of I/V/X standalone, or any after one of
 # these words (any case). C, D, L and M are left out: "CD", "MD", "XL" and "CV"
 # are everyday acronyms. A lone "I" is a pronoun.
@@ -156,7 +193,13 @@ _ROMAN_CONTEXT = frozenset(
     }
 )  # fmt: skip
 _ROMAN_VALID = re.compile(r"^X{0,3}(?:IX|IV|V?I{0,3})$")
-_EXEMPT_PHRASES: tuple[str, ...] = ("no one", "third-party", "third party")
+# Fixed phrases that carry no count: "no one", "third party/parties", and
+# domain terms (#1088 round 4, advisory): "Zero Trust", "single sign-on",
+# "key pair(s)", "double extortion", "one-time" (password, code).
+_EXEMPT_PHRASES: tuple[str, ...] = (
+    "no one", "third-party", "third party", "third parties", "zero trust",
+    "single sign-on", "key pairs", "key pair", "double extortion", "one-time",
+)  # fmt: skip
 
 _DASHES = "-‐‑‒–—−"
 _CURRENCY = "$€£"
@@ -172,13 +215,13 @@ _PLAIN = re.compile(
 _THOUSANDS = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
 
 # Token kinds.
-_NUM, _WORD, _ROMAN, _WEAK, _MAG, _ART, _CUR, _PCT, _DASH, _OTHER = (
-    "num", "word", "roman", "weak", "mag", "art", "cur", "pct", "dash", "other"
+_NUM, _WORD, _ROMAN, _WEAK, _MAG, _UNIT, _ART, _CUR, _PCT, _DASH, _OTHER = (
+    "num", "word", "roman", "weak", "mag", "unit", "art", "cur", "pct", "dash", "other"
 )  # fmt: skip
-_BEARING = frozenset({_NUM, _WORD, _ROMAN, _WEAK, _MAG})
+_BEARING = frozenset({_NUM, _WORD, _ROMAN, _WEAK, _MAG, _UNIT})
 # Tokens that make a span a number on their own; a span of only "quarter" or
 # only a magnitude letter is prose.
-_STRONG = frozenset({_NUM, _WORD, _ROMAN})
+_STRONG = frozenset({_NUM, _WORD, _ROMAN})  # a lone magnitude or unit is prose
 _WORDISH = frozenset({_WORD, _WEAK})
 
 
@@ -261,11 +304,28 @@ def _merge_length(toks: list[_Tok], i: int, masked: str) -> int:
         ):
             return 3
         return 0
+    if t.kind == "percentage" and nxt.kind == _DASH:
+        after = toks[i + 2] if i + 2 < len(toks) else None
+        if (
+            after is not None
+            and after.kind in ("point", "points")
+            and t.end == nxt.start
+            and nxt.end == after.start
+        ):
+            return 3
     if t.kind == "percentage" and spaced and nxt.kind in ("point", "points"):
         return 2
     if t.kind == _ART and spaced and nxt.text.casefold() in _ARTICLE_TARGETS:
         return 2
     return 0
+
+
+def _is_unit_shape(word: str) -> bool:
+    if not word.isalpha() or word.casefold() in _UNIT_STOPWORDS:
+        return False
+    # Four letters count only with a capital in them ("GBPS", "Gbps", "KWhs"):
+    # four lowercase letters are a noun after a count ("12 rows").
+    return len(word) <= 3 or (len(word) == 4 and not word.islower())
 
 
 def _word_kind(word: str, previous: str | None) -> str:
@@ -286,6 +346,8 @@ def _word_kind(word: str, previous: str | None) -> str:
         return _ROMAN
     if low in ("per", "cent", "percentage", "point", "points"):
         return low
+    if _is_unit_shape(word):
+        return _UNIT
     return _OTHER
 
 
@@ -308,6 +370,19 @@ def _tokens(masked: str) -> list[_Tok]:
         else:
             kind = _OTHER
         toks.append(_Tok(kind, m.start(), m.end(), t))
+    # "first" and "second" are number words INSIDE a dash compound with a tens
+    # word ("twenty-first", "thirty-second"), so the span is whole on both the
+    # fact and the text side (#1088 round 4, F3). Alone they stay prose.
+    for k in range(2, len(toks)):
+        t, dash, tens = toks[k], toks[k - 1], toks[k - 2]
+        if (
+            t.text.casefold() in ("first", "second")
+            and dash.kind == _DASH
+            and tens.end == dash.start
+            and dash.end == t.start
+            and tens.text.casefold() in _TENS
+        ):
+            t.kind = _WORD
     # "per cent" is one number word; "a"/"an" before a fraction or dozen word
     # merges into it. Any other "per", "cent", "a" or "an" is plain prose.
     merged: list[_Tok] = []
@@ -329,14 +404,28 @@ def _tokens(masked: str) -> list[_Tok]:
 
 def _joins(a: _Tok, gap: list[_Tok], gap_text: str, b: _Tok) -> bool:
     """Whether bearing tokens `a` and `b`, with `gap` between them, are one span."""
-    wordish = a.kind in _WORDISH or b.kind in _WORDISH
+    # A number word joins a number-bearing neighbour, never a unit or magnitude
+    # ("hundredth row" is a word and a noun, not a unit).
+    loose = (_UNIT, _MAG)
+    wordish = (a.kind in _WORDISH and b.kind not in loose) or (
+        b.kind in _WORDISH and a.kind not in loose
+    )
     # A magnitude joins the numeral before it ("5 bn", "3×", "5-fold"), and
     # "×" joins the numeral after it ("×3"); never a word or another magnitude.
-    magnitude = (a.kind == _NUM and b.kind == _MAG) or (a.text == "\u00d7" and b.kind == _NUM)
+    magnitude = (a.kind == _NUM and b.kind in (_MAG, _UNIT)) or (
+        a.text == "\u00d7" and b.kind == _NUM
+    )
     if not gap:
         if gap_text == "":
             return True  # adjacent: "3" then "×"
         return gap_text.isspace() and (wordish or magnitude)
+    if (
+        len(gap) == 1
+        and a.text.casefold() in _SCALES  # "one hundred and five", not "tenth and twelfth"
+        and b.kind == _WORD
+        and re.fullmatch(r"\s+and\s+", gap_text, re.IGNORECASE) is not None
+    ):
+        return True  # "one hundred and five" (#1088 round 4, F3)
     if len(gap) != 1 or gap_text != gap[0].text:
         return False  # anything with whitespace around punctuation breaks a span
     sep = gap[0].text
@@ -350,7 +439,7 @@ def _joins(a: _Tok, gap: list[_Tok], gap_text: str, b: _Tok) -> bool:
     if sep == "/":
         return a.kind == _NUM and b.kind == _NUM
     if gap[0].kind == _DASH:
-        return wordish or (a.kind == _NUM and b.kind in (_NUM, _MAG))
+        return wordish or (a.kind == _NUM and b.kind in (_NUM, _MAG, _UNIT))
     return False
 
 
@@ -407,7 +496,14 @@ def _spans(text: str, protected: frozenset[str]) -> list[tuple[int, int]]:
 
 
 def _normalize_display(raw: str) -> str:
-    return re.sub(r"\s+", " ", _THOUSANDS.sub("", raw)).strip().casefold()
+    """Thousands commas removed and whitespace collapsed. Case is folded ONLY
+    for a span with no digit or numeric character, i.e. spelled number words
+    and Roman numerals: a unit's case carries meaning ("45m" is not "45M",
+    #1088 round 4, F4)."""
+    text = re.sub(r"\s+", " ", _THOUSANDS.sub("", raw)).strip()
+    if any(_is_numeric_char(c) for c in text):
+        return text
+    return text.casefold()
 
 
 def _plain_value(raw: str) -> str | None:

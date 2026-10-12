@@ -13,10 +13,12 @@ THE RULE UNDER TEST comes from the advisor's rulings, not from the module:
   number-bearing text is read as whole SPANS; a span is licensed only as a
   plain numeral whose value is licensed, or as an exact display string from a
   fact field. Everything else in a span is a hit. The joining rules decide
-  where one span ends: a comma only as a thousands separator, a period only as
-  a decimal point, whitespace only beside a number word, a dash only as a sign,
-  a range between numerals or a compound with a number word, and a slash only
-  between numerals.
+  where one span ends: a comma, period or colon joins digit to digit with no
+  whitespace (a thousands group or decimal stays a plain numeral; anything else
+  is refused); whitespace joins beside a number word, before a magnitude or a
+  short unit after a numeral, or "and" between number words; a dash joins as a
+  sign, a range between numerals, a compound with a number word, or before a
+  magnitude or unit; a slash joins numerals only.
 
 Every expected value below is TYPED here from those rules. Nothing is read
 from the module's own tables (CLAUDE.md, #72). The corpus enumerates classes,
@@ -215,6 +217,7 @@ def test_unicode_and_roman(text: str, payload: dict, refused: list[str]) -> None
         ("Approved in March 2026.", {"year": 2026}, []),
         ("Approved in March 2026.", {}, ["2026"]),
         ("It follows NIST 800-53 rev 5.", {}, ["800-53", "5"]),
+        ("It follows NIST 800-53 rev 5.", {"std": "800-53", "rev": 5}, []),
         ("It runs v2.1 of the agent.", {"version": "v2.1"}, []),
         ("It runs v2.1 of the agent.", {"version": "2.1"}, ["v2.1"]),
         ("Spend fell in Q3 FY25.", {"period": "Q3 FY25"}, []),
@@ -259,7 +262,7 @@ def test_protected_codes_and_names(text: str, payload: dict, refused: list[str])
 @pytest.mark.parametrize(
     "text,payload,refused",
     [
-        # A comma joins only as a thousands separator.
+        # A comma followed by whitespace never joins.
         ("Techniques 3, 5 and 7 apply.", {"a": 3, "b": 5, "c": 7}, []),
         # Round 3, finding 4: a comma that is NOT a thousands group still joins
         # digit to digit with no space, because "3,5" is 3.5 in many locales
@@ -487,3 +490,78 @@ def test_an_all_numeric_protected_value_is_refused() -> None:
     # everywhere and let "40%" and "$40" through.
     with pytest.raises(ValueError, match="code"):
         allowed_numbers({"code": "40"}, fact_fields=(), protected_fields=("code",))
+
+
+# --- Review round 4 of #1088 (findings 1 to 4, and the advisory) ----------------
+
+
+@pytest.mark.parametrize(
+    "text,payload,refused",
+    [
+        # Finding 1: a short unit after a numeral joins it, any case, so the span
+        # is not a plain numeral. Units outside any list are refused by shape.
+        ("Spend was $5 Bn.", {"s": 5}, ["$5 Bn"]),
+        ("Spend was $5 BN.", {"s": 5}, ["$5 BN"]),
+        ("Spend was $5 mn.", {"s": 5}, ["$5 mn"]),
+        ("Spend was $5 b.", {"s": 5}, ["$5 b"]),
+        ("Spend was $5 bln.", {"s": 5}, ["$5 bln"]),
+        ("Spend was $5 tn.", {"s": 5}, ["$5 tn"]),
+        ("Spend was $5 grand.", {"s": 5}, ["$5 grand"]),
+        ("It grew 3 X.", {"s": 3}, ["3 X"]),
+        ("It rose 5 pp.", {"s": 5}, ["5 pp"]),
+        ("It rose 50 bps.", {"s": 50}, ["50 bps"]),
+        ("It rose 40 pc.", {"s": 40}, ["40 pc"]),
+        ("It rose 5 percentage-point.", {"s": 5}, ["5 percentage-point"]),
+        ("It took a 5-day window.", {"s": 5}, ["5-day"]),
+        ("It moved 5 GBPS.", {"s": 5}, ["5 GBPS"]),
+        ("It moved 5 Gbps.", {"s": 5}, ["5 Gbps"]),
+        ("Spend was $5 Bn.", {"s": "$5 Bn"}, []),
+        # ...but a short FUNCTION word after a numeral does not join.
+        ("5 of 82 controls apply.", {"a": 5, "b": 82}, []),
+        ("Rows 5 in all, 3 to go, 2 per user.", {"a": 5, "b": 3, "c": 2}, []),
+        ("We added 3 new tools.", {"n": 3}, []),
+        # A longer word after a numeral is prose, not a unit.
+        ("12 rows were scored; 4 tools and 7 apps.", {"a": 12, "b": 4, "c": 7}, []),
+        # Finding 2: the multiplier family, generated.
+        ("Spend quadrupled.", {}, ["quadrupled"]),
+        ("Spend is quadrupling.", {}, ["quadrupling"]),
+        ("Spend trebled.", {}, ["trebled"]),
+        ("Spend will halve.", {}, ["halve"]),
+        ("Spend will quintuple.", {}, ["quintuple"]),
+        # Finding 3: "first" and "second" inside a dash compound; "and" between
+        # number words.
+        ("The twenty-first control applies.", {}, ["twenty-first"]),
+        ("The thirty-second control applies.", {}, ["thirty-second"]),
+        ("Twenty controls apply.", {"c": "the twenty-first control"}, ["Twenty"]),
+        ("The twenty-first control applies.", {"c": "the twenty-first control"}, []),
+        ("One hundred and five rows.", {}, ["One hundred and five"]),
+        ("One hundred and five rows.", {"n": "one hundred and five"}, []),
+        ("Five rows.", {"n": "one hundred and five"}, ["Five"]),
+        # Finding 4: a span with a digit or a unit is NOT case-folded.
+        ("Spend was 45M.", {"s": "45m"}, ["45M"]),
+        ("Spend was 45m.", {"s": "45m"}, []),
+        ("Spend was €1.2M.", {"s": "€1.2m"}, ["€1.2M"]),
+        # Spelled number words still fold case.
+        ("Three tools overlap.", {"t": "three tools"}, []),
+    ],
+)
+def test_round_four_forms(text: str, payload: dict, refused: list[str]) -> None:
+    assert _refused(text, payload) == refused
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Advisory: domain terms that are not counts.
+        "Adopt Zero Trust across the estate.",
+        "Enable single sign-on for every app.",
+        "Rotate the key pair; store key pairs safely.",
+        "Plan for double extortion.",
+        "Send a one-time password; use one-time codes.",
+        "Review third parties annually.",
+        # A short unit with no numeral before it is prose.
+        "The MM team and the b side.",
+    ],
+)
+def test_round_four_text_with_no_number(text: str) -> None:
+    assert _refused(text, {}) == []
