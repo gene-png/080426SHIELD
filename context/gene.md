@@ -1,5 +1,20 @@
 # Gene — in-flight status
 
+_2026-10-12 (trackD): C-2 landed with PR #1074, for #1056._ The CSF "Edit dimension scores" editor now has a collapsed "How to score a row" section, a one-line hint under each dimension, and two lines that show only when a row is capped for missing evidence or has no target. The copy is the advisor's verbatim approval (6115345112). One test on main was edited with the advisor's sha256 approval (an engine pin for the cap). The evidence question (F5) is still with you.
+
+_2026-10-12 (trackB): TD-3 landed with PR #1066 (approved for merge in #736 6115773247), for #1050._ The admin shell no longer caps service workspaces at `max-w-6xl`, so the Tech Debt Step 2 table gets the screen's width; queue, deliverables, management, messages, health, audit and the Risk Register keep the cap. #1050 stays open: the real fix, a fixed Name column and wider Notes in `TechDebtWorkspace.tsx`, is queued after #1044 merges.
+
+_2026-10-12 (track1): #1011 landed with PR #1040, for #1011. When the tools behind a client's ATT&CK figure could not be checked against a security tool list, the home card now says so, with the reason, in the three sentences you approved (#736 6094262391), instead of looking the same as "checked, none found". "Checked, none found" still shows nothing. One test on main was edited with the advisor's sha256 approval (its `null` case moved to the new test); the old #889 test's docstring saying the card has nothing to say is now stale and is left as a prose follow-up. It comes back to you: conditions 5 and 6._
+
+_2026-10-12 (trackB): TD-2's intake banner landed with PR #1069 (main 931539b8), for #1058._ Corrected in #1040's landing commit: this line still read as a draft PR after it merged. Step 4 of intake now shows your suite-listing banner when Tech Debt or ATT&CK is selected (Tech Debt text when both are). It uses your drafts word for word, as you approved them in 6115464421. The Step 5 reminder line follows after IN-2 merges.
+
+_2026-10-11 (track6): the Atlas CSF Playbook seed is a draft PR on
+`track6/atlas-playbook-seed`, for #474._ The demo's Atlas client now has CSF
+Playbook rows (v1 and v2), so a Risk Register regenerated on Atlas shows CSF
+risks from the Playbook, with the source note: PR.AA-01, DE.AE-02 and ID.AM-01,
+each "level 1 of target 2". The published v1 register is unchanged, as the
+advisor ruled. Only the demo seed changes; it comes back to you (condition 5).
+
 _2026-10-11 (track6): #474 E is a draft PR on `track6/474-e-risk-evidence`,
 on top of D' (merged as dd6a788a) and #1000 (merged as b7a44039)._
 
