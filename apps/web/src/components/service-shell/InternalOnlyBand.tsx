@@ -1,3 +1,5 @@
+import { hasContent } from "./guards";
+
 import type { JSX, ReactNode } from "react";
 
 /**
@@ -17,6 +19,9 @@ import type { JSX, ReactNode } from "react";
  * Empty children THROW rather than render nothing: an empty band asserts admin
  * content that is not there, and a caller whose content is conditional should
  * render the band conditionally. Rendering nothing would hide that caller bug.
+ * "Empty" is `hasContent` (guards.ts): null, undefined, booleans, `[]`, a
+ * blank string and a bare 0 (from `{count && ...}`). A CALLER bug, never
+ * data-driven.
  */
 export const INTERNAL_ONLY_BAND_TEXT =
   "KENTRO ADMIN ONLY: never shown to the client";
@@ -26,7 +31,7 @@ export function InternalOnlyBand({
 }: {
   children: ReactNode;
 }): JSX.Element {
-  if (children === null || children === undefined || children === false) {
+  if (!hasContent(children)) {
     throw new Error(
       "InternalOnlyBand: nothing to mark. Render the band only around content.",
     );

@@ -27,7 +27,17 @@ describe("InternalOnlyBand (for #1087)", () => {
 });
 
 describe("InternalOnlyBand with nothing to mark (for #1087)", () => {
-  it.each([[null], [false], [undefined]])(
+  it.each([
+    [null],
+    [false],
+    [undefined],
+    [true],
+    [[]],
+    [0],
+    [""],
+    ["  "],
+    [[null, false, ""]],
+  ])(
     "refuses %s children: an empty band claims admin content that is not there",
     (children) => {
       expect(() =>
@@ -35,4 +45,15 @@ describe("InternalOnlyBand with nothing to mark (for #1087)", () => {
       ).toThrow(/nothing to mark/);
     },
   );
+});
+
+describe("InternalOnlyBand content that is really there (for #1087)", () => {
+  it.each([
+    ["a text node", "ADMIN TEXT"],
+    ["a non-zero number", 7],
+    ["a list with one real item", [null, <p key="a">ADMIN ITEM</p>]],
+  ])("accepts %s", (_name, children) => {
+    render(<InternalOnlyBand>{children as never}</InternalOnlyBand>);
+    expect(screen.getByTestId("internal-only-band")).toBeInTheDocument();
+  });
 });

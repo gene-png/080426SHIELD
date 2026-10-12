@@ -149,3 +149,16 @@ describe("SectionBar degenerate states (for #1087)", () => {
     ).toThrow(/hrefFor\("review"\) returned an empty href/);
   });
 });
+
+describe("SectionBar whitespace hrefs (for #1087)", () => {
+  it("refuses a whitespace-only href, not just an empty one", () => {
+    expect(() =>
+      render(
+        <SectionBar
+          current="overview"
+          hrefFor={(k) => (k === "analysis" ? "   " : `/svc/x/${k}`)}
+        />,
+      ),
+    ).toThrow(/hrefFor\("analysis"\) returned an empty href/);
+  });
+});

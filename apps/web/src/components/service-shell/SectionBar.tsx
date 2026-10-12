@@ -48,8 +48,9 @@ export function SectionBar({
   /** Sections this service does not have, e.g. CSF and ZT fold Inputs into AI draft. */
   omit?: readonly SectionKey[];
 }): JSX.Element {
-  // `current` is always one of the nine keys, so this one check also refuses
-  // omitting every section: that omits the current one too.
+  // A CALLER bug, never data-driven. `current` is always one of the nine
+  // keys, so this one check also refuses omitting every section: that omits
+  // the current one too.
   if (omit.includes(current)) {
     throw new Error(
       `SectionBar: the current section "${current}" is omitted, so no link could be marked current.`,
@@ -57,7 +58,8 @@ export function SectionBar({
   }
   const shown = SECTIONS.filter((s) => !omit.includes(s.key)).map((s) => {
     const href = hrefFor(s.key);
-    if (!href) {
+    // Trimmed: a whitespace-only href is as empty as "" (a CALLER bug).
+    if (!href.trim()) {
       throw new Error(
         `SectionBar: hrefFor("${s.key}") returned an empty href; every section needs its own URL.`,
       );

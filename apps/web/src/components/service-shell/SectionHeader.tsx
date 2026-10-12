@@ -1,3 +1,4 @@
+import { requireText } from "./guards";
 import { isAdminOnlySection, type SectionKey } from "./SectionBar";
 
 import type { JSX } from "react";
@@ -15,10 +16,12 @@ import type { JSX } from "react";
  * list adds no punctuation of its own, so no unapproved character ships
  * between a label and its text.
  *
- * Refused, loudly: an admin-only section (Recommendations) labelled anything
- * but "internal", an unknown visibility, a released label without a positive
- * whole version and a parseable release instant, and a bullet count outside
- * one to three.
+ * Refused, loudly. CALLER bugs: an admin-only section (Recommendations)
+ * labelled anything but "internal"; a bullet count outside one to three; a
+ * blank title, purpose or bullet. DATA-driven, from the API, which a mounting
+ * page must expect until apps/web has an error boundary: an unknown
+ * visibility, and a released label without a whole version from 1 or without
+ * a parseable release instant that names its zone.
  */
 export type Visibility = "internal" | "client-preview" | "released";
 
@@ -60,9 +63,18 @@ const MONTHS = [
  * in dashboards/shared.tsx); built from the UTC parts, not Intl, so the month
  * is always three letters (en-GB writes "Sept").
  */
+// An instant must name its zone: without one, `new Date` reads the string in
+// the viewer's local time, and the UTC date shown could be a day off.
+const ZONED = /(?:Z|[+-]\d{2}:?\d{2})$/i;
+
 export function releaseDateText(releasedAt: string): string {
+  if (!ZONED.test(releasedAt.trim())) {
+    throw new Error(
+      `SectionHeader: release date "${releasedAt}" has no zone (Z or +hh:mm), so it is not an instant.`,
+    );
+  }
   const d = new Date(releasedAt);
-  if (!releasedAt || Number.isNaN(d.getTime())) {
+  if (Number.isNaN(d.getTime())) {
     throw new Error(
       `SectionHeader: release date "${releasedAt}" is not a parseable instant.`,
     );
@@ -109,11 +121,14 @@ export function SectionHeader({
     );
   }
   const label = visibilityText(visibility, release);
+  requireText("SectionHeader", "title", title);
+  requireText("SectionHeader", "purpose", purpose);
   if (canDo.length < 1 || canDo.length > 3) {
     throw new Error(
       `SectionHeader "${title}": "What you can do here" takes one to three bullets (plan v2, rule 2), got ${canDo.length}.`,
     );
   }
+  canDo.forEach((item) => requireText("SectionHeader", "bullet", item));
   return (
     <header className="flex flex-col gap-3 px-6 py-4">
       <div className="flex flex-wrap items-center gap-3">

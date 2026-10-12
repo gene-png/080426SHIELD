@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { requireText } from "./guards";
+
 import type { JSX } from "react";
 
 /**
@@ -7,14 +9,20 @@ import type { JSX } from "react";
  * issuecomment-6116093149): "shows the service name, the version and status,
  * the stage, and one line: "Next: {action}" as a link".
  *
- * "Next:" is Gene's. The version, status and stage are the caller's text, and
- * so are their labels: none is approved yet, so each value renders as the
- * caller writes it (for example "v2", "Draft", "Review"), with no fixed
- * label in front. When nothing is next the Next line is omitted rather than
- * filled with unapproved copy.
+ * "Next:" is Gene's. The labels "Version", "Status" and "Stage" are the
+ * advisor's, approved verbatim (#736, issuecomment-6128447366); the values
+ * under them are the caller's text (for example "v2", "Draft", "Review"). A
+ * term/definition list joins label and value with no punctuation of its own.
+ * When nothing is next the Next line is omitted rather than filled with
+ * unapproved copy.
  *
  * The service title is a link to the service's Overview, not a heading: the
  * section's one h1 is in SectionHeader.
+ *
+ * Every string it renders must be non-blank, or it throws. A blank title,
+ * href or next text is a CALLER bug. A blank version, status or stage may be
+ * DATA-driven if the page passes an API field straight through; the page
+ * should map a missing value to its own text before calling.
  */
 export function ServiceHeader({
   serviceTitle,
@@ -32,13 +40,17 @@ export function ServiceHeader({
   next: { text: string; href: string } | null;
 }): JSX.Element {
   for (const [name, value] of [
+    ["serviceTitle", serviceTitle],
+    ["overviewHref", overviewHref],
     ["version", version],
     ["status", status],
     ["stage", stage],
   ] as const) {
-    if (!value.trim()) {
-      throw new Error(`ServiceHeader: a blank ${name}; rule 5 shows it.`);
-    }
+    requireText("ServiceHeader", name, value);
+  }
+  if (next) {
+    requireText("ServiceHeader", "next.text", next.text);
+    requireText("ServiceHeader", "next.href", next.href);
   }
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-border-subtle bg-surface-card px-6 py-3">
@@ -49,24 +61,17 @@ export function ServiceHeader({
         >
           {serviceTitle}
         </Link>
-        <span
-          data-testid="service-header-version"
-          className="text-sm text-ink-secondary"
-        >
-          {version}
-        </span>
-        <span
-          data-testid="service-header-status"
-          className="text-sm text-ink-secondary"
-        >
-          {status}
-        </span>
-        <span
-          data-testid="service-header-stage"
-          className="text-sm text-ink-secondary"
-        >
-          {stage}
-        </span>
+        <dl className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+          <HeaderFact testId="service-header-version" label="Version">
+            {version}
+          </HeaderFact>
+          <HeaderFact testId="service-header-status" label="Status">
+            {status}
+          </HeaderFact>
+          <HeaderFact testId="service-header-stage" label="Stage">
+            {stage}
+          </HeaderFact>
+        </dl>
       </div>
       {next ? (
         <p
@@ -82,6 +87,23 @@ export function ServiceHeader({
           </Link>
         </p>
       ) : null}
+    </div>
+  );
+}
+
+function HeaderFact({
+  testId,
+  label,
+  children,
+}: {
+  testId: string;
+  label: string;
+  children: string;
+}): JSX.Element {
+  return (
+    <div data-testid={testId} className="flex items-center gap-1">
+      <dt className="text-ink-tertiary">{label}</dt>
+      <dd className="text-ink-secondary">{children}</dd>
     </div>
   );
 }

@@ -106,7 +106,7 @@ describe("SectionHeader refuses a label it cannot honour (for #1087)", () => {
     },
   );
 
-  it("accepts internal on Recommendations, and any visibility elsewhere", () => {
+  it("accepts internal on Recommendations", () => {
     renderHeader("internal", ["DO-ONE"], "recommendations");
     expect(screen.getByTestId("section-visibility").textContent).toBe(
       "Internal only",
@@ -143,7 +143,8 @@ describe("SectionHeader's released label (for #1087)", () => {
   it.each([
     ["2026-10-12T15:00:00Z", 2, "Released to client: v2, 12 Oct 2026"],
     // An instant, shown in UTC: late evening west of UTC is the next UTC day.
-    ["2026-10-12T23:30:00-05:00", 3, "Released to client: v3, 13 Oct 2026"],
+    // 12 Oct in America/New_York (the zone pinned above), 13 Oct in UTC.
+    ["2026-10-12T22:30:00-04:00", 3, "Released to client: v3, 13 Oct 2026"],
     // Three-letter months always: en-GB Intl would write "Sept".
     ["2026-09-01T00:00:00Z", 1, "Released to client: v1, 1 Sep 2026"],
   ])("formats %s, v%s as %s", (releasedAt, version, text) => {
@@ -165,7 +166,7 @@ describe("SectionHeader's released label (for #1087)", () => {
     expect(() =>
       renderHeader("released", ["DO-ONE"], "overview", {
         version: 2,
-        releasedAt: "not a date",
+        releasedAt: "2026-13-45T00:00:00Z", // zoned, but no such day
       }),
     ).toThrow(/not a parseable instant/);
   });
@@ -174,6 +175,69 @@ describe("SectionHeader's released label (for #1087)", () => {
     renderHeader("client-preview");
     expect(screen.getByTestId("section-visibility").textContent).toBe(
       "Client preview",
+    );
+  });
+});
+
+describe("SectionHeader refuses blank text it would render (for #1087)", () => {
+  it("refuses a blank purpose", () => {
+    expect(() =>
+      render(
+        <SectionHeader
+          section="overview"
+          title="T"
+          purpose="  "
+          canDo={["DO"]}
+          visibility="internal"
+        />,
+      ),
+    ).toThrow(/blank purpose/);
+  });
+
+  it("refuses a blank title", () => {
+    expect(() =>
+      render(
+        <SectionHeader
+          section="overview"
+          title=""
+          purpose="P"
+          canDo={["DO"]}
+          visibility="internal"
+        />,
+      ),
+    ).toThrow(/blank title/);
+  });
+
+  it("refuses a blank bullet", () => {
+    expect(() => renderHeader("internal", ["DO-ONE", " "])).toThrow(
+      /blank bullet/,
+    );
+  });
+
+  it.each(["2026-10-12T23:30:00", "2026-10-12"])(
+    "refuses a release instant with no zone, %s (it would parse in local time)",
+    (releasedAt) => {
+      expect(() =>
+        renderHeader("released", ["DO-ONE"], "overview", {
+          version: 2,
+          releasedAt,
+        }),
+      ).toThrow(/no zone/);
+    },
+  );
+
+  it.each([
+    "2026-10-12T15:00:00Z",
+    "2026-10-12T15:00:00.123Z",
+    "2026-10-12T11:00:00-04:00",
+    "2026-10-12T20:30:00+0530",
+  ])("accepts a zoned instant, %s", (releasedAt) => {
+    renderHeader("released", ["DO-ONE"], "overview", {
+      version: 2,
+      releasedAt,
+    });
+    expect(screen.getByTestId("section-visibility").textContent).toBe(
+      "Released to client: v2, 12 Oct 2026",
     );
   });
 });

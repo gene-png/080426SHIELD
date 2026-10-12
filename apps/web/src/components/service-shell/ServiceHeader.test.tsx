@@ -48,17 +48,20 @@ describe("ServiceHeader (for #1087)", () => {
     expect(screen.queryByRole("heading")).toBeNull();
   });
 
-  it("shows the caller's version, status and stage, each as written, with no label of its own (rule 5)", () => {
+  it("shows version, status and stage under the approved labels (rule 5)", () => {
+    // The advisor's approved labels (#736, issuecomment-6128447366),
+    // transcribed literally, never imported from the component.
     renderHeader();
-    expect(screen.getByTestId("service-header-version").textContent).toBe(
-      "VERSION-TEXT",
-    );
-    expect(screen.getByTestId("service-header-status").textContent).toBe(
-      "STATUS-TEXT",
-    );
-    expect(screen.getByTestId("service-header-stage").textContent).toBe(
-      "STAGE-TEXT",
-    );
+    for (const [testId, label, value] of [
+      ["service-header-version", "Version", "VERSION-TEXT"],
+      ["service-header-status", "Status", "STATUS-TEXT"],
+      ["service-header-stage", "Stage", "STAGE-TEXT"],
+    ]) {
+      const group = screen.getByTestId(testId);
+      expect(group.querySelector("dt")?.textContent).toBe(label);
+      expect(group.querySelector("dd")?.textContent).toBe(value);
+      expect(group.textContent).toBe(`${label}${value}`);
+    }
   });
 
   it.each(["version", "status", "stage"] as const)(
@@ -69,4 +72,19 @@ describe("ServiceHeader (for #1087)", () => {
       );
     },
   );
+});
+
+describe("ServiceHeader refuses blank text it would render (for #1087)", () => {
+  it.each([
+    [
+      "next.text",
+      { next: { text: "  ", href: "/svc/td/review" } },
+      /blank next\.text/,
+    ],
+    ["next.href", { next: { text: "Review", href: " " } }, /blank next\.href/],
+    ["serviceTitle", { serviceTitle: "" }, /blank serviceTitle/],
+    ["overviewHref", { overviewHref: " " }, /blank overviewHref/],
+  ] as const)("refuses a blank %s", (_name, over, message) => {
+    expect(() => renderHeader(over as Partial<Props>)).toThrow(message);
+  });
 });

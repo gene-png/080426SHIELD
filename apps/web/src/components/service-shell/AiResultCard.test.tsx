@@ -53,28 +53,33 @@ describe("AiResultCard (for #1087)", () => {
   });
 });
 
-describe("AiResultCard figures and next step (rule 8, for #1087)", () => {
-  const FIGURES = [
-    { label: "L-ASKED", value: 45 },
-    { label: "L-APPLIED", value: 18 },
-    {
-      label: "L-NOT-APPLIED",
-      value: 27,
-      reasons: [
-        { reason: "R-NO-NOTES", count: 25 },
-        { reason: "R-OUT-OF-RANGE", count: 2 },
-      ],
-    },
-    { label: "L-UNSCORED", value: 0 },
-  ];
+// The advisor's approved labels (#736, issuecomment-6128447366), transcribed
+// here literally, never imported from the component: this is the spec.
+const ASKED = "Asked";
+const APPLIED = "Applied";
+const NOT_APPLIED = "Not applied";
+const UNSCORED = "Unscored";
+const WHAT_TO_DO_NEXT = "What to do next";
 
-  it("renders outcome, then the figures in the caller's order, then detail, then the next step", () => {
+const FIGURES = {
+  asked: 45,
+  applied: 18,
+  notApplied: 27,
+  notAppliedReasons: [
+    { reason: "R-NO-NOTES", count: 25 },
+    { reason: "R-OUT-OF-RANGE", count: 2 },
+  ],
+  unscored: 0,
+};
+
+describe("AiResultCard figures and next step (rule 8, for #1087)", () => {
+  it("renders outcome, then the four figures under the approved labels, then detail, then the next step", () => {
     render(
       <AiResultCard
         tone="warning"
         outcome="OUTCOME"
         figures={FIGURES}
-        nextStep={{ label: "L-NEXT", content: "NEXT-CONTENT" }}
+        nextStep="NEXT-CONTENT"
       >
         <p>DETAIL</p>
       </AiResultCard>,
@@ -82,65 +87,82 @@ describe("AiResultCard figures and next step (rule 8, for #1087)", () => {
     const card = screen.getByTestId("ai-result-card");
     expect(card.textContent).toBe(
       "OUTCOME" +
-        "L-ASKED45" +
-        "L-APPLIED18" +
-        "L-NOT-APPLIED27R-NO-NOTES 25R-OUT-OF-RANGE 2" +
-        "L-UNSCORED0" +
+        `${ASKED}45` +
+        `${APPLIED}18` +
+        `${NOT_APPLIED}27R-NO-NOTES 25R-OUT-OF-RANGE 2` +
+        `${UNSCORED}0` +
         "DETAIL" +
-        "L-NEXTNEXT-CONTENT",
+        `${WHAT_TO_DO_NEXT}NEXT-CONTENT`,
     );
     const terms = screen
       .getByTestId("ai-result-figures")
       .querySelectorAll("dt");
     expect([...terms].map((t) => t.textContent)).toEqual([
-      "L-ASKED",
-      "L-APPLIED",
-      "L-NOT-APPLIED",
-      "L-UNSCORED",
+      ASKED,
+      APPLIED,
+      NOT_APPLIED,
+      UNSCORED,
     ]);
+    const next = screen.getByTestId("ai-result-next");
+    expect(next.firstElementChild?.textContent).toBe(WHAT_TO_DO_NEXT);
   });
 
-  it("ships no fixed figure or next-step label of its own", () => {
+  it("puts each count under its own label, not just in order", () => {
     render(
       <AiResultCard
         tone="success"
         outcome="X"
-        figures={[{ label: "L", value: 1 }]}
-        nextStep={{ label: "N", content: "C" }}
+        figures={{ asked: 4, applied: 3, notApplied: 2, unscored: 1 }}
       />,
     );
-    expect(screen.getByTestId("ai-result-card").textContent).toBe("XL1NC");
+    const valueOf = (label: string) =>
+      screen.getByText(label).nextElementSibling?.textContent;
+    expect(valueOf(ASKED)).toBe("4");
+    expect(valueOf(APPLIED)).toBe("3");
+    expect(valueOf(NOT_APPLIED)).toBe("2");
+    expect(valueOf(UNSCORED)).toBe("1");
   });
 
-  it("refuses reasons that do not add up to their figure", () => {
+  it("renders no figures block and no next step when given neither", () => {
+    render(<AiResultCard tone="success" outcome="X" />);
+    expect(screen.getByTestId("ai-result-card").textContent).toBe("X");
+  });
+
+  it("refuses not-applied reasons that do not add up", () => {
     expect(() =>
       render(
         <AiResultCard
           tone="warning"
           outcome="X"
-          figures={[
-            {
-              label: "L-NOT-APPLIED",
-              value: 27,
-              reasons: [{ reason: "R", count: 25 }],
-            },
-          ]}
+          figures={{
+            ...FIGURES,
+            notAppliedReasons: [{ reason: "R", count: 25 }],
+          }}
         />,
       ),
     ).toThrow(/add up to 25, not 27/);
   });
 
-  it.each([-1, 1.5, Number.NaN])("refuses a figure of %s", (value) => {
-    expect(() =>
-      render(
-        <AiResultCard
-          tone="warning"
-          outcome="X"
-          figures={[{ label: "L", value }]}
-        />,
-      ),
-    ).toThrow(/not a whole number from zero/);
-  });
+  it.each(["asked", "applied", "notApplied", "unscored"] as const)(
+    "refuses a %s count that is not a whole number from zero",
+    (key) => {
+      for (const value of [-1, 1.5, Number.NaN]) {
+        expect(() =>
+          render(
+            <AiResultCard
+              tone="warning"
+              outcome="X"
+              figures={{
+                ...FIGURES,
+                notAppliedReasons: undefined,
+                [key]: value,
+              }}
+            />,
+          ),
+        ).toThrow(/not a whole number from zero/);
+      }
+    },
+  );
 
   it("refuses a reason count that is not a whole number", () => {
     expect(() =>
@@ -148,18 +170,55 @@ describe("AiResultCard figures and next step (rule 8, for #1087)", () => {
         <AiResultCard
           tone="warning"
           outcome="X"
-          figures={[
-            {
-              label: "L",
-              value: 1,
-              reasons: [
-                { reason: "A", count: 1.5 },
-                { reason: "B", count: -0.5 },
-              ],
-            },
-          ]}
+          figures={{
+            ...FIGURES,
+            notApplied: 1,
+            notAppliedReasons: [
+              { reason: "A", count: 1.5 },
+              { reason: "B", count: -0.5 },
+            ],
+          }}
         />,
       ),
     ).toThrow(/has a count that is not a whole number/);
   });
+});
+
+describe("AiResultCard refuses what it cannot render honestly (for #1087)", () => {
+  it("refuses an unknown tone rather than a class ending in undefined", () => {
+    expect(() =>
+      render(<AiResultCard tone={"pending" as never} outcome="X" />),
+    ).toThrow(/unknown tone "pending"/);
+  });
+
+  it("refuses a blank reason", () => {
+    expect(() =>
+      render(
+        <AiResultCard
+          tone="success"
+          outcome="X"
+          figures={{
+            ...FIGURES,
+            notApplied: 1,
+            notAppliedReasons: [{ reason: " ", count: 1 }],
+          }}
+        />,
+      ),
+    ).toThrow(/blank reason under "Not applied"/);
+  });
+
+  it.each([[""], [null], [[]]])(
+    "refuses empty next-step content %j under the fixed label",
+    (content) => {
+      expect(() =>
+        render(
+          <AiResultCard
+            tone="success"
+            outcome="X"
+            nextStep={content as never}
+          />,
+        ),
+      ).toThrow(/empty next-step content/);
+    },
+  );
 });
