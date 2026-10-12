@@ -117,21 +117,29 @@ def _archive(c, bearer: str, cid: str, svc: str) -> None:
     assert r.status_code == 204, r.text
 
 
-def _request(cid: str, service_type: ServiceType, *, declined: bool = False) -> None:
-    """A client's service request as intake submit writes it (setup only)."""
+def _request(cid: str, service_type: ServiceType, *, declined: bool = False) -> str:
+    """A client's service request as intake submit writes it (setup only).
+    Returns its id."""
     from datetime import UTC, datetime
 
     with _session() as db:
         user = db.query(User).filter(User.email == "admin@kentro.example").one()
-        db.add(
-            ServiceRequest(
-                service_type=service_type,
-                client_id=uuid.UUID(cid),
-                requested_by=user.id,
-                declined_at=datetime.now(UTC) if declined else None,
-            )
+        sr = ServiceRequest(
+            service_type=service_type,
+            client_id=uuid.UUID(cid),
+            requested_by=user.id,
+            declined_at=datetime.now(UTC) if declined else None,
         )
+        db.add(sr)
         db.commit()
+        return str(sr.id)
+
+
+def _publish(c, bearer: str, cid: str, request_id: str) -> str:
+    """The real "Publish for processing" route; returns the service it opens."""
+    r = c.post(f"/admin/service-requests/{request_id}/fulfill", headers=_h(bearer, cid))
+    assert r.status_code in (200, 201), r.text
+    return r.json()["service_id"]
 
 
 def _live_attack(c, bearer: str, cid: str) -> str:
@@ -311,3 +319,73 @@ def test_the_schema_refuses_a_locked_gate_with_no_reason() -> None:
     with pytest.raises(ValidationError) as exc:
         RiskGateStatus(**_gate_fields(unlocked=True))
     assert "an unlocked gate carries a locked state" in str(exc.value)
+
+
+# --- Services that came through the Intake Queue (review of #1100, finding 1) ------------
+
+ZT_DOD = "Zero Trust Assessment (DoD ZTRA)"
+
+
+def test_d_a_published_request_whose_service_was_archived(app_client) -> None:  # noqa: F811
+    """The production path: a request published through the real route, a
+    draft assessment started, the service archived. The request is fulfilled,
+    so it is not "waiting in the Intake Queue": D, not the unpublished A."""
+    c, _ = app_client
+    bearer, cid = _admin(c)
+    svc = _publish(c, bearer, cid, _request(cid, ServiceType.ATTACK_COVERAGE))
+    _assessment(c, bearer, cid, "attack", svc)
+    _archive(c, bearer, cid, svc)
+    _assert_locked(
+        c,
+        bearer,
+        cid,
+        [("attack", "archived_only", "attack_coverage"), ("csf_or_zt", "no_service", None)],
+        f"{_d(ATTACK, B_ATTACK)} {B_CSF_ZT} {CLOSING}",
+    )
+
+
+def test_a_pending_consultation_request_is_not_a_service_kind(app_client) -> None:  # noqa: F811
+    """A consultation is published nowhere and has no service kind; a pending
+    one beside a locked gate changes nothing (and is not a 500)."""
+    c, _ = app_client
+    bearer, cid = _admin(c)
+    _request(cid, ServiceType.CONSULTATION)
+    _assert_locked(
+        c,
+        bearer,
+        cid,
+        [("attack", "no_service", None), ("csf_or_zt", "no_service", None)],
+        f"{B_ATTACK} {B_CSF_ZT} {CLOSING}",
+    )
+
+
+def test_a_waiting_request_is_named_before_an_archived_assessment(app_client) -> None:  # noqa: F811
+    """Unpublished A beats D: publishing the waiting request is the remedy
+    that exists."""
+    c, _ = app_client
+    bearer, cid = _admin(c)
+    _archive(c, bearer, cid, _live_attack(c, bearer, cid))
+    _request(cid, ServiceType.ATTACK_COVERAGE)
+    _assert_locked(
+        c,
+        bearer,
+        cid,
+        [("attack", "unpublished", "attack_coverage"), ("csf_or_zt", "no_service", None)],
+        f"{_a_unpublished(ATTACK)} {B_CSF_ZT} {CLOSING}",
+    )
+
+
+def test_d_the_dod_zero_trust_kind_has_its_own_label(app_client) -> None:  # noqa: F811
+    c, _ = app_client
+    bearer, cid = _admin(c)
+    _live_attack(c, bearer, cid)
+    zt = _service(c, bearer, cid, "zt", "zero_trust_dod")
+    _assessment(c, bearer, cid, "zt", zt)
+    _archive(c, bearer, cid, zt)
+    _assert_locked(
+        c,
+        bearer,
+        cid,
+        [("csf_or_zt", "archived_only", "zero_trust_dod")],
+        f"{_d(ZT_DOD, B_CSF_ZT)} {CLOSING}",
+    )
