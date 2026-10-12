@@ -63,14 +63,16 @@ const MONTHS = [
  * in dashboards/shared.tsx); built from the UTC parts, not Intl, so the month
  * is always three letters (en-GB writes "Sept").
  */
-// An instant must name its zone: without one, `new Date` reads the string in
-// the viewer's local time, and the UTC date shown could be a day off.
-const ZONED = /(?:Z|[+-]\d{2}:?\d{2})$/i;
+// An instant must be an ISO date and time ending in a zone: without one,
+// `new Date` reads the string in the viewer's local time, and the UTC date
+// shown could be a day off. Z, +hh:mm or +hhmm, after a time.
+const ZONED =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/i;
 
 export function releaseDateText(releasedAt: string): string {
   if (!ZONED.test(releasedAt.trim())) {
     throw new Error(
-      `SectionHeader: release date "${releasedAt}" has no zone (Z or +hh:mm), so it is not an instant.`,
+      `SectionHeader: release date "${releasedAt}" has no zone after an ISO time (Z, ±hh:mm or ±hhmm), so it is not an instant.`,
     );
   }
   const d = new Date(releasedAt);

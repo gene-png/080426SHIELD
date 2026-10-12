@@ -83,6 +83,12 @@ describe("ServiceHeader refuses blank text it would render (for #1087)", () => {
     ],
     ["next.href", { next: { text: "Review", href: " " } }, /blank next\.href/],
     ["serviceTitle", { serviceTitle: "" }, /blank serviceTitle/],
+    [
+      "next.text (null)",
+      { next: { text: null, href: "/x" } },
+      /a blank next\.text/,
+    ],
+    ["version (undefined)", { version: undefined }, /a blank version/],
     ["overviewHref", { overviewHref: " " }, /blank overviewHref/],
   ] as const)("refuses a blank %s", (_name, over, message) => {
     expect(() => renderHeader(over as Partial<Props>)).toThrow(message);

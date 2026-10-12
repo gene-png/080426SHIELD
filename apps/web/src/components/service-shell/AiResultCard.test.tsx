@@ -3,6 +3,8 @@ import "@testing-library/jest-dom/vitest";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
+import type * as React from "react";
+
 import { AiResultCard } from "./AiResultCard";
 
 describe("AiResultCard (for #1087)", () => {
@@ -112,12 +114,12 @@ describe("AiResultCard figures and next step (rule 8, for #1087)", () => {
       <AiResultCard
         tone="success"
         outcome="X"
-        figures={{ asked: 4, applied: 3, notApplied: 2, unscored: 1 }}
+        figures={{ asked: 6, applied: 3, notApplied: 2, unscored: 1 }}
       />,
     );
     const valueOf = (label: string) =>
       screen.getByText(label).nextElementSibling?.textContent;
-    expect(valueOf(ASKED)).toBe("4");
+    expect(valueOf(ASKED)).toBe("6");
     expect(valueOf(APPLIED)).toBe("3");
     expect(valueOf(NOT_APPLIED)).toBe("2");
     expect(valueOf(UNSCORED)).toBe("1");
@@ -221,4 +223,70 @@ describe("AiResultCard refuses what it cannot render honestly (for #1087)", () =
       ).toThrow(/empty next-step content/);
     },
   );
+});
+
+// Fragments: Children.toArray does not look inside them, so these are the
+// rows a toArray-only check would let through (round 4 review).
+const EMPTY_FRAGMENTS: [string, React.ReactNode][] = [
+  ["<></>", <></>],
+  ["<>{null}</>", <>{null}</>],
+  [
+    '<><>{false}</><>{""}</></>',
+    <>
+      <>{false}</>
+      <>{""}</>
+    </>,
+  ],
+];
+
+describe("AiResultCard next step looks inside fragments (for #1087)", () => {
+  it.each(EMPTY_FRAGMENTS)("refuses next step %s", (_name, nextStep) => {
+    expect(() =>
+      render(<AiResultCard tone="success" outcome="X" nextStep={nextStep} />),
+    ).toThrow(/empty next-step content/);
+  });
+
+  it("accepts a fragment with real content", () => {
+    render(
+      <AiResultCard
+        tone="success"
+        outcome="X"
+        nextStep={
+          <>
+            <>{null}</>
+            <>NEXT</>
+          </>
+        }
+      />,
+    );
+    expect(screen.getByTestId("ai-result-next").textContent).toBe(
+      "What to do nextNEXT",
+    );
+  });
+});
+
+describe("AiResultCard figures partition what was asked (ruling, for #1087)", () => {
+  it.each([
+    [{ asked: 7, applied: 3, notApplied: 2, unscored: 1 }, "6"],
+    [{ asked: 5, applied: 3, notApplied: 2, unscored: 1 }, "6"],
+  ])("refuses %j: the parts add up to %s", (figures, parts) => {
+    expect(() =>
+      render(<AiResultCard tone="warning" outcome="X" figures={figures} />),
+    ).toThrow(
+      new RegExp(
+        `Applied, Not applied and Unscored add up to ${parts}, not Asked ${figures.asked}`,
+      ),
+    );
+  });
+
+  it("accepts all zeros", () => {
+    render(
+      <AiResultCard
+        tone="success"
+        outcome="X"
+        figures={{ asked: 0, applied: 0, notApplied: 0, unscored: 0 }}
+      />,
+    );
+    expect(screen.getByTestId("ai-result-figures")).toBeInTheDocument();
+  });
 });

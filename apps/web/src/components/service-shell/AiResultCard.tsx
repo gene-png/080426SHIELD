@@ -22,11 +22,15 @@ import type { JSX, ReactNode } from "react";
  * new design; it is proposed, not built.
  *
  * Refused, loudly. CALLER bugs: an unknown tone; a blank outcome; empty
- * next-step content. DATA-driven, from the run's accounting, which a mounting
+ * next-step content (`hasContent`, which looks inside fragments but cannot
+ * see a child component that renders null). DATA-driven, from the run's accounting, which a mounting
  * page must expect until apps/web has an error boundary: a count that is not
- * a whole number from zero, a blank reason, and not-applied reasons that do
+ * a whole number from zero, a blank reason, not-applied reasons that do
  * not add up to the not-applied count (rule 7: exclusions sit beside the
- * figure, so they must account for all of it). `children` is optional detail
+ * figure, so they must account for all of it), and Applied + Not applied +
+ * Unscored that do not equal Asked (they partition it, by ruling). The four
+ * counts must therefore be in ONE unit (rows, say), which a page has to
+ * derive: no service's stored run result carries an "asked" field today. `children` is optional detail
  * and is exempt: an absent detail leaves nothing dangling.
  */
 export type AiResultTone = "success" | "warning" | "failure";
@@ -69,19 +73,28 @@ function checkFigures(figures: AiResultFigures): void {
   checkCount(NOT_APPLIED, figures.notApplied);
   checkCount("Unscored", figures.unscored);
   const reasons = figures.notAppliedReasons;
-  if (!reasons) return;
-  reasons.forEach((r) =>
-    requireText("AiResultCard", `reason under "${NOT_APPLIED}"`, r.reason),
-  );
-  if (!reasons.every((r) => isCount(r.count))) {
-    throw new Error(
-      `AiResultCard: a reason under "${NOT_APPLIED}" has a count that is not a whole number from zero.`,
+  if (reasons) {
+    reasons.forEach((r) =>
+      requireText("AiResultCard", `reason under "${NOT_APPLIED}"`, r.reason),
     );
+    if (!reasons.every((r) => isCount(r.count))) {
+      throw new Error(
+        `AiResultCard: a reason under "${NOT_APPLIED}" has a count that is not a whole number from zero.`,
+      );
+    }
+    const sum = reasons.reduce((total, r) => total + r.count, 0);
+    if (sum !== figures.notApplied) {
+      throw new Error(
+        `AiResultCard: the reasons under "${NOT_APPLIED}" add up to ${sum}, not ${figures.notApplied}.`,
+      );
+    }
   }
-  const sum = reasons.reduce((total, r) => total + r.count, 0);
-  if (sum !== figures.notApplied) {
+  // The coordinator's ruling (#1095 round 4): the three parts partition what
+  // was asked. All zeros passes.
+  const parts = figures.applied + figures.notApplied + figures.unscored;
+  if (parts !== figures.asked) {
     throw new Error(
-      `AiResultCard: the reasons under "${NOT_APPLIED}" add up to ${sum}, not ${figures.notApplied}.`,
+      `AiResultCard: Applied, Not applied and Unscored add up to ${parts}, not Asked ${figures.asked}.`,
     );
   }
 }

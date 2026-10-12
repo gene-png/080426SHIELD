@@ -214,7 +214,14 @@ describe("SectionHeader refuses blank text it would render (for #1087)", () => {
     );
   });
 
-  it.each(["2026-10-12T23:30:00", "2026-10-12"])(
+  it.each([
+    "2026-10-12T23:30:00",
+    "2026-10-12",
+    "12-10-2026",
+    "2026-10-12Z",
+    "2026-10-12+05:30",
+    "Oct 12 2026 +0000",
+  ])(
     "refuses a release instant with no zone, %s (it would parse in local time)",
     (releasedAt) => {
       expect(() =>
@@ -239,5 +246,21 @@ describe("SectionHeader refuses blank text it would render (for #1087)", () => {
     expect(screen.getByTestId("section-visibility").textContent).toBe(
       "Released to client: v2, 12 Oct 2026",
     );
+  });
+});
+
+describe("SectionHeader requireText on a missing value (for #1087)", () => {
+  it("refuses an undefined purpose by name, not with a TypeError", () => {
+    expect(() =>
+      render(
+        <SectionHeader
+          section="overview"
+          title="T"
+          purpose={undefined as never}
+          canDo={["DO"]}
+          visibility="internal"
+        />,
+      ),
+    ).toThrow(/a blank purpose/);
   });
 });

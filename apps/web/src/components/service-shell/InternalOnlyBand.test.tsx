@@ -3,6 +3,8 @@ import "@testing-library/jest-dom/vitest";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
+import type * as React from "react";
+
 import { InternalOnlyBand } from "./InternalOnlyBand";
 
 // Gene's verbatim band text: #736 issuecomment-6115899349 rule 6, and the
@@ -55,5 +57,41 @@ describe("InternalOnlyBand content that is really there (for #1087)", () => {
   ])("accepts %s", (_name, children) => {
     render(<InternalOnlyBand>{children as never}</InternalOnlyBand>);
     expect(screen.getByTestId("internal-only-band")).toBeInTheDocument();
+  });
+});
+
+// Fragments: Children.toArray does not look inside them, so these are the
+// rows a toArray-only check would let through (round 4 review).
+const EMPTY_FRAGMENTS: [string, React.ReactNode][] = [
+  ["<></>", <></>],
+  ["<>{null}</>", <>{null}</>],
+  [
+    '<><>{false}</><>{""}</></>',
+    <>
+      <>{false}</>
+      <>{""}</>
+    </>,
+  ],
+];
+
+describe("InternalOnlyBand looks inside fragments (for #1087)", () => {
+  it.each(EMPTY_FRAGMENTS)("refuses %s", (_name, children) => {
+    expect(() =>
+      render(<InternalOnlyBand>{children}</InternalOnlyBand>),
+    ).toThrow(/nothing to mark/);
+  });
+
+  it("accepts a fragment with real content inside a nested fragment", () => {
+    render(
+      <InternalOnlyBand>
+        <>
+          <>{null}</>
+          <>
+            <p>ADMIN ROW</p>
+          </>
+        </>
+      </InternalOnlyBand>,
+    );
+    expect(screen.getByText("ADMIN ROW")).toBeInTheDocument();
   });
 });

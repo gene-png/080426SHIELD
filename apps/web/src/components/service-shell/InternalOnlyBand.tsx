@@ -20,8 +20,10 @@ import type { JSX, ReactNode } from "react";
  * content that is not there, and a caller whose content is conditional should
  * render the band conditionally. Rendering nothing would hide that caller bug.
  * "Empty" is `hasContent` (guards.ts): null, undefined, booleans, `[]`, a
- * blank string and a bare 0 (from `{count && ...}`). A CALLER bug, never
- * data-driven.
+ * blank string and a bare 0 (from `{count && ...}`), looking inside
+ * fragments. A CALLER bug, never data-driven. It cannot see a child
+ * COMPONENT that renders null (`<Rows />` is an element whatever it
+ * returns), so a caller wrapping one must check the data first.
  */
 export const INTERNAL_ONLY_BAND_TEXT =
   "KENTRO ADMIN ONLY: never shown to the client";
