@@ -125,7 +125,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import create_engine, event, select, text  # noqa: E402
+from sqlalchemy import create_engine, event, func, select, text  # noqa: E402
 from sqlalchemy.engine import Connection, Engine, make_url  # noqa: E402
 from sqlalchemy.exc import MultipleResultsFound, NoResultFound, SQLAlchemyError  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
@@ -335,17 +335,50 @@ def surfaced_parents(
     return surfaced, unresolved
 
 
-def csf_surfaced(db: Session) -> set[uuid.UUID]:
-    """Per CSF service, the version the Playbook and its exports read:
+def csf_surfaced(db: Session) -> dict[uuid.UUID, uuid.UUID | None]:
+    """{CSF service id: the version the Playbook and its exports read}, via
     `routes.csf._latest_assessment` (the latest non-discarded version), CALLED.
-    A service whose every version is discarded surfaces nothing."""
+    A service whose every version is discarded maps to None."""
     from app.routes.csf import _latest_assessment
 
-    out: set[uuid.UUID] = set()
+    out: dict[uuid.UUID, uuid.UUID | None] = {}
     for sid in set(db.execute(select(CsfAssessment.service_id)).scalars()):
         a = _latest_assessment(db, sid)
-        if a is not None:
-            out.add(a.id)
+        out[sid] = None if a is None else a.id
+    return out
+
+
+def service_coverage(
+    db: Session, model: Any, row_model: Any, surfaced: Mapping[uuid.UUID, uuid.UUID | None]
+) -> list[dict[str, Any]]:
+    """Per SERVICE: its client, its surfaced version, and how many rows that
+    version and all its versions hold. The flags are raised from this, so one
+    service's rows never hide another's empty headline."""
+    out = []
+    for sid in sorted(surfaced, key=str):
+        aid = surfaced[sid]
+        client_id = db.execute(select(model.client_id).where(model.service_id == sid)).scalar()
+        every = db.execute(
+            select(func.count(row_model.id))
+            .join(model, model.id == row_model.assessment_id)
+            .where(model.service_id == sid)
+        ).scalar_one()
+        shown = (
+            0
+            if aid is None
+            else db.execute(
+                select(func.count(row_model.id)).where(row_model.assessment_id == aid)
+            ).scalar_one()
+        )
+        out.append(
+            {
+                "service_id": str(sid),
+                "client_id": _cid(client_id),
+                "surfaced_assessment_id": None if aid is None else str(aid),
+                "rows_all_versions": int(every),
+                "rows_surfaced": int(shown),
+            }
+        )
     return out
 
 
@@ -727,12 +760,13 @@ def zt(db: Session, parents: Mapping[uuid.UUID, Deliverable]) -> dict[str, Any]:
                     "assessment_id": str(a.id),
                     "status": st,
                     "surfaced": str(surfaced),
+                    "pass": "rule" if applies else "stored_stage",
                     "reason": why,
                 }
             )
             continue
         if not applies:
-            _zt_one(
+            why_unfrozen = _zt_one(
                 out["released_without_freeze_answers"],
                 out["released_without_freeze_assessments"],
                 a,
@@ -741,7 +775,29 @@ def zt(db: Session, parents: Mapping[uuid.UUID, Deliverable]) -> dict[str, Any]:
                 proposed_launch_stage,
                 target,
             )
+            if why_unfrozen is not None:
+                # Listed, never dropped: its answers are counted in the line
+                # above, and without this it would vanish from the assessments.
+                out["not_evaluable"].append(
+                    {
+                        "assessment_id": str(a.id),
+                        "status": st,
+                        "surfaced": str(surfaced),
+                        "pass": "without_freeze",
+                        "reason": why_unfrozen,
+                    }
+                )
     return out
+
+
+def _not_headline(views: dict[str, Any]) -> dict[str, Any]:
+    """The without-freeze line is not the headline, so it does not use the
+    headline's key: `surfaced` becomes `surfaced_if_not_frozen`."""
+    return {
+        "headline": False,
+        "surfaced_if_not_frozen": views["surfaced"],
+        "all_versions": views["all_versions"],
+    }
 
 
 # ---------------------------------------------------------------- measure
@@ -758,10 +814,20 @@ def measure(url: str) -> dict[str, Any]:
         with Session(engine) as db:
             try:
                 names = {_cid(c.id): c.legal_name for c in db.execute(select(Client)).scalars()}
-                csf_parents = csf_surfaced(db)
+                csf_by_service = csf_surfaced(db)
+                csf_parents = {aid for aid in csf_by_service.values() if aid is not None}
                 zt_parents, zt_unresolved = surfaced_parents(
                     db, ZtAssessment, (ZtAssessmentStatus.APPROVED, ZtAssessmentStatus.RELEASED)
                 )
+                zt_by_service: dict[uuid.UUID, uuid.UUID | None] = dict.fromkeys(
+                    set(db.execute(select(ZtAssessment.service_id)).scalars())
+                )
+                for aid, deliv in zt_parents.items():
+                    zt_by_service[deliv.service_id] = aid
+                services = {
+                    "csf": service_coverage(db, CsfAssessment, CsfDimensionScore, csf_by_service),
+                    "zt": service_coverage(db, ZtAssessment, ZtAnswer, zt_by_service),
+                }
                 tiers = csf_tier_rows_python(db, csf_parents)
                 sql = csf_tier_rows_sql(db.connection())
                 ent, ent_bad = csf_enterprise(db, csf_parents)
@@ -795,7 +861,10 @@ def measure(url: str) -> dict[str, Any]:
             "without the freeze; its `surfaced` view is the subset a client dashboard renders",
             "all_versions": "every stored assessment version; versions no client surface "
             "reads take the live intake target",
-            "zt_statuses_held_at_stored_stage": ["released"],
+            # Derived from the rule, so the line cannot disagree with it.
+            "zt_statuses_held_at_stored_stage": [
+                s.value for s in ZtAssessmentStatus if not zt_rule_applies(s.value)
+            ],
         },
         "csf_tier_rows": tiers.report(names),
         "csf_tier_rows_sql": _sql_report(sql, names),
@@ -821,6 +890,7 @@ def measure(url: str) -> dict[str, Any]:
             "R3": {"rows_affected": 0, "basis": "by definition: R3 has no score effect"},
         },
         "surfaced_versions": {"csf": len(csf_parents), "zt": len(zt_parents)},
+        "services": services,
         "csf_enterprise": {**ent.report(names), "not_evaluable": ent_bad},
         "csf_deliverable": {
             "rows_moved": 0,
@@ -838,12 +908,12 @@ def measure(url: str) -> dict[str, Any]:
             "capped": "counted only when the number changes (ruling): stage_moves",
         },
         "zt_answers": zt_out["answers"].report(names, with_reasons=True),
-        "zt_released_without_freeze_answers": zt_out["released_without_freeze_answers"].report(
-            names, with_reasons=True
+        "zt_released_without_freeze_answers": _not_headline(
+            zt_out["released_without_freeze_answers"].report(names, with_reasons=True)
         ),
-        "zt_released_without_freeze_assessments": zt_out[
-            "released_without_freeze_assessments"
-        ].report(names),
+        "zt_released_without_freeze_assessments": _not_headline(
+            zt_out["released_without_freeze_assessments"].report(names)
+        ),
         "zt_assessments": {
             **zt_out["assessments"].report(names),
             "not_evaluable": zt_out["not_evaluable"],
@@ -883,9 +953,13 @@ _ALL = "secondary, ALL assessment versions"
 
 
 def _both(
-    title: str, headline: str, section: Mapping[str, Any], secondary: str = _ALL
+    title: str,
+    headline: str,
+    section: Mapping[str, Any],
+    secondary: str = _ALL,
+    surfaced_key: str = "surfaced",
 ) -> list[str]:
-    return _table(f"{title} [{headline}]", section["surfaced"]) + _table(
+    return _table(f"{title} [{headline}]", section[surfaced_key]) + _table(
         f"{title} [{secondary}]", section["all_versions"]
     )
 
@@ -900,7 +974,8 @@ def _read(section: Mapping[str, Any], metric: str, view: str = "all_versions") -
 
 
 def _nothing_to_measure(report: Mapping[str, Any]) -> list[str]:
-    """Per SERVICE: one service's rows never make another's zeros read clean."""
+    """Per SERVICE TYPE for "nothing read at all", then per SERVICE: one
+    service's rows never hide another service's empty headline."""
     out = []
     for service, key, section, metric, why in (
         (
@@ -923,16 +998,25 @@ def _nothing_to_measure(report: Mapping[str, Any]) -> list[str]:
                 f"{PREFIX}: NOTHING TO MEASURE ({service}): no rows were read, so its zeros "
                 "below are not a clean result"
             )
-        elif report["surfaced_versions"][key] == 0:
-            out.append(
-                f"{PREFIX}: NO SURFACED VERSION ({service}): rows exist but {why}, so its "
-                "HEADLINE zeros are not a clean result"
-            )
-        elif _read(section, metric, "surfaced") == 0:
-            out.append(
-                f"{PREFIX}: SURFACED VERSION HAS NO ROWS ({service}): the version its "
-                "readers read holds none, so its HEADLINE zeros are not a clean result"
-            )
+            continue
+        for svc in report["services"][key]:
+            where = f"service {svc['service_id']}, client {svc['client_id']}"
+            if svc["rows_all_versions"] == 0:
+                out.append(
+                    f"{PREFIX}: SERVICE HAS NO ROWS ({service}): {where} holds none in any "
+                    "version, so it is absent from the tables below"
+                )
+            elif svc["surfaced_assessment_id"] is None:
+                out.append(
+                    f"{PREFIX}: NO SURFACED VERSION ({service}): {where}: rows exist but "
+                    f"{why}, so its HEADLINE zeros are not a clean result"
+                )
+            elif svc["rows_surfaced"] == 0:
+                out.append(
+                    f"{PREFIX}: SURFACED VERSION HAS NO ROWS ({service}): {where}: the "
+                    "version its readers read holds none, so its HEADLINE zeros are not a "
+                    "clean result"
+                )
     return out
 
 
@@ -986,12 +1070,14 @@ def render(report: Mapping[str, Any]) -> str:
         _NOT_HEADLINE_SURFACED,
         report["zt_released_without_freeze_answers"],
         _NOT_HEADLINE_ALL,
+        "surfaced_if_not_frozen",
     )
     out += _both(
         "ZT assessments, released, IF NOT FROZEN",
         _NOT_HEADLINE_SURFACED,
         report["zt_released_without_freeze_assessments"],
         _NOT_HEADLINE_ALL,
+        "surfaced_if_not_frozen",
     )
     return "\n".join(out)
 

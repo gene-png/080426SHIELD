@@ -115,12 +115,18 @@ def test_the_released_version_is_measured_against_its_FROZEN_target(
     # CISA capability scored 4 counts as lowest + 1 = 2; against the FROZEN
     # target 2 that is no gap at all, against the live target 4 it would be
     # all n capabilities.
-    would = report["zt_released_without_freeze_assessments"]["surfaced"]["by_status"]
+    # Not the headline, so not the headline's key either (round-4 review).
+    for key in ("zt_released_without_freeze_assessments", "zt_released_without_freeze_answers"):
+        assert "surfaced" not in report[key]
+        assert report[key]["headline"] is False
+    would = report["zt_released_without_freeze_assessments"]["surfaced_if_not_frozen"]["by_status"]
     assert would["released"]["assessments_evaluated"] == 1
     assert would["released"]["targets_frozen"] == 1
     assert would["released"]["gaps_launch"] == 0
     assert would["released"]["average_stage_moves"] == 1
-    would_answers = report["zt_released_without_freeze_answers"]["surfaced"]["by_status"]
+    would_answers = report["zt_released_without_freeze_answers"]["surfaced_if_not_frozen"][
+        "by_status"
+    ]
     assert would_answers["released"]["stage_moves"] == n
     # The v2 draft is not released, so it never enters the without-freeze line.
     assert would["draft"]["assessments_evaluated"] == 0
@@ -287,3 +293,84 @@ def test_a_surfaced_csf_version_with_no_rows_is_flagged(app_client, tmp_path) ->
     assert report["csf_tier_rows"]["all_versions"]["by_status"]["released"]["rows_read"] > 0
     assert "SURFACED VERSION HAS NO ROWS (CSF)" in table
     assert "NO SURFACED VERSION (CSF)" not in table
+
+
+def _main_json(monkeypatch, capsys, url: str) -> tuple[int, dict, str]:
+    """Run `main` IN PROCESS, so a monkeypatch reaches the engine calls."""
+    monkeypatch.setenv("DATABASE_URL", url)
+    code = m.main()
+    out = capsys.readouterr().out
+    table, payload = out.split(m.JSON_MARKER, 1)
+    return code, json.loads(payload), table
+
+
+def test_a_failure_in_the_without_freeze_pass_is_listed_not_dropped(
+    app_client, tmp_path, monkeypatch, capsys  # noqa: F811
+) -> None:
+    """No stored input is known to make `analyze_gaps` raise there, so the
+    failure is injected: only on the without-freeze LAUNCH map, the one map in
+    this world holding a 2 (every stored stage is 4; the v2 draft holds none).
+    The assessment must be LISTED, tagged with its pass, and not silently
+    missing from the without-freeze line."""
+    c = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    _svc, a = _released_zt_on_four(c, h, bearer)
+    real = m.analyze_gaps
+
+    def raise_on_launch(fw, answers, **kw):
+        if 2 in answers.values():
+            raise ValueError("injected: the without-freeze launch pass")
+        return real(fw, answers, **kw)
+
+    monkeypatch.setattr(m, "analyze_gaps", raise_on_launch)
+    code, report, _table = _main_json(monkeypatch, capsys, _url(tmp_path))
+    assert code == 0
+    bad = report["zt_assessments"]["not_evaluable"]
+    assert [(b["assessment_id"], b["pass"]) for b in bad] == [(a["id"], "without_freeze")]
+    assert "injected" in bad[0]["reason"]
+    would = report["zt_released_without_freeze_assessments"]["all_versions"]["by_status"]
+    assert would["released"]["assessments_evaluated"] == 0
+    # The headline pass (stored stage) was unaffected.
+    headline = report["zt_assessments"]["all_versions"]["by_status"]
+    assert headline["released"]["assessments_evaluated"] == 1
+
+
+def test_the_held_statuses_are_derived_from_the_rule(
+    app_client, tmp_path, monkeypatch, capsys  # noqa: F811
+) -> None:
+    """`scope.zt_statuses_held_at_stored_stage` is derived from
+    `zt_rule_applies`, so a change to the rule changes the scope line."""
+    c = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    _released_zt_on_four(c, h, bearer)
+    _code, report, _table = _main_json(monkeypatch, capsys, _url(tmp_path))
+    assert report["scope"]["zt_statuses_held_at_stored_stage"] == ["released"]
+    monkeypatch.setattr(m, "zt_rule_applies", lambda status: status not in ("approved", "released"))
+    _code, report, _table = _main_json(monkeypatch, capsys, _url(tmp_path))
+    assert report["scope"]["zt_statuses_held_at_stored_stage"] == ["approved", "released"]
+
+
+def test_the_flags_are_per_service_not_per_service_type(app_client, tmp_path) -> None:  # noqa: F811
+    """CSF service A: one draft, seeded, read by the Playbook. CSF service B:
+    v1 released with rows, v2 opened and never seeded, so the version its
+    Playbook reads holds nothing. A's rows must not hide B's empty headline."""
+    c = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_a = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "A"}).json()["id"]
+    c.post(f"/csf/services/{svc_a}/assessments", headers=h)
+    _csf_seed_and_tick(c, h, svc_a, ticked=1)
+    svc_b = _csf_v1_released(c, h)
+    assert c.post(f"/csf/services/{svc_b}/assessments", headers=h).is_success
+
+    report, table = _run_full(_url(tmp_path))
+    by_service = {s["service_id"]: s for s in report["services"]["csf"]}
+    assert by_service[svc_a]["rows_surfaced"] > 0
+    assert by_service[svc_b]["rows_surfaced"] == 0
+    assert by_service[svc_b]["rows_all_versions"] > 0
+    flags = [line for line in table.splitlines() if "SURFACED VERSION HAS NO ROWS (CSF)" in line]
+    assert len(flags) == 1, flags
+    assert svc_b in flags[0]
+    assert svc_a not in table.split("SURFACED VERSION HAS NO ROWS (CSF)", 1)[1].splitlines()[0]
