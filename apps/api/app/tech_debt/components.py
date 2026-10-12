@@ -61,3 +61,23 @@ def savings_cost(item: Any) -> Any:
     part (only possible before #927) is not a saving; None keeps a Cut part an
     UNKNOWN saving, which makes the figure a floor, as it always has."""
     return None if is_component(item) else item.annual_cost_usd
+
+
+def bundle_name(item: Any, names: dict[Any, str]) -> str | None:
+    """for #929: the name of the bundle carrying a part's cost, stripped; ""
+    when that name is blank; None for a row that is not a part. `names` maps
+    each row's id to its name over the same list. A part's bundle is always in
+    that list (the split route writes both, and the foreign key cascades), so a
+    missing parent is a broken list: the lookup raises KeyError rather than
+    inventing a name."""
+    if not is_component(item):
+        return None
+    return names[item.parent_item_id].strip()
+
+
+def included_in(bundle: str) -> str:
+    """A part's cost cell: where its cost is (copy approved on #736,
+    6114570797). The SAME words the client dashboard renders
+    (`apps/web/src/lib/dashboards/techDebt.ts`, `itemCost`); "" is a bundle
+    with a blank name."""
+    return "Included in its bundle" if bundle == "" else f"Included in {bundle}"

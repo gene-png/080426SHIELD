@@ -128,7 +128,13 @@ from app.schemas.clients import (
 )
 from app.schemas.risk import RiskTargetUsed
 from app.services.engagement_targets import client_target_stage, client_target_tier
-from app.tech_debt.components import is_component, license_count, savings_cost, source_items
+from app.tech_debt.components import (
+    bundle_name,
+    is_component,
+    license_count,
+    savings_cost,
+    source_items,
+)
 from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.savings import estimated_savings
 from app.zt.catalog import capability_by_code as zt_capability_by_code
@@ -1657,17 +1663,6 @@ def zt_dashboard(
 _UNCATEGORIZED = "Uncategorized"
 
 
-def _td_bundle(it: CapabilityItem, names: dict[uuid.UUID, str]) -> str | None:
-    """for #929: the name of the bundle carrying a part's cost, stripped; ""
-    when that name is blank; None for a row that is not a part. A part's
-    bundle is always in the same list (the split route writes both, and the
-    foreign key cascades), so a missing parent is a broken list: the lookup
-    raises KeyError rather than inventing a name."""
-    if not is_component(it):
-        return None
-    return names[it.parent_item_id].strip()
-
-
 def _td_item(it: CapabilityItem, names: dict[uuid.UUID, str]) -> TechDebtItem:
     return TechDebtItem(
         name=it.name,
@@ -1678,7 +1673,7 @@ def _td_item(it: CapabilityItem, names: dict[uuid.UUID, str]) -> TechDebtItem:
         license_count=it.license_count,
         disposition=(it.disposition.value if it.disposition is not None else None),
         notes=it.notes,
-        bundle=_td_bundle(it, names),
+        bundle=bundle_name(it, names),
     )
 
 
@@ -1779,6 +1774,9 @@ def tech_debt_dashboard(
         bucket["items"].append(it)
     for bucket in by_cat.values():
         bucket["count"] = license_count(bucket["items"])
+        bucket["savings"] = estimated_savings(
+            (i.disposition, savings_cost(i)) for i in bucket["items"]
+        )
 
     spend_by_category = [
         TechDebtCategorySpend(category=cat, total_usd=round(b["total"], 2), count=b["count"])
@@ -1796,10 +1794,11 @@ def tech_debt_dashboard(
             # #804: the same derivation, per category. Its `known` flag is not
             # rendered per category today (pre-existing); the dashboard's
             # headline savings carries it.
-            savings_usd=round(
-                estimated_savings((i.disposition, savings_cost(i)) for i in b["items"]).amount,
-                2,
-            ),
+            savings_usd=round(b["savings"].amount, 2),
+            # for #1044: the category's own floor flag, so a category whose
+            # counted row has no usable cost reads as a floor where its figure
+            # is shown, as the headline does.
+            savings_cost_known=b["savings"].known,
             items=[_td_item(i, names) for i in b["items"]],
         )
         for cat, b in sorted(by_cat.items(), key=lambda kv: kv[1]["count"], reverse=True)

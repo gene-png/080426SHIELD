@@ -619,6 +619,9 @@ class TechDebtRedundancy(BaseModel):
     category: str
     count: int
     savings_usd: float  # tech_debt.savings.estimated_savings over this category (#804)
+    # for #1044: False when a counted (cut) row in this category has no usable
+    # cost, so `savings_usd` is a floor; the card marks it as the headline does.
+    savings_cost_known: bool
     items: list[TechDebtItem]
 
 

@@ -32,6 +32,12 @@ export interface Redundancy {
   category: string;
   count: number;
   savings_usd: number;
+  /**
+   * for #1044: false when a counted (cut) row in this category has no usable
+   * cost, so `savings_usd` is a floor. Only `true` reads as exact: a missing
+   * flag (an API older than the field) is unconfirmed, never confirmed.
+   */
+  savings_cost_known: boolean;
   items: TechDebtItem[];
 }
 
