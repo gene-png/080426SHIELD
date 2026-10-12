@@ -170,7 +170,7 @@ _MAGNITUDES = frozenset({"bn", "MM", "M", "K", "B", "T", "k", "m", "x", "fold", 
 # Longer magnitude spellings, matched case-insensitively (#1088 round 5, F2).
 # Four-lowercase-letter forms would otherwise pass as nouns (see THE UNIT RULE).
 _MAGNITUDES_ANY_CASE = frozenset(
-    {"mill", "mln", "bill", "bln", "trln", "lac", "lacs", "thou", "grand"}
+    {"bn", "mn", "tn", "mill", "mln", "bill", "bln", "trln", "lac", "lacs", "thou", "grand"}
 )
 # THE UNIT RULE (#1088 round 4, F1). Any other short alphabetic token after a
 # numeral (across whitespace or a dash) is treated as a unit and joins it, so a
@@ -281,48 +281,36 @@ def _protected_spans(text: str, protected: frozenset[str]) -> list[tuple[int, in
     return spans
 
 
-# The next word after whitespace ONLY: a spaced dash ("Windows 10 – see
-# below") does not join, so it does not touch the edge either.
-_NEXT_WORD = re.compile(r"\s+(\w+)")
-
-
 def _edge_touched(text: str, start: int, end: int) -> bool:
     """Whether a protected match has a DIGIT at an edge that a number form
-    touches (#1088 round 8). Masking it would hide a number the text states:
-    "Windows 10%" for protected "Windows 10", "$40 hosts" for "40 hosts".
-    The edge counts as touched ONLY where `_joins` would join (#1088 round 9),
-    so an acronym after it ("Microsoft 365 MFA", "Windows 10 PCs") does not
-    unmask it. After a trailing digit: a percent mark or "×" (attached or
-    across whitespace), a digit separator then a digit ("365,000", "10,5"),
-    or, across whitespace, a magnitude, scale or percent word. Before a
-    leading digit: a currency mark or a sign. Such a match is NOT masked, so
-    the number is checked."""
+    touches (#1088 rounds 8 to 10). Masking it would hide a number the text
+    states: "Windows 10%" for protected "Windows 10", "$40 hosts" for
+    "40 hosts". Such a match is NOT masked, so the number is checked.
+
+    After a trailing digit, touched by: a percent mark or "×" (attached or
+    across whitespace); a digit separator then a digit ("365,000", "10,5",
+    "1'500"); or, across whitespace only, the first token `_tokens` reads there
+    being a magnitude or a number word (the SAME classification `_joins` uses,
+    so the two cannot drift: "365 Mn", "10 million", "365 per cent"). A short
+    unit or acronym does NOT touch it ("Microsoft 365 MFA", "Windows 10 PCs"),
+    and a spaced dash does not reach the next word.
+    Before a leading digit, touched by: a currency mark, a sign, or "×"."""
     if _is_numeric_char(text[end - 1]):
         rest = text[end:]
         if re.match(rf"\s*[{_PERCENT}\u00d7]", rest):
             return True
-        if re.match(r"[,.:]\d", rest):
+        if re.match(r"[,.:'\u2019\u066c]\d", rest):
             return True
-        m = _NEXT_WORD.match(rest)
-        if m and _is_magnitude_like(m.group(1)):
-            return True
+        space = re.match(r"\s+", rest)
+        if space:
+            following = _tokens(rest[space.end() : space.end() + 40])
+            if following and following[0].start == 0 and following[0].kind in (_MAG, _WORD, _WEAK):
+                return True
     if _is_numeric_char(text[start]) and start > 0:
         before = text[start - 1]
-        if before in _CURRENCY or before in _DASHES:
+        if before in _CURRENCY or before in _DASHES or before == "\u00d7":
             return True
     return False
-
-
-def _is_magnitude_like(word: str) -> bool:
-    low = word.casefold()
-    # Not `_is_unit_shape`: a short unit joins a numeral, but the edge test
-    # must not unmask a protected value for an acronym after it (round 9).
-    return (
-        word in _MAGNITUDES
-        or low in _MAGNITUDES_ANY_CASE
-        or low in _SCALE_WORDS
-        or low in ("percent", "pct")
-    )
 
 
 def _exempt_spans(text: str) -> list[tuple[int, int]]:
@@ -463,6 +451,20 @@ def _tokens(masked: str) -> list[_Tok]:
     return merged
 
 
+# Locale digit-group separators (#1088 round 10, F2). Each joins a digit to
+# EXACTLY three digits, making one span that is refused unless a fact says it
+# verbatim. A PLAIN space is deliberately not one: across a plain space two
+# numerals stay two spans ("page 1 500 users", the round-2 rule "40 5"), because
+# in English prose that is two numbers far more often than one; the residual
+# (a model writing "1 500" for 1500 with 1 and 500 both licensed) is recorded.
+_GROUP_SPACES = frozenset({"\u00a0", "\u202f", "\u2009"})
+_GROUP_MARKS = frozenset({"'", "\u2019", "\u066c"})
+
+
+def _digit_group(a: _Tok, b: _Tok) -> bool:
+    return a.text[-1:].isdecimal() and re.match(r"\d{3}(?!\d)", b.text) is not None
+
+
 def _joins(a: _Tok, gap: list[_Tok], gap_text: str, b: _Tok) -> bool:
     """Whether bearing tokens `a` and `b`, with `gap` between them, are one span."""
     # A number word joins a number-bearing neighbour, never a unit or magnitude
@@ -480,6 +482,8 @@ def _joins(a: _Tok, gap: list[_Tok], gap_text: str, b: _Tok) -> bool:
     if not gap:
         if gap_text == "":
             return True  # adjacent: "3" then "×"
+        if gap_text in _GROUP_SPACES and _digit_group(a, b):
+            return True  # "1 500" with a no-break, narrow or thin space
         return gap_text.isspace() and (wordish or magnitude)
     if (
         len(gap) == 1
@@ -492,6 +496,8 @@ def _joins(a: _Tok, gap: list[_Tok], gap_text: str, b: _Tok) -> bool:
         return False  # anything with whitespace around punctuation breaks a span
     sep = gap[0].text
     a_digit = a.text[-1:].isdecimal()
+    if sep in _GROUP_MARKS:
+        return _digit_group(a, b)  # "1'500", "1’500", "1٬500"
     if sep in (",", ".", ":"):
         # Digit to digit with no whitespace is ONE span: a thousands group
         # ("1,200"), a decimal ("40.5"), or anything else ("3,5" is 3.5 in many
@@ -609,10 +615,12 @@ def _walk(
         return
     if isinstance(value, Mapping):
         for k, v in value.items():
-            if "." in str(k) and _ambiguous(str(k), fields["declared"]):
+            full = ".".join((*path, str(k)))
+            if "." in str(k) and _ambiguous(full, fields["declared"]):
                 # A dotted key is allowed (CSF and ATT&CK codes are natural
-                # keys) unless it equals a declared dotted path or a prefix of
-                # one, where it could be read either way (#1088 round 8).
+                # keys) unless its FULL path equals a declared dotted path or a
+                # prefix of one, where it could be read either way (#1088
+                # rounds 8 and 10).
                 raise ValueError(
                     f"numbers: payload key {str(k)!r} is ambiguous with a declared dotted path"
                 )

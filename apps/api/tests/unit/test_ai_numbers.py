@@ -727,19 +727,27 @@ def test_a_protected_name_present_only_below_the_top_level_is_refused() -> None:
 
 
 # Round 8, change 4: a dotted key is refused only when it is AMBIGUOUS, that is
-# when it equals a declared dotted path or a prefix of one. Natural dotted keys
-# (CSF and ATT&CK codes) are allowed and cannot be named by a dotted path.
+# when its FULL path (the keys above it, then the key) equals a declared dotted
+# path or a prefix of one (round 10, finding 4). Natural dotted keys (CSF and
+# ATT&CK codes) are allowed and cannot be named by a dotted path.
 
 
 @pytest.mark.parametrize(
     "payload,facts,protected",
     [
-        # Equal to a declared path, at the top level and at depth.
+        # Equal to a declared path: at the top level, in a nested dict, in a list
+        # of dicts, inside a fact subtree and inside a protected subtree.
         ({"service.id": 5, "service": {"id": 5}}, ("service.id",), ()),
-        ({"outer": {"service.id": 5}, "service": {"id": 5}}, ("service.id",), ()),
-        ({"rows": [{"service.id": 5}], "service": {"id": 5}}, ("service.id",), ()),
-        ({"service": {"id": 5, "x": {"service.id": 1}}}, ("service.id",), ()),
-        ({"code": {"service.id": "T1"}, "service": {"id": "T2"}}, ("code",), ("service.id",)),
+        ({"outer": {"service.id": 5, "service": {"id": 5}}}, ("outer.service.id",), ()),
+        ({"rows": [{"service.id": 5, "service": {"id": 5}}]}, ("rows.service.id",), ()),
+        ({"svc": {"x.y": 1, "x": {"y": 2}}}, ("svc", "svc.x.y"), ()),
+        ({"code": {"x.y": "T1", "x": {"y": "T2"}}}, (), ("code.x.y",)),
+        # Round 10, finding 4: the nested twin of the top-level case.
+        (
+            {"service": {"summary.total": 3, "summary": {"total": 40}}},
+            ("service.summary.total",),
+            (),
+        ),
         # A prefix of a declared dotted path.
         ({"a.b": 1, "a": {"b": {"c": 2}}}, ("a.b.c",), ()),
     ],
@@ -749,6 +757,13 @@ def test_an_ambiguous_dotted_key_is_refused(
 ) -> None:
     with pytest.raises(ValueError, match="ambiguous"):
         allowed_numbers(payload, fact_fields=facts, protected_fields=protected)
+
+
+def test_a_dotted_key_elsewhere_is_not_ambiguous() -> None:
+    # "outer.service.id" is not the declared "service.id": compared by FULL path.
+    payload = {"outer": {"service.id": 5}, "service": {"id": 7}}
+    allowed = allowed_numbers(payload, fact_fields=("service.id",), protected_fields=())
+    assert [h.raw for h in unallowed_numbers("7 and 5.", allowed)] == ["5"]
 
 
 def test_a_natural_dotted_key_is_allowed() -> None:
@@ -829,3 +844,54 @@ def test_a_declared_dotted_path_is_matched_by_whole_segments() -> None:
     # Advisory 5: declaring "a.b" does not make the key "a.bc" ambiguous.
     allowed = allowed_numbers({"a.bc": 1, "a": {"b": 2}}, fact_fields=("a.b",), protected_fields=())
     assert unallowed_numbers("2 apply.", allowed) == ()
+
+
+# --- Review round 10 of #1088 ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text,payload,protected,refused",
+    [
+        # Finding 1: every magnitude `_joins` joins touches the edge, in any case.
+        ("Microsoft 365 Mn seats.", {"p": "Microsoft 365"}, ("p",), ["365 Mn"]),
+        ("Microsoft 365 BN seats.", {"p": "Microsoft 365"}, ("p",), ["365 BN"]),
+        ("Microsoft 365 tn seats.", {"p": "Microsoft 365"}, ("p",), ["365 tn"]),
+        ("Microsoft 365 per cent.", {"p": "Microsoft 365"}, ("p",), ["365 per cent"]),
+        ("Microsoft 365 MFA seats.", {"p": "Microsoft 365"}, ("p",), []),
+        ("365 Mn seats.", {}, (), ["365 Mn"]),
+        # Finding 3: a leading "×" touches a protected value's leading digit.
+        # Unmasked, the whole span is reported: "Apps" is a unit-shaped token.
+        ("A \u00d7365 Apps uplift.", {"p": "365 Apps"}, ("p",), ["\u00d7365 Apps"]),
+        ("A 365 Apps uplift.", {"p": "365 Apps"}, ("p",), []),
+    ],
+)
+def test_round_ten_edges(
+    text: str, payload: dict, protected: tuple[str, ...], refused: list[str]
+) -> None:
+    allowed = allowed_numbers(payload, fact_fields=(), protected_fields=protected)
+    assert [h.raw for h in unallowed_numbers(text, allowed)] == refused
+
+
+@pytest.mark.parametrize(
+    "text,refused",
+    [
+        # Finding 2: a locale digit-group separator makes ONE span, refused
+        # unless a fact says it verbatim.
+        ("1'500 users.", ["1'500"]),
+        ("1\u2019500 users.", ["1\u2019500"]),
+        ("1\u00a0500 users.", ["1\u00a0500"]),
+        ("1\u202f500 users.", ["1\u202f500"]),
+        ("1\u2009500 users.", ["1\u2009500"]),
+        ("1\u066c500 users.", ["1\u066c500"]),
+        # Exactly three digits only.
+        ("1'50 users.", []),
+        # A PLAIN space between numerals still never joins (decision recorded
+        # in `_joins`): "page 1 500 users" is two numbers in English prose.
+        ("Page 1 500 users.", []),
+    ],
+)
+def test_round_ten_locale_group_separators(text: str, refused: list[str]) -> None:
+    allowed = allowed_numbers(
+        {"a": 1, "b": 500, "c": 50}, fact_fields=("a", "b", "c"), protected_fields=()
+    )
+    assert [h.raw for h in unallowed_numbers(text, allowed)] == refused
