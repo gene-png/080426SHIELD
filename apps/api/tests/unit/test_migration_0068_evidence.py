@@ -307,9 +307,10 @@ def _csf_assessment(
 
 
 def _seed_at_0066(tmp_path, name: str, statuses: set[str]) -> tuple[str, sa.Engine]:
-    """At 0066, through the ORM: one CSF assessment per status, each with a
-    ticked (`GV.OC-01`) and an unticked (`GV.OC-02`) Working Profile row, and
-    one artifact."""
+    """At 0066: one CSF assessment per status, written by a Core insert through
+    the model's own table (`_csf_assessment`), each with a ticked (`GV.OC-01`)
+    and an unticked (`GV.OC-02`) Working Profile row; the client, user,
+    services, profile rows and one artifact go through the ORM."""
     url = f"sqlite:///{tmp_path / name}"
     command.upgrade(_cfg(url), "0066")
     engine = sa.create_engine(url, future=True)
@@ -374,9 +375,10 @@ _FREEZES = {
 def test_upgrade_from_0066_freezes_only_ticked_rows_on_approved_and_released(
     tmp_path, capsys
 ) -> None:
-    """Seeded through the ORM at 0066, so the stored status spelling is the one
-    production writes (0045 froze nothing once because its fixture typed
-    `'approved'` by hand)."""
+    """Seeded at 0066 by a Core insert through the model's own table and
+    column types, so the stored status spelling is the one production writes
+    (0045 froze nothing once because its fixture typed `'approved'` by
+    hand)."""
     url, engine = _seed_at_0066(tmp_path, "m0068-backfill.db", {s for s, _ in _FREEZES})
     with engine.connect() as conn:
         stored = set(conn.execute(sa.text("SELECT status FROM csf_assessments")).scalars())
