@@ -13,6 +13,10 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**2026-10-12: #1081, PR #1100.** A locked Risk Register names, per unmet requirement, why it is locked and what to do, in the approved copy, on the page and in generate's typed 409. Status: the 2026-10-12 #1081 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
+**2026-10-12: C-2, PR #1074, for #1056.** The admin CSF dimension-score editor explains how to score a row, in copy the advisor approved verbatim (#736 6115345112). Status: the 2026-10-12 C-2 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
 **2026-10-12: TD-3, PR #1066, approved for merge (#736 6115773247), for #1050.** Admin service workspaces run full-width; other admin pages keep `max-w-6xl`. #1050 stays open: the fixed Name column and wider Notes in `TechDebtWorkspace.tsx` are queued after #1044 merges. Status: the 2026-10-12 TD-3 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
 **2026-10-12: TD-2's intake banner built on `trackB/1058-intake-banner`, a draft PR (not on `main`), for #1058.** Intake Step 4 asks Tech Debt and ATT&CK clients to list products separately, not as suites; the copy is approved by Gene (#736 6115464421). Status: the 2026-10-12 TD-2 entry in `DELIVERY_PLAN.md`'s MVP completion path.
