@@ -13,6 +13,12 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**2026-10-12: N4, PR #1099 (migration 0067).** Three new, empty tables for findings reports, integration runs and recommendations, with no reader or writer yet. Status: the 2026-10-12 N4 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
+**2026-10-12: #1049, PR #1092.** Intake accepts a website without a scheme (stored with `https://`), and its auto-save names a refused or failed save as such, instead of "Network error.". Status: the 2026-10-12 #1049 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
+**2026-10-12: #1081, PR #1100.** A locked Risk Register names, per unmet requirement, why it is locked and what to do, in the approved copy, on the page and in generate's typed 409. Status: the 2026-10-12 #1081 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
 **2026-10-12: C-2, PR #1074, for #1056.** The admin CSF dimension-score editor explains how to score a row, in copy the advisor approved verbatim (#736 6115345112). Status: the 2026-10-12 C-2 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
 **2026-10-12: TD-3, PR #1066, approved for merge (#736 6115773247), for #1050.** Admin service workspaces run full-width; other admin pages keep `max-w-6xl`. #1050 stays open: the fixed Name column and wider Notes in `TechDebtWorkspace.tsx` are queued after #1044 merges. Status: the 2026-10-12 TD-3 entry in `DELIVERY_PLAN.md`'s MVP completion path.
