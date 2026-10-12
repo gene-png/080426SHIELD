@@ -27,6 +27,7 @@ work stopped at 0.5 s, so it fails only when the budget is gone.
 from __future__ import annotations
 
 import json
+import os
 import threading
 from typing import Any
 
@@ -471,3 +472,68 @@ def test_a_child_dies_when_the_api_process_is_killed(tmp_path) -> None:
             api.kill()
         if child is not None and rw.is_running(child):
             os.kill(child, signal.SIGKILL)
+
+
+# ---------------------------------------------------------------------------
+# The clean-environment wrapper: refused at startup with a named cause, and
+# made again when a temp cleaner deletes it (#1042 final review, items 1 and 2)
+# ---------------------------------------------------------------------------
+
+
+def _start_the_api() -> None:
+    """Run the api's startup hook, and only that: no server, no requests."""
+    import asyncio
+
+    from app.main import _lifespan, create_app
+
+    async def _enter() -> None:
+        async with _lifespan(create_app()):
+            pass
+
+    asyncio.run(_enter())
+
+
+@pytest.mark.unit
+def test_startup_refuses_a_wrapper_it_cannot_execute_and_says_why(monkeypatch) -> None:
+    """A wrapper the host will not execute (a noexec temp mount does the same:
+    exec is refused) stops the api at startup, naming the cause, instead of
+    failing every AI call later as a bare `redaction_failed`."""
+    import app.ai.isolation as isolation
+
+    monkeypatch.setattr(isolation, "_wrapper_path", None)
+    monkeypatch.setattr(isolation, "_WRAPPER_MODE", 0o600)
+    with pytest.raises(isolation.RedactionSetupError, match=r"cannot execute .* noexec"):
+        _start_the_api()
+
+
+@pytest.mark.unit
+def test_startup_refuses_a_host_with_no_env_and_says_why(monkeypatch) -> None:
+    import shutil
+
+    import app.ai.isolation as isolation
+
+    monkeypatch.setattr(isolation, "_wrapper_path", None)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    with pytest.raises(isolation.RedactionSetupError, match=r"no `env` executable"):
+        _start_the_api()
+
+
+@pytest.mark.unit
+def test_a_wrapper_a_temp_cleaner_deleted_is_made_again(world) -> None:
+    """The wrapper is gone (a host temp cleaner removed its directory). The
+    next redaction makes it again before it starts a child, and succeeds."""
+    import shutil
+
+    import app.ai.isolation as isolation
+
+    first = isolation.prepare_redaction_executable()
+    shutil.rmtree(os.path.dirname(first))
+    assert not os.path.exists(first)
+
+    svc_id, artifact_id = rw.service_and_artifact(world, "Application\nPayroll\n")
+    run = rw.post_within(rw.HANG_GUARD_S, lambda: rw.extract(world, svc_id, artifact_id))
+
+    assert run["status"] == "completed", run
+    second = isolation.prepare_redaction_executable()
+    assert second != first
+    assert os.path.isfile(second)

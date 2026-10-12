@@ -9,11 +9,18 @@ the child's GIL, and the child can be killed by PID.
 
 WHAT THE CHILD GETS: the payload, the mode, the client's name and the hint set.
 Nothing else. The forkserver it is forked from is a fresh interpreter started
-through `env -i` with only PATH and LANG (`_use_clean_executable`), so neither
+through `env -i` with only PATH and LANG (`prepare_redaction_executable`), so neither
 holds the api's environment: not in `os.environ`, and not in the environment
 block the kernel keeps for the process (`/proc/<pid>/environ`), which is what a
 deletion from `os.environ` leaves behind. No provider key, no database URL, no
-SHIELD_* setting, and none of the api process's memory. Each child also has a
+SHIELD_* setting, and none of the api process's memory, in the child's OWN
+state. That is not out of its reach: THE CHILD IS NOT A PRIVILEGE BOUNDARY. It
+runs as the same user as the api, and measured on the #1042 review (`/proc`
+mounted without `hidepid`), a child read the api process's
+`/proc/<pid>/environ`, the environment the api was started with, which is where
+a provider key given at container start lives. The child keeps the redactor's
+work off the api's GIL and bounded; it does not contain a compromised
+redactor. Each child also has a
 CPU-time limit from the budget and dies with its parent, so it cannot outlive
 an api that died hard (`_redaction_child.limit_cpu`, `die_with_parent`).
 
@@ -63,6 +70,9 @@ import os
 import shlex
 import shutil
 import signal
+
+# One fixed probe of this module's own wrapper (`_probe_wrapper`).
+import subprocess  # nosec B404
 import sys
 import tempfile
 import threading
@@ -111,35 +121,89 @@ _ctx.set_forkserver_preload([_FORKSERVER_PRELOAD])
 #: and every SHIELD_* setting after the scrub.
 _CHILD_ENVIRONMENT = {"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"}
 _executable_lock = threading.Lock()
-_executable_set = False
+#: The wrapper the forkserver context currently execs, or None before the first.
+_wrapper_path: str | None = None
+#: The wrapper's mode. Owner-only: it is this process's way into a clean child.
+_WRAPPER_MODE = 0o700
+#: The probe the wrapper must pass before it is used: the interpreter starts,
+#: and its environment is exactly the allowlist.
+_ALLOWED_NAMES = ", ".join(repr(k) for k in sorted(_CHILD_ENVIRONMENT))
+_PROBE = f"import os, sys; sys.exit(0 if set(os.environ) <= {{{_ALLOWED_NAMES}}} else 3)"
+_PROBE_SECONDS = 30.0
 
 
-def _use_clean_executable() -> None:
-    """Point the forkserver context at a wrapper that execs this interpreter
-    under `env -i`, before the forkserver first starts. `multiprocessing` starts
-    the forkserver with `spawn.get_executable()` and the api's environment;
-    nothing else in the api uses `multiprocessing`. Fails loudly, never falls
-    back to the api's environment."""
-    global _executable_set
+class RedactionSetupError(RuntimeError):
+    """The clean-environment wrapper cannot be made or cannot run. The message
+    names the cause; every redaction fails closed until it is fixed."""
+
+
+def prepare_redaction_executable() -> str:
+    """The wrapper that execs this interpreter under `env -i`, written, PROBED
+    and set as the forkserver context's executable. Called at api startup (so a
+    host that cannot run it refuses to start, naming why) and before every
+    child (so a wrapper a temp cleaner deleted is made again before the next
+    forkserver start needs it). `multiprocessing` starts the forkserver with
+    `spawn.get_executable()`, and it reports no exec failure of its own (Python
+    3.12's `spawnv_passfds`), so the probe is what finds one. Nothing else in
+    the api uses `multiprocessing`. Never falls back to the api's environment."""
+    global _wrapper_path
     with _executable_lock:
-        if _executable_set:
-            return
-        env = shutil.which("env")
-        if env is None:
-            raise RuntimeError("redaction isolation: no `env` executable to start the forkserver")
-        assignments = " ".join(
-            f"{k}={shlex.quote(v)}" for k, v in sorted(_CHILD_ENVIRONMENT.items())
+        if _wrapper_path is not None and os.path.isfile(_wrapper_path):
+            return _wrapper_path
+        replacing = _wrapper_path
+        wrapper = _write_wrapper()
+        _probe_wrapper(wrapper)
+        _ctx.set_executable(wrapper)
+        _wrapper_path = wrapper
+    _log.info("redaction_isolation.forkserver_executable", wrapper=wrapper, replaced=replacing)
+    return wrapper
+
+
+def _write_wrapper() -> str:
+    env = shutil.which("env")
+    if env is None:
+        raise RedactionSetupError(
+            "redaction isolation: no `env` executable on PATH, so the redaction "
+            "forkserver cannot be started with a clean environment"
         )
+    assignments = " ".join(f"{k}={shlex.quote(v)}" for k, v in sorted(_CHILD_ENVIRONMENT.items()))
+    try:
         wrapper = os.path.join(tempfile.mkdtemp(prefix="shield-redaction-"), "python")
         with open(wrapper, "w", encoding="ascii") as f:
             f.write(
                 "#!/bin/sh\n"
                 f'exec {shlex.quote(env)} -i {assignments} {shlex.quote(sys.executable)} "$@"\n'
             )
-        os.chmod(wrapper, 0o700)
-        _ctx.set_executable(wrapper)
-        _executable_set = True
-        _log.info("redaction_isolation.forkserver_executable", wrapper=wrapper)
+        os.chmod(wrapper, _WRAPPER_MODE)
+    except OSError as exc:
+        raise RedactionSetupError(
+            f"redaction isolation: cannot write the forkserver wrapper under "
+            f"{tempfile.gettempdir()} (is the temp directory writable?): {exc}"
+        ) from exc
+    return wrapper
+
+
+def _probe_wrapper(wrapper: str) -> None:
+    try:
+        # Our own wrapper, a fixed `-c` probe, no shell.
+        done = subprocess.run(  # noqa: S603  # nosec B603
+            [wrapper, "-c", _PROBE], capture_output=True, timeout=_PROBE_SECONDS, check=False
+        )
+    except PermissionError as exc:
+        raise RedactionSetupError(
+            f"redaction isolation: cannot execute the forkserver wrapper {wrapper} "
+            f"(is {os.path.dirname(os.path.dirname(wrapper))} mounted noexec?): {exc}"
+        ) from exc
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RedactionSetupError(
+            f"redaction isolation: the forkserver wrapper {wrapper} did not run: {exc}"
+        ) from exc
+    if done.returncode != 0:
+        raise RedactionSetupError(
+            f"redaction isolation: the forkserver wrapper {wrapper} exited "
+            f"{done.returncode}, so it cannot start a clean interpreter: "
+            f"{done.stderr.decode(errors='replace').strip()[:300]}"
+        )
 
 
 #: How long to wait for a killed child to be reaped before failing loudly.
@@ -495,7 +559,7 @@ def _run_child(
     """Run the target in a fresh forkserver child. Returns ("ok", result) or
     ("http", (status, detail)), or ("timeout"|"died", detail) for the caller to
     type. The child is gone, reaped, before this returns, whatever happened."""
-    _use_clean_executable()
+    prepare_redaction_executable()
     recv, send = _ctx.Pipe(duplex=False)
     child = _ctx.Process(
         target=child_main,
