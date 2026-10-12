@@ -75,17 +75,25 @@ NOT_READ_REASONS: tuple[str, ...] = get_args(NotReadReason)
 class DocText:
     """What one file yielded.
 
-    `chars_total` counts the characters EXTRACTED. Extraction stops early once
-    `max_chars` is passed or `max_pages` is reached, so when `truncated` is
-    True the file holds more than `chars_total`; when it is False,
-    `chars_total` is the whole document. `text` is cut to `max_chars`.
+    `chars_total` counts the characters EXTRACTED, and `text` is cut to
+    `max_chars`. When `truncated` is False, `text` is the whole document's
+    text and `chars_total` its length. When it is True, `text` is not the
+    whole document: it was cut at `max_chars`, or extraction stopped at the
+    page or time limit, so `chars_total` is a lower bound on the document's
+    length, not its total.
 
     `pages_without_text` counts PDF pages read that gave no text (a partly
-    scanned file). `parts_not_read` counts parts of a read file that no reader
-    opened: an XFA form or an unreadable AcroForm in a PDF; an altChunk, an
-    embedded object or an unparseable header, footer, footnotes, endnotes or
-    comments part in a DOCX. Both are additions to section 15.2's shape, and
-    both are 0 when nothing was skipped.
+    scanned file). `parts_not_read` counts content in a read file that no
+    reader opened or that is deliberately not quoted: in a PDF, an XFA form,
+    an unreadable AcroForm, an embedded file or a media annotation; in a DOCX,
+    an altChunk, an embedded object, a picture, SmartArt, a chart, a hidden
+    run, a ruby (pronunciation) annotation, or an unparseable header, footer,
+    footnotes, endnotes or comments part; in an XLSX, each cell comment, each
+    worksheet drawing and each chartsheet. Both are additions to section
+    15.2's shape, and both are 0 when nothing was skipped.
+
+    A file whose only content is of those kinds is never an empty `read`: it
+    is `not_read: no_text_layer` (the reason the PDF reader gives a scan).
     """
 
     status: Literal["read", "not_read"]
@@ -132,6 +140,9 @@ class ChunkPlan:
     skipped: int
     overlap_chars: int
     offsets: tuple[int, ...]
+    #: True when whitespace runs were collapsed before chunking; `offsets`
+    #: then index `normalise_whitespace(text)`, not the text passed in.
+    whitespace_normalised: bool
 
 
 @dataclass(frozen=True)
@@ -212,7 +223,6 @@ _IMAGE_MAGIC = (
     b"GIF89a",
     b"II*\x00",
     b"MM\x00*",
-    b"BM",
 )
 _OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 _UTF32_BOMS = (b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff")
@@ -236,12 +246,15 @@ class _Tally:
     pages_without_text: int = 0
     parts_not_read: int = 0
     stopped_early: bool = False
+    timed_out: bool = False
 
     def out_of_time(self) -> bool:
         """True once the time limit has passed; it then marks the read as
-        stopped early."""
+        stopped early. Readers call it per page, row and paragraph, so input
+        that yields no text (empty rows, empty paragraphs) is still bounded."""
         if _clock() > self.deadline:
             self.stopped_early = True
+            self.timed_out = True
             return True
         return False
 
@@ -268,6 +281,19 @@ def document_text(storage: _Readable, artifact: Artifact, *, limits: ExtractLimi
         )
     except _NotRead as nr:
         return _not_read(artifact, nr.reason, nr.detail)
+    if not text.strip():
+        if tally.timed_out:
+            return _not_read(
+                artifact, "too_large", f"no text before the {limits.max_seconds}s time limit"
+            )
+        if tally.parts_not_read:
+            # The file's only content is in parts no reader opened (pictures,
+            # charts, an embedded object): not an empty document.
+            return _not_read(
+                artifact,
+                "no_text_layer",
+                f"no text; {tally.parts_not_read} part(s) not read",
+            )
     truncated = past_max_chars or tally.stopped_early
     result = DocText(
         status="read",
@@ -347,7 +373,7 @@ def _extract(
             # Not a fact about the file: the api is missing a declared runtime
             # dependency, and must not parse a client's XML without it.
             raise RuntimeError("defusedxml is not importable; refusing to parse XLSX")
-        return _read_xlsx(data)
+        return _read_xlsx(data, tally)
     return _read_txt(data, declared_text="txt" in declared)
 
 
@@ -377,11 +403,26 @@ def _detect(data: bytes, limits: ExtractLimits) -> Kind:
         return "ole"
     if data.startswith(b"{\\rtf"):
         return "rtf"
-    if data.startswith(_IMAGE_MAGIC) or (data[:4] == b"RIFF" and data[8:12] == b"WEBP"):
+    if (
+        data.startswith(_IMAGE_MAGIC)
+        or (data[:4] == b"RIFF" and data[8:12] == b"WEBP")
+        or _is_bmp(data)
+    ):
         return "image"
     if data.startswith(b"PK\x03\x04"):
         return _detect_zip(data, limits)
     return "txt"
+
+
+def _is_bmp(data: bytes) -> bool:
+    """A BMP header, not just "BM": the stored file size matches, the four
+    reserved bytes are zero, and the pixel offset lies inside the file.
+    Text that happens to start "BM" ("BMS ID,Location") fails all three."""
+    if len(data) < 26 or not data.startswith(b"BM"):
+        return False
+    size = int.from_bytes(data[2:6], "little")
+    offset = int.from_bytes(data[10:14], "little")
+    return size == len(data) and data[6:10] == b"\x00\x00\x00\x00" and 26 <= offset <= len(data)
 
 
 def _detect_zip(data: bytes, limits: ExtractLimits) -> Kind:
@@ -451,12 +492,16 @@ def _read_pdf(data: bytes, limits: ExtractLimits, tally: _Tally) -> Iterator[str
             yield text
         else:
             tally.pages_without_text += 1
+        for note in _pdf_annotations(pages[i], tally):
+            read_any = True
+            yield note
     capped = total > limits.max_pages
     if capped:
         tally.stopped_early = True
     for value in _pdf_form_values(reader, tally):
         read_any = True
         yield value
+    _count_pdf_attachments(reader, tally)
     if not read_any:
         if timed_out:
             raise _NotRead(
@@ -471,6 +516,51 @@ def _read_pdf(data: bytes, limits: ExtractLimits, tally: _Tally) -> Iterator[str
                 "the page limit",
             )
         raise _NotRead("no_text_layer", f"none of {total} pages has a text layer")
+
+
+#: Annotations that carry no reviewer text of their own: a form widget (its
+#: value is read as a form field), a link, and a popup (it repeats its
+#: parent's text).
+_PDF_ANNOT_SKIP = frozenset({"/Widget", "/Link", "/Popup"})
+#: Annotations whose content is a file or media this reader does not open.
+_PDF_ANNOT_NOT_READ = frozenset(
+    {"/FileAttachment", "/RichMedia", "/Movie", "/Sound", "/Screen", "/3D"}
+)
+
+
+def _pdf_annotations(page: object, tally: _Tally) -> list[str]:
+    """Annotation text on one page (comments, notes, free text, markup), read
+    the way DOCX comments are, as "[Annotation] text" lines. Media and file
+    attachments are counted as parts not read."""
+    lines: list[str] = []
+    try:
+        annots = page.get("/Annots")  # type: ignore[attr-defined]
+        if annots is None:
+            return lines
+        for ref in annots.get_object():
+            annot = ref.get_object()
+            subtype = str(annot.get("/Subtype", ""))
+            if subtype in _PDF_ANNOT_SKIP:
+                continue
+            if subtype in _PDF_ANNOT_NOT_READ:
+                tally.parts_not_read += 1
+                continue
+            contents = annot.get("/Contents")
+            if contents is not None and str(contents).strip():
+                lines.append(f"[Annotation] {contents}")
+    except Exception as exc:  # noqa: BLE001 - counted and logged, never swallowed
+        tally.parts_not_read += 1
+        _log.warning("documents.text.pdf_annotations_not_read", error=type(exc).__name__)
+    return lines
+
+
+def _count_pdf_attachments(reader: PdfReader, tally: _Tally) -> None:
+    """Files embedded in the PDF are not opened; each is counted."""
+    try:
+        tally.parts_not_read += len(reader.attachments)
+    except Exception as exc:  # noqa: BLE001 - counted and logged, never swallowed
+        tally.parts_not_read += 1
+        _log.warning("documents.text.pdf_attachments_not_read", error=type(exc).__name__)
 
 
 def _pdf_form_values(reader: PdfReader, tally: _Tally) -> Iterator[str]:
@@ -523,8 +613,19 @@ _DOCX_SKIP = frozenset(
         _MC_FALLBACK,
     }
 )
-#: Content this reader does not open, each counted as a part not read.
-_DOCX_NOT_READ = frozenset({_W + "altChunk", _W + "object"})
+#: Content this reader does not open, each counted as a part not read: an
+#: imported file, an embedded object, a picture, SmartArt and a chart.
+_DOCX_NOT_READ = frozenset(
+    {
+        _W + "altChunk",
+        _W + "object",
+        "{http://schemas.openxmlformats.org/drawingml/2006/picture}pic",
+        "{http://schemas.openxmlformats.org/drawingml/2006/diagram}relIds",
+        "{http://schemas.openxmlformats.org/drawingml/2006/chart}chart",
+    }
+)
+#: Private Use Area: a symbol font's code point, with no known character.
+_PUA = range(0xE000, 0xF900)
 _DOCX_NOTES = ("word/footnotes.xml", "word/endnotes.xml", "word/comments.xml")
 
 
@@ -569,7 +670,11 @@ def _docx_blocks(el: Element, tally: _Tally) -> Iterator[str]:
     """Paragraphs and tables in document order, through any wrapper (content
     controls, custom XML, footnote and comment elements)."""
     for child in el:
+        if tally.out_of_time():
+            return
         tag = child.tag
+        if tag == _W + "sdt" and _docx_is_placeholder(child):
+            continue
         if tag == _W + "p":
             yield from _docx_paragraph(child, tally)
         elif tag == _W + "tbl":
@@ -592,10 +697,25 @@ def _docx_paragraph(p: Element, tally: _Tally) -> Iterator[str]:
             tag = child.tag
             if tag == _W + "t":
                 pieces.append(child.text or "")
-            elif tag == _W + "tab":
+            elif tag in (_W + "tab", _W + "ptab"):
                 pieces.append("\t")
             elif tag in (_W + "br", _W + "cr"):
                 pieces.append("\n")
+            elif tag == _W + "noBreakHyphen":
+                # "Jean-Pierre" must reach the redactor as the hint is written.
+                pieces.append("-")
+            elif tag == _W + "sym":
+                pieces.append(_docx_symbol(child))
+            elif tag == _W + "r" and _docx_is_hidden(child):
+                # Hidden text is not what a reader of the document sees, so it
+                # is not quoted as evidence; it is counted, not dropped.
+                tally.parts_not_read += 1
+            elif tag == _W + "rt":
+                # Ruby text is a pronunciation guide over its base text (which
+                # is read); excluded from the quote and counted.
+                tally.parts_not_read += 1
+            elif tag == _W + "sdt" and _docx_is_placeholder(child):
+                pass
             elif tag == _W + "p":
                 nested.extend(_docx_paragraph(child, tally))
             elif tag == _W + "tbl":
@@ -616,10 +736,40 @@ def _docx_table(tbl: Element, tally: _Tally) -> Iterator[str]:
     """One line per row, cells tab-joined; a cell's own paragraphs and nested
     tables are joined into it. Rows and cells inside content controls count."""
     for row in _docx_descendants(tbl, _W + "tr"):
+        if tally.out_of_time():
+            return
         cells = ["\n".join(_docx_blocks(cell, tally)) for cell in _docx_descendants(row, _W + "tc")]
         line = "\t".join(cells)
         if line.strip():
             yield line
+
+
+def _docx_is_placeholder(sdt: Element) -> bool:
+    """A content control still showing its placeholder ("Click or tap here to
+    enter text.") holds no document content."""
+    props = sdt.find(_W + "sdtPr")
+    return props is not None and props.find(_W + "showingPlcHdr") is not None
+
+
+def _docx_is_hidden(run: Element) -> bool:
+    """A run formatted hidden (w:vanish), unless switched back off."""
+    props = run.find(_W + "rPr")
+    vanish = props.find(_W + "vanish") if props is not None else None
+    if vanish is None:
+        return False
+    return vanish.get(_W + "val", "true").lower() not in ("0", "false", "off")
+
+
+def _docx_symbol(sym: Element) -> str:
+    """A w:sym's character where it is a real one. A symbol-font code point in
+    the Private Use Area has no known character and gives nothing."""
+    try:
+        code = int(sym.get(_W + "char", ""), 16)
+    except ValueError:
+        return ""
+    if code in _PUA:
+        return ""
+    return chr(code)
 
 
 def _docx_descendants(el: Element, tag: str) -> Iterator[Element]:
@@ -636,7 +786,10 @@ def _docx_descendants(el: Element, tag: str) -> Iterator[Element]:
 
 
 @_typed_reader("XLSX")
-def _read_xlsx(data: bytes) -> Iterator[str]:
+def _read_xlsx(data: bytes, tally: _Tally) -> Iterator[str]:
+    """Every worksheet's rows. A sheet's "[Sheet: name]" line is written only
+    once it has a row, so a workbook of empty sheets is an empty read."""
+    tally.parts_not_read += _xlsx_parts_not_read(data)
     values = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     formulas = load_workbook(io.BytesIO(data), read_only=True, data_only=False)
     try:
@@ -645,16 +798,56 @@ def _read_xlsx(data: bytes) -> Iterator[str]:
             # writers get wrong; reset it so every row is read.
             ws_v.reset_dimensions()
             ws_f.reset_dimensions()
-            yield f"[Sheet: {ws_v.title}]"
+            header: str | None = f"[Sheet: {ws_v.title}]"
             rows_v = ws_v.iter_rows(values_only=True)
             rows_f = ws_f.iter_rows(values_only=True)
             for row_v, row_f in zip_longest(rows_v, rows_f, fillvalue=()):
+                if tally.out_of_time():
+                    return
                 line = _xlsx_row(row_v, row_f)
                 if line:
+                    if header is not None:
+                        yield header
+                        header = None
                     yield line
     finally:
         values.close()
         formulas.close()
+
+
+_XLSX_COMMENTS = re.compile(r"xl/comments(\d*|/[^/]+)\.xml")
+_XLSX_DRAWING = re.compile(r"xl/drawings/drawing\d+\.xml")
+_XLSX_CHARTSHEET = re.compile(r"xl/chartsheets/sheet\d+\.xml")
+_XLSX_CHARTSHEET_RELS = re.compile(r"xl/chartsheets/_rels/sheet\d+\.xml\.rels")
+
+
+def _xlsx_parts_not_read(data: bytes) -> int:
+    """What read-only openpyxl does not read, counted: each cell comment (the
+    legacy comment parts; threaded comments are mirrored there by Excel and
+    not counted twice), each worksheet drawing (pictures, charts, shapes) and
+    each chartsheet. A chartsheet's own drawing is the chartsheet, counted once.
+    A comments part that will not parse counts as one."""
+    count = 0
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        names = z.namelist()
+        chartsheet_drawings: set[str] = set()
+        for name in names:
+            if _XLSX_CHARTSHEET_RELS.fullmatch(name):
+                for target in re.findall(rb'Target="([^"]+)"', z.read(name)):
+                    chartsheet_drawings.add("xl/drawings/" + target.decode().rsplit("/", 1)[-1])
+        for name in names:
+            if _XLSX_COMMENTS.fullmatch(name):
+                try:
+                    root = safe_fromstring(z.read(name))
+                    count += sum(1 for el in root.iter() if el.tag.endswith("}comment"))
+                except Exception as exc:  # noqa: BLE001 - counted and logged
+                    count += 1
+                    _log.warning("documents.text.xlsx_comments_not_read", error=type(exc).__name__)
+            elif _XLSX_CHARTSHEET.fullmatch(name) or (
+                _XLSX_DRAWING.fullmatch(name) and name not in chartsheet_drawings
+            ):
+                count += 1
+    return count
 
 
 def _xlsx_row(row_v: tuple, row_f: tuple) -> str:
@@ -711,16 +904,39 @@ def _sanitize(text: str) -> str:
     return _CONTROLS.sub(" ", _LINE_BREAKS.sub("\n", text.lstrip("\ufeff")))
 
 
+def normalise_whitespace(text: str) -> str:
+    """Collapse every whitespace run to one character: a newline if the run
+    contains one, else a space. The redactor matches a name as its words
+    joined by `\\s+`, so after this the text as sent holds a name at exactly
+    the length of its hint, and an overlap sized from the hint covers it."""
+    return _WHITESPACE_RUN.sub(lambda m: "\n" if "\n" in m.group() else " ", text)
+
+
+_WHITESPACE_RUN = re.compile(r"\s+")
+
+
 def chunk_text(
-    text: str, *, chunk_chars: int, max_chunks: int, name_hints: Iterable[str]
+    text: str,
+    *,
+    chunk_chars: int,
+    max_chunks: int,
+    name_hints: Iterable[str],
+    client_org_name: str | None,
 ) -> ChunkPlan:
     """Split `text` into chunks of at most `chunk_chars` for per-payload calls.
 
+    Takes the literals `redact_for_ai` matches (`name_hints` and
+    `client_org_name`, usually the longest) so that no name the redactor would
+    catch whole can be cut in two by a boundary (advisor ruling, #736
+    6116519635; review round 2 of #1089):
+
+    * whitespace runs are collapsed first (`normalise_whitespace`), and the
+      plan says so; `offsets` index the NORMALISED text;
+    * adjacent chunks overlap by the longest literal, measured as its words
+      joined by single spaces, plus one character.
+
     A chunk ends at the last paragraph break in the second half of its
-    window, else the last whitespace there, else at `chunk_chars` exactly.
-    Adjacent chunks OVERLAP by the longest of `name_hints` plus one character
-    (the advisor's ruling on #736, 6116519635), so a name cut by a boundary is
-    still seen whole in the next chunk; with no hints there is no overlap. At
+    window, else the last whitespace there, else at `chunk_chars` exactly. At
     most `max_chunks` are returned; `skipped` counts the rest the text needed.
     """
     if not isinstance(text, str):
@@ -729,29 +945,31 @@ def chunk_text(
         raise ValueError(f"chunk_chars must be at least 1, got {chunk_chars}")
     if max_chunks < 1:
         raise ValueError(f"max_chunks must be at least 1, got {max_chunks}")
-    hints = [h for h in name_hints if h]
-    overlap = max(len(h) for h in hints) + 1 if hints else 0
+    literals = [" ".join(h.split()) for h in [*name_hints, client_org_name or ""]]
+    literals = [lit for lit in literals if lit]
+    overlap = max(len(lit) for lit in literals) + 1 if literals else 0
     if overlap and overlap * 2 >= chunk_chars:
         raise ValueError(
-            f"overlap of {overlap} (longest name hint + 1) needs chunk_chars above "
+            f"overlap of {overlap} (longest name literal + 1) needs chunk_chars above "
             f"{overlap * 2}, got {chunk_chars}"
         )
+    normalised = normalise_whitespace(text)
     chunks: list[str] = []
     offsets: list[int] = []
     start = 0
-    while start < len(text):
-        end = min(start + chunk_chars, len(text))
-        if end < len(text):
-            end = _chunk_end(text, start, end, chunk_chars)
+    while start < len(normalised):
+        end = min(start + chunk_chars, len(normalised))
+        if end < len(normalised):
+            end = _chunk_end(normalised, start, end, chunk_chars)
         if end <= start:
             # Every pass must consume text. Without this a bad limit loops
             # forever instead of failing.
             raise RuntimeError(
                 f"chunk_text made no progress at {start} (chunk_chars={chunk_chars})"
             )
-        chunks.append(text[start:end])
+        chunks.append(normalised[start:end])
         offsets.append(start)
-        if end == len(text):
+        if end == len(normalised):
             break
         start = max(end - overlap, start + 1)
     plan = ChunkPlan(
@@ -760,9 +978,14 @@ def chunk_text(
         skipped=max(len(chunks) - max_chunks, 0),
         overlap_chars=overlap,
         offsets=tuple(offsets[:max_chunks]),
+        whitespace_normalised=normalised != text,
     )
     _log.info(
-        "documents.text.chunked", sent=plan.sent, skipped=plan.skipped, overlap=plan.overlap_chars
+        "documents.text.chunked",
+        sent=plan.sent,
+        skipped=plan.skipped,
+        overlap=plan.overlap_chars,
+        whitespace_normalised=plan.whitespace_normalised,
     )
     return plan
 

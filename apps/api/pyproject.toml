@@ -58,8 +58,12 @@ dependencies = [
     # font limits). 6.19.0 is the newest release older than two weeks on
     # 2026-10-12; the tests pass on it and on 6.20.0.
     "pypdf>=6.19.0",
-    # openpyxl parses XLSX XML with defusedxml whenever it is importable, which
-    # refuses entity expansion in a client's workbook (app/documents/text.py).
+    # XML hardening for client workbooks and documents (app/documents/text.py).
+    # openpyxl (3.1, openpyxl/xml/functions.py) streams worksheets through
+    # `iterparse`, which is defusedxml's whenever defusedxml is importable; its
+    # `fromstring` (workbook, shared strings, styles) is lxml's with
+    # `resolve_entities=False` when lxml is installed, else defusedxml's. The
+    # DOCX reader parses every part with defusedxml directly.
     "defusedxml>=0.7.1",
 ]
 

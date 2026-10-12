@@ -19,6 +19,7 @@ never `read` with empty text (CLAUDE.md, the silent-success rule).
 from __future__ import annotations
 
 import io
+import re
 import uuid
 import zipfile
 from dataclasses import replace
@@ -34,6 +35,7 @@ from app.documents.text import (
     chunk_text,
     document_text,
     extract_limits,
+    normalise_whitespace,
 )
 from app.models.artifact import Artifact
 from app.storage.local import LocalFilesystemStorage
@@ -525,33 +527,49 @@ def test_a_storage_failure_that_is_not_a_miss_raises(store):
 
 
 def test_chunk_exact_boundary_is_one_chunk():
-    plan = chunk_text("a" * 100, chunk_chars=100, max_chunks=5, name_hints=())
-    assert plan == ChunkPlan(chunks=("a" * 100,), sent=1, skipped=0, overlap_chars=0, offsets=(0,))
+    plan = chunk_text("a" * 100, chunk_chars=100, max_chunks=5, name_hints=(), client_org_name=None)
+    assert plan == ChunkPlan(
+        chunks=("a" * 100,),
+        sent=1,
+        skipped=0,
+        overlap_chars=0,
+        offsets=(0,),
+        whitespace_normalised=False,
+    )
 
 
 def test_chunk_one_over_the_boundary_is_two_chunks():
-    plan = chunk_text("a" * 101, chunk_chars=100, max_chunks=5, name_hints=())
+    plan = chunk_text("a" * 101, chunk_chars=100, max_chunks=5, name_hints=(), client_org_name=None)
     assert plan == ChunkPlan(
-        chunks=("a" * 100, "a"), sent=2, skipped=0, overlap_chars=0, offsets=(0, 100)
+        chunks=("a" * 100, "a"),
+        sent=2,
+        skipped=0,
+        overlap_chars=0,
+        offsets=(0, 100),
+        whitespace_normalised=False,
     )
 
 
 def test_chunk_max_chunks_exceeded_counts_the_skipped():
-    plan = chunk_text("b" * 1000, chunk_chars=100, max_chunks=3, name_hints=())
+    plan = chunk_text(
+        "b" * 1000, chunk_chars=100, max_chunks=3, name_hints=(), client_org_name=None
+    )
     assert plan.sent == 3
     assert plan.skipped == 7
     assert plan.chunks == ("b" * 100,) * 3
 
 
 def test_chunk_empty_text_sends_nothing_and_skips_nothing():
-    assert chunk_text("", chunk_chars=100, max_chunks=3, name_hints=()) == ChunkPlan(
-        chunks=(), sent=0, skipped=0, overlap_chars=0, offsets=()
+    assert chunk_text(
+        "", chunk_chars=100, max_chunks=3, name_hints=(), client_org_name=None
+    ) == ChunkPlan(
+        chunks=(), sent=0, skipped=0, overlap_chars=0, offsets=(), whitespace_normalised=False
     )
 
 
 def test_chunk_breaks_at_whitespace_and_loses_nothing():
     text = "Uniform victor whiskey xray yankee zulu " * 40
-    plan = chunk_text(text, chunk_chars=50, max_chunks=1000, name_hints=())
+    plan = chunk_text(text, chunk_chars=50, max_chunks=1000, name_hints=(), client_org_name=None)
     assert plan.skipped == 0
     assert "".join(plan.chunks) == text
     assert all(len(c) <= 50 for c in plan.chunks)
@@ -560,7 +578,9 @@ def test_chunk_breaks_at_whitespace_and_loses_nothing():
 
 
 def test_chunk_hard_cuts_a_run_with_no_whitespace():
-    plan = chunk_text("c" * 250, chunk_chars=100, max_chunks=10, name_hints=())
+    plan = chunk_text(
+        "c" * 250, chunk_chars=100, max_chunks=10, name_hints=(), client_org_name=None
+    )
     assert [len(c) for c in plan.chunks] == [100, 100, 50]
 
 
@@ -570,12 +590,18 @@ def test_chunk_hard_cuts_a_run_with_no_whitespace():
 )
 def test_chunk_refuses_limits_that_cannot_hold_text(chunk_chars, max_chunks):
     with pytest.raises(ValueError):
-        chunk_text("text", chunk_chars=chunk_chars, max_chunks=max_chunks, name_hints=())
+        chunk_text(
+            "text",
+            chunk_chars=chunk_chars,
+            max_chunks=max_chunks,
+            name_hints=(),
+            client_org_name=None,
+        )
 
 
 def test_chunk_refuses_a_non_string():
     with pytest.raises(TypeError):
-        chunk_text(b"bytes", chunk_chars=10, max_chunks=1, name_hints=())  # type: ignore[arg-type]
+        chunk_text(b"bytes", chunk_chars=10, max_chunks=1, name_hints=(), client_org_name=None)  # type: ignore[arg-type]
 
 
 def test_a_large_file_chunks_end_to_end(store):
@@ -588,7 +614,11 @@ def test_a_large_file_chunks_end_to_end(store):
     _assert_read(result)
     assert result.chars_total == 43_000
     plan = chunk_text(
-        result.text, chunk_chars=limits.chunk_chars, max_chunks=limits.max_chunks, name_hints=()
+        result.text,
+        chunk_chars=limits.chunk_chars,
+        max_chunks=limits.max_chunks,
+        name_hints=(),
+        client_org_name=None,
     )
     assert plan.sent == 4
     assert plan.skipped == 6
@@ -1096,7 +1126,9 @@ def test_chunk_overlap_keeps_a_name_split_at_a_boundary_whole():
     because chunks overlap by the longest hint plus one character."""
     name = "Northwind Traders"
     text = ("word " * 8) + name + (" tail" * 30)
-    plan = chunk_text(text, chunk_chars=50, max_chunks=100, name_hints=[name, "Acme"])
+    plan = chunk_text(
+        text, chunk_chars=50, max_chunks=100, name_hints=[name, "Acme"], client_org_name=None
+    )
     start = text.index(name)
     # The precondition: some chunk boundary falls strictly inside the name.
     ends = [o + len(c) for o, c in zip(plan.offsets, plan.chunks, strict=True)]
@@ -1109,7 +1141,9 @@ def test_chunk_overlap_is_disclosed_and_offsets_locate_every_chunk():
     """A caller de-duplicating across chunks reads `offsets` and
     `overlap_chars`; each chunk is exactly the text at its offset."""
     text = "alpha bravo charlie delta echo foxtrot golf hotel india juliet " * 20
-    plan = chunk_text(text, chunk_chars=60, max_chunks=1000, name_hints=["Kilo Lima"])
+    plan = chunk_text(
+        text, chunk_chars=60, max_chunks=1000, name_hints=["Kilo Lima"], client_org_name=None
+    )
     assert plan.overlap_chars == 10
     for offset, chunk in zip(plan.offsets, plan.chunks, strict=True):
         assert text[offset : offset + len(chunk)] == chunk
@@ -1124,13 +1158,15 @@ def test_chunk_overlap_is_disclosed_and_offsets_locate_every_chunk():
 def test_chunk_prefers_a_paragraph_boundary_to_a_later_space():
     first = "Mike paragraph one runs on for a while here"
     text = first + "\n" + "November second paragraph words go on and on and on"
-    plan = chunk_text(text, chunk_chars=60, max_chunks=10, name_hints=())
+    plan = chunk_text(text, chunk_chars=60, max_chunks=10, name_hints=(), client_org_name=None)
     assert plan.chunks[0] == first + "\n"
 
 
 def test_chunk_refuses_an_overlap_that_leaves_no_progress():
     with pytest.raises(ValueError, match="overlap"):
-        chunk_text("x" * 100, chunk_chars=10, max_chunks=10, name_hints=["y" * 9])
+        chunk_text(
+            "x" * 100, chunk_chars=10, max_chunks=10, name_hints=["y" * 9], client_org_name=None
+        )
 
 
 class _Clock:
@@ -1188,3 +1224,292 @@ def test_time_cap_stops_between_pieces_for_any_reader(store, monkeypatch):
     assert result.truncated is True
     assert "Quebec row 1" in result.text
     assert "Quebec row 8" not in result.text
+
+
+# --------------------------------------------------------------------------
+# Review round 2 at 868eac00 (#1089).
+# --------------------------------------------------------------------------
+
+
+def _redactor_match(literal: str, chunk: str) -> bool:
+    r"""How the redactor finds a literal: its words joined by `\s+`
+    (app/ai/redact.py, `_literal_pattern`)."""
+    pattern = r"\s+".join(re.escape(w) for w in literal.split())
+    return re.search(pattern, chunk, re.IGNORECASE) is not None
+
+
+def test_whitespace_runs_are_collapsed_so_a_padded_name_is_not_split():
+    """ "Dana" + 14 spaces + "Whitfield" is longer than the hint. Collapsed to
+    one space before chunking, the text as sent matches the hint's length, so
+    the overlap covers it."""
+    text = ("word " * 6) + "Dana" + " " * 14 + "Whitfield" + (" tail" * 40)
+    plan = chunk_text(
+        text, chunk_chars=50, max_chunks=100, name_hints=["Dana Whitfield"], client_org_name=None
+    )
+    assert plan.whitespace_normalised is True
+    assert any(_redactor_match("Dana Whitfield", c) for c in plan.chunks)
+
+
+def test_whitespace_normalising_keeps_line_breaks_and_says_when_nothing_changed():
+    assert normalise_whitespace("a \t b\n\n  c") == "a b\nc"
+    plan = chunk_text(
+        "one two\nthree", chunk_chars=50, max_chunks=5, name_hints=(), client_org_name=None
+    )
+    assert plan.whitespace_normalised is False
+
+
+def test_overlap_is_sized_from_the_client_legal_name_too():
+    """The legal name is usually the longest literal the redactor matches;
+    the overlap covers it even when every user hint is shorter."""
+    org = "Northwind Traders International Holdings"
+    text = ("word " * 12) + org + (" tail" * 40)
+    plan = chunk_text(
+        text, chunk_chars=100, max_chunks=100, name_hints=["Acme"], client_org_name=org
+    )
+    assert plan.overlap_chars == len(org) + 1
+    start = text.index(org)
+    ends = [o + len(c) for o, c in zip(plan.offsets, plan.chunks, strict=True)]
+    assert any(start < e < start + len(org) for e in ends), ends
+    assert any(_redactor_match(org, c) for c in plan.chunks)
+
+
+def test_overlap_measures_a_hint_by_its_words_not_its_padding():
+    plan = chunk_text(
+        "x " * 100,
+        chunk_chars=50,
+        max_chunks=100,
+        name_hints=["  Dana    Whitfield "],
+        client_org_name=None,
+    )
+    assert plan.overlap_chars == len("Dana Whitfield") + 1
+
+
+def _docx_with_run(run_xml: str) -> bytes:
+    return _docx_xml(f"<w:p>{run_xml}</w:p>")
+
+
+def test_docx_picture_smartart_and_chart_are_counted(store):
+    pic = (
+        '<w:r><w:drawing><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+        '<a:graphicData><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"/>'
+        "</a:graphicData></a:graphic></w:drawing></w:r>"
+    )
+    smart = (
+        '<w:r><w:drawing><dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram"/>'
+        "</w:drawing></w:r>"
+    )
+    chart = (
+        '<w:r><w:drawing><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"/>'
+        "</w:drawing></w:r>"
+    )
+    result = _docx_text(store, _p("Figure words") + f"<w:p>{pic}{smart}{chart}</w:p>")
+    _assert_read(result)
+    assert "Figure words" in result.text
+    assert result.parts_not_read == 3
+
+
+def test_docx_whose_only_content_is_a_picture_is_not_an_empty_read(store):
+    """Mirrors the PDF: content this reader cannot read and no text is
+    `no_text_layer`, never a plain `read` with nothing in it."""
+    pic = (
+        '<w:p><w:r><w:drawing><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"/>'
+        "</w:drawing></w:r></w:p>"
+    )
+
+    def edit(name: str, raw: bytes) -> bytes:
+        if name != "word/document.xml":
+            return raw
+        text = raw.decode()
+        head, rest = text.split("<w:body>", 1)
+        _, tail = rest.split("<w:sectPr", 1)
+        return (head + "<w:body>" + pic + "<w:sectPr" + tail).encode()
+
+    data = _rewrite_zip(_docx(paragraphs=[]), edit)
+    _assert_not_read(store.read(data, title="photo.docx", mime=DOCX), "no_text_layer")
+
+
+def test_docx_run_elements_become_their_characters(store):
+    run = (
+        "<w:r><w:t>Jean</w:t><w:noBreakHyphen/><w:t>Pierre</w:t></w:r>"
+        '<w:r><w:ptab w:relativeTo="margin" w:alignment="right" w:leader="none"/><w:t>Right</w:t></w:r>'
+        '<w:r><w:sym w:font="Arial" w:char="00A9"/><w:t>Mark</w:t></w:r>'
+    )
+    result = _docx_text(store, f"<w:p>{run}</w:p>")
+    _assert_read(result)
+    assert "Jean-Pierre\tRight©Mark" in result.text
+
+
+def test_docx_placeholder_text_is_not_read(store):
+    body = (
+        "<w:sdt><w:sdtPr><w:showingPlcHdr/></w:sdtPr><w:sdtContent>"
+        + _p("Click or tap here to enter text.")
+        + "</w:sdtContent></w:sdt>"
+        + "<w:p><w:sdt><w:sdtPr><w:showingPlcHdr/></w:sdtPr><w:sdtContent>"
+        "<w:r><w:t>Choose an item.</w:t></w:r></w:sdtContent></w:sdt>"
+        "<w:r><w:t> Real words</w:t></w:r></w:p>"
+    )
+    result = _docx_text(store, body)
+    _assert_read(result)
+    assert "Click or tap" not in result.text
+    assert "Choose an item" not in result.text
+    assert "Real words" in result.text
+
+
+def test_docx_hidden_text_and_ruby_annotations_are_excluded_and_counted(store):
+    """Hidden runs and ruby (pronunciation) text are not what a reader of the
+    document sees, so they are not quoted as evidence; each is counted."""
+    body = (
+        "<w:p><w:r><w:t>Shown words </w:t></w:r>"
+        "<w:r><w:rPr><w:vanish/></w:rPr><w:t>Hidden words</w:t></w:r>"
+        "<w:r><w:ruby><w:rt><w:r><w:t>reading</w:t></w:r></w:rt>"
+        "<w:rubyBase><w:r><w:t>Base</w:t></w:r></w:rubyBase></w:ruby></w:r></w:p>"
+    )
+    result = _docx_text(store, body)
+    _assert_read(result)
+    assert "Shown words Base" in result.text
+    assert "Hidden words" not in result.text
+    assert "reading" not in result.text
+    assert result.parts_not_read == 2
+
+
+def test_docx_run_switched_back_on_is_not_hidden(store):
+    body = '<w:p><w:r><w:rPr><w:vanish w:val="0"/></w:rPr><w:t>Visible again</w:t></w:r></w:p>'
+    result = _docx_text(store, body)
+    _assert_read(result)
+    assert "Visible again" in result.text
+    assert result.parts_not_read == 0
+
+
+def test_xlsx_comments_drawings_and_chartsheets_are_counted(store):
+    from openpyxl import Workbook
+    from openpyxl.chart import BarChart, Reference
+    from openpyxl.comments import Comment
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    for row in (["Name", "Count"], ["Romeo", 3], ["Sierra", 4]):
+        ws.append(row)
+    ws["A2"].comment = Comment("Comment the reader skips", "author")
+    chart = BarChart()
+    chart.add_data(Reference(ws, min_col=2, min_row=1, max_row=3), titles_from_data=True)
+    ws.add_chart(chart, "D2")
+    cs = wb.create_chartsheet("Chart")
+    chart2 = BarChart()
+    chart2.add_data(Reference(ws, min_col=2, min_row=1, max_row=3), titles_from_data=True)
+    cs.add_chart(chart2)
+    buf = io.BytesIO()
+    wb.save(buf)
+    names = zipfile.ZipFile(io.BytesIO(buf.getvalue())).namelist()
+    assert any(n.startswith("xl/chartsheets/") for n in names), names
+
+    result = store.read(buf.getvalue(), title="charts.xlsx", mime=XLSX)
+    _assert_read(result)
+    assert "Romeo\t3" in result.text
+    assert "Comment the reader skips" not in result.text
+    # one comment, the worksheet's drawing, and the chartsheet
+    assert result.parts_not_read == 3
+
+
+def test_xlsx_with_only_empty_sheets_is_read_and_empty(store):
+    result = store.read(_xlsx({"Blank": []}), title="blank.xlsx", mime=XLSX)
+    _assert_read(result)
+    assert result.text == ""
+
+
+def test_pdf_annotation_text_is_read_like_a_comment(store):
+    from pypdf import PdfReader, PdfWriter
+    from pypdf.annotations import FreeText
+
+    writer = PdfWriter(clone_from=PdfReader(io.BytesIO(_pdf(["Tango annotated page"]))))
+    writer.add_annotation(
+        page_number=0, annotation=FreeText(text="Uniform reviewer note", rect=(50, 500, 300, 550))
+    )
+    out = io.BytesIO()
+    writer.write(out)
+    result = store.read(out.getvalue(), title="annot.pdf", mime=PDF)
+    _assert_read(result)
+    assert "Tango annotated page" in result.text
+    assert "Uniform reviewer note" in result.text
+
+
+def test_pdf_embedded_file_is_counted(store):
+    from pypdf import PdfReader, PdfWriter
+
+    writer = PdfWriter(clone_from=PdfReader(io.BytesIO(_pdf(["Victor host page"]))))
+    writer.add_attachment("inner.txt", b"Whiskey attached text")
+    out = io.BytesIO()
+    writer.write(out)
+    result = store.read(out.getvalue(), title="attach.pdf", mime=PDF)
+    _assert_read(result)
+    assert "Victor host page" in result.text
+    assert result.parts_not_read == 1
+
+
+def test_time_cap_fires_on_rows_that_yield_nothing(store, monkeypatch):
+    """A styled empty cell in column XFD on every row makes each row a
+    16,384-wide tuple and yields no text; the clock is still read per row."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    import app.documents.text as text_module
+
+    wb = Workbook()
+    ws = wb.active
+    for r in range(1, 41):
+        ws.cell(row=r, column=16384).font = Font(bold=True)
+    ws.cell(row=41, column=1, value="Xray late cell")
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    monkeypatch.setattr(text_module, "_clock", _Clock(step=10.0))
+    result = store.read(
+        buf.getvalue(), title="wide.xlsx", mime=XLSX, limits=replace(LIMITS, max_seconds=55.0)
+    )
+    _assert_not_read(result, "too_large")
+
+
+def test_time_cap_fires_between_docx_paragraphs(store, monkeypatch):
+    import app.documents.text as text_module
+
+    """Empty paragraphs yield no text, so only a per-paragraph clock check can
+    stop a document made of them."""
+    monkeypatch.setattr(text_module, "_clock", _Clock(step=10.0))
+    body = "<w:p/>" * 60 + _p("Yankee late paragraph")
+
+    def edit(name: str, raw: bytes) -> bytes:
+        if name != "word/document.xml":
+            return raw
+        text = raw.decode()
+        head, rest = text.split("<w:body>", 1)
+        _, tail = rest.split("<w:sectPr", 1)
+        return (head + "<w:body>" + body + "<w:sectPr" + tail).encode()
+
+    data = _rewrite_zip(_docx(paragraphs=[]), edit)
+    result = store.read(
+        data, title="long.docx", mime=DOCX, limits=replace(LIMITS, max_seconds=45.0)
+    )
+    _assert_not_read(result, "too_large")
+
+
+def test_text_starting_bm_is_text_not_a_bitmap(store):
+    result = store.read(b"BMS ID,Location\n1,Zulu site\n", title="sites.csv", mime="text/csv")
+    _assert_read(result)
+    assert result.text == "BMS ID,Location\n1,Zulu site\n"
+
+
+def test_a_real_bitmap_header_is_unsupported_type(store):
+    header_len = 54
+    pixels = b"\x00" * 16
+    size = header_len + len(pixels)
+    bmp = (
+        b"BM"
+        + size.to_bytes(4, "little")
+        + b"\x00\x00\x00\x00"
+        + header_len.to_bytes(4, "little")
+        + (40).to_bytes(4, "little")
+        + b"\x00" * 36
+        + pixels
+    )
+    assert len(bmp) == size
+    _assert_not_read(store.read(bmp, title="pic.bmp", mime="image/bmp"), "unsupported_type")
