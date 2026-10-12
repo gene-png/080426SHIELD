@@ -537,7 +537,13 @@ def test_an_archived_only_zero_trust_locks_the_register(app_client) -> None:  # 
     assert after["missing"] == ["a CSF or Zero Trust assessment"], after["missing"]
     r = c.post(f"/risk/clients/{cid}/register/generate", headers=h)
     assert r.status_code == 409, r.text
-    assert "a CSF or Zero Trust assessment" in r.text, r.text
+    # #1081: the locked copy, (D) for the archived Zero Trust service.
+    err = r.json()["error"]
+    assert err["reason"] == "risk_register_locked", err
+    assert err["message"].startswith(
+        "Acme's Zero Trust Assessment (CISA ZTMM 2.0) assessment is under an archived "
+        "service, and an archived service cannot be restored."
+    ), err
 
 
 def test_an_archived_zero_trust_contributes_no_findings(app_client) -> None:  # noqa: F811
