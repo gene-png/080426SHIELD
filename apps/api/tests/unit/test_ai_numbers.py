@@ -791,3 +791,41 @@ def test_a_protected_value_with_a_touched_digit_edge_is_not_masked(
     protected = tuple(payload)
     allowed = allowed_numbers(payload, fact_fields=(), protected_fields=protected)
     assert [h.raw for h in unallowed_numbers(text, allowed)] == refused
+
+
+# --- Review round 9 of #1088: the digit edge touches only joining forms ----------
+
+
+@pytest.mark.parametrize(
+    "text,payload,refused",
+    [
+        # Fix 1: an acronym or a spaced dash after the edge is NOT a number form.
+        ("Microsoft 365 MFA is on.", {"product": "Microsoft 365"}, []),
+        ("Windows 10 PCs are managed.", {"product": "Windows 10"}, []),
+        ("ISO 27001 ISMS applies.", {"std": "ISO 27001"}, []),
+        ("Windows 10 – see below.", {"product": "Windows 10"}, []),
+        # A spaced dash does not join, so it does not reach the word after it.
+        ("Windows 10 – million users.", {"product": "Windows 10"}, ["million"]),
+        # Fix 2: a digit-comma-digit after the edge touches it.
+        ("Microsoft 365,000 users.", {"product": "Microsoft 365"}, ["365,000"]),
+        ("Windows 10,5% upgraded.", {"product": "Windows 10"}, ["10,5%"]),
+        # Fix 3: a "×" after the edge, attached or spaced, touches it.
+        ("Office 365× growth.", {"product": "Office 365"}, ["365×"]),
+        ("Office 365 × growth.", {"product": "Office 365"}, ["365 ×"]),
+        # Fix 4: the any-case magnitude and percent-word branches.
+        ("Windows 10 mill users.", {"product": "Windows 10"}, ["10 mill"]),
+        ("Windows 10 percent upgraded.", {"product": "Windows 10"}, ["10 percent"]),
+        ("Windows 10 pct upgraded.", {"product": "Windows 10"}, ["10 pct"]),
+        # Fix 4: one clean occurrence is masked, a touched one is checked.
+        ("Windows 10 runs; Windows 10% upgraded.", {"product": "Windows 10"}, ["10%"]),
+    ],
+)
+def test_round_nine_digit_edge(text: str, payload: dict, refused: list[str]) -> None:
+    allowed = allowed_numbers(payload, fact_fields=(), protected_fields=tuple(payload))
+    assert [h.raw for h in unallowed_numbers(text, allowed)] == refused
+
+
+def test_a_declared_dotted_path_is_matched_by_whole_segments() -> None:
+    # Advisory 5: declaring "a.b" does not make the key "a.bc" ambiguous.
+    allowed = allowed_numbers({"a.bc": 1, "a": {"b": 2}}, fact_fields=("a.b",), protected_fields=())
+    assert unallowed_numbers("2 apply.", allowed) == ()

@@ -281,19 +281,27 @@ def _protected_spans(text: str, protected: frozenset[str]) -> list[tuple[int, in
     return spans
 
 
-_NEXT_WORD = re.compile(r"[\s" + re.escape(_DASHES) + r"]+(\w+)")
+# The next word after whitespace ONLY: a spaced dash ("Windows 10 – see
+# below") does not join, so it does not touch the edge either.
+_NEXT_WORD = re.compile(r"\s+(\w+)")
 
 
 def _edge_touched(text: str, start: int, end: int) -> bool:
     """Whether a protected match has a DIGIT at an edge that a number form
     touches (#1088 round 8). Masking it would hide a number the text states:
     "Windows 10%" for protected "Windows 10", "$40 hosts" for "40 hosts".
-    After a trailing digit: a percent mark (across any whitespace), or a
-    magnitude, unit or scale word. Before a leading digit: a currency mark or
-    a sign. Such a match is NOT masked, so the number is checked."""
+    The edge counts as touched ONLY where `_joins` would join (#1088 round 9),
+    so an acronym after it ("Microsoft 365 MFA", "Windows 10 PCs") does not
+    unmask it. After a trailing digit: a percent mark or "×" (attached or
+    across whitespace), a digit separator then a digit ("365,000", "10,5"),
+    or, across whitespace, a magnitude, scale or percent word. Before a
+    leading digit: a currency mark or a sign. Such a match is NOT masked, so
+    the number is checked."""
     if _is_numeric_char(text[end - 1]):
         rest = text[end:]
-        if re.match(rf"\s*[{_PERCENT}]", rest):
+        if re.match(rf"\s*[{_PERCENT}\u00d7]", rest):
+            return True
+        if re.match(r"[,.:]\d", rest):
             return True
         m = _NEXT_WORD.match(rest)
         if m and _is_magnitude_like(m.group(1)):
@@ -307,12 +315,13 @@ def _edge_touched(text: str, start: int, end: int) -> bool:
 
 def _is_magnitude_like(word: str) -> bool:
     low = word.casefold()
+    # Not `_is_unit_shape`: a short unit joins a numeral, but the edge test
+    # must not unmask a protected value for an acronym after it (round 9).
     return (
         word in _MAGNITUDES
         or low in _MAGNITUDES_ANY_CASE
         or low in _SCALE_WORDS
         or low in ("percent", "pct")
-        or _is_unit_shape(word)
     )
 
 
