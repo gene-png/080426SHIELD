@@ -19,6 +19,11 @@ Driven through the routes: the Tech Debt approve route and the what-if run
 world. Times are moved by direct SQL only to place v1's upload and approval
 BEFORE the base's approval, a state the routes reach whenever a consultant
 approves the Tech Debt list before the ATT&CK assessment.
+
+Audit rows are moved the same way, by a Core `update(AuditEntry)`. That
+BYPASSES `_block_audit_mutations` (`app/models/audit_entry.py`), which
+inspects only ORM-dirty instances in a flush; production code can never do
+this, and these tests do it only to place a route-written row in time.
 """
 
 from __future__ import annotations
@@ -82,7 +87,9 @@ def _v1_approved_before_the_base(w: World) -> uuid.UUID:
 
 def _approve_before_the_base(w: World, list_id: uuid.UUID) -> None:
     """Approve `list_id` through the route, then place its upload, rows and
-    approval an hour before the base's approval."""
+    approval an hour before the base's approval. The approval's audit row is
+    moved by a Core update, which bypasses `_block_audit_mutations` (see the
+    module docstring)."""
     v1 = list_id
     _approve(w, v1)
     with w.sessions() as db:
@@ -384,7 +391,9 @@ def _confirm(w: World, item_id: uuid.UUID) -> None:
 
 def _mail_confirmed_out_before_the_base(w: World) -> None:
     """MAIL confirmed NOT security through the confirm route, its sign-off
-    then placed an hour before the base: out of scope at the base."""
+    then placed an hour before the base: out of scope at the base. The
+    sign-off's audit row is moved by a Core update, which bypasses
+    `_block_audit_mutations` (see the module docstring)."""
     item_id = _mail_on_v1_before_the_base(w)
     _confirm(w, item_id)
     with w.sessions() as db:
@@ -442,3 +451,66 @@ def test_the_first_override_decides_not_the_latest(app_parts) -> None:  # noqa: 
     _re_extracted_v2(w, [EDR, SIEM, SOAR, MAIL])
     body = _what_if(w, {w.cc: [_flags(w.cc, MAIL, d=True)]})
     assert body["tools_added_since_base"] == 0, body["tools_added_since_base"]
+
+
+def test_a_row_confirmed_out_with_no_confirmation_on_record_reads_null(
+    app_parts,  # noqa: F811
+) -> None:
+    """A RATCHET, not a live case: the confirm route sets the flag and writes
+    its audit row together, and no other writer sets the flag, so the state
+    is built here by hand. MAIL, on the draft in force at the base, is
+    confirmed out of scope NOW with no confirmation on record, so its scope
+    at the base cannot be placed: null, never a guess."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    item_id = _mail_on_v1_before_the_base(w)
+    with w.sessions() as db:
+        db.get(CapabilityItem, item_id).security_class_confirmed = True
+        db.commit()
+        trail = db.execute(select(AuditEntry).where(AuditEntry.target_id == item_id)).all()
+    assert trail == []  # the precondition: no confirmation on record
+    body = _what_if(w, {w.cc: [_flags(w.cc, SIEM, d=True)]})
+    assert body["run_status"] == "completed", body["run_status"]
+    assert body["after"] is not None
+    assert body["tools_added_since_base"] is None, body["tools_added_since_base"]
+
+
+def test_a_not_in_use_row_removed_before_the_base_and_overridden_since_is_added(
+    app_parts,  # noqa: F811
+) -> None:
+    """#845's variant of the confirm route: MAIL, a security tool the
+    extraction marked NOT IN USE, is confirmed out of ATT&CK scope a day
+    before the base (the route records it as removed from ATT&CK scope), so
+    it was offered to nobody. Overridden into scope after the base, it is new
+    to the AI."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    with w.sessions() as db:
+        base_at = db.get(AttackAssessment, uuid.UUID(w.assessment_id)).approved_at
+        db.add(
+            CapabilityItem(
+                capability_list_id=_v1_id(w),
+                name=MAIL,
+                security_related=False,
+                notes="Security tool not in use: licensed, never deployed.",
+                created_at=base_at - timedelta(days=2),
+            )
+        )
+        db.commit()
+    item_id = _item(w, _v1_id(w), MAIL)
+    _confirm(w, item_id)
+    with w.sessions() as db:
+        # Core update: bypasses `_block_audit_mutations` (module docstring).
+        moved = db.execute(
+            update(AuditEntry)
+            .where(
+                AuditEntry.target_id == item_id,
+                AuditEntry.action == "capability_item.removed_from_attack_scope",
+            )
+            .values(at=base_at - timedelta(days=1))
+        ).rowcount
+        assert moved == 1, moved  # the route recorded the not-in-use removal
+        db.commit()
+    _override(w, item_id)  # after the base
+    body = _what_if(w, {w.cc: [_flags(w.cc, MAIL, d=True)]})
+    assert body["tools_added_since_base"] == 1, body["tools_added_since_base"]
+    marks = {d["technique_code"]: d["credited_added_tool"] for d in body["differences"]}
+    assert marks[w.cc] is True, marks

@@ -11,7 +11,8 @@ list version IN FORCE at the base's approval, by the R6b rule
   tool; its drafts are ignored;
 * otherwise the newest version that existed then and had not been
   discarded -- a draft at that moment, even if approved since -- read as its
-  rows created by then and in security scope now.
+  rows created by then and in security scope AT THAT MOMENT (`in_scope_at`,
+  the advisor's (ii) below).
 
 Plus the tools the base itself cites: it credited them, so they are not new
 to it.
@@ -39,16 +40,22 @@ whatever happened to its classification afterwards.
 Limits, stated rather than hidden:
 
 * a draft row's scope at the base is rebuilt from the audit trail, so a
-  confirmation or override written without its audit row is invisible. A
-  row confirmed out of scope NOW with no confirmation on record reads
-  "cannot be checked"; one confirmed and then overridden, both unaudited,
-  reads as in scope at the base. The earlier overcount from an override on a
-  row ALREADY in scope (a provisional negative, or re-picking an in-scope
-  row's functions) is gone: such a row was in scope at the base;
+  confirmation or override written without its audit row would be
+  invisible. No current writer produces one for a confirmation: the confirm
+  flag and its audit row were added together (faa8a781, with migration
+  0038), the confirm route writes both in one transaction, and nothing else
+  sets the flag. `in_scope_at`'s "confirmed with no confirmation on record"
+  branch ("cannot be checked") is therefore a SAFEGUARD against a future
+  writer (a restore, an import, a backfill), not a live case; a row
+  confirmed and then overridden, both unaudited, would read as in scope at
+  the base. The earlier overcount from an override on a row ALREADY in
+  scope (a provisional negative, or re-picking an in-scope row's functions)
+  is gone: such a row was in scope at the base;
 * a RENAME after the base is missed when the old name reached the basis,
   and reads as added when it did not;
 * R4 (b) is applied at the base's moment by the snapshot naming a tool, and
-  for a draft by its rows created by then being in scope now.
+  for a draft by its rows created by then being in security scope at that
+  moment (`in_scope_at`).
 """
 
 from __future__ import annotations
@@ -105,6 +112,12 @@ def in_scope_at(row: DraftRow, at: datetime) -> bool:
     if row.first_confirmed_at is not None:
         return _aware(row.first_confirmed_at) > at
     if row.security_related is False and row.confirmed:
+        # A SAFEGUARD, not a live case: no current writer sets the confirm
+        # flag without its audit row (the confirm route writes both in one
+        # transaction, and they were added together in faa8a781 with
+        # migration 0038), so nothing reaches this today. A writer that set
+        # the flag alone (a restore, an import, a backfill) would; its row
+        # cannot be placed in time, so the answer is "cannot be checked".
         raise _Unknown(f"row {row.name!r}: confirmed out of scope with no record of when")
     return True
 

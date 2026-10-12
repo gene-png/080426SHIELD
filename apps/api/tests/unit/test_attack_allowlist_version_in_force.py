@@ -270,3 +270,145 @@ def test_a_superseded_versions_approved_snapshot_is_withheld_too(app_parts) -> N
     result = _run(w, V1_TOOL)
     assert result["citations_confirmed"] == 0, result
     assert result["citations_rejected"] == len(w.codes), result
+
+
+LATE_TOOL = "Darktrace Enterprise"
+
+
+def _v1_approved_through_the_route_with_a_late_row(w: World) -> None:
+    """v1 approved THROUGH THE ROUTE (its snapshot holds V1_TOOL), then a
+    security row added to it after approval, so the live row is absent from
+    the snapshot."""
+    from app.models.capability import CapabilityDisposition
+
+    v1 = _v1(w)
+    with w.sessions() as db:
+        cl = db.get(CapabilityList, v1.id)
+        cl.status = CapabilityListStatus.DRAFT
+        for item in db.execute(
+            select(CapabilityItem).where(CapabilityItem.capability_list_id == v1.id)
+        ).scalars():
+            item.disposition = CapabilityDisposition.KEEP
+            item.security_related = True
+        db.commit()
+    r = w.c.post(f"/tech-debt/capability-lists/{v1.id}/approve", headers=w.h)
+    assert r.status_code == 200, r.text
+    with w.sessions() as db:
+        db.add(CapabilityItem(capability_list_id=v1.id, name=LATE_TOOL, security_related=True))
+        db.commit()
+        snapshot = db.get(CapabilityList, v1.id).approved_membership
+    assert [e["name"] for e in snapshot] == [V1_TOOL], snapshot
+
+
+def test_a_late_row_on_a_version_in_force_reads_absent_from_the_snapshot(
+    app_parts,  # noqa: F811
+) -> None:
+    """The POSITIVE control for the test below: while v1 IS in force, its
+    late row is withheld as absent from the snapshot, which re-approving v1
+    does clear."""
+    w = _runs_world(app_parts)
+    _v1_approved_through_the_route_with_a_late_row(w)
+    body = _inputs(w)
+    assert [c["name"] for c in body["capabilities"]] == [V1_TOOL], body["capabilities"]
+    assert {d["name"]: d["reason"] for d in body["not_sent"]} == {
+        LATE_TOOL: "not_in_approved_snapshot"
+    }, body["not_sent"]
+
+
+def test_a_late_row_on_a_version_not_in_force_is_withheld_as_not_in_force(
+    app_parts,  # noqa: F811
+) -> None:
+    """v1 and v2 are both APPROVED, so v2 is in force. A tool added to v1
+    after its approval is absent from v1's snapshot, but re-approving v1
+    would change nothing: v1 is not in force. The reason is the version, not
+    the snapshot, so the panel never tells the consultant to re-approve v1."""
+    w = _runs_world(app_parts)
+    _v1_approved_through_the_route_with_a_late_row(w)
+    _add_version(w, [NEW_TOOL], status=CapabilityListStatus.APPROVED)
+    body = _inputs(w)
+    assert [c["name"] for c in body["capabilities"]] == [NEW_TOOL], body["capabilities"]
+    withheld = {d["name"]: (d["reason"], d["source_list_version"]) for d in body["not_sent"]}
+    assert withheld == {V1_TOOL: (NOT_IN_FORCE, 1), LATE_TOOL: (NOT_IN_FORCE, 1)}, body["not_sent"]
+    assert body["totals"]["withheld_not_in_approved_snapshot"] == 0, body["totals"]
+    assert body["totals"]["withheld_version_not_in_force"] == 2, body["totals"]
+
+
+def test_a_late_tool_on_two_versions_out_of_force_is_withheld_as_not_in_force(
+    app_parts,  # noqa: F811
+) -> None:
+    """The late tool sits on v1 (not in force, absent from v1's snapshot) and
+    on v3 (an open draft beside approved versions: not in force) and nowhere
+    on v2. Both lists are out of force, so the tool is withheld as not in
+    force whichever list is read first, never as absent from a snapshot."""
+    w = _runs_world(app_parts)
+    _v1_approved_through_the_route_with_a_late_row(w)
+    _add_version(w, [NEW_TOOL], status=CapabilityListStatus.APPROVED)
+    _add_version(w, [LATE_TOOL], status=CapabilityListStatus.DRAFT, version=3)
+    body = _inputs(w)
+    reasons = {d["name"]: d["reason"] for d in body["not_sent"]}
+    assert reasons == {V1_TOOL: NOT_IN_FORCE, LATE_TOOL: NOT_IN_FORCE}, body["not_sent"]
+
+
+# ---------------------------------------------------------------------------
+# The precedence between two reports of one withheld tool, as a table
+# ---------------------------------------------------------------------------
+
+# Written from the rule, not read from the module: between lists equally in
+# force, absent-from-snapshot beats not-in-force beats discarded beats
+# out-of-scope; the same reason twice keeps the first report.
+_SNAP, _NIF, _DISC, _SCOPE = (
+    "not_in_approved_snapshot",
+    "version_not_in_force",
+    "list_discarded",
+    "security_scope",
+)
+_KEPT = {
+    (_SNAP, _SNAP): "held",
+    (_SNAP, _NIF): "held",
+    (_SNAP, _DISC): "held",
+    (_SNAP, _SCOPE): "held",
+    (_NIF, _SNAP): "later",
+    (_NIF, _NIF): "held",
+    (_NIF, _DISC): "held",
+    (_NIF, _SCOPE): "held",
+    (_DISC, _SNAP): "later",
+    (_DISC, _NIF): "later",
+    (_DISC, _DISC): "held",
+    (_DISC, _SCOPE): "held",
+    (_SCOPE, _SNAP): "later",
+    (_SCOPE, _NIF): "later",
+    (_SCOPE, _DISC): "later",
+    (_SCOPE, _SCOPE): "held",
+}
+
+
+def _report(reason: str, list_id: uuid.UUID):
+    from app.routes.attack import WithheldCapability
+
+    return WithheldCapability(
+        name="Tool", vendor=None, reason=reason, capability_list_id=list_id, list_version=1
+    )
+
+
+def test_the_precedence_table_covers_every_pair() -> None:
+    assert len(_KEPT) == 16
+    assert {a for a, _ in _KEPT} == {_SNAP, _NIF, _DISC, _SCOPE}
+
+
+@pytest.mark.parametrize(("held", "later"), sorted(_KEPT))
+def test_between_lists_equally_in_force_the_table_decides(held: str, later: str) -> None:
+    from app.routes.attack import _withheld_replaces
+
+    a, b = uuid.uuid4(), uuid.uuid4()
+    for in_force in (frozenset({a, b}), frozenset()):
+        replaced = _withheld_replaces(_report(held, a), _report(later, b), in_force)
+        assert replaced is (_KEPT[(held, later)] == "later"), (held, later, in_force)
+
+
+@pytest.mark.parametrize(("held", "later"), sorted(_KEPT))
+def test_a_report_from_the_list_in_force_always_wins(held: str, later: str) -> None:
+    from app.routes.attack import _withheld_replaces
+
+    a, b = uuid.uuid4(), uuid.uuid4()
+    assert _withheld_replaces(_report(held, a), _report(later, b), frozenset({b})) is True
+    assert _withheld_replaces(_report(held, a), _report(later, b), frozenset({a})) is False

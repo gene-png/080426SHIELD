@@ -1092,6 +1092,64 @@ WITHHELD_LIST_DISCARDED = "list_discarded"
 # already reads it.
 WITHHELD_VERSION_NOT_IN_FORCE = "version_not_in_force"
 
+#: Which reason reports a tool withheld on TWO lists, both from lists equally
+#: in force (see `_withheld_replaces` for the tier above this table). Keyed
+#: (the reason already held, the later one); the value is the reason kept.
+#: Every pair is written out, the diagonal included, so a fifth reason is a
+#: KeyError rather than a silent first-seen (#232; CLAUDE.md's "a rule you
+#: have rewritten three times" -- this replaced an elif chain).
+#:
+#: The order it encodes: absent from the snapshot, then not in force, then
+#: discarded, then out of security scope. `security_scope` loses to every
+#: other reason because each of those is given only to a copy that is IN
+#: scope, which proves the out-of-scope ruling is not universal. Of the three
+#: in-scope reasons, the snapshot one is the only one the consultant clears by
+#: re-approving, and since #1012 it is given only on a version in force; a
+#: version still on record outranks a discarded one, whose copy is gone.
+_SNAP, _NIF, _DISC, _SCOPE = (
+    WITHHELD_NOT_IN_APPROVED_SNAPSHOT,
+    WITHHELD_VERSION_NOT_IN_FORCE,
+    WITHHELD_LIST_DISCARDED,
+    WITHHELD_SECURITY_SCOPE,
+)
+_WITHHELD_PRECEDENCE: dict[tuple[str, str], str] = {
+    (_SNAP, _SNAP): _SNAP,
+    (_SNAP, _NIF): _SNAP,
+    (_SNAP, _DISC): _SNAP,
+    (_SNAP, _SCOPE): _SNAP,
+    (_NIF, _SNAP): _SNAP,
+    (_NIF, _NIF): _NIF,
+    (_NIF, _DISC): _NIF,
+    (_NIF, _SCOPE): _NIF,
+    (_DISC, _SNAP): _SNAP,
+    (_DISC, _NIF): _NIF,
+    (_DISC, _DISC): _DISC,
+    (_DISC, _SCOPE): _DISC,
+    (_SCOPE, _SNAP): _SNAP,
+    (_SCOPE, _NIF): _NIF,
+    (_SCOPE, _DISC): _DISC,
+    (_SCOPE, _SCOPE): _SCOPE,
+}
+
+
+def _withheld_replaces(
+    held: WithheldCapability, later: WithheldCapability, in_force: frozenset[uuid.UUID]
+) -> bool:
+    """Does `later` replace `held` as the one report for a withheld tool?
+
+    Two tiers. First, the version in force decides (#1012): a reason from a
+    list in force replaces one from a list that is not, and never the
+    reverse, because an older version holding a tool says nothing about why
+    the current one does not offer it. Then, between lists equally in force,
+    `_WITHHELD_PRECEDENCE`. On a tie the earlier report stands (the caller
+    sorts, so the choice is deterministic)."""
+    held_in = held.capability_list_id in in_force
+    later_in = later.capability_list_id in in_force
+    if held_in != later_in:
+        return later_in
+    kept = _WITHHELD_PRECEDENCE[(held.reason, later.reason)]
+    return kept != held.reason
+
 
 @dataclass(frozen=True)
 class CapabilityMembership:
@@ -1549,6 +1607,22 @@ def _client_capability_membership(
     pairs: list[_MergeCandidate] = []
     dropped: list[WithheldCapability] = []
 
+    def _list_level_reason(cap_list: CapabilityList) -> str | None:
+        """Why this LIST offers nothing, or None when it is offered.
+
+        A list-level reason outranks a row's own state wherever the row would
+        otherwise be citable: a discarded list, then a version that is not in
+        force (#1012). One statement, read by `_offer` and by the snapshot
+        loop's late rows, so a row absent from a snapshot on a version not in
+        force is never told to re-approve that version: re-approving it
+        changes nothing while another version is in force.
+        """
+        if cap_list.status == CapabilityListStatus.DISCARDED:
+            return WITHHELD_LIST_DISCARDED
+        if cap_list.id not in in_force:
+            return WITHHELD_VERSION_NOT_IN_FORCE
+        return None
+
     def _offer(
         cap_list: CapabilityList,
         name: str,
@@ -1606,28 +1680,17 @@ def _client_capability_membership(
         in the other. A guard written twice is two statements of one rule, and
         they agree only until somebody edits one of them.
         """
-        if cap_list.status == CapabilityListStatus.DISCARDED:
+        # A discarded list, or (#1012) a version that is not in force for its
+        # service: the row is not offered. Recorded, never silently skipped:
+        # the panel names it, and only a row that would otherwise be citable
+        # gets a list-level reason (an out-of-scope row keeps its own).
+        list_reason = _list_level_reason(cap_list)
+        if list_reason is not None:
             dropped.append(
                 WithheldCapability(
                     name=name,
                     vendor=vendor,
-                    reason=WITHHELD_LIST_DISCARDED,
-                    capability_list_id=cap_list.id,
-                    list_version=cap_list.version,
-                    source_artifact_id=source_artifact_id,
-                )
-            )
-            return
-        if cap_list.id not in in_force:
-            # #1012: the version in force for this service is another one, so
-            # this row is not offered. Recorded, never silently skipped: the
-            # panel names it, and only a row that would otherwise be citable
-            # gets this reason (an out-of-scope row keeps its own).
-            dropped.append(
-                WithheldCapability(
-                    name=name,
-                    vendor=vendor,
-                    reason=WITHHELD_VERSION_NOT_IN_FORCE,
+                    reason=list_reason,
                     capability_list_id=cap_list.id,
                     list_version=cap_list.version,
                     source_artifact_id=source_artifact_id,
@@ -1738,9 +1801,12 @@ def _client_capability_membership(
                     # the list's status. In scope now and absent means only that
                     # the snapshot predates it: a state, not a cause. The row
                     # was either created after approval or reclassified into
-                    # scope after, and nothing readable here separates those.
+                    # scope after, and nothing readable here separates those --
+                    # unless the LIST offers nothing (#1012: a version not in
+                    # force), when that is the reason: re-approving a version
+                    # that is not in force would not make the row citable.
                     reason=(
-                        WITHHELD_NOT_IN_APPROVED_SNAPSHOT
+                        (_list_level_reason(cap_list) or WITHHELD_NOT_IN_APPROVED_SNAPSHOT)
                         if in_security_scope(item)
                         else WITHHELD_SECURITY_SCOPE
                     ),
@@ -1900,24 +1966,7 @@ def _client_capability_membership(
         if not key or key in survivors:
             continue
         seen = withheld.get(key)
-        if seen is None:
-            withheld[key] = drop
-        # NOT re-derived for three reasons -- see #232 for the 3x3 this needs.
-        elif (
-            seen.reason == WITHHELD_VERSION_NOT_IN_FORCE
-            and drop.reason != WITHHELD_VERSION_NOT_IN_FORCE
-            and drop.capability_list_id in in_force
-        ):
-            # #1012: the version in force decides why a tool is withheld. An
-            # older version holding it in scope says nothing about why the
-            # current one does not offer it.
-            withheld[key] = drop
-        elif seen.reason != drop.reason and drop.reason == WITHHELD_NOT_IN_APPROVED_SNAPSHOT:
-            # Withheld for both reasons across two lists. `security_scope` says
-            # a human decided this is not security tooling; the copy that is in
-            # scope proves that decision is not universal, so the accurate
-            # report for the tool is the one the consultant can clear by
-            # re-approving.
+        if seen is None or _withheld_replaces(seen, drop, in_force):
             withheld[key] = drop
 
     plan_ids = _latest_plan_ids(lists)
