@@ -13,22 +13,33 @@ The design note rev 4, sections 5 and 10.1 (schema approved by the advisor,
   tiered rows on five), because `tier` is NULL on every ZT and ATT&CK link and
   a plain UNIQUE treats NULLs as distinct. A CHECK holds `tier` to CSF rows.
   `assessment_id` has no FK: three assessment tables are three referents.
-- `csf_dimension_scores.evidence_basis` (`MANUAL_FROZEN` | `LINKED`), nullable.
+- `csf_dimension_scores.evidence_basis` (`MANUAL_TICK_FROZEN` | `LINKED`),
+  nullable, BACKFILLED per Gene's Q9 grace ruling, option A (#736 6126886407):
+  `MANUAL_TICK_FROZEN` on every row whose manual tick (`has_evidence`) is on
+  and whose CSF assessment is APPROVED or RELEASED; NULL on every other row.
 
 Enum columns follow the `ai_runs` convention (`native_enum=False`, no
 `values_callable`): plain VARCHARs holding the member NAME.
 
 ## Blast radius
 
-Additive only. No existing row changes and NOTHING IS BACKFILLED:
-`evidence_basis` lands NULL on every row, because the Q9 grace rule that
-decides it is still Gene's call, and nothing reads it for scoring. The
-existing `evidence_artifact_id` columns are untouched.
+Additive, plus ONE backfill: `evidence_basis` on the ticked rows of APPROVED
+and RELEASED CSF assessments. No existing value changes; nothing reads the new
+column for scoring yet. The existing `evidence_artifact_id` columns are
+untouched. The number of rows frozen is printed, because a backfill that
+touched nothing and one that correctly had nothing to do look identical
+afterwards (0045).
+
+The status is matched on the member NAME (`APPROVED`, `RELEASED`), which is
+what `native_enum=False` stores, and case-insensitively: 0045 shipped once
+matching the `.value` (`'approved'`) and froze nothing against 8,862 rows.
 
 The downgrade REFUSES while any row records something this migration added: an
 evidence link, an artifact description or document status, or an
-`evidence_basis`. Dropping them would delete what a client said about a file and
-the links a consultant confirmed, without a trace.
+`evidence_basis` -- including a backfilled one. Dropping them would delete what
+a client said about a file and the links a consultant confirmed, without a
+trace; and a re-upgrade would freeze against the statuses AT THAT TIME, so an
+assessment approved in between would gain a freeze it never had at launch.
 """
 
 from __future__ import annotations
@@ -80,6 +91,42 @@ def _fk(column: str, target: str, ondelete: str) -> sa.ForeignKeyConstraint:
     )
 
 
+#: The CSF assessment statuses whose manual ticks are frozen (Q9 option A), as
+#: the column STORES them: the member NAME, compared case-insensitively.
+_FROZEN_STATUSES = ("APPROVED", "RELEASED")
+_FROZEN = "MANUAL_TICK_FROZEN"
+
+
+def _freeze_manual_ticks() -> None:
+    """Q9 option A: keep the manual tick, frozen, where the numbers are
+    already approved or released. Everything else stays NULL."""
+    result = op.get_bind().execute(
+        sa.text(
+            "UPDATE csf_dimension_scores SET evidence_basis = :frozen "
+            "WHERE has_evidence = :ticked AND assessment_id IN "
+            "(SELECT id FROM csf_assessments WHERE UPPER(status) IN :statuses)"
+        ).bindparams(
+            sa.bindparam("frozen", _FROZEN, type_=sa.String()),
+            sa.bindparam("ticked", True, type_=sa.Boolean()),
+            sa.bindparam("statuses", list(_FROZEN_STATUSES), expanding=True, type_=sa.String()),
+        )
+    )
+    if result is None:
+        # Offline (`--sql`): the UPDATE is emitted into the script, and no
+        # count exists to report. Said, not left blank.
+        print(
+            "[0068] offline mode: the MANUAL_TICK_FROZEN backfill is in the script; count unknown."
+        )
+        return
+    frozen = result.rowcount
+    # The count is the evidence the backfill ran (0045).
+    print(
+        f"[0068] froze {frozen} manually ticked Working Profile row(s) on APPROVED or "
+        "RELEASED CSF assessments as MANUAL_TICK_FROZEN; every other row's "
+        "evidence_basis is NULL."
+    )
+
+
 def upgrade() -> None:
     with op.batch_alter_table("artifacts") as batch:
         batch.add_column(sa.Column("description", sa.Text(), nullable=True))
@@ -101,7 +148,8 @@ def upgrade() -> None:
         )
 
     with op.batch_alter_table("csf_dimension_scores") as batch:
-        batch.add_column(sa.Column("evidence_basis", sa.String(16), nullable=True))
+        batch.add_column(sa.Column("evidence_basis", sa.String(32), nullable=True))
+    _freeze_manual_ticks()
 
     op.create_table(
         "evidence_links",

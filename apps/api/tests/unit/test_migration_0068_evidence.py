@@ -2,7 +2,9 @@
 `evidence_links` table, and `csf_dimension_scores.evidence_basis` (N5, design
 note rev 4, sections 5 and 10.1).
 
-Additive: nullable columns and one new table, nothing backfilled. The
+Additive: nullable columns and one new table, plus ONE backfill -- Gene's Q9
+grace, option A (#736 6126886407): `evidence_basis = MANUAL_TICK_FROZEN` on the
+ticked rows of APPROVED and RELEASED CSF assessments, NULL everywhere else. The
 downgrade REFUSES while any row records something 0068 added.
 
 The constraint tests write by raw SQL with SQLite foreign keys switched ON.
@@ -31,6 +33,7 @@ from app.models import (
     ArtifactOrigin,
     Client,
     CsfAssessment,
+    CsfAssessmentStatus,
     CsfDimensionScore,
     CsfEvidenceBasis,
     EvidenceLink,
@@ -219,6 +222,9 @@ def test_0068_adds_its_columns_and_table_and_removes_them_when_empty(tmp_path) -
         if c["name"] == "evidence_basis"
     )
     assert basis["nullable"] is True
+    # Wide enough for the stored NAME `MANUAL_TICK_FROZEN` (18): SQLite ignores
+    # a VARCHAR length, Postgres refuses the write.
+    assert basis["type"].length >= len("MANUAL_TICK_FROZEN"), basis["type"]
 
     command.downgrade(_cfg(url), "0067")
     assert not ARTIFACT_COLUMNS & _columns(engine, "artifacts")
@@ -240,7 +246,7 @@ def test_a_pre_0068_artifact_and_profile_row_read_unchanged(tmp_path) -> None:
         after_art = conn.execute(sa.text("SELECT * FROM artifacts")).mappings().one()
         after_score = conn.execute(sa.text("SELECT * FROM csf_dimension_scores")).mappings().one()
     # Every column the row had is byte-identical, and every new one is NULL:
-    # nothing was backfilled.
+    # the row is ticked but its assessment is a DRAFT, so it is not frozen.
     assert {k: after_art[k] for k in before_art} == dict(before_art)
     assert {k: after_art[k] for k in ARTIFACT_COLUMNS} == dict.fromkeys(ARTIFACT_COLUMNS)
     assert {k: after_score[k] for k in before_score} == dict(before_score)
@@ -267,6 +273,89 @@ def test_a_pre_0068_artifact_and_profile_row_read_unchanged(tmp_path) -> None:
         assert score.has_evidence is True
         assert str(score.evidence_artifact_id) == p["artifact"]
         assert score.evidence_basis is None
+
+
+#: Q9 option A (#736 6126886407), typed from the ruling: frozen exactly when
+#: the row is ticked AND its assessment is APPROVED or RELEASED.
+_FREEZES = {
+    ("DRAFT", True): None,
+    ("DRAFT", False): None,
+    ("SUBMITTED", True): None,
+    ("SUBMITTED", False): None,
+    ("APPROVED", True): "MANUAL_TICK_FROZEN",
+    ("APPROVED", False): None,
+    ("RELEASED", True): "MANUAL_TICK_FROZEN",
+    ("RELEASED", False): None,
+    ("DISCARDED", True): None,
+    ("DISCARDED", False): None,
+}
+
+
+def test_upgrade_from_0066_freezes_only_ticked_rows_on_approved_and_released(
+    tmp_path, capsys
+) -> None:
+    """Seeded through the ORM at 0066, so the stored status spelling is the one
+    production writes (0045 froze nothing once because its fixture typed
+    `'approved'` by hand)."""
+    url = f"sqlite:///{tmp_path / 'm0068-backfill.db'}"
+    command.upgrade(_cfg(url), "0066")
+    engine = sa.create_engine(url, future=True)
+    with Session(engine) as db:
+        client = Client()
+        db.add(client)
+        db.flush()
+        user = User(email="a@kentro.example", password_hash="x", role=UserRole.ADMIN)
+        db.add(user)
+        db.flush()
+        for status in {s for s, _ in _FREEZES}:
+            service = Service(
+                kind=ServiceKind.NIST_CSF, title=status, client_id=client.id, opened_by=user.id
+            )
+            db.add(service)
+            db.flush()
+            assessment = CsfAssessment(
+                service_id=service.id, client_id=client.id, status=CsfAssessmentStatus[status]
+            )
+            db.add(assessment)
+            db.flush()
+            for ticked in (True, False):
+                db.add(
+                    CsfDimensionScore(
+                        assessment_id=assessment.id,
+                        client_id=client.id,
+                        tier="moderate",
+                        subcategory_code="GV.OC-01" if ticked else "GV.OC-02",
+                        has_evidence=ticked,
+                    )
+                )
+        db.commit()
+    with engine.connect() as conn:
+        stored = set(conn.execute(sa.text("SELECT status FROM csf_assessments")).scalars())
+    # Positive first: the fixture wrote the spelling the migration must match.
+    assert stored == {s for s, _ in _FREEZES}, stored
+
+    capsys.readouterr()
+    command.upgrade(_cfg(url), "0068")
+    assert "[0068] froze 2 manually ticked Working Profile row(s)" in capsys.readouterr().out
+
+    with engine.connect() as conn:
+        rows = conn.execute(
+            sa.text(
+                "SELECT a.status, s.has_evidence, s.evidence_basis FROM csf_dimension_scores s "
+                "JOIN csf_assessments a ON a.id = s.assessment_id"
+            )
+        ).all()
+    got = {(status, bool(ticked)): basis for status, ticked, basis in rows}
+    assert len(rows) == len(_FREEZES)
+    assert got == _FREEZES
+
+    # And the downgrade refuses: dropping the column would lose the freeze, and
+    # a re-upgrade would freeze against the statuses at that later time.
+    with pytest.raises(
+        RuntimeError,
+        match="Refusing to downgrade 0068: 2 Working Profile rows with an evidence basis",
+    ):
+        command.downgrade(_cfg(url), "0067")
 
 
 def test_the_models_still_insert_and_select_against_a_pre_0068_schema(tmp_path) -> None:
@@ -534,7 +623,7 @@ def test_each_model_round_trips_and_stores_member_names(tmp_path) -> None:
             client_id=client.id,
             tier="moderate",
             subcategory_code="PR.AA-01",
-            evidence_basis=CsfEvidenceBasis.MANUAL_FROZEN,
+            evidence_basis=CsfEvidenceBasis.MANUAL_TICK_FROZEN,
         )
         csf = EvidenceLink(
             client_id=client.id,
@@ -568,7 +657,9 @@ def test_each_model_round_trips_and_stores_member_names(tmp_path) -> None:
         assert art.description == "Our access control policy."
         assert art.doc_status is ArtifactDocStatus.NOT_SURE
         assert art.doc_status_set_at.replace(tzinfo=UTC) == set_at
-        assert db.get(CsfDimensionScore, ids[1]).evidence_basis is CsfEvidenceBasis.MANUAL_FROZEN
+        assert (
+            db.get(CsfDimensionScore, ids[1]).evidence_basis is CsfEvidenceBasis.MANUAL_TICK_FROZEN
+        )
         csf = db.get(EvidenceLink, ids[2])
         assert csf.status is EvidenceLinkStatus.SUGGESTED
         assert (csf.target_kind, csf.target_code, csf.tier) == (
@@ -597,7 +688,7 @@ def test_each_model_round_trips_and_stores_member_names(tmp_path) -> None:
         ("CSF_ROW", "SUGGESTED"),
     ]
     assert doc_status == "NOT_SURE"
-    assert basis == "MANUAL_FROZEN"
+    assert basis == "MANUAL_TICK_FROZEN"
 
 
 def test_the_model_declares_what_the_migration_creates(tmp_path) -> None:
@@ -631,8 +722,9 @@ def test_the_model_declares_what_the_migration_creates(tmp_path) -> None:
 
 
 def test_nothing_outside_the_models_reads_evidence_basis() -> None:
-    """The column lands; its backfill rule (Q9 grace) is undecided, so nothing
-    may read it, for scoring or otherwise, until a later change says how."""
+    """The column lands and is backfilled (Q9 option A), but nothing reads it,
+    for scoring or otherwise, until the R1-R3 change says how (it waits on the
+    N3 blast-radius measurement)."""
     app_dir = API_ROOT / "app"
     readers = sorted(
         str(path.relative_to(API_ROOT))

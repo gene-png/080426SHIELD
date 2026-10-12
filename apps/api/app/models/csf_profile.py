@@ -35,8 +35,11 @@ class CsfEvidenceBasis(enum.StrEnum):
     """Where a Working Profile row's evidence comes from (design note rev 4,
     section 5, the Q9 grace; migration 0068). Stored as the member NAME."""
 
-    #: The manual `has_evidence` tick, frozen as it stood before linking.
-    MANUAL_FROZEN = "manual_frozen"
+    #: The manual `has_evidence` tick, frozen as it stood before linking: set
+    #: by migration 0068 on ticked rows of APPROVED and RELEASED assessments
+    #: (Gene's Q9 option A, #736 6126886407). Disclosed as "evidence confirmed
+    #: before linking existed".
+    MANUAL_TICK_FROZEN = "manual_tick_frozen"
     #: Confirmed `evidence_links` rows.
     LINKED = "linked"
 
@@ -92,17 +95,20 @@ class CsfDimensionScore(UUIDPKMixin, TimestampMixin, Base):
     # dimension is NOT NULL DEFAULT 0, and 0 is a legitimate score.
     answer_source: Mapped[str | None] = mapped_column(String(16))
 
-    # Migration 0068. NULL on every row: the column lands with NO backfill,
-    # because the Q9 grace rule that decides it is still Gene's call. NULL is
-    # "not decided", never either value. NOTHING READS IT FOR SCORING:
-    # `score_tier`'s evidence cap still reads `has_evidence` alone.
+    # Migration 0068 (Gene's Q9 grace, option A, #736 6126886407). The
+    # migration sets `MANUAL_TICK_FROZEN` on rows whose manual tick is on and
+    # whose assessment is APPROVED or RELEASED, so released numbers never move
+    # under a client. Every other row is NULL: a DRAFT (or SUBMITTED) row's
+    # tick switches to the EV-1 rule at launch, and an unticked row has no
+    # tick to freeze. NOTHING READS IT FOR SCORING YET: `score_tier`'s
+    # evidence cap still reads `has_evidence` alone.
     #
     # DEFERRED (group `EVIDENCE_BASIS_GROUP`) and `evaluates_none()`, for
     # `Artifact`'s evidence-intake columns' reason: a select or an ORM insert
     # against a pre-0068 schema must not name it.
     evidence_basis: Mapped[CsfEvidenceBasis | None] = mapped_column(
         SAEnum(
-            CsfEvidenceBasis, name="csf_evidence_basis", native_enum=False, length=16
+            CsfEvidenceBasis, name="csf_evidence_basis", native_enum=False, length=32
         ).evaluates_none(),
         deferred=True,
         deferred_group=EVIDENCE_BASIS_GROUP,
