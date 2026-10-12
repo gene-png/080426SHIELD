@@ -1,10 +1,11 @@
 # Gene — in-flight status
 
-_2026-10-11 (track4): #1012 is a draft PR on `track4/1012-citation-allowlist`._
-Run AI now offers ATT&CK only the Tech Debt list version that approve checks
-against (R6b), so it cannot cite a tool approve would refuse. Tools on other
-versions are listed as withheld on the AI-inputs panel. New panel copy is with
-the advisor. No migration; comes back to you (tests, condition 5).
+_2026-10-11 (track6): the Atlas CSF Playbook seed is a draft PR on
+`track6/atlas-playbook-seed`, for #474._ The demo's Atlas client now has CSF
+Playbook rows (v1 and v2), so a Risk Register regenerated on Atlas shows CSF
+risks from the Playbook, with the source note: PR.AA-01, DE.AE-02 and ID.AM-01,
+each "level 1 of target 2". The published v1 register is unchanged, as the
+advisor ruled. Only the demo seed changes; it comes back to you (condition 5).
 
 _2026-10-11 (track6): #474 E is a draft PR on `track6/474-e-risk-evidence`,
 on top of D' (merged as dd6a788a) and #1000 (merged as b7a44039)._
