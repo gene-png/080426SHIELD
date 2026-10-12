@@ -8,6 +8,22 @@ import {
   fetchProfile,
   patchDimensionScore,
 } from "@/lib/csf/client";
+import {
+  CAPPED_NOTE,
+  DIMENSION_HINTS,
+  HELP_EVIDENCE,
+  HELP_IN_SCOPE,
+  HELP_LEVEL_BANDS,
+  HELP_LEVELS_INTRO,
+  HELP_LOCK,
+  HELP_SCALE,
+  HELP_SUMMARY,
+  HELP_TARGET,
+  NO_TARGET_NOTE,
+  RUBRIC_HEADERS,
+  RUBRIC_ROWS,
+  type DimKey,
+} from "@/lib/csf/editorHelp";
 import type {
   CsfDimensionScore,
   CsfDimensionScorePatch,
@@ -29,9 +45,6 @@ const TIERS: { value: string; label: string }[] = [
   { value: "low", label: "Low" },
 ];
 
-type DimKey =
-  "governance" | "policy" | "implementation" | "monitoring" | "improvement";
-
 const DIMS: { key: DimKey; label: string }[] = [
   { key: "governance", label: "Governance" },
   { key: "policy", label: "Policy & Process" },
@@ -39,6 +52,75 @@ const DIMS: { key: DimKey; label: string }[] = [
   { key: "monitoring", label: "Monitoring & Measurement" },
   { key: "improvement", label: "Continuous Improvement" },
 ];
+
+/**
+ * C-2 (#1056): the scoring instructions, collapsed by default. A native
+ * `<details>` so it is keyboard- and screen-reader-operable with no state.
+ * The copy and what it rests on live in `@/lib/csf/editorHelp`.
+ */
+function HowToScore(): JSX.Element {
+  return (
+    <details className="rounded-md border border-border-subtle bg-surface-sunken px-3 py-2 text-sm">
+      <summary className="cursor-pointer font-semibold text-ink-primary">
+        {HELP_SUMMARY}
+      </summary>
+      <div
+        className="mt-2 flex flex-col gap-2 text-ink-secondary"
+        data-testid="csf-editor-help"
+      >
+        <p>{HELP_SCALE}</p>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-xs">
+            <thead>
+              <tr>
+                {RUBRIC_HEADERS.map((h) => (
+                  <th
+                    key={h}
+                    scope="col"
+                    className="border border-border-subtle px-2 py-1 text-left font-semibold text-ink-primary"
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {RUBRIC_ROWS.map(([label, zero, one, two]) => (
+                <tr key={label}>
+                  <th
+                    scope="row"
+                    className="border border-border-subtle px-2 py-1 text-left font-semibold text-ink-primary"
+                  >
+                    {label}
+                  </th>
+                  <td className="border border-border-subtle px-2 py-1">
+                    {zero}
+                  </td>
+                  <td className="border border-border-subtle px-2 py-1">
+                    {one}
+                  </td>
+                  <td className="border border-border-subtle px-2 py-1">
+                    {two}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p>{HELP_LEVELS_INTRO}</p>
+        <ul className="list-disc pl-5">
+          {HELP_LEVEL_BANDS.map((band) => (
+            <li key={band}>{band}</li>
+          ))}
+        </ul>
+        <p>{HELP_EVIDENCE}</p>
+        <p>{HELP_TARGET}</p>
+        <p>{HELP_IN_SCOPE}</p>
+        <p>{HELP_LOCK}</p>
+      </div>
+    </details>
+  );
+}
 
 function describeError(err: unknown): string {
   if (err instanceof CsfProxyError) {
@@ -63,6 +145,7 @@ export function CsfDimensionEditor({
   const [code, setCode] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const hintIdPrefix = React.useId();
 
   const loadTier = React.useCallback(
     async (t: string) => {
@@ -123,6 +206,8 @@ export function CsfDimensionEditor({
           </p>
         ) : null}
 
+        <HowToScore />
+
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex gap-1" role="tablist" aria-label="Tier">
             {TIERS.map((t) => (
@@ -166,11 +251,20 @@ export function CsfDimensionEditor({
                 key={d.key}
                 className="flex flex-wrap items-center justify-between gap-2"
               >
-                <span className="text-sm text-ink-secondary">{d.label}</span>
+                <div className="flex flex-col">
+                  <span className="text-sm text-ink-secondary">{d.label}</span>
+                  <span
+                    id={`${hintIdPrefix}-${d.key}`}
+                    className="text-xs text-ink-tertiary"
+                  >
+                    {DIMENSION_HINTS[d.key]}
+                  </span>
+                </div>
                 <div
                   className="flex gap-1"
                   role="radiogroup"
                   aria-label={d.label}
+                  aria-describedby={`${hintIdPrefix}-${d.key}`}
                 >
                   {[0, 1, 2].map((v) => {
                     const active = row[d.key] === v;
@@ -211,9 +305,14 @@ export function CsfDimensionEditor({
                   L{row.level}
                 </span>
                 {row.evidence_capped ? (
-                  <span className="ml-2 text-status-warning-fg">
-                    (capped — no evidence)
-                  </span>
+                  <>
+                    <span className="ml-2 text-status-warning-fg">
+                      (capped — no evidence)
+                    </span>
+                    <span className="mt-1 block text-xs text-status-warning-fg">
+                      {CAPPED_NOTE}
+                    </span>
+                  </>
                 ) : null}
               </span>
               <label className="flex items-center gap-2">
@@ -238,6 +337,11 @@ export function CsfDimensionEditor({
                   ))}
                 </select>
               </label>
+              {row.target_level === null ? (
+                <p className="w-full text-right text-xs text-ink-tertiary">
+                  {NO_TARGET_NOTE}
+                </p>
+              ) : null}
             </div>
 
             <div className="flex flex-wrap items-center gap-4 text-sm">
