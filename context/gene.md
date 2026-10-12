@@ -1,5 +1,7 @@
 # Gene — in-flight status
 
+_2026-10-12 (trackB): TD-3 landed with PR #1066 (approved for merge in #736 6115773247), for #1050._ The admin shell no longer caps service workspaces at `max-w-6xl`, so the Tech Debt Step 2 table gets the screen's width; queue, deliverables, management, messages, health, audit and the Risk Register keep the cap. #1050 stays open: the real fix, a fixed Name column and wider Notes in `TechDebtWorkspace.tsx`, is queued after #1044 merges.
+
 _2026-10-12 (track1): #1011 landed with PR #1040, for #1011. When the tools behind a client's ATT&CK figure could not be checked against a security tool list, the home card now says so, with the reason, in the three sentences you approved (#736 6094262391), instead of looking the same as "checked, none found". "Checked, none found" still shows nothing. One test on main was edited with the advisor's sha256 approval (its `null` case moved to the new test); the old #889 test's docstring saying the card has nothing to say is now stale and is left as a prose follow-up. It comes back to you: conditions 5 and 6._
 
 _2026-10-12 (trackB): TD-2's intake banner landed with PR #1069 (main 931539b8), for #1058._ Corrected in #1040's landing commit: this line still read as a draft PR after it merged. Step 4 of intake now shows your suite-listing banner when Tech Debt or ATT&CK is selected (Tech Debt text when both are). It uses your drafts word for word, as you approved them in 6115464421. The Step 5 reminder line follows after IN-2 merges.
