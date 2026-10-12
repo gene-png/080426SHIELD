@@ -1651,9 +1651,11 @@ def test_a_document_without_a_sign_off_is_complete():
     assert plan.signature_lines_removed == 0
 
 
-def test_a_cut_at_max_chars_never_splits_a_name_or_a_number(store):
-    """The max_chars stop keeps whole lines, so the redactor still sees the
-    whole name and the whole number on the last line read."""
+def test_a_line_boundary_stop_keeps_a_name_and_a_number_whole(store):
+    """When max_chars falls inside a line no longer than the limit, the stop
+    keeps that whole line, so the redactor still sees the whole name and the
+    whole number on it. (A cut INSIDE a piece is covered by the round-6
+    tests.)"""
     line = "Owner: Dana Whitfield, phone (410) 555-0199, reviews access.\n"
     data = ("Intro line with nothing in it.\n" * 3 + line + "Later line.\n" * 20).encode()
     cut_inside = len("Intro line with nothing in it.\n" * 3) + line.index("Whitf") + 2
@@ -1777,3 +1779,179 @@ def test_the_signature_guard_checks_the_placeholder_too(monkeypatch):
     monkeypatch.setattr(text_module, "redact_for_ai", placeholder_dropped)
     with pytest.raises(RuntimeError, match="placeholder"):
         _chunks(_COVER_THEN_POLICY, chunk_chars=1000, max_chunks=5)
+
+
+# --------------------------------------------------------------------------
+# Review round 6 at 8db3d7da (#1089).
+# --------------------------------------------------------------------------
+
+
+def test_text_at_the_bound_goes_into_chunk_text_with_the_same_max_chars(store):
+    """Two 10-character lines at max_chars=10 once returned 21 characters,
+    over the ceiling chunk_text enforces for the same limit. The separator
+    now counts toward the cut, so real output at the bound is accepted."""
+    limits = replace(LIMITS, max_chars=10)
+    for data in (
+        b"aaaaaaaaaa\nbbbbbbbbbb\ncccccccccc\n",
+        b"aaaaaaaaa\nbbbbbbbbbb\n",
+        b"aaaaaaaaaa\nbbbbbbbbb\n",
+    ):
+        result = store.read(data, title="b.txt", mime=TXT, limits=limits)
+        _assert_read(result)
+        assert len(result.text) <= 2 * limits.max_chars, result.text
+        plan = chunk_text(
+            result.text,
+            chunk_chars=5,
+            max_chunks=100,
+            mode="strict",
+            client_org_name=None,
+            name_hints=(),
+            source_truncated=result.truncated,
+            max_chars=limits.max_chars,
+        )
+        assert plan.sent > 0
+
+
+_DANA_LINE = "Lorem ipsum dolor sit amet Owner Dana Whitfield approved the plan"
+
+
+@pytest.mark.parametrize("max_chars", [38, 40, 43, 45])
+def test_an_in_piece_cut_inside_a_name_sends_no_part_of_it(store, max_chars):
+    """A one-line file cut inside "Dana Whitfield": the redactor cannot see a
+    partial name, so chunk_text drops the trailing tokens that begin the
+    hint before redacting, and counts them."""
+    result = store.read(
+        _DANA_LINE.encode(), title="d.txt", mime=TXT, limits=replace(LIMITS, max_chars=max_chars)
+    )
+    _assert_read(result)
+    assert result.truncated is True
+    assert result.text.endswith("Dana")
+    plan = chunk_text(
+        result.text,
+        chunk_chars=1000,
+        max_chunks=5,
+        mode="strict",
+        client_org_name=None,
+        name_hints=("Dana Whitfield",),
+        source_truncated=result.truncated,
+        max_chars=max_chars,
+    )
+    sent = "".join(plan.chunks)
+    assert "Dana" not in sent
+    assert sent.rstrip().endswith("Owner")
+    assert plan.tail_tokens_dropped == 1
+
+
+def test_an_in_piece_cut_inside_the_legal_name_sends_no_part_of_it(store):
+    line = "The plan was approved by Northwind Traders International Holdings today"
+    cut = line.index(" International") + 3
+    result = store.read(
+        line.encode(), title="o.txt", mime=TXT, limits=replace(LIMITS, max_chars=cut)
+    )
+    assert result.text.endswith("Northwind Traders")
+    plan = chunk_text(
+        result.text,
+        chunk_chars=1000,
+        max_chunks=5,
+        mode="strict",
+        client_org_name=_ORG,
+        name_hints=(),
+        source_truncated=result.truncated,
+        max_chars=cut,
+    )
+    assert not _leaks_org("".join(plan.chunks))
+    assert plan.tail_tokens_dropped == 2
+
+
+def test_an_in_piece_cut_inside_a_phone_number_sends_no_part_of_it(store):
+    line = "For access questions call (410) 555-0199 any weekday"
+    cut = line.index("555") + 2
+    result = store.read(
+        line.encode(), title="p.txt", mime=TXT, limits=replace(LIMITS, max_chars=cut)
+    )
+    assert result.text.endswith("(410)")
+    plan = chunk_text(
+        result.text,
+        chunk_chars=1000,
+        max_chunks=5,
+        mode="strict",
+        client_org_name=None,
+        name_hints=(),
+        source_truncated=result.truncated,
+        max_chars=cut,
+    )
+    sent = "".join(plan.chunks)
+    assert "410" not in sent
+    assert sent.rstrip().endswith("call")
+    assert plan.tail_tokens_dropped == 1
+
+
+def test_a_partial_last_token_of_a_name_is_dropped_too():
+    """A cut with no whitespace to land on can leave "Whitf"; a token that is
+    the start of the hint's next word counts as part of the name."""
+    plan = chunk_text(
+        "Reviewed by Dana Whitf",
+        chunk_chars=1000,
+        max_chunks=5,
+        mode="strict",
+        client_org_name=None,
+        name_hints=("Dana Whitfield",),
+        source_truncated=True,
+        max_chars=1000,
+    )
+    assert "Dana" not in "".join(plan.chunks)
+    assert "Whitf" not in "".join(plan.chunks)
+    assert plan.tail_tokens_dropped == 2
+
+
+def test_an_uncut_source_keeps_its_last_words(store):
+    """Only a cut source loses its tail: a document that really ends with a
+    first name keeps it."""
+    plan = chunk_text(
+        "The reviewer was Dana",
+        chunk_chars=1000,
+        max_chunks=5,
+        mode="strict",
+        client_org_name=None,
+        name_hints=("Dana Whitfield",),
+        source_truncated=False,
+        max_chars=1000,
+    )
+    assert plan.tail_tokens_dropped == 0
+    assert "".join(plan.chunks).endswith("Dana")
+
+
+def test_an_unknown_source_is_treated_as_cut():
+    plan = chunk_text(
+        "The reviewer was Dana",
+        chunk_chars=1000,
+        max_chunks=5,
+        mode="strict",
+        client_org_name=None,
+        name_hints=("Dana Whitfield",),
+        source_truncated=None,
+        max_chars=1000,
+    )
+    assert plan.tail_tokens_dropped == 1
+
+
+def test_a_whole_name_at_a_cut_is_left_for_the_redactor():
+    """A complete name at the end of a cut source is not a fragment: the
+    redactor matches it, and nothing is dropped."""
+    plan = chunk_text(
+        "Reviewed by Dana Whitfield",
+        chunk_chars=1000,
+        max_chunks=5,
+        mode="strict",
+        client_org_name=None,
+        name_hints=("Dana Whitfield",),
+        source_truncated=True,
+        max_chars=1000,
+    )
+    from app.ai.redact import redact_for_ai
+
+    expected, counts = redact_for_ai("Reviewed by Dana Whitfield", name_hints=["Dana Whitfield"])
+    assert plan.tail_tokens_dropped == 0
+    assert "".join(plan.chunks) == expected
+    assert plan.redaction_counts == counts
+    assert "Dana" not in expected

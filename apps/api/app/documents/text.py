@@ -30,10 +30,16 @@ Extraction STOPS EARLY at `max_chars`, at `max_pages` and at `max_seconds`
 reached before any text is `too_large`.
 
 Extraction stops at a PIECE boundary (a page, row, paragraph or text line),
-so `text` may run past `max_chars` by the last piece read. A single piece
-longer than `max_chars` on its own is cut at the last whitespace inside the
-limit. So `text` never exceeds twice `max_chars`, and `chunk_text` refuses
-anything longer (`TextOverCeiling`).
+so `text` may run past `max_chars` by the last piece read. A piece that,
+with its separating newline, is longer than `max_chars` is instead cut at the
+last whitespace inside what is left of the limit. So `len(text)` is at most
+`2 * max_chars`, separators included, and `chunk_text` refuses anything
+longer (`TextOverCeiling`).
+
+A cut can leave the START of a name or a number at the end of the text,
+which the redactor (whole literals and whole shapes only) cannot see. When
+the source was cut, or its truncation is unknown, `chunk_text` drops such a
+trailing fragment BEFORE redacting, and counts it on the plan.
 
 **Redaction runs over the WHOLE text, before chunking, inside `chunk_text`.**
 It takes the raw text and the same inputs as `app.ai.redact.redact_for_ai`,
@@ -102,10 +108,15 @@ class DocText:
     is False, `text` is the whole document's text. When it is True, it is
     not: extraction stopped after the piece (page, row, paragraph or line)
     that passed `max_chars`, or at the page or time limit, so `chars_total`
-    is a lower bound on the document's length. `text` is never cut inside a
-    piece, so it may run past `max_chars` by up to one piece; a name or a
-    number split across two pieces (a page break, a line wrap) can still be
-    cut by the stop.
+    is a lower bound on the document's length.
+
+    Where the stop falls: normally after a whole piece, so `text` may run past
+    `max_chars` by up to one piece. A piece that would itself take more than
+    `max_chars` (one huge line, paragraph or row) IS cut inside, at the last
+    whitespace within the limit, or mid-token where the span has none. Either
+    way `len(text) <= 2 * max_chars`. A stop can split a name or a number,
+    across two pieces or at an in-piece cut; `chunk_text` drops such a
+    trailing fragment before redacting (see the module docstring).
 
     `pages_without_text` counts PDF pages read that gave no text (a partly
     scanned file). `parts_not_read` counts content in a read file that no
@@ -154,9 +165,10 @@ class DocText:
 
 
 class TextOverCeiling(ValueError):
-    """`chunk_text` was handed more than twice `max_chars`, which
-    `document_text` never returns. The redactor runs over the whole text in
-    one call, so an unbounded text is an unbounded redaction."""
+    """`chunk_text` was handed more than `2 * max_chars` characters
+    (separators included), which `document_text` never returns. The redactor
+    runs over the whole text in one call, so an unbounded text is an
+    unbounded redaction."""
 
 
 class RedactionOffRefused(ValueError):
@@ -199,6 +211,11 @@ class ChunkPlan:
     signature_chars_removed: int
     signature_lines_removed: int
     source_truncated: bool | None
+    #: Trailing tokens dropped from a cut source before redaction: the start
+    #: of a name hint or the legal name, or a token with a digit (a partial
+    #: phone number or ID), which the redactor could not have matched.
+    tail_tokens_dropped: int
+    tail_chars_dropped: int
 
     @property
     def complete(self) -> bool | None:
@@ -398,11 +415,13 @@ def _collect(pieces: Iterator[str], max_chars: int, tally: _Tally) -> tuple[str,
         for piece in pieces:
             clean = _sanitize(piece)
             sep = 1 if parts else 0
-            if len(clean) > max_chars:
-                # One piece longer than the whole limit (a one-line text file,
-                # a huge paragraph or row): cut it to what is left of the
-                # limit, at the last whitespace, so the text stays bounded by
-                # twice max_chars and no token but the one at the cut is split.
+            if sep + len(clean) > max_chars:
+                # A piece that, with its separator, is longer than the whole
+                # limit (a one-line text file, a huge paragraph or row): cut
+                # it to what is left of the limit, at the last whitespace. The
+                # text before it is at most max_chars and any piece kept whole
+                # adds at most max_chars more, separator included, so
+                # len(text) <= 2 * max_chars.
                 kept = _cut_at_whitespace(clean, max_chars - count - sep)
                 if kept:
                     parts.append(kept)
@@ -1031,7 +1050,14 @@ def chunk_text(
     `source_truncated` is the source's own truncation (`DocText.truncated`),
     or None when the caller does not know it; None never yields a complete
     plan. `max_chars` is the extraction limit the text came from; text longer
-    than twice it is refused with `TextOverCeiling`.
+    than `2 * max_chars` is refused with `TextOverCeiling`.
+
+    When the source was cut (`source_truncated` True or None), a trailing
+    fragment the redactor cannot match is dropped BEFORE redacting: tokens
+    forming a proper prefix of a name hint's or the legal name's words
+    (case-insensitive, split on whitespace as the redactor splits them, the
+    last token possibly itself cut), and up to four trailing tokens holding a
+    digit (a partial phone number or ID). The plan counts what was dropped.
 
     Takes the same inputs `redact_for_ai` takes, and calls it, so there is no
     path to a chunk that has not been redacted (enforced by calling). Mode
@@ -1058,9 +1084,15 @@ def chunk_text(
         raise ValueError(f"max_chunks must be at least 1, got {max_chunks}")
     if len(text) > 2 * max_chars:
         raise TextOverCeiling(
-            f"{len(text)} characters is over the ceiling of {2 * max_chars} (twice max_chars)"
+            f"{len(text)} characters is over the ceiling of {2 * max_chars} (2 * max_chars)"
         )
     hints = list(name_hints)
+    tokens_dropped = 0
+    chars_dropped = 0
+    if source_truncated is not False:
+        kept, tokens_dropped = _drop_cut_tail(text, [*hints, client_org_name or ""])
+        chars_dropped = len(text) - len(kept)
+        text = kept
     redacted, counts = redact_for_ai(
         text, mode=mode, client_org_name=client_org_name, name_hints=hints
     )
@@ -1091,6 +1123,8 @@ def chunk_text(
         signature_chars_removed=cut_chars,
         signature_lines_removed=cut_lines,
         source_truncated=source_truncated,
+        tail_tokens_dropped=tokens_dropped,
+        tail_chars_dropped=chars_dropped,
     )
     _log.info(
         "documents.text.chunked",
@@ -1102,8 +1136,59 @@ def chunk_text(
         signature_lines_removed=cut_lines,
         source_truncated=source_truncated,
         complete=plan.complete,
+        tail_tokens_dropped=tokens_dropped,
+        tail_chars_dropped=chars_dropped,
     )
     return plan
+
+
+#: The most trailing digit-bearing tokens dropped from a cut: enough for a
+#: phone written in groups ("+1 410 555 01").
+_MAX_DIGIT_TOKENS_DROPPED = 4
+_TOKEN = re.compile(r"\S+")
+
+
+def _drop_cut_tail(text: str, literals: list[str]) -> tuple[str, int]:
+    """`text` without a trailing fragment the redactor could not match, and
+    how many tokens went. Repeats until the tail is clean: a name prefix, then
+    a digit-bearing token, then a name prefix again, and so on."""
+    words = [[t.lower() for t in lit.split()] for lit in literals if lit.split()]
+    dropped = 0
+    digit_tokens = 0
+    while True:
+        spans = [m.span() for m in _TOKEN.finditer(text)]
+        if not spans:
+            return text, dropped
+        tail = [text[a:b].lower() for a, b in spans]
+        k = max((_name_prefix_len(tail, w) for w in words), default=0)
+        if (
+            k == 0
+            and digit_tokens < _MAX_DIGIT_TOKENS_DROPPED
+            and any(ch.isdigit() for ch in tail[-1])
+        ):
+            k = 1
+            digit_tokens += 1
+        if k == 0:
+            return text, dropped
+        text = text[: spans[-k][0]].rstrip()
+        dropped += k
+
+
+def _name_prefix_len(tail: list[str], words: list[str]) -> int:
+    """The number of trailing tokens of `tail` that form a PROPER prefix of
+    `words` (a name's words): every token but the last equal to the name's,
+    and the last a start of the name's next word. 0 if none; the whole name,
+    complete, is not a prefix (the redactor matches it)."""
+    for k in range(min(len(words), len(tail)), 0, -1):
+        last = tail[-1]
+        if tail[len(tail) - k : -1] != words[: k - 1]:
+            continue
+        if not words[k - 1].startswith(last):
+            continue
+        if k == len(words) and last == words[-1]:
+            continue
+        return k
+    return 0
 
 
 def _signature_cut(text: str, redacted: str, counts: Mapping[str, int]) -> tuple[int, int]:
