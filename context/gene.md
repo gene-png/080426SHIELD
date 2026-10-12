@@ -1,5 +1,7 @@
 # Gene — in-flight status
 
+_2026-10-12 (track5): #552 landed with PR #1042._ Redaction before every AI call now runs in its own short-lived child process. A slow redaction can no longer freeze the app, and the child holds no keys of its own. The app also refuses to start if the redaction child cannot run, and the error says why. The same landing records D-112, your decision that SHIELD holds demo data only until the MVP: no new freeze work, and existing freezes stay.
+
 _2026-10-12 (track11): N4 landed with PR #1099 (migration 0067)._ The database now has the three empty tables the reports work will fill: findings reports, integration runs and recommendations. Nothing uses them yet. Anyone who upgraded a dev database while N4 was in review should run `alembic downgrade 0066` then `alembic upgrade head`, because 0067 changed in place (#1131).
 
 _2026-10-12 (trackB): #1049 landed with PR #1092._ A client typing "kentro.com" in intake now has it saved as "https://kentro.com/" instead of being refused, and when a save really is refused, the wizard says so in the approved words rather than "Network error.". One test on main was edited with the advisor's sha256 approval. Follow-ups: #1115 and #1116.

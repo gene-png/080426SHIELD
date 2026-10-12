@@ -6613,3 +6613,25 @@ A row is an answer when someone recorded something on it. A seeded Working Profi
 **Re-measured under the built code** (track5's scratchpad harness, 2026-10-10, SQLite with the production 15-connection pool, fixture mode, every provider key unset, uvicorn started as production starts it): with every place full (2 slots held, 2 runs waiting) for about 97% of each 20 s window, tenant B's `GET /auth/me` maxed at 57.8, 62.7 and 181.3 ms against idle controls of 224.5 (first-window warm-up), 64.6 and 46.2 ms; in the 181.3 ms arm `/health` and the event-loop probe spiked with it, so that was the machine, not a stall. The api process ran 0 redactions itself in every arm, and the pool sat at 15 of 15 (#1025). Three concurrent ordinary CSF Run-AIs (33 batches each), 6 rounds: 0 refusals, 18 of 18 completed, 0 failed batches, at most 3 places in use. **A first re-run failed closed on every call** (`redaction_failed`, nothing sent): it started uvicorn with `python -I` beside an editable install of another worktree, and Python 3.12's forkserver ignores the parent's `sys.path` (`multiprocessing.forkserver.main` takes it and never applies it), so the forkserver loaded the other tree's `app`. The child now refuses to run a redactor file other than the api's own, typed, so a forkserver that resolves `app` differently can never redact with another tree's rules in silence.
 
 **What would reopen this:** #1025 landing (raise N, re-measured); a multi-worker deploy (places and slots are per process, as the reaper is); or a redactor that no longer holds the GIL for a whole match.
+
+## D-112 — Until the MVP, every SHIELD database holds demo data only: no new freeze work, existing freezes stay
+
+**2026-10-12 · governance, all services** (Decision: Gene, relayed by the advisor on #736, comment 6130059800; first applied to #1044 in 6130039560. Recorded in N5's landing commit, as the advisor asked.)
+
+**The decision.** No real client data enters SHIELD until after the MVP. Until then, every deployment's database holds demo data only.
+
+**What it changes, until the MVP.**
+
+1. **No new freeze work.** Where a rule change would move a RELEASED number, the PR records its blast radius as "demo data only (Gene, 2026-10-12)". It builds no freeze, stamp, backfill or released-only exemption. #1044 is the first instance.
+2. **Freezes already built stay as they are, and are not expanded.** These are #1077's migration 0070 `rollup_rules` stamp and N5's `manual_tick_frozen` backfill (migration 0068). Removing them costs rework and a review round, and #1077's stamp is the mechanism later rule changes will need.
+3. **#1090 (N3)** drops its read-only blast-radius script. It applies the ZT rule to every assessment, with no released hold and no "would have moved" line.
+4. **Blast-radius queries for Gene stop**, except where a change could break the demo itself.
+5. **Design notes drop machinery that exists only to describe or rebuild records made before a change.** Examples: RR-1's pre-RR-1 register copy and file stamp (#736, 6131606581), and #1120's migration of existing records (6130869814).
+
+**What it does NOT change.**
+
+- **The redactor and every AI-egress control stay.** They protect the post-MVP product, and merge-rule condition 5 still applies.
+- **The correctness bar is unchanged.** Demo data is what Gene, and future clients, judge the product by.
+- **"Released numbers never move" returns as a requirement at launch.** Track7's post-MVP note from #1044 carries it: any rule change made after real data arrives needs a freeze.
+
+**What would reopen this:** the first real client's data, or a decision to onboard one before the MVP. From then on, item 1 reverts, and every change that moves a released number needs a freeze again.
