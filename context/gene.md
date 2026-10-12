@@ -1,5 +1,7 @@
 # Gene — in-flight status
 
+_2026-10-12 (track1): #1081 landed with PR #1100._ A locked Risk Register now tells the consultant, for each missing input, why it is missing (no assessment yet, a request waiting to be published, an assessment only under an archived service, or no service at all) and what to click, in the copy approved on the issue. The same sentence comes back in generate's error. Three tests on main were edited with the advisor's sha256 approval. Follow-ups: #1102 (naming the controls for a service with no intake request) and #1110 (a locked Generate still uses AI quota).
+
 _2026-10-12 (trackD): C-2 landed with PR #1074, for #1056._ The CSF "Edit dimension scores" editor now has a collapsed "How to score a row" section, a one-line hint under each dimension, and two lines that show only when a row is capped for missing evidence or has no target. The copy is the advisor's verbatim approval (6115345112). One test on main was edited with the advisor's sha256 approval (an engine pin for the cap). The evidence question (F5) is still with you.
 
 _2026-10-12 (trackB): TD-3 landed with PR #1066 (approved for merge in #736 6115773247), for #1050._ The admin shell no longer caps service workspaces at `max-w-6xl`, so the Tech Debt Step 2 table gets the screen's width; queue, deliverables, management, messages, health, audit and the Risk Register keep the cap. #1050 stays open: the real fix, a fixed Name column and wider Notes in `TechDebtWorkspace.tsx`, is queued after #1044 merges.
