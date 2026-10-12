@@ -1,5 +1,12 @@
 # Gene — in-flight status
 
+_2026-10-11 (track6): the Atlas CSF Playbook seed is a draft PR on
+`track6/atlas-playbook-seed`, for #474._ The demo's Atlas client now has CSF
+Playbook rows (v1 and v2), so a Risk Register regenerated on Atlas shows CSF
+risks from the Playbook, with the source note: PR.AA-01, DE.AE-02 and ID.AM-01,
+each "level 1 of target 2". The published v1 register is unchanged, as the
+advisor ruled. Only the demo seed changes; it comes back to you (condition 5).
+
 _2026-10-11 (track6): #474 E is a draft PR on `track6/474-e-risk-evidence`,
 on top of D' (merged as dd6a788a) and #1000 (merged as b7a44039)._
 
@@ -61,8 +68,6 @@ be published. Two tests about the old CSF engagement-tier rule are deleted,
 with the advisor's approval, because your decision retired that rule. The Atlas demo
 gets Playbook rows in a small PR right after this one. When the PR opens it
 comes back to you (conditions 5 and 6).
-
-_2026-10-11 (track1): #1011 is built on `track1/1011-home-card`, a draft PR, for #1011. When the tools behind a client's ATT&CK figure could not be checked against a security tool list, the home card now says so, with the reason, in the three sentences you approved (#736 6094262391), instead of looking the same as "checked, none found". "Checked, none found" still shows nothing. No test on main is edited; the old #889 test's docstring saying the card has nothing to say is now stale and is left as a prose follow-up. It comes back to you: conditions 5 and 6._
 
 _2026-10-09 (track4): #889 PR 1 is PR #1021 (a draft), for #889. When a tool leaves a client's security tool list after their ATT&CK report is approved, the client's dashboard says so and marks the tool, the documents say so as of finalize, and the home card says its ATT&CK total may be understated when a technique counted as covered relies on such a tool. When nothing could be checked, the dashboard says so: one sentence when the client has no list or only discarded ones, another when its lists in force have no security tools. The check reads, per Tech Debt service, its newest approved or released list version and ignores its drafts, so an open draft changes nothing the client sees; a service with only drafts uses its newest draft, so the check still works before anyone approves the list (R6b, #736 6094994432). "Newest" is the highest version number. A version with no security tools is skipped for the one before it, and the admin workspace, the deliverable and the client dashboard name the version used (R4, wording approved in #736 6093188709 and 6093549176; the admin line for a draft, C8a, applies only to a service with only drafts). So ATT&CK approve refuses a tool the version in force dropped, while Run AI can still offer it from an older version or a draft (#1012). Two declared test edits: the golden `dashboard.json` and `test_attack_planned_retirement.py` (approved in #736 6092259096). **One thing needs you:** the golden `dashboard.json` gains the "not checked" sentence; the advisor approved it (#736 6090360421) and your ratification is pending, as for #851's. Filed from review: #1005, #1010, #1011, #1019 and #1020. The Risk half waits for D′. It comes back to you: conditions 5 and 6._
 
