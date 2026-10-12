@@ -15,6 +15,9 @@ reference-docs/
 
 # Generated
 *.tsbuildinfo
+# Crosswalk data, derived byte for byte by apps/api/scripts/derive_*.py and pinned
+# by sha256 (test_crosswalks.py re-derives it); a reformat would break the pin.
+apps/api/app/integration/data/
 next-env.d.ts
 
 # Coverage / artifacts
