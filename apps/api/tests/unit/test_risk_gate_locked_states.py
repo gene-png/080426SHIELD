@@ -500,3 +500,28 @@ def test_two_waiting_requests_are_both_named_in_kind_order(app_client) -> None: 
         ],
         f"{_a_unpublished(CSF)} {_a_unpublished(ZT_CISA)} {CLOSING}",
     )
+
+
+def test_two_archived_kinds_are_both_named_in_kind_order(app_client) -> None:  # noqa: F811
+    """Review of #1100, round 4: the archived arm's twin. Live NIST CSF and
+    Zero Trust (CISA) assessments, both under services later archived (Zero
+    Trust created first): both D sentences, in kind order."""
+    c, _ = app_client
+    bearer, cid = _admin(c)
+    _live_attack(c, bearer, cid)
+    zt = _service(c, bearer, cid, "zt", "zero_trust_cisa")
+    _assessment(c, bearer, cid, "zt", zt)
+    csf = _service(c, bearer, cid, "csf", "nist_csf")
+    _assessment(c, bearer, cid, "csf", csf)
+    _archive(c, bearer, cid, zt)
+    _archive(c, bearer, cid, csf)
+    _assert_locked(
+        c,
+        bearer,
+        cid,
+        [
+            ("csf_or_zt", "archived_only", "nist_csf"),
+            ("csf_or_zt", "archived_only", "zero_trust_cisa"),
+        ],
+        f"{_d(CSF, B_CSF_ZT)} {_d(ZT_CISA, B_CSF_ZT)} {CLOSING}",
+    )
