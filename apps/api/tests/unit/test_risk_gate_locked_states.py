@@ -389,3 +389,73 @@ def test_d_the_dod_zero_trust_kind_has_its_own_label(app_client) -> None:  # noq
         [("csf_or_zt", "archived_only", "zero_trust_dod")],
         f"{_d(ZT_DOD, B_CSF_ZT)} {CLOSING}",
     )
+
+
+# --- Review of #1100, round 2 -------------------------------------------------------------
+
+
+def test_an_engaged_service_is_named_before_a_waiting_request(app_client) -> None:  # noqa: F811
+    """Engaged A beats unpublished A: the client asked for NIST CSF and Zero
+    Trust (CISA); only CSF was published, and it has no assessment yet."""
+    c, _ = app_client
+    bearer, cid = _admin(c)
+    _live_attack(c, bearer, cid)
+    _publish(c, bearer, cid, _request(cid, ServiceType.NIST_CSF))
+    _request(cid, ServiceType.ZERO_TRUST_CISA)
+    _assert_locked(
+        c,
+        bearer,
+        cid,
+        [("csf_or_zt", "no_assessment", "nist_csf")],
+        f"{_a(CSF)} {CLOSING}",
+    )
+
+
+def test_a_discarded_assessment_under_an_archived_service_is_no_service(
+    app_client,  # noqa: F811
+) -> None:
+    """D says an assessment exists; a discarded one does not count."""
+    c, _ = app_client
+    bearer, cid = _admin(c)
+    svc = _service(c, bearer, cid, "attack", "attack_coverage")
+    a = _assessment(c, bearer, cid, "attack", svc)
+    r = c.post(f"/attack/assessments/{a}/discard", headers=_h(bearer, cid))
+    assert r.status_code == 200, r.text
+    _archive(c, bearer, cid, svc)
+    _assert_locked(
+        c,
+        bearer,
+        cid,
+        [("attack", "no_service", None), ("csf_or_zt", "no_service", None)],
+        f"{B_ATTACK} {B_CSF_ZT} {CLOSING}",
+    )
+
+
+def test_another_clients_services_and_requests_change_nothing(app_client) -> None:  # noqa: F811
+    """Client scoping: a second tenant with a waiting request, an engaged
+    service and an assessment under an archived service, of both kinds. The
+    first client's gate and 409 are what they would be alone."""
+    c, _ = app_client
+    bearer, cid = _admin(c)
+    other = c.post(
+        "/admin/clients",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"legal_name": "Beta"},
+    )
+    assert other.status_code in (200, 201), other.text
+    oid = other.json()["id"]
+    _request(oid, ServiceType.ATTACK_COVERAGE)
+    _request(oid, ServiceType.NIST_CSF)
+    _service(c, bearer, oid, "attack", "attack_coverage")
+    _service(c, bearer, oid, "zt", "zero_trust_cisa")
+    _archive(c, bearer, oid, _live_attack(c, bearer, oid))
+    csf = _service(c, bearer, oid, "csf", "nist_csf")
+    _assessment(c, bearer, oid, "csf", csf)
+    _archive(c, bearer, oid, csf)
+    _assert_locked(
+        c,
+        bearer,
+        cid,
+        [("attack", "no_service", None), ("csf_or_zt", "no_service", None)],
+        f"{B_ATTACK} {B_CSF_ZT} {CLOSING}",
+    )
