@@ -156,3 +156,10 @@ def write_pid_wait_for_go_then_redact(payload: Any, **kwargs: Any) -> tuple[Any,
     while not go.exists():
         time.sleep(0.01)
     return redact_payload(payload, **kwargs)
+
+
+def report_cpu_limit(_payload: Any, **_kwargs: Any) -> tuple[Any, dict[str, int]]:
+    """Answer with this child's RLIMIT_CPU (soft, hard), in place of a payload."""
+    import resource
+
+    return {"rlimit_cpu": list(resource.getrlimit(resource.RLIMIT_CPU))}, {}

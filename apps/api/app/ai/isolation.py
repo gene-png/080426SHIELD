@@ -8,9 +8,14 @@ so no in-process budget can bound it either. In a child process it holds only
 the child's GIL, and the child can be killed by PID.
 
 WHAT THE CHILD GETS: the payload, the mode, the client's name and the hint set.
-Nothing else. It is forked from a forkserver whose environment is scrubbed on
-start (`_redaction_child`), so it carries no provider key, no database URL and
-no SHIELD_* setting, and it never sees the api process's memory.
+Nothing else. The forkserver it is forked from is a fresh interpreter started
+through `env -i` with only PATH and LANG (`_use_clean_executable`), so neither
+holds the api's environment: not in `os.environ`, and not in the environment
+block the kernel keeps for the process (`/proc/<pid>/environ`), which is what a
+deletion from `os.environ` leaves behind. No provider key, no database URL, no
+SHIELD_* setting, and none of the api process's memory. Each child also has a
+CPU-time limit from the budget and dies with its parent, so it cannot outlive
+an api that died hard (`_redaction_child.limit_cpu`, `die_with_parent`).
 
 WHAT HAPPENS WHEN IT GOES WRONG, every outcome typed (D-016) and before egress:
 
@@ -55,7 +60,11 @@ import collections
 import contextlib
 import multiprocessing
 import os
+import shlex
+import shutil
 import signal
+import sys
+import tempfile
 import threading
 import uuid
 from collections.abc import Callable, Hashable, Iterable, Iterator
@@ -85,12 +94,53 @@ REDACTION_CAPACITY_BUSY = "redaction_capacity_busy"
 _TARGET: Callable[..., tuple[Any, dict[str, int]]] = redact_payload
 
 #: The module the forkserver imports before it forks anything: it preloads the
-#: redactor and scrubs the forkserver's environment. NEVER imported here -- in
-#: this process it would scrub the api's own environment (it refuses to).
+#: redactor and scrubs `os.environ` again (the forkserver already starts with an
+#: allowlisted environment, below). NEVER imported here -- in this process it
+#: would scrub the api's own environment (it refuses to).
 _FORKSERVER_PRELOAD = "app.ai._redaction_forkserver"
 
 _ctx = multiprocessing.get_context("forkserver")
 _ctx.set_forkserver_preload([_FORKSERVER_PRELOAD])
+
+#: The forkserver's ENTIRE environment. It is started through `env -i` with
+#: these and nothing else, so neither it nor any child it forks ever holds the
+#: api's environment, in `os.environ` or in the environment block the kernel
+#: keeps (`/proc/<pid>/environ`). Deleting from `os.environ` alone leaves the
+#: original strings in that block, and a forked child inherits it: measured on
+#: the #1042 review, a child's block held the provider key, the database URL
+#: and every SHIELD_* setting after the scrub.
+_CHILD_ENVIRONMENT = {"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"}
+_executable_lock = threading.Lock()
+_executable_set = False
+
+
+def _use_clean_executable() -> None:
+    """Point the forkserver context at a wrapper that execs this interpreter
+    under `env -i`, before the forkserver first starts. `multiprocessing` starts
+    the forkserver with `spawn.get_executable()` and the api's environment;
+    nothing else in the api uses `multiprocessing`. Fails loudly, never falls
+    back to the api's environment."""
+    global _executable_set
+    with _executable_lock:
+        if _executable_set:
+            return
+        env = shutil.which("env")
+        if env is None:
+            raise RuntimeError("redaction isolation: no `env` executable to start the forkserver")
+        assignments = " ".join(
+            f"{k}={shlex.quote(v)}" for k, v in sorted(_CHILD_ENVIRONMENT.items())
+        )
+        wrapper = os.path.join(tempfile.mkdtemp(prefix="shield-redaction-"), "python")
+        with open(wrapper, "w", encoding="ascii") as f:
+            f.write(
+                "#!/bin/sh\n"
+                f'exec {shlex.quote(env)} -i {assignments} {shlex.quote(sys.executable)} "$@"\n'
+            )
+        os.chmod(wrapper, 0o700)
+        _ctx.set_executable(wrapper)
+        _executable_set = True
+        _log.info("redaction_isolation.forkserver_executable", wrapper=wrapper)
+
 
 #: How long to wait for a killed child to be reaped before failing loudly.
 _KILL_JOIN_SECONDS = 10.0
@@ -307,9 +357,13 @@ def _release(key: Hashable) -> None:
         if place is not None:
             _end_place(place)
         _refused_unplaced.pop(key, None)
-        _ended[key] = None
-        while len(_ended) > _ENDED_MEMORY:
-            _ended.popitem(last=False)
+        if key[0] != "call":
+            # A one-call run has no stragglers to refuse, and recording it
+            # would push a real run's key out of this bounded memory, after
+            # which that run's straggler is admitted to a place nobody frees.
+            _ended[key] = None
+            while len(_ended) > _ENDED_MEMORY:
+                _ended.popitem(last=False)
     if place is not None:
         _log.info("redaction_isolation.place_released", run=str(key[1]), cleared=place.cleared)
 
@@ -441,10 +495,11 @@ def _run_child(
     """Run the target in a fresh forkserver child. Returns ("ok", result) or
     ("http", (status, detail)), or ("timeout"|"died", detail) for the caller to
     type. The child is gone, reaped, before this returns, whatever happened."""
+    _use_clean_executable()
     recv, send = _ctx.Pipe(duplex=False)
     child = _ctx.Process(
         target=child_main,
-        args=(send, target, payload, mode, client_org_name, name_hints, _redactor_file()),
+        args=(send, target, payload, mode, client_org_name, name_hints, _redactor_file(), budget),
         daemon=True,
     )
     child.start()

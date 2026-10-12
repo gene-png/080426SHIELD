@@ -583,3 +583,40 @@ def test_an_answer_that_arrives_after_its_run_ended_is_not_sent(world, monkeypat
     assert rw.llm_rows(world) == 0
     assert isolation.places_in_use() == 0
     rw.assert_gone(int(pid_file.read_text()))
+
+
+@pytest.mark.unit
+def test_one_call_runs_never_push_an_ended_run_out_of_memory(world, monkeypatch) -> None:
+    """The ended-run memory is for runs whose stragglers can still arrive. A
+    one-call run has none, so ending one records nothing: however many one-call
+    redactions follow, an ended Run-AI's straggler is still refused and takes no
+    place (#1042 final review, item 3)."""
+    import app.ai.isolation as isolation
+    from app.ai.run_context import ai_run_id_var
+
+    monkeypatch.setattr(isolation, "_ENDED_MEMORY", 2)
+    run_id = uuid.uuid4()
+
+    def _redact() -> Any:
+        return isolation.redact_payload_isolated(
+            {"note": "x"}, mode="strict", client_org_name=None, name_hints=()
+        )
+
+    token = ai_run_id_var.set(run_id)
+    try:
+        _redact()
+    finally:
+        ai_run_id_var.reset(token)
+    assert isolation.places_in_use() == 1, "the run never took its place"
+    isolation.release_run(run_id)
+
+    for _ in range(3):
+        _redact()
+
+    token = ai_run_id_var.set(run_id)
+    try:
+        with pytest.raises(isolation.RedactionRefused):
+            _redact()
+    finally:
+        ai_run_id_var.reset(token)
+    assert isolation.places_in_use() == 0

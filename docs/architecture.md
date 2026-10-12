@@ -180,10 +180,13 @@ route → engine.run_job(purpose, payload, client_id)
   hold the GIL for as long as a C-level match runs, so one tenant's slow
   redaction used to stall every other tenant's requests, and nothing could
   stop it. `app/ai/isolation.py` forks a short-lived child per payload from a
-  forkserver whose environment is scrubbed (no provider key, no database URL,
-  no `SHIELD_*` setting), hands it the payload and the hint set only, and
-  kills it by PID if it outlives `SHIELD_REDACTION_BUDGET_SECONDS` (30, per
-  payload). Concurrency is bounded and never queued without limit:
+  forkserver started through `env -i` with only PATH and LANG, so neither
+  holds a provider key, a database URL or a `SHIELD_*` setting, in
+  `os.environ` or in the kernel's environment block. It hands the child the
+  payload and the hint set only, and kills it by PID if it outlives
+  `SHIELD_REDACTION_BUDGET_SECONDS` (30, per payload). A child also carries a
+  CPU-time limit from the budget and dies with its parent, so an api killed
+  outright leaves no child running. Concurrency is bounded and never queued without limit:
   `SHIELD_REDACTION_MAX_CHILDREN` slots (2), waited for FIFO for at most
   `SHIELD_REDACTION_SLOT_WAIT_SECONDS` (30), and `SHIELD_REDACTION_MAX_RUNS`
   run places (4). A run (a Run-AI, a Risk generate, or one call outside both)

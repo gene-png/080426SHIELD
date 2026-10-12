@@ -371,3 +371,103 @@ def test_a_child_left_running_by_a_failed_read_is_killed(world, monkeypatch) -> 
     assert pid_file.is_file(), "the stand-in child never ran, so this proves nothing"
     _assert_failed_closed(world, svc_id, run)
     rw.assert_gone(int(pid_file.read_text()))
+
+
+# ---------------------------------------------------------------------------
+# The child's environment BLOCK, its CPU limit, and its parent's death
+# (#1042 final review, items 1 and 2)
+# ---------------------------------------------------------------------------
+
+#: What a redaction child's environment may hold, as the kernel reports it.
+_CHILD_ENVIRONMENT = {"PATH", "LANG"}
+
+
+@pytest.mark.unit
+def test_a_childs_environment_block_holds_only_its_allowlist(world, monkeypatch) -> None:
+    """Read from `/proc/<pid>/environ`, the environment block the child was
+    started with, not `os.environ`: deleting from `os.environ` leaves the
+    original strings in that block, which a forked child inherits. The api
+    process's environment holds a provider key, a database URL and SHIELD
+    settings; none of their names may be there."""
+    import app.ai.isolation as isolation
+    from app.config import get_settings
+
+    monkeypatch.setenv("SHIELD_REDACTION_BUDGET_SECONDS", "10")
+    get_settings.cache_clear()
+    monkeypatch.setattr(isolation, "_TARGET", targets.write_pid_then_spin)
+    pid_file = world["tmp"] / "environ.pid"
+    svc_id, artifact_id = rw.service_and_artifact(
+        world, f"Application,__pid_file__\nPayroll,{pid_file}\n"
+    )
+    box: dict[str, Any] = {}
+    job = threading.Thread(
+        target=lambda: box.update(run=rw.extract(world, svc_id, artifact_id)), daemon=True
+    )
+    job.start()
+    rw.wait_for_file(pid_file)
+    pid = int(pid_file.read_text())
+    with open(f"/proc/{pid}/environ", "rb") as f:
+        block = f.read()
+    job.join(rw.HANG_GUARD_S)
+
+    names = {entry.split(b"=", 1)[0].decode() for entry in block.split(b"\0") if entry}
+    assert names, "read nothing from the child's environment block, so this proves nothing"
+    assert names <= _CHILD_ENVIRONMENT, sorted(names - _CHILD_ENVIRONMENT)
+    assert box["run"]["error_reason"] == "redaction_budget_exceeded", box
+
+
+@pytest.mark.unit
+def test_a_child_runs_under_a_cpu_limit_from_its_budget(monkeypatch) -> None:
+    """A child the parent can no longer kill (the api died) still stops: its
+    CPU limit is the budget, rounded up, plus one second."""
+    import app.ai.isolation as isolation
+    from app.config import get_settings
+
+    monkeypatch.setenv("SHIELD_REDACTION_BUDGET_SECONDS", "2.5")
+    get_settings.cache_clear()
+    monkeypatch.setattr(isolation, "_TARGET", targets.report_cpu_limit)
+    try:
+        out, _counts = isolation.redact_payload_isolated(
+            {"x": 1}, mode="strict", client_org_name=None, name_hints=()
+        )
+    finally:
+        get_settings.cache_clear()
+
+    assert out == {"rlimit_cpu": [4, 4]}, out
+
+
+@pytest.mark.unit
+def test_a_child_dies_when_the_api_process_is_killed(tmp_path) -> None:
+    """The api is killed outright (SIGKILL, as an OOM kill does) while its child
+    is redacting. The child is gone within seconds, long before its budget or
+    CPU limit (60 s) could stop it."""
+    import os
+    import signal
+    import subprocess
+    import sys
+    import time
+
+    pid_file = tmp_path / "orphan.pid"
+    api = subprocess.Popen(  # noqa: S603 - this interpreter and a module of this repo
+        [sys.executable, "-m", "tests._isolation_api_stand_in", str(pid_file), "60"],
+        cwd=str(rw.API_DIR),
+    )
+    child = None
+    try:
+        rw.wait_for_file(pid_file)
+        child = int(pid_file.read_text())
+        rw.assert_running(child)
+        api.send_signal(signal.SIGKILL)
+        api.wait(rw.HANG_GUARD_S)
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and rw.is_running(child):
+            time.sleep(0.1)
+        # Dead is the claim. Its parent (the forkserver) died first, so the
+        # child may still sit as a zombie until whoever adopted it reaps it;
+        # a zombie runs nothing, so `is_running` treats it as stopped.
+        assert not rw.is_running(child), f"child PID {child} outlived the api process"
+    finally:
+        if api.poll() is None:
+            api.kill()
+        if child is not None and rw.is_running(child):
+            os.kill(child, signal.SIGKILL)

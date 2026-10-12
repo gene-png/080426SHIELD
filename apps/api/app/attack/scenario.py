@@ -125,8 +125,10 @@ def removed_spellings(
     hints = tuple(name_hints)
 
     def show(name: str) -> str:
-        # #552: in-process on purpose. One tool name, never a payload, and
-        # nothing here egresses; the egress redacts in a child (ai/isolation.py).
+        # #552: still in-process. One tool name, never a payload, and nothing
+        # here egresses (the egress redacts in a child, ai/isolation.py). But
+        # it holds the api's GIL, once per name against every hint: a measured
+        # residual, D-111, recorded on #1124 and to be moved by #1080.
         shown, _counts = redact_for_ai(
             name,
             mode=redaction_mode,
@@ -366,8 +368,10 @@ def validate_added(
 
     def citable(name: str) -> set[str]:
         """The strings the model can cite for a tool: as stored and as shown."""
-        # #552: in-process on purpose. One tool name, never a payload, and
-        # nothing here egresses; the egress redacts in a child (ai/isolation.py).
+        # #552: still in-process. One tool name, never a payload, and nothing
+        # here egresses (the egress redacts in a child, ai/isolation.py). But
+        # it holds the api's GIL, once per name against every hint: a measured
+        # residual, D-111, recorded on #1124 and to be moved by #1080.
         shown, _counts = redact_for_ai(
             name, mode=redaction_mode, client_org_name=client_org_name or None, name_hints=hints
         )

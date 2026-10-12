@@ -33,6 +33,9 @@ _PASSWORD = "correct horse battery staple!"
 #: when a budget or a release is missing altogether.
 HANG_GUARD_S = 60
 
+#: apps/api: where a stand-in api process must start, so `app` and `tests` import.
+API_DIR = Path(__file__).resolve().parent.parent
+
 
 class LiveLookingProvider(FixtureProvider):
     """Serves canned output but REPORTS itself live, the way a provider built
@@ -321,3 +324,18 @@ def assert_gone(pid: int) -> None:
     except ProcessLookupError:
         return
     raise AssertionError(f"child PID {pid} still exists after the redaction ended")
+
+
+def is_running(pid: int) -> bool:
+    """The PID names a live process: not gone, and not a zombie either."""
+    try:
+        with open(f"/proc/{pid}/stat", encoding="ascii") as f:
+            state = f.read().rsplit(")", 1)[1].split()[0]
+    except FileNotFoundError:
+        return False
+    return state != "Z"
+
+
+def assert_running(pid: int) -> None:
+    if not is_running(pid):
+        raise AssertionError(f"child PID {pid} is not running, so this proves nothing")
