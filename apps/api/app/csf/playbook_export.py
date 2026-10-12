@@ -165,6 +165,8 @@ def render_xlsx(
     enterprise_rows: Sequence[Any],
     tier_profiles: Mapping[str, Sequence[Any]],
     gap_actions: Mapping[str, Any] | None = None,
+    kept_rows: Sequence[Any] = (),
+    scored_only: bool = False,
 ) -> bytes:
     """`enterprise_rows` are EnterpriseSubcategory-like; `tier_profiles` maps a
     tier name to its CsfDimensionScoreResponse-like rows (total/level computed).
@@ -238,19 +240,18 @@ def render_xlsx(
         ],
     )
     for r in enterprise_rows:
-        levels = r.tier_levels
         safe_text_row(
             ws,
             [
                 r.subcategory_code,
                 r.function,
                 r.name,
-                levels.get("high", ""),
-                levels.get("moderate", ""),
-                levels.get("low", ""),
+                _tier_cell(r, "high", ""),
+                _tier_cell(r, "moderate", ""),
+                _tier_cell(r, "low", ""),
                 f"L{r.enterprise_level}",
                 f"#{r.rollup_rule}",
-                f"L{r.target_level}" if r.target_level else "",
+                _target_cell(r, ""),
                 _gap_cell(r),
                 r.priority or "",
             ],
@@ -321,9 +322,11 @@ def render_xlsx(
             "POA&M ref",
         ],
     )
-    for r in enterprise_rows:
-        if not getattr(r, "gap", False):
-            continue
+    # #1031: an entry on a code that is not (or no longer) a gap stays, after
+    # the gaps, with KEPT_FOR_THE_RECORD where its priority would be.
+    plan = [r for r in enterprise_rows if getattr(r, "gap", False)]
+    for r in [*plan, *kept_rows]:
+        is_gap = getattr(r, "gap", False)
         act = actions.get(r.subcategory_code)
         override = getattr(act, "priority_override", None) if act else None
         safe_text_row(
@@ -331,9 +334,9 @@ def render_xlsx(
             [
                 r.subcategory_code,
                 r.name,
-                f"L{r.enterprise_level}",
+                f"L{r.enterprise_level}" if r.enterprise_level else "",
                 f"L{r.target_level}" if r.target_level else "",
-                override or (r.priority or ""),
+                (override or (r.priority or "")) if is_gap else KEPT_FOR_THE_RECORD,
                 getattr(act, "characterization", "") or "" if act else "",
                 getattr(act, "owner", "") or "" if act else "",
                 getattr(act, "deadline", "") or "" if act else "",
@@ -359,10 +362,17 @@ def render_xlsx(
         cover,
         [
             "Levels are code-computed: total = sum of the five dimensions (0-10); "
-            "L1 0-2, L2 3-5, L3 6-7, L4 8-9, L5 10. Enterprise = weighted-floor "
-            "roll-up across the tiers in use."
+            "L1 0-2, L2 3-5, L3 6-7, L4 8-9, L5 10. "
+            + (
+                SCORED_METHOD
+                if scored_only
+                else "Enterprise = weighted-floor roll-up across the tiers in use."
+            )
         ],
     )
+    unscored_line = _unscored_line(enterprise_rows) if scored_only else None
+    if unscored_line:
+        safe_text_row(cover, [unscored_line])
     cover["A1"].font = Font(bold=True, size=14)
 
     # #646: the "AI source" sheet, last, as every deliverable carries it -- and
@@ -482,7 +492,7 @@ def _function_summary(rows: Sequence[Any]) -> list[dict[str, Any]]:
     return out
 
 
-def _overview_sentences(rows: Sequence[Any]) -> list[str]:
+def _overview_sentences(rows: Sequence[Any], *, scored_only: bool = False) -> list[str]:
     total = len(rows)
     overall = _overall_level(rows)
     gaps = sum(1 for r in rows if r.gap)
@@ -513,10 +523,15 @@ def _overview_sentences(rows: Sequence[Any]) -> list[str]:
     lines = [
         f"This assessment covers {total} in-scope NIST CSF 2.0 "
         f"{'subcategory' if total == 1 else 'subcategories'}. "
-        f"Enterprise maturity, rolled up across the impact tiers in use, "
+        f"Enterprise maturity, rolled up across the "
+        f"{'scored impact tiers in use' if scored_only else 'impact tiers in use'}, "
         f"averages Level {overall} of 5.",
         shortfall,
     ]
+    # #1031: where the roll-up is shown, how many tier rows it left out.
+    unscored = _unscored_line(rows) if scored_only else None
+    if unscored:
+        lines.insert(1, unscored)
     if len(fns) >= 2:
         strongest = max(fns, key=lambda f: f["avg"])
         weakest = min(fns, key=lambda f: f["avg"])
@@ -531,6 +546,49 @@ def _overview_sentences(rows: Sequence[Any]) -> list[str]:
 
 def _gaps(n: int) -> str:
     return "gap" if n == 1 else "gaps"
+
+
+# #1031, copy approved verbatim (#736 6116519635, as proposed in 6116347717).
+#: A tier cell for an in-scope tier nobody scored, left out of the roll-up.
+NOT_SCORED = "Not scored"
+#: The method line under the scored-tiers rule.
+SCORED_METHOD = (
+    "Enterprise = weighted-floor roll-up across the in-scope tiers that have been "
+    'scored. A tier with no score recorded is left out and marked "Not scored".'
+)
+#: An Action Plan row whose code is not (or no longer) a gap (#1031).
+KEPT_FOR_THE_RECORD = "No longer a gap: kept for the record"
+#: Target and Gap cells when a subcategory's only targets sit on unscored
+#: tiers (#736 6127667643). "No target" stays for a row with none at all.
+NOT_MEASURED = "Not measured"
+
+
+def _target_cell(r: Any, missing: str) -> str:
+    if getattr(r, "target_not_measured", False):
+        return NOT_MEASURED
+    return f"L{r.target_level}" if r.target_level else missing
+
+
+def _unscored_count(rows: Sequence[Any]) -> int:
+    return sum(len(getattr(r, "unscored_tiers", ()) or ()) for r in rows)
+
+
+def _unscored_line(rows: Sequence[Any]) -> str | None:
+    """The count line, or None when no tier row was left out."""
+    n = _unscored_count(rows)
+    if n == 0:
+        return None
+    if n == 1:
+        return "1 in-scope tier row was not scored and is not part of the Enterprise level."
+    return f"{n} in-scope tier rows were not scored and are not part of the Enterprise level."
+
+
+def _tier_cell(r: Any, tier: str, missing: str) -> Any:
+    """A tier's level cell: "Not scored" for an in-scope tier left out of the
+    roll-up (#1031), else its level, else `missing` (not in use)."""
+    if tier in (getattr(r, "unscored_tiers", ()) or ()):
+        return NOT_SCORED
+    return r.tier_levels.get(tier, missing)
 
 
 # #762: the third state. `routes/csf.py::_enterprise_subcategories` sets
@@ -551,6 +609,8 @@ def _untargeted(rows: Sequence[Any]) -> int:
 
 def _gap_cell(r: Any) -> str:
     """A row's Gap cell: "Yes", "" (meets its target) or "No target"."""
+    if getattr(r, "target_not_measured", False):
+        return NOT_MEASURED
     if r.target_level is None:
         return NO_TARGET
     return "Yes" if r.gap else ""
@@ -940,6 +1000,7 @@ def render_exec_pdf(
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
     retired_note: str | None = None,
     no_notes_note: str | None = None,
+    scored_only: bool = False,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -966,7 +1027,7 @@ def render_exec_pdf(
     story.append(PageBreak())
 
     story.append(Paragraph("Executive summary", styles["h2"]))
-    for line in _overview_sentences(enterprise_rows):
+    for line in _overview_sentences(enterprise_rows, scored_only=scored_only):
         story.append(Paragraph(line, styles["body"]))
     _scorecard(story, styles, enterprise_rows)
     story.append(Paragraph("Top priority gaps", styles["h2"]))
@@ -987,6 +1048,7 @@ def render_full_pdf(
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
     retired_note: str | None = None,
     no_notes_note: str | None = None,
+    scored_only: bool = False,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -1029,7 +1091,7 @@ def render_full_pdf(
     story.append(PageBreak())
 
     story.append(Paragraph("1. Executive summary", styles["h2"]))
-    for line in _overview_sentences(enterprise_rows):
+    for line in _overview_sentences(enterprise_rows, scored_only=scored_only):
         story.append(Paragraph(line, styles["body"]))
 
     story.append(Paragraph("2. Methodology", styles["h2"]))
@@ -1062,7 +1124,7 @@ def render_full_pdf(
                 r.subcategory_code,
                 Paragraph(escape(r.name), styles["cell"]),
                 f"L{r.enterprise_level}",
-                f"L{r.target_level}" if r.target_level else "—",
+                _target_cell(r, "—"),
                 _gap_cell(r),
                 r.priority or "",
             ]
@@ -1093,9 +1155,9 @@ def render_full_pdf(
         [
             r.subcategory_code,
             FUNCTION_NAMES.get(_fn_code(r.function), _fn_code(r.function)),
-            r.tier_levels.get("high", "—"),
-            r.tier_levels.get("moderate", "—"),
-            r.tier_levels.get("low", "—"),
+            _tier_cell(r, "high", "—"),
+            _tier_cell(r, "moderate", "—"),
+            _tier_cell(r, "low", "—"),
             f"L{r.enterprise_level}",
             f"#{r.rollup_rule}",
             _gap_cell(r),
@@ -1214,6 +1276,7 @@ def render_exec_docx(
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
     retired_note: str | None = None,
     no_notes_note: str | None = None,
+    scored_only: bool = False,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -1235,7 +1298,7 @@ def render_exec_docx(
     )
 
     add_heading(doc, "Executive summary")
-    add_paragraphs(doc, _overview_sentences(enterprise_rows))
+    add_paragraphs(doc, _overview_sentences(enterprise_rows, scored_only=scored_only))
     _docx_scorecard(doc, enterprise_rows)
 
     add_heading(doc, "Top priority gaps")
@@ -1273,6 +1336,7 @@ def render_full_docx(
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
     retired_note: str | None = None,
     no_notes_note: str | None = None,
+    scored_only: bool = False,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -1302,7 +1366,7 @@ def render_full_docx(
     add_page_break(doc)
 
     add_heading(doc, "1. Executive summary")
-    add_paragraphs(doc, _overview_sentences(enterprise_rows))
+    add_paragraphs(doc, _overview_sentences(enterprise_rows, scored_only=scored_only))
 
     add_heading(doc, "2. Methodology")
     add_paragraphs(doc, _methodology(enterprise_rows))
@@ -1331,7 +1395,7 @@ def render_full_docx(
                     r.subcategory_code,
                     r.name,
                     f"L{r.enterprise_level}",
-                    f"L{r.target_level}" if r.target_level else "—",
+                    _target_cell(r, "—"),
                     _gap_cell(r),
                     r.priority or "",
                 ]
@@ -1375,9 +1439,9 @@ def render_full_docx(
             [
                 r.subcategory_code,
                 FUNCTION_NAMES.get(_fn_code(r.function), _fn_code(r.function)),
-                r.tier_levels.get("high", "—"),
-                r.tier_levels.get("moderate", "—"),
-                r.tier_levels.get("low", "—"),
+                _tier_cell(r, "high", "—"),
+                _tier_cell(r, "moderate", "—"),
+                _tier_cell(r, "low", "—"),
                 f"L{r.enterprise_level}",
                 f"#{r.rollup_rule}",
                 _gap_cell(r),

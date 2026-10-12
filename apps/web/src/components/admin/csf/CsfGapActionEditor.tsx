@@ -137,6 +137,16 @@ export function CsfGapActionEditor({
                     <p className="text-sm font-medium text-ink-primary">
                       {a.name}
                     </p>
+                    {/* #1031: a POA&M entry never vanishes silently (#736
+                        6116519635, copy approved verbatim). */}
+                    {a.no_longer_gap === true ? (
+                      <p
+                        className="text-xs text-ink-tertiary"
+                        data-testid="gap-action-kept"
+                      >
+                        No longer a gap: kept for the record
+                      </p>
+                    ) : null}
                   </div>
                   <span className="text-xs text-ink-tertiary">
                     L{a.enterprise_level}

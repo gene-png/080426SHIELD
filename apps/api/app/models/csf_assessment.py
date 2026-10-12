@@ -89,6 +89,9 @@ class CsfAssessment(UUIDPKMixin, TimestampMixin, Base):
     approved_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )
+    #: #1031 (migration 0070): the Enterprise roll-up rule it was approved
+    #: under. Read ONLY through `app/csf/rules.py::scored_tiers_only`.
+    rollup_rules: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class CsfAnswer(UUIDPKMixin, TimestampMixin, Base):

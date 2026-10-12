@@ -485,16 +485,27 @@ const PRIORITY_COLOR: Record<string, { bg: string; fg: string }> = {
   P3: { bg: "#f1f5f9", fg: "#475569" },
 };
 
+// #1031, copy approved verbatim (#736 6127667643): an unscored in-scope tier
+// reads "Not scored" and is never dropped, e.g. "H3 · M Not scored · L Not
+// scored". The separator is U+00B7 with a space each side.
+const NOT_SCORED = "Not scored";
+const NOT_MEASURED = "Not measured";
+
 function tierLevels(row: EnterpriseSubcategory): string {
   const order: [string, string][] = [
     ["high", "H"],
     ["moderate", "M"],
     ["low", "L"],
   ];
+  const unscored = row.unscored_tiers ?? [];
   return order
-    .filter(([t]) => row.tier_levels[t] != null)
-    .map(([t, abbr]) => `${abbr}${row.tier_levels[t]}`)
-    .join("  ");
+    .filter(([t]) => row.tier_levels[t] != null || unscored.includes(t))
+    .map(([t, abbr]) =>
+      unscored.includes(t)
+        ? `${abbr} ${NOT_SCORED}`
+        : `${abbr}${row.tier_levels[t]}`,
+    )
+    .join(" \u00b7 ");
 }
 
 const COLUMNS: DataTableColumn<EnterpriseSubcategory>[] = [
@@ -535,13 +546,20 @@ const COLUMNS: DataTableColumn<EnterpriseSubcategory>[] = [
     key: "target",
     header: "Target",
     align: "center",
-    cell: (r) => (r.target_level ? `L${r.target_level}` : "—"),
+    cell: (r) =>
+      r.target_not_measured === true
+        ? NOT_MEASURED
+        : r.target_level
+          ? `L${r.target_level}`
+          : "—",
   },
   {
     key: "priority",
     header: "Gap",
     align: "center",
     cell: (r) => {
+      if (r.target_not_measured === true)
+        return <span className="text-ink-tertiary">{NOT_MEASURED}</span>;
       if (!r.gap) return <span className="text-ink-tertiary">—</span>;
       const c = PRIORITY_COLOR[r.priority ?? "P3"] ?? PRIORITY_COLOR.P3;
       return (

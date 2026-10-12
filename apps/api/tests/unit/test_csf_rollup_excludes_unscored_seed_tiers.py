@@ -17,6 +17,8 @@ Out of scope here, filed as #1073: a subcategory with NO scored tier still
 rolls up its seed rows and reads level 1 (pre-existing).
 
 Every expected level is written out, worked from the scores below:
+Ruling 2 (a) (#736 6116519635): the target comes from the scored tiers too.
+
 - HIGH scored governance 2, policy 2, implementation 2, monitoring 1,
   improvement 0, with evidence: total 7, level 3. A seeded row: total 0,
   level 1. Before #1031, {high: 3, moderate: 1, low: 1} rolled up to 1
@@ -80,11 +82,13 @@ def test_a_scored_tier_is_not_pulled_down_by_two_seed_tiers(app_client) -> None:
     assert (sub["target_level"], sub["gap"], sub["priority"]) == (3, False, None), sub
 
 
-def test_a_target_only_tier_is_unscored_and_its_target_still_counts(
+def test_a_target_only_tier_is_unscored_and_its_target_is_not_counted(
     app_client,  # noqa: F811
 ) -> None:
     """Ruling (a): a target is not a score, so MODERATE's level leaves the
-    roll-up; the subcategory's target is still the highest in-scope target."""
+    roll-up; ruling 2 (a), #736 6116519635: its target leaves it too, so the
+    gap is measured against the scored tier's own target (3), and there is
+    none. Before 2 (a) this read target 4, gap True."""
     c = app_client
     h, svc_id = _seeded(c, THREE_TIERS)
     _patch(c, h, svc_id, "high", {**LEVEL_3, "target_level": 3})
@@ -92,7 +96,7 @@ def test_a_target_only_tier_is_unscored_and_its_target_still_counts(
     sub = _enterprise(c, h, svc_id)
     assert sub["tier_levels"] == {"high": 3}, sub
     assert sub["enterprise_level"] == 3, sub
-    assert (sub["target_level"], sub["gap"]) == (4, True), sub
+    assert (sub["target_level"], sub["gap"]) == (3, False), sub
 
 
 def test_a_tier_with_only_a_finding_written_is_scored(app_client) -> None:  # noqa: F811

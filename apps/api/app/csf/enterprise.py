@@ -28,6 +28,7 @@ from app.csf.playbook import (
     weighted_floor_rollup,
 )
 from app.csf.retired import catalog_rows, has_recorded_value_besides_target
+from app.csf.rules import scored_tiers_only
 from app.logging import get_logger
 from app.models.csf_assessment import CsfAnswer, CsfAssessment
 from app.models.csf_profile import CsfDimensionScore
@@ -82,12 +83,15 @@ def enterprise_subcategories(
         tiers_in_use.add(r.tier)
 
     noted = codes_with_notes(db, a)
+    # #1031, ruling 3: an assessment approved before #1031 keeps its rule.
+    scored_only = scored_tiers_only(a)
     out: list[EnterpriseSubcategory] = []
     for code in sorted(by_subcat):
         tier_rows = by_subcat[code]
+        rolled = _scored_tiers(tier_rows) if scored_only else tier_rows
         results = {
             tier: score_tier(dimensions_of(row), has_evidence=row.has_evidence)
-            for tier, row in _scored_tiers(tier_rows).items()
+            for tier, row in rolled.items()
         }
         tier_levels = {tier: r.level for tier, r in results.items()}
         rollup = weighted_floor_rollup(
@@ -98,8 +102,18 @@ def enterprise_subcategories(
             is_core_primary=is_core_primary(code),
             is_supporting_or_supplemental=is_supporting_or_supplemental(code),
         )
-        targets = [row.target_level for row in tier_rows.values() if row.target_level]
+        # #1031, ruling 2 (a): the target comes from the rows that roll up,
+        # so under the new rule a gap is measured against what was assessed.
+        # A subcategory none of whose tiers is scored keeps every row, level
+        # and target alike, as before #1031 (#1073).
+        # A target that sits only on unscored tiers beside a scored one is
+        # not counted, and is disclosed as "Not measured" (#736 6127667643).
+        target_rows = list(rolled.values())
+        targets = [row.target_level for row in target_rows if row.target_level]
         target = max(targets) if targets else None
+        target_not_measured = target is None and any(
+            row.target_level for t, row in tier_rows.items() if t not in rolled
+        )
         gap = is_gap(rollup.score, target) if target is not None else False
         priority = (
             gap_priority(
@@ -114,6 +128,7 @@ def enterprise_subcategories(
         _log.debug(
             "csf.enterprise.rolled_up",
             subcategory_code=code,
+            scored_only=scored_only,
             tiers_rolled_up=sorted(results),
             tiers_unscored=sorted(set(tier_rows) - set(results)),
         )
@@ -130,6 +145,8 @@ def enterprise_subcategories(
                 gap=gap,
                 priority=priority,
                 no_notes=code not in noted,
+                unscored_tiers=sorted(set(tier_rows) - set(results)),
+                target_not_measured=target_not_measured,
             )
         )
     return out, tiers_in_use

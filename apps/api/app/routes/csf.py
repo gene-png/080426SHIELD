@@ -78,10 +78,13 @@ from app.csf.playbook import (
 from app.csf.retired import (
     answers_sentence,
     catalog_rows,
+    has_recorded_action,
     retired_answers,
     retired_scores,
     working_profile_sentence,
 )
+from app.csf.rules import SCORED_TIERS as CSF_SCORED_TIERS
+from app.csf.rules import scored_tiers_only as csf_scored_tiers_only
 from app.csf.scoring import compute as compute_score
 from app.db.session import get_db
 from app.deliverable_release import release_deliverable
@@ -849,7 +852,13 @@ def approve_assessment(
             CsfAssessment.id == a.id,
             CsfAssessment.status.in_((CsfAssessmentStatus.DRAFT, CsfAssessmentStatus.SUBMITTED)),
         )
-        .values(status=CsfAssessmentStatus.APPROVED, approved_at=utcnow(), approved_by=user.id)
+        # #1031 (migration 0070): approved under the scored-tiers roll-up.
+        .values(
+            status=CsfAssessmentStatus.APPROVED,
+            approved_at=utcnow(),
+            approved_by=user.id,
+            rollup_rules=CSF_SCORED_TIERS,
+        )
         .execution_options(synchronize_session=False)
     )
     if result.rowcount != 1:
@@ -1387,6 +1396,9 @@ def _gap_action_response(
         success_criteria=action.success_criteria if action else None,
         poam_ref=action.poam_ref if action else None,
         effective_priority=_effective_priority(ent, action),
+        # #1031: the editor and the Action Plan say so ("No longer a gap: kept
+        # for the record").
+        no_longer_gap=not ent.gap,
     )
 
 
@@ -1458,16 +1470,41 @@ def list_gap_actions(
     ent_rows, _ = _enterprise_subcategories(db, a)
     actions = _load_gap_actions(db, a.id)
     gaps = [r for r in ent_rows if r.gap]
+    kept = _kept_for_the_record(db, a, ent_rows, actions)
     _log.info(
-        "csf.gap_actions.list assessment=%s gaps=%d annotated=%d",
+        "csf.gap_actions.list assessment=%s gaps=%d annotated=%d kept=%d",
         a.id,
         len(gaps),
         len(actions),
+        len(kept),
     )
     return CsfGapActionsResponse(
         assessment_id=a.id,
-        actions=[_gap_action_response(r, actions.get(r.subcategory_code)) for r in gaps],
+        actions=[_gap_action_response(r, actions.get(r.subcategory_code)) for r in [*gaps, *kept]],
     )
+
+
+def _kept_for_the_record(
+    db: Session,
+    a: CsfAssessment,
+    ent_rows: list[EnterpriseSubcategory],
+    actions: dict[str, CsfGapAction],
+) -> list[EnterpriseSubcategory]:
+    """#1031 (#736 6116519635): a POA&M entry never vanishes silently. A
+    recorded annotation on a catalog code that is not (or no longer) a gap is
+    listed after the gaps, each shown as "No longer a gap: kept for the
+    record". A code the catalog no longer has is #852's, disclosed there."""
+    by_code = {r.subcategory_code: r for r in ent_rows}
+    valid = all_codes()
+    out: list[EnterpriseSubcategory] = []
+    for code in sorted(actions):
+        ent = by_code.get(code)
+        if (ent is not None and ent.gap) or code not in valid:
+            continue
+        if not has_recorded_action(actions[code]):
+            continue
+        out.append(ent or _stand_in_enterprise_row(db, a, code))
+    return out
 
 
 @router.put(
@@ -1557,21 +1594,26 @@ def upsert_gap_action(
     ent_rows, _ = _enterprise_subcategories(db, a)
     ent = next((r for r in ent_rows if r.subcategory_code == subcategory_code), None)
     if ent is None:
-        # Annotated a subcategory that is not currently a gap (e.g. out of scope
-        # or no target). Still return the stored values; no roll-up default.
-        ent = EnterpriseSubcategory(
-            subcategory_code=subcategory_code,
-            name=getattr(subcategory_by_code(subcategory_code), "name", subcategory_code),
-            function=str(getattr(subcategory_by_code(subcategory_code), "function", "")),
-            tier_levels={},
-            enterprise_level=0,
-            rollup_rule=0,
-            target_level=None,
-            gap=False,
-            priority=None,
-            no_notes=subcategory_code not in _codes_with_notes(db, a),
-        )
+        ent = _stand_in_enterprise_row(db, a, subcategory_code)
     return _gap_action_response(ent, row)
+
+
+def _stand_in_enterprise_row(db: Session, a: CsfAssessment, code: str) -> EnterpriseSubcategory:
+    """A subcategory with no in-scope rows to roll up (e.g. out of scope), for
+    a stored annotation on it. Still return the stored values; no roll-up
+    default."""
+    return EnterpriseSubcategory(
+        subcategory_code=code,
+        name=getattr(subcategory_by_code(code), "name", code),
+        function=str(getattr(subcategory_by_code(code), "function", "")),
+        tier_levels={},
+        enterprise_level=0,
+        rollup_rule=0,
+        target_level=None,
+        gap=False,
+        priority=None,
+        no_notes=code not in _codes_with_notes(db, a),
+    )
 
 
 def _llm_dep(db: Annotated[Session, Depends(get_db)]) -> LLMClient:
@@ -2605,6 +2647,10 @@ def export_playbook(
     computed_rows, _ = _enterprise_subcategories(db, a)
     gap_actions = _load_gap_actions(db, a.id)
     enterprise_rows = _with_effective_priority(computed_rows, gap_actions)
+    # #1031: the roll-up rule the copy describes, and POA&M entries kept for
+    # the record on codes that are not (or no longer) gaps.
+    _scored_only = csf_scored_tiers_only(a)
+    _kept = _kept_for_the_record(db, a, computed_rows, gap_actions)
     tier_profiles: dict[str, list] = {}
     for tier in ("high", "moderate", "low"):
         trows = sorted(
@@ -2677,10 +2723,12 @@ def export_playbook(
                 enterprise_rows=enterprise_rows,
                 tier_profiles=tier_profiles,
                 gap_actions=gap_actions,
+                kept_rows=_kept,
                 approved=_approved,
                 ai_mode=_ai_mode,
                 retired_note=retired_note,
                 no_notes_note=_no_notes_note,
+                scored_only=_scored_only,
             ),
         ),
         (
@@ -2697,6 +2745,7 @@ def export_playbook(
                 ai_mode=_ai_mode,
                 retired_note=retired_note,
                 no_notes_note=_no_notes_note,
+                scored_only=_scored_only,
             ),
         ),
         (
@@ -2713,6 +2762,7 @@ def export_playbook(
                 ai_mode=_ai_mode,
                 retired_note=retired_note,
                 no_notes_note=_no_notes_note,
+                scored_only=_scored_only,
             ),
         ),
         (
@@ -2729,6 +2779,7 @@ def export_playbook(
                 ai_mode=_ai_mode,
                 retired_note=retired_note,
                 no_notes_note=_no_notes_note,
+                scored_only=_scored_only,
             ),
         ),
         (
@@ -2745,6 +2796,7 @@ def export_playbook(
                 ai_mode=_ai_mode,
                 retired_note=retired_note,
                 no_notes_note=_no_notes_note,
+                scored_only=_scored_only,
             ),
         ),
     ]

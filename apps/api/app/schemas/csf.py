@@ -373,6 +373,16 @@ class EnterpriseSubcategory(BaseModel):
     #: #474 D': per tier, whether the evidence cap CHANGED that tier's result
     #: (`score_tier(...).evidence_capped`). Never serialized.
     tier_evidence_capped: dict[str, bool] = Field(default_factory=dict, exclude=True)
+    #: #1031: in-scope tiers left out of the roll-up because nobody scored
+    #: them; every screen and file shows each as "Not scored". Empty under the
+    #: every-tier rule and for a subcategory none of whose tiers is scored
+    #: (#1073). Defaulted so an older client parses.
+    unscored_tiers: list[str] = Field(default_factory=list)
+    #: #1031: the subcategory's only targets sit on unscored tiers, so no
+    #: target was measured ("Not measured" in the Target and Gap cells; "No
+    #: target" stays for a row with no target at all). Defaulted so an older
+    #: client parses.
+    target_not_measured: bool = False
 
 
 class EnterpriseProfileResponse(BaseModel):
@@ -571,6 +581,10 @@ class CsfGapActionResponse(BaseModel):
     poam_ref: str | None
     # priority_override where set, else default_priority.
     effective_priority: str | None
+    #: #1031: the code is not (or no longer) a gap; the entry is kept for
+    #: the record ("No longer a gap: kept for the record"). Required: every
+    #: construction goes through `_gap_action_response`.
+    no_longer_gap: bool
 
 
 class CsfGapActionsResponse(BaseModel):
