@@ -4,7 +4,8 @@ ONE reader set, ONE set of limits and ONE "not read" vocabulary, for EV-1's
 evidence-link job (P4) and EV-2's client summary. Both import this module;
 neither reimplements a reader ("same as" enforced by calling).
 
-Readers: PDF (pypdf, page text and filled AcroForm values), DOCX (its XML,
+Readers: PDF (pypdf: page text, annotation text and filled AcroForm values),
+DOCX (its XML,
 walked directly: body, headers, footers, footnotes, endnotes, comments, content
 controls, text boxes, tracked insertions, nested tables), XLSX (openpyxl, XML
 parsed through defusedxml) and plain text. Images, RTF, legacy Office files,
@@ -24,7 +25,16 @@ The type is decided from the file's MAGIC BYTES. The declared type (the
 upload's mime and the title's extension) is a claim checked against them: a
 declaration that disagrees with the bytes is `unreadable`, never trusted.
 
-Extraction STOPS EARLY at `max_chars` and at `max_pages`; `truncated` says so.
+Extraction STOPS EARLY at `max_chars`, at `max_pages` and at `max_seconds`
+(checked per page, row and paragraph); `truncated` says so, and a time limit
+reached before any text is `too_large`.
+
+**Redaction runs over the WHOLE text, before chunking.** `redact_text` calls
+`app.ai.redact.redact_for_ai` on the full extracted text and returns a
+`RedactedText`; `chunk_text` accepts nothing else. Redacting chunk by chunk is
+NOT safe: the redactor matches whole literals and whole shapes, so a boundary
+inside a name, a phone number or an address leaves fragments it cannot see
+(review round 3 of #1089).
 
 Wired to nothing yet: no route and no AI call reads it.
 """
@@ -36,7 +46,7 @@ import io
 import re
 import time
 import zipfile
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from itertools import zip_longest
 from typing import TYPE_CHECKING, Literal, Protocol, get_args
@@ -48,7 +58,8 @@ from pypdf import PdfReader
 from pypdf.errors import FileNotDecryptedError
 from pypdf.generic import NameObject
 
-from app.config import Settings, get_settings
+from app.ai.redact import redact_for_ai
+from app.config import RedactionMode, Settings, get_settings
 from app.logging import get_logger
 from app.models.artifact import Artifact
 
@@ -129,20 +140,47 @@ class DocText:
 class ChunkPlan:
     """The chunks to send, and how many were sent and skipped. `sent` is
     `len(chunks)`; `skipped` is how many more the text needed past the cap.
-
-    ADJACENT CHUNKS OVERLAP by `overlap_chars`, so a caller counting what the
-    chunks found must not count text in the overlap twice: `offsets[i]` is
-    where `chunks[i]` starts in the text, and chunk i+1 starts
-    `overlap_chars` or fewer characters before chunk i ends."""
+    Chunks do not overlap and concatenate back to the redacted text;
+    `offsets[i]` is where `chunks[i]` starts in it."""
 
     chunks: tuple[str, ...]
     sent: int
     skipped: int
-    overlap_chars: int
     offsets: tuple[int, ...]
-    #: True when whitespace runs were collapsed before chunking; `offsets`
-    #: then index `normalise_whitespace(text)`, not the text passed in.
-    whitespace_normalised: bool
+
+
+@dataclass(frozen=True)
+class RedactedText:
+    """Text that has been through `redact_for_ai` WHOLE, the only input
+    `chunk_text` accepts. `counts` is the redactor's own count of what it
+    replaced; `mode` is the mode it ran in."""
+
+    text: str
+    counts: Mapping[str, int]
+    mode: RedactionMode
+
+
+def redact_text(
+    text: str,
+    *,
+    mode: RedactionMode,
+    client_org_name: str | None,
+    name_hints: Iterable[str],
+) -> RedactedText:
+    """Redact the WHOLE extracted text with `redact_for_ai`, before any
+    chunking, so no chunk boundary can split a name, a phone number, an
+    address or a signature block out of the redactor's sight.
+
+    This calls the redactor in the calling process. A caller wiring it into
+    a live AI path must run it inside #552's redaction isolation (the child
+    process with a per-payload time budget), as every other egress does."""
+    if not isinstance(text, str):
+        raise TypeError(f"redact_text needs str, got {type(text).__name__}")
+    cleaned, counts = redact_for_ai(
+        text, mode=mode, client_org_name=client_org_name, name_hints=name_hints
+    )
+    _log.info("documents.text.redacted", mode=mode, chars=len(cleaned), counts=counts)
+    return RedactedText(text=cleaned, counts=dict(counts), mode=mode)
 
 
 @dataclass(frozen=True)
@@ -498,10 +536,13 @@ def _read_pdf(data: bytes, limits: ExtractLimits, tally: _Tally) -> Iterator[str
     capped = total > limits.max_pages
     if capped:
         tally.stopped_early = True
-    for value in _pdf_form_values(reader, tally):
-        read_any = True
-        yield value
-    _count_pdf_attachments(reader, tally)
+    if not timed_out and not tally.out_of_time():
+        for value in _pdf_form_values(reader, tally):
+            read_any = True
+            yield value
+        _count_pdf_attachments(reader, tally)
+    else:
+        timed_out = True
     if not read_any:
         if timed_out:
             raise _NotRead(
@@ -622,8 +663,13 @@ _DOCX_NOT_READ = frozenset(
         "{http://schemas.openxmlformats.org/drawingml/2006/picture}pic",
         "{http://schemas.openxmlformats.org/drawingml/2006/diagram}relIds",
         "{http://schemas.openxmlformats.org/drawingml/2006/chart}chart",
+        "{http://schemas.openxmlformats.org/officeDocument/2006/math}oMathPara",
+        "{http://schemas.openxmlformats.org/officeDocument/2006/math}oMath",
     }
 )
+#: Containers of graphics. One that gives no text and nothing counted inside
+#: it (a VML picture, a chartex chart, ink, a shape) is counted itself.
+_DOCX_GRAPHIC = frozenset({_W + "drawing", _W + "pict"})
 #: Private Use Area: a symbol font's code point, with no known character.
 _PUA = range(0xE000, 0xF900)
 _DOCX_NOTES = ("word/footnotes.xml", "word/endnotes.xml", "word/comments.xml")
@@ -705,7 +751,16 @@ def _docx_paragraph(p: Element, tally: _Tally) -> Iterator[str]:
                 # "Jean-Pierre" must reach the redactor as the hint is written.
                 pieces.append("-")
             elif tag == _W + "sym":
-                pieces.append(_docx_symbol(child))
+                symbol = _docx_symbol(child)
+                if symbol:
+                    pieces.append(symbol)
+                else:
+                    tally.parts_not_read += 1
+            elif tag in _DOCX_GRAPHIC:
+                before = (len(pieces), len(nested), tally.parts_not_read)
+                walk(child)
+                if (len(pieces), len(nested), tally.parts_not_read) == before:
+                    tally.parts_not_read += 1
             elif tag == _W + "r" and _docx_is_hidden(child):
                 # Hidden text is not what a reader of the document sees, so it
                 # is not quoted as evidence; it is counted, not dropped.
@@ -761,15 +816,17 @@ def _docx_is_hidden(run: Element) -> bool:
 
 
 def _docx_symbol(sym: Element) -> str:
-    """A w:sym's character where it is a real one. A symbol-font code point in
-    the Private Use Area has no known character and gives nothing."""
+    """A w:sym's character where it is a real one, else "" (the caller counts
+    it). A symbol-font code point in the Private Use Area (Wingdings' checked
+    and empty boxes, F0FE and F0A8) has no known character; neither has a
+    code that is not hex or not a code point at all."""
     try:
         code = int(sym.get(_W + "char", ""), 16)
-    except ValueError:
+        if code in _PUA:
+            return ""
+        return chr(code)
+    except (ValueError, OverflowError):
         return ""
-    if code in _PUA:
-        return ""
-    return chr(code)
 
 
 def _docx_descendants(el: Element, tag: str) -> Iterator[Element]:
@@ -904,89 +961,48 @@ def _sanitize(text: str) -> str:
     return _CONTROLS.sub(" ", _LINE_BREAKS.sub("\n", text.lstrip("\ufeff")))
 
 
-def normalise_whitespace(text: str) -> str:
-    """Collapse every whitespace run to one character: a newline if the run
-    contains one, else a space. The redactor matches a name as its words
-    joined by `\\s+`, so after this the text as sent holds a name at exactly
-    the length of its hint, and an overlap sized from the hint covers it."""
-    return _WHITESPACE_RUN.sub(lambda m: "\n" if "\n" in m.group() else " ", text)
-
-
-_WHITESPACE_RUN = re.compile(r"\s+")
-
-
-def chunk_text(
-    text: str,
-    *,
-    chunk_chars: int,
-    max_chunks: int,
-    name_hints: Iterable[str],
-    client_org_name: str | None,
-) -> ChunkPlan:
-    """Split `text` into chunks of at most `chunk_chars` for per-payload calls.
-
-    Takes the literals `redact_for_ai` matches (`name_hints` and
-    `client_org_name`, usually the longest) so that no name the redactor would
-    catch whole can be cut in two by a boundary (advisor ruling, #736
-    6116519635; review round 2 of #1089):
-
-    * whitespace runs are collapsed first (`normalise_whitespace`), and the
-      plan says so; `offsets` index the NORMALISED text;
-    * adjacent chunks overlap by the longest literal, measured as its words
-      joined by single spaces, plus one character.
+def chunk_text(redacted: RedactedText, *, chunk_chars: int, max_chunks: int) -> ChunkPlan:
+    """Split already-redacted text into chunks of at most `chunk_chars` for
+    per-payload AI calls. It takes only a `RedactedText` (from `redact_text`),
+    never raw text: redacting per chunk is not safe (see the module docstring).
 
     A chunk ends at the last paragraph break in the second half of its
-    window, else the last whitespace there, else at `chunk_chars` exactly. At
-    most `max_chunks` are returned; `skipped` counts the rest the text needed.
+    window, else the last whitespace there, else at `chunk_chars` exactly.
+    Chunks do not overlap. At most `max_chunks` are returned; `skipped`
+    counts the rest the text needed.
     """
-    if not isinstance(text, str):
-        raise TypeError(f"chunk_text needs str, got {type(text).__name__}")
+    if not isinstance(redacted, RedactedText):
+        raise TypeError(
+            f"chunk_text needs a RedactedText from redact_text, got {type(redacted).__name__}"
+        )
     if chunk_chars < 1:
         raise ValueError(f"chunk_chars must be at least 1, got {chunk_chars}")
     if max_chunks < 1:
         raise ValueError(f"max_chunks must be at least 1, got {max_chunks}")
-    literals = [" ".join(h.split()) for h in [*name_hints, client_org_name or ""]]
-    literals = [lit for lit in literals if lit]
-    overlap = max(len(lit) for lit in literals) + 1 if literals else 0
-    if overlap and overlap * 2 >= chunk_chars:
-        raise ValueError(
-            f"overlap of {overlap} (longest name literal + 1) needs chunk_chars above "
-            f"{overlap * 2}, got {chunk_chars}"
-        )
-    normalised = normalise_whitespace(text)
+    text = redacted.text
     chunks: list[str] = []
     offsets: list[int] = []
     start = 0
-    while start < len(normalised):
-        end = min(start + chunk_chars, len(normalised))
-        if end < len(normalised):
-            end = _chunk_end(normalised, start, end, chunk_chars)
+    while start < len(text):
+        end = min(start + chunk_chars, len(text))
+        if end < len(text):
+            end = _chunk_end(text, start, end, chunk_chars)
         if end <= start:
             # Every pass must consume text. Without this a bad limit loops
             # forever instead of failing.
             raise RuntimeError(
                 f"chunk_text made no progress at {start} (chunk_chars={chunk_chars})"
             )
-        chunks.append(normalised[start:end])
+        chunks.append(text[start:end])
         offsets.append(start)
-        if end == len(normalised):
-            break
-        start = max(end - overlap, start + 1)
+        start = end
     plan = ChunkPlan(
         chunks=tuple(chunks[:max_chunks]),
         sent=min(len(chunks), max_chunks),
         skipped=max(len(chunks) - max_chunks, 0),
-        overlap_chars=overlap,
         offsets=tuple(offsets[:max_chunks]),
-        whitespace_normalised=normalised != text,
     )
-    _log.info(
-        "documents.text.chunked",
-        sent=plan.sent,
-        skipped=plan.skipped,
-        overlap=plan.overlap_chars,
-        whitespace_normalised=plan.whitespace_normalised,
-    )
+    _log.info("documents.text.chunked", sent=plan.sent, skipped=plan.skipped)
     return plan
 
 

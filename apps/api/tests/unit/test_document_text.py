@@ -32,10 +32,11 @@ from app.documents.text import (
     ChunkPlan,
     DocText,
     ExtractLimits,
+    RedactedText,
     chunk_text,
     document_text,
     extract_limits,
-    normalise_whitespace,
+    redact_text,
 )
 from app.models.artifact import Artifact
 from app.storage.local import LocalFilesystemStorage
@@ -526,50 +527,38 @@ def test_a_storage_failure_that_is_not_a_miss_raises(store):
 # --------------------------------------------------------------------------
 
 
+def _unredacted(text: str) -> RedactedText:
+    """A RedactedText from `redact_text` with mode "off": these tests are about
+    where chunks break, and must not depend on what the redactor rewrites.
+    Redaction itself is tested below, through `redact_for_ai`."""
+    return redact_text(text, mode="off", client_org_name=None, name_hints=())
+
+
 def test_chunk_exact_boundary_is_one_chunk():
-    plan = chunk_text("a" * 100, chunk_chars=100, max_chunks=5, name_hints=(), client_org_name=None)
-    assert plan == ChunkPlan(
-        chunks=("a" * 100,),
-        sent=1,
-        skipped=0,
-        overlap_chars=0,
-        offsets=(0,),
-        whitespace_normalised=False,
-    )
+    plan = chunk_text(_unredacted("a" * 100), chunk_chars=100, max_chunks=5)
+    assert plan == ChunkPlan(chunks=("a" * 100,), sent=1, skipped=0, offsets=(0,))
 
 
 def test_chunk_one_over_the_boundary_is_two_chunks():
-    plan = chunk_text("a" * 101, chunk_chars=100, max_chunks=5, name_hints=(), client_org_name=None)
-    assert plan == ChunkPlan(
-        chunks=("a" * 100, "a"),
-        sent=2,
-        skipped=0,
-        overlap_chars=0,
-        offsets=(0, 100),
-        whitespace_normalised=False,
-    )
+    plan = chunk_text(_unredacted("a" * 101), chunk_chars=100, max_chunks=5)
+    assert plan == ChunkPlan(chunks=("a" * 100, "a"), sent=2, skipped=0, offsets=(0, 100))
 
 
 def test_chunk_max_chunks_exceeded_counts_the_skipped():
-    plan = chunk_text(
-        "b" * 1000, chunk_chars=100, max_chunks=3, name_hints=(), client_org_name=None
-    )
+    plan = chunk_text(_unredacted("b" * 1000), chunk_chars=100, max_chunks=3)
     assert plan.sent == 3
     assert plan.skipped == 7
     assert plan.chunks == ("b" * 100,) * 3
 
 
 def test_chunk_empty_text_sends_nothing_and_skips_nothing():
-    assert chunk_text(
-        "", chunk_chars=100, max_chunks=3, name_hints=(), client_org_name=None
-    ) == ChunkPlan(
-        chunks=(), sent=0, skipped=0, overlap_chars=0, offsets=(), whitespace_normalised=False
-    )
+    plan = chunk_text(_unredacted(""), chunk_chars=100, max_chunks=3)
+    assert plan == ChunkPlan(chunks=(), sent=0, skipped=0, offsets=())
 
 
 def test_chunk_breaks_at_whitespace_and_loses_nothing():
     text = "Uniform victor whiskey xray yankee zulu " * 40
-    plan = chunk_text(text, chunk_chars=50, max_chunks=1000, name_hints=(), client_org_name=None)
+    plan = chunk_text(_unredacted(text), chunk_chars=50, max_chunks=1000)
     assert plan.skipped == 0
     assert "".join(plan.chunks) == text
     assert all(len(c) <= 50 for c in plan.chunks)
@@ -577,10 +566,22 @@ def test_chunk_breaks_at_whitespace_and_loses_nothing():
     assert all(c[-1].isspace() for c in plan.chunks[:-1])
 
 
+def test_chunk_offsets_locate_every_chunk():
+    text = "alpha bravo charlie delta echo foxtrot golf hotel india juliet " * 20
+    plan = chunk_text(_unredacted(text), chunk_chars=60, max_chunks=1000)
+    for offset, chunk in zip(plan.offsets, plan.chunks, strict=True):
+        assert text[offset : offset + len(chunk)] == chunk
+
+
+def test_chunk_prefers_a_paragraph_boundary_to_a_later_space():
+    first = "Mike paragraph one runs on for a while here"
+    text = first + "\n" + "November second paragraph words go on and on and on"
+    plan = chunk_text(_unredacted(text), chunk_chars=60, max_chunks=10)
+    assert plan.chunks[0] == first + "\n"
+
+
 def test_chunk_hard_cuts_a_run_with_no_whitespace():
-    plan = chunk_text(
-        "c" * 250, chunk_chars=100, max_chunks=10, name_hints=(), client_org_name=None
-    )
+    plan = chunk_text(_unredacted("c" * 250), chunk_chars=100, max_chunks=10)
     assert [len(c) for c in plan.chunks] == [100, 100, 50]
 
 
@@ -590,18 +591,14 @@ def test_chunk_hard_cuts_a_run_with_no_whitespace():
 )
 def test_chunk_refuses_limits_that_cannot_hold_text(chunk_chars, max_chunks):
     with pytest.raises(ValueError):
-        chunk_text(
-            "text",
-            chunk_chars=chunk_chars,
-            max_chunks=max_chunks,
-            name_hints=(),
-            client_org_name=None,
-        )
+        chunk_text(_unredacted("text"), chunk_chars=chunk_chars, max_chunks=max_chunks)
 
 
-def test_chunk_refuses_a_non_string():
-    with pytest.raises(TypeError):
-        chunk_text(b"bytes", chunk_chars=10, max_chunks=1, name_hints=(), client_org_name=None)  # type: ignore[arg-type]
+@pytest.mark.parametrize("raw", ["plain unredacted text", b"bytes"])
+def test_chunk_refuses_anything_but_redacted_text(raw):
+    """chunk_text never sees text that has not been through the redactor."""
+    with pytest.raises(TypeError, match="RedactedText"):
+        chunk_text(raw, chunk_chars=10, max_chunks=1)  # type: ignore[arg-type]
 
 
 def test_a_large_file_chunks_end_to_end(store):
@@ -614,11 +611,7 @@ def test_a_large_file_chunks_end_to_end(store):
     _assert_read(result)
     assert result.chars_total == 43_000
     plan = chunk_text(
-        result.text,
-        chunk_chars=limits.chunk_chars,
-        max_chunks=limits.max_chunks,
-        name_hints=(),
-        client_org_name=None,
+        _unredacted(result.text), chunk_chars=limits.chunk_chars, max_chunks=limits.max_chunks
     )
     assert plan.sent == 4
     assert plan.skipped == 6
@@ -1121,54 +1114,6 @@ def test_xlsx_without_defusedxml_refuses_to_parse(store, monkeypatch):
 # --------------------------------------------------------------------------
 
 
-def test_chunk_overlap_keeps_a_name_split_at_a_boundary_whole():
-    """A name hint cut by a chunk boundary still appears whole in a chunk,
-    because chunks overlap by the longest hint plus one character."""
-    name = "Northwind Traders"
-    text = ("word " * 8) + name + (" tail" * 30)
-    plan = chunk_text(
-        text, chunk_chars=50, max_chunks=100, name_hints=[name, "Acme"], client_org_name=None
-    )
-    start = text.index(name)
-    # The precondition: some chunk boundary falls strictly inside the name.
-    ends = [o + len(c) for o, c in zip(plan.offsets, plan.chunks, strict=True)]
-    assert any(start < e < start + len(name) for e in ends), ends
-    assert any(name in c for c in plan.chunks)
-    assert plan.overlap_chars == len(name) + 1
-
-
-def test_chunk_overlap_is_disclosed_and_offsets_locate_every_chunk():
-    """A caller de-duplicating across chunks reads `offsets` and
-    `overlap_chars`; each chunk is exactly the text at its offset."""
-    text = "alpha bravo charlie delta echo foxtrot golf hotel india juliet " * 20
-    plan = chunk_text(
-        text, chunk_chars=60, max_chunks=1000, name_hints=["Kilo Lima"], client_org_name=None
-    )
-    assert plan.overlap_chars == 10
-    for offset, chunk in zip(plan.offsets, plan.chunks, strict=True):
-        assert text[offset : offset + len(chunk)] == chunk
-    # Adjacent chunks share text, and the last chunk reaches the end.
-    assert all(
-        b < a + len(c)
-        for a, b, c in zip(plan.offsets[:-1], plan.offsets[1:], plan.chunks[:-1], strict=True)
-    )
-    assert plan.offsets[-1] + len(plan.chunks[-1]) == len(text)
-
-
-def test_chunk_prefers_a_paragraph_boundary_to_a_later_space():
-    first = "Mike paragraph one runs on for a while here"
-    text = first + "\n" + "November second paragraph words go on and on and on"
-    plan = chunk_text(text, chunk_chars=60, max_chunks=10, name_hints=(), client_org_name=None)
-    assert plan.chunks[0] == first + "\n"
-
-
-def test_chunk_refuses_an_overlap_that_leaves_no_progress():
-    with pytest.raises(ValueError, match="overlap"):
-        chunk_text(
-            "x" * 100, chunk_chars=10, max_chunks=10, name_hints=["y" * 9], client_org_name=None
-        )
-
-
 class _Clock:
     """A fake monotonic clock: each read advances it by `step` seconds."""
 
@@ -1229,59 +1174,6 @@ def test_time_cap_stops_between_pieces_for_any_reader(store, monkeypatch):
 # --------------------------------------------------------------------------
 # Review round 2 at 868eac00 (#1089).
 # --------------------------------------------------------------------------
-
-
-def _redactor_match(literal: str, chunk: str) -> bool:
-    r"""How the redactor finds a literal: its words joined by `\s+`
-    (app/ai/redact.py, `_literal_pattern`)."""
-    pattern = r"\s+".join(re.escape(w) for w in literal.split())
-    return re.search(pattern, chunk, re.IGNORECASE) is not None
-
-
-def test_whitespace_runs_are_collapsed_so_a_padded_name_is_not_split():
-    """ "Dana" + 14 spaces + "Whitfield" is longer than the hint. Collapsed to
-    one space before chunking, the text as sent matches the hint's length, so
-    the overlap covers it."""
-    text = ("word " * 6) + "Dana" + " " * 14 + "Whitfield" + (" tail" * 40)
-    plan = chunk_text(
-        text, chunk_chars=50, max_chunks=100, name_hints=["Dana Whitfield"], client_org_name=None
-    )
-    assert plan.whitespace_normalised is True
-    assert any(_redactor_match("Dana Whitfield", c) for c in plan.chunks)
-
-
-def test_whitespace_normalising_keeps_line_breaks_and_says_when_nothing_changed():
-    assert normalise_whitespace("a \t b\n\n  c") == "a b\nc"
-    plan = chunk_text(
-        "one two\nthree", chunk_chars=50, max_chunks=5, name_hints=(), client_org_name=None
-    )
-    assert plan.whitespace_normalised is False
-
-
-def test_overlap_is_sized_from_the_client_legal_name_too():
-    """The legal name is usually the longest literal the redactor matches;
-    the overlap covers it even when every user hint is shorter."""
-    org = "Northwind Traders International Holdings"
-    text = ("word " * 12) + org + (" tail" * 40)
-    plan = chunk_text(
-        text, chunk_chars=100, max_chunks=100, name_hints=["Acme"], client_org_name=org
-    )
-    assert plan.overlap_chars == len(org) + 1
-    start = text.index(org)
-    ends = [o + len(c) for o, c in zip(plan.offsets, plan.chunks, strict=True)]
-    assert any(start < e < start + len(org) for e in ends), ends
-    assert any(_redactor_match(org, c) for c in plan.chunks)
-
-
-def test_overlap_measures_a_hint_by_its_words_not_its_padding():
-    plan = chunk_text(
-        "x " * 100,
-        chunk_chars=50,
-        max_chunks=100,
-        name_hints=["  Dana    Whitfield "],
-        client_org_name=None,
-    )
-    assert plan.overlap_chars == len("Dana Whitfield") + 1
 
 
 def _docx_with_run(run_xml: str) -> bytes:
@@ -1513,3 +1405,160 @@ def test_a_real_bitmap_header_is_unsupported_type(store):
     )
     assert len(bmp) == size
     _assert_not_read(store.read(bmp, title="pic.bmp", mime="image/bmp"), "unsupported_type")
+
+
+# --------------------------------------------------------------------------
+# Review round 3 at 7b4102bd (#1089): redaction runs over the whole text.
+# --------------------------------------------------------------------------
+
+_ORG = "Northwind Traders International Holdings"
+_ORG_TOKENS = ("northwind", "traders", "international", "holdings")
+
+
+def _leaks_org(chunk: str) -> bool:
+    words = set(re.findall(r"\w+", chunk.lower()))
+    return any(token in words for token in _ORG_TOKENS)
+
+
+def test_redacting_each_chunk_leaks_a_name_cut_by_a_boundary():
+    """The defect, reproduced with the real redactor: chunk first and redact
+    each chunk, and a boundary leaves part of the legal name unredacted."""
+    from app.ai.redact import redact_for_ai
+
+    text = ("Lorem ipsum dolor sit amet " * 3 + _ORG + " ") * 8
+    raw_chunks = chunk_text(_unredacted(text), chunk_chars=120, max_chunks=100).chunks
+    per_chunk = [redact_for_ai(c, client_org_name=_ORG)[0] for c in raw_chunks]
+    assert any(_leaks_org(c) for c in per_chunk)
+
+
+def test_no_chunk_carries_any_part_of_a_name_or_phone_cut_by_a_boundary():
+    """Redaction runs over the WHOLE text before chunking, so no boundary can
+    hide a name or a phone number from it."""
+    from app.ai.redact import redact_for_ai
+
+    phone = "(410) 555-0199"
+    base = ("Lorem ipsum dolor sit amet " * 3 + _ORG + " ") * 8
+    # The phone's inner space is the last whitespace before character 120, so
+    # a 120-character chunk boundary falls inside the number.
+    text = "Lorem ipsum dolor sit amet " * 4 + " call " + phone + " now " + base
+    assert text.index(phone) == 114
+
+    # Control: chunked first and redacted per chunk, the number is cut in two
+    # and part of it reaches the provider.
+    raw = chunk_text(_unredacted(text), chunk_chars=120, max_chunks=100).chunks
+    assert raw[0].endswith("(410) ")
+    per_chunk = [redact_for_ai(c, client_org_name=_ORG)[0] for c in raw]
+    assert any("0199" in c or "410" in c for c in per_chunk)
+
+    redacted = redact_text(text, mode="strict", client_org_name=_ORG, name_hints=())
+    plan = chunk_text(redacted, chunk_chars=120, max_chunks=100)
+    assert plan.skipped == 0
+    assert plan.sent > 5
+    assert not any(_leaks_org(c) for c in plan.chunks)
+    assert not any(d in c for c in plan.chunks for d in ("410", "555", "0199"))
+    assert redacted.counts
+
+
+def test_redact_text_is_redact_for_ai_over_the_whole_text():
+    """Same inputs, same output: redact_text calls redact_for_ai, it does
+    not reimplement it."""
+    from app.ai.redact import redact_for_ai
+
+    text = "Contact Dana Whitfield at Northwind Traders International Holdings, (410) 555-0199."
+    expected, counts = redact_for_ai(
+        text, mode="strict", client_org_name=_ORG, name_hints=["Dana Whitfield"]
+    )
+    got = redact_text(text, mode="strict", client_org_name=_ORG, name_hints=["Dana Whitfield"])
+    assert got.text == expected
+    assert got.counts == counts
+    assert "Dana" not in got.text
+
+
+def _docx_body_only(body: str) -> bytes:
+    """A DOCX whose body is exactly `body`: no other paragraph."""
+
+    def edit(name: str, raw: bytes) -> bytes:
+        if name != "word/document.xml":
+            return raw
+        text = raw.decode()
+        head, rest = text.split("<w:body>", 1)
+        _, tail = rest.split("<w:sectPr", 1)
+        return (head + "<w:body>" + body + "<w:sectPr" + tail).encode()
+
+    return _rewrite_zip(_docx(paragraphs=[]), edit)
+
+
+def test_docx_symbol_font_characters_are_counted(store):
+    """Wingdings checked (F0FE) and empty (F0A8) boxes have no known
+    character; each is counted, so yes and no do not read the same as
+    nothing."""
+    body = (
+        "<w:p><w:r><w:t>Answer: </w:t></w:r>"
+        '<w:r><w:sym w:font="Wingdings" w:char="F0FE"/></w:r>'
+        '<w:r><w:sym w:font="Wingdings" w:char="F0A8"/></w:r></w:p>'
+    )
+    result = _docx_text(store, body)
+    _assert_read(result)
+    assert result.parts_not_read == 2
+
+
+def test_docx_symbol_with_an_impossible_code_is_counted_not_fatal(store):
+    body = '<w:p><w:r><w:t>Still read</w:t></w:r><w:r><w:sym w:char="FFFFFFFF"/></w:r></w:p>'
+    result = _docx_text(store, body)
+    _assert_read(result)
+    assert "Still read" in result.text
+    assert result.parts_not_read == 1
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        # a legacy VML picture
+        '<w:r><w:pict><v:shape><v:imagedata r:id="rIdImg"/></v:shape></w:pict></w:r>',
+        # a drawing in a namespace the reader does not list (chartex)
+        '<w:r><w:drawing><cx:chart xmlns:cx="http://schemas.microsoft.com/office/'
+        'drawing/2014/chartex" r:id="rIdCx"/></w:drawing></w:r>',
+        # an OMML equation
+        '<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">'
+        "<m:r><m:t>E=mc2</m:t></m:r></m:oMath>",
+    ],
+    ids=["vml-picture", "chartex", "equation"],
+)
+def test_docx_whose_only_content_is_unread_is_no_text_layer(store, content):
+    data = _docx_body_only(f"<w:p>{content}</w:p>")
+    _assert_not_read(store.read(data, title="only.docx", mime=DOCX), "no_text_layer")
+
+
+def test_docx_unread_drawings_beside_text_are_counted_once_each(store):
+    body = (
+        _p("Words around them")
+        + '<w:p><w:r><w:pict><v:shape><v:imagedata r:id="rIdImg"/></v:shape></w:pict></w:r>'
+        + '<w:r><w:drawing><cx:chart xmlns:cx="http://schemas.microsoft.com/office/'
+        'drawing/2014/chartex" r:id="rIdCx"/></w:drawing></w:r>'
+        + '<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">'
+        "<m:r><m:t>E=mc2</m:t></m:r></m:oMath></w:p>"
+    )
+    result = _docx_text(store, body)
+    _assert_read(result)
+    assert "Words around them" in result.text
+    assert result.parts_not_read == 3
+
+
+def test_a_timed_out_pdf_does_not_walk_its_form(store, monkeypatch):
+    from pypdf import PdfReader
+
+    import app.documents.text as text_module
+
+    calls: list[str] = []
+    real = PdfReader.get_fields
+
+    def counting(self, *a, **k):
+        calls.append("get_fields")
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(PdfReader, "get_fields", counting)
+    monkeypatch.setattr(text_module, "_clock", _Clock(step=10.0))
+    data = _pdf_with_form("Whiskey value", page_text=None)
+    result = store.read(data, title="tform.pdf", mime=PDF, limits=replace(LIMITS, max_seconds=5.0))
+    _assert_not_read(result, "too_large")
+    assert calls == []

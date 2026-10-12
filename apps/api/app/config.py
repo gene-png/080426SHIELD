@@ -248,13 +248,16 @@ class Settings(BaseSettings):
     shield_document_max_bytes: int = Field(default=50 * 1024 * 1024, ge=1, le=1024**3)
     shield_document_max_unzipped_bytes: int = Field(default=200 * 1024 * 1024, ge=1, le=4 * 1024**3)
     # Characters extracted from one file; extraction stops once past it and
-    # the result says `truncated`.
+    # the result says `truncated`. The WHOLE extracted text is redacted at once,
+    # before chunking (`redact_text`), so this, not the chunk size, is what must
+    # fit #552's per-payload redaction budget. That budget is TIME
+    # (`shield_redaction_budget_seconds`, #1042) and redaction cost grows with
+    # the name hints as well as the text, so no character count is derivable
+    # from it. 2,000,000 is NOT measured against it: measure it when #1042
+    # lands and the first caller is wired.
     shield_document_max_chars: int = Field(default=2_000_000, ge=1, le=100_000_000)
-    # One chunk is one AI payload, so it must redact inside #552's per-payload
-    # budget. That budget is TIME (`shield_redaction_budget_seconds`, #1042)
-    # and redaction cost grows with the name hints as well as the text, so no
-    # character count is derivable from it. 12,000 is NOT measured against it:
-    # measure it when #1042 lands and the first caller is wired.
+    # Characters per AI payload, cut from already-redacted text. 12,000 is a
+    # placeholder, measured with `max_chars` when the first caller is wired.
     shield_document_chunk_chars: int = Field(default=12_000, ge=1, le=1_000_000)
     # Chunks sent per file; the rest are counted as skipped and disclosed.
     shield_document_max_chunks: int = Field(default=20, ge=1, le=1_000)
