@@ -13,6 +13,8 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**2026-10-12: #552, PR #1042.** AI egress redaction runs in an isolated child process (D-111) with a clean environment, a CPU limit and a startup probe. Status: the 2026-10-12 #552 entry in `DELIVERY_PLAN.md`'s MVP completion path. D-112 records Gene's standing decision that SHIELD holds demo data only until the MVP.
+
 **2026-10-12: N4, PR #1099 (migration 0067).** Three new, empty tables for findings reports, integration runs and recommendations, with no reader or writer yet. Status: the 2026-10-12 N4 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
 **2026-10-12: #1049, PR #1092.** Intake accepts a website without a scheme (stored with `https://`), and its auto-save names a refused or failed save as such, instead of "Network error.". Status: the 2026-10-12 #1049 entry in `DELIVERY_PLAN.md`'s MVP completion path.
