@@ -12,10 +12,17 @@
         "SA-24",
         "SI-02(07)"
       ],
-      "x1_maps_any_of_them": false
+      "x1_maps_any_of_them": false,
+      "families_only_in_5.2.0": {},
+      "category_references_only_in_5.2.0": {},
+      "subcategories_only_in_5.2.0": []
     },
     "x1_sha256": "9ad804731398e925c70fb4765f505496ecd93b33427d2c55940440c6e3e51b26",
-    "third_party_lines_ignored": 4594,
+    "third_party_lines_ignored": {
+      "subcategory": 4594,
+      "category": 480,
+      "function": 54
+    },
     "x2_rows_without_a_subcategory": {
       "other": 2,
       "function": 12,

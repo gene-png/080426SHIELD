@@ -185,7 +185,7 @@ class X2References:
     refs: dict[str, dict[str, set[str]]]
     families: dict[str, dict[str, set[str]]]
     categories: dict[str, dict[str, set[str]]]
-    third_party: int
+    third_party: dict[str, int]
     unplaced: dict[str, int]
 
 
@@ -208,13 +208,19 @@ def _x2_references(x2_path: Path) -> X2References:
         # The export carries no default style; openpyxl says so on every load.
         warnings.filterwarnings("ignore", message="Workbook contains no default style")
         sheet = openpyxl.load_workbook(x2_path, read_only=True)["CSF 2.0"]
-    out = X2References({}, {}, {}, 0, {"other": 0, "function": 0, "category": 0})
+    out = X2References(
+        {},
+        {},
+        {},
+        {"subcategory": 0, "category": 0, "function": 0},
+        {"other": 0, "function": 0, "category": 0},
+    )
     for row in sheet.iter_rows(values_only=True):
         cells = [*row, None, None, None, None, None][:5]
         sub = _SUBCATEGORY.match(cells[2]) if isinstance(cells[2], str) else None
         sp, other = _sp_lines(cells[4])
         if sub is not None:
-            out.third_party += other
+            out.third_party["subcategory"] += other
             for line in sp:
                 if ref := _REF.match(line):
                     _add(out.refs, sub.group(1), ref.group(1), ref.group(2))
@@ -226,15 +232,29 @@ def _x2_references(x2_path: Path) -> X2References:
         category = _CATEGORY.match(cells[1]) if isinstance(cells[1], str) else None
         if category is not None and not cells[0]:
             out.unplaced["category"] += 1
+            out.third_party["category"] += other
             for line in sp:
                 ref = _REF.match(line)
                 if ref is None:
                     raise Refused(f"unreadable SP 800-53 line {line!r} under {category.group(1)}")
                 _add(out.categories, category.group(1), ref.group(1), ref.group(2))
             continue
-        out.unplaced["function" if cells[0] and not cells[1] else "other"] += 1
+        kind = "function" if cells[0] and not cells[1] else "other"
+        out.unplaced[kind] += 1
+        if kind == "function":
+            out.third_party["function"] += other
         if sp:
             raise Refused(f"SP 800-53 line {sp[0]!r} on an X2 row with no subcategory or category")
+    return out
+
+
+def _only_other(found: dict[str, dict[str, set[str]]]) -> dict[str, list[str]]:
+    """{code: [values]} named under the other revision and not under REVISION."""
+    out = {}
+    for code, revisions in sorted(found.items()):
+        extra = revisions.get(OTHER_REVISION, set()) - revisions.get(REVISION, set())
+        if extra:
+            out[code] = sorted(extra)
     return out
 
 
@@ -242,9 +262,13 @@ def derive_c1(x2_path: Path, x1: dict) -> dict:
     x2 = _x2_references(x2_path)
     refs = x2.refs
     known = csf_codes()
-    strangers = sorted(set(refs) - known)
+    strangers = sorted((set(refs) | set(x2.families)) - known)
     if strangers:
         raise Refused(f"X2 names subcategories SHIELD's catalog lacks: {strangers}")
+    categories = {code.rsplit("-", 1)[0] for code in known}
+    strangers = sorted(set(x2.categories) - categories)
+    if strangers:
+        raise Refused(f"X2 names categories SHIELD's catalog lacks: {strangers}")
     by_control: dict[str, set[tuple[str, str]]] = {}
     for r in x1["rows"]:
         by_control.setdefault(r["control"], set()).add((r["technique"], r["attack_16_1"]))
@@ -276,6 +300,14 @@ def derive_c1(x2_path: Path, x1: dict) -> dict:
             "revision_difference": {
                 "only_in_" + OTHER_REVISION: sorted(only_other),
                 "x1_maps_any_of_them": any(c in by_control for c in only_other),
+                f"families_only_in_{OTHER_REVISION}": _only_other(x2.families),
+                f"category_references_only_in_{OTHER_REVISION}": _only_other(x2.categories),
+                f"subcategories_only_in_{OTHER_REVISION}": sorted(
+                    code
+                    for code in set(refs) | set(x2.families)
+                    if not refs.get(code, {}).get(REVISION)
+                    and not x2.families.get(code, {}).get(REVISION)
+                ),
             },
             "x1_sha256": hashlib.sha256(
                 (json.dumps(x1, indent=2, ensure_ascii=False) + "\n").encode()

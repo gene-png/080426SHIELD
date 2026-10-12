@@ -116,7 +116,8 @@ def test_x1_header_names_its_source_and_versions() -> None:
     assert header["licence"] == "Apache-2.0"
     assert header["attack_version_source"] == "16.1"
     assert header["attack_version_target"] == "19.2"
-    # The CTID file's own counts: 5,410 mapping objects, 96 non-mappable.
+    # Hand counts of the CTID file (it carries no counts of its own): 5,410
+    # mapping objects, 96 of them non-mappable.
     assert header["mapping_objects_total"] == 5410
     assert header["skipped_non_mappable"] == 96
 
@@ -126,6 +127,8 @@ def test_x1_accounts_for_every_mapping_object() -> None:
     # distinct (control, technique) pairs; the 50 others repeat an earlier
     # object in EVERY field (e.g. IA-09 / T1036 Masquerading, twice). One
     # object (T1521.003) has no 19.2 technique. 5,410 = 96 + 1 + 50 + 5,263.
+    # The identity below cannot go red by construction (derive_x1 sends every
+    # object to exactly one counter); its force is the TYPED 1, 50 and 5,263.
     header = load_crosswalk("x1").header
     assert header["untranslated_rows"] == 1
     assert header["duplicate_rows"] == 50
@@ -149,7 +152,10 @@ def test_x1_rows_are_triples_so_two_16_1_ids_can_reach_one_technique() -> None:
     }
     assert {"T1562", "T1562.001"} <= sources
     header = load_crosswalk("x1").header
-    assert header["control_technique_pairs"] < header["rows"]
+    # 5,236 distinct (control, 19.2 technique) pairs, counted by the
+    # coordinator from the committed rows on #1105 round 2, independently of
+    # derive_x1: 27 fewer than the 5,263 triples.
+    assert header["control_technique_pairs"] == 5236
 
 
 def test_x1_discloses_every_untranslated_id_with_a_reason() -> None:
@@ -181,13 +187,27 @@ def test_c1_header_records_the_revision_and_its_difference() -> None:
     assert header["x2_sha256"] == (
         "d83fbc04ea146e3ed4cacd3594351beab2359ae835669d607228528b43bb31a7"
     )
+    # Hand trace: the family and category lines read the same in both
+    # revisions, and no subcategory is referenced only under 5.2.0.
     assert header["revision_difference"] == {
         "only_in_5.2.0": ["RA-04", "SA-15(13)", "SA-24", "SI-02(07)"],
         "x1_maps_any_of_them": False,
+        "families_only_in_5.2.0": {},
+        "category_references_only_in_5.2.0": {},
+        "subcategories_only_in_5.2.0": [],
     }
-    # The README: 106 subcategories carry SP 800-53 references.
-    assert header["subcategories_with_sp_800_53"] == 106
-    assert header["third_party_lines_ignored"] > 0
+    # Every one of the CSF 2.0 catalog's 106 subcategories carries an SP 800-53
+    # Rev 5.1.1 line in X2 (the catalog's own count, and a read of the export).
+    from app.csf.catalog import all_codes as csf_codes
+
+    assert header["subcategories_with_sp_800_53"] == 106 == len(csf_codes())
+    # Non-SP 800-53 lines, counted straight from the export with openpyxl, per
+    # row kind: subcategory, category and function rows all carry them.
+    assert header["third_party_lines_ignored"] == {
+        "subcategory": 4594,
+        "category": 480,
+        "function": 54,
+    }
 
 
 def test_c1_discloses_the_sp_800_53_lines_it_does_not_compose() -> None:
@@ -251,6 +271,25 @@ def test_a_partly_mapped_subcategory_names_the_controls_that_reach_nothing() -> 
     assert all(r.control not in ("AU-06", "IR-04") for r in result.rows)
 
 
+def test_a_category_reference_reaches_the_lookup() -> None:
+    # Hand trace: X2's RC.RP category row names CP-04 and CP-10 (X1 maps
+    # CP-10 to techniques); RC.RP-04 itself reaches nothing. The category's
+    # controls are disclosed with the result, never composed into its rows.
+    result = c1_techniques_for("RC.RP-04")
+    assert result.status == "no_mapping"
+    assert result.category_references_not_composed == ("CP-04", "CP-10")
+    # RC.RP-03 is mapped through its own CP-02 and CP-09 and names neither
+    # category control, so the category's are disclosed beside its rows.
+    mapped = c1_techniques_for("RC.RP-03")
+    assert mapped.status == "mapped"
+    assert mapped.category_references_not_composed == ("CP-04", "CP-10")
+    assert all(r.control not in ("CP-04", "CP-10") for r in mapped.rows)
+    # RC.RP-01 names CP-10 on its OWN row in X2, so CP-10 is composed there
+    # from that line, not from the category's.
+    assert any(r.control == "CP-10" for r in c1_techniques_for("RC.RP-01").rows)
+    assert c1_techniques_for("PR.AA-01").category_references_not_composed == ()
+
+
 def test_a_family_reference_reaches_the_lookup() -> None:
     assert c1_techniques_for("PR.IR-03").families_not_expanded == ("CP", "IR")
     assert c1_techniques_for("PR.AA-01").families_not_expanded == ()
@@ -267,6 +306,13 @@ def test_a_subcategory_with_no_sp_800_53_reference_raises(monkeypatch) -> None:
     fake = crosswalk.Crosswalk("c1", header, real.rows)
     monkeypatch.setattr(crosswalk, "load_crosswalk", lambda name: fake)
     with pytest.raises(CrosswalkIntegrityError, match="no SP 800-53 reference"):
+        c1_techniques_for("GV.OC-01")
+    # Referenced ONLY under the other revision is a different cause, named.
+    header["revision_difference"] = {
+        **header["revision_difference"],
+        "subcategories_only_in_5.2.0": ["GV.OC-01"],
+    }
+    with pytest.raises(CrosswalkIntegrityError, match="only under SP 800-53 Rev 5.2.0"):
         c1_techniques_for("GV.OC-01")
 
 
@@ -477,8 +523,39 @@ def test_x2_classifies_family_and_category_lines(tmp_path: Path) -> None:
     assert parsed.refs == {"GV.OC-01": {"5.1.1": {"PM-11"}}}
     assert parsed.families == {"GV.OC-01": {"5.1.1": {"PT"}}}
     assert parsed.categories == {"GV.OC": {"5.1.1": {"PM-01"}}}
-    assert parsed.third_party == 1
+    assert parsed.third_party == {"subcategory": 1, "category": 0, "function": 0}
     assert parsed.unplaced == {"other": 0, "function": 1, "category": 1}
+
+
+def test_x2_counts_third_party_lines_on_every_row_kind(tmp_path: Path) -> None:
+    script = _script("derive_crosswalks")
+    path = _x2(
+        tmp_path,
+        ("Function", "Category", "Subcategory", None, "Informative References"),
+        ("GOVERN (GV): text", None, None, None, "CRI: GV"),
+        (None, "Organizational Context (GV.OC): text", None, None, "CRI: GV.OC\nISO: y"),
+        (None, None, "GV.OC-01: text", None, "ISO: x"),
+    )
+    assert script._x2_references(path).third_party == {
+        "subcategory": 1,
+        "category": 2,
+        "function": 1,
+    }
+
+
+def test_derive_c1_refuses_a_family_or_category_line_under_an_unknown_code(
+    tmp_path: Path, monkeypatch
+) -> None:
+    script = _script("derive_crosswalks")
+    x1 = {"rows": []}
+    family = _x2(tmp_path, (None, None, "ZZ.ZZ-01: text", None, "SP 800-53 Rev 5.1.1: PT"))
+    with pytest.raises(script.Refused, match="ZZ.ZZ-01"):
+        script.derive_c1(family, x1)
+    category = _x2(
+        tmp_path, (None, "Unknown (ZZ.ZZ): text", None, None, "SP 800-53 Rev 5.1.1: PM-01")
+    )
+    with pytest.raises(script.Refused, match="ZZ.ZZ"):
+        script.derive_c1(category, x1)
 
 
 @pytest.mark.parametrize(

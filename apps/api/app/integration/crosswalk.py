@@ -17,9 +17,12 @@ C1 being absent is a further case the caller sees as an exception, never as
 "no conflict".
 
 PARTLY MAPPED. A `mapped` subcategory can still list controls that reach no
-technique (`controls_without_techniques`), and a whole control family X2 names
-is not expanded (`families_not_expanded`); both travel with the result so a
-reader of the rows can say what they do not cover.
+technique (`controls_without_techniques`); a whole control family X2 names is
+not expanded (`families_not_expanded`); and controls X2 names on the
+subcategory's CATEGORY row are not composed into its rows
+(`category_references_not_composed`, resolved from the code's category
+prefix). All three travel with the result so a reader of the rows can say what
+they do not cover.
 """
 
 from __future__ import annotations
@@ -47,7 +50,7 @@ CROSSWALK_FILES: dict[str, tuple[str, str]] = {
     ),
     "c1": (
         "c1_csf_attack.json",
-        "ec7c0680d1bc7545064966b4a9f31f471e54488d89df1f43c949219235ececc0",
+        "67546cb9666888acdfacf56c4c0395e6d01d9ce0ecdea1b7708c14fca7af1749",
     ),
 }
 
@@ -76,6 +79,7 @@ class C1Result:
     rows: tuple[C1Row, ...]
     controls_without_techniques: tuple[str, ...] = ()
     families_not_expanded: tuple[str, ...] = ()
+    category_references_not_composed: tuple[str, ...] = ()
 
 
 @cache
@@ -108,12 +112,21 @@ def c1_techniques_for(subcategory: str) -> C1Result:
         for r in c1.rows
         if r["subcategory"] == subcategory
     )
-    if not rows and subcategory not in c1.header["subcategories_without_a_mapping"]:
+    header = c1.header
+    if not rows and subcategory not in header["subcategories_without_a_mapping"]:
+        revision = header["sp_800_53_revision"]
+        other = [k for k in header["revision_difference"] if k.startswith("subcategories_only_in_")]
+        for key in other:
+            if subcategory in header["revision_difference"][key]:
+                raise CrosswalkIntegrityError(
+                    f"crosswalk c1: {subcategory} is referenced only under SP 800-53 Rev "
+                    f"{key.removeprefix('subcategories_only_in_')}, not Rev {revision}"
+                )
         raise CrosswalkIntegrityError(
             f"crosswalk c1: {subcategory} has no SP 800-53 reference in X2, so it is "
             "neither mapped nor unmapped"
         )
-    header = c1.header
+    category = subcategory.rsplit("-", 1)[0]
     return C1Result(
         status="mapped" if rows else "no_mapping",
         rows=rows,
@@ -121,6 +134,9 @@ def c1_techniques_for(subcategory: str) -> C1Result:
             header["controls_without_techniques_by_subcategory"].get(subcategory, ())
         ),
         families_not_expanded=tuple(header["family_references_not_expanded"].get(subcategory, ())),
+        category_references_not_composed=tuple(
+            header["category_references_not_composed"].get(category, ())
+        ),
     )
 
 
