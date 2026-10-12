@@ -392,6 +392,13 @@ def test_the_function_line_with_no_measured_target(app_client) -> None:  # noqa:
     fn = next(r["function"] for r in rows if r["subcategory_code"] == CODE)
     in_fn = [r for r in rows if r["function"] == fn]
     assert not any(r["gap"] for r in in_fn)  # positive first: the world is gap-free
+    # The precondition, named: CODE is the function's only row with a target,
+    # measured or not, so a seeding change fails here with a clear message.
+    assert [
+        r["subcategory_code"]
+        for r in in_fn
+        if r["target_level"] is not None or r["target_not_measured"]
+    ] == [CODE]
     untargeted = sum(1 for r in in_fn if r["target_level"] is None) - 1
     piece = f"{untargeted} with no target set · 1 not measured, so not assessed for gaps."
     files = _export(c, h, svc)
