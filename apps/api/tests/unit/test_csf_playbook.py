@@ -55,6 +55,31 @@ def test_evidence_present_no_cap() -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "dims,has_evidence,total,level,capped",
+    [
+        # Master Spec, "Evidence rule": without evidence "total maturity cannot
+        # exceed Level 2". Below the cap, and on a row whose Implementation is
+        # already 0 or 1, only the LEVEL clamp acts (C-2 plan section 4, #1076).
+        ((1, 1, 1, 0, 0), True, 3, 2, False),  # 3 -> L2, nothing to cap
+        ((2, 2, 0, 1, 1), True, 6, 3, False),  # 6 -> L3 with evidence
+        ((2, 2, 0, 1, 1), False, 6, 2, True),  # the same row held at L2
+        # S1's level-clamp-only path: G2 P2 I0 M2 C2, no evidence. Total 8 is L4
+        # by the spec bands; Implementation stays 0 (it is not raised to 1).
+        ((2, 2, 0, 2, 2), False, 8, 2, True),
+    ],
+)
+def test_evidence_cap_by_level_clamp(
+    dims: tuple[int, int, int, int, int], has_evidence: bool, total: int, level: int, capped: bool
+) -> None:
+    r = score_tier(DimensionScores(*dims), has_evidence=has_evidence)
+    assert r.dimensions.implementation == dims[2]
+    assert r.total == total
+    assert r.level == level
+    assert r.evidence_capped is capped
+
+
+@pytest.mark.unit
 def test_rollup_rule1_all_same() -> None:
     r = weighted_floor_rollup(
         {Tier.HIGH: 6, Tier.MODERATE: 6, Tier.LOW: 6},

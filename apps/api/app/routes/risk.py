@@ -90,6 +90,9 @@ from app.risk.inputs import (
     publish_blockers,
 )
 from app.risk.link_scope import LinkScope, csf_playbook_scope, scope_for
+from app.risk.locked import ATTACK as LOCKED_ATTACK
+from app.risk.locked import CSF_OR_ZT as LOCKED_CSF_OR_ZT
+from app.risk.locked import locked_inputs, locked_message
 from app.risk.zt_capped import CAPPED_TARGET_KEY as ZT_CAPPED_TARGET_KEY
 from app.risk.zt_capped import capped_target_codes as zt_capped_target_codes
 from app.risk.zt_capped import capped_target_sentence as zt_capped_target_sentence
@@ -104,6 +107,7 @@ from app.schemas.risk import (
     RiskEntryResponse,
     RiskGateStatus,
     RiskInputState,
+    RiskLockedInput,
     RiskRegisterResponse,
     RiskTargetUsed,
 )
@@ -661,7 +665,25 @@ def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
     if not (finalized_csf or finalized_zt):
         synthesizable_missing.append("an approved CSF or Zero Trust assessment")
 
+    # #1081: why it is locked, from the gate's own verdict, never re-derived.
+    unmet = [
+        req
+        for req, met in ((LOCKED_ATTACK, has_attack), (LOCKED_CSF_OR_ZT, has_csf or has_zt))
+        if not met
+    ]
+    locked = locked_inputs(db, client_id, unmet=unmet) if unmet else []
+
     return RiskGateStatus(
+        locked_inputs=[
+            RiskLockedInput(
+                requirement=x.requirement,
+                state=x.state,
+                service_kind=x.service_kind.value if x.service_kind else None,
+                sentence=x.sentence,
+            )
+            for x in locked
+        ],
+        locked_message=locked_message(locked) if locked else None,
         inputs=_input_states(db, client_id),
         unlocked=unlocked,
         has_attack=has_attack,
@@ -1858,9 +1880,10 @@ def generate(
     client = _require_client(db, cid)
     g = _gate(db, cid)
     if not g.unlocked:
+        # #1081: the locked page's own copy (`app/risk/locked.py`), typed.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Risk Register is locked. Missing: " + "; ".join(g.missing) + ".",
+            detail={"reason": "risk_register_locked", "message": g.locked_message},
         )
     # #737, Gene's ruling (#736 item 13): NO refusal for unapproved inputs here
     # -- this reverses #237's refusal. A draft register is generated from
