@@ -18,7 +18,6 @@ from __future__ import annotations
 import io
 from collections.abc import Iterable
 from dataclasses import dataclass
-from xml.sax.saxutils import escape
 
 from app.client_naming import org_display_name
 from app.mode_stamp import (
@@ -497,9 +496,7 @@ def render_pdf(ctx: DeliverableContext) -> bytes:
         # A plain string never wraps in a reportlab Table, and the bundle's
         # name is longer than the 1-inch column, so the part's cell wraps.
         cost: object = (
-            Paragraph(escape(included_in(part_of)), body)
-            if part_of is not None
-            else _cost_text(item)
+            pdf_text(included_in(part_of), body) if part_of is not None else _cost_text(item)
         )
         table_data.append(
             [
