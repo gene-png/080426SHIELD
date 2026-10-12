@@ -13,10 +13,8 @@ import type { AdminArtifactRow } from "./types";
  * - `generatedReports`: every other origin (a deliverable's files, written at
  *   finalize or export).
  *
- * The third bucket exists so nothing is dropped between two filters: the org
- * page does not render consultant uploads yet (#1067, copy pending), and a
- * bucket it ignores is visible in the code where two non-covering filters
- * are not.
+ * One split rather than separate filters, so nothing can fall between them:
+ * the org page renders each bucket in its own section (#1119).
  */
 export interface ArtifactBuckets {
   clientUploads: AdminArtifactRow[];

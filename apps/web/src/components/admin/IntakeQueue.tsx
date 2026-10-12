@@ -231,7 +231,7 @@ function ReadinessItem({
   );
 }
 
-/** One artifact per row: title, size and date. Shared by both lists. */
+/** One artifact per row: title, size and date. Shared by all three lists. */
 function ArtifactList({
   artifacts,
 }: {
@@ -577,11 +577,11 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
   // #1054: one split of every artifact, by stored origin and uploader role
   // (`splitArtifacts` says why each bucket is what it is). Only a client-role
   // `client_upload` counts as evidence for the readiness line below.
-  // KNOWN GAP: `consultantUploads` is not rendered on this page. Its section's
-  // heading and empty state are pending the advisor's approval of the wording
-  // (#1067); the files stay listed in the Tech Debt workspace's documents
-  // panel.
-  const { clientUploads, generatedReports } = splitArtifacts(state.artifacts);
+  // Each bucket is rendered in its own section below, so every artifact is
+  // listed exactly once on this page (#1119).
+  const { clientUploads, consultantUploads, generatedReports } = splitArtifacts(
+    state.artifacts,
+  );
   const hasDocuments = clientUploads.length > 0;
   const visibleRequests = filterServiceRequests(
     state.service_requests,
@@ -762,6 +762,26 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
           />
         ) : (
           <ArtifactList artifacts={clientUploads} />
+        )}
+      </section>
+
+      <section
+        aria-labelledby="consultant-uploads"
+        className="flex flex-col gap-3"
+      >
+        <h2
+          id="consultant-uploads"
+          className="text-lg font-semibold text-ink-primary"
+        >
+          Consultant uploads ({consultantUploads.length})
+        </h2>
+        {consultantUploads.length === 0 ? (
+          <EmptyState
+            title="No consultant uploads"
+            description="Files a consultant uploads in this organization's workspaces will appear here."
+          />
+        ) : (
+          <ArtifactList artifacts={consultantUploads} />
         )}
       </section>
 
