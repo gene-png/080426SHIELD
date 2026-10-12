@@ -28,21 +28,23 @@ that could decide it is not on record:
   overwrote the membership the base was offered;
 
 The advisor's (ii), in the DRAFTS branch only (#736 6116519635): a draft
-row is read by its scope NOW, so a row whose security classification was
-overridden after the base may have been out of scope then, and it does not
-join the basis. The override is judged on the BASIS row -- the row whose
-current scope the basis reads -- never on the offered row, which may be a
-re-extracted copy on another version with no override of its own. A tool in
-the recorded membership of the APPROVED version in force at the base was
-offered to the base as frozen at approval, whatever happened to its
-classification afterwards.
+row joins the basis only if it was in security scope AT THE BASE
+(`in_scope_at`), rebuilt from its classification and the times of its first
+confirmation and first override. The scope judged is the BASIS row's, never
+the offered row's, which may be a re-extracted copy on another version with
+a different history. A tool in the recorded membership of the APPROVED
+version in force at the base was offered to the base as frozen at approval,
+whatever happened to its classification afterwards.
 
 Limits, stated rather than hidden:
 
-* a draft row's security scope is read as it is NOW; a row reclassified out
-  of scope since is not offered now either, so it cannot be misjudged as
-  added, but one reclassified INTO scope without an override is read as the
-  base having had it;
+* a draft row's scope at the base is rebuilt from the audit trail, so a
+  confirmation or override written without its audit row is invisible. A
+  row confirmed out of scope NOW with no confirmation on record reads
+  "cannot be checked"; one confirmed and then overridden, both unaudited,
+  reads as in scope at the base. The earlier overcount from an override on a
+  row ALREADY in scope (a provisional negative, or re-picking an in-scope
+  row's functions) is gone: such a row was in scope at the base;
 * a RENAME after the base is missed when the old name reached the basis,
   and reads as added when it did not;
 * R4 (b) is applied at the base's moment by the snapshot naming a tool, and
@@ -75,14 +77,36 @@ def _aware(at: datetime) -> datetime:
 
 @dataclass(frozen=True)
 class DraftRow:
-    """A live row of a list version: its name, when it was created, whether
-    it is in security scope now, and when its security classification was
-    last overridden (the audit record of (ii)), if ever."""
+    """A live row of a list version: its name, when it was created, its
+    current classification, and from the audit trail when it was FIRST
+    confirmed out of scope and FIRST overridden into scope, if ever."""
 
     name: str
     created_at: datetime
-    in_scope: bool
-    overridden_at: datetime | None = None
+    security_related: bool | None
+    confirmed: bool
+    first_confirmed_at: datetime | None
+    first_overridden_at: datetime | None
+
+
+def in_scope_at(row: DraftRow, at: datetime) -> bool:
+    """Was this row in ATT&CK security scope at `at`? Raises `_Unknown` when
+    the record cannot say.
+
+    From the writers: every row starts IN scope (an unconfirmed negative is
+    provisional); the confirm route takes a negative OUT and is the only
+    thing that does; the override route puts a row back IN for good (it
+    clears the confirmation, and the confirm route then refuses the row).
+    So a row was in scope at `at` iff its first override was by then, or no
+    confirmation was. A row confirmed out of scope with no confirmation on
+    record cannot be placed in time."""
+    if row.first_overridden_at is not None and _aware(row.first_overridden_at) <= at:
+        return True
+    if row.first_confirmed_at is not None:
+        return _aware(row.first_confirmed_at) > at
+    if row.security_related is False and row.confirmed:
+        raise _Unknown(f"row {row.name!r}: confirmed out of scope with no record of when")
+    return True
 
 
 @dataclass(frozen=True)
@@ -184,11 +208,7 @@ def _service_basis(versions: list[ListVersion], at: datetime) -> set[str]:
         if not _live_at(v, at):
             continue
         names = {
-            name_key(r.name)
-            for r in v.rows
-            if r.in_scope
-            and _aware(r.created_at) <= at
-            and (r.overridden_at is None or _aware(r.overridden_at) <= at)
+            name_key(r.name) for r in v.rows if _aware(r.created_at) <= at and in_scope_at(r, at)
         } - {""}
         if names:
             return names

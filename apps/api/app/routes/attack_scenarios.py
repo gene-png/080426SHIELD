@@ -69,7 +69,7 @@ from app.routes.attack import (
     _llm_dep,
     outside_subset_citations,
 )
-from app.routes.tech_debt import SECURITY_CLASSIFICATION_OVERRIDDEN
+from app.routes.tech_debt import REMOVED_FROM_ATTACK_SCOPE, SECURITY_CLASSIFICATION_OVERRIDDEN
 from app.schemas.ai_runs import AiRunStarted, RunAiRequest
 from app.schemas.attack_scenario import (
     ScenarioAddedTool,
@@ -88,7 +88,6 @@ from app.schemas.attack_scenario import (
 )
 from app.security.rate_limit import RateLimiter, get_rate_limiter
 from app.tech_debt.extract import name_hints_for_tenant
-from app.tech_debt.security_scope import in_security_scope
 from app.tenant import require_service_in_tenant
 
 _log = get_logger(__name__)
@@ -265,15 +264,22 @@ def _lists_of(rows: list[AttackScenarioRow]) -> dict[str, dict[str, list[str]]]:
     }
 
 
+#: The audit action `confirm_security_classification` (routes/tech_debt.py)
+#: writes when a consultant confirms a negative call, taking the row out of
+#: ATT&CK scope. A literal there, mirrored here; #845's not-in-use variant is
+#: `REMOVED_FROM_ATTACK_SCOPE`, imported.
+_CONFIRMED_OUT_OF_SCOPE = "capability_item.security_classification_confirmed"
+
+
 def _list_history(
     db: Session, lists: Iterable[CapabilityList]
 ) -> list[added_since_base.ListVersion]:
     """#1012 (option A): every Tech Debt list version of the client, with
     what the record says about its past: its approval times and discard
-    time from the audit trail, and its live rows, each with the time of its
-    latest security-classification override ((ii); the audit row is the
-    only record of WHEN, `updated_at` moves on every edit). Three queries,
-    whatever the number of versions."""
+    time from the audit trail, and its live rows, each with its current
+    classification and the times of its FIRST confirmation and FIRST
+    override ((ii); the audit row is the only record of WHEN, `updated_at`
+    moves on every edit). Three queries, whatever the number of versions."""
     lists = list(lists)
     ids = [cl.id for cl in lists]
     approvals: dict[uuid.UUID, list] = {i: [] for i in ids}
@@ -294,25 +300,46 @@ def _list_history(
         .scalars()
         .all()
     )
-    overridden = dict(
-        db.execute(
-            select(AuditEntry.target_id, func.max(AuditEntry.at))
+    # The FIRST confirmation and the FIRST override per row, in one grouped
+    # query: an override only ever moves a row INTO scope and nothing moves it
+    # back, so its first one decides (`added_since_base.in_scope_at`). A
+    # subquery rather than a list of every item id, so a large client never
+    # meets the bind-parameter limit.
+    first: dict[tuple[uuid.UUID, str], Any] = {
+        (target, action): at
+        for target, action, at in db.execute(
+            select(AuditEntry.target_id, AuditEntry.action, func.min(AuditEntry.at))
             .where(
-                AuditEntry.action == SECURITY_CLASSIFICATION_OVERRIDDEN,
                 AuditEntry.target_type == "capability_item",
-                AuditEntry.target_id.in_([i.id for i in items]),
+                AuditEntry.action.in_(
+                    (
+                        SECURITY_CLASSIFICATION_OVERRIDDEN,
+                        _CONFIRMED_OUT_OF_SCOPE,
+                        REMOVED_FROM_ATTACK_SCOPE,
+                    )
+                ),
+                AuditEntry.target_id.in_(
+                    select(CapabilityItem.id).where(CapabilityItem.capability_list_id.in_(ids))
+                ),
             )
-            .group_by(AuditEntry.target_id)
+            .group_by(AuditEntry.target_id, AuditEntry.action)
         ).all()
-    )
+    }
     rows: dict[uuid.UUID, list] = {i: [] for i in ids}
     for item in items:
+        confirms = [
+            at
+            for action in (_CONFIRMED_OUT_OF_SCOPE, REMOVED_FROM_ATTACK_SCOPE)
+            if (at := first.get((item.id, action))) is not None
+        ]
         rows[item.capability_list_id].append(
             added_since_base.DraftRow(
                 name=item.name,
                 created_at=item.created_at,
-                in_scope=in_security_scope(item),
-                overridden_at=overridden.get(item.id),
+                security_related=item.security_related,
+                confirmed=item.security_class_confirmed,
+                first_confirmed_at=min(confirms) if confirms else None,
+                first_overridden_at=first.get((item.id, SECURITY_CLASSIFICATION_OVERRIDDEN)),
             )
         )
     return [

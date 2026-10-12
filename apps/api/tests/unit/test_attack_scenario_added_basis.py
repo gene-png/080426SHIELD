@@ -323,18 +323,7 @@ def test_an_override_after_the_base_adds_a_tool_in_the_drafts_branch(
     but confirmed NOT security, so offered to nobody. The override endpoint
     brings it into scope after the base: it is new to the AI."""
     w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
-    with w.sessions() as db:
-        base_at = db.get(AttackAssessment, uuid.UUID(w.assessment_id)).approved_at
-        db.add(
-            CapabilityItem(
-                capability_list_id=_v1_id(w),
-                name=MAIL,
-                security_related=False,
-                security_class_confirmed=True,
-                created_at=base_at - timedelta(days=1),
-            )
-        )
-        db.commit()
+    _mail_confirmed_out_before_the_base(w)
     _override(w, _item(w, _v1_id(w), MAIL))
     body = _what_if(w, {w.cc: [_flags(w.cc, MAIL, d=True)]})
     assert body["tools_added_since_base"] == 1, body["tools_added_since_base"]
@@ -351,18 +340,7 @@ def test_an_override_on_the_basis_row_counts_though_the_offered_row_has_none(
     then v2 is re-extracted with MAIL in scope by classification (no
     override on v2's row) and approved. MAIL is new to the AI."""
     w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
-    with w.sessions() as db:
-        base_at = db.get(AttackAssessment, uuid.UUID(w.assessment_id)).approved_at
-        db.add(
-            CapabilityItem(
-                capability_list_id=_v1_id(w),
-                name=MAIL,
-                security_related=False,
-                security_class_confirmed=True,
-                created_at=base_at - timedelta(days=1),
-            )
-        )
-        db.commit()
+    _mail_confirmed_out_before_the_base(w)
     _override(w, _item(w, _v1_id(w), MAIL))
     v2 = _re_extracted_v2(w, [EDR, SIEM, SOAR, MAIL])
     with w.sessions() as db:
@@ -376,3 +354,91 @@ def test_an_override_on_the_basis_row_counts_though_the_offered_row_has_none(
     assert body["tools_added_since_base"] == 1, body["tools_added_since_base"]
     marks = {d["technique_code"]: d["credited_added_tool"] for d in body["differences"]}
     assert marks[w.cc] is True, marks
+
+
+def _mail_on_v1_before_the_base(w: World) -> uuid.UUID:
+    """MAIL on v1 from a day before the base, the model's provisional "not
+    security" call (in scope until a consultant confirms it)."""
+    with w.sessions() as db:
+        base_at = db.get(AttackAssessment, uuid.UUID(w.assessment_id)).approved_at
+        db.add(
+            CapabilityItem(
+                capability_list_id=_v1_id(w),
+                name=MAIL,
+                security_related=False,
+                created_at=base_at - timedelta(days=1),
+            )
+        )
+        db.commit()
+    return _item(w, _v1_id(w), MAIL)
+
+
+def _confirm(w: World, item_id: uuid.UUID) -> None:
+    """The real confirm route: takes a negative row out of scope."""
+    r = w.c.post(
+        f"/tech-debt/capability-items/{item_id}/security-classification/confirm",
+        headers=w.h,
+    )
+    assert r.status_code == 200, r.text
+
+
+def _mail_confirmed_out_before_the_base(w: World) -> None:
+    """MAIL confirmed NOT security through the confirm route, its sign-off
+    then placed an hour before the base: out of scope at the base."""
+    item_id = _mail_on_v1_before_the_base(w)
+    _confirm(w, item_id)
+    with w.sessions() as db:
+        base_at = db.get(AttackAssessment, uuid.UUID(w.assessment_id)).approved_at
+        moved = db.execute(
+            update(AuditEntry)
+            .where(
+                AuditEntry.target_id == item_id,
+                AuditEntry.action == "capability_item.security_classification_confirmed",
+            )
+            .values(at=base_at - timedelta(hours=1))
+        ).rowcount
+        assert moved == 1, moved
+        db.commit()
+
+
+def test_a_row_in_scope_at_the_base_and_confirmed_out_since_is_not_added(
+    app_parts,  # noqa: F811
+) -> None:
+    """The drafts-branch basis reads a row as it was AT THE BASE. MAIL was a
+    provisional negative on v1 (in scope, offered to the base); after the
+    base a consultant confirms it out of scope, then v2 is re-extracted with
+    MAIL in scope and approved. The base was offered MAIL: not added."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    _confirm(w, _mail_on_v1_before_the_base(w))  # after the base
+    _re_extracted_v2(w, [EDR, SIEM, SOAR, MAIL])
+    body = _what_if(w, {w.cc: [_flags(w.cc, MAIL, d=True)]})
+    assert body["tools_added_since_base"] == 0, body["tools_added_since_base"]
+    assert all(d["credited_added_tool"] is False for d in body["differences"])
+
+
+def test_the_first_override_decides_not_the_latest(app_parts) -> None:  # noqa: F811
+    """MAIL was confirmed out, then overridden back in, both before the base:
+    in scope at the base. Overriding it AGAIN after the base (re-picking its
+    functions) changes nothing about the base. Re-extracted into v2, MAIL is
+    not added. Judged on the LATEST override it would read as out of scope
+    at the base, and so as added."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    _mail_confirmed_out_before_the_base(w)
+    item_id = _item(w, _v1_id(w), MAIL)
+    _override(w, item_id)
+    with w.sessions() as db:
+        base_at = db.get(AttackAssessment, uuid.UUID(w.assessment_id)).approved_at
+        moved = db.execute(
+            update(AuditEntry)
+            .where(
+                AuditEntry.target_id == item_id,
+                AuditEntry.action == "capability_item.security_classification_overridden",
+            )
+            .values(at=base_at - timedelta(minutes=30))
+        ).rowcount
+        assert moved == 1, moved
+        db.commit()
+    _override(w, item_id)  # again, after the base
+    _re_extracted_v2(w, [EDR, SIEM, SOAR, MAIL])
+    body = _what_if(w, {w.cc: [_flags(w.cc, MAIL, d=True)]})
+    assert body["tools_added_since_base"] == 0, body["tools_added_since_base"]
