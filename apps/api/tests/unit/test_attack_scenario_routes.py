@@ -989,6 +989,17 @@ def test_an_old_row_brought_into_scope_after_the_base_is_counted_and_one_before_
                 at=base_at - timedelta(days=1),
             )
         )
+        # LATE's confirmation, also before the base, as the confirm route
+        # records it (#1012: the what-if rebuilds a row's scope AT THE BASE
+        # from these records, so a confirmation needs its audit row).
+        db.add(
+            AuditEntry(
+                action="capability_item.security_classification_confirmed",
+                target_type="capability_item",
+                target_id=late.id,
+                at=base_at - timedelta(days=1),
+            )
+        )
         db.commit()
         late_id = str(late.id)
         offered = {
