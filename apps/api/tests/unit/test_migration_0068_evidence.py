@@ -15,6 +15,7 @@ test.
 
 from __future__ import annotations
 
+import io
 import re
 import shutil
 import uuid
@@ -275,6 +276,57 @@ def test_a_pre_0068_artifact_and_profile_row_read_unchanged(tmp_path) -> None:
         assert score.evidence_basis is None
 
 
+def _seed_at_0066(tmp_path, name: str, statuses: set[str]) -> tuple[str, sa.Engine]:
+    """At 0066, through the ORM: one CSF assessment per status, each with a
+    ticked (`GV.OC-01`) and an unticked (`GV.OC-02`) Working Profile row, and
+    one artifact."""
+    url = f"sqlite:///{tmp_path / name}"
+    command.upgrade(_cfg(url), "0066")
+    engine = sa.create_engine(url, future=True)
+    with Session(engine) as db:
+        client = Client()
+        db.add(client)
+        db.flush()
+        user = User(email="a@kentro.example", password_hash="x", role=UserRole.ADMIN)
+        db.add(user)
+        db.flush()
+        db.add(
+            Artifact(
+                client_id=client.id,
+                title="policy.pdf",
+                file_storage_key="k",
+                mime_type="application/pdf",
+                size_bytes=1,
+                sha256="0" * 64,
+                origin=ArtifactOrigin.CLIENT_UPLOAD,
+                uploaded_by=user.id,
+            )
+        )
+        for status in sorted(statuses):
+            service = Service(
+                kind=ServiceKind.NIST_CSF, title=status, client_id=client.id, opened_by=user.id
+            )
+            db.add(service)
+            db.flush()
+            assessment = CsfAssessment(
+                service_id=service.id, client_id=client.id, status=CsfAssessmentStatus[status]
+            )
+            db.add(assessment)
+            db.flush()
+            for ticked in (True, False):
+                db.add(
+                    CsfDimensionScore(
+                        assessment_id=assessment.id,
+                        client_id=client.id,
+                        tier="moderate",
+                        subcategory_code="GV.OC-01" if ticked else "GV.OC-02",
+                        has_evidence=ticked,
+                    )
+                )
+        db.commit()
+    return url, engine
+
+
 #: Q9 option A (#736 6126886407), typed from the ruling: frozen exactly when
 #: the row is ticked AND its assessment is APPROVED or RELEASED.
 _FREEZES = {
@@ -297,38 +349,7 @@ def test_upgrade_from_0066_freezes_only_ticked_rows_on_approved_and_released(
     """Seeded through the ORM at 0066, so the stored status spelling is the one
     production writes (0045 froze nothing once because its fixture typed
     `'approved'` by hand)."""
-    url = f"sqlite:///{tmp_path / 'm0068-backfill.db'}"
-    command.upgrade(_cfg(url), "0066")
-    engine = sa.create_engine(url, future=True)
-    with Session(engine) as db:
-        client = Client()
-        db.add(client)
-        db.flush()
-        user = User(email="a@kentro.example", password_hash="x", role=UserRole.ADMIN)
-        db.add(user)
-        db.flush()
-        for status in {s for s, _ in _FREEZES}:
-            service = Service(
-                kind=ServiceKind.NIST_CSF, title=status, client_id=client.id, opened_by=user.id
-            )
-            db.add(service)
-            db.flush()
-            assessment = CsfAssessment(
-                service_id=service.id, client_id=client.id, status=CsfAssessmentStatus[status]
-            )
-            db.add(assessment)
-            db.flush()
-            for ticked in (True, False):
-                db.add(
-                    CsfDimensionScore(
-                        assessment_id=assessment.id,
-                        client_id=client.id,
-                        tier="moderate",
-                        subcategory_code="GV.OC-01" if ticked else "GV.OC-02",
-                        has_evidence=ticked,
-                    )
-                )
-        db.commit()
+    url, engine = _seed_at_0066(tmp_path, "m0068-backfill.db", {s for s, _ in _FREEZES})
     with engine.connect() as conn:
         stored = set(conn.execute(sa.text("SELECT status FROM csf_assessments")).scalars())
     # Positive first: the fixture wrote the spelling the migration must match.
@@ -349,13 +370,142 @@ def test_upgrade_from_0066_freezes_only_ticked_rows_on_approved_and_released(
     assert len(rows) == len(_FREEZES)
     assert got == _FREEZES
 
-    # And the downgrade refuses: dropping the column would lose the freeze, and
-    # a re-upgrade would freeze against the statuses at that later time.
-    with pytest.raises(
-        RuntimeError,
-        match="Refusing to downgrade 0068: 2 Working Profile rows with an evidence basis",
-    ):
+    # And the downgrade refuses, naming the REAL reason when only the backfill
+    # blocks it: a re-upgrade would re-freeze against later statuses.
+    with pytest.raises(RuntimeError) as refused:
         command.downgrade(_cfg(url), "0067")
+    message = str(refused.value)
+    assert message.startswith(
+        "Refusing to downgrade 0068: 2 Working Profile rows frozen by this migration's backfill."
+    ), message
+    assert "a re-upgrade would re-freeze them against the statuses at that later time" in message
+    assert "Clearing before a downgrade" in message
+    assert "what a client said" not in message, message
+
+
+def test_the_backfill_matches_status_case_insensitively(tmp_path, capsys) -> None:
+    """A pre-existing database can hold a status in another case (0009's
+    server default is lowercase `'draft'`); written by SQL, as such a row
+    would have been."""
+    url, engine = _seed_at_0066(tmp_path, "m0068-case.db", {"APPROVED", "RELEASED", "DRAFT"})
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text("UPDATE csf_assessments SET status = 'approved' WHERE status = 'APPROVED'")
+        )
+        conn.execute(
+            sa.text("UPDATE csf_assessments SET status = 'Released' WHERE status = 'RELEASED'")
+        )
+        conn.execute(sa.text("UPDATE csf_assessments SET status = 'draft' WHERE status = 'DRAFT'"))
+        # Positive first: the odd spellings really are what is stored.
+        stored = set(conn.execute(sa.text("SELECT status FROM csf_assessments")).scalars())
+    assert stored == {"approved", "Released", "draft"}
+
+    capsys.readouterr()
+    command.upgrade(_cfg(url), "0068")
+    assert "[0068] froze 2 manually ticked Working Profile row(s)" in capsys.readouterr().out
+    with engine.connect() as conn:
+        rows = conn.execute(
+            sa.text(
+                "SELECT a.status, s.has_evidence, s.evidence_basis FROM csf_dimension_scores s "
+                "JOIN csf_assessments a ON a.id = s.assessment_id"
+            )
+        ).all()
+    assert {(status, bool(t)): basis for status, t, basis in rows} == {
+        ("approved", True): "MANUAL_TICK_FROZEN",
+        ("approved", False): None,
+        ("Released", True): "MANUAL_TICK_FROZEN",
+        ("Released", False): None,
+        ("draft", True): None,
+        ("draft", False): None,
+    }
+
+
+def test_the_documented_clearing_procedure_lets_the_downgrade_through(tmp_path) -> None:
+    """Ruling #736 6128447366 (c): the docstring states what to run before a
+    downgrade. Run exactly those statements, read from the docstring."""
+    url, engine = _seed_at_0066(tmp_path, "m0068-clear.db", {"APPROVED", "DRAFT"})
+    command.upgrade(_cfg(url), "0068")
+    with engine.begin() as conn:
+        conn.execute(sa.text("UPDATE artifacts SET description = 'x', doc_status = 'DRAFT'"))
+        frozen = conn.execute(
+            sa.text("SELECT COUNT(*) FROM csf_dimension_scores WHERE evidence_basis IS NOT NULL")
+        ).scalar_one()
+    assert frozen == 1
+    with pytest.raises(RuntimeError, match="Refusing to downgrade 0068"):
+        command.downgrade(_cfg(url), "0067")
+
+    statements = _clearing_statements()
+    # Asserted first: a section the extractor could not find would pass the rest.
+    assert len(statements) == 3, statements
+    with engine.begin() as conn:
+        for statement in statements:
+            conn.execute(sa.text(statement))
+    command.downgrade(_cfg(url), "0067")
+    assert "evidence_links" not in sa.inspect(engine).get_table_names()
+
+
+def _clearing_statements() -> list[str]:
+    from alembic.script import ScriptDirectory
+
+    script = ScriptDirectory.from_config(_cfg("sqlite://")).get_revision("0068")
+    doc = script.module.__doc__
+    section = doc.split("## Clearing before a downgrade", 1)[1].split("\n## ", 1)[0]
+    return [line.strip() for line in section.splitlines() if line.startswith("    ")]
+
+
+# --- the migration as Postgres receives it (offline, postgresql dialect) ----------
+
+_PG_SQL: dict[str, str] = {}
+
+
+def _postgres_sql() -> str:
+    if "sql" not in _PG_SQL:
+        buf = io.StringIO()
+        cfg = Config(str(API_ROOT / "alembic.ini"), output_buffer=buf)
+        cfg.set_main_option("script_location", str(API_ROOT / "alembic"))
+        cfg.set_main_option("sqlalchemy.url", "postgresql+psycopg://u:p@localhost/x")
+        command.upgrade(cfg, "0067:0068", sql=True)
+        _PG_SQL["sql"] = buf.getvalue()
+    return _PG_SQL["sql"]
+
+
+@pytest.mark.parametrize(
+    ("index", "columns", "where"),
+    [
+        (
+            "uq_evidence_links_untiered",
+            "artifact_id, assessment_id, target_kind, target_code",
+            "tier IS NULL",
+        ),
+        (
+            "uq_evidence_links_tiered",
+            "artifact_id, assessment_id, target_kind, target_code, tier",
+            "tier IS NOT NULL",
+        ),
+    ],
+)
+def test_postgres_receives_both_unique_indexes_as_partial(index, columns, where) -> None:
+    """SQLite is what CI's unit job runs; this is the migration's
+    `postgresql_where`, which nothing else here exercises. Without it Postgres
+    gets a plain UNIQUE, and one file linked to a CSF row at two tiers fails."""
+    sql = _postgres_sql()
+    assert "CREATE TABLE evidence_links" in sql  # positive first: it rendered 0068
+    expected = f"CREATE UNIQUE INDEX {index} ON evidence_links ({columns}) WHERE {where};"
+    assert expected in sql, [line for line in sql.splitlines() if index in line]
+
+
+def test_offline_mode_emits_the_backfill_with_literal_statuses(capsys) -> None:
+    _PG_SQL.clear()
+    capsys.readouterr()
+    sql = _postgres_sql()
+    assert (
+        "UPDATE csf_dimension_scores SET evidence_basis = 'MANUAL_TICK_FROZEN' "
+        "WHERE has_evidence = true AND assessment_id IN "
+        "(SELECT id FROM csf_assessments WHERE UPPER(status) IN ('APPROVED', 'RELEASED'));"
+    ) in sql
+    assert "[0068] offline mode: the MANUAL_TICK_FROZEN backfill is in the script" in (
+        capsys.readouterr().out
+    )
 
 
 def test_the_models_still_insert_and_select_against_a_pre_0068_schema(tmp_path) -> None:
@@ -417,7 +567,7 @@ def test_the_models_still_insert_and_select_against_a_pre_0068_schema(tmp_path) 
         (
             "evidence_basis",
             "UPDATE csf_dimension_scores SET evidence_basis = 'LINKED'",
-            "1 Working Profile rows with an evidence basis",
+            "1 Working Profile rows with another evidence basis",
         ),
     ],
 )
@@ -466,6 +616,29 @@ def test_tier_check_refuses(tmp_path, kind, code, tier) -> None:
         engine.begin() as conn,
     ):
         _link(conn, p, kind, code, tier)
+
+
+@pytest.mark.parametrize("tier", ["High", "MODERATE", "medium", "", "Low "])
+def test_tier_vocabulary_check_refuses_anything_but_the_stored_spelling(tmp_path, tier) -> None:
+    """`csf_dimension_scores.tier` stores `high` / `moderate` / `low` (the
+    `app.csf.playbook.Tier` values); a link's `tier` must match it exactly."""
+    _, engine = _at(tmp_path, f"m0068-tiervocab-{tier.strip() or 'empty'}-{len(tier)}.db")
+    p = _parents(engine)
+    with (
+        pytest.raises(sa.exc.IntegrityError, match="ck_evidence_links_tier_vocabulary"),
+        engine.begin() as conn,
+    ):
+        _link(conn, p, "CSF_ROW", "GV.OC-01", tier)
+
+
+def test_tier_vocabulary_accepts_each_stored_tier(tmp_path) -> None:
+    _, engine = _at(tmp_path, "m0068-tiervocab-ok.db")
+    p = _parents(engine)
+    with engine.begin() as conn:
+        for tier in ("high", "moderate", "low"):
+            _link(conn, p, "CSF_ROW", "GV.OC-01", tier)
+        n = conn.execute(sa.text("SELECT COUNT(*) FROM evidence_links")).scalar_one()
+    assert n == 3
 
 
 # --- the partial unique indexes -------------------------------------------------------
@@ -701,7 +874,10 @@ def test_the_model_declares_what_the_migration_creates(tmp_path) -> None:
     table = EvidenceLink.__table__
     declared_checks = {c.name for c in table.constraints if isinstance(c, sa.CheckConstraint)}
     declared_indexes = {i.name: bool(i.unique) for i in table.indexes}
-    assert created_checks == {"ck_evidence_links_tier_iff_csf_row"}
+    assert created_checks == {
+        "ck_evidence_links_tier_iff_csf_row",
+        "ck_evidence_links_tier_vocabulary",
+    }
     assert declared_checks == created_checks
     assert created_indexes == {
         "ix_evidence_links_client_id": False,

@@ -20,7 +20,15 @@ for `ai_runs`' reason: an index declared with only one of them is a plain
 UNIQUE index on the other dialect.
 
 A CHECK holds `tier` to CSF rows only: present exactly when `target_kind` is
-`CSF_ROW`.
+`CSF_ROW`. A second holds its spelling to `high` / `moderate` / `low`, the
+`app.csf.playbook.Tier` values `csf_dimension_scores.tier` stores, so a link
+always joins its row.
+
+`target_code` HAS NO CHECK, deliberately: three catalogs, each with its own
+code shape. WRITERS NORMALISE IT to the catalog's own spelling as the
+assessment rows store it (`GV.OC-01`, `IDE.01`, `T1003.001`: upper case, no
+padding), because the uniqueness indexes and every join compare it exactly;
+`gv.oc-01` would be a second, unjoinable link.
 
 Enum columns follow the `ai_runs` convention (`native_enum=False`, no
 `values_callable`): the STORED value is the member NAME (`CSF_ROW`,
@@ -55,6 +63,10 @@ from app.db.base import Base
 from app.models._common import TimestampMixin, UUIDPKMixin
 
 _JSON = JSON().with_variant(JSONB, "postgresql")
+#: "NULL IS NOT RECORDED" MEANS SQL NULL, and a plain `JSON` column writes
+#: Python None as the JSON text 'null' (`risk_register.py`, review of
+#: 655184cc, F3). A writer meaning "not recorded" leaves `supports` UNSET or
+#: writes `sqlalchemy.null()`; never None.
 
 
 class EvidenceTargetKind(enum.StrEnum):
@@ -80,6 +92,10 @@ class EvidenceLink(UUIDPKMixin, TimestampMixin, Base):
             "(target_kind = 'CSF_ROW' AND tier IS NOT NULL) "
             "OR (target_kind <> 'CSF_ROW' AND tier IS NULL)",
             name=conv("ck_evidence_links_tier_iff_csf_row"),
+        ),
+        CheckConstraint(
+            "tier IS NULL OR tier IN ('high', 'moderate', 'low')",
+            name=conv("ck_evidence_links_tier_vocabulary"),
         ),
         Index(
             "uq_evidence_links_untiered",
@@ -123,7 +139,7 @@ class EvidenceLink(UUIDPKMixin, TimestampMixin, Base):
     tier: Mapped[str | None] = mapped_column(String(16))
     # What the file shows, from a fixed vocabulary per kind: CSF the five
     # dimensions; ZT `implemented`; ATT&CK `detect`, `prevent`, `respond`.
-    # NULL is "not recorded"; [] is "nothing".
+    # SQL NULL (see `_JSON`) is "not recorded"; [] is "nothing".
     supports: Mapped[list | None] = mapped_column(_JSON)
     status: Mapped[EvidenceLinkStatus] = mapped_column(
         SAEnum(EvidenceLinkStatus, name="evidence_link_status", native_enum=False, length=16),

@@ -11,7 +11,9 @@ The design note rev 4, sections 5 and 10.1 (schema approved by the advisor,
 - New table `evidence_links`: one client file linked to one assessment row.
   Uniqueness is two partial unique indexes (untiered rows on four columns,
   tiered rows on five), because `tier` is NULL on every ZT and ATT&CK link and
-  a plain UNIQUE treats NULLs as distinct. A CHECK holds `tier` to CSF rows.
+  a plain UNIQUE treats NULLs as distinct. A CHECK holds `tier` to CSF rows,
+  and a second holds it to `high` / `moderate` / `low`, the spelling
+  `csf_dimension_scores.tier` stores (`app.csf.playbook.Tier`).
   `assessment_id` has no FK: three assessment tables are three referents.
 - `csf_dimension_scores.evidence_basis` (`MANUAL_TICK_FROZEN` | `LINKED`),
   nullable, BACKFILLED per Gene's Q9 grace ruling, option A (#736 6126886407):
@@ -39,7 +41,23 @@ evidence link, an artifact description or document status, or an
 `evidence_basis` -- including a backfilled one. Dropping them would delete what
 a client said about a file and the links a consultant confirmed, without a
 trace; and a re-upgrade would freeze against the statuses AT THAT TIME, so an
-assessment approved in between would gain a freeze it never had at launch.
+assessment approved in between would gain a freeze it never had at launch. The
+advisor accepted this refusal (#736 6128447366, (c)): on any database with real
+CSF work the downgrade is, in practice, one-way until someone clears the rows.
+
+## Clearing before a downgrade
+
+Only once someone has decided the data may go (export it first if it must be
+kept). These three statements clear everything the refusal counts, and are run
+verbatim by `test_the_documented_clearing_procedure_lets_the_downgrade_through`:
+
+    DELETE FROM evidence_links
+    UPDATE artifacts SET description = NULL, doc_status = NULL, doc_status_set_by = NULL, doc_status_set_at = NULL
+    UPDATE csf_dimension_scores SET evidence_basis = NULL
+
+then `alembic downgrade 0067`. A later `alembic upgrade 0068` re-runs the
+backfill against the assessment statuses AT THAT TIME, not those at the first
+launch.
 """
 
 from __future__ import annotations
@@ -59,17 +77,38 @@ depends_on: str | Sequence[str] | None = None
 _UNTIERED = "tier IS NULL"
 _TIERED = "tier IS NOT NULL"
 
-_RECORDED = {
-    "evidence links": "SELECT COUNT(*) FROM evidence_links",
-    "artifacts with a description or document status": (
+_REASON_DATA = (
+    "Dropping them would delete what a client said about a file, the links a "
+    "consultant confirmed, or which rows' evidence is linked, without a trace."
+)
+_REASON_FROZEN = (
+    "The backfilled rows cannot simply be recomputed: a re-upgrade would re-freeze "
+    "them against the statuses at that later time, so an assessment approved since "
+    "would gain a freeze it never had at launch."
+)
+
+#: What the downgrade refuses over: (label, count query, why it matters).
+_RECORDED = (
+    ("evidence links", "SELECT COUNT(*) FROM evidence_links", _REASON_DATA),
+    (
+        "artifacts with a description or document status",
         "SELECT COUNT(*) FROM artifacts WHERE description IS NOT NULL "
         "OR doc_status IS NOT NULL OR doc_status_set_by IS NOT NULL "
-        "OR doc_status_set_at IS NOT NULL"
+        "OR doc_status_set_at IS NOT NULL",
+        _REASON_DATA,
     ),
-    "Working Profile rows with an evidence basis": (
-        "SELECT COUNT(*) FROM csf_dimension_scores WHERE evidence_basis IS NOT NULL"
+    (
+        "Working Profile rows frozen by this migration's backfill",
+        "SELECT COUNT(*) FROM csf_dimension_scores " "WHERE evidence_basis = 'MANUAL_TICK_FROZEN'",
+        _REASON_FROZEN,
     ),
-}
+    (
+        "Working Profile rows with another evidence basis",
+        "SELECT COUNT(*) FROM csf_dimension_scores "
+        "WHERE evidence_basis IS NOT NULL AND evidence_basis <> 'MANUAL_TICK_FROZEN'",
+        _REASON_DATA,
+    ),
+)
 
 
 def _uuid(name: str, *, nullable: bool = True, primary_key: bool = False) -> sa.Column:
@@ -178,6 +217,10 @@ def upgrade() -> None:
             "OR (target_kind <> 'CSF_ROW' AND tier IS NULL)",
             name=conv("ck_evidence_links_tier_iff_csf_row"),
         ),
+        sa.CheckConstraint(
+            "tier IS NULL OR tier IN ('high', 'moderate', 'low')",
+            name=conv("ck_evidence_links_tier_vocabulary"),
+        ),
     )
     op.create_index("ix_evidence_links_client_id", "evidence_links", ["client_id"])
     op.create_index("ix_evidence_links_artifact_id", "evidence_links", ["artifact_id"])
@@ -202,14 +245,19 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     bind = op.get_bind()
-    counts = {what: bind.execute(sa.text(query)).scalar_one() for what, query in _RECORDED.items()}
-    held = {what: n for what, n in counts.items() if n}
+    held = [
+        (n, label, reason)
+        for label, query, reason in _RECORDED
+        if (n := bind.execute(sa.text(query)).scalar_one())
+    ]
     if held:
-        listed = ", ".join(f"{n} {what}" for what, n in held.items())
+        listed = ", ".join(f"{n} {label}" for n, label, _ in held)
+        # Only the reasons that apply, in order: a database blocked solely by
+        # the backfill is told about the re-freeze, not about client data.
+        reasons = " ".join(dict.fromkeys(reason for _, _, reason in held))
         raise RuntimeError(
-            f"Refusing to downgrade 0068: {listed}. Dropping them would delete what "
-            "a client said about a file and the links a consultant confirmed, "
-            "without a trace."
+            f"Refusing to downgrade 0068: {listed}. {reasons} To clear them "
+            "deliberately, see 'Clearing before a downgrade' in the 0068 migration."
         )
     op.drop_index("uq_evidence_links_tiered", table_name="evidence_links")
     op.drop_index("uq_evidence_links_untiered", table_name="evidence_links")
