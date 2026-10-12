@@ -550,21 +550,28 @@ def _walk(
     everything beneath it, dicts and lists alike. Facts are matched by their
     path from the TOP LEVEL ("summary" or "service.summary"), never by a key
     name found at any depth (#1088 round 6): a same-named key inside a
-    non-fact subtree, such as an id, licenses nothing."""
+    non-fact subtree, such as an id, licenses nothing. Protected names match
+    the same way (#1088 round 7): a same-named key elsewhere is NOT protected,
+    so its text is checked like any other."""
     if value is None or isinstance(value, bool):
         # `int(True)` is 1 (CLAUDE.md): a flag licenses no number.
         return
     if isinstance(value, Mapping):
         for k, v in value.items():
+            if "." in str(k):
+                # A dot would be ambiguous with a dotted fact or protected path.
+                raise ValueError(f"numbers: payload key {str(k)!r} contains '.'")
             child = (*path, str(k))
-            out["keys"].add(str(k))
             out["paths"].add(child)
             _walk(v, str(k), child, fields, out, in_fact or child in fields["facts"])
     elif isinstance(value, (list, tuple)):
         for v in value:
             _walk(v, key, path, fields, out, in_fact)
     elif isinstance(value, str):
-        if key in fields["protected"]:
+        # PRECEDENCE: a protected path wins over an enclosing fact. Its string
+        # is written as given and licenses no number of its own; the rest of
+        # the fact still licenses (#1088 round 7).
+        if path in fields["protected"]:
             if value.strip() and not any(c.isalpha() for c in value):
                 # A numeral is not a code: protecting "40" would mask it
                 # everywhere and let "40%" and "$40" through (#1088 round 3, F5).
@@ -595,11 +602,18 @@ def _walk(
         raise TypeError(f"numbers: cannot read a {type(value).__name__} at {key!r}")
 
 
-def _field_names(names: Iterable[str], what: str) -> frozenset[str]:
+def _field_paths(names: Iterable[str], what: str) -> frozenset[tuple[str, ...]]:
+    """Each name as a path from the top level: "summary" -> ("summary",),
+    "service.summary" -> ("service", "summary")."""
     if isinstance(names, str):
         # `frozenset("code")` is {"c", "o", "d", "e"}: it would match nothing.
         raise TypeError(f"numbers: {what} must be an iterable of names, not a str")
-    return frozenset(names)
+    paths: set[tuple[str, ...]] = set()
+    for name in names:
+        if not isinstance(name, str):
+            raise TypeError(f"numbers: {what} entries must be str, not {type(name).__name__}")
+        paths.add(tuple(name.split(".")))
+    return frozenset(paths)
 
 
 def allowed_numbers(
@@ -612,29 +626,26 @@ def allowed_numbers(
     from the TOP LEVEL ("summary", or dotted "service.summary"; lists are
     transparent). Beneath a fact, at any depth: every numeric value, and for
     every string each of its spans verbatim and each plain numeral's value.
-    Strings under a key named in `protected_fields` (any depth) may be written
-    as given and license nothing else. Anything outside every fact licenses
-    nothing. A fact path or protected name that matches nothing raises."""
+    Strings at a path in `protected_fields` (matched the same way) may be
+    written as given and license nothing else; a protected path inside a fact
+    takes precedence over the fact for that one value. Anything outside every
+    fact licenses nothing. A path that matches nothing, a payload key
+    containing ".", or a non-str entry in either list raises."""
     if not isinstance(payload, Mapping):
         raise TypeError(f"numbers: payload must be a mapping, not {type(payload).__name__}")
     fields = {
         # A fact is a path from the top level: "summary", or "service.summary".
-        "facts": frozenset(
-            tuple(name.split(".")) for name in _field_names(fact_fields, "fact_fields")
-        ),
-        "protected": _field_names(protected_fields, "protected_fields"),
+        "facts": _field_paths(fact_fields, "fact_fields"),
+        "protected": _field_paths(protected_fields, "protected_fields"),
     }
     out: dict[str, Any] = {
         "values": set(),
         "protected": set(),
         "strings": [],
-        "keys": set(),
         "paths": set(),
     }
     _walk(payload, None, (), fields, out, False)
-    unmatched = sorted(
-        {".".join(f) for f in fields["facts"] - out["paths"]} | (fields["protected"] - out["keys"])
-    )
+    unmatched = sorted(".".join(f) for f in (fields["facts"] | fields["protected"]) - out["paths"])
     if unmatched:
         raise ValueError(f"numbers: listed fields match nothing in the payload: {unmatched}")
     protected = frozenset(out["protected"])

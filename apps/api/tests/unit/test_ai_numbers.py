@@ -680,3 +680,61 @@ def test_fact_names_match_top_level_keys_or_dotted_paths(
 def test_an_unmatched_fact_path_is_refused(payload: dict, facts: tuple[str, ...]) -> None:
     with pytest.raises(ValueError):
         allowed_numbers(payload, fact_fields=facts, protected_fields=())
+
+
+# --- Review round 7 of #1088 ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text,payload,protected,refused",
+    [
+        # A same-named key in a non-fact subtree is NOT protected: its numbers
+        # are checked like any other text.
+        (
+            "40% of hosts unpatched in 2025.",
+            {"name": "Acme Corp", "findings": [{"name": "40% of hosts unpatched in 2025"}]},
+            ("name",),
+            ["40%", "2025"],
+        ),
+        # A dotted path protects exactly that nested value (lists transparent).
+        (
+            "T1003 applies.",
+            {"findings": [{"code": "T1003"}]},
+            ("findings.code",),
+            [],
+        ),
+    ],
+)
+def test_protected_names_match_top_level_keys_or_dotted_paths(
+    text: str, payload: dict, protected: tuple[str, ...], refused: list[str]
+) -> None:
+    allowed = allowed_numbers(payload, fact_fields=(), protected_fields=protected)
+    assert [h.raw for h in unallowed_numbers(text, allowed)] == refused
+
+
+def test_a_protected_path_inside_a_fact_takes_precedence() -> None:
+    # Precedence: the protected string is written as given and licenses no
+    # number of its own; the rest of the fact still licenses.
+    payload = {"facts": {"code": "PR.PS-01", "count": 5}}
+    allowed = allowed_numbers(payload, fact_fields=("facts",), protected_fields=("facts.code",))
+    assert unallowed_numbers("PR.PS-01 has 5 owners.", allowed) == ()
+    assert [h.raw for h in unallowed_numbers("Owner 01 applies.", allowed)] == ["01"]
+
+
+def test_a_protected_name_present_only_below_the_top_level_is_refused() -> None:
+    with pytest.raises(ValueError):
+        allowed_numbers({"findings": [{"name": "x"}]}, fact_fields=(), protected_fields=("name",))
+
+
+def test_a_payload_key_containing_a_dot_is_refused() -> None:
+    with pytest.raises(ValueError, match="service.id"):
+        allowed_numbers({"service.id": 5}, fact_fields=(), protected_fields=())
+
+
+@pytest.mark.parametrize(
+    "facts,protected",
+    [((1,), ()), ((), (None,)), (("ok", b"bytes"), ())],
+)
+def test_a_field_list_entry_that_is_not_a_str_is_refused(facts: tuple, protected: tuple) -> None:
+    with pytest.raises(TypeError):
+        allowed_numbers({"ok": 1}, fact_fields=facts, protected_fields=protected)
