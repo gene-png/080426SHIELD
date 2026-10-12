@@ -447,7 +447,12 @@ def test_attack_alone_cannot_generate_so_no_register_records_no_targets(
     assert ar.status_code == 200, ar.text
     gen = c.post(f"/risk/clients/{cid}/register/generate", headers=h)
     assert gen.status_code == 409, gen.text
-    assert "a CSF or Zero Trust assessment" in gen.text
+    # #1081: the locked copy, (B) for CSF/ZT, approved in #1081 6116102972.
+    err = gen.json()["error"]
+    assert err["reason"] == "risk_register_locked", err
+    assert err["message"].startswith(
+        "Acme has no NIST CSF 2.0 Assessment or Zero Trust service."
+    ), err
 
 
 def test_a_target_with_no_source_raises_rather_than_guessing() -> None:
