@@ -204,15 +204,31 @@ describe("resolveClientChoice (§3.1a)", () => {
     );
   });
 
-  it("labels an unnamed organisation with the shared label", () => {
-    const r = resolveClientChoice(
-      ok({ clients: [summary(A.id, null)] }),
-      cookie(null),
-      NO_URL,
-    );
-    expect(r).toMatchObject({
+  // Carried from `lib/risk/client.test.ts`, deleted with `getClientName`
+  // (RR-2, design note §6.2 item 3): a real name is used unchanged, and the
+  // three spellings of "nobody has named this org" get the web's one label for
+  // that state, never a blank heading. `"   "` is the one a bare `||` let
+  // through. The other two cases there, "not in the list" and "the request
+  // failed", are rows 4a/8 and row 1 above.
+  it("uses a real name unchanged", () => {
+    expect(resolveClientChoice(one, cookie(null), NO_URL)).toMatchObject({
       kind: "chosen",
-      client: { label: "(pending intake)" },
+      client: { label: "Atlas Corp" },
     });
   });
+
+  it.each([null, "", "   "])(
+    "labels an unnamed organisation rather than printing %o",
+    (blank) => {
+      const r = resolveClientChoice(
+        ok({ clients: [summary(A.id, blank)] }),
+        cookie(null),
+        NO_URL,
+      );
+      expect(r).toMatchObject({
+        kind: "chosen",
+        client: { label: "(pending intake)" },
+      });
+    },
+  );
 });
