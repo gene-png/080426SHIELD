@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, model_serializer
+from pydantic import BaseModel, ConfigDict, model_serializer, model_validator
 
 from app.risk.engine import Impact, Likelihood
 
@@ -76,6 +76,17 @@ class RiskDuplicateService(BaseModel):
     version: int
 
 
+class RiskLockedInput(BaseModel):
+    """#1081: why one unmet gate requirement is unmet (`app/risk/locked.py`)."""
+
+    requirement: Literal["attack", "csf_or_zt"]
+    state: Literal["no_assessment", "unpublished", "archived_only", "no_service"]
+    #: The service kind the sentence names; None for `no_service`.
+    service_kind: str | None
+    #: The approved sentence for this state.
+    sentence: str
+
+
 class RiskGateStatus(BaseModel):
     """Whether the Risk Register can be generated for a client.
 
@@ -139,6 +150,23 @@ class RiskGateStatus(BaseModel):
     # no such pair. The banner offers one archive button per row (advisor, #736
     # 6042801745). Defaulted so an older client parses.
     duplicate_services: list[RiskDuplicateService] = []
+    # #1081: why the gate is locked, per unmet requirement, and the approved copy
+    # the locked page and generate's 409 render. Defaulted so an older client
+    # parses; the validator below holds them to `unlocked`, so a locked gate
+    # can never arrive without a reason.
+    locked_inputs: list[RiskLockedInput] = []
+    locked_message: str | None = None
+
+    @model_validator(mode="after")
+    def _locked_state_matches_unlocked(self) -> RiskGateStatus:
+        """#1081, fail closed: a locked gate names why, an unlocked one does not."""
+        has_reason = bool(self.locked_inputs) and self.locked_message is not None
+        has_any = bool(self.locked_inputs) or self.locked_message is not None
+        if self.unlocked and has_any:
+            raise ValueError("risk gate: an unlocked gate carries a locked state (#1081)")
+        if not self.unlocked and not has_reason:
+            raise ValueError("risk gate: a locked gate carries no locked state (#1081)")
+        return self
 
 
 class RiskEntryResponse(BaseModel):
