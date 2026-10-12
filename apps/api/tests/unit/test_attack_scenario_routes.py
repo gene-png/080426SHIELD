@@ -889,20 +889,29 @@ def test_a_row_naming_an_added_tool_with_no_function_is_not_marked(app_parts) ->
 
 
 def test_a_post_0043_snapshot_judges_each_entry_by_its_item(app_parts) -> None:  # noqa: F811
-    """Round 3, item 2. The list is approved WITH a D-053 snapshot, written by
-    the real writer. A tool added and re-approved after the base is counted;
-    the snapshot's older entries are not."""
-    from app.routes.tech_debt import build_approved_membership
+    """Round 3, item 2. The list is approved WITH a D-053 snapshot, through the
+    approve route (#1012: the route also records WHEN, which the what-if now
+    reads). A tool added and approved after the base is counted; the
+    snapshot's older entries are not."""
+    from app.models.capability import CapabilityDisposition
 
     w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
     with w.sessions() as db:
         cl = db.execute(select(CapabilityList)).scalars().one()
         db.add(CapabilityItem(capability_list_id=cl.id, name=XDR))
         db.flush()
-        cl.status = CapabilityListStatus.APPROVED
-        cl.approved_membership = build_approved_membership(db, cl.id)
+        db.execute(
+            update(CapabilityItem)
+            .where(CapabilityItem.capability_list_id == cl.id)
+            .values(disposition=CapabilityDisposition.KEEP)
+        )
         db.commit()
-        assert {e["name"] for e in cl.approved_membership} >= {EDR, SIEM, SOAR, XDR}
+        list_id = cl.id
+    r = w.c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=w.h)
+    assert r.status_code == 200, r.text
+    with w.sessions() as db:
+        snapshot = db.get(CapabilityList, list_id).approved_membership
+    assert {e["name"] for e in snapshot} >= {EDR, SIEM, SOAR, XDR}
     w.answer({w.cc: [_flags(w.cc, XDR, d=True)]})
     sid = w.create([EDR]).json()["id"]
     body = _run_to_completion(w, sid)
