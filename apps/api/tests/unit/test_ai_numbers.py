@@ -8,7 +8,9 @@ THE RULE UNDER TEST comes from the advisor's rulings, not from the module:
 - #736 6115903398 (EV-2, G2): no number, date, year, version or count "except
   a fact value copied exactly from `facts`".
 - #736 6116092992: ruling 1, a percent is a distinct form; ruling 2, strict
-  licensing (numeric values and the caller's declared fact fields only).
+  licensing. #736 6116519635: F5, only what sits under a declared fact field
+  licenses, numbers included; F6, a fact field licenses everything beneath
+  it. Round 6: fact names match TOP-LEVEL keys, or a dotted path.
 - The round-2 review of #1088 and the coordinator's design (fail closed):
   number-bearing text is read as whole SPANS; a span is licensed only as a
   plain numeral whose value is licensed, or as an exact display string from a
@@ -611,3 +613,70 @@ def test_round_four_text_with_no_number(text: str) -> None:
 )
 def test_round_five_forms(text: str, payload: dict, refused: list[str]) -> None:
     assert _refused(text, payload) == refused
+
+
+# --- Review round 6 of #1088 ------------------------------------------------------
+
+
+def test_a_non_finite_decimal_outside_any_fact_still_raises() -> None:
+    with pytest.raises(ValueError):
+        allowed_numbers({"x": Decimal("NaN")}, fact_fields=(), protected_fields=())
+    with pytest.raises(ValueError):
+        allowed_numbers({"x": Decimal("Infinity")}, fact_fields=(), protected_fields=())
+
+
+@pytest.mark.parametrize(
+    "text,payload,refused",
+    [
+        ("Spend was $5 thou.", {"s": 5}, ["$5 thou"]),
+        ("Spend was $5 Grand.", {"s": 5}, ["$5 Grand"]),
+        ("Spend was $5 GRAND.", {"s": 5}, ["$5 GRAND"]),
+        ("Spend was five mln.", {"c": "five controls"}, ["five mln"]),
+    ],
+)
+def test_round_six_magnitudes(text: str, payload: dict, refused: list[str]) -> None:
+    assert _refused(text, payload) == refused
+
+
+@pytest.mark.parametrize(
+    "text,payload,facts,refused",
+    [
+        # A top-level fact licenses its whole subtree.
+        ("Values 5 and 7.", {"facts": {"value": 5, "meta": {"value": 7}}}, ("facts",), []),
+        # A same-named key under a non-fact parent licenses nothing.
+        ("Values 5 and 7.", {"value": 5, "meta": {"value": 7}}, ("value",), ["7"]),
+        ("Id 9 applies.", {"value": 5, "meta": {"value": "9"}}, ("value",), ["9"]),
+        # A dotted path names a nested fact, and only that subtree.
+        (
+            "5 rows; id 9.",
+            {"service": {"summary": "5 rows", "id": 9}},
+            ("service.summary",),
+            ["9"],
+        ),
+        (
+            "5 rows.",
+            {"service": [{"summary": "5 rows"}, {"summary": "6 rows"}]},
+            ("service.summary",),
+            [],
+        ),
+    ],
+)
+def test_fact_names_match_top_level_keys_or_dotted_paths(
+    text: str, payload: dict, facts: tuple[str, ...], refused: list[str]
+) -> None:
+    allowed = allowed_numbers(payload, fact_fields=facts, protected_fields=())
+    assert [h.raw for h in unallowed_numbers(text, allowed)] == refused
+
+
+@pytest.mark.parametrize(
+    "payload,facts",
+    [
+        # A name present only below the top level does not match.
+        ({"meta": {"value": 7}}, ("value",)),
+        ({"service": {"summary": "5 rows"}}, ("service.nope",)),
+        ({"service": {"summary": "5 rows"}}, ("summary",)),
+    ],
+)
+def test_an_unmatched_fact_path_is_refused(payload: dict, facts: tuple[str, ...]) -> None:
+    with pytest.raises(ValueError):
+        allowed_numbers(payload, fact_fields=facts, protected_fields=())

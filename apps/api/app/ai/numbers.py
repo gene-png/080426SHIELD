@@ -3,7 +3,8 @@
 THE RULE. AI-drafted narrative may state only numbers present in the input it
 was given (#736 6115899208, P1 rule 1; 6115903398, G2). LICENSING IS STRICT
 (#736 6116092992, ruling 2; 6116519635, F5 and F6): only what sits under a
-field the caller declares as a FACT licenses numbers, at any depth beneath it
+field the caller declares as a FACT (a top-level key, or a dotted path to a
+nested one) licenses numbers, at any depth beneath it
 (numbers, and the text of strings); anything outside every fact field, number
 or string, licenses nothing. A percent is a distinct form (ruling 1). Catalog codes and
 names under the fields the caller declares as PROTECTED may be written as
@@ -419,8 +420,9 @@ def _joins(a: _Tok, gap: list[_Tok], gap_text: str, b: _Tok) -> bool:
     wordish = (a.kind in _WORDISH and b.kind not in loose) or (
         b.kind in _WORDISH and a.kind not in loose
     )
-    # A magnitude joins the numeral before it ("5 bn", "3×", "5-fold"), and
-    # "×" joins the numeral after it ("×3"); never a word or another magnitude.
+    # A magnitude or unit joins the numeral before it ("5 bn", "3×", "5-fold"),
+    # and "×" joins the numeral after it ("×3"). A magnitude also joins a
+    # number WORD through `wordish` above ("five bn"); a unit never does.
     magnitude = (a.kind == _NUM and b.kind in (_MAG, _UNIT)) or (
         a.text == "\u00d7" and b.kind == _NUM
     )
@@ -535,22 +537,32 @@ def _plain_value(raw: str) -> str | None:
 
 
 def _walk(
-    value: Any, key: str | None, fields: dict[str, frozenset[str]], out: dict, in_fact: bool
+    value: Any,
+    key: str | None,
+    path: tuple[str, ...],
+    fields: dict[str, Any],
+    out: dict,
+    in_fact: bool,
 ) -> None:
-    """`in_fact`: some key on the path from the root is a declared fact field.
-    Rulings F5 and F6 (#736 6116519635): numbers and strings license ONLY under
-    a fact field, and a fact field licenses everything beneath it, at any
-    depth, dicts and lists alike."""
+    """`path`: the keys from the root (lists are transparent). `in_fact`: the
+    path passed through a declared fact. Rulings F5 and F6 (#736 6116519635):
+    numbers and strings license ONLY under a fact, and a fact licenses
+    everything beneath it, dicts and lists alike. Facts are matched by their
+    path from the TOP LEVEL ("summary" or "service.summary"), never by a key
+    name found at any depth (#1088 round 6): a same-named key inside a
+    non-fact subtree, such as an id, licenses nothing."""
     if value is None or isinstance(value, bool):
         # `int(True)` is 1 (CLAUDE.md): a flag licenses no number.
         return
     if isinstance(value, Mapping):
         for k, v in value.items():
+            child = (*path, str(k))
             out["keys"].add(str(k))
-            _walk(v, str(k), fields, out, in_fact or str(k) in fields["facts"])
+            out["paths"].add(child)
+            _walk(v, str(k), child, fields, out, in_fact or child in fields["facts"])
     elif isinstance(value, (list, tuple)):
         for v in value:
-            _walk(v, key, fields, out, in_fact)
+            _walk(v, key, path, fields, out, in_fact)
     elif isinstance(value, str):
         if key in fields["protected"]:
             if value.strip() and not any(c.isalpha() for c in value):
@@ -567,7 +579,11 @@ def _walk(
         # Any other string licenses nothing (ruling 2): ids, timestamps and
         # identifiers carry digits that are not facts.
     elif isinstance(value, (int, float, Decimal)):
+        # Finiteness is checked BEFORE the fact test, so a NaN or Infinity is
+        # refused wherever it sits, not only inside a fact (#1088 round 6).
         if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError(f"numbers: non-finite value at {key!r}")
+        if isinstance(value, Decimal) and not value.is_finite():
             raise ValueError(f"numbers: non-finite value at {key!r}")
         if not in_fact:
             return  # F5: a number outside every fact field licenses nothing
@@ -592,23 +608,35 @@ def allowed_numbers(
     fact_fields: Iterable[str],
     protected_fields: Iterable[str],
 ) -> NumberAllowList:
-    """What `payload` licenses, strictly. Beneath a key in `fact_fields`, at any
-    depth (dicts and lists alike): every numeric value, and for every string
-    each of its spans verbatim and each plain numeral's value. Strings under
-    `protected_fields` may be written as given and license nothing else.
-    Anything outside every fact field licenses nothing. A listed name that
-    matches no key raises."""
+    """What `payload` licenses, strictly. Each name in `fact_fields` is a path
+    from the TOP LEVEL ("summary", or dotted "service.summary"; lists are
+    transparent). Beneath a fact, at any depth: every numeric value, and for
+    every string each of its spans verbatim and each plain numeral's value.
+    Strings under a key named in `protected_fields` (any depth) may be written
+    as given and license nothing else. Anything outside every fact licenses
+    nothing. A fact path or protected name that matches nothing raises."""
     if not isinstance(payload, Mapping):
         raise TypeError(f"numbers: payload must be a mapping, not {type(payload).__name__}")
     fields = {
-        "facts": _field_names(fact_fields, "fact_fields"),
+        # A fact is a path from the top level: "summary", or "service.summary".
+        "facts": frozenset(
+            tuple(name.split(".")) for name in _field_names(fact_fields, "fact_fields")
+        ),
         "protected": _field_names(protected_fields, "protected_fields"),
     }
-    out: dict[str, Any] = {"values": set(), "protected": set(), "strings": [], "keys": set()}
-    _walk(payload, None, fields, out, False)
-    unmatched = (fields["facts"] | fields["protected"]) - out["keys"]
+    out: dict[str, Any] = {
+        "values": set(),
+        "protected": set(),
+        "strings": [],
+        "keys": set(),
+        "paths": set(),
+    }
+    _walk(payload, None, (), fields, out, False)
+    unmatched = sorted(
+        {".".join(f) for f in fields["facts"] - out["paths"]} | (fields["protected"] - out["keys"])
+    )
     if unmatched:
-        raise ValueError(f"numbers: listed fields match no key in the payload: {sorted(unmatched)}")
+        raise ValueError(f"numbers: listed fields match nothing in the payload: {unmatched}")
     protected = frozenset(out["protected"])
     displays: set[str] = set()
     for s in out["strings"]:
