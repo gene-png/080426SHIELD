@@ -45,12 +45,12 @@ def _refused(
     """The raw spans the validator refuses, in order.
 
     SETUP, not outcome: rows list a few protected names per group, so only the
-    ones each row's payload carries are passed, and every string value a row
-    gives is declared a fact unless `facts` says otherwise. The strict rule
-    itself has its own tests below."""
+    ones each row's payload carries are passed, and every other key a row gives
+    is declared a fact unless `facts` says otherwise. The strict rule itself
+    (only fact fields license, ruling F5) has its own tests below."""
     present = tuple(f for f in protected if f in payload)
     if facts is None:
-        facts = tuple(k for k, v in payload.items() if isinstance(v, str) and k not in present)
+        facts = tuple(k for k in payload if k not in present)
     allowed = allowed_numbers(payload, fact_fields=facts, protected_fields=present)
     return [hit.raw for hit in unallowed_numbers(text, allowed)]
 
@@ -296,7 +296,7 @@ def test_joining_rules(text: str, payload: dict, refused: list[str]) -> None:
 
 def test_text_that_passed_passes_again() -> None:
     payload = {"pct": "40%", "code": "PR.PS-01", "total": 1200}
-    allowed = allowed_numbers(payload, fact_fields=("pct",), protected_fields=("code",))
+    allowed = allowed_numbers(payload, fact_fields=("pct", "total"), protected_fields=("code",))
     text = "PR.PS-01 sits at 40% with 1,200 in spend."
     assert unallowed_numbers(text, allowed) == ()
     assert unallowed_numbers(text, allowed) == ()
@@ -308,7 +308,9 @@ def test_empty_text_has_no_hits() -> None:
 
 def test_very_long_text_reports_every_hit_with_its_offsets() -> None:
     text = "Only 7 here. " * 5000 + "And 8 at the end."
-    hits = unallowed_numbers(text, allowed_numbers({"n": 7}, fact_fields=(), protected_fields=()))
+    hits = unallowed_numbers(
+        text, allowed_numbers({"n": 7}, fact_fields=("n",), protected_fields=())
+    )
     assert [h.raw for h in hits] == ["8"]
     assert text[hits[0].start : hits[0].end] == "8"
 
@@ -325,8 +327,9 @@ def test_a_hit_carries_raw_normalized_and_offsets() -> None:
 
 
 def test_payload_walk_reads_nested_values() -> None:
+    # F6: a fact field licenses everything beneath it, dicts and lists alike.
     payload = {"facts": [{"id": "f1", "value": 17}, {"id": "f2", "label": "Has 4 rows"}]}
-    assert _refused("17 and 4 hold.", payload, facts=("label",)) == []
+    assert _refused("17 and 4 hold.", payload, facts=("facts",)) == []
 
 
 def test_a_boolean_is_not_a_number() -> None:
@@ -340,6 +343,14 @@ def test_a_boolean_is_not_a_number() -> None:
         ("Finding 1 repeats.", {"finding_id": "f1"}, (), ["1"]),
         ("Rows from 2026 apply.", {"created_at": "2026-10-12T09:00:00Z"}, (), ["2026"]),
         ("Rows from 2026 apply.", {"year": "2026"}, ("year",), []),
+        # F5 (#736 6116519635): a number licenses only under a fact field.
+        ("Service 40 is open.", {"service_id": 40}, (), ["40"]),
+        ("Service 40 is open.", {"service_id": 40}, ("service_id",), []),
+        # F6: a fact field licenses everything beneath it, at any depth.
+        ("Count is 5.", {"facts": {"count": 5}}, ("facts",), []),
+        ("Count is 6.", {"facts": {"count": 5}, "other": {"n": 6}}, ("facts",), ["6"]),
+        ("Count is 5.", {"facts": [[{"deep": "5 rows"}]]}, ("facts",), []),
+        ("Count is 5.", {"facts": {"rows": [5]}}, ("facts",), []),
         ("Detection covers 40%.", {"pct": "40%", "id": "x40"}, ("pct",), []),
         ("Detection covers 40.", {"pct": "40%", "id": "x40"}, ("pct",), ["40"]),
         # A plain numeral inside an undeclared string licenses nothing.
@@ -401,7 +412,7 @@ def test_a_fact_field_matching_no_key_is_refused() -> None:
 def test_the_allow_list_is_a_value_object() -> None:
     allowed = allowed_numbers(
         {"n": 3, "code": "PR.PS-01", "note": "40 percent"},
-        fact_fields=("note",),
+        fact_fields=("n", "note"),
         protected_fields=("code",),
     )
     assert isinstance(allowed, NumberAllowList)
@@ -565,3 +576,38 @@ def test_round_four_forms(text: str, payload: dict, refused: list[str]) -> None:
 )
 def test_round_four_text_with_no_number(text: str) -> None:
     assert _refused(text, {}) == []
+
+
+# --- Review round 5 of #1088 ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text,payload,refused",
+    [
+        # Finding 1: a number WORD joins a magnitude (only a unit is excluded).
+        ("Spend was five bn.", {"c": "five controls"}, ["five bn"]),
+        ("Risk grew five-fold.", {"c": "five controls"}, ["five-fold"]),
+        ("Spend was ten M.", {"c": "ten controls"}, ["ten M"]),
+        ("Risk grew three x.", {"c": "three controls"}, ["three x"]),
+        # Finding 2: four-letter magnitude spellings, any case, and basis points.
+        ("Spend was $5 mill.", {"s": 5}, ["$5 mill"]),
+        ("Spend was $5 bill.", {"s": 5}, ["$5 bill"]),
+        ("Spend was $5 trln.", {"s": 5}, ["$5 trln"]),
+        ("Spend was 5 lacs.", {"s": 5}, ["5 lacs"]),
+        ("Spend was 5 Lakhs.", {"s": 5}, ["5 Lakhs"]),
+        ("Spend was 5 crores.", {"s": 5}, ["5 crores"]),
+        ("It rose 5 basis points.", {"s": 5}, ["5 basis points"]),
+        ("It rose 5 basis point.", {"s": 5}, ["5 basis point"]),
+        ("It rose 5 basis points.", {"s": "5 basis points"}, []),
+        ("Pay the bill.", {}, []),
+        # Advisory 4: a spelled number word folds case even in a digit span; a
+        # unit does not.
+        ("Spend was 5 Million.", {"s": "5 million"}, []),
+        ("Spend was 5 M.", {"s": "5 m"}, ["5 M"]),
+        # Advisory 5: text next to an exempt phrase is still checked.
+        ("Zero Trust 2.0 applies.", {}, ["2.0"]),
+        ("Send a one-time code to 5 users.", {}, ["5"]),
+    ],
+)
+def test_round_five_forms(text: str, payload: dict, refused: list[str]) -> None:
+    assert _refused(text, payload) == refused

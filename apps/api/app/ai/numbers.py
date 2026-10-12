@@ -2,9 +2,10 @@
 
 THE RULE. AI-drafted narrative may state only numbers present in the input it
 was given (#736 6115899208, P1 rule 1; 6115903398, G2). LICENSING IS STRICT
-(#736 6116092992, ruling 2): numeric values in the payload, and the text of
-the fields the caller declares as FACTS, license numbers; every other string
-licenses nothing. A percent is a distinct form (ruling 1). Catalog codes and
+(#736 6116092992, ruling 2; 6116519635, F5 and F6): only what sits under a
+field the caller declares as a FACT licenses numbers, at any depth beneath it
+(numbers, and the text of strings); anything outside every fact field, number
+or string, licenses nothing. A percent is a distinct form (ruling 1). Catalog codes and
 names under the fields the caller declares as PROTECTED may be written as
 given.
 
@@ -161,10 +162,18 @@ _ARTICLE_TARGETS = frozenset({"dozen", "half", "quarter", *_ORDINALS})
 # ("$5 bn", "5 M", "5 K", "5-fold", "3 x", "3×"), or "×" BEFORE one ("×3").
 # Case-sensitive. Alone it is prose ("press x", "M to mute"). "5 m" is joined
 # and therefore refused on purpose: minutes, metres or millions, unknowable.
-_MAGNITUDES = frozenset({"bn", "MM", "M", "K", "B", "T", "k", "m", "x", "fold", "grand", "\u00d7"})
+_MAGNITUDES = frozenset({"bn", "MM", "M", "K", "B", "T", "k", "m", "x", "fold", "\u00d7"})
+# Longer magnitude spellings, matched case-insensitively (#1088 round 5, F2).
+# Four-lowercase-letter forms would otherwise pass as nouns (see THE UNIT RULE).
+_MAGNITUDES_ANY_CASE = frozenset(
+    {"mill", "mln", "bill", "bln", "trln", "lac", "lacs", "thou", "grand"}
+)
 # THE UNIT RULE (#1088 round 4, F1). Any other short alphabetic token after a
 # numeral (across whitespace or a dash) is treated as a unit and joins it, so a
-# list of units cannot leak ("$5 Bn", "$5 tn", "50 bps", "40 pc", "5-day").
+# separated unit fails by its shape rather than by a list ("$5 Bn", "$5 tn",
+# "50 bps", "40 pc", "5-day"). RESIDUAL, stated honestly: a four-lowercase
+# unit abbreviation that is in no list ("kbps", "mbps") reads as a count noun
+# and passes with the bare numeral, as "12 rows" must.
 # "Short" is one to three letters in any case, or four letters with a capital
 # ("GBPS", "Gbps"; five-letter "MMBTU" is out). Four lowercase letters are left out on
 # purpose: "12 rows", "4 tools", "7 apps" are counts followed by nouns, and
@@ -313,7 +322,7 @@ def _merge_length(toks: list[_Tok], i: int, masked: str) -> int:
             and nxt.end == after.start
         ):
             return 3
-    if t.kind == "percentage" and spaced and nxt.kind in ("point", "points"):
+    if t.kind in ("percentage", "basis") and spaced and nxt.kind in ("point", "points"):
         return 2
     if t.kind == _ART and spaced and nxt.text.casefold() in _ARTICLE_TARGETS:
         return 2
@@ -332,7 +341,7 @@ def _word_kind(word: str, previous: str | None) -> str:
     low = word.casefold()
     if any(_is_numeric_char(c) for c in word):
         return _NUM
-    if word in _MAGNITUDES:
+    if word in _MAGNITUDES or low in _MAGNITUDES_ANY_CASE:
         return _MAG
     if low in _NUMBER_WORDS:
         return _WORD
@@ -344,7 +353,7 @@ def _word_kind(word: str, previous: str | None) -> str:
         return _ART
     if _is_roman(word, previous):
         return _ROMAN
-    if low in ("per", "cent", "percentage", "point", "points"):
+    if low in ("per", "cent", "percentage", "basis", "point", "points"):
         return low
     if _is_unit_shape(word):
         return _UNIT
@@ -395,7 +404,7 @@ def _tokens(masked: str) -> list[_Tok]:
             merged.append(_Tok(_WORD, t.start, last.end, masked[t.start : last.end]))
             i += n
             continue
-        if t.kind in ("per", "cent", "percentage", "point", "points", _ART):
+        if t.kind in ("per", "cent", "percentage", "basis", "point", "points", _ART):
             t = _Tok(_OTHER, t.start, t.end, t.text)
         merged.append(t)
         i += 1
@@ -406,7 +415,7 @@ def _joins(a: _Tok, gap: list[_Tok], gap_text: str, b: _Tok) -> bool:
     """Whether bearing tokens `a` and `b`, with `gap` between them, are one span."""
     # A number word joins a number-bearing neighbour, never a unit or magnitude
     # ("hundredth row" is a word and a noun, not a unit).
-    loose = (_UNIT, _MAG)
+    loose = (_UNIT,)  # a magnitude DOES join a number word ("five bn", "five-fold")
     wordish = (a.kind in _WORDISH and b.kind not in loose) or (
         b.kind in _WORDISH and a.kind not in loose
     )
@@ -502,7 +511,15 @@ def _normalize_display(raw: str) -> str:
     #1088 round 4, F4)."""
     text = re.sub(r"\s+", " ", _THOUSANDS.sub("", raw)).strip()
     if any(_is_numeric_char(c) for c in text):
-        return text
+        # Fold only the spelled number words ("5 Million" is "5 million"); a
+        # unit keeps its case (#1088 round 5, advisory 4).
+        return re.sub(
+            r"[^\W\d_]+",
+            lambda m: (
+                m.group(0).casefold() if m.group(0).casefold() in _NUMBER_WORDS else m.group(0)
+            ),
+            text,
+        )
     return text.casefold()
 
 
@@ -517,17 +534,23 @@ def _plain_value(raw: str) -> str | None:
     return _canonical(num) + ("%" if m.group("pct") else "")
 
 
-def _walk(value: Any, key: str | None, fields: dict[str, frozenset[str]], out: dict) -> None:
+def _walk(
+    value: Any, key: str | None, fields: dict[str, frozenset[str]], out: dict, in_fact: bool
+) -> None:
+    """`in_fact`: some key on the path from the root is a declared fact field.
+    Rulings F5 and F6 (#736 6116519635): numbers and strings license ONLY under
+    a fact field, and a fact field licenses everything beneath it, at any
+    depth, dicts and lists alike."""
     if value is None or isinstance(value, bool):
         # `int(True)` is 1 (CLAUDE.md): a flag licenses no number.
         return
     if isinstance(value, Mapping):
         for k, v in value.items():
             out["keys"].add(str(k))
-            _walk(v, str(k), fields, out)
+            _walk(v, str(k), fields, out, in_fact or str(k) in fields["facts"])
     elif isinstance(value, (list, tuple)):
         for v in value:
-            _walk(v, key, fields, out)
+            _walk(v, key, fields, out, in_fact)
     elif isinstance(value, str):
         if key in fields["protected"]:
             if value.strip() and not any(c.isalpha() for c in value):
@@ -539,13 +562,15 @@ def _walk(value: Any, key: str | None, fields: dict[str, frozenset[str]], out: d
                 )
             if value.strip():
                 out["protected"].add(value.strip())
-        elif key in fields["facts"]:
+        elif in_fact:
             out["strings"].append(value)
         # Any other string licenses nothing (ruling 2): ids, timestamps and
         # identifiers carry digits that are not facts.
     elif isinstance(value, (int, float, Decimal)):
         if isinstance(value, float) and not math.isfinite(value):
             raise ValueError(f"numbers: non-finite value at {key!r}")
+        if not in_fact:
+            return  # F5: a number outside every fact field licenses nothing
         try:
             out["values"].add(_canonical(Decimal(str(value))))
         except InvalidOperation as exc:
@@ -567,11 +592,12 @@ def allowed_numbers(
     fact_fields: Iterable[str],
     protected_fields: Iterable[str],
 ) -> NumberAllowList:
-    """What `payload` licenses, strictly: every numeric value at any depth; and
-    for every string under a key in `fact_fields` (any depth), each of its
-    spans verbatim and each plain numeral's value. Strings under
-    `protected_fields` may be written as given and license nothing else. Any
-    other string licenses nothing. A listed name that matches no key raises."""
+    """What `payload` licenses, strictly. Beneath a key in `fact_fields`, at any
+    depth (dicts and lists alike): every numeric value, and for every string
+    each of its spans verbatim and each plain numeral's value. Strings under
+    `protected_fields` may be written as given and license nothing else.
+    Anything outside every fact field licenses nothing. A listed name that
+    matches no key raises."""
     if not isinstance(payload, Mapping):
         raise TypeError(f"numbers: payload must be a mapping, not {type(payload).__name__}")
     fields = {
@@ -579,7 +605,7 @@ def allowed_numbers(
         "protected": _field_names(protected_fields, "protected_fields"),
     }
     out: dict[str, Any] = {"values": set(), "protected": set(), "strings": [], "keys": set()}
-    _walk(payload, None, fields, out)
+    _walk(payload, None, fields, out, False)
     unmatched = (fields["facts"] | fields["protected"]) - out["keys"]
     if unmatched:
         raise ValueError(f"numbers: listed fields match no key in the payload: {sorted(unmatched)}")
