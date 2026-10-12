@@ -2,6 +2,8 @@
 
 _2026-10-12 (trackB): TD-3 (PR #1066) is approved for merge (#736 6115773247), for #1050._ The admin shell no longer caps service workspaces at `max-w-6xl`, so the Tech Debt Step 2 table gets the screen's width; queue, deliverables, management, messages, health, audit and the Risk Register keep the cap. #1050 stays open: the real fix, a fixed Name column and wider Notes in `TechDebtWorkspace.tsx`, is queued after #1044 merges.
 
+_2026-10-12 (trackB): TD-2's intake banner is a draft PR on `trackB/1058-intake-banner`, for #1058._ Step 4 of intake now shows your suite-listing banner when Tech Debt or ATT&CK is selected (Tech Debt text when both are). It uses your drafts word for word, as you approved them in 6115464421. The Step 5 reminder line follows after IN-2 merges.
+
 _2026-10-11 (track6): the Atlas CSF Playbook seed is a draft PR on
 `track6/atlas-playbook-seed`, for #474._ The demo's Atlas client now has CSF
 Playbook rows (v1 and v2), so a Risk Register regenerated on Atlas shows CSF

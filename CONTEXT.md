@@ -15,6 +15,8 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 **2026-10-12: TD-3, PR #1066, approved for merge (#736 6115773247), for #1050.** Admin service workspaces run full-width; other admin pages keep `max-w-6xl`. #1050 stays open: the fixed Name column and wider Notes in `TechDebtWorkspace.tsx` are queued after #1044 merges. Status: the 2026-10-12 TD-3 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
+**2026-10-12: TD-2's intake banner built on `trackB/1058-intake-banner`, a draft PR (not on `main`), for #1058.** Intake Step 4 asks Tech Debt and ATT&CK clients to list products separately, not as suites; the copy is approved by Gene (#736 6115464421). Status: the 2026-10-12 TD-2 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
 **2026-10-09: #930 built on `track6/930-published-amber`, a draft PR (not on
 `main`).** A published Risk Register's carried-ratings block drops the "Rate
 it/them again" instruction and keeps its amber style. Status and rulings (#736
