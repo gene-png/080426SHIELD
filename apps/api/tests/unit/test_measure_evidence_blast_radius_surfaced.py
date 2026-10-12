@@ -103,14 +103,27 @@ def test_the_released_version_is_measured_against_its_FROZEN_target(
     report = _run(_url(tmp_path))
     headline = report["zt_assessments"]["surfaced"]["by_status"]
 
-    # Every CISA capability scored 4 reaches 4, so at launch each counts as
-    # lowest + 1 = 2. Against the FROZEN target 2 that is no gap at all; against
-    # the live target 4 it would be all n capabilities.
+    # Advisor ruling, option (a): the rule does not reach a RELEASED
+    # assessment, which is scored at its stored stage. The headline counts it
+    # as not moving at all.
     assert headline["released"]["assessments_evaluated"] == 1
     assert headline["released"]["targets_frozen"] == 1
     assert headline["released"]["gaps_today"] == 0
     assert headline["released"]["gaps_launch"] == 0
-    assert headline["released"]["average_stage_moves"] == 1
+    assert headline["released"]["average_stage_moves"] == 0
+    # The separate line: what it WOULD have moved without the freeze. Every
+    # CISA capability scored 4 counts as lowest + 1 = 2; against the FROZEN
+    # target 2 that is no gap at all, against the live target 4 it would be
+    # all n capabilities.
+    would = report["zt_released_without_freeze_assessments"]["surfaced"]["by_status"]
+    assert would["released"]["assessments_evaluated"] == 1
+    assert would["released"]["targets_frozen"] == 1
+    assert would["released"]["gaps_launch"] == 0
+    assert would["released"]["average_stage_moves"] == 1
+    would_answers = report["zt_released_without_freeze_answers"]["surfaced"]["by_status"]
+    assert would_answers["released"]["stage_moves"] == n
+    # The v2 draft is not released, so it never enters the without-freeze line.
+    assert would["draft"]["assessments_evaluated"] == 0
     # The v2 draft is not a surfaced version: absent from the headline, present
     # in the all-versions line.
     assert headline["draft"]["assessments_evaluated"] == 0
@@ -118,7 +131,8 @@ def test_the_released_version_is_measured_against_its_FROZEN_target(
     assert every["draft"]["assessments_evaluated"] == 1
     assert every["released"]["assessments_evaluated"] == 1
     answers = report["zt_answers"]["surfaced"]["by_status"]["released"]
-    assert answers["stage_moves"] == n
+    assert answers["stage_moves"] == 0
+    assert answers["unchanged"] == n
     assert report["zt_assessments"]["parents_unresolved"] == []
 
 

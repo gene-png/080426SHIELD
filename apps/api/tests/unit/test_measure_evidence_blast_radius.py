@@ -65,7 +65,7 @@ def _csf_service(c, h, title: str) -> tuple[str, str, list[dict]]:
         f"/csf/services/{svc}/profiles/seed", headers=h, json={"tiers": ["high"]}
     ).is_success
     rows = c.get(f"/csf/services/{svc}/profile/high", headers=h).json()["rows"]
-    assert len(rows) > 4  # the selector selected something before it is read
+    assert len(rows) > 5  # the selector selected something before it is read
     return svc, aid, rows
 
 
@@ -109,7 +109,7 @@ def world(app_client):  # noqa: F811
     # --- CSF, DRAFT. Section 10.4 R1 at launch = today's cap for every row,
     # because no CONFIRMED Current link exists at launch (10.6).
     _, draft_aid, rows = _csf_service(c, h, "CSF draft")
-    r0, r1, r2, r3 = rows[0], rows[1], rows[2], rows[3]
+    r0, r1, r2, r3, r4 = rows[0], rows[1], rows[2], rows[3], rows[4]
     # r0: ticked, all 2. Today total 10 -> L5. Launch: implementation 1, total
     # 9 -> L4, then level <= 2 -> L2. MOVES. Target 3: no gap today, a gap at launch.
     _patch_row(c, h, r0, {**_ALL_TWO, "has_evidence": True, "target_level": 3})
@@ -119,6 +119,9 @@ def world(app_client):  # noqa: F811
     _patch_row(c, h, r2, {"governance": 1, "has_evidence": True})
     # r3: ticked, all 2, but OUT of scope: not counted in scope at all.
     _patch_row(c, h, r3, {**_ALL_TWO, "has_evidence": True, "in_scope": False})
+    # r4: ticked, implementation 2 only. Today total 2 -> L1. Launch:
+    # implementation 1, total 1 -> L1. The TOTAL moves and the level does not.
+    _patch_row(c, h, r4, {"implementation": 2, "has_evidence": True})
     # A ticked all-2 row on ID.AM-09, a code the catalog no longer has (#852).
     # Writer: `seed_profiles` before migration 0065, which KEEPS such rows; no
     # current route can mint one, so it is inserted as 0065 left it. Today L5,
@@ -210,14 +213,16 @@ def test_known_answer_and_no_write(world) -> None:
 
     # CSF tier rows, Python path, per status, ALL versions. DRAFT: n catalog
     # rows plus the retired ID.AM-09 row; n in scope (r3 out, ID.AM-09 in);
-    # two moves (r0, ID.AM-09), one of them on the retired code; three ticked
-    # in scope (r0, r2, ID.AM-09). RELEASED: n in scope, one move, one ticked.
+    # two level moves (r0, ID.AM-09), one of them on the retired code; three
+    # total moves (r0, ID.AM-09, r4); four ticked in scope (r0, r2, r4,
+    # ID.AM-09). RELEASED: n in scope, one move of each kind, one ticked.
     tiers = report["csf_tier_rows"]["all_versions"]["by_status"]
     assert tiers["draft"] == {
         "rows_read": n + 1,
         "rows_in_scope": n,
         "rows_level_moves": 2,
-        "rows_ticked_today": 3,
+        "rows_ticked_today": 4,
+        "rows_total_moves": 3,
         "rows_on_retired_code": 1,
         "rows_level_moves_on_retired_code": 1,
     }
@@ -226,6 +231,7 @@ def test_known_answer_and_no_write(world) -> None:
         "rows_in_scope": n,
         "rows_level_moves": 1,
         "rows_ticked_today": 1,
+        "rows_total_moves": 1,
         "rows_on_retired_code": 0,
         "rows_level_moves_on_retired_code": 0,
     }
@@ -366,8 +372,10 @@ def test_a_zero_zt_read_is_flagged_even_when_csf_has_rows(world, monkeypatch, ca
     real = m.zt
 
     def no_zt_rows(db, parents):
-        answers, assessments, bad = real(db, parents)
-        return m.Views(answers.metrics), m.Views(assessments.metrics), bad
+        return {
+            k: (m.Views(v.metrics) if isinstance(v, m.Views) else v)
+            for k, v in real(db, parents).items()
+        }
 
     monkeypatch.setattr(m, "zt", no_zt_rows)
     assert m.main() == 0

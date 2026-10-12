@@ -23,6 +23,16 @@ reads as Not sure. So at launch no target has a confirmed Current file, and:
   - ZT: no capability has a Current file supporting `implemented`, so every
     stage above the framework's lowest counts as the lowest plus one.
 
+ADVISOR RULINGS (#736 comment 6116519635), applied here:
+  - ZT option (a): the rule applies only to assessments NOT YET RELEASED. A
+    RELEASED assessment is scored at its stored stage, so the headline counts
+    released ZT as not moving. A separate, labelled line
+    (`zt_released_without_freeze_*`) shows what it WOULD have moved.
+  - Out-of-ladder stages stay unchanged (`proposed_launch_stage`).
+  - "Capped" counts only when the number changes: `stage_moves`.
+  - CSF totals are reported as well as levels: `rows_total_moves`.
+  - CSF is not frozen by option (a); it is reported per status as before.
+
 `app.routes.clients` and `app.routes.csf` are imported INSIDE the functions
 that call their helpers, not at module level: importing either builds the app's
 own (writable) engine from
@@ -106,7 +116,7 @@ import sys
 import traceback
 import uuid
 from collections import Counter
-from collections.abc import Collection, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -152,6 +162,7 @@ TIER_METRICS = (
     "rows_in_scope",
     "rows_level_moves",
     "rows_ticked_today",
+    "rows_total_moves",
     "rows_on_retired_code",
     "rows_level_moves_on_retired_code",
 )
@@ -356,13 +367,18 @@ def csf_tier_rows_python(db: Session, parents: Collection[uuid.UUID]) -> Views:
                 continue
             retired = row.id not in on_catalog
             ds = enterprise.dimensions_of(row)
-            today = playbook.score_tier(ds, has_evidence=row.has_evidence).level
-            launch = playbook.score_tier(ds, has_evidence=LAUNCH_HAS_CURRENT_IMPLEMENTATION).level
+            today_r = playbook.score_tier(ds, has_evidence=row.has_evidence)
+            launch_r = playbook.score_tier(ds, has_evidence=LAUNCH_HAS_CURRENT_IMPLEMENTATION)
+            today, launch = today_r.level, launch_r.level
             views.add(surfaced, cid, st, "rows_in_scope")
             if retired:
                 views.add(surfaced, cid, st, "rows_on_retired_code")
             if row.has_evidence:
                 views.add(surfaced, cid, st, "rows_ticked_today")
+            # Totals as well as levels (advisor ruling): a ticked row whose
+            # implementation drops 2 -> 1 can lose a point and keep its level.
+            if today_r.total != launch_r.total:
+                views.add(surfaced, cid, st, "rows_total_moves")
             if today != launch:
                 views.add(surfaced, cid, st, "rows_level_moves")
                 if retired:
@@ -580,87 +596,142 @@ def _zt_target(db: Session, a: ZtAssessment, deliv: Deliverable | None) -> tuple
     return chosen, frozen_at is not None
 
 
-def zt(
-    db: Session, parents: Mapping[uuid.UUID, Deliverable]
-) -> tuple[Views, Views, list[dict[str, str]]]:
-    answers_views = Views(("answers_read", "answers_evaluated", "stage_moves", "unchanged"))
-    assessments_views = Views(
-        (
-            "assessments_evaluated",
-            "targets_frozen",
-            "targets_live",
-            "overall_label_moves",
-            "average_stage_moves",
-            "pillar_average_moves",
-            "gaps_today",
-            "gaps_launch",
-            "assessments_gap_count_moves",
-        )
-    )
-    not_evaluable: list[dict[str, str]] = []
-    for a in db.execute(select(ZtAssessment)).scalars().all():
-        cid, st, surfaced = _cid(a.client_id), _status(a.status), a.id in parents
-        fw = _catalog_framework(a.framework)
-        rows = db.execute(select(ZtAnswer).where(ZtAnswer.assessment_id == a.id)).scalars().all()
-        for r in rows:
-            answers_views.add(surfaced, cid, st, "answers_read")
-            why = _why_not_evaluable(fw, r.capability_code, r.maturity_stage)
-            if why is not None:
-                answers_views.reason(surfaced, cid, st, why)
-                continue
-            answers_views.add(surfaced, cid, st, "answers_evaluated")
-            stage = int(r.maturity_stage)  # type: ignore[arg-type]
-            launch = proposed_launch_stage(fw, stage)
-            assert launch is not None
-            if _counted_stage(fw, r.capability_code, stage) != _counted_stage(
-                fw, r.capability_code, launch
-            ):
-                answers_views.add(surfaced, cid, st, "stage_moves")
-            else:
-                answers_views.add(surfaced, cid, st, "unchanged")
+ZT_ANSWER_METRICS = ("answers_read", "answers_evaluated", "stage_moves", "unchanged")
+ZT_ASSESSMENT_METRICS = (
+    "assessments_evaluated",
+    "targets_frozen",
+    "targets_live",
+    "overall_label_moves",
+    "average_stage_moves",
+    "pillar_average_moves",
+    "gaps_today",
+    "gaps_launch",
+    "assessments_gap_count_moves",
+)
 
-        # The deliverable's inputs, as the finalize route builds them.
-        valid = all_codes(fw)
-        today_map = {
-            r.capability_code: r.maturity_stage for r in rows if r.capability_code in valid
-        }
-        launch_map = {c: proposed_launch_stage(fw, s) for c, s in today_map.items()}
-        targets = {r.capability_code: r.target_stage for r in rows if r.capability_code in valid}
-        chosen, frozen = _zt_target(db, a, parents.get(a.id))
-        try:
-            target_stage, _source = resolve_target_stage(fw, chosen)
-            every = len(capabilities(fw))  # no DEFAULT_TOP_N truncation
-            s_today, s_launch = compute(fw, today_map), compute(fw, launch_map)
-            g_today = analyze_gaps(
-                fw, today_map, targets=targets, target_stage=target_stage, top_n=every
-            )
-            g_launch = analyze_gaps(
-                fw, launch_map, targets=targets, target_stage=target_stage, top_n=every
-            )
-        except (ValueError, KeyError) as exc:
-            not_evaluable.append(
+LaunchStage = Callable[[ZtFrameworkCode, "int | None"], "int | None"]
+
+
+def _stored_stage(_framework: ZtFrameworkCode, stage: int | None) -> int | None:
+    """A RELEASED assessment is scored at its stored stage (advisor ruling,
+    option (a), #736 comment 6116519635): the rule does not reach it."""
+    return stage
+
+
+def zt_rule_applies(status: str) -> bool:
+    """Option (a): the ZT rule applies only to assessments not yet released."""
+    return status != ZtAssessmentStatus.RELEASED.value
+
+
+def _zt_one(
+    answers: Views,
+    assessments: Views,
+    a: ZtAssessment,
+    rows: list[ZtAnswer],
+    surfaced: bool,
+    launch_stage: LaunchStage,
+    target: tuple[object, bool],
+) -> str | None:
+    """Count one assessment into `answers` and `assessments`, with
+    `launch_stage` as the launch rule. Returns the reason the deliverable figures
+    could not be evaluated, or None."""
+    cid, st = _cid(a.client_id), _status(a.status)
+    fw = _catalog_framework(a.framework)
+    for r in rows:
+        answers.add(surfaced, cid, st, "answers_read")
+        why = _why_not_evaluable(fw, r.capability_code, r.maturity_stage)
+        if why is not None:
+            answers.reason(surfaced, cid, st, why)
+            continue
+        answers.add(surfaced, cid, st, "answers_evaluated")
+        stage = int(r.maturity_stage)  # type: ignore[arg-type]
+        launch = launch_stage(fw, stage)
+        assert launch is not None
+        # "Capped" counts only when the number changes (advisor ruling): a
+        # stage already at lowest + 1 is unchanged, never a move.
+        if _counted_stage(fw, r.capability_code, stage) != _counted_stage(
+            fw, r.capability_code, launch
+        ):
+            answers.add(surfaced, cid, st, "stage_moves")
+        else:
+            answers.add(surfaced, cid, st, "unchanged")
+
+    # The deliverable's inputs, as the finalize route builds them.
+    valid = all_codes(fw)
+    today_map = {r.capability_code: r.maturity_stage for r in rows if r.capability_code in valid}
+    launch_map = {c: launch_stage(fw, s) for c, s in today_map.items()}
+    targets = {r.capability_code: r.target_stage for r in rows if r.capability_code in valid}
+    chosen, frozen = target
+    try:
+        target_stage, _source = resolve_target_stage(fw, chosen)
+        every = len(capabilities(fw))  # no DEFAULT_TOP_N truncation
+        s_today, s_launch = compute(fw, today_map), compute(fw, launch_map)
+        g_today = analyze_gaps(
+            fw, today_map, targets=targets, target_stage=target_stage, top_n=every
+        )
+        g_launch = analyze_gaps(
+            fw, launch_map, targets=targets, target_stage=target_stage, top_n=every
+        )
+    except (ValueError, KeyError) as exc:
+        return f"{type(exc).__name__}: {exc}"
+    assessments.add(surfaced, cid, st, "assessments_evaluated")
+    assessments.add(surfaced, cid, st, "targets_frozen" if frozen else "targets_live")
+    if s_today.overall_stage_label != s_launch.overall_stage_label:
+        assessments.add(surfaced, cid, st, "overall_label_moves")
+    if s_today.average_stage != s_launch.average_stage:
+        assessments.add(surfaced, cid, st, "average_stage_moves")
+    for p_today, p_launch in zip(s_today.by_pillar, s_launch.by_pillar, strict=True):
+        if p_today.average_stage != p_launch.average_stage:
+            assessments.add(surfaced, cid, st, "pillar_average_moves")
+    assessments.add(surfaced, cid, st, "gaps_today", g_today.total_gap_count)
+    assessments.add(surfaced, cid, st, "gaps_launch", g_launch.total_gap_count)
+    if g_today.total_gap_count != g_launch.total_gap_count:
+        assessments.add(surfaced, cid, st, "assessments_gap_count_moves")
+    return None
+
+
+def zt(db: Session, parents: Mapping[uuid.UUID, Deliverable]) -> dict[str, Any]:
+    """Every ZT assessment under option (a): RELEASED at its stored stage, the
+    rest under the proposed rule. RELEASED assessments are counted a second
+    time, under the rule, into `released_without_freeze`: what WOULD have moved
+    had the freeze not been ruled. That line is never part of the headline."""
+    out: dict[str, Any] = {
+        "answers": Views(ZT_ANSWER_METRICS),
+        "assessments": Views(ZT_ASSESSMENT_METRICS),
+        "released_without_freeze_answers": Views(ZT_ANSWER_METRICS),
+        "released_without_freeze_assessments": Views(ZT_ASSESSMENT_METRICS),
+        "not_evaluable": [],
+    }
+    for a in db.execute(select(ZtAssessment)).scalars().all():
+        st, surfaced = _status(a.status), a.id in parents
+        rows = list(
+            db.execute(select(ZtAnswer).where(ZtAnswer.assessment_id == a.id)).scalars().all()
+        )
+        target = _zt_target(db, a, parents.get(a.id))
+        applies = zt_rule_applies(st)
+        launch_stage: LaunchStage = proposed_launch_stage if applies else _stored_stage
+        why = _zt_one(out["answers"], out["assessments"], a, rows, surfaced, launch_stage, target)
+        if why is not None:
+            out["not_evaluable"].append(
                 {
                     "assessment_id": str(a.id),
                     "status": st,
                     "surfaced": str(surfaced),
-                    "reason": f"{type(exc).__name__}: {exc}",
+                    "reason": why,
                 }
             )
             continue
-        assessments_views.add(surfaced, cid, st, "assessments_evaluated")
-        assessments_views.add(surfaced, cid, st, "targets_frozen" if frozen else "targets_live")
-        if s_today.overall_stage_label != s_launch.overall_stage_label:
-            assessments_views.add(surfaced, cid, st, "overall_label_moves")
-        if s_today.average_stage != s_launch.average_stage:
-            assessments_views.add(surfaced, cid, st, "average_stage_moves")
-        for p_today, p_launch in zip(s_today.by_pillar, s_launch.by_pillar, strict=True):
-            if p_today.average_stage != p_launch.average_stage:
-                assessments_views.add(surfaced, cid, st, "pillar_average_moves")
-        assessments_views.add(surfaced, cid, st, "gaps_today", g_today.total_gap_count)
-        assessments_views.add(surfaced, cid, st, "gaps_launch", g_launch.total_gap_count)
-        if g_today.total_gap_count != g_launch.total_gap_count:
-            assessments_views.add(surfaced, cid, st, "assessments_gap_count_moves")
-    return answers_views, assessments_views, not_evaluable
+        if not applies:
+            _zt_one(
+                out["released_without_freeze_answers"],
+                out["released_without_freeze_assessments"],
+                a,
+                rows,
+                surfaced,
+                proposed_launch_stage,
+                target,
+            )
+    return out
 
 
 # ---------------------------------------------------------------- measure
@@ -684,7 +755,7 @@ def measure(url: str) -> dict[str, Any]:
                 tiers = csf_tier_rows_python(db, csf_parents)
                 sql = csf_tier_rows_sql(db.connection())
                 ent, ent_bad = csf_enterprise(db, csf_parents)
-                zt_answers, zt_assessments, zt_bad = zt(db, zt_parents)
+                zt_out = zt(db, zt_parents)
             finally:
                 db.rollback()
     except (MultipleResultsFound, NoResultFound) as exc:
@@ -720,6 +791,7 @@ def measure(url: str) -> dict[str, Any]:
             "shared_population": ["rows_in_scope", "rows_ticked_today"],
             "python_only": [
                 "rows_read",
+                "rows_total_moves",
                 "rows_on_retired_code",
                 "rows_level_moves_on_retired_code",
             ],
@@ -742,10 +814,26 @@ def measure(url: str) -> dict[str, Any]:
             "basis": "by construction, not measured: the CSF deliverable reads "
             "CsfAnswer.maturity_tier, which no proposed rule reads",
         },
-        "zt_answers": zt_answers.report(names, with_reasons=True),
+        "zt_rule": {
+            "applies_to": "assessments not yet released (advisor ruling, option (a), "
+            "#736 comment 6116519635)",
+            "released": "scored at the stored stage: the headline counts released ZT as "
+            "not moving",
+            "released_without_freeze": "a separate line: what released ZT WOULD have "
+            "moved under the rule; never part of the headline",
+            "out_of_ladder": "left unchanged (ruling)",
+            "capped": "counted only when the number changes (ruling): stage_moves",
+        },
+        "zt_answers": zt_out["answers"].report(names, with_reasons=True),
+        "zt_released_without_freeze_answers": zt_out["released_without_freeze_answers"].report(
+            names, with_reasons=True
+        ),
+        "zt_released_without_freeze_assessments": zt_out[
+            "released_without_freeze_assessments"
+        ].report(names),
         "zt_assessments": {
-            **zt_assessments.report(names),
-            "not_evaluable": zt_bad,
+            **zt_out["assessments"].report(names),
+            "not_evaluable": zt_out["not_evaluable"],
             "parents_unresolved": zt_unresolved,
         },
     }
@@ -869,6 +957,20 @@ def render(report: Mapping[str, Any]) -> str:
     for key in ("not_evaluable", "parents_unresolved"):
         if report["zt_assessments"][key]:
             out.append(f"  ZT {key}: {report['zt_assessments'][key]}")
+    out.append(
+        f"\nZT RELEASED WITHOUT THE FREEZE: {report['zt_rule']['released_without_freeze']}. "
+        "Released ZT is scored at the stored stage above (option (a))."
+    )
+    out += _both(
+        "ZT answers, released, IF NOT FROZEN",
+        _ZT_HEADLINE,
+        report["zt_released_without_freeze_answers"],
+    )
+    out += _both(
+        "ZT assessments, released, IF NOT FROZEN",
+        _ZT_HEADLINE,
+        report["zt_released_without_freeze_assessments"],
+    )
     return "\n".join(out)
 
 
