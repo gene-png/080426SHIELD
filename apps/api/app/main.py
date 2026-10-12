@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app import __version__
+from app.ai.isolation import prepare_redaction_executable
 from app.config import get_settings
 from app.exceptions import register_exception_handlers
 from app.logging import configure_logging, get_logger
@@ -43,6 +44,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging(settings.log_level)
     settings.assert_safe_for_runtime()
+    # #552: the egress redaction's clean-environment wrapper, written and probed
+    # now, so a host that cannot run it refuses to start and says why, rather
+    # than failing every AI call later with no named cause.
+    prepare_redaction_executable()
 
     log = get_logger("app.startup")
     log.info(
