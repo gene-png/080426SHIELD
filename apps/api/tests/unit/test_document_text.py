@@ -21,6 +21,7 @@ from __future__ import annotations
 import io
 import uuid
 import zipfile
+from dataclasses import replace
 
 import pytest
 
@@ -52,6 +53,7 @@ LIMITS = ExtractLimits(
     max_chars=1_000_000,
     chunk_chars=4_000,
     max_chunks=10,
+    max_pages=500,
 )
 
 
@@ -322,14 +324,10 @@ def test_zero_byte_binary_types_are_unreadable(store, title, mime):
     _assert_not_read(store.read(b"", title=title, mime=mime), "unreadable")
 
 
-def test_text_over_max_chars_is_truncated_and_counts_the_whole(store):
-    limits = ExtractLimits(
-        max_bytes=LIMITS.max_bytes,
-        max_unzipped_bytes=LIMITS.max_unzipped_bytes,
-        max_chars=10,
-        chunk_chars=LIMITS.chunk_chars,
-        max_chunks=LIMITS.max_chunks,
-    )
+def test_text_over_max_chars_is_truncated_and_counts_what_it_read(store):
+    """A TXT file is one piece (it is bounded by `max_bytes`), so what it read
+    is the whole of it."""
+    limits = replace(LIMITS, max_chars=10)
     result = store.read(b"Quebec Romeo Sierra", title="long.txt", mime=TXT, limits=limits)
     _assert_read(result)
     assert result.truncated is True
@@ -338,13 +336,7 @@ def test_text_over_max_chars_is_truncated_and_counts_the_whole(store):
 
 
 def test_file_over_max_bytes_is_too_large(store):
-    limits = ExtractLimits(
-        max_bytes=100,
-        max_unzipped_bytes=LIMITS.max_unzipped_bytes,
-        max_chars=LIMITS.max_chars,
-        chunk_chars=LIMITS.chunk_chars,
-        max_chunks=LIMITS.max_chunks,
-    )
+    limits = replace(LIMITS, max_bytes=100)
     _assert_not_read(
         store.read(b"x" * 101, title="big.txt", mime=TXT, limits=limits),
         "too_large",
@@ -352,13 +344,7 @@ def test_file_over_max_bytes_is_too_large(store):
 
 
 def test_file_at_exactly_max_bytes_is_read(store):
-    limits = ExtractLimits(
-        max_bytes=100,
-        max_unzipped_bytes=LIMITS.max_unzipped_bytes,
-        max_chars=LIMITS.max_chars,
-        chunk_chars=LIMITS.chunk_chars,
-        max_chunks=LIMITS.max_chunks,
-    )
+    limits = replace(LIMITS, max_bytes=100)
     _assert_read(store.read(b"y" * 100, title="edge.txt", mime=TXT, limits=limits))
 
 
@@ -372,13 +358,7 @@ def test_zip_that_inflates_past_the_limit_is_too_large(store):
     buf = io.BytesIO()
     doc.save(buf)
     data = buf.getvalue()
-    limits = ExtractLimits(
-        max_bytes=LIMITS.max_bytes,
-        max_unzipped_bytes=100_000,
-        max_chars=LIMITS.max_chars,
-        chunk_chars=LIMITS.chunk_chars,
-        max_chunks=LIMITS.max_chunks,
-    )
+    limits = replace(LIMITS, max_unzipped_bytes=100_000)
     assert len(data) < 100_000  # the compressed file alone would pass
     _assert_not_read(store.read(data, title="bomb.docx", mime=DOCX, limits=limits), "too_large")
 
@@ -503,10 +483,15 @@ def test_docx_with_no_text_is_read_and_empty(store):
 
 
 def test_control_characters_are_removed_without_joining_words(store):
-    raw = "Lima\x07bell Mike\x1bescape\r\nNovember\x85next Oscar\u2028line Papa\x0cfeed\tTab\x7f!"
+    raw = (
+        "Lima\x07bell Mike\x1bescape\r\nNovember\x85next Oscar\u2028line "
+        "Papa\x0cfeed\tTab\x7f! Romeo\x1funit"
+    )
     result = store.read(raw.encode(), title="ctl.txt", mime=TXT)
     _assert_read(result)
-    assert result.text == ("Lima bell Mike escape\nNovember\nnext Oscar\nline Papa\nfeed\tTab !")
+    assert result.text == (
+        "Lima bell Mike escape\nNovember\nnext Oscar\nline Papa\nfeed\tTab ! Romeo unit"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -593,13 +578,7 @@ def test_a_large_file_chunks_end_to_end(store):
     sent and skipped counts add up to every chunk the file needed."""
     line = "Victor evidence line about access reviews.\n"  # 43 characters
     data = (line * 1000).encode()
-    limits = ExtractLimits(
-        max_bytes=LIMITS.max_bytes,
-        max_unzipped_bytes=LIMITS.max_unzipped_bytes,
-        max_chars=LIMITS.max_chars,
-        chunk_chars=4_300,
-        max_chunks=4,
-    )
+    limits = replace(LIMITS, chunk_chars=4_300, max_chunks=4)
     result = store.read(data, title="big.txt", mime=TXT, limits=limits)
     _assert_read(result)
     assert result.chars_total == 43_000
@@ -662,6 +641,7 @@ def test_limits_are_read_from_settings():
         shield_document_max_chars=333,
         shield_document_chunk_chars=44,
         shield_document_max_chunks=5,
+        shield_document_max_pages=66,
     )
     assert extract_limits(settings) == ExtractLimits(
         max_bytes=111,
@@ -669,6 +649,7 @@ def test_limits_are_read_from_settings():
         max_chars=333,
         chunk_chars=44,
         max_chunks=5,
+        max_pages=66,
     )
 
 
@@ -680,6 +661,7 @@ def test_limits_are_read_from_settings():
         "shield_document_max_chars",
         "shield_document_chunk_chars",
         "shield_document_max_chunks",
+        "shield_document_max_pages",
     ],
 )
 def test_a_limit_below_one_refuses_to_load(field):
@@ -687,3 +669,409 @@ def test_a_limit_below_one_refuses_to_load(field):
 
     with pytest.raises(ValidationError):
         Settings(**{field: 0})
+
+
+# --------------------------------------------------------------------------
+# Review of 138a9d25 (#1089): what the first version read silently short.
+# --------------------------------------------------------------------------
+
+W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+WPS_NS = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
+V_NS = "urn:schemas-microsoft-com:vml"
+_WP = "application/vnd.openxmlformats-officedocument.wordprocessingml"
+_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+
+def _rewrite_zip(data: bytes, edit) -> bytes:
+    """Copy a zip, letting `edit(name, body) -> body | None` change a part (or
+    drop it with None), then add any parts `edit.extra` names."""
+    src = zipfile.ZipFile(io.BytesIO(data))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as dst:
+        for info in src.infolist():
+            body = edit(info.filename, src.read(info.filename))
+            if body is not None:
+                dst.writestr(info.filename, body)
+        for name, body in getattr(edit, "extra", {}).items():
+            dst.writestr(name, body)
+    return out.getvalue()
+
+
+def _p(text: str) -> str:
+    return f'<w:p><w:r><w:t xml:space="preserve">{text}</w:t></w:r></w:p>'
+
+
+def _docx_xml(body: str, *, notes: dict[str, str] | None = None) -> bytes:
+    """A python-docx file whose body gets `body` (raw WordprocessingML, before
+    `w:sectPr`), plus optional footnotes/endnotes/comments parts, each wired
+    with a relationship and a content type as Word writes them."""
+    notes = notes or {}
+    kinds = {
+        "footnotes": ("footnotes", "footnote"),
+        "endnotes": ("endnotes", "endnote"),
+        "comments": ("comments", "comment"),
+    }
+
+    def edit(name: str, raw: bytes) -> bytes:
+        if name not in ("word/document.xml", "[Content_Types].xml", "word/_rels/document.xml.rels"):
+            return raw
+        text = raw.decode()
+        if name == "word/document.xml":
+            # python-docx's root already declares w, r, mc, v and wps.
+            for prefix, uri in (
+                ("w", W_NS),
+                ("r", R_NS),
+                ("mc", MC_NS),
+                ("v", V_NS),
+                ("wps", WPS_NS),
+            ):
+                assert f'xmlns:{prefix}="{uri}"' in text, prefix
+            head, tail = text.split("<w:sectPr", 1)
+            text = head + body + "<w:sectPr" + tail
+        if name == "[Content_Types].xml":
+            for part in notes:
+                text = text.replace(
+                    "</Types>",
+                    f'<Override PartName="/word/{part}.xml" '
+                    f'ContentType="{_WP}.{part}+xml"/></Types>',
+                )
+        if name == "word/_rels/document.xml.rels":
+            for i, part in enumerate(notes):
+                text = text.replace(
+                    "</Relationships>",
+                    f'<Relationship Id="rIdN{i}" Type="{_REL}/{part}" '
+                    f'Target="{part}.xml"/></Relationships>',
+                )
+        return text.encode()
+
+    edit.extra = {  # type: ignore[attr-defined]
+        f"word/{part}.xml": (
+            f'<w:{kinds[part][0]} xmlns:w="{W_NS}">{inner}</w:{kinds[part][0]}>'
+            if not inner.startswith("<<")
+            else inner
+        ).encode()
+        for part, inner in notes.items()
+    }
+    return _rewrite_zip(_docx(paragraphs=["Base paragraph"]), edit)
+
+
+def _docx_text(store, body: str, **kw) -> DocText:
+    return store.read(_docx_xml(body, **kw), title="rich.docx", mime=DOCX)
+
+
+def test_docx_with_injected_markup_still_reads_its_ordinary_paragraph(store):
+    """The fixture builder's own control: a body edit that reads nothing new."""
+    result = _docx_text(store, _p("Control para"))
+    _assert_read(result)
+    assert "Base paragraph" in result.text
+    assert "Control para" in result.text
+    assert result.parts_not_read == 0
+
+
+def test_docx_reads_a_block_level_content_control(store):
+    result = _docx_text(
+        store, f"<w:sdt><w:sdtContent>{_p('Sdt block words')}</w:sdtContent></w:sdt>"
+    )
+    _assert_read(result)
+    assert "Sdt block words" in result.text
+
+
+def test_docx_reads_a_run_level_content_control_in_its_paragraph(store):
+    body = (
+        '<w:p><w:r><w:t xml:space="preserve">Before </w:t></w:r>'
+        "<w:sdt><w:sdtContent><w:r><w:t>run control</w:t></w:r></w:sdtContent></w:sdt>"
+        "</w:p>"
+    )
+    result = _docx_text(store, body)
+    _assert_read(result)
+    assert "Before run control" in result.text
+
+
+def test_docx_reads_tracked_insertions_and_not_tracked_deletions(store):
+    body = (
+        '<w:p><w:ins w:id="1" w:author="a"><w:r><w:t>Inserted words</w:t></w:r></w:ins>'
+        '<w:del w:id="2" w:author="a"><w:r><w:delText>Deleted words</w:delText></w:r></w:del>'
+        "</w:p>"
+    )
+    result = _docx_text(store, body)
+    _assert_read(result)
+    assert "Inserted words" in result.text
+    assert "Deleted words" not in result.text
+
+
+def test_docx_reads_a_text_box_once_not_twice(store):
+    """Word writes a text box twice: the drawing (mc:Choice) and a VML copy
+    for old readers (mc:Fallback). One copy is read."""
+    box = f"<w:txbxContent>{_p('Textbox words')}</w:txbxContent>"
+    body = (
+        "<w:p><w:r><mc:AlternateContent>"
+        f'<mc:Choice Requires="wps"><wps:txbx>{box}</wps:txbx></mc:Choice>'
+        f"<mc:Fallback><w:pict><v:textbox>{box}</v:textbox></w:pict></mc:Fallback>"
+        "</mc:AlternateContent></w:r></w:p>"
+    )
+    result = _docx_text(store, body)
+    _assert_read(result)
+    assert result.text.count("Textbox words") == 1
+
+
+def test_docx_reads_a_table_nested_in_a_cell(store):
+    inner = (
+        "<w:tbl><w:tr><w:tc>"
+        + _p("Nested one")
+        + "</w:tc><w:tc>"
+        + _p("Nested two")
+        + "</w:tc></w:tr></w:tbl>"
+    )
+    body = (
+        "<w:tbl><w:tr><w:tc>"
+        + _p("Outer cell")
+        + "</w:tc><w:tc>"
+        + inner
+        + _p("")
+        + "</w:tc></w:tr></w:tbl>"
+    )
+    result = _docx_text(store, body)
+    _assert_read(result)
+    assert "Outer cell" in result.text
+    assert "Nested one\tNested two" in result.text
+
+
+@pytest.mark.parametrize(
+    ("part", "tag"),
+    [("footnotes", "footnote"), ("endnotes", "endnote"), ("comments", "comment")],
+)
+def test_docx_reads_footnotes_endnotes_and_comments(store, part, tag):
+    inner = f'<w:{tag} w:id="1">{_p(f"Words in the {part} part")}</w:{tag}>'
+    result = _docx_text(store, _p("Body words"), notes={part: inner})
+    _assert_read(result)
+    assert f"Words in the {part} part" in result.text
+    assert result.parts_not_read == 0
+
+
+def test_docx_part_that_cannot_be_parsed_is_counted_not_dropped(store):
+    """The body reads; a footnotes part that is not XML is disclosed as one
+    part not read, never a silent complete `read`."""
+    result = _docx_text(store, _p("Body still reads"), notes={"footnotes": "<<not xml"})
+    _assert_read(result)
+    assert "Body still reads" in result.text
+    assert result.parts_not_read == 1
+
+
+def test_docx_alt_chunk_is_counted_as_a_part_not_read(store):
+    """An altChunk imports another file (HTML, RTF, another DOCX) that this
+    reader does not open: disclosed, not dropped."""
+    result = _docx_text(store, _p("Host words") + '<w:altChunk r:id="rIdAlt"/>')
+    _assert_read(result)
+    assert "Host words" in result.text
+    assert result.parts_not_read == 1
+
+
+def test_xlsx_with_a_wrong_stored_dimension_reads_every_row(store):
+    """Read-only openpyxl trusts the sheet's stored `<dimension ref>`. A file
+    whose writer stored "A1" still has its other rows read."""
+    data = _xlsx({"S": [["Alpha row"], ["Bravo row"], ["Charlie row"]]})
+
+    def edit(name: str, raw: bytes) -> bytes:
+        if name == "xl/worksheets/sheet1.xml":
+            text = raw.decode()
+            assert text.count('<dimension ref="A1:A3"/>') == 1
+            return text.replace('<dimension ref="A1:A3"/>', '<dimension ref="A1"/>').encode()
+        return raw
+
+    result = store.read(_rewrite_zip(data, edit), title="dim.xlsx", mime=XLSX)
+    _assert_read(result)
+    assert "Alpha row" in result.text
+    assert "Charlie row" in result.text
+
+
+def test_xlsx_entity_expansion_is_refused(store):
+    """openpyxl uses defusedxml when it is installed, which refuses a DTD
+    entity rather than expanding it into the client's text."""
+    data = _xlsx({"S": [["Plain"]]})
+
+    def edit(name: str, raw: bytes) -> bytes:
+        if name == "xl/worksheets/sheet1.xml":
+            # openpyxl writes the cell as an inline string in the sheet part.
+            text = raw.decode()
+            assert text.count("<worksheet ") == 1 and text.count("<t>Plain</t>") == 1
+            text = text.replace(
+                "<worksheet ", '<!DOCTYPE worksheet [<!ENTITY e "EXPANDEDENTITY">]><worksheet '
+            )
+            return text.replace("<t>Plain</t>", "<t>&e;</t>").encode()
+        return raw
+
+    result = store.read(_rewrite_zip(data, edit), title="ent.xlsx", mime=XLSX)
+    assert "EXPANDEDENTITY" not in result.text
+    _assert_not_read(result, "unreadable")
+
+
+def _pdf_with_form(value: str, *, page_text: str | None = "Mike form page") -> bytes:
+    from reportlab.pdfgen import canvas
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    if page_text is not None:
+        c.drawString(72, 720, page_text)
+    c.acroForm.textfield(name="owner", value=value, x=72, y=600, width=300, height=20)
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+def test_pdf_reads_filled_form_field_values(store):
+    result = store.read(_pdf_with_form("November filled value"), title="form.pdf", mime=PDF)
+    _assert_read(result)
+    assert "Mike form page" in result.text
+    assert "November filled value" in result.text
+
+
+def test_pdf_with_only_a_filled_form_is_read_not_no_text_layer(store):
+    data = _pdf_with_form("Oscar only value", page_text=None)
+    result = store.read(data, title="formonly.pdf", mime=PDF)
+    _assert_read(result)
+    assert "Oscar only value" in result.text
+
+
+def test_pdf_xfa_form_is_counted_as_a_part_not_read(store):
+    """An XFA form keeps its data in XML streams this reader does not parse."""
+    from pypdf import PdfReader, PdfWriter
+    from pypdf.generic import ArrayObject, DictionaryObject, NameObject
+
+    writer = PdfWriter(clone_from=PdfReader(io.BytesIO(_pdf(["Papa xfa page"]))))
+    writer._root_object[NameObject("/AcroForm")] = DictionaryObject(
+        {NameObject("/Fields"): ArrayObject(), NameObject("/XFA"): ArrayObject()}
+    )
+    out = io.BytesIO()
+    writer.write(out)
+    result = store.read(out.getvalue(), title="xfa.pdf", mime=PDF)
+    _assert_read(result)
+    assert "Papa xfa page" in result.text
+    assert result.parts_not_read == 1
+
+
+def test_pdf_page_cap_stops_and_says_truncated(store):
+    data = _pdf([f"Quebec page {i}" for i in range(1, 6)])
+    result = store.read(data, title="pages.pdf", mime=PDF, limits=replace(LIMITS, max_pages=2))
+    _assert_read(result)
+    assert "Quebec page 2" in result.text
+    assert "Quebec page 3" not in result.text
+    assert result.truncated is True
+
+
+def test_pdf_page_cap_with_no_text_in_the_pages_read_is_too_large(store):
+    """Nothing read in the capped pages is not evidence of no text layer: the
+    rest of the file was never looked at."""
+    data = _pdf([None, None, "Romeo late text"])
+    result = store.read(data, title="late.pdf", mime=PDF, limits=replace(LIMITS, max_pages=2))
+    _assert_not_read(result, "too_large")
+
+
+def test_max_chars_stops_pdf_extraction_early(store, monkeypatch):
+    """Past `max_chars` no further page is extracted."""
+    from pypdf import PageObject
+
+    calls = {"n": 0}
+    real = PageObject.extract_text
+
+    def counting(self, *a, **k):
+        calls["n"] += 1
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(PageObject, "extract_text", counting)
+    data = _pdf([f"Sierra page {i} with some words" for i in range(1, 21)])
+    result = store.read(data, title="early.pdf", mime=PDF, limits=replace(LIMITS, max_chars=40))
+    _assert_read(result)
+    assert result.truncated is True
+    assert len(result.text) == 40
+    assert calls["n"] <= 2
+
+
+@pytest.mark.parametrize("encoding", ["utf-32", "utf-32-be"])
+def test_utf32_with_bom_is_read_as_utf32(store, encoding):
+    raw = "Tango wide words".encode(encoding)
+    if encoding == "utf-32-be":
+        raw = b"\x00\x00\xfe\xff" + raw
+    result = store.read(raw, title="w32.txt", mime=TXT)
+    _assert_read(result)
+    assert result.text == "Tango wide words"
+
+
+@pytest.mark.parametrize(("title", "mime"), [("doc.rtf", "application/rtf"), ("upload", OCTET)])
+def test_rtf_is_unsupported_type(store, title, mime):
+    _assert_not_read(
+        store.read(b"{\\rtf1\\ansi Uniform rtf words}", title=title, mime=mime),
+        "unsupported_type",
+    )
+
+
+def test_an_unrecognised_binary_is_unsupported_type_not_unreadable(store):
+    """Bytes nothing recognises, declared as nothing: no reader exists for
+    them. `unreadable` is kept for a recognised type that fails."""
+    data = bytes(range(256)) * 4
+    _assert_not_read(store.read(data, title="blob", mime=OCTET), "unsupported_type")
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("shield_document_max_bytes", 2 * 1024**3),
+        ("shield_document_max_unzipped_bytes", 8 * 1024**3),
+        ("shield_document_max_chars", 100_000_001),
+        ("shield_document_chunk_chars", 1_000_001),
+        ("shield_document_max_chunks", 1_001),
+        ("shield_document_max_pages", 10_001),
+    ],
+)
+def test_a_limit_above_its_bound_refuses_to_load(field, value):
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match=field):
+        Settings(**{field: value})
+
+
+def test_unzipped_limit_below_the_file_limit_refuses_to_load():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="max_unzipped_bytes"):
+        Settings(shield_document_max_bytes=1000, shield_document_max_unzipped_bytes=999)
+
+
+def test_chunk_larger_than_max_chars_refuses_to_load():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="chunk_chars"):
+        Settings(shield_document_max_chars=1000, shield_document_chunk_chars=1001)
+
+
+def test_the_file_limit_is_the_upload_limit():
+    """A file the upload route accepts is a file the extractor will open."""
+    from app.routes.artifacts import MAX_UPLOAD_BYTES
+
+    assert Settings().shield_document_max_bytes == MAX_UPLOAD_BYTES
+
+
+def test_docx_reads_moved_to_text_and_not_moved_from_text(store):
+    """A tracked move leaves the text in both places; only the destination
+    is in the document."""
+    body = (
+        '<w:p><w:moveFrom w:id="3" w:author="a"><w:r><w:t>Moved away words</w:t></w:r>'
+        '</w:moveFrom><w:moveTo w:id="4" w:author="a"><w:r><w:t>Moved here words</w:t></w:r>'
+        "</w:moveTo></w:p>"
+    )
+    result = _docx_text(store, body)
+    _assert_read(result)
+    assert "Moved here words" in result.text
+    assert "Moved away words" not in result.text
+
+
+def test_xlsx_without_defusedxml_refuses_to_parse(store, monkeypatch):
+    """Not a fact about the file: a missing runtime dependency raises rather
+    than parsing a client's XML unguarded or recording a reason."""
+    import openpyxl.xml
+
+    monkeypatch.setattr(openpyxl.xml, "DEFUSEDXML", False)
+    artifact = store.put(_xlsx({"S": [["Victor"]]}), title="x.xlsx", mime=XLSX)
+    with pytest.raises(RuntimeError, match="defusedxml"):
+        document_text(store.storage, artifact, limits=LIMITS)

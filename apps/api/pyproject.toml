@@ -49,7 +49,15 @@ dependencies = [
     # (approved on #736, 6115903398); the export-content tests read rendered
     # PDFs back with it too. Rebuild the api image after changing this; a plain
     # restart does not install it (the Sprint 7 google-auth lesson).
-    "pypdf>=5",
+    # The floor is a SECURITY floor: client uploads are untrusted PDFs. 6.0.0
+    # bounded FlateDecode output (CVE-2025-55197); decoder and parser limits
+    # kept landing through 6.18.1 (FlateDecode recovery, font /Widths,
+    # parse_bfchar tokens) and 6.19.0 (page-label size). 6.19.0 is the newest
+    # release older than two weeks on 2026-10-12, and what the tests ran on.
+    "pypdf>=6.19.0",
+    # openpyxl parses XLSX XML with defusedxml whenever it is importable, which
+    # refuses entity expansion in a client's workbook (app/documents/text.py).
+    "defusedxml>=0.7.1",
 ]
 
 [project.optional-dependencies]

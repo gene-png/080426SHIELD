@@ -4,36 +4,56 @@ ONE reader set, ONE set of limits and ONE "not read" vocabulary, for EV-1's
 evidence-link job (P4) and EV-2's client summary. Both import this module;
 neither reimplements a reader ("same as" enforced by calling).
 
-Readers: PDF (pypdf), DOCX (python-docx), XLSX (openpyxl) and plain text.
-Images, legacy Office files and other archives are `not_read: unsupported_type`
-until OCR and further readers exist.
+Readers: PDF (pypdf, page text and filled AcroForm values), DOCX (its XML,
+walked directly: body, headers, footers, footnotes, endnotes, comments, content
+controls, text boxes, tracked insertions, nested tables), XLSX (openpyxl, XML
+parsed through defusedxml) and plain text. Images, RTF, legacy Office files,
+other archives and unrecognised binaries are `not_read: unsupported_type` until
+a reader exists for them.
 
 **"I could not read it" and "it was empty" are different results.** A file
 that cannot be read is `status="not_read"` with a typed reason and NO text; a
 file that was read and holds nothing is `status="read"` with zero characters.
 `DocText` refuses any shape that blurs the two (CLAUDE.md, the silent-success
 rule: the "could not look" branch must never share the "nothing there" branch).
+What a reader skips INSIDE a read file is counted, never dropped:
+`pages_without_text` (PDF pages with no text layer) and `parts_not_read`
+(document parts no reader opened, such as an XFA form or a DOCX altChunk).
 
 The type is decided from the file's MAGIC BYTES. The declared type (the
 upload's mime and the title's extension) is a claim checked against them: a
 declaration that disagrees with the bytes is `unreadable`, never trusted.
+
+Extraction STOPS EARLY at `max_chars` and at `max_pages`; `truncated` says so.
 
 Wired to nothing yet: no route and no AI call reads it.
 """
 
 from __future__ import annotations
 
+import functools
 import io
 import re
 import zipfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from itertools import zip_longest
-from typing import Literal, Protocol, get_args
+from typing import TYPE_CHECKING, Literal, Protocol, get_args
+
+import openpyxl.xml
+from defusedxml.ElementTree import fromstring as safe_fromstring
+from openpyxl import load_workbook
+from pypdf import PdfReader
+from pypdf.errors import FileNotDecryptedError
+from pypdf.generic import NameObject
 
 from app.config import Settings, get_settings
 from app.logging import get_logger
 from app.models.artifact import Artifact
+
+if TYPE_CHECKING:
+    # Annotation only: every parse goes through defusedxml (`safe_fromstring`).
+    from xml.etree.ElementTree import Element  # nosec B405
 
 _log = get_logger(__name__)
 
@@ -54,11 +74,17 @@ NOT_READ_REASONS: tuple[str, ...] = get_args(NotReadReason)
 class DocText:
     """What one file yielded.
 
-    `chars_total` is the length of the WHOLE extracted text; `text` is cut to
-    the limit and `truncated` says so. `pages_without_text` counts PDF pages
-    that gave no text (a partly scanned file); it is 0 for every other type.
-    It is an addition to section 15.2's shape: without it a PDF with one text
-    page and forty scanned ones reads as a complete `read`.
+    `chars_total` counts the characters EXTRACTED. Extraction stops early once
+    `max_chars` is passed or `max_pages` is reached, so when `truncated` is
+    True the file holds more than `chars_total`; when it is False,
+    `chars_total` is the whole document. `text` is cut to `max_chars`.
+
+    `pages_without_text` counts PDF pages read that gave no text (a partly
+    scanned file). `parts_not_read` counts parts of a read file that no reader
+    opened: an XFA form or an unreadable AcroForm in a PDF; an altChunk, an
+    embedded object or an unparseable header, footer, footnotes, endnotes or
+    comments part in a DOCX. Both are additions to section 15.2's shape, and
+    both are 0 when nothing was skipped.
     """
 
     status: Literal["read", "not_read"]
@@ -67,6 +93,7 @@ class DocText:
     chars_total: int
     truncated: bool
     pages_without_text: int = 0
+    parts_not_read: int = 0
 
     def __post_init__(self) -> None:
         if self.status == "read":
@@ -79,7 +106,13 @@ class DocText:
             raise ValueError(
                 f"not_read needs a reason from {NOT_READ_REASONS}, got {self.reason!r}"
             )
-        if self.text or self.chars_total or self.truncated or self.pages_without_text:
+        if (
+            self.text
+            or self.chars_total
+            or self.truncated
+            or self.pages_without_text
+            or self.parts_not_read
+        ):
             raise ValueError("a not_read result carries no text and no counts")
 
 
@@ -102,6 +135,7 @@ class ExtractLimits:
     max_chars: int
     chunk_chars: int
     max_chunks: int
+    max_pages: int
 
 
 def extract_limits(settings: Settings | None = None) -> ExtractLimits:
@@ -113,6 +147,7 @@ def extract_limits(settings: Settings | None = None) -> ExtractLimits:
         max_chars=s.shield_document_max_chars,
         chunk_chars=s.shield_document_chunk_chars,
         max_chunks=s.shield_document_max_chunks,
+        max_pages=s.shield_document_max_pages,
     )
 
 
@@ -120,7 +155,10 @@ class _Readable(Protocol):
     def get(self, key: str) -> bytes: ...
 
 
-Kind = Literal["pdf", "docx", "xlsx", "txt", "image", "ole", "zip"]
+Kind = Literal["pdf", "docx", "xlsx", "txt", "image", "ole", "zip", "rtf"]
+
+#: Kinds with no text reader yet.
+_UNSUPPORTED: frozenset[str] = frozenset({"image", "ole", "zip", "rtf"})
 
 _MIME_KIND: dict[str, Kind] = {
     "application/pdf": "pdf",
@@ -132,6 +170,8 @@ _MIME_KIND: dict[str, Kind] = {
     "application/msword": "ole",
     "application/vnd.ms-excel": "ole",
     "application/zip": "zip",
+    "application/rtf": "rtf",
+    "text/rtf": "rtf",
 }
 
 _EXT_KIND: dict[str, Kind] = {
@@ -152,6 +192,7 @@ _EXT_KIND: dict[str, Kind] = {
     "doc": "ole",
     "xls": "ole",
     "zip": "zip",
+    "rtf": "rtf",
 }
 
 _IMAGE_MAGIC = (
@@ -164,6 +205,8 @@ _IMAGE_MAGIC = (
     b"BM",
 )
 _OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+_UTF32_BOMS = (b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff")
+_UTF16_BOMS = (b"\xff\xfe", b"\xfe\xff")
 
 
 class _NotRead(Exception):
@@ -173,6 +216,15 @@ class _NotRead(Exception):
         super().__init__(detail)
         self.reason = reason
         self.detail = detail
+
+
+@dataclass
+class _Tally:
+    """What a reader skipped inside a file it did read."""
+
+    pages_without_text: int = 0
+    parts_not_read: int = 0
+    stopped_early: bool = False
 
 
 def document_text(storage: _Readable, artifact: Artifact, *, limits: ExtractLimits) -> DocText:
@@ -186,29 +238,50 @@ def document_text(storage: _Readable, artifact: Artifact, *, limits: ExtractLimi
         data = storage.get(artifact.file_storage_key)
     except FileNotFoundError:
         return _not_read(artifact, "storage_missing", "no object at the storage key")
+    tally = _Tally()
     try:
-        raw, pages_without_text = _extract(data, artifact, limits)
+        text, past_max_chars = _collect(_extract(data, artifact, limits, tally), limits.max_chars)
     except _NotRead as nr:
         return _not_read(artifact, nr.reason, nr.detail)
-    text = _sanitize(raw)
-    chars_total = len(text)
-    truncated = chars_total > limits.max_chars
+    truncated = past_max_chars or tally.stopped_early
     result = DocText(
         status="read",
         reason=None,
-        text=text[: limits.max_chars] if truncated else text,
-        chars_total=chars_total,
+        text=text[: limits.max_chars],
+        chars_total=len(text),
         truncated=truncated,
-        pages_without_text=pages_without_text,
+        pages_without_text=tally.pages_without_text,
+        parts_not_read=tally.parts_not_read,
     )
     _log.info(
         "documents.text.read",
         artifact_id=str(artifact.id),
-        chars_total=chars_total,
+        chars_total=result.chars_total,
         truncated=truncated,
-        pages_without_text=pages_without_text,
+        pages_without_text=result.pages_without_text,
+        parts_not_read=result.parts_not_read,
     )
     return result
+
+
+def _collect(pieces: Iterator[str], max_chars: int) -> tuple[str, bool]:
+    """Join a reader's pieces, sanitised, and STOP once past `max_chars`: no
+    further page, row or part is extracted. Returns the text read and whether
+    it stopped early."""
+    parts: list[str] = []
+    count = 0
+    try:
+        for piece in pieces:
+            clean = _sanitize(piece)
+            count += len(clean) + (1 if parts else 0)
+            parts.append(clean)
+            if count > max_chars:
+                return "\n".join(parts), True
+    finally:
+        close = getattr(pieces, "close", None)
+        if close is not None:
+            close()
+    return "\n".join(parts), False
 
 
 def _not_read(artifact: Artifact, reason: NotReadReason, detail: str) -> DocText:
@@ -221,7 +294,9 @@ def _not_read(artifact: Artifact, reason: NotReadReason, detail: str) -> DocText
     return DocText(status="not_read", reason=reason, text="", chars_total=0, truncated=False)
 
 
-def _extract(data: bytes, artifact: Artifact, limits: ExtractLimits) -> tuple[str, int]:
+def _extract(
+    data: bytes, artifact: Artifact, limits: ExtractLimits, tally: _Tally
+) -> Iterator[str]:
     if len(data) > limits.max_bytes:
         raise _NotRead("too_large", f"{len(data)} bytes over the {limits.max_bytes} byte limit")
     detected = _detect(data, limits)
@@ -229,15 +304,19 @@ def _extract(data: bytes, artifact: Artifact, limits: ExtractLimits) -> tuple[st
     mismatched = sorted(d for d in declared if d != detected)
     if mismatched:
         raise _NotRead("unreadable", f"declared {mismatched} but the bytes are {detected}")
-    if detected in ("image", "ole", "zip"):
+    if detected in _UNSUPPORTED:
         raise _NotRead("unsupported_type", f"{detected} has no text reader")
     if detected == "pdf":
-        return _read_pdf(data)
+        return _read_pdf(data, limits, tally)
     if detected == "docx":
-        return _read_docx(data), 0
+        return _read_docx(data, tally)
     if detected == "xlsx":
-        return _read_xlsx(data), 0
-    return _read_txt(data), 0
+        if not openpyxl.xml.DEFUSEDXML:
+            # Not a fact about the file: the api is missing a declared runtime
+            # dependency, and must not parse a client's XML without it.
+            raise RuntimeError("defusedxml is not importable; refusing to parse XLSX")
+        return _read_xlsx(data)
+    return _read_txt(data, declared_text="txt" in declared)
 
 
 def _declared(artifact: Artifact) -> set[Kind]:
@@ -264,6 +343,8 @@ def _detect(data: bytes, limits: ExtractLimits) -> Kind:
         return "pdf"
     if data.startswith(_OLE_MAGIC):
         return "ole"
+    if data.startswith(b"{\\rtf"):
+        return "rtf"
     if data.startswith(_IMAGE_MAGIC) or (data[:4] == b"RIFF" and data[8:12] == b"WEBP"):
         return "image"
     if data.startswith(b"PK\x03\x04"):
@@ -291,96 +372,248 @@ def _detect_zip(data: bytes, limits: ExtractLimits) -> Kind:
     return "zip"
 
 
-def _read_pdf(data: bytes) -> tuple[str, int]:
-    from pypdf import PdfReader
-    from pypdf.errors import FileNotDecryptedError
+def _typed_reader(label: str) -> Callable:
+    """Wrap a reader generator so any library failure inside it becomes
+    `not_read: unreadable` with its type and message. `_NotRead` passes
+    through; GeneratorExit (an early stop) is not an Exception and is not
+    caught."""
 
-    try:
-        reader = PdfReader(io.BytesIO(data))
-        texts = [page.extract_text() or "" for page in reader.pages]
-    except FileNotDecryptedError as exc:
-        # pypdf tries the empty user password itself, which opens
-        # owner-password-only files (any viewer opens those too). This is
-        # raised only for a file that needs a password we do not have.
-        raise _NotRead("encrypted", f"PDF: {exc}") from exc
-    except Exception as exc:  # noqa: BLE001 - typed and logged, never swallowed
-        # pypdf raises a wide family on a damaged file (PdfReadError, its
-        # stream errors, and KeyError/ValueError from deep inside a parse).
-        # Every one means the same thing to a caller: this file was not read.
-        raise _NotRead("unreadable", f"PDF: {type(exc).__name__}: {exc}") from exc
-    without = sum(1 for t in texts if not t.strip())
-    if without == len(texts):
-        raise _NotRead("no_text_layer", f"none of {len(texts)} pages has a text layer")
-    return "\n".join(t for t in texts if t.strip()), without
+    def deco(fn: Callable[..., Iterator[str]]) -> Callable[..., Iterator[str]]:
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs) -> Iterator[str]:
+            try:
+                yield from fn(*args, **kwargs)
+            except _NotRead:
+                raise
+            except FileNotDecryptedError as exc:
+                # pypdf tries the empty user password itself, which opens
+                # owner-password-only files (any viewer opens those too). This
+                # is raised only for a file that needs a password we lack.
+                raise _NotRead("encrypted", f"{label}: {exc}") from exc
+            except Exception as exc:  # noqa: BLE001 - typed and logged, never swallowed
+                # Parsers raise a wide family on a damaged file (pypdf's stream
+                # errors, zip and XML errors, KeyError/ValueError from deep in a
+                # parse, RecursionError on absurd nesting). Each means the same
+                # thing to a caller: this file was not read.
+                raise _NotRead("unreadable", f"{label}: {type(exc).__name__}: {exc}") from exc
 
+        return wrapper
 
-def _read_docx(data: bytes) -> str:
-    from docx import Document
-
-    try:
-        doc = Document(io.BytesIO(data))
-        parts: list[str] = []
-        seen_headers: set[str] = set()
-        for section in doc.sections:
-            for header in (section.first_page_header, section.header, section.even_page_header):
-                _add_unique(parts, seen_headers, header.iter_inner_content())
-        parts.extend(_docx_blocks(doc.iter_inner_content()))
-        seen_footers: set[str] = set()
-        for section in doc.sections:
-            for footer in (section.first_page_footer, section.footer, section.even_page_footer):
-                _add_unique(parts, seen_footers, footer.iter_inner_content())
-    except Exception as exc:  # noqa: BLE001 - typed and logged, never swallowed
-        raise _NotRead("unreadable", f"DOCX: {type(exc).__name__}: {exc}") from exc
-    return "\n".join(parts)
+    return deco
 
 
-def _add_unique(parts: list[str], seen: set[str], blocks: Iterator[object]) -> None:
-    """A header linked to the previous section repeats its text; keep one."""
-    text = "\n".join(_docx_blocks(blocks))
-    if text.strip() and text not in seen:
-        seen.add(text)
-        parts.append(text)
-
-
-def _docx_blocks(blocks: Iterator[object]) -> Iterator[str]:
-    from docx.table import Table
-
-    for block in blocks:
-        if isinstance(block, Table):
-            for row in block.rows:
-                cells: list[str] = []
-                last = None
-                for cell in row.cells:
-                    # A merged cell is returned once per grid column it spans.
-                    if cell._tc is last:
-                        continue
-                    last = cell._tc
-                    cells.append(cell.text)
-                yield "\t".join(cells)
+@_typed_reader("PDF")
+def _read_pdf(data: bytes, limits: ExtractLimits, tally: _Tally) -> Iterator[str]:
+    reader = PdfReader(io.BytesIO(data))
+    pages = reader.pages
+    total = len(pages)
+    read_any = False
+    for i in range(min(total, limits.max_pages)):
+        text = pages[i].extract_text() or ""
+        if text.strip():
+            read_any = True
+            yield text
         else:
-            yield block.text  # type: ignore[attr-defined]
+            tally.pages_without_text += 1
+    capped = total > limits.max_pages
+    if capped:
+        tally.stopped_early = True
+    for value in _pdf_form_values(reader, tally):
+        read_any = True
+        yield value
+    if not read_any:
+        if capped:
+            # The pages never looked at may hold text: not evidence of none.
+            raise _NotRead(
+                "too_large",
+                f"no text in the first {limits.max_pages} of {total} pages; the rest is over "
+                "the page limit",
+            )
+        raise _NotRead("no_text_layer", f"none of {total} pages has a text layer")
 
 
-def _read_xlsx(data: bytes) -> str:
-    from openpyxl import load_workbook
-
+def _pdf_form_values(reader: PdfReader, tally: _Tally) -> Iterator[str]:
+    """Filled AcroForm values, as "name: value" lines. Page text extraction
+    does not see them: they live in the form's field dictionaries. An XFA form
+    (data in XML streams) or a form pypdf cannot walk is counted as a part not
+    read rather than dropped."""
     try:
-        values = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
-        formulas = load_workbook(io.BytesIO(data), read_only=True, data_only=False)
-        parts: list[str] = []
+        acro = reader.trailer["/Root"].get("/AcroForm")
+        if acro is None:
+            return
+        acro = acro.get_object()
+        if "/XFA" in acro:
+            tally.parts_not_read += 1
+        fields = reader.get_fields() or {}
+    except Exception as exc:  # noqa: BLE001 - counted and logged, never swallowed
+        tally.parts_not_read += 1
+        _log.warning("documents.text.pdf_form_not_read", error=f"{type(exc).__name__}: {exc}")
+        return
+    lines: list[str] = []
+    for name, field in fields.items():
+        value = field.get("/V")
+        if value is None:
+            continue
+        values = value if isinstance(value, list) else [value]
+        shown = ", ".join(str(v)[1:] if isinstance(v, NameObject) else str(v) for v in values)
+        if shown.strip():
+            lines.append(f"{name}: {shown}")
+    if lines:
+        yield "[Form fields]"
+        yield from lines
+
+
+# -- DOCX: the package XML, walked directly ------------------------------------
+
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+_MC_FALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
+#: Never text: tracked moves away (their runs use w:t; a tracked deletion uses
+#: w:delText, which is never read), properties, and the legacy copy Word writes
+#: beside a drawing (the mc:Choice copy is the one read).
+_DOCX_SKIP = frozenset(
+    {
+        _W + "moveFrom",
+        _W + "sectPr",
+        _W + "pPr",
+        _W + "rPr",
+        _W + "tblPr",
+        _W + "trPr",
+        _W + "tcPr",
+        _MC_FALLBACK,
+    }
+)
+#: Content this reader does not open, each counted as a part not read.
+_DOCX_NOT_READ = frozenset({_W + "altChunk", _W + "object"})
+_DOCX_NOTES = ("word/footnotes.xml", "word/endnotes.xml", "word/comments.xml")
+
+
+def _part_number(name: str) -> int:
+    digits = re.findall(r"\d+", name.rsplit("/", 1)[1])
+    return int(digits[0]) if digits else 0
+
+
+@_typed_reader("DOCX")
+def _read_docx(data: bytes, tally: _Tally) -> Iterator[str]:
+    """Headers, then the body, then footers, footnotes, endnotes and comments.
+    The main document part failing is `unreadable`; any other part failing is
+    counted in `parts_not_read` and the rest is still read."""
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        names = z.namelist()
+        body = safe_fromstring(z.read("word/document.xml"))
+        headers = sorted(
+            (n for n in names if re.fullmatch(r"word/header\d*\.xml", n)), key=_part_number
+        )
+        footers = sorted(
+            (n for n in names if re.fullmatch(r"word/footer\d*\.xml", n)), key=_part_number
+        )
+        notes = [n for n in _DOCX_NOTES if n in names]
+        for name in headers:
+            yield from _docx_part(z, name, tally)
+        yield from _docx_blocks(body, tally)
+        for name in footers + notes:
+            yield from _docx_part(z, name, tally)
+
+
+def _docx_part(z: zipfile.ZipFile, name: str, tally: _Tally) -> Iterator[str]:
+    try:
+        root = safe_fromstring(z.read(name))
+    except Exception as exc:  # noqa: BLE001 - counted and logged, never swallowed
+        tally.parts_not_read += 1
+        _log.warning("documents.text.docx_part_not_read", part=name, error=type(exc).__name__)
+        return
+    yield from _docx_blocks(root, tally)
+
+
+def _docx_blocks(el: Element, tally: _Tally) -> Iterator[str]:
+    """Paragraphs and tables in document order, through any wrapper (content
+    controls, custom XML, footnote and comment elements)."""
+    for child in el:
+        tag = child.tag
+        if tag == _W + "p":
+            yield from _docx_paragraph(child, tally)
+        elif tag == _W + "tbl":
+            yield from _docx_table(child, tally)
+        elif tag in _DOCX_NOT_READ:
+            tally.parts_not_read += 1
+        elif tag not in _DOCX_SKIP:
+            yield from _docx_blocks(child, tally)
+
+
+def _docx_paragraph(p: Element, tally: _Tally) -> Iterator[str]:
+    """One paragraph's runs as one line (through run-level content controls,
+    hyperlinks, fields and tracked insertions), then any paragraphs nested in
+    it (text boxes) on their own lines."""
+    pieces: list[str] = []
+    nested: list[str] = []
+
+    def walk(el: Element) -> None:
+        for child in el:
+            tag = child.tag
+            if tag == _W + "t":
+                pieces.append(child.text or "")
+            elif tag == _W + "tab":
+                pieces.append("\t")
+            elif tag in (_W + "br", _W + "cr"):
+                pieces.append("\n")
+            elif tag == _W + "p":
+                nested.extend(_docx_paragraph(child, tally))
+            elif tag == _W + "tbl":
+                nested.extend(_docx_table(child, tally))
+            elif tag in _DOCX_NOT_READ:
+                tally.parts_not_read += 1
+            elif tag not in _DOCX_SKIP:
+                walk(child)
+
+    walk(p)
+    line = "".join(pieces)
+    if line.strip():
+        yield line
+    yield from nested
+
+
+def _docx_table(tbl: Element, tally: _Tally) -> Iterator[str]:
+    """One line per row, cells tab-joined; a cell's own paragraphs and nested
+    tables are joined into it. Rows and cells inside content controls count."""
+    for row in _docx_descendants(tbl, _W + "tr"):
+        cells = ["\n".join(_docx_blocks(cell, tally)) for cell in _docx_descendants(row, _W + "tc")]
+        line = "\t".join(cells)
+        if line.strip():
+            yield line
+
+
+def _docx_descendants(el: Element, tag: str) -> Iterator[Element]:
+    """Children with `tag`, looking through wrappers (a content control around
+    a row or cell) but not into a match, so a nested table's rows stay in it."""
+    for child in el:
+        if child.tag == tag:
+            yield child
+        elif child.tag not in _DOCX_SKIP:
+            yield from _docx_descendants(child, tag)
+
+
+# -- XLSX ----------------------------------------------------------------------
+
+
+@_typed_reader("XLSX")
+def _read_xlsx(data: bytes) -> Iterator[str]:
+    values = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    formulas = load_workbook(io.BytesIO(data), read_only=True, data_only=False)
+    try:
         for ws_v, ws_f in zip(values.worksheets, formulas.worksheets, strict=True):
-            parts.append(f"[Sheet: {ws_v.title}]")
+            # Read-only mode trusts the sheet's stored <dimension ref>, which
+            # writers get wrong; reset it so every row is read.
+            ws_v.reset_dimensions()
+            ws_f.reset_dimensions()
+            yield f"[Sheet: {ws_v.title}]"
             rows_v = ws_v.iter_rows(values_only=True)
             rows_f = ws_f.iter_rows(values_only=True)
             for row_v, row_f in zip_longest(rows_v, rows_f, fillvalue=()):
                 line = _xlsx_row(row_v, row_f)
                 if line:
-                    parts.append(line)
+                    yield line
+    finally:
         values.close()
         formulas.close()
-    except Exception as exc:  # noqa: BLE001 - typed and logged, never swallowed
-        raise _NotRead("unreadable", f"XLSX: {type(exc).__name__}: {exc}") from exc
-    return "\n".join(parts)
 
 
 def _xlsx_row(row_v: tuple, row_f: tuple) -> str:
@@ -397,27 +630,38 @@ def _xlsx_row(row_v: tuple, row_f: tuple) -> str:
     return "\t".join(cells)
 
 
-def _read_txt(data: bytes) -> str:
-    """UTF-8 (with or without a BOM) and BOM-marked UTF-16 are read. Anything
-    else is `unreadable`: guessing an encoding puts mojibake into a quote that
-    then reads as the client's own words."""
-    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
-        try:
-            return data.decode("utf-16")
-        except UnicodeDecodeError as exc:
-            raise _NotRead("unreadable", f"text: UTF-16 BOM but {exc}") from exc
-    if b"\x00" in data:
-        raise _NotRead("unreadable", "text: NUL bytes, so binary rather than text")
+# -- TXT -----------------------------------------------------------------------
+
+
+def _read_txt(data: bytes, *, declared_text: bool) -> Iterator[str]:
+    """UTF-8 (with or without a BOM) and BOM-marked UTF-16 and UTF-32 are read;
+    the UTF-32 BOMs are checked first, since UTF-32LE's begins with UTF-16LE's.
+    Anything else is not decoded by guessing, which would put mojibake into a
+    quote that then reads as the client's own words. A file DECLARED as text
+    that is not decodable text is `unreadable`; bytes that declared nothing and
+    match no format are `unsupported_type`, because no reader exists for them."""
+    failure: NotReadReason = "unreadable" if declared_text else "unsupported_type"
+    if data.startswith(_UTF32_BOMS):
+        encoding = "utf-32"
+    elif data.startswith(_UTF16_BOMS):
+        encoding = "utf-16"
+    elif b"\x00" in data:
+        raise _NotRead(failure, "text: NUL bytes and no UTF-16/32 BOM, so binary")
+    else:
+        encoding = "utf-8-sig"
     try:
-        return data.decode("utf-8-sig")
+        text = data.decode(encoding)
     except UnicodeDecodeError as exc:
-        raise _NotRead("unreadable", f"text: not UTF-8 ({exc})") from exc
+        raise _NotRead(failure, f"text: not {encoding} ({exc})") from exc
+    yield text
 
 
-#: Line separators other than "\n", including "\r\n" as one.
+#: Line separators other than "\n", including "\r\n" as one: CR, VT, FF, the
+#: file/group/record separators, NEL, and U+2028/U+2029.
 _LINE_BREAKS = re.compile("\r\n|[\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]")
-#: Every other control character: C0 except tab and newline, DEL, and C1.
-_CONTROLS = re.compile("[\x00-\x08\x0e-\x1b\x7f-\x84\x86-\x9f]")
+#: Every other control character: C0 except tab, newline and the separators
+#: above (so \x1f, the unit separator, IS removed), DEL, and C1 except NEL.
+_CONTROLS = re.compile("[\x00-\x08\x0e-\x1b\x1f\x7f-\x84\x86-\x9f]")
 
 
 def _sanitize(text: str) -> str:
@@ -446,6 +690,12 @@ def chunk_text(text: str, *, chunk_chars: int, max_chunks: int) -> ChunkPlan:
             cut = max(window.rfind(" "), window.rfind("\n"), window.rfind("\t"))
             if cut > 0:
                 end = start + cut + 1
+        if end <= start:
+            # Every pass must consume text. Without this a bad limit loops
+            # forever instead of failing.
+            raise RuntimeError(
+                f"chunk_text made no progress at {start} (chunk_chars={chunk_chars})"
+            )
         chunks.append(text[start:end])
         start = end
     sent = chunks[:max_chunks]

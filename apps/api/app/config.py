@@ -9,7 +9,7 @@ import time
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["development", "staging", "production"]
@@ -239,22 +239,41 @@ class Settings(BaseSettings):
     password_reset_token_ttl_seconds: int = Field(default=3600, ge=300)
 
     # Document text extraction (app/documents/text.py, N2 for #1071): the ONE
-    # set of limits EV-1's evidence-link job and EV-2's summary both read.
+    # set of limits EV-1's evidence-link job and EV-2's summary both read. Each
+    # is bounded both ways, and `_document_limits_agree` checks them together.
     # A file over `max_bytes`, or a DOCX/XLSX whose parts inflate past
     # `max_unzipped_bytes`, is "not read: too_large" before any parser runs.
-    # `max_bytes` matches routes/artifacts.py's MAX_UPLOAD_BYTES today.
-    shield_document_max_bytes: int = Field(default=50 * 1024 * 1024, ge=1)
-    shield_document_max_unzipped_bytes: int = Field(default=200 * 1024 * 1024, ge=1)
-    # Characters kept from one file; past it the text is cut and `truncated`.
-    shield_document_max_chars: int = Field(default=2_000_000, ge=1)
+    # `max_bytes` equals routes/artifacts.py's MAX_UPLOAD_BYTES, pinned by
+    # test_the_file_limit_is_the_upload_limit rather than by this comment.
+    shield_document_max_bytes: int = Field(default=50 * 1024 * 1024, ge=1, le=1024**3)
+    shield_document_max_unzipped_bytes: int = Field(default=200 * 1024 * 1024, ge=1, le=4 * 1024**3)
+    # Characters extracted from one file; extraction stops once past it and
+    # the result says `truncated`.
+    shield_document_max_chars: int = Field(default=2_000_000, ge=1, le=100_000_000)
     # One chunk is one AI payload, so it must redact inside #552's per-payload
     # budget. That budget is TIME (`shield_redaction_budget_seconds`, #1042)
     # and redaction cost grows with the name hints as well as the text, so no
     # character count is derivable from it. 12,000 is NOT measured against it:
     # measure it when #1042 lands and the first caller is wired.
-    shield_document_chunk_chars: int = Field(default=12_000, ge=1)
+    shield_document_chunk_chars: int = Field(default=12_000, ge=1, le=1_000_000)
     # Chunks sent per file; the rest are counted as skipped and disclosed.
-    shield_document_max_chunks: int = Field(default=20, ge=1)
+    shield_document_max_chunks: int = Field(default=20, ge=1, le=1_000)
+    # PDF pages read per file; past it the result says `truncated`.
+    shield_document_max_pages: int = Field(default=2_000, ge=1, le=10_000)
+
+    @model_validator(mode="after")
+    def _document_limits_agree(self) -> Settings:
+        if self.shield_document_max_unzipped_bytes < self.shield_document_max_bytes:
+            raise ValueError(
+                f"shield_document_max_unzipped_bytes ({self.shield_document_max_unzipped_bytes})"
+                f" must be at least shield_document_max_bytes ({self.shield_document_max_bytes})"
+            )
+        if self.shield_document_chunk_chars > self.shield_document_max_chars:
+            raise ValueError(
+                f"shield_document_chunk_chars ({self.shield_document_chunk_chars}) must be at"
+                f" most shield_document_max_chars ({self.shield_document_max_chars})"
+            )
+        return self
 
     def is_development(self) -> bool:
         """True only on a developer's machine.
