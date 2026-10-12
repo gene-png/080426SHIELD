@@ -46,11 +46,15 @@ export interface AdminArtifactRow {
   uploaded_by: string;
   uploaded_at: string;
   /**
-   * #1054: the stored `Artifact.origin`. A released deliverable's files are
-   * artifacts too (`consultant_approved`); only `client_upload` is something
-   * the client attached. Mirrors `ArtifactOrigin` in `app/models/artifact.py`.
+   * #1054: the stored `Artifact.origin`. A deliverable's files, written at
+   * finalize or export, are artifacts too (`consultant_approved`). Mirrors
+   * `ArtifactOrigin` in `app/models/artifact.py`. `client_upload` alone does
+   * NOT mean the client attached it: the upload route writes it for an admin
+   * too, so read it with `uploaded_by_role`.
    */
   origin: "client_upload" | "automated_draft" | "consultant_approved";
+  /** #1054: the uploader's role, read by the API from `uploaded_by`. */
+  uploaded_by_role: "admin" | "client";
 }
 
 export interface AdminIntakeQueueResponse {

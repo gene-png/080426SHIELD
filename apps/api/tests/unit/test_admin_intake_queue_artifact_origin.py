@@ -1,16 +1,19 @@
 """#1054 (IN-2): the admin intake queue says WHERE each artifact came from.
 
 The org page's "Uploaded documents" list rendered every `Artifact` row of the
-tenant, and a released deliverable's PDF/XLSX/DOCX files are `Artifact` rows
-too (origin `consultant_approved`), so twelve generated reports sat in a list
-headed as the client's uploads. The stored `origin` is the discriminator; the
-route must carry it so the page can split the list without guessing from a
-filename.
+tenant. Two other kinds of row sat in it beside the client's own files:
 
-The client upload goes through the real upload route; the generated report is
-written the way the deliverable exporters write it (an `Artifact` with
-`origin=CONSULTANT_APPROVED`), because building a whole released deliverable
-here would test the exporters, not this route.
+* a deliverable's PDF/XLSX/DOCX files, written at finalize or export with
+  origin `consultant_approved`;
+* a CONSULTANT's upload: `POST /artifacts` has no role check and stamps every
+  upload `client_upload`, and the Tech Debt workspace's Dropzone posts to it as
+  the admin. So `origin == client_upload` does NOT mean "the client attached
+  it" (review of #1067 at 79539736).
+
+The route therefore carries the stored `origin` AND the uploader's role, read
+server-side from `uploaded_by`. Both uploads go through the real upload route;
+the generated report is written the way the exporters write it, because
+building a whole deliverable here would test the exporters, not this route.
 """
 
 from __future__ import annotations
@@ -103,8 +106,25 @@ def test_intake_queue_rows_carry_the_stored_origin(env) -> None:
     assert up.status_code == 201, up.text
     upload_id = up.json()["id"]
 
-    from app.models.artifact import Artifact, ArtifactOrigin
+    # The consultant uploads into the same tenant through the same route, as
+    # the Tech Debt workspace's Dropzone does. The admin's active tenant is the
+    # client's, so the row lands beside the client's own upload.
     from app.models.user import User
+
+    probe = TestSession()
+    tenant_id = str(
+        probe.execute(select(User).where(User.email == "client@example.com")).scalar_one().client_id
+    )
+    probe.close()
+    admin_up = app_client.post(
+        "/artifacts",
+        headers={"Authorization": f"Bearer {admin_bearer}", "X-Client-Id": tenant_id},
+        files={"file": ("consultant-inventory.csv", b"host,os\nb,windows\n", "text/csv")},
+    )
+    assert admin_up.status_code == 201, admin_up.text
+    admin_upload_id = admin_up.json()["id"]
+
+    from app.models.artifact import Artifact, ArtifactOrigin
 
     db = TestSession()
     admin_row = db.execute(select(User).where(User.email == "admin@example.com")).scalar_one()
@@ -124,7 +144,6 @@ def test_intake_queue_rows_carry_the_stored_origin(env) -> None:
     db.add(report)
     db.commit()
     report_id = str(report.id)
-    tenant_id = str(client_row.client_id)
     db.close()
 
     r = app_client.get(
@@ -133,6 +152,11 @@ def test_intake_queue_rows_carry_the_stored_origin(env) -> None:
     )
     assert r.status_code == 200, r.text
     by_id = {a["id"]: a for a in r.json()["artifacts"]}
-    assert set(by_id) == {upload_id, report_id}
+    assert set(by_id) == {upload_id, admin_upload_id, report_id}
     assert by_id[upload_id]["origin"] == "client_upload"
+    assert by_id[upload_id]["uploaded_by_role"] == "client"
+    # Same stored origin as the client's file; only the role tells them apart.
+    assert by_id[admin_upload_id]["origin"] == "client_upload"
+    assert by_id[admin_upload_id]["uploaded_by_role"] == "admin"
     assert by_id[report_id]["origin"] == "consultant_approved"
+    assert by_id[report_id]["uploaded_by_role"] == "admin"

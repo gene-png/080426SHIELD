@@ -13,13 +13,14 @@ import type { useServiceStages as useServiceStagesType } from "@/lib/stages/clie
 
 /**
  * #1054 (IN-2): the org page's "Uploaded documents" list held every Artifact
- * row of the tenant, and a released deliverable's PDF/XLSX/DOCX files are
- * Artifact rows too -- twelve generated reports listed as the client's
- * uploads. The page now splits on the STORED `origin`, never on a filename.
+ * row of the tenant. A deliverable's PDF/XLSX/DOCX files, written at finalize
+ * or export, are Artifact rows too, and so is a CONSULTANT's upload: the
+ * upload route stamps every file `client_upload`, whoever posts it. The page
+ * now decides "the client attached it" from the stored `origin` AND the
+ * uploader's role, both served by the API, never from a filename.
  *
  * The readiness checklist read the same list, so "Supporting documents
- * uploaded" ticked for a client who had uploaded nothing once any report had
- * been exported. That is asserted here too.
+ * uploaded" ticked for a client who had uploaded nothing. Asserted here too.
  */
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
@@ -43,6 +44,10 @@ function artifact(
   id: string,
   title: string,
   origin: AdminArtifactRow["origin"],
+  uploaded_by_role: AdminArtifactRow["uploaded_by_role"] = origin ===
+  "client_upload"
+    ? "client"
+    : "admin",
 ): AdminArtifactRow {
   return {
     id,
@@ -52,6 +57,7 @@ function artifact(
     uploaded_by: "u1",
     uploaded_at: "2026-10-01T12:00:00Z",
     origin,
+    uploaded_by_role,
   };
 }
 
@@ -156,6 +162,30 @@ describe("IntakeQueue — client uploads vs generated reports (#1054)", () => {
     ).toBeInTheDocument();
   });
 
+  it("does not list a consultant's upload as the client's", async () => {
+    // What the Tech Debt Dropzone writes: origin `client_upload`, posted by an
+    // admin. Beside it, one real client upload, so the section renders a list
+    // and the absence below is checked against something present.
+    serve([
+      artifact("a1", "network-inventory.csv", "client_upload"),
+      artifact("a5", "consultant-inventory.csv", "client_upload", "admin"),
+    ]);
+    render(<IntakeQueue clientId="00000000-0000-4000-8000-000000000001" />);
+    await screen.findByRole("heading", { name: /^Uploaded documents \(1\)$/ });
+    const uploads = section(/^Uploaded documents \(1\)$/);
+    expect(
+      within(uploads).getByText("network-inventory.csv"),
+    ).toBeInTheDocument();
+    expect(
+      within(uploads).queryByText("consultant-inventory.csv"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(section(/^Generated reports \(0\)$/)).queryByText(
+        "consultant-inventory.csv",
+      ),
+    ).not.toBeInTheDocument();
+  });
+
   // The readiness line must read the CLIENT's uploads. Asserted both ways so a
   // fix that hard-codes either answer goes red.
   async function readinessLine(): Promise<HTMLElement> {
@@ -168,6 +198,14 @@ describe("IntakeQueue — client uploads vs generated reports (#1054)", () => {
 
   it("does not tick 'Supporting documents uploaded' on generated reports alone", async () => {
     serve([artifact("a2", "NIST-CSF-Report-v1.pdf", "consultant_approved")]);
+    const li = await readinessLine();
+    expect(li).toHaveTextContent("no evidence to ground the assessment");
+  });
+
+  it("does not tick 'Supporting documents uploaded' on a consultant's upload alone", async () => {
+    serve([
+      artifact("a5", "consultant-inventory.csv", "client_upload", "admin"),
+    ]);
     const li = await readinessLine();
     expect(li).toHaveTextContent("no evidence to ground the assessment");
   });

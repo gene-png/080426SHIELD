@@ -573,17 +573,24 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
   const hasContext = Boolean(
     c?.prompting_context && c.prompting_context.trim(),
   );
-  // #1054: split on the STORED origin, never on a filename. A released
-  // deliverable's PDF/XLSX/DOCX files are artifacts of this tenant too, so the
-  // unsplit list showed generated reports as client uploads -- and the
-  // readiness line below ticked "Supporting documents uploaded" for a client
-  // who had attached nothing. Only `client_upload` counts as evidence.
+  // #1054: split on what the API serves, never on a filename. A deliverable's
+  // PDF/XLSX/DOCX files, written at finalize or export, are artifacts of this
+  // tenant too, and so is a consultant's upload: the upload route stamps every
+  // file `client_upload`, and the Tech Debt Dropzone posts to it as the admin.
+  // The unsplit list showed both as the client's, and the readiness line below
+  // ticked "Supporting documents uploaded" for a client who had attached
+  // nothing. "The client attached it" is the stored origin AND a client-role
+  // uploader; only that counts as evidence.
   const clientUploads = state.artifacts.filter(
-    (a) => a.origin === "client_upload",
+    (a) => a.origin === "client_upload" && a.uploaded_by_role === "client",
   );
   const generatedReports = state.artifacts.filter(
     (a) => a.origin !== "client_upload",
   );
+  // A consultant's upload (`client_upload` posted by an admin) is in NEITHER
+  // list. Its section's heading and empty state are pending the advisor's
+  // approval of the wording (#1067), so until then this page does not list
+  // it. It stays listed in the Tech Debt workspace's documents panel.
   const hasDocuments = clientUploads.length > 0;
   const visibleRequests = filterServiceRequests(
     state.service_requests,
