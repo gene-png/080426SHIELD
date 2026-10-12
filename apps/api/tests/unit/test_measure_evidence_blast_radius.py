@@ -196,12 +196,17 @@ def test_known_answer_and_no_write(world) -> None:
     report = _json(r.stdout)
     n = world["csf_rows_per_assessment"]
 
-    # No deliverable was ever released in this world, so no version is read by
-    # a client surface: the headline is empty and every figure is in
-    # `all_versions`. A zero headline over a world with rows must say so.
-    assert report["csf_tier_rows"]["surfaced"]["by_status"]["draft"]["rows_read"] == 0
-    assert report["csf_tier_rows"]["surfaced"]["by_status"]["released"]["rows_read"] == 0
+    # CSF's headline is the version the Playbook and its exports read,
+    # `routes.csf._latest_assessment`: each CSF service here has ONE version,
+    # so the headline is every CSF row. ZT's headline is the version the client
+    # dashboard renders, and no ZT deliverable was ever released here, so it is
+    # empty -- and a zero headline over a world with ZT rows must say so.
+    assert report["csf_tier_rows"]["surfaced"] == report["csf_tier_rows"]["all_versions"]
     assert report["zt_assessments"]["surfaced"]["by_status"]["draft"]["assessments_evaluated"] == 0
+    table = r.stdout.split(m.JSON_MARKER)[0]
+    assert "NO SURFACED VERSION (Zero Trust)" in table
+    assert "NO SURFACED VERSION (CSF)" not in table
+    assert report["surfaced_versions"] == {"csf": 2, "zt": 0}
 
     # CSF tier rows, Python path, per status, ALL versions. DRAFT: n catalog
     # rows plus the retired ID.AM-09 row; n in scope (r3 out, ID.AM-09 in);
@@ -335,6 +340,22 @@ def test_an_unexpected_failure_exits_2_not_1(world, monkeypatch, capsys) -> None
     assert m.main() == 2
     out = capsys.readouterr()
     assert "could not measure" in out.err
+    assert m.JSON_MARKER not in out.out
+
+
+def test_an_inconsistent_deliverable_chain_is_named_and_exits_2(world, monkeypatch, capsys) -> None:
+    """`_deliverable_parent` uses `scalar_one_or_none`, which raises on a
+    second row. That is not "could not read the database"; say what it is."""
+    from sqlalchemy.exc import MultipleResultsFound
+
+    def two_parents(db, model, statuses):
+        raise MultipleResultsFound("Multiple rows were found when one or none was required")
+
+    monkeypatch.setattr(m, "surfaced_parents", two_parents)
+    monkeypatch.setenv("DATABASE_URL", world["url"])
+    assert m.main() == 2
+    out = capsys.readouterr()
+    assert "the deliverable chain is inconsistent" in out.err
     assert m.JSON_MARKER not in out.out
 
 

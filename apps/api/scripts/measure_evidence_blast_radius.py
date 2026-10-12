@@ -23,8 +23,9 @@ reads as Not sure. So at launch no target has a confirmed Current file, and:
   - ZT: no capability has a Current file supporting `implemented`, so every
     stage above the framework's lowest counts as the lowest plus one.
 
-`app.routes.clients` is imported INSIDE the functions that call its helpers,
-not at module level: importing it builds the app's own (writable) engine from
+`app.routes.clients` and `app.routes.csf` are imported INSIDE the functions
+that call their helpers, not at module level: importing either builds the app's
+own (writable) engine from
 DATABASE_URL, so a module-level import would fail on a malformed URL before
 `main` could report it as exit 2, and would do so before this script opened its
 read-only engine. The app engine is never connected by this script.
@@ -42,12 +43,17 @@ engines, CALLED on the stored rows with the launch rule applied in memory:
     the launch stages. A capability's counted stage is read from `compute`
     over that one answer.
 
-WHICH VERSIONS, AND WHICH TARGET. Every figure is reported twice:
-  - HEADLINE (`surfaced`): per service, the assessment version its client
-    dashboard renders, resolved by the dashboard's own helpers
-    (`_latest_released_deliverable`, then `_deliverable_parent`). ZT gaps are
-    against the target that deliverable was FROZEN with, through the
-    dashboard's `_frozen_or_live_target` (#209), never the live intake read.
+WHICH VERSIONS, AND WHICH TARGET. Every figure is reported twice. The HEADLINE
+(`surfaced`) is chosen PER SERVICE, because the two services' readers differ:
+  - CSF: the version the Playbook and its exports read. `csf_dashboard` reads
+    `CsfAnswer.maturity_tier`, which no rule touches; every reader of the rows
+    measured here (`enterprise_subcategories`, `export_playbook` and its client
+    artifacts) takes `routes.csf._latest_assessment`, the latest NON-DISCARDED
+    version, released or not. Called, not re-derived.
+  - ZT: the version the client dashboard renders, resolved by the dashboard's
+    own helpers (`_latest_released_deliverable`, then `_deliverable_parent`).
+    Its gaps are against the target that deliverable was FROZEN with, through
+    the dashboard's `_frozen_or_live_target` (#209), never the live intake read.
   - secondary (`all_versions`): every stored version, drafts and superseded
     versions included. A version no client surface reads takes the live intake
     target (`client_target_stage` + `resolve_target_stage`, as finalize does).
@@ -100,7 +106,7 @@ import sys
 import traceback
 import uuid
 from collections import Counter
-from collections.abc import Iterator, Mapping
+from collections.abc import Collection, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -109,7 +115,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import create_engine, event, select, text  # noqa: E402
 from sqlalchemy.engine import Connection, Engine, make_url  # noqa: E402
-from sqlalchemy.exc import SQLAlchemyError  # noqa: E402
+from sqlalchemy.exc import MultipleResultsFound, NoResultFound, SQLAlchemyError  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from app.csf import enterprise, playbook  # noqa: E402
@@ -250,8 +256,9 @@ class Tally:
 
 
 class Views:
-    """Every count twice. `surfaced` (the HEADLINE): only the assessment versions
-    a client surface reads, one per service at most. `all_versions`: every
+    """Every count twice. `surfaced` (the HEADLINE): only the version the
+    service's readers read, one per service at most (CSF: the Playbook's
+    `_latest_assessment`; ZT: the client dashboard's released parent). `all_versions`: every
     stored version, drafts and superseded versions included, which is what the
     10.6 SQL reads and what the two-path cross-check compares."""
 
@@ -315,10 +322,24 @@ def surfaced_parents(
     return surfaced, unresolved
 
 
+def csf_surfaced(db: Session) -> set[uuid.UUID]:
+    """Per CSF service, the version the Playbook and its exports read:
+    `routes.csf._latest_assessment` (the latest non-discarded version), CALLED.
+    A service whose every version is discarded surfaces nothing."""
+    from app.routes.csf import _latest_assessment
+
+    out: set[uuid.UUID] = set()
+    for sid in set(db.execute(select(CsfAssessment.service_id)).scalars()):
+        a = _latest_assessment(db, sid)
+        if a is not None:
+            out.add(a.id)
+    return out
+
+
 # ---------------------------------------------------------------- CSF
 
 
-def csf_tier_rows_python(db: Session, parents: Mapping[uuid.UUID, Deliverable]) -> Views:
+def csf_tier_rows_python(db: Session, parents: Collection[uuid.UUID]) -> Views:
     """Path 1: `score_tier` per stored row, today's tick against launch."""
     views = Views(TIER_METRICS)
     for a in db.execute(select(CsfAssessment)).scalars().all():
@@ -452,7 +473,7 @@ def _launch_score_tier(calls: list[int]) -> Iterator[None]:
 
 
 def csf_enterprise(
-    db: Session, parents: Mapping[uuid.UUID, Deliverable]
+    db: Session, parents: Collection[uuid.UUID]
 ) -> tuple[Views, list[dict[str, str]]]:
     views = Views(
         (
@@ -656,9 +677,7 @@ def measure(url: str) -> dict[str, Any]:
         with Session(engine) as db:
             try:
                 names = {_cid(c.id): c.legal_name for c in db.execute(select(Client)).scalars()}
-                csf_parents, csf_unresolved = surfaced_parents(
-                    db, CsfAssessment, (CsfAssessmentStatus.APPROVED, CsfAssessmentStatus.RELEASED)
-                )
+                csf_parents = csf_surfaced(db)
                 zt_parents, zt_unresolved = surfaced_parents(
                     db, ZtAssessment, (ZtAssessmentStatus.APPROVED, ZtAssessmentStatus.RELEASED)
                 )
@@ -668,6 +687,10 @@ def measure(url: str) -> dict[str, Any]:
                 zt_answers, zt_assessments, zt_bad = zt(db, zt_parents)
             finally:
                 db.rollback()
+    except (MultipleResultsFound, NoResultFound) as exc:
+        # `_deliverable_parent` resolves with `scalar_one_or_none`, which raises
+        # on a second parent row: a data fault, not an unreadable database.
+        raise CouldNotRead(f"the deliverable chain is inconsistent: {exc!r}") from exc
     except SQLAlchemyError as exc:
         raise CouldNotRead(f"could not read the database: {exc!r}") from exc
     finally:
@@ -678,9 +701,14 @@ def measure(url: str) -> dict[str, Any]:
         "scope": {
             "launch": "no CONFIRMED links (the backfill writes SUGGESTED); doc_status NULL "
             "reads as not_sure (design note rev 4, 10.6)",
-            "surfaced": "HEADLINE: per service, the assessment version its client dashboard "
-            "renders (latest released deliverable's parent); ZT gaps against that "
-            "deliverable's frozen target",
+            "surfaced": {
+                "csf": "HEADLINE: per CSF service, the version the Playbook and its exports "
+                "read (routes.csf._latest_assessment: latest non-discarded); the CSF client "
+                "dashboard reads CsfAnswer.maturity_tier, which no rule touches",
+                "zt": "HEADLINE: per ZT service, the version the client dashboard renders "
+                "(latest released deliverable's parent), gaps against that deliverable's "
+                "frozen target",
+            },
             "all_versions": "every stored assessment version; versions no client surface "
             "reads take the live intake target",
             "statuses_frozen_by_q9_grace_proposal": ["approved", "released"],
@@ -707,11 +735,8 @@ def measure(url: str) -> dict[str, Any]:
             },
             "R3": {"rows_affected": 0, "basis": "by definition: R3 has no score effect"},
         },
-        "csf_enterprise": {
-            **ent.report(names),
-            "not_evaluable": ent_bad,
-            "parents_unresolved": csf_unresolved,
-        },
+        "surfaced_versions": {"csf": len(csf_parents), "zt": len(zt_parents)},
+        "csf_enterprise": {**ent.report(names), "not_evaluable": ent_bad},
         "csf_deliverable": {
             "rows_moved": 0,
             "basis": "by construction, not measured: the CSF deliverable reads "
@@ -751,12 +776,13 @@ def _table(title: str, section: Mapping[str, Any]) -> list[str]:
     return lines
 
 
-_HEADLINE = "HEADLINE, versions a client surface reads"
+_CSF_HEADLINE = "HEADLINE, the version the Playbook and its exports read"
+_ZT_HEADLINE = "HEADLINE, the version the client dashboard renders"
 _ALL = "secondary, ALL assessment versions"
 
 
-def _both(title: str, section: Mapping[str, Any]) -> list[str]:
-    return _table(f"{title} [{_HEADLINE}]", section["surfaced"]) + _table(
+def _both(title: str, headline: str, section: Mapping[str, Any]) -> list[str]:
+    return _table(f"{title} [{headline}]", section["surfaced"]) + _table(
         f"{title} [{_ALL}]", section["all_versions"]
     )
 
@@ -768,20 +794,36 @@ def _read(section: Mapping[str, Any], metric: str, view: str = "all_versions") -
 def _nothing_to_measure(report: Mapping[str, Any]) -> list[str]:
     """Per SERVICE: one service's rows never make another's zeros read clean."""
     out = []
-    for service, section, metric in (
-        ("CSF", report["csf_tier_rows"], "rows_read"),
-        ("Zero Trust", report["zt_answers"], "answers_read"),
+    for service, key, section, metric, why in (
+        (
+            "CSF",
+            "csf",
+            report["csf_tier_rows"],
+            "rows_read",
+            "every version is discarded, so _latest_assessment returns none",
+        ),
+        (
+            "Zero Trust",
+            "zt",
+            report["zt_answers"],
+            "answers_read",
+            "no released deliverable resolves to a parent",
+        ),
     ):
         if _read(section, metric) == 0:
             out.append(
                 f"{PREFIX}: NOTHING TO MEASURE ({service}): no rows were read, so its zeros "
                 "below are not a clean result"
             )
+        elif report["surfaced_versions"][key] == 0:
+            out.append(
+                f"{PREFIX}: NO SURFACED VERSION ({service}): rows exist but {why}, so its "
+                "HEADLINE zeros are not a clean result"
+            )
         elif _read(section, metric, "surfaced") == 0:
             out.append(
-                f"{PREFIX}: NO SURFACED VERSION ({service}): rows exist but no client surface "
-                "reads any of them (no released deliverable resolves to a parent), so its "
-                "HEADLINE zeros are not a clean result"
+                f"{PREFIX}: SURFACED VERSION HAS NO ROWS ({service}): the version its "
+                "readers read holds none, so its HEADLINE zeros are not a clean result"
             )
     return out
 
@@ -808,17 +850,22 @@ def render(report: Mapping[str, Any]) -> str:
         f"{', '.join(check['shared_population'])}; score_tier path only: "
         f"{', '.join(check['python_only'])}"
     )
-    out += _both("CSF tier rows (score_tier path)", report["csf_tier_rows"])
+    out += _both("CSF tier rows (score_tier path)", _CSF_HEADLINE, report["csf_tier_rows"])
     out += _table(f"CSF tier rows (10.6 SQL path) [{_ALL}]", report["csf_tier_rows_sql"])
-    out += _both("CSF Enterprise (enterprise_subcategories)", report["csf_enterprise"])
-    for key in ("not_evaluable", "parents_unresolved"):
-        if report["csf_enterprise"][key]:
-            out.append(f"  CSF {key}: {report['csf_enterprise'][key]}")
+    out += _both(
+        "CSF Enterprise (enterprise_subcategories)", _CSF_HEADLINE, report["csf_enterprise"]
+    )
+    if report["csf_enterprise"]["not_evaluable"]:
+        out.append(f"  CSF not_evaluable: {report['csf_enterprise']['not_evaluable']}")
     out.append(f"\nCSF R2: {report['csf_rules']['R2']['basis']}")
     out.append(f"CSF R3: {report['csf_rules']['R3']['basis']}")
     out.append(f"CSF deliverable: {report['csf_deliverable']['basis']}")
-    out += _both("ZT answers (counted stage, compute)", report["zt_answers"])
-    out += _both("ZT assessments (deliverable: compute + analyze_gaps)", report["zt_assessments"])
+    out += _both("ZT answers (counted stage, compute)", _ZT_HEADLINE, report["zt_answers"])
+    out += _both(
+        "ZT assessments (deliverable: compute + analyze_gaps)",
+        _ZT_HEADLINE,
+        report["zt_assessments"],
+    )
     for key in ("not_evaluable", "parents_unresolved"):
         if report["zt_assessments"][key]:
             out.append(f"  ZT {key}: {report['zt_assessments'][key]}")
