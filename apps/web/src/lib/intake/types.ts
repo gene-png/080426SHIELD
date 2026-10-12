@@ -184,6 +184,8 @@ export const SERVICE_DESCRIPTIONS: Record<ServiceType, string> = {
     "A guided conversation to scope which services fit your organization.",
 };
 
+/** COPIED to `apps/api/app/risk/locked.py` (`KIND_LABELS`), whose locked
+ *  Risk Register copy names these services (#1081); change both. */
 export const SERVICE_LABELS: Record<ServiceType, string> = {
   tech_debt: "Technical Debt Review",
   zero_trust_cisa: "Zero Trust Assessment (CISA ZTMM 2.0)",
