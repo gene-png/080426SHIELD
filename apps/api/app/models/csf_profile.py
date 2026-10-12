@@ -26,6 +26,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base
 from app.models._common import TimestampMixin, UUIDPKMixin
 
+#: The deferred group holding `CsfDimensionScore.evidence_basis` (migration
+#: 0068); a query that renders it undefers it.
+EVIDENCE_BASIS_GROUP = "evidence_basis"
+
 
 class CsfEvidenceBasis(enum.StrEnum):
     """Where a Working Profile row's evidence comes from (design note rev 4,
@@ -92,8 +96,16 @@ class CsfDimensionScore(UUIDPKMixin, TimestampMixin, Base):
     # because the Q9 grace rule that decides it is still Gene's call. NULL is
     # "not decided", never either value. NOTHING READS IT FOR SCORING:
     # `score_tier`'s evidence cap still reads `has_evidence` alone.
+    #
+    # DEFERRED (group `EVIDENCE_BASIS_GROUP`) and `evaluates_none()`, for
+    # `Artifact`'s evidence-intake columns' reason: a select or an ORM insert
+    # against a pre-0068 schema must not name it.
     evidence_basis: Mapped[CsfEvidenceBasis | None] = mapped_column(
-        SAEnum(CsfEvidenceBasis, name="csf_evidence_basis", native_enum=False, length=16)
+        SAEnum(
+            CsfEvidenceBasis, name="csf_evidence_basis", native_enum=False, length=16
+        ).evaluates_none(),
+        deferred=True,
+        deferred_group=EVIDENCE_BASIS_GROUP,
     )
 
 

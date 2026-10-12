@@ -246,9 +246,13 @@ def test_a_pre_0068_artifact_and_profile_row_read_unchanged(tmp_path) -> None:
     assert {k: after_score[k] for k in before_score} == dict(before_score)
     assert after_score["evidence_basis"] is None
 
-    # And through the models the app uses.
+    # And through the models the app uses, undeferring the 0068 columns the
+    # way a reader that renders them must (the rows were written by raw SQL,
+    # whose UUID spelling a deferred per-row load by primary key would miss).
     with Session(_engine(url)) as db:
-        art = db.execute(sa.select(Artifact)).scalar_one()
+        art = db.execute(
+            sa.select(Artifact).options(sa.orm.undefer_group("evidence_intake"))
+        ).scalar_one()
         assert str(art.id) == p["artifact"]
         assert art.title == "policy.pdf"
         assert art.origin is ArtifactOrigin.CLIENT_UPLOAD
@@ -256,11 +260,58 @@ def test_a_pre_0068_artifact_and_profile_row_read_unchanged(tmp_path) -> None:
         assert art.description is None
         assert art.doc_status is None
         assert art.doc_status_set_by is None and art.doc_status_set_at is None
-        score = db.execute(sa.select(CsfDimensionScore)).scalar_one()
+        score = db.execute(
+            sa.select(CsfDimensionScore).options(sa.orm.undefer_group("evidence_basis"))
+        ).scalar_one()
         assert (score.governance, score.policy, score.implementation) == (2, 1, 2)
         assert score.has_evidence is True
         assert str(score.evidence_artifact_id) == p["artifact"]
         assert score.evidence_basis is None
+
+
+def test_the_models_still_insert_and_select_against_a_pre_0068_schema(tmp_path) -> None:
+    """The migration tests that pin an older revision use these models. A new
+    column named in an ORM SELECT or INSERT against a schema that lacks it
+    breaks every one of them (0066's lesson): the columns are deferred and an
+    unset one is left out of the INSERT."""
+    url, fk_engine = _at(tmp_path, "m0068-compat.db", "0067")
+    p = _parents(fk_engine)
+    # Foreign keys OFF here: the parents were written by raw SQL, whose UUID
+    # spelling the ORM's does not match on SQLite. This test is about which
+    # COLUMNS the ORM names, and the FK behaviour has its own tests.
+    engine = sa.create_engine(url, future=True)
+    with Session(engine) as db:
+        db.add(
+            Artifact(
+                client_id=uuid.UUID(p["client"]),
+                title="second.pdf",
+                file_storage_key="k2",
+                mime_type="application/pdf",
+                size_bytes=2,
+                sha256="b" * 64,
+                origin=ArtifactOrigin.CLIENT_UPLOAD,
+                uploaded_by=uuid.UUID(p["user"]),
+            )
+        )
+        db.add(
+            CsfDimensionScore(
+                assessment_id=uuid.UUID(p["assessment"]),
+                client_id=uuid.UUID(p["client"]),
+                tier="high",
+                subcategory_code="GV.OC-02",
+            )
+        )
+        db.commit()
+    with Session(engine) as db:
+        titles = sorted(db.execute(sa.select(Artifact.title)).scalars())
+        assert titles == ["policy.pdf", "second.pdf"]
+        assert len(db.execute(sa.select(Artifact)).scalars().all()) == 2
+        codes = sorted(
+            r.subcategory_code for r in db.execute(sa.select(CsfDimensionScore)).scalars()
+        )
+        assert codes == ["GV.OC-01", "GV.OC-02"]
+    assert "evidence_basis" not in _columns(engine, "csf_dimension_scores")
+    assert not ARTIFACT_COLUMNS & _columns(engine, "artifacts")
 
 
 @pytest.mark.parametrize(
