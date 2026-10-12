@@ -307,3 +307,78 @@ def test_a_kept_entry_on_an_unmeasured_target_reads_not_measured(app_client) -> 
     assert _row(book["Enterprise Profile"], CODE)["Target"] == "Not measured"
     plan = _row(book["Action Plan"], CODE)
     assert (plan["Owner"], plan["Target"]) == ("Ops lead", "Not measured"), plan
+
+
+# --- Review of #1077, round 2: the count line through every renderer (F1, F3) -----------
+
+UNMEASURED_ONE = (
+    "1 in-scope subcategory has a target only on tiers that were not scored, so it was "
+    "not measured."
+)
+
+
+def _profile(c, h: dict, svc: str) -> list[dict]:
+    r = c.get(f"/csf/services/{svc}/enterprise-profile", headers=h)
+    assert r.status_code == 200, r.text
+    return r.json()["subcategories"]
+
+
+def _unmeasured_world(c, h: dict, *, gap_code: str | None = None) -> tuple[str, list[dict]]:
+    """CODE: HIGH scored (level 3) with no target, MODERATE target-only at 4,
+    so its target is not measured. `gap_code`: HIGH scored to level 3 against
+    a target of 4, a real gap. Every other subcategory has no target."""
+    svc, _aid = _world(c, h, tiers=["high", "moderate"], high=LEVEL_3)
+    _patch(c, h, svc, "moderate", {"target_level": 4})
+    if gap_code:
+        rows = c.get(f"/csf/services/{svc}/profile/high", headers=h).json()["rows"]
+        sid = next(r["id"] for r in rows if r["subcategory_code"] == gap_code)
+        r = c.patch(f"/csf/dimension-scores/{sid}", headers=h, json={**LEVEL_3, "target_level": 4})
+        assert r.status_code == 200, r.text
+    return svc, _profile(c, h, svc)
+
+
+def _subcats(n: int) -> str:
+    return f"{n} in-scope subcategor{'y has' if n == 1 else 'ies have'} no target set"
+
+
+def test_the_no_gaps_sentence_reaches_every_document(app_client) -> None:  # noqa: F811
+    c, h = app_client
+    svc, rows = _unmeasured_world(c, h)
+    untargeted = sum(1 for r in rows if r["target_level"] is None) - 1  # CODE is unmeasured
+    assert [r["subcategory_code"] for r in rows if r["target_not_measured"]] == [CODE]
+    sentence = f"{_subcats(untargeted)}, so they are not assessed for gaps. {UNMEASURED_ONE}"
+    files = _export(c, h, svc)
+    for kind in ("exec_pdf", "exec_docx", "full_pdf", "full_docx"):
+        flat = _flat_text(kind, files[kind])
+        assert sentence in flat, kind
+        assert "every in-scope subcategory meets its target" not in flat, kind
+
+
+def test_the_gap_list_tail_reaches_every_document(app_client) -> None:  # noqa: F811
+    c, h = app_client
+    gap_code = SUBCATEGORIES[1].code
+    svc, rows = _unmeasured_world(c, h, gap_code=gap_code)
+    assert [r["subcategory_code"] for r in rows if r["gap"]] == [gap_code]
+    untargeted = sum(1 for r in rows if r["target_level"] is None) - 1
+    tail = f"{_subcats(untargeted)} and are not assessed for gaps. {UNMEASURED_ONE}"
+    files = _export(c, h, svc)
+    for kind in ("exec_pdf", "exec_docx", "full_pdf", "full_docx"):
+        assert tail in _flat_text(kind, files[kind]), kind
+
+
+def test_the_function_line_keeps_unmeasured_out_of_with_a_target(app_client) -> None:  # noqa: F811
+    """F1: CODE's function has one real gap row, CODE unmeasured, the rest
+    untargeted. "among the 1 with a target" counts the gap row only."""
+    c, h = app_client
+    gap_code = SUBCATEGORIES[1].code
+    svc, rows = _unmeasured_world(c, h, gap_code=gap_code)
+    fn = next(r["function"] for r in rows if r["subcategory_code"] == CODE)
+    assert fn == next(r["function"] for r in rows if r["subcategory_code"] == gap_code)
+    in_fn = [r for r in rows if r["function"] == fn]
+    untargeted = sum(1 for r in in_fn if r["target_level"] is None) - 1
+    piece = (
+        f"1 gap among the 1 with a target · {untargeted} with no target set · " "1 not measured."
+    )
+    files = _export(c, h, svc)
+    for kind in ("full_pdf", "full_docx"):
+        assert piece in _flat_text(kind, files[kind]), kind

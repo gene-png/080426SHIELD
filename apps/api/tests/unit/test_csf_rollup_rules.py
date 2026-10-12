@@ -194,3 +194,11 @@ def test_an_approved_row_written_through_the_orm_records_the_rule(tmp_path) -> N
         db.add(frozen)
         db.flush()
         assert frozen.rollup_rules == 1
+        db.commit()
+    # Read the STORED values back, not the objects (review F4).
+    with engine.connect() as raw:
+        stored = sorted(
+            raw.execute(text("SELECT status, rollup_rules FROM csf_assessments")).all(),
+            key=lambda r: (r[0], r[1] or 0),
+        )
+    assert stored == [("APPROVED", 2), ("APPROVED", 2), ("RELEASED", 1), ("RELEASED", 2)], stored

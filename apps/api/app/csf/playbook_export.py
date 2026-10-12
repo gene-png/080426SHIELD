@@ -718,15 +718,23 @@ def _function_detail(frows: Sequence[Any]) -> str:
     avg = round(sum(r.enterprise_level for r in frows) / n)
     fgaps = sum(1 for r in frows if r.gap)
     what = "subcategory" if n == 1 else "subcategories"
-    # #765: the gap count is of the function's TARGETED rows only.
+    # #765: the gap count is of the function's TARGETED rows only. #1031
+    # review F1: a row whose target was not measured is not "with a target"
+    # either; it is stated apart (only the scored-tiers rule sets it, so a
+    # frozen assessment reads as before).
     untargeted = _untargeted(frows)
-    if untargeted == n:
+    unmeasured = _unmeasured(frows)
+    measured = n - untargeted - unmeasured
+    beside = [
+        *([f"{untargeted} with no target set"] if untargeted else []),
+        *([f"{unmeasured} not measured"] if unmeasured else []),
+    ]
+    if measured == 0 and not unmeasured:
         gaps = "no target set, so not assessed for gaps"
-    elif untargeted:
-        gaps = (
-            f"{fgaps} {_gaps(fgaps)} among the {n - untargeted} with a target · "
-            f"{untargeted} with no target set"
-        )
+    elif measured == 0:
+        gaps = f"{' · '.join(beside)}, so not assessed for gaps"
+    elif beside:
+        gaps = f"{fgaps} {_gaps(fgaps)} among the {measured} with a target · " + " · ".join(beside)
     else:
         gaps = f"{fgaps} {_gaps(fgaps)}"
     return f"{n} {what} · average Level {avg} · {gaps}."

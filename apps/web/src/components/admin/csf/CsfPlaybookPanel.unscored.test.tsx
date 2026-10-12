@@ -139,4 +139,12 @@ describe("CsfPlaybookPanel, unscored tiers and unmeasured targets (#1031)", () =
     // A row with no target at all keeps its dash, never "Not measured".
     expect(rowOf("GV.OC-04")).not.toHaveTextContent("Not measured");
   });
+
+  it("counts an unmeasured target apart from no target (review F2)", async () => {
+    render(<CsfPlaybookPanel serviceId="svc-1" />);
+    const line = await screen.findByText(/tier\(s\) in use/);
+    expect((line.textContent ?? "").replace(/\s+/g, " ").trim()).toBe(
+      "3 tier(s) in use · 0 subcategories with a gap · 2 with no target · 1 not measured",
+    );
+  });
 });
