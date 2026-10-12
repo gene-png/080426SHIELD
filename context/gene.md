@@ -1,5 +1,7 @@
 # Gene — in-flight status
 
+_2026-10-12 (track11): N4 landed with PR #1099 (migration 0067)._ The database now has the three empty tables the reports work will fill: findings reports, integration runs and recommendations. Nothing uses them yet. Anyone who upgraded a dev database while N4 was in review should run `alembic downgrade 0066` then `alembic upgrade head`, because 0067 changed in place (#1131).
+
 _2026-10-12 (trackB): #1049 landed with PR #1092._ A client typing "kentro.com" in intake now has it saved as "https://kentro.com/" instead of being refused, and when a save really is refused, the wizard says so in the approved words rather than "Network error.". One test on main was edited with the advisor's sha256 approval. Follow-ups: #1115 and #1116.
 
 _2026-10-12 (track1): #1081 landed with PR #1100._ A locked Risk Register now tells the consultant, for each missing input, why it is missing (no assessment yet, a request waiting to be published, an assessment only under an archived service, or no service at all) and what to click, in the copy approved on the issue. The same sentence comes back in generate's error. Three tests on main were edited with the advisor's sha256 approval. Follow-ups: #1102 (naming the controls for a service with no intake request) and #1110 (a locked Generate still uses AI quota).
