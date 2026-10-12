@@ -13,6 +13,7 @@ import {
 } from "@shield/design-system";
 
 import { fetchIntakeQueue, fulfillServiceRequest } from "@/lib/admin/client";
+import { splitArtifacts } from "@/lib/admin/artifactBuckets";
 import { isNamedOrg, orgDisplayName } from "@/lib/org-name";
 import {
   AGE_OPTIONS,
@@ -573,24 +574,14 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
   const hasContext = Boolean(
     c?.prompting_context && c.prompting_context.trim(),
   );
-  // #1054: split on what the API serves, never on a filename. A deliverable's
-  // PDF/XLSX/DOCX files, written at finalize or export, are artifacts of this
-  // tenant too, and so is a consultant's upload: the upload route stamps every
-  // file `client_upload`, and the Tech Debt Dropzone posts to it as the admin.
-  // The unsplit list showed both as the client's, and the readiness line below
-  // ticked "Supporting documents uploaded" for a client who had attached
-  // nothing. "The client attached it" is the stored origin AND a client-role
-  // uploader; only that counts as evidence.
-  const clientUploads = state.artifacts.filter(
-    (a) => a.origin === "client_upload" && a.uploaded_by_role === "client",
-  );
-  const generatedReports = state.artifacts.filter(
-    (a) => a.origin !== "client_upload",
-  );
-  // A consultant's upload (`client_upload` posted by an admin) is in NEITHER
-  // list. Its section's heading and empty state are pending the advisor's
-  // approval of the wording (#1067), so until then this page does not list
-  // it. It stays listed in the Tech Debt workspace's documents panel.
+  // #1054: one split of every artifact, by stored origin and uploader role
+  // (`splitArtifacts` says why each bucket is what it is). Only a client-role
+  // `client_upload` counts as evidence for the readiness line below.
+  // KNOWN GAP: `consultantUploads` is not rendered on this page. Its section's
+  // heading and empty state are pending the advisor's approval of the wording
+  // (#1067); the files stay listed in the Tech Debt workspace's documents
+  // panel.
+  const { clientUploads, generatedReports } = splitArtifacts(state.artifacts);
   const hasDocuments = clientUploads.length > 0;
   const visibleRequests = filterServiceRequests(
     state.service_requests,
