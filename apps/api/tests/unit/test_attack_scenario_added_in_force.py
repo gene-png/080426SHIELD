@@ -1,11 +1,12 @@
 """For #1012: the what-if's "tools added since the base" check reads only the
-Tech Debt list versions IN FORCE, the versions whose tools it is offered.
+Tech Debt list version that was IN FORCE when the base was approved
+(`attack/added_since_base.py`, the advisor's option A).
 
-`tools_added_since` answers None (cannot check) when a list it is given was
-approved before migration 0043, because that list's membership at the base's
-approval was never recorded. Since #1012 a superseded version offers
-nothing, so a superseded pre-0043 v1 must not make the whole what-if
-unknowable once an approved v2 with a recorded snapshot is in force.
+A list approved before migration 0043 has no recorded membership, so the
+check cannot be made when that list was the version in force at the base:
+null, never 0. A pre-0043 v1 that an approved v2 with a recorded snapshot had
+already superseded by then does not decide anything, so it must not make the
+whole what-if unknowable.
 
 Driven through the routes (`POST /attack/scenarios/{id}/run`), on the world
 `test_attack_scenario_routes` builds: v1 APPROVED with no recorded
@@ -38,14 +39,19 @@ pytestmark = pytest.mark.unit
 
 
 def _approved_v2_uploaded_before_the_base(w: World) -> None:
-    """v2 of the same Tech Debt service, holding the same tools: uploaded
-    BEFORE the base was approved and approved after, with its membership
-    recorded (post-0043). Its rows predate the base, so none was added."""
+    """v2 of the same Tech Debt service, holding the same tools, uploaded and
+    approved BEFORE the base with its membership recorded (post-0043): the
+    version in force at the base. The same tools are offered now, so none
+    was added."""
     with w.sessions() as db:
         base_at = db.get(AttackAssessment, uuid.UUID(w.assessment_id)).approved_at
         v1 = db.execute(select(CapabilityList)).scalars().one()
         v2 = CapabilityList(
-            service_id=v1.service_id, version=2, status=CapabilityListStatus.APPROVED
+            service_id=v1.service_id,
+            version=2,
+            status=CapabilityListStatus.APPROVED,
+            created_at=base_at - timedelta(days=1),
+            approved_at=base_at - timedelta(hours=12),
         )
         db.add(v2)
         db.flush()
