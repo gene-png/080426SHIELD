@@ -25,3 +25,14 @@ describe("InternalOnlyBand (for #1087)", () => {
     ).toBeTruthy();
   });
 });
+
+describe("InternalOnlyBand with nothing to mark (for #1087)", () => {
+  it.each([[null], [false], [undefined]])(
+    "refuses %s children: an empty band claims admin content that is not there",
+    (children) => {
+      expect(() =>
+        render(<InternalOnlyBand>{children as never}</InternalOnlyBand>),
+      ).toThrow(/nothing to mark/);
+    },
+  );
+});

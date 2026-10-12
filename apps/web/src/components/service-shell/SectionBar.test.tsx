@@ -32,9 +32,7 @@ function links(): HTMLAnchorElement[] {
 }
 
 function labels(): string[] {
-  return links().map(
-    (a) => a.querySelector("[data-section-label]")?.textContent ?? "",
-  );
+  return links().map((a) => a.textContent ?? "");
 }
 
 describe("SectionBar (for #1087)", () => {
@@ -48,11 +46,11 @@ describe("SectionBar (for #1087)", () => {
     const badges = screen.getAllByText(ADMIN_BADGE);
     expect(badges).toHaveLength(1);
     expect(badges[0]).toHaveAttribute("data-admin-badge");
-    const recs = links()[GENE_LABELS.length - 1];
-    expect(recs).toContainElement(badges[0]);
-    expect(recs.querySelector("[data-section-label]")?.textContent).toBe(
-      "Recommendations",
-    );
+    // The ruling: the link text is "Recommendations"; the badge sits beside
+    // the link, not inside it, so it is not part of the link's name.
+    const recs = screen.getByRole("link", { name: "Recommendations" });
+    expect(recs).not.toContainElement(badges[0]);
+    expect(recs.closest("li")).toContainElement(badges[0]);
   });
 
   it("makes every section a real link to its own URL", () => {
@@ -100,5 +98,54 @@ describe("SectionBar (for #1087)", () => {
       "aria-label",
       "Service sections",
     );
+  });
+});
+
+describe("SectionBar degenerate states (for #1087)", () => {
+  it("refuses a current section that is omitted", () => {
+    expect(() =>
+      render(
+        <SectionBar current="inputs" hrefFor={hrefFor} omit={["inputs"]} />,
+      ),
+    ).toThrow(/current section "inputs" is omitted/);
+  });
+
+  // `current` is always one of the nine keys, so omitting every key always
+  // omits the current one: that single check covers this state.
+  it("refuses omitting every section", () => {
+    const all: SectionKey[] = [
+      "overview",
+      "inputs",
+      "ai-draft",
+      "review",
+      "analysis",
+      "generate",
+      "quality-check",
+      "approve-and-release",
+      "recommendations",
+    ];
+    expect(() =>
+      render(<SectionBar current="overview" hrefFor={hrefFor} omit={all} />),
+    ).toThrow(/omitted/);
+    // The boundary: every key but the current one omitted still renders.
+    render(
+      <SectionBar
+        current="overview"
+        hrefFor={hrefFor}
+        omit={all.filter((k) => k !== "overview")}
+      />,
+    );
+    expect(links()).toHaveLength(1);
+  });
+
+  it("refuses an empty href", () => {
+    expect(() =>
+      render(
+        <SectionBar
+          current="overview"
+          hrefFor={(k) => (k === "review" ? "" : `/svc/x/${k}`)}
+        />,
+      ),
+    ).toThrow(/hrefFor\("review"\) returned an empty href/);
   });
 });

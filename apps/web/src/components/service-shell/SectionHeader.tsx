@@ -1,3 +1,5 @@
+import { isAdminOnlySection, type SectionKey } from "./SectionBar";
+
 import type { JSX } from "react";
 
 /**
@@ -7,9 +9,16 @@ import type { JSX } from "react";
  * its visibility state. v2 supersedes v1's "What this page is for".
  *
  * The two labels and the three visibility labels are Gene's, verbatim. The
- * sentence and bullets are the caller's, and go to Gene verbatim per section.
- * A term/definition list adds no punctuation of its own, so no unapproved
- * character ships between a label and its text.
+ * released label's format, "Released to client: v{n}, {d Mon yyyy}", is the
+ * advisor's ruling (#736, issuecomment-6116519635). The sentence and bullets
+ * are the caller's, and go to Gene verbatim per section. A term/definition
+ * list adds no punctuation of its own, so no unapproved character ships
+ * between a label and its text.
+ *
+ * Refused, loudly: an admin-only section (Recommendations) labelled anything
+ * but "internal", an unknown visibility, a released label without a positive
+ * whole version and a parseable release instant, and a bullet count outside
+ * one to three.
  */
 export type Visibility = "internal" | "client-preview" | "released";
 
@@ -23,23 +32,83 @@ const VISIBILITY_CLASS: Record<Visibility, string> = {
   internal:
     "border-status-warning-border bg-status-warning-bg text-status-warning-fg",
   "client-preview":
-    "border-status-info-fg bg-status-info-bg text-status-info-fg",
+    "border-status-info-border bg-status-info-bg text-status-info-fg",
   released:
     "border-status-success-border bg-status-success-bg text-status-success-fg",
 };
 
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+/**
+ * "12 Oct 2026" for a release INSTANT, in UTC. No existing helper gives this
+ * form: `formatDate` (dashboards/shared.tsx) gives "Oct 12, 2026", and
+ * `formatDateOnly` (lib/dates.ts) uses the viewer's locale for calendar dates.
+ * UTC matches every other surface showing a release instant (see the zone note
+ * in dashboards/shared.tsx); built from the UTC parts, not Intl, so the month
+ * is always three letters (en-GB writes "Sept").
+ */
+export function releaseDateText(releasedAt: string): string {
+  const d = new Date(releasedAt);
+  if (!releasedAt || Number.isNaN(d.getTime())) {
+    throw new Error(
+      `SectionHeader: release date "${releasedAt}" is not a parseable instant.`,
+    );
+  }
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+
+function visibilityText(
+  visibility: Visibility,
+  release: { version: number; releasedAt: string } | undefined,
+): string {
+  if (!Object.hasOwn(VISIBILITY_LABEL, visibility)) {
+    throw new Error(`SectionHeader: unknown visibility "${visibility}".`);
+  }
+  if (visibility !== "released") return VISIBILITY_LABEL[visibility];
+  if (!release || !Number.isInteger(release.version) || release.version < 1) {
+    throw new Error(
+      'SectionHeader: "released" needs the released version (a whole number from 1) and its date.',
+    );
+  }
+  return `${VISIBILITY_LABEL.released}: v${release.version}, ${releaseDateText(release.releasedAt)}`;
+}
+
 export function SectionHeader({
+  section,
   title,
   purpose,
   canDo,
   visibility,
+  release,
 }: {
+  section: SectionKey;
   title: string;
   purpose: string;
   /** One to three short bullets (plan v2, rule 2). */
   canDo: readonly string[];
   visibility: Visibility;
+  /** Required when `visibility` is "released": what the client can see now. */
+  release?: { version: number; releasedAt: string };
 }): JSX.Element {
+  if (isAdminOnlySection(section) && visibility !== "internal") {
+    throw new Error(
+      `SectionHeader: the admin-only section "${section}" can only be labelled "internal", not "${visibility}".`,
+    );
+  }
+  const label = visibilityText(visibility, release);
   if (canDo.length < 1 || canDo.length > 3) {
     throw new Error(
       `SectionHeader "${title}": "What you can do here" takes one to three bullets (plan v2, rule 2), got ${canDo.length}.`,
@@ -58,7 +127,7 @@ export function SectionHeader({
             VISIBILITY_CLASS[visibility]
           }
         >
-          {VISIBILITY_LABEL[visibility]}
+          {label}
         </span>
       </div>
       <dl className="grid grid-cols-1 gap-x-4 gap-y-1 text-sm sm:grid-cols-[max-content_1fr]">

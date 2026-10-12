@@ -9,11 +9,11 @@ import type { JSX } from "react";
  *
  * The labels and their order are Gene's, verbatim (plan v2, #736
  * issuecomment-6116093149). Recommendations is the link text alone; its
- * admin-only marker is a separate "KENTRO ADMIN ONLY" badge beside it, and the
- * nav is named "Service sections" (both rulings, #736
- * issuecomment-6116092992). The URLs are NOT decided here: the caller supplies
- * `hrefFor`, so the route shape is chosen by the page that mounts this (the
- * Tech Debt pilot), not by the shared piece.
+ * admin-only marker is a separate "KENTRO ADMIN ONLY" badge BESIDE the link,
+ * outside it, so it is not part of the link's name. The nav is named "Service
+ * sections" (both rulings, #736 issuecomment-6116092992). The URLs are NOT
+ * decided here: the caller supplies `hrefFor`, so the route shape is chosen by
+ * the page that mounts this (the Tech Debt pilot), not by the shared piece.
  */
 export const SECTIONS = [
   { key: "overview", label: "Overview", adminOnly: false },
@@ -33,6 +33,11 @@ export const SECTIONS = [
 
 export type SectionKey = (typeof SECTIONS)[number]["key"];
 
+/** Whether `key` is a KENTRO ADMIN ONLY section (only Recommendations, today). */
+export function isAdminOnlySection(key: SectionKey): boolean {
+  return SECTIONS.some((s) => s.key === key && s.adminOnly);
+}
+
 export function SectionBar({
   current,
   hrefFor,
@@ -43,7 +48,22 @@ export function SectionBar({
   /** Sections this service does not have, e.g. CSF and ZT fold Inputs into AI draft. */
   omit?: readonly SectionKey[];
 }): JSX.Element {
-  const shown = SECTIONS.filter((s) => !omit.includes(s.key));
+  // `current` is always one of the nine keys, so this one check also refuses
+  // omitting every section: that omits the current one too.
+  if (omit.includes(current)) {
+    throw new Error(
+      `SectionBar: the current section "${current}" is omitted, so no link could be marked current.`,
+    );
+  }
+  const shown = SECTIONS.filter((s) => !omit.includes(s.key)).map((s) => {
+    const href = hrefFor(s.key);
+    if (!href) {
+      throw new Error(
+        `SectionBar: hrefFor("${s.key}") returned an empty href; every section needs its own URL.`,
+      );
+    }
+    return { ...s, href };
+  });
   return (
     <nav
       aria-label="Service sections"
@@ -53,9 +73,9 @@ export function SectionBar({
         {shown.map((section) => {
           const active = section.key === current;
           return (
-            <li key={section.key}>
+            <li key={section.key} className="flex items-center">
               <Link
-                href={hrefFor(section.key)}
+                href={section.href}
                 aria-current={active ? "page" : undefined}
                 className={
                   "inline-block border-b-2 px-3 py-2 text-sm font-medium " +
@@ -64,16 +84,16 @@ export function SectionBar({
                     : "border-transparent text-ink-secondary hover:text-ink-primary")
                 }
               >
-                <span data-section-label>{section.label}</span>
-                {section.adminOnly ? (
-                  <span
-                    data-admin-badge
-                    className="ml-2 rounded-sm bg-status-warning-fg px-1.5 py-0.5 text-xs font-bold text-ink-on-accent"
-                  >
-                    KENTRO ADMIN ONLY
-                  </span>
-                ) : null}
+                {section.label}
               </Link>
+              {section.adminOnly ? (
+                <span
+                  data-admin-badge
+                  className="rounded-sm bg-status-warning-fg px-1.5 py-0.5 text-xs font-bold text-ink-on-accent"
+                >
+                  KENTRO ADMIN ONLY
+                </span>
+              ) : null}
             </li>
           );
         })}

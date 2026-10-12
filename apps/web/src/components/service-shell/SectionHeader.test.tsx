@@ -1,8 +1,9 @@
 import "@testing-library/jest-dom/vitest";
 
 import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import type { SectionKey } from "./SectionBar";
 import { SectionHeader, type Visibility } from "./SectionHeader";
 
 // Gene's verbatim copy, written out here as the spec. Plan v2 rules 2 and 6
@@ -17,12 +18,22 @@ const VISIBILITY: Record<Visibility, string> = {
   released: "Released to client",
 };
 
+// The advisor's format for the released label (#736, issuecomment-6116519635):
+// "Released to client: v{n}, {d Mon yyyy}".
+const RELEASE = { version: 2, releasedAt: "2026-10-12T15:00:00Z" };
+const RELEASED_TEXT = "Released to client: v2, 12 Oct 2026";
+
 function renderHeader(
   visibility: Visibility = "internal",
   canDo: string[] = ["DO-ONE", "DO-TWO"],
+  section: SectionKey = "overview",
+  // null: no release at all (undefined would take the default).
+  release: { version: number; releasedAt: string } | null = RELEASE,
 ) {
   return render(
     <SectionHeader
+      section={section}
+      release={release ?? undefined}
       title="Overview"
       purpose="PURPOSE-TEXT"
       canDo={canDo}
@@ -75,10 +86,94 @@ describe("SectionHeader (for #1087)", () => {
     (visibility, label) => {
       renderHeader(visibility);
       const badge = screen.getByTestId("section-visibility");
-      expect(badge.textContent).toBe(label);
+      expect(badge.textContent).toBe(
+        visibility === "released" ? RELEASED_TEXT : label,
+      );
       for (const other of Object.values(VISIBILITY)) {
         if (other !== label) expect(screen.queryByText(other)).toBeNull();
       }
     },
   );
+});
+
+describe("SectionHeader refuses a label it cannot honour (for #1087)", () => {
+  it.each(["client-preview", "released"] as Visibility[])(
+    "refuses %s on the admin-only Recommendations section",
+    (visibility) => {
+      expect(() =>
+        renderHeader(visibility, ["DO-ONE"], "recommendations"),
+      ).toThrow(/admin-only section "recommendations".*"internal"/);
+    },
+  );
+
+  it("accepts internal on Recommendations, and any visibility elsewhere", () => {
+    renderHeader("internal", ["DO-ONE"], "recommendations");
+    expect(screen.getByTestId("section-visibility").textContent).toBe(
+      "Internal only",
+    );
+  });
+
+  it("refuses an unknown visibility rather than rendering a blank pill", () => {
+    expect(() => renderHeader("public" as unknown as Visibility)).toThrow(
+      /unknown visibility "public"/,
+    );
+  });
+
+  it("styles client preview with the info border token", () => {
+    renderHeader("client-preview");
+    expect(screen.getByTestId("section-visibility").className).toContain(
+      "border-status-info-border",
+    );
+  });
+});
+
+describe("SectionHeader's released label (for #1087)", () => {
+  // Run in a zone west of UTC, so a date read in the viewer's local time would
+  // differ from the UTC date the label must show.
+  let savedTz: string | undefined;
+  beforeEach(() => {
+    savedTz = process.env.TZ;
+    process.env.TZ = "America/New_York";
+  });
+  afterEach(() => {
+    if (savedTz === undefined) delete process.env.TZ;
+    else process.env.TZ = savedTz;
+  });
+
+  it.each([
+    ["2026-10-12T15:00:00Z", 2, "Released to client: v2, 12 Oct 2026"],
+    // An instant, shown in UTC: late evening west of UTC is the next UTC day.
+    ["2026-10-12T23:30:00-05:00", 3, "Released to client: v3, 13 Oct 2026"],
+    // Three-letter months always: en-GB Intl would write "Sept".
+    ["2026-09-01T00:00:00Z", 1, "Released to client: v1, 1 Sep 2026"],
+  ])("formats %s, v%s as %s", (releasedAt, version, text) => {
+    renderHeader("released", ["DO-ONE"], "overview", { version, releasedAt });
+    expect(screen.getByTestId("section-visibility").textContent).toBe(text);
+  });
+
+  it.each([
+    ["no release", null],
+    ["version 0", { version: 0, releasedAt: "2026-10-12T00:00:00Z" }],
+    ["version 1.5", { version: 1.5, releasedAt: "2026-10-12T00:00:00Z" }],
+  ])("refuses %s", (_name, release) => {
+    expect(() =>
+      renderHeader("released", ["DO-ONE"], "overview", release),
+    ).toThrow(/needs the released version/);
+  });
+
+  it("refuses an unparseable release date", () => {
+    expect(() =>
+      renderHeader("released", ["DO-ONE"], "overview", {
+        version: 2,
+        releasedAt: "not a date",
+      }),
+    ).toThrow(/not a parseable instant/);
+  });
+
+  it("ignores the release on a non-released label", () => {
+    renderHeader("client-preview");
+    expect(screen.getByTestId("section-visibility").textContent).toBe(
+      "Client preview",
+    );
+  });
 });
