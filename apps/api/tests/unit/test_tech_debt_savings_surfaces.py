@@ -91,6 +91,8 @@ def released(app_client):  # noqa: F811
 
 def test_the_deliverable_states_the_savings(released) -> None:
     assert "$600,000 estimated annual savings" in released["summary"], released["summary"]
+    # Exact, not a floor: "≥ $600,000 ..." also contains the phrase above.
+    assert "≥" not in released["summary"], released["summary"]
 
 
 def test_the_plan_card_states_the_savings(released) -> None:
