@@ -57,6 +57,19 @@ def test_save_adds_https_when_no_scheme(app_client, typed, stored) -> None:  # n
         ("https://kentro.com", "https://kentro.com/"),
         ("http://kentro.com", "http://kentro.com/"),
         ("HTTPS://kentro.com", "https://kentro.com/"),
+        # An "@" after the host is a path or query, with or without a scheme.
+        ("https://medium.com/@kentro", "https://medium.com/@kentro"),
+        ("https://kentro.com/?ref=a@b.com", "https://kentro.com/?ref=a@b.com"),
+        # A scheme typed with one slash, a backslash or none: HttpUrl repairs
+        # these to the host meant, as it did before IN-1 (plain HttpUrl on
+        # main gives the same result). The prefix must not turn the host
+        # into "https" (review of #1092, round 3).
+        ("https:/kentro.com", "https://kentro.com/"),
+        ("https:\\kentro.com", "https://kentro.com/"),
+        ("https:kentro.com", "https://kentro.com/"),
+        # HttpUrl reads a backslash after the host as a path separator, so
+        # this "@" is in the path and the host stays kentro.com.
+        ("https://kentro.com\\@evil.com", "https://kentro.com/@evil.com"),
     ],
 )
 def test_save_keeps_a_scheme_the_client_typed(app_client, typed, stored) -> None:  # noqa: F811
@@ -84,6 +97,42 @@ def test_save_does_not_prefix_a_value_with_an_at_sign(app_client, typed) -> None
     # prefix made "https://mailto:a@b.com/", a URL with userinfo "mailto:a"
     # on host b.com, and stored it. A schemeless value with "@" is left for
     # HttpUrl, which refuses it.
+    client, _ = app_client
+    bearer = _register_and_bearer(client)
+    r = _patch_website(client, bearer, typed)
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["reason"].startswith("schema_")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "typed",
+    ["https//kentro.com", "HTTP//kentro.com", "https//kentro.com/about"],
+)
+def test_save_refuses_a_mistyped_scheme(app_client, typed) -> None:  # noqa: F811
+    # Review of #1092, round 3: these were 422 before IN-1. A blind prefix made
+    # "https://https//kentro.com", a URL whose host is "https", and the wizard
+    # said Saved. An attempted scheme is left for HttpUrl, which refuses these.
+    client, _ = app_client
+    bearer = _register_and_bearer(client)
+    r = _patch_website(client, bearer, typed)
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["reason"].startswith("schema_")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "typed",
+    [
+        "https://kentro.com@evil.com",
+        "https://user:pass@kentro.com",
+        "http://kentro.com@evil.com/path",
+    ],
+)
+def test_save_refuses_userinfo_on_a_scheme_bearing_website(app_client, typed) -> None:  # noqa: F811
+    # Review of #1092, round 3: "https://kentro.com@evil.com" was accepted with
+    # host evil.com (pre-existing, before IN-1). The "@" rule now applies to the
+    # authority of a value that names its scheme too.
     client, _ = app_client
     bearer = _register_and_bearer(client)
     r = _patch_website(client, bearer, typed)

@@ -26,6 +26,12 @@ from app.schemas._numeric import IntNotBool
 
 # A URL scheme, RFC 3986 section 3.1, followed by "://".
 _HAS_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+# A value that already names a scheme, even one typed wrong ("https:/",
+# "https:\\", "https:", "https//"). Prefixing it makes a URL whose host is
+# "https" (review of #1092, round 3), so it goes to `HttpUrl` as typed, which
+# repairs the first three to the host the client meant and refuses the last.
+# A colon followed by a digit is a port ("example.com:8080"), not a scheme.
+_ATTEMPTED_SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*:(?![0-9])|^https?//", re.IGNORECASE)
 
 
 def _authority(value: str) -> str:
@@ -60,9 +66,25 @@ class ClientProfilePatch(BaseModel):
         if not isinstance(value, str):
             return value
         stripped = value.strip()
-        if stripped and "@" not in _authority(stripped) and not _HAS_SCHEME.match(stripped):
+        if (
+            stripped
+            and "@" not in _authority(stripped)
+            and not _HAS_SCHEME.match(stripped)
+            and not _ATTEMPTED_SCHEME.match(stripped)
+        ):
             return f"https://{stripped}"
         return stripped
+
+    @field_validator("website", mode="after")
+    @classmethod
+    def _website_has_no_userinfo(cls, value: HttpUrl | None) -> HttpUrl | None:
+        """Review of #1092, round 3: "https://kentro.com@evil.com" parses with
+        host evil.com, and "https://user:pass@kentro.com" stores a password.
+        Asked of the parsed URL, so it agrees with `HttpUrl` about where the
+        authority ends, rather than re-deriving it."""
+        if value is not None and (value.username is not None or value.password is not None):
+            raise ValueError("A website address cannot contain a user name or password.")
+        return value
 
     size_band: str | None = Field(default=None, max_length=64)
     industry: str | None = Field(default=None, max_length=128)
