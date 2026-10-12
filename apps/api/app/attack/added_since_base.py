@@ -48,7 +48,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.models.capability import CapabilityListStatus
@@ -96,6 +96,12 @@ class ListVersion:
     rows: tuple[DraftRow, ...]
 
 
+#: The approve route stamps `approved_at` and writes its audit row in ONE
+#: transaction, a few milliseconds apart (`approved_at` first). A gap wider
+#: than this is two different approvals, not one.
+_SAME_APPROVAL = timedelta(minutes=1)
+
+
 class _Unknown(Exception):
     """A step that could decide the basis is not on record."""
 
@@ -107,7 +113,13 @@ def _approved_by(v: ListVersion, at: datetime) -> bool:
     if v.status not in _APPROVED_STATUSES:
         return False
     if v.approvals:
-        return min(_aware(t) for t in v.approvals) <= at
+        first = min(_aware(t) for t in v.approvals)
+        if v.approved_at is not None and _aware(v.approved_at) < first - _SAME_APPROVAL:
+            # `approved_at` is the LAST approval, so it cannot precede the
+            # first audited one: an approval is missing from the trail, and
+            # the first approval may be the missing one.
+            raise _Unknown(f"version {v.version}: approval trail is incomplete")
+        return first <= at
     if v.approved_at is not None and _aware(v.approved_at) <= at:
         return True  # the last approval was by then, so the first was too
     raise _Unknown(f"version {v.version}: no record of when it was first approved")

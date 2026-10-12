@@ -76,6 +76,14 @@ def _v1_approved_before_the_base(w: World) -> uuid.UUID:
     """v1 approved through the route, then its upload, rows and approval
     placed an hour before the base's approval."""
     v1 = _v1_id(w)
+    _approve_before_the_base(w, v1)
+    return v1
+
+
+def _approve_before_the_base(w: World, list_id: uuid.UUID) -> None:
+    """Approve `list_id` through the route, then place its upload, rows and
+    approval an hour before the base's approval."""
+    v1 = list_id
     _approve(w, v1)
     with w.sessions() as db:
         base_at = db.get(AttackAssessment, uuid.UUID(w.assessment_id)).approved_at
@@ -100,7 +108,6 @@ def _v1_approved_before_the_base(w: World) -> uuid.UUID:
         ).rowcount
         assert moved == 1, moved  # the route wrote exactly one approval
         db.commit()
-    return v1
 
 
 def _re_extracted_v2(w: World, names: list[str]) -> uuid.UUID:
@@ -213,3 +220,55 @@ def test_a_draft_at_the_base_approved_since_is_judged_as_the_draft_it_was(
     assert body["tools_added_since_base"] == 1, body["tools_added_since_base"]
     marks = {d["technique_code"]: d["credited_added_tool"] for d in body["differences"]}
     assert marks[w.cc] is True and marks[w.a] is False, marks
+
+
+def test_an_uncited_tool_in_the_approved_snapshot_is_not_added(app_parts) -> None:  # noqa: F811
+    """MAIL is in v1's approved snapshot, which was in force at the base, and
+    no base row cites it. Re-extracted into v2, it is not new: only the
+    snapshot can say the base had it."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    with w.sessions() as db:
+        db.add(CapabilityItem(capability_list_id=_v1_id(w), name=MAIL))
+        db.commit()
+    _v1_approved_before_the_base(w)
+    with w.sessions() as db:
+        snapshot = db.get(CapabilityList, _v1_id(w)).approved_membership
+    assert MAIL in {e["name"] for e in snapshot}, snapshot
+    _re_extracted_v2(w, [EDR, SIEM, SOAR, MAIL])
+    body = _what_if(w, {w.cc: [_flags(w.cc, MAIL, d=True)]})
+    assert body["tools_added_since_base"] == 0, body["tools_added_since_base"]
+    assert all(d["credited_added_tool"] is False for d in body["differences"])
+
+
+def test_a_pre_0043_list_in_force_at_the_base_reads_null(app_parts) -> None:  # noqa: F811
+    """The shape migration 0043 left on lists approved before it: approved,
+    with `approved_at` and its approval on record, membership NULL. In force
+    at the base, its membership then cannot be read: null, and the run
+    still completes."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    v1 = _v1_approved_before_the_base(w)
+    with w.sessions() as db:
+        db.execute(
+            update(CapabilityList).where(CapabilityList.id == v1).values(approved_membership=None)
+        )
+        db.commit()
+    body = _what_if(w, {w.cc: [_flags(w.cc, SIEM, d=True)]})
+    assert body["run_status"] == "completed", body["run_status"]
+    assert body["after"] is not None
+    assert body["tools_added_since_base"] is None, body["tools_added_since_base"]
+
+
+def test_an_approval_missing_from_the_trail_reads_null(app_parts) -> None:  # noqa: F811
+    """`approved_at` (the LAST approval) a day before the only audited one:
+    an earlier approval is missing from the audit trail, so when the list was
+    first approved is not on record. Null, never a reading of the partial
+    trail."""
+    w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
+    v1 = _v1_approved_before_the_base(w)
+    with w.sessions() as db:
+        cl = db.get(CapabilityList, v1)
+        cl.approved_at = cl.approved_at - timedelta(days=1)
+        db.commit()
+    body = _what_if(w, {w.cc: [_flags(w.cc, SIEM, d=True)]})
+    assert body["run_status"] == "completed", body["run_status"]
+    assert body["tools_added_since_base"] is None, body["tools_added_since_base"]

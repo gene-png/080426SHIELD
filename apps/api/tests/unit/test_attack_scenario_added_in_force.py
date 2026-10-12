@@ -15,16 +15,12 @@ membership, the base approved, finalized and released.
 
 from __future__ import annotations
 
-import uuid
-from datetime import timedelta
-
 import pytest
 from sqlalchemy import select
 
-from app.models.attack_assessment import AttackAssessment
 from app.models.capability import CapabilityItem, CapabilityList, CapabilityListStatus
-from app.routes.tech_debt import build_approved_membership
 from tests.unit.test_ai_runs_attack import app_parts  # noqa: F401  (fixture)
+from tests.unit.test_attack_scenario_added_basis import _approve_before_the_base
 from tests.unit.test_attack_scenario_routes import (
     EDR,
     SIEM,
@@ -39,34 +35,23 @@ pytestmark = pytest.mark.unit
 
 
 def _approved_v2_uploaded_before_the_base(w: World) -> None:
-    """v2 of the same Tech Debt service, holding the same tools, uploaded and
-    approved BEFORE the base with its membership recorded (post-0043): the
-    version in force at the base. The same tools are offered now, so none
-    was added."""
+    """v2 of the same Tech Debt service, holding the same tools, approved
+    through the approve route (membership recorded, post-0043) and placed
+    before the base: the version in force at the base. The same tools are
+    offered now, so none was added."""
     with w.sessions() as db:
-        base_at = db.get(AttackAssessment, uuid.UUID(w.assessment_id)).approved_at
         v1 = db.execute(select(CapabilityList)).scalars().one()
-        v2 = CapabilityList(
-            service_id=v1.service_id,
-            version=2,
-            status=CapabilityListStatus.APPROVED,
-            created_at=base_at - timedelta(days=1),
-            approved_at=base_at - timedelta(hours=12),
-        )
+        v2 = CapabilityList(service_id=v1.service_id, version=2, status=CapabilityListStatus.DRAFT)
         db.add(v2)
         db.flush()
         for name in (EDR, SIEM, SOAR):
-            db.add(
-                CapabilityItem(
-                    capability_list_id=v2.id,
-                    name=name,
-                    created_at=base_at - timedelta(days=1),
-                )
-            )
-        db.flush()
-        v2.approved_membership = build_approved_membership(db, v2.id)
+            db.add(CapabilityItem(capability_list_id=v2.id, name=name))
         db.commit()
-        assert sorted(e["name"] for e in v2.approved_membership) == sorted([EDR, SIEM, SOAR])
+        v2_id = v2.id
+    _approve_before_the_base(w, v2_id)
+    with w.sessions() as db:
+        snapshot = db.get(CapabilityList, v2_id).approved_membership
+    assert sorted(e["name"] for e in snapshot) == sorted([EDR, SIEM, SOAR])
 
 
 def test_a_superseded_pre_0043_version_does_not_make_the_check_unknowable(
