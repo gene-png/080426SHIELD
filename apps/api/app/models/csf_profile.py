@@ -9,6 +9,7 @@ math (total/level/evidence-cap/weighted-floor roll-up) is `app/csf/playbook.py`.
 
 from __future__ import annotations
 
+import enum
 import uuid
 
 from sqlalchemy import (
@@ -19,10 +20,21 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 from app.models._common import TimestampMixin, UUIDPKMixin
+
+
+class CsfEvidenceBasis(enum.StrEnum):
+    """Where a Working Profile row's evidence comes from (design note rev 4,
+    section 5, the Q9 grace; migration 0068). Stored as the member NAME."""
+
+    #: The manual `has_evidence` tick, frozen as it stood before linking.
+    MANUAL_FROZEN = "manual_frozen"
+    #: Confirmed `evidence_links` rows.
+    LINKED = "linked"
 
 
 class CsfDimensionScore(UUIDPKMixin, TimestampMixin, Base):
@@ -75,6 +87,14 @@ class CsfDimensionScore(UUIDPKMixin, TimestampMixin, Base):
     # still populate an empty Playbook. "Has a value" cannot serve here: every
     # dimension is NOT NULL DEFAULT 0, and 0 is a legitimate score.
     answer_source: Mapped[str | None] = mapped_column(String(16))
+
+    # Migration 0068. NULL on every row: the column lands with NO backfill,
+    # because the Q9 grace rule that decides it is still Gene's call. NULL is
+    # "not decided", never either value. NOTHING READS IT FOR SCORING:
+    # `score_tier`'s evidence cap still reads `has_evidence` alone.
+    evidence_basis: Mapped[CsfEvidenceBasis | None] = mapped_column(
+        SAEnum(CsfEvidenceBasis, name="csf_evidence_basis", native_enum=False, length=16)
+    )
 
 
 class CsfGapAction(UUIDPKMixin, TimestampMixin, Base):

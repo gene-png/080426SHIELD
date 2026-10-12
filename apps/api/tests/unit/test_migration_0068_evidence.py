@@ -1,0 +1,593 @@
+"""Migration 0068 and its models: the evidence fields on `artifacts`, the
+`evidence_links` table, and `csf_dimension_scores.evidence_basis` (N5, design
+note rev 4, sections 5 and 10.1).
+
+Additive: nullable columns and one new table, nothing backfilled. The
+downgrade REFUSES while any row records something 0068 added.
+
+The constraint tests write by raw SQL with SQLite foreign keys switched ON.
+The expected names, stored spellings and vocabularies are typed here from the
+design note and the repo's enum convention, never imported from the code under
+test.
+"""
+
+from __future__ import annotations
+
+import re
+import shutil
+import uuid
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+import sqlalchemy as sa
+from alembic import command
+from alembic.config import Config
+from sqlalchemy.orm import Session
+
+from app.models import (
+    Artifact,
+    ArtifactDocStatus,
+    ArtifactOrigin,
+    Client,
+    CsfAssessment,
+    CsfDimensionScore,
+    CsfEvidenceBasis,
+    EvidenceLink,
+    EvidenceLinkStatus,
+    EvidenceTargetKind,
+    Service,
+    ServiceKind,
+    User,
+    UserRole,
+)
+
+pytestmark = pytest.mark.unit
+
+API_ROOT = Path(__file__).resolve().parents[2]
+NOW = "2026-10-12 00:00:00"
+ARTIFACT_COLUMNS = {"description", "doc_status", "doc_status_set_by", "doc_status_set_at"}
+
+
+def _cfg(url: str) -> Config:
+    cfg = Config(str(API_ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(API_ROOT / "alembic"))
+    cfg.set_main_option("sqlalchemy.url", url)
+    return cfg
+
+
+def _engine(url: str) -> sa.Engine:
+    engine = sa.create_engine(url, future=True)
+
+    @sa.event.listens_for(engine, "connect")
+    def _fk_on(dbapi_conn, _record) -> None:  # noqa: ANN001
+        dbapi_conn.execute("PRAGMA foreign_keys=ON")
+
+    return engine
+
+
+#: One database migrated to 0067, built once per session and copied per test.
+_TEMPLATE: dict[str, Path] = {}
+
+
+@pytest.fixture(autouse=True)
+def _template_0067(tmp_path_factory) -> None:
+    if "0067" not in _TEMPLATE:
+        path = tmp_path_factory.mktemp("tpl0068") / "0067.db"
+        command.upgrade(_cfg(f"sqlite:///{path}"), "0067")
+        _TEMPLATE["0067"] = path
+
+
+def _at(tmp_path, name: str, revision: str = "0068") -> tuple[str, sa.Engine]:
+    target = tmp_path / name
+    shutil.copyfile(_TEMPLATE["0067"], target)
+    url = f"sqlite:///{target}"
+    command.upgrade(_cfg(url), revision)
+    return url, _engine(url)
+
+
+def _columns(engine: sa.Engine, table: str) -> set[str]:
+    return {c["name"] for c in sa.inspect(engine).get_columns(table)}
+
+
+def _parents(engine: sa.Engine) -> dict[str, str]:
+    """A client, a user, an artifact and a Working Profile row, by raw SQL, in
+    the shape every pre-0068 row has: none of the 0068 columns named."""
+    ids = {
+        k: str(uuid.uuid4())
+        for k in ("client", "user", "service", "artifact", "assessment", "score")
+    }
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text("INSERT INTO client (id, created_at, updated_at) VALUES (:id, :n, :n)"),
+            {"id": ids["client"], "n": NOW},
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO users (id, email, password_hash, role, timezone, is_active, "
+                "mfa_enrolled, failed_login_count, created_at, updated_at) VALUES "
+                "(:id, :e, 'x', 'CLIENT', 'UTC', 1, 0, 0, :n, :n)"
+            ),
+            {"id": ids["user"], "e": f"{ids['user']}@atlas.example", "n": NOW},
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO artifacts (id, client_id, title, file_storage_key, mime_type, "
+                "size_bytes, sha256, origin, stage, uploaded_by, uploaded_at, notes, "
+                "created_at, updated_at) VALUES (:id, :c, 'policy.pdf', 'k/policy.pdf', "
+                "'application/pdf', 1234, :sha, 'CLIENT_UPLOAD', 'intake', :u, :n, "
+                "'older note', :n, :n)"
+            ),
+            {
+                "id": ids["artifact"],
+                "c": ids["client"],
+                "sha": "a" * 64,
+                "u": ids["user"],
+                "n": NOW,
+            },
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO services (id, kind, status, title, opened_by, client_id, "
+                "created_at, updated_at) VALUES "
+                "(:id, 'NIST_CSF', 'DRAFT', 'CSF', :u, :c, :n, :n)"
+            ),
+            {"id": ids["service"], "u": ids["user"], "c": ids["client"], "n": NOW},
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO csf_assessments (id, service_id, client_id, version, status, "
+                "documents_stale, created_at, updated_at) VALUES "
+                "(:id, :s, :c, 1, 'DRAFT', 0, :n, :n)"
+            ),
+            {"id": ids["assessment"], "s": ids["service"], "c": ids["client"], "n": NOW},
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO csf_dimension_scores (id, assessment_id, client_id, tier, "
+                "subcategory_code, governance, policy, implementation, monitoring, "
+                "improvement, in_scope, has_evidence, evidence_artifact_id, locked, "
+                "answer_source, created_at, updated_at) VALUES (:id, :a, :c, 'moderate', "
+                "'GV.OC-01', 2, 1, 2, 0, 1, 1, 1, :art, 0, 'consultant', :n, :n)"
+            ),
+            {
+                "id": ids["score"],
+                "a": ids["assessment"],
+                "c": ids["client"],
+                "art": ids["artifact"],
+                "n": NOW,
+            },
+        )
+    return ids
+
+
+_LINK = sa.text(
+    "INSERT INTO evidence_links (id, client_id, artifact_id, assessment_id, target_kind, "
+    "target_code, tier, supports, status, origin, created_at, updated_at) VALUES "
+    "(:id, :c, :art, :a, :kind, :code, :tier, '[]', 'SUGGESTED', 'ai', :n, :n)"
+)
+
+
+def _link(conn, p: dict[str, str], kind: str, code: str, tier: str | None, **over: str) -> None:
+    conn.execute(
+        _LINK,
+        {
+            "id": str(uuid.uuid4()),
+            "c": p["client"],
+            "art": over.get("artifact", p["artifact"]),
+            "a": over.get("assessment", p["assessment"]),
+            "kind": kind,
+            "code": code,
+            "tier": tier,
+            "n": NOW,
+        },
+    )
+
+
+# --- upgrade / downgrade ------------------------------------------------------------
+
+
+def test_0068_adds_its_columns_and_table_and_removes_them_when_empty(tmp_path) -> None:
+    url, engine = _at(tmp_path, "m0068.db", "0067")
+    assert not ARTIFACT_COLUMNS & _columns(engine, "artifacts")
+    assert "evidence_basis" not in _columns(engine, "csf_dimension_scores")
+    assert "evidence_links" not in sa.inspect(engine).get_table_names()
+
+    command.upgrade(_cfg(url), "0068")
+    assert _columns(engine, "artifacts") >= ARTIFACT_COLUMNS
+    assert "evidence_basis" in _columns(engine, "csf_dimension_scores")
+    assert _columns(engine, "evidence_links") >= {
+        "client_id",
+        "artifact_id",
+        "assessment_id",
+        "target_kind",
+        "target_code",
+        "tier",
+        "supports",
+        "status",
+        "origin",
+        "suggested_by_run_id",
+        "quote",
+        "confirmed_by",
+        "confirmed_at",
+    }
+    nullable = {c["name"]: c["nullable"] for c in sa.inspect(engine).get_columns("artifacts")}
+    assert all(nullable[c] for c in ARTIFACT_COLUMNS), nullable
+    basis = next(
+        c
+        for c in sa.inspect(engine).get_columns("csf_dimension_scores")
+        if c["name"] == "evidence_basis"
+    )
+    assert basis["nullable"] is True
+
+    command.downgrade(_cfg(url), "0067")
+    assert not ARTIFACT_COLUMNS & _columns(engine, "artifacts")
+    assert "evidence_basis" not in _columns(engine, "csf_dimension_scores")
+    assert "evidence_links" not in sa.inspect(engine).get_table_names()
+    command.upgrade(_cfg(url), "0068")
+    assert _columns(engine, "artifacts") >= ARTIFACT_COLUMNS
+
+
+def test_a_pre_0068_artifact_and_profile_row_read_unchanged(tmp_path) -> None:
+    url, engine = _at(tmp_path, "m0068-older.db", "0067")
+    p = _parents(engine)
+    with engine.connect() as conn:
+        before_art = conn.execute(sa.text("SELECT * FROM artifacts")).mappings().one()
+        before_score = conn.execute(sa.text("SELECT * FROM csf_dimension_scores")).mappings().one()
+
+    command.upgrade(_cfg(url), "0068")
+    with engine.connect() as conn:
+        after_art = conn.execute(sa.text("SELECT * FROM artifacts")).mappings().one()
+        after_score = conn.execute(sa.text("SELECT * FROM csf_dimension_scores")).mappings().one()
+    # Every column the row had is byte-identical, and every new one is NULL:
+    # nothing was backfilled.
+    assert {k: after_art[k] for k in before_art} == dict(before_art)
+    assert {k: after_art[k] for k in ARTIFACT_COLUMNS} == dict.fromkeys(ARTIFACT_COLUMNS)
+    assert {k: after_score[k] for k in before_score} == dict(before_score)
+    assert after_score["evidence_basis"] is None
+
+    # And through the models the app uses.
+    with Session(_engine(url)) as db:
+        art = db.execute(sa.select(Artifact)).scalar_one()
+        assert str(art.id) == p["artifact"]
+        assert art.title == "policy.pdf"
+        assert art.origin is ArtifactOrigin.CLIENT_UPLOAD
+        assert art.notes == "older note"
+        assert art.description is None
+        assert art.doc_status is None
+        assert art.doc_status_set_by is None and art.doc_status_set_at is None
+        score = db.execute(sa.select(CsfDimensionScore)).scalar_one()
+        assert (score.governance, score.policy, score.implementation) == (2, 1, 2)
+        assert score.has_evidence is True
+        assert str(score.evidence_artifact_id) == p["artifact"]
+        assert score.evidence_basis is None
+
+
+@pytest.mark.parametrize(
+    ("what", "write", "message"),
+    [
+        ("link", "LINK", "1 evidence links"),
+        ("description", "UPDATE artifacts SET description = 'x'", "1 artifacts with a"),
+        ("doc_status", "UPDATE artifacts SET doc_status = 'DRAFT'", "1 artifacts with a"),
+        (
+            "doc_status_set_at",
+            "UPDATE artifacts SET doc_status_set_at = '2026-10-12 00:00:00'",
+            "1 artifacts with a",
+        ),
+        (
+            "evidence_basis",
+            "UPDATE csf_dimension_scores SET evidence_basis = 'LINKED'",
+            "1 Working Profile rows with an evidence basis",
+        ),
+    ],
+)
+def test_0068_downgrade_refuses_while_anything_it_added_is_recorded(
+    tmp_path, what, write, message
+) -> None:
+    url, engine = _at(tmp_path, f"m0068-refuse-{what}.db")
+    p = _parents(engine)
+    with engine.begin() as conn:
+        if write == "LINK":
+            _link(conn, p, "ZT_CAPABILITY", "IDE.01", None)
+        else:
+            conn.execute(sa.text(write))
+    with pytest.raises(RuntimeError, match=f"Refusing to downgrade 0068: {message}"):
+        command.downgrade(_cfg(url), "0067")
+    assert "evidence_links" in sa.inspect(engine).get_table_names()
+
+
+# --- the tier CHECK -----------------------------------------------------------------
+
+
+def test_one_link_of_each_kind_in_the_right_shape_is_accepted(tmp_path) -> None:
+    _, engine = _at(tmp_path, "m0068-shape-ok.db")
+    p = _parents(engine)
+    with engine.begin() as conn:
+        _link(conn, p, "CSF_ROW", "GV.OC-01", "moderate")
+        _link(conn, p, "ZT_CAPABILITY", "IDE.01", None)
+        _link(conn, p, "ATTACK_TECHNIQUE", "T1003", None)
+        n = conn.execute(sa.text("SELECT COUNT(*) FROM evidence_links")).scalar_one()
+    assert n == 3
+
+
+@pytest.mark.parametrize(
+    ("kind", "code", "tier"),
+    [
+        ("CSF_ROW", "GV.OC-01", None),
+        ("ZT_CAPABILITY", "IDE.01", "moderate"),
+        ("ATTACK_TECHNIQUE", "T1003", "high"),
+    ],
+)
+def test_tier_check_refuses(tmp_path, kind, code, tier) -> None:
+    _, engine = _at(tmp_path, f"m0068-tier-{kind}.db")
+    p = _parents(engine)
+    with (
+        pytest.raises(sa.exc.IntegrityError, match="ck_evidence_links_tier_iff_csf_row"),
+        engine.begin() as conn,
+    ):
+        _link(conn, p, kind, code, tier)
+
+
+# --- the partial unique indexes -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("kind", "code", "tier"),
+    [
+        ("ZT_CAPABILITY", "IDE.01", None),
+        ("ATTACK_TECHNIQUE", "T1003", None),
+        ("CSF_ROW", "GV.OC-01", "moderate"),
+    ],
+)
+def test_a_duplicate_link_is_refused(tmp_path, kind, code, tier) -> None:
+    _, engine = _at(tmp_path, f"m0068-dup-{kind}.db")
+    p = _parents(engine)
+    with engine.begin() as conn:
+        _link(conn, p, kind, code, tier)
+    with pytest.raises(sa.exc.IntegrityError, match="UNIQUE"), engine.begin() as conn:
+        _link(conn, p, kind, code, tier)
+
+
+def test_links_differing_in_one_key_column_are_both_kept(tmp_path) -> None:
+    _, engine = _at(tmp_path, "m0068-distinct.db")
+    p = _parents(engine)
+    with engine.begin() as conn:
+        _link(conn, p, "CSF_ROW", "GV.OC-01", "moderate")
+        _link(conn, p, "CSF_ROW", "GV.OC-01", "high")
+        _link(conn, p, "CSF_ROW", "GV.OC-02", "moderate")
+        _link(conn, p, "ZT_CAPABILITY", "IDE.01", None)
+        _link(conn, p, "ZT_CAPABILITY", "IDE.01", None, assessment=str(uuid.uuid4()))
+        n = conn.execute(sa.text("SELECT COUNT(*) FROM evidence_links")).scalar_one()
+    assert n == 5
+
+
+def test_the_unique_indexes_are_partial_in_the_stored_schema(tmp_path) -> None:
+    _, engine = _at(tmp_path, "m0068-ddl.db")
+    with engine.connect() as conn:
+        ddl = dict(
+            conn.execute(
+                sa.text(
+                    "SELECT name, sql FROM sqlite_master WHERE type = 'index' "
+                    "AND tbl_name = 'evidence_links' AND name LIKE 'uq_%'"
+                )
+            ).all()
+        )
+    assert set(ddl) == {"uq_evidence_links_untiered", "uq_evidence_links_tiered"}
+    assert re.search(r"WHERE\s+tier IS NULL\s*$", ddl["uq_evidence_links_untiered"]), ddl
+    assert re.search(r"WHERE\s+tier IS NOT NULL\s*$", ddl["uq_evidence_links_tiered"]), ddl
+
+
+# --- NOT NULL and foreign keys ----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "column",
+    ["client_id", "artifact_id", "assessment_id", "target_kind", "target_code", "status", "origin"],
+)
+def test_required_link_column_refuses_null(tmp_path, column) -> None:
+    _, engine = _at(tmp_path, f"m0068-nn-{column}.db")
+    p = _parents(engine)
+    values = {
+        "id": str(uuid.uuid4()),
+        "client_id": p["client"],
+        "artifact_id": p["artifact"],
+        "assessment_id": p["assessment"],
+        "target_kind": "ZT_CAPABILITY",
+        "target_code": "IDE.01",
+        "status": "SUGGESTED",
+        "origin": "ai",
+        "created_at": NOW,
+        "updated_at": NOW,
+    }
+    table = sa.table("evidence_links", *map(sa.column, values))
+    with engine.begin() as conn:
+        conn.execute(table.insert().values(**values))
+    values = {**values, "id": str(uuid.uuid4()), "target_code": "IDE.02", column: None}
+    with pytest.raises(sa.exc.IntegrityError, match="NOT NULL"), engine.begin() as conn:
+        conn.execute(table.insert().values(**values))
+
+
+def test_foreign_keys_and_their_delete_rules(tmp_path) -> None:
+    _, engine = _at(tmp_path, "m0068-fk.db")
+    inspector = sa.inspect(engine)
+    links = {
+        fk["constrained_columns"][0]: (fk["referred_table"], fk["options"].get("ondelete"))
+        for fk in inspector.get_foreign_keys("evidence_links")
+    }
+    # No entry for assessment_id: three assessment tables, no single referent.
+    assert links == {
+        "client_id": ("client", "CASCADE"),
+        "artifact_id": ("artifacts", "CASCADE"),
+        "suggested_by_run_id": ("ai_runs", "SET NULL"),
+        "confirmed_by": ("users", "SET NULL"),
+    }
+    artifact_fks = {
+        fk["constrained_columns"][0]: (fk["referred_table"], fk["options"].get("ondelete"))
+        for fk in inspector.get_foreign_keys("artifacts")
+    }
+    assert artifact_fks["doc_status_set_by"] == ("users", "SET NULL")
+
+
+def test_a_link_to_a_missing_artifact_is_refused_and_deleting_one_takes_its_links(
+    tmp_path,
+) -> None:
+    _, engine = _at(tmp_path, "m0068-cascade.db")
+    p = _parents(engine)
+    with pytest.raises(sa.exc.IntegrityError, match="FOREIGN KEY"), engine.begin() as conn:
+        _link(conn, p, "ZT_CAPABILITY", "IDE.01", None, artifact=str(uuid.uuid4()))
+    with engine.begin() as conn:
+        _link(conn, p, "ZT_CAPABILITY", "IDE.01", None)
+        conn.execute(sa.text("DELETE FROM csf_dimension_scores"))
+        conn.execute(sa.text("DELETE FROM artifacts WHERE id = :a"), {"a": p["artifact"]})
+        n = conn.execute(sa.text("SELECT COUNT(*) FROM evidence_links")).scalar_one()
+    assert n == 0
+
+
+# --- ORM round trip -------------------------------------------------------------------
+
+
+def test_each_model_round_trips_and_stores_member_names(tmp_path) -> None:
+    url, engine = _at(tmp_path, "m0068-orm.db")
+    set_at = datetime(2026, 10, 12, 9, 30, tzinfo=UTC)
+    with Session(engine) as db:
+        client = Client()
+        db.add(client)
+        db.flush()
+        user = User(email="c@atlas.example", password_hash="x", role=UserRole.CLIENT)
+        db.add(user)
+        db.flush()
+        art = Artifact(
+            client_id=client.id,
+            title="policy.pdf",
+            file_storage_key="k",
+            mime_type="application/pdf",
+            size_bytes=1,
+            sha256="0" * 64,
+            origin=ArtifactOrigin.CLIENT_UPLOAD,
+            uploaded_by=user.id,
+            description="Our access control policy.",
+            doc_status=ArtifactDocStatus.NOT_SURE,
+            doc_status_set_by=user.id,
+            doc_status_set_at=set_at,
+        )
+        service = Service(
+            kind=ServiceKind.NIST_CSF, title="CSF", client_id=client.id, opened_by=user.id
+        )
+        db.add_all([art, service])
+        db.flush()
+        assessment = CsfAssessment(service_id=service.id, client_id=client.id)
+        db.add(assessment)
+        db.flush()
+        score = CsfDimensionScore(
+            assessment_id=assessment.id,
+            client_id=client.id,
+            tier="moderate",
+            subcategory_code="PR.AA-01",
+            evidence_basis=CsfEvidenceBasis.MANUAL_FROZEN,
+        )
+        csf = EvidenceLink(
+            client_id=client.id,
+            artifact_id=art.id,
+            assessment_id=score.assessment_id,
+            target_kind=EvidenceTargetKind.CSF_ROW,
+            target_code="PR.AA-01",
+            tier="moderate",
+            supports=["policy", "implementation"],
+            origin="ai",
+            quote="Access is reviewed quarterly.",
+        )
+        attack = EvidenceLink(
+            client_id=client.id,
+            artifact_id=art.id,
+            assessment_id=uuid.uuid4(),
+            target_kind=EvidenceTargetKind.ATTACK_TECHNIQUE,
+            target_code="T1003",
+            supports=["detect"],
+            status=EvidenceLinkStatus.CONFIRMED,
+            origin="consultant",
+            confirmed_by=user.id,
+            confirmed_at=set_at,
+        )
+        db.add_all([score, csf, attack])
+        db.commit()
+        ids = (art.id, score.id, csf.id, attack.id)
+
+    with Session(_engine(url)) as db:
+        art = db.get(Artifact, ids[0])
+        assert art.description == "Our access control policy."
+        assert art.doc_status is ArtifactDocStatus.NOT_SURE
+        assert art.doc_status_set_at.replace(tzinfo=UTC) == set_at
+        assert db.get(CsfDimensionScore, ids[1]).evidence_basis is CsfEvidenceBasis.MANUAL_FROZEN
+        csf = db.get(EvidenceLink, ids[2])
+        assert csf.status is EvidenceLinkStatus.SUGGESTED
+        assert (csf.target_kind, csf.target_code, csf.tier) == (
+            EvidenceTargetKind.CSF_ROW,
+            "PR.AA-01",
+            "moderate",
+        )
+        assert csf.supports == ["policy", "implementation"]
+        assert csf.quote == "Access is reviewed quarterly."
+        attack = db.get(EvidenceLink, ids[3])
+        assert attack.tier is None
+        assert attack.status is EvidenceLinkStatus.CONFIRMED
+        assert attack.origin == "consultant"
+
+    with engine.connect() as conn:
+        links = conn.execute(
+            sa.text("SELECT target_kind, status FROM evidence_links ORDER BY target_kind")
+        ).all()
+        doc_status = conn.execute(sa.text("SELECT doc_status FROM artifacts")).scalar_one()
+        basis = conn.execute(
+            sa.text("SELECT evidence_basis FROM csf_dimension_scores")
+        ).scalar_one()
+    # The repo's enum convention: the stored value is the member NAME.
+    assert [tuple(r) for r in links] == [
+        ("ATTACK_TECHNIQUE", "CONFIRMED"),
+        ("CSF_ROW", "SUGGESTED"),
+    ]
+    assert doc_status == "NOT_SURE"
+    assert basis == "MANUAL_FROZEN"
+
+
+def test_the_model_declares_what_the_migration_creates(tmp_path) -> None:
+    _, engine = _at(tmp_path, "m0068-parity.db")
+    inspector = sa.inspect(engine)
+    created_checks = {c["name"] for c in inspector.get_check_constraints("evidence_links")}
+    created_indexes = {
+        i["name"]: bool(i["unique"]) for i in inspector.get_indexes("evidence_links")
+    }
+    table = EvidenceLink.__table__
+    declared_checks = {c.name for c in table.constraints if isinstance(c, sa.CheckConstraint)}
+    declared_indexes = {i.name: bool(i.unique) for i in table.indexes}
+    assert created_checks == {"ck_evidence_links_tier_iff_csf_row"}
+    assert declared_checks == created_checks
+    assert created_indexes == {
+        "ix_evidence_links_client_id": False,
+        "ix_evidence_links_artifact_id": False,
+        "ix_evidence_links_assessment_id": False,
+        "uq_evidence_links_untiered": True,
+        "uq_evidence_links_tiered": True,
+    }
+    assert declared_indexes == created_indexes
+    for name, where in (
+        ("uq_evidence_links_untiered", "tier IS NULL"),
+        ("uq_evidence_links_tiered", "tier IS NOT NULL"),
+    ):
+        index = next(i for i in table.indexes if i.name == name)
+        for dialect in ("sqlite", "postgresql"):
+            clause = index.dialect_options[dialect]["where"]
+            assert clause is not None and str(clause) == where, (name, dialect)
+
+
+def test_nothing_outside_the_models_reads_evidence_basis() -> None:
+    """The column lands; its backfill rule (Q9 grace) is undecided, so nothing
+    may read it, for scoring or otherwise, until a later change says how."""
+    app_dir = API_ROOT / "app"
+    readers = sorted(
+        str(path.relative_to(API_ROOT))
+        for path in app_dir.rglob("*.py")
+        if "evidence_basis" in path.read_text(encoding="utf-8")
+    )
+    # Positive first: the search could see the declaring module.
+    assert "app/models/csf_profile.py" in readers, readers
+    assert readers == ["app/models/csf_profile.py"]

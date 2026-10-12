@@ -39,6 +39,16 @@ class ArtifactOrigin(enum.StrEnum):
     CONSULTANT_APPROVED = "consultant_approved"
 
 
+class ArtifactDocStatus(enum.StrEnum):
+    """What the client says the document is (design note rev 4, section 10.1;
+    migration 0068). Stored as the member NAME (`native_enum=False`)."""
+
+    CURRENT = "current"
+    DRAFT = "draft"
+    OUTDATED = "outdated"
+    NOT_SURE = "not_sure"
+
+
 class Artifact(UUIDPKMixin, TimestampMixin, Base):
     __tablename__ = "artifacts"
 
@@ -74,3 +84,23 @@ class Artifact(UUIDPKMixin, TimestampMixin, Base):
     purged_by: Mapped[uuid.UUID | None] = mapped_column()
 
     notes: Mapped[str | None] = mapped_column(Text)
+
+    # Evidence intake (EV-1, migration 0068). All nullable, so every older row
+    # and every generated artifact parses unchanged (the C0 pattern).
+    #
+    # `description` answers "What is this document?". The upload route will
+    # require it for client evidence uploads; NULL on older rows and on
+    # generated artifacts.
+    description: Mapped[str | None] = mapped_column(Text)
+    # NULL READS AS `not_sure`, never as `current`: missing data is
+    # unconfirmed. Nothing reads it yet; the reader that will must say so.
+    doc_status: Mapped[ArtifactDocStatus | None] = mapped_column(
+        SAEnum(ArtifactDocStatus, name="artifact_doc_status", native_enum=False, length=16)
+    )
+    # Who last set `doc_status`: the client at upload, or a consultant
+    # correcting it after reading the file. The client's original stays in the
+    # audit row of the correction (Q9), not here.
+    doc_status_set_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    doc_status_set_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
