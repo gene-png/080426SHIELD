@@ -26,6 +26,53 @@ export const CURRENT_LIST_NOTE =
 export const HOME_CARD_NOTE =
   "Some techniques counted as covered rely on a tool that is not in the client's current security tool list, so this total may be understated.";
 
+/** #1011: on the home card, beside an ATT&CK figure whose tools could not be
+ *  checked (`attack_subset_not_checked_reason`), so "not checked" no longer
+ *  reads as "checked, none found". Copy strings 1 to 3, approved verbatim
+ *  (advisor, #736 comment 6094262391, on the plan at 6093958175). Neutral:
+ *  unchecked is unknown, not found, so no "may be understated". String 1 is
+ *  C5's sense ("no_list" and "discarded"), string 2 C5b's ("empty"). */
+export const HOME_CARD_NOT_CHECKED_NO_LIST =
+  "Tools credited for techniques counted as covered were not checked against a security tool list, because the client has none.";
+export const HOME_CARD_NOT_CHECKED_EMPTY =
+  "Tools credited for techniques counted as covered were not checked against a security tool list, because the client's security tool list has no security tools.";
+/** String 3: a reason this build does not know (an API newer than the page). */
+export const HOME_CARD_NOT_CHECKED_FALLBACK =
+  "Tools credited for techniques counted as covered were not checked against a security tool list.";
+
+/** The not-checked line for the ATT&CK figure, or null when there is none to
+ *  state. Never throws: the home page must render.
+ *
+ *  - No resolved figure (state D, or unresolved): nothing to qualify, null.
+ *  - A known reason: its sentence (state C).
+ *  - An unknown reason: string 3, and an error is logged.
+ *  - NO reason while `relies` is strictly `null` beside a figure: string 3, and
+ *    a distinct error is logged. The API sends a reason in exactly that state,
+ *    so its absence is version skew or a wiring slip, and missing data defaults
+ *    to UNCONFIRMED: silence here would read as "checked, none found".
+ *  - `relies === false` (state B, checked, none found) stays silent, as ruled.
+ *  - `relies === undefined` (an API that predates #889 sends neither field)
+ *    stays silent: such an API never said anything was checked, and the card
+ *    said nothing there before either. */
+export function homeCardNotCheckedNote(
+  reason: string | null | undefined,
+  relies: boolean | null | undefined,
+  hasFigure: boolean,
+): string | null {
+  if (!hasFigure) return null;
+  if (reason == null) {
+    if (relies !== null) return null;
+    console.error("[home] ATT&CK figure not checked, but no reason was sent");
+    return HOME_CARD_NOT_CHECKED_FALLBACK;
+  }
+  if (reason === "no_list" || reason === "discarded") {
+    return HOME_CARD_NOT_CHECKED_NO_LIST;
+  }
+  if (reason === "empty") return HOME_CARD_NOT_CHECKED_EMPTY;
+  console.error("[home] unknown ATT&CK not-checked reason", reason);
+  return HOME_CARD_NOT_CHECKED_FALLBACK;
+}
+
 export function outsideMark(
   tool: string,
   outside: readonly string[] | undefined,

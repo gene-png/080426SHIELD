@@ -1,6 +1,8 @@
 # Gene — in-flight status
 
-_2026-10-12 (trackB): TD-2's intake banner is a draft PR on `trackB/1058-intake-banner`, for #1058._ Step 4 of intake now shows your suite-listing banner when Tech Debt or ATT&CK is selected (Tech Debt text when both are). It uses your drafts word for word, as you approved them in 6115464421. The Step 5 reminder line follows after IN-2 merges.
+_2026-10-12 (track1): #1011 landed with PR #1040, for #1011. When the tools behind a client's ATT&CK figure could not be checked against a security tool list, the home card now says so, with the reason, in the three sentences you approved (#736 6094262391), instead of looking the same as "checked, none found". "Checked, none found" still shows nothing. One test on main was edited with the advisor's sha256 approval (its `null` case moved to the new test); the old #889 test's docstring saying the card has nothing to say is now stale and is left as a prose follow-up. It comes back to you: conditions 5 and 6._
+
+_2026-10-12 (trackB): TD-2's intake banner landed with PR #1069 (main 931539b8), for #1058._ Corrected in #1040's landing commit: this line still read as a draft PR after it merged. Step 4 of intake now shows your suite-listing banner when Tech Debt or ATT&CK is selected (Tech Debt text when both are). It uses your drafts word for word, as you approved them in 6115464421. The Step 5 reminder line follows after IN-2 merges.
 
 _2026-10-11 (track6): the Atlas CSF Playbook seed is a draft PR on
 `track6/atlas-playbook-seed`, for #474._ The demo's Atlas client now has CSF
