@@ -47,11 +47,13 @@ class ClientProfilePatch(BaseModel):
         scheme ("kentro.com") gets `https://` in front instead of a schema 422.
         Covers save and submit, which both validate through this model. A value
         that already names a scheme, and anything that is not a string, is left
-        for `HttpUrl` to judge unchanged."""
+        for `HttpUrl` to judge unchanged. So is a schemeless value holding "@"
+        (review of #1092): prefixing "mailto:a@b.com" would store a URL whose
+        host is b.com, so it is left for `HttpUrl` to refuse."""
         if not isinstance(value, str):
             return value
         stripped = value.strip()
-        if stripped and not _HAS_SCHEME.match(stripped):
+        if stripped and "@" not in stripped and not _HAS_SCHEME.match(stripped):
             return f"https://{stripped}"
         return stripped
 

@@ -33,6 +33,7 @@ def _patch_website(client, bearer: str, website: str | None):
         ("www.kentro.com", "https://www.kentro.com/"),
         ("kentro.com/about", "https://kentro.com/about"),
         ("  kentro.com  ", "https://kentro.com/"),
+        ("example.com:8080", "https://example.com:8080/"),
     ],
 )
 def test_save_adds_https_when_no_scheme(app_client, typed, stored) -> None:  # noqa: F811
@@ -66,6 +67,20 @@ def test_save_still_refuses_a_value_that_is_not_a_web_address(app_client) -> Non
     client, _ = app_client
     bearer = _register_and_bearer(client)
     r = _patch_website(client, bearer, "not a website")
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["reason"].startswith("schema_")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("typed", ["mailto:a@b.com", "a@b.com", "user@kentro.com/path"])
+def test_save_does_not_prefix_a_value_with_an_at_sign(app_client, typed) -> None:  # noqa: F811
+    # Review of #1092, item 4: "mailto:a@b.com" names no "://", so a blind
+    # prefix made "https://mailto:a@b.com/", a URL with userinfo "mailto:a"
+    # on host b.com, and stored it. A schemeless value with "@" is left for
+    # HttpUrl, which refuses it.
+    client, _ = app_client
+    bearer = _register_and_bearer(client)
+    r = _patch_website(client, bearer, typed)
     assert r.status_code == 422, r.text
     assert r.json()["error"]["reason"].startswith("schema_")
 
