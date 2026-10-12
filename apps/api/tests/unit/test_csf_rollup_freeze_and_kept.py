@@ -382,3 +382,20 @@ def test_the_function_line_keeps_unmeasured_out_of_with_a_target(app_client) -> 
     files = _export(c, h, svc)
     for kind in ("full_pdf", "full_docx"):
         assert piece in _flat_text(kind, files[kind]), kind
+
+
+def test_the_function_line_with_no_measured_target(app_client) -> None:  # noqa: F811
+    """Round 3: CODE's function has CODE unmeasured and the rest untargeted,
+    so nothing in it was measured against a target: no "0 gaps among the 0"."""
+    c, h = app_client
+    svc, rows = _unmeasured_world(c, h)
+    fn = next(r["function"] for r in rows if r["subcategory_code"] == CODE)
+    in_fn = [r for r in rows if r["function"] == fn]
+    assert not any(r["gap"] for r in in_fn)  # positive first: the world is gap-free
+    untargeted = sum(1 for r in in_fn if r["target_level"] is None) - 1
+    piece = f"{untargeted} with no target set · 1 not measured, so not assessed for gaps."
+    files = _export(c, h, svc)
+    for kind in ("full_pdf", "full_docx"):
+        flat = _flat_text(kind, files[kind])
+        assert piece in flat, kind
+        assert "among the 0 with a target" not in flat, kind
