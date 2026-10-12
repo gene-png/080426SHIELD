@@ -131,11 +131,13 @@ def _parents(engine: sa.Engine) -> dict[str, str]:
 _REC_INSERT = sa.text(
     "INSERT INTO recommendations (id, scope, client_id, service_id, deliverable_id, kind, "
     "text, origin, status, created_at, updated_at) VALUES "
-    "(:id, :scope, :c, :s, :d, 'GENERAL', 'Do the thing.', 'ai', 'PENDING', :n, :n)"
+    "(:id, :scope, :c, :s, :d, 'GENERAL', 'Do the thing.', :origin, 'PENDING', :n, :n)"
 )
 
 
-def _rec(conn, p: dict[str, str], scope: str, *, service: bool, deliverable: bool) -> None:
+def _rec(
+    conn, p: dict[str, str], scope: str, *, service: bool, deliverable: bool, origin: str = "ai"
+) -> None:
     conn.execute(
         _REC_INSERT,
         {
@@ -144,6 +146,7 @@ def _rec(conn, p: dict[str, str], scope: str, *, service: bool, deliverable: boo
             "c": p["client"],
             "s": p["service"] if service else None,
             "d": p["deliverable"] if deliverable else None,
+            "origin": origin,
             "n": NOW,
         },
     )
@@ -276,6 +279,30 @@ def test_scope_check_refuses(tmp_path, scope, service, deliverable, constraint) 
     p = _parents(engine)
     with pytest.raises(sa.exc.IntegrityError, match=constraint), engine.begin() as conn:
         _rec(conn, p, scope, service=service, deliverable=deliverable)
+
+
+# --- the origin vocabulary (ruling #736 6128447366, (d)) -------------------------
+
+
+@pytest.mark.parametrize("origin", ["ai", "edited", "consultant"])
+def test_origin_accepts_the_ruled_vocabulary(tmp_path, origin) -> None:
+    _, engine = _at(tmp_path, f"m0067-origin-{origin}.db")
+    p = _parents(engine)
+    with engine.begin() as conn:
+        _rec(conn, p, "CLIENT", service=False, deliverable=False, origin=origin)
+        stored = conn.execute(sa.text("SELECT origin FROM recommendations")).scalar_one()
+    assert stored == origin
+
+
+@pytest.mark.parametrize("origin", ["AI", "human", "", "Edited"])
+def test_origin_check_refuses_anything_else(tmp_path, origin) -> None:
+    _, engine = _at(tmp_path, f"m0067-origin-bad-{origin or 'empty'}.db")
+    p = _parents(engine)
+    with (
+        pytest.raises(sa.exc.IntegrityError, match="ck_recommendations_origin_vocabulary"),
+        engine.begin() as conn,
+    ):
+        _rec(conn, p, "CLIENT", service=False, deliverable=False, origin=origin)
 
 
 # --- NOT NULL ----------------------------------------------------------------------
@@ -602,5 +629,6 @@ def test_the_model_declares_the_same_checks_the_migration_creates(tmp_path) -> N
     assert created == {
         "ck_recommendations_client_scope_has_no_service",
         "ck_recommendations_service_scope_has_service",
+        "ck_recommendations_origin_vocabulary",
     }
     assert declared == created

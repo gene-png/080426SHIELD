@@ -12,7 +12,9 @@ The design note rev 4, section 5 (schema approved by the advisor, #736
   inputs, crosswalks and code-computed findings (section 12).
 - `recommendations` (output B), one row per item, admin only. `scope` is
   SERVICE or CLIENT; two CHECKs hold a client-scope row to no service and no
-  deliverable, and a service-scope row to a service. No artifact column.
+  deliverable, and a service-scope row to a service. A third CHECK holds
+  `origin` to `ai` | `edited` | `consultant` (ruling #736 6128447366, (d)).
+  No artifact column.
 
 Enum columns follow the `ai_runs` convention (`native_enum=False`, no
 `values_callable`): plain VARCHARs holding the member NAME, so the CHECKs are
@@ -159,6 +161,10 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "scope <> 'SERVICE' OR service_id IS NOT NULL",
             name=conv("ck_recommendations_service_scope_has_service"),
+        ),
+        sa.CheckConstraint(
+            "origin IN ('ai', 'edited', 'consultant')",
+            name=conv("ck_recommendations_origin_vocabulary"),
         ),
     )
     op.create_index("ix_recommendations_client_id", t, ["client_id"])
