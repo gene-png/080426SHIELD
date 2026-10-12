@@ -49,7 +49,10 @@ JOINING RULES (where one span ends):
     ("twenty-one", "twenty-first", "40-percent"), or before a magnitude or
     short unit ("5-fold", "5-day");
   - a slash joins numerals only, with no whitespace ("1/3", "10/12/2026");
-  - a currency mark joins the numeral it touches; a percent mark ("%", "％",
+  - a currency mark ("$", "€", "£") joins a numeral it directly PRECEDES,
+    with or without a sign between ("$5", "-$5", "$-5"); a trailing mark
+    ("5$") joins nothing, and marks outside that set ("¥", "₹") are not
+    currency here, so "¥40" is read as "40"; a percent mark ("%", "％",
     "٪", "‰") joins the span before it across any whitespace.
 
 PROTECTED VALUES. A protected value is masked unless it is TOUCHED. The edge
@@ -58,15 +61,17 @@ unmasked, the span builder above runs (without the unit rule, so "Windows 10
 PCs" stays masked), and a protected match is touched iff some joined span
 containing one of the match's DIGITS extends past either end of it ("Windows
 10%", "1'400 hosts"). A touched value is checked like any other number. A
-protected path naming a mapping or a number raises: protecting a whole subtree
-would exempt strings nobody listed.
+protected path naming a mapping, a number, None or a bool raises: protecting a
+whole subtree would exempt strings nobody listed. So does a protected value
+made only of magnitudes, units or number words ("M", "GB",
+"percent"): it would mask the word that makes a numeral composite.
 
 WHAT IT DOES NOT DO. It does not check which fact a number is attached to.
 
 FAIL LOUDLY. A hit is returned, never raised. Input it cannot read raises: a
 non-string text, a non-mapping payload, a field list given as a str, a listed
 field matching no key, a value of an unknown type, a non-finite number, a protected path naming a
-mapping or a number.
+mapping, a number, None or a bool, a protected value made only of number words.
 
 Owned by whichever of #1063 and EV-2 lands first; the other imports it. Nothing
 calls it yet: no prompt and no egress path changes.
@@ -620,18 +625,19 @@ def _walk(
     non-fact subtree, such as an id, licenses nothing. Protected names match
     the same way (#1088 round 7): a same-named key elsewhere is NOT protected,
     so its text is checked like any other."""
-    if value is None or isinstance(value, bool):
-        # `int(True)` is 1 (CLAUDE.md): a flag licenses no number.
-        return
     if path and path in fields["protected"] and not isinstance(value, (str, list, tuple)):
-        # A protected path names one string value (or a list of them). A dict
-        # or a number there protects nothing, so it is refused rather than
-        # silently ignored (#1088 round 11); a whole subtree is not protected,
-        # because that would exempt strings nobody listed (fail open).
+        # A protected path names one string value (or a list of them). A dict,
+        # a number, None or a bool there protects nothing, so it is refused
+        # rather than silently counted as matched (#1088 rounds 11 and 12); a
+        # whole subtree is not protected, because that would exempt strings
+        # nobody listed (fail open).
         raise ValueError(
             f"numbers: protected path {'.'.join(path)!r} names a "
             f"{type(value).__name__}, not a string"
         )
+    if value is None or isinstance(value, bool):
+        # `int(True)` is 1 (CLAUDE.md): a flag licenses no number.
+        return
     if isinstance(value, Mapping):
         for k, v in value.items():
             full = ".".join((*path, str(k)))
@@ -661,6 +667,15 @@ def _walk(
                     f"numbers: protected field {key!r} holds an all-numeric value; "
                     "list it as a fact field instead"
                 )
+            if value.strip() and _only_number_bearing(value):
+                # Protecting "M", "GB" or "percent" would mask the very word
+                # that makes "$5 M" composite, and the edge (`_touched`) reads
+                # only the match's digits, so nothing would unmask it (#1088
+                # round 12).
+                raise ValueError(
+                    f"numbers: protected field {key!r} holds {value.strip()!r}, which is "
+                    "made only of magnitudes, units or number words"
+                )
             if value.strip():
                 out["protected"].add(value.strip())
         elif in_fact:
@@ -682,6 +697,24 @@ def _walk(
             raise ValueError(f"numbers: unreadable number at {key!r}: {value!r}") from exc
     else:
         raise TypeError(f"numbers: cannot read a {type(value).__name__} at {key!r}")
+
+
+def _only_number_bearing(value: str) -> bool:
+    """Whether `value` has no digit and every word in it is number-bearing as
+    the span builder reads it: a magnitude, a unit, a number word (including a
+    merged "per cent") or a Roman numeral ("M", "GB", "percent"). Only such a
+    value can hide a composite: the edge (`_touched`) unmasks a match through
+    its DIGITS, so a value WITH a digit ("Windows 10", "PR.PS-01", "ISO 27001")
+    is governed by the edge, and a value with an ordinary word in it
+    ("Phase two") is a name. Unit SHAPE is a guess about one word after a
+    numeral, so several words that are only unit-shaped ("Acme Corp") are a
+    name too; one such word alone ("GB", and so also "EDR") is refused."""
+    # No digit test is needed: a token with a digit is NUM ("10", "Q3",
+    # "01" in "PR.PS-01"), never one of the four kinds below.
+    words = [t for t in _tokens(value) if t.text[0].isalnum()]
+    if not words or not all(t.kind in (_MAG, _UNIT, _WORD, _ROMAN) for t in words):
+        return False
+    return len(words) == 1 or any(t.kind != _UNIT for t in words)
 
 
 def _ambiguous(key: str, declared: frozenset[str]) -> bool:

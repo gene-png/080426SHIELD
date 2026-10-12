@@ -922,7 +922,7 @@ _BEFORE = "400 hosts"
         ("Windows 10.5 on.", _AFTER, ["10.5"]),
         ("Windows 10:30 on.", _AFTER, ["10:30"]),
         ("Windows 10'500 on.", _AFTER, ["10'500"]),
-        ("Windows 10 500 on.", _AFTER, ["10 500"]),
+        ("Windows 10\u00a0500 on.", _AFTER, ["10\u00a0500"]),
         ("Windows 10 bn on.", _AFTER, ["10 bn"]),
         ("Windows 10 million on.", _AFTER, ["10 million"]),
         ("Windows 10 two on.", _AFTER, ["10 two"]),
@@ -944,7 +944,7 @@ _BEFORE = "400 hosts"
         ("1'400 hosts.", _BEFORE, ["1'400"]),
         ("1’400 hosts.", _BEFORE, ["1’400"]),
         ("1٬400 hosts.", _BEFORE, ["1٬400"]),
-        ("1 400 hosts.", _BEFORE, ["1 400"]),
+        ("1\u00a0400 hosts.", _BEFORE, ["1\u00a0400"]),
         ("two 400 hosts.", _BEFORE, ["two 400"]),
         ("399-400 hosts.", _BEFORE, ["399-400"]),
         ("1/400 hosts.", _BEFORE, ["1/400"]),
@@ -973,8 +973,46 @@ def test_a_group_mark_needs_exactly_three_digits_after_it() -> None:
     [
         {"summary": {"product": {"name": "Windows 10"}}},
         {"summary": {"product": 10}},
+        # #1088 round 12, advisory 5: None and a bool protect nothing either.
+        {"summary": {"product": None}},
+        {"summary": {"product": True}},
+        {"summary": {"product": ["Windows 10", None]}},
     ],
 )
 def test_a_protected_path_naming_a_dict_or_a_number_is_refused(payload: dict) -> None:
     with pytest.raises(ValueError, match="summary.product"):
         allowed_numbers(payload, fact_fields=("summary",), protected_fields=("summary.product",))
+
+
+@pytest.mark.parametrize(
+    "n,protected,text,unprotected",
+    [
+        # #1088 round 12, F1: a protected value that is itself the magnitude,
+        # unit or number word making a numeral composite would hide that word,
+        # and `_touched` reads only the match's DIGITS, so nothing unmasks it.
+        (5, "M", "$5 M exposure.", ["$5 M"]),
+        (40, "percent", "40 percent of hosts.", ["40 percent"]),
+        (5, "GB", "5 GB used.", ["5 GB"]),
+        (5, "hundred thousand", "5 hundred thousand rows.", ["5 hundred thousand"]),
+        (5, "Mn", "$5 Mn spent.", ["$5 Mn"]),
+        (5, "XII", "XII hosts.", ["XII"]),
+    ],
+)
+def test_a_protected_value_made_only_of_number_words_is_refused(
+    n: int, protected: str, text: str, unprotected: list[str]
+) -> None:
+    # Unprotected, the composite is refused...
+    plain = allowed_numbers({"n": n}, fact_fields=("n",), protected_fields=())
+    assert [h.raw for h in unallowed_numbers(text, plain)] == unprotected
+    # ...so protecting the word that makes it composite must not be possible.
+    with pytest.raises(ValueError, match=f"protected field 'p' holds {protected!r}"):
+        allowed_numbers({"n": n, "p": protected}, fact_fields=("n",), protected_fields=("p",))
+
+
+@pytest.mark.parametrize(
+    "protected",
+    ["T1078", "Windows 10", "Zero Trust", "PR.AA-01", "Q3", "Acme Corp", "ISO 27001", "Phase two"],
+)
+def test_a_protected_value_with_a_name_or_a_code_in_it_is_accepted(protected: str) -> None:
+    allowed = allowed_numbers({"p": protected}, fact_fields=(), protected_fields=("p",))
+    assert protected in allowed.protected
