@@ -194,6 +194,15 @@ LOCK_DRIVERS: dict[tuple[str, str], Callable[[World], Any]] = {
     ("POST", "/zt/services/{service_id}/deliverables/finalize"): (
         lambda w: w.c.post(f"/zt/services/{w.svc_id}/deliverables/finalize", headers=w.h)
     ),
+    # #1120: Start a revision refuses while a run is in progress, ahead of
+    # every other rule, so it answers the lock even for a draft target.
+    ("POST", "/zt/services/{service_id}/assessments/{assessment_id}/revisions"): (
+        lambda w: w.c.post(
+            f"/zt/services/{w.svc_id}/assessments/{w.assessment_id}/revisions",
+            headers=w.h,
+            json={"reason": "mid-run"},
+        )
+    ),
 }
 
 # Mutating ZT routes a run deliberately leaves open, each for a reason.

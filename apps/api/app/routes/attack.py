@@ -26,6 +26,7 @@ from typing import Annotated, Any, NamedTuple
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.ai.batching import Batched, run_batches
@@ -137,6 +138,7 @@ from app.models.capability import (
 )
 from app.models.client import Client
 from app.models.deliverable import Deliverable
+from app.models.evidence_link import EvidenceTargetKind
 from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.user import User, UserRole
 from app.routes.artifacts import _storage_dep
@@ -168,8 +170,16 @@ from app.schemas.attack import (
     CoverageChange,
     TacticHeatmapEntry,
 )
+from app.schemas.revisions import RevisionStartRequest
 from app.schemas.tech_debt import DeliverableResponse
 from app.security.rate_limit import enforce_ai_rate_limit
+from app.services.revisions import (
+    ChildSpec,
+    KindPlan,
+    evidence_links_for,
+    revision_for_viewer,
+    start_revision,
+)
 from app.storage import StorageBackend
 from app.tech_debt.extract import name_hints_for_tenant
 from app.tech_debt.filename import SERVICE_SLUG_ATTACK, deliverable_filename
@@ -253,7 +263,9 @@ def _serialize_one(db: Session, row: AttackCoverage) -> AttackCoverageResponse:
     return next(c for c in _serialize_coverage(a, siblings) if c.id == row.id)
 
 
-def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentResponse:
+def _serialize_assessment(
+    db: Session, a: AttackAssessment, viewer: User
+) -> AttackAssessmentResponse:
     rows = (
         db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
         .scalars()
@@ -276,6 +288,8 @@ def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentR
         catalog_current=attack_catalog_is_current(a),
         # #646: the ONE derivation every surface calls.
         ai_source=ai_mode_for(db, db.get(Service, a.service_id), a).as_api(),
+        # #1120: V3, V4, V5, for an admin only.
+        revision=revision_for_viewer(db, a, "attack.assessment", viewer),
         statuses_computed=statuses_computed(a),
         coverage=_serialize_coverage(a, rows),
         tool_retirement=_tool_retirement_marks(db, a.service_id, rows),
@@ -623,7 +637,7 @@ def create_assessment(
             service_id=str(svc.id),
         )
         response.status_code = status.HTTP_200_OK
-        return _serialize_assessment(db, prior)
+        return _serialize_assessment(db, prior, viewer=user)
     version = _max_assessment_version(db, svc.id) + 1
     assessment = AttackAssessment(
         service_id=svc.id,
@@ -634,7 +648,24 @@ def create_assessment(
         catalog_version=SOURCE_VERSION,
     )
     db.add(assessment)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        # #1120 (migration 0073): a draft was committed between the read above
+        # and this insert. `uq_attack_assessments_one_draft` refused the second
+        # draft; answer as the open-draft reuse above does, with THAT draft.
+        db.rollback()
+        winner = _latest_assessment(db, svc.id)
+        if winner is None or winner.status != AttackAssessmentStatus.DRAFT:
+            raise
+        _log.info(
+            "attack_assessment_create_lost_race_returned_open_draft",
+            assessment_id=str(winner.id),
+            version=winner.version,
+            service_id=str(svc.id),
+        )
+        response.status_code = status.HTTP_200_OK
+        return _serialize_assessment(db, winner, viewer=user)
     # Pre-seed an unscored coverage row per technique so the UI receives
     # a complete grid on the very first GET. 600+ rows but cheap.
     for t in TECHNIQUES:
@@ -656,7 +687,7 @@ def create_assessment(
     )
     db.commit()
     db.refresh(assessment)
-    return _serialize_assessment(db, assessment)
+    return _serialize_assessment(db, assessment, viewer=user)
 
 
 @router.get(
@@ -702,7 +733,7 @@ def latest_assessment(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="ATT&CK assessments are admin-only.",
         )
-    return _serialize_assessment(db, a)
+    return _serialize_assessment(db, a, viewer=user)
 
 
 # ---------------------------------------------------------------------------
@@ -2955,7 +2986,7 @@ def approve_assessment(
     # #645: approving mid-run would approve rows about to change.
     refuse_while_running(db, a.service_id)
     if a.status == AttackAssessmentStatus.APPROVED:
-        return _serialize_assessment(db, a)
+        return _serialize_assessment(db, a, viewer=user)
     if a.status == AttackAssessmentStatus.RELEASED:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -3017,7 +3048,7 @@ def approve_assessment(
     )
     db.commit()
     db.refresh(a)
-    return _serialize_assessment(db, a)
+    return _serialize_assessment(db, a, viewer=user)
 
 
 @router.post(
@@ -3143,7 +3174,7 @@ def review_computed_statuses(
         remaining=len(queue) - len(codes),
     )
     db.refresh(a)
-    return _serialize_assessment(db, a)
+    return _serialize_assessment(db, a, viewer=user)
 
 
 @router.post(
@@ -3162,7 +3193,7 @@ def discard_assessment(
     ... WHERE status='draft' for the concurrency contract (D-031)."""
     a = require_attack_assessment_in_tenant(db, assessment_id, client.id)
     if a.status == AttackAssessmentStatus.DISCARDED:
-        return _serialize_assessment(db, a)  # idempotent, no audit
+        return _serialize_assessment(db, a, viewer=user)  # idempotent, no audit
     if a.status != AttackAssessmentStatus.DRAFT:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -3191,7 +3222,7 @@ def discard_assessment(
     if result.rowcount != 1:
         db.refresh(a)
         if a.status == AttackAssessmentStatus.DISCARDED:
-            return _serialize_assessment(db, a)
+            return _serialize_assessment(db, a, viewer=user)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -3221,7 +3252,7 @@ def discard_assessment(
     )
     db.commit()
     db.refresh(a)
-    return _serialize_assessment(db, a)
+    return _serialize_assessment(db, a, viewer=user)
 
 
 # ---------------------------------------------------------------------------
@@ -4032,3 +4063,50 @@ def release_attack_deliverable(
         ),
     )
     return _serialize_deliverable(db, deliv)
+
+
+# ---------------------------------------------------------------------------
+# #1120 "Start a revision" (Option A, ruled #736 6136101129)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/services/{service_id}/assessments/{assessment_id}/revisions",
+    response_model=AttackAssessmentResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Start a revision: the next version as a DRAFT, everything copied (admin, #1120)",
+)
+def start_assessment_revision(
+    service_id: uuid.UUID,
+    assessment_id: uuid.UUID,
+    body: RevisionStartRequest,
+    user: Annotated[User, _admin_required],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> AttackAssessmentResponse:
+    """Mint the next version of an APPROVED or RELEASED assessment as a DRAFT,
+    copying its values, notes and consultant edits forward
+    (`services/revisions.py`). The source record and its deliverables are not
+    written to. Every refusal is a typed 409 with the approved copy."""
+    svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.ATTACK_COVERAGE)
+    target = db.get(AttackAssessment, assessment_id)
+    if target is None or target.service_id != svc.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assessment not found.")
+    plan = KindPlan(
+        audit_prefix="attack.assessment",
+        children=[
+            ChildSpec(AttackCoverage, code_attr="technique_code"),
+            evidence_links_for(EvidenceTargetKind.ATTACK_TECHNIQUE),
+        ],
+        # Ruling item 4: the CURRENT catalog; rows for retired codes are not
+        # copied and are named in the audit row (V4).
+        record_values={"catalog_version": SOURCE_VERSION},
+        current_codes=frozenset(t.id for t in TECHNIQUES),
+        code_child=AttackCoverage,
+        blank_row=lambda rec, code: AttackCoverage(
+            assessment_id=rec.id, client_id=rec.client_id, technique_code=code, status=None
+        ),
+        drop_retired=True,
+    )
+    result = start_revision(db, svc=svc, target=target, user=user, reason=body.reason, plan=plan)
+    return _serialize_assessment(db, result.record, viewer=user)

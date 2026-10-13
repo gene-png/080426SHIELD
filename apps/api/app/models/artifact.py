@@ -22,6 +22,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    Uuid,
 )
 from sqlalchemy import (
     Enum as SAEnum,
@@ -37,6 +38,21 @@ class ArtifactOrigin(enum.StrEnum):
     CLIENT_UPLOAD = "client_upload"
     AUTOMATED_DRAFT = "automated_draft"
     CONSULTANT_APPROVED = "consultant_approved"
+
+
+#: The deferred group holding the four evidence-intake columns (migration
+#: 0068); a query that renders them undefers it.
+EVIDENCE_INTAKE_GROUP = "evidence_intake"
+
+
+class ArtifactDocStatus(enum.StrEnum):
+    """What the client says the document is (design note rev 4, section 10.1;
+    migration 0068). Stored as the member NAME (`native_enum=False`)."""
+
+    CURRENT = "current"
+    DRAFT = "draft"
+    OUTDATED = "outdated"
+    NOT_SURE = "not_sure"
 
 
 class Artifact(UUIDPKMixin, TimestampMixin, Base):
@@ -74,3 +90,47 @@ class Artifact(UUIDPKMixin, TimestampMixin, Base):
     purged_by: Mapped[uuid.UUID | None] = mapped_column()
 
     notes: Mapped[str | None] = mapped_column(Text)
+
+    # Evidence intake (EV-1, migration 0068). All nullable, so every older row
+    # and every generated artifact parses unchanged (the C0 pattern).
+    #
+    # ALL FOUR ARE DEFERRED, in the `EVIDENCE_INTAKE_GROUP` group, and their
+    # types `evaluates_none()`, for 0066's reason (`RiskEntry.other_axes`): a
+    # `select(Artifact)` or an ORM insert against a pre-0068 schema (the
+    # migration tests that pin an older revision) must not name a column that
+    # schema lacks. Deferred keeps them out of the SELECT; `evaluates_none()`
+    # keeps an UNSET attribute out of the INSERT, which otherwise renders every
+    # nullable column without a default as an explicit NULL. A set value,
+    # including an explicit None, is still written. The reader that renders
+    # them undefers the group in its query (`undefer_group`), so there is no
+    # per-row load.
+    #
+    # `description` answers "What is this document?". The upload route will
+    # require it for client evidence uploads; NULL on older rows and on
+    # generated artifacts.
+    description: Mapped[str | None] = mapped_column(
+        Text().evaluates_none(), deferred=True, deferred_group=EVIDENCE_INTAKE_GROUP
+    )
+    # NULL READS AS `not_sure`, never as `current`: missing data is
+    # unconfirmed. Nothing reads it yet; the reader that will must say so.
+    doc_status: Mapped[ArtifactDocStatus | None] = mapped_column(
+        SAEnum(
+            ArtifactDocStatus, name="artifact_doc_status", native_enum=False, length=16
+        ).evaluates_none(),
+        deferred=True,
+        deferred_group=EVIDENCE_INTAKE_GROUP,
+    )
+    # Who last set `doc_status`: the client at upload, or a consultant
+    # correcting it after reading the file. The client's original stays in the
+    # audit row of the correction (Q9), not here.
+    doc_status_set_by: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid().evaluates_none(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        deferred=True,
+        deferred_group=EVIDENCE_INTAKE_GROUP,
+    )
+    doc_status_set_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True).evaluates_none(),
+        deferred=True,
+        deferred_group=EVIDENCE_INTAKE_GROUP,
+    )
