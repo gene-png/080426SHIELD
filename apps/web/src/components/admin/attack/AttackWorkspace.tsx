@@ -64,6 +64,7 @@ import { AttackTechniquePanel } from "./AttackTechniquePanel";
 import type { JSX } from "react";
 import { ProgressStages } from "../ProgressStages";
 import { useServiceStages } from "@/lib/stages/client";
+import { DRAFT_OPEN_REASON, refusalReason } from "@/lib/revisions/refusal";
 import { useRefreshFailures } from "@/components/admin/useRefreshFailures";
 import { isUpstreamOutcomeUnknown } from "@/lib/describe-save-error";
 import { AiSourceNote } from "@/components/AiSourceNote";
@@ -638,9 +639,30 @@ export function AttackWorkspace({
         await refreshHeatmap();
       }
     } catch (err) {
-      throw new Error(describeError(err));
+      const message = describeError(err);
+      // A draft already exists (V6, V8): show it beneath the dialog, which
+      // stays open with the API's sentence telling the consultant to approve
+      // or discard it.
+      if (
+        err instanceof AttackProxyError &&
+        refusalReason(err.payload) === DRAFT_OPEN_REASON
+      ) {
+        await showLatestAfterRefusal(seq);
+      }
+      throw new Error(message);
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function showLatestAfterRefusal(seq: number): Promise<void> {
+    try {
+      const a = await fetchLatestAssessment(serviceId);
+      if (seq !== assessmentSeq.current || !a) return;
+      setAssessment(a);
+      await refreshHeatmap();
+    } catch (err) {
+      setLoadError(describeError(err));
     }
   }
 

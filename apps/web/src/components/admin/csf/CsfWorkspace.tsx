@@ -58,6 +58,7 @@ import { CsfScoreCard } from "./CsfScoreCard";
 import type { JSX } from "react";
 import { ProgressStages } from "../ProgressStages";
 import { useServiceStages } from "@/lib/stages/client";
+import { DRAFT_OPEN_REASON, refusalReason } from "@/lib/revisions/refusal";
 import { AiSourceNote } from "@/components/AiSourceNote";
 
 export interface CsfWorkspaceProps {
@@ -505,9 +506,32 @@ export function CsfWorkspace({
         await refreshScoreAndGap(t);
       }
     } catch (err) {
-      throw new Error(describeError(err));
+      const message = describeError(err);
+      // A draft already exists (V6, V8): show it beneath the dialog, which
+      // stays open with the API's sentence telling the consultant to approve
+      // or discard it.
+      if (
+        err instanceof CsfProxyError &&
+        refusalReason(err.payload) === DRAFT_OPEN_REASON
+      ) {
+        await showLatestAfterRefusal(seq);
+      }
+      throw new Error(message);
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function showLatestAfterRefusal(seq: number): Promise<void> {
+    try {
+      const a = await fetchLatestAssessment(serviceId);
+      if (seq !== assessmentSeq.current || !a) return;
+      setAssessment(a);
+      const t = normalizeTarget(a.client_target_tier);
+      setTargetTier(t);
+      await refreshScoreAndGap(t);
+    } catch (err) {
+      setLoadError(describeError(err));
     }
   }
 
@@ -772,7 +796,12 @@ export function CsfWorkspace({
             {/* #646: the assessment's AI source, from the derivation the
                 deliverable and the client dashboard call. */}
             <AiSourceNote source={assessment.ai_source} className="mb-3" />
+            {/* Keyed on the record: the panel and the editors inside it load
+                rows by service and keep them, so a swap to another record (a
+                revision, a discard, a new draft) must remount them, or an edit
+                PATCHes the previous record's rows (#1120). */}
             <CsfPlaybookPanel
+              key={assessment.id}
               serviceId={serviceId}
               readOnly={readOnly}
               runOutcomeUnknown={runOutcomeUnknown}

@@ -108,4 +108,45 @@ describe("StartRevisionButton (#1120)", () => {
     expect(dialog.open).toBe(true);
     expect(within(dialog).getByRole("alert")).toHaveTextContent(refusal);
   });
+
+  it("caps the reason at the API's 2000 characters", () => {
+    const { dialog } = openDialog();
+    expect(
+      within(dialog).getByLabelText("What is this revision for?"),
+    ).toHaveAttribute("maxlength", "2000");
+  });
+
+  it("keeps an open dialog and its refusal when the record beneath becomes a draft", async () => {
+    const refusal =
+      "Version 4 is open as a draft. Approve it, or discard it, before starting another revision.";
+    const onStart = vi.fn().mockRejectedValue(new Error(refusal));
+    const view = render(
+      <StartRevisionButton status="approved" version={3} onStart={onStart} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Start a revision" }));
+    const dialog = view.container.querySelector("dialog") as HTMLDialogElement;
+    fireEvent.change(
+      within(dialog).getByLabelText("What is this revision for?"),
+      { target: { value: "Again" } },
+    );
+    await act(async () => {
+      fireEvent.click(
+        within(dialog).getByRole("button", { name: "Start revision" }),
+      );
+    });
+    // The workspace re-reads the service and now shows its draft.
+    view.rerender(
+      <StartRevisionButton status="draft" version={4} onStart={onStart} />,
+    );
+    const still = view.container.querySelector("dialog") as HTMLDialogElement;
+    expect(still.open).toBe(true);
+    expect(within(still).getByRole("alert")).toHaveTextContent(refusal);
+    // The trigger is gone, and the dialog can only be closed now.
+    expect(
+      screen.queryByRole("button", { name: "Start a revision" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(still).getByRole("button", { name: "Start revision" }),
+    ).toBeDisabled();
+  });
 });

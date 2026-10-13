@@ -8,6 +8,9 @@ import { fill } from "@/lib/revisions/fill";
 
 import type { JSX } from "react";
 
+/** The API's limit on the reason (`RevisionStartRequest.reason`, max_length). */
+export const REASON_MAX_LENGTH = 2000;
+
 export interface StartRevisionButtonProps {
   /**
    * The record's status. The control renders ONLY for "approved" or
@@ -44,7 +47,12 @@ export function StartRevisionButton({
   const reasonId = React.useId();
   const hintId = React.useId();
 
-  if (status !== "approved" && status !== "released") return null;
+  // The trigger shows only where a revision can start. An open dialog stays
+  // mounted when the record beneath it changes (a refusal re-reads the
+  // service's draft), so its refusal message is not lost; it can then only be
+  // closed.
+  const revisable = status === "approved" || status === "released";
+  if (!revisable && !open) return null;
 
   const trimmed = reason.trim();
 
@@ -65,14 +73,16 @@ export function StartRevisionButton({
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        disabled={disabled}
-        className="rounded-md border border-border px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        {REVISION_COPY.V1}
-      </button>
+      {revisable ? (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          disabled={disabled}
+          className="rounded-md border border-border px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {REVISION_COPY.V1}
+        </button>
+      ) : null}
       <Modal
         open={open}
         onClose={() => {
@@ -93,7 +103,7 @@ export function StartRevisionButton({
             <button
               type="button"
               onClick={() => void handleConfirm()}
-              disabled={busy || !trimmed}
+              disabled={busy || !trimmed || !revisable}
               className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {REVISION_COPY.V2c_CONFIRM}
@@ -115,6 +125,7 @@ export function StartRevisionButton({
             id={reasonId}
             aria-describedby={hintId}
             required
+            maxLength={REASON_MAX_LENGTH}
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             disabled={busy}

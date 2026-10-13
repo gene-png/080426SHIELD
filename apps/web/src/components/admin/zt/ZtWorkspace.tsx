@@ -63,6 +63,7 @@ import { ZtScoreCard } from "./ZtScoreCard";
 import type { JSX } from "react";
 import { ProgressStages } from "../ProgressStages";
 import { useServiceStages } from "@/lib/stages/client";
+import { DRAFT_OPEN_REASON, refusalReason } from "@/lib/revisions/refusal";
 import { useRefreshFailures } from "@/components/admin/useRefreshFailures";
 import {
   isUpstreamOutcomeUnknown,
@@ -605,9 +606,32 @@ export function ZtWorkspace({
         await refreshScoreAndGap(t);
       }
     } catch (err) {
-      throw new Error(describeError(err));
+      const message = describeError(err);
+      // A draft already exists (V6, V8): show it beneath the dialog, which
+      // stays open with the API's sentence telling the consultant to approve
+      // or discard it.
+      if (
+        err instanceof ZtProxyError &&
+        refusalReason(err.payload) === DRAFT_OPEN_REASON
+      ) {
+        await showLatestAfterRefusal(seq);
+      }
+      throw new Error(message);
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function showLatestAfterRefusal(seq: number): Promise<void> {
+    try {
+      const a = await fetchLatestAssessment(serviceId);
+      if (seq !== assessmentSeq.current || !a) return;
+      setAssessment(a);
+      const t = normalizeTarget(a.client_target_stage, catalog?.stages);
+      setTargetStage(t);
+      await refreshScoreAndGap(t);
+    } catch (err) {
+      setLoadError(describeError(err));
     }
   }
 
