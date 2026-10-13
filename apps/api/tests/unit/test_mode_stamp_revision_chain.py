@@ -127,6 +127,8 @@ def test_a_chain_deeper_than_32_reads_unknown(world) -> None:
     c, sessions = world
     h, _ = _admin(c)
     svc_id, v1 = _v1_approved(c, h)
+    from app.audit.spine import audit
+
     with sessions() as s:  # 33 released ancestors, built directly
         prev = s.get(CsfAssessment, uuid.UUID(v1))
         prev.status = CsfAssessmentStatus.RELEASED
@@ -140,6 +142,15 @@ def test_a_chain_deeper_than_32_reads_unknown(world) -> None:
             )
             s.add(row)
             s.flush()
+            # Each with the audit row the revision route writes beside it, so
+            # the only unreachable thing built here is the depth.
+            audit(
+                s,
+                action="csf.assessment.revision_started",
+                target_type="csf_assessment",
+                target_id=row.id,
+                details={"from_version": version - 1, "reason": "r", "from_rules": {}},
+            )
             prev = row
         s.commit()
         top = s.execute(select(CsfAssessment.id).where(CsfAssessment.version == 34)).scalar_one()
