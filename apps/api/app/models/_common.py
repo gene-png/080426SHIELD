@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime
+from sqlalchemy import DateTime, Index, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -27,4 +27,20 @@ class TimestampMixin:
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
+def one_draft_index(table: str) -> Index:
+    """#1120 (migration 0073): at most one DRAFT per service, in the database.
+
+    Both dialect clauses, as `uq_ai_runs_one_running` carries them: an index
+    declared with only one is a plain UNIQUE index on the other dialect, which
+    would refuse a second record EVER. `'DRAFT'` is the member NAME that
+    `native_enum=False` stores."""
+    return Index(
+        f"uq_{table}_one_draft",
+        "service_id",
+        unique=True,
+        sqlite_where=text("status = 'DRAFT'"),
+        postgresql_where=text("status = 'DRAFT'"),
     )

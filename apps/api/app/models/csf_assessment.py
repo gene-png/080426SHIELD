@@ -43,7 +43,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.models._common import TimestampMixin, UUIDPKMixin
+from app.models._common import TimestampMixin, UUIDPKMixin, one_draft_index
 
 
 class CsfAssessmentStatus(enum.StrEnum):
@@ -62,6 +62,7 @@ class CsfAssessment(UUIDPKMixin, TimestampMixin, Base):
     __tablename__ = "csf_assessments"
     __table_args__ = (
         UniqueConstraint("service_id", "version", name="uq_csf_assessments_service_version"),
+        one_draft_index("csf_assessments"),
     )
 
     service_id: Mapped[uuid.UUID] = mapped_column(
@@ -82,7 +83,14 @@ class CsfAssessment(UUIDPKMixin, TimestampMixin, Base):
             length=16,
         ),
         default=CsfAssessmentStatus.DRAFT,
+        # #1120 (0073): the NAME, as stored; 0006/0009-0011 created it lowercase.
+        server_default="DRAFT",
         nullable=False,
+    )
+    # #1120 (0073): the record "Start a revision" copied from. NULL on every
+    # record not minted by a revision; nothing clears it.
+    revision_of: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("csf_assessments.id", ondelete="SET NULL")
     )
 
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
