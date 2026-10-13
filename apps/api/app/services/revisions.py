@@ -137,6 +137,7 @@ RECORD_NOT_CARRIED: dict[str, dict[str, str]] = {
         "approved_by": "not approved yet",
         "documents_stale": "no documents yet",
         "revision_of": "set to the source record",
+        "rollup_rules": "NULL = the current rules (ruling item 4); approve stamps it",
     },
     "zt_assessments": {
         **_IDENTITY,

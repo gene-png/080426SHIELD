@@ -259,3 +259,40 @@ def test_a_revision_that_loses_the_race_is_v6_naming_the_winner(world, monkeypat
     with sessions() as s:
         count = s.execute(text("SELECT COUNT(*) FROM csf_assessments")).scalar_one()
     assert count == 2  # v1 and the winner; the revision wrote nothing
+
+
+@pytest.mark.parametrize(
+    ("kind", "table", "stamps"),
+    [
+        ("csf", "csf_assessments", ("rollup_rules",)),
+        ("attack", "attack_assessments", ("parent_rules", "status_rules")),
+    ],
+)
+def test_a_revision_is_stamped_with_the_current_rules(world, kind, table, stamps) -> None:
+    """Ruling item 4: a revision of a record approved under EARLIER rules (stamp
+    1, as the 0054 / 0059 / 0070 backfills write) starts with NULL stamps,
+    which every reader takes as the current rules; approve stamps it then."""
+    c, sessions = world
+    h = _admin(c)
+    svc_id, v1 = _service(c, h, kind)
+    _approve(c, h, kind, v1)
+    sets = ", ".join(f"{s} = 1" for s in stamps)
+    with sessions() as s:  # an old-rules approval, as the backfills leave one
+        s.execute(
+            text(f"UPDATE {table} SET {sets} WHERE id = :id"),  # noqa: S608
+            {"id": uuid.UUID(v1).hex},
+        )
+        s.commit()
+    v2 = _revise(c, h, kind, svc_id, v1).json()["id"]
+    cols = ", ".join(stamps)
+    with sessions() as s:
+        old = s.execute(
+            text(f"SELECT {cols} FROM {table} WHERE id = :id"),  # noqa: S608
+            {"id": uuid.UUID(v1).hex},
+        ).one()
+        new = s.execute(
+            text(f"SELECT {cols} FROM {table} WHERE id = :id"),  # noqa: S608
+            {"id": uuid.UUID(v2).hex},
+        ).one()
+    assert tuple(old) == (1,) * len(stamps)  # the source keeps its rules
+    assert tuple(new) == (None,) * len(stamps)  # the revision: the current rules

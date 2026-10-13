@@ -1,12 +1,12 @@
 """One draft per service, and the revision link (#1120, Option A).
 
 Revision ID: 0073
-Revises: 0068
+Revises: 0070
 
 The design note rev 10, sections 2, 3 and 6, ruled by the advisor
 (#736 6136101129, item 8). The number 0073 is the advisor's; `down_revision`
-is main's head when this branch was cut and is re-pointed onto main's head at
-merge (single-head rule).
+is main's head (0070 since #1077 merged) and is re-pointed onto main's head
+at merge (single-head rule).
 
 For each of `attack_assessments`, `csf_assessments`, `zt_assessments` and
 `capability_lists`:
@@ -46,7 +46,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "0073"
-down_revision: str | Sequence[str] | None = "0068"
+down_revision: str | Sequence[str] | None = "0070"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

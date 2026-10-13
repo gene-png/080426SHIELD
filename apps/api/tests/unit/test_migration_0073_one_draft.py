@@ -42,16 +42,16 @@ def _cfg(url: str) -> Config:
 
 
 @pytest.fixture(autouse=True)
-def _template_0068(tmp_path_factory) -> None:
-    if "0068" not in _TEMPLATE:
-        path = tmp_path_factory.mktemp("tpl0073") / "0068.db"
-        command.upgrade(_cfg(f"sqlite:///{path}"), "0068")
-        _TEMPLATE["0068"] = path
+def _template_0070(tmp_path_factory) -> None:
+    if "0070" not in _TEMPLATE:
+        path = tmp_path_factory.mktemp("tpl0073") / "0070.db"
+        command.upgrade(_cfg(f"sqlite:///{path}"), "0070")
+        _TEMPLATE["0070"] = path
 
 
-def _at_0068(tmp_path) -> tuple[str, sa.Engine]:
+def _at_0070(tmp_path) -> tuple[str, sa.Engine]:
     target = tmp_path / "db.sqlite"
-    shutil.copyfile(_TEMPLATE["0068"], target)
+    shutil.copyfile(_TEMPLATE["0070"], target)
     url = f"sqlite:///{target}"
     return url, sa.create_engine(url, future=True)
 
@@ -88,7 +88,7 @@ def _insert(engine: sa.Engine, table: str, service_id: str, version: int, **valu
 
 @pytest.mark.parametrize("table", TABLES)
 def test_two_drafts_for_one_service_are_refused(tmp_path, table: str) -> None:
-    url, engine = _at_0068(tmp_path)
+    url, engine = _at_0070(tmp_path)
     command.upgrade(_cfg(url), "0073")
     svc = str(uuid.uuid4())
     _insert(engine, table, svc, 1, status="APPROVED")
@@ -100,7 +100,7 @@ def test_two_drafts_for_one_service_are_refused(tmp_path, table: str) -> None:
 
 @pytest.mark.parametrize("table", TABLES)
 def test_a_status_omitted_insert_stores_the_name_spelling(tmp_path, table: str) -> None:
-    url, engine = _at_0068(tmp_path)
+    url, engine = _at_0070(tmp_path)
     command.upgrade(_cfg(url), "0073")
     svc = str(uuid.uuid4())
     first = _insert(engine, table, svc, 1)
@@ -119,7 +119,7 @@ def test_a_status_omitted_row_loads_through_the_orm(tmp_path) -> None:
 
     from app.models.csf_assessment import CsfAssessment, CsfAssessmentStatus
 
-    url, engine = _at_0068(tmp_path)
+    url, engine = _at_0070(tmp_path)
     command.upgrade(_cfg(url), "0073")
     row_id = _insert(engine, "csf_assessments", str(uuid.uuid4()), 1)
     with Session(engine) as s:
@@ -133,7 +133,7 @@ def test_a_status_omitted_row_loads_through_the_orm(tmp_path) -> None:
 
 @pytest.mark.parametrize("table", TABLES)
 def test_the_upgrade_refuses_over_two_drafts_and_changes_nothing(tmp_path, table: str) -> None:
-    url, engine = _at_0068(tmp_path)
+    url, engine = _at_0070(tmp_path)
     svc = str(uuid.uuid4())
     _insert(engine, table, svc, 1, status="DRAFT")
     _insert(engine, table, svc, 2, status="DRAFT")
@@ -141,19 +141,19 @@ def test_the_upgrade_refuses_over_two_drafts_and_changes_nothing(tmp_path, table
         command.upgrade(_cfg(url), "0073")
     with engine.connect() as conn:
         head = conn.execute(sa.text("SELECT version_num FROM alembic_version")).scalar_one()
-    assert head == "0068"
+    assert head == "0070"
     assert "revision_of" not in {c["name"] for c in sa.inspect(engine).get_columns(table)}
 
 
 def test_revision_of_is_added_to_every_table_and_removed_by_downgrade(tmp_path) -> None:
-    url, engine = _at_0068(tmp_path)
+    url, engine = _at_0070(tmp_path)
     command.upgrade(_cfg(url), "0073")
     for table in TABLES:
         cols = {c["name"] for c in sa.inspect(engine).get_columns(table)}
         assert "revision_of" in cols, table
         idx = {i["name"] for i in sa.inspect(engine).get_indexes(table)}
         assert f"uq_{table}_one_draft" in idx, table
-    command.downgrade(_cfg(url), "0068")
+    command.downgrade(_cfg(url), "0070")
     engine.dispose()
     for table in TABLES:
         cols = {c["name"] for c in sa.inspect(engine).get_columns(table)}
