@@ -1,5 +1,7 @@
 # Gene — in-flight status
 
+_2026-10-12 (track11): N5 landed with PR #1109 (migration 0068)._ The database can now hold a client's description and status for each uploaded file, and links between a file and the assessment row it supports. Nothing uses them yet. Rows you had already ticked as having evidence, on approved or released CSF assessments, are marked as confirmed before linking existed. Undoing this migration is refused while any of that data exists.
+
 _2026-10-12 (track5): #552 landed with PR #1042._ Redaction before every AI call now runs in its own short-lived child process. A slow redaction can no longer freeze the app, and the child holds no keys of its own. The app also refuses to start if the redaction child cannot run, and the error says why. The same landing records D-112, your decision that SHIELD holds demo data only until the MVP: no new freeze work, and existing freezes stay.
 
 _2026-10-12 (track11): N4 landed with PR #1099 (migration 0067)._ The database now has the three empty tables the reports work will fill: findings reports, integration runs and recommendations. Nothing uses them yet. Anyone who upgraded a dev database while N4 was in review should run `alembic downgrade 0066` then `alembic upgrade head`, because 0067 changed in place (#1131).

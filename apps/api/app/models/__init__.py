@@ -7,7 +7,7 @@ against `Base.metadata`, which Alembic autogenerate relies on.
 from __future__ import annotations
 
 from app.models.ai_run import AiRun, AiRunStatus
-from app.models.artifact import Artifact, ArtifactOrigin
+from app.models.artifact import Artifact, ArtifactDocStatus, ArtifactOrigin
 from app.models.attack_assessment import (
     AttackAssessment,
     AttackAssessmentStatus,
@@ -31,9 +31,10 @@ from app.models.csf_assessment import (
     CsfAssessment,
     CsfAssessmentStatus,
 )
-from app.models.csf_profile import CsfDimensionScore, CsfGapAction
+from app.models.csf_profile import CsfDimensionScore, CsfEvidenceBasis, CsfGapAction
 from app.models.deliverable import Deliverable
 from app.models.email_token import EmailToken, EmailTokenPurpose
+from app.models.evidence_link import EvidenceLink, EvidenceLinkStatus, EvidenceTargetKind
 from app.models.findings_report import FindingsReport, FindingsReportStatus
 from app.models.integration_run import IntegrationRun
 from app.models.llm_call import LLMCall, LLMCallMode, LLMCallStatus
@@ -64,6 +65,7 @@ __all__ = [
     "AiRun",
     "AiRunStatus",
     "Artifact",
+    "ArtifactDocStatus",
     "ArtifactOrigin",
     "AttackAssessment",
     "AttackAssessmentStatus",
@@ -81,10 +83,14 @@ __all__ = [
     "CsfAssessment",
     "CsfAssessmentStatus",
     "CsfDimensionScore",
+    "CsfEvidenceBasis",
     "CsfGapAction",
     "Deliverable",
     "EmailToken",
     "EmailTokenPurpose",
+    "EvidenceLink",
+    "EvidenceLinkStatus",
+    "EvidenceTargetKind",
     "FindingsReport",
     "FindingsReportStatus",
     "IntegrationRun",
