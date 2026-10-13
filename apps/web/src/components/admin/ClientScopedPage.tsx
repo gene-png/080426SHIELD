@@ -122,7 +122,10 @@ export function ClientScopedPage({
         <AdminClientPicker
           // Remounted when the shown client or the state changes, so the
           // select starts from the current client (or the placeholder).
-          key={chosen?.id ?? choice.kind}
+          // Prefixed: the body below is keyed by the same client, and the
+          // two are siblings, so bare ids would collide (two children with
+          // one key). Each still re-mounts when the client changes.
+          key={`picker-${chosen?.id ?? choice.kind}`}
           clients={clients}
           current={chosen}
           disabled={leaving !== null || bodyBusy || choice.kind === "loading"}
@@ -141,7 +144,7 @@ export function ClientScopedPage({
         />
       )}
       {chosen !== null ? (
-        <React.Fragment key={chosen.id}>
+        <React.Fragment key={`body-${chosen.id}`}>
           {children({
             client: chosen,
             leaving: leaving !== null,
