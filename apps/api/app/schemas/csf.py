@@ -13,6 +13,7 @@ from app.models.csf_assessment import CsfAssessmentStatus
 from app.models.service import ServiceKind, ServiceStatus
 from app.schemas._numeric import IntNotBool
 from app.schemas.ai_runs import AiSource
+from app.schemas.revisions import RevisionInfo
 
 # ---------------------------------------------------------------------------
 # Catalog
@@ -151,6 +152,8 @@ class CsfAssessmentResponse(BaseModel):
     # (`csf/retired.py`).
     retired_answers: int = 0
     retired_answers_note: str | None = None
+    #: #1120: what a revision copied and why (V3, V4, V5); NULL otherwise.
+    revision: RevisionInfo | None = None
 
 
 class CsfAnswerPatch(BaseModel):
@@ -373,6 +376,16 @@ class EnterpriseSubcategory(BaseModel):
     #: #474 D': per tier, whether the evidence cap CHANGED that tier's result
     #: (`score_tier(...).evidence_capped`). Never serialized.
     tier_evidence_capped: dict[str, bool] = Field(default_factory=dict, exclude=True)
+    #: #1031: in-scope tiers left out of the roll-up because nobody scored
+    #: them; every screen and file shows each as "Not scored". Empty under the
+    #: every-tier rule and for a subcategory none of whose tiers is scored
+    #: (#1073). Defaulted so an older client parses.
+    unscored_tiers: list[str] = Field(default_factory=list)
+    #: #1031: the subcategory's only targets sit on unscored tiers, so no
+    #: target was measured ("Not measured" in the Target and Gap cells; "No
+    #: target" stays for a row with no target at all). Defaulted so an older
+    #: client parses.
+    target_not_measured: bool = False
 
 
 class EnterpriseProfileResponse(BaseModel):
@@ -571,6 +584,13 @@ class CsfGapActionResponse(BaseModel):
     poam_ref: str | None
     # priority_override where set, else default_priority.
     effective_priority: str | None
+    #: #1031: the code is not (or no longer) a gap; the entry is kept for
+    #: the record ("No longer a gap: kept for the record"). Required: every
+    #: construction goes through `_gap_action_response`.
+    no_longer_gap: bool
+    #: #1077 review, F1: the code's only targets sit on unscored tiers, so
+    #: its target reads "Not measured" here as on the Enterprise Profile.
+    target_not_measured: bool
 
 
 class CsfGapActionsResponse(BaseModel):
