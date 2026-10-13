@@ -26,7 +26,20 @@ import { adminApiToken, API_BASE } from "../helpers/ids";
 test.describe.configure({ timeout: 300_000 });
 
 const ACTIVE_CLIENT_COOKIE = "shield_active_client_id";
-const SWITCH_WINDOW_MS = 3_000;
+/**
+ * Step 7's NEGATIVE window: how long it waits for a switch that must not
+ * happen. It is not a guess: step 8, on the same run, times a real switch and
+ * requires it to fit inside this window, so a switch the blocked click had
+ * caused could not have been too slow to see.
+ */
+const NEGATIVE_WINDOW_MS = 20_000;
+/**
+ * A POSITIVE wait for a full page load on the dev server, the same order as
+ * this file's other first-load waits: Apply is a `location.replace`, so the
+ * new document is server-rendered and its scripts reloaded, which takes
+ * seconds on a CI runner. A 3 s positive window here was miscalibrated.
+ */
+const FIRST_LOAD_MS = 60_000;
 const string18 = (label: string) =>
   `Opening ${label}. If this page does not change, reload it, then choose the client again.`;
 
@@ -336,32 +349,44 @@ test("behind the archive dialog the picker is inert, so Apply cannot switch the 
     true,
   );
 
-  // 5. What is under the point: the modal's backdrop, i.e. the <dialog>. Soft,
+  // 5. What is under the point: the open modal, its backdrop or its panel.
+  // Over the backdrop the hit is the <dialog> itself; over the panel it is a
+  // CHILD of it, so the check is `closest("dialog")`, not the tag name. Soft,
   // so a revert still runs step 7, which must go red on its own.
   expect
     .soft(
       await page.evaluate(
-        ([px, py]) => document.elementFromPoint(px, py)?.tagName,
+        ([px, py]) => {
+          const hit = document.elementFromPoint(px, py);
+          const modal = hit?.closest("dialog");
+          return modal instanceof HTMLDialogElement && modal.open;
+        },
         [x, y],
       ),
+      "the point over Apply is covered by the open modal",
     )
-    .toBe("DIALOG");
+    .toBe(true);
 
   // 6. A real click at that point: `locator.click()` would wait out its
   // timeout behind a modal, and `dispatchEvent` ignores `inert`.
   await page.mouse.click(x, y);
 
-  // 7. Wait out the window a switch would need, then assert.
+  // 7. Wait out the window a switch would need, then assert. `commit` is the
+  // earliest point a navigation is visible, and the point step 8 times, so
+  // the two measure the same thing. A switch caused by this click commits
+  // well inside the window (step 8 proves a real one does, on this run), so
+  // if the modal did not block it, `navigated` is true and this goes red.
   const navigated = await page
     .waitForURL((u) => u.searchParams.get("client") === B.id, {
-      timeout: SWITCH_WINDOW_MS,
+      timeout: NEGATIVE_WINDOW_MS,
+      waitUntil: "commit",
     })
     .then(
       () => true,
       () => false,
     );
   const gateSeen = await expect
-    .poll(() => count(bGate), { timeout: SWITCH_WINDOW_MS })
+    .poll(() => count(bGate), { timeout: NEGATIVE_WINDOW_MS })
     .toBeGreaterThan(0)
     .then(
       () => true,
@@ -379,18 +404,38 @@ test("behind the archive dialog the picker is inert, so Apply cannot switch the 
   await expect.soft(picker).not.toBeFocused();
   expect.soft(gateSeen, "B's gate was requested").toBe(false);
 
-  // 8. Release the archive with a 2xx, then Apply for real: B within the same
-  // window. This calibrates step 7: too short a window turns THIS red.
+  // 8. Release the archive with a 2xx, then Apply for real. The waits are
+  // POSITIVE, so they get a full page load's time (FIRST_LOAD_MS). What a
+  // real switch TOOK is measured and must fit inside step 7's windows: that
+  // is what makes step 7's "nothing happened" mean something. If CI ever
+  // switches slower than the window, THIS goes red and says so, rather than
+  // step 7 passing over a switch it was too impatient to see.
   await (held as unknown as Route).fulfill({ status: 204 });
   await expect(dialog).toBeHidden({ timeout: 30_000 });
+  // Timed from the click itself, not from the wait for Apply to be enabled.
+  await expect(apply).toBeEnabled({ timeout: 30_000 });
+  const clickedAt = Date.now();
   await apply.click();
   await page.waitForURL((u) => u.searchParams.get("client") === B.id, {
-    timeout: SWITCH_WINDOW_MS,
+    timeout: FIRST_LOAD_MS,
+    waitUntil: "commit",
   });
+  const committedMs = Date.now() - clickedAt;
   await expect
-    .poll(() => count(bGate), { timeout: SWITCH_WINDOW_MS })
+    .poll(() => count(bGate), { timeout: FIRST_LOAD_MS })
     .toBeGreaterThan(0);
+  const gateMs = Date.now() - clickedAt;
+  // Step 7 waited NEGATIVE_WINDOW_MS for the commit, and then another
+  // NEGATIVE_WINDOW_MS for the gate request, so the gate's bound is twice it.
+  expect(
+    committedMs,
+    `a real switch committed in ${committedMs} ms; step 7's window is ${NEGATIVE_WINDOW_MS} ms`,
+  ).toBeLessThan(NEGATIVE_WINDOW_MS);
+  expect(
+    gateMs,
+    `a real switch requested B's gate in ${gateMs} ms; step 7 watched for ${2 * NEGATIVE_WINDOW_MS} ms`,
+  ).toBeLessThan(2 * NEGATIVE_WINDOW_MS);
   await expect(
     page.getByRole("heading", { name: `Risk Register for ${B.name}` }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: FIRST_LOAD_MS });
 });
