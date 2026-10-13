@@ -149,6 +149,18 @@ export async function reviewComputedStatuses(
   );
 }
 
+/** #1120: start a revision of an approved or released assessment. */
+export async function startRevision(
+  serviceId: string,
+  assessmentId: string,
+  reason: string,
+): Promise<AttackAssessment> {
+  return jsonRequest<AttackAssessment>(
+    `/api/proxy/attack/services/${serviceId}/assessments/${assessmentId}/revisions`,
+    { method: "POST", body: { reason } },
+  );
+}
+
 export async function discardAssessment(
   assessmentId: string,
 ): Promise<AttackAssessment> {

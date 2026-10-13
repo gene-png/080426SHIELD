@@ -13,6 +13,8 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**2026-10-13: #1120, PR #1152 with #1151 (migration 0073).** Approved and released ATT&CK, CSF and ZT assessments are changed only through "Start a revision", which opens one new draft per service; clients keep seeing the revised record. Tech Debt revisions are still to come. Status: the 2026-10-13 #1120 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
 **2026-10-13: #1031, PR #1077 (migration 0070).** The CSF Enterprise roll-up reads only scored tier rows; assessments approved before it keep their delivered numbers. Status: the 2026-10-13 #1031 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
 **2026-10-12: N5, PR #1109 (migration 0068).** Evidence fields on artifacts, a new `evidence_links` table, and a one-time `evidence_basis` backfill on ticked rows of approved and released CSF assessments. Nothing reads them yet. Status: the 2026-10-12 N5 entry in `DELIVERY_PLAN.md`'s MVP completion path.

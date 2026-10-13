@@ -1,3 +1,4 @@
+import type { RevisionInfo } from "@/lib/revisions/types";
 import type { AiSource } from "@/lib/aiSource/types";
 
 /** Wire types mirroring apps/api/app/schemas/csf.py. */
@@ -56,6 +57,8 @@ export interface CsfAnswer {
 export interface CsfAssessment {
   /** #646: which mode drafted the AI suggestions, as the API states it. */
   ai_source: AiSource;
+  /** #1120: what a revision copied and why; null unless a revision minted it. */
+  revision?: RevisionInfo | null;
   id: string;
   service_id: string;
   version: number;
