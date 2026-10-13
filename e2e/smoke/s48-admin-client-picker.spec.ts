@@ -158,6 +158,19 @@ async function cookieClient(page: Page): Promise<string | undefined> {
   return all.find((c) => c.name === ACTIVE_CLIENT_COOKIE)?.value;
 }
 
+/** The four facts step 3 checks while B's load is held. */
+interface LockFacts {
+  regenerateButtons: number;
+  regenerateDisabled: boolean;
+  leavingLineShown: boolean;
+  h1s: string[];
+}
+
+/** A snapshot the page pushed out; `receivedAt` is set test-side. */
+interface LockSnapshot extends LockFacts {
+  receivedAt?: number;
+}
+
 function urlClient(page: Page): string | null {
   return new URL(page.url()).searchParams.get("client");
 }
@@ -230,26 +243,69 @@ test("the picker's client, not the cookie's, reaches the URL, a reload, the twin
     });
 
   await test.step("3. Apply locks the page while its load is held", async () => {
-    let held: Route | null = null;
+    // While B's document is held, the test makes NO call into the page.
+    // Locator actions, locator assertions AND `page.evaluate` all wait for
+    // the pending navigation to finish, so each deadlocks against the hold:
+    // the click on 13810890, `expect(regenerate).toBeDisabled()` on
+    // c91df49f, and the `page.evaluate` poll on 190058c8 ("Timeout 30000ms
+    // exceeded while waiting on the predicate", with no Received value: the
+    // callback never returned; the review's guess that evaluate would not
+    // wait was wrong). Instead the page PUSHES its state out: an observer
+    // installed while the page is idle reports a snapshot through an
+    // exposed binding on every DOM change, and on a timer, and the test
+    // reads only its own array.
+    const snaps: LockSnapshot[] = [];
+    let heldAt: number | null = null;
+    await page.exposeBinding("__s48Lock", (_source, snap: LockSnapshot) => {
+      snaps.push({ ...snap, receivedAt: Date.now() });
+    });
+    await page.evaluate((leavingLine) => {
+      const report = (): void => {
+        const regenerate = Array.from(
+          document.querySelectorAll("button"),
+        ).filter((b) => b.textContent?.trim() === "Regenerate");
+        (window as unknown as { __s48Lock: (s: unknown) => void }).__s48Lock({
+          regenerateButtons: regenerate.length,
+          regenerateDisabled: regenerate.every((b) => b.disabled),
+          leavingLineShown: (document.body.textContent ?? "").includes(
+            leavingLine,
+          ),
+          h1s: Array.from(document.querySelectorAll("h1")).map(
+            (h) => h.textContent?.trim() ?? "",
+          ),
+        });
+      };
+      new MutationObserver(report).observe(document.body, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        characterData: true,
+      });
+      // On a timer too, so a snapshot is taken while the load is held even
+      // if the DOM settled before the hold began.
+      window.setInterval(report, 250);
+      report();
+    }, string18(B.name));
+
     const isBLoad = (url: URL) =>
       url.pathname === "/admin/risk-register" &&
       url.searchParams.get("client") === B.id;
+    let held: Route | null = null;
     await page.route(isBLoad, async (route) => {
-      if (route.request().resourceType() === "document") held = route;
-      else await route.continue();
+      if (route.request().resourceType() === "document") {
+        heldAt = Date.now();
+        held = route;
+      } else await route.continue();
     });
     await page
       .getByRole("combobox", { name: "Client for this page" })
       .selectOption(B.id, { timeout: STEP_MS });
     // NOT awaited here. Playwright's click waits for the navigation it
     // starts, and this test is holding that navigation, so awaiting the click
-    // before releasing the route is a deadlock: the click waits for the load,
-    // the load waits for `continue()`, and `continue()` waits for the click.
-    // That deadlock was #1140's E2E failure (13810890's annotation: s48 step
-    // 3, `locator.click: Timeout 30000ms exceeded`; before the waits were
-    // bounded it was the 52-minute hang). The click is awaited after the
-    // route is released. `catch` only stops an early failure below from
-    // leaving an unhandled rejection; `await clicking` still throws.
+    // before releasing the route is a deadlock (13810890's annotation; before
+    // the waits were bounded it was the 52-minute hang). The click is awaited
+    // after the route is released. `catch` only stops an early failure below
+    // from leaving an unhandled rejection; `await clicking` still throws.
     // LOAD_MS, not STEP_MS: the click's own wait includes B's full page load
     // once the route is released (#1140 review of c91df49f, F1).
     const clicking = page
@@ -257,44 +313,47 @@ test("the picker's client, not the cookie's, reaches the URL, a reload, the twin
       .click({ timeout: LOAD_MS });
     clicking.catch(() => undefined);
     await expect.poll(() => held !== null, { timeout: STEP_MS }).toBe(true);
-    // The locked state, read from the CURRENT document with `page.evaluate`,
-    // never with a locator: locator actions AND locator assertions wait for
-    // the pending navigation to finish, and this test is holding it (the
-    // annotation on c91df49f: `expect(regenerate).toBeDisabled()` at this
-    // step, "waiting for … navigation to finish", then the timeout).
-    // `page.evaluate` runs in the current page and does not wait. Regenerate
-    // is found as the one <button> whose text is exactly "Regenerate".
-    await expect
-      .poll(
-        () =>
-          page.evaluate(
-            ([leavingLine, headingA]) => {
-              const regenerate = Array.from(
-                document.querySelectorAll("button"),
-              ).filter((b) => b.textContent?.trim() === "Regenerate");
-              return {
-                regenerateButtons: regenerate.length,
-                regenerateDisabled: regenerate.every(
-                  (b) => (b as HTMLButtonElement).disabled,
-                ),
-                leavingLineShown: (document.body.textContent ?? "").includes(
-                  leavingLine,
-                ),
-                h1s: Array.from(document.querySelectorAll("h1")).map(
-                  (h) => h.textContent?.trim() ?? "",
-                ),
-              };
-            },
-            [string18(B.name), `Risk Register for ${A.name}`] as const,
-          ),
-        { timeout: STEP_MS },
-      )
-      .toEqual({
-        regenerateButtons: 1,
-        regenerateDisabled: true,
-        leavingLineShown: true,
-        h1s: [`Risk Register for ${A.name}`],
-      });
+
+    // The locked state, from a snapshot taken AFTER the hold began. Before
+    // Apply, Regenerate is enabled and string 18 is absent, so a pre-Apply
+    // snapshot could not match the locked shape anyway; `receivedAt` makes
+    // that explicit rather than incidental.
+    const locked: LockFacts = {
+      regenerateButtons: 1,
+      regenerateDisabled: true,
+      leavingLineShown: true,
+      h1s: [`Risk Register for ${A.name}`],
+    };
+    const matchesLocked = (s: LockSnapshot): boolean =>
+      s.receivedAt !== undefined &&
+      heldAt !== null &&
+      s.receivedAt >= heldAt &&
+      s.regenerateButtons === locked.regenerateButtons &&
+      s.regenerateDisabled === locked.regenerateDisabled &&
+      s.leavingLineShown === locked.leavingLineShown &&
+      JSON.stringify(s.h1s) === JSON.stringify(locked.h1s);
+    const sawLocked = await expect
+      .poll(() => snaps.some(matchesLocked), { timeout: STEP_MS })
+      .toBe(true)
+      .then(
+        () => true,
+        () => false,
+      );
+    if (!sawLocked) {
+      // Name WHICH fact was wrong: the last snapshot against the locked one.
+      const last = snaps.at(-1);
+      expect(
+        last
+          ? {
+              regenerateButtons: last.regenerateButtons,
+              regenerateDisabled: last.regenerateDisabled,
+              leavingLineShown: last.leavingLineShown,
+              h1s: last.h1s,
+            }
+          : null,
+        `no snapshot after the hold matched the locked state (${snaps.length} received; hold began ${heldAt === null ? "never" : "at " + heldAt})`,
+      ).toEqual(locked);
+    }
     await (held as unknown as Route).continue();
     await clicking;
     await page.unroute(isBLoad);
