@@ -4,6 +4,11 @@ import Link from "next/link";
 
 import { Card, CardBody, EmptyState } from "@shield/design-system";
 
+import {
+  ClientScopedPage,
+  type ClientScopedBodyProps,
+} from "@/components/admin/ClientScopedPage";
+import type { ClientOption } from "@/lib/admin/client-choice";
 import { workspaceHref } from "@/lib/admin/types";
 import { SERVICE_LABELS, type ServiceType } from "@/lib/intake/types";
 import {
@@ -64,14 +69,67 @@ function ThreadRow({ thread }: { thread: InboxThread }): JSX.Element {
   );
 }
 
+/** §7, approved verbatim (#736 6130838759). */
+const MESSAGES_NO_CLIENT =
+  "Messages are listed per client. Choose a client above, then select Show this client.";
+const MESSAGES_SUBTITLE =
+  "Threads for the client chosen above, newest first. The badge counts messages you haven't opened yet.";
+const MESSAGES_EMPTY =
+  "Threads appear here once a service for this client has a conversation.";
+
+/**
+ * RR-2 (for #1121), design note §3.5: the h1 and subtitle moved here from the
+ * server-rendered page, because they depend on the chosen client. The
+ * subtitle shows only in `chosen`: "the client chosen above" is false when
+ * none is.
+ */
+function MessagesHeader({
+  chosen,
+}: {
+  chosen: ClientOption | null;
+}): JSX.Element {
+  return (
+    <div>
+      <h1 className="text-2xl font-semibold text-ink-primary">
+        {chosen ? `Messages for ${chosen.label}` : "Messages"}
+      </h1>
+      {chosen ? (
+        <p className="mt-1 text-sm text-ink-secondary">{MESSAGES_SUBTITLE}</p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * RR-2 (for #1121): scoped by the page's own client picker
+ * (`ClientScopedPage`), not by the shared active-client cookie.
+ */
 export function InboxView(): JSX.Element {
+  return (
+    <ClientScopedPage
+      header={(chosen) => <MessagesHeader chosen={chosen} />}
+      noClient={
+        <EmptyState
+          title="Pick a client first"
+          description={MESSAGES_NO_CLIENT}
+        />
+      }
+    >
+      {(props) => <InboxBody {...props} />}
+    </ClientScopedPage>
+  );
+}
+
+/** Read-only, so there is no work in flight to lock the picker with. */
+function InboxBody({ client }: ClientScopedBodyProps): JSX.Element {
+  const clientId = client.id;
   const [threads, setThreads] = React.useState<InboxThread[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     let active = true;
-    fetchInbox()
+    fetchInbox(clientId)
       .then((r) => {
         if (active) setThreads(r.threads);
       })
@@ -84,7 +142,7 @@ export function InboxView(): JSX.Element {
     return () => {
       active = false;
     };
-  }, []);
+  }, [clientId]);
 
   if (loading) return <p className="text-sm text-ink-tertiary">Loading…</p>;
   if (error)
@@ -95,10 +153,7 @@ export function InboxView(): JSX.Element {
     );
   if (threads.length === 0)
     return (
-      <EmptyState
-        title="No message threads"
-        description="Threads appear here once a service for the selected client has a conversation. Pick a client from the switcher to see theirs."
-      />
+      <EmptyState title="No message threads" description={MESSAGES_EMPTY} />
     );
 
   return (

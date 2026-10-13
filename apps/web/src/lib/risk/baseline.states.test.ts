@@ -23,6 +23,9 @@ function csf(source: string): RiskTargetUsed {
     target: null,
     source,
     origin: "live_at_generate",
+    // RR-1 (#1122): the server's label (design note §6.2). This file pins
+    // the Playbook states' wording, not the label.
+    label: "NIST CSF",
   };
 }
 

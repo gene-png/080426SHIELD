@@ -258,6 +258,22 @@ export function serverReason(err: unknown): string | null {
 }
 
 /**
+ * RR-2 (for #1121), design note §3.2: the server's sentence for a failed
+ * READ, or null. The same as `serverReason`, except that #550's
+ * `upstream_outcome_unknown` sentence ("We couldn't confirm whether this
+ * finished...") is withheld: it exists for a WRITE whose outcome is unknown,
+ * and a read that failed changed nothing, so there is nothing to "check before
+ * trying again". The caller shows its own fallback instead.
+ *
+ * Not `clientFacingError` and not `dashboardLoadReason`: both let that
+ * sentence through.
+ */
+export function readFailureReason(err: unknown): string | null {
+  if (isUpstreamOutcomeUnknown(err)) return null;
+  return serverReason(err);
+}
+
+/**
  * What to show a CLIENT when a call failed and there is no richer local copy.
  *
  * Returns the server's own typed sentence where it sent one, and `fallback`

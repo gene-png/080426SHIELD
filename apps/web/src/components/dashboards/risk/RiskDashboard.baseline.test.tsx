@@ -45,6 +45,7 @@ describe("RiskDashboard baseline (#474)", () => {
               target: 4,
               source: "client",
               origin: "live_at_generate",
+              label: "NIST CSF",
             },
           ],
           targets_recorded: true,
@@ -67,6 +68,7 @@ describe("RiskDashboard baseline (#474)", () => {
               target: 4,
               source: "client",
               origin: "live_at_generate",
+              label: "Zero Trust (CISA ZTMM 2.0)",
             },
             {
               kind: "zt",
@@ -74,6 +76,7 @@ describe("RiskDashboard baseline (#474)", () => {
               target: 3,
               source: "default",
               origin: "live_at_generate",
+              label: "Zero Trust (DoD ZT Reference Architecture)",
             },
           ],
           targets_recorded: true,
