@@ -109,9 +109,12 @@ function proxyError(status: number, payload: unknown): Error {
 
 /**
  * The api's schema 422, as `_handle_validation_error` sends it for a value
- * `ClientProfilePatch` refuses. Captured from the api on 2026-10-01 for
- * `{"client": {"website": "example.gov"}}` (`website: HttpUrl`); only the
- * correlation id is dropped.
+ * `ClientProfilePatch` refuses. Re-captured from the api on 2026-10-12 (PATCH
+ * /intake through TestClient) for `{"client": {"website": "not a website"}}`
+ * (`website: HttpUrl`); only the correlation id is dropped. The 2026-10-01
+ * capture used "example.gov", which IN-1 (#1049) now accepts as
+ * "https://example.gov/". `input` is what the validator handed `HttpUrl`,
+ * after the https:// prefix.
  */
 function schema422(field: string, input: string): Error {
   return proxyError(422, {
@@ -124,9 +127,9 @@ function schema422(field: string, input: string): Error {
         {
           type: "url_parsing",
           loc: ["body", "client", field],
-          msg: "Input should be a valid URL, relative URL without a base",
+          msg: "Input should be a valid URL, invalid international domain name",
           input,
-          ctx: { error: "relative URL without a base" },
+          ctx: { error: "invalid international domain name" },
         },
       ],
     },
@@ -248,16 +251,16 @@ describe("IntakeWizard: Submit and an in-flight save (#252)", () => {
   });
 
   it("drops a value the server REFUSED, keeps the error, and submits what the server holds", async () => {
-    // Review of #757, finding 2. A website the schema refuses ("example.gov",
+    // Review of #757, finding 2. A website the schema refuses ("not a website",
     // `website: HttpUrl`) used to stay in the overlay: the review showed it as
     // accepted and Submit then failed with only "Failed to submit intake."
-    const submit = await editThenReview([["website", "example.gov"]]);
+    const submit = await editThenReview([["website", "not a website"]]);
     await act(async () => {
-      held[0].reject(schema422("website", "example.gov"));
+      held[0].reject(schema422("website", "https://not a website"));
     });
 
     expect(screen.getByText(/^Couldn.t save:/)).toBeInTheDocument();
-    expect(screen.queryByText("example.gov")).not.toBeInTheDocument();
+    expect(screen.queryByText("not a website")).not.toBeInTheDocument();
     expect(submit).toBeEnabled();
     await act(async () => {
       fireEvent.click(submit);
@@ -271,9 +274,9 @@ describe("IntakeWizard: Submit and an in-flight save (#252)", () => {
     render(<IntakeWizard />);
     await screen.findByRole("button", { name: "Next →" });
     await next(); // -> organization
-    await typeAndBlur("website", "example.gov");
+    await typeAndBlur("website", "not a website");
     await act(async () => {
-      held[0].reject(schema422("website", "example.gov"));
+      held[0].reject(schema422("website", "https://not a website"));
     });
     expect(screen.getByText(/^Couldn.t save:/)).toBeInTheDocument();
 

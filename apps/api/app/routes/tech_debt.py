@@ -45,6 +45,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import and_, func, select, update
 from sqlalchemy.orm import Session
 
+from app.ai.isolation import REDACTION_BUDGET_EXCEEDED, RedactionRefused, limit_text
 from app.ai.llm import LLMClient
 from app.ai.runs import (
     RunContext,
@@ -56,6 +57,7 @@ from app.ai.runs import (
     start_run,
 )
 from app.audit import audit
+from app.config import get_settings
 from app.db.session import get_db
 from app.deliverable_release import ParentGuard, release_deliverable
 from app.dependencies import current_client, current_user, require_role
@@ -647,6 +649,16 @@ def extract_capability_list(
 _EXTRACT_PURPOSE = "tech_debt_extract"
 
 
+def _inventory_over_budget() -> str:
+    """The approved Tech Debt sentence (#736 6094262391), {N} from the setting."""
+    budget = get_settings().shield_redaction_budget_seconds
+    return (
+        "Checking this inventory for people's names took longer than the "
+        f"{limit_text(budget)}-second limit, so the check was stopped and nothing was "
+        "sent to the AI provider. No capability list was created."
+    )
+
+
 def _extract_run_work(
     session: Session,
     ctx: RunContext,
@@ -691,6 +703,14 @@ def _extract_run_work(
         raise RunFailed(
             "ai_extraction_unparseable", f"AI extraction failed to parse: {exc}"
         ) from exc
+    except RedactionRefused as exc:
+        # #552: the egress says this in neutral words, because it serves every
+        # service. Here, and only here, a capability list is what a consultant
+        # was waiting for, so the approved Tech Debt sentence (#736 6094262391)
+        # says none was made -- true: this raise is above the list's insert.
+        if exc.reason == REDACTION_BUDGET_EXCEEDED and not exc.sent_before:
+            raise exc.with_message(_inventory_over_budget()) from exc
+        raise
     # The provider call is over and recorded: keep its `llm_calls` row whatever
     # happens to the apply below.
     db.commit()
