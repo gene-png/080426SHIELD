@@ -250,18 +250,51 @@ test("the picker's client, not the cookie's, reaches the URL, a reload, the twin
     // bounded it was the 52-minute hang). The click is awaited after the
     // route is released. `catch` only stops an early failure below from
     // leaving an unhandled rejection; `await clicking` still throws.
+    // LOAD_MS, not STEP_MS: the click's own wait includes B's full page load
+    // once the route is released (#1140 review of c91df49f, F1).
     const clicking = page
       .getByRole("button", { name: "Show this client" })
-      .click({ timeout: STEP_MS });
+      .click({ timeout: LOAD_MS });
     clicking.catch(() => undefined);
     await expect.poll(() => held !== null, { timeout: STEP_MS }).toBe(true);
-    await expect(regenerate).toBeDisabled({ timeout: STEP_MS });
-    await expect(page.getByText(string18(B.name))).toBeVisible({
-      timeout: STEP_MS,
-    });
-    await expect(
-      page.getByRole("heading", { name: `Risk Register for ${A.name}` }),
-    ).toBeVisible({ timeout: STEP_MS });
+    // The locked state, read from the CURRENT document with `page.evaluate`,
+    // never with a locator: locator actions AND locator assertions wait for
+    // the pending navigation to finish, and this test is holding it (the
+    // annotation on c91df49f: `expect(regenerate).toBeDisabled()` at this
+    // step, "waiting for … navigation to finish", then the timeout).
+    // `page.evaluate` runs in the current page and does not wait. Regenerate
+    // is found as the one <button> whose text is exactly "Regenerate".
+    await expect
+      .poll(
+        () =>
+          page.evaluate(
+            ([leavingLine, headingA]) => {
+              const regenerate = Array.from(
+                document.querySelectorAll("button"),
+              ).filter((b) => b.textContent?.trim() === "Regenerate");
+              return {
+                regenerateButtons: regenerate.length,
+                regenerateDisabled: regenerate.every(
+                  (b) => (b as HTMLButtonElement).disabled,
+                ),
+                leavingLineShown: (document.body.textContent ?? "").includes(
+                  leavingLine,
+                ),
+                h1s: Array.from(document.querySelectorAll("h1")).map(
+                  (h) => h.textContent?.trim() ?? "",
+                ),
+              };
+            },
+            [string18(B.name), `Risk Register for ${A.name}`] as const,
+          ),
+        { timeout: STEP_MS },
+      )
+      .toEqual({
+        regenerateButtons: 1,
+        regenerateDisabled: true,
+        leavingLineShown: true,
+        h1s: [`Risk Register for ${A.name}`],
+      });
     await (held as unknown as Route).continue();
     await clicking;
     await page.unroute(isBLoad);
@@ -310,7 +343,8 @@ test("the picker's client, not the cookie's, reaches the URL, a reload, the twin
       .getByRole("navigation", { name: "Primary" })
       .first()
       .getByRole("link", { name: "Deliverables", exact: true })
-      .click({ timeout: STEP_MS });
+      // LOAD_MS: a Next <Link> may fall back to a full load on a cold compile, and then the click carries the load.
+      .click({ timeout: LOAD_MS });
     await expect
       .poll(() => new URL(page.url()).pathname, { timeout: LOAD_MS })
       .toBe("/admin/deliverables");
@@ -514,7 +548,9 @@ test("behind the archive dialog the picker is inert, so Apply cannot switch the 
     // Timed from the click itself, not from the wait for Apply to be enabled.
     await expect(apply).toBeEnabled({ timeout: STEP_MS });
     const clickedAt = Date.now();
-    await apply.click({ timeout: STEP_MS });
+    // LOAD_MS: the click waits for the navigation it starts (#1140 review of
+    // c91df49f, F1, the twin of step 3 in the first test).
+    await apply.click({ timeout: LOAD_MS });
     await page.waitForURL((u) => u.searchParams.get("client") === B.id, {
       timeout: FIRST_LOAD_MS,
       waitUntil: "commit",
