@@ -19,6 +19,9 @@ function playbook(): RiskTargetUsed {
     target: null,
     source: "playbook",
     origin: "live_at_generate",
+    // RR-1 (#1122): the server's label (design note §6.2). This file pins
+    // the Playbook line, not the label.
+    label: "NIST CSF",
   };
 }
 
@@ -34,6 +37,12 @@ describe("targetSentences, the CSF Playbook baseline (#474 D')", () => {
       target: 3,
       source: "default",
       origin: "live_at_generate",
+      // One ZT service: the server leaves the framework unnamed (§6.2).
+      // This row is the ONLY web case that goes red if the web goes back to
+      // naming a framework from `framework` instead of rendering `label`:
+      // `framework` says CISA, the server's label does not, and the expected
+      // line is the unnamed one.
+      label: "Zero Trust",
     };
     expect(targetSentences([playbook(), zt], true)).toEqual([
       CSF_PLAYBOOK,

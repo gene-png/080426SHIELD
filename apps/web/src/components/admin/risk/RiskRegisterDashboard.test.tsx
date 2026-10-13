@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as clientReads from "@/lib/admin/client-reads";
 import * as riskClient from "@/lib/risk/client";
 import type { RiskGate, RiskRegister } from "@/lib/risk/types";
 
@@ -20,8 +21,18 @@ vi.mock("@/lib/risk/client", () => ({
   fetchRiskGate: vi.fn(),
   fetchRiskRegisterLatest: vi.fn(),
   generateRiskRegister: vi.fn(),
-  getActiveClientId: vi.fn(),
-  getClientName: vi.fn(),
+}));
+
+// RR-2 (for #1121): the page takes its client from its own picker. The two
+// reads are mocked where they live, with API-shaped bodies, so the real
+// resolver chooses the client. The URL carries no ?client=.
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/admin/risk-register",
+  useSearchParams: () => new URLSearchParams(),
+}));
+vi.mock("@/lib/admin/client-reads", () => ({
+  readClientList: vi.fn(),
+  readActiveClient: vi.fn(),
 }));
 
 // The Generate control sits behind the offline-AI confirmation. Passing the
@@ -41,18 +52,66 @@ const fetchRiskGate = vi.mocked(riskClient.fetchRiskGate);
 const fetchRiskRegisterLatest = vi.mocked(riskClient.fetchRiskRegisterLatest);
 const generateRiskRegister = vi.mocked(riskClient.generateRiskRegister);
 const exportRiskRegister = vi.mocked(riskClient.exportRiskRegister);
-const getActiveClientId = vi.mocked(riskClient.getActiveClientId);
-const getClientName = vi.mocked(riskClient.getClientName);
 
 /** No casts. If the wire type gains a field, these stop compiling — which is
  *  the point: the previous version cast the fixture and could therefore
  *  describe a payload the API never sends. */
+/**
+ * RR-2 (for #1121): `id` is the one listed client, named `name`, and the one
+ * saved in this browser. The list is shaped like `AdminClientListResponse`.
+ */
+function mockPickedClient(id: string, name: string): void {
+  vi.mocked(clientReads.readClientList).mockResolvedValue({
+    clients: [
+      {
+        id,
+        legal_name: name,
+        dba_name: null,
+        industry: null,
+        size_band: null,
+        intake_completed_at: null,
+        created_at: "2026-10-01T00:00:00Z",
+        archived_at: null,
+        open_request_count: 0,
+        total_request_count: 0,
+      },
+    ],
+  });
+  vi.mocked(clientReads.readActiveClient).mockResolvedValue({ active: id });
+}
+
 function gate(over: Partial<RiskGate> = {}): RiskGate {
   return {
     unlocked: true,
     has_attack: true,
     has_csf: true,
     has_zt: true,
+    // RR-1 (for #1122): the selection block's rows. With none, Generate
+    // stays disabled (design note §3.4).
+    eligible: [
+      {
+        kind: "attack",
+        service_id: "svc-attack",
+        title: "ATT&CK",
+        framework: null,
+        label: "ATT&CK coverage",
+      },
+      {
+        kind: "csf",
+        service_id: "svc-csf",
+        title: "CSF",
+        framework: null,
+        label: "NIST CSF",
+      },
+      {
+        kind: "zt",
+        service_id: "svc-zt",
+        title: "ZT",
+        framework: "cisa_ztmm_2_0",
+        label: "Zero Trust (CISA ZTMM 2.0)",
+      },
+    ],
+    ineligible: [],
     missing: [],
     not_finalized: [],
     synthesizable_missing: [],
@@ -139,11 +198,14 @@ const BANNER = "risk-register-excluded-inputs";
 
 async function loaded(): Promise<void> {
   render(<RiskRegisterDashboard />);
-  await waitFor(() =>
+  await waitFor(() => {
+    // RR-2 (for #1121): the h1 names the client and renders before the
+    // body has loaded, so the wait is for the body too.
     expect(
-      screen.getByRole("heading", { name: "Risk Register" }),
-    ).toBeInTheDocument(),
-  );
+      screen.getByRole("heading", { name: /^Risk Register for / }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Loading…")).toBeNull();
+  });
 }
 
 /**
@@ -169,8 +231,7 @@ async function loaded(): Promise<void> {
 describe("RiskRegisterDashboard tier-less entries disclosure", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getActiveClientId.mockResolvedValue("c1");
-    getClientName.mockResolvedValue("Atlas");
+    mockPickedClient("c1", "Atlas");
     fetchRiskGate.mockResolvedValue(gate());
   });
 
@@ -305,8 +366,7 @@ describe("RiskRegisterDashboard tier-less entries disclosure", () => {
 describe("RiskRegisterDashboard excluded-inputs disclosure", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getActiveClientId.mockResolvedValue("c1");
-    getClientName.mockResolvedValue("Atlas");
+    mockPickedClient("c1", "Atlas");
     fetchRiskGate.mockResolvedValue(gate());
     fetchRiskRegisterLatest.mockResolvedValue(null);
   });
@@ -325,7 +385,11 @@ describe("RiskRegisterDashboard excluded-inputs disclosure", () => {
     // asserting on it pins styling rather than copy.
     expect(banner.textContent).toMatch(/the CSF assessment/);
     expect(banner.textContent).toMatch(/not approved/);
-    expect(banner.textContent).toMatch(/exported documents do not say so/i);
+    // RR-1 (for #1122): copy 16a, verbatim. It no longer speaks for the
+    // exported documents (design note §6.3).
+    expect(banner.textContent).toBe(
+      "Generated without the CSF assessment. That assessment was not approved when this register was generated, so nothing from it is in this register. Re-generate if it should be included.",
+    );
   });
 
   it("says an OLD register was never asked, rather than reporting it clean", async () => {
@@ -432,10 +496,10 @@ describe("RiskRegisterDashboard excluded-inputs disclosure", () => {
     });
     const text = (await screen.findByTestId(BANNER)).textContent ?? "";
     expect(text).toContain(
-      "That assessment exists but is not approved, so nothing from it is in this register.",
+      "That assessment was not approved when this register was generated, so nothing from it is in this register.",
     );
-    expect(text).toContain("after approving it if it should be included.");
-    expect(text).not.toMatch(/Those|approving them|they should/);
+    expect(text).toContain("Re-generate if it should be included.");
+    expect(text).not.toMatch(/Those|from them|they should/);
   });
 
   it("speaks of the assessments when several were excluded (#683)", async () => {
@@ -450,9 +514,9 @@ describe("RiskRegisterDashboard excluded-inputs disclosure", () => {
     });
     const text = (await screen.findByTestId(BANNER)).textContent ?? "";
     expect(text).toContain(
-      "Those assessments exist but are not approved, so nothing from them is in this register.",
+      "Those assessments were not approved when this register was generated, so nothing from them is in this register.",
     );
-    expect(text).toContain("after approving them if they should be included.");
+    expect(text).toContain("Re-generate if they should be included.");
   });
 
   it("renders no banner when nothing was excluded", async () => {
@@ -509,8 +573,7 @@ describe("RiskRegisterDashboard excluded-inputs disclosure", () => {
 
 describe("RiskRegisterDashboard partial-synthesis disclosure (#372)", () => {
   beforeEach(() => {
-    getActiveClientId.mockResolvedValue("c1");
-    getClientName.mockResolvedValue("Atlas");
+    mockPickedClient("c1", "Atlas");
     fetchRiskGate.mockResolvedValue(gate());
     fetchRiskRegisterLatest.mockResolvedValue(null);
   });
@@ -640,8 +703,7 @@ describe("RiskRegisterDashboard partial-synthesis disclosure (#372)", () => {
 describe("RiskRegisterDashboard denominator (#330)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getActiveClientId.mockResolvedValue("c1");
-    getClientName.mockResolvedValue("Atlas");
+    mockPickedClient("c1", "Atlas");
     fetchRiskGate.mockResolvedValue(gate());
   });
 
@@ -703,8 +765,7 @@ describe("RiskRegisterDashboard denominator (#330)", () => {
 describe("RiskRegisterDashboard scored-coverage disclosure (#403)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getActiveClientId.mockResolvedValue("c1");
-    getClientName.mockResolvedValue("Atlas");
+    mockPickedClient("c1", "Atlas");
     fetchRiskGate.mockResolvedValue(gate());
   });
 
@@ -723,8 +784,13 @@ describe("RiskRegisterDashboard scored-coverage disclosure (#403)", () => {
         entries_total: 1,
         excluded_unscored_links_recorded: true,
         excluded_unscored_links: [
-          { service: "attack", scored: 12, total: 700 },
-          { service: "csf", scored: 106, total: 106 },
+          {
+            service: "attack",
+            scored: 12,
+            total: 700,
+            label: "ATT&CK coverage",
+          },
+          { service: "csf", scored: 106, total: 106, label: "NIST CSF" },
         ],
       }),
     );
@@ -766,7 +832,7 @@ describe("RiskRegisterDashboard scored-coverage disclosure (#403)", () => {
         entries_total: 1,
         excluded_unscored_links_recorded: true,
         excluded_unscored_links: [
-          { service: "tech_debt", scored: 1, total: 9 },
+          { service: "tech_debt", scored: 1, total: 9, label: "tech_debt" },
         ],
       }),
     );

@@ -53,6 +53,7 @@ function data(
         target: null,
         source,
         origin: "live_at_generate",
+        label: "NIST CSF",
       },
     ],
     targets_recorded: true,

@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as clientReads from "@/lib/admin/client-reads";
 import * as riskClient from "@/lib/risk/client";
 import type { RiskGate } from "@/lib/risk/types";
 
@@ -24,17 +25,49 @@ vi.mock("@/lib/risk/client", () => ({
   fetchRiskGate: vi.fn(),
   fetchRiskRegisterLatest: vi.fn(),
   generateRiskRegister: vi.fn(),
-  getActiveClientId: vi.fn(),
-  getClientName: vi.fn(),
+}));
+
+// RR-2 (for #1121): the page takes its client from its own picker. The two
+// reads are mocked where they live, with API-shaped bodies, so the real
+// resolver chooses the client. The URL carries no ?client=.
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/admin/risk-register",
+  useSearchParams: () => new URLSearchParams(),
+}));
+vi.mock("@/lib/admin/client-reads", () => ({
+  readClientList: vi.fn(),
+  readActiveClient: vi.fn(),
 }));
 
 const fetchRiskGate = vi.mocked(riskClient.fetchRiskGate);
 const fetchRiskRegisterLatest = vi.mocked(riskClient.fetchRiskRegisterLatest);
-const getActiveClientId = vi.mocked(riskClient.getActiveClientId);
-const getClientName = vi.mocked(riskClient.getClientName);
 
 const MESSAGE =
   "Acme has no MITRE ATT&CK Coverage Mapping service. A client adds it by selecting MITRE ATT&CK Coverage Mapping in the Services step of its intake; there is no control here to add it. Acme has no NIST CSF 2.0 Assessment or Zero Trust service. The client can add one by selecting it in the Services step of its intake, or by starting a self-assessment from My Assessments. A draft assessment is enough to generate a draft register; approve the assessments before you publish it.";
+
+/**
+ * RR-2 (for #1121): `id` is the one listed client, named `name`, and the one
+ * saved in this browser. The list is shaped like `AdminClientListResponse`.
+ */
+function mockPickedClient(id: string, name: string): void {
+  vi.mocked(clientReads.readClientList).mockResolvedValue({
+    clients: [
+      {
+        id,
+        legal_name: name,
+        dba_name: null,
+        industry: null,
+        size_band: null,
+        intake_completed_at: null,
+        created_at: "2026-10-01T00:00:00Z",
+        archived_at: null,
+        open_request_count: 0,
+        total_request_count: 0,
+      },
+    ],
+  });
+  vi.mocked(clientReads.readActiveClient).mockResolvedValue({ active: id });
+}
 
 function lockedGate(over: Partial<RiskGate> = {}): RiskGate {
   return {
@@ -68,8 +101,7 @@ function lockedGate(over: Partial<RiskGate> = {}): RiskGate {
 describe("RiskRegisterDashboard, locked (#1081)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getActiveClientId.mockResolvedValue("cid-1");
-    getClientName.mockResolvedValue("Acme");
+    mockPickedClient("cid-1", "Acme");
     fetchRiskRegisterLatest.mockResolvedValue(null);
   });
 

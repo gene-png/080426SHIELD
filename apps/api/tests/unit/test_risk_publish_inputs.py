@@ -24,12 +24,15 @@ from tests.unit.test_risk_register import (  # noqa: F401  (app_client is a fixt
 pytestmark = pytest.mark.unit
 
 
-def _gen(c, provider, bearer: str, cid: str) -> dict:
+def _gen(c, provider, bearer: str, cid: str, include: dict | None = None) -> dict:
     # One rated entry, so the unrated-entry refusal (D1) never masks the
-    # input refusal under test.
+    # input refusal under test. RR-1 (for #1122): `include` is the generate
+    # body's selection; None sends no body (the absent-body default).
     provider.register_static("risk_synthesize", LLMResponse(_entries_payload(_entry("R"))))
     r = c.post(
-        f"/risk/clients/{cid}/register/generate", headers={"Authorization": f"Bearer {bearer}"}
+        f"/risk/clients/{cid}/register/generate",
+        headers={"Authorization": f"Bearer {bearer}"},
+        **({} if include is None else {"json": {"include": include}}),
     )
     assert r.status_code == 201, r.text
     return r.json()
@@ -135,9 +138,17 @@ def test_a_register_with_no_input_record_blocks(app_client) -> None:  # noqa: F8
         prov.pop("current_inputs")
         reg.provenance = prov
         s.commit()
-    assert _blockers(_publish(c, bearer, cid)) == [
-        {"input": "register", "reason": "not_recorded", "status": None}
-    ]
+    r = _publish(c, bearer, cid)
+    assert _blockers(r) == [{"input": "register", "reason": "not_recorded", "status": None}]
+    # RR-1 (#1122), design note §4 check 5 and §5.3: a `selection` beside an
+    # unreadable `current_inputs` fails §4, so the register is refused with
+    # copy 19 (§8, pending the advisor), never with the pre-RR-1 "predates
+    # input recording" sentence.
+    assert r.json()["error"]["message"] == (
+        "This register has no usable record of how its services were chosen or "
+        "which were left out, so it cannot be published. Regenerate it, then "
+        "publish the new version."
+    )
 
 
 def test_the_gate_lists_every_input_and_its_state(app_client) -> None:  # noqa: F811
@@ -148,11 +159,41 @@ def test_the_gate_lists_every_input_and_its_state(app_client) -> None:  # noqa: 
     release(c, bearer, cid, "zt", s.zt_service)
     g = c.get(f"/risk/clients/{cid}/gate", headers={"Authorization": f"Bearer {bearer}"})
     assert g.status_code == 200, g.text
+    # RR-1 (for #1122), design note §6.5: `in_register` is None on every row
+    # while no register exists (here and in the gate reads below).
     assert g.json()["inputs"] == [
-        {"kind": "attack", "engaged": True, "status": "approved", "version": 1, "qualifier": None},
-        {"kind": "csf", "engaged": False, "status": None, "version": None, "qualifier": None},
-        {"kind": "zt", "engaged": True, "status": "released", "version": 1, "qualifier": None},
-        {"kind": "tech_debt", "engaged": False, "status": None, "version": None, "qualifier": None},
+        {
+            "kind": "attack",
+            "engaged": True,
+            "status": "approved",
+            "version": 1,
+            "qualifier": None,
+            "in_register": None,
+        },
+        {
+            "kind": "csf",
+            "engaged": False,
+            "status": None,
+            "version": None,
+            "qualifier": None,
+            "in_register": None,
+        },
+        {
+            "kind": "zt",
+            "engaged": True,
+            "status": "released",
+            "version": 1,
+            "qualifier": None,
+            "in_register": None,
+        },
+        {
+            "kind": "tech_debt",
+            "engaged": False,
+            "status": None,
+            "version": None,
+            "qualifier": None,
+            "in_register": None,
+        },
     ]
 
 
@@ -313,7 +354,14 @@ def test_an_archived_service_is_not_an_input(app_client) -> None:  # noqa: F811
 
     g = c.get(f"/risk/clients/{cid}/gate", headers=h).json()
     assert [r for r in g["inputs"] if r["kind"] == "attack"] == [
-        {"kind": "attack", "engaged": True, "status": "draft", "version": 1, "qualifier": None}
+        {
+            "kind": "attack",
+            "engaged": True,
+            "status": "draft",
+            "version": 1,
+            "qualifier": None,
+            "in_register": None,
+        }
     ]
     _gen(c, provider, bearer, cid)
     prov = _register_provenance()
@@ -327,7 +375,13 @@ def test_an_archived_service_is_not_an_input(app_client) -> None:  # noqa: F811
 
 def test_every_engaged_zero_trust_service_must_be_released(app_client) -> None:  # noqa: F811
     """B2 (b). CISA has v2 RELEASED; a DoD service has v1 DRAFT. Both are
-    engaged, so the DoD draft blocks even though CISA's is the newer version."""
+    engaged, so the DoD draft blocks even though CISA's is the newer version.
+
+    RR-1 (for #1122) makes a register draw on ONE Zero Trust framework, and
+    with both eligible an absent body is refused (copy 6). The register here
+    names DoD, so the DoD draft is its input and blocks it. A register naming
+    CISA leaves DoD deselected, which blocks nothing (Matrix B, C50; pinned in
+    `test_risk_selection.py`)."""
     c, provider = app_client
     bearer, cid = _admin(c)
     s = seed_released(c, bearer, cid)
@@ -341,6 +395,7 @@ def test_every_engaged_zero_trust_service_must_be_released(app_client) -> None: 
             "status": "released",
             "version": 2,
             "qualifier": "CISA ZTMM 2.0",
+            "in_register": None,
         },
         {
             "kind": "zt",
@@ -348,9 +403,10 @@ def test_every_engaged_zero_trust_service_must_be_released(app_client) -> None: 
             "status": "draft",
             "version": 1,
             "qualifier": "DoD ZT Reference Architecture",
+            "in_register": None,
         },
     ]
-    _gen(c, provider, bearer, cid)
+    _gen(c, provider, bearer, cid, {"csf": False, "zero_trust": "dod_ztra"})
     assert _blockers(_publish(c, bearer, cid)) == [
         {"input": "zt", "reason": "not_released", "status": "draft"}
     ]
@@ -390,8 +446,16 @@ def test_a_second_tech_debt_service_with_no_list_blocks(app_client) -> None:  # 
             "status": "released",
             "version": 1,
             "qualifier": "TD1",
+            "in_register": None,
         },
-        {"kind": "tech_debt", "engaged": True, "status": None, "version": None, "qualifier": "TD2"},
+        {
+            "kind": "tech_debt",
+            "engaged": True,
+            "status": None,
+            "version": None,
+            "qualifier": "TD2",
+            "in_register": None,
+        },
     ]
     _gen(c, provider, bearer, cid)
     assert _blockers(_publish(c, bearer, cid)) == [
