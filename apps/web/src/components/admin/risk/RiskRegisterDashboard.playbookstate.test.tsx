@@ -199,6 +199,7 @@ describe("RiskRegisterDashboard states the CSF Playbook state (#474 D')", () => 
               target: null,
               source,
               origin: "live_at_generate",
+              label: "NIST CSF",
             },
           ],
           targets_recorded: true,

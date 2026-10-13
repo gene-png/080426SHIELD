@@ -82,6 +82,32 @@ function gate(): RiskGate {
     has_attack: true,
     has_csf: true,
     has_zt: true,
+    // RR-1 (for #1122): the selection block's rows. With none, Generate
+    // stays disabled (design note §3.4).
+    eligible: [
+      {
+        kind: "attack",
+        service_id: "svc-attack",
+        title: "ATT&CK",
+        framework: null,
+        label: "ATT&CK coverage",
+      },
+      {
+        kind: "csf",
+        service_id: "svc-csf",
+        title: "CSF",
+        framework: null,
+        label: "NIST CSF",
+      },
+      {
+        kind: "zt",
+        service_id: "svc-zt",
+        title: "ZT",
+        framework: "cisa_ztmm_2_0",
+        label: "Zero Trust (CISA ZTMM 2.0)",
+      },
+    ],
+    ineligible: [],
     missing: [],
     not_finalized: [],
     synthesizable_missing: [],
@@ -233,9 +259,19 @@ describe("RiskRegisterDashboard per service (#876)", () => {
       register({
         excluded_unscored_links_recorded: true,
         excluded_unscored_links: [
-          { service: "attack", scored: 3, total: 10 },
-          { service: "zt:cisa_ztmm_2_0", scored: 2, total: 37 },
-          { service: "zt:dod_ztra", scored: 1, total: 20 },
+          { service: "attack", scored: 3, total: 10, label: "ATT&CK coverage" },
+          {
+            service: "zt:cisa_ztmm_2_0",
+            scored: 2,
+            total: 37,
+            label: "Zero Trust (CISA ZTMM 2.0)",
+          },
+          {
+            service: "zt:dod_ztra",
+            scored: 1,
+            total: 20,
+            label: "Zero Trust (DoD ZT Reference Architecture)",
+          },
         ],
       }),
     );

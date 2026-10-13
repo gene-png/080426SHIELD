@@ -126,6 +126,25 @@ function gate(over: Partial<RiskGate> = {}): RiskGate {
     has_attack: true,
     has_csf: false,
     has_zt: true,
+    // RR-1 (for #1122): the selection block's rows. With none, Generate
+    // stays disabled (design note §3.4).
+    eligible: [
+      {
+        kind: "attack",
+        service_id: "svc-attack",
+        title: "ATT&CK",
+        framework: null,
+        label: "ATT&CK coverage",
+      },
+      {
+        kind: "zt",
+        service_id: "svc-zt",
+        title: "ZT",
+        framework: "cisa_ztmm_2_0",
+        label: "Zero Trust (CISA ZTMM 2.0)",
+      },
+    ],
+    ineligible: [],
     missing: [],
     not_finalized: [],
     synthesizable_missing: [],

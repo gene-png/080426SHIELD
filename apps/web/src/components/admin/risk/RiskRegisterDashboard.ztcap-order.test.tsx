@@ -40,6 +40,7 @@ const CISA_AND_DOD = [
     target: 4,
     source: "client",
     origin: "live_at_generate",
+    label: "Zero Trust (CISA ZTMM 2.0)",
   },
   {
     kind: "zt",
@@ -47,6 +48,7 @@ const CISA_AND_DOD = [
     target: 3,
     source: "client",
     origin: "live_at_generate",
+    label: "Zero Trust (DoD ZT Reference Architecture)",
   },
 ];
 
@@ -234,6 +236,7 @@ describe("RiskRegisterDashboard puts the DoD cap note after the Zero Trust targe
             target: 3,
             source: "client",
             origin: "live_at_generate",
+            label: "NIST CSF",
           },
           {
             kind: "zt",
@@ -241,6 +244,7 @@ describe("RiskRegisterDashboard puts the DoD cap note after the Zero Trust targe
             target: 3,
             source: "client",
             origin: "live_at_generate",
+            label: "Zero Trust",
           },
         ],
         targets_recorded: true,

@@ -186,8 +186,15 @@ function scoped(attackPending: number | null): RiskRegister {
         scored: 12,
         total: 700,
         pending_review: attackPending,
+        label: "ATT&CK coverage",
       },
-      { service: "zt", scored: 2, total: 37, pending_review: null },
+      {
+        service: "zt",
+        scored: 2,
+        total: 37,
+        pending_review: null,
+        label: "Zero Trust",
+      },
     ],
   });
 }

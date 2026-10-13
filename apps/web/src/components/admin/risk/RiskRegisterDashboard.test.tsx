@@ -86,6 +86,32 @@ function gate(over: Partial<RiskGate> = {}): RiskGate {
     has_attack: true,
     has_csf: true,
     has_zt: true,
+    // RR-1 (for #1122): the selection block's rows. With none, Generate
+    // stays disabled (design note §3.4).
+    eligible: [
+      {
+        kind: "attack",
+        service_id: "svc-attack",
+        title: "ATT&CK",
+        framework: null,
+        label: "ATT&CK coverage",
+      },
+      {
+        kind: "csf",
+        service_id: "svc-csf",
+        title: "CSF",
+        framework: null,
+        label: "NIST CSF",
+      },
+      {
+        kind: "zt",
+        service_id: "svc-zt",
+        title: "ZT",
+        framework: "cisa_ztmm_2_0",
+        label: "Zero Trust (CISA ZTMM 2.0)",
+      },
+    ],
+    ineligible: [],
     missing: [],
     not_finalized: [],
     synthesizable_missing: [],
@@ -359,7 +385,11 @@ describe("RiskRegisterDashboard excluded-inputs disclosure", () => {
     // asserting on it pins styling rather than copy.
     expect(banner.textContent).toMatch(/the CSF assessment/);
     expect(banner.textContent).toMatch(/not approved/);
-    expect(banner.textContent).toMatch(/exported documents do not say so/i);
+    // RR-1 (for #1122): copy 16a, verbatim. It no longer speaks for the
+    // exported documents (design note §6.3).
+    expect(banner.textContent).toBe(
+      "Generated without the CSF assessment. That assessment was not approved when this register was generated, so nothing from it is in this register. Re-generate if it should be included.",
+    );
   });
 
   it("says an OLD register was never asked, rather than reporting it clean", async () => {
@@ -466,10 +496,10 @@ describe("RiskRegisterDashboard excluded-inputs disclosure", () => {
     });
     const text = (await screen.findByTestId(BANNER)).textContent ?? "";
     expect(text).toContain(
-      "That assessment exists but is not approved, so nothing from it is in this register.",
+      "That assessment was not approved when this register was generated, so nothing from it is in this register.",
     );
-    expect(text).toContain("after approving it if it should be included.");
-    expect(text).not.toMatch(/Those|approving them|they should/);
+    expect(text).toContain("Re-generate if it should be included.");
+    expect(text).not.toMatch(/Those|from them|they should/);
   });
 
   it("speaks of the assessments when several were excluded (#683)", async () => {
@@ -484,9 +514,9 @@ describe("RiskRegisterDashboard excluded-inputs disclosure", () => {
     });
     const text = (await screen.findByTestId(BANNER)).textContent ?? "";
     expect(text).toContain(
-      "Those assessments exist but are not approved, so nothing from them is in this register.",
+      "Those assessments were not approved when this register was generated, so nothing from them is in this register.",
     );
-    expect(text).toContain("after approving them if they should be included.");
+    expect(text).toContain("Re-generate if they should be included.");
   });
 
   it("renders no banner when nothing was excluded", async () => {
@@ -754,8 +784,13 @@ describe("RiskRegisterDashboard scored-coverage disclosure (#403)", () => {
         entries_total: 1,
         excluded_unscored_links_recorded: true,
         excluded_unscored_links: [
-          { service: "attack", scored: 12, total: 700 },
-          { service: "csf", scored: 106, total: 106 },
+          {
+            service: "attack",
+            scored: 12,
+            total: 700,
+            label: "ATT&CK coverage",
+          },
+          { service: "csf", scored: 106, total: 106, label: "NIST CSF" },
         ],
       }),
     );
@@ -797,7 +832,7 @@ describe("RiskRegisterDashboard scored-coverage disclosure (#403)", () => {
         entries_total: 1,
         excluded_unscored_links_recorded: true,
         excluded_unscored_links: [
-          { service: "tech_debt", scored: 1, total: 9 },
+          { service: "tech_debt", scored: 1, total: 9, label: "tech_debt" },
         ],
       }),
     );

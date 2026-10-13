@@ -189,6 +189,7 @@ function csf(source: string): Partial<RiskRegister> {
         target: null,
         source,
         origin: "live_at_generate",
+        label: "NIST CSF",
       },
     ],
     targets_recorded: true,
