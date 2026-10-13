@@ -43,6 +43,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import and_, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.ai.isolation import REDACTION_BUDGET_EXCEEDED, RedactionRefused, limit_text
@@ -659,6 +660,15 @@ def _inventory_over_budget() -> str:
     )
 
 
+#: The extraction's refusal when a draft appeared while it ran: said by the
+#: re-check before the provider call, and by the one-draft index (#1120,
+#: migration 0073) at the insert after it.
+_DRAFT_OPENED_DURING_RUN = (
+    "A draft capability list was opened while this extraction ran, so it "
+    "was not added beside it. Nothing was applied."
+)
+
+
 def _extract_run_work(
     session: Session,
     ctx: RunContext,
@@ -680,8 +690,7 @@ def _extract_run_work(
     if existing is not None and existing.status == CapabilityListStatus.DRAFT:
         raise RunFailed(
             "capability_list_draft_exists",
-            "A draft capability list was opened while this extraction ran, so it "
-            "was not added beside it. Nothing was applied.",
+            _DRAFT_OPENED_DURING_RUN,
         )
     try:
         result = extract_from_rows(
@@ -735,7 +744,23 @@ def _extract_run_work(
         extraction_findings=list(result.findings),
     )
     db.add(cap_list)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        # #1120 (migration 0073): a draft was committed during the provider
+        # call, after the re-check above. `uq_capability_lists_one_draft`
+        # refused a second draft; end the run with the re-check's own reason.
+        # The `llm_calls` row was committed above and is kept.
+        db.rollback()
+        _log.info(
+            "techdebt_extract_lost_draft_race",
+            service_id=str(ctx.service_id),
+            attempted_version=next_version,
+        )
+        raise RunFailed(
+            "capability_list_draft_exists",
+            _DRAFT_OPENED_DURING_RUN,
+        ) from exc
 
     for item in result.items:
         db.add(

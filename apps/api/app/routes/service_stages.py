@@ -29,6 +29,7 @@ from app.models.csf_assessment import CsfAssessment
 from app.models.service import Service, ServiceKind
 from app.models.user import User
 from app.models.zt_assessment import ZtAssessment
+from app.services.revisions import client_facing
 from app.services.stages import (
     Stage,
     analysis_ran_for_version,
@@ -121,6 +122,8 @@ def service_stages(
             stages=_out(stages),
         )
 
+    # #1120 client door 5: a revision draft reads as the record it revises.
+    row = client_facing(db, row, _user)
     created_at = row.created_at
     # Tech Debt inverts the usual order: the extraction call runs first and the
     # capability list is created from its output, so the run predates the list
