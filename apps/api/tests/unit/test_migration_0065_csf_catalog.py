@@ -18,11 +18,12 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, insert, select
 from sqlalchemy.orm import Session
 
 pytestmark = pytest.mark.unit
@@ -63,10 +64,20 @@ def world(tmp_path):
         db.add(svc)
         db.flush()
 
-        def assessment(st: CsfAssessmentStatus, version: int) -> CsfAssessment:
-            a = CsfAssessment(service_id=svc.id, client_id=client.id, version=version, status=st)
-            db.add(a)
-            db.flush()
+        def assessment(st: CsfAssessmentStatus, version: int) -> SimpleNamespace:
+            # Core, with the columns the table has at 0064, not the ORM: the
+            # model maps every column up to head (0070's `rollup_rules`), and
+            # an ORM INSERT names them all, which a 0064 table does not have.
+            res = db.execute(
+                insert(CsfAssessment.__table__).values(
+                    service_id=svc.id,
+                    client_id=client.id,
+                    version=version,
+                    status=st,
+                    documents_stale=False,
+                )
+            )
+            a = SimpleNamespace(id=res.inserted_primary_key[0])
             db.add(
                 CsfAnswer(
                     assessment_id=a.id,

@@ -36,6 +36,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
 )
 from sqlalchemy import (
     Enum as SAEnum,
@@ -43,7 +44,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.models._common import TimestampMixin, UUIDPKMixin
+from app.models._common import TimestampMixin, UUIDPKMixin, one_draft_index
 
 
 class CsfAssessmentStatus(enum.StrEnum):
@@ -62,6 +63,7 @@ class CsfAssessment(UUIDPKMixin, TimestampMixin, Base):
     __tablename__ = "csf_assessments"
     __table_args__ = (
         UniqueConstraint("service_id", "version", name="uq_csf_assessments_service_version"),
+        one_draft_index("csf_assessments"),
     )
 
     service_id: Mapped[uuid.UUID] = mapped_column(
@@ -82,13 +84,23 @@ class CsfAssessment(UUIDPKMixin, TimestampMixin, Base):
             length=16,
         ),
         default=CsfAssessmentStatus.DRAFT,
+        # #1120 (0073): the NAME, as stored; 0006/0009-0011 created it lowercase.
+        server_default="DRAFT",
         nullable=False,
+    )
+    # #1120 (0073): the record "Start a revision" copied from. NULL on every
+    # record not minted by a revision; nothing clears it.
+    revision_of: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("csf_assessments.id", ondelete="SET NULL")
     )
 
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     approved_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )
+    #: #1031 (migration 0070): the Enterprise roll-up rule it was approved
+    #: under. Read ONLY through `app/csf/rules.py::scored_tiers_only`.
+    rollup_rules: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class CsfAnswer(UUIDPKMixin, TimestampMixin, Base):
@@ -128,3 +140,22 @@ class CsfAnswer(UUIDPKMixin, TimestampMixin, Base):
         ForeignKey("users.id", ondelete="SET NULL")
     )
     answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+@event.listens_for(CsfAssessment, "before_insert")
+@event.listens_for(CsfAssessment, "before_update")
+def _record_rollup_rules(_mapper: object, _connection: object, target: CsfAssessment) -> None:
+    """#1077 review, F3: an APPROVED or RELEASED row never leaves `rollup_rules`
+    NULL. Writers that set the status through the ORM without it (the demo
+    seed, fixtures) record 2, which is what NULL reads as
+    (`app/csf/rules.py`), so the stored value and the rendering agree and
+    0070's downgrade guard sees it. An explicit value (the backfill's 1) is
+    never overwritten. The approve route writes 2 itself, through Core.
+
+    The literal 2 is `app.csf.rules.SCORED_TIERS`, not imported: models do not
+    import from `app.csf`."""
+    if target.rollup_rules is None and target.status in (
+        CsfAssessmentStatus.APPROVED,
+        CsfAssessmentStatus.RELEASED,
+    ):
+        target.rollup_rules = 2

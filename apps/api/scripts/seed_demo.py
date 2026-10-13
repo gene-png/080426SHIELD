@@ -70,6 +70,7 @@ from app.csf.exporters import render_pdf as render_csf_pdf  # noqa: E402
 from app.csf.exporters import render_xlsx as render_csf_xlsx  # noqa: E402
 from app.csf.gap import analyze as analyze_csf_gap  # noqa: E402
 from app.csf.retired import has_recorded_value_besides_target  # noqa: E402
+from app.csf.rules import SCORED_TIERS as CSF_SCORED_TIERS  # noqa: E402
 from app.csf.scoring import compute as compute_csf  # noqa: E402
 from app.docx_export import DOCX_MIME  # noqa: E402
 from app.models import (  # noqa: E402  -- triggers metadata registration
@@ -647,6 +648,8 @@ def _seed_csf(
         status=CsfAssessmentStatus.RELEASED,
         approved_at=utcnow(),
         approved_by=admin.id,
+        # #1077 review, F3: approved under the scored-tiers roll-up (0070).
+        rollup_rules=CSF_SCORED_TIERS,
     )
     db.add(assessment)
     db.flush()
@@ -868,6 +871,8 @@ def _seed_csf_v2_approved(
         status=CsfAssessmentStatus.APPROVED,
         approved_at=utcnow(),
         approved_by=admin.id,
+        # #1077 review, F3: approved under the scored-tiers roll-up (0070).
+        rollup_rules=CSF_SCORED_TIERS,
     )
     db.add(v2)
     db.flush()
