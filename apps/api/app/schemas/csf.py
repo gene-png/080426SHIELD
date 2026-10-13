@@ -13,6 +13,7 @@ from app.models.csf_assessment import CsfAssessmentStatus
 from app.models.service import ServiceKind, ServiceStatus
 from app.schemas._numeric import IntNotBool
 from app.schemas.ai_runs import AiSource
+from app.schemas.revisions import RevisionInfo
 
 # ---------------------------------------------------------------------------
 # Catalog
@@ -151,6 +152,8 @@ class CsfAssessmentResponse(BaseModel):
     # (`csf/retired.py`).
     retired_answers: int = 0
     retired_answers_note: str | None = None
+    #: #1120: what a revision copied and why (V3, V4, V5); NULL otherwise.
+    revision: RevisionInfo | None = None
 
 
 class CsfAnswerPatch(BaseModel):

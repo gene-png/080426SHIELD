@@ -14,6 +14,7 @@ import {
   approveAssessment,
   createAssessment,
   discardAssessment,
+  startRevision,
   fetchCatalog,
   fetchGapAnalysis,
   fetchLatestAssessment,
@@ -46,6 +47,8 @@ import { MessageThread } from "@/components/messages/MessageThread";
 import { StaleDocsNudge } from "@/components/admin/StaleDocsNudge";
 import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { AiPreviewButton } from "@/components/admin/AiPreviewButton";
+import { RevisionBanner } from "@/components/admin/RevisionBanner";
+import { StartRevisionButton } from "@/components/admin/StartRevisionButton";
 import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
 import { AiDraftProvenanceNotice } from "@/components/admin/AiDraftProvenanceNotice";
@@ -60,6 +63,7 @@ import { ZtScoreCard } from "./ZtScoreCard";
 import type { JSX } from "react";
 import { ProgressStages } from "../ProgressStages";
 import { useServiceStages } from "@/lib/stages/client";
+import { DRAFT_OPEN_REASON, refusalReason } from "@/lib/revisions/refusal";
 import { useRefreshFailures } from "@/components/admin/useRefreshFailures";
 import {
   isUpstreamOutcomeUnknown,
@@ -216,7 +220,7 @@ export function ZtWorkspace({
   const { messages: refreshMessages, begin: beginRefresh } =
     useRefreshFailures();
   const [busy, setBusy] = React.useState<
-    "create" | "approve" | "run" | "discard" | null
+    "create" | "approve" | "run" | "discard" | "revise" | null
   >(null);
   // #550: set once a run's outcome is unknown and never cleared; a reload
   // clears it, which the copy says.
@@ -584,6 +588,53 @@ export function ZtWorkspace({
     }
   }
 
+  /**
+   * #1120 "Start a revision": mints the next version as a DRAFT with this
+   * one's work copied forward, then shows it. A refusal is rethrown with the
+   * API's approved copy, which the dialog shows.
+   */
+  async function onStartRevision(reason: string): Promise<void> {
+    if (!assessment) return;
+    setBusy("revise");
+    const seq = ++assessmentSeq.current;
+    try {
+      const a = await startRevision(serviceId, assessment.id, reason);
+      if (seq === assessmentSeq.current) {
+        setAssessment(a);
+        const t = normalizeTarget(a.client_target_stage, catalog?.stages);
+        setTargetStage(t);
+        await refreshScoreAndGap(t);
+      }
+    } catch (err) {
+      const message = describeError(err);
+      // A draft already exists (V6, V8): show it beneath the dialog, which
+      // stays open with the API's sentence telling the consultant to approve
+      // or discard it.
+      if (
+        err instanceof ZtProxyError &&
+        refusalReason(err.payload) === DRAFT_OPEN_REASON
+      ) {
+        await showLatestAfterRefusal(seq);
+      }
+      throw new Error(message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function showLatestAfterRefusal(seq: number): Promise<void> {
+    try {
+      const a = await fetchLatestAssessment(serviceId);
+      if (seq !== assessmentSeq.current || !a) return;
+      setAssessment(a);
+      const t = normalizeTarget(a.client_target_stage, catalog?.stages);
+      setTargetStage(t);
+      await refreshScoreAndGap(t);
+    } catch (err) {
+      setLoadError(describeError(err));
+    }
+  }
+
   async function onDiscard(): Promise<void> {
     if (!assessment) return;
     setBusy("discard");
@@ -879,9 +930,23 @@ export function ZtWorkspace({
               disabled={busy !== null && busy !== "run"}
             />
           ) : null}
+          {assessment ? (
+            <StartRevisionButton
+              status={assessment.status}
+              version={assessment.version}
+              onStart={onStartRevision}
+              disabled={busy !== null}
+            />
+          ) : null}
         </div>
       </header>
 
+      {assessment ? (
+        <RevisionBanner
+          status={assessment.status}
+          revision={assessment.revision}
+        />
+      ) : null}
       {stagesPhase === "ready" && serviceStages ? (
         <ProgressStages
           stages={serviceStages.stages}
