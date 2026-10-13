@@ -308,8 +308,10 @@ def _artifact(sessions, client_id: str, user_id: str) -> uuid.UUID:
 #: Per kind: the service body, the evidence-link target kind, and the child
 #: table whose row an evidence link names. WHICH child tables are checked is
 #: not listed here: it is derived from the model (`_copied_children`), so a
-#: child classified as copied but missing from the route's `KindPlan` fails
-#: the "not copied" assertion below.
+#: new child table fails this test before anyone wires it: with no rows in
+#: the setup, at `scalar_one()` (NoResultFound); with rows, at `_KEYS[table]`
+#: (KeyError) until its match key is named. A table already wired here that is
+#: dropped from the route's `KindPlan` fails the "not copied" assertion below.
 _KIND = {
     "attack": ({"title": "ATT&CK"}, "ATTACK_TECHNIQUE", "attack_coverage"),
     "csf": ({"kind": "nist_csf", "title": "CSF"}, "CSF_ROW", "csf_answers"),
