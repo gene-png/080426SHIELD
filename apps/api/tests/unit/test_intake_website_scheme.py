@@ -1,0 +1,169 @@
+"""IN-1 (#1049), ruling A (#736 6115773247): a website typed without a scheme
+is accepted with `https://` in front, on save AND submit.
+
+Before this, `PATCH /intake` refused "kentro.com" with a schema 422, the wizard
+showed "Couldn't save: Network error." on every later step, and the website was
+never stored. Exercised through the real endpoints, so the test goes red if the
+validator is deleted or the routes stop using `ClientProfilePatch`.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from tests.unit.test_intake_routes import (
+    _register_and_bearer,
+    app_client,  # noqa: F401  (fixture)
+)
+
+
+def _patch_website(client, bearer: str, website: str | None):
+    return client.patch(
+        "/intake",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"client": {"website": website}},
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("typed", "stored"),
+    [
+        ("kentro.com", "https://kentro.com/"),
+        ("www.kentro.com", "https://www.kentro.com/"),
+        ("kentro.com/about", "https://kentro.com/about"),
+        ("  kentro.com  ", "https://kentro.com/"),
+        ("example.com:8080", "https://example.com:8080/"),
+        # Review of #1092 round 2: an "@" after the host is a path or query,
+        # not userinfo, so the prefix still applies.
+        ("medium.com/@kentro", "https://medium.com/@kentro"),
+        ("example.com/a@b", "https://example.com/a@b"),
+        ("example.com?ref=a@b.com", "https://example.com/?ref=a@b.com"),
+        ("example.com#a@b", "https://example.com/#a@b"),
+    ],
+)
+def test_save_adds_https_when_no_scheme(app_client, typed, stored) -> None:  # noqa: F811
+    client, _ = app_client
+    bearer = _register_and_bearer(client)
+    r = _patch_website(client, bearer, typed)
+    assert r.status_code == 200, r.text
+    assert r.json()["client"]["website"] == stored
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("typed", "stored"),
+    [
+        ("https://kentro.com", "https://kentro.com/"),
+        ("http://kentro.com", "http://kentro.com/"),
+        ("HTTPS://kentro.com", "https://kentro.com/"),
+        # An "@" after the host is a path or query, with or without a scheme.
+        ("https://medium.com/@kentro", "https://medium.com/@kentro"),
+        ("https://kentro.com/?ref=a@b.com", "https://kentro.com/?ref=a@b.com"),
+        # A scheme typed with one slash, a backslash or none: HttpUrl repairs
+        # these to the host meant, as it did before IN-1 (plain HttpUrl on
+        # main gives the same result). The prefix must not turn the host
+        # into "https" (review of #1092, round 3).
+        ("https:/kentro.com", "https://kentro.com/"),
+        ("https:\\kentro.com", "https://kentro.com/"),
+        ("https:kentro.com", "https://kentro.com/"),
+        # HttpUrl reads a backslash after the host as a path separator, so
+        # this "@" is in the path and the host stays kentro.com.
+        ("https://kentro.com\\@evil.com", "https://kentro.com/@evil.com"),
+    ],
+)
+def test_save_keeps_a_scheme_the_client_typed(app_client, typed, stored) -> None:  # noqa: F811
+    client, _ = app_client
+    bearer = _register_and_bearer(client)
+    r = _patch_website(client, bearer, typed)
+    assert r.status_code == 200, r.text
+    assert r.json()["client"]["website"] == stored
+
+
+@pytest.mark.unit
+def test_save_still_refuses_a_value_that_is_not_a_web_address(app_client) -> None:  # noqa: F811
+    # The prefix only supplies a missing scheme; it does not make garbage valid.
+    client, _ = app_client
+    bearer = _register_and_bearer(client)
+    r = _patch_website(client, bearer, "not a website")
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["reason"].startswith("schema_")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("typed", ["mailto:a@b.com", "a@b.com", "user@kentro.com/path"])
+def test_save_does_not_prefix_a_value_with_an_at_sign(app_client, typed) -> None:  # noqa: F811
+    # Review of #1092, item 4: "mailto:a@b.com" names no "://", so a blind
+    # prefix made "https://mailto:a@b.com/", a URL with userinfo "mailto:a"
+    # on host b.com, and stored it. A schemeless value with "@" is left for
+    # HttpUrl, which refuses it.
+    client, _ = app_client
+    bearer = _register_and_bearer(client)
+    r = _patch_website(client, bearer, typed)
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["reason"].startswith("schema_")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "typed",
+    ["https//kentro.com", "HTTP//kentro.com", "https//kentro.com/about"],
+)
+def test_save_refuses_a_mistyped_scheme(app_client, typed) -> None:  # noqa: F811
+    # Review of #1092, round 3: these were 422 before IN-1. A blind prefix made
+    # "https://https//kentro.com", a URL whose host is "https", and the wizard
+    # said Saved. An attempted scheme is left for HttpUrl, which refuses these.
+    client, _ = app_client
+    bearer = _register_and_bearer(client)
+    r = _patch_website(client, bearer, typed)
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["reason"].startswith("schema_")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "typed",
+    [
+        "https://kentro.com@evil.com",
+        "https://user:pass@kentro.com",
+        "http://kentro.com@evil.com/path",
+    ],
+)
+def test_save_refuses_userinfo_on_a_scheme_bearing_website(app_client, typed) -> None:  # noqa: F811
+    # Review of #1092, round 3: "https://kentro.com@evil.com" was accepted with
+    # host evil.com (pre-existing, before IN-1). The "@" rule now applies to the
+    # authority of a value that names its scheme too.
+    client, _ = app_client
+    bearer = _register_and_bearer(client)
+    r = _patch_website(client, bearer, typed)
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["reason"].startswith("schema_")
+
+
+@pytest.mark.unit
+def test_save_of_null_website_still_clears_it(app_client) -> None:  # noqa: F811
+    client, _ = app_client
+    bearer = _register_and_bearer(client)
+    assert _patch_website(client, bearer, "kentro.com").status_code == 200
+    r = _patch_website(client, bearer, None)
+    assert r.status_code == 200, r.text
+    assert r.json()["client"]["website"] is None
+
+
+@pytest.mark.unit
+def test_submit_adds_https_to_a_website_without_a_scheme(app_client) -> None:  # noqa: F811
+    client, _ = app_client
+    bearer = _register_and_bearer(client)
+    r = client.post(
+        "/intake/submit",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={
+            "client": {"legal_name": "Atlas Defense Solutions", "website": "kentro.com"},
+            "service_requests": [{"service_type": "tech_debt"}],
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["client"]["website"] == "https://kentro.com/"
+    # And it is what was stored, not only what the response echoed.
+    again = client.get("/intake", headers={"Authorization": f"Bearer {bearer}"})
+    assert again.json()["client"]["website"] == "https://kentro.com/"
