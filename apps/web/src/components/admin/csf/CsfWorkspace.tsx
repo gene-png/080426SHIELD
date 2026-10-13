@@ -15,6 +15,7 @@ import {
   createAssessment,
   CsfProxyError,
   discardAssessment,
+  startRevision,
   fetchCatalog,
   fetchGapAnalysis,
   fetchInterviewQuestionnaire,
@@ -37,6 +38,8 @@ import type {
 import { MessageThread } from "@/components/messages/MessageThread";
 import { StaleDocsNudge } from "@/components/admin/StaleDocsNudge";
 import { WorkflowStep } from "@/components/admin/WorkflowStep";
+import { RevisionBanner } from "@/components/admin/RevisionBanner";
+import { StartRevisionButton } from "@/components/admin/StartRevisionButton";
 import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
 import { useRefreshFailures } from "@/components/admin/useRefreshFailures";
 import { serverReason } from "@/lib/describe-save-error";
@@ -55,6 +58,7 @@ import { CsfScoreCard } from "./CsfScoreCard";
 import type { JSX } from "react";
 import { ProgressStages } from "../ProgressStages";
 import { useServiceStages } from "@/lib/stages/client";
+import { DRAFT_OPEN_REASON, refusalReason } from "@/lib/revisions/refusal";
 import { AiSourceNote } from "@/components/AiSourceNote";
 
 export interface CsfWorkspaceProps {
@@ -174,7 +178,7 @@ export function CsfWorkspace({
   // reports. Approve is rendered here, outside the panel, and must lock too.
   const [runInProgress, setRunInProgress] = React.useState(false);
   const [busy, setBusy] = React.useState<
-    "create" | "approve" | "discard" | null
+    "create" | "approve" | "discard" | "revise" | null
   >(null);
   /**
    * THE TARGET THE CONTROL SHOWS IS DERIVED, NOT REMEMBERED (#385).
@@ -484,6 +488,53 @@ export function CsfWorkspace({
     }
   }
 
+  /**
+   * #1120 "Start a revision": mints the next version as a DRAFT with this
+   * one's work copied forward, then shows it. A refusal is rethrown with the
+   * API's approved copy, which the dialog shows.
+   */
+  async function onStartRevision(reason: string): Promise<void> {
+    if (!assessment) return;
+    setBusy("revise");
+    const seq = ++assessmentSeq.current;
+    try {
+      const a = await startRevision(serviceId, assessment.id, reason);
+      if (seq === assessmentSeq.current) {
+        setAssessment(a);
+        const t = normalizeTarget(a.client_target_tier);
+        setTargetTier(t);
+        await refreshScoreAndGap(t);
+      }
+    } catch (err) {
+      const message = describeError(err);
+      // A draft already exists (V6, V8): show it beneath the dialog, which
+      // stays open with the API's sentence telling the consultant to approve
+      // or discard it.
+      if (
+        err instanceof CsfProxyError &&
+        refusalReason(err.payload) === DRAFT_OPEN_REASON
+      ) {
+        await showLatestAfterRefusal(seq);
+      }
+      throw new Error(message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function showLatestAfterRefusal(seq: number): Promise<void> {
+    try {
+      const a = await fetchLatestAssessment(serviceId);
+      if (seq !== assessmentSeq.current || !a) return;
+      setAssessment(a);
+      const t = normalizeTarget(a.client_target_tier);
+      setTargetTier(t);
+      await refreshScoreAndGap(t);
+    } catch (err) {
+      setLoadError(describeError(err));
+    }
+  }
+
   async function onDiscard(): Promise<void> {
     if (!assessment) return;
     setBusy("discard");
@@ -660,9 +711,23 @@ export function CsfWorkspace({
               disabled={busy !== null}
             />
           ) : null}
+          {assessment ? (
+            <StartRevisionButton
+              status={assessment.status}
+              version={assessment.version}
+              onStart={onStartRevision}
+              disabled={busy !== null}
+            />
+          ) : null}
         </div>
       </header>
 
+      {assessment ? (
+        <RevisionBanner
+          status={assessment.status}
+          revision={assessment.revision}
+        />
+      ) : null}
       {stagesPhase === "ready" && serviceStages ? (
         <ProgressStages
           stages={serviceStages.stages}
@@ -731,7 +796,12 @@ export function CsfWorkspace({
             {/* #646: the assessment's AI source, from the derivation the
                 deliverable and the client dashboard call. */}
             <AiSourceNote source={assessment.ai_source} className="mb-3" />
+            {/* Keyed on the record: the panel and the editors inside it load
+                rows by service and keep them, so a swap to another record (a
+                revision, a discard, a new draft) must remount them, or an edit
+                PATCHes the previous record's rows (#1120). */}
             <CsfPlaybookPanel
+              key={assessment.id}
               serviceId={serviceId}
               readOnly={readOnly}
               runOutcomeUnknown={runOutcomeUnknown}

@@ -1,5 +1,7 @@
 "use client";
 
+import { readFailureReason } from "@/lib/describe-save-error";
+
 /** Wire types for GET /admin/deliverables (apps/api/app/schemas/admin.py). */
 
 /** `withheld`: a released ATT&CK report scored against another catalog (#556).
@@ -28,10 +30,16 @@ export interface AdminDeliverableListResponse {
   items: AdminDeliverableRow[];
 }
 
+/**
+ * RR-2 (for #1121), design note §3.2: the deliverables of the client the
+ * page's picker chose. The proxy refuses a request that names none.
+ */
 export async function fetchAdminDeliverables(
+  clientId: string,
   signal?: AbortSignal,
 ): Promise<AdminDeliverableListResponse> {
-  const res = await fetch("/api/proxy/admin/deliverables", {
+  const url = `/api/proxy/admin/deliverables?client_id=${encodeURIComponent(clientId)}`;
+  const res = await fetch(url, {
     cache: "no-store",
     headers: { Accept: "application/json" },
     signal,
@@ -40,18 +48,22 @@ export async function fetchAdminDeliverables(
     // Read the body ONCE. res.json() followed by res.text() throws "body stream
     // already read" and masks the real status — the defect the 2026-08-04 pass
     // fixed in all six lib/*/client.ts wrappers.
+    //
+    // RR-2 (for #1121): the body is read as the `{error: {...}}` envelope every
+    // api error arrives in (`_handle_http_exception`), through
+    // `readFailureReason`, so a server sentence shows and #550's write-only
+    // sentence does not. The old `detail` reads matched nothing the api sends.
     const raw = await res.text();
-    let detail = `Failed to load deliverables (${res.status}).`;
+    let payload: unknown = undefined;
     try {
-      const body = JSON.parse(raw) as {
-        detail?: { message?: string } | string;
-      };
-      if (typeof body?.detail === "string") detail = body.detail;
-      else if (body?.detail?.message) detail = body.detail.message;
+      payload = JSON.parse(raw) as unknown;
     } catch {
-      /* non-JSON upstream error: keep the status-based message */
+      /* non-JSON upstream error: the status-based fallback below */
     }
-    throw new Error(detail);
+    throw new Error(
+      readFailureReason({ status: res.status, payload }) ??
+        `Failed to load deliverables (${res.status}).`,
+    );
   }
   return (await res.json()) as AdminDeliverableListResponse;
 }

@@ -114,7 +114,9 @@ from app.risk.engine import (  # noqa: E402
     tier_for,
 )
 from app.risk.inputs import publish_blockers  # noqa: E402
-from app.routes.risk import _provenance_snapshot, _take_input_snapshot  # noqa: E402
+from app.risk.selection import selection_of  # noqa: E402
+from app.routes.risk import _provenance_snapshot, _select, _take_input_snapshot  # noqa: E402
+from app.schemas.risk import RiskInclude  # noqa: E402
 from app.security.email_domains import domain_of  # noqa: E402
 from app.security.password import hash_password  # noqa: E402
 from app.storage import StorageBackend, get_storage  # noqa: E402
@@ -1389,9 +1391,20 @@ _RISK_ENTRIES = [
 ]
 
 
+#: RR-1 (for #1122), design note §7: Atlas has CSF, CISA ZT, DoD ZT and ATT&CK.
+#: The demo register is generated from CSF and CISA; DoD is recorded as left
+#: out, and the files print copy 9a for it.
+SEED_INCLUDE = RiskInclude(csf=True, zero_trust="cisa_ztmm_2_0")
+
+
 def _seed_risk_register(
     db: Session, storage: StorageBackend, admin: User, org: Client
 ) -> RiskRegister:
+    # RR-1: through the SAME `_select` generate uses, which narrows the
+    # snapshot's sources AND `current_inputs`, and records the selection. A
+    # snapshot left un-narrowed would hold DoD in `current_inputs` and in
+    # `deselected` at once, and publish would refuse the seed's own register.
+    snap, selection = _select(db, org.id, _take_input_snapshot(db, org.id), SEED_INCLUDE)
     register = RiskRegister(
         client_id=org.id,
         version=1,
@@ -1419,7 +1432,7 @@ def _seed_risk_register(
         #
         # #737: through `_take_input_snapshot`, the read generate uses, so the
         # provenance carries the `current_inputs` record publish checks.
-        provenance=_provenance_snapshot(_take_input_snapshot(db, org.id), []),
+        provenance=_provenance_snapshot(snap, [], selection=selection),
     )
     db.add(register)
     db.flush()
@@ -1484,6 +1497,9 @@ def _seed_risk_register(
         client_legal_name=org.legal_name,
         version=register.version,
         entries=entries,
+        # RR-1 (for #1122), design note §7: the export route's own reader, so
+        # the demo files print copy 8 and 9a. Omitting it would print copy 11.
+        disclosure=risk_exporters.selection_context(register.provenance),
     )
     today = date.today()
 
@@ -1536,6 +1552,7 @@ def _seed_risk_register(
         org.id,
         (register.provenance or {}).get("current_inputs"),
         (register.provenance or {}).get("inputs"),
+        selection=selection_of(register.provenance),
     )
     if blockers:
         raise RuntimeError(
