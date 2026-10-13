@@ -1,10 +1,11 @@
 """#474 D': a Playbook edited after generate stops publish (snapshot, not lock).
 
-Risk's CSF findings come from the Playbook, and Playbook rows stay editable
-after the CSF assessment is approved and released (#37 is Gene's open
-decision; nothing here freezes them). `publish_blockers` compared only an
-input's record id, version and status, so a score or target changed after
-generate published a register whose CSF findings no longer matched the
+Risk's CSF findings come from the Playbook. Playbook rows stayed editable
+after the CSF assessment was approved and released (#37) until #1120's ruling
+A2 (#736 6136101129), which refuses that edit; the fingerprint stays as a
+ratchet against any writer that reaches an approved record again.
+`publish_blockers` compared only an input's record id, version and status,
+so a score or target changed after generate published a register whose CSF findings no longer matched the
 Playbook. The advisor's ruling (#736 6087786886, item 3, option (a)):
 generate records a content fingerprint of the in-scope Playbook rows, and
 publish reports CSF `changed` when it differs.
@@ -72,15 +73,19 @@ def test_an_untouched_register_still_publishes(app_client) -> None:  # noqa: F81
     [{"governance": 2}, {"target_level": 4}],
     ids=["score", "target"],
 )
-def test_a_playbook_edit_after_generate_blocks_publish(
+def test_a_playbook_edit_after_generate_is_refused_so_publish_proceeds(
     app_client, edit: dict  # noqa: F811
 ) -> None:
+    """#1120 A2: the released CSF assessment's Playbook row cannot be edited
+    in place any more, so the register still matches it and publishes."""
     c, provider = app_client
     bearer, cid = _admin(c)
     h, row_id = _released_world(c, provider, bearer, cid)
     r = c.patch(f"/csf/dimension-scores/{row_id}", headers=h, json=edit)
-    assert r.status_code == 200, r.text
-    assert _blockers(_publish(c, bearer, cid)) == CHANGED
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "working_profile_locked", r.text
+    pub = _publish(c, bearer, cid)
+    assert pub.status_code == 200, pub.text
 
 
 def test_a_register_without_a_recorded_fingerprint_is_changed(app_client) -> None:  # noqa: F811
