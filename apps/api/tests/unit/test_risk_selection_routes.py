@@ -635,6 +635,9 @@ _UNREADABLE_BODIES = [
     ("the body is a number", "3"),
     ("the body is null", "null"),
     ("the body is not JSON", "{not json"),
+    # #1148 review, finding 8: nesting deeper than the parser's recursion
+    # limit raises RecursionError, not a ValueError.
+    ("the body is nested past the parser's limit", "[" * 100_000 + "]" * 100_000),
 ]
 
 
@@ -655,6 +658,25 @@ def test_a_malformed_body_is_refused_typed_with_copy_10_and_generates_nothing(
     latest = c.get(f"/risk/clients/{cid}/register/latest", headers=_h(bearer, cid))
     assert latest.status_code in (200, 404), latest.text
     assert latest.status_code == 404 or latest.json() is None, latest.text
+
+
+def test_a_signed_out_caller_is_refused_401_before_its_body_is_read(
+    app_client,  # noqa: F811
+) -> None:
+    """#1148 review, finding 7: authentication comes first. A malformed body
+    from a caller with no session is a 401, never the body's 400."""
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    _world(c, bearer, cid, "eligible", "eligible", "none")
+    r = c.post(
+        f"/risk/clients/{cid}/register/generate",
+        headers={"Content-Type": "application/json"},
+        content='{"include": {"csf": "yes"}}',
+    )
+    assert r.status_code == 401, r.text
+    # The control: the same body from the signed-in admin is the typed 400.
+    signed_in = _post_raw(c, provider, bearer, cid, '{"include": {"csf": "yes"}}')
+    assert signed_in.status_code == 400, signed_in.text
 
 
 @pytest.mark.parametrize(
@@ -836,16 +858,14 @@ def test_no_usable_selection_refuses_publish_with_copy_19_and_prints_copy_11(
     assert latest.status_code == 200, (name, latest.text)
     assert latest.json()["selection_recorded"] is False, name
     assert latest.json()["covered_inputs"] == [], name
+    # Export runs no selection gate and no #240 guard (that one is
+    # publish-only), so every shape exports, and every file says copy 11.
     ex = c.post(f"/risk/clients/{cid}/register/export", headers=h)
-    if ex.status_code == 200:
-        for kind, text in _export_texts(c, bearer, cid).items():
-            flat = " ".join(text.split())
-            assert COPY_11 in flat, (name, kind)
-            assert "This register was generated from" not in flat, (name, kind)
-    else:
-        # Export's own #240 guard refuses some of these shapes first; what
-        # matters here is that nothing 500s.
-        assert ex.status_code == 409, (name, ex.text)
+    assert ex.status_code == 200, (name, ex.text)
+    for kind, text in _export_texts(c, bearer, cid).items():
+        flat = " ".join(text.split())
+        assert COPY_11 in flat, (name, kind)
+        assert "This register was generated from" not in flat, (name, kind)
 
 
 # ---------------------------------------------------------------------------
@@ -860,32 +880,63 @@ def _lines_in_every_file(c, bearer, cid, *lines: str) -> None:
             assert line in flat, (kind, line)
 
 
-def test_a6_names_the_cisa_scored_coverage_row_in_every_file(app_client) -> None:  # noqa: F811
-    """A6/A8 shape: CISA eligible, DoD engaged with no assessment. The bare
-    `zt` scope key is named like copy 8 and 9c beside it (§6.2)."""
+def _scored_coverage_rows(c, bearer: str, cid: str) -> list[tuple]:
+    """The XLSX "Scored coverage" sheet's data rows, as exported."""
+    import io
+
+    from openpyxl import load_workbook
+
+    h = _h(bearer, cid)
+    ex = c.post(f"/risk/clients/{cid}/register/export", headers=h)
+    assert ex.status_code == 200, ex.text
+    raw = c.get(f"/artifacts/{ex.json()['xlsx_artifact_id']}/download", headers=h).content
+    sheet = load_workbook(io.BytesIO(raw))["Scored coverage"]
+    return [tuple(row) for row in sheet.iter_rows(min_row=2, values_only=True) if row[0]]
+
+
+@pytest.mark.parametrize(
+    "state, named, other",
+    [
+        (("none", "eligible", "no_record"), CISA_LABEL, DOD_LABEL),
+        (("none", "no_record", "eligible"), DOD_LABEL, CISA_LABEL),
+    ],
+    ids=["A8: CISA in, DoD no assessment", "A6: DoD in, CISA no assessment"],
+)
+def test_the_bare_zt_scored_coverage_row_is_named_in_every_file(
+    state, named, other, app_client  # noqa: F811
+) -> None:
+    """A6/A8: one ZT service has a record and the other is engaged with none.
+    The bare `zt` scope key is named like copy 8 and 9c beside it (§6.2).
+
+    The needle carries the row's COUNTS, so copy 8, which also prints the
+    named label, cannot satisfy it: only the scored-coverage row prints
+    "{label} {scored} of {total}", and only the XLSX sheet's row pairs the
+    label with its numbers."""
     c, provider = app_client
     bearer, cid = _admin(c)
-    _world(c, bearer, cid, "none", "eligible", "no_record")
+    _world(c, bearer, cid, *state)
     h = _h(bearer, cid)
     r = _generate(c, provider, bearer, cid, None)
     assert r.status_code == 201, r.text
     body = c.get(f"/risk/clients/{cid}/register/latest", headers=h).json()
-    assert body["covered_inputs"] == ["ATT&CK coverage", CISA_LABEL]
-    assert body["ineligible_inputs"] == [DOD_LABEL]
-    scope = {s["service"]: s["label"] for s in body["excluded_unscored_links"]}
-    assert scope.get("zt") == CISA_LABEL, scope
-    assert [t["label"] for t in body["targets"]] == [CISA_LABEL]
+    assert body["covered_inputs"] == ["ATT&CK coverage", named]
+    assert body["ineligible_inputs"] == [other]
+    (zt,) = [s for s in body["excluded_unscored_links"] if s["service"] == "zt"]
+    assert zt["label"] == named, zt
+    assert [t["label"] for t in body["targets"]] == [named]
+    scored, total = zt["scored"], zt["total"]
+    assert total > 0, zt
     _lines_in_every_file(
         c,
         bearer,
         cid,
-        COPY_8.format(list=f"ATT&CK coverage and {CISA_LABEL}"),
-        COPY_9C.format(label=DOD_LABEL),
+        COPY_8.format(list=f"ATT&CK coverage and {named}"),
+        COPY_9C.format(label=other),
+        f"{named} {scored} of {total}",
     )
-    texts = _export_texts(c, bearer, cid)
-    assert CISA_LABEL in texts["xlsx"]
-    for kind, text in texts.items():
-        assert "Zero Trust:" not in " ".join(text.split()), kind
+    rows = _scored_coverage_rows(c, bearer, cid)
+    assert (named, scored, total, total - scored) in [row[:4] for row in rows], rows
+    assert not [row for row in rows if row[0] == "Zero Trust"], rows
 
 
 @pytest.mark.parametrize(

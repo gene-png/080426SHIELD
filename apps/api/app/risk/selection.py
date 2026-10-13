@@ -153,8 +153,9 @@ def _unreadable(why: str) -> _Sentinel:
 def selection_of(provenance: object) -> SelectionRead:
     """The register's `selection`, or one of the two sentinels. Never raises.
 
-    The consistency checks run FIRST and in this order: 5, 3, 4, 1, 2 (the
-    numbers are the design note's names for them). Each reads only what the
+    The consistency checks run FIRST and in this order: 5, 3, 4, 1, 2, then
+    6 (the numbers are the design note's names for them; 6 was added by the
+    #1148 review). Each reads only what the
     ones before it proved readable, so none can raise on a malformed record.
     No list wins a conflict: a "skip deselected" rule applied before these
     checks would skip an id that is also an input, and fail open.
@@ -190,6 +191,13 @@ def selection_of(provenance: object) -> SelectionRead:
     inc_ids = [r.service_id for r in included]
     if input_ids is None or len(set(inc_ids)) != len(inc_ids) or set(inc_ids) != input_ids:
         return _unreadable("included does not match inputs")
+    # Check 6 (#1148 review, finding 5): every included service is recorded in
+    # `current_inputs`. With check 1, that also makes `included` disjoint from
+    # `deselected` and `ineligible`: no record can name a service both as an
+    # input and as one publish skips. No writer produces such a record; this
+    # is the fail-closed reading of one that does.
+    if not set(inc_ids) <= current_ids:
+        return _unreadable("included is not in current_inputs")
     return Selection(included=included, deselected=deselected, ineligible=ineligible)
 
 

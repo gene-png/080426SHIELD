@@ -483,6 +483,11 @@ function RiskRegisterBody({
     try {
       const reg = await generateRiskRegister(cid, selected.include);
       setRegister(reg);
+      // RR-1 (#1148 review, finding 2): the Inputs panel's split
+      // (`in_register`) is computed by the gate against the register on
+      // screen, so the new version needs a fresh gate. A failed re-read
+      // shows its own error; the register above is already the new one.
+      await reloadGate();
     } catch (err) {
       setError(describeRiskError(err));
     } finally {
@@ -1331,8 +1336,10 @@ function RiskRegisterBody({
             className="rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
             data-testid="risk-selection-lines"
           >
-            {selectionLines(register).map((line) => (
-              <p key={line}>{line}</p>
+            {selectionLines(register).map((line, i) => (
+              // By position: two services can print the same line (two 9c
+              // lines for one framework), so the text is not a key.
+              <p key={i}>{line}</p>
             ))}
           </div>
           {/* #474. The baseline every CSF and ZT finding was measured

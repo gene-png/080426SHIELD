@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { RiskDashboard } from "./RiskDashboard";
 import type { RiskDashboardData } from "@/lib/dashboards/risk";
@@ -92,6 +92,35 @@ describe("RiskDashboard, what the register was generated from (RR-1)", () => {
       "Zero Trust (CISA ZTMM 2.0) was not included in this register.",
       "Zero Trust (DoD ZT Reference Architecture) was engaged but had no assessment when this register was generated, so it is not in this register.",
     ]);
+  });
+
+  it("prints two identical 9c lines without a duplicate React key (#1148 review, finding 9)", () => {
+    // Two DoD services engaged with no assessment carry one label each, so
+    // the two 9c lines read the same. Whether to merge them is a copy
+    // question; here both print, keyed by position.
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    render(
+      <RiskDashboard
+        data={data({
+          selection_recorded: true,
+          covered_inputs: ["ATT&CK coverage", "NIST CSF"],
+          ineligible_inputs: [
+            "Zero Trust (DoD ZT Reference Architecture)",
+            "Zero Trust (DoD ZT Reference Architecture)",
+          ],
+        })}
+      />,
+    );
+    expect(lines()).toHaveLength(3);
+    // Only a warning about a SELECTION LINE's key: the 9c text is the key
+    // React would name. (Other duplicate keys on the page are not this.)
+    const keyWarnings = errors.mock.calls.filter(
+      (call) =>
+        String(call[0]).includes("same key") &&
+        call.slice(1).some((arg) => String(arg).includes("had no assessment")),
+    );
+    errors.mockRestore();
+    expect(keyWarnings).toEqual([]);
   });
 
   it("prints the lines before the target lines", () => {

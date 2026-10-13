@@ -983,9 +983,11 @@ async def _generate_body(request: Request) -> RiskGenerateRequest | None:
         return None
     try:
         return RiskGenerateRequest.model_validate(json.loads(raw))
-    except (ValueError, ValidationError) as exc:
+    except (ValueError, ValidationError, RecursionError) as exc:
         # `json.JSONDecodeError` and pydantic's ValidationError; a non-object
-        # body fails `model_validate` the same way.
+        # body fails `model_validate` the same way. RecursionError: nesting
+        # deeper than the parser's limit (#1148 review, finding 8), which
+        # would otherwise be an untyped 500.
         _log.info("risk_selection_unreadable", error=type(exc).__name__, length=len(raw))
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

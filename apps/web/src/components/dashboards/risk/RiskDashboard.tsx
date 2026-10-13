@@ -311,8 +311,10 @@ export function RiskDashboard({
           covered_inputs: data.covered_inputs,
           deselected_inputs: data.deselected_inputs,
           ineligible_inputs: data.ineligible_inputs,
-        }).map((line) => (
-          <p key={line}>{line}</p>
+        }).map((line, i) => (
+          // By position: two services can print the same line (two 9c
+          // lines for one framework), so the text is not a key.
+          <p key={i}>{line}</p>
         ))}
       </div>
       {/* #474. Which target the findings were measured against, in the words

@@ -220,6 +220,31 @@ describe("RiskRegisterDashboard, what the register was generated from (RR-1)", (
     ]);
   });
 
+  it("prints two identical 9c lines without a duplicate React key (#1148 review, finding 9)", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({
+        selection_recorded: true,
+        covered_inputs: ["ATT&CK coverage", "NIST CSF"],
+        ineligible_inputs: [
+          "Zero Trust (DoD ZT Reference Architecture)",
+          "Zero Trust (DoD ZT Reference Architecture)",
+        ],
+      }),
+    );
+    await loaded();
+    expect(selectionLineTexts()).toHaveLength(3);
+    // Only a warning about a SELECTION LINE's key: the 9c text is the key
+    // React would name. (Other duplicate keys on the page are not this.)
+    const keyWarnings = errors.mock.calls.filter(
+      (call) =>
+        String(call[0]).includes("same key") &&
+        call.slice(1).some((arg) => String(arg).includes("had no assessment")),
+    );
+    errors.mockRestore();
+    expect(keyWarnings).toEqual([]);
+  });
+
   it("prints the lines above the target lines", async () => {
     fetchRiskRegisterLatest.mockResolvedValue(register());
     await loaded();

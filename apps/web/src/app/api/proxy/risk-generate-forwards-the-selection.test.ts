@@ -9,12 +9,14 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
  * `{method: "POST"}` alone, so a selection never reached the api.
  */
 
+const SIGNED_IN = {
+  accessToken: "bearer-1122",
+  role: "admin",
+  user: { email: "admin@example.com", role: "admin" },
+};
+const authMock = vi.fn(async (): Promise<typeof SIGNED_IN | null> => SIGNED_IN);
 vi.mock("@/lib/auth/options", () => ({
-  auth: vi.fn(async () => ({
-    accessToken: "bearer-1122",
-    role: "admin",
-    user: { email: "admin@example.com", role: "admin" },
-  })),
+  auth: () => authMock(),
 }));
 vi.mock("next/headers", () => ({
   cookies: vi.fn(async () => ({ get: () => undefined })),
@@ -89,6 +91,16 @@ describe("POST /api/proxy/risk/clients/:cid/register/generate (RR-1)", () => {
       expect(init.body ?? undefined).toBeUndefined();
     },
   );
+
+  it("answers a signed-out caller 401 before reading its body (#1148 review, finding 7)", async () => {
+    authMock.mockResolvedValueOnce(null);
+    const res = await post("{not json");
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({
+      error: { code: 401, message: "Not signed in." },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 
   it("refuses an unparseable body with copy 10, and calls nothing upstream", async () => {
     const res = await post("{not json");

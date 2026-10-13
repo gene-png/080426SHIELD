@@ -165,6 +165,28 @@ def test_an_absent_key_is_not_recorded_and_null_is_unreadable() -> None:
         ),
         ("an input not included", {"selection": _sel()}),
         ("inputs unreadable", {"inputs": None}),
+        # Check 6 (#1148 review, finding 5): every `included` id is in
+        # `current_inputs`. With checks 1 and 6 together, `included` is also
+        # disjoint from `deselected` and `ineligible`, so a service cannot be
+        # both an input and skipped at publish.
+        (
+            "included not in current_inputs",
+            {"current_inputs": [{"kind": "attack", "service_id": ATTACK_ID}]},
+        ),
+        (
+            "included also deselected",
+            {
+                "current_inputs": [{"kind": "attack", "service_id": ATTACK_ID}],
+                "selection": _sel(included=[_row("csf", CSF_ID)], deselected=[_row("csf", CSF_ID)]),
+            },
+        ),
+        (
+            "included also ineligible",
+            {
+                "current_inputs": [{"kind": "attack", "service_id": ATTACK_ID}],
+                "selection": _sel(included=[_row("csf", CSF_ID)], ineligible=[_row("csf", CSF_ID)]),
+            },
+        ),
     ],
 )
 def test_each_failing_shape_is_unreadable(name: str, over: dict) -> None:
