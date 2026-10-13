@@ -41,12 +41,15 @@ const NEGATIVE_WINDOW_MS = 20_000;
  */
 const FIRST_LOAD_MS = 60_000;
 /**
- * EVERY wait in this file is bounded, well under the test timeout (about 15
- * minutes under `test.slow`): the config sets no action or navigation timeout,
- * so an unbounded wait that cannot resolve eats the whole test and its retry
- * instead of failing and naming its step. #1140's E2E job ran into the job
- * limit that way. STEP_MS for an action on a page already loaded, LOAD_MS for
- * a page or a download the dev server may compile cold.
+ * Every wait written in this file is bounded, well under the test timeout
+ * (about 15 minutes under `test.slow`): the config sets no action or
+ * navigation timeout, so an unbounded wait that cannot resolve eats the whole
+ * test and its retry instead of failing and naming its step; #1140's E2E job
+ * ran into the job limit that way. ONE wait this file reaches is not bounded:
+ * `signIn`'s `page.goto("/sign-in")` in helpers/auth.ts, which passes no
+ * timeout and so inherits the config's absent navigationTimeout. STEP_MS for
+ * an action on a page already loaded, LOAD_MS for a page or a download the
+ * dev server may compile cold.
  */
 const STEP_MS = 30_000;
 const LOAD_MS = 60_000;
