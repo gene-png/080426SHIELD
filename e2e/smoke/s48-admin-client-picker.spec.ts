@@ -241,9 +241,19 @@ test("the picker's client, not the cookie's, reaches the URL, a reload, the twin
     await page
       .getByRole("combobox", { name: "Client for this page" })
       .selectOption(B.id, { timeout: STEP_MS });
-    await page
+    // NOT awaited here. Playwright's click waits for the navigation it
+    // starts, and this test is holding that navigation, so awaiting the click
+    // before releasing the route is a deadlock: the click waits for the load,
+    // the load waits for `continue()`, and `continue()` waits for the click.
+    // That deadlock was #1140's E2E failure (13810890's annotation: s48 step
+    // 3, `locator.click: Timeout 30000ms exceeded`; before the waits were
+    // bounded it was the 52-minute hang). The click is awaited after the
+    // route is released. `catch` only stops an early failure below from
+    // leaving an unhandled rejection; `await clicking` still throws.
+    const clicking = page
       .getByRole("button", { name: "Show this client" })
       .click({ timeout: STEP_MS });
+    clicking.catch(() => undefined);
     await expect.poll(() => held !== null, { timeout: STEP_MS }).toBe(true);
     await expect(regenerate).toBeDisabled({ timeout: STEP_MS });
     await expect(page.getByText(string18(B.name))).toBeVisible({
@@ -253,6 +263,7 @@ test("the picker's client, not the cookie's, reaches the URL, a reload, the twin
       page.getByRole("heading", { name: `Risk Register for ${A.name}` }),
     ).toBeVisible({ timeout: STEP_MS });
     await (held as unknown as Route).continue();
+    await clicking;
     await page.unroute(isBLoad);
   });
 
