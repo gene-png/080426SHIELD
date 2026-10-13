@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session, undefer_group
 from app.ai.catalog_fields import register_catalog_field, register_catalog_keys
 from app.ai.engine import get_job, run_job
 from app.ai.failures import ai_call_boundary
+from app.ai.isolation import RedactionRefused, redaction_scope
 from app.ai.llm import LLMClient
 from app.attack.catalog import technique_by_id
 from app.attack.catalog_version import catalog_mismatch_message, require_current_catalog
@@ -90,6 +91,9 @@ from app.risk.inputs import (
     publish_blockers,
 )
 from app.risk.link_scope import LinkScope, csf_playbook_scope, scope_for
+from app.risk.locked import ATTACK as LOCKED_ATTACK
+from app.risk.locked import CSF_OR_ZT as LOCKED_CSF_OR_ZT
+from app.risk.locked import locked_inputs, locked_message
 from app.risk.zt_capped import CAPPED_TARGET_KEY as ZT_CAPPED_TARGET_KEY
 from app.risk.zt_capped import capped_target_codes as zt_capped_target_codes
 from app.risk.zt_capped import capped_target_sentence as zt_capped_target_sentence
@@ -104,6 +108,7 @@ from app.schemas.risk import (
     RiskEntryResponse,
     RiskGateStatus,
     RiskInputState,
+    RiskLockedInput,
     RiskRegisterResponse,
     RiskTargetUsed,
 )
@@ -661,7 +666,25 @@ def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
     if not (finalized_csf or finalized_zt):
         synthesizable_missing.append("an approved CSF or Zero Trust assessment")
 
+    # #1081: why it is locked, from the gate's own verdict, never re-derived.
+    unmet = [
+        req
+        for req, met in ((LOCKED_ATTACK, has_attack), (LOCKED_CSF_OR_ZT, has_csf or has_zt))
+        if not met
+    ]
+    locked = locked_inputs(db, client_id, unmet=unmet) if unmet else []
+
     return RiskGateStatus(
+        locked_inputs=[
+            RiskLockedInput(
+                requirement=x.requirement,
+                state=x.state,
+                service_kind=x.service_kind.value if x.service_kind else None,
+                sentence=x.sentence,
+            )
+            for x in locked
+        ],
+        locked_message=locked_message(locked) if locked else None,
         inputs=_input_states(db, client_id),
         unlocked=unlocked,
         has_attack=has_attack,
@@ -1670,6 +1693,12 @@ def _risk_batch_inputs(
     }
 
 
+# #552: the whole fan-out is ONE run for the redaction gate's places. Risk is
+# not a Run-AI, so its calls carry no run id; without this each batch would be
+# a one-call run, and five concurrent batches would take five of the platform's
+# places and refuse each other. A fresh scope per call (`contextmanager` objects
+# re-enter as decorators), released when the function returns or raises.
+@redaction_scope()
 def _run_risk_synthesize_batched(
     db: Session,
     llm: LLMClient,
@@ -1789,6 +1818,17 @@ def _run_risk_synthesize_batched(
         for fut in as_completed(futures):
             try:
                 data = fut.result()
+            except RedactionRefused:
+                # #552, ruling (a) on #736: the redaction gate refused this
+                # generate, and that is the WHOLE generate's refusal: counted as
+                # a failed batch, the batches that got through would become a
+                # register. Queued batches are cancelled; leaving the `with`
+                # waits for those in flight, inside the scope (see the
+                # decorator), so none redacts after the place is given back.
+                # Nothing is written: `generate` raises before its insert.
+                pool.shutdown(wait=False, cancel_futures=True)
+                _log.error("risk_synthesize_refused_by_redaction", client_id=str(client_id))
+                raise
             except Exception as exc:  # noqa: BLE001 - counted, not swallowed
                 failed += 1
                 first_error = first_error or exc
@@ -1858,9 +1898,10 @@ def generate(
     client = _require_client(db, cid)
     g = _gate(db, cid)
     if not g.unlocked:
+        # #1081: the locked page's own copy (`app/risk/locked.py`), typed.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Risk Register is locked. Missing: " + "; ".join(g.missing) + ".",
+            detail={"reason": "risk_register_locked", "message": g.locked_message},
         )
     # #737, Gene's ruling (#736 item 13): NO refusal for unapproved inputs here
     # -- this reverses #237's refusal. A draft register is generated from

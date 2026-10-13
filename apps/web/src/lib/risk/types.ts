@@ -96,6 +96,26 @@ export interface RiskGate {
    * parses.
    */
   duplicate_services?: RiskDuplicateService[];
+  /**
+   * #1081: why the gate is locked, per unmet requirement
+   * (`app/risk/locked.py`). Empty when unlocked. Optional so an older API
+   * parses.
+   */
+  locked_inputs?: RiskLockedInput[];
+  /**
+   * #1081: the approved locked-page copy, composed by the API (the same text
+   * generate's 409 carries); null when unlocked. Optional so an older API
+   * parses; the page then names what is missing, as it did before.
+   */
+  locked_message?: string | null;
+}
+
+/** #1081: one unmet requirement and why. */
+export interface RiskLockedInput {
+  requirement: "attack" | "csf_or_zt";
+  state: "no_assessment" | "unpublished" | "archived_only" | "no_service";
+  service_kind: string | null;
+  sentence: string;
 }
 
 /** #896: one service behind the duplicate refusal. */

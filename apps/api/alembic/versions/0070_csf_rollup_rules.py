@@ -1,7 +1,7 @@
 """CSF Enterprise roll-up rule recorded per assessment (#1031)
 
 Revision ID: 0070
-Revises: 0066
+Revises: 0068
 Create Date: 2026-10-12 00:00:00
 
 #1031 (Gene, #736 6115464421): an unscored seed tier no longer takes part in
@@ -25,9 +25,10 @@ DISCARDED stay NULL.
 
 ## Revision chain
 
-Revises main's head at the time of writing (0066). Whichever of 0067, 0068
-and 0070 merges second rewrites its `down_revision` to the head at that
-moment; the merge checklist confirms `alembic heads` is single.
+Written against main's head 0066, and re-pointed to 0068 in #1077's landing
+commit, after N4 (0067) and N5 (0068) merged, in the order the advisor
+approved (#736 6128447366 (a)). The merge checklist confirms `alembic heads`
+is single.
 
 SQLite-safe via `batch_alter_table` (core principle 6).
 """
@@ -40,7 +41,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0070"
-down_revision: str | Sequence[str] | None = "0066"
+down_revision: str | Sequence[str] | None = "0068"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

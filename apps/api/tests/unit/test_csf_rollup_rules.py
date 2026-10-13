@@ -94,7 +94,7 @@ def test_the_migration_backfills_approved_and_released_to_every_tier(tmp_path) -
     url = f"sqlite:///{tmp_path / 'shield-0070.db'}"
     os.environ["DATABASE_URL"] = url
     cfg = _cfg(url)
-    command.upgrade(cfg, "0066")  # the revision before 0070 on main
+    command.upgrade(cfg, "0068")  # the revision before 0070 on main
     engine = create_engine(url, future=True)
     with engine.begin() as db:
         # The stored form is the enum NAME, as on the dev database (0054).
@@ -125,12 +125,12 @@ def _db_at_0070(tmp_path, rules: int | None) -> Config:
 def test_downgrading_0070_refuses_while_an_assessment_was_approved_under_1031(tmp_path) -> None:
     cfg = _db_at_0070(tmp_path, 2)
     with pytest.raises(RuntimeError, match="rollup_rules = 2"):
-        command.downgrade(cfg, "0066")
+        command.downgrade(cfg, "0068")
 
 
 def test_downgrading_0070_succeeds_when_nothing_was_approved_under_1031(tmp_path) -> None:
     cfg = _db_at_0070(tmp_path, 1)
-    command.downgrade(cfg, "0066")
+    command.downgrade(cfg, "0068")
 
 
 @pytest.mark.parametrize("status", ["APPROVED", "RELEASED"])
@@ -145,7 +145,7 @@ def test_downgrading_0070_refuses_an_approved_row_with_no_rule_recorded(tmp_path
     with create_engine(url, future=True).begin() as db:
         _insert(db, status, rules=None, before=False)
     with pytest.raises(RuntimeError, match="no rollup_rules recorded"):
-        command.downgrade(cfg, "0066")
+        command.downgrade(cfg, "0068")
 
 
 def test_an_approved_row_written_through_the_orm_records_the_rule(tmp_path) -> None:

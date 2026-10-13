@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from app.ai.engine import get_job, run_job
 from app.ai.failures import AI_CALL_FAILED, ai_call_boundary, is_credential_rejection
+from app.ai.isolation import RedactionRefused, redaction_scope
 from app.ai.llm import LLMClient
 from app.ai.runs import RUN_DEADLINE_EXCEEDED, RunFailed
 from app.logging import get_logger
@@ -53,6 +54,10 @@ class Batched:
     failed: int
 
 
+# #552: one redaction place for the whole fan-out when the caller is not a
+# Run-AI (the CLI measure script); a no-op inside a run, which already holds
+# its place by run id. A fresh scope per call.
+@redaction_scope()
 def run_batches(
     db: Session,
     llm: LLMClient,
@@ -91,6 +96,13 @@ def run_batches(
     key costs at most `max_workers` calls -- the ones already in flight --
     instead of one per batch. Any other failure -- a rate limit, a 5xx, a
     timeout, a malformed answer -- costs its batch and the run goes on.
+
+    A REDACTION REFUSAL (#552, `isolation.RedactionRefused`: no place, no child
+    slot in time, a payload over its budget, a child that died) is the other
+    failure that stops the run, and it fails the run WHOLE: it is raised out
+    like any exception below, so queued batches are cancelled and nothing is
+    applied, rather than landing a partial run from the batches that got
+    through (ruling (a) on #736).
 
     ANY OTHER EXCEPTION raised while the caller waits for results -- a Ctrl-C,
     a failure in the caller's own thread -- cancels every batch not yet
@@ -202,6 +214,21 @@ def run_batches(
             except _NotSent:
                 # #797: its worker saw the stop flag. No answer, no call.
                 continue
+            except RedactionRefused as exc:
+                # #552, ruling (a) on #736: the redaction gate refused this run
+                # -- no place, no slot in time, a payload over its budget, a
+                # child that died. That is the RUN's refusal, not one batch's:
+                # counted as a failed batch, the run would land PARTIAL from the
+                # batches that got through. Raised out, so the handler below
+                # cancels every batch not yet started and the run fails whole
+                # with the gate's typed reason; nothing is applied.
+                _log.error(
+                    f"{job_name}_refused_by_redaction",
+                    service_id=str(service_id),
+                    reason=exc.reason,
+                    sent_before=exc.sent_before,
+                )
+                raise
             except Exception as exc:  # noqa: BLE001 - counted, not swallowed
                 attempted += 1
                 failed += 1

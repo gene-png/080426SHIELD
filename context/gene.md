@@ -1,5 +1,17 @@
 # Gene — in-flight status
 
+_2026-10-13 (track1): #1031 landed with PR #1077 (migration 0070)._ A CSF subcategory scored only on one tier no longer drops to level 1 because the other tiers were left at their defaults: the Enterprise level now reads the tiers someone actually scored. Assessments approved before this keep the numbers the client already has. Where the only target sits on a tier nobody scored, the Playbook says "Not measured" instead of guessing.
+
+_2026-10-12 (track11): N5 landed with PR #1109 (migration 0068)._ The database can now hold a client's description and status for each uploaded file, and links between a file and the assessment row it supports. Nothing uses them yet. Rows you had already ticked as having evidence, on approved or released CSF assessments, are marked as confirmed before linking existed. Undoing this migration is refused while any of that data exists.
+
+_2026-10-12 (track5): #552 landed with PR #1042._ Redaction before every AI call now runs in its own short-lived child process. A slow redaction can no longer freeze the app, and the child holds no keys of its own. The app also refuses to start if the redaction child cannot run, and the error says why. The same landing records D-112, your decision that SHIELD holds demo data only until the MVP: no new freeze work, and existing freezes stay.
+
+_2026-10-12 (track11): N4 landed with PR #1099 (migration 0067)._ The database now has the three empty tables the reports work will fill: findings reports, integration runs and recommendations. Nothing uses them yet. Anyone who upgraded a dev database while N4 was in review should run `alembic downgrade 0066` then `alembic upgrade head`, because 0067 changed in place (#1131).
+
+_2026-10-12 (trackB): #1049 landed with PR #1092._ A client typing "kentro.com" in intake now has it saved as "https://kentro.com/" instead of being refused, and when a save really is refused, the wizard says so in the approved words rather than "Network error.". One test on main was edited with the advisor's sha256 approval. Follow-ups: #1115 and #1116.
+
+_2026-10-12 (track1): #1081 landed with PR #1100._ A locked Risk Register now tells the consultant, for each missing input, why it is missing (no assessment yet, a request waiting to be published, an assessment only under an archived service, or no service at all) and what to click, in the copy approved on the issue. The same sentence comes back in generate's error. Three tests on main were edited with the advisor's sha256 approval. Follow-ups: #1102 (naming the controls for a service with no intake request) and #1110 (a locked Generate still uses AI quota).
+
 _2026-10-12 (trackD): C-2 landed with PR #1074, for #1056._ The CSF "Edit dimension scores" editor now has a collapsed "How to score a row" section, a one-line hint under each dimension, and two lines that show only when a row is capped for missing evidence or has no target. The copy is the advisor's verbatim approval (6115345112). One test on main was edited with the advisor's sha256 approval (an engine pin for the cap). The evidence question (F5) is still with you.
 
 _2026-10-12 (trackB): TD-3 landed with PR #1066 (approved for merge in #736 6115773247), for #1050._ The admin shell no longer caps service workspaces at `max-w-6xl`, so the Tech Debt Step 2 table gets the screen's width; queue, deliverables, management, messages, health, audit and the Risk Register keep the cap. #1050 stays open: the real fix, a fixed Name column and wider Notes in `TechDebtWorkspace.tsx`, is queued after #1044 merges.
