@@ -114,11 +114,18 @@ _PLAYBOOK_FIELDS = (
 def csf_playbook_fingerprint(db: Session, assessment_id: str) -> str:
     """#474 D' (advisor, #736 6087786886, item 3, option (a)): a snapshot, not
     a lock. The sha256 of the assessment's in-scope catalog Playbook rows,
-    every field above, sorted by (subcategory, tier). Playbook rows stay
-    editable after approval (#37 is Gene's open decision), so publish compares
-    this with the value recorded at generate and reports CSF `changed` when a
+    every field above, sorted by (subcategory, tier). Publish compares this
+    with the value recorded at generate and reports CSF `changed` when a
     score, target, note or scope changed since. A row moved out of scope
-    leaves the set, so that changes it too."""
+    leaves the set, so that changes it too.
+
+    Since #1120's ruling A2 (#736 6136101129) an APPROVED or RELEASED
+    assessment's Playbook rows are not edited in place: the dimension-score
+    PATCH and the gap-action upsert refuse it, and a change goes through a
+    revision, which is a new record. One writer still reaches it: seeding
+    creates the rows of an approved record that has none, which changes this
+    fingerprint from the empty set's. Any route that later edits an approved
+    record's rows in place would make the other changes reachable again."""
     rows = csf_catalog_rows(
         db.execute(
             select(CsfDimensionScore).where(

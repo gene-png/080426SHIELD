@@ -1,23 +1,26 @@
 """Migration 0064 (#839): stored DoD answers survive the catalog change.
 
-The world is built through the ORM at revision 0063 (0064 changes no schema, so
-the models fit both), then upgraded. What the migration must do comes from the
-approved plan (#838 comment 6022742677, amended in 6023694715), not from the
-migration: DoD numbers Data Loss Prevention 4.6 and Data Access Control 4.7, so
-the stored `DOD.DAT.06` and `DOD.DAT.07` answers swap; `DOD.USR.09` (1.9) is
-inserted; the six retired rows are KEPT; risk links swap the same way; CISA
-and discarded assessments are untouched; a downgrade never deletes an answer.
+The world is built at revision 0063 (0064 changes no schema), through the ORM
+except for assessments (see `assessment`), then upgraded. What the migration
+must do comes from the approved plan (#838 comment 6022742677, amended in
+6023694715), not from the migration: DoD numbers Data Loss Prevention 4.6 and
+Data Access Control 4.7, so the stored `DOD.DAT.06` and `DOD.DAT.07` answers
+swap; `DOD.USR.09` (1.9) is inserted; the six retired rows are KEPT; risk links
+swap the same way; CISA and discarded assessments are untouched; a downgrade
+never deletes an answer.
 """
 
 from __future__ import annotations
 
 import os
+import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, insert, select
 from sqlalchemy.orm import Session
 
 pytestmark = pytest.mark.unit
@@ -65,12 +68,21 @@ def world(tmp_path):
             return s
 
         def assessment(svc: Service, fw: ZtFramework, status: ZtAssessmentStatus, version=1):
-            a = ZtAssessment(
-                service_id=svc.id, client_id=client.id, framework=fw, version=version, status=status
+            # Core, not the ORM: the head model carries columns a later migration
+            # adds (#1120's `revision_of`), which this revision's schema lacks, so
+            # only the columns written here are inserted.
+            a_id = uuid.uuid4()
+            db.execute(
+                insert(ZtAssessment.__table__).values(
+                    id=a_id,
+                    service_id=svc.id,
+                    client_id=client.id,
+                    framework=fw,
+                    version=version,
+                    status=status,
+                )
             )
-            db.add(a)
-            db.flush()
-            return a
+            return SimpleNamespace(id=a_id)
 
         def answer(a, code: str, stage: int | None, notes: str | None = None) -> None:
             db.add(
