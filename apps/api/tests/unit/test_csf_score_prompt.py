@@ -3,9 +3,11 @@
 The text is Gene's CSF scoring prompt, #806 comment 5982122270 (approved
 2026-10-04, never edited: its `updated_at` equals its `created_at`), the body
 of its ```text block placed verbatim. The build was approved as A1 to A5 in
-#736 comment 6075712436. Every expected value below is read from the prompt
-text, never from the parser's constants, except where a test checks the
-parser AGAINST the prompt and says so.
+#736 comment 6075712436. v3 (#1046, C-1) applies the two section-12 edits the
+advisor approved verbatim in #736 comment 6115773247, and nothing else. Every
+expected value below is read from the prompt text, never from the parser's
+constants, except where a test checks the parser AGAINST the prompt and says
+so.
 """
 
 from __future__ import annotations
@@ -21,11 +23,12 @@ from app.csf.maturity import TIER_DEFINITIONS
 
 pytestmark = pytest.mark.unit
 
-# sha256 of the ```text block in #806 comment 5982122270, with no trailing
-# newline. A one-byte drift turns this red.
-CSF_SCORE_PROMPT_SHA256 = "ec0f7b3fb7b89bf1a305fd09dfe9bcb89fdc520e25cf143f1c0070933b759562"
+# sha256 of the ```text block in #806 comment 5982122270 with the two edits of
+# #736 comment 6115773247 applied (v3), with no trailing newline. A one-byte
+# drift turns this red.
+CSF_SCORE_PROMPT_SHA256 = "523fee871b04876829d5603f8f21013ee56ace543fe53d7db78aee2640d7404a"
 # Its length in UTF-8 bytes, beside the hash.
-CSF_SCORE_PROMPT_BYTES = 13434
+CSF_SCORE_PROMPT_BYTES = 13871
 
 
 def _prompt() -> str:
@@ -47,8 +50,8 @@ def test_the_prompt_is_plain_ascii_with_no_control_characters() -> None:
 
 def test_the_job_records_the_new_prompt_version() -> None:
     # C9: old and new runs must differ in `llm_calls.prompt_version`. The v1
-    # text was every csf_score call before #806.
-    assert get_job("csf_score").prompt_version == "v2"
+    # text was every csf_score call before #806; v2 every call before #1046.
+    assert get_job("csf_score").prompt_version == "v3"
 
 
 def test_the_first_json_example_is_the_scores_object() -> None:
@@ -72,7 +75,9 @@ def test_the_prompt_asks_for_no_executive_summary() -> None:
     """Section 12: no other fields. The v1 prompt asked for one; nothing
     persisted it."""
     assert "executive_summary" not in _prompt()
-    assert "No other fields, at the top level or in a row" in _prompt()
+    assert "Do not add a confidence, rationale, or any other key, at the top level or in a row" in (
+        _prompt()
+    )
 
 
 def test_every_rating_label_the_prompt_names_is_a_shield_tier_label() -> None:
