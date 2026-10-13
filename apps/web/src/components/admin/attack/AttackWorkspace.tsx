@@ -16,6 +16,7 @@ import {
   AttackProxyError,
   createAssessment,
   discardAssessment,
+  startRevision,
   fetchCatalog,
   fetchHeatmap,
   fetchLatestAssessment,
@@ -45,6 +46,8 @@ import { StaleDocsNudge } from "@/components/admin/StaleDocsNudge";
 import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { AiPreviewButton } from "@/components/admin/AiPreviewButton";
 import { AiRunStatus, LastRunNote } from "@/components/admin/AiRunStatus";
+import { RevisionBanner } from "@/components/admin/RevisionBanner";
+import { StartRevisionButton } from "@/components/admin/StartRevisionButton";
 import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
 
@@ -193,7 +196,7 @@ export function AttackWorkspace({
   const { messages: refreshMessages, begin: beginRefresh } =
     useRefreshFailures();
   const [busy, setBusy] = React.useState<
-    "create" | "approve" | "review" | "run" | "discard" | null
+    "create" | "approve" | "review" | "run" | "discard" | "revise" | null
   >(null);
   // Set when the API REFUSES a run (typed 409). Distinct from loadError: the
   // page is fine, the prerequisite is not.
@@ -619,6 +622,28 @@ export function AttackWorkspace({
     return trackWrite(() => onDiscardWrite());
   }
 
+  /**
+   * #1120 "Start a revision": mints the next version as a DRAFT with this
+   * one's work copied forward, then shows it. A refusal is rethrown with the
+   * API's approved copy, which the dialog shows.
+   */
+  async function onStartRevision(reason: string): Promise<void> {
+    if (!assessment) return;
+    setBusy("revise");
+    const seq = ++assessmentSeq.current;
+    try {
+      const a = await startRevision(serviceId, assessment.id, reason);
+      if (seq === assessmentSeq.current) {
+        setAssessment(a);
+        await refreshHeatmap();
+      }
+    } catch (err) {
+      throw new Error(describeError(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function onDiscardWrite(): Promise<void> {
     if (!assessment) return;
     setActionError(null);
@@ -789,9 +814,23 @@ export function AttackWorkspace({
               disabled={busy !== null && busy !== "run"}
             />
           ) : null}
+          {assessment ? (
+            <StartRevisionButton
+              status={assessment.status}
+              version={assessment.version}
+              onStart={onStartRevision}
+              disabled={busy !== null}
+            />
+          ) : null}
         </div>
       </header>
 
+      {assessment ? (
+        <RevisionBanner
+          status={assessment.status}
+          revision={assessment.revision}
+        />
+      ) : null}
       {stagesPhase === "ready" && serviceStages ? (
         <ProgressStages
           stages={serviceStages.stages}

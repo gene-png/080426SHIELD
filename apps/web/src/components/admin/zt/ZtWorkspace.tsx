@@ -14,6 +14,7 @@ import {
   approveAssessment,
   createAssessment,
   discardAssessment,
+  startRevision,
   fetchCatalog,
   fetchGapAnalysis,
   fetchLatestAssessment,
@@ -46,6 +47,8 @@ import { MessageThread } from "@/components/messages/MessageThread";
 import { StaleDocsNudge } from "@/components/admin/StaleDocsNudge";
 import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { AiPreviewButton } from "@/components/admin/AiPreviewButton";
+import { RevisionBanner } from "@/components/admin/RevisionBanner";
+import { StartRevisionButton } from "@/components/admin/StartRevisionButton";
 import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
 import { AiDraftProvenanceNotice } from "@/components/admin/AiDraftProvenanceNotice";
@@ -216,7 +219,7 @@ export function ZtWorkspace({
   const { messages: refreshMessages, begin: beginRefresh } =
     useRefreshFailures();
   const [busy, setBusy] = React.useState<
-    "create" | "approve" | "run" | "discard" | null
+    "create" | "approve" | "run" | "discard" | "revise" | null
   >(null);
   // #550: set once a run's outcome is unknown and never cleared; a reload
   // clears it, which the copy says.
@@ -584,6 +587,30 @@ export function ZtWorkspace({
     }
   }
 
+  /**
+   * #1120 "Start a revision": mints the next version as a DRAFT with this
+   * one's work copied forward, then shows it. A refusal is rethrown with the
+   * API's approved copy, which the dialog shows.
+   */
+  async function onStartRevision(reason: string): Promise<void> {
+    if (!assessment) return;
+    setBusy("revise");
+    const seq = ++assessmentSeq.current;
+    try {
+      const a = await startRevision(serviceId, assessment.id, reason);
+      if (seq === assessmentSeq.current) {
+        setAssessment(a);
+        const t = normalizeTarget(a.client_target_stage, catalog?.stages);
+        setTargetStage(t);
+        await refreshScoreAndGap(t);
+      }
+    } catch (err) {
+      throw new Error(describeError(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function onDiscard(): Promise<void> {
     if (!assessment) return;
     setBusy("discard");
@@ -879,9 +906,23 @@ export function ZtWorkspace({
               disabled={busy !== null && busy !== "run"}
             />
           ) : null}
+          {assessment ? (
+            <StartRevisionButton
+              status={assessment.status}
+              version={assessment.version}
+              onStart={onStartRevision}
+              disabled={busy !== null}
+            />
+          ) : null}
         </div>
       </header>
 
+      {assessment ? (
+        <RevisionBanner
+          status={assessment.status}
+          revision={assessment.revision}
+        />
+      ) : null}
       {stagesPhase === "ready" && serviceStages ? (
         <ProgressStages
           stages={serviceStages.stages}
