@@ -166,8 +166,12 @@ interface LockFacts {
   h1s: string[];
 }
 
-/** A snapshot the page pushed out; `receivedAt` is set test-side. */
+/**
+ * A snapshot the page pushed out: `seq` counts up page-side, one per report;
+ * `receivedAt` is set test-side when the binding call arrives.
+ */
 interface LockSnapshot extends LockFacts {
+  seq: number;
   receivedAt?: number;
 }
 
@@ -256,15 +260,22 @@ test("the picker's client, not the cookie's, reaches the URL, a reload, the twin
     // reads only its own array.
     const snaps: LockSnapshot[] = [];
     let heldAt: number | null = null;
+    // The highest `seq` received when the hold began: a snapshot must be
+    // PRODUCED after the hold (seq above this) as well as received after it.
+    let maxSeq = -1;
+    let seqAtHold: number | null = null;
     await page.exposeBinding("__s48Lock", (_source, snap: LockSnapshot) => {
+      maxSeq = Math.max(maxSeq, snap.seq);
       snaps.push({ ...snap, receivedAt: Date.now() });
     });
     await page.evaluate((leavingLine) => {
+      let seq = 0;
       const report = (): void => {
         const regenerate = Array.from(
           document.querySelectorAll("button"),
         ).filter((b) => b.textContent?.trim() === "Regenerate");
         (window as unknown as { __s48Lock: (s: unknown) => void }).__s48Lock({
+          seq: seq++,
           regenerateButtons: regenerate.length,
           regenerateDisabled: regenerate.every((b) => b.disabled),
           leavingLineShown: (document.body.textContent ?? "").includes(
@@ -294,6 +305,7 @@ test("the picker's client, not the cookie's, reaches the URL, a reload, the twin
     await page.route(isBLoad, async (route) => {
       if (route.request().resourceType() === "document") {
         heldAt = Date.now();
+        seqAtHold = maxSeq;
         held = route;
       } else await route.continue();
     });
@@ -314,46 +326,61 @@ test("the picker's client, not the cookie's, reaches the URL, a reload, the twin
     clicking.catch(() => undefined);
     await expect.poll(() => held !== null, { timeout: STEP_MS }).toBe(true);
 
-    // The locked state, from a snapshot taken AFTER the hold began. Before
-    // Apply, Regenerate is enabled and string 18 is absent, so a pre-Apply
-    // snapshot could not match the locked shape anyway; `receivedAt` makes
-    // that explicit rather than incidental.
+    // The locked state, from a snapshot both PRODUCED after the hold began
+    // (`seq` above the highest received when it began) and RECEIVED at least
+    // two timer ticks after it (`heldAt + 500`). A snapshot taken by the
+    // locked re-render just before the interception, or delivered late, does
+    // not count. (Before Apply, Regenerate is enabled and string 18 is
+    // absent, so a pre-Apply snapshot could not match the shape either.)
+    //
+    // If this reports "0 received after the hold", Playwright does not
+    // deliver binding calls during a held navigation either, and the lock is
+    // not observable from e2e at all. Then this check is dropped: the lock is
+    // pinned by vitest, in RiskRegisterDashboard.client.test.tsx ("Apply locks
+    // the page (§3.3, rev 11 and 12)" and "work in flight locks the picker
+    // (§3.3)") and RiskRegisterDashboard.guard-lock.test.tsx ("RunAiGuard busy
+    // locks the picker (§3.3)").
     const locked: LockFacts = {
       regenerateButtons: 1,
       regenerateDisabled: true,
       leavingLineShown: true,
       h1s: [`Risk Register for ${A.name}`],
     };
-    const matchesLocked = (s: LockSnapshot): boolean =>
-      s.receivedAt !== undefined &&
+    const afterHold = (s: LockSnapshot): boolean =>
       heldAt !== null &&
-      s.receivedAt >= heldAt &&
+      seqAtHold !== null &&
+      s.seq > seqAtHold &&
+      s.receivedAt !== undefined &&
+      s.receivedAt >= heldAt + 500;
+    const isLocked = (s: LockFacts): boolean =>
       s.regenerateButtons === locked.regenerateButtons &&
       s.regenerateDisabled === locked.regenerateDisabled &&
       s.leavingLineShown === locked.leavingLineShown &&
       JSON.stringify(s.h1s) === JSON.stringify(locked.h1s);
     const sawLocked = await expect
-      .poll(() => snaps.some(matchesLocked), { timeout: STEP_MS })
+      .poll(() => snaps.some((s) => afterHold(s) && isLocked(s)), {
+        timeout: STEP_MS,
+      })
       .toBe(true)
       .then(
         () => true,
         () => false,
       );
-    if (!sawLocked) {
-      // Name WHICH fact was wrong: the last snapshot against the locked one.
-      const last = snaps.at(-1);
-      expect(
+    const post = snaps.filter(afterHold);
+    const last = post.at(-1);
+    expect(
+      sawLocked,
+      `${post.length} received after the hold; the last: ${
         last
-          ? {
+          ? JSON.stringify({
               regenerateButtons: last.regenerateButtons,
               regenerateDisabled: last.regenerateDisabled,
               leavingLineShown: last.leavingLineShown,
               h1s: last.h1s,
-            }
-          : null,
-        `no snapshot after the hold matched the locked state (${snaps.length} received; hold began ${heldAt === null ? "never" : "at " + heldAt})`,
-      ).toEqual(locked);
-    }
+            })
+          : "none"
+      }; locked is ${JSON.stringify(locked)}`,
+    ).toBe(true);
     await (held as unknown as Route).continue();
     await clicking;
     await page.unroute(isBLoad);
