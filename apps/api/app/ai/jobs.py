@@ -65,8 +65,14 @@ register_job(
 
 # --- CSF dimension-score suggestions ---------------------------------------
 # The approved CSF scoring prompt (#806): Gene's text, #806 comment 5982122270,
-# placed verbatim with no `.format()`; `test_csf_score_prompt.py` pins its byte
-# length and sha256. Built as approved in #736 comment 6075712436 (A1 to A5).
+# placed verbatim with no `.format()`, then amended by the two section-12 edits
+# the advisor approved verbatim in #736 comment 6115773247 (v3, for #1046), and
+# nothing else. `test_csf_score_prompt.py` pins its byte length and sha256.
+# Built as approved in #736 comment 6075712436 (A1 to A5).
+#
+# H1 (#1056, #1076): the Playbook's dimension editor tells consultants it uses
+# "the same definitions Run AI is told to use" (apps/web/src/lib/csf/editorHelp.ts).
+# Change one, check the other.
 #
 # The response schema MUST match what routes/csf.py:run_ai parses: a top-level
 # "scores" array whose rows are keyed by "tier" + "subcategory_code" and carry
@@ -264,7 +270,8 @@ Return only one valid JSON object in exactly this structure:
 
 Output requirements:
 - No Markdown, comments, or text outside the JSON object.
-- No other fields, at the top level or in a row, and no renamed fields.
+- Each row has exactly these eight keys and no others: `tier`, `subcategory_code`, `governance`, `policy`, `implementation`, `monitoring`, `improvement`, and `what_we_found`. Do not add a confidence, rationale, or any other key, at the top level or in a row, and do not rename a key.
+- Every row includes all five dimension keys, each with a score, even when the score is 0.
 - Every score is a JSON integer 0, 1, or 2, never a string or a decimal.
 - Copy `tier` and `subcategory_code` values exactly from the input.
 - Every required (tier, Subcategory) pair appears exactly once, in the required order.
@@ -272,7 +279,7 @@ Output requirements:
 Before returning the JSON, silently verify:
 1. Every required pair is present exactly once, and no row names a code outside `subcategories`.
 2. The tier changed a score only through a tier-limited statement in the notes.
-3. Each dimension was scored independently, under its own JSON key.
+3. Each dimension was scored independently, under its own JSON key, and every row has all five dimension keys and no key other than `tier`, `subcategory_code`, the five dimensions, and `what_we_found`.
 4. Only the notes established organizational practices.
 5. The recorded rating did not determine any score.
 6. Evidence attachment status did not determine any score.
@@ -281,8 +288,8 @@ Before returning the JSON, silently verify:
 9. The output is valid JSON with no text outside the object."""  # noqa: E501
 
 # C9 (#806 plan 5983938383): the approved text is a new version, so old and new
-# runs differ in `llm_calls.prompt_version`.
-_CSF_SCORE_PROMPT_VERSION = "v2"
+# runs differ in `llm_calls.prompt_version`. v3 is v2 with #1046's two edits.
+_CSF_SCORE_PROMPT_VERSION = "v3"
 
 # "scores" must be a list -- W1 counts the entries in it, so a non-list would be
 # counted as noise rather than refused. ZT/Risk/ATT&CK get the same treatment as
