@@ -165,6 +165,8 @@ def render_xlsx(
     enterprise_rows: Sequence[Any],
     tier_profiles: Mapping[str, Sequence[Any]],
     gap_actions: Mapping[str, Any] | None = None,
+    kept_rows: Sequence[Any] = (),
+    scored_only: bool = False,
 ) -> bytes:
     """`enterprise_rows` are EnterpriseSubcategory-like; `tier_profiles` maps a
     tier name to its CsfDimensionScoreResponse-like rows (total/level computed).
@@ -238,19 +240,18 @@ def render_xlsx(
         ],
     )
     for r in enterprise_rows:
-        levels = r.tier_levels
         safe_text_row(
             ws,
             [
                 r.subcategory_code,
                 r.function,
                 r.name,
-                levels.get("high", ""),
-                levels.get("moderate", ""),
-                levels.get("low", ""),
+                _tier_cell(r, "high", ""),
+                _tier_cell(r, "moderate", ""),
+                _tier_cell(r, "low", ""),
                 f"L{r.enterprise_level}",
                 f"#{r.rollup_rule}",
-                f"L{r.target_level}" if r.target_level else "",
+                _target_cell(r, ""),
                 _gap_cell(r),
                 r.priority or "",
             ],
@@ -321,9 +322,11 @@ def render_xlsx(
             "POA&M ref",
         ],
     )
-    for r in enterprise_rows:
-        if not getattr(r, "gap", False):
-            continue
+    # #1031: an entry on a code that is not (or no longer) a gap stays, after
+    # the gaps, with KEPT_FOR_THE_RECORD where its priority would be.
+    plan = [r for r in enterprise_rows if getattr(r, "gap", False)]
+    for r in [*plan, *kept_rows]:
+        is_gap = getattr(r, "gap", False)
         act = actions.get(r.subcategory_code)
         override = getattr(act, "priority_override", None) if act else None
         safe_text_row(
@@ -331,9 +334,9 @@ def render_xlsx(
             [
                 r.subcategory_code,
                 r.name,
-                f"L{r.enterprise_level}",
-                f"L{r.target_level}" if r.target_level else "",
-                override or (r.priority or ""),
+                f"L{r.enterprise_level}" if r.enterprise_level else "",
+                _target_cell(r, ""),
+                (override or (r.priority or "")) if is_gap else KEPT_FOR_THE_RECORD,
                 getattr(act, "characterization", "") or "" if act else "",
                 getattr(act, "owner", "") or "" if act else "",
                 getattr(act, "deadline", "") or "" if act else "",
@@ -359,10 +362,17 @@ def render_xlsx(
         cover,
         [
             "Levels are code-computed: total = sum of the five dimensions (0-10); "
-            "L1 0-2, L2 3-5, L3 6-7, L4 8-9, L5 10. Enterprise = weighted-floor "
-            "roll-up across the tiers in use."
+            "L1 0-2, L2 3-5, L3 6-7, L4 8-9, L5 10. "
+            + (
+                SCORED_METHOD
+                if scored_only
+                else "Enterprise = weighted-floor roll-up across the tiers in use."
+            )
         ],
     )
+    unscored_line = _unscored_line(enterprise_rows) if scored_only else None
+    if unscored_line:
+        safe_text_row(cover, [unscored_line])
     cover["A1"].font = Font(bold=True, size=14)
 
     # #646: the "AI source" sheet, last, as every deliverable carries it -- and
@@ -477,12 +487,14 @@ def _function_summary(rows: Sequence[Any]) -> list[dict[str, Any]]:
                 "target": max(g["targets"]) if g["targets"] else None,
                 # #765: "Target" and "gaps" above are of TARGETED rows only.
                 "untargeted": _untargeted(g["rows"]),
+                # #1031: rows whose target was not measured, apart.
+                "unmeasured": _unmeasured(g["rows"]),
             }
         )
     return out
 
 
-def _overview_sentences(rows: Sequence[Any]) -> list[str]:
+def _overview_sentences(rows: Sequence[Any], *, scored_only: bool = False) -> list[str]:
     total = len(rows)
     overall = _overall_level(rows)
     gaps = sum(1 for r in rows if r.gap)
@@ -497,10 +509,15 @@ def _overview_sentences(rows: Sequence[Any]) -> list[str]:
         else "subcategories fall short of their target maturity"
     )
     untargeted = _untargeted(rows)
-    if total and untargeted == total:
+    unmeasured = _unmeasured(rows)
+    shortfall: str | None
+    if total and untargeted + unmeasured == total:
         # #765 item 2: with no target anywhere, "0 subcategories fall short ...
-        # 0 Priority 1" counts shortfalls nothing was measured for.
-        shortfall = f"No gaps or priorities are assessed: {_subcats(untargeted)}."
+        # 0 Priority 1" counts shortfalls nothing was measured for. #1031: the
+        # unmeasured count line below says the rest.
+        shortfall = (
+            f"No gaps or priorities are assessed: {_subcats(untargeted)}." if untargeted else None
+        )
     else:
         shortfall = (
             f"{gaps} {short} — "
@@ -510,27 +527,77 @@ def _overview_sentences(rows: Sequence[Any]) -> list[str]:
             # of anything, they were never measured against a target.
             + (f" {_subcats(untargeted)}." if untargeted else "")
         )
-    lines = [
+    lines: list[str | None] = [
         f"This assessment covers {total} in-scope NIST CSF 2.0 "
         f"{'subcategory' if total == 1 else 'subcategories'}. "
-        f"Enterprise maturity, rolled up across the impact tiers in use, "
+        f"Enterprise maturity, rolled up across the "
+        f"{'scored impact tiers in use' if scored_only else 'impact tiers in use'}, "
         f"averages Level {overall} of 5.",
         shortfall,
+        _unmeasured_line(unmeasured) if unmeasured else None,
     ]
+    # #1031: where the roll-up is shown, how many tier rows it left out.
+    unscored = _unscored_line(rows) if scored_only else None
+    if unscored:
+        lines.insert(1, unscored)
+    out = [line for line in lines if line]
     if len(fns) >= 2:
         strongest = max(fns, key=lambda f: f["avg"])
         weakest = min(fns, key=lambda f: f["avg"])
         if strongest["code"] != weakest["code"]:
-            lines.append(
+            out.append(
                 f"The strongest function is {strongest['name']} "
                 f"(avg Level {strongest['avg']}); the area needing the most "
                 f"attention is {weakest['name']} (avg Level {weakest['avg']})."
             )
-    return lines
+    return out
 
 
 def _gaps(n: int) -> str:
     return "gap" if n == 1 else "gaps"
+
+
+# #1031, copy approved verbatim (#736 6116519635, as proposed in 6116347717).
+#: A tier cell for an in-scope tier nobody scored, left out of the roll-up.
+NOT_SCORED = "Not scored"
+#: The method line under the scored-tiers rule.
+SCORED_METHOD = (
+    "Enterprise = weighted-floor roll-up across the in-scope tiers that have been "
+    'scored. A tier with no score recorded is left out and marked "Not scored".'
+)
+#: An Action Plan row whose code is not (or no longer) a gap (#1031).
+KEPT_FOR_THE_RECORD = "No longer a gap: kept for the record"
+#: Target and Gap cells when a subcategory's only targets sit on unscored
+#: tiers (#736 6127667643). "No target" stays for a row with none at all.
+NOT_MEASURED = "Not measured"
+
+
+def _target_cell(r: Any, missing: str) -> str:
+    if getattr(r, "target_not_measured", False):
+        return NOT_MEASURED
+    return f"L{r.target_level}" if r.target_level else missing
+
+
+def _unscored_count(rows: Sequence[Any]) -> int:
+    return sum(len(getattr(r, "unscored_tiers", ()) or ()) for r in rows)
+
+
+def _unscored_line(rows: Sequence[Any]) -> str | None:
+    """The count line, or None when no tier row was left out."""
+    n = _unscored_count(rows)
+    if n == 0:
+        return None
+    if n == 1:
+        return "1 in-scope tier row was not scored and is not part of the Enterprise level."
+    return f"{n} in-scope tier rows were not scored and are not part of the Enterprise level."
+
+
+def _tier_cell(r: Any, tier: str, missing: str) -> Any:
+    """A tier's level cell: "Not scored" for an in-scope tier left out of the
+    roll-up (#1031), else its level, else `missing` (not in use)."""
+    if tier in (getattr(r, "unscored_tiers", ()) or ()):
+        return NOT_SCORED
+    return r.tier_levels.get(tier, missing)
 
 
 # #762: the third state. `routes/csf.py::_enterprise_subcategories` sets
@@ -546,11 +613,36 @@ NO_TARGET = "No target"
 
 
 def _untargeted(rows: Sequence[Any]) -> int:
-    return sum(1 for r in rows if r.target_level is None)
+    """Rows with no target set. #1031 (#736 6128447366): a row whose only
+    targets sit on unscored tiers HAS a target, which was not measured, so it
+    is counted by `_unmeasured` instead. Under the every-tier rule nothing is
+    unmeasured, so frozen assessments keep the old counts and copy."""
+    return sum(
+        1 for r in rows if r.target_level is None and not getattr(r, "target_not_measured", False)
+    )
+
+
+def _unmeasured(rows: Sequence[Any]) -> int:
+    return sum(1 for r in rows if getattr(r, "target_not_measured", False))
+
+
+def _unmeasured_line(n: int) -> str:
+    """The count line, approved verbatim (#736 6128447366)."""
+    if n == 1:
+        return (
+            "1 in-scope subcategory has a target only on tiers that were not scored, "
+            "so it was not measured."
+        )
+    return (
+        f"{n} in-scope subcategories have a target only on tiers that were not scored, "
+        "so it was not measured."
+    )
 
 
 def _gap_cell(r: Any) -> str:
     """A row's Gap cell: "Yes", "" (meets its target) or "No target"."""
+    if getattr(r, "target_not_measured", False):
+        return NOT_MEASURED
     if r.target_level is None:
         return NO_TARGET
     return "Yes" if r.gap else ""
@@ -559,8 +651,10 @@ def _gap_cell(r: Any) -> str:
 def _scorecard_target(f: Mapping[str, Any]) -> str:
     """A function's scorecard Target cell (#765): "No target" when none of its
     rows has one, as `_gap_cell` says of a row."""
-    if f["untargeted"] == f["count"]:
-        return NO_TARGET
+    if f["untargeted"] + f.get("unmeasured", 0) == f["count"]:
+        # #1031: no measured target at all; "Not measured" when any row has a
+        # target that was not measured, else "No target".
+        return NOT_MEASURED if f.get("unmeasured", 0) else NO_TARGET
     return f"L{f['target']}"
 
 
@@ -568,10 +662,16 @@ def _scorecard_gaps(f: Mapping[str, Any]) -> str:
     """A function's scorecard Gaps cell (#765): the count of its TARGETED rows'
     gaps, with its untargeted rows beside it, or "—" when it has no target at
     all. A bare "0" over untargeted rows read as the function meeting it."""
-    if f["untargeted"] == f["count"]:
+    unmeasured = f.get("unmeasured", 0)
+    if f["untargeted"] + unmeasured == f["count"]:
         return "—"
-    if f["untargeted"]:
-        return f"{f['gaps']} ({f['untargeted']} no target)"
+    # #1031: the unmeasured rows apart from the untargeted ones.
+    beside = [
+        *([f"{f['untargeted']} no target"] if f["untargeted"] else []),
+        *([f"{unmeasured} not measured"] if unmeasured else []),
+    ]
+    if beside:
+        return f"{f['gaps']} ({', '.join(beside)})"
     return str(f["gaps"])
 
 
@@ -584,15 +684,30 @@ def _no_gaps_sentence(rows: Sequence[Any]) -> str:
     every in-scope row has a target; otherwise "no gaps" is said of the rows
     that have one, and the rest are named as not assessed."""
     untargeted = _untargeted(rows)
-    if untargeted == 0:
+    unmeasured = _unmeasured(rows)
+    # #1031: "every ... meets its target" only when BOTH counts are 0.
+    if untargeted == 0 and unmeasured == 0:
         return "No gaps — every in-scope subcategory meets its target."
-    targeted = len(rows) - untargeted
-    if targeted == 0:
+    tail = f" {_unmeasured_line(unmeasured)}" if unmeasured else ""
+    targeted = len(rows) - untargeted - unmeasured
+    if targeted == 0 and untargeted and not unmeasured:
         return "No in-scope subcategory has a target set, so none is assessed for gaps."
+    if targeted == 0 and not untargeted:
+        return _unmeasured_line(unmeasured)
+    if targeted == 0:
+        return (
+            f"{_subcats(untargeted)}, so {'it is' if untargeted == 1 else 'they are'} "
+            f"not assessed for gaps.{tail}"
+        )
+    if not untargeted:
+        return (
+            f"No gaps among the {targeted} subcategor{'y' if targeted == 1 else 'ies'} with a "
+            f"target.{tail}"
+        )
     return (
         f"No gaps among the {targeted} subcategor{'y' if targeted == 1 else 'ies'} with a "
         f"target. {_subcats(untargeted)}, so {'it is' if untargeted == 1 else 'they are'} "
-        "not assessed for gaps."
+        f"not assessed for gaps.{tail}"
     )
 
 
@@ -603,15 +718,23 @@ def _function_detail(frows: Sequence[Any]) -> str:
     avg = round(sum(r.enterprise_level for r in frows) / n)
     fgaps = sum(1 for r in frows if r.gap)
     what = "subcategory" if n == 1 else "subcategories"
-    # #765: the gap count is of the function's TARGETED rows only.
+    # #765: the gap count is of the function's TARGETED rows only. #1031
+    # review F1: a row whose target was not measured is not "with a target"
+    # either; it is stated apart (only the scored-tiers rule sets it, so a
+    # frozen assessment reads as before).
     untargeted = _untargeted(frows)
-    if untargeted == n:
+    unmeasured = _unmeasured(frows)
+    measured = n - untargeted - unmeasured
+    beside = [
+        *([f"{untargeted} with no target set"] if untargeted else []),
+        *([f"{unmeasured} not measured"] if unmeasured else []),
+    ]
+    if measured == 0 and not unmeasured:
         gaps = "no target set, so not assessed for gaps"
-    elif untargeted:
-        gaps = (
-            f"{fgaps} {_gaps(fgaps)} among the {n - untargeted} with a target · "
-            f"{untargeted} with no target set"
-        )
+    elif measured == 0:
+        gaps = f"{' · '.join(beside)}, so not assessed for gaps"
+    elif beside:
+        gaps = f"{fgaps} {_gaps(fgaps)} among the {measured} with a target · " + " · ".join(beside)
     else:
         gaps = f"{fgaps} {_gaps(fgaps)}"
     return f"{n} {what} · average Level {avg} · {gaps}."
@@ -628,6 +751,10 @@ def _next_steps(rows: Sequence[Any]) -> list[str]:
             f"{_subcats(untargeted)}; this plan does not cover "
             f"{'it' if untargeted == 1 else 'them'}."
         )
+    # #1031: a row whose target was not measured is not covered either.
+    unmeasured = _unmeasured(rows)
+    if unmeasured:
+        steps.append(_unmeasured_line(unmeasured))
     # Each sentence agrees in number with its count (#682): "the 1 Priority 1
     # gap(s) first — these are ... weaknesses" read one gap as several.
     if pc["P1"]:
@@ -695,11 +822,14 @@ def _untargeted_tail(rows: Sequence[Any]) -> str:
     target, with its leading space, or "". One place, so the executive list and
     the full Playbook's roadmap (review of #764, F3) say it the same way."""
     untargeted = _untargeted(rows)
+    unmeasured = _unmeasured(rows)
+    # #1031: the unmeasured rows are not in the gap list either.
+    tail = f" {_unmeasured_line(unmeasured)}" if unmeasured else ""
     if not untargeted:
-        return ""
+        return tail
     return (
         f" {_subcats(untargeted)} and {'is' if untargeted == 1 else 'are'} not "
-        "assessed for gaps."
+        f"assessed for gaps.{tail}"
     )
 
 
@@ -940,6 +1070,7 @@ def render_exec_pdf(
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
     retired_note: str | None = None,
     no_notes_note: str | None = None,
+    scored_only: bool = False,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -966,7 +1097,7 @@ def render_exec_pdf(
     story.append(PageBreak())
 
     story.append(Paragraph("Executive summary", styles["h2"]))
-    for line in _overview_sentences(enterprise_rows):
+    for line in _overview_sentences(enterprise_rows, scored_only=scored_only):
         story.append(Paragraph(line, styles["body"]))
     _scorecard(story, styles, enterprise_rows)
     story.append(Paragraph("Top priority gaps", styles["h2"]))
@@ -987,6 +1118,7 @@ def render_full_pdf(
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
     retired_note: str | None = None,
     no_notes_note: str | None = None,
+    scored_only: bool = False,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -1029,7 +1161,7 @@ def render_full_pdf(
     story.append(PageBreak())
 
     story.append(Paragraph("1. Executive summary", styles["h2"]))
-    for line in _overview_sentences(enterprise_rows):
+    for line in _overview_sentences(enterprise_rows, scored_only=scored_only):
         story.append(Paragraph(line, styles["body"]))
 
     story.append(Paragraph("2. Methodology", styles["h2"]))
@@ -1062,7 +1194,7 @@ def render_full_pdf(
                 r.subcategory_code,
                 Paragraph(escape(r.name), styles["cell"]),
                 f"L{r.enterprise_level}",
-                f"L{r.target_level}" if r.target_level else "—",
+                _target_cell(r, "—"),
                 _gap_cell(r),
                 r.priority or "",
             ]
@@ -1093,9 +1225,9 @@ def render_full_pdf(
         [
             r.subcategory_code,
             FUNCTION_NAMES.get(_fn_code(r.function), _fn_code(r.function)),
-            r.tier_levels.get("high", "—"),
-            r.tier_levels.get("moderate", "—"),
-            r.tier_levels.get("low", "—"),
+            _tier_cell(r, "high", "—"),
+            _tier_cell(r, "moderate", "—"),
+            _tier_cell(r, "low", "—"),
             f"L{r.enterprise_level}",
             f"#{r.rollup_rule}",
             _gap_cell(r),
@@ -1214,6 +1346,7 @@ def render_exec_docx(
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
     retired_note: str | None = None,
     no_notes_note: str | None = None,
+    scored_only: bool = False,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -1235,7 +1368,7 @@ def render_exec_docx(
     )
 
     add_heading(doc, "Executive summary")
-    add_paragraphs(doc, _overview_sentences(enterprise_rows))
+    add_paragraphs(doc, _overview_sentences(enterprise_rows, scored_only=scored_only))
     _docx_scorecard(doc, enterprise_rows)
 
     add_heading(doc, "Top priority gaps")
@@ -1273,6 +1406,7 @@ def render_full_docx(
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE,
     retired_note: str | None = None,
     no_notes_note: str | None = None,
+    scored_only: bool = False,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -1302,7 +1436,7 @@ def render_full_docx(
     add_page_break(doc)
 
     add_heading(doc, "1. Executive summary")
-    add_paragraphs(doc, _overview_sentences(enterprise_rows))
+    add_paragraphs(doc, _overview_sentences(enterprise_rows, scored_only=scored_only))
 
     add_heading(doc, "2. Methodology")
     add_paragraphs(doc, _methodology(enterprise_rows))
@@ -1331,7 +1465,7 @@ def render_full_docx(
                     r.subcategory_code,
                     r.name,
                     f"L{r.enterprise_level}",
-                    f"L{r.target_level}" if r.target_level else "—",
+                    _target_cell(r, "—"),
                     _gap_cell(r),
                     r.priority or "",
                 ]
@@ -1375,9 +1509,9 @@ def render_full_docx(
             [
                 r.subcategory_code,
                 FUNCTION_NAMES.get(_fn_code(r.function), _fn_code(r.function)),
-                r.tier_levels.get("high", "—"),
-                r.tier_levels.get("moderate", "—"),
-                r.tier_levels.get("low", "—"),
+                _tier_cell(r, "high", "—"),
+                _tier_cell(r, "moderate", "—"),
+                _tier_cell(r, "low", "—"),
                 f"L{r.enterprise_level}",
                 f"#{r.rollup_rule}",
                 _gap_cell(r),

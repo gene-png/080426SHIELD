@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session, undefer_group
 from app.ai.catalog_fields import register_catalog_field, register_catalog_keys
 from app.ai.engine import get_job, run_job
 from app.ai.failures import ai_call_boundary
+from app.ai.isolation import RedactionRefused, redaction_scope
 from app.ai.llm import LLMClient
 from app.attack.catalog import technique_by_id
 from app.attack.catalog_version import catalog_mismatch_message, require_current_catalog
@@ -1973,6 +1974,12 @@ def _risk_batch_inputs(
     }
 
 
+# #552: the whole fan-out is ONE run for the redaction gate's places. Risk is
+# not a Run-AI, so its calls carry no run id; without this each batch would be
+# a one-call run, and five concurrent batches would take five of the platform's
+# places and refuse each other. A fresh scope per call (`contextmanager` objects
+# re-enter as decorators), released when the function returns or raises.
+@redaction_scope()
 def _run_risk_synthesize_batched(
     db: Session,
     llm: LLMClient,
@@ -2092,6 +2099,17 @@ def _run_risk_synthesize_batched(
         for fut in as_completed(futures):
             try:
                 data = fut.result()
+            except RedactionRefused:
+                # #552, ruling (a) on #736: the redaction gate refused this
+                # generate, and that is the WHOLE generate's refusal: counted as
+                # a failed batch, the batches that got through would become a
+                # register. Queued batches are cancelled; leaving the `with`
+                # waits for those in flight, inside the scope (see the
+                # decorator), so none redacts after the place is given back.
+                # Nothing is written: `generate` raises before its insert.
+                pool.shutdown(wait=False, cancel_futures=True)
+                _log.error("risk_synthesize_refused_by_redaction", client_id=str(client_id))
+                raise
             except Exception as exc:  # noqa: BLE001 - counted, not swallowed
                 failed += 1
                 first_error = first_error or exc

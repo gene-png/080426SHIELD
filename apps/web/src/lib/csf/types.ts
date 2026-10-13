@@ -241,6 +241,16 @@ export interface EnterpriseSubcategory {
    * `=== true`: a response without it says nothing.
    */
   no_notes?: boolean;
+  /**
+   * #1031: in-scope tiers nobody scored, left out of the roll-up; each reads
+   * "Not scored" and is never dropped. Optional so an older API parses.
+   */
+  unscored_tiers?: string[];
+  /**
+   * #1031: the only targets sit on unscored tiers, so none was measured;
+   * Target and Gap read "Not measured". Optional so an older API parses.
+   */
+  target_not_measured?: boolean;
 }
 
 export interface EnterpriseProfile {
@@ -366,6 +376,16 @@ export interface CsfGapAction {
   poam_ref: string | null;
   /** priority_override where set, else default_priority. */
   effective_priority: string | null;
+  /**
+   * #1031: the code is not (or no longer) a gap; the entry is kept for the
+   * record. Optional so an older API parses.
+   */
+  no_longer_gap?: boolean;
+  /**
+   * #1077 review, F1: the code's only targets sit on unscored tiers; the
+   * target reads "Not measured". Optional so an older API parses.
+   */
+  target_not_measured?: boolean;
 }
 
 export interface CsfGapActions {
