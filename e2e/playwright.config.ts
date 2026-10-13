@@ -25,7 +25,10 @@ export default defineConfig({
   workers: 1,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  reporter: [["list"]],
+  // On CI, the github reporter also writes each failure as a check-run
+  // annotation (file, line, error), which the API returns, so a failing spec
+  // can be named without the job log. GitHub Actions sets CI=true.
+  reporter: process.env.CI ? [["list"], ["github"]] : [["list"]],
   use: {
     baseURL: resolveBaseUrl(),
     trace: "on-first-retry",
