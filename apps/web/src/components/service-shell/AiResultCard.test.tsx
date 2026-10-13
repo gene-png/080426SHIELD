@@ -8,21 +8,30 @@ import type * as React from "react";
 
 import { AiResultCard } from "./AiResultCard";
 
+// Figures are required (round 6 review, F1): every card shows its counts, and
+// all zeros is a valid run. Tests about something else pass these.
+const ZERO = { asked: 0, applied: 0, notApplied: 0, unscored: 0 };
+const ZERO_TEXT = "Asked0Applied0Not applied0Unscored0";
+
 describe("AiResultCard (for #1087)", () => {
   it("leads with the outcome: the card's text starts with it", () => {
     render(
-      <AiResultCard tone="warning" outcome="40 of 45 rows scored">
+      <AiResultCard
+        tone="warning"
+        outcome="40 of 45 rows scored"
+        figures={ZERO}
+      >
         <p>DETAIL</p>
       </AiResultCard>,
     );
     const card = screen.getByTestId("ai-result-card");
     expect(card.textContent?.startsWith("40 of 45 rows scored")).toBe(true);
-    expect(card.textContent).toBe("40 of 45 rows scoredDETAIL");
+    expect(card.textContent).toBe(`40 of 45 rows scored${ZERO_TEXT}DETAIL`);
   });
 
   it("puts the outcome before the detail in the document", () => {
     render(
-      <AiResultCard tone="success" outcome="OUTCOME">
+      <AiResultCard tone="success" outcome="OUTCOME" figures={ZERO}>
         <p>DETAIL</p>
       </AiResultCard>,
     );
@@ -41,9 +50,9 @@ describe("AiResultCard (for #1087)", () => {
   ] as const)(
     "tone %s is colour only (%s), with no words of its own",
     (tone, own, others) => {
-      render(<AiResultCard tone={tone} outcome="X" />);
+      render(<AiResultCard tone={tone} outcome="X" figures={ZERO} />);
       const card = screen.getByTestId("ai-result-card");
-      expect(card.textContent).toBe("X");
+      expect(card.textContent).toBe(`X${ZERO_TEXT}`);
       expect(card.className).toContain(`bg-${own}-bg`);
       for (const other of others) expect(card.className).not.toContain(other);
     },
@@ -51,7 +60,7 @@ describe("AiResultCard (for #1087)", () => {
 
   it.each(["", "   "])("refuses a blank outcome %j", (outcome) => {
     expect(() =>
-      render(<AiResultCard tone="success" outcome={outcome} />),
+      render(<AiResultCard tone="success" outcome={outcome} figures={ZERO} />),
     ).toThrow(/blank outcome/);
   });
 });
@@ -115,20 +124,31 @@ describe("AiResultCard figures and next step (rule 8, for #1087)", () => {
       <AiResultCard
         tone="success"
         outcome="X"
-        figures={{ asked: 6, applied: 3, notApplied: 2, unscored: 1 }}
+        figures={{
+          asked: 6,
+          applied: 3,
+          notApplied: 2,
+          notAppliedReasons: [{ reason: "R", count: 2 }],
+          unscored: 1,
+        }}
       />,
     );
     const valueOf = (label: string) =>
       screen.getByText(label).nextElementSibling?.textContent;
     expect(valueOf(ASKED)).toBe("6");
     expect(valueOf(APPLIED)).toBe("3");
-    expect(valueOf(NOT_APPLIED)).toBe("2");
+    expect(valueOf(NOT_APPLIED)).toBe("2R 2");
     expect(valueOf(UNSCORED)).toBe("1");
   });
 
-  it("renders no figures block and no next step when given neither", () => {
-    render(<AiResultCard tone="success" outcome="X" />);
-    expect(screen.getByTestId("ai-result-card").textContent).toBe("X");
+  // Was "renders no figures block and no next step when given neither": F1
+  // makes figures required, so only the next-step half still holds.
+  it("renders no next step when given none", () => {
+    render(<AiResultCard tone="success" outcome="X" figures={ZERO} />);
+    expect(screen.getByTestId("ai-result-card").textContent).toBe(
+      `X${ZERO_TEXT}`,
+    );
+    expect(screen.queryByTestId("ai-result-next")).toBeNull();
   });
 
   it("refuses not-applied reasons that do not add up", () => {
@@ -190,7 +210,9 @@ describe("AiResultCard figures and next step (rule 8, for #1087)", () => {
 describe("AiResultCard refuses what it cannot render honestly (for #1087)", () => {
   it("refuses an unknown tone rather than a class ending in undefined", () => {
     expect(() =>
-      render(<AiResultCard tone={"pending" as never} outcome="X" />),
+      render(
+        <AiResultCard tone={"pending" as never} outcome="X" figures={ZERO} />,
+      ),
     ).toThrow(/unknown tone "pending"/);
   });
 
@@ -218,6 +240,7 @@ describe("AiResultCard refuses what it cannot render honestly (for #1087)", () =
           <AiResultCard
             tone="success"
             outcome="X"
+            figures={ZERO}
             nextStep={content as never}
           />,
         ),
@@ -258,7 +281,14 @@ const REAL_CONTENT: [string, React.ReactNode][] = [
 describe("AiResultCard next step looks inside fragments (for #1087)", () => {
   it.each(EMPTY_FRAGMENTS)("refuses next step %s", (_name, nextStep) => {
     expect(() =>
-      render(<AiResultCard tone="success" outcome="X" nextStep={nextStep} />),
+      render(
+        <AiResultCard
+          tone="success"
+          outcome="X"
+          figures={ZERO}
+          nextStep={nextStep}
+        />,
+      ),
     ).toThrow(/empty next-step content/);
   });
 
@@ -267,6 +297,7 @@ describe("AiResultCard next step looks inside fragments (for #1087)", () => {
       <AiResultCard
         tone="success"
         outcome="X"
+        figures={ZERO}
         nextStep={
           <>
             <>{null}</>
@@ -281,10 +312,30 @@ describe("AiResultCard next step looks inside fragments (for #1087)", () => {
   });
 });
 
+const R2 = [{ reason: "R", count: 2 }];
+
 describe("AiResultCard figures partition what was asked (ruling, for #1087)", () => {
   it.each([
-    [{ asked: 7, applied: 3, notApplied: 2, unscored: 1 }, "6"],
-    [{ asked: 5, applied: 3, notApplied: 2, unscored: 1 }, "6"],
+    [
+      {
+        asked: 7,
+        applied: 3,
+        notApplied: 2,
+        notAppliedReasons: R2,
+        unscored: 1,
+      },
+      "6",
+    ],
+    [
+      {
+        asked: 5,
+        applied: 3,
+        notApplied: 2,
+        notAppliedReasons: R2,
+        unscored: 1,
+      },
+      "6",
+    ],
   ])("refuses %j: the parts add up to %s", (figures, parts) => {
     expect(() =>
       render(<AiResultCard tone="warning" outcome="X" figures={figures} />),
@@ -309,7 +360,14 @@ describe("AiResultCard figures partition what was asked (ruling, for #1087)", ()
 
 describe("AiResultCard next step looks inside Fragments only (for #1087)", () => {
   it.each(REAL_CONTENT)("accepts next step %s", (_name, nextStep) => {
-    render(<AiResultCard tone="success" outcome="X" nextStep={nextStep} />);
+    render(
+      <AiResultCard
+        tone="success"
+        outcome="X"
+        figures={ZERO}
+        nextStep={nextStep}
+      />,
+    );
     expect(screen.getByTestId("ai-result-next")).toBeInTheDocument();
   });
 });
@@ -319,8 +377,84 @@ describe("AiResultCard's outcome on a missing value (for #1087)", () => {
     "refuses outcome %s by name, not with a TypeError",
     (outcome) => {
       expect(() =>
-        render(<AiResultCard tone="success" outcome={outcome as never} />),
+        render(
+          <AiResultCard
+            tone="success"
+            outcome={outcome as never}
+            figures={ZERO}
+          />,
+        ),
       ).toThrow(/a blank outcome/);
     },
   );
+});
+
+// Round 6 review, F1: a card with no counts, or a "Not applied" figure with no
+// reasons, reads as a full account while giving none (rule 7: exclusions sit
+// beside the figure and account for all of it).
+describe("AiResultCard requires its figures and their reasons (F1, for #1087)", () => {
+  it("refuses a card with no figures", () => {
+    expect(() =>
+      // @ts-expect-error -- figures is required; this pins the type as well.
+      render(<AiResultCard tone="success" outcome="X" />),
+    ).toThrow(/AiResultCard: no figures/);
+  });
+
+  it("refuses a Not applied count above zero with no reasons", () => {
+    expect(() =>
+      render(
+        <AiResultCard
+          tone="warning"
+          outcome="X"
+          figures={{ asked: 45, applied: 18, notApplied: 27, unscored: 0 }}
+        />,
+      ),
+    ).toThrow(/"Not applied" is 27 but no reasons were given/);
+  });
+
+  it("refuses an empty reasons list under a Not applied count above zero", () => {
+    expect(() =>
+      render(
+        <AiResultCard
+          tone="warning"
+          outcome="X"
+          figures={{ ...FIGURES, notAppliedReasons: [] }}
+        />,
+      ),
+    ).toThrow(/add up to 0, not 27/);
+  });
+
+  it("accepts no reasons when Not applied is zero", () => {
+    render(
+      <AiResultCard
+        tone="success"
+        outcome="X"
+        figures={{ asked: 3, applied: 3, notApplied: 0, unscored: 0 }}
+      />,
+    );
+    expect(screen.getByText(NOT_APPLIED).nextElementSibling?.textContent).toBe(
+      "0",
+    );
+  });
+
+  it.each([
+    ["the same reason twice", "R-NO-NOTES", "R-NO-NOTES"],
+    ["reasons equal once trimmed", "R-NO-NOTES", " R-NO-NOTES "],
+  ])("refuses %s", (_name, first, second) => {
+    expect(() =>
+      render(
+        <AiResultCard
+          tone="warning"
+          outcome="X"
+          figures={{
+            ...FIGURES,
+            notAppliedReasons: [
+              { reason: first, count: 25 },
+              { reason: second, count: 2 },
+            ],
+          }}
+        />,
+      ),
+    ).toThrow(/duplicate reason "R-NO-NOTES" under "Not applied"/);
+  });
 });

@@ -283,3 +283,14 @@ describe("SectionHeader release date on a missing value (for #1087)", () => {
     },
   );
 });
+
+describe("SectionHeader refuses duplicate bullets (round 6 review, for #1087)", () => {
+  it.each([
+    ["the same bullet twice", ["DO-ONE", "DO-ONE"]],
+    ["bullets equal once trimmed", ["DO-ONE", " DO-ONE "]],
+  ])("refuses %s", (_name, canDo) => {
+    expect(() => renderHeader("internal", canDo)).toThrow(
+      /duplicate bullet "DO-ONE"/,
+    );
+  });
+});

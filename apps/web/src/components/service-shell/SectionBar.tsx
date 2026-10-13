@@ -14,6 +14,14 @@ import type { JSX } from "react";
  * sections" (both rulings, #736 issuecomment-6116092992). The URLs are NOT
  * decided here: the caller supplies `hrefFor`, so the route shape is chosen by
  * the page that mounts this (the Tech Debt pilot), not by the shared piece.
+ *
+ * ADMIN-ONLY: mount this on Kentro admin service pages only, never on a page a
+ * client can reach. It takes no viewer input and always shows the KENTRO ADMIN
+ * ONLY Recommendations link, because the plan places it in "SHIELD admin UI:
+ * page plan" ("written from an inventory of every admin workspace"), and the
+ * client side gets released dashboards instead (its "Client dashboards
+ * (released results)" section, #736 issuecomment-6116093149). A client mount
+ * needs a viewer input first.
  */
 export const SECTIONS = [
   { key: "overview", label: "Overview", adminOnly: false },

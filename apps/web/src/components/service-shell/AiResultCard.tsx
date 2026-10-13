@@ -1,4 +1,4 @@
-import { hasContent, requireText } from "./guards";
+import { hasContent, requireDistinct, requireText } from "./guards";
 
 import type { JSX, ReactNode } from "react";
 
@@ -21,11 +21,13 @@ import type { JSX, ReactNode } from "react";
  * owns that truth. Tone sets colour only. A tone for "status unknown" would be
  * new design; it is proposed, not built.
  *
- * Refused, loudly. CALLER bugs: an unknown tone; a blank outcome; empty
- * next-step content (`hasContent`, which looks inside fragments but cannot
+ * Refused, loudly. CALLER bugs: an unknown tone; a blank outcome; no figures
+ * (every card shows its counts; all zeros is a valid run); empty next-step
+ * content (`hasContent`, which looks inside fragments but cannot
  * see a child component that renders null). DATA-driven, from the run's accounting, which a mounting
  * page must expect until apps/web has an error boundary: a count that is not
- * a whole number from zero, a blank reason, not-applied reasons that do
+ * a whole number from zero, a blank reason, two reasons equal once trimmed,
+ * a Not applied count above zero with no reasons, not-applied reasons that do
  * not add up to the not-applied count (rule 7: exclusions sit beside the
  * figure, so they must account for all of it), and Applied + Not applied +
  * Unscored that do not equal Asked (they partition it, by ruling). The four
@@ -39,7 +41,10 @@ export type AiResultFigures = {
   asked: number;
   applied: number;
   notApplied: number;
-  /** Why rows were not applied. When given, must sum to `notApplied`. */
+  /**
+   * Why rows were not applied, summing to `notApplied`. Required whenever
+   * `notApplied` is above zero; may be left out only when it is zero.
+   */
   notAppliedReasons?: readonly { reason: string; count: number }[];
   unscored: number;
 };
@@ -73,9 +78,20 @@ function checkFigures(figures: AiResultFigures): void {
   checkCount(NOT_APPLIED, figures.notApplied);
   checkCount("Unscored", figures.unscored);
   const reasons = figures.notAppliedReasons;
+  if (!reasons && figures.notApplied > 0) {
+    throw new Error(
+      `AiResultCard: "${NOT_APPLIED}" is ${figures.notApplied} but no reasons were given; the reasons must account for all of it.`,
+    );
+  }
   if (reasons) {
     reasons.forEach((r) =>
       requireText("AiResultCard", `reason under "${NOT_APPLIED}"`, r.reason),
+    );
+    requireDistinct(
+      "AiResultCard",
+      "reason",
+      reasons.map((r) => r.reason),
+      ` under "${NOT_APPLIED}"`,
     );
     if (!reasons.every((r) => isCount(r.count))) {
       throw new Error(
@@ -109,7 +125,7 @@ export function AiResultCard({
   /** One sentence, the card's first text. */
   outcome: string;
   tone: AiResultTone;
-  figures?: AiResultFigures;
+  figures: AiResultFigures;
   /** Shown under "What to do next". */
   nextStep?: ReactNode;
   children?: ReactNode;
@@ -119,7 +135,12 @@ export function AiResultCard({
   }
   // The card leads with the outcome; type-first, so null gets this refusal.
   requireText("AiResultCard", "outcome", outcome);
-  if (figures) checkFigures(figures);
+  // Type-first, like the outcome: the type requires figures, but a page
+  // spreading an API object could still pass undefined.
+  if (typeof figures !== "object" || figures === null) {
+    throw new Error("AiResultCard: no figures; every card shows its counts.");
+  }
+  checkFigures(figures);
   if (nextStep !== undefined && !hasContent(nextStep)) {
     throw new Error("AiResultCard: empty next-step content.");
   }
@@ -131,33 +152,30 @@ export function AiResultCard({
       }
     >
       <p className="text-base font-semibold">{outcome}</p>
-      {figures ? (
-        <dl
-          data-testid="ai-result-figures"
-          className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm text-ink-primary"
-        >
-          <dt className="font-semibold">Asked</dt>
-          <dd>{figures.asked}</dd>
-          <dt className="font-semibold">Applied</dt>
-          <dd>{figures.applied}</dd>
-          <dt className="font-semibold">Not applied</dt>
-          <dd>
-            {figures.notApplied}
-            {figures.notAppliedReasons &&
-            figures.notAppliedReasons.length > 0 ? (
-              <ul className="list-disc pl-5">
-                {figures.notAppliedReasons.map((r) => (
-                  <li key={r.reason}>
-                    {r.reason} {r.count}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </dd>
-          <dt className="font-semibold">Unscored</dt>
-          <dd>{figures.unscored}</dd>
-        </dl>
-      ) : null}
+      <dl
+        data-testid="ai-result-figures"
+        className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm text-ink-primary"
+      >
+        <dt className="font-semibold">Asked</dt>
+        <dd>{figures.asked}</dd>
+        <dt className="font-semibold">Applied</dt>
+        <dd>{figures.applied}</dd>
+        <dt className="font-semibold">Not applied</dt>
+        <dd>
+          {figures.notApplied}
+          {figures.notAppliedReasons && figures.notAppliedReasons.length > 0 ? (
+            <ul className="list-disc pl-5">
+              {figures.notAppliedReasons.map((r) => (
+                <li key={r.reason}>
+                  {r.reason} {r.count}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </dd>
+        <dt className="font-semibold">Unscored</dt>
+        <dd>{figures.unscored}</dd>
+      </dl>
       {children ? (
         <div className="text-sm text-ink-primary">{children}</div>
       ) : null}

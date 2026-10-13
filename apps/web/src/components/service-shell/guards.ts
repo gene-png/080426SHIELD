@@ -22,6 +22,28 @@ export function requireText(where: string, name: string, value: unknown): void {
 }
 
 /**
+ * Refuses two entries equal once trimmed. Lists here render with the entry as
+ * the React key, so a duplicate would collide, and a reader cannot tell two
+ * identical lines apart anyway.
+ */
+export function requireDistinct(
+  where: string,
+  name: string,
+  values: readonly string[],
+  /** Appended after the value, e.g. ` under "Not applied"`. */
+  context = "",
+): void {
+  const seen = new Set<string>();
+  for (const value of values) {
+    const key = value.trim();
+    if (seen.has(key)) {
+      throw new Error(`${where}: a duplicate ${name} "${key}"${context}.`);
+    }
+    seen.add(key);
+  }
+}
+
+/**
  * Whether `node` renders anything a reader would see. `Children.toArray`
  * drops null, undefined and booleans (so `true`, `false` and `[]` come back
  * empty), but does NOT look inside fragments, so this recurses into any

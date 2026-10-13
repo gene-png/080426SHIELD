@@ -1,4 +1,4 @@
-import { requireText } from "./guards";
+import { requireDistinct, requireText } from "./guards";
 import { isAdminOnlySection, type SectionKey } from "./SectionBar";
 
 import type { JSX } from "react";
@@ -18,7 +18,8 @@ import type { JSX } from "react";
  *
  * Refused, loudly. CALLER bugs: an admin-only section (Recommendations)
  * labelled anything but "internal"; a bullet count outside one to three; a
- * blank title, purpose or bullet. DATA-driven, from the API, which a mounting
+ * blank title, purpose or bullet; two bullets equal once trimmed (they are
+ * the list's React keys). DATA-driven, from the API, which a mounting
  * page must expect until apps/web has an error boundary: an unknown
  * visibility, and a released label without a whole version from 1 or without
  * a parseable release instant that names its zone.
@@ -134,6 +135,7 @@ export function SectionHeader({
     );
   }
   canDo.forEach((item) => requireText("SectionHeader", "bullet", item));
+  requireDistinct("SectionHeader", "bullet", canDo);
   return (
     <header className="flex flex-col gap-3 px-6 py-4">
       <div className="flex flex-wrap items-center gap-3">
