@@ -158,6 +158,7 @@ from app.services.revisions import (
     client_facing,
     evidence_links_for,
     is_revision_draft,
+    revision_info,
     start_revision,
 )
 from app.storage import StorageBackend
@@ -213,6 +214,7 @@ def _serialize_assessment(db: Session, a: CsfAssessment) -> CsfAssessmentRespons
         client_profile=_client_profile(db, a.service_id),
         # #646: the ONE derivation every surface calls.
         ai_source=ai_mode_for(db, db.get(Service, a.service_id), a).as_api(),
+        revision=revision_info(db, a, "csf.assessment"),  # #1120: V3, V4, V5
         # #852: answers kept on a code the catalog no longer has (ID.AM-09),
         # from the one derivation the deliverable and the dashboard call too.
         # `answers` above still lists them, as ZT's does; the questionnaire

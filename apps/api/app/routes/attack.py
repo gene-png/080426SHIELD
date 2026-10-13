@@ -173,7 +173,13 @@ from app.schemas.attack import (
 from app.schemas.revisions import RevisionStartRequest
 from app.schemas.tech_debt import DeliverableResponse
 from app.security.rate_limit import enforce_ai_rate_limit
-from app.services.revisions import ChildSpec, KindPlan, evidence_links_for, start_revision
+from app.services.revisions import (
+    ChildSpec,
+    KindPlan,
+    evidence_links_for,
+    revision_info,
+    start_revision,
+)
 from app.storage import StorageBackend
 from app.tech_debt.extract import name_hints_for_tenant
 from app.tech_debt.filename import SERVICE_SLUG_ATTACK, deliverable_filename
@@ -280,6 +286,7 @@ def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentR
         catalog_current=attack_catalog_is_current(a),
         # #646: the ONE derivation every surface calls.
         ai_source=ai_mode_for(db, db.get(Service, a.service_id), a).as_api(),
+        revision=revision_info(db, a, "attack.assessment"),  # #1120: V3, V4, V5
         statuses_computed=statuses_computed(a),
         coverage=_serialize_coverage(a, rows),
         tool_retirement=_tool_retirement_marks(db, a.service_id, rows),

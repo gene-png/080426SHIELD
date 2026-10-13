@@ -105,6 +105,7 @@ from app.services.revisions import (
     client_facing,
     evidence_links_for,
     is_revision_draft,
+    revision_info,
     start_revision,
 )
 from app.storage import StorageBackend
@@ -372,6 +373,7 @@ def _serialize_assessment(db: Session, a: ZtAssessment) -> ZtAssessmentResponse:
         client_target_stage=client_target_stage(db, a.service_id),
         # #646: the ONE derivation every surface calls.
         ai_source=ai_mode_for(db, db.get(Service, a.service_id), a).as_api(),
+        revision=revision_info(db, a, "zt.assessment"),  # #1120: V3, V4, V5
         retired_answers=retired,
         retired_answers_note=retired_sentence(cat_fw, retired),
     )

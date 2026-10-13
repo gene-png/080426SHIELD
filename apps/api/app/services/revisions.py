@@ -37,12 +37,14 @@ from app.ai.runs import refuse_while_running
 from app.audit import audit
 from app.logging import get_logger
 from app.models.attack_assessment import AttackAssessment, AttackAssessmentStatus
+from app.models.audit_entry import AuditEntry
 from app.models.capability import CapabilityList, CapabilityListStatus
 from app.models.csf_assessment import CsfAssessment, CsfAssessmentStatus
 from app.models.evidence_link import EvidenceLink, EvidenceTargetKind
 from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.user import User, UserRole
 from app.models.zt_assessment import ZtAssessment, ZtAssessmentStatus
+from app.schemas.revisions import RevisionInfo
 from app.services.revision_copy import COPY
 
 _log = get_logger(__name__)
@@ -374,11 +376,7 @@ def start_revision(
             "from_version": target.version,
             "to_version": record.version,
             "reason": reason,
-            "from_rules": {
-                k: getattr(target, k)
-                for k in ("parent_rules", "status_rules")
-                if hasattr(target, k)
-            },
+            "from_rules": {k: getattr(target, k) for k in RULE_STAMPS if hasattr(target, k)},
             **(
                 {
                     "from_catalog_version": target.catalog_version,
@@ -416,6 +414,46 @@ def client_facing(db: Session, record: Any, user: User) -> Any:
     if source is None:  # ON DELETE SET NULL makes this unreachable; fail closed
         raise RuntimeError(f"revision {record.id} names a missing source {record.revision_of}")
     return source
+
+
+#: The rule stamps a record carries; 1 = approved under the EARLIER rules.
+RULE_STAMPS = ("parent_rules", "status_rules", "rollup_rules")
+_EARLIER_RULES = 1
+
+
+def revision_info(db: Session, record: Any, audit_prefix: str) -> RevisionInfo | None:
+    """The `revision` field of an assessment response (#1120): NULL unless a
+    revision minted `record`; else what its `revision_started` audit row,
+    written in the same transaction, records. A revision with no such row
+    breaks that invariant, and raises rather than inventing provenance."""
+    if getattr(record, "revision_of", None) is None:
+        return None
+    entry = (
+        db.execute(
+            select(AuditEntry)
+            .where(
+                AuditEntry.action == f"{audit_prefix}.revision_started",
+                AuditEntry.target_id == record.id,
+            )
+            .order_by(AuditEntry.at.desc())
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
+    if entry is None or not entry.details:
+        raise RuntimeError(f"revision {record.id} has no {audit_prefix}.revision_started row")
+    actor = db.get(User, entry.actor_user_id) if entry.actor_user_id else None
+    name = (actor.display_name or actor.email) if actor is not None else "an unknown user"
+    stamps = entry.details.get("from_rules") or {}
+    return RevisionInfo(
+        from_version=entry.details["from_version"],
+        started_by_name=name,
+        started_at=entry.at,
+        reason=entry.details["reason"],
+        rules_changed=any(v == _EARLIER_RULES for v in stamps.values()),
+        retired_codes=list(entry.details.get("retired_codes") or []),
+    )
 
 
 def evidence_links_for(kind: EvidenceTargetKind) -> ChildSpec:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -16,3 +18,21 @@ class RevisionStartRequest(BaseModel):
         if not stripped:
             raise ValueError("reason is required")
         return stripped
+
+
+class RevisionInfo(BaseModel):
+    """#1120: what a revision copied and why, for the V3, V4 and V5 banners.
+    NULL on every record no revision minted."""
+
+    #: The version the revision copied (V5's {v}).
+    from_version: int
+    #: Who started it, and when (V5's {name} and {date}).
+    started_by_name: str
+    started_at: datetime
+    #: V5's {reason}, as typed.
+    reason: str
+    #: True when the source was approved under EARLIER rules (a stamp of 1),
+    #: so some results may differ from what the client has (V3).
+    rules_changed: bool
+    #: ATT&CK codes the current catalog no longer holds, not copied (V4).
+    retired_codes: list[str]
