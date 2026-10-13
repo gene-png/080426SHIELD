@@ -141,12 +141,48 @@ describe("StartRevisionButton (#1120)", () => {
     const still = view.container.querySelector("dialog") as HTMLDialogElement;
     expect(still.open).toBe(true);
     expect(within(still).getByRole("alert")).toHaveTextContent(refusal);
+    // It still names the version it was opened on, as its refusal does.
+    expect(
+      within(still).getByText("Start a revision of version 3?"),
+    ).toBeInTheDocument();
+    expect(within(still).getByText(V2A)).toBeInTheDocument();
     // The trigger is gone, and the dialog can only be closed now.
     expect(
       screen.queryByRole("button", { name: "Start a revision" }),
     ).not.toBeInTheDocument();
     expect(
       within(still).getByRole("button", { name: "Start revision" }),
+    ).toBeDisabled();
+  });
+
+  it("opens clean after a refusal, cancel and reopen", async () => {
+    const refusal =
+      "Version 4 is open as a draft. Approve it, or discard it, before starting another revision.";
+    const { dialog } = openDialog(
+      "approved",
+      vi.fn().mockRejectedValue(new Error(refusal)),
+    );
+    fireEvent.change(
+      within(dialog).getByLabelText("What is this revision for?"),
+      { target: { value: "Again" } },
+    );
+    await act(async () => {
+      fireEvent.click(
+        within(dialog).getByRole("button", { name: "Start revision" }),
+      );
+    });
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(refusal);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(dialog.open).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Start a revision" }));
+    expect(dialog.open).toBe(true);
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      within(dialog).getByLabelText("What is this revision for?"),
+    ).toHaveValue("");
+    expect(
+      within(dialog).getByRole("button", { name: "Start revision" }),
     ).toBeDisabled();
   });
 });

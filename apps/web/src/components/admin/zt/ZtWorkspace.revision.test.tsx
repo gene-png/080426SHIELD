@@ -225,6 +225,33 @@ describe("ZtWorkspace: Start a revision", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("when the re-read after a draft_open refusal fails, says so and keeps v1", async () => {
+    const draftOpen =
+      "Version 2 is open as a draft. Approve it, or discard it, before starting another revision.";
+    vi.mocked(ztClient.startRevision).mockRejectedValue(
+      new ztClient.ZtProxyError(409, {
+        error: { reason: "draft_open", message: draftOpen },
+      }),
+    );
+    vi.mocked(ztClient.fetchLatestAssessment)
+      .mockResolvedValueOnce(V1)
+      .mockRejectedValue(
+        new ztClient.ZtProxyError(503, {
+          error: { message: "The service is unavailable right now." },
+        }),
+      );
+    renderWorkspace();
+
+    await startRevisionThroughTheDialog();
+
+    expect(
+      await screen.findByText("The service is unavailable right now."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Approved v1")).toBeInTheDocument();
+    expect(await dialogAlert()).toHaveTextContent(draftOpen);
+    expect(ztClient.fetchLatestAssessment).toHaveBeenCalledTimes(2);
+  });
+
   it.each(["draft", "submitted"])(
     "offers no revision on a %s record",
     async (status) => {

@@ -44,6 +44,10 @@ export function StartRevisionButton({
   const [busy, setBusy] = React.useState(false);
   const [reason, setReason] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
+  // The version the open dialog is about, fixed when it opens: a refusal can
+  // re-read the record beneath it (a newer draft), and the dialog must keep
+  // naming the version it was opened on.
+  const [openedOn, setOpenedOn] = React.useState(version);
   const reasonId = React.useId();
   const hintId = React.useId();
 
@@ -55,6 +59,14 @@ export function StartRevisionButton({
   if (!revisable && !open) return null;
 
   const trimmed = reason.trim();
+
+  /** Each opening starts clean: no earlier refusal, no earlier reason. */
+  function openDialog(): void {
+    setOpenedOn(version);
+    setError(null);
+    setReason("");
+    setOpen(true);
+  }
 
   async function handleConfirm(): Promise<void> {
     if (!trimmed) return;
@@ -76,7 +88,7 @@ export function StartRevisionButton({
       {revisable ? (
         <button
           type="button"
-          onClick={() => setOpen(true)}
+          onClick={openDialog}
           disabled={disabled}
           className="rounded-md border border-border px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-60"
         >
@@ -88,7 +100,7 @@ export function StartRevisionButton({
         onClose={() => {
           if (!busy) setOpen(false);
         }}
-        title={fill(REVISION_COPY.V2, { v: version })}
+        title={fill(REVISION_COPY.V2, { v: openedOn })}
         size="sm"
         footer={
           <>
@@ -113,7 +125,7 @@ export function StartRevisionButton({
       >
         <div className="flex flex-col gap-3">
           <p className="text-sm text-ink-secondary">
-            {fill(REVISION_COPY.V2a, { v: version, "v+1": version + 1 })}
+            {fill(REVISION_COPY.V2a, { v: openedOn, "v+1": openedOn + 1 })}
           </p>
           <label
             htmlFor={reasonId}

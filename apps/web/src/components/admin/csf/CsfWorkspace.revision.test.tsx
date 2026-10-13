@@ -298,6 +298,33 @@ describe("CsfWorkspace: Start a revision", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("when the re-read after a draft_open refusal fails, says so and keeps v1", async () => {
+    const draftOpen =
+      "Version 2 is open as a draft. Approve it, or discard it, before starting another revision.";
+    vi.mocked(csfClient.startRevision).mockRejectedValue(
+      new csfClient.CsfProxyError(409, {
+        error: { reason: "draft_open", message: draftOpen },
+      }),
+    );
+    vi.mocked(csfClient.fetchLatestAssessment)
+      .mockResolvedValueOnce(V1)
+      .mockRejectedValue(
+        new csfClient.CsfProxyError(503, {
+          error: { message: "The service is unavailable right now." },
+        }),
+      );
+    render(<CsfWorkspace serviceId="svc-1" serviceTitle="Acme" />);
+
+    await startRevisionThroughTheDialog();
+
+    expect(
+      await screen.findByText("The service is unavailable right now."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Approved v1")).toBeInTheDocument();
+    expect(await dialogAlert()).toHaveTextContent(draftOpen);
+    expect(csfClient.fetchLatestAssessment).toHaveBeenCalledTimes(2);
+  });
+
   it.each(["draft", "submitted"])(
     "offers no revision on a %s record",
     async (status) => {

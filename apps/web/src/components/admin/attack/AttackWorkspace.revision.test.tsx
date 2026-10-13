@@ -224,6 +224,33 @@ describe("AttackWorkspace: Start a revision", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("when the re-read after a draft_open refusal fails, says so and keeps v1", async () => {
+    const draftOpen =
+      "Version 2 is open as a draft. Approve it, or discard it, before starting another revision.";
+    vi.mocked(attackClient.startRevision).mockRejectedValue(
+      new attackClient.AttackProxyError(409, {
+        error: { reason: "draft_open", message: draftOpen },
+      }),
+    );
+    vi.mocked(attackClient.fetchLatestAssessment)
+      .mockResolvedValueOnce(V1)
+      .mockRejectedValue(
+        new attackClient.AttackProxyError(503, {
+          error: { message: "The service is unavailable right now." },
+        }),
+      );
+    renderWorkspace();
+
+    await startRevisionThroughTheDialog();
+
+    expect(
+      await screen.findByText("The service is unavailable right now."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Approved v1")).toBeInTheDocument();
+    expect(await dialogAlert()).toHaveTextContent(draftOpen);
+    expect(attackClient.fetchLatestAssessment).toHaveBeenCalledTimes(2);
+  });
+
   it("offers no revision on a draft record", async () => {
     vi.mocked(attackClient.fetchLatestAssessment).mockResolvedValue(
       record("attack-v1", 1, "draft"),
