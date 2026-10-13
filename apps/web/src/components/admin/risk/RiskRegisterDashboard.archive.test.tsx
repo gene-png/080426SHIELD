@@ -10,6 +10,7 @@ import {
 } from "@testing-library/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as clientReads from "@/lib/admin/client-reads";
 import * as riskClient from "@/lib/risk/client";
 import type { RiskDuplicateService, RiskGate } from "@/lib/risk/types";
 
@@ -34,8 +35,18 @@ vi.mock("@/lib/risk/client", () => ({
   fetchRiskGate: vi.fn(),
   fetchRiskRegisterLatest: vi.fn(),
   generateRiskRegister: vi.fn(),
-  getActiveClientId: vi.fn(),
-  getClientName: vi.fn(),
+}));
+
+// RR-2 (for #1121): the page takes its client from its own picker. The two
+// reads are mocked where they live, with API-shaped bodies, so the real
+// resolver chooses the client. The URL carries no ?client=.
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/admin/risk-register",
+  useSearchParams: () => new URLSearchParams(),
+}));
+vi.mock("@/lib/admin/client-reads", () => ({
+  readClientList: vi.fn(),
+  readActiveClient: vi.fn(),
 }));
 
 vi.mock("@/components/admin/RunAiGuard", () => ({
@@ -50,8 +61,6 @@ vi.mock("@/components/admin/RunAiGuard", () => ({
 
 const fetchRiskGate = vi.mocked(riskClient.fetchRiskGate);
 const fetchRiskRegisterLatest = vi.mocked(riskClient.fetchRiskRegisterLatest);
-const getActiveClientId = vi.mocked(riskClient.getActiveClientId);
-const getClientName = vi.mocked(riskClient.getClientName);
 const archive = vi.mocked(riskClient.archiveDuplicateService);
 
 beforeAll(() => {
@@ -71,6 +80,30 @@ const LEAD = "Archive the one this register should not draw on:";
 // 6047873969); the screen's lines are written out at each assertion.
 const NOT_IN_GROUP =
   "ZT 2 is no longer one of several engaged services of the same kind, so it was not archived.";
+
+/**
+ * RR-2 (for #1121): `id` is the one listed client, named `name`, and the one
+ * saved in this browser. The list is shaped like `AdminClientListResponse`.
+ */
+function mockPickedClient(id: string, name: string): void {
+  vi.mocked(clientReads.readClientList).mockResolvedValue({
+    clients: [
+      {
+        id,
+        legal_name: name,
+        dba_name: null,
+        industry: null,
+        size_band: null,
+        intake_completed_at: null,
+        created_at: "2026-10-01T00:00:00Z",
+        archived_at: null,
+        open_request_count: 0,
+        total_request_count: 0,
+      },
+    ],
+  });
+  vi.mocked(clientReads.readActiveClient).mockResolvedValue({ active: id });
+}
 
 function svc(
   service_id: string,
@@ -93,6 +126,25 @@ function gate(over: Partial<RiskGate> = {}): RiskGate {
     has_attack: true,
     has_csf: false,
     has_zt: true,
+    // RR-1 (for #1122): the selection block's rows. With none, Generate
+    // stays disabled (design note §3.4).
+    eligible: [
+      {
+        kind: "attack",
+        service_id: "svc-attack",
+        title: "ATT&CK",
+        framework: null,
+        label: "ATT&CK coverage",
+      },
+      {
+        kind: "zt",
+        service_id: "svc-zt",
+        title: "ZT",
+        framework: "cisa_ztmm_2_0",
+        label: "Zero Trust (CISA ZTMM 2.0)",
+      },
+    ],
+    ineligible: [],
     missing: [],
     not_finalized: [],
     synthesizable_missing: [],
@@ -111,11 +163,14 @@ const DUPLICATE_GATE = gate({
 
 async function loaded(): Promise<void> {
   render(<RiskRegisterDashboard />);
-  await waitFor(() =>
+  await waitFor(() => {
+    // RR-2 (for #1121): the h1 names the client and renders before the
+    // body has loaded, so the wait is for the body too.
     expect(
-      screen.getByRole("heading", { name: "Risk Register" }),
-    ).toBeInTheDocument(),
-  );
+      screen.getByRole("heading", { name: /^Risk Register for / }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Loading…")).toBeNull();
+  });
 }
 
 async function confirmIn(dialog: HTMLElement): Promise<void> {
@@ -129,8 +184,7 @@ async function confirmIn(dialog: HTMLElement): Promise<void> {
 describe("RiskRegisterDashboard archive control (#896)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getActiveClientId.mockResolvedValue("c1");
-    getClientName.mockResolvedValue("Client");
+    mockPickedClient("c1", "Client");
     fetchRiskRegisterLatest.mockResolvedValue(null);
   });
 

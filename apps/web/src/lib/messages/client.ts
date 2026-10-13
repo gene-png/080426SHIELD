@@ -85,8 +85,14 @@ export async function postMessage(
   });
 }
 
-export async function fetchInbox(): Promise<InboxResponse> {
-  return jsonRequest<InboxResponse>("/api/proxy/messages/inbox");
+/**
+ * RR-2 (for #1121), design note §3.2: the threads of the client the admin
+ * Messages page's picker chose. The proxy refuses a request that names none.
+ */
+export async function fetchInbox(clientId: string): Promise<InboxResponse> {
+  return jsonRequest<InboxResponse>(
+    `/api/proxy/messages/inbox?client_id=${encodeURIComponent(clientId)}`,
+  );
 }
 
 export function describeMessagesError(err: unknown): string {

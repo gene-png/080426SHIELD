@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as clientReads from "@/lib/admin/client-reads";
 import * as riskClient from "@/lib/risk/client";
 import type { RiskEntry, RiskGate, RiskRegister } from "@/lib/risk/types";
 
@@ -22,8 +23,18 @@ vi.mock("@/lib/risk/client", () => ({
   fetchRiskGate: vi.fn(),
   fetchRiskRegisterLatest: vi.fn(),
   generateRiskRegister: vi.fn(),
-  getActiveClientId: vi.fn(),
-  getClientName: vi.fn(),
+}));
+
+// RR-2 (for #1121): the page takes its client from its own picker. The two
+// reads are mocked where they live, with API-shaped bodies, so the real
+// resolver chooses the client. The URL carries no ?client=.
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/admin/risk-register",
+  useSearchParams: () => new URLSearchParams(),
+}));
+vi.mock("@/lib/admin/client-reads", () => ({
+  readClientList: vi.fn(),
+  readActiveClient: vi.fn(),
 }));
 
 vi.mock("@/components/admin/RunAiGuard", () => ({
@@ -38,8 +49,30 @@ vi.mock("@/components/admin/RunAiGuard", () => ({
 
 const fetchRiskGate = vi.mocked(riskClient.fetchRiskGate);
 const fetchRiskRegisterLatest = vi.mocked(riskClient.fetchRiskRegisterLatest);
-const getActiveClientId = vi.mocked(riskClient.getActiveClientId);
-const getClientName = vi.mocked(riskClient.getClientName);
+
+/**
+ * RR-2 (for #1121): `id` is the one listed client, named `name`, and the one
+ * saved in this browser. The list is shaped like `AdminClientListResponse`.
+ */
+function mockPickedClient(id: string, name: string): void {
+  vi.mocked(clientReads.readClientList).mockResolvedValue({
+    clients: [
+      {
+        id,
+        legal_name: name,
+        dba_name: null,
+        industry: null,
+        size_band: null,
+        intake_completed_at: null,
+        created_at: "2026-10-01T00:00:00Z",
+        archived_at: null,
+        open_request_count: 0,
+        total_request_count: 0,
+      },
+    ],
+  });
+  vi.mocked(clientReads.readActiveClient).mockResolvedValue({ active: id });
+}
 
 function gate(): RiskGate {
   return {
@@ -131,11 +164,14 @@ function register(over: Partial<RiskRegister> = {}): RiskRegister {
 
 async function loaded(): Promise<void> {
   render(<RiskRegisterDashboard />);
-  await waitFor(() =>
+  await waitFor(() => {
+    // RR-2 (for #1121): the h1 names the client and renders before the
+    // body has loaded, so the wait is for the body too.
     expect(
-      screen.getByRole("heading", { name: "Risk Register" }),
-    ).toBeInTheDocument(),
-  );
+      screen.getByRole("heading", { name: /^Risk Register for / }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Loading…")).toBeNull();
+  });
 }
 
 const NOT_RECORDED =
@@ -150,8 +186,15 @@ function scoped(attackPending: number | null): RiskRegister {
         scored: 12,
         total: 700,
         pending_review: attackPending,
+        label: "ATT&CK coverage",
       },
-      { service: "zt", scored: 2, total: 37, pending_review: null },
+      {
+        service: "zt",
+        scored: 2,
+        total: 37,
+        pending_review: null,
+        label: "Zero Trust",
+      },
     ],
   });
 }
@@ -163,8 +206,7 @@ function banner(): HTMLElement {
 describe("RiskRegisterDashboard pending review (#415)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getActiveClientId.mockResolvedValue("c1");
-    getClientName.mockResolvedValue("Client");
+    mockPickedClient("c1", "Client");
     fetchRiskGate.mockResolvedValue(gate());
   });
 
@@ -201,8 +243,7 @@ describe("RiskRegisterDashboard dropped-link banners name pending review (#415)"
   // The wording approved verbatim on #736: a dropped value has a third cause.
   beforeEach(() => {
     vi.clearAllMocks();
-    getActiveClientId.mockResolvedValue("c1");
-    getClientName.mockResolvedValue("Client");
+    mockPickedClient("c1", "Client");
     fetchRiskGate.mockResolvedValue(gate());
   });
 

@@ -138,7 +138,7 @@ import functools
 import itertools
 import json
 import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -1032,7 +1032,34 @@ def compare_pair(
     if objects_only:
         rows["unkeyable_a"] = len(keyless_a or [])
         rows["unkeyable_b"] = len(keyless_b or [])
-    return {"rows": rows, "fields": out_fields}
+    out: dict[str, Any] = {"rows": rows, "fields": out_fields}
+    if job == "zt_score":
+        # #806: the apply path reads `current` only, so any other key on a row
+        # (a stray `target` above all) is an `unknown_field` there. Counted here
+        # per run, never compared: two runs agreeing on a value nobody applies
+        # is not agreement. Counted over the RAW rows, never the index: `_index`
+        # drops both copies of a duplicated code, while the apply path drops
+        # every copy's stray key as `unknown_field` (#981 re-review).
+        out["unknown_fields"] = {
+            "a": _unknown_field_count(a.get(list_key) or [], key_fields, fields),
+            "b": _unknown_field_count(b.get(list_key) or [], key_fields, fields),
+        }
+    return out
+
+
+def _unknown_field_count(
+    rows: Iterable[Any], key_fields: Sequence[str], fields: Sequence[str]
+) -> int:
+    """Keys, on every raw response row, that are neither a key field nor a
+    compared one: each copy of a duplicated row counts, as each is an
+    `unknown_field` drop on the apply path.
+
+    A row that is not an object is EXCLUDED, deliberately: it has no keys, so
+    it carries no stray key, and the apply path drops it as `entry_shape`, not
+    `unknown_field`. It is not lost: `_index` counts it as unreadable, and the
+    pair line prints that count."""
+    known = set(key_fields) | set(fields)
+    return sum(1 for row in rows if isinstance(row, dict) for k in row if k not in known)
 
 
 def _zt_sent_current(inputs: Mapping[str, Any], code: Any) -> Any:
@@ -1094,6 +1121,32 @@ def echo_share(
     return out
 
 
+#: C2 (#806 plan 5983938383): the approved prompt (v2) asks for no `target`,
+#: so `downstream` measures each run's gaps against the engagement stage. A
+#: report from the v1 prompt measured them against the targets the model sent.
+#: Stated in every zt_score report, because the two figures look alike.
+ZT_DOWNSTREAM_TARGET_BASIS = (
+    "From prompt v2 (#806) the model sends no target, so these gaps are measured "
+    "against the engagement stage. A v1 report measured them against the "
+    "model's own targets; the two gap counts are not comparable."
+)
+
+
+def zt_no_result_count(inputs: Mapping[str, Any], data: Mapping[str, Any]) -> int:
+    """Capabilities the run asked about that no entry named (#806, C3). Under
+    the approved prompt a blank or placeholder note, and a DoD capability that
+    is Not Assessed, get no result by design, so this is a count to read, not a
+    fault. Locks are not modelled: this is what the model answered, not what a
+    run would write."""
+    asked = {c for c in inputs.get("capabilities") or [] if isinstance(c, str)}
+    named = {
+        row["code"]
+        for row in data.get("capabilities") or []
+        if isinstance(row, dict) and isinstance(row.get("code"), str)
+    }
+    return len(asked - named)
+
+
 def zt_downstream(framework: Any, *, engagement_stage: int, data: Mapping[str, Any]) -> dict:
     """The gaps a client would see if every value in `data` were applied,
     counted by the engine (`analyze_gaps`) with no truncation.
@@ -1102,16 +1155,20 @@ def zt_downstream(framework: Any, *, engagement_stage: int, data: Mapping[str, A
     `non_integer_values` and treated as absent, because the engine's own
     validator calls `int()`, which would read `true` as 1 and `"2"` as 2.
     A whole number outside the framework's stages is passed on (the engine
-    treats it as unscored, or an unusable target) and ALSO counted in
-    `out_of_range_values`, so a run of stage 9s cannot read as a run that
-    simply left rows blank. `unusable_target_codes` is the engine's own list.
+    treats it as unscored) and ALSO counted in `out_of_range_values`, so a
+    run of stage 9s cannot read as a run that simply left rows blank.
+
+    Only `current` is read (#806): the model sends no target, a stray one is
+    an unknown field (`compare_pair`'s `unknown_fields`), and the gaps rest on
+    the engagement stage, as `ZT_DOWNSTREAM_TARGET_BASIS` says. So
+    `unusable_target_codes`, the engine's own list, is empty here.
     Rows the real apply path would skip (locked, protected, edited) are not
     modelled: this is what the model ASKED for, not what a run would write.
 
     A TWIN LEFT ALONE, on purpose (#867 review B-4/B-5): unlike `compare_pair`
     and `csf_levels`, this does NOT go through `routes/zt.py::_validated_stage`.
-    It passes out-of-range whole numbers ON so the engine names unusable
-    targets, which the validator would hide; and it reads "2" as non-integer
+    It passes out-of-range whole numbers ON so the engine sees them, which
+    the validator would hide; and it reads "2" as non-integer
     where the apply path stores 2. The second is a known disagreement with the
     apply path, recorded on #867 for a decision rather than changed here.
     """
@@ -1128,7 +1185,10 @@ def zt_downstream(framework: Any, *, engagement_stage: int, data: Mapping[str, A
     for row in data.get("capabilities") or []:
         if not isinstance(row, dict) or not isinstance(row.get("code"), str):
             continue
-        for field, dest in (("current", answers), ("target", targets)):
+        # #806: the model sends no target. A stray one is an unknown field
+        # (`compare_pair`'s `unknown_fields`), never an input to the engine,
+        # so the gaps here rest on the engagement stage, as the report says.
+        for field, dest in (("current", answers),):
             if field not in row or row[field] is None:
                 continue
             if _is_whole(row[field]):
@@ -1750,6 +1810,11 @@ def measure_zt(
     ]
     report["downstream"] = [
         {"run": n, **zt_downstream(fw, engagement_stage=stage, data=data)}
+        for n, data in _ok_runs(records)
+    ]
+    report["downstream_target_basis"] = ZT_DOWNSTREAM_TARGET_BASIS
+    report["no_result"] = [
+        {"run": n, "no_result_count": zt_no_result_count(req.preview.inputs, data)}
         for n, data in _ok_runs(records)
     ]
     return report
@@ -2506,6 +2571,7 @@ def measure_risk(
     max_usd: float | None = None,
     price: Mapping[str, float] | None = None,
     progress: Callable[[Sequence[RunRecord]], None] | None = None,
+    zero_trust: str | None = None,
 ) -> dict:
     """Run risk_synthesize `runs` times for the one client whose register is
     unlocked, through the route's own findings (`_gather_findings`, over the
@@ -2517,7 +2583,13 @@ def measure_risk(
     in which any batch failed is a failed run, never "0% agreement".
 
     `--reopen-released` is refused: Risk reads FINAL inputs, so reopening one
-    would change what is measured rather than make it measurable."""
+    would change what is measured rather than make it measurable.
+
+    RR-1 (for #1122), design note §7: the route's own `_select` runs after the
+    duplicate check, as in `generate`. `zero_trust` (`--risk-zero-trust`)
+    names the framework; without it the absent-body rule applies, so a client
+    with both Zero Trust frameworks is refused with the route's own sentence
+    rather than measured over a guess."""
     from fastapi import HTTPException
 
     from app.routes.risk import (
@@ -2525,8 +2597,10 @@ def measure_risk(
         _duplicate_inputs_message,
         _gather_findings,
         _run_risk_synthesize_batched,
+        _select,
         _take_input_snapshot,
     )
+    from app.schemas.risk import RiskInclude
 
     if reopen_released:
         raise Refused(
@@ -2541,6 +2615,19 @@ def measure_risk(
     duplicate = _duplicate_inputs_message(list(snap.sources))
     if duplicate is not None:
         raise Refused("builder_refused", f"The route's generate refuses: {duplicate}")
+    include = (
+        None
+        if zero_trust is None
+        else RiskInclude(
+            csf=any(src.kind == "csf" for src in snap.sources),
+            zero_trust=None if zero_trust == "none" else zero_trust,  # type: ignore[arg-type]
+        )
+    )
+    try:
+        snap, _selection = _select(db, client.id, snap, include)
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        raise Refused("builder_refused", str(detail.get("message", exc.detail))) from exc
     findings, techniques, controls, _targets, _scopes = _gather_findings(db, client.id, snap)
     keys = [snap.drafted_from[str(f["source_id"])].scope_key for f in findings]
     batches = _batches(findings, keys)
@@ -2924,6 +3011,21 @@ def measure_tech_debt(
     return report
 
 
+def _zt_stray_keys_by_run(report: dict) -> dict[int, int]:
+    """Each run's count of keys beside `current` on its raw rows, read from the
+    pairs' `unknown_fields` (`compare_pair`, zt_score only). A run's count is
+    the same in every pair it is in, since it counts that run's own response,
+    so it is taken per run, never summed across pairs."""
+    out: dict[int, int] = {}
+    for p in report.get("pairs", []):
+        uf = p.get("unknown_fields")
+        if uf is None:
+            continue
+        out[p["pair"][0]] = uf["a"]
+        out[p["pair"][1]] = uf["b"]
+    return out
+
+
 def _print_table(report: dict) -> None:
     print(f"job={report['job']} runs_ok={report['runs_ok']}/{report['runs_requested']}")
     for f in report["failed_runs"]:
@@ -2984,13 +3086,19 @@ def _print_table(report: dict) -> None:
                 f"pair {p['pair']} maturity level: equal {lv['equal']}/{lv['compared']} "
                 f"({lv['no_evidence_rows']} of those rows have no evidence: capped at Level 2)"
             )
+    stray = _zt_stray_keys_by_run(report)
     for d in report.get("downstream", []):
         if "total_gap_count" in d:
+            # #806: no "unusable targets" term. `zt_downstream` reads `current`
+            # only, so that list is always empty and a 0 would read as a
+            # measurement. The keys the model sent beside `current` (a stray
+            # `target` above all) are printed instead, from the pairs.
             print(
                 f"run {d['run']}: client-visible gaps {d['total_gap_count']}, "
                 f"unscored {d['unscored_count']}, non-integer values {d['non_integer_values']}, "
                 f"out-of-range values {d['out_of_range_values']}, "
-                f"unusable targets {len(d['unusable_target_codes'])}"
+                f"stray keys such as target (not applied, not measured) "
+                f"{stray.get(d['run'], 'n/a (in no pair)')}"
             )
         elif "computed_status_counts" in d:
             print(
@@ -3063,6 +3171,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="csf_score and mitre_map only: run just the first N of the route's batches. "
         "With --runs 1 it sizes per-batch cost and reports no agreement. mitre_map also "
         "allows --runs 2 or more over the same batches, compared like a full measurement.",
+    )
+    p.add_argument(
+        "--risk-zero-trust",
+        choices=("cisa_ztmm_2_0", "dod_ztra", "none"),
+        default=None,
+        help="risk_synthesize only: the Zero Trust framework the register is generated "
+        "from, as the Risk Register page chooses it (RR-1). Required when the client has "
+        "both; omitted, the route's absent-body rule applies.",
     )
     p.add_argument(
         "--inventory",
@@ -3514,7 +3630,13 @@ def _measure(
         if args.job == "mitre_map":
             return measure_attack(db, llm, probe_batches=args.probe_batches, **common)
         if args.job == "risk_synthesize":
-            return measure_risk(db, llm, probe_batches=args.probe_batches, **common)
+            return measure_risk(
+                db,
+                llm,
+                probe_batches=args.probe_batches,
+                zero_trust=args.risk_zero_trust,
+                **common,
+            )
         if args.job == "tech_debt_extract":
             # No assessment to reopen (refused above): the input is the file.
             common.pop("reopen_released")

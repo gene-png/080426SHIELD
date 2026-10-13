@@ -83,6 +83,7 @@ from app.models.zt_assessment import (
     ZtAssessmentStatus,
     ZtFramework,
 )
+from app.risk import exporters as risk_exporters
 from app.risk.baseline import targets_used
 from app.risk.csf_source import csf_no_shared_row as risk_csf_no_shared_row
 from app.risk.csf_source import csf_source_note as risk_csf_source_note
@@ -2095,10 +2096,15 @@ def risk_dashboard(
                 target=t.target,
                 source=t.source,
                 origin=t.origin,
+                # RR-1 (for #1122): the files' label and naming predicate.
+                label=risk_exporters.target_row_label(t.kind, t.framework, reg.provenance),
             )
             for t in _risk_targets
         ],
         targets_recorded=_risk_targets_recorded,
+        # RR-1 (for #1122), design note §6.4: copy 8, 9a-9c or 11, by the files'
+        # own reader, so the client reads what their files print.
+        **risk_exporters.selection_fields(reg.provenance),
         matrix=[
             RiskMatrixCell(
                 likelihood=cell.likelihood,

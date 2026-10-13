@@ -261,7 +261,8 @@ _MAX_OUTPUT_TOKENS = 8192
 # (2026-09-23) and mitre_map (2026-08-07, before batching) each had a call cut
 # off at 8192, so what those calls wanted is unknown and higher.
 #   mitre_map              15,289 (earlier dev llm_calls); 11,684 on 2026-10-02
-#   zt_score                1,553 (2026-10-02)
+#   zt_score                6,739 (2026-10-12, #981 v2 prompt, notes corpus,
+#                          only 18 of 45 rows scored); 1,553 on 2026-10-02
 #   extract.capabilities    8,117 (2026-09-23); 687 on 2026-10-02
 #   csf_score              ~4,200 a batch of 10 (#806 probe 4,213, 2026-10-03;
 #                          the largest single batch was not recorded)
@@ -305,13 +306,14 @@ _MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
     # one live run failed on stop_reason=max_tokens and the retry finished at
     # 8117 of 8192.
     "extract.capabilities": 64000,
-    # zt_score is small: 37-45 capabilities, three short fields each, no
-    # narrative since #64 removed three unconsumed ones. Its 2026-08-04 overrun
-    # at 4096 was with those narratives, and the 2026-07-15 one at 8192 was
-    # unbounded gemini thinking, now capped at _THINKING_BUDGET_TOKENS. So 8192
-    # is CHOSEN, not defaulted: raising it buys nothing for an output this
-    # size.
-    "zt_score": _MAX_OUTPUT_TOKENS,
+    # zt_score, measured on the #981 v2 prompt: its DoD probe with the notes
+    # corpus (#736, issuecomment-6115649315, 2026-10-12) produced a largest
+    # single output of 6,739 tokens with only 18 of 45 rows scored. 8192 fails
+    # the 3x rule (it needs 3 x 6,739 = 20,217), and a fully scored run is
+    # likely larger still. 64000 is what the STREAMED adapter sends, billed as
+    # generated. The non-streamed adapters keep 8192
+    # (`non_streamed_output_cap`), a cost recorded on #479.
+    "zt_score": 64000,
     # #802's ATT&CK what-if, per batch of `scenario.BATCH_SIZE` (6). 64000 is
     # what the STREAMED adapter sends, billed as generated. The non-streamed
     # adapters send 8,192 (`non_streamed_output_cap`), and the 3x rule holds for
@@ -352,7 +354,7 @@ def max_output_tokens_for(purpose: str | None) -> int:
 # complete; "these adapters are unchanged" can be, and a test pins it. Raising
 # them is its own change, with #485's ceilings and 60 s timeout.
 _RAISED_FOR_THE_STREAMED_ADAPTER_ONLY = frozenset(
-    {"csf_score", "extract.capabilities", "attack_scenario_delta"}
+    {"csf_score", "extract.capabilities", "attack_scenario_delta", "zt_score"}
 )
 
 
