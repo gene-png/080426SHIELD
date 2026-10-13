@@ -158,7 +158,7 @@ from app.services.revisions import (
     client_facing,
     evidence_links_for,
     is_revision_draft,
-    revision_info,
+    revision_for_viewer,
     start_revision,
 )
 from app.storage import StorageBackend
@@ -199,7 +199,7 @@ def _client_profile(db: Session, service_id: uuid.UUID) -> str | None:
     return sr.csf_profile if sr is not None else None
 
 
-def _serialize_assessment(db: Session, a: CsfAssessment) -> CsfAssessmentResponse:
+def _serialize_assessment(db: Session, a: CsfAssessment, viewer: User) -> CsfAssessmentResponse:
     rows = db.execute(select(CsfAnswer).where(CsfAnswer.assessment_id == a.id)).scalars().all()
     return CsfAssessmentResponse(
         id=a.id,
@@ -214,7 +214,8 @@ def _serialize_assessment(db: Session, a: CsfAssessment) -> CsfAssessmentRespons
         client_profile=_client_profile(db, a.service_id),
         # #646: the ONE derivation every surface calls.
         ai_source=ai_mode_for(db, db.get(Service, a.service_id), a).as_api(),
-        revision=revision_info(db, a, "csf.assessment"),  # #1120: V3, V4, V5
+        # #1120: V3, V4, V5, for an admin only.
+        revision=revision_for_viewer(db, a, "csf.assessment", viewer),
         # #852: answers kept on a code the catalog no longer has (ID.AM-09),
         # from the one derivation the deliverable and the dashboard call too.
         # `answers` above still lists them, as ZT's does; the questionnaire
@@ -541,7 +542,7 @@ def create_assessment(
             service_id=str(svc.id),
         )
         response.status_code = status.HTTP_200_OK
-        return _serialize_assessment(db, prior)
+        return _serialize_assessment(db, prior, viewer=user)
     version = _max_assessment_version(db, svc.id) + 1
     assessment = CsfAssessment(
         service_id=svc.id,
@@ -567,7 +568,7 @@ def create_assessment(
             service_id=str(svc.id),
         )
         response.status_code = status.HTTP_200_OK
-        return _serialize_assessment(db, winner)
+        return _serialize_assessment(db, winner, viewer=user)
     # Pre-create empty answer rows so the workspace UI gets a deterministic
     # answer grid back from the very first GET. Cheap (~106 rows).
     for sc in SUBCATEGORIES:
@@ -594,7 +595,7 @@ def create_assessment(
         version=version,
         service_id=str(svc.id),
     )
-    return _serialize_assessment(db, assessment)
+    return _serialize_assessment(db, assessment, viewer=user)
 
 
 @router.get(
@@ -626,7 +627,7 @@ def latest_assessment(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="CSF assessments are admin-only until released.",
         )
-    return _serialize_assessment(db, assessment)
+    return _serialize_assessment(db, assessment, viewer=user)
 
 
 # ---------------------------------------------------------------------------
@@ -738,7 +739,7 @@ def get_self_assessment(
         )
     # #1120 client door 1: a revision draft reads as the record it revises.
     assessment = client_facing(db, assessment, _user)
-    return _serialize_assessment(db, assessment)
+    return _serialize_assessment(db, assessment, viewer=_user)
 
 
 @router.patch(
@@ -858,7 +859,7 @@ def submit_self_assessment(
     )
     db.commit()
     db.refresh(a)
-    return _serialize_assessment(db, a)
+    return _serialize_assessment(db, a, viewer=user)
 
 
 def _refuse_approving_discarded() -> HTTPException:
@@ -890,7 +891,7 @@ def approve_assessment(
     # #645: approving mid-run would approve rows about to change.
     refuse_while_running(db, a.service_id)
     if a.status == CsfAssessmentStatus.APPROVED:
-        return _serialize_assessment(db, a)
+        return _serialize_assessment(db, a, viewer=user)
     if a.status == CsfAssessmentStatus.RELEASED:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -922,7 +923,7 @@ def approve_assessment(
         if a.status == CsfAssessmentStatus.DISCARDED:
             raise _refuse_approving_discarded()
         if a.status == CsfAssessmentStatus.APPROVED:
-            return _serialize_assessment(db, a)
+            return _serialize_assessment(db, a, viewer=user)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Assessment already released.",
@@ -938,7 +939,7 @@ def approve_assessment(
     )
     db.commit()
     db.refresh(a)
-    return _serialize_assessment(db, a)
+    return _serialize_assessment(db, a, viewer=user)
 
 
 @router.post(
@@ -959,7 +960,7 @@ def discard_assessment(
     contract (D-031)."""
     a = require_csf_assessment_in_tenant(db, assessment_id, client.id)
     if a.status == CsfAssessmentStatus.DISCARDED:
-        return _serialize_assessment(db, a)  # idempotent, no audit
+        return _serialize_assessment(db, a, viewer=user)  # idempotent, no audit
     if a.status != CsfAssessmentStatus.DRAFT:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -992,7 +993,7 @@ def discard_assessment(
     if result.rowcount != 1:
         db.refresh(a)
         if a.status == CsfAssessmentStatus.DISCARDED:
-            return _serialize_assessment(db, a)
+            return _serialize_assessment(db, a, viewer=user)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -1022,7 +1023,7 @@ def discard_assessment(
     )
     db.commit()
     db.refresh(a)
-    return _serialize_assessment(db, a)
+    return _serialize_assessment(db, a, viewer=user)
 
 
 # ---------------------------------------------------------------------------
@@ -1204,7 +1205,7 @@ def _score_response(row: CsfDimensionScore) -> CsfDimensionScoreResponse:
 # to the client under an approved label, so an edit after approval would change
 # a delivered artifact without a new version. The remedy is a revision.
 #
-# COPY PENDING THE ADVISOR'S APPROVAL (sent verbatim; not yet approved).
+# The copy is approved verbatim (#736 6136756990).
 _WORKING_PROFILE_LOCKED = (
     "Version {version} is {status}, so its Working Profile cannot be changed. "
     "Start a revision to change it."
@@ -1385,17 +1386,13 @@ def patch_dimension_score(
     # These rows are NOT what the Deliverable or the client dashboard read (both
     # take `CsfAnswer.maturity_tier`; `CsfDeliverableContext` carries no
     # dimension scores). They feed `export_playbook`, which stores the Working
-    # Profile workbook and its PDF/DOCX as artifacts. Whether that track should
-    # freeze on assessment approval is an OPEN DECISION, not an oversight — see
-    # issue #37.
-    #
-    # Deliberately not enforced here. In the dev/demo database on 2026-08-09,
-    # all 25 APPROVED assessments carry ZERO dimension-score rows, against 636
-    # each on DRAFT and SUBMITTED. Strictly that says they were never seeded at
-    # all, not that seeding followed approval — but either way a freeze on
-    # `seed_profiles` would strand them, because seeding is what creates the
-    # rows and `export_playbook` refuses without them. That is a demo database,
-    # so it bounds the shape of the problem rather than proving field usage.
+    # Profile workbook and its PDF/DOCX as artifacts. The freeze issue #37 left
+    # open is decided by #1120's ruling A2 (#736 6136101129): this route
+    # refuses an APPROVED or RELEASED assessment above, with the typed reason
+    # `working_profile_locked`, and the change goes through a revision. Seeding
+    # is the one exception: `seed_profiles` still creates the rows of an
+    # approved record that has none, so an approved assessment that was never
+    # seeded can still export, and it refuses once rows exist.
     audit(
         db,
         action="csf.dimension_score.updated",
@@ -3288,4 +3285,4 @@ def start_assessment_revision(
         ),
     )
     result = start_revision(db, svc=svc, target=target, user=user, reason=body.reason, plan=plan)
-    return _serialize_assessment(db, result.record)
+    return _serialize_assessment(db, result.record, viewer=user)

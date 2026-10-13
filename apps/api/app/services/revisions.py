@@ -456,6 +456,18 @@ def revision_info(db: Session, record: Any, audit_prefix: str) -> RevisionInfo |
     )
 
 
+def revision_for_viewer(
+    db: Session, record: Any, audit_prefix: str, viewer: User
+) -> RevisionInfo | None:
+    """`revision_info` for an ADMIN caller; None for anyone else. The reason
+    is the consultant's audit-log text and the starter's name may be an email,
+    so a client is never served them, whichever route serializes the record
+    (#1120, review of #1151)."""
+    if viewer.role != UserRole.ADMIN:
+        return None
+    return revision_info(db, record, audit_prefix)
+
+
 def evidence_links_for(kind: EvidenceTargetKind) -> ChildSpec:
     """The polymorphic evidence links of one record (no FK; keyed on
     `assessment_id` and the target kind)."""

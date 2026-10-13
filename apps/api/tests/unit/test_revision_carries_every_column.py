@@ -5,12 +5,14 @@ Two halves:
 * STRUCTURE, from `Base.metadata`: every table with a ForeignKey to a record
   table is either copied (it has a `CHILD_NOT_CARRIED` entry in the copier) or
   named here as not carried, with its reason; every column of every copied
-  table is either copied or in its `NOT_CARRIED` set. A new child table or
-  column fails here until someone classifies it.
-* VALUES, through the real route: one row of every copied table is given a
-  non-default value in every carried column, generated from the column's TYPE
-  (so a new column needs no edit here), the record is approved and revised, and
-  every carried column of the copy must equal its source.
+  table, record tables included, is in exactly one of `CARRIED` (written here,
+  from the design note) and the copier's `NOT_CARRIED`. The copier copies by
+  default, so a new column fails here until someone classifies it: a new rule
+  stamp would otherwise carry the source's value (ruling item 4).
+* VALUES, through the real route: one row of every copied child table is given
+  a non-default value in every carried column, generated from the column's
+  TYPE, the record is approved and revised, and every carried column of the
+  copy, and of the new record, must equal its source.
 
 Limits, stated: type introspection cannot see a polymorphic key without a
 ForeignKey (`evidence_links.assessment_id`, copied; `ai_runs.subject_id` and
@@ -40,6 +42,111 @@ RECORD_TABLES = {"attack_assessments", "csf_assessments", "zt_assessments"}
 #: FK children of a record table that a revision does NOT copy, and why.
 TABLES_NOT_CARRIED = {
     "attack_scenarios": "a what-if is pinned to its base record, which Option A never changes",
+}
+
+#: Every column a revision COPIES, per table: the specification the copier's
+#: `NOT_CARRIED` maps are checked against (exactly one of the two holds each).
+CARRIED: dict[str, frozenset[str]] = {
+    "attack_assessments": frozenset({"client_id", "service_id"}),
+    "csf_assessments": frozenset({"client_id", "service_id"}),
+    "zt_assessments": frozenset({"client_id", "service_id", "framework"}),
+    "attack_coverage": frozenset(
+        {
+            "answered_at",
+            "answered_by",
+            "client_id",
+            "detection_tools",
+            "evidence_artifact_id",
+            "locked",
+            "narrative",
+            "notes",
+            "prevention_tools",
+            "rationale",
+            "reason_code",
+            "response_tools",
+            "reviewed_at",
+            "reviewed_by",
+            "reviewed_status",
+            "status",
+            "technique_code",
+            "unconfirmed_citations",
+        }
+    ),
+    "csf_answers": frozenset(
+        {
+            "answered_at",
+            "answered_by",
+            "client_id",
+            "evidence_artifact_id",
+            "locked",
+            "maturity_tier",
+            "notes",
+            "subcategory_code",
+        }
+    ),
+    "csf_dimension_scores": frozenset(
+        {
+            "answer_source",
+            "client_id",
+            "evidence_artifact_id",
+            "governance",
+            "has_evidence",
+            "implementation",
+            "improvement",
+            "in_scope",
+            "locked",
+            "monitoring",
+            "policy",
+            "rationale",
+            "subcategory_code",
+            "target_level",
+            "tier",
+            "what_we_found",
+        }
+    ),
+    "csf_gap_actions": frozenset(
+        {
+            "characterization",
+            "client_id",
+            "deadline",
+            "owner",
+            "poam_ref",
+            "priority_override",
+            "resources",
+            "subcategory_code",
+            "success_criteria",
+        }
+    ),
+    "zt_answers": frozenset(
+        {
+            "answer_source",
+            "answered_at",
+            "answered_by",
+            "capability_code",
+            "client_id",
+            "evidence_artifact_id",
+            "locked",
+            "maturity_stage",
+            "notes",
+            "target_stage",
+        }
+    ),
+    "evidence_links": frozenset(
+        {
+            "artifact_id",
+            "client_id",
+            "confirmed_at",
+            "confirmed_by",
+            "origin",
+            "quote",
+            "status",
+            "suggested_by_run_id",
+            "supports",
+            "target_code",
+            "target_kind",
+            "tier",
+        }
+    ),
 }
 
 #: Keys introspection cannot classify (no ForeignKey), and how each is handled.
@@ -83,12 +190,21 @@ def test_every_child_table_of_a_record_is_classified() -> None:
             ), f"{child} (a child of {record}) is neither copied nor classified"
 
 
-def test_every_column_of_a_copied_table_is_classified() -> None:
-    for table in (*RECORD_TABLES, *CHILD_NOT_CARRIED):
+def test_every_column_of_a_copied_table_is_classified_exactly_once() -> None:
+    tables = (*RECORD_TABLES, *CHILD_NOT_CARRIED)
+    assert set(CARRIED) == set(tables), set(CARRIED) ^ set(tables)
+    for table in tables:
         cols = {c.name for c in Base.metadata.tables[table].columns}
-        not_carried = {**RECORD_NOT_CARRIED, **CHILD_NOT_CARRIED}[table]
-        assert set(not_carried) <= cols, (table, set(not_carried) - cols)
-        for reason in not_carried.values():
+        not_carried = set({**RECORD_NOT_CARRIED, **CHILD_NOT_CARRIED}[table])
+        assert CARRIED[table] & not_carried == set(), (table, CARRIED[table] & not_carried)
+        assert CARRIED[table] | not_carried == cols, (
+            table,
+            "unclassified",
+            cols - CARRIED[table] - not_carried,
+            "not a column",
+            (CARRIED[table] | not_carried) - cols,
+        )
+        for reason in {**RECORD_NOT_CARRIED, **CHILD_NOT_CARRIED}[table].values():
             assert reason.strip(), table
 
 
@@ -305,3 +421,8 @@ def test_every_carried_column_is_copied(world, kind: str, tmp_path) -> None:
             for key, values in by_key.items():
                 assert key in copies, (table, key, "not copied")
                 assert copies[key] == values, (table, key)
+        # The record itself: every carried column equals the source's.
+        record_model = models[f"{kind}_assessments"].class_
+        old, new = (s.get(record_model, uuid.UUID(str(i))) for i in (v1["id"], v2))
+        for col in sorted(CARRIED[f"{kind}_assessments"]):
+            assert getattr(new, col) == getattr(old, col), (kind, col)

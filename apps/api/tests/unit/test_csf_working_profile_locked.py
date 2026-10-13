@@ -75,12 +75,16 @@ def _first_row(c: TestClient, h: dict, svc_id: str) -> dict:
     return rows[0]
 
 
-def _assert_locked(r, status_word: str) -> None:
+def _assert_locked(r, status_word: str, version: int = 1) -> None:
+    """The whole approved sentence (#736 6136756990), written out, never
+    imported from the route."""
     assert r.status_code == 409, r.text
     err = r.json()["error"]
     assert err["reason"] == REASON, err
-    assert f"is {status_word}, so its Working Profile cannot be changed" in err["message"], err
-    assert "Start a revision" in err["message"], err
+    assert err["message"] == (
+        f"Version {version} is {status_word}, so its Working Profile cannot be "
+        "changed. Start a revision to change it."
+    ), err
 
 
 def _released_or_approved(c, sessions, h, aid, status_word: str) -> None:

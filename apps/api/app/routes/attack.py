@@ -177,7 +177,7 @@ from app.services.revisions import (
     ChildSpec,
     KindPlan,
     evidence_links_for,
-    revision_info,
+    revision_for_viewer,
     start_revision,
 )
 from app.storage import StorageBackend
@@ -263,7 +263,9 @@ def _serialize_one(db: Session, row: AttackCoverage) -> AttackCoverageResponse:
     return next(c for c in _serialize_coverage(a, siblings) if c.id == row.id)
 
 
-def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentResponse:
+def _serialize_assessment(
+    db: Session, a: AttackAssessment, viewer: User
+) -> AttackAssessmentResponse:
     rows = (
         db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
         .scalars()
@@ -286,7 +288,8 @@ def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentR
         catalog_current=attack_catalog_is_current(a),
         # #646: the ONE derivation every surface calls.
         ai_source=ai_mode_for(db, db.get(Service, a.service_id), a).as_api(),
-        revision=revision_info(db, a, "attack.assessment"),  # #1120: V3, V4, V5
+        # #1120: V3, V4, V5, for an admin only.
+        revision=revision_for_viewer(db, a, "attack.assessment", viewer),
         statuses_computed=statuses_computed(a),
         coverage=_serialize_coverage(a, rows),
         tool_retirement=_tool_retirement_marks(db, a.service_id, rows),
@@ -634,7 +637,7 @@ def create_assessment(
             service_id=str(svc.id),
         )
         response.status_code = status.HTTP_200_OK
-        return _serialize_assessment(db, prior)
+        return _serialize_assessment(db, prior, viewer=user)
     version = _max_assessment_version(db, svc.id) + 1
     assessment = AttackAssessment(
         service_id=svc.id,
@@ -662,7 +665,7 @@ def create_assessment(
             service_id=str(svc.id),
         )
         response.status_code = status.HTTP_200_OK
-        return _serialize_assessment(db, winner)
+        return _serialize_assessment(db, winner, viewer=user)
     # Pre-seed an unscored coverage row per technique so the UI receives
     # a complete grid on the very first GET. 600+ rows but cheap.
     for t in TECHNIQUES:
@@ -684,7 +687,7 @@ def create_assessment(
     )
     db.commit()
     db.refresh(assessment)
-    return _serialize_assessment(db, assessment)
+    return _serialize_assessment(db, assessment, viewer=user)
 
 
 @router.get(
@@ -730,7 +733,7 @@ def latest_assessment(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="ATT&CK assessments are admin-only.",
         )
-    return _serialize_assessment(db, a)
+    return _serialize_assessment(db, a, viewer=user)
 
 
 # ---------------------------------------------------------------------------
@@ -2983,7 +2986,7 @@ def approve_assessment(
     # #645: approving mid-run would approve rows about to change.
     refuse_while_running(db, a.service_id)
     if a.status == AttackAssessmentStatus.APPROVED:
-        return _serialize_assessment(db, a)
+        return _serialize_assessment(db, a, viewer=user)
     if a.status == AttackAssessmentStatus.RELEASED:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -3045,7 +3048,7 @@ def approve_assessment(
     )
     db.commit()
     db.refresh(a)
-    return _serialize_assessment(db, a)
+    return _serialize_assessment(db, a, viewer=user)
 
 
 @router.post(
@@ -3171,7 +3174,7 @@ def review_computed_statuses(
         remaining=len(queue) - len(codes),
     )
     db.refresh(a)
-    return _serialize_assessment(db, a)
+    return _serialize_assessment(db, a, viewer=user)
 
 
 @router.post(
@@ -3190,7 +3193,7 @@ def discard_assessment(
     ... WHERE status='draft' for the concurrency contract (D-031)."""
     a = require_attack_assessment_in_tenant(db, assessment_id, client.id)
     if a.status == AttackAssessmentStatus.DISCARDED:
-        return _serialize_assessment(db, a)  # idempotent, no audit
+        return _serialize_assessment(db, a, viewer=user)  # idempotent, no audit
     if a.status != AttackAssessmentStatus.DRAFT:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -3219,7 +3222,7 @@ def discard_assessment(
     if result.rowcount != 1:
         db.refresh(a)
         if a.status == AttackAssessmentStatus.DISCARDED:
-            return _serialize_assessment(db, a)
+            return _serialize_assessment(db, a, viewer=user)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -3249,7 +3252,7 @@ def discard_assessment(
     )
     db.commit()
     db.refresh(a)
-    return _serialize_assessment(db, a)
+    return _serialize_assessment(db, a, viewer=user)
 
 
 # ---------------------------------------------------------------------------
@@ -4106,4 +4109,4 @@ def start_assessment_revision(
         drop_retired=True,
     )
     result = start_revision(db, svc=svc, target=target, user=user, reason=body.reason, plan=plan)
-    return _serialize_assessment(db, result.record)
+    return _serialize_assessment(db, result.record, viewer=user)

@@ -99,3 +99,72 @@ def test_a_revision_of_an_earlier_rules_record_says_the_rules_changed(world, kin
         json={"reason": "r"},
     )
     assert r.json()["revision"]["rules_changed"] is True
+
+
+_TABLE = {"attack": "attack_assessments", "csf": "csf_assessments", "zt": "zt_assessments"}
+
+
+def _released_revision(world, kind: str):
+    """A client and an admin, the service, and its v2: a revision of v1,
+    approved and released, so a client reads it."""
+    c, sessions = world
+    admin = _admin(c)
+    r = c.post(
+        "/auth/register",
+        json={
+            "email": "client@example.com",
+            "password": "correct horse battery staple!",
+            "display_name": "Cleo Client",
+        },
+    )
+    assert r.status_code == 201, r.text
+    client = {"Authorization": f"Bearer {r.json()['tokens']['access_token']}"}
+    svc, v1 = _approved(c, admin, kind)
+    v2 = c.post(
+        f"/{kind}/services/{svc}/assessments/{v1['id']}/revisions",
+        headers=admin,
+        json={"reason": "Consultant-only note"},
+    ).json()
+    assert c.post(f"/{kind}/assessments/{v2['id']}/approve", headers=admin).status_code == 200
+    with sessions() as s:  # RELEASED is reachable; the release route is not under test
+        s.execute(
+            text(f"UPDATE {_TABLE[kind]} SET status = 'RELEASED' WHERE id = :id"),  # noqa: S608
+            {"id": uuid.UUID(v2["id"]).hex},
+        )
+        s.commit()
+    return c, admin, client, svc, v2
+
+
+@pytest.mark.parametrize("kind", ["csf", "zt"])
+def test_a_client_is_never_served_a_revisions_provenance(world, kind: str) -> None:
+    """The reason is the consultant's audit-log text and the name may be an
+    email: neither is the client's to read. CSF's and ZT's `latest` take any
+    signed-in user (ATT&CK's refuses a client: pinned below)."""
+    c, admin, client, svc, v2 = _released_revision(world, kind)
+    mine = c.get(f"/{kind}/services/{svc}/assessments/latest", headers=client)
+    assert mine.status_code == 200, mine.text
+    assert mine.json()["id"] == v2["id"]
+    assert mine.json()["revision"] is None
+    theirs = c.get(f"/{kind}/services/{svc}/assessments/latest", headers=admin).json()
+    assert theirs["id"] == v2["id"]
+    assert theirs["revision"]["reason"] == "Consultant-only note"
+
+
+@pytest.mark.parametrize("kind", ["csf", "zt"])
+def test_a_clients_self_assessment_carries_no_provenance(world, kind: str) -> None:
+    c, admin, client, svc, v2 = _released_revision(world, kind)
+    mine = c.get(f"/{kind}/services/{svc}/self-assessment", headers=client)
+    assert mine.status_code == 200, mine.text
+    assert mine.json()["id"] == v2["id"]
+    assert mine.json()["revision"] is None
+    theirs = c.get(f"/{kind}/services/{svc}/self-assessment", headers=admin).json()
+    assert theirs["revision"]["reason"] == "Consultant-only note"
+
+
+def test_attack_latest_refuses_a_client_outright(world) -> None:
+    """Why ATT&CK has no client case above: its `latest` is admin-only, so no
+    client reaches its serializer through a route. The serializer withholds
+    provenance from a non-admin regardless."""
+    c, admin, client, svc, v2 = _released_revision(world, "attack")
+    r = c.get(f"/attack/services/{svc}/assessments/latest", headers=client)
+    assert r.status_code == 403, r.text

@@ -105,7 +105,7 @@ from app.services.revisions import (
     client_facing,
     evidence_links_for,
     is_revision_draft,
-    revision_info,
+    revision_for_viewer,
     start_revision,
 )
 from app.storage import StorageBackend
@@ -356,7 +356,7 @@ def _serialize_answers(rows: Iterable[ZtAnswer]) -> list[ZtAnswerResponse]:
     return [ZtAnswerResponse.model_validate(r, from_attributes=True) for r in ordered]
 
 
-def _serialize_assessment(db: Session, a: ZtAssessment) -> ZtAssessmentResponse:
+def _serialize_assessment(db: Session, a: ZtAssessment, viewer: User) -> ZtAssessmentResponse:
     rows = db.execute(select(ZtAnswer).where(ZtAnswer.assessment_id == a.id)).scalars().all()
     cat_fw = _to_catalog_framework(a.framework)
     retired = retired_answer_count(cat_fw, rows)
@@ -373,7 +373,8 @@ def _serialize_assessment(db: Session, a: ZtAssessment) -> ZtAssessmentResponse:
         client_target_stage=client_target_stage(db, a.service_id),
         # #646: the ONE derivation every surface calls.
         ai_source=ai_mode_for(db, db.get(Service, a.service_id), a).as_api(),
-        revision=revision_info(db, a, "zt.assessment"),  # #1120: V3, V4, V5
+        # #1120: V3, V4, V5, for an admin only.
+        revision=revision_for_viewer(db, a, "zt.assessment", viewer),
         retired_answers=retired,
         retired_answers_note=retired_sentence(cat_fw, retired),
     )
@@ -1211,7 +1212,7 @@ def create_assessment(
             service_id=str(svc.id),
         )
         response.status_code = status.HTTP_200_OK
-        return _serialize_assessment(db, prior)
+        return _serialize_assessment(db, prior, viewer=user)
     version = _max_assessment_version(db, svc.id) + 1
     assessment = ZtAssessment(
         service_id=svc.id,
@@ -1238,7 +1239,7 @@ def create_assessment(
             service_id=str(svc.id),
         )
         response.status_code = status.HTTP_200_OK
-        return _serialize_assessment(db, winner)
+        return _serialize_assessment(db, winner, viewer=user)
     for cap in capabilities(cat_fw):
         db.add(
             ZtAnswer(
@@ -1261,7 +1262,7 @@ def create_assessment(
     )
     db.commit()
     db.refresh(assessment)
-    return _serialize_assessment(db, assessment)
+    return _serialize_assessment(db, assessment, viewer=user)
 
 
 @router.get(
@@ -1291,7 +1292,7 @@ def latest_assessment(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="ZT assessments are admin-only until released.",
         )
-    return _serialize_assessment(db, a)
+    return _serialize_assessment(db, a, viewer=user)
 
 
 # ---------------------------------------------------------------------------
@@ -1418,7 +1419,7 @@ def get_self_assessment(
         )
     # #1120 client door 1: a revision draft reads as the record it revises.
     assessment = client_facing(db, assessment, _user)
-    return _serialize_assessment(db, assessment)
+    return _serialize_assessment(db, assessment, viewer=_user)
 
 
 @router.patch(
@@ -1568,7 +1569,7 @@ def submit_self_assessment(
     )
     db.commit()
     db.refresh(a)
-    return _serialize_assessment(db, a)
+    return _serialize_assessment(db, a, viewer=user)
 
 
 def _refuse_approving_discarded() -> HTTPException:
@@ -1600,7 +1601,7 @@ def approve_assessment(
     # #645: approving mid-run would approve answers about to change.
     refuse_while_running(db, a.service_id)
     if a.status == ZtAssessmentStatus.APPROVED:
-        return _serialize_assessment(db, a)
+        return _serialize_assessment(db, a, viewer=user)
     if a.status == ZtAssessmentStatus.RELEASED:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1626,7 +1627,7 @@ def approve_assessment(
         if a.status == ZtAssessmentStatus.DISCARDED:
             raise _refuse_approving_discarded()
         if a.status == ZtAssessmentStatus.APPROVED:
-            return _serialize_assessment(db, a)
+            return _serialize_assessment(db, a, viewer=user)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Assessment already released.",
@@ -1642,7 +1643,7 @@ def approve_assessment(
     )
     db.commit()
     db.refresh(a)
-    return _serialize_assessment(db, a)
+    return _serialize_assessment(db, a, viewer=user)
 
 
 @router.post(
@@ -1663,7 +1664,7 @@ def discard_assessment(
     contract (D-031)."""
     a = require_zt_assessment_in_tenant(db, assessment_id, client.id)
     if a.status == ZtAssessmentStatus.DISCARDED:
-        return _serialize_assessment(db, a)  # idempotent, no audit
+        return _serialize_assessment(db, a, viewer=user)  # idempotent, no audit
     if a.status != ZtAssessmentStatus.DRAFT:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1697,7 +1698,7 @@ def discard_assessment(
     if result.rowcount != 1:
         db.refresh(a)
         if a.status == ZtAssessmentStatus.DISCARDED:
-            return _serialize_assessment(db, a)
+            return _serialize_assessment(db, a, viewer=user)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -1728,7 +1729,7 @@ def discard_assessment(
     )
     db.commit()
     db.refresh(a)
-    return _serialize_assessment(db, a)
+    return _serialize_assessment(db, a, viewer=user)
 
 
 # ---------------------------------------------------------------------------
@@ -2337,4 +2338,4 @@ def start_assessment_revision(
         ),
     )
     result = start_revision(db, svc=svc, target=target, user=user, reason=body.reason, plan=plan)
-    return _serialize_assessment(db, result.record)
+    return _serialize_assessment(db, result.record, viewer=user)
