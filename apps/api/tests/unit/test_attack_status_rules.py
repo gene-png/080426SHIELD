@@ -212,7 +212,11 @@ def test_a_draft_in_progress_before_0059_reads_as_computed_and_queues_its_change
                     "t": tools,
                 },
             )
-    command.upgrade(cfg, "0059")
+    # To head, not 0059: the ORM below is head-shaped, so reading it at 0059
+    # breaks as soon as a later migration adds a column to these tables
+    # (#1120's 0073 adds `revision_of`). 0059's backfill is what is under test,
+    # and no later migration touches `status_rules` or these rows.
+    command.upgrade(cfg, "head")
     with Session(engine) as s:
         # The only assessment and its rows. Raw SQL above wrote hyphenated ids,
         # which the ORM's UUID type does not look up by key on SQLite.

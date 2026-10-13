@@ -12,6 +12,7 @@ from app.attack.coverage import CoverageStatus
 from app.models.attack_assessment import AttackAssessmentStatus
 from app.models.service import ServiceKind, ServiceStatus
 from app.schemas.ai_runs import AiSource
+from app.schemas.revisions import RevisionInfo
 
 # ---------------------------------------------------------------------------
 # Catalog
@@ -257,6 +258,8 @@ class AttackAssessmentResponse(BaseModel):
     #: service's drafts being ignored once it has one (R6b). Admin only.
     #: REQUIRED.
     subset_fallback_notes: list[str]
+    #: #1120: what a revision copied and why (V3, V4, V5); NULL otherwise.
+    revision: RevisionInfo | None = None
 
 
 class ComputedStatusReviewItem(BaseModel):

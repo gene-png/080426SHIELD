@@ -593,7 +593,13 @@ export function RiskRegisterDashboard(): JSX.Element {
     return (
       <EmptyState
         title="Risk Register is locked"
-        description={`To synthesise risks for ${clientName}, first complete: ${gate.missing.join("; ")}.`}
+        // #1081: the API's approved copy, one sentence per missing kind. A
+        // value test, not a presence test: an older API sends no message, and
+        // the page then names what is missing as it did before.
+        description={
+          gate.locked_message ??
+          `To synthesise risks for ${clientName}, first complete: ${gate.missing.join("; ")}.`
+        }
       />
     );
   }
