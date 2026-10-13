@@ -789,9 +789,13 @@ def test_intake_engagement_status_skips_discarded(app_client) -> None:
 
     from app.models.csf_assessment import CsfAssessment, CsfAssessmentStatus
     from app.models.service import ServiceKind
+    from app.models.user import User
     from app.routes.intake import _latest_assessment_status
 
     with TestSession() as db:
+        # #1120: the status is per viewer (a revision draft reads, for a
+        # client, as the record it revises); this is the admin's view.
+        admin = db.get(User, admin_id)
         svc = _build_service(db, kind=ServiceKind.NIST_CSF, client_id=client_id, opened_by=admin_id)
         db.add(
             CsfAssessment(
@@ -812,7 +816,7 @@ def test_intake_engagement_status_skips_discarded(app_client) -> None:
         db.commit()
         db.refresh(svc)
         # Reports the latest NON-discarded status, not the discarded v2.
-        assert _latest_assessment_status(db, svc) == "approved"
+        assert _latest_assessment_status(db, svc, admin) == "approved"
 
         # Discarded-only -> no active assessment status.
         svc2 = _build_service(
@@ -828,4 +832,4 @@ def test_intake_engagement_status_skips_discarded(app_client) -> None:
         )
         db.commit()
         db.refresh(svc2)
-        assert _latest_assessment_status(db, svc2) is None
+        assert _latest_assessment_status(db, svc2, admin) is None

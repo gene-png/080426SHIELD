@@ -74,7 +74,8 @@ test("archiving one of two same-kind services from the duplicate banner clears t
 
   await page.goto("/admin/risk-register");
   await expect(
-    page.getByRole("heading", { name: "Risk Register", exact: true }),
+    // RR-2 (for #1121): the h1 names the client the page shows.
+    page.getByRole("heading", { name: /^Risk Register for / }),
   ).toBeVisible({ timeout: 60000 });
 
   // The refusal and its remedy, before anything is archived.

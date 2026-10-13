@@ -1,5 +1,17 @@
 # Gene — in-flight status
 
+_2026-10-14 (track5): C-1a landed with PR #1144, for #1046._ CSF Run AI now uses version v3 of the scoring prompt: the v2 text you approved plus the two edits the advisor approved, telling the model to return exactly eight keys per row, with no confidence or other extra key, and all five dimension scores even when a score is 0. It is still only an instruction: a row that leaves a dimension out keeps its old value and is not reported. The check and the re-ask are C-1b, #1133. Three tests on main were edited with the advisor's sha256 approval. Advisories are filed as #1146. It comes back to you: conditions 5 and 6.
+
+_2026-10-13 (track4): #806's Zero Trust prompt landed with PR #981._ Run AI on a Zero Trust assessment now uses the prompt you approved, tells the model what each capability and DoD activity is, and only suggests a current stage: the target always comes from intake. A test failure on this PR's head could not be reproduced and passed on re-run; it is filed as #1143 so it is not forgotten.
+
+_2026-10-13 (track1): RR-2 and RR-1 landed together with PR #1148, carrying #1140._ The Risk Register, Deliverables and Messages pages now have their own client picker, and the client is in the URL, so two tabs can show two clients and nothing changes behind your back. On the Risk Register, the consultant chooses which CSF and Zero Trust services feed the register before generating it; the screen, the client dashboard and the PDF, DOCX and XLSX all say what was included and what was left out. Publish refuses a register that has no recorded choice. The demo seed picks CSF and CISA Zero Trust. Follow-ups: #1139, #1142 and #1150.
+
+_2026-10-13 (trackB): #1120 landed with PR #1152, carrying #1151 (migration 0073)._ To change an approved or released ATT&CK, CSF or ZT assessment, a consultant now clicks "Start a revision" and gives a reason; that opens a new draft with the same values, and the draft says where it came from. A service can only ever have one draft. Clients keep seeing the version they had until the revision is released. Editing an approved CSF Working Profile directly is now refused, with a message pointing at the button. Tech Debt revisions are still to do, after #1044, so #1120 stays open.
+
+_2026-10-13 (track1): #1031 landed with PR #1077 (migration 0070)._ A CSF subcategory scored only on one tier no longer drops to level 1 because the other tiers were left at their defaults: the Enterprise level now reads the tiers someone actually scored. Assessments approved before this keep the numbers the client already has. Where the only target sits on a tier nobody scored, the Playbook says "Not measured" instead of guessing.
+
+_2026-10-12 (track11): N5 landed with PR #1109 (migration 0068)._ The database can now hold a client's description and status for each uploaded file, and links between a file and the assessment row it supports. Nothing uses them yet. Rows you had already ticked as having evidence, on approved or released CSF assessments, are marked as confirmed before linking existed. Undoing this migration is refused while any of that data exists.
+
 _2026-10-12 (track5): #552 landed with PR #1042._ Redaction before every AI call now runs in its own short-lived child process. A slow redaction can no longer freeze the app, and the child holds no keys of its own. The app also refuses to start if the redaction child cannot run, and the error says why. The same landing records D-112, your decision that SHIELD holds demo data only until the MVP: no new freeze work, and existing freezes stay.
 
 _2026-10-12 (track11): N4 landed with PR #1099 (migration 0067)._ The database now has the three empty tables the reports work will fill: findings reports, integration runs and recommendations. Nothing uses them yet. Anyone who upgraded a dev database while N4 was in review should run `alembic downgrade 0066` then `alembic upgrade head`, because 0067 changed in place (#1131).
@@ -44,7 +56,8 @@ and 6).
 
 _2026-10-09 (track5): the #806 CSF prompt is built on `track5/806-csf-prompt`;
 the PR is not yet open. It ships your approved CSF text (#806 comment
-5982122270, sha256-pinned) as `prompt_version` "v2", sends each
+5982122270, sha256-pinned) as `prompt_version` "v2" (v3 from PR #1144,
+2026-10-14), sends each
 subcategory's NIST outcome text through #985's catalog guard, a batch's own
 codes only, and rewrites the offline fixture from the prompt. The test edits
 are A1 to A5 as approved on #736 (comment 6075712436), s7 included. The batch

@@ -9,7 +9,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 let pathname = "/admin/queue";
-vi.mock("next/navigation", () => ({ usePathname: () => pathname }));
+// RR-2 (for #1121): the shell reads `client` from the URL for its twin links.
+vi.mock("next/navigation", () => ({
+  usePathname: () => pathname,
+  useSearchParams: () => new URLSearchParams(),
+}));
 vi.mock("@/components/admin/AiStatusBanner", () => ({
   AiStatusBanner: () => null,
 }));

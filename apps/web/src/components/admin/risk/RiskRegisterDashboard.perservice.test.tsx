@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as clientReads from "@/lib/admin/client-reads";
 import * as riskClient from "@/lib/risk/client";
 import type { RiskEntry, RiskGate, RiskRegister } from "@/lib/risk/types";
 
@@ -24,8 +25,18 @@ vi.mock("@/lib/risk/client", () => ({
   fetchRiskGate: vi.fn(),
   fetchRiskRegisterLatest: vi.fn(),
   generateRiskRegister: vi.fn(),
-  getActiveClientId: vi.fn(),
-  getClientName: vi.fn(),
+}));
+
+// RR-2 (for #1121): the page takes its client from its own picker. The two
+// reads are mocked where they live, with API-shaped bodies, so the real
+// resolver chooses the client. The URL carries no ?client=.
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/admin/risk-register",
+  useSearchParams: () => new URLSearchParams(),
+}));
+vi.mock("@/lib/admin/client-reads", () => ({
+  readClientList: vi.fn(),
+  readActiveClient: vi.fn(),
 }));
 
 vi.mock("@/components/admin/RunAiGuard", () => ({
@@ -40,8 +51,30 @@ vi.mock("@/components/admin/RunAiGuard", () => ({
 
 const fetchRiskGate = vi.mocked(riskClient.fetchRiskGate);
 const fetchRiskRegisterLatest = vi.mocked(riskClient.fetchRiskRegisterLatest);
-const getActiveClientId = vi.mocked(riskClient.getActiveClientId);
-const getClientName = vi.mocked(riskClient.getClientName);
+
+/**
+ * RR-2 (for #1121): `id` is the one listed client, named `name`, and the one
+ * saved in this browser. The list is shaped like `AdminClientListResponse`.
+ */
+function mockPickedClient(id: string, name: string): void {
+  vi.mocked(clientReads.readClientList).mockResolvedValue({
+    clients: [
+      {
+        id,
+        legal_name: name,
+        dba_name: null,
+        industry: null,
+        size_band: null,
+        intake_completed_at: null,
+        created_at: "2026-10-01T00:00:00Z",
+        archived_at: null,
+        open_request_count: 0,
+        total_request_count: 0,
+      },
+    ],
+  });
+  vi.mocked(clientReads.readActiveClient).mockResolvedValue({ active: id });
+}
 
 function gate(): RiskGate {
   return {
@@ -49,6 +82,32 @@ function gate(): RiskGate {
     has_attack: true,
     has_csf: true,
     has_zt: true,
+    // RR-1 (for #1122): the selection block's rows. With none, Generate
+    // stays disabled (design note §3.4).
+    eligible: [
+      {
+        kind: "attack",
+        service_id: "svc-attack",
+        title: "ATT&CK",
+        framework: null,
+        label: "ATT&CK coverage",
+      },
+      {
+        kind: "csf",
+        service_id: "svc-csf",
+        title: "CSF",
+        framework: null,
+        label: "NIST CSF",
+      },
+      {
+        kind: "zt",
+        service_id: "svc-zt",
+        title: "ZT",
+        framework: "cisa_ztmm_2_0",
+        label: "Zero Trust (CISA ZTMM 2.0)",
+      },
+    ],
+    ineligible: [],
     missing: [],
     not_finalized: [],
     synthesizable_missing: [],
@@ -130,11 +189,14 @@ function register(over: Partial<RiskRegister> = {}): RiskRegister {
 
 async function loaded(): Promise<void> {
   render(<RiskRegisterDashboard />);
-  await waitFor(() =>
+  await waitFor(() => {
+    // RR-2 (for #1121): the h1 names the client and renders before the
+    // body has loaded, so the wait is for the body too.
     expect(
-      screen.getByRole("heading", { name: "Risk Register" }),
-    ).toBeInTheDocument(),
-  );
+      screen.getByRole("heading", { name: /^Risk Register for / }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Loading…")).toBeNull();
+  });
 }
 
 const DUPLICATE =
@@ -143,8 +205,7 @@ const DUPLICATE =
 describe("RiskRegisterDashboard per service (#876)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getActiveClientId.mockResolvedValue("c1");
-    getClientName.mockResolvedValue("Client");
+    mockPickedClient("c1", "Client");
     fetchRiskRegisterLatest.mockResolvedValue(null);
   });
 
@@ -198,9 +259,19 @@ describe("RiskRegisterDashboard per service (#876)", () => {
       register({
         excluded_unscored_links_recorded: true,
         excluded_unscored_links: [
-          { service: "attack", scored: 3, total: 10 },
-          { service: "zt:cisa_ztmm_2_0", scored: 2, total: 37 },
-          { service: "zt:dod_ztra", scored: 1, total: 20 },
+          { service: "attack", scored: 3, total: 10, label: "ATT&CK coverage" },
+          {
+            service: "zt:cisa_ztmm_2_0",
+            scored: 2,
+            total: 37,
+            label: "Zero Trust (CISA ZTMM 2.0)",
+          },
+          {
+            service: "zt:dod_ztra",
+            scored: 1,
+            total: 20,
+            label: "Zero Trust (DoD ZT Reference Architecture)",
+          },
         ],
       }),
     );

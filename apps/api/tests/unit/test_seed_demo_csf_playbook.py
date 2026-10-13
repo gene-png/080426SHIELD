@@ -131,7 +131,13 @@ def test_a_regenerate_on_atlas_draws_csf_findings_from_the_playbook(seeded) -> N
         h = {"Authorization": f"Bearer {login.json()['access_token']}"}
         with Session(engine) as db:
             cid = str(db.execute(select(RiskRegister.client_id)).scalar_one())
-        gen = c.post(f"/risk/clients/{cid}/register/generate", headers=h)
+        # RR-1 (#1122): seeded Atlas has both Zero Trust frameworks, so an
+        # absent body is refused as ambiguous; name the seed's own selection.
+        gen = c.post(
+            f"/risk/clients/{cid}/register/generate",
+            headers=h,
+            json={"include": {"csf": True, "zero_trust": "cisa_ztmm_2_0"}},
+        )
         assert gen.status_code == 201, gen.text
         latest = c.get(f"/risk/clients/{cid}/register/latest", headers=h)
         assert latest.status_code == 200, latest.text

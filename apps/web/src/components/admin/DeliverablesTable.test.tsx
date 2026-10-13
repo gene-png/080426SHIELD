@@ -18,17 +18,55 @@ vi.mock("@/lib/admin/deliverables", async (importOriginal) => ({
   fetchAdminDeliverables: vi.fn(),
 }));
 
-vi.mock("@/lib/active-client", () => ({ getActiveClientId: vi.fn() }));
+// RR-2 (for #1121): the page takes its client from its own picker. The two
+// reads are mocked where they live, with API-shaped bodies, so the real
+// resolver chooses the client. The URL carries no ?client=.
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/admin/deliverables",
+  useSearchParams: () => new URLSearchParams(),
+}));
+vi.mock("@/lib/admin/client-reads", () => ({
+  readClientList: vi.fn(),
+  readActiveClient: vi.fn(),
+}));
 
 const { fetchAdminDeliverables } = await import("@/lib/admin/deliverables");
 const mockFetch = vi.mocked(fetchAdminDeliverables);
-const { getActiveClientId } = await import("@/lib/active-client");
-const mockActiveClient = vi.mocked(getActiveClientId);
+const clientReads = await import("@/lib/admin/client-reads");
+
+const PICKED = "11111111-1111-4111-8111-111111111111";
+
+/** One row of `AdminClientListResponse`, every field the API sends. */
+function summary(id: string, legal_name: string) {
+  return {
+    id,
+    legal_name,
+    dba_name: null,
+    industry: null,
+    size_band: null,
+    intake_completed_at: null,
+    created_at: "2026-10-01T00:00:00Z",
+    archived_at: null,
+    open_request_count: 0,
+    total_request_count: 0,
+  };
+}
+
+/** Two clients, so no one-client rule; `active` is the one saved. */
+function savedClient(active: string | null): void {
+  vi.mocked(clientReads.readClientList).mockResolvedValue({
+    clients: [
+      summary(PICKED, "Atlas Corp"),
+      summary("22222222-2222-4222-8222-222222222222", "Beacon LLC"),
+    ],
+  });
+  vi.mocked(clientReads.readActiveClient).mockResolvedValue({ active });
+}
 
 beforeEach(() => {
   // Every test below is about an admin who has already picked a tenant, unless
   // it says otherwise.
-  mockActiveClient.mockResolvedValue("11111111-1111-4111-8111-111111111111");
+  savedClient(PICKED);
 });
 
 afterEach(() => {
@@ -132,7 +170,7 @@ describe("DeliverablesTable", () => {
   // for "pick a client", which is what CI hit on 2026-08-07.
   describe("with no client selected", () => {
     beforeEach(() => {
-      mockActiveClient.mockResolvedValue(null);
+      savedClient(null);
     });
 
     it("says what to do next instead of reporting a failure", async () => {
