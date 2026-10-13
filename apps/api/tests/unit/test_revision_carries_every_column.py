@@ -305,15 +305,23 @@ def _artifact(sessions, client_id: str, user_id: str) -> uuid.UUID:
         return a.id
 
 
+#: Per kind: the service body, the evidence-link target kind, and the child
+#: table whose row an evidence link names. WHICH child tables are checked is
+#: not listed here: it is derived from the model (`_copied_children`), so a
+#: child classified as copied but missing from the route's `KindPlan` fails
+#: the "not copied" assertion below.
 _KIND = {
-    "attack": ({"title": "ATT&CK"}, "ATTACK_TECHNIQUE", ("attack_coverage",)),
-    "csf": (
-        {"kind": "nist_csf", "title": "CSF"},
-        "CSF_ROW",
-        ("csf_answers", "csf_dimension_scores", "csf_gap_actions"),
-    ),
-    "zt": ({"kind": "zero_trust_cisa", "title": "ZT"}, "ZT_CAPABILITY", ("zt_answers",)),
+    "attack": ({"title": "ATT&CK"}, "ATTACK_TECHNIQUE", "attack_coverage"),
+    "csf": ({"kind": "nist_csf", "title": "CSF"}, "CSF_ROW", "csf_answers"),
+    "zt": ({"kind": "zero_trust_cisa", "title": "ZT"}, "ZT_CAPABILITY", "zt_answers"),
 }
+
+
+def _copied_children(kind: str) -> tuple[str, ...]:
+    """Every ForeignKey child of the kind's record table that is not named as
+    not carried: what a revision must copy (evidence links, keyed without a
+    ForeignKey, are checked beside these)."""
+    return tuple(sorted(_fk_children(f"{kind}_assessments") - set(TABLES_NOT_CARRIED)))
 
 
 @pytest.mark.parametrize("kind", sorted(_KIND))
@@ -324,7 +332,9 @@ def test_every_carried_column_is_copied(world, kind: str, tmp_path) -> None:
 
     c, sessions = world
     h, user_id = _admin(c)
-    body, target_kind, tables = _KIND[kind]
+    body, target_kind, link_table = _KIND[kind]
+    tables = _copied_children(kind)
+    assert link_table in tables, (kind, tables)
     svc = c.post(f"/{kind}/services", headers=h, json=body).json()
     v1 = c.post(f"/{kind}/services/{svc['id']}/assessments", headers=h).json()
     if kind == "csf":
@@ -373,8 +383,8 @@ def test_every_carried_column_is_copied(world, kind: str, tmp_path) -> None:
             "ZT_CAPABILITY": "capability_code",
         }[target_kind]
         first = s.execute(
-            select(models[tables[0]].class_)
-            .where(models[tables[0]].class_.assessment_id == uuid.UUID(v1["id"]))
+            select(models[link_table].class_)
+            .where(models[link_table].class_.assessment_id == uuid.UUID(v1["id"]))
             .limit(1)
         ).scalar_one()
         link = EvidenceLink(
