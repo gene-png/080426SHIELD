@@ -48,7 +48,7 @@ export const HELP_EVIDENCE =
   'Tick "Evidence on file" only when evidence for this subcategory and tier is held. Without it, Implementation counts as no more than 1 and the level cannot exceed L2, whatever the scores. Run AI never ticks this box, and a file the client attached to the questionnaire does not tick it either: a consultant has to.';
 
 export const HELP_TARGET =
-  'Target is the level the client should reach for this subcategory in this tier. The Enterprise profile compares its rolled-up level, usually the lowest of the in-scope tiers that have been scored, with the highest target set on any in-scope tier that has been scored. Below the target is a gap. With no target on any in-scope tier that has been scored, the subcategory is not checked for a gap: it is counted as "with no target", not as met.';
+  'Target is the level the client should reach for this subcategory in this tier. The Enterprise profile reads the in-scope tiers that have been scored, or every in-scope tier while none has been scored. It compares their rolled-up level, usually the lowest, with the highest target among them. Below the target is a gap. If none of them has a target, the subcategory is not checked for a gap: it is counted as "not measured" when another in-scope tier has a target, and as "with no target" otherwise, never as met.';
 
 export const HELP_IN_SCOPE =
   'Untick "In scope" when this subcategory does not apply to the systems in this tier. An out-of-scope row is left out of the Enterprise level, the gaps and their priorities. If every tier is out of scope, the subcategory leaves the Enterprise profile.';
@@ -124,9 +124,11 @@ export const CAPPED_NOTE =
 
 /**
  * S2: under Target, only when this tier's row has none. The gap is judged per
- * subcategory against the highest target on any in-scope tier that has been
- * scored (`enterprise_subcategories`: `max(targets)`), so an untargeted tier is
- * still checked when another tier that has been scored has a target (#1076).
+ * subcategory against the highest target among the in-scope tiers the roll-up
+ * reads (`enterprise_subcategories`: `max(targets)`): the tiers that have been
+ * scored, or every in-scope tier while none has been scored. So an untargeted
+ * tier is still checked when another in-scope tier has a target and has been
+ * scored, or when no tier has been scored yet (#1076, #1141).
  */
 export const NO_TARGET_NOTE =
-  "No target on this tier. The subcategory is still checked for a gap if another in-scope tier that has been scored has a target.";
+  "No target on this tier. The subcategory is still checked for a gap if another in-scope tier has a target and has been scored, or if no tier has been scored yet.";
