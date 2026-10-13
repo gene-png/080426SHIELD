@@ -1,5 +1,7 @@
 # Gene — in-flight status
 
+_2026-10-13 (trackB): #1120 landed with PR #1152, carrying #1151 (migration 0073)._ To change an approved or released ATT&CK, CSF or ZT assessment, a consultant now clicks "Start a revision" and gives a reason; that opens a new draft with the same values, and the draft says where it came from. A service can only ever have one draft. Clients keep seeing the version they had until the revision is released. Editing an approved CSF Working Profile directly is now refused, with a message pointing at the button. Tech Debt revisions are still to do, after #1044, so #1120 stays open.
+
 _2026-10-13 (track1): #1031 landed with PR #1077 (migration 0070)._ A CSF subcategory scored only on one tier no longer drops to level 1 because the other tiers were left at their defaults: the Enterprise level now reads the tiers someone actually scored. Assessments approved before this keep the numbers the client already has. Where the only target sits on a tier nobody scored, the Playbook says "Not measured" instead of guessing.
 
 _2026-10-12 (track11): N5 landed with PR #1109 (migration 0068)._ The database can now hold a client's description and status for each uploaded file, and links between a file and the assessment row it supports. Nothing uses them yet. Rows you had already ticked as having evidence, on approved or released CSF assessments, are marked as confirmed before linking existed. Undoing this migration is refused while any of that data exists.
