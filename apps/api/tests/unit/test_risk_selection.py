@@ -120,11 +120,7 @@ def test_an_absent_key_is_not_recorded_and_null_is_unreadable() -> None:
         # Check 4: only CSF and ZT are named.
         (
             "attack in ineligible",
-            {
-                "selection": _sel(
-                    included=[_row("csf", CSF_ID)], ineligible=[_row("attack", "a2")]
-                )
-            },
+            {"selection": _sel(included=[_row("csf", CSF_ID)], ineligible=[_row("attack", "a2")])},
         ),
         (
             "tech_debt in ineligible",

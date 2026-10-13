@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import contextvars
 import dataclasses
+import json
 import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -22,7 +23,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import ValidationError
 from sqlalchemy import func, null, select, update
 from sqlalchemy.orm import Session, undefer_group
 
@@ -954,6 +956,44 @@ _SERVICE_KINDS_FOR = {
     ("zt", "cisa_ztmm_2_0"): (ServiceKind.ZERO_TRUST_CISA,),
     ("zt", "dod_ztra"): (ServiceKind.ZERO_TRUST_DOD,),
 }
+
+
+#: Design note §8 copy 10, approved verbatim (#736 6131606581). The proxy's own
+#: refusal of an unparseable body says the same (`.../register/generate/route.ts`).
+_SELECTION_UNREADABLE_MESSAGE = (
+    "The services to include could not be read. Reload the page and choose them again."
+)
+
+
+async def _generate_body(request: Request) -> RiskGenerateRequest | None:
+    """The generate body, or None when none was sent (§3.2's absent-body default).
+
+    Advisor ruling 6135456370, option (a): EVERY shape error -- not JSON, not an
+    object, `include` missing or not an object, a key the schema does not know,
+    a `csf` that is not a JSON boolean ("yes", 1, "true"), a `zero_trust` that
+    is not a stored framework or null -- is the typed `risk_selection_unreadable`
+    with copy 10. FastAPI's own validation would answer with the schema
+    envelope ("Request validation failed.", `schema_*`), a downgrade on a route
+    whose other refusals are typed (CLAUDE.md, the `Query(ge=...)` entry). A
+    JSON `null` is a body that was sent, so it is refused too, never read as
+    "no body". Read from the raw bytes for that reason.
+    """
+    raw = await request.body()
+    if not raw.strip():
+        return None
+    try:
+        return RiskGenerateRequest.model_validate(json.loads(raw))
+    except (ValueError, ValidationError) as exc:
+        # `json.JSONDecodeError` and pydantic's ValidationError; a non-object
+        # body fails `model_validate` the same way.
+        _log.info("risk_selection_unreadable", error=type(exc).__name__, length=len(raw))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "reason": "risk_selection_unreadable",
+                "message": _SELECTION_UNREADABLE_MESSAGE,
+            },
+        ) from exc
 
 
 def _selection_refused(reason: str, message: str) -> HTTPException:
@@ -2103,7 +2143,9 @@ def generate(
     db: Annotated[Session, Depends(get_db)],
     llm: Annotated[LLMClient, Depends(_llm_dep)],
     limiter: Annotated[RateLimiter, Depends(get_rate_limiter)],
-    body: RiskGenerateRequest | None = None,
+    # LAST, so an unauthenticated or non-admin caller is refused by the
+    # dependencies above before its body is read.
+    body: Annotated[RiskGenerateRequest | None, Depends(_generate_body)],
 ) -> RiskRegisterResponse:
     # DELIBERATELY NOT a background run, and it does NOT take `serves` yet.
     # #645 moved ATT&CK, Tech Debt, CSF and ZT to runs that carry the AI status

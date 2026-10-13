@@ -598,28 +598,85 @@ def test_the_duplicate_refusal_precedes_and_ignores_the_selection(app_client) ->
     assert r.json()["error"]["reason"] == "risk_register_duplicate_inputs", r.text
 
 
-@pytest.mark.parametrize(
-    "body",
-    [
-        {"include": {"csf": True}},
-        {"include": {"csf": True, "zero_trust": "zt"}},
-        {"include": {"csf": "yes", "zero_trust": None}},
-        {"include": {"csf": 1, "zero_trust": None}},
-        {"include": {"csf": True, "zero_trust": None, "attack": False}},
-        {"csf": True, "zero_trust": None},
-    ],
-)
-def test_a_malformed_body_is_refused_typed_and_generates_nothing(
-    body, app_client  # noqa: F811
+COPY_10 = "The services to include could not be read. Reload the page and choose them again."
+
+
+def _post_raw(c, provider, bearer: str, cid: str, raw: str):
+    """Generate with a body sent as given, bytes and all."""
+    provider.register("risk_synthesize", _per_finding([]))
+    return c.post(
+        f"/risk/clients/{cid}/register/generate",
+        headers={**_h(bearer, cid), "Content-Type": "application/json"},
+        content=raw,
+    )
+
+
+# Advisor ruling 6135456370, option (a): EVERY shape error in the generate
+# body is the typed `risk_selection_unreadable` with copy 10, as the proxy's
+# own refusal is, never FastAPI's schema envelope. The three `csf` strings the
+# ruling names come first.
+_UNREADABLE_BODIES = [
+    ("csf is the string yes", '{"include": {"csf": "yes", "zero_trust": null}}'),
+    ("csf is the number 1", '{"include": {"csf": 1, "zero_trust": null}}'),
+    ("csf is the string true", '{"include": {"csf": "true", "zero_trust": null}}'),
+    ("csf is null", '{"include": {"csf": null, "zero_trust": null}}'),
+    ("csf is missing", '{"include": {"zero_trust": null}}'),
+    ("zero_trust is missing", '{"include": {"csf": true}}'),
+    ("zero_trust is not a framework", '{"include": {"csf": true, "zero_trust": "zt"}}'),
+    ("zero_trust is a number", '{"include": {"csf": true, "zero_trust": 2}}'),
+    ("an extra key in include", '{"include": {"csf": true, "zero_trust": null, "attack": false}}'),
+    ("an extra top-level key", '{"include": {"csf": true, "zero_trust": null}, "x": 1}'),
+    ("include is missing", "{}"),
+    ("the selection is not under include", '{"csf": true, "zero_trust": null}'),
+    ("include is not an object", '{"include": 3}'),
+    ("include is null", '{"include": null}'),
+    ("the body is a list", "[]"),
+    ("the body is a string", '"include"'),
+    ("the body is a number", "3"),
+    ("the body is null", "null"),
+    ("the body is not JSON", "{not json"),
+]
+
+
+@pytest.mark.parametrize("name, raw", _UNREADABLE_BODIES, ids=[n for n, _ in _UNREADABLE_BODIES])
+def test_a_malformed_body_is_refused_typed_with_copy_10_and_generates_nothing(
+    name, raw, app_client  # noqa: F811
 ) -> None:
     c, provider = app_client
     bearer, cid = _admin(c)
     _world(c, bearer, cid, "eligible", "eligible", "none")
-    r = _generate(c, provider, bearer, cid, body)
-    assert r.status_code == 422, r.text
+    r = _post_raw(c, provider, bearer, cid, raw)
+    assert r.status_code == 400, (name, r.status_code, r.text)
+    err = r.json()["error"]
+    assert err["reason"] == "risk_selection_unreadable", (name, err)
+    assert err["message"] == COPY_10, (name, err)
+    # Never the schema envelope.
+    assert "reasons" not in err and "details" not in err, (name, err)
     latest = c.get(f"/risk/clients/{cid}/register/latest", headers=_h(bearer, cid))
     assert latest.status_code in (200, 404), latest.text
     assert latest.status_code == 404 or latest.json() is None, latest.text
+
+
+@pytest.mark.parametrize(
+    "name, raw",
+    [
+        ("an empty body", ""),
+        ("a valid selection", '{"include": {"csf": true, "zero_trust": null}}'),
+        (
+            "a valid selection with Zero Trust",
+            '{"include": {"csf": false, "zero_trust": "cisa_ztmm_2_0"}}',
+        ),
+    ],
+)
+def test_a_readable_body_or_none_still_generates(name, raw, app_client) -> None:  # noqa: F811
+    """The negative control: the refusal above is about shape, not about
+    having a body. An empty body is the absent-body default (§3.2)."""
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    _world(c, bearer, cid, "eligible", "eligible", "none")
+    r = _post_raw(c, provider, bearer, cid, raw)
+    assert r.status_code == 201, (name, r.text)
+    assert r.json()["selection_recorded"] is True, name
 
 
 # ---------------------------------------------------------------------------
