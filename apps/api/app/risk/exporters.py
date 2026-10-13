@@ -15,6 +15,7 @@ from typing import Any
 
 from app.client_naming import org_display_name
 from app.csf.catalog import all_codes as csf_all_codes
+from app.logging import get_logger
 from app.mode_stamp import (
     UNKNOWN_AI_MODE_REGISTER,
     AiModeStamp,
@@ -23,7 +24,7 @@ from app.mode_stamp import (
     pdf_paragraph,
 )
 from app.pdf_export import pdf_text
-from app.risk.baseline import PLAYBOOK_SOURCES
+from app.risk.baseline import PLAYBOOK_SOURCES, targets_used
 from app.risk.engine import (
     IMPACT_ORDER,
     LIKELIHOOD_ORDER,
@@ -38,7 +39,16 @@ from app.risk.engine import (
     matrix_counts,
     tier_counts,
 )
+from app.risk.selection import (
+    SELECTION_NOT_RECORDED,
+    SELECTION_UNREADABLE,
+    Selection,
+    selection_of,
+    zt_service_count,
+)
 from app.xlsx_export import safe_text_row
+
+_log = get_logger(__name__)
 
 #: #737, Gene's ruling (#736, 5986057990 item 13), verbatim.
 DRAFT_MARKER = "Draft: not published"
@@ -52,6 +62,37 @@ _GOVERNANCE_COLUMNS = [
     "Next Review",
     "Status",
 ]
+
+
+@dataclass(frozen=True)
+class Disclosure:
+    """RR-1 (for #1122), design note §6.1 and §7: what a register says about
+    the services it was generated from, read ONCE from its provenance by
+    `selection_context`, for the files AND the responses.
+
+    `recorded` False is the fail-closed state: the register has no usable
+    record of its selection (no `selection` key, an unreadable one, or one
+    failing the consistency checks), or its `inputs` cannot be read. Every
+    surface then prints copy 11 alone, never copy 8 or 9a-9c.
+    """
+
+    recorded: bool
+    #: Copy 8's `{list}`: each `inputs` row's label, in `inputs` order.
+    covered: tuple[str, ...] = ()
+    #: 9a/9b: eligible CSF or ZT services the admin left out.
+    deselected: tuple[str, ...] = ()
+    #: 9c: CSF or ZT services engaged with no assessment at generate.
+    ineligible: tuple[str, ...] = ()
+    #: §6.2's naming predicate for the target lines, or None to keep the
+    #: pre-RR-1 rule (count the ZT target rows) when nothing is known.
+    name_framework: bool | None = None
+    #: The scored-coverage row labels, by scope key (`scope_display_label`).
+    scope_labels: dict[str, str] = field(default_factory=dict)
+
+
+#: A caller that passes no disclosure renders copy 11, never copy 8 or 9a-9c:
+#: fail closed, so a forgotten argument cannot print a clean "generated from".
+Disclosure.NOT_RECORDED = Disclosure(recorded=False)  # type: ignore[attr-defined]
 
 
 @dataclass(frozen=True)
@@ -117,6 +158,8 @@ class RiskExportContext:
     #: R11 (#736 6103383277): the CSF Playbook had scores and targets that
     #: never shared a row, so the not-measured line says that instead.
     csf_no_shared_row: bool = False
+    #: RR-1 (for #1122): the selection lines (copy 8, 9a-9c, or 11).
+    disclosure: Disclosure = Disclosure.NOT_RECORDED  # type: ignore[attr-defined]
 
 
 def _enum_list(values, enum_cls):
@@ -146,6 +189,7 @@ def build_context(
     csf_source_note: str | None = None,
     csf_unscored_targets_note: str | None = None,
     csf_no_shared_row: bool = False,
+    disclosure: Disclosure = Disclosure.NOT_RECORDED,  # type: ignore[attr-defined]
 ) -> RiskExportContext:
     return RiskExportContext(
         client_legal_name=org_display_name(client_legal_name),
@@ -163,6 +207,7 @@ def build_context(
         csf_source_note=csf_source_note,
         csf_unscored_targets_note=csf_unscored_targets_note,
         csf_no_shared_row=csf_no_shared_row,
+        disclosure=disclosure,
     )
 
 
@@ -405,7 +450,7 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
             safe_text_row(
                 sheet,
                 [
-                    scope_label(service),
+                    ctx.disclosure.scope_labels.get(service) or scope_label(service),
                     scored,
                     total,
                     total - scored,
@@ -443,18 +488,13 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
 #: Service tokens as the API spells them, for the #403 scored-coverage
 #: disclosure.
 #:
-#: DUPLICATED, unavoidably: `SERVICE_LABELS` in
-#: `apps/web/src/lib/risk/labels.ts` is the one web copy of the target and
-#: scope-key labels; `lib/risk/inputs.ts` and `components/admin/zt/ZtWorkspace.tsx`
-#: repeat these strings (#946). There is no way to share a Python
-#: dict with TSX, so this is a synchronization rather than a derivation --
-#: which `CLAUDE.md` says to avoid where possible and otherwise to NAME, with
-#: the window stated.
-#:
-#: The window: a label changed in one place and not the other makes the client's
-#: PDF and the screens disagree about which assessment a count belongs to.
-#: Cosmetic rather than numeric -- the counts themselves come from one parser --
-#: but it is the kind of drift nobody notices. Change both.
+#: RR-1 (for #1122): the screens no longer keep a copy of these labels. They
+#: render the `label` the API builds from this map (the gate's rows, the
+#: target rows and the scored-coverage rows), so the files and the screens
+#: cannot name a service differently. `lib/risk/inputs.ts` (the Inputs panel)
+#: and `components/admin/zt/ZtWorkspace.tsx` still repeat the kind strings
+#: (#946): a synchronization, whose window is a panel row and a file naming one
+#: assessment two ways. Change them with this map.
 _SERVICE_LABELS = {
     "attack": "ATT&CK coverage",
     "csf": "NIST CSF",
@@ -464,10 +504,10 @@ _SERVICE_LABELS = {
 #: The ZT frameworks by the names the ZT deliverable already prints
 #: (`app/zt/exporters.py`), so the Risk Register names a framework the way the
 #: client's own Zero Trust report does (advisor, #736 6019425290, Q3).
-#: `ZT_FRAMEWORK_NAMES` in `apps/web/src/lib/risk/labels.ts` is the one web copy
-#: of the target and scope-key labels; `lib/risk/inputs.ts` and
-#: `components/admin/zt/ZtWorkspace.tsx` repeat these strings (#946). Change
-#: both.
+#: RR-1 (for #1122): the screens take these labels from the API (`label` on the
+#: gate's rows, the target rows and the scored-coverage rows), so the web holds
+#: no copy of this map; `lib/risk/inputs.ts` and
+#: `components/admin/zt/ZtWorkspace.tsx` still repeat the kind strings (#946).
 ZT_FRAMEWORK_NAMES = {
     "cisa_ztmm_2_0": "CISA ZTMM 2.0",
     "dod_ztra": "DoD ZT Reference Architecture",
@@ -504,7 +544,7 @@ def _link_scope_lines(ctx: RiskExportContext) -> list[str]:
     if not ctx.link_scope:
         return []
     parts = [
-        f"{scope_label(service)} {scored} of {total}"
+        f"{ctx.disclosure.scope_labels.get(service) or scope_label(service)} {scored} of {total}"
         for service, scored, total, _pending in sorted(ctx.link_scope)
     ]
     return [
@@ -611,10 +651,13 @@ def _summary_lines(ctx: RiskExportContext) -> list[str]:
         "By recommended action — " + ", ".join(f"{k} {v}" for k, v in acts.items() if v),
         *_missing_line(total, total - len(actions), "no recommended action"),
         *_finding_lines(ctx.finding_counts),
+        # RR-1 (for #1122), design note §6.4: directly before the target lines.
+        *selection_lines(ctx.disclosure),
         *_target_lines(
             ctx.targets,
             csf_unscored_note=ctx.csf_unscored_targets_note,
             csf_no_shared_row=ctx.csf_no_shared_row,
+            name_framework=ctx.disclosure.name_framework,
         ),
         # #915 (S3), one line or none. #944: immediately after the target
         # lines. Their last line is a Zero Trust one whenever the register has
@@ -651,6 +694,166 @@ def target_label(kind: str, framework: str | None, *, name_framework: bool) -> s
     return label
 
 
+# ---------------------------------------------------------------------------
+# RR-1 (for #1122): the services a register was generated from
+# ---------------------------------------------------------------------------
+
+#: Design note §8, approved verbatim (#736 6131606581, 6133670854).
+COVERED_LINE = "This register was generated from {list}."
+DESELECTED_ONE_LINE = "{label} was not included in this register."
+DESELECTED_MANY_LINE = "{labels} were not included in this register."
+INELIGIBLE_LINE = (
+    "{label} was engaged but had no assessment when this register was generated, so it "
+    "is not in this register."
+)
+SELECTION_NOT_RECORDED_LINE = (
+    "This register has no usable record of how its services were chosen or which were left out."
+)
+
+
+def join_labels(labels: Sequence[str]) -> str:
+    """Joins labels as copy 8 and 9b print them: "A", "A and B", "A, B and C"."""
+    items = list(labels)
+    if len(items) <= 1:
+        return "".join(items)
+    return ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def _known(kind: object, framework: object) -> bool:
+    if kind not in _SERVICE_LABELS:
+        return False
+    if kind == "zt":
+        return framework in ZT_FRAMEWORK_NAMES
+    return True
+
+
+def zt_name_framework(provenance: object) -> bool:
+    """§6.2's ONE naming predicate: a ZT service is named with its framework
+    when the register's lines mention more than one ZT service, across what it
+    was generated from, what was left out and what had no assessment.
+
+    The target lines, the target rows' `label` on both screens and the
+    selection lines all call this, so no surface counts differently. Where the
+    register's `inputs` cannot be read, the pre-RR-1 rule stands: count the ZT
+    target rows.
+    """
+    count = zt_service_count(provenance, selection_of(provenance))
+    if count is None:
+        rows, recorded = targets_used(provenance)
+        return recorded and sum(1 for r in rows if r.kind == "zt") > 1
+    return count > 1
+
+
+def scope_display_label(key: str, provenance: object) -> str:
+    """A scored-coverage row's label (design note §6.2).
+
+    A `zt:<framework>` key, or a non-ZT key: as `scope_label`. The bare `zt`
+    (one ZT service had a record, so its key carries no framework): named with
+    the framework of the register's single ZT `inputs` row when the naming
+    predicate holds, so it reads like copy 8 and the target line beside it.
+    Otherwise the bare "Zero Trust", logged with the reason. It never indexes
+    a row it has not counted.
+    """
+    if key != "zt":
+        return scope_label(key)
+    selection = selection_of(provenance)
+    reason: str | None = None
+    rows: list[dict] = []
+    if selection is SELECTION_UNREADABLE:
+        reason = "selection_unreadable"
+    elif selection is SELECTION_NOT_RECORDED:
+        reason = "selection_not_recorded"
+    else:
+        raw = provenance.get("inputs") if isinstance(provenance, dict) else None
+        rows = (
+            [i for i in raw if isinstance(i, dict) and i.get("kind") == "zt"]
+            if (isinstance(raw, list))
+            else []
+        )
+        if not rows:
+            reason = "no_zt_input"
+        elif len(rows) > 1:
+            reason = "several_zt_inputs"
+        elif rows[0].get("framework") not in ZT_FRAMEWORK_NAMES:
+            reason = "zt_input_without_framework"
+    if reason is not None:
+        _log.info("risk.scope_label.zt_unresolved", reason=reason)
+        return _SERVICE_LABELS["zt"]
+    if not zt_name_framework(provenance):
+        return _SERVICE_LABELS["zt"]
+    return target_label("zt", rows[0]["framework"], name_framework=True)
+
+
+def selection_context(provenance: object) -> Disclosure:
+    """The ONE reader of a register's selection disclosure (design note §7):
+    the export route and the seed both pass its result to `build_context`, and
+    the responses read the same fields through `selection_fields`."""
+    selection = selection_of(provenance)
+    scope_raw = provenance.get("link_scope") if isinstance(provenance, dict) else None
+    scope_labels = (
+        {str(k): scope_display_label(str(k), provenance) for k in scope_raw}
+        if isinstance(scope_raw, dict)
+        else {}
+    )
+    raw_inputs = provenance.get("inputs") if isinstance(provenance, dict) else None
+    inputs_ok = isinstance(raw_inputs, list) and all(
+        isinstance(i, dict) and _known(i.get("kind"), i.get("framework")) for i in raw_inputs
+    )
+    if not isinstance(selection, Selection) or not inputs_ok:
+        _log.info(
+            "risk_selection_disclosure_not_recorded",
+            selection=repr(selection) if not isinstance(selection, Selection) else "parsed",
+            inputs_readable=inputs_ok,
+        )
+        return Disclosure(
+            recorded=False,
+            name_framework=zt_name_framework(provenance),
+            scope_labels=scope_labels,
+        )
+    named = zt_name_framework(provenance)
+
+    def _label(kind: str, framework: str | None) -> str:
+        return target_label(kind, framework, name_framework=named)
+
+    return Disclosure(
+        recorded=True,
+        covered=tuple(_label(i["kind"], i.get("framework")) for i in raw_inputs),  # type: ignore[union-attr]
+        deselected=tuple(_label(r.kind, r.framework) for r in selection.deselected),
+        ineligible=tuple(_label(r.kind, r.framework) for r in selection.ineligible),
+        name_framework=named,
+        scope_labels=scope_labels,
+    )
+
+
+def selection_lines(d: Disclosure) -> list[str]:
+    """Copy 8, then 9a or 9b, then one 9c per service; or copy 11 alone."""
+    if not d.recorded:
+        return [SELECTION_NOT_RECORDED_LINE]
+    lines = [COVERED_LINE.format(list=join_labels(d.covered))]
+    if len(d.deselected) == 1:
+        lines.append(DESELECTED_ONE_LINE.format(label=d.deselected[0]))
+    elif d.deselected:
+        lines.append(DESELECTED_MANY_LINE.format(labels=join_labels(d.deselected)))
+    lines.extend(INELIGIBLE_LINE.format(label=label) for label in d.ineligible)
+    return lines
+
+
+def selection_fields(provenance: object) -> dict:
+    """The four response fields both screens read (design note §6.4)."""
+    d = selection_context(provenance)
+    return {
+        "covered_inputs": list(d.covered),
+        "deselected_inputs": list(d.deselected),
+        "ineligible_inputs": list(d.ineligible),
+        "selection_recorded": d.recorded,
+    }
+
+
+def target_row_label(kind: str, framework: str | None, provenance: object) -> str:
+    """A target row's `label`, by the files' own helper and predicate."""
+    return target_label(kind, framework, name_framework=zt_name_framework(provenance))
+
+
 #: #474 D': the CSF Playbook baseline, by the target's recorded source token
 #: (`risk/baseline.py::PLAYBOOK_SOURCE_BY_STATE`). Approved verbatim: #736
 #: 6087027524 (Q1) for `playbook`, 6087786886 (item 4) for the other two.
@@ -680,6 +883,7 @@ def _target_lines(
     *,
     csf_unscored_note: str | None = None,
     csf_no_shared_row: bool = False,
+    name_framework: bool | None = None,
 ) -> list[str]:
     """#474. Which target each service's findings were measured against.
 
@@ -694,7 +898,9 @@ def _target_lines(
             "The targets these findings were measured against were not recorded for "
             "this register."
         ]
-    name_framework = sum(1 for kind, *_ in targets if kind == "zt") > 1
+    if name_framework is None:
+        # Nothing about the register's services is known: the pre-RR-1 rule.
+        name_framework = sum(1 for kind, *_ in targets if kind == "zt") > 1
     lines = []
     for kind, framework, target, source, _origin in targets:
         label = target_label(kind, framework, name_framework=name_framework)

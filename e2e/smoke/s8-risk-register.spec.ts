@@ -81,7 +81,8 @@ test("seeded Atlas Risk Register renders code-derived tiers and its exports down
 
   await page.goto("/admin/risk-register");
   await expect(
-    page.getByRole("heading", { name: "Risk Register", exact: true }),
+    // RR-2 (for #1121): the h1 names the client the page shows.
+    page.getByRole("heading", { name: /^Risk Register for / }),
   ).toBeVisible({ timeout: 60000 });
 
   // A register already exists (the seed's contribution — before T8 a fresh seed
@@ -175,12 +176,17 @@ test("register is locked with only ATT&CK and unlocks once a ZT assessment exist
   expect(attackAssessment.ok()).toBeTruthy();
 
   // Locked: the empty state names exactly what's missing, and there is no
-  // Generate button.
+  // Generate button. #1081: in the approved copy, (B) for CSF/ZT (the tenant
+  // has no such service) and the closing line.
   await page.goto("/admin/risk-register");
   await expect(page.getByText("Risk Register is locked")).toBeVisible({
     timeout: 60000,
   });
-  await expect(page.getByText(/a CSF or Zero Trust assessment/)).toBeVisible();
+  await expect(
+    page.getByText(
+      /has no NIST CSF 2\.0 Assessment or Zero Trust service\. The client can add one by selecting it in the Services step of its intake, or by starting a self-assessment from My Assessments\. A draft assessment is enough to generate a draft register; approve the assessments before you publish it\./,
+    ),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: /Generate|Regenerate/ }),
   ).toHaveCount(0);
@@ -198,10 +204,15 @@ test("register is locked with only ATT&CK and unlocks once a ZT assessment exist
 
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "Risk Register", exact: true }),
+    // RR-2 (for #1121): the h1 names the client the page shows.
+    page.getByRole("heading", { name: /^Risk Register for / }),
   ).toBeVisible({ timeout: 60000 });
+  // RR-2 (for #1121): the h1 renders before the body has loaded, so Generate
+  // must APPEAR before "locked" is checked absent, or the absence is vacuous.
+  await expect(page.getByRole("button", { name: "Generate" })).toBeVisible({
+    timeout: 60000,
+  });
   await expect(page.getByText("Risk Register is locked")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Generate" })).toBeVisible();
 
   // #737 (Gene's ruling, #736 item 13, reversing #237). The gate still unlocks
   // on EXISTENCE, and both assessments here are DRAFTS: a register can now be
@@ -282,7 +293,8 @@ test("Generate derives tiers in code, renders KPIs + 5x5 heatmap, cites only the
 
   await page.goto("/admin/risk-register");
   await expect(
-    page.getByRole("heading", { name: "Risk Register", exact: true }),
+    // RR-2 (for #1121): the h1 names the client the page shows.
+    page.getByRole("heading", { name: /^Risk Register for / }),
   ).toBeVisible({ timeout: 60000 });
   await page.waitForLoadState("networkidle").catch(() => undefined);
 

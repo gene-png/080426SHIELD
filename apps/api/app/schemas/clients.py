@@ -777,6 +777,13 @@ class RiskDashboardResponse(BaseModel):
     #: (`risk/csf_source.py::csf_no_shared_row`). False when the register
     #: predates R11, so it keeps the original no-scores line.
     csf_no_shared_row: bool = False
+    #: RR-1 (for #1122), design note §6.4: what the register was generated
+    #: from (copy 8), what the admin left out (9a/9b) and what had no
+    #: assessment (9c), as display labels. `selection_recorded` False: copy 11.
+    covered_inputs: list[str] = []
+    deselected_inputs: list[str] = []
+    ineligible_inputs: list[str] = []
+    selection_recorded: bool = False
 
 
 class ValueSummaryResponse(BaseModel):

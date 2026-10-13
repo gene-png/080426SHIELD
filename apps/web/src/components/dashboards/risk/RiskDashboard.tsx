@@ -20,6 +20,7 @@ import {
   type RiskEntry,
 } from "@/lib/dashboards/risk";
 import { targetSentences } from "@/lib/risk/baseline";
+import { selectionLines } from "@/lib/risk/selection";
 import { OTHER_AXES_HEADER, otherAxesCell } from "@/lib/risk/otherAxes";
 
 import type { JSX } from "react";
@@ -293,6 +294,29 @@ export function RiskDashboard({
           {withheldNote}
         </div>
       ) : null}
+      {/* RR-1 (for #1122), design note §6.1: what this register was
+          generated from, and what was left out (copy 8, 9a-9c), or copy 11
+          when it has no usable record of that. The exported register prints
+          the same lines, directly before the target lines. */}
+      <div
+        className="mb-4 text-sm"
+        style={{ color: C.muted }}
+        data-testid="risk-selection-lines"
+      >
+        {/* The four fields named here, not `data` passed whole, so the
+            disclosure gate (check_disclosure_consumers.py) can see this
+            screen read them. */}
+        {selectionLines({
+          selection_recorded: data.selection_recorded,
+          covered_inputs: data.covered_inputs,
+          deselected_inputs: data.deselected_inputs,
+          ineligible_inputs: data.ineligible_inputs,
+        }).map((line, i) => (
+          // By position: two services can print the same line (two 9c
+          // lines for one framework), so the text is not a key.
+          <p key={i}>{line}</p>
+        ))}
+      </div>
       {/* #474. Which target the findings were measured against, in the words
           the exported register prints, so the client can compare it with the
           target their CSF or Zero Trust report states. */}

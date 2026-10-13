@@ -45,6 +45,7 @@ import type { JSX } from "react";
  */
 export function RunAiGuard({
   onProceed,
+  onBusyChange,
   children,
 }: {
   /**
@@ -55,6 +56,13 @@ export function RunAiGuard({
    * status read and the click.
    */
   onProceed: (serves: AiServes) => void;
+  /**
+   * RR-2 (for #1121), design note §3.3: true while a click is held for the AI
+   * status, or the offline prompt is open. Both are work that has not started
+   * yet, so a page that must not switch clients mid-work locks on them too.
+   * Told `false` when the guard unmounts, so it never leaves a lock set.
+   */
+  onBusyChange?: (busy: boolean) => void;
   /**
    * The Run-AI control. Receives the click handler to attach, and
    * `statusUnknown`, which the control must add to its `disabled`: true while
@@ -72,6 +80,12 @@ export function RunAiGuard({
   /** A held click whose own status read came back unreadable. */
   const [clickFoundNoStatus, setClickFoundNoStatus] = React.useState(false);
   const statusUnknown = phase === "error" || clickFoundNoStatus;
+  const guardBusy = awaitingStatus || promptFor !== null;
+
+  React.useEffect(() => {
+    onBusyChange?.(guardBusy);
+    return () => onBusyChange?.(false);
+  }, [guardBusy, onBusyChange]);
 
   /** Decide what a click means, given a SETTLED status. */
   function decide(s: AiStatus | null): void {

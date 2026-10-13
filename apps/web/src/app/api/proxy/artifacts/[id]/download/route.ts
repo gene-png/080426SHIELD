@@ -9,12 +9,13 @@ import { NextResponse } from "next/server";
 
 import { ACTIVE_CLIENT_COOKIE } from "@/lib/api";
 import { auth } from "@/lib/auth/options";
+import { clientIdRequired } from "@/lib/proxy-client-id";
 import { upstreamOutcomeUnknown } from "@/lib/upstream-outcome-unknown";
 
 const BASE_URL = process.env.API_BASE_URL ?? "http://api:8000";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   props: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   const params = await props.params;
@@ -26,12 +27,27 @@ export async function GET(
       { status: 401 },
     );
   }
-  // Hand-rolled binary proxy, so forward the active-client cookie as
-  // X-Client-Id ourselves (the backend download guard is tenant-scoped).
+  // Hand-rolled binary proxy, so forward the tenant as X-Client-Id ourselves
+  // (the backend download guard is tenant-scoped).
+  //
+  // RR-2 (for #1121), design note §3.2a: a link that names its client with
+  // `?client_id=` (the twin admin pages, whose picker is not the cookie) is
+  // answered for THAT client, and the cookie is not read. An empty value is
+  // refused. With no parameter, the cookie as before: eight other components
+  // link here from pages that set it, or as client users, whose tenant the api
+  // pins whatever the header says.
   const reqHeaders: Record<string, string> = {
     Authorization: `Bearer ${token}`,
   };
-  const activeClient = (await cookies()).get(ACTIVE_CLIENT_COOKIE)?.value;
+  const named = new URL(request.url).searchParams;
+  let activeClient: string | undefined;
+  if (named.has("client_id")) {
+    const id = named.get("client_id");
+    if (!id) return clientIdRequired("/artifacts/{id}/download");
+    activeClient = id;
+  } else {
+    activeClient = (await cookies()).get(ACTIVE_CLIENT_COOKIE)?.value;
+  }
   if (activeClient) {
     reqHeaders["X-Client-Id"] = activeClient;
   }

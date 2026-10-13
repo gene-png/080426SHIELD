@@ -137,11 +137,28 @@ export function CsfGapActionEditor({
                     <p className="text-sm font-medium text-ink-primary">
                       {a.name}
                     </p>
+                    {/* #1031: a POA&M entry never vanishes silently (#736
+                        6116519635, copy approved verbatim). */}
+                    {a.no_longer_gap === true ? (
+                      <p
+                        className="text-xs text-ink-tertiary"
+                        data-testid="gap-action-kept"
+                      >
+                        No longer a gap: kept for the record
+                      </p>
+                    ) : null}
                   </div>
                   <span className="text-xs text-ink-tertiary">
-                    L{a.enterprise_level}
-                    {a.target_level ? ` → target L${a.target_level}` : ""} ·
-                    priority{" "}
+                    {/* #1077 review, F2: a kept entry with nothing rolled up
+                        (out of scope) shows no level, never "L0". */}
+                    {a.enterprise_level > 0 ? `L${a.enterprise_level}` : ""}
+                    {/* F1: "Not measured", approved (#736 6127667643). */}
+                    {a.target_not_measured === true
+                      ? " → target Not measured"
+                      : a.target_level
+                        ? ` → target L${a.target_level}`
+                        : ""}{" "}
+                    · priority{" "}
                     <span className="font-semibold text-ink-primary">
                       {a.effective_priority ?? "—"}
                     </span>

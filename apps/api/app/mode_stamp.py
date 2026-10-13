@@ -140,6 +140,37 @@ def _unattributed_calls(
     return bool(db.execute(select(exists().where(*conditions))).scalar())
 
 
+#: #1120: the deepest revision chain a stamp walks. Deeper, or a cycle, and the
+#: stamp reads not-recorded (`unknown`): failing closed, never "no AI".
+REVISION_CHAIN_MAX = 32
+
+
+class RevisionChainError(RuntimeError):
+    """The `revision_of` chain is cyclic or deeper than `REVISION_CHAIN_MAX`."""
+
+
+def revision_chain(db: Session, subject: Any) -> list[Any]:
+    """`subject`, then each record it was revised from, oldest last (#1120).
+
+    A revision copies values that AI runs drafted on its source, so its
+    disclosure counts the runs on every ancestor."""
+    chain = [subject]
+    seen = {subject.id}
+    current = subject
+    while getattr(current, "revision_of", None) is not None:
+        if len(chain) > REVISION_CHAIN_MAX:
+            raise RevisionChainError(f"revision chain of {subject.id} exceeds {REVISION_CHAIN_MAX}")
+        parent = db.get(type(subject), current.revision_of)
+        if parent is None:
+            raise RevisionChainError(f"revision chain of {subject.id} names a missing record")
+        if parent.id in seen:
+            raise RevisionChainError(f"revision chain of {subject.id} is cyclic at {parent.id}")
+        seen.add(parent.id)
+        chain.append(parent)
+        current = parent
+    return chain
+
+
 def ai_mode_for_assessment(
     db: Session,
     *,
@@ -148,8 +179,11 @@ def ai_mode_for_assessment(
     call_purpose: str,
     assessment_id: uuid.UUID,
     assessment_created_at: datetime,
+    chain_ids: list[uuid.UUID] | None = None,
 ) -> AiModeStamp:
-    """The stamp for one assessment: its own completed runs.
+    """The stamp for one assessment: its own completed runs, and (#1120) those
+    on every record it was revised from (`chain_ids`; `assessment_created_at`
+    is then the root's).
 
     `unknown` when the service holds pre-#756 AI calls of this purpose made at
     or after the assessment was created: they may have drafted it, and nothing
@@ -160,7 +194,7 @@ def ai_mode_for_assessment(
             select(AiRun).where(
                 AiRun.service_id == service_id,
                 AiRun.purpose == run_purpose,
-                AiRun.subject_id == assessment_id,
+                AiRun.subject_id.in_(chain_ids or [assessment_id]),
                 AiRun.status == AiRunStatus.COMPLETED,
             )
         ).scalars()
@@ -188,6 +222,7 @@ def ai_mode_for_capability_list(
     run_purpose: str,
     call_purpose: str,
     capability_list_id: uuid.UUID,
+    chain_ids: list[uuid.UUID] | None = None,
 ) -> AiModeStamp:
     """The stamp for one Tech Debt capability list.
 
@@ -207,7 +242,8 @@ def ai_mode_for_capability_list(
         r
         for r in candidates
         if isinstance(r.result, dict)
-        and r.result.get("capability_list_id") == str(capability_list_id)
+        and r.result.get("capability_list_id")
+        in {str(i) for i in (chain_ids or [capability_list_id])}
     ]
     live, fixture = _run_counts(runs)
     recorded = bool(runs) or not _unattributed_calls(
@@ -245,6 +281,19 @@ def ai_mode_for(db: Session, service: Service, subject: Any) -> AiModeStamp:
     if service.kind not in _PURPOSES:
         raise ValueError(f"no AI run purpose for service kind {service.kind!r}")
     run_purpose, call_purpose = _PURPOSES[service.kind]
+    try:
+        chain = revision_chain(db, subject)
+    except RevisionChainError as exc:
+        _log.error(
+            "ai_mode_stamp.revision_chain_unreadable", subject_id=str(subject.id), error=str(exc)
+        )
+        return AiModeStamp(
+            live_runs=0,
+            fixture_runs=0,
+            recorded=False,
+            **({"subject": "capability list"} if service.kind == ServiceKind.TECH_DEBT else {}),
+        )
+    chain_ids = [r.id for r in chain]
     if service.kind == ServiceKind.TECH_DEBT:
         return ai_mode_for_capability_list(
             db,
@@ -252,6 +301,7 @@ def ai_mode_for(db: Session, service: Service, subject: Any) -> AiModeStamp:
             run_purpose=run_purpose,
             call_purpose=call_purpose,
             capability_list_id=subject.id,
+            chain_ids=chain_ids,
         )
     return ai_mode_for_assessment(
         db,
@@ -259,7 +309,8 @@ def ai_mode_for(db: Session, service: Service, subject: Any) -> AiModeStamp:
         run_purpose=run_purpose,
         call_purpose=call_purpose,
         assessment_id=subject.id,
-        assessment_created_at=subject.created_at,
+        assessment_created_at=chain[-1].created_at,
+        chain_ids=chain_ids,
     )
 
 
