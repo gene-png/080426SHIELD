@@ -101,19 +101,10 @@ const EXCLUDED: Array<[RegExp, string]> = [
     /[\/]lib[\/]tech_debt[\/]client\.ts$/,
     "proxyMessage is consumed only by components/admin/** (#365)",
   ],
-  // The third twin, and also found by running a widened pattern rather than
-  // by reading this list. `getActiveClientId` throws
-  // `Could not read the active client (${res.status}).` -- an HTTP status as
-  // copy. Its own docstring opens "The admin client switcher's active
-  // tenant", and `grep -rn "active-client" src` gives its importers as
-  // `components/admin/DeliverablesTable.tsx` and a re-export from
-  // `lib/risk/client.ts`, itself already excluded above as admin-only. Same
-  // disposition, and the file carries no `.message` shape, so nothing else
-  // here loses coverage by excluding it.
-  [
-    /[\/]lib[\/]active-client\.ts$/,
-    "getActiveClientId is consumed only by admin surfaces (#365)",
-  ],
+  // RR-2 (for #1121): the `lib/active-client.ts` entry that stood here is
+  // gone with the file. Its replacement, `lib/admin/client-reads.ts`, throws
+  // `ClientReadError` with fields and no message template, so it needs no
+  // exclusion and this scan covers it.
 ];
 
 function walk(dir: string): string[] {

@@ -13,6 +13,12 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**2026-10-14: IN-2 (#1054), PR #1067.** The admin org page lists the client's own uploads, consultant uploads and generated reports in separate sections, and "Supporting documents uploaded" counts only files a client-role user uploaded. Status: the 2026-10-14 IN-2 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
+**2026-10-13: #806, PR #981.** ZT Run AI sends the approved v2 prompt with each capability's details, and applies only the AI's current stage. Status: the 2026-10-13 #806 ZT entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
+**2026-10-13: RR-2 (#1121) and RR-1 (#1122), PR #1148 with #1140.** The Risk Register, Deliverables and Messages pages pick their client from the URL, not a hidden cookie, and the admin chooses which CSF and Zero Trust services feed a register, disclosed in every output. Status: the 2026-10-13 RR entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
 **2026-10-13: #1120, PR #1152 with #1151 (migration 0073).** Approved and released ATT&CK, CSF and ZT assessments are changed only through "Start a revision", which opens one new draft per service; clients keep seeing the revised record. Tech Debt revisions are still to come. Status: the 2026-10-13 #1120 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
 **2026-10-13: #1031, PR #1077 (migration 0070).** The CSF Enterprise roll-up reads only scored tier rows; assessments approved before it keep their delivered numbers. Status: the 2026-10-13 #1031 entry in `DELIVERY_PLAN.md`'s MVP completion path.

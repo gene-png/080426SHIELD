@@ -141,7 +141,17 @@ def test_publish_refuses_inputs_that_cannot_be_certified(app_client) -> None:  #
         s.commit()
     pub = _post(c, ah, cid, "publish")
     assert pub.status_code == 409, pub.text
-    assert pub.json()["error"]["reason"] == "register_inputs_not_recorded"
+    # RR-1 (for #1122), design note §5.3: without `inputs` the register's
+    # `selection` fails §4's check 2, so publish refuses it FIRST, as a
+    # register with no usable record of its selection (copy 19, from §8).
+    # Before RR-1 the #240 guard's `register_inputs_not_recorded` refused it.
+    err = pub.json()["error"]
+    assert err["reason"] == "risk_register_inputs_not_final", err
+    assert err["blockers"] == [{"input": "register", "reason": "not_recorded", "status": None}]
+    assert err["message"] == (
+        "This register has no usable record of how its services were chosen or which were "
+        "left out, so it cannot be published. Regenerate it, then publish the new version."
+    )
     assert _client_dashboard(c, ch, cid).status_code == 404
 
 

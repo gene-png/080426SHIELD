@@ -1,5 +1,3 @@
-import { SERVICE_LABELS, ZT_FRAMEWORK_NAMES } from "./labels";
-
 /**
  * #474. The sentences naming which target each service's findings were
  * measured against. ONE formatter for the consultant's screen and the client's
@@ -17,6 +15,14 @@ export interface RiskTargetUsed {
   target: number | null;
   source: string;
   origin: string;
+  /**
+   * RR-1 (for #1122), design note §6.2: what the line calls this service,
+   * built on the server by the files' own helper and naming predicate. The
+   * web renders it as given and holds no naming rule of its own, so the
+   * screens cannot say "Zero Trust" where the files say "Zero Trust (CISA
+   * ZTMM 2.0)". Required.
+   */
+  label: string;
 }
 
 /** #474. Which word each kind's target takes; `_TARGET_UNITS` in the export. */
@@ -24,19 +30,6 @@ const TARGET_UNITS: ReadonlyMap<string, string> = new Map([
   ["csf", "tier"],
   ["zt", "stage"],
 ]);
-
-/**
- * What a target line calls a service, as `target_label` in the export: the
- * kind's label, and the ZT framework only when the record holds more than one
- * ZT entry (Q3, ruling 2a). A label this module lacks renders as the token
- * the API sent, never as nothing; the API sends only kinds and frameworks its
- * reader validated.
- */
-function targetLabel(t: RiskTargetUsed, nameFramework: boolean): string {
-  const label = SERVICE_LABELS.get(t.kind) ?? t.kind;
-  if (!nameFramework || t.framework === null) return label;
-  return `${label} (${ZT_FRAMEWORK_NAMES.get(t.framework) ?? t.framework})`;
-}
 
 export const TARGETS_NOT_RECORDED =
   "The targets these findings were measured against were not recorded for this register.";
@@ -80,20 +73,19 @@ const NO_SHARED_ROW_LINE = (label: string) =>
 
 export function targetSentence(
   t: RiskTargetUsed,
-  nameFramework: boolean,
   csfNoSharedRow: boolean = false,
 ): string {
   if (t.source === "playbook_no_scores" && csfNoSharedRow)
-    return NO_SHARED_ROW_LINE(targetLabel(t, nameFramework));
+    return NO_SHARED_ROW_LINE(t.label);
   const playbook = PLAYBOOK_LINES.get(t.source);
-  if (playbook) return playbook(targetLabel(t, nameFramework));
+  if (playbook) return playbook(t.label);
   const why =
     t.source === "client"
       ? "the engagement target when this register was generated"
       : t.source === "default"
         ? "SHIELD's default: no engagement target was set"
         : "SHIELD's default: the engagement target could not be used";
-  return `${targetLabel(t, nameFramework)} findings are measured against target ${TARGET_UNITS.get(t.kind) ?? "level"} ${t.target}, ${why}.`;
+  return `${t.label} findings are measured against target ${TARGET_UNITS.get(t.kind) ?? "level"} ${t.target}, ${why}.`;
 }
 
 /**
@@ -110,8 +102,5 @@ export function targetSentences(
 ): string[] {
   if (recorded !== true) return [TARGETS_NOT_RECORDED];
   const rows = targets ?? [];
-  const nameFramework = rows.filter((t) => t.kind === "zt").length > 1;
-  return rows.map((t) =>
-    targetSentence(t, nameFramework, csfNoSharedRow === true),
-  );
+  return rows.map((t) => targetSentence(t, csfNoSharedRow === true));
 }

@@ -81,7 +81,8 @@ test("seeded Atlas Risk Register renders code-derived tiers and its exports down
 
   await page.goto("/admin/risk-register");
   await expect(
-    page.getByRole("heading", { name: "Risk Register", exact: true }),
+    // RR-2 (for #1121): the h1 names the client the page shows.
+    page.getByRole("heading", { name: /^Risk Register for / }),
   ).toBeVisible({ timeout: 60000 });
 
   // A register already exists (the seed's contribution — before T8 a fresh seed
@@ -203,10 +204,15 @@ test("register is locked with only ATT&CK and unlocks once a ZT assessment exist
 
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "Risk Register", exact: true }),
+    // RR-2 (for #1121): the h1 names the client the page shows.
+    page.getByRole("heading", { name: /^Risk Register for / }),
   ).toBeVisible({ timeout: 60000 });
+  // RR-2 (for #1121): the h1 renders before the body has loaded, so Generate
+  // must APPEAR before "locked" is checked absent, or the absence is vacuous.
+  await expect(page.getByRole("button", { name: "Generate" })).toBeVisible({
+    timeout: 60000,
+  });
   await expect(page.getByText("Risk Register is locked")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Generate" })).toBeVisible();
 
   // #737 (Gene's ruling, #736 item 13, reversing #237). The gate still unlocks
   // on EXISTENCE, and both assessments here are DRAFTS: a register can now be
@@ -287,7 +293,8 @@ test("Generate derives tiers in code, renders KPIs + 5x5 heatmap, cites only the
 
   await page.goto("/admin/risk-register");
   await expect(
-    page.getByRole("heading", { name: "Risk Register", exact: true }),
+    // RR-2 (for #1121): the h1 names the client the page shows.
+    page.getByRole("heading", { name: /^Risk Register for / }),
   ).toBeVisible({ timeout: 60000 });
   await page.waitForLoadState("networkidle").catch(() => undefined);
 
