@@ -185,4 +185,27 @@ describe("StartRevisionButton (#1120)", () => {
       within(dialog).getByRole("button", { name: "Start revision" }),
     ).toBeDisabled();
   });
+
+  it("names the current version when reopened after the record moved on", () => {
+    // Unkeyed in the workspace, so one button outlives v3 approved, v4 as a
+    // draft, then v4 approved.
+    const onStart = vi.fn();
+    const view = render(
+      <StartRevisionButton status="approved" version={3} onStart={onStart} />,
+    );
+    view.rerender(
+      <StartRevisionButton status="approved" version={4} onStart={onStart} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Start a revision" }));
+    const dialog = view.container.querySelector("dialog") as HTMLDialogElement;
+    expect(dialog.open).toBe(true);
+    expect(
+      within(dialog).getByText("Start a revision of version 4?"),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        "This creates version 5 as a draft, with every answer, score, note and consultant edit copied from version 4. Version 4 and its reports are not changed, and the client sees nothing new until a report from version 5 is released.",
+      ),
+    ).toBeInTheDocument();
+  });
 });
