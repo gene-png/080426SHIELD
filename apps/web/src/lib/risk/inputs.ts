@@ -30,11 +30,38 @@ export function statusWord(status: string): string {
   return STATES[status] ?? status;
 }
 
-export function inputLine(row: RiskInputState): string {
+function rowLabel(row: RiskInputState): string {
   // #876: the framework (or service title) only when a kind has more than
   // one row; the server decides, so the screen and the refusal agree.
   const base = LABELS[row.kind] ?? row.kind;
-  const label = row.qualifier ? `${base} (${row.qualifier})` : base;
+  return row.qualifier ? `${base} (${row.qualifier})` : base;
+}
+
+/**
+ * RR-1 (for #1122), design note §6.5 and §8 copy 13: the panel's second
+ * group, for services that are NOT part of the register on screen and so do
+ * not hold it in draft.
+ */
+export const NOT_IN_REGISTER_HEADING = "Not in this register";
+
+/** Whether a row belongs under `NOT_IN_REGISTER_HEADING`. */
+export function isNotInRegister(row: RiskInputState): boolean {
+  return row.in_register === "deselected" || row.in_register === "ineligible";
+}
+
+/**
+ * Copies 14 and 15: the fragment that replaces the status for a row not in
+ * the register. Its record status is not shown, so "in progress (draft)"
+ * never appears beside a service that does not hold the register in draft.
+ */
+export function notInRegisterLine(row: RiskInputState): string {
+  return row.in_register === "deselected"
+    ? `${rowLabel(row)}: left out of this register`
+    : `${rowLabel(row)}: no assessment when this register was generated`;
+}
+
+export function inputLine(row: RiskInputState): string {
+  const label = rowLabel(row);
   if (!row.engaged) return `${label}: not engaged`;
   if (row.status === null) return `${label}: not started`;
   // #474 D' (Gene, #736 5984218862): a released CSF record whose in-scope

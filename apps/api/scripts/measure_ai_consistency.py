@@ -2506,6 +2506,7 @@ def measure_risk(
     max_usd: float | None = None,
     price: Mapping[str, float] | None = None,
     progress: Callable[[Sequence[RunRecord]], None] | None = None,
+    zero_trust: str | None = None,
 ) -> dict:
     """Run risk_synthesize `runs` times for the one client whose register is
     unlocked, through the route's own findings (`_gather_findings`, over the
@@ -2517,7 +2518,13 @@ def measure_risk(
     in which any batch failed is a failed run, never "0% agreement".
 
     `--reopen-released` is refused: Risk reads FINAL inputs, so reopening one
-    would change what is measured rather than make it measurable."""
+    would change what is measured rather than make it measurable.
+
+    RR-1 (for #1122), design note §7: the route's own `_select` runs after the
+    duplicate check, as in `generate`. `zero_trust` (`--risk-zero-trust`)
+    names the framework; without it the absent-body rule applies, so a client
+    with both Zero Trust frameworks is refused with the route's own sentence
+    rather than measured over a guess."""
     from fastapi import HTTPException
 
     from app.routes.risk import (
@@ -2525,8 +2532,10 @@ def measure_risk(
         _duplicate_inputs_message,
         _gather_findings,
         _run_risk_synthesize_batched,
+        _select,
         _take_input_snapshot,
     )
+    from app.schemas.risk import RiskInclude
 
     if reopen_released:
         raise Refused(
@@ -2541,6 +2550,19 @@ def measure_risk(
     duplicate = _duplicate_inputs_message(list(snap.sources))
     if duplicate is not None:
         raise Refused("builder_refused", f"The route's generate refuses: {duplicate}")
+    include = (
+        None
+        if zero_trust is None
+        else RiskInclude(
+            csf=any(src.kind == "csf" for src in snap.sources),
+            zero_trust=None if zero_trust == "none" else zero_trust,  # type: ignore[arg-type]
+        )
+    )
+    try:
+        snap, _selection = _select(db, client.id, snap, include)
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        raise Refused("builder_refused", str(detail.get("message", exc.detail))) from exc
     findings, techniques, controls, _targets, _scopes = _gather_findings(db, client.id, snap)
     keys = [snap.drafted_from[str(f["source_id"])].scope_key for f in findings]
     batches = _batches(findings, keys)
@@ -3065,6 +3087,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         "allows --runs 2 or more over the same batches, compared like a full measurement.",
     )
     p.add_argument(
+        "--risk-zero-trust",
+        choices=("cisa_ztmm_2_0", "dod_ztra", "none"),
+        default=None,
+        help="risk_synthesize only: the Zero Trust framework the register is generated "
+        "from, as the Risk Register page chooses it (RR-1). Required when the client has "
+        "both; omitted, the route's absent-body rule applies.",
+    )
+    p.add_argument(
         "--inventory",
         default=None,
         help="tech_debt_extract only, and required for it: the .csv or .xlsx whose rows "
@@ -3514,7 +3544,13 @@ def _measure(
         if args.job == "mitre_map":
             return measure_attack(db, llm, probe_batches=args.probe_batches, **common)
         if args.job == "risk_synthesize":
-            return measure_risk(db, llm, probe_batches=args.probe_batches, **common)
+            return measure_risk(
+                db,
+                llm,
+                probe_batches=args.probe_batches,
+                zero_trust=args.risk_zero_trust,
+                **common,
+            )
         if args.job == "tech_debt_extract":
             # No assessment to reopen (refused above): the input is the file.
             common.pop("reopen_released")

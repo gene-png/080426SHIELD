@@ -115,6 +115,12 @@ DISCLOSURE_PREFIXES = (
     # the advisor's ruling on #736 (comment 6067815887): CSF first, then ZT
     # (#840) and ATT&CK (#853).
     "omitted_",
+    # RR-1 (for #1122), design note §6.4: the services a Risk Register was NOT
+    # generated from -- left out by the admin (`deselected_inputs`) or engaged
+    # with no assessment at generate (`ineligible_inputs`). `excluded_`
+    # already means #316's pre-#737 set, so it is not overloaded.
+    "deselected_",
+    "ineligible_",
 )
 #: SUBSTRINGS, not prefixes, and #209 added the last two. `target_frozen_at`
 #: and `<kind>_targets_computed_live` are disclosure fields by the same

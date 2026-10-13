@@ -69,6 +69,39 @@ const HANDLERS = ROUTES.flatMap((p) =>
   declaredMethods(p).map((m) => [`${m} ${label(p)}`, p, m] as const),
 );
 
+// RR-2 (#1121): some routes branch on a `client_id` query parameter, so every
+// handler is called both WITH and WITHOUT one, and each branch is judged by
+// what it answers. Without it a route must either reach upstream, as before,
+// or refuse with the typed 400 `client_id_required` before any upstream call.
+// Which routes do which is read from the response, never from a list. Both
+// request builders carry the same choice, including the multipart fallback
+// `call()` uses for a route that refuses a JSON body, so a "with client_id"
+// case is never quietly sent without one.
+const CLIENT_ID = "00000000-0000-4000-8000-000000000550";
+const CASES = HANDLERS.flatMap(
+  ([name, path, method]) =>
+    [
+      [`${name} (with client_id)`, path, method, true],
+      [`${name} (without client_id)`, path, method, false],
+    ] as const,
+);
+
+/** The typed refusal a route gives when it needs `client_id` and has none. */
+async function refusedForMissingClientId(
+  name: string,
+  res: Response,
+): Promise<void> {
+  expect(
+    fetchMock.mock.calls.length,
+    `${name} refused without calling upstream, so it must be the client_id refusal`,
+  ).toBe(0);
+  const body = (await res.json()) as { error?: { reason?: unknown } };
+  expect(
+    { status: res.status, reason: body.error?.reason },
+    `${name} made no upstream call: only the typed client_id refusal may do that`,
+  ).toEqual({ status: 400, reason: "client_id_required" });
+}
+
 // An admin session with a bearer: the most permissive caller, so every route
 // gets as far as its upstream call.
 vi.mock("@/lib/auth/options", () => ({
@@ -112,8 +145,9 @@ const PARAMS = new Proxy(
   },
 );
 
-function jsonRequest(method: Method): Request {
-  return new Request("http://localhost/api/proxy/x?limit=10", {
+function jsonRequest(method: Method, withClientId: boolean): Request {
+  const query = withClientId ? `?limit=10&client_id=${CLIENT_ID}` : "?limit=10";
+  return new Request(`http://localhost/api/proxy/x${query}`, {
     method,
     ...(method === "GET"
       ? {}
@@ -124,15 +158,23 @@ function jsonRequest(method: Method): Request {
   });
 }
 
-function multipartRequest(method: Method): Request {
+function multipartRequest(method: Method, withClientId: boolean): Request {
   const form = new FormData();
   form.append("file", new Blob(["a,b\n1,2\n"], { type: "text/csv" }), "x.csv");
-  return new Request("http://localhost/api/proxy/x", { method, body: form });
+  const query = withClientId ? `?client_id=${CLIENT_ID}` : "";
+  return new Request(`http://localhost/api/proxy/x${query}`, {
+    method,
+    body: form,
+  });
 }
 
 type Handler = (req: Request, ctx: unknown) => Promise<Response>;
 
-async function call(path: string, method: Method): Promise<Response> {
+async function call(
+  path: string,
+  method: Method,
+  withClientId: boolean,
+): Promise<Response> {
   const mod = (await import(/* @vite-ignore */ path)) as Record<
     string,
     unknown
@@ -142,10 +184,13 @@ async function call(path: string, method: Method): Promise<Response> {
     "function",
   );
   const ctx = { params: Promise.resolve(PARAMS) };
-  let res = await (handler as Handler)(jsonRequest(method), ctx);
+  let res = await (handler as Handler)(jsonRequest(method, withClientId), ctx);
   if (fetchMock.mock.calls.length === 0 && method !== "GET") {
     // A multipart route refuses a JSON body before it calls upstream.
-    res = await (handler as Handler)(multipartRequest(method), ctx);
+    res = await (handler as Handler)(
+      multipartRequest(method, withClientId),
+      ctx,
+    );
   }
   return res;
 }
@@ -184,10 +229,14 @@ describe("proxies say the outcome is unknown when they cannot see the api's answ
     );
   });
 
-  it.each(HANDLERS)(
+  it.each(CASES)(
     "%s answers a rejected fetch with the typed 504",
-    async (name, path, method) => {
-      const res = await call(path, method);
+    async (name, path, method, withClientId) => {
+      const res = await call(path, method, withClientId);
+      if (!withClientId && fetchMock.mock.calls.length === 0) {
+        await refusedForMissingClientId(name, res);
+        return;
+      }
       expect(
         fetchMock.mock.calls.length,
         `${name} never called upstream, so this test cannot judge it`,
@@ -209,9 +258,9 @@ describe("proxies say the outcome is unknown when they cannot see the api's answ
     },
   );
 
-  it.each(HANDLERS)(
+  it.each(CASES)(
     "%s answers a response whose BODY never arrives with the typed 504",
-    async (name, path, method) => {
+    async (name, path, method, withClientId) => {
       // The api's headers arrived and the connection then reset mid-body: the
       // status line says nothing about whether the work finished, and the
       // body that would have said so is gone. Every route reads the body of a
@@ -235,7 +284,11 @@ describe("proxies say the outcome is unknown when they cannot see the api's answ
             { status: 409, headers: { "Content-Type": "application/json" } },
           ),
       );
-      const res = await call(path, method);
+      const res = await call(path, method, withClientId);
+      if (!withClientId && fetchMock.mock.calls.length === 0) {
+        await refusedForMissingClientId(name, res);
+        return;
+      }
       expect(fetchMock.mock.calls.length, name).toBeGreaterThan(0);
       const body = (await res.json()) as {
         error?: { code?: unknown; reason?: unknown; message?: unknown };
@@ -250,9 +303,9 @@ describe("proxies say the outcome is unknown when they cannot see the api's answ
     },
   );
 
-  it.each(HANDLERS)(
+  it.each(CASES)(
     "%s passes an answer the api DID send through unchanged",
-    async (name, path, method) => {
+    async (name, path, method, withClientId) => {
       // The other half: only a missing answer is "unknown". A refusal the api
       // sent is its own typed outcome and must reach the browser as sent.
       const refusal = {
@@ -265,7 +318,11 @@ describe("proxies say the outcome is unknown when they cannot see the api's answ
             headers: { "Content-Type": "application/json" },
           }),
       );
-      const res = await call(path, method);
+      const res = await call(path, method, withClientId);
+      if (!withClientId && fetchMock.mock.calls.length === 0) {
+        await refusedForMissingClientId(name, res);
+        return;
+      }
       expect(fetchMock.mock.calls.length, name).toBeGreaterThan(0);
       expect({ status: res.status, body: await res.json() }, name).toEqual({
         status: 409,
