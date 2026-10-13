@@ -53,6 +53,7 @@ from app.schemas.intake import (
     IntakeSubmitRequest,
     ServiceRequestInput,
 )
+from app.services.revisions import client_facing
 from app.zt.maturity import ZtFrameworkCode, level_count
 
 _ZT_SERVICE_TYPES = (ServiceType.ZERO_TRUST_CISA, ServiceType.ZERO_TRUST_DOD)
@@ -487,7 +488,7 @@ def submit_intake(
 _ZT_KINDS = (ServiceKind.ZERO_TRUST_CISA, ServiceKind.ZERO_TRUST_DOD)
 
 
-def _latest_assessment_status(db: Session, svc: Service) -> str | None:
+def _latest_assessment_status(db: Session, svc: Service, user: User) -> str | None:
     """Self-assessment lifecycle status for a CSF/ZT engagement, else None.
 
     Reports the latest NON-discarded assessment (D-031): a discarded draft is
@@ -557,7 +558,7 @@ def _latest_assessment_status(db: Session, svc: Service) -> str | None:
     # substitution that made the first draft of this paragraph false.
     if svc.kind == ServiceKind.NIST_CSF:
         row = db.execute(
-            select(CsfAssessment.status)
+            select(CsfAssessment)
             .where(
                 CsfAssessment.service_id == svc.id,
                 CsfAssessment.status != "discarded",
@@ -567,7 +568,7 @@ def _latest_assessment_status(db: Session, svc: Service) -> str | None:
         ).scalar_one_or_none()
     elif svc.kind in _ZT_KINDS:
         row = db.execute(
-            select(ZtAssessment.status)
+            select(ZtAssessment)
             .where(
                 ZtAssessment.service_id == svc.id,
                 ZtAssessment.status != "discarded",
@@ -577,7 +578,12 @@ def _latest_assessment_status(db: Session, svc: Service) -> str | None:
         ).scalar_one_or_none()
     else:
         return None
-    return getattr(row, "value", row) if row is not None else None
+    if row is None:
+        return None
+    # #1120 client door 6: a revision draft reads, for a non-admin, as the
+    # record it revises, so the client is never told their released work is
+    # back in draft.
+    return client_facing(db, row, user).status.value
 
 
 def _report_withheld(db: Session, svc: Service) -> bool:
@@ -603,13 +609,13 @@ def _report_withheld(db: Session, svc: Service) -> bool:
     return bool(released) and all(is_stale_attack_deliverable(db, d) for d in released)
 
 
-def _engagement_response(db: Session, svc: Service) -> EngagementResponse:
+def _engagement_response(db: Session, svc: Service, user: User) -> EngagementResponse:
     return EngagementResponse(
         service_id=svc.id,
         service_type=ServiceType(svc.kind.value),
         title=svc.title,
         status=getattr(svc.status, "value", svc.status),
-        assessment_status=_latest_assessment_status(db, svc),
+        assessment_status=_latest_assessment_status(db, svc, user),
         withheld=_report_withheld(db, svc),
         created_at=svc.created_at,
     )
@@ -634,7 +640,7 @@ def list_engagements(
         .scalars()
         .all()
     )
-    return [_engagement_response(db, s) for s in svcs]
+    return [_engagement_response(db, s, _user) for s in svcs]
 
 
 @router.post(
@@ -777,4 +783,4 @@ def create_engagement(
 
     db.commit()
     db.refresh(svc)
-    return _engagement_response(db, svc)
+    return _engagement_response(db, svc, user)

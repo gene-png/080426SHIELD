@@ -938,4 +938,6 @@ def test_nothing_outside_the_models_reads_evidence_basis() -> None:
     )
     # Positive first: the search could see the declaring module.
     assert "app/models/csf_profile.py" in readers, readers
-    assert readers == ["app/models/csf_profile.py"]
+    # #1120: `app/services/revisions.py` names the column only as a key of its
+    # NOT_CARRIED map, so a revision leaves it unset; it reads no value.
+    assert readers == ["app/models/csf_profile.py", "app/services/revisions.py"]

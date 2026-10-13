@@ -40,7 +40,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.models._common import TimestampMixin, UUIDPKMixin
+from app.models._common import TimestampMixin, UUIDPKMixin, one_draft_index
 
 
 class CapabilityListStatus(enum.StrEnum):
@@ -88,6 +88,7 @@ class CapabilityList(UUIDPKMixin, TimestampMixin, Base):
     __tablename__ = "capability_lists"
     __table_args__ = (
         UniqueConstraint("service_id", "version", name="uq_capability_lists_service_id_version"),
+        one_draft_index("capability_lists"),
     )
 
     service_id: Mapped[uuid.UUID] = mapped_column(
@@ -97,7 +98,14 @@ class CapabilityList(UUIDPKMixin, TimestampMixin, Base):
     status: Mapped[CapabilityListStatus] = mapped_column(
         SAEnum(CapabilityListStatus, name="capability_list_status", native_enum=False, length=16),
         default=CapabilityListStatus.DRAFT,
+        # #1120 (0073): the NAME, as stored; 0006/0009-0011 created it lowercase.
+        server_default="DRAFT",
         nullable=False,
+    )
+    # #1120 (0073): the record "Start a revision" copied from. NULL on every
+    # record not minted by a revision; nothing clears it.
+    revision_of: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("capability_lists.id", ondelete="SET NULL")
     )
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     approved_by: Mapped[uuid.UUID | None] = mapped_column(
