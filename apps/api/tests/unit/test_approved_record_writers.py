@@ -76,7 +76,7 @@ WRITER_VERDICTS: dict[str, tuple[str, str]] = {
     ),
     "app/routes/attack.py::start_assessment_revision": (
         "NEW RECORD",
-        "NEW RECORD: writes a new record (reuses an open DRAFT or inserts the next version), never into an existing one",
+        "NEW RECORD: inserts the next version as a new DRAFT copied from an APPROVED or RELEASED record, never writing the source; refused while the service has a draft (V6, the one-draft index) and while a run is in progress (refuse_while_running)",
     ),
     "app/routes/attack_scenarios.py::create_scenario": (
         "EXCLUDED",
@@ -144,7 +144,7 @@ WRITER_VERDICTS: dict[str, tuple[str, str]] = {
     ),
     "app/routes/csf.py::start_assessment_revision": (
         "NEW RECORD",
-        "NEW RECORD: writes a new record (reuses an open DRAFT or inserts the next version), never into an existing one",
+        "NEW RECORD: inserts the next version as a new DRAFT copied from an APPROVED or RELEASED record, never writing the source; refused while the service has a draft (V6, the one-draft index) and while a run is in progress (refuse_while_running)",
     ),
     "app/routes/csf.py::submit_self_assessment": (
         "REFUSED",
@@ -248,7 +248,7 @@ WRITER_VERDICTS: dict[str, tuple[str, str]] = {
     ),
     "app/routes/zt.py::start_assessment_revision": (
         "NEW RECORD",
-        "NEW RECORD: writes a new record (reuses an open DRAFT or inserts the next version), never into an existing one",
+        "NEW RECORD: inserts the next version as a new DRAFT copied from an APPROVED or RELEASED record, never writing the source; refused while the service has a draft (V6, the one-draft index) and while a run is in progress (refuse_while_running)",
     ),
     "app/routes/zt.py::submit_self_assessment": (
         "REFUSED",
