@@ -780,6 +780,10 @@ def _extract_run_work(
                 # negative one.
                 security_related=item.security_related,
                 security_functions=list(item.security_functions),
+                # TD-2 (for #1058): as the parser left them. None stays None:
+                # an unanswered flag is not a "no".
+                is_suite=item.is_suite,
+                recognized=item.recognized,
             )
         )
 

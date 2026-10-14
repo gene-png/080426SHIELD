@@ -305,6 +305,13 @@ UNKNOWN_NAME = "Unknown capability"
 #: each row you keep"). Both items are kept; the later one is recorded.
 DUPLICATED = "duplicated"
 
+#: TD-2 (for #1058): the finding reasons for v3.3 section 9a's two flags. Code
+#: tokens, not copy. `MISSING`: the key was absent or null (verify item 10,
+#: "never null"). `NOT_BOOLEAN`: anything but a JSON true or false, including
+#: "true", 1 and 0. Either way the value is stored as NULL, never as False.
+MISSING = "missing"
+NOT_BOOLEAN = "not_boolean"
+
 
 @dataclass(frozen=True)
 class ExtractedCapability:
@@ -323,6 +330,10 @@ class ExtractedCapability:
     # keeps unclassified rows in the ATT&CK subset for exactly that reason.
     security_related: bool | None = None
     security_functions: tuple[str, ...] = ()
+    # TD-2 (for #1058), v3.3 section 9a. None when the model did not send a
+    # JSON boolean (recorded in `findings`), never coerced to False.
+    is_suite: bool | None = None
+    recognized: bool | None = None
     # #833 / #834: what this item's values could not be stored as given, each
     # `{source_row_index, item_name, field, reason, value}`. The value itself
     # is stored as NULL (a number) or cut to its column (a string); the record
@@ -578,6 +589,21 @@ def _coerce_item(item: dict[str, Any]) -> ExtractedCapability:
                 return False
         return None
 
+    def _strict_bool(key: str) -> bool | None:
+        """TD-2 (for #1058): a JSON true or false, stored as sent; anything else
+        is stored as None and recorded. Stricter than `_opt_bool` on purpose:
+        v3.3 asks for these two as booleans "never null", and a `"false"` or a
+        `0` read as False would record a decision the model did not make in the
+        form asked -- and False is what clears a row of part B's red."""
+        if key not in item or item[key] is None:
+            _record(key, MISSING, item.get(key))
+            return None
+        v = item[key]
+        if isinstance(v, bool):
+            return v
+        _record(key, NOT_BOOLEAN, v)
+        return None
+
     functions = _security_functions(item.get("security_functions"))
     related = _opt_bool("security_related")
     # A named security function contradicts a False flag. Trust the function:
@@ -598,6 +624,8 @@ def _coerce_item(item: dict[str, Any]) -> ExtractedCapability:
     cost = _opt_cost("annual_cost_usd")
     licenses = _opt_int("license_count", *_INT_RANGES["license_count"])
     confidence = _opt_int("confidence_pct", *_INT_RANGES["confidence_pct"])
+    is_suite = _strict_bool("is_suite")
+    recognized = _strict_bool("recognized")
     return ExtractedCapability(
         name=name,
         vendor=vendor,
@@ -610,6 +638,8 @@ def _coerce_item(item: dict[str, Any]) -> ExtractedCapability:
         source_row_index=row,
         security_related=related,
         security_functions=functions,
+        is_suite=is_suite,
+        recognized=recognized,
         findings=tuple(findings),
     )
 
