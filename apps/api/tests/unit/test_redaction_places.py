@@ -44,10 +44,21 @@ _BUSY_PART_WAY = (
     "The check for people's names is busy with other AI work, so this run was "
     "stopped part-way. Nothing from it was applied."
 )
+#: Quoted at {N} = 5, the budget its one test sets: that test needs a REAL
+#: redaction to finish inside the budget before the held one overruns it, and
+#: at 0.5 s a slow runner killed the real one first (#1143). The 0.5 s form of
+#: the neutral sentence is pinned in `test_redaction_budget.py`.
+_PART_WAY_BUDGET_S = "5"
 _BUDGET_PART_WAY = (
     "Checking a payload in this run for people's names took longer than the "
-    "0.5-second limit, so the run was stopped part-way. Nothing from it was applied."
+    "5-second limit, so the run was stopped part-way. Nothing from it was applied."
 )
+
+
+def _why(run: dict) -> tuple:
+    """What a failed run says about itself, first: pytest truncates the run's
+    dict, and the reason and message are past the cut."""
+    return run["error_reason"], run["error_message"], run
 
 
 def _settings(monkeypatch, **values: str) -> None:
@@ -102,7 +113,7 @@ def test_a_batched_run_takes_one_place_however_many_calls_it_makes(world, monkey
 
     run = rw.post_within(rw.HANG_GUARD_S, lambda: rw.csf_run(world, svc_id))
 
-    assert run["status"] == "completed", run
+    assert run["status"] == "completed", _why(run)
     assert run["batches_total"] >= 5, f"too few batches to fan out: {run['batches_total']}"
     assert run["batches_failed"] == 0, run
     assert len(world["sent"]) == run["batches_total"], (len(world["sent"]), run)
@@ -235,7 +246,7 @@ def test_the_place_is_released_when_the_run_succeeds(world) -> None:
     svc_id, artifact_id = rw.service_and_artifact(world, "Application\nPayroll\n")
     run = rw.extract(world, svc_id, artifact_id)
 
-    assert run["status"] == "completed", run
+    assert run["status"] == "completed", _why(run)
     assert seen == [1], seen
     assert isolation.places_in_use() == 0
 
@@ -248,9 +259,9 @@ def test_the_place_is_released_when_the_run_fails_typed(world) -> None:
     svc_id, artifact_id = rw.service_and_artifact(world, "Application\nPayroll\n")
     run = rw.extract(world, svc_id, artifact_id)
 
-    assert run["status"] == "failed", run
+    assert run["status"] == "failed", _why(run)
     # Typed upstream, by `ai_call_boundary`, before the route's own parse.
-    assert run["error_reason"] == "ai_call_failed", run
+    assert run["error_reason"] == "ai_call_failed", _why(run)
     assert seen == [1], seen
     assert isolation.places_in_use() == 0
 
@@ -268,8 +279,8 @@ def test_the_place_is_released_when_the_run_raises_unexpectedly(world, monkeypat
     svc_id, artifact_id = rw.service_and_artifact(world, "Application\nPayroll\n")
     run = rw.extract(world, svc_id, artifact_id)
 
-    assert run["status"] == "failed", run
-    assert run["error_reason"] == "run_crashed", run
+    assert run["status"] == "failed", _why(run)
+    assert run["error_reason"] == "run_crashed", _why(run)
     assert seen == [1], seen
     assert isolation.places_in_use() == 0
 
@@ -377,11 +388,21 @@ def test_a_refusal_inside_risk_generate_fails_the_whole_generate(world, monkeypa
     the budget. Generate answers the typed refusal with the part-way sentence
     and writes NO register: before this, the batches that got through became a
     register. (The client's legal name carries the control directory, because
-    Risk passes the redactor no name hints.)"""
+    Risk passes the redactor no name hints.)
+
+    THE MARGIN: the first batch's real redaction (about 0.1 s idle, under 2 s
+    on one CPU shared eight ways, #1143) must finish inside the budget, and
+    the waiting batches must not time out on their slot before the held one
+    is stopped, so the slot wait is well past the budget."""
     import app.ai.isolation as isolation
     import app.routes.risk as risk
 
-    _settings(monkeypatch, MAX_CHILDREN="1")
+    _settings(
+        monkeypatch,
+        MAX_CHILDREN="1",
+        BUDGET_SECONDS=_PART_WAY_BUDGET_S,
+        SLOT_WAIT_SECONDS="30",
+    )
     monkeypatch.setattr(risk, "_RISK_BATCH_SIZE", 1)
     ctl = world["tmp"] / "ctl"
     ctl.mkdir()
