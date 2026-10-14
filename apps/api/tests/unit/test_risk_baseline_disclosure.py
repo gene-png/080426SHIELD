@@ -25,7 +25,6 @@ from __future__ import annotations
 import pytest
 
 from tests.unit.test_risk_per_service import _both_frameworks, _export_texts
-from tests.unit.test_risk_per_service import _generate as _generate_per_finding
 from tests.unit.test_risk_register import (  # noqa: F401  (app_client is a fixture)
     _admin,
     _entries_payload,
@@ -170,7 +169,14 @@ def test_the_client_dashboard_carries_the_baseline(app_client) -> None:  # noqa:
 
 # ---------------------------------------------------------------------------
 # CISA (client 4) plus DoD (default), the approved table's two-ZT row, through
-# generate and every surface. Literal strings, positive first.
+# every surface. Literal strings, positive first.
+#
+# RR-1 (#1122): generate now draws on ONE Zero Trust framework per register, so
+# a register holding both is one generated before RR-1. Those still exist and
+# every surface must still render them, so the two-ZT world below is that
+# older shape, built from one real generate per framework
+# (`tests/_risk_pre_rr1.py`). What generate itself now stores with both
+# frameworks engaged is pinned by the RR-1 test that replaced #876's.
 # ---------------------------------------------------------------------------
 
 _CISA_LINE = (
@@ -199,6 +205,27 @@ _TWO_ZT_TARGETS = [
 ]
 
 
+def _generate_selecting(c, provider, bearer: str, cid: str, *, csf: bool, zero_trust: str):
+    """One generate with an explicit RR-1 selection, through the route."""
+    from tests.unit.test_risk_per_service import _h, _per_finding
+
+    provider.register("risk_synthesize", _per_finding([]))
+    return c.post(
+        f"/risk/clients/{cid}/register/generate",
+        headers=_h(bearer, cid),
+        json={"include": {"csf": csf, "zero_trust": zero_trust}},
+    )
+
+
+def _pre_rr1_two_zt_register(c, provider, bearer: str, cid: str, *, csf: bool) -> None:
+    from tests._risk_pre_rr1 import CISA, DOD, merge_into_pre_rr1_two_zt
+
+    for framework in (CISA, DOD):
+        r = _generate_selecting(c, provider, bearer, cid, csf=csf, zero_trust=framework)
+        assert r.status_code == 201, r.text
+    merge_into_pre_rr1_two_zt(_session, cid)
+
+
 def _two_zt_world(app_client):  # noqa: F811
     from tests.unit.test_risk_register import _set_zt_target
 
@@ -206,23 +233,41 @@ def _two_zt_world(app_client):  # noqa: F811
     bearer, cid = _admin(c)
     _both_frameworks(c, bearer, cid)
     _set_zt_target(cid, 4, kind="zero_trust_cisa")
-    r = _generate_per_finding(c, provider, bearer, cid, [])
-    assert r.status_code == 201, r.text
+    _pre_rr1_two_zt_register(c, provider, bearer, cid, csf=False)
     return c, bearer, cid
 
 
-def _stored_targets() -> dict:
+def _stored_provenance() -> dict:
     from sqlalchemy import select
 
     from app.models.risk_register import RiskRegister
 
     with _session() as s:
-        return dict(s.execute(select(RiskRegister)).scalar_one().provenance["targets"])
+        return dict(s.execute(select(RiskRegister)).scalar_one().provenance)
 
 
-def test_two_zero_trust_services_store_kind_and_framework(app_client) -> None:  # noqa: F811
-    _two_zt_world(app_client)
-    assert _stored_targets() == {
+def test_with_both_frameworks_generate_stores_only_the_chosen_one(
+    app_client,  # noqa: F811
+) -> None:
+    """RR-1 (#1122) REPLACES #876's `test_two_zero_trust_services_store_kind_and_framework`.
+
+    That test pinned generate storing BOTH Zero Trust targets. RR-1's ruling
+    (design note §1.1, reversing #876 Q1) is one framework per register, so
+    its premise is reversed, not weakened: said here, per CLAUDE.md core
+    principle 3. Expected values are the design note's (§3.3: the scope key
+    is computed over the full engaged set, so it names the framework; §4: the
+    other framework is recorded as deselected), not read from the code.
+    """
+    from tests.unit.test_risk_register import _set_zt_target
+
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    _both_frameworks(c, bearer, cid)
+    _set_zt_target(cid, 4, kind="zero_trust_cisa")
+    r = _generate_selecting(c, provider, bearer, cid, csf=False, zero_trust="cisa_ztmm_2_0")
+    assert r.status_code == 201, r.text
+    prov = _stored_provenance()
+    assert prov["targets"] == {
         "zt:cisa_ztmm_2_0": {
             "target": 4,
             "source": "client",
@@ -230,14 +275,9 @@ def test_two_zero_trust_services_store_kind_and_framework(app_client) -> None:  
             "framework": "cisa_ztmm_2_0",
             "origin": "live_at_generate",
         },
-        "zt:dod_ztra": {
-            "target": 3,
-            "source": "default",
-            "kind": "zt",
-            "framework": "dod_ztra",
-            "origin": "live_at_generate",
-        },
     }
+    deselected = sorted((d["kind"], d["framework"]) for d in prov["selection"]["deselected"])
+    assert deselected == [("zt", "dod_ztra")], deselected
 
 
 def test_two_zero_trust_services_reach_the_admin_response(app_client) -> None:  # noqa: F811
@@ -281,8 +321,7 @@ def test_csf_plus_cisa_plus_dod_print_the_csf_line_then_cisa_then_dod(
     _both_frameworks(c, bearer, cid)
     _seed_csf_playbook_at_level(c, bearer, cid, level=1, target=4)
     _set_zt_target(cid, 4, kind="zero_trust_cisa")
-    r = _generate_per_finding(c, provider, bearer, cid, [])
-    assert r.status_code == 201, r.text
+    _pre_rr1_two_zt_register(c, provider, bearer, cid, csf=True)
     texts = _export_texts(c, bearer, cid)
     for fmt in ("pdf", "docx", "xlsx"):
         text = " ".join(texts[fmt].split())
@@ -447,12 +486,7 @@ def test_attack_alone_cannot_generate_so_no_register_records_no_targets(
     assert ar.status_code == 200, ar.text
     gen = c.post(f"/risk/clients/{cid}/register/generate", headers=h)
     assert gen.status_code == 409, gen.text
-    # #1081: the locked copy, (B) for CSF/ZT, approved in #1081 6116102972.
-    err = gen.json()["error"]
-    assert err["reason"] == "risk_register_locked", err
-    assert err["message"].startswith(
-        "Acme has no NIST CSF 2.0 Assessment or Zero Trust service."
-    ), err
+    assert "a CSF or Zero Trust assessment" in gen.text
 
 
 def test_a_target_with_no_source_raises_rather_than_guessing() -> None:

@@ -14,10 +14,13 @@ assessment whose intake target of 3 the cap lowers for 15 capabilities.
 
 A second world adds a released CISA Zero Trust assessment with an intake target
 of 4, so the register holds two Zero Trust targets and each line names its
-framework. The cap is DoD's, and `generate` records it per Zero Trust source,
-so the note must follow the DoD line, not merely the last target line: the
-two-framework case is what tells those apart. Its target lines are #861's
-approved two-framework forms.
+framework. Since RR-1 (#1122), generate draws on one Zero Trust framework per
+register, so a two-framework register is one generated BEFORE RR-1, which
+every surface must still render. It is built from one real generate per
+framework (`tests/_risk_pre_rr1.py`). The cap is DoD's, and `generate` records
+it per Zero Trust source, so the note must follow the DoD line, not merely
+the last target line: the two-framework case is what tells those apart. Its
+target lines are #861's approved two-framework forms.
 
 Each file is checked through the download a client receives. The positive state
 is asserted first, so a missing sentence fails as missing and never passes as
@@ -97,6 +100,8 @@ DOD_LINE = (
 
 
 def _published_with_cisa_and_dod(c) -> tuple[str, str, list[str]]:
+    from tests._risk_pre_rr1 import CISA, DOD, merge_into_pre_rr1_two_zt
+    from tests.unit.test_risk_register import _session
     from tests.unit.test_zt_dashboard import _attach_intake_target
 
     cid, h, _client = _world(c, intake_stage=3, own_target=None)
@@ -109,7 +114,14 @@ def _published_with_cisa_and_dod(c) -> tuple[str, str, list[str]]:
     r = c.post(f"/zt/assessments/{za.json()['id']}/approve", headers=h)
     assert r.status_code == 200, r.text
     release(c, bearer, cid, "zt", zsvc.json()["id"])
-    assert c.post(f"/risk/clients/{cid}/register/generate", headers=h).status_code == 201
+    for framework in (CISA, DOD):
+        gen = c.post(
+            f"/risk/clients/{cid}/register/generate",
+            headers=h,
+            json={"include": {"csf": False, "zero_trust": framework}},
+        )
+        assert gen.status_code == 201, gen.text
+    merge_into_pre_rr1_two_zt(_session, cid)
     pub = c.post(f"/risk/clients/{cid}/register/publish", headers=h)
     assert pub.status_code in (200, 201), pub.text
     return _files(c, h, pub.json())
