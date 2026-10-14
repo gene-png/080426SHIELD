@@ -9,12 +9,18 @@ service) landed first, so 0072 chains AFTER 0073 and `down_revision` is
 main's head at the time of writing. The chain's order is not the number order
 (`test_alembic_single_head` reads the chain, never filenames).
 
-Seven nullable columns, the design of TD-2 (td2, as ruled by the advisor):
+Eight nullable columns, the design of TD-2 (td2, as ruled by the advisor):
 
 - `is_suite`, `recognized`: the two booleans Tech Debt extraction prompt v3.3
   section 9a asks for. NULL means "not answered": a row extracted before TD-2,
   or an answer whose flag was missing or not a boolean (recorded in
   `extraction_findings`). NULL is NEVER read as False.
+- `extracted_prompt_version` (F1, option (a), #736 6160171214): on a row the
+  extraction inserted, the prompt version that ran -- the value the call
+  records in `llm_calls.prompt_version`, passed through. It is what tells a
+  NULL flag from a v3.3 run ("asked, unanswered") from a NULL flag on a row
+  extracted before TD-2 ("not asked"). NULL on every row a consultant adds
+  (an included excluded row, a component) and on every existing row.
 - `purchase_status`: on a COMPONENT row only (a CHECK holds it to rows with a
   `parent_item_id`), one of the four approved statuses -- Purchased and in use,
   Purchased, not deployed, Not purchased, Unknown -- stored as the member NAME
@@ -28,9 +34,9 @@ Seven nullable columns, the design of TD-2 (td2, as ruled by the advisor):
 ## Blast radius
 
 Additive and nullable; nothing is backfilled. Every existing row keeps NULL in
-all seven columns, which part B reads as "extracted before this check existed"
+all eight columns, which part B reads as "extracted before this check existed"
 (ruling Q3: never red, never counted as cleared). Nothing reads the columns in
-this part except the extraction write of the two flags.
+this part except the extraction write of the two flags and the prompt version.
 
 ## The downgrade refuses while any row holds a value 0072 added
 
@@ -46,7 +52,7 @@ Only once someone has decided the data may go (export it first if it must be
 kept). This statement clears everything the refusal counts, and is the one the
 refusal prints:
 
-    UPDATE capability_items SET is_suite = NULL, recognized = NULL, purchase_status = NULL, client_unconfirmed_name = NULL, client_unconfirmed_reason = NULL, client_unconfirmed_at = NULL, client_unconfirmed_by = NULL
+    UPDATE capability_items SET is_suite = NULL, recognized = NULL, extracted_prompt_version = NULL, purchase_status = NULL, client_unconfirmed_name = NULL, client_unconfirmed_reason = NULL, client_unconfirmed_at = NULL, client_unconfirmed_by = NULL
 
 then `alembic downgrade 0073`.
 """
@@ -79,6 +85,7 @@ _FK_BY = "fk_capability_items_client_unconfirmed_by_users"
 _COLUMNS = (
     "is_suite",
     "recognized",
+    "extracted_prompt_version",
     "purchase_status",
     "client_unconfirmed_name",
     "client_unconfirmed_reason",
@@ -95,6 +102,7 @@ def upgrade() -> None:
     with op.batch_alter_table("capability_items") as batch:
         batch.add_column(sa.Column("is_suite", sa.Boolean(), nullable=True))
         batch.add_column(sa.Column("recognized", sa.Boolean(), nullable=True))
+        batch.add_column(sa.Column("extracted_prompt_version", sa.String(32), nullable=True))
         batch.add_column(sa.Column("purchase_status", sa.String(32), nullable=True))
         batch.add_column(sa.Column("client_unconfirmed_name", sa.String(255), nullable=True))
         batch.add_column(sa.Column("client_unconfirmed_reason", sa.Text(), nullable=True))
@@ -122,7 +130,8 @@ def downgrade() -> None:
         noun = "capability item holds" if held == 1 else "capability items hold"
         raise RuntimeError(
             f"Refusing to downgrade 0072: {held} {noun} a value 0072 added "
-            "(a suite or recognition flag, a purchase status, or a 'Client could not "
+            "(a suite or recognition flag, the prompt version that asked for them, a "
+            "purchase status, or a 'Client could not "
             "confirm' record). Dropping them would delete a model's answers and a "
             "consultant's work without a trace, and a re-upgrade restores NULL, not "
             "the values. To clear them deliberately, once the data may go, run: "

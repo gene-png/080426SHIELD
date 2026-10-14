@@ -784,6 +784,10 @@ def _extract_run_work(
                 # an unanswered flag is not a "no".
                 is_suite=item.is_suite,
                 recognized=item.recognized,
+                # F1 (#736 6160171214): the version the call recorded, passed
+                # through -- never worked out again from the constant -- so a
+                # None flag here reads as "asked, unanswered", not pre-TD-2.
+                extracted_prompt_version=result.llm_call.prompt_version,
             )
         )
 

@@ -264,6 +264,12 @@ class CapabilityItem(UUIDPKMixin, TimestampMixin, Base):
     # "not recognized".
     is_suite: Mapped[bool | None] = mapped_column()
     recognized: Mapped[bool | None] = mapped_column()
+    # F1 (#736 6160171214): on a row the extraction inserted, the prompt version
+    # that ran, passed through from the call's `llm_calls.prompt_version`. It
+    # tells a v3.3 row whose flag went unanswered (version set, flag None) from
+    # a row extracted before TD-2 (both None). None on every row a consultant
+    # adds: nobody asked the model about it.
+    extracted_prompt_version: Mapped[str | None] = mapped_column(String(32))
     # On a component row only (a CHECK says so). None = no status given yet.
     purchase_status: Mapped[PurchaseStatus | None] = mapped_column(
         SAEnum(PurchaseStatus, name="purchase_status", native_enum=False, length=32)
