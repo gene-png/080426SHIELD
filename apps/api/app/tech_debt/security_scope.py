@@ -67,8 +67,9 @@ def awaiting_security_signoff(item: CapabilityItem) -> bool:
 #: The ONE constant every reader matches; tests copy the string from the prompt.
 NOT_IN_USE_PREFIX = "Security tool not in use:"
 
-#: The extraction prompt versions that ask for the prefix. v3.2 is the in-tree
-#: prompt since the #806 Tech Debt prompt PR, so a new extraction fills the
+#: The extraction prompt versions that ask for the prefix. v3.2 first asked for
+#: it (the #806 Tech Debt prompt PR); v3.3 (TD-2, for #1058) is the in-tree
+#: prompt and keeps the rule unchanged, so a new extraction fills the
 #: not-in-use group and measures the contradiction count. A list an earlier
 #: prompt (v2) drafted never asked for it: its group fills only from a
 #: consultant's own note, and its count stays not measured. Add a version here
