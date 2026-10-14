@@ -13,6 +13,8 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**2026-10-14: #1143, PR #1162, the redaction test budget.** The intermittent unit-test red traced to the redaction tests' 0.5 s budget on slow runners, plus a settings cache that leaked it into later Risk tests; #1143 stays open until later CI runs confirm the fix. Tests only. Status: the 2026-10-14 #1143 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
 **2026-10-14: C-1a (#1046), PR #1144.** CSF Run AI sends the `csf_score` prompt v3: v2 plus the two approved section-12 edits asking for exactly eight keys per row and all five dimension scores. Status: the 2026-10-14 C-1a entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
 **2026-10-14: UI plan v2 step 1 (#1087), PR #1095.** The shared service header, section bar, section header, AI result card and internal-only band exist under `components/service-shell/`, mounted on no page yet. Status: the 2026-10-14 #1087 entry in `DELIVERY_PLAN.md`'s MVP completion path.
