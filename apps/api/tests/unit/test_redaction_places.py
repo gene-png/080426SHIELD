@@ -227,30 +227,48 @@ def _record_places(world: dict, answer: str) -> list[int]:
     return seen
 
 
+def _room_to_redact(monkeypatch) -> None:
+    """A budget these tests do not exercise, so a slow runner cannot fail them
+    on it. The world's 0.5 s budget is wall clock from the child's start, and
+    under pytest every child first re-runs the `pytest` script as
+    `__mp_main__` (importing pytest) before it redacts: about 0.1 s idle, and
+    0.6 to 1.2 s with the CPU shared eight ways, measured for #1143, where a
+    real two-row redaction was killed as over budget and the run failed."""
+    _settings(monkeypatch, BUDGET_SECONDS="5")
+
+
+def _why(run: dict) -> tuple:
+    """What a failed run says about itself, first: pytest truncates the run's
+    dict, and the reason and message are past the cut."""
+    return run["error_reason"], run["error_message"], run
+
+
 @pytest.mark.unit
-def test_the_place_is_released_when_the_run_succeeds(world) -> None:
+def test_the_place_is_released_when_the_run_succeeds(world, monkeypatch) -> None:
     import app.ai.isolation as isolation
 
+    _room_to_redact(monkeypatch)
     seen = _record_places(world, '{"items": []}')
     svc_id, artifact_id = rw.service_and_artifact(world, "Application\nPayroll\n")
     run = rw.extract(world, svc_id, artifact_id)
 
-    assert run["status"] == "completed", run
+    assert run["status"] == "completed", _why(run)
     assert seen == [1], seen
     assert isolation.places_in_use() == 0
 
 
 @pytest.mark.unit
-def test_the_place_is_released_when_the_run_fails_typed(world) -> None:
+def test_the_place_is_released_when_the_run_fails_typed(world, monkeypatch) -> None:
     import app.ai.isolation as isolation
 
+    _room_to_redact(monkeypatch)
     seen = _record_places(world, "this is not JSON")
     svc_id, artifact_id = rw.service_and_artifact(world, "Application\nPayroll\n")
     run = rw.extract(world, svc_id, artifact_id)
 
-    assert run["status"] == "failed", run
+    assert run["status"] == "failed", _why(run)
     # Typed upstream, by `ai_call_boundary`, before the route's own parse.
-    assert run["error_reason"] == "ai_call_failed", run
+    assert run["error_reason"] == "ai_call_failed", _why(run)
     assert seen == [1], seen
     assert isolation.places_in_use() == 0
 
@@ -264,12 +282,13 @@ def test_the_place_is_released_when_the_run_raises_unexpectedly(world, monkeypat
         raise RuntimeError("an unexpected failure after the AI call")
 
     monkeypatch.setattr(tech_debt, "_max_list_version", _explode)
+    _room_to_redact(monkeypatch)
     seen = _record_places(world, '{"items": []}')
     svc_id, artifact_id = rw.service_and_artifact(world, "Application\nPayroll\n")
     run = rw.extract(world, svc_id, artifact_id)
 
-    assert run["status"] == "failed", run
-    assert run["error_reason"] == "run_crashed", run
+    assert run["status"] == "failed", _why(run)
+    assert run["error_reason"] == "run_crashed", _why(run)
     assert seen == [1], seen
     assert isolation.places_in_use() == 0
 
