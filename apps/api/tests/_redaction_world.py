@@ -1,6 +1,8 @@
 """The world the #552 redaction-isolation tests share: one tenant on SQLite with
 an admin, a recording fixture provider wired into Tech Debt, CSF and Risk, and
-the redaction budget at 0.5 s, plus the helpers the test files use. A module
+a redaction budget too generous to be met by ordinary work (`ROOM_TO_REDACT_S`),
+plus the helpers the test files use. A test that exercises the budget, or
+quotes the "0.5-second" copy, sets `OVER_BUDGET_S` itself (`set_budget`). A module
 rather than a conftest so the fixture is imported by name where it is used
 (`_world`, requested as `world`)."""
 
@@ -33,6 +35,19 @@ _PASSWORD = "correct horse battery staple!"
 #: when a budget or a release is missing altogether.
 HANG_GUARD_S = 60
 
+#: The budget the world gives every test that does not set its own (#1143).
+#: The budget is wall clock from the child's start, and under pytest each child
+#: first re-runs the `pytest` script as `__mp_main__` before it redacts: about
+#: 0.1 s idle, 0.6 to 1.8 s on one CPU shared eight ways. At 0.5 s that failed
+#: CI on real redactions in tests that never meant to touch the budget. Kept
+#: under the hang guard, so a child that never ends still fails the test.
+ROOM_TO_REDACT_S = "10"
+
+#: The budget a test sets EXPLICITLY, with `set_budget`, when it exercises the
+#: budget (a child that spins until it is stopped) or quotes the approved copy
+#: with "0.5-second" in it. Short, so a deliberate overrun costs half a second.
+OVER_BUDGET_S = "0.5"
+
 #: apps/api: where a stand-in api process must start, so `app` and `tests` import.
 API_DIR = Path(__file__).resolve().parent.parent
 
@@ -48,12 +63,12 @@ class LiveLookingProvider(FixtureProvider):
 @pytest.fixture(name="world")
 def _world(tmp_path, monkeypatch) -> Iterator[dict[str, Any]]:
     """A tenant with an admin, a recording provider, and the redaction budget at
-    0.5 s. Settings are read through `get_settings()`, so its cache is cleared
-    on the way in and out. On the way out, every place and slot must be free:
-    a test that leaked one would otherwise poison the next."""
+    `ROOM_TO_REDACT_S`. Settings are read through `get_settings()`, so its
+    cache is cleared on the way in and out. On the way out, every place and
+    slot must be free: a test that leaked one would otherwise poison the next."""
     from app.config import get_settings
 
-    monkeypatch.setenv("SHIELD_REDACTION_BUDGET_SECONDS", "0.5")
+    monkeypatch.setenv("SHIELD_REDACTION_BUDGET_SECONDS", ROOM_TO_REDACT_S)
     monkeypatch.setenv("SHIELD_REDACTION_MAX_CHILDREN", "2")
     monkeypatch.setenv("SHIELD_REDACTION_MAX_RUNS", "4")
     monkeypatch.setenv("SHIELD_REDACTION_SLOT_WAIT_SECONDS", "5")
@@ -142,7 +157,29 @@ def _world(tmp_path, monkeypatch) -> Iterator[dict[str, Any]]:
         w["c"] = c
         w["h"] = {"Authorization": f"Bearer {w['bearer']}"}
         yield w
-    wait_until_idle()
+    try:
+        wait_until_idle()
+    finally:
+        # Always, and the environment BEFORE the cache (#1143). A test that
+        # fails holding a place makes `wait_until_idle` raise; that used to
+        # skip the cache clear, so this test's cached settings outlived it and
+        # every later test without a world of its own (Risk's `app_client`
+        # clears nothing) ran under them. Reproduced: with
+        # `test_one_call_runs_never_push_...` failing that way, the next file,
+        # `test_risk_attack_evidence_stored_status.py`, failed on the
+        # "0.5-second" budget it never sets -- the pair CI #1159 failed.
+        # Restoring the environment first means nothing in the gap can
+        # re-cache this test's values.
+        monkeypatch.undo()
+        get_settings.cache_clear()
+
+
+def set_budget(monkeypatch, seconds: str) -> None:
+    """Set the redaction budget for this test, e.g. `OVER_BUDGET_S`, and drop
+    the cached settings so the next redaction reads it."""
+    from app.config import get_settings
+
+    monkeypatch.setenv("SHIELD_REDACTION_BUDGET_SECONDS", seconds)
     get_settings.cache_clear()
 
 
