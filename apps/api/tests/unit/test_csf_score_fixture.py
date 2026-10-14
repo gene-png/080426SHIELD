@@ -11,7 +11,8 @@ comment 5982122270, quoted by section:
   rating sentence and the evidence sentence;
 - sections 7, 8 and 10: `what_we_found` reports the rating with one of the
   five required sentences, then ends with one of the two evidence sentences;
-- section 12: no other fields, at the top level or in a row.
+- section 12, as v3 amends it (#736 comment 6115773247): each row has
+  exactly the eight keys and no others, at the top level or in a row.
 
 The sentences are copied out of the prompt by `_sentence`, so a fixture that
 drifts from the approved wording goes red here.
@@ -110,7 +111,7 @@ def test_rows_follow_subcategories_then_tiers_in_input_order() -> None:
 
 
 def test_the_response_carries_no_field_the_prompt_does_not_ask_for() -> None:
-    """Section 12: "No other fields, at the top level or in a row"."""
+    """Section 12 (v3): "Each row has exactly these eight keys and no others"."""
     payload = {
         "tiers": ["high"],
         "subcategories": ["GV.OC-01", "GV.OC-02"],
