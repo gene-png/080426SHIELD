@@ -26,6 +26,7 @@ from datetime import datetime
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Integer,
@@ -38,6 +39,7 @@ from sqlalchemy import (
     Enum as SAEnum,
 )
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.sql.elements import conv
 
 from app.db.base import Base
 from app.models._common import TimestampMixin, UUIDPKMixin, one_draft_index
@@ -69,6 +71,22 @@ class CapabilityDisposition(enum.StrEnum):
 RETIRING_DISPOSITIONS: frozenset[CapabilityDisposition] = frozenset(
     {CapabilityDisposition.CUT, CapabilityDisposition.CONSOLIDATE}
 )
+
+
+class PurchaseStatus(enum.StrEnum):
+    """What the client holds of one product inside a suite (TD-2, for #1058;
+    migration 0072). The four statuses Gene approved (#736 6115464421):
+    Purchased and in use; Purchased, not deployed; Not purchased; Unknown.
+
+    Stored as the member NAME (`native_enum=False`), which is what the 0072
+    CHECK lists. Set on a COMPONENT row only; NULL is "not given yet", and a
+    component without one does not count toward a confirmed breakdown
+    (ruling Q2)."""
+
+    PURCHASED_IN_USE = "purchased_in_use"
+    PURCHASED_NOT_DEPLOYED = "purchased_not_deployed"
+    NOT_PURCHASED = "not_purchased"
+    UNKNOWN = "unknown"
 
 
 class SecurityFunction(enum.StrEnum):
@@ -160,6 +178,19 @@ class CapabilityList(UUIDPKMixin, TimestampMixin, Base):
 
 class CapabilityItem(UUIDPKMixin, TimestampMixin, Base):
     __tablename__ = "capability_items"
+    __table_args__ = (
+        # Migration 0072 (TD-2, for #1058): the member NAMEs, and only on a
+        # component row.
+        CheckConstraint(
+            "purchase_status IS NULL OR purchase_status IN ('PURCHASED_IN_USE', "
+            "'PURCHASED_NOT_DEPLOYED', 'NOT_PURCHASED', 'UNKNOWN')",
+            name=conv("ck_capability_items_purchase_status_vocabulary"),
+        ),
+        CheckConstraint(
+            "purchase_status IS NULL OR parent_item_id IS NOT NULL",
+            name=conv("ck_capability_items_purchase_status_on_component"),
+        ),
+    )
 
     capability_list_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("capability_lists.id", ondelete="CASCADE"), nullable=False
@@ -223,4 +254,25 @@ class CapabilityItem(UUIDPKMixin, TimestampMixin, Base):
     # nuke the dependent row's disposition.
     consolidation_target_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("capability_items.id", ondelete="SET NULL")
+    )
+
+    # TD-2 (for #1058; migration 0072). Tech Debt prompt v3.3 section 9a's two
+    # flags, as the model sent them. Tri-state on purpose, like
+    # `security_related`: None = not answered (a row extracted before TD-2, or
+    # a missing or non-boolean value, recorded in `extraction_findings`), which
+    # must NEVER read as False -- False is the model's answer "not a suite" /
+    # "not recognized".
+    is_suite: Mapped[bool | None] = mapped_column()
+    recognized: Mapped[bool | None] = mapped_column()
+    # On a component row only (a CHECK says so). None = no status given yet.
+    purchase_status: Mapped[PurchaseStatus | None] = mapped_column(
+        SAEnum(PurchaseStatus, name="purchase_status", native_enum=False, length=32)
+    )
+    # "Client could not confirm" on a suite row: the CLIENT CONTACT's name
+    # (ruling Q1), the reason, and when and by which consultant it was recorded.
+    client_unconfirmed_name: Mapped[str | None] = mapped_column(String(255))
+    client_unconfirmed_reason: Mapped[str | None] = mapped_column(Text)
+    client_unconfirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    client_unconfirmed_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
     )
