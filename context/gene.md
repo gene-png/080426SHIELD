@@ -2,6 +2,12 @@
 
 _2026-10-14 (track7): #935 and #929 landed with PR #1044._ In Tech Debt, a part split out of a bundle (Defender inside Microsoft 365 E5, say) is no longer counted as a tool of its own: the admin workspace's Capabilities, Annual cost and Total cost count source items only, and say how many bundle parts were left out. On the client dashboard and in the PDF, DOCX and XLSX, a part's cost now reads "Included in Microsoft 365 E5" instead of "—". Per the advisor's ruling, a cost typed on a part before #927 no longer counts as a saving anywhere, so a plan cutting such a part shows its savings as a floor ("≥"). Your read-only query found one released demo list with one costed part ($741,523); its already-released files do not change. It comes back to you: conditions 5 and 6. Follow-ups: #1094 and #1041.
 
+_2026-10-14 (track8): the fix for the flaky unit-test red landed with PR #1162 (for #1143); #1143 stays open until later CI runs confirm it._ The tests that check redaction before AI calls gave the redaction only half a second, including its own start-up, so a slow CI machine failed them at random and cost a CI run on most PRs. They now get ten seconds by default; tests that check the budget itself set their own short budget. A second bug let the short limit leak into later Risk tests; that is fixed too. Only test files changed.
+
+_2026-10-14 (track5): C-1a landed with PR #1144, for #1046._ CSF Run AI now uses version v3 of the scoring prompt: the v2 text you approved plus the two edits the advisor approved, telling the model to return exactly eight keys per row, with no confidence or other extra key, and all five dimension scores even when a score is 0. It is still only an instruction: a row that leaves a dimension out keeps its old value and is not reported. The check and the re-ask are C-1b, #1133. Three tests on main were edited with the advisor's sha256 approval. Advisories are filed as #1146. It comes back to you: conditions 5 and 6.
+
+_2026-10-14 (track8): step 1 of your UI page plan v2 landed with PR #1095, for #1087._ The shared pieces now exist: the service header, the section bar, the section header with its visibility label, the AI result card and the "KENTRO ADMIN ONLY" band, with the labels you and the advisor approved. No page uses them yet, so nothing on screen changes; the Tech Debt pilot, after #1044, is where pages move. One thing the pilot must do: the AI result card's Applied, Not applied and Unscored must add up to Asked, and no service records an "asked" count today, so the page has to work all four out in one unit.
+
 _2026-10-13 (track4): #806's Zero Trust prompt landed with PR #981._ Run AI on a Zero Trust assessment now uses the prompt you approved, tells the model what each capability and DoD activity is, and only suggests a current stage: the target always comes from intake. A test failure on this PR's head could not be reproduced and passed on re-run; it is filed as #1143 so it is not forgotten.
 
 _2026-10-13 (track1): RR-2 and RR-1 landed together with PR #1148, carrying #1140._ The Risk Register, Deliverables and Messages pages now have their own client picker, and the client is in the URL, so two tabs can show two clients and nothing changes behind your back. On the Risk Register, the consultant chooses which CSF and Zero Trust services feed the register before generating it; the screen, the client dashboard and the PDF, DOCX and XLSX all say what was included and what was left out. Publish refuses a register that has no recorded choice. The demo seed picks CSF and CISA Zero Trust. Follow-ups: #1139, #1142 and #1150.
@@ -56,7 +62,8 @@ and 6).
 
 _2026-10-09 (track5): the #806 CSF prompt is built on `track5/806-csf-prompt`;
 the PR is not yet open. It ships your approved CSF text (#806 comment
-5982122270, sha256-pinned) as `prompt_version` "v2", sends each
+5982122270, sha256-pinned) as `prompt_version` "v2" (v3 from PR #1144,
+2026-10-14), sends each
 subcategory's NIST outcome text through #985's catalog guard, a batch's own
 codes only, and rewrites the offline fixture from the prompt. The test edits
 are A1 to A5 as approved on #736 (comment 6075712436), s7 included. The batch
