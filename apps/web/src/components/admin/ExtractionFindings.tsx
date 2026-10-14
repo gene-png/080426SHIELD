@@ -29,6 +29,24 @@ const DUPLICATED = "duplicated";
 /** Not editable in the table, so never under "Correct these in the table". */
 const NOT_EDITABLE = new Set(["confidence_pct", "source_row_index"]);
 
+/**
+ * TD-2 F2 (for #1058): v3.3's two flags (`app.tech_debt.extract`'s `is_suite`
+ * and `recognized`). A finding on either is an item the AI sent no usable
+ * answer for, stored as not answered. The table has no control for them, so
+ * they get their own line, counted by ITEM (one item missing both counts once)
+ * and naming no control (D-076). Copy approved on #736 (comment 6170931492).
+ */
+const FLAGS = new Set(["is_suite", "recognized"]);
+
+function itemsMissingAFlag(findings: ExtractionFinding[]): number {
+  const items = new Set(
+    findings
+      .filter((f) => FLAGS.has(f.field))
+      .map((f) => `${f.source_row_index ?? ""}|${f.item_name}`),
+  );
+  return items.size;
+}
+
 function line(f: ExtractionFinding): string {
   const field = LABELS[f.field] ?? f.field;
   switch (f.reason) {
@@ -63,8 +81,10 @@ export function ExtractionFindings({
   // that could not be stored; `ExtractionFlags` says it, so it is not here.
   const shown = findings.filter((f) => f.reason !== DUPLICATED);
   if (shown.length === 0) return null;
-  const editable = shown.filter((f) => !NOT_EDITABLE.has(f.field));
-  const other = shown.length - editable.length;
+  const flagged = itemsMissingAFlag(shown);
+  const rest = shown.filter((f) => !FLAGS.has(f.field));
+  const editable = rest.filter((f) => !NOT_EDITABLE.has(f.field));
+  const other = rest.length - editable.length;
   return (
     <div
       className="rounded-md border border-border bg-surface-sunken p-3 text-sm"
@@ -97,6 +117,16 @@ export function ExtractionFindings({
           {other === 1
             ? "1 value about the AI's confidence or the source row could not be stored as given and was left blank."
             : `${other} values about the AI's confidence or the source row could not be stored as given and were left blank.`}
+        </p>
+      ) : null}
+      {flagged > 0 ? (
+        <p
+          className="mt-1 text-ink-secondary"
+          data-testid="extraction-findings-flags"
+        >
+          {flagged === 1
+            ? "1 item is missing a usable answer from the AI on whether it is a suite or a recognized product, so it is shown as not answered."
+            : `${flagged} items are missing a usable answer from the AI on whether they are a suite or a recognized product, so they are shown as not answered.`}
         </p>
       ) : null}
     </div>
