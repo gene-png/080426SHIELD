@@ -148,6 +148,9 @@ def _example(i: int, **fields) -> dict:
         "notes": None,
         "security_related": False,
         "security_functions": [],
+        # v3.3 (for #1058): section 10's example values for the two new flags.
+        "is_suite": False,
+        "recognized": True,
         "confidence_pct": 90,
         "source_row_index": i,
     }
