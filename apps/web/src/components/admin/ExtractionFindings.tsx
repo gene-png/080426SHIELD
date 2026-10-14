@@ -34,7 +34,7 @@ const NOT_EDITABLE = new Set(["confidence_pct", "source_row_index"]);
  * and `recognized`). A finding on either is an item the AI sent no usable
  * answer for, stored as not answered. The table has no control for them, so
  * they get their own line, counted by ITEM (one item missing both counts once)
- * and naming no control (D-076). Copy approved on #736 (comment 6170931492).
+ * and naming no control (D-076). Copy approved on #736 (comment 6179966253, amending 6170931492).
  */
 const FLAGS = new Set(["is_suite", "recognized"]);
 
@@ -42,7 +42,14 @@ function itemsMissingAFlag(findings: ExtractionFinding[]): number {
   const items = new Set(
     findings
       .filter((f) => FLAGS.has(f.field))
-      .map((f) => `${f.source_row_index ?? ""}|${f.item_name}`),
+      .map((f) => {
+        // The row and the name do not identify an item: the parser keeps both
+        // items naming one row, and two unrowed items can share a name. The
+        // parser stamps `item_index` on every flag finding; one without it
+        // cannot be placed, so it counts as an item of its own (never merged).
+        if (typeof f.item_index !== "number") return f;
+        return f.item_index;
+      }),
   );
   return items.size;
 }
@@ -125,8 +132,8 @@ export function ExtractionFindings({
           data-testid="extraction-findings-flags"
         >
           {flagged === 1
-            ? "1 item is missing a usable answer from the AI on whether it is a suite or a recognized product, so it is shown as not answered."
-            : `${flagged} items are missing a usable answer from the AI on whether they are a suite or a recognized product, so they are shown as not answered.`}
+            ? "1 item is missing a usable answer from the AI on whether it is a suite or a recognized product."
+            : `${flagged} items are missing a usable answer from the AI on whether they are a suite or a recognized product.`}
         </p>
       ) : null}
     </div>

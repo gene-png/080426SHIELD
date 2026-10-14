@@ -8,17 +8,18 @@ import { ExtractionFindings } from "./ExtractionFindings";
 /**
  * TD-2 F2 (for #1058): a v3.3 flag (`is_suite`, `recognized`) the AI sent no
  * usable answer for. The table has no control for either, so the line names
- * none (D-076). Copy approved verbatim on #736 (comment 6170931492); every
+ * none (D-076). Copy approved verbatim on #736 (comment 6179966253, amending 6170931492); every
  * expected string is written out here.
  */
 
 const SINGULAR =
-  "1 item is missing a usable answer from the AI on whether it is a suite or a recognized product, so it is shown as not answered.";
+  "1 item is missing a usable answer from the AI on whether it is a suite or a recognized product.";
 
 function flag(over: Partial<ExtractionFinding>): ExtractionFinding {
   return {
     source_row_index: 0,
     item_name: "Tool",
+    item_index: 0,
     field: "is_suite",
     reason: "missing",
     value: "None",
@@ -63,18 +64,24 @@ describe("ExtractionFindings, the v3.3 flags (TD-2 F2)", () => {
           flag({}),
           flag({ field: "recognized" }),
           flag({
+            item_index: 1,
             source_row_index: 1,
             item_name: "Suite",
             field: "recognized",
             reason: "not_boolean",
             value: "1",
           }),
-          flag({ source_row_index: 2, item_name: "Other", field: "is_suite" }),
+          flag({
+            item_index: 2,
+            source_row_index: 2,
+            item_name: "Other",
+            field: "is_suite",
+          }),
         ]}
       />,
     );
     expect(flagLine()).toBe(
-      "3 items are missing a usable answer from the AI on whether they are a suite or a recognized product, so they are shown as not answered.",
+      "3 items are missing a usable answer from the AI on whether they are a suite or a recognized product.",
     );
   });
 
@@ -85,6 +92,7 @@ describe("ExtractionFindings, the v3.3 flags (TD-2 F2)", () => {
         findings={[
           flag({}),
           flag({
+            item_index: 1,
             source_row_index: 1,
             item_name: "Suite",
             field: "recognized",
@@ -129,6 +137,26 @@ describe("ExtractionFindings, the v3.3 flags (TD-2 F2)", () => {
     expect(flagLine()).toBe(SINGULAR);
     // The flag finding is not counted in the editable list's total.
     expect(box).not.toHaveTextContent("2 values from the AI");
+  });
+
+  it("counts two items sharing a row and a name as two (item_index)", () => {
+    // The parser keeps both items that name one source row, and two items with
+    // no row can share a name: only `item_index` tells them apart.
+    render(
+      <ExtractionFindings
+        readOnly={false}
+        findings={[
+          flag({ item_index: 0 }),
+          flag({ item_index: 1 }),
+          flag({ item_index: 1, field: "recognized" }),
+          flag({ item_index: 2, source_row_index: null, item_name: "Acrobat" }),
+          flag({ item_index: 3, source_row_index: null, item_name: "Acrobat" }),
+        ]}
+      />,
+    );
+    expect(flagLine()).toBe(
+      "4 items are missing a usable answer from the AI on whether they are a suite or a recognized product.",
+    );
   });
 
   it("says the flag line on a released list too, still naming no control", () => {

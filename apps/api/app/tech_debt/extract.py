@@ -419,7 +419,9 @@ def _parse_response(content: str) -> list[ExtractedCapability]:
 
     require_list_at(require_json_object(decoded), "items")
     raw_items = decoded.get("items", [])
-    return [_coerce_item(item) for item in raw_items if isinstance(item, dict)]
+    return [
+        _coerce_item(item, index=i) for i, item in enumerate(raw_items) if isinstance(item, dict)
+    ]
 
 
 def _security_functions(raw: Any) -> tuple[str, ...]:
@@ -496,7 +498,11 @@ def _number(raw: Any, *, money: bool = False) -> float | None:
     return n if math.isfinite(n) else None
 
 
-def _coerce_item(item: dict[str, Any]) -> ExtractedCapability:
+def _coerce_item(item: dict[str, Any], index: int) -> ExtractedCapability:
+    """`index` is the item's position in the model's `items` list, stamped on
+    the v3.3 flag findings as `item_index` (TD-2 F2, for #1058): the row and
+    the name do not identify an item, and the panel counts items."""
+
     def _opt_str(key: str) -> str | None:
         v = item.get(key)
         if v is None:
@@ -596,12 +602,12 @@ def _coerce_item(item: dict[str, Any]) -> ExtractedCapability:
         `0` read as False would record a decision the model did not make in the
         form asked -- and False is what clears a row of part B's red."""
         if key not in item or item[key] is None:
-            _record(key, MISSING, item.get(key))
+            _record(key, MISSING, item.get(key), item_index=index)
             return None
         v = item[key]
         if isinstance(v, bool):
             return v
-        _record(key, NOT_BOOLEAN, v)
+        _record(key, NOT_BOOLEAN, v, item_index=index)
         return None
 
     functions = _security_functions(item.get("security_functions"))

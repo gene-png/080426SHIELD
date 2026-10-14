@@ -128,6 +128,7 @@ def test_a_missing_flag_is_stored_as_null_not_false_and_recorded(app_client) -> 
         {
             "source_row_index": 1,
             "item_name": "Adobe Creative Cloud All Apps",
+            "item_index": 1,
             "field": "is_suite",
             "reason": "missing",
             "value": "None",
@@ -135,6 +136,7 @@ def test_a_missing_flag_is_stored_as_null_not_false_and_recorded(app_client) -> 
         {
             "source_row_index": 1,
             "item_name": "Adobe Creative Cloud All Apps",
+            "item_index": 1,
             "field": "recognized",
             "reason": "missing",
             "value": "None",
@@ -172,6 +174,7 @@ def test_a_non_boolean_flag_is_stored_as_null_and_recorded(
         {
             "source_row_index": 0,
             "item_name": "Capability 0",
+            "item_index": 0,
             "field": "recognized",
             "reason": "not_boolean",
             "value": shown,
