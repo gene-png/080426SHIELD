@@ -203,7 +203,7 @@ def test_a_client_named_critical_gets_nists_text_and_its_name_is_still_redacted(
         assert "Critical" not in p["answers"]["GV.OC-04"]["notes"]
 
 
-def test_a_run_records_the_v2_prompt_in_llm_calls(world) -> None:
+def test_a_run_records_the_v3_prompt_in_llm_calls(world) -> None:
     """C9: an llm_calls row from a run says which prompt produced it."""
     world.provider.register("csf_score", _Recorder())
     csf_run_ai(world.c, world.svc_id, world.h)
@@ -214,4 +214,4 @@ def test_a_run_records_the_v2_prompt_in_llm_calls(world) -> None:
             .all()
         )
     assert versions, "the run wrote no llm_calls row"
-    assert set(versions) == {"v2"}
+    assert set(versions) == {"v3"}
