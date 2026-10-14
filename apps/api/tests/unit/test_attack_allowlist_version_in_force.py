@@ -171,15 +171,35 @@ def test_a_tool_only_an_open_draft_beside_an_approved_version_holds_is_not_citab
 # ---------------------------------------------------------------------------
 
 
-def test_in_a_drafts_only_service_only_the_newest_draft_is_citable(app_parts) -> None:  # noqa: F811
+def test_in_a_drafts_only_service_the_open_draft_is_citable(app_parts) -> None:  # noqa: F811
+    """The drafts-only half of R6b: with no approved or released version, the
+    open draft IS the version in force, so its tools are offered.
+
+    A service holds at most ONE draft (migration 0073,
+    `uq_capability_lists_one_draft`; the extract route returns or refuses an
+    open draft rather than cutting a second), so "the newest draft" has one
+    candidate and two drafts at once are not built here: no writer can
+    produce them. The reachable drafts-only service with an older version is
+    this one: v1, a draft, discarded through the route before v2 is cut. Its
+    tool is withheld because the list was discarded, not as not in force."""
     w = _runs_world(app_parts)
     _set_v1_status(w, CapabilityListStatus.DRAFT)
+    v1 = _v1(w).id
+    r = w.c.post(f"/tech-debt/capability-lists/{v1}/discard", headers=w.h)
+    assert r.status_code == 200, r.text
     _add_version(w, [NEW_TOOL], status=CapabilityListStatus.DRAFT)
     positive = _run(w, NEW_TOOL)
     assert positive["citations_confirmed"] == len(w.codes), positive
+    assert _detection_tools(w) == {NEW_TOOL}
     result = _run(w, V1_TOOL)
     assert result["citations_confirmed"] == 0, result
     assert result["citations_rejected"] == len(w.codes), result
+    body = _inputs(w)
+    assert [c["name"] for c in body["capabilities"]] == [NEW_TOOL], body["capabilities"]
+    withheld = {d["name"]: d["reason"] for d in body["not_sent"]}
+    assert withheld == {V1_TOOL: "list_discarded"}, body["not_sent"]
+    in_force = {s["version"]: s["in_force"] for s in body["sources"]}
+    assert in_force == {1: None, 2: True}, body["sources"]
 
 
 def test_an_approved_version_with_no_security_row_leaves_the_previous_one_in_force(

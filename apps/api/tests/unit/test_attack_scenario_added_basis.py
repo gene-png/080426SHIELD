@@ -119,9 +119,18 @@ def _approve_before_the_base(w: World, list_id: uuid.UUID) -> None:
 
 def _re_extracted_v2(w: World, names: list[str]) -> uuid.UUID:
     """A re-extraction: v2 of the same service with NEW rows, uploaded and
-    approved after the base."""
+    approved after the base.
+
+    Only once v1 has moved on: the extract route cuts a new version only when
+    no draft is open (`extract_capability_list` returns or refuses an open
+    one), and migration 0073's `uq_capability_lists_one_draft` refuses a
+    second DRAFT per service in the database. A test whose v1 is still a
+    draft approves it first, as a consultant would, so it never builds the
+    two-drafts state no writer can produce."""
     with w.sessions() as db:
         v1 = db.get(CapabilityList, _v1_id(w))
+        open_draft = v1.status == CapabilityListStatus.DRAFT
+        assert not open_draft, "v1 is an open draft: re-extraction cannot cut v2 beside it (0073)"
         v2 = CapabilityList(service_id=v1.service_id, version=2, status=CapabilityListStatus.DRAFT)
         db.add(v2)
         db.flush()
@@ -343,12 +352,14 @@ def test_an_override_on_the_basis_row_counts_though_the_offered_row_has_none(
 ) -> None:
     """(ii) is judged on the row the drafts-branch basis reads, not on the
     offered row. v1 was a DRAFT at the base with MAIL confirmed NOT security
-    (offered to nobody). After the base, v1's MAIL is overridden into scope,
-    then v2 is re-extracted with MAIL in scope by classification (no
-    override on v2's row) and approved. MAIL is new to the AI."""
+    (offered to nobody). After the base, v1's MAIL is overridden into scope
+    and v1 approved, then v2 is re-extracted with MAIL in scope by
+    classification (no override on v2's row) and approved. MAIL is new to
+    the AI."""
     w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
     _mail_confirmed_out_before_the_base(w)
     _override(w, _item(w, _v1_id(w), MAIL))
+    _approve(w, _v1_id(w))  # v1 moves on (after the base) before v2 is cut
     v2 = _re_extracted_v2(w, [EDR, SIEM, SOAR, MAIL])
     with w.sessions() as db:
         offered_row = db.get(CapabilityItem, _item(w, v2, MAIL))
@@ -415,10 +426,12 @@ def test_a_row_in_scope_at_the_base_and_confirmed_out_since_is_not_added(
 ) -> None:
     """The drafts-branch basis reads a row as it was AT THE BASE. MAIL was a
     provisional negative on v1 (in scope, offered to the base); after the
-    base a consultant confirms it out of scope, then v2 is re-extracted with
-    MAIL in scope and approved. The base was offered MAIL: not added."""
+    base a consultant confirms it out of scope and approves v1, then v2 is
+    re-extracted with MAIL in scope and approved. The base was offered MAIL:
+    not added."""
     w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
     _confirm(w, _mail_on_v1_before_the_base(w))  # after the base
+    _approve(w, _v1_id(w))  # v1 moves on (after the base) before v2 is cut
     _re_extracted_v2(w, [EDR, SIEM, SOAR, MAIL])
     body = _what_if(w, {w.cc: [_flags(w.cc, MAIL, d=True)]})
     assert body["tools_added_since_base"] == 0, body["tools_added_since_base"]
@@ -428,8 +441,8 @@ def test_a_row_in_scope_at_the_base_and_confirmed_out_since_is_not_added(
 def test_the_first_override_decides_not_the_latest(app_parts) -> None:  # noqa: F811
     """MAIL was confirmed out, then overridden back in, both before the base:
     in scope at the base. Overriding it AGAIN after the base (re-picking its
-    functions) changes nothing about the base. Re-extracted into v2, MAIL is
-    not added. Judged on the LATEST override it would read as out of scope
+    functions) changes nothing about the base. v1 approved after the base
+    and MAIL re-extracted into v2, it is not added. Judged on the LATEST override it would read as out of scope
     at the base, and so as added."""
     w = _world(app_parts, list_status=CapabilityListStatus.DRAFT)
     _mail_confirmed_out_before_the_base(w)
@@ -448,6 +461,7 @@ def test_the_first_override_decides_not_the_latest(app_parts) -> None:  # noqa: 
         assert moved == 1, moved
         db.commit()
     _override(w, item_id)  # again, after the base
+    _approve(w, _v1_id(w))  # v1 moves on (after the base) before v2 is cut
     _re_extracted_v2(w, [EDR, SIEM, SOAR, MAIL])
     body = _what_if(w, {w.cc: [_flags(w.cc, MAIL, d=True)]})
     assert body["tools_added_since_base"] == 0, body["tools_added_since_base"]
