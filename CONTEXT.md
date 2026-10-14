@@ -13,6 +13,8 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**2026-10-14: UI plan v2 step 1 (#1087), PR #1095.** The shared service header, section bar, section header, AI result card and internal-only band exist under `components/service-shell/`, mounted on no page yet. Status: the 2026-10-14 #1087 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
 **2026-10-13: #806, PR #981.** ZT Run AI sends the approved v2 prompt with each capability's details, and applies only the AI's current stage. Status: the 2026-10-13 #806 ZT entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
 **2026-10-13: RR-2 (#1121) and RR-1 (#1122), PR #1148 with #1140.** The Risk Register, Deliverables and Messages pages pick their client from the URL, not a hidden cookie, and the admin chooses which CSF and Zero Trust services feed a register, disclosed in every output. Status: the 2026-10-13 RR entry in `DELIVERY_PLAN.md`'s MVP completion path.
