@@ -73,7 +73,7 @@ NOT_IN_USE_PREFIX = "Security tool not in use:"
 #: prompt (v2) drafted never asked for it: its group fills only from a
 #: consultant's own note, and its count stays not measured. Add a version here
 #: only when its prompt asks for the prefix.
-PROMPT_VERSIONS_WITH_PREFIX: frozenset[str] = frozenset({"v3.2"})
+PROMPT_VERSIONS_WITH_PREFIX: frozenset[str] = frozenset({"v3.2", "v3.3"})
 
 
 def _notes_carry_the_prefix(notes: object) -> bool:
