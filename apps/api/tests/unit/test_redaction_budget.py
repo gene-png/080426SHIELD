@@ -58,7 +58,7 @@ def _add_crafted_tenant_users(w: dict, n: int) -> None:
 
 
 @pytest.mark.unit
-def test_real_matcher_over_budget_fails_closed_with_the_approved_copy(world) -> None:
+def test_real_matcher_over_budget_fails_closed_with_the_approved_copy(world, monkeypatch) -> None:
     """THE MARGIN, so this cannot flake on a fast or slow machine. #546 measured
     the worst case at 427-556 ns per sharing hint per character (api image,
     Python 3.12.13; H = 1024 measured 438-520). This payload is 1024 sharing
@@ -68,6 +68,7 @@ def test_real_matcher_over_budget_fails_closed_with_the_approved_copy(world) -> 
     the api image for the redaction to finish inside the budget, and the hang
     guard is 60 s, so a missing budget fails in a minute rather than passing in
     two."""
+    rw.set_budget(monkeypatch, rw.OVER_BUDGET_S)
     _add_crafted_tenant_users(world, 1024)
     cell = "-" * 9_700
     csv_text = "Application,Description\n" + "".join(f"App {i},{cell}\n" for i in range(27))
@@ -101,6 +102,7 @@ def test_a_csf_run_over_budget_says_the_neutral_sentence(world, monkeypatch) -> 
     nothing about a capability list."""
     import app.ai.isolation as isolation
 
+    rw.set_budget(monkeypatch, rw.OVER_BUDGET_S)
     monkeypatch.setattr(isolation, "_TARGET", targets.spin_forever)
     svc_id = rw.csf_service(world)
 
@@ -120,6 +122,7 @@ def test_the_preview_over_budget_answers_a_typed_503(world, monkeypatch) -> None
     dump, and its one-call place is given back."""
     import app.ai.isolation as isolation
 
+    rw.set_budget(monkeypatch, rw.OVER_BUDGET_S)
     monkeypatch.setattr(isolation, "_TARGET", targets.spin_forever)
     c, h = world["c"], world["h"]
     svc_id = rw.csf_service(world)
