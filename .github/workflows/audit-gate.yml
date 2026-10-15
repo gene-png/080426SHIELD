@@ -274,8 +274,8 @@ jobs:
   # DELIBERATELY NOT REGISTERED AS A REQUIRED CHECK, and that is a decision
   # rather than an omission. Branch protection is a GitHub setting, not a file
   # here, so adding this to the required set is not something a PR can do -- and
-  # doing it would make condition 1's "all seven CI checks green" read eight,
-  # which the merge rule says to re-derive rather than let drift. So this
+  # doing it would add a name to condition 1's list of required checks, which
+  # the merge rule says to re-derive rather than let drift. So this
   # reports, visibly, on every PR, and registering it is a separate decision
   # with a separate cost. Filed rather than assumed.
   #

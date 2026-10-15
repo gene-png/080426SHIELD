@@ -1,0 +1,19 @@
+{
+ "incident": "ADVERSARIAL: #689's skipped files make a second place a test can be recorded. A test in a shard's record AND a skipped file still covers the selection exactly once by union, so a union-only check would pass it; it must be red as a duplicate.",
+ "expect": 1,
+ "adversarial": true,
+ "argv": [
+  "verify",
+  "--full",
+  "{dir}/full.txt",
+  "--of",
+  "2",
+  "--ran",
+  "{dir}/ran-1.txt",
+  "{dir}/ran-2.txt",
+  "--skipped",
+  "{dir}/skipped-1.txt",
+  "{dir}/skipped-2.txt"
+ ],
+ "stdout_contains": "ran in 2 shards: tests/unit/test_b.py::test_1"
+}

@@ -79,7 +79,8 @@ collection time is not seen. A conftest hook that deselects individual items
 applies to BOTH collections, so it is invisible too. CI runs this selection in
 SHARDS (`scripts/pytest_shard.py`), and the shard plugin narrows each run by
 ENVIRONMENT (`PYTEST_SHARD`) -- exactly what this gate cannot see. What closes
-that is the Python aggregate job: each shard records the node ids it RAN, and
+that is the Python aggregate job: each shard records the node ids it RAN and,
+apart, the ones it SKIPPED at runtime (#689), and
 `scripts/shard_partition.py verify` fails unless their union is exactly the
 set THIS RUN CERTIFIED, each test once. `--selected-out FILE` writes that set,
 and only on a clean verdict, so the file the aggregate compares against is

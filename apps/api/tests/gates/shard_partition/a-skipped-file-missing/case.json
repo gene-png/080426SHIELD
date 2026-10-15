@@ -1,0 +1,17 @@
+{
+ "incident": "#689: the aggregate globs the skipped files; a glob that matches nothing reaches the verifier as a literal path. A missing skipped file is could-not-look, never a run with no skips.",
+ "expect": 2,
+ "adversarial": false,
+ "argv": [
+  "verify",
+  "--full",
+  "{dir}/full.txt",
+  "--of",
+  "1",
+  "--ran",
+  "{dir}/ran-1.txt",
+  "--skipped",
+  "{dir}/skipped-1.txt"
+ ],
+ "stdout_contains": "cannot read skipped file"
+}

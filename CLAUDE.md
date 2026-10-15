@@ -1252,9 +1252,10 @@ recorded with a real exit code and a real date, and was the minority outcome
   main from 2026-08-07). Restoring the header alone would then have turned s40
   green over a page showing nothing but `Failed to load deliverables (400).` Fix
   both ends: render the page identity in EVERY branch, and make the spec assert a
-  state only a working page can reach. Download the CI artifact
-  (`gh run download <id> -n playwright-report`) — `error-context.md` carries the
-  failing page snapshot and ends this class of argument in one read.
+  state only a working page can reach. Download the CI artifacts
+  (`gh run download <id> -p 'playwright-report-*'`; one per E2E shard since
+  #680) — `error-context.md` carries the failing page snapshot and ends this
+  class of argument in one read.
 - **Before naming a new e2e spec, `ls e2e/smoke`.** Phase D added
   `s37-admin-deliverables` and `s38-help` alongside the existing
   `s37-security-signoff` and `s38-progress-stages` — Playwright does not care, so

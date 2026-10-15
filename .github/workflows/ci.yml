@@ -546,12 +546,37 @@ jobs:
         run: python -m scripts.check_ci_selection --selected-out "$RUNNER_TEMP/pytest-selection.txt"
 
       - name: Upload the unit selection
+        id: upload-selection
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: pytest-selection
           path: ${{ runner.temp }}/pytest-selection.txt
           retention-days: 7
           if-no-files-found: error
+          overwrite: true
+
+      - name: Upload the unit selection (retry 1, #734)
+        id: upload-selection-retry-1
+        if: steps.upload-selection.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: pytest-selection
+          path: ${{ runner.temp }}/pytest-selection.txt
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Upload the unit selection (retry 2, #734)
+        if: steps.upload-selection-retry-1.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: pytest-selection
+          path: ${{ runner.temp }}/pytest-selection.txt
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
 
       - name: bandit
         run: bandit -q -c pyproject.toml -r apps/api/app
@@ -567,10 +592,16 @@ jobs:
     # `pytest -m unit tests/unit` was about 22 of the Python job's 24 minutes.
     # Split 4 ways by `scripts/pytest_shard.py`: after `-m unit` deselects, each
     # file's tests are dealt round-robin across the shards, derived from
-    # collection alone. Each shard records the node ids it ran; the aggregate
-    # checks their union is the full selection, each test exactly once.
+    # collection alone. Each shard records the node ids it RAN and, apart, the
+    # ones it SKIPPED at runtime (#689); the aggregate checks their union is the
+    # full selection, each test exactly once, and names the skipped ones.
     name: Python unit tests (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
+    # #739: without one, GitHub's 6-hour default lets a hung test hold the
+    # required check that long. Measured per shard: 14-20 min on #680's own
+    # run 38176987278 (2026-10-11), 22-29 min on run 38802579958 (2026-10-15).
+    # 60 is twice the slowest, and a timed-out shard fails the aggregate.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -601,14 +632,52 @@ jobs:
           PYTEST_SHARD_RECORD: ${{ runner.temp }}/pytest-shard-${{ matrix.shard }}.txt
         run: python -m pytest -p scripts.pytest_shard -m unit tests/unit
 
+      # #734: an upload is retried, twice, because a transient upload error
+      # (ETIMEDOUT) turned a required check red on a green suite. Still fail
+      # closed: the first two attempts may fail (`continue-on-error`), each
+      # retry runs only if the attempt before it FAILED, and the last attempt
+      # has no `continue-on-error`, so three failures fail the job. `overwrite`
+      # replaces whatever a failed attempt left half-written. Pinned by
+      # test_ci_upload_retry.py, which walks every outcome of the attempts.
       - name: Upload what this shard ran
+        id: upload-record
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: pytest-shard-${{ matrix.shard }}
-          path: ${{ runner.temp }}/pytest-shard-${{ matrix.shard }}.txt
+          path: |
+            ${{ runner.temp }}/pytest-shard-${{ matrix.shard }}.txt
+            ${{ runner.temp }}/pytest-shard-${{ matrix.shard }}.txt.skipped
           retention-days: 7
           if-no-files-found: ignore
+          overwrite: true
+
+      - name: Upload what this shard ran (retry 1, #734)
+        id: upload-record-retry-1
+        if: always() && steps.upload-record.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: pytest-shard-${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/pytest-shard-${{ matrix.shard }}.txt
+            ${{ runner.temp }}/pytest-shard-${{ matrix.shard }}.txt.skipped
+          retention-days: 7
+          if-no-files-found: ignore
+          overwrite: true
+
+      - name: Upload what this shard ran (retry 2, #734)
+        if: always() && steps.upload-record-retry-1.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: pytest-shard-${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/pytest-shard-${{ matrix.shard }}.txt
+            ${{ runner.temp }}/pytest-shard-${{ matrix.shard }}.txt.skipped
+          retention-days: 7
+          if-no-files-found: ignore
+          overwrite: true
 
   python:
     # THE REQUIRED CHECK, by its exact name: branch protection lists it, and it
@@ -651,6 +720,7 @@ jobs:
           --full "$RUNNER_TEMP/pytest/pytest-selection.txt"
           --of 4
           --ran "$RUNNER_TEMP"/pytest/pytest-shard-*.txt
+          --skipped "$RUNNER_TEMP"/pytest/pytest-shard-*.txt.skipped
 
   web:
     name: Web (prettier + eslint + typecheck + build)
@@ -736,15 +806,12 @@ jobs:
     # below checks their union is the full list, each test exactly once.
     name: E2E (Playwright shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
-    # 30 was not enough once the suite reached 73 tests: the 2026-08-05 run on
-    # PR #5 was terminated at 30m18s with Playwright still going (no assertion
-    # failures — the job simply ran out of budget), while the same suite takes
-    # ~37 min locally. The specs share one seeded database and run
-    # `workers: 1` deliberately, so wall-clock scales with the spec count and
-    # will keep growing. Sharding is the real fix and needs per-shard database
-    # isolation; until then this ceiling has to clear a full serial run with
-    # headroom for a slow runner.
-    timeout-minutes: 40
+    # Sized for ONE shard on its own stack, not the serial run this ceiling
+    # was first set for (40 min, when the whole suite ran here). Each leg
+    # composes and seeds its own database, and within a leg the specs share it
+    # and run `workers: 1`. Measured legs: 5-11 min, including stack bring-up,
+    # on #680's run 38176987278 (2026-10-11).
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -814,13 +881,45 @@ jobs:
         working-directory: e2e
         run: npx playwright test --list --shard=${{ matrix.shard }}/4 > "$RUNNER_TEMP/e2e-shard-${{ matrix.shard }}.txt"
 
+      # #734: an upload is retried, twice, because a transient upload error
+      # (ETIMEDOUT) turned a required check red on a green suite. Still fail
+      # closed: the first two attempts may fail (`continue-on-error`), each
+      # retry runs only if the attempt before it FAILED, and the last attempt
+      # has no `continue-on-error`, so three failures fail the job. `overwrite`
+      # replaces whatever a failed attempt left half-written. Pinned by
+      # test_ci_upload_retry.py, which walks every outcome of the attempts.
       - name: Upload this shard's test list
+        id: upload-list
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: e2e-list-shard-${{ matrix.shard }}
           path: ${{ runner.temp }}/e2e-shard-${{ matrix.shard }}.txt
           retention-days: 7
           if-no-files-found: error
+          overwrite: true
+
+      - name: Upload this shard's test list (retry 1, #734)
+        id: upload-list-retry-1
+        if: steps.upload-list.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-list-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/e2e-shard-${{ matrix.shard }}.txt
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Upload this shard's test list (retry 2, #734)
+        if: steps.upload-list-retry-1.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-list-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/e2e-shard-${{ matrix.shard }}.txt
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
 
       - name: Run Playwright suite (shard)
         working-directory: e2e
@@ -918,12 +1017,37 @@ jobs:
 
       # GitHub Actions sets CI=true, so playwright.config.ts applies retries: 1.
       - name: Upload the full test list
+        id: upload-full-list
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: e2e-list-full
           path: ${{ runner.temp }}/playwright-list.txt
           retention-days: 7
           if-no-files-found: error
+          overwrite: true
+
+      - name: Upload the full test list (retry 1, #734)
+        id: upload-full-list-retry-1
+        if: steps.upload-full-list.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-list-full
+          path: ${{ runner.temp }}/playwright-list.txt
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Upload the full test list (retry 2, #734)
+        if: steps.upload-full-list-retry-1.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-list-full
+          path: ${{ runner.temp }}/playwright-list.txt
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
 
       # #487: a user working on one page was signed out once the access token
       # expired, because a server-side `auth()` rotated the refresh token and
