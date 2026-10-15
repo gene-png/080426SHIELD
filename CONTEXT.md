@@ -15,6 +15,8 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 **2026-10-14: #935 and #929, PR #1044.** The Tech Debt workspace counts source items, not bundle parts, a part's cost cell names the bundle that carries it ("Included in {bundle}"), and a part's pre-#927 stored cost no longer counts as a saving. Status: the 2026-10-14 #935 and #929 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
+**2026-10-14: #1012, PR #1038.** ATT&CK Run AI offers only each Tech Debt list's version in force, the one approve checks against, withholds the rest as `version_not_in_force` on the AI-inputs panel, and the what-if judges "added since the base" against the version in force then. Status: the 2026-10-14 #1012 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
 **2026-10-14: #1143, PR #1162, the redaction test budget.** The intermittent unit-test red traced to the redaction tests' 0.5 s budget on slow runners, plus a settings cache that leaked it into later Risk tests; #1143 stays open until later CI runs confirm the fix. Tests only. Status: the 2026-10-14 #1143 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
 **2026-10-14: C-1a (#1046), PR #1144.** CSF Run AI sends the `csf_score` prompt v3: v2 plus the two approved section-12 edits asking for exactly eight keys per row and all five dimension scores. Status: the 2026-10-14 C-1a entry in `DELIVERY_PLAN.md`'s MVP completion path.

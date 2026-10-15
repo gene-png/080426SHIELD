@@ -38,7 +38,7 @@ from app.ai.runs import (
     running_run,
     start_run,
 )
-from app.attack import scenario, scenario_intent
+from app.attack import added_since_base, scenario, scenario_intent
 from app.attack.citations import Candidate
 from app.attack.computed import awaiting_review_sentence
 from app.attack.rules import parents_computed
@@ -51,7 +51,7 @@ from app.models.ai_run import AiRun, AiRunStatus
 from app.models.attack_assessment import AttackAssessment, AttackCoverage
 from app.models.attack_scenario import AttackScenario, AttackScenarioRow, AttackScenarioState
 from app.models.audit_entry import AuditEntry
-from app.models.capability import CapabilityItem
+from app.models.capability import CapabilityItem, CapabilityList
 from app.models.client import Client
 from app.models.llm_call import LLMCall
 from app.models.service import ServiceKind
@@ -69,7 +69,7 @@ from app.routes.attack import (
     _llm_dep,
     outside_subset_citations,
 )
-from app.routes.tech_debt import SECURITY_CLASSIFICATION_OVERRIDDEN
+from app.routes.tech_debt import REMOVED_FROM_ATTACK_SCOPE, SECURITY_CLASSIFICATION_OVERRIDDEN
 from app.schemas.ai_runs import AiRunStarted, RunAiRequest
 from app.schemas.attack_scenario import (
     ScenarioAddedTool,
@@ -262,6 +262,100 @@ def _lists_of(rows: list[AttackScenarioRow]) -> dict[str, dict[str, list[str]]]:
         }
         for r in rows
     }
+
+
+#: The audit action `confirm_security_classification` (routes/tech_debt.py)
+#: writes when a consultant confirms a negative call, taking the row out of
+#: ATT&CK scope. A literal there, mirrored here; #845's not-in-use variant is
+#: `REMOVED_FROM_ATTACK_SCOPE`, imported.
+_CONFIRMED_OUT_OF_SCOPE = "capability_item.security_classification_confirmed"
+
+
+def _list_history(
+    db: Session, lists: Iterable[CapabilityList]
+) -> list[added_since_base.ListVersion]:
+    """#1012 (option A): every Tech Debt list version of the client, with
+    what the record says about its past: its approval times and discard
+    time from the audit trail, and its live rows, each with its current
+    classification and the times of its FIRST confirmation and FIRST
+    override ((ii); the audit row is the only record of WHEN, `updated_at`
+    moves on every edit). Three queries, whatever the number of versions."""
+    lists = list(lists)
+    ids = [cl.id for cl in lists]
+    approvals: dict[uuid.UUID, list] = {i: [] for i in ids}
+    discarded: dict[uuid.UUID, Any] = {}
+    for target, action, at in db.execute(
+        select(AuditEntry.target_id, AuditEntry.action, AuditEntry.at).where(
+            AuditEntry.target_type == "capability_list",
+            AuditEntry.action.in_(("capability_list.approved", "capability_list.discarded")),
+            AuditEntry.target_id.in_(ids),
+        )
+    ).all():
+        if action == "capability_list.approved":
+            approvals[target].append(at)
+        else:
+            discarded[target] = max(at, discarded.get(target, at))
+    items = (
+        db.execute(select(CapabilityItem).where(CapabilityItem.capability_list_id.in_(ids)))
+        .scalars()
+        .all()
+    )
+    # The FIRST confirmation and the FIRST override per row, in one grouped
+    # query: an override only ever moves a row INTO scope and nothing moves it
+    # back, so its first one decides (`added_since_base.in_scope_at`). A
+    # subquery rather than a list of every item id, so a large client never
+    # meets the bind-parameter limit.
+    first: dict[tuple[uuid.UUID, str], Any] = {
+        (target, action): at
+        for target, action, at in db.execute(
+            select(AuditEntry.target_id, AuditEntry.action, func.min(AuditEntry.at))
+            .where(
+                AuditEntry.target_type == "capability_item",
+                AuditEntry.action.in_(
+                    (
+                        SECURITY_CLASSIFICATION_OVERRIDDEN,
+                        _CONFIRMED_OUT_OF_SCOPE,
+                        REMOVED_FROM_ATTACK_SCOPE,
+                    )
+                ),
+                AuditEntry.target_id.in_(
+                    select(CapabilityItem.id).where(CapabilityItem.capability_list_id.in_(ids))
+                ),
+            )
+            .group_by(AuditEntry.target_id, AuditEntry.action)
+        ).all()
+    }
+    rows: dict[uuid.UUID, list] = {i: [] for i in ids}
+    for item in items:
+        confirms = [
+            at
+            for action in (_CONFIRMED_OUT_OF_SCOPE, REMOVED_FROM_ATTACK_SCOPE)
+            if (at := first.get((item.id, action))) is not None
+        ]
+        rows[item.capability_list_id].append(
+            added_since_base.DraftRow(
+                name=item.name,
+                created_at=item.created_at,
+                security_related=item.security_related,
+                confirmed=item.security_class_confirmed,
+                first_confirmed_at=min(confirms) if confirms else None,
+                first_overridden_at=first.get((item.id, SECURITY_CLASSIFICATION_OVERRIDDEN)),
+            )
+        )
+    return [
+        added_since_base.ListVersion(
+            service_id=cl.service_id,
+            version=cl.version,
+            status=cl.status,
+            created_at=cl.created_at,
+            approved_at=cl.approved_at,
+            approvals=tuple(approvals[cl.id]),
+            discarded_at=discarded.get(cl.id),
+            approved_membership=cl.approved_membership,
+            rows=tuple(rows[cl.id]),
+        )
+        for cl in lists
+    ]
 
 
 def _added_tools(s: AttackScenario) -> list[scenario.AddedTool]:
@@ -1077,31 +1171,21 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
     kept = [p.capability for p in kept_offers]
     indistinct = [c.name for c in kept if spellings.shares_shown_form(c.name)]
     # (b2): which offered tools are newer than the base, or None if unknowable.
-    item_ids = [uuid.UUID(p.item_id) for p in kept_offers if p.item_id]
-    created = {
-        str(i): at
-        for i, at in db.execute(
-            select(CapabilityItem.id, CapabilityItem.created_at).where(
-                CapabilityItem.id.in_(item_ids)
-            )
-        ).all()
-    }
-    # (ii): the latest classification override per offered item. The audit
-    # row is the only record of WHEN; `updated_at` moves on every edit.
-    overridden = {
-        str(i): at
-        for i, at in db.execute(
-            select(AuditEntry.target_id, func.max(AuditEntry.at))
-            .where(
-                AuditEntry.action == SECURITY_CLASSIFICATION_OVERRIDDEN,
-                AuditEntry.target_type == "capability_item",
-                AuditEntry.target_id.in_(item_ids),
-            )
-            .group_by(AuditEntry.target_id)
-        ).all()
-    }
-    added = scenario.tools_added_since(
-        kept_offers, membership.lists, created, base.approved_at, overridden
+    # #1012, the advisor's option A (#736 6115773247): judged by NAME against
+    # the list version in force when the base was approved, rebuilt from the
+    # record (`attack/added_since_base.py`), plus the tools the base cites.
+    # Row creation time alone read every tool of a re-extracted list as new.
+    added = added_since_base.tools_added(
+        kept_offers,
+        _list_history(db, membership.lists),
+        scenario.cited_tools(base_rows),
+        base.approved_at,
+    )
+    _log.info(
+        "attack_scenario.added_since_base",
+        scenario_id=str(s.id),
+        checked=added is not None,
+        added=len(added) if added is not None else None,
     )
     # Slice B: the admin's added tools are offered beside the client's and
     # may be credited, but they are NOT the client's list: the drift check
