@@ -15,9 +15,11 @@ non-SQLite URL, or no URL at all.
 
 WHY IT CANNOT HAND A TEST A WRONG DATABASE. The template is built by the real
 `command.upgrade(cfg, "head")`, so every test process still runs the full chain
-from empty to head once. The head revision is read once from the script
-directory, and each copy's `alembic_version` must equal it or the call raises,
-so a stale template is an error, never a quietly older schema.
+from empty to head once. Templates are kept per script directory, and each
+copy's `alembic_version` must equal its caller's head or the call raises. Today
+every caller names the same `apps/api/alembic`, so the check cannot fire on a
+reachable state: it is a ratchet against a caller that points at another chain,
+or a template file replaced underneath the process, and a test forces it.
 `test_migrated_template.py` pins the copy as schema-identical to a real upgrade.
 
 TURNING IT OFF. `SHIELD_TEST_REAL_MIGRATIONS=1` runs every upgrade for real, as
@@ -52,8 +54,10 @@ _log = structlog.get_logger(__name__)
 OPT_OUT_ENV = "SHIELD_TEST_REAL_MIGRATIONS"
 
 _real_upgrade = command.upgrade
-_template_path: str | None = None
-_head: str | None = None
+#: script_location -> (template path, head revision). Keyed on the caller's
+#: script directory, so a caller pointing at a different chain gets its own
+#: template, and the version check compares each copy with ITS caller's head.
+_templates: dict[str, tuple[str, str]] = {}
 #: Counts for the tests and for anyone timing a run. `served` copies, `real` runs.
 stats = {"served": 0, "real": 0}
 
@@ -64,17 +68,28 @@ def _fresh_sqlite_file(cfg) -> str | None:
     if not url.startswith("sqlite:///"):
         return None
     path = url[len("sqlite:///") :]
-    if not path or path == ":memory:" or os.path.exists(path):
+    # A query string or a missing directory is not the plain fixture shape:
+    # Alembic decides those, as it did before this module.
+    if not path or path == ":memory:" or "?" in path or os.path.exists(path):
+        return None
+    if not os.path.isdir(os.path.dirname(path) or "."):
         return None
     return path
 
 
-def _build_template(cfg) -> str:
-    """Run the real migrations once, into a private file, and remember the head."""
-    global _template_path, _head
+def _script_location(cfg) -> str:
+    return os.path.realpath(cfg.get_main_option("script_location") or "")
+
+
+def _head_of(cfg) -> str:
     from alembic.script import ScriptDirectory
 
-    head = ScriptDirectory.from_config(cfg).get_current_head()
+    return ScriptDirectory.from_config(cfg).get_current_head()
+
+
+def _build_template(cfg) -> tuple[str, str]:
+    """Run the real migrations once per script directory, into a private file."""
+    head = _head_of(cfg)
     path = os.path.join(tempfile.mkdtemp(prefix="shield-migrated-"), "template.db")
     url = f"sqlite:///{path}"
     old_url = cfg.get_main_option("sqlalchemy.url")
@@ -83,15 +98,16 @@ def _build_template(cfg) -> str:
         cfg.set_main_option("sqlalchemy.url", url)
         os.environ["DATABASE_URL"] = url
         _real_upgrade(cfg, "head")
+        stats["real"] += 1
     finally:
         cfg.set_main_option("sqlalchemy.url", old_url)
         if old_env is None:
             os.environ.pop("DATABASE_URL", None)
         else:
             os.environ["DATABASE_URL"] = old_env
-    _template_path, _head = path, head
+    _templates[_script_location(cfg)] = (path, head)
     _log.info("tests.migrated_template.built", head=head, path=path)
-    return path
+    return path, head
 
 
 def _version_of(path: str) -> list[str]:
@@ -111,13 +127,12 @@ def upgrade(cfg, revision, *args, **kwargs):
     if path is None:
         stats["real"] += 1
         return _real_upgrade(cfg, revision)
-    template = _template_path or _build_template(cfg)
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    template, head = _templates.get(_script_location(cfg)) or _build_template(cfg)
     shutil.copyfile(template, path)
     found = _version_of(path)
-    if found != [_head]:
+    if found != [head]:
         raise RuntimeError(
-            f"migrated template: the copy at {path} is at {found}, not head {_head!r}; "
+            f"migrated template: the copy at {path} is at {found}, not head {head!r}; "
             f"set {OPT_OUT_ENV}=1 to migrate for real"
         )
     stats["served"] += 1
@@ -131,6 +146,8 @@ command.upgrade = upgrade
 def _report() -> None:
     """One line per test process, so a reader can see which path ran (core
     principle 5). On stderr at exit: pytest's capture has ended by then."""
+    for path, _ in _templates.values():
+        shutil.rmtree(os.path.dirname(path), ignore_errors=True)
     nl = chr(10)
     sys.stderr.write(
         f"tests.migrated_template: served {stats['served']} fresh databases from the "

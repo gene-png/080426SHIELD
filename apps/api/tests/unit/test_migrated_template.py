@@ -30,6 +30,9 @@ def _installed():
 def _cfg(path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
     url = f"sqlite:///{path}"
     monkeypatch.setenv("DATABASE_URL", url)
+    # The opt-out is for whole runs. These tests pin the served path, so a
+    # developer running everything with it set must not see them go red.
+    monkeypatch.delenv("SHIELD_TEST_REAL_MIGRATIONS", raising=False)
     cfg = Config(str(_API_ROOT / "alembic.ini"))
     cfg.set_main_option("script_location", str(_API_ROOT / "alembic"))
     cfg.set_main_option("sqlalchemy.url", url)
@@ -46,7 +49,7 @@ def _clauses(sql: str | None) -> tuple[str, ...]:
 
 
 def _snapshot(path: Path) -> dict:
-    """Schema, version and every table's row count: what a test can observe."""
+    """Schema, version and every table's rows: what a test can observe."""
     con = sqlite3.connect(path)
     try:
         schema = sorted(
@@ -57,12 +60,12 @@ def _snapshot(path: Path) -> dict:
         )
         tables = [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")]
         # Table names come from sqlite_master of a database this test built.
-        count_sql = 'SELECT COUNT(*) FROM "{}"'
-        counts = {t: con.execute(count_sql.format(t)).fetchone()[0] for t in tables}
+        rows_sql = 'SELECT * FROM "{}"'
+        rows = {t: sorted(map(repr, con.execute(rows_sql.format(t)))) for t in tables}
         version = [r[0] for r in con.execute("SELECT version_num FROM alembic_version")]
     finally:
         con.close()
-    return {"schema": schema, "rows": counts, "version": version}
+    return {"schema": schema, "rows": rows, "version": version}
 
 
 def test_conftest_installs_it() -> None:
@@ -94,8 +97,12 @@ def test_a_fresh_upgrade_to_head_is_a_copy_identical_to_a_real_upgrade(
 def test_a_stale_template_is_an_error_not_an_older_schema(tmp_path, monkeypatch) -> None:
     mod = _installed()
     assert mod is not None
-    command.upgrade(_cfg(tmp_path / "warm.db", monkeypatch), "head")  # the template exists
-    monkeypatch.setattr(mod, "_head", "0000_not_the_head")
+    cfg = _cfg(tmp_path / "warm.db", monkeypatch)
+    command.upgrade(cfg, "head")  # the template exists
+    key = mod._script_location(cfg)
+    template, _ = mod._templates[key]
+    # Unreachable today (one chain); forced, to prove the ratchet fires.
+    monkeypatch.setitem(mod._templates, key, (template, "0000_not_the_head"))
     with pytest.raises(RuntimeError, match=r"is at \['\w+'\], not head '0000_not_the_head'"):
         command.upgrade(_cfg(tmp_path / "stale.db", monkeypatch), "head")
 
@@ -127,7 +134,29 @@ def test_an_existing_file_is_upgraded_for_real(tmp_path, monkeypatch) -> None:
 def test_the_opt_out_migrates_for_real(tmp_path, monkeypatch) -> None:
     mod = _installed()
     assert mod is not None
+    cfg = _cfg(tmp_path / "optout.db", monkeypatch)
     monkeypatch.setenv(mod.OPT_OUT_ENV, "1")
     served_before, real_before = mod.stats["served"], mod.stats["real"]
-    command.upgrade(_cfg(tmp_path / "optout.db", monkeypatch), "head")
+    command.upgrade(cfg, "head")
     assert (mod.stats["served"], mod.stats["real"]) == (served_before, real_before + 1)
+
+
+def test_a_url_with_a_query_string_is_left_to_alembic(tmp_path, monkeypatch) -> None:
+    mod = _installed()
+    assert mod is not None
+    db = tmp_path / "q.db"
+    cfg = _cfg(db, monkeypatch)
+    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db}?timeout=5")
+    served_before = mod.stats["served"]
+    command.upgrade(cfg, "head")
+    assert mod.stats["served"] == served_before
+
+
+def test_the_documented_opt_out_does_not_red_these_tests(tmp_path, monkeypatch) -> None:
+    """`_cfg` clears the opt-out, so a whole run with it set still serves here."""
+    mod = _installed()
+    assert mod is not None
+    monkeypatch.setenv(mod.OPT_OUT_ENV, "1")
+    served_before = mod.stats["served"]
+    command.upgrade(_cfg(tmp_path / "cleared.db", monkeypatch), "head")
+    assert mod.stats["served"] == served_before + 1
