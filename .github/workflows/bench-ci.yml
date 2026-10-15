@@ -106,7 +106,7 @@ jobs:
           TEMPLATE_DB_MODE: version
         run: |
           mkdir -p "$GITHUB_WORKSPACE/out"
-          extra="-p scripts.pytest_shard -p ci_timing"
+          extra="-p pytest_shard -p ci_timing"
           if [ "${{ matrix.variant }}" = "shard-template-version" ]; then extra="-p template_db $extra"; fi
           start=$(date +%s)
           set +e
@@ -147,7 +147,7 @@ jobs:
         run: |
           set -o pipefail
           # CI's exact selector, collected; node ids are the lines carrying "::".
-          pytest -m unit tests/unit --collect-only -q -p no:cacheprovider > "$GITHUB_WORKSPACE/collect.txt"
+          pytest -m unit tests/unit --collect-only -q -o addopts="" -p no:cacheprovider > "$GITHUB_WORKSPACE/collect.txt"
           grep "::" "$GITHUB_WORKSPACE/collect.txt" > "$GITHUB_WORKSPACE/full.txt"
           tail -n 3 "$GITHUB_WORKSPACE/collect.txt"
           wc -l "$GITHUB_WORKSPACE/full.txt"
@@ -157,7 +157,7 @@ jobs:
           rc=0
           for v in shard shard-template-version; do
             echo "== $v"
-            python -m scripts.shard_partition verify --full "$GITHUB_WORKSPACE/full.txt" --of 4 \
+            python "$GITHUB_WORKSPACE/bench/shard_partition.py" verify --full "$GITHUB_WORKSPACE/full.txt" --of 4 \
               --ran "$GITHUB_WORKSPACE"/shards/bench-$v-1/ran.txt "$GITHUB_WORKSPACE"/shards/bench-$v-2/ran.txt \
                     "$GITHUB_WORKSPACE"/shards/bench-$v-3/ran.txt "$GITHUB_WORKSPACE"/shards/bench-$v-4/ran.txt || rc=1
           done

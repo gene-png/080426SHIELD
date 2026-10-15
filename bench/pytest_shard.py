@@ -47,7 +47,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.shard_partition import RECORD_ENV, SHARD_ENV, ShardSpecError, assign, parse_spec
+from shard_partition import RECORD_ENV, SHARD_ENV, ShardSpecError, assign, parse_spec
 
 __all__ = ["RECORD_ENV", "SHARD_ENV"]
 
