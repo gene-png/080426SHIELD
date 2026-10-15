@@ -780,6 +780,14 @@ def _extract_run_work(
                 # negative one.
                 security_related=item.security_related,
                 security_functions=list(item.security_functions),
+                # TD-2 (for #1058): as the parser left them. None stays None:
+                # an unanswered flag is not a "no".
+                is_suite=item.is_suite,
+                recognized=item.recognized,
+                # F1 (#736 6160171214): the version the call recorded, passed
+                # through -- never worked out again from the constant -- so a
+                # None flag here reads as "asked, unanswered", not pre-TD-2.
+                extracted_prompt_version=result.llm_call.prompt_version,
             )
         )
 
