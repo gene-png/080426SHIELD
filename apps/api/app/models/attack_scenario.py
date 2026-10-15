@@ -74,7 +74,7 @@ class AttackScenario(UUIDPKMixin, TimestampMixin, Base):
     scored_higher: Mapped[int | None] = mapped_column(Integer)
     # The advisor's (b2), 08:10Z: the OFFERED tools added to the client's list
     # after the base was approved, by name. NULL before a run AND when that
-    # could not be checked (`scenario.tools_added_since`); never [] for
+    # could not be checked (`attack/added_since_base.tools_added`, #1012); never [] for
     # "unknown". The count every surface shows is its length.
     tools_added_since_base: Mapped[list | None] = mapped_column(_JSON)
     created_by: Mapped[uuid.UUID] = mapped_column(
