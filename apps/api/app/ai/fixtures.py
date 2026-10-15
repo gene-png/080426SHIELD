@@ -380,6 +380,13 @@ def _fixture_csf_score(payload: dict[str, Any]) -> LLMResponse:
 #     no functions, its note beginning with exactly the not-in-use prefix;
 #   - section 8: confidence is 100, 90 or 60, and every 60 has a note.
 #   - section 10: no rows (missing, not an array, or empty) is {"items":[]}.
+#   - section 9a (v3.3, TD-2, for #1058): `is_suite` and `recognized` on every
+#     item, true or false, never null, keyed as section 10's example keys them.
+#     A suite is a row naming one of section 9a's own examples ("Microsoft 365
+#     G5", "Adobe Creative Cloud All Apps") or saying suite or bundle; an
+#     unrecognized row is one whose name looks like an internal code (no
+#     lowercase letter, at least one digit). Both are reachable offline, so
+#     the red and amber rows that read them are too.
 # Costs and licence counts stay null, as before: the fixture drafts the
 # classification, and offline demo totals are not its job.
 
@@ -399,6 +406,14 @@ _TECH_DEBT_NOT_IN_USE_WORDS = ("not yet deployed", "no longer used", "inactive",
 #: v3.2 section 6, `annual_cost_usd` and `license_count`: a header naming cost,
 #: price, spend or fees, or a license, seat or user count.
 _TECH_DEBT_COST_HEADER_WORDS = ("cost", "price", "spend", "fee", "licen", "seat")
+
+
+#: v3.3 section 9a's examples, and its own words "suite" and "bundle".
+_TECH_DEBT_SUITE = re.compile(
+    r"\bmicrosoft\s+365\b|\bcreative\s+cloud\b|\bsuite\b|\bbundle\b", re.IGNORECASE
+)
+#: v3.3 section 9a, "an internal code": no lowercase letter, at least one digit.
+_TECH_DEBT_INTERNAL_CODE = re.compile(r"^(?=[^a-z]*\d)[^a-z]+$")
 
 
 def _row_cells(row: dict[str, Any]) -> list[str]:
@@ -518,6 +533,8 @@ def _fixture_tech_debt(payload: dict[str, Any]) -> LLMResponse:
                     if security_related
                     else []
                 ),
+                "is_suite": bool(_TECH_DEBT_SUITE.search(name)),
+                "recognized": not _TECH_DEBT_INTERNAL_CODE.match(name),
             }
         )
     return _resp({"items": items})

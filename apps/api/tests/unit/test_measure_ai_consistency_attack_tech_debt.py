@@ -1095,6 +1095,9 @@ FIELDS = {
         "confidence_pct",
         "security_related",
         "security_functions",
+        # TD-2 (for #1058): prompt v3.3 section 9a's flags are measured too.
+        "is_suite",
+        "recognized",
     ),
 }
 _LISTS = {
@@ -1148,6 +1151,9 @@ _VALID = {
         "confidence_pct": 90,
         "security_related": True,
         "security_functions": ["detect"],
+        # TD-2 (for #1058): v3.3 section 10's example values.
+        "is_suite": False,
+        "recognized": True,
     },
 }
 _LIST_KEY = {

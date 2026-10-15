@@ -557,6 +557,27 @@ def test_an_edit_landing_during_approval_refuses_it(app_client, monkeypatch) -> 
 # ---------------------------------------------------------------------------
 
 
+# Restates 0072's `_CLEAR`: if 0072 gains a column, its guard refuses and these go red.
+def _clear_0072(url: str) -> None:
+    """Rewinding to 0055 passes back through 0072, which refuses while any item
+    holds a value it added. These lists were extracted at head, so each item
+    records its prompt version. Run the clearing statement 0072's refusal
+    prints, as an operator would; nothing here reads those columns."""
+    engine = create_engine(url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE capability_items SET is_suite = NULL, recognized = NULL, "
+                    "extracted_prompt_version = NULL, purchase_status = NULL, "
+                    "client_unconfirmed_name = NULL, client_unconfirmed_reason = NULL, "
+                    "client_unconfirmed_at = NULL, client_unconfirmed_by = NULL"
+                )
+            )
+    finally:
+        engine.dispose()
+
+
 @pytest.mark.unit
 def test_the_backfill_reads_an_approved_list_as_current_and_a_draft_as_not(
     app_client,
@@ -576,6 +597,7 @@ def test_the_backfill_reads_an_approved_list_as_current_and_a_draft_as_not(
     cfg = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
     cfg.set_main_option("script_location", str(Path(__file__).resolve().parents[2] / "alembic"))
     cfg.set_main_option("sqlalchemy.url", url)
+    _clear_0072(url)
     command.downgrade(cfg, "0055")
     command.upgrade(cfg, "0056")
 
@@ -611,6 +633,7 @@ def test_a_deliverable_from_before_0056_is_refused_at_release(app_client) -> Non
     cfg = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
     cfg.set_main_option("script_location", str(Path(__file__).resolve().parents[2] / "alembic"))
     cfg.set_main_option("sqlalchemy.url", url)
+    _clear_0072(url)
     command.downgrade(cfg, "0055")
     command.upgrade(cfg, "0056")
     # Back to head before anything reads through the ORM: the models track
@@ -646,6 +669,7 @@ def _replay_0056() -> None:
     cfg = Config(str(api_root / "alembic.ini"))
     cfg.set_main_option("script_location", str(api_root / "alembic"))
     cfg.set_main_option("sqlalchemy.url", os.environ["DATABASE_URL"])
+    _clear_0072(os.environ["DATABASE_URL"])
     command.downgrade(cfg, "0055")
     command.upgrade(cfg, "0056")
     command.upgrade(cfg, "head")
