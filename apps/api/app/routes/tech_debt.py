@@ -103,7 +103,7 @@ from app.schemas.tech_debt import (
 from app.security.rate_limit import enforce_ai_rate_limit
 from app.storage import StorageBackend
 from app.tech_debt.bounds import NOT_WHOLE_CENTS, cost_problem, license_problem
-from app.tech_debt.components import is_component
+from app.tech_debt.components import is_component, savings_cost
 from app.tech_debt.exporters import (
     build_context,
     cost_label,
@@ -2118,7 +2118,7 @@ def savings_preview(
                 "A proposed disposition is not one of Keep, Cut, or Cut, covered by another tool.",
             ) from None
     # `.get` keeps an explicit None: unticking a row in the what-if is a choice.
-    rows = [(overlay.get(key, it.disposition), it.annual_cost_usd) for key, it in by_id.items()]
+    rows = [(overlay.get(key, it.disposition), savings_cost(it)) for key, it in by_id.items()]
     savings = estimated_savings(rows)
     counts = dict.fromkeys(CapabilityDisposition, 0)
     undecided = 0
@@ -2187,7 +2187,7 @@ def consolidation_plan_summary(
         elif it.disposition == CapabilityDisposition.CUT:
             cut += 1
     # #804: the deliverable's own derivation, not a copy of it.
-    savings = estimated_savings((it.disposition, it.annual_cost_usd) for it in items)
+    savings = estimated_savings((it.disposition, savings_cost(it)) for it in items)
 
     return ConsolidationPlanSummary(
         capability_list_id=cap_list.id,

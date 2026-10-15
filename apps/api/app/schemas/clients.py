@@ -605,6 +605,11 @@ class TechDebtItem(BaseModel):
     license_count: int | None
     disposition: str | None  # keep | consolidate | cut | None
     notes: str | None
+    # for #929: the bundle that carries this row's cost, when the row is a
+    # named part of a split bundle (`tech_debt/components.py`). The bundle's
+    # name, stripped; "" when that name is blank (still a part, so the screen
+    # says "Included in its bundle"); None for a row that is not a part.
+    bundle: str | None
 
 
 class TechDebtCategorySpend(BaseModel):
@@ -619,6 +624,9 @@ class TechDebtRedundancy(BaseModel):
     category: str
     count: int
     savings_usd: float  # tech_debt.savings.estimated_savings over this category (#804)
+    # for #1044: False when a counted (cut) row in this category has no usable
+    # cost, so `savings_usd` is a floor; the card marks it as the headline does.
+    savings_cost_known: bool
     items: list[TechDebtItem]
 
 
