@@ -59,7 +59,7 @@ from app.tech_debt.reconcile import Reconciliation, reconcile_rows
 #     beginning with exactly `security_scope.NOT_IN_USE_PREFIX` (for #845).
 # The text is placed verbatim, with no `.format()`: a test pins its sha256.
 # `llm_calls.prompt_version` tells a v3.2 run from a v2 one.
-PROMPT_VERSION = "v3.2"
+PROMPT_VERSION = "v3.3"
 
 PROMPT = """You are a deterministic software-inventory extraction engine. Convert the input JSON `rows` array into a normalized capability list by applying the rules below exactly.
 
@@ -204,6 +204,12 @@ Low confidence does not justify excluding an identifiable capability. State what
 
 `source_row_index` is the zero-based index of the source row in `rows[]`. Return items in ascending `source_row_index` order.
 
+## 9a. Suite and recognition flags
+
+`is_suite`: true when the row names a suite, bundle or multi-product license (for example "Microsoft 365 G5" or "Adobe Creative Cloud All Apps") rather than a single product; otherwise false. Decide from the row's text and widely known product names. Do not list a suite's contents unless the row names them; section 4 rule 5 still applies.
+
+`recognized`: false when you cannot identify the product with confidence from the row (an unfamiliar name, an internal code, or a misspelling you cannot resolve); otherwise true. An unrecognized item is still returned.
+
 ## 10. Output requirements
 
 Return only valid JSON. Do not include Markdown, explanations, comments, headings, or text outside the JSON object. Use `null` exactly where required; do not substitute empty strings, "N/A", "none", or "unknown".
@@ -220,6 +226,8 @@ Return only valid JSON. Do not include Markdown, explanations, comments, heading
       "notes": null,
       "security_related": false,
       "security_functions": [],
+      "is_suite": false,
+      "recognized": true,
       "confidence_pct": 90,
       "source_row_index": 0
     }
@@ -240,7 +248,8 @@ Before returning the JSON, silently verify:
 6. Every security-related item has at least one security function; every other item, including a planned, inactive, or no-longer-used security tool, has none.
 7. `confidence_pct` is 100, 90, or 60, and every 60 has a note saying why.
 8. No field exceeds its length limit.
-9. The response is valid JSON with no text outside the object."""  # noqa: E501
+9. The response is valid JSON with no text outside the object.
+10. `is_suite` and `recognized` are true or false on every item, never null."""  # noqa: E501
 
 #: v3.2 section 6's closed `category` list, held ONCE. A test parses the list
 #: out of `PROMPT` and requires it to equal this tuple, so a drift between the
@@ -285,7 +294,7 @@ CONFIDENCE_SCALE: frozenset[int] = frozenset({100, 90, 60})
 #: confidence from 0 to 100 and offered "EDR" as a category), so its flags are
 #: not measured rather than counted. Add a version only when its prompt carries
 #: the same closed scale, closed list and one-item-per-row rule.
-PROMPT_VERSIONS_WITH_CLOSED_SCALES: frozenset[str] = frozenset({"v3.2"})
+PROMPT_VERSIONS_WITH_CLOSED_SCALES: frozenset[str] = frozenset({"v3.2", "v3.3"})
 
 #: The name an item is stored under when the model sent none. Kept, not
 #: dropped: the row is a capability the client pays for (C6 (1), for #806).
@@ -295,6 +304,13 @@ UNKNOWN_NAME = "Unknown capability"
 #: the same answer already named (v3.2 section 4, "Return exactly one item for
 #: each row you keep"). Both items are kept; the later one is recorded.
 DUPLICATED = "duplicated"
+
+#: TD-2 (for #1058): the finding reasons for v3.3 section 9a's two flags. Code
+#: tokens, not copy. `MISSING`: the key was absent or null (verify item 10,
+#: "never null"). `NOT_BOOLEAN`: anything but a JSON true or false, including
+#: "true", 1 and 0. Either way the value is stored as NULL, never as False.
+MISSING = "missing"
+NOT_BOOLEAN = "not_boolean"
 
 
 @dataclass(frozen=True)
@@ -314,6 +330,10 @@ class ExtractedCapability:
     # keeps unclassified rows in the ATT&CK subset for exactly that reason.
     security_related: bool | None = None
     security_functions: tuple[str, ...] = ()
+    # TD-2 (for #1058), v3.3 section 9a. None when the model did not send a
+    # JSON boolean (recorded in `findings`), never coerced to False.
+    is_suite: bool | None = None
+    recognized: bool | None = None
     # #833 / #834: what this item's values could not be stored as given, each
     # `{source_row_index, item_name, field, reason, value}`. The value itself
     # is stored as NULL (a number) or cut to its column (a string); the record
@@ -399,7 +419,9 @@ def _parse_response(content: str) -> list[ExtractedCapability]:
 
     require_list_at(require_json_object(decoded), "items")
     raw_items = decoded.get("items", [])
-    return [_coerce_item(item) for item in raw_items if isinstance(item, dict)]
+    return [
+        _coerce_item(item, index=i) for i, item in enumerate(raw_items) if isinstance(item, dict)
+    ]
 
 
 def _security_functions(raw: Any) -> tuple[str, ...]:
@@ -476,7 +498,11 @@ def _number(raw: Any, *, money: bool = False) -> float | None:
     return n if math.isfinite(n) else None
 
 
-def _coerce_item(item: dict[str, Any]) -> ExtractedCapability:
+def _coerce_item(item: dict[str, Any], index: int) -> ExtractedCapability:
+    """`index` is the item's position in the model's `items` list, stamped on
+    the v3.3 flag findings as `item_index` (TD-2 F2, for #1058): the row and
+    the name do not identify an item, and the panel counts items."""
+
     def _opt_str(key: str) -> str | None:
         v = item.get(key)
         if v is None:
@@ -569,6 +595,21 @@ def _coerce_item(item: dict[str, Any]) -> ExtractedCapability:
                 return False
         return None
 
+    def _strict_bool(key: str) -> bool | None:
+        """TD-2 (for #1058): a JSON true or false, stored as sent; anything else
+        is stored as None and recorded. Stricter than `_opt_bool` on purpose:
+        v3.3 asks for these two as booleans "never null", and a `"false"` or a
+        `0` read as False would record a decision the model did not make in the
+        form asked -- and False is what clears a row of part B's red."""
+        if key not in item or item[key] is None:
+            _record(key, MISSING, item.get(key), item_index=index)
+            return None
+        v = item[key]
+        if isinstance(v, bool):
+            return v
+        _record(key, NOT_BOOLEAN, v, item_index=index)
+        return None
+
     functions = _security_functions(item.get("security_functions"))
     related = _opt_bool("security_related")
     # A named security function contradicts a False flag. Trust the function:
@@ -589,6 +630,8 @@ def _coerce_item(item: dict[str, Any]) -> ExtractedCapability:
     cost = _opt_cost("annual_cost_usd")
     licenses = _opt_int("license_count", *_INT_RANGES["license_count"])
     confidence = _opt_int("confidence_pct", *_INT_RANGES["confidence_pct"])
+    is_suite = _strict_bool("is_suite")
+    recognized = _strict_bool("recognized")
     return ExtractedCapability(
         name=name,
         vendor=vendor,
@@ -601,6 +644,8 @@ def _coerce_item(item: dict[str, Any]) -> ExtractedCapability:
         source_row_index=row,
         security_related=related,
         security_functions=functions,
+        is_suite=is_suite,
+        recognized=recognized,
         findings=tuple(findings),
     )
 

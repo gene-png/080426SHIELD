@@ -83,6 +83,9 @@ export interface ExtractionFlagCounts {
 export interface ExtractionFinding {
   source_row_index: number | null;
   item_name: string;
+  /** TD-2 F2: the item's position in the AI's answer, on the v3.3 flag
+   *  findings only. The row and the name do not identify an item. */
+  item_index?: number;
   field: string;
   reason: string;
   value: string;

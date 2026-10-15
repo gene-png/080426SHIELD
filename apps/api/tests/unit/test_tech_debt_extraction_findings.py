@@ -45,6 +45,10 @@ def _item(name: str, i: int, **fields) -> dict:
         "notes": None,
         "security_related": True,
         "security_functions": ["detect"],
+        # TD-2 (for #1058): v3.3 section 10's example values, so a compliant
+        # item records nothing for them.
+        "is_suite": False,
+        "recognized": True,
         "confidence_pct": 90,
         "source_row_index": i,
     }

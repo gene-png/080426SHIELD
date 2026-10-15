@@ -85,6 +85,12 @@ And the paths that do not:
   * **the database cannot be reached** — exit 2, same reason. `depends_on`
     waits for `service_healthy`, so this should not happen; if it does, the
     honest report is that the check did not run, not that the pair is fine.
+  * **the stamped revision is not in the tree AND the tree's chain has no
+    single head** (forked, a cycle, or a `down_revision` this check cannot
+    read) — exit 2, naming the heads and the stamped revision. The mismatch
+    message names the tree's head, read from the chain rather than from the
+    highest number, because 0072 chains after 0073 (for #1058); with no single
+    head there is nothing true to print in that line.
   * **any command-line argument** — exit 2, naming it (#597). The gate takes
     none, so `--help` or a typo must not run the check as though absent.
 
@@ -143,6 +149,40 @@ def tree_revisions(versions_dir: pathlib.Path) -> dict[str, list[str]]:
         if match:
             found.setdefault(match.group(1), []).append(path.name)
     return found
+
+
+#: A migration's `down_revision`, in both spellings the repo uses:
+#:
+#:     down_revision: str | Sequence[str] | None = "0073"
+#:     down_revision = "0045"
+#:
+#: `None` names no parent. A tuple (a merge revision) or any other form is not
+#: read, so it removes no candidate head: a parent it fails to eliminate shows
+#: up as a SECOND head, and the gate reports a head it cannot name (exit 2)
+#: rather than guessing one.
+_DOWN_REVISION = re.compile(r"^down_revision(?:\s*:[^=\n]+)?\s*=\s*['\"]([^'\"]+)['\"]", re.M)
+
+
+def chain_heads(versions_dir: pathlib.Path) -> list[str]:
+    """The revisions no other revision names as its `down_revision`, sorted.
+
+    The chain's head, read from the chain. NOT the highest number: this repo's
+    chain order is not its number order (0072 chains after 0073, for #1058),
+    so `sorted(ids)[-1]` named a revision that is not the head. One entry is a
+    head; two or more is a forked chain; none is a cycle. The caller decides
+    what each means.
+    """
+    revisions: set[str] = set()
+    parents: set[str] = set()
+    for path in sorted(versions_dir.glob("*.py")):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        rev = _REVISION.search(text)
+        if rev:
+            revisions.add(rev.group(1))
+        down = _DOWN_REVISION.search(text)
+        if down:
+            parents.add(down.group(1))
+    return sorted(revisions - parents)
 
 
 def database_revision(url: str) -> str | None:
@@ -258,7 +298,25 @@ def main(argv: list[str] | None = None) -> int:
         )
         return EXIT_OK
 
-    newest = sorted(in_tree)[-1]
+    heads = chain_heads(versions)
+    if len(heads) != 1:
+        # The mismatch IS established; the head is not. Named as could-not-look
+        # rather than printed as a guess, because the message below exists to
+        # tell the reader which revision this tree would migrate to.
+        cause = (
+            f"{len(heads)} heads ({' '.join(heads)}): the chain is forked, or a "
+            "`down_revision` is in a form this check does not read"
+            if heads
+            else "no head: every revision is named as another's `down_revision` (a cycle)"
+        )
+        print(
+            f"check-mount: could not look -- the mounted tree's migration chain has "
+            f"{cause}. Separately, the database is stamped {stamped}, which this "
+            f"tree does not contain. Read from {versions}.",
+            file=sys.stderr,
+        )
+        return EXIT_COULD_NOT_LOOK
+    head = heads[0]
     print(
         "\n".join(
             [
@@ -267,7 +325,7 @@ def main(argv: list[str] | None = None) -> int:
                 "MIGRATED FROM.",
                 "",
                 f"  database stamped : {stamped}",
-                f"  newest in tree   : {newest}",
+                f"  head of chain in tree : {head}",
                 f"  tree has         : {' '.join(sorted(in_tree))}",
                 f"  reading          : {versions}",
                 "",
