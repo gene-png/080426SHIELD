@@ -16,6 +16,7 @@ import {
   AttackProxyError,
   createAssessment,
   discardAssessment,
+  startRevision,
   fetchCatalog,
   fetchHeatmap,
   fetchLatestAssessment,
@@ -45,6 +46,8 @@ import { StaleDocsNudge } from "@/components/admin/StaleDocsNudge";
 import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { AiPreviewButton } from "@/components/admin/AiPreviewButton";
 import { AiRunStatus, LastRunNote } from "@/components/admin/AiRunStatus";
+import { RevisionBanner } from "@/components/admin/RevisionBanner";
+import { StartRevisionButton } from "@/components/admin/StartRevisionButton";
 import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
 
@@ -61,6 +64,7 @@ import { AttackTechniquePanel } from "./AttackTechniquePanel";
 import type { JSX } from "react";
 import { ProgressStages } from "../ProgressStages";
 import { useServiceStages } from "@/lib/stages/client";
+import { DRAFT_OPEN_REASON, refusalReason } from "@/lib/revisions/refusal";
 import { useRefreshFailures } from "@/components/admin/useRefreshFailures";
 import { isUpstreamOutcomeUnknown } from "@/lib/describe-save-error";
 import { AiSourceNote } from "@/components/AiSourceNote";
@@ -193,7 +197,7 @@ export function AttackWorkspace({
   const { messages: refreshMessages, begin: beginRefresh } =
     useRefreshFailures();
   const [busy, setBusy] = React.useState<
-    "create" | "approve" | "review" | "run" | "discard" | null
+    "create" | "approve" | "review" | "run" | "discard" | "revise" | null
   >(null);
   // Set when the API REFUSES a run (typed 409). Distinct from loadError: the
   // page is fine, the prerequisite is not.
@@ -619,6 +623,49 @@ export function AttackWorkspace({
     return trackWrite(() => onDiscardWrite());
   }
 
+  /**
+   * #1120 "Start a revision": mints the next version as a DRAFT with this
+   * one's work copied forward, then shows it. A refusal is rethrown with the
+   * API's approved copy, which the dialog shows.
+   */
+  async function onStartRevision(reason: string): Promise<void> {
+    if (!assessment) return;
+    setBusy("revise");
+    const seq = ++assessmentSeq.current;
+    try {
+      const a = await startRevision(serviceId, assessment.id, reason);
+      if (seq === assessmentSeq.current) {
+        setAssessment(a);
+        await refreshHeatmap();
+      }
+    } catch (err) {
+      const message = describeError(err);
+      // A draft already exists (V6, V8): show it beneath the dialog, which
+      // stays open with the API's sentence telling the consultant to approve
+      // or discard it.
+      if (
+        err instanceof AttackProxyError &&
+        refusalReason(err.payload) === DRAFT_OPEN_REASON
+      ) {
+        await showLatestAfterRefusal(seq);
+      }
+      throw new Error(message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function showLatestAfterRefusal(seq: number): Promise<void> {
+    try {
+      const a = await fetchLatestAssessment(serviceId);
+      if (seq !== assessmentSeq.current || !a) return;
+      setAssessment(a);
+      await refreshHeatmap();
+    } catch (err) {
+      setLoadError(describeError(err));
+    }
+  }
+
   async function onDiscardWrite(): Promise<void> {
     if (!assessment) return;
     setActionError(null);
@@ -789,9 +836,23 @@ export function AttackWorkspace({
               disabled={busy !== null && busy !== "run"}
             />
           ) : null}
+          {assessment ? (
+            <StartRevisionButton
+              status={assessment.status}
+              version={assessment.version}
+              onStart={onStartRevision}
+              disabled={busy !== null}
+            />
+          ) : null}
         </div>
       </header>
 
+      {assessment ? (
+        <RevisionBanner
+          status={assessment.status}
+          revision={assessment.revision}
+        />
+      ) : null}
       {stagesPhase === "ready" && serviceStages ? (
         <ProgressStages
           stages={serviceStages.stages}

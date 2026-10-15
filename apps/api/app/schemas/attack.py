@@ -12,6 +12,7 @@ from app.attack.coverage import CoverageStatus
 from app.models.attack_assessment import AttackAssessmentStatus
 from app.models.service import ServiceKind, ServiceStatus
 from app.schemas.ai_runs import AiSource
+from app.schemas.revisions import RevisionInfo
 
 # ---------------------------------------------------------------------------
 # Catalog
@@ -257,6 +258,8 @@ class AttackAssessmentResponse(BaseModel):
     #: service's drafts being ignored once it has one (R6b). Admin only.
     #: REQUIRED.
     subset_fallback_notes: list[str]
+    #: #1120: what a revision copied and why (V3, V4, V5); NULL otherwise.
+    revision: RevisionInfo | None = None
 
 
 class ComputedStatusReviewItem(BaseModel):
@@ -605,9 +608,9 @@ class AttackAiInputSourceList(BaseModel):
     version: int
     status: str
     # TRI-STATE. True => latest. False => a LATER version of the same list
-    # exists and this one STILL COUNTS, which routinely surprises people: every
-    # non-discarded version feeds the mapping, not just the newest. None =>
-    # RETIRED, i.e. discarded.
+    # exists. None => RETIRED, i.e. discarded. Whether this version FEEDS the
+    # mapping is `in_force` below, not this field (#1012): an approved v1 beside
+    # an open draft v2 is not the latest and is still the version in force.
     #
     # `None` rather than `False` for a discarded list because it is not
     # superseded — nothing replaced it. Collapsing the two made a renderer say
@@ -625,6 +628,14 @@ class AttackAiInputSourceList(BaseModel):
     # FOURTH meaning ("nobody said") wearing the clothes of one of the three.
     # Every producer of this field knows which of the three it means.
     is_latest_for_service: bool | None
+    # TRI-STATE, for #1012 (R6b, #736 6094994432). True => the version of its
+    # Tech Debt service that feeds the mapping: the newest APPROVED or RELEASED
+    # version offering a security row, or, in a drafts-only service, the newest
+    # draft offering one. False => not in force, so nothing on it is offered
+    # and its citable rows are withheld as `version_not_in_force`. None =>
+    # RETIRED (discarded), for the reason `is_latest_for_service` gives.
+    # No default, for the same reason as `is_latest_for_service`.
+    in_force: bool | None
     # True when the APPROVED snapshot decides membership; False when live rows
     # do (a DRAFT, or a list approved before migration 0043 — NULL means nobody
     # recorded it, which is not the same as nothing having been approved).
@@ -669,6 +680,8 @@ class AttackAiInputTotals(BaseModel):
     withheld_security_scope: int = 0
     withheld_not_in_approved_snapshot: int = 0
     withheld_list_discarded: int = 0
+    # #1012: rows only a version that is not in force holds (R6b).
+    withheld_version_not_in_force: int = 0
     excluded_rows_named: int = 0
     # Contributing lists whose extraction-time exclusions cannot be reported.
     # Rendered beside `excluded_rows_named` for the same reason a withheld count

@@ -817,9 +817,13 @@ def test_the_raised_budgets_clear_what_actually_failed() -> None:
     assert llm_mod.max_output_tokens_for("extract.capabilities") > 8192
     # One CSF tier alone is 106 rows (csf/catalog.py) at >= ~100 tokens a row.
     assert llm_mod.max_output_tokens_for("csf_score") >= 106 * 100
-    # Deliberately NOT raised: three short fields per capability, so a larger
-    # budget buys nothing.
-    assert llm_mod.max_output_tokens_for("zt_score") == 8192
+    # Measured 2026-10-12 on the #981 v2 prompt (#736, issuecomment-6115649315):
+    # its DoD probe with the notes corpus produced a largest single output of
+    # 6,739 tokens with only 18 of 45 rows scored. The 3x rule needs 20,217, so
+    # the streamed budget must clear that; a fully scored run is likely larger.
+    assert llm_mod.max_output_tokens_for("zt_score") >= 3 * 6739
+    # The non-streamed adapters keep what they sent before (cost on #479).
+    assert llm_mod.non_streamed_output_cap("zt_score") == 8192
 
 
 _OPENAI_OK = {

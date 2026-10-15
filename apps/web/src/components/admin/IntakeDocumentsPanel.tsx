@@ -54,11 +54,12 @@ export interface IntakeDocumentsPanelProps {
 }
 
 /**
- * Surfaces the documents the client uploaded (during intake or otherwise)
- * inside the workspace, so the consultant can review them and extract a
- * capability list straight from an inventory without re-uploading. Relies on
- * the active tenant being aligned to this service's client (EnsureActiveClient)
- * so the artifacts list is scoped correctly.
+ * Surfaces this tenant's uploaded documents inside the workspace: the client's
+ * (during intake or otherwise) and a consultant's (the Tech Debt Dropzone posts
+ * to the same upload route as the admin, #1054), so the consultant can review
+ * them and extract a capability list straight from an inventory without
+ * re-uploading. Relies on the active tenant being aligned to this service's
+ * client (EnsureActiveClient) so the artifacts list is scoped correctly.
  */
 export function IntakeDocumentsPanel({
   onExtract,

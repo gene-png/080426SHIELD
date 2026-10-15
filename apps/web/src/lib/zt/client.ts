@@ -185,6 +185,18 @@ export async function approveAssessment(
   );
 }
 
+/** #1120: start a revision of an approved or released assessment. */
+export async function startRevision(
+  serviceId: string,
+  assessmentId: string,
+  reason: string,
+): Promise<ZtAssessment> {
+  return jsonRequest<ZtAssessment>(
+    `/api/proxy/zt/services/${serviceId}/assessments/${assessmentId}/revisions`,
+    { method: "POST", body: { reason } },
+  );
+}
+
 export async function discardAssessment(
   assessmentId: string,
 ): Promise<ZtAssessment> {

@@ -1083,7 +1083,7 @@ def test_items_as_the_parser_emits_them_carry_no_unearned_agreement() -> None:
 # a field the measure dropped would silently leave the matrix with it.
 
 FIELDS = {
-    "zt_score": ("current", "target"),
+    "zt_score": ("current",),
     "csf_score": ("governance", "policy", "implementation", "monitoring", "improvement"),
     "mitre_map": ("status", "reason_code", "detection_tools", "prevention_tools", "response_tools"),
     "tech_debt_extract": (
@@ -1095,6 +1095,9 @@ FIELDS = {
         "confidence_pct",
         "security_related",
         "security_functions",
+        # TD-2 (for #1058): prompt v3.3 section 9a's flags are measured too.
+        "is_suite",
+        "recognized",
     ),
 }
 _LISTS = {
@@ -1120,7 +1123,7 @@ _CSF_KEY = ("high", "GV.OC-01")
 # with a reason that status takes and tools the resolver places -- on a key the
 # assessment holds.
 _VALID = {
-    "zt_score": {"code": _ZT_CODE, "current": 2, "target": 3},
+    "zt_score": {"code": _ZT_CODE, "current": 2},
     "csf_score": {
         "tier": _CSF_KEY[0],
         "subcategory_code": _CSF_KEY[1],
@@ -1148,6 +1151,9 @@ _VALID = {
         "confidence_pct": 90,
         "security_related": True,
         "security_functions": ["detect"],
+        # TD-2 (for #1058): v3.3 section 10's example values.
+        "is_suite": False,
+        "recognized": True,
     },
 }
 _LIST_KEY = {

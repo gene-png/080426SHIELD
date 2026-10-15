@@ -39,7 +39,7 @@ import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import BackgroundTasks, HTTPException, status
@@ -49,8 +49,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.ai.failures import friendly_reason
+from app.ai.isolation import RedactionRefused, release_run
 from app.ai.llm import LLMClient
 from app.ai.run_context import ai_run_id_var
+from app.ai.run_limits import REAP_MARGIN, RUN_DEADLINE
 from app.logging import correlation_id_var, get_logger
 from app.models._common import utcnow
 from app.models.ai_run import AiRun, AiRunStatus
@@ -63,17 +65,6 @@ _log = get_logger(__name__)
 #: process that no longer exists (see the module docstring's precondition).
 BOOT_ID = str(uuid.uuid4())
 
-#: How long a run may hold its service's edit lock. Sized above the longest
-#: measured run: ATT&CK's 26 batches at 5 workers, ~30s of generation each
-#: (`routes/attack.py`, `_MITRE_BATCH_SIZE`), is ~3 minutes when healthy, and a
-#: rate-limited provider has been seen to stretch a single batch to minutes.
-RUN_DEADLINE = timedelta(minutes=45)
-
-#: How far past its deadline a run THIS process is still executing may go
-#: before a status read ends it. The ATT&CK job checks its own deadline between
-#: batches; this margin is for a job blocked inside one provider call, which
-#: cannot check anything until the call returns.
-REAP_MARGIN = timedelta(minutes=5)
 
 RUN_ORPHANED = "run_orphaned"
 RUN_DEADLINE_EXCEEDED = "run_deadline_exceeded"
@@ -184,6 +175,18 @@ def _charged_likely(db: Session, run_id: uuid.UUID, mode: LLMCallMode) -> bool |
     return None if mode == LLMCallMode.LIVE else False
 
 
+def _charged_likely_after(db: Session, ctx: RunContext, exc: BaseException) -> bool | None:
+    """`_charged_likely` for a run that raised, with one case it cannot see:
+    a run the redaction gate refused before ANY of its payloads cleared
+    (#552) sent nothing, so it is "not charged", False -- never None, which
+    the workspace prints as "may have made a live AI call" beside a refusal
+    saying nothing was sent. A refusal after a payload cleared is no such
+    proof, and falls through to the ledger like any other failure."""
+    if isinstance(exc, RedactionRefused) and not exc.sent_before:
+        return False
+    return _charged_likely(db, ctx.run_id, ctx.mode)
+
+
 def _fail_if_running(
     db: Session,
     run_id: uuid.UUID,
@@ -274,6 +277,11 @@ def reap(db: Session, *, service_id: uuid.UUID, purpose: str | None = None) -> N
             charged_likely=_charged_likely(db, run.id, run.mode),
         ):
             reaped += 1
+            # #552: the run's redaction place comes back at the reap, not when
+            # its job finally returns: a job stuck in a call would otherwise
+            # hold a place for as long as it is stuck. Its later calls are
+            # refused (`isolation` remembers the run as ended).
+            release_run(run.id)
             _log.warning(
                 "ai_runs.reaped",
                 run_id=str(run.id),
@@ -515,7 +523,7 @@ def _execute(bind: Engine | Connection, ctx: RunContext, work: Work) -> None:
             ctx.run_id,
             reason=reason,
             message=message,
-            charged_likely=_charged_likely(session, ctx.run_id, ctx.mode),
+            charged_likely=_charged_likely_after(session, ctx, exc),
             batches=exc.batches if isinstance(exc, RunFailed) else None,
         )
         session.commit()
@@ -533,8 +541,14 @@ def _execute(bind: Engine | Connection, ctx: RunContext, work: Work) -> None:
         # status read in a gap between the two would find a RUNNING run this
         # process "is not executing" and reap a run that is about to complete.
         # (The completion CAS is the backstop; this ordering is the guard.)
-        session.close()
-        _mark_done(ctx.run_id)
+        try:
+            session.close()
+            _mark_done(ctx.run_id)
+        finally:
+            # #552: the run's redaction place, on every path through here,
+            # including one where closing out the run raises: the reaper
+            # covers only RUNNING runs, so a place leaked here never returns.
+            release_run(ctx.run_id)
 
 
 # ---------------------------------------------------------------------------

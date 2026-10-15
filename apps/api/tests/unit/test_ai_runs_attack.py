@@ -631,6 +631,15 @@ LOCK_DRIVERS: dict[tuple[str, str], Callable[[World], Any]] = {
             json={"reviews": [{"code": w.codes[0], "computed_status": "gap"}]},
         )
     ),
+    # #1120: Start a revision refuses while a run is in progress, ahead of
+    # every other rule, so it answers the lock even for a draft target.
+    ("POST", "/attack/services/{service_id}/assessments/{assessment_id}/revisions"): (
+        lambda w: w.c.post(
+            f"/attack/services/{w.svc_id}/assessments/{w.assessment_id}/revisions",
+            headers=w.h,
+            json={"reason": "mid-run"},
+        )
+    ),
 }
 
 # Mutating ATT&CK routes the lock deliberately leaves open, each for a reason.

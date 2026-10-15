@@ -166,12 +166,28 @@ def intake_queue(
             )
         )
 
-    art_stmt = select(Artifact)
+    # #1054: each row carries its uploader's role, because the stored origin
+    # cannot say who attached a file (`POST /artifacts` writes `client_upload`
+    # for an admin too). An inner join is total: `uploaded_by` is a non-null
+    # FK with ON DELETE RESTRICT, so every artifact has its user.
+    art_stmt = select(Artifact, User.role).join(User, Artifact.uploaded_by == User.id)
     if client_id is not None:
         art_stmt = art_stmt.where(Artifact.client_id == client_id)
     art_stmt = art_stmt.order_by(Artifact.uploaded_at.desc())
-    artifact_rows = db.execute(art_stmt).scalars().all()
-    artifacts = [AdminArtifactRow.model_validate(a, from_attributes=True) for a in artifact_rows]
+    artifact_rows = db.execute(art_stmt).all()
+    artifacts = [
+        AdminArtifactRow(
+            id=a.id,
+            title=a.title,
+            mime_type=a.mime_type,
+            size_bytes=a.size_bytes,
+            uploaded_by=a.uploaded_by,
+            uploaded_at=a.uploaded_at,
+            origin=a.origin,
+            uploaded_by_role=role,
+        )
+        for a, role in artifact_rows
+    ]
 
     user_stmt = select(func.count()).select_from(User)
     if client_id is not None:

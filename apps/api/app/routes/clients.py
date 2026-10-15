@@ -83,6 +83,7 @@ from app.models.zt_assessment import (
     ZtAssessmentStatus,
     ZtFramework,
 )
+from app.risk import exporters as risk_exporters
 from app.risk.baseline import targets_used
 from app.risk.csf_source import csf_no_shared_row as risk_csf_no_shared_row
 from app.risk.csf_source import csf_source_note as risk_csf_source_note
@@ -128,7 +129,13 @@ from app.schemas.clients import (
 )
 from app.schemas.risk import RiskTargetUsed
 from app.services.engagement_targets import client_target_stage, client_target_tier
-from app.tech_debt.components import is_component, license_count, source_items
+from app.tech_debt.components import (
+    bundle_name,
+    is_component,
+    license_count,
+    savings_cost,
+    source_items,
+)
 from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.savings import estimated_savings
 from app.zt.catalog import capability_by_code as zt_capability_by_code
@@ -1019,7 +1026,7 @@ def _tech_debt_savings(db: Session, service_ids: list[uuid.UUID]) -> _TechDebtTo
             .all()
         )
         # #804: the deliverable's own derivation, per released list.
-        found = estimated_savings((it.disposition, it.annual_cost_usd) for it in items)
+        found = estimated_savings((it.disposition, savings_cost(it)) for it in items)
         total += found.amount
         cost_known = cost_known and found.known
     return _TechDebtTotal(total, cost_known, False)
@@ -1685,7 +1692,7 @@ def zt_dashboard(
 _UNCATEGORIZED = "Uncategorized"
 
 
-def _td_item(it: CapabilityItem) -> TechDebtItem:
+def _td_item(it: CapabilityItem, names: dict[uuid.UUID, str]) -> TechDebtItem:
     return TechDebtItem(
         name=it.name,
         vendor=it.vendor,
@@ -1695,6 +1702,7 @@ def _td_item(it: CapabilityItem) -> TechDebtItem:
         license_count=it.license_count,
         disposition=(it.disposition.value if it.disposition is not None else None),
         notes=it.notes,
+        bundle=bundle_name(it, names),
     )
 
 
@@ -1756,6 +1764,8 @@ def tech_debt_dashboard(
         .all()
     )
 
+    # for #929: every row's name by id, so a part can name its bundle.
+    names = {it.id: it.name for it in items}
     annual_spend = 0.0
     # for #835: the ONE rule for what counts as an application. A split
     # bundle's parts are listed in the inventory but are not tools of their own.
@@ -1764,7 +1774,7 @@ def tech_debt_dashboard(
     # #804: the deliverable's own derivation, not a copy of it. Savings still
     # see a part (advisor ruling on #736): a part marked Cut with no cost is a
     # genuinely unknown saving.
-    found = estimated_savings((it.disposition, it.annual_cost_usd) for it in items)
+    found = estimated_savings((it.disposition, savings_cost(it)) for it in items)
     savings = found.amount
     savings_cost_known = found.known
     # #126: the same floor question the SAVINGS figure has always asked, asked
@@ -1793,6 +1803,9 @@ def tech_debt_dashboard(
         bucket["items"].append(it)
     for bucket in by_cat.values():
         bucket["count"] = license_count(bucket["items"])
+        bucket["savings"] = estimated_savings(
+            (i.disposition, savings_cost(i)) for i in bucket["items"]
+        )
 
     spend_by_category = [
         TechDebtCategorySpend(category=cat, total_usd=round(b["total"], 2), count=b["count"])
@@ -1807,14 +1820,13 @@ def tech_debt_dashboard(
         TechDebtRedundancy(
             category=cat,
             count=b["count"],
-            # #804: the same derivation, per category. Its `known` flag is not
-            # rendered per category today (pre-existing); the dashboard's
-            # headline savings carries it.
-            savings_usd=round(
-                estimated_savings((i.disposition, i.annual_cost_usd) for i in b["items"]).amount,
-                2,
-            ),
-            items=[_td_item(i) for i in b["items"]],
+            # #804: the same derivation, per category.
+            savings_usd=round(b["savings"].amount, 2),
+            # for #1044: the category's own floor flag. The redundancy card
+            # renders it ("≥ "), even at $0, so a category whose counted row
+            # has no usable cost reads as a floor, as the headline does.
+            savings_cost_known=b["savings"].known,
+            items=[_td_item(i, names) for i in b["items"]],
         )
         for cat, b in sorted(by_cat.items(), key=lambda kv: kv[1]["count"], reverse=True)
         if b["count"] > 1
@@ -1907,7 +1919,7 @@ def tech_debt_dashboard(
         spend_by_category=spend_by_category,
         sprawl_by_category=sprawl_by_category,
         redundancies=redundancies,
-        items=[_td_item(i) for i in items],
+        items=[_td_item(i, names) for i in items],
     )
 
 
@@ -2084,10 +2096,15 @@ def risk_dashboard(
                 target=t.target,
                 source=t.source,
                 origin=t.origin,
+                # RR-1 (for #1122): the files' label and naming predicate.
+                label=risk_exporters.target_row_label(t.kind, t.framework, reg.provenance),
             )
             for t in _risk_targets
         ],
         targets_recorded=_risk_targets_recorded,
+        # RR-1 (for #1122), design note §6.4: copy 8, 9a-9c or 11, by the files'
+        # own reader, so the client reads what their files print.
+        **risk_exporters.selection_fields(reg.provenance),
         matrix=[
             RiskMatrixCell(
                 likelihood=cell.likelihood,

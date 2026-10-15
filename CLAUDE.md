@@ -97,7 +97,8 @@ Register (5x5 NIST 800-30) synthesized from them.
 
 Stack: pnpm monorepo. Next.js 14 App Router (`apps/web`), FastAPI + SQLAlchemy
 2 + Alembic (`apps/api`), Postgres 16 / Redis / MinIO / Keycloak / MailHog via
-`docker-compose.yml`. No worker service — AI jobs run synchronously in `api`.
+`docker-compose.yml`. No worker service — AI jobs run synchronously in `api`,
+and egress redaction runs in a short-lived child process (D-111).
 Playwright e2e lives in `e2e/` (host-run). Reference spec:
 `reference-docs/SHIELDv2_Master_Spec.txt`. Architecture detail:
 `docs/architecture.md`.

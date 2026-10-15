@@ -605,6 +605,11 @@ class TechDebtItem(BaseModel):
     license_count: int | None
     disposition: str | None  # keep | consolidate | cut | None
     notes: str | None
+    # for #929: the bundle that carries this row's cost, when the row is a
+    # named part of a split bundle (`tech_debt/components.py`). The bundle's
+    # name, stripped; "" when that name is blank (still a part, so the screen
+    # says "Included in its bundle"); None for a row that is not a part.
+    bundle: str | None
 
 
 class TechDebtCategorySpend(BaseModel):
@@ -619,6 +624,9 @@ class TechDebtRedundancy(BaseModel):
     category: str
     count: int
     savings_usd: float  # tech_debt.savings.estimated_savings over this category (#804)
+    # for #1044: False when a counted (cut) row in this category has no usable
+    # cost, so `savings_usd` is a floor; the card marks it as the headline does.
+    savings_cost_known: bool
     items: list[TechDebtItem]
 
 
@@ -777,6 +785,13 @@ class RiskDashboardResponse(BaseModel):
     #: (`risk/csf_source.py::csf_no_shared_row`). False when the register
     #: predates R11, so it keeps the original no-scores line.
     csf_no_shared_row: bool = False
+    #: RR-1 (for #1122), design note §6.4: what the register was generated
+    #: from (copy 8), what the admin left out (9a/9b) and what had no
+    #: assessment (9c), as display labels. `selection_recorded` False: copy 11.
+    covered_inputs: list[str] = []
+    deselected_inputs: list[str] = []
+    ineligible_inputs: list[str] = []
+    selection_recorded: bool = False
 
 
 class ValueSummaryResponse(BaseModel):

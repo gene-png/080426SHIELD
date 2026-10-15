@@ -14,6 +14,12 @@ export interface TechDebtItem {
   license_count: number | null;
   disposition: string | null;
   notes: string | null;
+  /**
+   * for #929: the bundle that carries this row's cost when the row is a named
+   * part of a split bundle. "" when that bundle's name is blank (still a part);
+   * null for a row that is not a part.
+   */
+  bundle: string | null;
 }
 
 export interface CategorySpend {
@@ -26,6 +32,12 @@ export interface Redundancy {
   category: string;
   count: number;
   savings_usd: number;
+  /**
+   * for #1044: false when a counted (cut) row in this category has no usable
+   * cost, so `savings_usd` is a floor. Only `true` reads as exact: a missing
+   * flag (an API older than the field) is unconfirmed, never confirmed.
+   */
+  savings_cost_known: boolean;
   items: TechDebtItem[];
 }
 
@@ -73,6 +85,25 @@ export function usdCompact(n: number | null): string {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `$${Math.round(n / 1000)}K`;
   return `$${n}`;
+}
+
+/**
+ * The cost cell for one inventory or redundancy row (for #929). A bundle's
+ * part has no cost of its own: its bundle holds the licence value and the
+ * spend figure counts it there, so the cell says where the cost is rather than
+ * "—", which reads as unknown. A cost stored on a part before #927 refused one
+ * is not shown, because spend does not count it. Only a STRING marks a part:
+ * "" is a part whose bundle has a blank name, so this never tests truthiness,
+ * and a missing key (an API older than this field) is not a part, so it never
+ * tests `!== null` either, which would print "Included in undefined".
+ */
+export function itemCost(it: TechDebtItem): string {
+  if (typeof it.bundle === "string") {
+    return it.bundle === ""
+      ? "Included in its bundle"
+      : `Included in ${it.bundle}`;
+  }
+  return usdCompact(it.annual_cost_usd);
 }
 
 /** Full USD (e.g. $708,000). */

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import contextvars
 import dataclasses
+import json
 import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -22,13 +23,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import ValidationError
 from sqlalchemy import func, null, select, update
 from sqlalchemy.orm import Session, undefer_group
 
 from app.ai.catalog_fields import register_catalog_field, register_catalog_keys
 from app.ai.engine import get_job, run_job
 from app.ai.failures import ai_call_boundary
+from app.ai.isolation import RedactionRefused, redaction_scope
 from app.ai.llm import LLMClient
 from app.attack.catalog import technique_by_id
 from app.attack.catalog_version import catalog_mismatch_message, require_current_catalog
@@ -93,6 +96,13 @@ from app.risk.link_scope import LinkScope, csf_playbook_scope, scope_for
 from app.risk.locked import ATTACK as LOCKED_ATTACK
 from app.risk.locked import CSF_OR_ZT as LOCKED_CSF_OR_ZT
 from app.risk.locked import locked_inputs, locked_message
+from app.risk.selection import (
+    SELECTABLE_KINDS,
+    Selection,
+    SelectionRow,
+    selection_of,
+    selection_roles,
+)
 from app.risk.zt_capped import CAPPED_TARGET_KEY as ZT_CAPPED_TARGET_KEY
 from app.risk.zt_capped import capped_target_codes as zt_capped_target_codes
 from app.risk.zt_capped import capped_target_sentence as zt_capped_target_sentence
@@ -106,9 +116,12 @@ from app.schemas.risk import (
     RiskEntryRatingEdit,
     RiskEntryResponse,
     RiskGateStatus,
+    RiskGenerateRequest,
+    RiskInclude,
     RiskInputState,
     RiskLockedInput,
     RiskRegisterResponse,
+    RiskSelectableService,
     RiskTargetUsed,
 )
 from app.security.rate_limit import RateLimiter, get_rate_limiter
@@ -512,6 +525,7 @@ def _input_states(db: Session, client_id: uuid.UUID) -> list[RiskInputState]:
     kind the client has no live service of. An archived service has no row."""
     engaged = engaged_services(db, client_id)
     current = {(r.kind, r.service_id): r for r in current_inputs(db, client_id)}
+    in_register = _in_register(db, client_id, engaged, current)
     rows: list[RiskInputState] = []
     for kind in INPUT_KINDS:
         services = [svc for k, svc in engaged if k == kind]
@@ -536,9 +550,77 @@ def _input_states(db: Session, client_id: uuid.UUID) -> list[RiskInputState]:
                     ),
                     no_shared_playbook_row=m.no_shared_row if m else None,
                     unscored_targeted_subcategories=m.unscored_targeted if m else None,
+                    in_register=in_register.get((kind, str(svc.id))),
                 )
             )
     return rows
+
+
+def _in_register(
+    db: Session,
+    client_id: uuid.UUID,
+    engaged: list[tuple[str, Service]],
+    current: dict[tuple[str, str], InputRecord],
+) -> dict[tuple[str, str], str]:
+    """RR-1 (for #1122), design note §6.5: each engaged service's place in the
+    register on screen, from `selection_roles`, the SAME helper publish maps to
+    its blockers, so the panel and the refusal cannot disagree. Empty (every
+    row `None`) with no register, or when its selection is not recorded or
+    unreadable: the panel then does not guess."""
+    reg = _latest_register(db, client_id)
+    if reg is None:
+        return {}
+    selection = selection_of(reg.provenance)
+    if not isinstance(selection, Selection):
+        return {}
+    recorded = (reg.provenance or {}).get("current_inputs")
+    recorded_ids = {
+        (str(r.get("kind")), str(r.get("service_id")))
+        for r in (recorded if isinstance(recorded, list) else [])
+        if isinstance(r, dict)
+    }
+    roles = selection_roles(selection, recorded_ids, [(kind, str(svc.id)) for kind, svc in engaged])
+    out: dict[tuple[str, str], str] = {}
+    for key, role in roles.items():
+        if role.name == "deselected":
+            out[key] = "deselected"
+        elif role.name == "ineligible" and key not in current:
+            out[key] = "ineligible"
+        else:
+            # Recorded, or ineligible at generate and now holding a record
+            # (publish's `not_released` or `changed`), or engaged after
+            # generate: each holds the register in draft.
+            out[key] = "input"
+    return out
+
+
+def _selectable_services(
+    db: Session, client_id: uuid.UUID, sources: list[_Source]
+) -> tuple[list[RiskSelectableService], list[RiskSelectableService]]:
+    """RR-1 (for #1122), design note §3.4: the gate's `eligible` (engaged
+    ATT&CK, CSF and ZT services with a current record) and `ineligible`
+    (engaged CSF and ZT services with none). Tech Debt is in neither: it is
+    not a choice, so no label is built for it. A second ATT&CK service with no
+    record is in neither too; publish blocks it as `not_started`."""
+    with_record = {src.service_id for src in sources}
+    eligible: list[RiskSelectableService] = []
+    ineligible: list[RiskSelectableService] = []
+    for kind, svc in engaged_services(db, client_id):
+        if kind not in ("attack", *SELECTABLE_KINDS):
+            continue
+        framework = _ZT_FRAMEWORK_BY_SERVICE_KIND.get(svc.kind) if kind == "zt" else None
+        row = RiskSelectableService(
+            kind=kind,  # type: ignore[arg-type]
+            service_id=str(svc.id),
+            title=svc.title,
+            framework=framework,
+            label=risk_exporters.target_label(kind, framework, name_framework=True),
+        )
+        if str(svc.id) in with_record:
+            eligible.append(row)
+        elif kind in SELECTABLE_KINDS:
+            ineligible.append(row)
+    return eligible, ineligible
 
 
 def _csf_input_measure(db: Session, r: InputRecord) -> CsfPlaybookMeasure:
@@ -672,8 +754,11 @@ def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
         if not met
     ]
     locked = locked_inputs(db, client_id, unmet=unmet) if unmet else []
+    eligible, ineligible = _selectable_services(db, client_id, sources)
 
     return RiskGateStatus(
+        eligible=eligible,
+        ineligible=ineligible,
         locked_inputs=[
             RiskLockedInput(
                 requirement=x.requirement,
@@ -800,7 +885,9 @@ def archive_duplicate_service(
     )
 
 
-def _provenance_snapshot(snap: _InputSnapshot, excluded: list[str]) -> dict:
+def _provenance_snapshot(
+    snap: _InputSnapshot, excluded: list[str], *, selection: Selection
+) -> dict:
     """What this register is being built FROM, as it stood BEFORE synthesis (#240).
 
     Captured at GENERATE and never revised. Recomputing it at export would read
@@ -835,11 +922,206 @@ def _provenance_snapshot(snap: _InputSnapshot, excluded: list[str]) -> dict:
     # compares this with the inputs as they stand then
     # (`app/risk/inputs.py::publish_blockers`), so a register built before an
     # input was released, or before a newer version existed, cannot publish.
+    # RR-1 (for #1122), design note §4: which CSF and ZT services were chosen,
+    # left out, or engaged with no record. REQUIRED, so no writer can produce
+    # a register without one; `selection_of` is its only reader.
     return {
         "inputs": inputs,
         "excluded": list(excluded),
         "current_inputs": [r.as_json() for r in snap.current],
+        "selection": selection.as_json(),
     }
+
+
+# ---------------------------------------------------------------------------
+# RR-1 (for #1122): the admin's selection, validated and applied at generate
+# ---------------------------------------------------------------------------
+
+#: Design note §8, approved verbatim (#736 6131606581, 6133670854).
+_NEEDS_CSF_OR_ZT = {
+    "both": (
+        "Choose NIST CSF, Zero Trust, or both. "
+        "ATT&CK coverage alone is not enough for a register."
+    ),
+    "zt_both": "Choose a Zero Trust framework. ATT&CK coverage alone is not enough for a register.",
+    "zt_one": "Include {label}. ATT&CK coverage alone is not enough for a register.",
+    "csf": "Include NIST CSF. ATT&CK coverage alone is not enough for a register.",
+}
+_ZT_AMBIGUOUS = "This client has both Zero Trust frameworks. Choose one for this register."
+_NOT_ENGAGED = "{label} cannot be included: this client has not engaged that service."
+_ARCHIVED = "{label} cannot be included: that service has been archived."
+_NO_ASSESSMENT = "{title} cannot be included: it has no assessment yet."
+
+_SERVICE_KINDS_FOR = {
+    ("csf", None): (ServiceKind.NIST_CSF,),
+    ("zt", "cisa_ztmm_2_0"): (ServiceKind.ZERO_TRUST_CISA,),
+    ("zt", "dod_ztra"): (ServiceKind.ZERO_TRUST_DOD,),
+}
+
+
+#: Design note §8 copy 10, approved verbatim (#736 6131606581). The proxy's own
+#: refusal of an unparseable body says the same (`.../register/generate/route.ts`).
+_SELECTION_UNREADABLE_MESSAGE = (
+    "The services to include could not be read. Reload the page and choose them again."
+)
+
+
+async def _generate_body(request: Request) -> RiskGenerateRequest | None:
+    """The generate body, or None when none was sent (§3.2's absent-body default).
+
+    Advisor ruling 6135456370, option (a): EVERY shape error -- not JSON, not an
+    object, `include` missing or not an object, a key the schema does not know,
+    a `csf` that is not a JSON boolean ("yes", 1, "true"), a `zero_trust` that
+    is not a stored framework or null -- is the typed `risk_selection_unreadable`
+    with copy 10. FastAPI's own validation would answer with the schema
+    envelope ("Request validation failed.", `schema_*`), a downgrade on a route
+    whose other refusals are typed (CLAUDE.md, the `Query(ge=...)` entry). A
+    JSON `null` is a body that was sent, so it is refused too, never read as
+    "no body". Read from the raw bytes for that reason.
+    """
+    raw = await request.body()
+    if not raw.strip():
+        return None
+    try:
+        return RiskGenerateRequest.model_validate(json.loads(raw))
+    except (ValueError, ValidationError, RecursionError) as exc:
+        # `json.JSONDecodeError` and pydantic's ValidationError; a non-object
+        # body fails `model_validate` the same way. RecursionError: nesting
+        # deeper than the parser's limit (#1148 review, finding 8), which
+        # would otherwise be an untyped 500.
+        _log.info("risk_selection_unreadable", error=type(exc).__name__, length=len(raw))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "reason": "risk_selection_unreadable",
+                "message": _SELECTION_UNREADABLE_MESSAGE,
+            },
+        ) from exc
+
+
+def _selection_refused(reason: str, message: str) -> HTTPException:
+    _log.info("risk_selection_refused", reason=reason)
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={"reason": reason, "message": message},
+    )
+
+
+def _select(
+    db: Session,
+    client_id: uuid.UUID,
+    snap: _InputSnapshot,
+    include: RiskInclude | None,
+) -> tuple[_InputSnapshot, Selection]:
+    """Design note §3.3 and §3.5: validate the request against what the client
+    has, then narrow the snapshot to it and record the choice.
+
+    `include` None is an absent body: every eligible CSF and ZT service, as
+    before RR-1, except that with BOTH ZT frameworks eligible it refuses rather
+    than guess (copy 6). Refusals, in this order: anything the request names
+    that cannot be included (7a, 7c, 7b), then the ambiguity (6), then no CSF
+    and no ZT at all (5a-5d, chosen from what the SERVER finds eligible).
+
+    The narrowing covers `snap.current` as well as the sources: a deselected
+    service must not be in `current_inputs`, or the selection's own
+    consistency check would refuse the register at publish.
+    """
+    engaged = [(k, svc) for k, svc in engaged_services(db, client_id) if k in SELECTABLE_KINDS]
+    eligible = [src for src in snap.sources if src.kind in SELECTABLE_KINDS]
+    eligible_ids = {src.service_id for src in eligible}
+    eligible_csf = [src for src in eligible if src.kind == "csf"]
+    # One source per framework: the duplicate refusal ran first.
+    eligible_zt = {src.framework: src for src in eligible if src.kind == "zt"}
+
+    def _framework(svc: Service) -> str | None:
+        return _ZT_FRAMEWORK_BY_SERVICE_KIND.get(svc.kind)
+
+    def _check_named(kind: str, framework: str | None) -> None:
+        label = risk_exporters.target_label(kind, framework, name_framework=True)
+        matching = [
+            svc
+            for k, svc in engaged
+            if k == kind and (kind != "zt" or _framework(svc) == framework)
+        ]
+        if not matching:
+            archived = db.execute(
+                select(func.count())
+                .select_from(Service)
+                .where(
+                    Service.client_id == client_id,
+                    Service.kind.in_(_SERVICE_KINDS_FOR[(kind, framework)]),
+                    Service.status == ServiceStatus.ARCHIVED,
+                )
+            ).scalar_one()
+            if archived:
+                raise _selection_refused(
+                    "risk_selection_not_engaged", _ARCHIVED.format(label=label)
+                )
+            raise _selection_refused("risk_selection_not_engaged", _NOT_ENGAGED.format(label=label))
+        if not any(str(svc.id) in eligible_ids for svc in matching):
+            raise _selection_refused(
+                "risk_selection_no_assessment", _NO_ASSESSMENT.format(title=matching[0].title)
+            )
+
+    if include is None:
+        want_csf = bool(eligible_csf)
+        if len(eligible_zt) > 1:
+            raise _selection_refused("risk_selection_zero_trust_ambiguous", _ZT_AMBIGUOUS)
+        want_zt = next(iter(eligible_zt), None)
+    else:
+        want_csf = include.csf
+        want_zt = include.zero_trust
+        if want_csf:
+            _check_named("csf", None)
+        if want_zt is not None:
+            _check_named("zt", want_zt)
+    if not want_csf and want_zt is None:
+        if eligible_csf and eligible_zt:
+            message = _NEEDS_CSF_OR_ZT["both"]
+        elif len(eligible_zt) > 1:
+            message = _NEEDS_CSF_OR_ZT["zt_both"]
+        elif eligible_zt:
+            (only,) = eligible_zt
+            message = _NEEDS_CSF_OR_ZT["zt_one"].format(
+                label=risk_exporters.target_label("zt", only, name_framework=True)
+            )
+        else:
+            message = _NEEDS_CSF_OR_ZT["csf"]
+        raise _selection_refused("risk_selection_needs_csf_or_zt", message)
+
+    included = [
+        src
+        for src in eligible
+        if (src.kind == "csf" and want_csf) or (src.kind == "zt" and src.framework == want_zt)
+    ]
+    included_ids = {src.service_id for src in included}
+    deselected = [src for src in eligible if src.service_id not in included_ids]
+    deselected_ids = {src.service_id for src in deselected}
+    selection = Selection(
+        included=tuple(SelectionRow(s.kind, s.service_id, s.framework) for s in included),
+        deselected=tuple(SelectionRow(s.kind, s.service_id, s.framework) for s in deselected),
+        ineligible=tuple(
+            SelectionRow(k, str(svc.id), _framework(svc) if k == "zt" else None)
+            for k, svc in engaged
+            if str(svc.id) not in eligible_ids
+        ),
+    )
+    narrowed = dataclasses.replace(
+        snap,
+        sources=tuple(
+            src for src in snap.sources if src.kind == "attack" or src.service_id in included_ids
+        ),
+        current=tuple(r for r in snap.current if r.service_id not in deselected_ids),
+    )
+    _log.info(
+        "risk_selection_applied",
+        client_id=str(client_id),
+        body=include is not None,
+        included=sorted((r.kind, r.framework or "") for r in selection.included),
+        deselected=sorted((r.kind, r.framework or "") for r in selection.deselected),
+        ineligible=sorted((r.kind, r.framework or "") for r in selection.ineligible),
+    )
+    return narrowed, selection
 
 
 #: Fields whose model-supplied values are checked against the client's own
@@ -1692,6 +1974,12 @@ def _risk_batch_inputs(
     }
 
 
+# #552: the whole fan-out is ONE run for the redaction gate's places. Risk is
+# not a Run-AI, so its calls carry no run id; without this each batch would be
+# a one-call run, and five concurrent batches would take five of the platform's
+# places and refuse each other. A fresh scope per call (`contextmanager` objects
+# re-enter as decorators), released when the function returns or raises.
+@redaction_scope()
 def _run_risk_synthesize_batched(
     db: Session,
     llm: LLMClient,
@@ -1811,6 +2099,17 @@ def _run_risk_synthesize_batched(
         for fut in as_completed(futures):
             try:
                 data = fut.result()
+            except RedactionRefused:
+                # #552, ruling (a) on #736: the redaction gate refused this
+                # generate, and that is the WHOLE generate's refusal: counted as
+                # a failed batch, the batches that got through would become a
+                # register. Queued batches are cancelled; leaving the `with`
+                # waits for those in flight, inside the scope (see the
+                # decorator), so none redacts after the place is given back.
+                # Nothing is written: `generate` raises before its insert.
+                pool.shutdown(wait=False, cancel_futures=True)
+                _log.error("risk_synthesize_refused_by_redaction", client_id=str(client_id))
+                raise
             except Exception as exc:  # noqa: BLE001 - counted, not swallowed
                 failed += 1
                 first_error = first_error or exc
@@ -1864,6 +2163,9 @@ def generate(
     db: Annotated[Session, Depends(get_db)],
     llm: Annotated[LLMClient, Depends(_llm_dep)],
     limiter: Annotated[RateLimiter, Depends(get_rate_limiter)],
+    # LAST, so an unauthenticated or non-admin caller is refused by the
+    # dependencies above before its body is read.
+    body: Annotated[RiskGenerateRequest | None, Depends(_generate_body)],
 ) -> RiskRegisterResponse:
     # DELIBERATELY NOT a background run, and it does NOT take `serves` yet.
     # #645 moved ATT&CK, Tech Debt, CSF and ZT to runs that carry the AI status
@@ -1899,6 +2201,10 @@ def generate(
             status_code=status.HTTP_409_CONFLICT,
             detail={"reason": "risk_register_duplicate_inputs", "message": duplicate},
         )
+    # RR-1 (for #1122), design note §3.3: AFTER the duplicate refusal, which
+    # runs over the full engaged set and ignores the selection. Everything
+    # below reads the NARROWED snapshot.
+    snap, selection = _select(db, cid, snap, body.include if body is not None else None)
     findings, valid_techniques, valid_controls, target_sources, link_scopes = _gather_findings(
         db, cid, snap
     )
@@ -1948,7 +2254,7 @@ def generate(
         # #737: nothing present is EXCLUDED any more -- drafts are synthesized
         # -- so the excluded set is recorded empty, and `excluded_inputs` keeps
         # its meaning only for registers generated before this change.
-        provenance=_provenance_snapshot(snap, []),
+        provenance=_provenance_snapshot(snap, [], selection=selection),
     )
     # #372. The batch tally is PERSISTED, into the provenance column 0047
     # already added -- no migration, and no new state to keep in step.
@@ -2603,6 +2909,13 @@ _STATE_WORDS = {
 }
 
 
+#: Design note §8 copy 19, approved verbatim (#736 6133670854).
+_SELECTION_NOT_RECORDED_MESSAGE = (
+    "This register has no usable record of how its services were chosen or which were left "
+    "out, so it cannot be published. Regenerate it, then publish the new version."
+)
+
+
 def _inputs_not_final_message(blockers: list[Blocker]) -> str:
     """#737. One sentence per cause, naming each input. DRAFT copy."""
     if any(b.reason == "not_recorded" for b in blockers):
@@ -2872,6 +3185,9 @@ def _render_and_store(
         csf_source_note=csf_source_note(reg.provenance),
         csf_unscored_targets_note=csf_unscored_targets_note(reg.provenance),
         csf_no_shared_row=csf_no_shared_row(reg.provenance),
+        # RR-1 (for #1122), design note §7: the ONE reader of the selection
+        # disclosure; the seed passes the same object.
+        disclosure=risk_exporters.selection_context(reg.provenance),
         # #646: `ai_mode` is left at "not recorded", deliberately -- see
         # `RiskExportContext.ai_mode`. Nothing ties a register to the calls
         # that drafted it until Risk runs through the run framework (#504).
@@ -3055,20 +3371,36 @@ def publish(
     #
     # #737, Gene's rule: nothing final until every engaged input is final. FIRST,
     # so a draft input is refused with the typed per-input reason rather than
-    # by the older #240 guard's untyped sentence, which still runs below for the
-    # shapes only it knows (pre-0047 provenance, a missing `inputs` key).
+    # by the older #240 guard's untyped sentence.
+    #
+    # RR-1 (for #1122), design note §5.3: the shapes only that guard used to
+    # know (pre-0047 provenance, a missing `inputs` key) have no readable
+    # `selection` either, so they are refused HERE now, with copy 19. On
+    # publish, `_require_certifiable_inputs` below is a RATCHET: no register
+    # with a readable selection reaches it in those shapes (`selection_of`'s
+    # check 2 needs `inputs`). Export still reaches it directly.
+    selection = selection_of(reg.provenance)
     blockers = publish_blockers(
         db,
         cid,
         (reg.provenance or {}).get("current_inputs"),
         (reg.provenance or {}).get("inputs"),
+        selection=selection,
     )
     if blockers:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
                 "reason": "risk_register_inputs_not_final",
-                "message": _inputs_not_final_message(blockers),
+                # RR-1 (for #1122), design note §5.3: a register with no usable
+                # selection gets copy 19, decided here from `selection_of`
+                # itself, never from the blocker tokens (which stay
+                # `register` / `not_recorded`, as ruled).
+                "message": (
+                    _inputs_not_final_message(blockers)
+                    if isinstance(selection, Selection)
+                    else _SELECTION_NOT_RECORDED_MESSAGE
+                ),
                 "blockers": [
                     {"input": b.kind, "reason": b.reason, "status": b.status} for b in blockers
                 ],
@@ -3548,6 +3880,9 @@ def _link_scope_fields(stored: object) -> dict:
         rows.append(
             LinkScopeDisclosure(
                 service=str(service),
+                # RR-1 (for #1122), design note §6.2: the files' own label, so
+                # the admin banner and the files name a row alike.
+                label=risk_exporters.scope_display_label(str(service), stored),
                 scored=counts["scored"],  # type: ignore[index]
                 total=counts["total"],  # type: ignore[index]
                 # #415: absent on CSF and ZT (no review queue) and on an
@@ -3636,7 +3971,11 @@ def _targets_record(
 
 
 def _target_fields(stored: object) -> dict:
-    """#474, through the one reader of the record (`app/risk/baseline.py`)."""
+    """#474, through the one reader of the record (`app/risk/baseline.py`).
+
+    RR-1 (for #1122), design note §6.2: each row carries its `label`, by the
+    files' helper and naming predicate, so the screens render what the files
+    print and hold no rule of their own."""
     rows, recorded = targets_used(stored)
     return {
         "targets": [
@@ -3646,6 +3985,7 @@ def _target_fields(stored: object) -> dict:
                 target=r.target,
                 source=r.source,
                 origin=r.origin,
+                label=risk_exporters.target_row_label(r.kind, r.framework, stored),
             )
             for r in rows
         ],
@@ -3837,6 +4177,9 @@ def _serialize(
         **_finding_fields(stored),
         **_carried_fields(stored),
         **_target_fields(stored),
+        # RR-1 (for #1122), design note §6.4: copy 8, 9a-9c or 11, by the
+        # files' own reader.
+        **risk_exporters.selection_fields(stored),
         id=register.id,
         client_id=register.client_id,
         version=register.version,
