@@ -53,6 +53,13 @@ dev = [
     "pyyaml>=6.0",
     "pytest-asyncio>=0.24",
     "pytest-cov>=5.0",
+    # CI only: a test that FAILS in its body prints a GitHub `::error file=,line=::`
+    # workflow command, so the check run names it without anyone opening the job
+    # log (for #1143). NOT annotated: a fixture/setup ERROR or a collection error
+    # (0.4.2 reads only the call phase); those still need the log. Inert unless
+    # GITHUB_ACTIONS=true. Paths resolve against GITHUB_WORKSPACE, so do NOT set
+    # PYTEST_RUN_PATH: with both set it prefixes apps/api twice. Pinned exactly.
+    "pytest-github-actions-annotate-failures==0.4.2",
     # Lint/format pinned to known-good ranges: CI installs fresh, and a new
     # tool release can re-flag a previously clean repo with rules the diff
     # never touched. Bump deliberately, with a format pass if needed.

@@ -193,8 +193,8 @@ function OmittedItems({
  *
  * Not a drop reason: every number above counts values the model SENT, and a
  * capability with no entry sent none. Blank notes come first in neutral
- * styling and are never a live region: leaving them out is by design once the
- * #806 ZT prompt ships, since A5 tells the model to; on today's prompt, a miss.
+ * styling and are never a live region: leaving them out is by design, since
+ * the #806 ZT prompt's A5 tells the model to.
  * Notes present come next. Code cannot tell a deliberate "N/A" from a miss, so
  * Z3 says so instead of classifying them.
  *

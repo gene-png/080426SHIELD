@@ -5,6 +5,7 @@ is issue 806, comment 5984600764, approved on issue 736 (comment 5986057990,
 item 4). Its tests, in the plan's order:
 
 1. The prompt is v3.2 verbatim, and `llm_calls.prompt_version` says "v3.2".
+   Since v3.3 (for #1058) the pin is v3.3's text and the recorded version "v3.3".
 2. What a model can still send against v3.2's rules is kept as sent and counted:
    a missing name (`name_missing`), a confidence off v3.2's scale
    (`confidence_off_scale`), a category off v3.2's closed list
@@ -42,10 +43,10 @@ from tests.unit.test_tech_debt_routes import (  # noqa: F401  (fixture)
 
 pytestmark = pytest.mark.unit
 
-#: sha256 of the fenced "Full text:" block of issue 806 comment 5983838515,
-#: taken from the comment body on 2026-10-08 (11,536 characters, no trailing
-#: newline). Any edit to the prompt, however small, goes red here.
-V32_SHA256 = "61bf3e991807440a9d7588aaeb5129f08a9a61425af4bab67aca203f90d4302e"
+#: sha256 of v3.3 (for #1058): v3.2's text (issue 806 comment 5983838515) plus
+#: section 9a, two JSON example fields and verify item 10 (12,262 characters,
+#: no trailing newline). Any edit to the prompt, however small, goes red here.
+V32_SHA256 = "cb9aef02c1c72f8e7dfc293d57594e81638963a6f90d8d575b0d6c2d57e47e69"
 
 #: v3.2's section headings, as the comment writes them.
 V32_HEADINGS = (
@@ -112,7 +113,7 @@ V32_CONFIDENCE = {100, 90, 60}
 def test_the_prompt_is_v32_verbatim() -> None:
     from app.tech_debt.extract import PROMPT, PROMPT_VERSION
 
-    assert PROMPT_VERSION == "v3.2"
+    assert PROMPT_VERSION == "v3.3"
     for heading in V32_HEADINGS:
         assert heading in PROMPT, heading
     assert V32_PREFIX_SENTENCE in PROMPT
@@ -147,6 +148,9 @@ def _example(i: int, **fields) -> dict:
         "notes": None,
         "security_related": False,
         "security_functions": [],
+        # v3.3 (for #1058): section 10's example values for the two new flags.
+        "is_suite": False,
+        "recognized": True,
         "confidence_pct": 90,
         "source_row_index": i,
     }
@@ -309,7 +313,7 @@ def test_the_prompt_version_is_recorded_and_an_earlier_one_is_not_measured(
         call = s.execute(
             select(LLMCall).where(LLMCall.purpose == "extract.capabilities")
         ).scalar_one()
-        assert call.prompt_version == "v3.2"
+        assert call.prompt_version == "v3.3"
         call.prompt_version = "v2"
         s.commit()
     assert body["extraction_flags"]["category_off_list"] == 1
@@ -321,7 +325,7 @@ def test_the_prompt_version_is_recorded_and_an_earlier_one_is_not_measured(
 
 def test_each_list_reads_its_own_extractions_prompt_version(app_client) -> None:  # noqa: F811
     """Review finding F5 on PR #955: the version is the one the LIST's own
-    extraction ran, never the latest call. A later v3.2 extraction on another
+    extraction ran, never the latest call. A later v3.3 extraction on another
     service leaves an earlier list's v2 call where it was."""
     items = [_example(0, category="EDR", confidence_pct=70)]
     c, Sess, h, _, first = _extract(app_client, items, rows=1)
@@ -332,7 +336,7 @@ def test_each_list_reads_its_own_extractions_prompt_version(app_client) -> None:
         call.prompt_version = "v2"
         s.commit()
 
-    # A second, later extraction on a different service and list, under v3.2.
+    # A second, later extraction on a different service and list, under v3.3.
     bearer = h["Authorization"].split()[1]
     svc2 = c.post("/tech-debt/services", headers=h, json={"title": "y"}).json()["id"]
     art2 = _upload_csv(c, bearer, "y.csv", b"name\nrow0\n")
@@ -350,7 +354,7 @@ def test_each_list_reads_its_own_extractions_prompt_version(app_client) -> None:
                 select(LLMCall.prompt_version).where(LLMCall.purpose == "extract.capabilities")
             )
         )
-    assert versions == ["v2", "v3.2"]
+    assert versions == ["v2", "v3.3"]
 
     second = c.get(f"/tech-debt/services/{svc2}/capability-lists/latest", headers=h).json()
     assert second["extraction_flags"]["category_off_list"] == 1

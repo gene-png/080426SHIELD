@@ -29,7 +29,13 @@ from app.mode_stamp import (
 )
 from app.models.capability import CapabilityDisposition, CapabilityItem, CapabilityList
 from app.pdf_export import pdf_text
-from app.tech_debt.components import is_component, source_items
+from app.tech_debt.components import (
+    bundle_name,
+    included_in,
+    is_component,
+    savings_cost,
+    source_items,
+)
 from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.savings import estimated_savings as estimated_savings_of
 from app.xlsx_export import safe_text_row
@@ -120,6 +126,16 @@ def reconciliation_line(ctx: DeliverableContext) -> str | None:
         # in case `exclusion_count_state` is ever loosened.
         line += " (excluded rows were not attributed individually)"
     return line
+
+
+def _names(ctx: DeliverableContext) -> dict:
+    """Each row's name by id, so a bundle's part can name its bundle."""
+    return {it.id: it.name for it in ctx.items}
+
+
+def _cost_text(item: CapabilityItem) -> str:
+    """A non-part row's cost cell in the PDF and DOCX: its cost, or "—"."""
+    return f"${float(item.annual_cost_usd):,.0f}" if item.annual_cost_usd is not None else "—"
 
 
 def cost_label(ctx: DeliverableContext) -> str:
@@ -230,7 +246,7 @@ def build_context(
     total_cost = 0.0
     # #804: the one savings derivation, shared with the plan card, the client
     # dashboard, the home value card and the savings what-if.
-    savings = estimated_savings_of((it.disposition, it.annual_cost_usd) for it in items_list)
+    savings = estimated_savings_of((it.disposition, savings_cost(it)) for it in items_list)
     estimated_savings = savings.amount
     savings_known = savings.known
     # `total_cost` SKIPS an uncosted item rather than failing, which makes the
@@ -338,7 +354,9 @@ def render_xlsx(ctx: DeliverableContext) -> bytes:
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="left", vertical="center")
 
+    names = _names(ctx)
     for item in ctx.items:
+        part_of = bundle_name(item, names)
         safe_text_row(
             ws,
             [
@@ -346,7 +364,11 @@ def render_xlsx(ctx: DeliverableContext) -> bytes:
                 item.vendor or "",
                 item.category or "",
                 item.function or "",
-                float(item.annual_cost_usd) if item.annual_cost_usd is not None else "",
+                (
+                    included_in(part_of)
+                    if part_of is not None
+                    else float(item.annual_cost_usd) if item.annual_cost_usd is not None else ""
+                ),
                 item.license_count if item.license_count is not None else "",
                 _disposition_label(item.disposition),
                 item.disposition_rationale or "",
@@ -468,8 +490,14 @@ def render_pdf(ctx: DeliverableContext) -> bytes:
     story.append(Paragraph("Capability list", h2))
 
     table_data: list[list] = [["Name", "Vendor", "Category", "Annual cost", "Disposition"]]
+    names = _names(ctx)
     for item in ctx.items:
-        cost = f"${float(item.annual_cost_usd):,.0f}" if item.annual_cost_usd is not None else "—"
+        part_of = bundle_name(item, names)
+        # A plain string never wraps in a reportlab Table, and the bundle's
+        # name is longer than the 1-inch column, so the part's cell wraps.
+        cost: object = (
+            pdf_text(included_in(part_of), body) if part_of is not None else _cost_text(item)
+        )
         table_data.append(
             [
                 item.name,
@@ -551,8 +579,10 @@ def render_docx(ctx: DeliverableContext) -> bytes:
 
     add_heading(doc, "Capability list")
     rows = []
+    names = _names(ctx)
     for item in ctx.items:
-        cost = f"${float(item.annual_cost_usd):,.0f}" if item.annual_cost_usd is not None else "—"
+        part_of = bundle_name(item, names)
+        cost = included_in(part_of) if part_of is not None else _cost_text(item)
         rows.append(
             [
                 item.name,

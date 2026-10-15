@@ -13,6 +13,7 @@ import {
 } from "@/components/dashboards/shared";
 import {
   filterItems,
+  itemCost,
   usdCompact,
   usdFull,
   type Redundancy,
@@ -190,9 +191,16 @@ function RedundancyCard({ r }: { r: Redundancy }): JSX.Element {
             {redundancyLicenses(r.count)}
           </span>
         </div>
-        {r.savings_usd > 0 ? (
+        {/* for #1044: three values. An unknown saving shows its floor even
+            at $0, so it never reads as "nothing to save"; the line is hidden
+            only when the amount is 0 AND every counted cost is known. */}
+        {r.savings_usd > 0 || r.savings_cost_known !== true ? (
           <span style={{ color: "#a7f3d0", fontWeight: 700, fontSize: 12.5 }}>
-            {usdCompact(r.savings_usd)}/yr
+            {/* "≥ " is the floor marker the admin plan card and the what-if
+                use; only an explicit true reads as exact. `usdCompact` reads 0
+                as "—", so a $0 floor is written in full. */}
+            {r.savings_cost_known === true ? "" : "≥ "}
+            {r.savings_usd > 0 ? usdCompact(r.savings_usd) : usdFull(0)}/yr
           </span>
         ) : null}
       </div>
@@ -210,7 +218,7 @@ function RedundancyCard({ r }: { r: Redundancy }): JSX.Element {
             <DispositionChip value={it.disposition} />
             <span>{it.name}</span>
             <span style={{ marginLeft: "auto", color: C.muted }}>
-              {usdCompact(it.annual_cost_usd)}
+              {itemCost(it)}
             </span>
           </div>
         ))}
@@ -367,7 +375,7 @@ export function TechDebtDashboard({
                   <td style={cell(true)}>{it.category ?? "—"}</td>
                   <td style={cell(true)}>{it.function ?? "—"}</td>
                   <td style={{ ...cell(), textAlign: "right" }}>
-                    {usdCompact(it.annual_cost_usd)}
+                    {itemCost(it)}
                   </td>
                   <td style={{ ...cell(true), textAlign: "right" }}>
                     {it.license_count ?? "—"}

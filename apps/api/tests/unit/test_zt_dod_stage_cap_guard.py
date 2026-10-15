@@ -108,7 +108,7 @@ def test_run_ai_drops_the_suggestion_as_refused_and_applies_its_siblings(
         "zt_score",
         LLMResponse(
             '{"capabilities": ['
-            '{"code": "' + NO_ADVANCED + '", "current": 3, "target": 2},'
+            '{"code": "' + NO_ADVANCED + '", "current": 3},'
             '{"code": "' + HAS_ADVANCED + '", "current": 3}'
             "]}"
         ),
@@ -116,8 +116,9 @@ def test_run_ai_drops_the_suggestion_as_refused_and_applies_its_siblings(
     body = zt_run_ai(c, svc_id, h)
     by_code = {r["capability_code"]: r for r in body["answers"]}
     # The positive state first: the reachable values landed.
+    # The sibling that applies is a second capability's `current` (#806: the
+    # AI's `target` is no longer applied).
     assert by_code[HAS_ADVANCED]["maturity_stage"] == 3
-    assert by_code[NO_ADVANCED]["target_stage"] == 2
     assert by_code[NO_ADVANCED]["maturity_stage"] is None
     drops = [d for d in body["dropped"] if d["key"] == NO_ADVANCED]
     assert drops == [
@@ -129,4 +130,4 @@ def test_run_ai_drops_the_suggestion_as_refused_and_applies_its_siblings(
             "values": 1,
         }
     ], body["dropped"]
-    assert body["suggestions_applied"] == 2, body
+    assert body["suggestions_applied"] == 1, body

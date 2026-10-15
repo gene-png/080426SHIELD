@@ -83,6 +83,7 @@ from app.models.zt_assessment import (
     ZtAssessmentStatus,
     ZtFramework,
 )
+from app.risk import exporters as risk_exporters
 from app.risk.baseline import targets_used
 from app.risk.csf_source import csf_no_shared_row as risk_csf_no_shared_row
 from app.risk.csf_source import csf_source_note as risk_csf_source_note
@@ -128,7 +129,13 @@ from app.schemas.clients import (
 )
 from app.schemas.risk import RiskTargetUsed
 from app.services.engagement_targets import client_target_stage, client_target_tier
-from app.tech_debt.components import is_component, license_count, source_items
+from app.tech_debt.components import (
+    bundle_name,
+    is_component,
+    license_count,
+    savings_cost,
+    source_items,
+)
 from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.savings import estimated_savings
 from app.zt.catalog import capability_by_code as zt_capability_by_code
@@ -862,7 +869,7 @@ def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _TargetedKindTot
 
 def _attack_uncovered_total(
     db: Session, service_ids: list[uuid.UUID]
-) -> tuple[_KindTotal, bool, int | None, bool | None]:
+) -> tuple[_KindTotal, bool, int | None, bool | None, str | None]:
     """The ATT&CK total, whether it is unresolved because the report is
     WITHHELD (#556) rather than unmatched (#114) -- two causes, two sentences --
     and the NOT-VERIFIED count beside it (#554, #621 review).
@@ -883,12 +890,19 @@ def _attack_uncovered_total(
     copy C7 as ruled). A Gap row crediting such a tool is already IN the total,
     so it does not raise the flag (round-2 review). None with the total, and
     when nothing could be checked (no Tech Debt list, only lists with no
-    security tool, or only discarded lists): not checked is not "none found"."""
+    security tool, or only discarded lists): not checked is not "none found".
+
+    The fifth value is #1011's: WHY nothing could be checked
+    (`SubsetCheck.not_checked_reason`), exactly when the fourth is None beside
+    a total, so the card can say "not checked" instead of reading as clean.
+    The check is per CLIENT, so every service reports the same reason; two
+    different ones raise rather than pick."""
     if not service_ids:
-        return _KindTotal(None, False), False, None, None
+        return _KindTotal(None, False), False, None, None, None
     total = 0
     not_verified: int | None = None
     outside: bool | None = None
+    not_checked: set[str | None] = set()
     for sid in service_ids:
         # #114: the released deliverable's parent, not the latest APPROVED row.
         # See `_csf_gap_total` above for why the `found` flag went with it.
@@ -902,7 +916,7 @@ def _attack_uncovered_total(
             # One unresolvable service makes the whole KIND unresolved. Summing
             # the rest would publish a floor as a figure — option 1 in
             # `_released_parent`, rejected there for this reason.
-            return _KindTotal(None, True), False, None, None
+            return _KindTotal(None, True), False, None, None, None
         # No `deliverable` here: an ATT&CK service has no engagement target of
         # #209's shape, so there is nothing to freeze. Stated because the two
         # helpers above this one DO freeze, and a reader sweeping for the twin
@@ -913,7 +927,7 @@ def _attack_uncovered_total(
             # unknown codes silently dropped by `attack_compute` below. Same
             # answer as an unresolvable service: the whole kind is unresolved,
             # and the card is told the cause.
-            return _KindTotal(None, True), True, None, None
+            return _KindTotal(None, True), True, None, None, None
         # #554 R3: computed statuses where they apply, so this gap count is the
         # dashboard's gap count.
         rows = attack_effective_coverage(
@@ -949,7 +963,24 @@ def _attack_uncovered_total(
             # covered", and a Gap, N/A or unscored row is not.
             credited = {r.technique_code for r in rows if r.status in _CREDITS_COVERAGE}
             outside = bool(outside) or any(o.technique_code in credited for o in subset.outside)
-    return _KindTotal(total, False), False, not_verified, outside
+        else:
+            not_checked.add(subset.not_checked_reason)
+    return _KindTotal(total, False), False, not_verified, outside, _one_reason(outside, not_checked)
+
+
+def _one_reason(outside: bool | None, not_checked: set[str | None]) -> str | None:
+    """#1011: the not-checked reason for the card, or None when a service was
+    checked (`outside` is a bool). Raises on two reasons, or on a reason-less
+    not-checked subset: the card would otherwise pick one, or read as clean."""
+    if outside is not None:
+        return None
+    if len(not_checked) != 1 or None in not_checked:
+        raise ValueError(
+            f"ATT&CK value summary: expected one not-checked reason per client, "
+            f"got {sorted(map(repr, not_checked))} (#1011)"
+        )
+    (reason,) = not_checked
+    return reason
 
 
 #: #889 round 2: the effective statuses the rollup counts toward coverage.
@@ -995,7 +1026,7 @@ def _tech_debt_savings(db: Session, service_ids: list[uuid.UUID]) -> _TechDebtTo
             .all()
         )
         # #804: the deliverable's own derivation, per released list.
-        found = estimated_savings((it.disposition, it.annual_cost_usd) for it in items)
+        found = estimated_savings((it.disposition, savings_cost(it)) for it in items)
         total += found.amount
         cost_known = cost_known and found.known
     return _TechDebtTotal(total, cost_known, False)
@@ -1026,8 +1057,8 @@ def value_summary(
         ServiceKind.ZERO_TRUST_DOD, []
     )
     zt = _zt_gap_total(db, zt_ids)
-    attack, attack_withheld, attack_not_verified, attack_outside = _attack_uncovered_total(
-        db, by_kind.get(ServiceKind.ATTACK_COVERAGE, [])
+    attack, attack_withheld, attack_not_verified, attack_outside, attack_not_checked = (
+        _attack_uncovered_total(db, by_kind.get(ServiceKind.ATTACK_COVERAGE, []))
     )
     csf = _csf_gap_total(db, by_kind.get(ServiceKind.NIST_CSF, []))
 
@@ -1055,6 +1086,9 @@ def value_summary(
         csf_targets_defaulted=csf.targets_defaulted,
         csf_targets_unusable=csf.targets_unusable,
         csf_targets_computed_live=csf.targets_computed_live,
+        # #1011: which of the card's ATT&CK states this was (None: checked, or
+        # no figure).
+        attack_subset_not_checked_reason=attack_not_checked,
     )
     return ValueSummaryResponse(
         tech_debt_savings_usd=td.value,
@@ -1071,6 +1105,7 @@ def value_summary(
         attack_uncovered_withheld=attack_withheld,
         attack_not_verified_count=attack_not_verified,
         attack_covered_relies_on_outside_tool=attack_outside,
+        attack_subset_not_checked_reason=attack_not_checked,
         csf_gap_count=csf.value,
         csf_gap_unresolved=csf.unresolved,
         csf_services=csf.services,
@@ -1657,7 +1692,7 @@ def zt_dashboard(
 _UNCATEGORIZED = "Uncategorized"
 
 
-def _td_item(it: CapabilityItem) -> TechDebtItem:
+def _td_item(it: CapabilityItem, names: dict[uuid.UUID, str]) -> TechDebtItem:
     return TechDebtItem(
         name=it.name,
         vendor=it.vendor,
@@ -1667,6 +1702,7 @@ def _td_item(it: CapabilityItem) -> TechDebtItem:
         license_count=it.license_count,
         disposition=(it.disposition.value if it.disposition is not None else None),
         notes=it.notes,
+        bundle=bundle_name(it, names),
     )
 
 
@@ -1728,6 +1764,8 @@ def tech_debt_dashboard(
         .all()
     )
 
+    # for #929: every row's name by id, so a part can name its bundle.
+    names = {it.id: it.name for it in items}
     annual_spend = 0.0
     # for #835: the ONE rule for what counts as an application. A split
     # bundle's parts are listed in the inventory but are not tools of their own.
@@ -1736,7 +1774,7 @@ def tech_debt_dashboard(
     # #804: the deliverable's own derivation, not a copy of it. Savings still
     # see a part (advisor ruling on #736): a part marked Cut with no cost is a
     # genuinely unknown saving.
-    found = estimated_savings((it.disposition, it.annual_cost_usd) for it in items)
+    found = estimated_savings((it.disposition, savings_cost(it)) for it in items)
     savings = found.amount
     savings_cost_known = found.known
     # #126: the same floor question the SAVINGS figure has always asked, asked
@@ -1765,6 +1803,9 @@ def tech_debt_dashboard(
         bucket["items"].append(it)
     for bucket in by_cat.values():
         bucket["count"] = license_count(bucket["items"])
+        bucket["savings"] = estimated_savings(
+            (i.disposition, savings_cost(i)) for i in bucket["items"]
+        )
 
     spend_by_category = [
         TechDebtCategorySpend(category=cat, total_usd=round(b["total"], 2), count=b["count"])
@@ -1779,14 +1820,13 @@ def tech_debt_dashboard(
         TechDebtRedundancy(
             category=cat,
             count=b["count"],
-            # #804: the same derivation, per category. Its `known` flag is not
-            # rendered per category today (pre-existing); the dashboard's
-            # headline savings carries it.
-            savings_usd=round(
-                estimated_savings((i.disposition, i.annual_cost_usd) for i in b["items"]).amount,
-                2,
-            ),
-            items=[_td_item(i) for i in b["items"]],
+            # #804: the same derivation, per category.
+            savings_usd=round(b["savings"].amount, 2),
+            # for #1044: the category's own floor flag. The redundancy card
+            # renders it ("≥ "), even at $0, so a category whose counted row
+            # has no usable cost reads as a floor, as the headline does.
+            savings_cost_known=b["savings"].known,
+            items=[_td_item(i, names) for i in b["items"]],
         )
         for cat, b in sorted(by_cat.items(), key=lambda kv: kv[1]["count"], reverse=True)
         if b["count"] > 1
@@ -1879,7 +1919,7 @@ def tech_debt_dashboard(
         spend_by_category=spend_by_category,
         sprawl_by_category=sprawl_by_category,
         redundancies=redundancies,
-        items=[_td_item(i) for i in items],
+        items=[_td_item(i, names) for i in items],
     )
 
 
@@ -2056,10 +2096,15 @@ def risk_dashboard(
                 target=t.target,
                 source=t.source,
                 origin=t.origin,
+                # RR-1 (for #1122): the files' label and naming predicate.
+                label=risk_exporters.target_row_label(t.kind, t.framework, reg.provenance),
             )
             for t in _risk_targets
         ],
         targets_recorded=_risk_targets_recorded,
+        # RR-1 (for #1122), design note §6.4: copy 8, 9a-9c or 11, by the files'
+        # own reader, so the client reads what their files print.
+        **risk_exporters.selection_fields(reg.provenance),
         matrix=[
             RiskMatrixCell(
                 likelihood=cell.likelihood,

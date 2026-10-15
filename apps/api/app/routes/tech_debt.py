@@ -43,8 +43,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import and_, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.ai.isolation import REDACTION_BUDGET_EXCEEDED, RedactionRefused, limit_text
 from app.ai.llm import LLMClient
 from app.ai.runs import (
     RunContext,
@@ -56,6 +58,7 @@ from app.ai.runs import (
     start_run,
 )
 from app.audit import audit
+from app.config import get_settings
 from app.db.session import get_db
 from app.deliverable_release import ParentGuard, release_deliverable
 from app.dependencies import current_client, current_user, require_role
@@ -100,7 +103,7 @@ from app.schemas.tech_debt import (
 from app.security.rate_limit import enforce_ai_rate_limit
 from app.storage import StorageBackend
 from app.tech_debt.bounds import NOT_WHOLE_CENTS, cost_problem, license_problem
-from app.tech_debt.components import is_component
+from app.tech_debt.components import is_component, savings_cost
 from app.tech_debt.exporters import (
     build_context,
     cost_label,
@@ -647,6 +650,25 @@ def extract_capability_list(
 _EXTRACT_PURPOSE = "tech_debt_extract"
 
 
+def _inventory_over_budget() -> str:
+    """The approved Tech Debt sentence (#736 6094262391), {N} from the setting."""
+    budget = get_settings().shield_redaction_budget_seconds
+    return (
+        "Checking this inventory for people's names took longer than the "
+        f"{limit_text(budget)}-second limit, so the check was stopped and nothing was "
+        "sent to the AI provider. No capability list was created."
+    )
+
+
+#: The extraction's refusal when a draft appeared while it ran: said by the
+#: re-check before the provider call, and by the one-draft index (#1120,
+#: migration 0073) at the insert after it.
+_DRAFT_OPENED_DURING_RUN = (
+    "A draft capability list was opened while this extraction ran, so it "
+    "was not added beside it. Nothing was applied."
+)
+
+
 def _extract_run_work(
     session: Session,
     ctx: RunContext,
@@ -668,8 +690,7 @@ def _extract_run_work(
     if existing is not None and existing.status == CapabilityListStatus.DRAFT:
         raise RunFailed(
             "capability_list_draft_exists",
-            "A draft capability list was opened while this extraction ran, so it "
-            "was not added beside it. Nothing was applied.",
+            _DRAFT_OPENED_DURING_RUN,
         )
     try:
         result = extract_from_rows(
@@ -691,6 +712,14 @@ def _extract_run_work(
         raise RunFailed(
             "ai_extraction_unparseable", f"AI extraction failed to parse: {exc}"
         ) from exc
+    except RedactionRefused as exc:
+        # #552: the egress says this in neutral words, because it serves every
+        # service. Here, and only here, a capability list is what a consultant
+        # was waiting for, so the approved Tech Debt sentence (#736 6094262391)
+        # says none was made -- true: this raise is above the list's insert.
+        if exc.reason == REDACTION_BUDGET_EXCEEDED and not exc.sent_before:
+            raise exc.with_message(_inventory_over_budget()) from exc
+        raise
     # The provider call is over and recorded: keep its `llm_calls` row whatever
     # happens to the apply below.
     db.commit()
@@ -715,7 +744,23 @@ def _extract_run_work(
         extraction_findings=list(result.findings),
     )
     db.add(cap_list)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        # #1120 (migration 0073): a draft was committed during the provider
+        # call, after the re-check above. `uq_capability_lists_one_draft`
+        # refused a second draft; end the run with the re-check's own reason.
+        # The `llm_calls` row was committed above and is kept.
+        db.rollback()
+        _log.info(
+            "techdebt_extract_lost_draft_race",
+            service_id=str(ctx.service_id),
+            attempted_version=next_version,
+        )
+        raise RunFailed(
+            "capability_list_draft_exists",
+            _DRAFT_OPENED_DURING_RUN,
+        ) from exc
 
     for item in result.items:
         db.add(
@@ -735,6 +780,14 @@ def _extract_run_work(
                 # negative one.
                 security_related=item.security_related,
                 security_functions=list(item.security_functions),
+                # TD-2 (for #1058): as the parser left them. None stays None:
+                # an unanswered flag is not a "no".
+                is_suite=item.is_suite,
+                recognized=item.recognized,
+                # F1 (#736 6160171214): the version the call recorded, passed
+                # through -- never worked out again from the constant -- so a
+                # None flag here reads as "asked, unanswered", not pre-TD-2.
+                extracted_prompt_version=result.llm_call.prompt_version,
             )
         )
 
@@ -2065,7 +2118,7 @@ def savings_preview(
                 "A proposed disposition is not one of Keep, Cut, or Cut, covered by another tool.",
             ) from None
     # `.get` keeps an explicit None: unticking a row in the what-if is a choice.
-    rows = [(overlay.get(key, it.disposition), it.annual_cost_usd) for key, it in by_id.items()]
+    rows = [(overlay.get(key, it.disposition), savings_cost(it)) for key, it in by_id.items()]
     savings = estimated_savings(rows)
     counts = dict.fromkeys(CapabilityDisposition, 0)
     undecided = 0
@@ -2134,7 +2187,7 @@ def consolidation_plan_summary(
         elif it.disposition == CapabilityDisposition.CUT:
             cut += 1
     # #804: the deliverable's own derivation, not a copy of it.
-    savings = estimated_savings((it.disposition, it.annual_cost_usd) for it in items)
+    savings = estimated_savings((it.disposition, savings_cost(it)) for it in items)
 
     return ConsolidationPlanSummary(
         capability_list_id=cap_list.id,

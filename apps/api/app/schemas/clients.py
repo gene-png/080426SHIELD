@@ -13,6 +13,11 @@ from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, model_serializer, model_validator
 
+from app.attack.subset_drift import (
+    NOT_CHECKED_DISCARDED,
+    NOT_CHECKED_EMPTY,
+    NOT_CHECKED_NO_LIST,
+)
 from app.models.service import ServiceKind
 from app.schemas.ai_runs import AiSource
 from app.schemas.risk import RiskTargetUsed
@@ -600,6 +605,11 @@ class TechDebtItem(BaseModel):
     license_count: int | None
     disposition: str | None  # keep | consolidate | cut | None
     notes: str | None
+    # for #929: the bundle that carries this row's cost, when the row is a
+    # named part of a split bundle (`tech_debt/components.py`). The bundle's
+    # name, stripped; "" when that name is blank (still a part, so the screen
+    # says "Included in its bundle"); None for a row that is not a part.
+    bundle: str | None
 
 
 class TechDebtCategorySpend(BaseModel):
@@ -614,6 +624,9 @@ class TechDebtRedundancy(BaseModel):
     category: str
     count: int
     savings_usd: float  # tech_debt.savings.estimated_savings over this category (#804)
+    # for #1044: False when a counted (cut) row in this category has no usable
+    # cost, so `savings_usd` is a floor; the card marks it as the headline does.
+    savings_cost_known: bool
     items: list[TechDebtItem]
 
 
@@ -772,6 +785,13 @@ class RiskDashboardResponse(BaseModel):
     #: (`risk/csf_source.py::csf_no_shared_row`). False when the register
     #: predates R11, so it keeps the original no-scores line.
     csf_no_shared_row: bool = False
+    #: RR-1 (for #1122), design note §6.4: what the register was generated
+    #: from (copy 8), what the admin left out (9a/9b) and what had no
+    #: assessment (9c), as display labels. `selection_recorded` False: copy 11.
+    covered_inputs: list[str] = []
+    deselected_inputs: list[str] = []
+    ineligible_inputs: list[str] = []
+    selection_recorded: bool = False
 
 
 class ValueSummaryResponse(BaseModel):
@@ -867,6 +887,13 @@ class ValueSummaryResponse(BaseModel):
     #: only lists in force with no security tool, or only discarded lists, or a mix of
     #: those last two).
     attack_covered_relies_on_outside_tool: bool | None
+    #: #1011: why nothing could be checked (`subset_drift.NOT_CHECKED_*`), set
+    #: EXACTLY when there is a figure and the flag above is None (state C), so
+    #: the card can tell "not checked" from "checked, none found" (False) and
+    #: from "no figure" (D). Required, and enforced below, for the reason the
+    #: comment at the foot of this class gives: a construction site that forgot
+    #: it would put state C back to reading as clean.
+    attack_subset_not_checked_reason: str | None
     csf_gap_count: int | None
     csf_gap_unresolved: bool
     csf_services: int
@@ -884,3 +911,39 @@ class ValueSummaryResponse(BaseModel):
     # defaults to UNCONFIRMED, never to confirmed -- and the C0 argument for
     # optional fields does not apply, because these are written by the server
     # rather than parsed from an older one.
+
+    @model_validator(mode="after")
+    def _not_checked_reason_only_in_state_c(self) -> ValueSummaryResponse:
+        """#1011: the reason is present EXACTLY in state C -- an ATT&CK figure
+        whose tools could not be checked (`attack_covered_relies_on_outside_tool`
+        None beside a figure). Wrong wiring raises here, at build."""
+        reason = self.attack_subset_not_checked_reason
+        has_figure = self.attack_uncovered_count is not None
+        flag = self.attack_covered_relies_on_outside_tool
+        if reason is None:
+            if has_figure and flag is None:
+                raise ValueError(
+                    "value summary: an ATT&CK figure whose tools were not checked "
+                    "carries no reason; it would read as checked, none found (#1011)."
+                )
+            return self
+        if reason not in _NOT_CHECKED_REASONS:
+            raise ValueError(
+                f"value summary: {reason!r} is not a known reason "
+                f"({sorted(_NOT_CHECKED_REASONS)}) (#1011)."
+            )
+        if not has_figure:
+            raise ValueError(
+                f"value summary: a not-checked reason ({reason!r}) without an ATT&CK "
+                "figure; there is nothing for it to qualify (#1011)."
+            )
+        if flag is not None:
+            raise ValueError(
+                f"value summary: a not-checked reason ({reason!r}) beside a checked "
+                f"flag ({flag!r}) (#1011)."
+            )
+        return self
+
+
+#: #1011: the reasons `subset_state` reports, from the module that defines them.
+_NOT_CHECKED_REASONS = frozenset({NOT_CHECKED_NO_LIST, NOT_CHECKED_EMPTY, NOT_CHECKED_DISCARDED})

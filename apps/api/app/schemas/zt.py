@@ -13,6 +13,7 @@ from app.models.service import ServiceKind, ServiceStatus
 from app.models.zt_assessment import ZtAssessmentStatus, ZtFramework
 from app.schemas._numeric import IntNotBool
 from app.schemas.ai_runs import AiSource
+from app.schemas.revisions import RevisionInfo
 
 # ---------------------------------------------------------------------------
 # Catalog
@@ -109,6 +110,8 @@ class ZtAssessmentResponse(BaseModel):
     # approved sentence, or None when there are none (`zt/retired.py`).
     retired_answers: int = 0
     retired_answers_note: str | None = None
+    #: #1120: what a revision copied and why (V3, V4, V5); NULL otherwise.
+    revision: RevisionInfo | None = None
 
 
 class ZtAnswerPatch(BaseModel):
@@ -347,8 +350,7 @@ class ZtOmittedCapability(BaseModel):
     `notes_blank` is the only part of the #806 ZT prompt's "nothing to score"
     rule (A5) code can test: no notes, or whitespace only. "N/A" and "TBD" are
     notes, and the panel says so instead of classifying them. Leaving a
-    blank-notes capability out is by design once the #806 ZT prompt ships; on
-    today's prompt, it is a miss.
+    blank-notes capability out is by design under the #806 ZT prompt (A5).
 
     `kept_stage` is the maturity stage the row still holds, read AFTER the
     apply, so an edit that landed while the model answered is what it reports.

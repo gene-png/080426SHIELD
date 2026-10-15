@@ -32,6 +32,33 @@ export interface RiskInputState {
    * nothing (`no_playbook_scores` is then false). Absent on every other kind.
    */
   no_shared_playbook_row?: boolean;
+  /**
+   * RR-1 (for #1122), design note §6.5: this service's place in the register
+   * on screen. `input` rows sit under the all-inputs-final rule; `deselected`
+   * and `ineligible` rows are not part of it and move under "Not in this
+   * register". null/absent: no register, an unengaged kind, or a register
+   * whose selection is not recorded -- the panel as before.
+   */
+  in_register?: "input" | "deselected" | "ineligible" | null;
+}
+
+/**
+ * RR-1 (for #1122), design note §3.4: one engaged service the selection block
+ * names. `label` is the server's, rendered as given.
+ */
+export interface RiskSelectableService {
+  kind: "attack" | "csf" | "zt";
+  service_id: string;
+  title: string;
+  /** `cisa_ztmm_2_0` or `dod_ztra` for Zero Trust; null otherwise. */
+  framework: string | null;
+  label: string;
+}
+
+/** RR-1 (for #1122), design note §3.1: the generate body's `include`. */
+export interface RiskInclude {
+  csf: boolean;
+  zero_trust: "cisa_ztmm_2_0" | "dod_ztra" | null;
 }
 
 export interface RiskGate {
@@ -96,6 +123,34 @@ export interface RiskGate {
    * parses.
    */
   duplicate_services?: RiskDuplicateService[];
+  /**
+   * RR-1 (for #1122), design note §3.4: the engaged ATT&CK, CSF and ZT
+   * services with a current record (the selection block's rows), and the
+   * engaged CSF and ZT services with none (shown disabled, copy 18).
+   * Optional so an older server's response parses; absent reads as none.
+   */
+  eligible?: RiskSelectableService[];
+  ineligible?: RiskSelectableService[];
+  /**
+   * #1081: why the gate is locked, per unmet requirement
+   * (`app/risk/locked.py`). Empty when unlocked. Optional so an older API
+   * parses.
+   */
+  locked_inputs?: RiskLockedInput[];
+  /**
+   * #1081: the approved locked-page copy, composed by the API (the same text
+   * generate's 409 carries); null when unlocked. Optional so an older API
+   * parses; the page then names what is missing, as it did before.
+   */
+  locked_message?: string | null;
+}
+
+/** #1081: one unmet requirement and why. */
+export interface RiskLockedInput {
+  requirement: "attack" | "csf_or_zt";
+  state: "no_assessment" | "unpublished" | "archived_only" | "no_service";
+  service_kind: string | null;
+  sentence: string;
 }
 
 /** #896: one service behind the duplicate refusal. */
@@ -197,6 +252,12 @@ export interface RiskEntry {
  */
 export interface LinkScopeDisclosure {
   service: string;
+  /**
+   * RR-1 (for #1122), design note §6.2: the row's display label, built by the
+   * files' own helper, so the banner and the files name a row alike.
+   * Required: the web holds no label table to fall back on.
+   */
+  label: string;
   scored: number;
   total: number;
   /**
@@ -410,6 +471,16 @@ export interface RiskRegister {
    * Read by the files' reader; absent or false keeps the original line.
    */
   csf_no_shared_row?: boolean;
+  /**
+   * RR-1 (for #1122), design note §6.1 and §6.4: what the register was
+   * generated from (copy 8), the eligible services left out (9a/9b) and the
+   * engaged services with no assessment at generate (9c), as display labels.
+   * `selection_recorded` false or absent: no usable record, so copy 11 alone.
+   */
+  covered_inputs?: string[];
+  deselected_inputs?: string[];
+  ineligible_inputs?: string[];
+  selection_recorded?: boolean;
   id: string;
   client_id: string;
   version: number;

@@ -37,6 +37,7 @@ const CISA_AND_DOD = [
     target: 4,
     source: "client",
     origin: "live_at_generate",
+    label: "Zero Trust (CISA ZTMM 2.0)",
   },
   {
     kind: "zt",
@@ -44,6 +45,7 @@ const CISA_AND_DOD = [
     target: 3,
     source: "client",
     origin: "live_at_generate",
+    label: "Zero Trust (DoD ZT Reference Architecture)",
   },
 ];
 
@@ -87,6 +89,7 @@ function data(over: Partial<RiskDashboardData> = {}): RiskDashboardData {
         target: 3,
         source: "client",
         origin: "live_at_generate",
+        label: "NIST CSF",
       },
       {
         kind: "zt",
@@ -94,6 +97,7 @@ function data(over: Partial<RiskDashboardData> = {}): RiskDashboardData {
         target: 3,
         source: "client",
         origin: "live_at_generate",
+        label: "Zero Trust",
       },
     ],
     targets_recorded: true,

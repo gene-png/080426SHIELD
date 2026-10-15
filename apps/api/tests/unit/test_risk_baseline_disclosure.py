@@ -24,8 +24,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.unit.test_risk_per_service import _both_frameworks, _export_texts
-from tests.unit.test_risk_per_service import _generate as _generate_per_finding
+from tests.unit.test_risk_per_service import _both_frameworks, _export_texts, _h, _per_finding
 from tests.unit.test_risk_register import (  # noqa: F401  (app_client is a fixture)
     _admin,
     _entries_payload,
@@ -87,6 +86,9 @@ def test_the_register_records_each_services_target(app_client) -> None:  # noqa:
         "target": None,
         "source": "playbook",
         "origin": "live_at_generate",
+        # RR-1 (#1122): each target row carries its display label, derived once
+        # on the server (design note §6.2).
+        "label": "NIST CSF",
     }
     # No ZT target was set, so ZT used the engine default and says so.
     assert by_kind["zt"]["framework"] == "cisa_ztmm_2_0"
@@ -169,9 +171,20 @@ def test_the_client_dashboard_carries_the_baseline(app_client) -> None:  # noqa:
 
 
 # ---------------------------------------------------------------------------
-# CISA (client 4) plus DoD (default), the approved table's two-ZT row, through
-# generate and every surface. Literal strings, positive first.
+# CISA (client 4) plus DoD (default), the approved table's two-ZT client,
+# through generate and every surface. Literal strings, positive first.
+#
+# RR-1 (#1122): generate draws on ONE Zero Trust framework per register
+# (reversing #876 Q1). This client therefore generates once per framework, and
+# each test runs on each real register. The other framework is deselected, so
+# the register mentions two Zero Trust services and each line names its
+# framework (design note §6.2). The old single register holding BOTH lines is
+# a state RR-1 cannot produce, so the tests that read it are re-stated per
+# register, and the store test is REPLACED (said at each, per core principle 3).
 # ---------------------------------------------------------------------------
+
+CISA = "cisa_ztmm_2_0"
+DOD = "dod_ztra"
 
 _CISA_LINE = (
     "Zero Trust (CISA ZTMM 2.0) findings are measured against target stage 4, "
@@ -181,99 +194,143 @@ _DOD_LINE = (
     "Zero Trust (DoD ZT Reference Architecture) findings are measured against "
     "target stage 3, SHIELD's default: no engagement target was set."
 )
-_TWO_ZT_TARGETS = [
-    {
+_LINE = {CISA: _CISA_LINE, DOD: _DOD_LINE}
+_OTHER = {CISA: DOD, DOD: CISA}
+_ZT_TARGET = {
+    CISA: {
         "kind": "zt",
-        "framework": "cisa_ztmm_2_0",
+        "framework": CISA,
         "target": 4,
         "source": "client",
         "origin": "live_at_generate",
+        "label": "Zero Trust (CISA ZTMM 2.0)",
     },
-    {
+    DOD: {
         "kind": "zt",
-        "framework": "dod_ztra",
+        "framework": DOD,
         "target": 3,
         "source": "default",
         "origin": "live_at_generate",
+        "label": "Zero Trust (DoD ZT Reference Architecture)",
     },
-]
+}
+_STORED = {
+    CISA: {
+        "target": 4,
+        "source": "client",
+        "kind": "zt",
+        "framework": CISA,
+        "origin": "live_at_generate",
+    },
+    DOD: {
+        "target": 3,
+        "source": "default",
+        "kind": "zt",
+        "framework": DOD,
+        "origin": "live_at_generate",
+    },
+}
 
 
-def _two_zt_world(app_client):  # noqa: F811
+def _generate_selecting(c, provider, bearer: str, cid: str, *, csf: bool, zero_trust: str):
+    """One generate with an explicit RR-1 selection, through the route."""
+    provider.register("risk_synthesize", _per_finding([]))
+    return c.post(
+        f"/risk/clients/{cid}/register/generate",
+        headers=_h(bearer, cid),
+        json={"include": {"csf": csf, "zero_trust": zero_trust}},
+    )
+
+
+def _two_zt_world(app_client, framework: str):  # noqa: F811
+    """The CISA-and-DoD client, and one real register for `framework`."""
     from tests.unit.test_risk_register import _set_zt_target
 
     c, provider = app_client
     bearer, cid = _admin(c)
     _both_frameworks(c, bearer, cid)
     _set_zt_target(cid, 4, kind="zero_trust_cisa")
-    r = _generate_per_finding(c, provider, bearer, cid, [])
+    r = _generate_selecting(c, provider, bearer, cid, csf=False, zero_trust=framework)
     assert r.status_code == 201, r.text
     return c, bearer, cid
 
 
-def _stored_targets() -> dict:
+def _stored_provenance() -> dict:
     from sqlalchemy import select
 
     from app.models.risk_register import RiskRegister
 
     with _session() as s:
-        return dict(s.execute(select(RiskRegister)).scalar_one().provenance["targets"])
+        return dict(s.execute(select(RiskRegister)).scalar_one().provenance)
 
 
-def test_two_zero_trust_services_store_kind_and_framework(app_client) -> None:  # noqa: F811
-    _two_zt_world(app_client)
-    assert _stored_targets() == {
-        "zt:cisa_ztmm_2_0": {
-            "target": 4,
-            "source": "client",
-            "kind": "zt",
-            "framework": "cisa_ztmm_2_0",
-            "origin": "live_at_generate",
-        },
-        "zt:dod_ztra": {
-            "target": 3,
-            "source": "default",
-            "kind": "zt",
-            "framework": "dod_ztra",
-            "origin": "live_at_generate",
-        },
-    }
+@pytest.mark.parametrize("framework", [CISA, DOD])
+def test_with_both_frameworks_generate_stores_only_the_chosen_one(
+    app_client, framework: str  # noqa: F811
+) -> None:
+    """RR-1 (#1122) REPLACES #876's `test_two_zero_trust_services_store_kind_and_framework`.
+
+    That test pinned generate storing BOTH Zero Trust targets. RR-1's ruling
+    (design note §1.1, reversing #876 Q1) is one framework per register, so
+    its premise is reversed, not weakened: said here, per CLAUDE.md core
+    principle 3. Expected values are the design note's, not read from the
+    code: §3.3 step 5, the scope key is computed over the engaged services
+    WITH A RECORD, and both frameworks have one here, so the key names the
+    framework; §4, the other framework is recorded as deselected.
+    """
+    _two_zt_world(app_client, framework)
+    prov = _stored_provenance()
+    assert prov["targets"] == {f"zt:{framework}": _STORED[framework]}
+    deselected = sorted((d["kind"], d["framework"]) for d in prov["selection"]["deselected"])
+    assert deselected == [("zt", _OTHER[framework])], deselected
 
 
-def test_two_zero_trust_services_reach_the_admin_response(app_client) -> None:  # noqa: F811
-    c, bearer, cid = _two_zt_world(app_client)
+@pytest.mark.parametrize("framework", [CISA, DOD])
+def test_each_zero_trust_framework_reaches_the_admin_response(
+    app_client, framework: str  # noqa: F811
+) -> None:
+    c, bearer, cid = _two_zt_world(app_client, framework)
     body = _latest(c, bearer, cid)
     assert body["targets_recorded"] is True
-    assert body["targets"] == _TWO_ZT_TARGETS
+    assert body["targets"] == [_ZT_TARGET[framework]]
 
 
-def test_two_zero_trust_services_reach_the_client_dashboard(app_client) -> None:  # noqa: F811
-    c, bearer, cid = _two_zt_world(app_client)
+@pytest.mark.parametrize("framework", [CISA, DOD])
+def test_each_zero_trust_framework_reaches_the_client_dashboard(
+    app_client, framework: str  # noqa: F811
+) -> None:
+    c, bearer, cid = _two_zt_world(app_client, framework)
     body = _client_dashboard(c, bearer, cid)
     assert body["targets_recorded"] is True
-    assert body["targets"] == _TWO_ZT_TARGETS
+    assert body["targets"] == [_ZT_TARGET[framework]]
 
 
-def test_two_zero_trust_services_name_each_framework_in_every_file(
-    app_client,  # noqa: F811
+@pytest.mark.parametrize("framework", [CISA, DOD])
+def test_each_zero_trust_register_names_its_framework_in_every_file(
+    app_client, framework: str  # noqa: F811
 ) -> None:
-    c, bearer, cid = _two_zt_world(app_client)
+    """Per register (RR-1): its own line, named, and not the other's. The
+    pre-RR-1 order check (CISA before DoD in one register) has no state left
+    to run on, and is dropped with that state."""
+    c, bearer, cid = _two_zt_world(app_client, framework)
     texts = _export_texts(c, bearer, cid)
     # All three files: the XLSX summary sheet prints `_summary_lines` too.
     for fmt in ("pdf", "docx", "xlsx"):
         text = " ".join(texts[fmt].split())
-        assert _CISA_LINE in text, (fmt, text)
-        assert _DOD_LINE in text, (fmt, text)
-        assert text.index(_CISA_LINE) < text.index(_DOD_LINE), fmt
+        assert _LINE[framework] in text, (fmt, text)
+        assert _LINE[_OTHER[framework]] not in text, fmt
         assert "zt:" not in text, fmt
         assert "target level" not in text, fmt
 
 
-def test_csf_plus_cisa_plus_dod_print_the_csf_line_then_cisa_then_dod(
-    app_client,  # noqa: F811
+@pytest.mark.parametrize("framework", [CISA, DOD])
+def test_csf_plus_each_zero_trust_framework_print_the_csf_line_first(
+    app_client, framework: str  # noqa: F811
 ) -> None:
-    """The table's last recorded row: the CSF line, then the two ZT lines,
-    sorted by (kind, framework), in every file."""
+    """The table's CSF-plus-Zero-Trust row, per register (RR-1): the CSF line,
+    then the chosen framework's line, in every file. Replaces
+    `test_csf_plus_cisa_plus_dod_print_the_csf_line_then_cisa_then_dod`, whose
+    single register held both Zero Trust lines, a state RR-1 cannot produce."""
     from tests.unit.test_risk_register import _set_zt_target
 
     c, provider = app_client
@@ -281,14 +338,15 @@ def test_csf_plus_cisa_plus_dod_print_the_csf_line_then_cisa_then_dod(
     _both_frameworks(c, bearer, cid)
     _seed_csf_playbook_at_level(c, bearer, cid, level=1, target=4)
     _set_zt_target(cid, 4, kind="zero_trust_cisa")
-    r = _generate_per_finding(c, provider, bearer, cid, [])
+    r = _generate_selecting(c, provider, bearer, cid, csf=True, zero_trust=framework)
     assert r.status_code == 201, r.text
     texts = _export_texts(c, bearer, cid)
     for fmt in ("pdf", "docx", "xlsx"):
         text = " ".join(texts[fmt].split())
-        positions = [text.find(line) for line in (_CSF_PLAYBOOK_LINE, _CISA_LINE, _DOD_LINE)]
+        positions = [text.find(line) for line in (_CSF_PLAYBOOK_LINE, _LINE[framework])]
         assert -1 not in positions, (fmt, positions, text)  # the positive state first
         assert positions == sorted(positions), (fmt, positions)
+        assert _LINE[_OTHER[framework]] not in text, fmt
 
 
 @pytest.mark.parametrize(
@@ -447,7 +505,12 @@ def test_attack_alone_cannot_generate_so_no_register_records_no_targets(
     assert ar.status_code == 200, ar.text
     gen = c.post(f"/risk/clients/{cid}/register/generate", headers=h)
     assert gen.status_code == 409, gen.text
-    assert "a CSF or Zero Trust assessment" in gen.text
+    # #1081: the locked copy, (B) for CSF/ZT, approved in #1081 6116102972.
+    err = gen.json()["error"]
+    assert err["reason"] == "risk_register_locked", err
+    assert err["message"].startswith(
+        "Acme has no NIST CSF 2.0 Assessment or Zero Trust service."
+    ), err
 
 
 def test_a_target_with_no_source_raises_rather_than_guessing() -> None:

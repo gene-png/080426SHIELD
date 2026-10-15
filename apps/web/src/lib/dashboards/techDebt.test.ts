@@ -26,6 +26,7 @@ function item(p: Partial<TechDebtItem>): TechDebtItem {
     license_count: null,
     disposition: null,
     notes: null,
+    bundle: null,
     ...p,
   };
 }

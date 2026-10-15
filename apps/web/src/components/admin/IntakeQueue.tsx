@@ -13,6 +13,7 @@ import {
 } from "@shield/design-system";
 
 import { fetchIntakeQueue, fulfillServiceRequest } from "@/lib/admin/client";
+import { splitArtifacts } from "@/lib/admin/artifactBuckets";
 import { isNamedOrg, orgDisplayName } from "@/lib/org-name";
 import {
   AGE_OPTIONS,
@@ -227,6 +228,35 @@ function ReadinessItem({
         {ok ? "" : ` — ${missingHint}`}
       </span>
     </li>
+  );
+}
+
+/** One artifact per row: title, size and date. Shared by all three lists. */
+function ArtifactList({
+  artifacts,
+}: {
+  artifacts: AdminIntakeQueueResponse["artifacts"];
+}): JSX.Element {
+  return (
+    <ul className="flex flex-col gap-1">
+      {artifacts.map((a) => (
+        <li
+          key={a.id}
+          className="flex items-center justify-between gap-3 rounded-md border border-border-subtle bg-surface-card px-3 py-2 text-sm"
+        >
+          <span
+            className="truncate font-medium text-ink-primary"
+            title={a.title}
+          >
+            {a.title}
+          </span>
+          <span className="shrink-0 text-xs text-ink-tertiary">
+            {(a.size_bytes / 1024).toFixed(1)} KB ·{" "}
+            {new Date(a.uploaded_at).toLocaleDateString()}
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -544,7 +574,15 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
   const hasContext = Boolean(
     c?.prompting_context && c.prompting_context.trim(),
   );
-  const hasDocuments = state.artifacts.length > 0;
+  // #1054: one split of every artifact, by stored origin and uploader role
+  // (`splitArtifacts` says why each bucket is what it is). Only a client-role
+  // `client_upload` counts as evidence for the readiness line below.
+  // Each bucket is rendered in its own section below, so every artifact is
+  // listed exactly once on this page (#1119).
+  const { clientUploads, consultantUploads, generatedReports } = splitArtifacts(
+    state.artifacts,
+  );
+  const hasDocuments = clientUploads.length > 0;
   const visibleRequests = filterServiceRequests(
     state.service_requests,
     filters,
@@ -715,33 +753,55 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
 
       <section aria-labelledby="artifacts" className="flex flex-col gap-3">
         <h2 id="artifacts" className="text-lg font-semibold text-ink-primary">
-          Uploaded documents ({state.artifacts.length})
+          Uploaded documents ({clientUploads.length})
         </h2>
-        {state.artifacts.length === 0 ? (
+        {clientUploads.length === 0 ? (
           <EmptyState
             title="No documents uploaded yet"
             description="Files the client attaches during intake will appear here."
           />
         ) : (
-          <ul className="flex flex-col gap-1">
-            {state.artifacts.map((a) => (
-              <li
-                key={a.id}
-                className="flex items-center justify-between gap-3 rounded-md border border-border-subtle bg-surface-card px-3 py-2 text-sm"
-              >
-                <span
-                  className="truncate font-medium text-ink-primary"
-                  title={a.title}
-                >
-                  {a.title}
-                </span>
-                <span className="shrink-0 text-xs text-ink-tertiary">
-                  {(a.size_bytes / 1024).toFixed(1)} KB ·{" "}
-                  {new Date(a.uploaded_at).toLocaleDateString()}
-                </span>
-              </li>
-            ))}
-          </ul>
+          <ArtifactList artifacts={clientUploads} />
+        )}
+      </section>
+
+      <section
+        aria-labelledby="consultant-uploads"
+        className="flex flex-col gap-3"
+      >
+        <h2
+          id="consultant-uploads"
+          className="text-lg font-semibold text-ink-primary"
+        >
+          Consultant uploads ({consultantUploads.length})
+        </h2>
+        {consultantUploads.length === 0 ? (
+          <EmptyState
+            title="No consultant uploads"
+            description="Files a consultant uploads in this organization's workspaces will appear here."
+          />
+        ) : (
+          <ArtifactList artifacts={consultantUploads} />
+        )}
+      </section>
+
+      <section
+        aria-labelledby="generated-reports"
+        className="flex flex-col gap-3"
+      >
+        <h2
+          id="generated-reports"
+          className="text-lg font-semibold text-ink-primary"
+        >
+          Generated reports ({generatedReports.length})
+        </h2>
+        {generatedReports.length === 0 ? (
+          <EmptyState
+            title="No reports generated yet"
+            description="Deliverable files exported from this organization's assessments will appear here."
+          />
+        ) : (
+          <ArtifactList artifacts={generatedReports} />
         )}
       </section>
     </div>

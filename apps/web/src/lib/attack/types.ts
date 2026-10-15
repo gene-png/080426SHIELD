@@ -1,3 +1,4 @@
+import type { RevisionInfo } from "@/lib/revisions/types";
 import type { AiSource } from "@/lib/aiSource/types";
 
 /** Wire types mirroring apps/api/app/schemas/attack.py. */
@@ -133,6 +134,8 @@ export interface UnconfirmedCitation {
 export interface AttackAssessment {
   /** #646: which mode drafted the AI suggestions, as the API states it. */
   ai_source: AiSource;
+  /** #1120: what a revision copied and why; null unless a revision minted it. */
+  revision?: RevisionInfo | null;
   id: string;
   service_id: string;
   version: number;
@@ -419,7 +422,10 @@ export interface AttackAiInputDocument {
  * file, which is the one a web developer reads.
  */
 export type AttackWithheldReason =
-  "security_scope" | "not_in_approved_snapshot" | "list_discarded";
+  | "security_scope"
+  | "not_in_approved_snapshot"
+  | "list_discarded"
+  | "version_not_in_force";
 
 /**
  * How much the API may honestly say about rows dropped at extraction.
@@ -494,8 +500,8 @@ export interface AttackAiInputSourceList {
   /**
    * `true` latest, `false` superseded by a later version, `null` RETIRED.
    *
-   * `false` still COUNTS: every non-discarded version feeds the mapping, not
-   * just the newest, which routinely surprises people.
+   * Whether the version FEEDS the mapping is `in_force`, not this (#1012): an
+   * approved v1 beside an open draft v2 is not the latest and is in force.
    *
    * `null` is a discarded list: not latest, and not superseded either, because
    * nothing replaced it. Renderers must not treat `!is_latest_for_service` as
@@ -503,6 +509,12 @@ export interface AttackAiInputSourceList {
    * one, which is a different fact with a different remedy.
    */
   is_latest_for_service: boolean | null;
+  /**
+   * #1012 (R6b): `true` the version of its Tech Debt list that feeds the
+   * mapping, `false` not in force (its citable rows are withheld as
+   * `version_not_in_force`), `null` RETIRED (discarded), as above.
+   */
+  in_force: boolean | null;
   /** True when the APPROVED snapshot decides membership; false when live rows do. */
   membership_from_snapshot: boolean;
   /** The snapshot no longer matches current security scope; re-approval clears it. */
@@ -527,6 +539,8 @@ export interface AttackAiInputTotals {
   withheld_security_scope: number;
   withheld_not_in_approved_snapshot: number;
   withheld_list_discarded: number;
+  /** #1012: rows only a version that is not in force holds. */
+  withheld_version_not_in_force: number;
   excluded_rows_named: number;
   /**
    * Contributing lists whose extraction-time exclusions cannot be reported.

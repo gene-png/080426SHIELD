@@ -13,7 +13,7 @@ suggestions line up with the live assessment and Run AI actually changes rows.
 
 All six job purposes are registered:
   mitre_map            -> ATT&CK coverage status + validated D/P/R tool citations
-  zt_score             -> Zero Trust current/target (DoD respects the <=3 clamp)
+  zt_score             -> Zero Trust current stage (the approved #806 prompt's rules)
   csf_score            -> NIST CSF five dimension scores (0-2) + narrative (#806 prompt)
   extract.capabilities -> Tech Debt capability extraction (with confidence_pct)
   risk_synthesize      -> Risk Register candidate entries (catalog-valid links)
@@ -221,26 +221,54 @@ def _fixture_mitre_map(payload: dict[str, Any]) -> LLMResponse:
 
 
 # ---------------------------------------------------------------------------
-# zt_score: Zero Trust current + target per capability (framework-clamped)
+# zt_score: Zero Trust current stage per capability, from the approved prompt
 # ---------------------------------------------------------------------------
+
+# A5's examples of notes that say only "not applicable, to be determined, or
+# covered elsewhere". Compared after trimming whitespace and case.
+_ZT_PLACEHOLDER_NOTES = frozenset({"n/a", "tbd", "see interview"})
+
+
+def _zt_notes_give_no_result(notes: object) -> bool:
+    """A5: null, empty or whitespace-only notes, or a placeholder, get no
+    result."""
+    if not isinstance(notes, str):
+        return True
+    return not notes.strip() or notes.strip().lower() in _ZT_PLACEHOLDER_NOTES
 
 
 def _fixture_zt_score(payload: dict[str, Any]) -> LLMResponse:
-    framework = str(payload.get("framework") or "").lower()
-    # CISA ZTMM 2.0 -> 1..4, DoD ZTRA -> 1..3. Emit values already inside the
-    # framework's ladder so DoD suggestions respect the <=3 clamp (never a 4 the
-    # route would silently drop).
-    max_stage = 3 if "dod" in framework else 4
-    codes = sorted(_strs(payload.get("capabilities")))
+    """Written from the approved prompt (#806), never from the parser.
+
+    - A9: each row is `{"code", "current"}`; no `target` (A6), and no other key.
+    - A5: no result for blank or placeholder notes.
+    - A9: `current` is an integer, 1 to 4 for CISA and 1 to 3 for DoD, never 0.
+    - C3: a DoD capability with no `activities` gets no result.
+    - C4: a DoD capability with no `advanced` activity never gets 3, and one
+      with no `target` activity never gets 2.
+    Deterministic: the stage alternates 1, 2 by the code's position.
+    """
+    is_dod = str(payload.get("framework") or "") == "dod_ztra"
+    answers = payload.get("answers")
+    answers = answers if isinstance(answers, dict) else {}
+    details = payload.get("capability_details")
+    details = details if isinstance(details, dict) else {}
     capabilities: list[dict[str, Any]] = []
-    for i, code in enumerate(codes):
-        current = (i % 2) + 1  # 1 or 2 -> early-stage posture with room to grow
-        target = min(current + 2, max_stage)  # DoD caps at 3, CISA at 4
-        capabilities.append({"code": code, "current": current, "target": target})
-    # Narrative keys were removed from `_ZT_SCORE_PROMPT` (issue #64) because
-    # nothing consumed them, so the fixture must not emit them either — a
-    # fixture richer than the prompt teaches the parser to expect fields a real
-    # model will never be asked for.
+    for i, code in enumerate(_strs(payload.get("capabilities"))):
+        answer = answers.get(code)
+        notes = answer.get("notes") if isinstance(answer, dict) else None
+        if _zt_notes_give_no_result(notes):
+            continue
+        current = (i % 2) + 1
+        if is_dod:
+            detail = details.get(code)
+            activities = detail.get("activities") if isinstance(detail, dict) else None
+            if not isinstance(activities, list) or not activities:
+                continue  # C3
+            levels = {a.get("level") for a in activities if isinstance(a, dict)}
+            if current == 2 and "target" not in levels:
+                current = 1  # C4: no Target activity, so never 2
+        capabilities.append({"code": code, "current": current})
     body: dict[str, Any] = {"capabilities": capabilities}
     return _resp(body)
 
@@ -352,6 +380,13 @@ def _fixture_csf_score(payload: dict[str, Any]) -> LLMResponse:
 #     no functions, its note beginning with exactly the not-in-use prefix;
 #   - section 8: confidence is 100, 90 or 60, and every 60 has a note.
 #   - section 10: no rows (missing, not an array, or empty) is {"items":[]}.
+#   - section 9a (v3.3, TD-2, for #1058): `is_suite` and `recognized` on every
+#     item, true or false, never null, keyed as section 10's example keys them.
+#     A suite is a row naming one of section 9a's own examples ("Microsoft 365
+#     G5", "Adobe Creative Cloud All Apps") or saying suite or bundle; an
+#     unrecognized row is one whose name looks like an internal code (no
+#     lowercase letter, at least one digit). Both are reachable offline, so
+#     the red and amber rows that read them are too.
 # Costs and licence counts stay null, as before: the fixture drafts the
 # classification, and offline demo totals are not its job.
 
@@ -371,6 +406,14 @@ _TECH_DEBT_NOT_IN_USE_WORDS = ("not yet deployed", "no longer used", "inactive",
 #: v3.2 section 6, `annual_cost_usd` and `license_count`: a header naming cost,
 #: price, spend or fees, or a license, seat or user count.
 _TECH_DEBT_COST_HEADER_WORDS = ("cost", "price", "spend", "fee", "licen", "seat")
+
+
+#: v3.3 section 9a's examples, and its own words "suite" and "bundle".
+_TECH_DEBT_SUITE = re.compile(
+    r"\bmicrosoft\s+365\b|\bcreative\s+cloud\b|\bsuite\b|\bbundle\b", re.IGNORECASE
+)
+#: v3.3 section 9a, "an internal code": no lowercase letter, at least one digit.
+_TECH_DEBT_INTERNAL_CODE = re.compile(r"^(?=[^a-z]*\d)[^a-z]+$")
 
 
 def _row_cells(row: dict[str, Any]) -> list[str]:
@@ -490,6 +533,8 @@ def _fixture_tech_debt(payload: dict[str, Any]) -> LLMResponse:
                     if security_related
                     else []
                 ),
+                "is_suite": bool(_TECH_DEBT_SUITE.search(name)),
+                "recognized": not _TECH_DEBT_INTERNAL_CODE.match(name),
             }
         )
     return _resp({"items": items})
