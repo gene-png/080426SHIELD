@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr
 
+from app.models.artifact import ArtifactOrigin
 from app.models.service import ServiceKind, ServiceStatus
 from app.models.service_request import ServiceType
 from app.models.user import UserRole
@@ -99,6 +100,17 @@ class AdminArtifactRow(BaseModel):
     size_bytes: int
     uploaded_by: uuid.UUID
     uploaded_at: datetime
+    # #1054: the stored origin. A deliverable's files, written at finalize or
+    # export, are Artifact rows too (`consultant_approved`). `client_upload`
+    # does NOT mean the client attached it: `POST /artifacts` stamps every
+    # upload that way, including a consultant's (the Tech Debt Dropzone).
+    origin: ArtifactOrigin
+    # #1054: the uploader's role, read from `uploaded_by` when the queue is
+    # served. With `origin`, this is what decides "the client attached it".
+    # It is the role NOW, not at upload time; a user's role is not changed by
+    # any route today. Additive: the only consumer is IntakeQueue.tsx, which
+    # reads both fields by value.
+    uploaded_by_role: UserRole
 
 
 class AdminIntakeQueueResponse(BaseModel):
