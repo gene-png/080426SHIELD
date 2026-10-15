@@ -23,6 +23,13 @@ so a stale template is an error, never a quietly older schema.
 TURNING IT OFF. `SHIELD_TEST_REAL_MIGRATIONS=1` runs every upgrade for real, as
 before. Use it to time the old path or to rule this module out of a failure.
 
+ENVIRONMENT. The template is built with the first caller's environment. That
+is safe only while no migration reads one: today none imports `app` or reads
+`os.environ` (`grep -E "os.environ|getenv|from app" alembic/versions/*.py` is
+empty), and `alembic/env.py` reads settings only when the config names no URL,
+which this module always sets. A migration that starts reading the environment
+makes this module wrong; turn it off with the opt-out until it is reworked.
+
 Installed by `tests/conftest.py` importing this module, before any test module
 imports `alembic.command`. Tests call `command.upgrade` as an attribute, so the
 replacement reaches every call site.
@@ -30,9 +37,11 @@ replacement reaches every call site.
 
 from __future__ import annotations
 
+import atexit
 import os
 import shutil
 import sqlite3
+import sys
 import tempfile
 
 import structlog
@@ -116,3 +125,15 @@ def upgrade(cfg, revision, *args, **kwargs):
 
 
 command.upgrade = upgrade
+
+
+@atexit.register
+def _report() -> None:
+    """One line per test process, so a reader can see which path ran (core
+    principle 5). On stderr at exit: pytest's capture has ended by then."""
+    nl = chr(10)
+    sys.stderr.write(
+        f"tests.migrated_template: served {stats['served']} fresh databases from the "
+        f"template and ran {stats['real']} upgrades for real "
+        f"({OPT_OUT_ENV}={os.environ.get(OPT_OUT_ENV, 'unset')}){nl}"
+    )
