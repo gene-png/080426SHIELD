@@ -15,11 +15,11 @@ non-SQLite URL, or no URL at all.
 
 WHY IT CANNOT HAND A TEST A WRONG DATABASE. The template is built by the real
 `command.upgrade(cfg, "head")`, so every test process still runs the full chain
-from empty to head once. Templates are kept per script directory, and each
-copy's `alembic_version` must equal its caller's head or the call raises. Today
-every caller names the same `apps/api/alembic`, so the check cannot fire on a
-reachable state: it is a ratchet against a caller that points at another chain,
-or a template file replaced underneath the process, and a test forces it.
+from empty to head once. Templates are kept per script directory, so a caller
+pointing at another chain gets its own. Each copy's `alembic_version` must equal
+the head recorded when that chain's template was built, or the call raises. No
+reachable state trips that today: it guards a template file replaced underneath
+the running process, and a test forces it.
 `test_migrated_template.py` pins the copy as schema-identical to a real upgrade.
 
 TURNING IT OFF. `SHIELD_TEST_REAL_MIGRATIONS=1` runs every upgrade for real, as

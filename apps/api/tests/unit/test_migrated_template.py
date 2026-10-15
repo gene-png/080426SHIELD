@@ -49,7 +49,12 @@ def _clauses(sql: str | None) -> tuple[str, ...]:
 
 
 def _snapshot(path: Path) -> dict:
-    """Schema, version and every table's rows: what a test can observe."""
+    """Schema, version and every table's rows: what a test can observe.
+
+    Today every data-writing migration is guarded by existing rows, so on a
+    fresh file the tables are empty apart from `alembic_version`. A migration
+    that seeds rows unconditionally with uuid4() or now() would make two
+    correct databases differ here; compare those columns by shape, not value."""
     con = sqlite3.connect(path)
     try:
         schema = sorted(
@@ -147,9 +152,13 @@ def test_a_url_with_a_query_string_is_left_to_alembic(tmp_path, monkeypatch) -> 
     db = tmp_path / "q.db"
     cfg = _cfg(db, monkeypatch)
     cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db}?timeout=5")
-    served_before = mod.stats["served"]
+    served_before, real_before = mod.stats["served"], mod.stats["real"]
     command.upgrade(cfg, "head")
-    assert mod.stats["served"] == served_before
+    # Alembic did the work: counted as real, and the database is at head.
+    assert (mod.stats["served"], mod.stats["real"]) == (served_before, real_before + 1)
+    real = tmp_path / "real.db"
+    mod._real_upgrade(_cfg(real, monkeypatch), "head")
+    assert _snapshot(db)["version"] == _snapshot(real)["version"]
 
 
 def test_the_documented_opt_out_does_not_red_these_tests(tmp_path, monkeypatch) -> None:
@@ -160,3 +169,15 @@ def test_the_documented_opt_out_does_not_red_these_tests(tmp_path, monkeypatch) 
     served_before = mod.stats["served"]
     command.upgrade(_cfg(tmp_path / "cleared.db", monkeypatch), "head")
     assert mod.stats["served"] == served_before + 1
+
+
+def test_a_missing_directory_is_left_to_alembic(tmp_path, monkeypatch) -> None:
+    """The template module never creates directories: a fixture naming a
+    directory that does not exist gets Alembic's own error, as before."""
+    mod = _installed()
+    assert mod is not None
+    served_before = mod.stats["served"]
+    with pytest.raises(Exception, match="unable to open database file"):
+        command.upgrade(_cfg(tmp_path / "absent" / "x.db", monkeypatch), "head")
+    assert mod.stats["served"] == served_before
+    assert not (tmp_path / "absent").exists()
