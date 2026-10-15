@@ -127,16 +127,20 @@ function withheldBreakdown(totals: AttackAiInputTotals): string {
     totals.withheld_list_discarded > 0
       ? `${totals.withheld_list_discarded} on a list that was discarded`
       : null,
+    totals.withheld_version_not_in_force > 0
+      ? `${totals.withheld_version_not_in_force} on a list version not in force`
+      : null,
   ].filter((c): c is string => c !== null);
   // A RESIDUAL, because the clauses above are a floor and `not_sent` is the
-  // truth. Today the three reasons partition it exactly, so this emits nothing
+  // truth. Today the four reasons partition it exactly, so this emits nothing
   // — but `REASON_COPY` already anticipates an unrecognised reason and this
   // function assumed none could exist, which is a guard applied to one branch
   // and forgotten in its twin, in the same file.
   const counted =
     totals.withheld_security_scope +
     totals.withheld_not_in_approved_snapshot +
-    totals.withheld_list_discarded;
+    totals.withheld_list_discarded +
+    totals.withheld_version_not_in_force;
   if (totals.not_sent > counted) {
     clauses.push(`${totals.not_sent - counted} for another reason`);
   }
@@ -167,6 +171,10 @@ const REASON_COPY: Record<string, string> = {
     "Absent from the membership frozen when the list was approved. It was either added or reclassified into scope afterwards, and nothing on record separates those. Re-approve the list to include it.",
   list_discarded:
     "The capability list itself was discarded, so nothing on it is offered. Upload a replacement list to make these tools citable again.",
+  // #1012. No imperative remedy on purpose: the control depends on whether the
+  // version is older (nothing to do) or a draft beside an approved one.
+  version_not_in_force:
+    "On a version of its Tech Debt list that is not in force, so nothing on it is offered. Only each list's newest approved or released version that lists a security tool is offered, or, when the list has no approved or released version, its newest draft that does.",
 };
 
 /**
@@ -313,13 +321,15 @@ export function AttackAiInputsPanel({
   ).length;
   const staleLists = sources.filter((s) => s.membership_stale).length;
   // `=== false`, NOT `!`. The field is a tri-state and `null` means RETIRED —
-  // a discarded list, which nothing supersedes. `!null` is true, so the falsy
-  // test counted every discarded list as superseded and drove three separate
-  // sentences that were then false: the row suffix, the pill, and the
-  // paragraph telling the reader to discard a list already discarded.
-  const supersededLists = sources.filter(
-    (s) => s.is_latest_for_service === false,
-  ).length;
+  // a discarded list. `!null` is true, so the falsy test counted every
+  // discarded list as superseded and drove three separate sentences that were
+  // then false: the row suffix, the pill, and the paragraph.
+  //
+  // #1012: keyed on `in_force`, not `is_latest_for_service`. Only the version
+  // in force is offered, and "latest" is not it when a draft sits beside an
+  // approved version: keying on "latest" would call the approved v1 that IS
+  // offered "(superseded)" and say nothing about the draft that is not.
+  const notInForceLists = sources.filter((s) => s.in_force === false).length;
   const retiredLists = sources.filter(
     (s) => s.is_latest_for_service === null,
   ).length;
@@ -469,7 +479,7 @@ export function AttackAiInputsPanel({
       totals.sent_without_source_document > 0 ||
       liveRowMissing > 0 ||
       staleLists > 0 ||
-      supersededLists > 0 ? (
+      notInForceLists > 0 ? (
         <div className="flex flex-wrap gap-2">
           {totals.awaiting_signoff > 0 ? (
             <StatusPill tone="warning">
@@ -492,10 +502,10 @@ export function AttackAiInputsPanel({
               {totals.sent_without_source_document} with no source document
             </StatusPill>
           ) : null}
-          {supersededLists > 0 ? (
+          {notInForceLists > 0 ? (
             <StatusPill tone="info">
-              Includes {supersededLists} superseded{" "}
-              {plural(supersededLists, "version", "versions")}
+              Includes {notInForceLists}{" "}
+              {plural(notInForceLists, "version", "versions")} not in force
             </StatusPill>
           ) : null}
         </div>
@@ -514,19 +524,22 @@ export function AttackAiInputsPanel({
         </p>
       ) : null}
 
-      {supersededLists > 0 ? (
-        <p className="text-xs text-ink-secondary">
-          Every non-discarded capability list counts, superseded versions
-          included — a tool removed in a later version is still offered to the
-          model. Discard a list in its Tech Debt workspace to take it out.
+      {notInForceLists > 0 ? (
+        <p
+          className="text-xs text-ink-secondary"
+          data-testid="attack-ai-inputs-not-in-force"
+        >
+          Only the version in force of each Tech Debt list is offered to the
+          model: its newest approved or released version that lists a security
+          tool, or, when it has no approved or released version, its newest
+          draft that does. A tool only another version holds is not offered.
         </p>
       ) : null}
 
       {/*
-        Its own sentence, and deliberately not folded into the one above. That
-        paragraph's advice is "discard it to take it out", which is already done
-        here — printing it over a discarded list tells a consultant to repeat an
-        action they have taken, which reads as the action not having worked.
+        Its own sentence, and deliberately not folded into the one above. A
+        discarded list is not a version "not in force" behind another one:
+        nothing replaced it, and its remedy (upload a replacement) differs.
       */}
       {retiredLists > 0 ? (
         <p
@@ -587,10 +600,10 @@ export function AttackAiInputsPanel({
                         className="py-1 pr-3 font-medium text-ink-primary"
                       >
                         {list.tech_debt_service_title} v{list.version}
-                        {list.is_latest_for_service === false
-                          ? " (superseded)"
-                          : list.is_latest_for_service === null
-                            ? " (discarded)"
+                        {list.is_latest_for_service === null
+                          ? " (discarded)"
+                          : list.in_force === false
+                            ? " (not in force)"
                             : ""}
                       </th>
                       <td className="py-1 pr-3 text-ink-secondary">
