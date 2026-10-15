@@ -1515,41 +1515,40 @@ Rules of the road:
 
 - **GIT WORKTREES ISOLATE FILES. THEY DO NOT ISOLATE A DOCKER-COMPOSE STACK.**
   `docker-compose.yml` hardcodes `name: shield-v2` and binds `./apps/api:/app`,
-  so `docker compose exec` from ANY tree attaches to the same container, mounted
-  from whichever tree last ran `up`. Two worktrees created to give two agents
-  structural isolation would have run every containerised gate against a third
-  tree.
+  so `docker compose exec` from ANY tree attaches to one container, mounted from
+  whichever tree last ran `up`: a gate run that way tests a third tree.
 
-  **A second stack was weighed and WITHDRAWN** — it needs its own
-  `COMPOSE_PROJECT_NAME`, ports, `.env` (gitignored, so `git worktree add` never
-  creates one) and duplicated services, with host-run e2e binding `:3000` from
-  both. **Agents take turns in one tree.**
+  **The parallel model: one worktree per agent, and no additional local Docker
+  stack** (a second was weighed and withdrawn: own project name, ports, `.env`).
 
-  **For the WEB toolchain they no longer have to:** `scripts/verify-in-worktree.sh`
-  runs tsc, vitest or eslint against the worktree you are standing in, in a
-  `--rm` container touching no running service. It needs no `pnpm install` —
-  `node_modules` are named volumes. The one thing NOT in a volume is
-  `packages/*/node_modules`, gitignored and missing from every fresh worktree;
-  the script mounts it read-only from the primary tree, and that single line is
-  what makes it work.
+  - **API unit tests:** `scripts/unit-in-worktree.sh [paths] [-- pytest opts]`,
+    `docker run --rm --network none` on the `shield-v2-api` image with THIS tree
+    mounted read-only; CI's `pytest -m unit tests/unit` by default, SQLite
+    fixtures, no shared Postgres reachable. It prints the tree, HEAD and
+    cleanliness, and exits 2 for an `app` imported from the image or for
+    dependency skew between the image and this tree's `pyproject.toml`.
+  - **Web:** `scripts/verify-in-worktree.sh` (tsc, vitest, eslint); it mounts
+    `packages/*/node_modules` read-only from the primary tree.
+  - **Browser (e2e) and integration tests:** agents run them on GitHub runners
+    only.
 
-  **`--self-test` is the part that matters.** It appends a deliberate type
-  error, proves the write landed with `grep`, requires the run to go RED, and
-  removes it. A green from the wrong mount is indistinguishable from a green
-  from your own work — a typecheck once returned 0 while the container was
-  mounted from a tree containing none of that branch.
+  Both are bash, run in Git Bash on 2026-10-15. **Run `--self-test` before
+  trusting a green from a tree you have not verified from**: each plants a probe
+  only that worktree holds and requires RED, because a green from the wrong
+  mount is indistinguishable from your own (a typecheck once returned 0 from a
+  tree holding none of the branch). The unit one is also shown red with its
+  mount pointed elsewhere.
 
-  **The shared stack is still required for e2e**, the only residual. **The rule
-  is bounded by its REASON, not by the word "worktree"**: a worktree that starts
-  no containers, runs no gates and writes nothing is outside it — which is what
-  makes the read-only reviewer dispatch above safe. Where one tree is kept
-  anyway, detect a switch with `git reflog show HEAD | wc -l` sampled before and
-  after; **`git rev-parse HEAD` cannot do this**, because a switch away and back
-  leaves it byte-identical. Tracked in #203.
+  **The rule is bounded by its REASON, not by the word "worktree"**: a worktree
+  that starts no containers, runs no gates and writes nothing is outside it —
+  which is what makes the read-only reviewer dispatch above safe. Where one tree
+  is shared anyway, detect a switch with `git reflog show HEAD | wc -l` sampled
+  before and after; **`git rev-parse HEAD` cannot do this**, because a switch
+  away and back leaves it byte-identical. Tracked in #203.
 
 - **While any agent holds the shared tree, the ORCHESTRATING SESSION changes
   nothing that agent's work or its gates depend on.** That sentence is the rule;
-  what follows is examples and NOT the set. "Agents take turns in one tree" and
+  what follows is examples and NOT the set. "One worktree per agent" and
   the agent definitions' "only one runs at a time" bind the AGENTS — not the
   session driving them, which has no definition of its own to carry a rule.
 

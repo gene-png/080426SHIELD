@@ -160,6 +160,17 @@ DEFERRED: dict[str, str] = {
         "143 with no probe left. Red-on-revert, 2026-09-24: four mutations, each "
         "red on its named failure."
     ),
+    "unit_in_worktree_status.sh": (
+        "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
+        "Both states are covered internally with REAL RUNS of "
+        "`scripts/unit-in-worktree.sh` under a stub `docker` on PATH: the refusing "
+        "state (image missing, 125, no RAN line, exit 1 with no summary, exit 5, "
+        "`app` from the image, dependency skew, usage) must exit 2 with the cause "
+        "named; the passing state must report pytest's 0 or 1. `--self-test` runs "
+        "in both states: 0 against the worktree, 2 naming the red half with the "
+        "mount pointed at an empty directory. Red-on-revert, 2026-10-15: four "
+        "mutations, each red on its named case."
+    ),
     "verify_in_worktree_mounts.sh": (
         "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
         "Both states are covered internally and BOTH ARE REAL RUNS: the passing "
