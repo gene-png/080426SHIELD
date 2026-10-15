@@ -1,0 +1,3 @@
+{"incident": "#736 item C: on a merge-queue entry the audit must name the head being merged. Measured 2026-10-15, all 20 of the latest merged PRs named the final head inside the audit section, 8 of them only outside the Scope line (PRs 1039-1162). A body that names the head in its summary and test plan while the audit names only an earlier head reads as current to a skimmer; the section is what is judged.",
+ "expect": 1, "adversarial": true,
+ "argv": ["--changed-files", "{dir}/changed.txt", "--body", "{dir}/body.md", "--head-sha", "{dir}/head.txt"]}

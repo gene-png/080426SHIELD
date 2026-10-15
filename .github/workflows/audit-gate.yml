@@ -98,18 +98,24 @@ jobs:
       # merge_group only: the same four inputs the three steps above collect on
       # pull_request, fetched for the PR the queue ref names. See the `on:`
       # block. Exit 2 -- red -- if the ref does not parse or any fetch fails, and
-      # no stale file survives for the check below to read.
+      # no stale file survives for the check below to read. Given the group's
+      # base and head, it also refuses (2) unless the PR's CURRENT head is what
+      # the group merges, and writes that head for the audit check below.
       - name: Read the queued PR (merge_group)
         if: github.event_name == 'merge_group'
         working-directory: apps/api
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_REF: ${{ github.event.merge_group.head_ref }}
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
           REPO: ${{ github.repository }}
         run: >-
           python -m scripts.merge_group_pr --head-ref "$HEAD_REF" --repo "$REPO"
+          --base-sha "$BASE_SHA" --group-head-sha "$GROUP_HEAD_SHA"
           --files-out /tmp/changed.txt --diff-out /tmp/diff.txt
           --body-out /tmp/body.md --author-out /tmp/author.txt
+          --head-sha-out /tmp/pr_head_sha.txt
 
       # The PR AUTHOR, for the Dependabot exemption below, on both events.
       # `github.event.pull_request.user.login` is EMPTY on merge_group, and an
@@ -285,10 +291,22 @@ jobs:
         run: |
           python scripts/check_bot_pr_is_manifest_only.py             --author "$AUTHOR"             --changed-files /tmp/changed.txt             --diff /tmp/diff.txt
 
+      # On merge_group the audit section must also NAME the head being merged
+      # (#736 item C): the resolver above has shown that head is what the group
+      # merges, and an audit naming an earlier head says nothing about it. Not
+      # on pull_request: there it would redden every PR between a push and the
+      # body edit that follows it.
       - name: Require recorded audit evidence
         if: steps.author.outputs.login != 'dependabot[bot]'
         working-directory: apps/api
-        run: python -m scripts.check_audit_evidence --changed-files /tmp/changed.txt --body /tmp/body.md
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = "merge_group" ]; then
+            python -m scripts.check_audit_evidence --changed-files /tmp/changed.txt --body /tmp/body.md --head-sha /tmp/pr_head_sha.txt
+          else
+            python -m scripts.check_audit_evidence --changed-files /tmp/changed.txt --body /tmp/body.md
+          fi
 
   merge-rule-text:
     # INTERIM, until CODEOWNERS covers the governance files (#572). A PR that
@@ -553,16 +571,21 @@ jobs:
       # and GitHub's closing references, for the PR the queue ref names. See the
       # `on:` block. Unlike the step above, a failed closing-references query
       # fails THIS step (exit 2) rather than leaving the file absent; both are
-      # red, and neither is a verdict about the change.
+      # red, and neither is a verdict about the change. It also refuses (2)
+      # unless the PR's CURRENT head is what the group merges, so the commit
+      # messages judged here are the merged change's own.
       - name: Read the queued PR (merge_group)
         if: github.event_name == 'merge_group'
         working-directory: apps/api
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_REF: ${{ github.event.merge_group.head_ref }}
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
           REPO: ${{ github.repository }}
         run: >-
           python -m scripts.merge_group_pr --head-ref "$HEAD_REF" --repo "$REPO"
+          --base-sha "$BASE_SHA" --group-head-sha "$GROUP_HEAD_SHA"
           --title-out /tmp/pr_title.txt --body-out /tmp/pr_body.txt
           --commits-out /tmp/pr_commits.txt --linked-out /tmp/pr_linked.txt
 

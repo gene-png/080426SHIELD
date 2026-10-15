@@ -52,3 +52,26 @@ merge-rule condition 5 (`.github/workflows/**`, `apps/api/scripts/**`,
 Three in `test_audit_gate_dependabot_exemption.py` repinned by equality to the
 author step; one in `test_compose_unchanged.py` now allows exactly one
 job-level condition on the compose job. The PR body carries the verdicts.
+
+## 2026-10-15: the owner's spec (#736, item C)
+
+- **The body checks confirm the queued head is the one being merged.** Both
+  resolver steps pass the event's `merge_group.base_sha` and `head_sha`;
+  `merge_group_pr.py` then requires the group head's tree to equal
+  `git merge-tree --write-tree <base_sha> <PR head.sha>`, fetching the PR head
+  by sha when the clone lacks it. A PR pushed after it was queued, a group
+  holding a second PR, or a head that conflicts with the base is exit 2 with
+  no output written. Method-agnostic: squash and merge-commit groups both pass
+  (`tests/gates/merge_group_head.sh`, real git).
+- **The audit must name that head.** On merge_group only, `check_audit_evidence
+  --head-sha` requires the `## Adversarial audit` section to contain a 7-to-40
+  hex prefix of the PR's current head (exit 1 if not, 2 if the head file is
+  unreadable). All 20 of the latest merged PRs (1039 to 1162) already did.
+- **Recorded payloads.** `tests/unit/test_merge_group_payloads.py` replays
+  octokit's recorded `checks_requested` payload, and two copies differing only
+  in `head_ref` (unparseable; a PR that does not exist), through both
+  workflows' resolver steps as written.
+- **What every required check reads** is pinned by
+  `tests/unit/test_merge_group_event_reads.py`: no checkout overrides `ref:`,
+  no step reads pull_request-only context unless it is pull_request-only, and
+  no job a required check `needs` has a condition other than `always()`.

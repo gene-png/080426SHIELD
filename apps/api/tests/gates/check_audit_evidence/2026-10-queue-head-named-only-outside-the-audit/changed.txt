@@ -1,0 +1,1 @@
+apps/api/scripts/merge_group_pr.py

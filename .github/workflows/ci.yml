@@ -378,6 +378,11 @@ jobs:
           # group scanning nothing and passing; this proves the guard fires,
           # that a squash-shaped group scans its range, and each exit code.
           bash tests/gates/gitleaks_merge_group.sh
+          # #659 / #736 item C: on merge_group the two body checks refuse unless
+          # the queued PR's current head is what the group merges. The unit
+          # tests replace git; this proves, against real git, that a squash
+          # group and a merge-commit group pass and a moved head is refused.
+          bash tests/gates/merge_group_head.sh
 
       - name: gates can fail
         run: python apps/api/scripts/check_gate_fixtures.py
