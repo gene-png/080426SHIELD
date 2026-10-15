@@ -1,0 +1,164 @@
+# BENCHMARK ONLY -- never merged. Runs on pushes to bench/** branches, so it
+# never runs on a PR and never reports a required check. It measures the
+# Python job's pytest step under five configurations on GitHub's own runners:
+#   baseline         CI's exact command, plus a timing plugin
+#   template         + a migrated SQLite template instead of 71 migrations/test,
+#                      checked by a no-op Alembic upgrade ("alembic" mode) or by
+#                      reading alembic_version against head ("version" mode)
+#   shard (x4)       #680's pytest_shard plugin, 4 parallel jobs
+#   shard+template   both
+#   xdist+template   one runner, pytest-xdist -n 4, version mode (an extra comparison)
+# The `verify` job proves each sharded variant ran every selected test exactly
+# once, using #680's own `shard_partition verify`.
+name: Bench CI
+
+on:
+  push:
+    branches: ["bench/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: ${{ github.workspace }}/bench:${{ github.workspace }}/apps/api
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  single:
+    name: ${{ matrix.variant }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [baseline, template, template-version, xdist-template-version]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install API + dev tools (as CI)
+        working-directory: apps/api
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Install pytest-xdist (xdist variant only)
+        if: matrix.variant == 'xdist-template-version'
+        run: pip install "pytest-xdist==3.6.1"
+      - name: Runner facts
+        run: nproc; free -m; python --version; pip list 2>/dev/null | grep -iE "^(pytest|alembic|sqlalchemy) "
+      - name: pytest -m unit (${{ matrix.variant }})
+        working-directory: apps/api
+        env:
+          CI_TIMING_OUT: ${{ github.workspace }}/out/timing.json
+          TEMPLATE_DB_OUT: ${{ github.workspace }}/out/template.json
+          TEMPLATE_DB_MODE: ${{ contains(matrix.variant, 'version') && 'version' || 'alembic' }}
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          case "${{ matrix.variant }}" in
+            baseline)       extra="-p ci_timing" ;;
+            template|template-version) extra="-p template_db -p ci_timing" ;;
+            xdist-template-version)    extra="-p template_db -n 4" ;;
+          esac
+          start=$(date +%s)
+          set +e
+          pytest -m unit tests/unit $extra --junitxml="$GITHUB_WORKSPACE/out/junit.xml" -q 2>&1 | tail -n 60
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "pytest_exit=$status seconds=$(( $(date +%s) - start ))" | tee "$GITHUB_WORKSPACE/out/result.txt"
+          exit "$status"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-${{ matrix.variant }}
+          path: out/
+          retention-days: 14
+
+  sharded:
+    name: ${{ matrix.variant }} ${{ matrix.shard }}/4
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [shard, shard-template-version]
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install API + dev tools (as CI)
+        working-directory: apps/api
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: pytest -m unit (${{ matrix.variant }} ${{ matrix.shard }}/4)
+        working-directory: apps/api
+        env:
+          PYTEST_SHARD: ${{ matrix.shard }}/4
+          PYTEST_SHARD_RECORD: ${{ github.workspace }}/out/ran.txt
+          CI_TIMING_OUT: ${{ github.workspace }}/out/timing.json
+          TEMPLATE_DB_OUT: ${{ github.workspace }}/out/template.json
+          TEMPLATE_DB_MODE: version
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          extra="-p scripts.pytest_shard -p ci_timing"
+          if [ "${{ matrix.variant }}" = "shard-template-version" ]; then extra="-p template_db $extra"; fi
+          start=$(date +%s)
+          set +e
+          pytest -m unit tests/unit $extra --junitxml="$GITHUB_WORKSPACE/out/junit.xml" -q 2>&1 | tail -n 60
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "pytest_exit=$status seconds=$(( $(date +%s) - start ))" | tee "$GITHUB_WORKSPACE/out/result.txt"
+          exit "$status"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-${{ matrix.variant }}-${{ matrix.shard }}
+          path: out/
+          retention-days: 14
+
+  verify:
+    name: verify shard partitions
+    needs: [sharded]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install API + dev tools (as CI)
+        working-directory: apps/api
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bench-shard*
+          path: shards
+      - name: Full CI selection (CI's selector, collected)
+        working-directory: apps/api
+        run: |
+          set -o pipefail
+          # CI's exact selector, collected; node ids are the lines carrying "::".
+          pytest -m unit tests/unit --collect-only -q -p no:cacheprovider > "$GITHUB_WORKSPACE/collect.txt"
+          grep "::" "$GITHUB_WORKSPACE/collect.txt" > "$GITHUB_WORKSPACE/full.txt"
+          tail -n 3 "$GITHUB_WORKSPACE/collect.txt"
+          wc -l "$GITHUB_WORKSPACE/full.txt"
+      - name: Each sharded variant is a partition of the selection
+        working-directory: apps/api
+        run: |
+          rc=0
+          for v in shard shard-template-version; do
+            echo "== $v"
+            python -m scripts.shard_partition verify --full "$GITHUB_WORKSPACE/full.txt" --of 4 \
+              --ran "$GITHUB_WORKSPACE"/shards/bench-$v-1/ran.txt "$GITHUB_WORKSPACE"/shards/bench-$v-2/ran.txt \
+                    "$GITHUB_WORKSPACE"/shards/bench-$v-3/ran.txt "$GITHUB_WORKSPACE"/shards/bench-$v-4/ran.txt || rc=1
+          done
+          exit $rc
