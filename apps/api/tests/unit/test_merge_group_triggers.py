@@ -96,9 +96,11 @@ def test_a_required_checks_workflow_runs_on_merge_group(context: str) -> None:
 @pytest.mark.unit
 @pytest.mark.parametrize("context", REQUIRED_CONTEXTS)
 def test_a_required_job_has_no_job_level_condition(context: str) -> None:
-    """A skipped required job reports success. No condition, no skip."""
+    """A skipped required job reports success. No condition, no skip -- except
+    exactly `always()`, by equality: it never skips, and it is what an aggregate
+    over `needs` jobs must carry to report at all when one of them fails (#680)."""
     file, key, job = _job_named(context)
-    assert "if" not in job, (
+    assert job.get("if", "always()") == "always()", (
         f"{context!r} ({file}:{key}) carries a job-level `if: {job['if']}`. When it is "
         f"false the job is SKIPPED and the required context reports SUCCESS -- a "
         f"silent green on the event it excluded."
