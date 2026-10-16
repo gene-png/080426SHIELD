@@ -66,7 +66,8 @@ describe("EditableCapabilityTable layout (#643)", () => {
     for (const [label, value] of [
       ["Name", "Tool"],
       ["Vendor", "Vendor"],
-      ["Category", "Category"],
+      // #1176: Category is a dropdown now, not free text. Its title is pinned
+      // in EditableCapabilityTable.category.test.tsx's cases.
       ["Function", "Function"],
       ["Notes", "n"],
     ]) {

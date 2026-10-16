@@ -120,8 +120,11 @@ test("client message reaches the admin inbox + workspace, reply returns, and ope
 
     // --- Admin opens the thread (clears unread) and replies --------------
     await inboxRow.click();
+    // T6: the inbox link's old workspace URL redirects into the client frame.
     await adminPage.waitForURL(
-      new RegExp(`/admin/services/${csfServiceId}/csf`),
+      new RegExp(
+        `/admin/clients/[^/]+/services/csf/overview\\?service=${csfServiceId}`,
+      ),
       { timeout: 30000 },
     );
     await ensureCsfAssessment(adminPage, csfServiceId);

@@ -422,16 +422,22 @@ def test_zt_sends_the_corpus_notes_redacted_and_says_so(world) -> None:
         assert "[CLIENT] security team runs this daily" in blob
         # Every note sent is a corpus note, as the redactor leaves it.
         assert set(notes) <= _all_corpus_notes("[CLIENT]")
-        assert {"No MFA.", "N/A", "TBD", ""} <= set(notes)
+        assert {"No MFA.", "N/A", "TBD"} <= set(notes)
+        # #1084: a blank note is never sent; "N/A" and "TBD" are notes.
+        assert "" not in set(notes), notes
     setup = report["input_setup"]["notes_corpus"]
     assert setup["corpus"] == "measure-notes-v1"
     assert setup["sha256"] == corpus.sha256
     assert list(setup["classes"]) == SECTION_2_NOTE_CLASSES
-    rows = len(seen[0]["capabilities"])
-    assert setup["rows"] == rows
-    assert sum(v["rows"] for v in setup["classes"].values()) == rows
-    # ZT sends every row it builds, so every row a class landed on was sent.
-    assert all(v["rows"] >= 1 and v["sent"] == v["rows"] for v in setup["classes"].values())
+    assert sum(v["rows"] for v in setup["classes"].values()) == setup["rows"]
+    assert sum(v["sent"] for v in setup["classes"].values()) == len(seen[0]["capabilities"])
+    # ZT sends every row with a note, and no blank one (#1084), as CSF does.
+    classes = setup["classes"]
+    assert classes["blank"]["rows"] >= 1
+    assert classes["blank"]["sent"] == 0
+    assert all(
+        v["rows"] >= 1 and v["sent"] == v["rows"] for k, v in classes.items() if k != "blank"
+    ), classes
     assert setup["client_name_substituted"] >= 1
     assert report["runs_ok"] == 2
 
@@ -1487,7 +1493,13 @@ def test_a_started_call_whose_row_never_landed_is_unknown_even_in_a_successful_r
     `invoke` once more in a session that is never committed -- the in-flight
     straggler's shape -- and returns success. Nothing else marks the run
     incomplete, so only the rule can make its spend unknown. It does not drive
-    the deadline path; the test above does."""
+    the deadline path; the test above does.
+
+    The straggler's session is IN a transaction when it calls (#1025): a
+    caller holding none has its RUNNING row committed by `invoke` from a
+    session of its own, so that row always lands. One in a transaction keeps
+    the row in it, uncommitted, which is the shape this rule is for."""
+    from sqlalchemy import select as _select
     from sqlalchemy.orm import Session as _Session
 
     import app.ai.batching as batching
@@ -1500,6 +1512,8 @@ def test_a_started_call_whose_row_never_landed_is_unknown_even_in_a_successful_r
     def with_a_lost_row(db, llm, job_name, batch_inputs, **kw):
         result = real(db, llm, job_name, batch_inputs, **kw)
         lost = _Session(bind=db.get_bind())
+        lost.execute(_select(1))
+        assert lost.in_transaction(), "setup: the straggler holds a transaction"
         run_job(
             lost,
             llm,
@@ -1530,9 +1544,15 @@ def test_a_started_call_whose_row_never_landed_is_unknown_even_in_a_successful_r
 def test_a_batch_whose_commit_failed_after_the_call_is_unknown_spend(
     csf_world, monkeypatch
 ) -> None:
-    # Scenario (b): the provider call returned (and billed), then the
-    # worker's `session.commit()` failed, so its row never landed.
+    # Scenario (b): the provider call returned (and billed), then recording
+    # its outcome failed, so the row never says what the call cost. Since
+    # #1025 a batch worker's row is written by `invoke` from sessions of its
+    # own: the RUNNING row commits before the call, and the FINALISE after it
+    # is the commit that can fail, leaving the row RUNNING with no tokens.
+    # So the failing commit is the first one carrying a COMPLETED row.
     from sqlalchemy.orm import Session as _Session
+
+    from app.models.llm_call import LLMCall, LLMCallStatus
 
     c, TestSession, provider = csf_world
     provider.register("csf_score", _csf_answer_all([]))
@@ -1540,15 +1560,19 @@ def test_a_batch_whose_commit_failed_after_the_call_is_unknown_spend(
 
     class FailingCommit(_Session):
         def commit(self):
+            finalising = any(
+                isinstance(o, LLMCall) and o.status == LLMCallStatus.COMPLETED
+                for o in [*self.new, *self.dirty]
+            )
             with lock:
-                if not chosen:
+                mine = finalising and not chosen
+                if mine:
                     chosen.append(id(self))
-                mine = chosen[0] == id(self)
             if mine:
                 raise RuntimeError("commit failed")
             return super().commit()
 
-    monkeypatch.setattr("app.ai.batching.Session", FailingCommit)
+    monkeypatch.setattr("app.ai.llm.Session", FailingCommit)
     with TestSession() as db:
         report = measure_csf(db, LLMClient(provider), runs=2, max_usd=100.0, price=OPUS5)
     assert report["failed_runs"][0]["failure"] == "batches_failed:1/11"
@@ -1556,6 +1580,20 @@ def test_a_batch_whose_commit_failed_after_the_call_is_unknown_spend(
     assert report["budget_usd"]["complete"] is False
     # #952 round 3, finding 2: the output-token block says the same.
     assert report["budget"]["complete"] is False
+    # Which commit failed: the FINALISE, after the call. Its row was committed
+    # RUNNING before egress and still says so, with no tokens; a failed INSERT
+    # would leave no row at all and report the same unknown spend.
+    assert chosen, "setup: the finalise commit failed"
+    from sqlalchemy import func as _func
+    from sqlalchemy import select as _select
+
+    with TestSession() as db:
+        stuck = db.execute(
+            _select(_func.count())
+            .select_from(LLMCall)
+            .where(LLMCall.status == LLMCallStatus.RUNNING, LLMCall.output_tokens.is_(None))
+        ).scalar_one()
+    assert stuck == 1, stuck
 
 
 def _dump_failing(monkeypatch, statuses: dict[str, str]):

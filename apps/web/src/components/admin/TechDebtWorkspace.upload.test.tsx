@@ -35,6 +35,11 @@ vi.mock("@/lib/tech_debt/client", () => ({
     Promise.resolve({ running: null, latest: null, last_completed: null }),
   ),
   fetchConsolidationPlan: vi.fn(),
+  // #1176: the workspace reads the category list on load; it loads here, so
+  // this file's single-alert lookups see only the alerts they are about.
+  fetchCategories: vi.fn(() =>
+    Promise.resolve({ categories: [], uncategorized_label: "Uncategorized" }),
+  ),
   fetchLatestDeliverable: vi.fn(),
   fetchLatestList: vi.fn(),
   fetchOverlapAnalysis: vi.fn(),
