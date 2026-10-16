@@ -108,7 +108,11 @@ export default async function SectionPage(props: {
         hrefFor={(key) => sectionHref(clientId, kind, key, svc.service_id)}
       />
       <div className="mt-6">
-        <ExistingWorkspace kind={kind} serviceId={svc.service_id} />
+        <ExistingWorkspace
+          kind={kind}
+          serviceId={svc.service_id}
+          section={sectionKey}
+        />
       </div>
     </div>
   );

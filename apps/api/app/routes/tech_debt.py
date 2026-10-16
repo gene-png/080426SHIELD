@@ -1647,6 +1647,19 @@ def patch_capability_item(
     return CapabilityItemResponse.model_validate(item, from_attributes=True)
 
 
+def _already_decided_message(decided: int, selected: int) -> str:
+    """TD-11 (for #1055). Copy approved on #736 (6216024281 item 2)."""
+    if selected == 1:
+        return (
+            "The undecided row now has a decision. Nothing was changed. "
+            "Reload the list and try again."
+        )
+    return (
+        f"{decided} of the {selected} undecided rows now have a decision. "
+        "Nothing was changed. Reload the list and try again."
+    )
+
+
 @router.post(
     "/capability-lists/{list_id}/items/disposition",
     response_model=CapabilityListResponse,
@@ -1707,11 +1720,50 @@ def bulk_set_disposition(
                 ),
             },
         )
-    for item in items:
-        item.disposition = body.disposition
-        item.confidence_pct = None
+    if body.only_if_undecided:
+        # TD-11 (for #1055): ONE conditional UPDATE, so the check and the write
+        # are atomic -- a decision committed after the rows were read above is
+        # still seen. All or nothing, like the refusal above: a short count
+        # rolls back every row, so "Set {n} rows to Keep." is never partial.
+        #
+        # `_record_edit` FIRST: it takes the list row's lock, and every other
+        # edit path takes that lock before its item rows (sessions do not
+        # autoflush, so their item UPDATEs reach the database at commit). Taking
+        # the items first here would invert the order and can deadlock two
+        # consultants on Postgres. A refusal below rolls the bump back.
+        _record_edit(db, cap_list.id)
+        written = db.execute(
+            update(CapabilityItem)
+            .where(
+                CapabilityItem.capability_list_id == cap_list.id,
+                CapabilityItem.id.in_(wanted),
+                CapabilityItem.disposition.is_(None),
+            )
+            .values(disposition=body.disposition, confidence_pct=None)
+            .execution_options(synchronize_session=False)
+        ).rowcount
+        if written != len(wanted):
+            db.rollback()
+            decided = len(wanted) - written
+            _log.warning(
+                "tech_debt.bulk_disposition_refused",
+                capability_list_id=str(cap_list.id),
+                selected=len(wanted),
+                already_decided=decided,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "reason": "capability_items_already_decided",
+                    "message": _already_decided_message(decided, len(wanted)),
+                },
+            )
+    else:
+        for item in items:
+            item.disposition = body.disposition
+            item.confidence_pct = None
+        _record_edit(db, cap_list.id)
     item_ids = sorted(str(i.id) for i in items)
-    _record_edit(db, cap_list.id)
     audit(
         db,
         action="capability_items.disposition_set",
@@ -1723,6 +1775,7 @@ def bulk_set_disposition(
             "disposition": body.disposition.value if body.disposition else None,
             "item_count": len(item_ids),
             "item_ids": item_ids,
+            "only_if_undecided": body.only_if_undecided,
         },
     )
     db.commit()

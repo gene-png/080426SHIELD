@@ -1,0 +1,12 @@
+{
+ "incident": "ADVERSARIAL (review of #680 at af6847a2): a test reported twice with NOTHING lost -- what `--dist each` or a re-run plugin produces. Nothing is missing and nothing is unselected, and passed + skipped + xfailed is at least the selection, so only the duplicate check can make this red. The sibling case also loses a test, so it stayed red with the duplicate check deleted.",
+ "expect": 1,
+ "adversarial": true,
+ "argv": [
+  "--junit",
+  "{dir}/junit.xml",
+  "--selected",
+  "{dir}/selected.txt"
+ ],
+ "stdout_contains": "reported 2 times: tests/unit/test_a.py::TestB::test_two[x-1]"
+}

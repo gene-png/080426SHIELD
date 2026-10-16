@@ -30,8 +30,8 @@ function result(over: Partial<ZtRunAiResponse> = {}): ZtRunAiResponse {
 }
 
 const DRIFT = /The AI returned no suggestions at all/;
-// PENDING the advisor's ruling: the proposed line for a run that sent nothing.
-// It changes with the ruling, never with the component.
+// Approved verbatim at #736 comment 6216024281: the line for a run that sent
+// nothing. Quoted here, never imported from the component.
 const NOTHING_SENT =
   "No capability was sent to the AI, because none had notes recorded when this run started.";
 

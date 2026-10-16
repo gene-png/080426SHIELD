@@ -195,12 +195,19 @@ export async function bulkSetDisposition(
   listId: string,
   itemIds: string[],
   disposition: CapabilityDisposition | null,
+  // TD-11 (for #1055): true refuses the whole request if any row has a
+  // decision by now (`capability_items_already_decided`), so a click never
+  // overwrites another consultant's decision.
+  onlyIfUndecided = false,
 ): Promise<CapabilityList> {
   return jsonRequest<CapabilityList>(
     `/api/proxy/tech-debt/capability-lists/${listId}/items/disposition`,
     {
       method: "POST",
-      body: { item_ids: itemIds, disposition },
+      // The key is sent only when set, so #641's request body is unchanged.
+      body: onlyIfUndecided
+        ? { item_ids: itemIds, disposition, only_if_undecided: true }
+        : { item_ids: itemIds, disposition },
     },
   );
 }
