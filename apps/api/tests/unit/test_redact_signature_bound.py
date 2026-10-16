@@ -217,3 +217,32 @@ def test_a_bare_opener_that_starts_no_block_does_not_end_the_window() -> None:
     assert "Appendix line 1 lists" not in cleaned
     for kept in ("Appendix line 2 lists", "Appendix line 3 lists", "Appendix line 4 lists"):
         assert kept in cleaned, f"{kept!r} was cut, past the window"
+
+
+# --- #1256: a rank-and-name line ending in a full stop -----------------------
+#
+# The REDACT row is in test_redact_rules_matrix.py's _SIGNATURE_LEAKS. These pin
+# what the fix must NOT start cutting: only an all-capitalised line has its
+# ranks and suffixes left out of the word count.
+
+
+@pytest.mark.parametrize(
+    ("shape", "text"),
+    [
+        # A sentence ends the lookahead (B1), so the name line after it must
+        # not be reached: the sentence has to stay a sentence.
+        (
+            "a sentence with an honorific",
+            "Findings follow.\nBest\nDr. Smith approved the change.\nDana Whitfield\n",
+        ),
+        (
+            "a capitalised sentence of five words",
+            "Findings follow.\nBest\nThe Quarterly Board Review Concluded.\n",
+        ),
+    ],
+)
+@pytest.mark.parametrize("scope", ["to_end", "block"])
+def test_prose_after_an_opener_is_still_not_cut(shape: str, text: str, scope: str) -> None:
+    cleaned, counts = redact_for_ai(text, mode="strict", signature_scope=scope)
+    assert "signature_block" not in counts, shape
+    assert cleaned.endswith(text.splitlines()[-1] + "\n"), shape

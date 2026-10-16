@@ -594,7 +594,17 @@ def _looks_like_prose(line: str) -> bool:
         return False
     if not stripped[0].isupper():
         return True
-    return len(stripped.split()) > _MAX_SIGNATORY_WORDS
+    words = stripped.split()
+    # A line in which EVERY token is capitalised is name-shaped, so it is
+    # measured as `_looks_like_a_signatory` measures it: ranks, initials and
+    # suffixes (`_is_abbreviation`) do not count. Counted raw, "Lt. Col. Dana M.
+    # Whitfield Jr." was six words ending in a full stop -- a "sentence" -- so
+    # the signature cut stopped before it and the name went to the model
+    # (#1256). A line with any lowercase word is still counted raw: "Dr. Smith
+    # approved the change." stays a sentence.
+    if all(w[0].isupper() for w in words):
+        words = [w for w in words if not _is_abbreviation(w)]
+    return len(words) > _MAX_SIGNATORY_WORDS
 
 
 def _split_inline_signoff(line: str) -> bool:
