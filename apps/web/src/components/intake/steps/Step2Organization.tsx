@@ -168,7 +168,9 @@ export function Step2Organization({
           <input
             id="country"
             type="text"
-            defaultValue={c?.country ?? "United States"}
+            // #1200: no prefill. A default shown here is what the next blur
+            // saves, which silently undid a cleared country.
+            defaultValue={c?.country ?? ""}
             onBlur={(e) => saveField("country", e.target.value || null)}
             className={inputClasses}
           />

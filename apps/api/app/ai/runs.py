@@ -177,16 +177,28 @@ def _charged_likely(db: Session, run_id: uuid.UUID, mode: LLMCallMode) -> bool |
     return None if mode == LLMCallMode.LIVE else False
 
 
+def _charged_likely_for(db: Session, ctx: RunContext) -> bool | None:
+    """`_charged_likely`, plus the one case the ledger cannot see: a job that
+    DECLARED it made no provider call (`RunContext.declare_no_call`, #1219)
+    sent nothing, so it is "not charged", False -- never None, which the
+    workspace prints on a failed run as "may have made a live AI call". A
+    committed live row still wins: a declaration never hides a real call."""
+    charged = _charged_likely(db, ctx.run_id, ctx.mode)
+    if charged is None and ctx.declared_no_call:
+        return False
+    return charged
+
+
 def _charged_likely_after(db: Session, ctx: RunContext, exc: BaseException) -> bool | None:
-    """`_charged_likely` for a run that raised, with one case it cannot see:
-    a run the redaction gate refused before ANY of its payloads cleared
+    """`_charged_likely_for` for a run that raised, with one case it cannot
+    see: a run the redaction gate refused before ANY of its payloads cleared
     (#552) sent nothing, so it is "not charged", False -- never None, which
     the workspace prints as "may have made a live AI call" beside a refusal
     saying nothing was sent. A refusal after a payload cleared is no such
     proof, and falls through to the ledger like any other failure."""
     if isinstance(exc, RedactionRefused) and not exc.sent_before:
         return False
-    return _charged_likely(db, ctx.run_id, ctx.mode)
+    return _charged_likely_for(db, ctx)
 
 
 def _fail_if_running(
@@ -450,6 +462,13 @@ class RunOutcome:
     accounting: tuple[str, dict[str, Any]] | None = None
 
 
+@dataclass
+class _NoCallMark:
+    """The one mutable bit a frozen `RunContext` carries (#1219)."""
+
+    declared: bool = False
+
+
 @dataclass(frozen=True)
 class RunContext:
     """Plain values a job needs. Never request-bound ORM objects: the request
@@ -463,6 +482,21 @@ class RunContext:
     deadline_at: datetime
     llm: LLMClient
     extra: dict[str, Any] = field(default_factory=dict)
+    # Not a constructor argument and not part of equality: only the job sets it.
+    _no_call: _NoCallMark = field(
+        default_factory=_NoCallMark, init=False, compare=False, repr=False
+    )
+
+    def declare_no_call(self) -> None:
+        """The job decided, before any provider call, to make none (#1219):
+        e.g. a ZT run whose every capability is blank (#1084). The run then
+        records `charged_likely` False, not "not known". Call it only on a
+        path that has made no call and will make none."""
+        self._no_call.declared = True
+
+    @property
+    def declared_no_call(self) -> bool:
+        return self._no_call.declared
 
     @property
     def mode(self) -> LLMCallMode:
@@ -520,7 +554,7 @@ def _execute(bind: Engine | Connection, ctx: RunContext, work: Work) -> None:
                 applied_count=outcome.applied_count,
                 batches_total=outcome.batches_total,
                 batches_failed=outcome.batches_failed,
-                charged_likely=_charged_likely(session, ctx.run_id, ctx.mode),
+                charged_likely=_charged_likely_for(session, ctx),
                 finished_at=utcnow(),
             )
             .execution_options(synchronize_session=False)
