@@ -46,5 +46,7 @@ def test_a_push_to_main_has_a_group_of_its_own() -> None:
 def test_ci_runs_on_both_events_the_group_tells_apart() -> None:
     # The group's two arms are only meaningful while CI runs on both events.
     on = _ci().get("on", _ci().get(True))
-    assert set(on) == {"push", "pull_request"}, on
+    # A SUBSET, not equality: any other trigger (e.g. `merge_group`, which #659
+    # adds) falls to the commit arm, a group of its own, which is safe.
+    assert {"push", "pull_request"} <= set(on), on
     assert on["push"] == {"branches": ["main"]}, on["push"]
