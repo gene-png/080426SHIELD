@@ -34,19 +34,25 @@ EMAIL = "first@example.com"
 
 @contextmanager
 def pool_count() -> Iterator[list[int]]:
-    """Connections checked out of any pool since entry, live, as `[n]`. The
-    same counter #1365 adds as `tests/_pool_count.py`, kept here so this fix
-    does not wait on that PR."""
+    """Connections checked out of any pool since entry and not yet returned,
+    live, as `[n]`. The same counter #1365 adds as `tests/_pool_count.py`,
+    kept here so this fix does not wait on that PR. Tracked per connection,
+    so a connection checked out BEFORE entry and returned during the block is
+    not counted at all: a plain counter went negative in a full run (CI on
+    #1365, `[-2, -2, ...]`)."""
     held = [0]
+    out: set[int] = set()
     lock = threading.Lock()
 
-    def _out(*_a) -> None:
+    def _out(_dbapi_conn, record, _proxy) -> None:
         with lock:
-            held[0] += 1
+            out.add(id(record))
+            held[0] = len(out)
 
-    def _in(*_a) -> None:
+    def _in(_dbapi_conn, record) -> None:
         with lock:
-            held[0] -= 1
+            out.discard(id(record))
+            held[0] = len(out)
 
     event.listen(Pool, "checkout", _out)
     event.listen(Pool, "checkin", _in)
