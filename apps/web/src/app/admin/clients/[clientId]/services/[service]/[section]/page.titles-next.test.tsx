@@ -177,25 +177,38 @@ describe("the header's Next: line, from the current stage", () => {
     );
   });
 
-  it("Zero Trust at prepare waits for the client, linking to Overview", async () => {
-    const ZTC_A = "5e000000-0000-4000-8000-0000000000e1";
-    const world = baseWorld();
-    world.services.push({
-      id: ZTC_A,
-      client_id: A,
-      kind: "zero_trust_cisa",
-      status: "draft",
-      created_at: "2026-09-04T10:00:00Z",
-    });
-    serveStages(at("prepare"), world);
-    await renderSection("zero-trust-cisa", ZTC_A);
-    const line = "Next: wait for the client's self-assessment";
-    expect(screen.getByTestId("service-header-next").textContent).toBe(line);
-    expect(screen.getByRole("link", { name: line.slice(6) })).toHaveAttribute(
-      "href",
-      hrefTo("zero-trust-cisa", "overview", ZTC_A),
-    );
-  });
+  it.each([
+    [
+      "zero_trust_cisa",
+      "zero-trust-cisa",
+      "5e000000-0000-4000-8000-0000000000e1",
+    ],
+    [
+      "zero_trust_dod",
+      "zero-trust-dod",
+      "5e000000-0000-4000-8000-0000000000f1",
+    ],
+  ] as const)(
+    "Zero Trust (%s) at prepare waits for the client, linking to Overview",
+    async (kind, slug, id) => {
+      const world = baseWorld();
+      world.services.push({
+        id,
+        client_id: A,
+        kind,
+        status: "draft",
+        created_at: "2026-09-04T10:00:00Z",
+      });
+      serveStages(at("prepare"), world);
+      await renderSection(slug, id);
+      const line = "Next: wait for the client's self-assessment";
+      expect(screen.getByTestId("service-header-next").textContent).toBe(line);
+      expect(screen.getByRole("link", { name: line.slice(6) })).toHaveAttribute(
+        "href",
+        hrefTo(slug, "overview", id),
+      );
+    },
+  );
 
   it("CSF past prepare uses the shared line (no Inputs section to link)", async () => {
     serveStages(at("analyze"));
