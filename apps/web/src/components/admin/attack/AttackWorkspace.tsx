@@ -54,6 +54,7 @@ import { RunAiGuard } from "@/components/admin/RunAiGuard";
 import { AttackAiInputsPanel } from "./AttackAiInputsPanel";
 import { AttackCitationAccounting } from "./AttackCitationAccounting";
 import { AttackComputedReviewPanel } from "./AttackComputedReviewPanel";
+import { AttackMappingDone } from "./AttackMappingDone";
 import { AttackDeliverableCard } from "./AttackDeliverableCard";
 import { AttackHeatmapCard } from "./AttackHeatmapCard";
 import { AttackMatrix } from "./AttackMatrix";
@@ -977,7 +978,19 @@ export function AttackWorkspace({
                 <AiSourceNote source={assessment.ai_source} />
               ) : null}
               <LastRunNote run={aiRun.lastCompleted} />
-              {runResult ? (
+              {/* #1182: what the run covered. A run stored without an applied
+                  count keeps the line it was shown with. */}
+              {runResult && aiRun.lastCompleted?.applied_count != null ? (
+                <AttackMappingDone
+                  toolsAvailable={runResult.tools_available}
+                  techniquesMapped={aiRun.lastCompleted.applied_count}
+                  batchesFailed={
+                    (runResult.batches_failed ?? 0) +
+                    (runResult.reask_batches_failed ?? 0)
+                  }
+                  catalog={catalog.techniques}
+                />
+              ) : runResult ? (
                 <p className="text-sm text-ink-secondary" aria-live="polite">
                   Updated{" "}
                   <span className="font-semibold text-ink-primary">
