@@ -15,7 +15,7 @@ const NOT_SAVED_KEPT =
   "This value was not saved. It is still in the form, so you can save it again.";
 /** S-1115-2, a PLACEHOLDER until approved: the same answer for a field the
  *  wizard does not keep. */
-const NOT_SAVED_RETYPE = "This value was not saved. Enter it again to save it.";
+const NOT_SAVED_RETYPE = "This value was not saved. Set it again to save it.";
 const OUTCOME_UNKNOWN =
   "We couldn't confirm whether this finished. It may still complete; check before trying again.";
 

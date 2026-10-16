@@ -37,7 +37,7 @@ const NOT_SAVED_KEPT =
 /** S-1115-2, a PLACEHOLDER until approved: the same answer, for a field the
  *  caller does NOT keep, where "still in the form" would be false (review of
  *  8b4f28a1: Step 3 re-reads its fields from the server when it reopens). */
-const NOT_SAVED_RETYPE = "This value was not saved. Enter it again to save it.";
+const NOT_SAVED_RETYPE = "This value was not saved. Set it again to save it.";
 
 /** The fields a patch writes, keyed so a client field and a top-level
  *  profile field of the same name cannot collide. */
