@@ -1,5 +1,7 @@
 # Gene — in-flight status
 
+_2026-10-16 (track T5): #1198 item 1, a title or phone can be cleared._ A client who empties their title or phone on intake Step 3 now clears it; before, the old value came back. Their full name and time zone still cannot be blanked, as you ruled. It comes back to you: condition 5.
+
 _2026-10-16 (track T5): #1093 item 1, emptied intake fields are cleared._ A client who deletes the text of an intake field (Step 2) now clears it. Before, the old value came back on reload, and a blanked website was refused as "not accepted". The second half of #1093 waits on the ruling for #1115, which touches the same file. It comes back to you: condition 5.
 
 _2026-10-16 (track T5): #1173, a warning about blank answers before submit._ When a client presses "Submit for review" in the CSF or Zero Trust self-assessment with answers still blank, they now see how many are blank, a "Go to Govern (2 blank)" style button for each area with blanks, and "Submit anyway". A complete assessment submits as before. The wording is the text approved on #736. It comes back to you: condition 5.
