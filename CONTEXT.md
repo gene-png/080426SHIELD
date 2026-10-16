@@ -13,6 +13,8 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**2026-10-16: #1093 item 2, a landed intake save never reads as "Network error."** A save whose answer came back 2xx but unreadable now says Saved, and a bug in the wizard's state update fails loudly instead of being shown as a failed save. Status: the 2026-10-16 #1093 item 2 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
 **2026-10-16: #1115, intake auto-save keeps a value the server did not judge.** A failed intake save drops what the client typed only on a 400, 409 or 422; a 401, 403 or 429 keeps it and says so, and a bare 5xx from in front of the api says the outcome is unknown. Status: the 2026-10-16 #1115 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
 **2026-10-16: #1173, the self-assessment warns about blank answers before submit.** On "Submit for review" with any blank answer, the CSF and ZT client self-assessments show the blank count, a button to each function or pillar that has a blank, and "Submit anyway"; a complete assessment submits straight through. Status: the 2026-10-16 #1173 entry in `DELIVERY_PLAN.md`'s MVP completion path.

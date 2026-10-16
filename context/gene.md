@@ -1,5 +1,7 @@
 # Gene — in-flight status
 
+_2026-10-16 (track T5): #1093 item 2, a save that went through is no longer shown as "Network error."._ If the server saved a field but its answer could not be read, the intake now says Saved instead of a network error, which used to make clients type the value again. It comes back to you: condition 5.
+
 _2026-10-16 (track T5): #1115, intake auto-save no longer throws away what a client typed when the server did not judge it._ If a save fails because the client's session ended, access was refused or there were too many requests, the typed value now stays in the form with "This value was not saved. It is still in the form, so you can save it again." A bare server error from in front of the api says it could not confirm whether the save went through. Only a real refusal of the value still drops it. It comes back to you: conditions 5 and 6.
 
 _2026-10-16 (track T5): #1173, a warning about blank answers before submit._ When a client presses "Submit for review" in the CSF or Zero Trust self-assessment with answers still blank, they now see how many are blank, a "Go to Govern (2 blank)" style button for each area with blanks, and "Submit anyway". A complete assessment submits as before. The wording is the text approved on #736. It comes back to you: condition 5.
