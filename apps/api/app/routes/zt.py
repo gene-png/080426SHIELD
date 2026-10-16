@@ -922,6 +922,7 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
             assessment_id=str(a.id),
             capabilities=len(rows),
         )
+        ctx.declare_no_call()  # so the run reads "not charged", never "not known" (#1219)
         data = {"capabilities": []}
     # The provider call is over: keep its `llm_calls` row whatever happens to
     # the apply. Then read the rows as they are NOW -- an edit that landed while
