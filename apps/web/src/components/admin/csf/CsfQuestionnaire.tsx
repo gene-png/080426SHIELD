@@ -20,6 +20,12 @@ export interface CsfQuestionnaireProps {
    * Supplemental context for the assessor; sparse by design. */
   questionsByCode?: Record<string, CsfInterviewQuestion[]>;
   readOnly?: boolean;
+  /** Optional controlled function tab (#1173, #1171): the client
+   * self-assessment moves to a function from outside the questionnaire. Left
+   * unset, the tab is the questionnaire's own state, as for the admin
+   * workspace. */
+  activeFunction?: string;
+  onActiveFunctionChange?: (code: string) => void;
   onAnswerUpdate: (
     answerId: string,
     patch: CsfAnswerPatch,
@@ -77,13 +83,16 @@ export function CsfQuestionnaire({
   answersByCode,
   questionsByCode = {},
   readOnly = false,
+  activeFunction,
+  onActiveFunctionChange,
   onAnswerUpdate,
 }: CsfQuestionnaireProps): JSX.Element {
   const [tab, setTab] = React.useState<TabState>({
     active: catalog.functions[0]?.code ?? "GV",
   });
+  const active = activeFunction ?? tab.active;
 
-  const activeFn = catalog.functions.find((f) => f.code === tab.active);
+  const activeFn = catalog.functions.find((f) => f.code === active);
 
   return (
     <section
@@ -98,8 +107,11 @@ export function CsfQuestionnaire({
       </h2>
       <FunctionTabBar
         functions={catalog.functions}
-        active={tab.active}
-        onChange={(code) => setTab({ active: code })}
+        active={active}
+        onChange={(code) => {
+          setTab({ active: code });
+          onActiveFunctionChange?.(code);
+        }}
       />
       {activeFn ? (
         <div
