@@ -28,6 +28,11 @@ function notesBlank(notes: string | null): boolean {
   return notes === null || notes.trim() === "";
 }
 
+// #982 (A): a per-capability target whose origin is not recorded. PLACEHOLDER,
+// PENDING the advisor's approval (#736): proposed text, not approved.
+const TARGET_ORIGIN_NOT_RECORDED =
+  "PLACEHOLDER (pending approval): who set this target is not recorded. An earlier AI run may have set it.";
+
 export interface ZtQuestionnaireProps {
   catalog: ZtCatalog;
   answersByCode: Record<string, ZtAnswer>;
@@ -178,6 +183,12 @@ export function ZtQuestionnaire({
                             ))}
                           </select>
                         </label>
+                        {ans.target_stage != null &&
+                        ans.target_source == null ? (
+                          <p className="max-w-xs text-xs text-ink-tertiary">
+                            {TARGET_ORIGIN_NOT_RECORDED}
+                          </p>
+                        ) : null}
                       </div>
                     </div>
                     <details className="mt-2">

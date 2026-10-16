@@ -82,6 +82,8 @@ class ZtAnswerResponse(BaseModel):
     capability_code: str
     maturity_stage: int | None
     target_stage: int | None = None
+    #: #982: who set `target_stage`; None = origin not recorded.
+    target_source: str | None = None
     notes: str | None
     evidence_artifact_id: uuid.UUID | None
     locked: bool = False
