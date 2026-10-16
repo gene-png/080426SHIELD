@@ -10,7 +10,8 @@ import { acknowledgeOfflineAi, waitForRun } from "../helpers/ai";
  * Admin opens the seeded Atlas ATT&CK service, runs the fixture-mode mitre_map
  * job (T6b), and works the matrix. We assert the spec's contract:
  *   1. The ATT&CK matrix + coverage-rollup heatmap render, Run AI reports
- *      "Updated N fields across M techniques", and a technique's side panel
+ *      "Mapping done for N tools across M ATT&CK techniques and sub-techniques"
+ *      (#1182), and a technique's side panel
  *      shows its Detection/Prevention/Response tool chips + rationale.
  *   2. C2 lock semantics: a locked technique is left untouched by a Run AI and
  *      is absent from the "what changed" diff, while unlocked rows still change.
@@ -143,12 +144,12 @@ test("matrix + heatmap render, Run AI reports updated fields, and the panel show
   expect(runBody.changed.length).toBeGreaterThan(0);
   expect(runBody.tools_available).toBeGreaterThan(0);
 
-  // The workspace echoes the "Updated N fields across M techniques" summary.
-  const summary = page
-    .locator("p", { hasText: "Updated" })
-    .filter({ hasText: "technique" });
+  // #1182: the workspace states what the run covered (Gene's line).
+  const summary = page.getByTestId("attack-mapping-done");
   await expect(summary).toBeVisible({ timeout: 30000 });
-  await expect(summary).toContainText(/Updated\s+\d+\s+field/);
+  await expect(summary).toContainText(
+    /Mapping done for \d+ tools across \d+ ATT&CK techniques and sub-techniques\./,
+  );
 
   // A STANDALONE technique (no sub-techniques, no parent) the fixture marked
   // covered with a cited tool. Not "T1001": since #554 (D-094) a parent with
