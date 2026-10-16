@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as ztClient from "@/lib/zt/client";
@@ -100,6 +100,7 @@ beforeEach(() => {
   scrollIntoView.mockReset();
   Element.prototype.scrollIntoView = scrollIntoView;
   vi.mocked(ztClient.fetchCatalog).mockResolvedValue(CATALOG);
+  vi.mocked(ztClient.patchSelfAssessmentAnswer).mockReset();
   vi.mocked(ztClient.submitSelfAssessment).mockReset();
   vi.mocked(ztClient.submitSelfAssessment).mockResolvedValue(
     assessment({}, "submitted"),
@@ -128,6 +129,15 @@ const ONE_BLANK = {
   "CISA.DV.01": 1,
   "CISA.DV.02": null,
 };
+
+function stageRadio(code: string, stage: number): HTMLElement {
+  const group = screen.getByRole("radiogroup", {
+    name: `Maturity stage for ${code}`,
+  });
+  return within(group).getByRole("radio", {
+    name: new RegExp(`^S${stage}(?![0-9])`),
+  });
+}
 
 describe("ZtSelfAssessment: blank answers before submit (#1173)", () => {
   it("warns in place of submitting, with the blank count", async () => {
@@ -175,6 +185,68 @@ describe("ZtSelfAssessment: blank answers before submit (#1173)", () => {
     expect(ztClient.submitSelfAssessment).toHaveBeenCalledWith("s1", {
       target_stage: 3,
     });
+  });
+
+  it("keeps Submit anyway off while an answer save is out (#758)", async () => {
+    let release: (a: ZtAnswer) => void = () => undefined;
+    vi.mocked(ztClient.patchSelfAssessmentAnswer).mockImplementation(
+      () =>
+        new Promise<ZtAnswer>((resolve) => {
+          release = resolve;
+        }),
+    );
+    await mountWith(assessment(ONE_BLANK));
+    expect(screen.getByRole("button", { name: "Submit anyway" })).toBeEnabled();
+    await act(async () => {
+      fireEvent.blur(screen.getByLabelText("Notes for CISA.ID.01"), {
+        target: { value: "a note" },
+      });
+    });
+    expect(
+      screen.getByRole("button", { name: "Submit anyway" }),
+    ).toBeDisabled();
+    await act(async () => {
+      release({ ...answer("ans0", "CISA.ID.01", 2), notes: "a note" });
+    });
+    expect(screen.getByRole("button", { name: "Submit anyway" })).toBeEnabled();
+    expect(ztClient.submitSelfAssessment).not.toHaveBeenCalled();
+  });
+
+  it("drops the warning once the blanks are answered, does not bring it back unasked, and then submits straight through", async () => {
+    vi.mocked(ztClient.patchSelfAssessmentAnswer).mockImplementation(
+      async (answerId, patch) =>
+        ({ ...answer(answerId, "CISA.DV.02", null), ...patch }) as ZtAnswer,
+    );
+    await mountWith(assessment(ONE_BLANK));
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Go to Devices (1 blank)" }),
+      );
+    });
+    await act(async () => {
+      fireEvent.click(stageRadio("CISA.DV.02", 2));
+    });
+    expect(screen.queryByRole("button", { name: "Submit anyway" })).toBeNull();
+
+    // Clearing the answer makes a blank again, but nobody pressed Submit.
+    await act(async () => {
+      fireEvent.click(stageRadio("CISA.DV.02", 2));
+    });
+    expect(stageRadio("CISA.DV.02", 2)).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    expect(screen.queryByText(/have no answer yet/)).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(stageRadio("CISA.DV.02", 3));
+    });
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Submit for review" }),
+      );
+    });
+    expect(ztClient.submitSelfAssessment).toHaveBeenCalledTimes(1);
   });
 
   it("submits a complete assessment straight through, with no warning", async () => {

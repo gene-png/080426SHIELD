@@ -297,6 +297,11 @@ export function ZtSelfAssessment({
   const isLast = idx >= pillars.length - 1;
   const incomplete = pillarStats.filter((s) => s.answered === 0);
   const blankTotal = capabilityTotal - answeredTotal;
+  // The warning answers one press of Submit. Once the blanks are gone it is
+  // done, so an answer cleared later must not bring it back unasked, pulling
+  // focus to the bottom of the page. Reset during render, React's pattern for
+  // state that follows other state.
+  if (blankWarning && blankTotal === 0) setBlankWarning(false);
 
   function onSubmitClick(): void {
     if (blankTotal > 0) {

@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as csfClient from "@/lib/csf/client";
@@ -120,6 +120,7 @@ beforeEach(() => {
   scrollIntoView.mockReset();
   Element.prototype.scrollIntoView = scrollIntoView;
   vi.mocked(csfClient.fetchCatalog).mockResolvedValue(CATALOG);
+  vi.mocked(csfClient.patchSelfAssessmentAnswer).mockReset();
   vi.mocked(csfClient.submitSelfAssessment).mockReset();
   vi.mocked(csfClient.submitSelfAssessment).mockResolvedValue(
     assessment({}, { status: "submitted" }),
@@ -149,6 +150,23 @@ const TWO_BLANK = {
   "GV.OC-03": null,
   "ID.AM-01": null,
 };
+
+// One in-scope blank, in ID (GV.OC-03 is out of scope at MOD).
+const ONE_BLANK = {
+  "GV.OC-01": 2,
+  "GV.OC-02": 3,
+  "GV.OC-03": null,
+  "ID.AM-01": null,
+};
+
+function tierRadio(code: string, tier: number): HTMLElement {
+  const group = screen.getByRole("radiogroup", {
+    name: `Maturity tier for ${code}`,
+  });
+  return within(group).getByRole("radio", {
+    name: new RegExp(`^T${tier}(?![0-9])`),
+  });
+}
 
 describe("CsfSelfAssessment: blank answers before submit (#1173)", () => {
   it("warns in place of submitting, with the in-scope blank count", async () => {
@@ -205,6 +223,65 @@ describe("CsfSelfAssessment: blank answers before submit (#1173)", () => {
     expect(csfClient.submitSelfAssessment).toHaveBeenCalledWith("s1", {
       target_tier: 3,
     });
+  });
+
+  it("keeps Submit anyway off while an answer save is out (#758)", async () => {
+    let release: (a: CsfAnswer) => void = () => undefined;
+    vi.mocked(csfClient.patchSelfAssessmentAnswer).mockImplementation(
+      () =>
+        new Promise<CsfAnswer>((resolve) => {
+          release = resolve;
+        }),
+    );
+    await mountWith(assessment(TWO_BLANK));
+    expect(screen.getByRole("button", { name: "Submit anyway" })).toBeEnabled();
+    await act(async () => {
+      fireEvent.blur(screen.getByLabelText("Notes for GV.OC-01"), {
+        target: { value: "a note" },
+      });
+    });
+    expect(
+      screen.getByRole("button", { name: "Submit anyway" }),
+    ).toBeDisabled();
+    await act(async () => {
+      release({ ...answer("ans0", "GV.OC-01", 2), notes: "a note" });
+    });
+    expect(screen.getByRole("button", { name: "Submit anyway" })).toBeEnabled();
+    expect(csfClient.submitSelfAssessment).not.toHaveBeenCalled();
+  });
+
+  it("drops the warning once the blanks are answered, does not bring it back unasked, and then submits straight through", async () => {
+    vi.mocked(csfClient.patchSelfAssessmentAnswer).mockImplementation(
+      async (answerId, patch) =>
+        ({ ...answer(answerId, "ID.AM-01", null), ...patch }) as CsfAnswer,
+    );
+    await mountWith(assessment(ONE_BLANK));
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Go to Identify (1 blank)" }),
+      );
+    });
+    await act(async () => {
+      fireEvent.click(tierRadio("ID.AM-01", 2));
+    });
+    expect(screen.queryByRole("button", { name: "Submit anyway" })).toBeNull();
+
+    // Clearing the answer makes a blank again, but nobody pressed Submit.
+    await act(async () => {
+      fireEvent.click(tierRadio("ID.AM-01", 2));
+    });
+    expect(tierRadio("ID.AM-01", 2)).toHaveAttribute("aria-checked", "false");
+    expect(screen.queryByText(/have no answer yet/)).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(tierRadio("ID.AM-01", 3));
+    });
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Submit for review" }),
+      );
+    });
+    expect(csfClient.submitSelfAssessment).toHaveBeenCalledTimes(1);
   });
 
   it("submits a complete assessment straight through, with no warning", async () => {
