@@ -117,6 +117,8 @@ from app.tech_debt.cost_estimate import (
     estimate_targets,
     is_ai_estimate,
     parse_estimates,
+    savings_estimate_count,
+    savings_estimate_count_for,
 )
 from app.tech_debt.cost_estimate import JOB_NAME as COST_ESTIMATE_JOB
 from app.tech_debt.cost_estimate import PURPOSE as COST_ESTIMATE_PURPOSE
@@ -2545,11 +2547,11 @@ def savings_preview(
     derivation. Writes nothing, calls no AI; "Apply to plan" goes through the
     disposition routes and their guards.
 
-    #1299 (TD-5), left alone on purpose: this consultant-only figure carries no
-    AI-estimate sentence. Every client and deliverable savings figure does
-    (`cost_estimate.savings_estimate_count`); here the what-if's own table
-    (`SavingsWhatIf.tsx`) labels each estimated row's cost "(AI estimate)".
-    Tracked in #1354 for a sentence here too."""
+    #1299 (TD-5): no admin exemption (#736 issuecomment-6225076633). The
+    figure counts the AI-estimated costs it includes under the PROPOSED
+    dispositions, by the same rule as every other savings figure
+    (`cost_estimate.savings_estimate_count_for`), and the what-if says so (E6);
+    its table also labels each estimated row's cost "(AI estimate)"."""
     cap_list = db.get(CapabilityList, list_id)
     svc = db.get(Service, cap_list.service_id) if cap_list is not None else None
     if cap_list is None or svc is None or svc.client_id != client.id:
@@ -2590,6 +2592,9 @@ def savings_preview(
     # `.get` keeps an explicit None: unticking a row in the what-if is a choice.
     rows = [(overlay.get(key, it.disposition), savings_cost(it)) for key, it in by_id.items()]
     savings = estimated_savings(rows)
+    estimate_count = savings_estimate_count_for(
+        (overlay.get(key, it.disposition), it) for key, it in by_id.items()
+    )
     counts = dict.fromkeys(CapabilityDisposition, 0)
     undecided = 0
     for disposition, _cost in rows:
@@ -2608,6 +2613,7 @@ def savings_preview(
         capability_list_id=cap_list.id,
         estimated_annual_savings=savings.amount,
         savings_cost_known=savings.known,
+        savings_ai_estimate_count=estimate_count,
         keep_count=counts[CapabilityDisposition.KEEP],
         consolidate_count=counts[CapabilityDisposition.CONSOLIDATE],
         cut_count=counts[CapabilityDisposition.CUT],
@@ -2657,11 +2663,9 @@ def consolidation_plan_summary(
         elif it.disposition == CapabilityDisposition.CUT:
             cut += 1
     # #804: the deliverable's own derivation, not a copy of it.
-    # #1299 (TD-5), left alone on purpose: this consultant-only card carries no
-    # AI-estimate sentence; every client and deliverable savings figure does.
-    # The card has no rows of its own: the same workspace page's capability
-    # table (`EditableCapabilityTable.tsx`) badges each estimated row, and the
-    # savings what-if labels each estimated cost. Tracked in #1354.
+    # #1299 (TD-5): no admin exemption (#736 issuecomment-6225076633); the card
+    # counts the AI-estimated costs its figure includes, by the same rule as
+    # every other savings figure, and says so (E6).
     savings = estimated_savings((it.disposition, savings_cost(it)) for it in items)
 
     return ConsolidationPlanSummary(
@@ -2674,6 +2678,7 @@ def consolidation_plan_summary(
         undecided_count=undecided,
         estimated_annual_savings=savings.amount,
         savings_cost_known=savings.known,
+        savings_ai_estimate_count=savings_estimate_count(items),
     )
 
 

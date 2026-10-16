@@ -1216,6 +1216,7 @@ Components carry no cost of their own — this licence keeps its full value.`,
               list={list}
               planSavings={plan.estimated_annual_savings}
               planKnown={plan.savings_cost_known}
+              planEstimateCount={plan.savings_ai_estimate_count}
               readOnly={readOnly}
               onApplied={(next) => {
                 // Applied through the disposition route, as a row edit is;

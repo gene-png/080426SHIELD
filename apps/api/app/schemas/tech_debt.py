@@ -285,6 +285,9 @@ class ConsolidationPlanSummary(BaseModel):
     undecided_count: int
     estimated_annual_savings: float
     savings_cost_known: bool
+    # #1299 (TD-5): how many AI-estimated costs the savings figure includes
+    # (`cost_estimate.savings_estimate_count`); the card says so (E6). REQUIRED.
+    savings_ai_estimate_count: int
 
 
 class SavingsPreviewRequest(BaseModel):
@@ -307,6 +310,10 @@ class SavingsPreviewResponse(BaseModel):
     capability_list_id: uuid.UUID
     estimated_annual_savings: float
     savings_cost_known: bool
+    # #1299 (TD-5): how many AI-estimated costs the what-if figure includes,
+    # under the PROPOSED dispositions (`cost_estimate.savings_estimate_count_for`);
+    # the what-if says so (E6). REQUIRED.
+    savings_ai_estimate_count: int
     keep_count: int
     consolidate_count: int
     cut_count: int

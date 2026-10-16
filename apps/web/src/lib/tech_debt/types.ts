@@ -166,6 +166,8 @@ export interface ConsolidationPlanSummary {
   undecided_count: number;
   estimated_annual_savings: number;
   savings_cost_known: boolean;
+  /** #1299 (TD-5): AI-estimated costs the figure includes; E6 says so. */
+  savings_ai_estimate_count: number;
 }
 
 /** #804: what proposed dispositions would make the savings figure. Computed
@@ -174,6 +176,9 @@ export interface SavingsPreview {
   capability_list_id: string;
   estimated_annual_savings: number;
   savings_cost_known: boolean;
+  /** #1299 (TD-5): AI-estimated costs the what-if figure includes under the
+   *  proposed dispositions; E6 says so. */
+  savings_ai_estimate_count: number;
   keep_count: number;
   consolidate_count: number;
   cut_count: number;

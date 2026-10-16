@@ -8,6 +8,7 @@ import {
   NumberCard,
 } from "@shield/design-system";
 
+import { aiEstimateSentence } from "@/lib/tech_debt/costEstimate";
 import { DISPOSITION_LABEL } from "@/lib/tech_debt/dispositionLabels";
 import type { ConsolidationPlanSummary } from "@/lib/tech_debt/types";
 
@@ -29,6 +30,11 @@ export function ConsolidationPlanCard({
   const savingsLabel = summary.savings_cost_known
     ? fmtUsd(summary.estimated_annual_savings)
     : `≥ ${fmtUsd(summary.estimated_annual_savings)}`;
+  // #1299 (TD-5), copy E6: no admin exemption (#736 issuecomment-6225076633).
+  const estimates = aiEstimateSentence(summary.savings_ai_estimate_count);
+  const savingsHint = summary.savings_cost_known
+    ? "Sum of the annual costs of rows marked Cut or Cut, covered by another tool."
+    : "At least one row marked to cut is missing a cost; this is a lower bound.";
 
   return (
     <Card>
@@ -64,9 +70,7 @@ export function ConsolidationPlanCard({
             value={savingsLabel}
             deltaTone="positive"
             hint={
-              summary.savings_cost_known
-                ? "Sum of the annual costs of rows marked Cut or Cut, covered by another tool."
-                : "At least one row marked to cut is missing a cost; this is a lower bound."
+              estimates === null ? savingsHint : `${savingsHint} · ${estimates}`
             }
           />
         </div>

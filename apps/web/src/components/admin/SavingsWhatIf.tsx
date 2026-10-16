@@ -14,7 +14,11 @@ import {
   previewSavings,
   proxyMessage,
 } from "@/lib/tech_debt/client";
-import { AI_ESTIMATE_LABEL, isAiEstimate } from "@/lib/tech_debt/costEstimate";
+import {
+  AI_ESTIMATE_LABEL,
+  aiEstimateSentence,
+  isAiEstimate,
+} from "@/lib/tech_debt/costEstimate";
 import { DISPOSITION_LABEL } from "@/lib/tech_debt/dispositionLabels";
 import type {
   CapabilityDisposition,
@@ -86,15 +90,38 @@ export interface SavingsWhatIfProps {
   /** The real plan's savings, from the consolidation-plan summary. */
   planSavings: number;
   planKnown: boolean;
+  /** #1299 (TD-5): AI-estimated costs the plan's figure includes (E6). */
+  planEstimateCount: number;
   /** A released list cannot be edited, so the what-if cannot be applied to it. */
   readOnly: boolean;
   onApplied: (list: CapabilityList) => void;
+}
+
+/**
+ * #1299 (TD-5), copy E6 beside a savings figure that includes an AI-estimated
+ * cost. No admin exemption (#736 issuecomment-6225076633). Nothing at 0.
+ */
+function EstimatesLine({
+  k,
+  testId,
+}: {
+  k: number;
+  testId: string;
+}): JSX.Element | null {
+  const sentence = aiEstimateSentence(k);
+  if (sentence === null) return null;
+  return (
+    <div className="text-xs text-ink-secondary" data-testid={testId}>
+      {sentence}
+    </div>
+  );
 }
 
 export function SavingsWhatIf({
   list,
   planSavings,
   planKnown,
+  planEstimateCount,
   readOnly,
   onApplied,
 }: SavingsWhatIfProps): JSX.Element {
@@ -214,6 +241,10 @@ export function SavingsWhatIf({
             >
               {usd(planSavings, planKnown)}
             </div>
+            <EstimatesLine
+              k={planEstimateCount}
+              testId="what-if-current-estimates"
+            />
           </div>
           {phase.kind === "ready" ? (
             <div>
@@ -227,6 +258,10 @@ export function SavingsWhatIf({
                   phase.preview.savings_cost_known,
                 )}
               </div>
+              <EstimatesLine
+                k={phase.preview.savings_ai_estimate_count}
+                testId="what-if-savings-estimates"
+              />
             </div>
           ) : null}
         </div>

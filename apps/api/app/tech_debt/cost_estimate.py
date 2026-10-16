@@ -102,7 +102,15 @@ def savings_estimate_count(items: Iterable[CapabilityItem]) -> int:
     INCLUDES -- rows counted as savings (`savings.SAVINGS_DISPOSITIONS`) whose
     cost is an AI estimate. Every savings surface calls this, so the dashboard,
     the redundancy cards, the home card and the files cannot disagree."""
-    return sum(1 for it in items if it.disposition in SAVINGS_DISPOSITIONS and is_ai_estimate(it))
+    return savings_estimate_count_for((it.disposition, it) for it in items)
+
+
+def savings_estimate_count_for(
+    rows: Iterable[tuple[object, CapabilityItem]],
+) -> int:
+    """The same count over (disposition, item) pairs, for a figure computed
+    from dispositions that are not stored: the savings what-if's overlay."""
+    return sum(1 for disposition, it in rows if disposition in SAVINGS_DISPOSITIONS and is_ai_estimate(it))
 
 
 def estimate_targets(items: Iterable[CapabilityItem]) -> list[CapabilityItem]:
