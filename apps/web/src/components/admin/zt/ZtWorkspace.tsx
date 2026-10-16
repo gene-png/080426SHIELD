@@ -1008,10 +1008,13 @@ export function ZtWorkspace({
               the very bottom, below the deliverable. Analysis output (score,
               gaps, roadmap) and the message thread are reference and now sit
               after the numbered path. */}
+          {/* #1083, Z-1083-2 ("It scores only capabilities with notes
+              recorded. ..."): PENDING the advisor's ruling on #736 comment
+              6205228372. True since #1084: a blank row is never sent. */}
           <WorkflowStep
             number={1}
             title="Draft the maturity scoring with AI"
-            description="The AI suggests a current maturity stage for each capability on this framework's scale. It does not suggest targets. It drafts; you decide. An offline run leaves alone locked rows, and any answer the AI did not write — a client submission, or one still in progress. It does NOT leave alone an unlocked row the AI wrote: that row stays AI-owned even after you correct it, so running offline again can redraft your correction. A live run may draft over any unlocked row, and shows you the diff."
+            description="The AI suggests a current maturity stage for each capability on this framework's scale. It does not suggest targets. It scores only capabilities with notes recorded. A capability with no notes is not sent to the AI and keeps any stage it already has. It drafts; you decide. An offline run leaves alone locked rows, and any answer the AI did not write — a client submission, or one still in progress. It does NOT leave alone an unlocked row the AI wrote: that row stays AI-owned even after you correct it, so running offline again can redraft your correction. A live run may draft over any unlocked row, and shows you the diff."
             // Not `runResult !== null`: a run that applied NOTHING put a green
             // success badge and a "— done" heading directly above "AI applied 0
             // of 74". The step is complete when the AI actually drafted

@@ -253,7 +253,14 @@ function ZtOmittedBlock({
       </p>
       {blank.length > 0 ? (
         <div className="text-ink-secondary">
-          <p>No notes recorded ({blank.length}):</p>
+          {/* #1083, Z-1083-1: PENDING the advisor's ruling on #736 comment
+              6205228372. A blank-notes capability is never sent (#1084), so
+              it is never scored; the line says so and names the remedy. */}
+          <p>
+            No notes recorded ({blank.length}). The AI scores only capabilities
+            that have notes, so these were not scored. To score them, record
+            notes and run the AI again:
+          </p>
           <OmittedItems items={blank} />
         </div>
       ) : null}
