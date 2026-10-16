@@ -35,7 +35,7 @@ function isRead(method: string): boolean {
  * @param err    what the upstream call threw
  * @param where  which proxy call it was, for the log line only
  * @param method the UPSTREAM call's method (#1130). Required, so every caller
- *               states it: a GET answers `upstream_read_failed`, anything
+ *               states it: a GET or HEAD answers `upstream_read_failed`, anything
  *               else the #550 body.
  */
 export function upstreamOutcomeUnknown(
