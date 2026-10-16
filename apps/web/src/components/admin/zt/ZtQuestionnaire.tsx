@@ -22,7 +22,7 @@ const SELF_REPORTED = "Self-reported, not validated";
 const LEGEND = "The highlighted stage is the current assessed score.";
 
 /** Null, empty or whitespace only: the rule `routes/zt.py` applies when it
- *  decides a capability has no notes (#1084). JS `trim()` and Python `strip()`
+ *  decides a capability has no notes (#1084, PR #1220). JS `trim()` and Python `strip()`
  *  differ only on rare control and BOM characters. */
 function notesBlank(notes: string | null): boolean {
   return notes === null || notes.trim() === "";
