@@ -19,7 +19,14 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    ValidatorFunctionWrapHandler,
+    field_validator,
+)
 
 from app.models.service_request import CsfProfile, ServiceType
 from app.schemas._numeric import IntNotBool
@@ -33,11 +40,13 @@ _HAS_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
 # A colon followed by a digit is a port ("example.com:8080"), not a scheme.
 _ATTEMPTED_SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*:(?![0-9])|^https?//", re.IGNORECASE)
 # #1116: "http" or "https", a colon, then a digit. The colon-digit reads as a
-# port above, so "https:8080" got the prefix and was stored with host "https";
-# left to `HttpUrl` it reads as an IPv4 address. It is a scheme typed without
-# "//" and followed by a number, never a host, so it is refused. A letter after
-# the colon ("https:kentro.com") is left as before: `HttpUrl` repairs it.
+# port in `_ATTEMPTED_SCHEME`, so "https:8080" got the prefix and was stored
+# with host "https". It is a scheme typed without "//" and followed by a
+# number, never a host, so it is refused. A letter after the colon
+# ("https:kentro.com") is left as before: `HttpUrl` repairs it.
 _BARE_WEB_SCHEME_THEN_DIGIT = re.compile(r"^https?:[0-9]", re.IGNORECASE)
+# #1116: an IPv4 host as `HttpUrl` writes it, a dotted quad.
+_DOTTED_QUAD = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+")
 
 
 def _authority(value: str) -> str:
@@ -82,6 +91,28 @@ class ClientProfilePatch(BaseModel):
         ):
             return f"https://{stripped}"
         return stripped
+
+    @field_validator("website", mode="wrap")
+    @classmethod
+    def _website_host_was_typed(cls, value: Any, handler: ValidatorFunctionWrapHandler) -> Any:
+        """#1116, review of 2a4f17eb: refuse an IPv4 host the client did not
+        type. `HttpUrl` turns a bare number into an address: "8080",
+        "https:/8080", a percent-encoded or full-width "8080" all parse to
+        host 0.0.31.144. ("https:8080" itself is refused earlier, in
+        `_website_scheme`, because the prefix made its host "https".) A
+        website typed as a dotted quad ("https://1.2.3.4") names that host
+        itself and is kept. Defined after `_website_scheme`, so pydantic runs
+        this one OUTERMOST and `value` is the raw input, before the prefix."""
+        url = handler(value)
+        host = getattr(url, "host", None)
+        if (
+            isinstance(value, str)
+            and host is not None
+            and _DOTTED_QUAD.fullmatch(host)
+            and host not in value.lower()
+        ):
+            raise ValueError("A website address needs a real host name.")
+        return url
 
     @field_validator("website", mode="after")
     @classmethod
