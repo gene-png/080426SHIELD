@@ -105,6 +105,7 @@ from app.services.revisions import (
     client_facing,
     evidence_links_for,
     is_revision_draft,
+    latest_released_version,
     refuse_mint_over_released,
     revision_for_viewer,
     start_revision,
@@ -1312,8 +1313,9 @@ def create_assessment(
     # #1123 item 1: never a plain draft over released work; a revision only.
     # Twins: CSF, ATT&CK and ZT `create_assessment` all refuse; Tech Debt mints
     # its next list by extraction and has no Start a revision, so it does not.
-    if prior is not None and prior.status == ZtAssessmentStatus.RELEASED:
-        raise refuse_mint_over_released(prior.version)
+    released = latest_released_version(db, ZtAssessment, ZtAssessmentStatus.RELEASED, svc.id)
+    if released is not None:
+        raise refuse_mint_over_released(released)
     version = _max_assessment_version(db, svc.id) + 1
     assessment = ZtAssessment(
         service_id=svc.id,

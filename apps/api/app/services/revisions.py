@@ -399,6 +399,19 @@ def start_revision(
     return result
 
 
+def latest_released_version(db: Session, model: type, released: Any, service_id) -> int | None:
+    """The newest RELEASED version of a service's records, or None (#1123).
+
+    The create refusal keys on THIS, not on the latest record: a released v1
+    with an approved revision v2 on top has an APPROVED latest, and a plain
+    create there minted a blank v3 the client doors did not cover."""
+    return db.execute(
+        select(func.max(model.version)).where(
+            model.service_id == service_id, model.status == released
+        )
+    ).scalar()
+
+
 def refuse_mint_over_released(version: int) -> HTTPException:
     """#1123 item 1, approved verbatim at #736 comment 6216024281: a plain
     "create assessment" over a RELEASED latest version is refused. It used to
