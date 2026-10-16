@@ -93,10 +93,10 @@ describe("Step5Notes: the uploads list failed to load (#1223)", () => {
     unmount();
 
     respond(
-      400,
+      403,
       JSON.stringify({
         error: {
-          code: 400,
+          code: 403,
           message: "Client-role user is not bound to a client.",
         },
       }),

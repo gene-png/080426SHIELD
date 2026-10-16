@@ -87,10 +87,10 @@ describe("Step6Review: the uploads list failed to load (#1223)", () => {
   it("shows its own copy, not untyped server text (#1225)", async () => {
     // current_client's plain-string detail: no `reason`, internal text.
     respond(
-      400,
+      403,
       JSON.stringify({
         error: {
-          code: 400,
+          code: 403,
           message: "Client-role user is not bound to a client.",
         },
       }),
