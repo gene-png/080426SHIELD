@@ -110,7 +110,9 @@ def savings_estimate_count_for(
 ) -> int:
     """The same count over (disposition, item) pairs, for a figure computed
     from dispositions that are not stored: the savings what-if's overlay."""
-    return sum(1 for disposition, it in rows if disposition in SAVINGS_DISPOSITIONS and is_ai_estimate(it))
+    return sum(
+        1 for disposition, it in rows if disposition in SAVINGS_DISPOSITIONS and is_ai_estimate(it)
+    )
 
 
 def estimate_targets(items: Iterable[CapabilityItem]) -> list[CapabilityItem]:
