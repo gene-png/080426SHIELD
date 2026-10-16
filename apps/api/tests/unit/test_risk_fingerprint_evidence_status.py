@@ -1,12 +1,12 @@
-"""The Risk Register's CSF Playbook fingerprint across migration 0074.
+"""The Risk Register's CSF Playbook fingerprint across migration 0075.
 
 `has_evidence` became the three-valued `evidence_status`. A fingerprint a
-register recorded before 0074 must still match an unchanged Playbook, or every
+register recorded before 0075 must still match an unchanged Playbook, or every
 existing register would report CSF "changed" at its next publish. A move to
 `confirmed_in_discussion` must change it, or that move would go unnoticed.
 
 `STORED` was recorded by running this file's world on main 18447481, before
-0074 (the boolean column), so it is the value a pre-0074 register holds. It
+0075 (the boolean column), so it is the value a pre-0075 register holds. It
 is a literal: never recomputed from the code under test.
 """
 
@@ -50,7 +50,7 @@ def _fingerprint(aid: str) -> str:
         return csf_playbook_fingerprint(db, aid)
 
 
-def test_a_pre_0074_fingerprint_still_matches(app_client) -> None:  # noqa: F811
+def test_a_pre_0075_fingerprint_still_matches(app_client) -> None:  # noqa: F811
     c, h = app_client
     svc, aid = _world(c, h)
     _patch(c, h, svc, {**SCORES, "has_evidence": True})

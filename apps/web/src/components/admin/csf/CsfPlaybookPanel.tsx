@@ -582,7 +582,7 @@ const COLUMNS: DataTableColumn<EnterpriseSubcategory>[] = [
         ? NOT_SCORED
         : r.tier_evidence
           ? evidenceByTier(r.tier_evidence)
-          : "", // an API from before migration 0074 sends none
+          : "", // an API from before migration 0075 sends none
   },
   // C13 (#736 6205956728): no Rule column here; the XLSX keeps it, in words.
   {

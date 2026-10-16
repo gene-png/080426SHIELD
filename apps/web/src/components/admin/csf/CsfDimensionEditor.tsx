@@ -398,7 +398,7 @@ export function CsfDimensionEditor({
             </div>
 
             <div className="flex flex-wrap items-center gap-4 text-sm">
-              {/* E1 (migration 0074): three values. None changes the
+              {/* E1 (migration 0075): three values. None changes the
                   scores or the level except under a frozen assessment's cap. */}
               <label className="flex items-center gap-2">
                 <span className="text-ink-secondary">{EVIDENCE_LABEL}</span>

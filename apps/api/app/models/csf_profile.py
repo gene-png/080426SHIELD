@@ -30,7 +30,7 @@ from app.models._common import TimestampMixin, UUIDPKMixin
 #: 0068); a query that renders it undefers it.
 EVIDENCE_BASIS_GROUP = "evidence_basis"
 #: The deferred group holding `CsfDimensionScore.evidence_status` (migration
-#: 0074); a query that reads it for many rows undefers it.
+#: 0075); a query that reads it for many rows undefers it.
 EVIDENCE_STATUS_GROUP = "evidence_status"
 
 
@@ -50,7 +50,7 @@ class CsfEvidenceBasis(enum.StrEnum):
 
 class CsfEvidenceStatus(enum.StrEnum):
     """A Working Profile row's evidence, three values (Gene, #736 6201691989
-    item 2; migration 0074, which read `has_evidence` true as ON_FILE and false
+    item 2; migration 0075, which read `has_evidence` true as ON_FILE and false
     as NEITHER). Stored as the VALUE. No value changes a score or a level
     except under the frozen cap (`csf/rules.py::evidence_cap_applies`), which
     reads ON_FILE alone, as the boolean it replaced did."""
@@ -93,11 +93,11 @@ class CsfDimensionScore(UUIDPKMixin, TimestampMixin, Base):
     evidence_artifact_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("artifacts.id", ondelete="SET NULL")
     )
-    # Migration 0074. NOT NULL in the database, server default `neither`.
+    # Migration 0075. NOT NULL in the database, server default `neither`.
     #
     # DEFERRED (group `EVIDENCE_STATUS_GROUP`) and `evaluates_none()` with NO
     # ORM default, for `evidence_basis`'s reason below: a select or an ORM
-    # insert against a pre-0074 schema (the migration tests that pin an older
+    # insert against a pre-0075 schema (the migration tests that pin an older
     # revision) must not name it. An unset attribute is left out of the INSERT
     # and the server default writes `neither`. The model does NOT declare
     # that default: declared, SQLAlchemy would read it back with `RETURNING
@@ -156,7 +156,7 @@ class CsfDimensionScore(UUIDPKMixin, TimestampMixin, Base):
 
     @property
     def has_evidence(self) -> bool:
-        """Evidence on file: what the boolean column meant before 0074, and
+        """Evidence on file: what the boolean column meant before 0075, and
         what the frozen cap reads."""
         return self.evidence_status == CsfEvidenceStatus.ON_FILE
 

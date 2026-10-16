@@ -201,7 +201,7 @@ export interface CsfDimensionScore {
   in_scope: boolean;
   rationale: string | null;
   what_we_found: string | null;
-  /** Three values since migration 0074; none changes `level` (Option 3).
+  /** Three values since migration 0075; none changes `level` (Option 3).
    * Optional so an older API parses: read it through `evidenceStatusOf`. */
   evidence_status?: CsfEvidenceStatus;
   /** `evidence_status === "on_file"`, kept for older readers. */
@@ -290,8 +290,8 @@ export interface CsfCoverage {
   notional: number;
 }
 
-/** A row's evidence value. An API from before migration 0074 sends only
- * `has_evidence`, whose two values 0074 mapped onto `on_file` and `neither`;
+/** A row's evidence value. An API from before migration 0075 sends only
+ * `has_evidence`, whose two values 0075 mapped onto `on_file` and `neither`;
  * this reads them the same way, never as a third value. */
 export function evidenceStatusOf(row: {
   evidence_status?: CsfEvidenceStatus;

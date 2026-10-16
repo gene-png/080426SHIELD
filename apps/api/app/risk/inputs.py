@@ -150,8 +150,8 @@ def csf_playbook_fingerprint(db: Session, assessment_id: str) -> str:
 
 def _fingerprint_value(row: CsfDimensionScore, field: str) -> object:
     """One field as the fingerprint hashes it. `has_evidence` became the
-    three-valued `evidence_status` (migration 0074): its two old values hash
-    as the boolean did, so a fingerprint recorded before 0074 still matches an
+    three-valued `evidence_status` (migration 0075): its two old values hash
+    as the boolean did, so a fingerprint recorded before 0075 still matches an
     unchanged Playbook, and the new middle value hashes as itself, so a move
     to or from it reads as changed."""
     if field == "evidence_artifact_id":

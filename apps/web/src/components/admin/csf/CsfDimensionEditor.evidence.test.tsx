@@ -116,7 +116,7 @@ describe("CsfDimensionEditor, evidence labels the level (Options 1 and 3)", () =
     ).toEqual(["Evidence on file", "Confirmed in discussion", "Neither"]);
   });
 
-  it("reads an older API's has_evidence as the value 0074 mapped it to", async () => {
+  it("reads an older API's has_evidence as the value 0075 mapped it to", async () => {
     const older = row({ has_evidence: true });
     delete older.evidence_status;
     await renderWith(older);

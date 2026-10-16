@@ -1,10 +1,10 @@
-"""Migration 0074: `csf_dimension_scores.has_evidence` becomes the three-valued
+"""Migration 0075: `csf_dimension_scores.has_evidence` becomes the three-valued
 `evidence_status` (Gene, #736 6201691989 item 2: "existing true reads as
 Evidence on file, false as Neither").
 
 The stored spellings are typed here from that ruling and the migration's
 docstring, never imported from the code under test. Rows are written by raw
-SQL in the shape every pre-0074 row has.
+SQL in the shape every pre-0075 row has.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ def _cfg(url: str) -> Config:
 def _template_0072(tmp_path_factory) -> None:
     """One database migrated to 0072, built once and copied per test."""
     if "0072" not in _TEMPLATE:
-        path = tmp_path_factory.mktemp("tpl0074") / "0072.db"
+        path = tmp_path_factory.mktemp("tpl0075") / "0072.db"
         command.upgrade(_cfg(f"sqlite:///{path}"), "0072")
         _TEMPLATE["0072"] = path
 
@@ -126,7 +126,7 @@ def test_upgrade_maps_true_to_on_file_and_false_to_neither(tmp_path) -> None:
     url, engine = _at_0072(tmp_path)
     ids = _world(engine)
     assert "has_evidence" in _columns(engine)  # positive first: the old shape
-    command.upgrade(_cfg(url), "0074")
+    command.upgrade(_cfg(url), "0075")
     cols = _columns(engine)
     assert "evidence_status" in cols and "has_evidence" not in cols, cols
     assert _status(engine, ids["ticked"]) == "on_file"
@@ -135,10 +135,10 @@ def test_upgrade_maps_true_to_on_file_and_false_to_neither(tmp_path) -> None:
 
 def test_a_row_inserted_without_the_column_reads_neither(tmp_path) -> None:
     """The server default: a writer that names no evidence column (as every
-    pre-0074 writer did when false) stores `neither`, never NULL."""
+    pre-0075 writer did when false) stores `neither`, never NULL."""
     url, engine = _at_0072(tmp_path)
     ids = _world(engine)
-    command.upgrade(_cfg(url), "0074")
+    command.upgrade(_cfg(url), "0075")
     new_id = str(uuid.uuid4())
     with engine.begin() as conn:
         conn.execute(
@@ -156,7 +156,7 @@ def test_a_row_inserted_without_the_column_reads_neither(tmp_path) -> None:
 def test_downgrade_round_trips_the_two_old_values(tmp_path) -> None:
     url, engine = _at_0072(tmp_path)
     ids = _world(engine)
-    command.upgrade(_cfg(url), "0074")
+    command.upgrade(_cfg(url), "0075")
     command.downgrade(_cfg(url), "0072")
     cols = _columns(engine)
     assert "has_evidence" in cols and "evidence_status" not in cols, cols
@@ -168,7 +168,7 @@ def test_downgrade_round_trips_the_two_old_values(tmp_path) -> None:
 def test_downgrade_refuses_to_erase_confirmed_in_discussion(tmp_path) -> None:
     url, engine = _at_0072(tmp_path)
     ids = _world(engine)
-    command.upgrade(_cfg(url), "0074")
+    command.upgrade(_cfg(url), "0075")
     with engine.begin() as conn:
         conn.execute(
             sa.text(
@@ -185,7 +185,7 @@ def test_downgrade_refuses_to_erase_confirmed_in_discussion(tmp_path) -> None:
 def test_downgrade_refuses_an_assessment_approved_without_the_cap(tmp_path) -> None:
     url, engine = _at_0072(tmp_path)
     _world(engine, rollup_rules=3)
-    command.upgrade(_cfg(url), "0074")
+    command.upgrade(_cfg(url), "0075")
     with pytest.raises(RuntimeError, match="rollup_rules = 3"):
         command.downgrade(_cfg(url), "0072")
     assert "evidence_status" in _columns(engine)

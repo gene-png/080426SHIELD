@@ -1,7 +1,12 @@
 """CSF Working Profile evidence, three values (Options 1 and 3).
 
-Revision ID: 0074
+Revision ID: 0075
 Revises: 0072
+
+Numbered 0075, not 0074, by the advisor's ruling (#736 6206818759 item 5):
+Tech Debt's #1060 takes 0074. `down_revision` is the single head on main
+today (0072). It is re-derived, and this rebases onto 0074, whichever of
+the two lands second.
 
 Gene, #736 6201691989 item 2: the "Evidence on file" box becomes three
 values, `on_file` / `confirmed_in_discussion` / `neither`, so a level the
@@ -39,7 +44,7 @@ cannot hold it:
   `app/csf/rules.py`): code before this change raises on 3, and rewriting it
   to 2 would cap levels that were delivered uncapped.
 
-On an empty database neither exists, so a test rewinding past 0074 is not
+On an empty database neither exists, so a test rewinding past 0075 is not
 refused.
 """
 
@@ -50,7 +55,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0074"
+revision: str = "0075"
 down_revision: str | Sequence[str] | None = "0072"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -87,15 +92,15 @@ def downgrade() -> None:
     )
     if confirmed:
         raise RuntimeError(
-            f"Refusing to downgrade 0074: {confirmed} CSF Working Profile row(s) record "
+            f"Refusing to downgrade 0075: {confirmed} CSF Working Profile row(s) record "
             "evidence as confirmed in discussion, which the boolean has_evidence cannot "
             "hold; downgrading would erase it."
         )
     uncapped = _count("SELECT COUNT(*) FROM csf_assessments WHERE rollup_rules = 3")
     if uncapped:
         raise RuntimeError(
-            f"Refusing to downgrade 0074: {uncapped} CSF assessment(s) have "
-            "rollup_rules = 3 (approved with no evidence cap). Code before 0074 cannot "
+            f"Refusing to downgrade 0075: {uncapped} CSF assessment(s) have "
+            "rollup_rules = 3 (approved with no evidence cap). Code before 0075 cannot "
             "read 3, and rewriting it to 2 would cap levels that were delivered uncapped."
         )
     with op.batch_alter_table("csf_dimension_scores") as batch:

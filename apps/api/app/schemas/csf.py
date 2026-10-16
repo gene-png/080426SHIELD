@@ -323,7 +323,7 @@ class CsfDimensionScoreResponse(BaseModel):
     in_scope: bool
     rationale: str | None
     what_we_found: str | None
-    #: Three values (migration 0074): `on_file`, `confirmed_in_discussion`,
+    #: Three values (migration 0075): `on_file`, `confirmed_in_discussion`,
     #: `neither`. None of them changes `level` except under the frozen cap.
     evidence_status: CsfEvidenceStatus
     #: `evidence_status == on_file`, the boolean this replaced, kept for
@@ -353,7 +353,7 @@ class CsfDimensionScorePatch(BaseModel):
     in_scope: bool | None = None
     rationale: str | None = Field(default=None, max_length=8000)
     what_we_found: str | None = Field(default=None, max_length=8000)
-    #: The two-valued write the box had before 0074: true is `on_file`, false
+    #: The two-valued write the box had before 0075: true is `on_file`, false
     #: is `neither`. Refused beside `evidence_status` (the route says why).
     has_evidence: bool | None = None
     evidence_status: CsfEvidenceStatus | None = None

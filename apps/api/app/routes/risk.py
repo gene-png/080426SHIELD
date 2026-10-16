@@ -1588,7 +1588,7 @@ def _csf_evidence(e: object, tier_rows: dict[str, CsfDimensionScore]) -> dict:
     """The approved `csf` evidence (#474 E, rulings 2, 3 and 6; risk_synthesize
     v5, #736 6205956728), from the Playbook roll-up `_gather_findings` already
     called. `evidence` is each rolled-up tier's three-valued `evidence_status`
-    (migration 0074). `evidence_capped` is sent ONLY for an assessment approved
+    (migration 0075). `evidence_capped` is sent ONLY for an assessment approved
     before Options 1 and 3 (`e.evidence_cap`), the one kind whose levels the
     former cap can still have lowered: `tier_evidence_capped`, true only where
     the cap CHANGED that tier's result (`csf/playbook.py::score_tier`), never

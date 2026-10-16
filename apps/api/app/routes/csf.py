@@ -1359,7 +1359,7 @@ def patch_dimension_score(
         refuse_while_running(db, owner.service_id)  # #645: the edit lock
         _refuse_working_profile_edit(owner)  # #1120 A2
     data = body.model_dump(exclude_unset=True)
-    # Migration 0074: the old two-valued write and the three-valued one name
+    # Migration 0075: the old two-valued write and the three-valued one name
     # the same column. Both at once cannot both be honoured, so neither is.
     if "has_evidence" in data and "evidence_status" in data:
         raise HTTPException(
