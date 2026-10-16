@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from html import escape
 from typing import Any
 
+# W4 (#736 6205956728): every level cell by name, from the one map.
+from app.csf.levels import level_name as _level_name
 from app.mode_stamp import (
     UNKNOWN_AI_MODE,
     XLSX_SHEET_TITLE,
@@ -678,15 +680,6 @@ KEPT_FOR_THE_RECORD = "No longer a gap: kept for the record"
 NOT_MEASURED = "Not measured"
 
 
-#: W4 (#736 6205956728): every level cell by name (6202644525 item 1). The
-#: bands are `csf/playbook.py::maturity_level`'s.
-LEVEL_NAMES: dict[int, str] = {
-    1: "Ad hoc",
-    2: "Developing",
-    3: "Defined",
-    4: "Managed",
-    5: "Optimized",
-}
 #: C13 (#736 6205956728): the roll-up rule in words, in the XLSX only. The
 #: numbers are `csf/playbook.py::weighted_floor_rollup`'s.
 ROLLUP_RULE_WORDS: dict[int, str] = {
@@ -697,14 +690,6 @@ ROLLUP_RULE_WORDS: dict[int, str] = {
     5: "Only Low is lowest, supporting outcome: higher tier",
     6: "Mixed: lowest tier",
 }
-
-
-def _level_name(level: int) -> str:
-    """A level's name. A level outside 1..5 is a defect upstream, so it raises
-    rather than print an invented name."""
-    if level not in LEVEL_NAMES:
-        raise ValueError(f"CSF level {level!r} has no name")
-    return LEVEL_NAMES[level]
 
 
 def _level(level: int | None) -> str:
