@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
  * out, not imported, so the test cannot agree with the code by construction.
  */
 const READ_FAILED =
-  "SHIELD's server didn't answer, so this couldn't be loaded. Reload the page to try again.";
+  "SHIELD's server didn't send a complete answer, so this couldn't be loaded. Reload the page to try again.";
 const OUTCOME_UNKNOWN =
   "We couldn't confirm whether this finished. It may still complete; check before trying again.";
 

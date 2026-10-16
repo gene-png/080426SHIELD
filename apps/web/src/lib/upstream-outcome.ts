@@ -34,6 +34,6 @@ export const UPSTREAM_OUTCOME_UNKNOWN_MESSAGE =
  */
 export const UPSTREAM_READ_FAILED = "upstream_read_failed";
 
-/** PLACEHOLDER pending the advisor's verbatim ruling (#736, the #1130 plan). */
+/** Approved verbatim on #736 (issuecomment-6225076633, option b). */
 export const UPSTREAM_READ_FAILED_MESSAGE =
-  "SHIELD's server didn't answer, so this couldn't be loaded. Reload the page to try again.";
+  "SHIELD's server didn't send a complete answer, so this couldn't be loaded. Reload the page to try again.";
