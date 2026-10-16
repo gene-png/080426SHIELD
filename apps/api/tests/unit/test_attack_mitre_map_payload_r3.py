@@ -38,9 +38,11 @@ FORBIDDEN = [
 OFFERED = ["prevention_limited", "recovery_absent", "missing_control_category"]
 
 
-def _spy_payloads(c, TestSession, provider) -> list[dict]:
+def _spy_payloads(c, TestSession, provider) -> tuple[list[dict], int]:
     """Run once, recording every batch's payload as the provider received it
-    (after redaction)."""
+    (after redaction), and how many of them are the first pass. This spy
+    answers nothing, so since #1047 the run asks every technique once more;
+    the first `batches_total` calls are the first pass."""
     h, svc_id, _ = _one_row_run(c, TestSession, provider, "covered")
     sent: list[dict] = []
 
@@ -49,20 +51,24 @@ def _spy_payloads(c, TestSession, provider) -> list[dict]:
         return LLMResponse('{"techniques": []}')
 
     provider.register("mitre_map", _spy)
-    attack_run_ai(c, svc_id, h)
-    assert len(sent) > 1, "one batch cannot show that each batch gets only its own slice"
-    return sent
+    result = attack_run_ai(c, svc_id, h)
+    first_pass = result["batches_total"]
+    # Counted over the FIRST pass: `len(sent)` now includes the re-ask too.
+    assert first_pass > 1, "one batch cannot show that each batch gets only its own slice"
+    assert len(sent) == first_pass + result["reask_batches_total"], (len(sent), result)
+    return sent, first_pass
 
 
 def test_each_batch_carries_technique_details_for_its_own_codes_only(
     app_client,  # noqa: F811
 ) -> None:
     c, TestSession, provider = app_client
-    sent = _spy_payloads(c, TestSession, provider)
+    sent, first_pass = _spy_payloads(c, TestSession, provider)
     union: list[str] = []
-    for payload in sent:
+    for i, payload in enumerate(sent):
         assert sorted(payload["technique_details"]) == sorted(payload["technique_codes"])
-        union.extend(payload["technique_details"])
+        if i < first_pass:
+            union.extend(payload["technique_details"])
     assert len(union) == len(set(union)), "a code's details went to more than one batch"
 
 
@@ -74,7 +80,7 @@ def test_technique_details_carry_the_catalogue_name_and_mitres_preventability(
     c, TestSession, provider = app_client
     details = {
         code: d
-        for payload in _spy_payloads(c, TestSession, provider)
+        for payload in _spy_payloads(c, TestSession, provider)[0]
         for code, d in payload["technique_details"].items()
     }
     # Literals from MITRE ATT&CK v19.2: T1595.001 maps only M1056

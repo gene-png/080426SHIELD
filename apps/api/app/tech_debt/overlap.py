@@ -106,6 +106,19 @@ def _bucketize(
     return out
 
 
+def no_cost_items(items: Iterable[CapabilityItem]) -> list[CapabilityItem]:
+    """TD-10 (for #1048): the source items every cost total leaves out.
+
+    THE ONE RULE for the count each surface states beside a total: an item
+    whose `annual_cost_usd` is null. Every disposition counts. A recorded $0 is
+    a cost, not a missing one. A split bundle's part carries no cost of its own
+    (its bundle does), so it is never counted. Excluded upload rows are not
+    items, so they never reach this function. Callers: `analyze_overlap`, the
+    client dashboard and the deliverable's `build_context`.
+    """
+    return [it for it in items if it.annual_cost_usd is None and not is_component(it)]
+
+
 def analyze_overlap(items: list[CapabilityItem]) -> OverlapAnalysis:
     by_category = _bucketize(items, lambda i: (i.category or "").strip())
     by_vendor = _bucketize(items, lambda i: (i.vendor or "").strip())
@@ -126,7 +139,7 @@ def analyze_overlap(items: list[CapabilityItem]) -> OverlapAnalysis:
     total_cost = sum(float(i.annual_cost_usd or 0) for i in costed)
     uncategorized = sum(1 for i in items if not (i.category or "").strip())
     no_vendor = sum(1 for i in items if not (i.vendor or "").strip())
-    no_cost = sum(1 for i in items if i.annual_cost_usd is None and not is_component(i))
+    no_cost = len(no_cost_items(items))
 
     return OverlapAnalysis(
         by_category=by_category,

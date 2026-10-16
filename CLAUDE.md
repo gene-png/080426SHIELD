@@ -148,18 +148,14 @@ Every merge is pinned to the head that was checked:
 
     gh pr merge <n> --squash --auto --match-head-commit <head sha>
 
-- **Auto-merge, with the head guard (Gene, 2026-10-16).** Enable it on a
-  plain PR only once the reviewer has run at that head and every
+- **Auto-merge, with the head guard (Gene, 2026-10-16).** Gene turned the
+  repository's "Allow auto-merge" setting on that day: "allow auto merge if
+  all checks are passed and the adversarial review also passed". Enable it on
+  a plain PR only once the reviewer has run at that head and every
   NON-required gate on it has finished green; auto-merge then waits for the
   required checks itself. On an extra-care PR, enable it only after the
-  advisor's "merge approved at <sha>", at exactly that SHA.
-- **Until the guard is proven, merge by hand** with the same command minus
-  `--auto`, once every check has finished green. Proof means a throwaway PR
-  posted on #736 showing that a push after auto-merge was enabled does NOT
-  merge, read only AFTER every required check on the NEW head has finished
-  green (earlier, "not merged" only means "not yet"). On 2026-10-16 the probe could not run: the repository's "Allow
-  auto-merge" setting is off (`gh api repos/gene-png/080426SHIELD --jq
-  .allow_auto_merge` returned `false`). Turning it on is Gene's call.
+  advisor's "merge approved at <sha>", at exactly that SHA. Read the head
+  from `gh pr view <n> --json headRefOid`, never type it.
 - **If a PR's body is edited after auto-merge is enabled,** disable it
   (`gh pr merge <n> --disable-auto`) and re-enable only once the body-reading
   gates have finished green again; the head guard cannot see a body edit.
@@ -173,9 +169,21 @@ Every merge is pinned to the head that was checked:
 - The advisor audits every merge afterwards.
 
 1. **Every check on the PR's head has finished green, required or not.** The
-   required set alone is not enough: the merge-rule-text, compose and
-   migration gates are deliberately not required. A green certificate is
-   about the head it ran on (see "READY is two claims").
+   required set, by the name branch protection requires, is: from `ci.yml`,
+   `Python (ruff + black + pytest + bandit)`,
+   `Web (prettier + eslint + typecheck + build)`, `Secret scan (gitleaks)`,
+   `E2E (Playwright smoke suite)` and `Demo (hosted-demo reset + journey spec)`;
+   from `audit-gate.yml`, `Adversarial audit recorded` and
+   `No accidental issue closes`. The E2E name is an aggregate job that fails
+   unless every shard and the session job succeeded and the shard lists
+   partition the suite; the jobs it waits on are not themselves required.
+   `mutation-sweep.yml` is schedule-only and excluded. **Re-derive this list
+   when a required check is added**, from branch protection
+   (`gh api repos/gene-png/080426SHIELD/branches/main/protection/required_status_checks`),
+   not from this paragraph. The required set alone is not enough: the
+   merge-rule-text, compose and migration gates are deliberately not
+   required. A green certificate is about the head it ran on (see "READY is
+   two claims").
    - **The exception: these gates are red by design** when they report a
      CHANGE (exit 1): "Merge rule text" and "compose content changed". That
      red is the extra-care trigger. It blocks a plain merge, and only an
@@ -1321,9 +1329,10 @@ recorded with a real exit code and a real date, and was the minority outcome
   main from 2026-08-07). Restoring the header alone would then have turned s40
   green over a page showing nothing but `Failed to load deliverables (400).` Fix
   both ends: render the page identity in EVERY branch, and make the spec assert a
-  state only a working page can reach. Download the CI artifact
-  (`gh run download <id> -n playwright-report`) — `error-context.md` carries the
-  failing page snapshot and ends this class of argument in one read.
+  state only a working page can reach. Download the CI artifacts
+  (`gh run download <id> -p 'playwright-report-*'`; one per E2E shard since
+  #680) — `error-context.md` carries the failing page snapshot and ends this
+  class of argument in one read.
 - **Before naming a new e2e spec, `ls e2e/smoke`.** Phase D added
   `s37-admin-deliverables` and `s38-help` alongside the existing
   `s37-security-signoff` and `s38-progress-stages` — Playwright does not care, so
@@ -1433,8 +1442,9 @@ because it is long. Load-bearing rules stay at any length:
 - **"AI suggests, code computes"** and **FAIL LOUDLY** — core principles 1 and 2.
 - **The gate suite** and the reasons each gate exists.
 - **The merge rule.** Keeping it ACCURATE is mandatory and is not "growth":
-  condition 1 reads every check on the head, and D-059
-  says to re-derive its measurement whenever condition 5 changes. Never leave a
+  condition 1 reads every check on the head and says to re-derive its
+  required-check list when a required check is added, and D-059 says to
+  re-derive its measurement whenever condition 5 changes. Never leave a
   known gap in it because a budget said not to grow. What to resist is growth
   in KIND — another condition, another worked example. If it becomes
   unholdable, restructure the presentation rather than freeze a rule whose own

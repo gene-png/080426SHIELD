@@ -21,6 +21,7 @@ import pytest
 
 from app.ai.llm import LLMResponse
 from tests._ai_runs import zt_run_ai
+from tests._zt_notes import note_rows
 from tests.unit.test_zt_run_ai import _admin_service, app_client  # noqa: F401  (fixture)
 
 pytestmark = pytest.mark.unit
@@ -103,7 +104,9 @@ def test_run_ai_drops_the_suggestion_as_refused_and_applies_its_siblings(
     app_client,  # noqa: F811
 ) -> None:
     c, provider = app_client
-    h, svc_id, _ = _draft(c)
+    h, svc_id, rows = _draft(c)
+    # #1084: a capability is sent only with notes.
+    note_rows(c, h, [rows[NO_ADVANCED], rows[HAS_ADVANCED]])
     provider.register_static(
         "zt_score",
         LLMResponse(

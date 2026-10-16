@@ -60,6 +60,16 @@ function isSubmittedField(key: string): key is SubmittedClientField {
   return (SUBMITTED_CLIENT_FIELDS as readonly string[]).includes(key);
 }
 
+/** Whether every value in `patch` is one the wizard keeps on screen after a
+ *  failed save: the submitted client fields, laid over the server's copy. */
+function keepsPatch(patch: IntakePatchRequest): boolean {
+  const { client, ...profile } = patch;
+  return (
+    Object.keys(profile).length === 0 &&
+    Object.keys(client ?? {}).every(isSubmittedField)
+  );
+}
+
 const STEP_INDEX: Record<WizardStepKey, number> = WIZARD_STEPS.reduce(
   (acc, step, i) => {
     acc[step.key] = i;
@@ -107,6 +117,9 @@ export function IntakeWizard(): JSX.Element {
         }
         return nextEntered;
       }),
+    // #1115: the wizard keeps on screen only the client fields it submits;
+    // Step 3's are re-read from the server when the step reopens.
+    keepsPatch,
   );
 
   // #252: the client fields as this person last ENTERED them, from every save
@@ -207,7 +220,8 @@ export function IntakeWizard(): JSX.Element {
 
   function onSystemsChange(prompting_context: string): void {
     saveEntered({
-      client: { prompting_context: prompting_context || undefined },
+      // #1093: emptied is null, so the clear reaches the api.
+      client: { prompting_context: prompting_context || null },
     });
   }
 
@@ -224,13 +238,19 @@ export function IntakeWizard(): JSX.Element {
     try {
       const next = await submitIntake({
         client: {
-          // Every field `?? undefined`. Since D-080 an unnamed org is NULL
-          // rather than a sentinel, and submitting one is refused by the API
-          // with a typed 422 ("Organization legal name is required to submit
-          // intake.") — the wizard does not pre-empt that check, so the user
-          // gets the server's message rather than a silent no-op.
+          // Every field `?? undefined`, except one the client CLEARED (#1093):
+          // that is sent as null, because the review shows it as not provided
+          // and, if its blur save never landed, Submit is what carries the
+          // clear. Since D-080 an unnamed org is NULL rather than a sentinel,
+          // and submitting one is refused by the API with a typed 422
+          // ("Organization legal name is required to submit intake.") — the
+          // wizard does not pre-empt that check, so the user gets the
+          // server's message rather than a silent no-op.
           ...(Object.fromEntries(
-            SUBMITTED_CLIENT_FIELDS.map((k) => [k, client[k] ?? undefined]),
+            SUBMITTED_CLIENT_FIELDS.map((k) => [
+              k,
+              enteredClient[k] === null ? null : (client[k] ?? undefined),
+            ]),
           ) as ClientProfilePatch),
           service_interests: picks,
         },

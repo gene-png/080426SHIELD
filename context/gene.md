@@ -1,8 +1,13 @@
 # Gene — in-flight status
 
 _2026-10-16 (coordinator, session_018WJ…): D-113, the merge rule, at your instruction._ An agent merges a PR once every check on its head has finished green and the reviewer has run on that head, with auto-merge and a head guard once that guard is proven (your repository's "Allow auto-merge" setting is currently off). Anything with a migration, an extra-care path or client-facing content first needs the advisor's merge approval naming its head SHA, and then the coordinator merges at exactly that head. Status docs are batched. You can still merge anything yourself.
+_2026-10-16 (track T5): #1115, intake auto-save no longer throws away what a client typed when the server did not judge it._ If a save fails because the client's session ended, access was refused or there were too many requests, the typed value now stays in the form with "This value was not saved. It is still in the form, so you can save it again." A bare server error from in front of the api says it could not confirm whether the save went through. Only a real refusal of the value still drops it. It comes back to you: conditions 5 and 6.
+
+_2026-10-16 (track T5): #1093 item 1, emptied intake fields are cleared._ A client who deletes the text of an intake field (Step 2) now clears it. Before, the old value came back on reload, and a blanked website was refused as "not accepted". The second half of #1093 waits on the ruling for #1115, which touches the same file. It comes back to you: condition 5.
 
 _2026-10-16 (track T5): #1173, a warning about blank answers before submit._ When a client presses "Submit for review" in the CSF or Zero Trust self-assessment with answers still blank, they now see how many are blank, a "Go to Govern (2 blank)" style button for each area with blanks, and "Submit anyway". A complete assessment submits as before. The wording is the text approved on #736. It comes back to you: condition 5.
+
+_2026-10-16 (track T5): #1262, uploads land under the right client._ If a consultant had two clients open in two tabs, a document dropped into one client's Tech Debt workspace could be stored under the other client. It is now always stored under the client the workspace belongs to. It comes back to you: condition 5.
 
 _2026-10-16 (track T5): #1170, the suite-listing banner moved to Notes and artifacts._ The "List each product separately, not as a suite" banner now shows at the top of Step 5 (Notes and artifacts), above the upload box, and no longer on Step 4 (Systems). Same rule and your approved wording. The Step 5 reminder line planned after IN-2 would now repeat it on the same step, so it waits for your call on whether it is still wanted. It comes back to you: condition 5.
 
