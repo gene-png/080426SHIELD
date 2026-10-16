@@ -1029,6 +1029,9 @@ def unseeded_csf(world):
         "id"
     ]
     assert c.post(f"/csf/services/{svc_id}/assessments", headers=h).status_code in (200, 201)
+    # CSF Option 1 (D-114): only rows whose answer has notes are sent, and a
+    # measurement with nothing to send is refused (`csf_nothing_to_send`).
+    note_every_answer(svc_id)
     yield TestSession, provider
 
 
