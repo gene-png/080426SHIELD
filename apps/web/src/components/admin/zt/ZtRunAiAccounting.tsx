@@ -73,7 +73,7 @@ const DROP_REASON_LABEL: Record<ZtDroppedSuggestion["reason"], string> = {
 // #1084: the line for a run that sent no capability. PLACEHOLDER, PENDING the
 // advisor's ruling: proposed text, not approved verbatim.
 const NOTHING_SENT =
-  "No capability was sent to the AI, because none has notes recorded.";
+  "No capability was sent to the AI, because none had notes recorded when this run started.";
 
 // `edited` joined it with #645, `no_notes` with #1084 (as in CSF, #1000).
 const BY_DESIGN_SKIPS: ReadonlySet<string> = new Set([

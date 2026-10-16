@@ -33,7 +33,7 @@ const DRIFT = /The AI returned no suggestions at all/;
 // PENDING the advisor's ruling: the proposed line for a run that sent nothing.
 // It changes with the ruling, never with the component.
 const NOTHING_SENT =
-  "No capability was sent to the AI, because none has notes recorded.";
+  "No capability was sent to the AI, because none had notes recorded when this run started.";
 
 describe("ZtRunAiAccounting, a run that sent nothing (#1084)", () => {
   it("shows the omitted disclosure and no drift alert", () => {
