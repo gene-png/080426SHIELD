@@ -1,6 +1,6 @@
 # Gene — in-flight status
 
-_2026-10-16 (track T5): #1093 item 2, a save answered 2xx is no longer shown as "Network error."._ If a save's success answer cannot be read (only possible from something in front of the app, such as a network sign-in page), the intake now says it could not confirm the save, and keeps the typed value. A bug in the wizard's own state update now shows up loudly instead of as a failed save. It comes back to you: condition 5.
+_2026-10-16 (track T5): #1093 item 2, a save answered 2xx is no longer shown as "Network error."._ If a save's success answer cannot be read (only possible from something in front of the app, such as a network sign-in page), the intake now says it could not confirm the save. The typed value stays on screen for the organization and systems fields; a contact-step field shows what the server holds when the step reopens. A bug in the wizard's own state update now shows up loudly instead of as a failed save. It comes back to you: condition 5.
 
 _2026-10-16 (track T5): #1115, intake auto-save no longer throws away what a client typed when the server did not judge it._ If a save fails because the client's session ended, access was refused or there were too many requests, the typed value now stays in the form with "This value was not saved. It is still in the form, so you can save it again." A bare server error from in front of the api says it could not confirm whether the save went through. Only a real refusal of the value still drops it. It comes back to you: conditions 5 and 6.
 
