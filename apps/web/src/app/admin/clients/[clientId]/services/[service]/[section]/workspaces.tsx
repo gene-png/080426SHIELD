@@ -67,10 +67,12 @@ function Workspace({
 }
 
 /**
- * The section's slot, and the ONE place a service track splits its workspace
- * into sections: it receives the URL's `section` (already checked against the
- * kind by the page). Until a track moves its components, every section shows
- * the whole existing workspace, once, and `section` only names the slot.
+ * The section's slot: the one place that decides what a section RENDERS. It
+ * receives the URL's `section` (already checked against the kind by the
+ * page). Which sections a kind has (`omittedSections` in `frameRoutes.ts`),
+ * the header's `next` and the page title are still the frame's. Until a track
+ * moves its components, every section shows the whole existing workspace,
+ * once, and `section` only names the slot.
  */
 export function ExistingWorkspace({
   kind,

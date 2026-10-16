@@ -1,8 +1,8 @@
 /**
- * T6: the section page hands the URL's section to the workspace slot, so a
- * service track can split its components into sections in that one place
- * without touching the frame. Until a track does, every section shows the
- * whole existing workspace, once. Tested through the page, not the slot.
+ * T6: the section page hands the URL's section to the workspace slot, the one
+ * place that decides what a section renders, so a service track can split its
+ * components there. Until a track does, every section shows the whole
+ * existing workspace, once. Tested through the page, not the slot.
  */
 import { render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
