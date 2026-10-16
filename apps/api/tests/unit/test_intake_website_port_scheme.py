@@ -45,6 +45,9 @@ def _patch_website(client, bearer: str, website: str):
         "https:/8080",
         "https:\\8080",
         "https:%38080",
+        # The "//" missing before a real dotted quad: the prefix made its host
+        # "https", so it is refused too.
+        "https:1.2.3.4",
         "https:\uff18\uff10\uff18\uff10",  # full-width "8080"
     ],
 )
@@ -69,6 +72,7 @@ def test_a_bare_scheme_and_a_port_is_refused(app_client, typed) -> None:  # noqa
         # A dotted quad the client typed names its own host (review of
         # 2a4f17eb: the widened rule must not refuse a real address).
         ("https://1.2.3.4", "https://1.2.3.4/"),
+        ("http://1.2.3.4", "http://1.2.3.4/"),
         ("1.2.3.4:8080", "https://1.2.3.4:8080/"),
     ],
 )

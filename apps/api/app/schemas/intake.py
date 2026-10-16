@@ -39,11 +39,11 @@ _HAS_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
 # repairs the first three to the host the client meant and refuses the last.
 # A colon followed by a digit is a port ("example.com:8080"), not a scheme.
 _ATTEMPTED_SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*:(?![0-9])|^https?//", re.IGNORECASE)
-# #1116: "http" or "https", a colon, then a digit. The colon-digit reads as a
-# port in `_ATTEMPTED_SCHEME`, so "https:8080" got the prefix and was stored
-# with host "https". It is a scheme typed without "//" and followed by a
-# number, never a host, so it is refused. A letter after the colon
-# ("https:kentro.com") is left as before: `HttpUrl` repairs it.
+# #1116: "http" or "https", a colon, then a digit, with no "//". The
+# colon-digit reads as a port in `_ATTEMPTED_SCHEME`, so the value got the
+# `https://` prefix and its host became "https" ("https:8080",
+# "https:1.2.3.4"). Refused: the client must type the "//". A letter after the
+# colon ("https:kentro.com") is left as before: `HttpUrl` repairs it.
 _BARE_WEB_SCHEME_THEN_DIGIT = re.compile(r"^https?:[0-9]", re.IGNORECASE)
 # #1116: an IPv4 host as `HttpUrl` writes it, a dotted quad.
 _DOTTED_QUAD = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+")
@@ -82,7 +82,7 @@ class ClientProfilePatch(BaseModel):
             return value
         stripped = value.strip()
         if _BARE_WEB_SCHEME_THEN_DIGIT.match(stripped):
-            raise ValueError("A website address needs a host after its scheme.")
+            raise ValueError('A website address needs "//" after "http:" or "https:".')
         if (
             stripped
             and "@" not in _authority(stripped)
