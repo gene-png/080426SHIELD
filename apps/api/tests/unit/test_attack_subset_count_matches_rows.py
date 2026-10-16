@@ -27,6 +27,7 @@ from tests.unit.test_attack_subset_after_release import (
     _cover,
     _dashboard,
     _release,
+    _uncleared,
 )
 from tests.unit.test_attack_subset_drift import (
     EDR,
@@ -99,11 +100,21 @@ def test_each_format_counts_only_rows_with_a_status(
     assert C1_TWO not in text, text[:3000]
 
 
-def _status_world(app_parts, tmp_path, status_body: dict, *, stored_rules: bool):  # noqa: F811
-    """Row one carries `status_body` and credits LEGACY; row two is unscored and
-    credits LEGACY. `stored_rules` gives an assessment approved before R3
+def _status_world(
+    app_parts,  # noqa: F811
+    tmp_path,
+    status_body: dict,
+    *,
+    stored_rules: bool,
+    tools: tuple[str, ...] = (EDR, LEGACY),
+    uncleared: bool = False,
+):
+    """Row one carries `status_body` and credits `tools`; row two is unscored
+    and credits LEGACY. `stored_rules` gives an assessment approved before R3
     (`status_rules` 1, migration 0059's backfill), whose stored status is what
-    every surface reads -- the only way a Gap row keeps its tools here."""
+    every surface reads. `uncleared` leaves every citation of LEGACY on row one
+    uncleared (#102), so under R3 a row whose only tool is LEGACY computes to
+    Gap and keeps its tools: the production-path Gap."""
     import uuid as _uuid
 
     from app.models.attack_assessment import AttackAssessment
@@ -111,10 +122,12 @@ def _status_world(app_parts, tmp_path, status_body: dict, *, stored_rules: bool)
     _with_storage(app_parts, tmp_path)
     w = _world(app_parts)
     one, two = _codes(w)[:2]
-    r = w.patch(one, {**status_body, "detection_tools": [EDR, LEGACY]})
+    r = w.patch(one, {**status_body, "detection_tools": list(tools)})
     assert r.status_code == 200, r.text
     r = w.patch(two, {"detection_tools": [LEGACY]})
     assert r.status_code == 200, r.text
+    if uncleared:
+        _uncleared(w, one, LEGACY)
     assert w.approve().status_code == 200
     if stored_rules:
         # After approve, which stamps the rule set: migration 0059's backfill
@@ -130,19 +143,32 @@ def _status_world(app_parts, tmp_path, status_body: dict, *, stored_rules: bool)
 
 
 @pytest.mark.parametrize(
-    ("status_body", "stored_rules"),
+    ("status_body", "stored_rules", "tools", "uncleared"),
     [
-        ({"status": "not_applicable", "reason_code": "platform_absent"}, False),
-        ({"status": "gap"}, True),
+        (
+            {"status": "not_applicable", "reason_code": "platform_absent"},
+            False,
+            (EDR, LEGACY),
+            False,
+        ),
+        ({"status": "gap"}, True, (EDR, LEGACY), False),
+        ({"status": "gap"}, False, (LEGACY,), True),
     ],
-    ids=["not_applicable", "gap_before_r3"],
+    ids=["not_applicable", "gap_before_r3", "gap_computed_r3"],
 )
 def test_a_judged_row_that_is_not_coverage_still_counts(
-    app_parts, tmp_path, status_body: dict, stored_rules: bool  # noqa: F811
+    app_parts, tmp_path, status_body: dict, stored_rules: bool, tools, uncleared: bool  # noqa: F811
 ) -> None:
     """Gap and N/A are judgements (#889): their rows still count. Only the
     unscored row is out."""
-    w, fin, row_one = _status_world(app_parts, tmp_path, status_body, stored_rules=stored_rules)
+    w, fin, row_one = _status_world(
+        app_parts,
+        tmp_path,
+        status_body,
+        stored_rules=stored_rules,
+        tools=tools,
+        uncleared=uncleared,
+    )
     assert row_one["status"] == status_body["status"], "setup: row one keeps its status"
     # And it is the status every surface reads, computed or stored.
     assert (row_one["computed_status"] or row_one["status"]) == status_body["status"], row_one
