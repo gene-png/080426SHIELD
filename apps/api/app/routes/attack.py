@@ -2443,13 +2443,16 @@ def _mitre_map_batches(
     service_id: uuid.UUID,
     client_id: uuid.UUID,
     deadline_at: datetime,
+    codes: list[str] | None = None,
 ) -> Batched:
     """The batched mitre_map call. How batches run, fail and are accounted for
-    is `app.ai.batching.run_batches`, shared with csf_score."""
-    codes = [c for c in (req.preview.inputs.get("technique_codes") or []) if isinstance(c, str)]
-    batches = [
-        codes[i : i + _MITRE_BATCH_SIZE] for i in range(0, len(codes), _MITRE_BATCH_SIZE)
-    ] or [[]]
+    is `app.ai.batching.run_batches`, shared with csf_score.
+
+    `codes` asks for those techniques only, with the same payload otherwise
+    (#1047's re-ask). None asks for every code the request carries."""
+    if codes is None:
+        codes = [c for c in (req.preview.inputs.get("technique_codes") or []) if isinstance(c, str)]
+    batches = _mitre_batches(codes)
     out = run_batches(
         db,
         llm,
@@ -2469,6 +2472,112 @@ def _mitre_map_batches(
         ),
     )
     return out
+
+
+def _mitre_batches(codes: list[str]) -> list[list[str]]:
+    """`codes` in slices of `_MITRE_BATCH_SIZE`. No codes is one empty batch:
+    `run_batches` refuses an empty list as a caller's bug."""
+    batches = [codes[i : i + _MITRE_BATCH_SIZE] for i in range(0, len(codes), _MITRE_BATCH_SIZE)]
+    return batches or [[]]
+
+
+@dataclass(frozen=True)
+class _Reask:
+    """What #1047's second ask did.
+
+    `entries` holds only the entries naming a technique their OWN re-ask batch
+    asked about; anything else is a stray, dropped and counted, so a re-ask
+    can never overwrite an answer the first pass gave. `answered` is the
+    techniques those entries named. Only the ones the run then APPLIES (or
+    kept as a consultant's edit) leave the omitted list: a refused re-ask
+    answer applies nothing, so its technique still got no status this run.
+    """
+
+    entries: list[dict] = field(default_factory=list)
+    answered: frozenset[str] = frozenset()
+    asked: int = 0
+    batches_total: int = 0
+    batches_failed: int = 0
+    strays_dropped: int = 0
+    skipped_past_deadline: bool = False
+
+
+def _reask_omitted(db: Session, ctx: RunContext, req: AttackAiRequest, omitted: set[str]) -> _Reask:
+    """#1047: ask once more for the techniques a SUCCESSFUL first-pass batch
+    left out (`_omitted_codes`), with the same prompt and batching.
+
+    - Failed first-pass batches are NOT asked again: their techniques stay on
+      the failed-batch alert, and `batches_failed` keeps its meaning.
+    - Nothing is asked past the run's deadline. Recorded, so "why was nothing
+      asked again" has an answer.
+    - A re-ask that fails, in part or whole, costs only its own techniques:
+      they stay omitted and the failure is counted on `batches_failed` here,
+      never the run's. A deadline reached DURING the re-ask is such a failure.
+    - A redaction refusal is not caught: it fails the run whole (ruling (a)
+      on #736), as it does in the first pass.
+    """
+    if not omitted:
+        return _Reask()
+    codes = sorted(omitted)
+    if ctx.past_deadline():
+        _log.warning(
+            "attack.run_ai.reask_skipped_past_deadline",
+            service_id=str(ctx.service_id),
+            omitted=len(codes),
+        )
+        return _Reask(skipped_past_deadline=True)
+    planned = len(_mitre_batches(codes))
+    try:
+        out = _mitre_map_batches(
+            db,
+            ctx.llm,
+            req,
+            requested_by=ctx.requested_by,
+            service_id=ctx.service_id,
+            client_id=ctx.client_id,
+            deadline_at=ctx.deadline_at,
+            codes=codes,
+        )
+    except RunFailed as exc:
+        # Every re-ask batch came back without an answer, or the deadline
+        # passed while they ran. The first pass still lands.
+        _log.error(
+            "attack.run_ai.reask_failed",
+            service_id=str(ctx.service_id),
+            reason=exc.reason,
+            asked=len(codes),
+            batches=planned,
+        )
+        return _Reask(asked=len(codes), batches_total=planned, batches_failed=planned)
+    entries: list[dict] = []
+    strays = 0
+    for inputs, data in zip(out.inputs, out.answers, strict=True):
+        asked_here = set(inputs["technique_codes"])
+        for t in data.get("techniques") or []:
+            if not isinstance(t, dict):
+                continue
+            if t.get("technique_code") in asked_here:
+                entries.append(t)
+            else:
+                strays += 1
+    reask = _Reask(
+        entries=entries,
+        answered=frozenset(t["technique_code"] for t in entries),
+        asked=len(codes),
+        batches_total=out.total,
+        batches_failed=out.failed,
+        strays_dropped=strays,
+    )
+    _log.info(
+        "attack.run_ai.reasked",
+        service_id=str(ctx.service_id),
+        asked=reask.asked,
+        answered=len(reask.answered),
+        batches_total=reask.batches_total,
+        batches_failed=reask.batches_failed,
+        strays_dropped=strays,
+    )
+    return reask
 
 
 def _omitted_codes(out: Batched, locked: frozenset[str]) -> set[str]:
@@ -2775,7 +2884,19 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
         deadline_at=ctx.deadline_at,
     )
     batches_total, batches_failed = batched.total, batched.failed
-    result = _BatchedResult(data={"techniques": _batch_suggestions(batched)})
+    # #1047: ask once more for what a successful batch left out. Locked rows
+    # read fresh: a lock set while the first pass ran is honoured.
+    db.expire_all()
+    reask = _reask_omitted(
+        db,
+        ctx,
+        req,
+        _omitted_codes(batched, frozenset(code for code, r in rows.items() if r.locked)),
+    )
+    # First pass, then re-ask: no technique is in both, because the re-ask
+    # asked only for techniques no first-pass entry named and keeps nothing
+    # else.
+    result = _BatchedResult(data={"techniques": _batch_suggestions(batched) + reask.entries})
     # The snapshot is taken AFTER the provider calls, from the database as it
     # is now: a row edited while the batches ran (an edit that checked the lock
     # before this run existed) must be seen as edited, and the rows above were
@@ -3061,9 +3182,16 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
     # #853: read after the apply, so `kept_status` is what the row holds now,
     # an edit that landed while the model answered included. Against the
     # PRE-recompute `locked_keys`: an unlocked parent is never asked for.
+    # #1047: less what the re-ask settled, so this is what is STILL missing.
+    # Settled means applied, or kept as an edit made during the run. NOT a
+    # re-ask answer the loop refused: unlike a first-pass refusal, which is an
+    # answer (`_omitted_codes`), that technique was already on this list, and
+    # moving it to the audit row alone (#859) would hide a status nobody
+    # confirmed that the list exists to show.
+    reask_settled = reask.answered & (applied_codes | skipped_codes)
     omitted_techniques = [
         AttackOmittedTechnique(technique_code=code, kept_status=rows[code].status)
-        for code in sorted(_omitted_codes(batched, locked_keys))
+        for code in sorted(_omitted_codes(batched, locked_keys) - reask_settled)
     ]
     locked_keys = locked_keys - frozenset(parents_unlocked)
     db.flush()
@@ -3118,6 +3246,7 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
             "unusable": citations.unusable,
             "pending_review_rows": len(pending),
             "omitted_count": len(omitted_techniques),
+            "reasked_count": reask.asked,
         },
     )
     audit(
@@ -3156,6 +3285,14 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
             # this run, the ones that reach the deliverable.
             "omitted_count": len(omitted_techniques),
             "omitted_kept_status": sum(1 for t in omitted_techniques if t.kept_status is not None),
+            # #1047: the second ask, counts only. Its batches are not the
+            # run's `batches_*`: a failed re-ask leaves its techniques on the
+            # omitted list above, not on the failed-batch alert.
+            "reasked_count": reask.asked,
+            "reask_batches_total": reask.batches_total,
+            "reask_batches_failed": reask.batches_failed,
+            "reask_strays_dropped": reask.strays_dropped,
+            "reask_skipped_past_deadline": reask.skipped_past_deadline,
         },
     )
     # No commit: the framework commits this apply together with the
@@ -3194,6 +3331,9 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
         forbidden_reason_refused=len(forbidden_reason_codes - applied_codes),
         omitted_count=len(omitted_techniques),
         omitted_techniques=omitted_techniques,
+        reasked_count=reask.asked,
+        reask_batches_total=reask.batches_total,
+        reask_batches_failed=reask.batches_failed,
     )
     return RunOutcome(
         result=result_payload.model_dump(mode="json"),

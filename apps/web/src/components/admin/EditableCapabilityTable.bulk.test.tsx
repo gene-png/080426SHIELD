@@ -54,7 +54,11 @@ function chooseBulk(value: string): void {
 describe("EditableCapabilityTable bulk disposition (#641)", () => {
   it("offers no selection without a bulk handler, so other callers are unchanged", () => {
     render(<EditableCapabilityTable items={ITEMS} onItemUpdate={() => {}} />);
-    expect(screen.getAllByRole("combobox")).toHaveLength(3);
+    // #1176: count the Disposition selects (3 rows; "Disposition for selected
+    // rows" would make it 4), not every combobox: Category is one too now.
+    expect(
+      screen.getAllByRole("combobox", { name: /Disposition/ }),
+    ).toHaveLength(3);
     expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
   });
 
@@ -67,7 +71,11 @@ describe("EditableCapabilityTable bulk disposition (#641)", () => {
         readOnly
       />,
     );
-    expect(screen.getAllByRole("combobox")).toHaveLength(3);
+    // #1176: count the Disposition selects (3 rows; "Disposition for selected
+    // rows" would make it 4), not every combobox: Category is one too now.
+    expect(
+      screen.getAllByRole("combobox", { name: /Disposition/ }),
+    ).toHaveLength(3);
     expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
   });
 

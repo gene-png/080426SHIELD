@@ -1,7 +1,8 @@
 """#840: a ZT capability the model returns no result for is counted and shown.
 
-`_zt_run_work` asks the model about every capability and applies only the
-entries that come back. Before #840 a capability with no entry kept whatever
+`_zt_run_work` asks the model about every capability with notes (a blank one
+is never sent, #1084, and is listed as omitted all the same) and applies only
+the entries that come back. Before #840 a capability with no entry kept whatever
 stage it held and the run recorded nothing. The run now reports
 `omitted_capabilities = (asked & rows) - answered - locked`, with `notes_blank` and
 `kept_stage` per capability, and the audit row carries counts only.
@@ -35,6 +36,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.models.zt_assessment import ZtAnswer
 from tests._ai_runs import zt_run_ai
+from tests._zt_notes import note_rows
 
 
 @dataclass
@@ -52,6 +54,11 @@ class World:
     def patch(self, i: int, **fields: Any) -> None:
         r = self.c.patch(f"/zt/answers/{self.answers[i]['id']}", headers=self.h, json=fields)
         assert r.status_code == 200, r.text
+
+    def note_all_but(self, *indices: int) -> None:
+        """#1084: a blank-notes capability is never sent, so every row a test
+        does not set up itself gets a note, and is asked about."""
+        note_rows(self.c, self.h, self.answers, skip={self.code(i) for i in indices})
 
     def answer_all_but(
         self,
@@ -147,6 +154,7 @@ def test_capabilities_left_out_are_listed_with_their_notes_and_kept_stage(world)
     Red-on-revert: drop `- answered` and every capability is listed.
     """
     blank, noted = world.code(0), world.code(1)
+    world.note_all_but(0)
     # `blank`: no notes, no stage (row 5). `noted`: notes and a stage set by
     # hand (row 6), the harm the issue names.
     world.patch(1, notes="Okta covers the workforce only", maturity_stage=2)
@@ -186,6 +194,7 @@ def test_an_entry_that_names_a_capability_and_is_refused_is_not_omitted(world) -
     Red-on-revert: count only APPLIED codes as answered, and both are listed.
     """
     out_of_range, empty_entry = world.code(0), world.code(1)
+    world.note_all_but()
     world.answer_all_but(
         set(),
         override={
@@ -213,6 +222,7 @@ def test_a_locked_capability_left_out_is_not_omitted(world) -> None:
     Red-on-revert: drop `- locked_keys` and the locked code is listed.
     """
     locked, unlocked = world.code(0), world.code(1)
+    world.note_all_but()
     world.patch(0, locked=True, notes="Locked by the consultant")
     world.answer_all_but({locked, unlocked})
 
@@ -228,6 +238,7 @@ def test_whitespace_notes_are_blank_and_na_is_a_note(world) -> None:
     """Whitespace only is blank. "N/A" is a note: code cannot tell a deliberate
     "N/A" from one a model should have scored, so it does not try."""
     spaces, na = world.code(0), world.code(1)
+    world.note_all_but()
     world.patch(0, notes="  \n\t ")
     world.patch(1, notes="N/A")
     world.answer_all_but({spaces, na})
@@ -257,6 +268,7 @@ def test_kept_stage_is_read_after_the_apply(world, monkeypatch) -> None:
     from app.models._common import utcnow
 
     edited = world.code(0)
+    world.note_all_but()
     world.patch(0, notes="Before the run", maturity_stage=1)
     real_run_job = zt_routes.run_job
     calls: list[int] = []
@@ -288,6 +300,7 @@ def test_an_empty_response_lists_every_unlocked_capability(world) -> None:
     """`{"capabilities": []}` received nothing, so every capability asked for is
     without a result. The panel renders this inside its received-0 branch."""
     locked = world.code(0)
+    world.note_all_but()
     world.patch(0, locked=True)
     world.provider.register_static("zt_score", LLMResponse('{"capabilities": []}'))
 
@@ -311,6 +324,7 @@ def test_the_audit_row_carries_omitted_counts_and_no_codes(world) -> None:
         (2, {"notes": "Partial rollout", "maturity_stage": 3}),
         (3, {"notes": "N/A"}),
     ]
+    world.note_all_but(0, 1)
     for i, fields in setups:
         if fields:
             world.patch(i, **fields)
@@ -340,6 +354,7 @@ def test_the_audit_row_and_accounting_line_carry_the_omitted_total(world, capsys
     from app.models.audit_entry import AuditEntry
 
     omitted = {world.code(i) for i in range(3)}
+    world.note_all_but()
     world.answer_all_but(omitted)
     capsys.readouterr()
 

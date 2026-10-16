@@ -52,6 +52,9 @@ const DROP_REASON_LABEL: Record<ZtDroppedSuggestion["reason"], string> = {
   protected: "answer was not written by the AI, and an offline run left it",
   // #645: an edit that landed after the run started is kept, never overwritten.
   edited: "answer was edited after this run started, so the run left it",
+  // #1084, approved verbatim at #736 comment 6205425122: CSF's `no_notes`
+  // label with "row" read as "capability".
+  no_notes: "capability has no notes, so the AI does not assess it",
   // #839 F1, S4, approved verbatim at #736 comment 6049667540: the PATCH routes
   // refuse this stage with the approved 422, and this is the run's word for it.
   stage_above_capability_max:
@@ -67,11 +70,17 @@ const DROP_REASON_LABEL: Record<ZtDroppedSuggestion["reason"], string> = {
  * NOT merged into one label, because telling a consultant a row is "locked"
  * when nobody locked it is a false statement about who did what.
  */
-// `edited` joined it with #645.
+// #1084: the line for a run that sent no capability. PLACEHOLDER, PENDING the
+// advisor's ruling: proposed text, not approved verbatim.
+const NOTHING_SENT =
+  "No capability was sent to the AI, because none had notes recorded when this run started.";
+
+// `edited` joined it with #645, `no_notes` with #1084 (as in CSF, #1000).
 const BY_DESIGN_SKIPS: ReadonlySet<string> = new Set([
   "locked",
   "protected",
   "edited",
+  "no_notes",
 ]);
 
 /**
@@ -188,7 +197,8 @@ function OmittedItems({
 }
 
 /**
- * #840: the capabilities the run asked about and got no entry for. Copy Z1 to
+ * #840: the capabilities the run got no entry for, including the blank-notes
+ * ones it never sends (#1084). Copy Z1 to
  * Z6, approved verbatim (#840 plan, #736 ruling).
  *
  * Not a drop reason: every number above counts values the model SENT, and a
@@ -328,8 +338,24 @@ export function ZtRunAiAccounting({
   // error path fired, and "applied 0 of 0" reads as calmly as "applied 12 of
   // 12" — the most reassuring possible way to report a wholly-lost response.
   //
-  // #840: a response with no entries leaves every capability it was asked
-  // about without a result, so the omitted block renders here too.
+  // #840: a response with no entries leaves every capability without a
+  // result, so the omitted block renders here too.
+  // #1084: no capability was sent (every one is blank), so no call was made.
+  // Receiving nothing is then the design, never the drift alert: one neutral
+  // line says so, then the disclosure, which lists the blank rows that are not
+  // locked and renders nothing when every row is locked, so the panel is
+  // never empty. `=== 0`, not falsy: a run stored before the count existed
+  // (undefined/null) keeps the alert, as it did.
+  if (result.suggestions_received === 0 && result.capabilities_sent === 0) {
+    return (
+      <div className="space-y-2">
+        {/* PLACEHOLDER, PENDING the advisor's ruling (#1084 re-review R6):
+            proposed text, not approved. */}
+        <p className="text-sm text-ink-secondary">{NOTHING_SENT}</p>
+        <ZtOmittedBlock result={result} otherAlert={false} />
+      </div>
+    );
+  }
   if (result.suggestions_received === 0) {
     return (
       <div className="space-y-2">

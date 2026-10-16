@@ -724,6 +724,11 @@ class TechDebtDashboardResponse(BaseModel):
     # uploaded row, so `excluded_count` is the count. False makes it a FLOOR
     # (the true count may be higher, and is unknown); the client is told so.
     excluded_count_exact: bool
+    # TD-10 (for #1048): source items (not a split bundle's parts) with no
+    # recorded cost, which `annual_spend_usd` leaves out; `overlap.no_cost_items`.
+    # A recorded $0 is a cost. REQUIRED: a default of 0 would claim every tool
+    # was costed.
+    no_cost_count: int
     redundant_category_count: int
     spend_by_category: list[TechDebtCategorySpend]
     sprawl_by_category: list[TechDebtCategorySpend]

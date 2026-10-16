@@ -138,6 +138,7 @@ from app.tech_debt.components import (
     savings_cost,
     source_items,
 )
+from app.tech_debt.overlap import no_cost_items
 from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.savings import estimated_savings
 from app.zt.catalog import capability_by_code as zt_capability_by_code
@@ -1811,7 +1812,11 @@ def tech_debt_dashboard(
     # of SPEND. An uncosted item contributes 0.0 below and is still counted in
     # `total_applications`, so the spend figure was a floor and said so nowhere
     # while `savings` beside it carried a flag for exactly this.
-    spend_cost_known = True
+    # TD-10 (for #1048): THE ONE RULE for the uncosted count, shared with the
+    # admin overlap view and the deliverable. The floor flag is derived from it,
+    # so the count and "partial" cannot disagree.
+    no_cost_count = len(no_cost_items(items))
+    spend_cost_known = no_cost_count == 0
     # category -> {"total": float, "items": [CapabilityItem]}; "count" is
     # derived below as the number of distinct LICENSES in the bucket.
     by_cat: dict[str, dict] = {}
@@ -1821,8 +1826,6 @@ def tech_debt_dashboard(
         # own, makes spend a floor. A real uncosted source row still does.
         part = is_component(it)
         cost = float(it.annual_cost_usd) if it.annual_cost_usd is not None and not part else 0.0
-        if it.annual_cost_usd is None and not part:
-            spend_cost_known = False
         annual_spend += cost
         # A part DOES sit in its own category (UX finding 5: Defender beside
         # CrowdStrike is a real redundancy), but a bundle and its parts are one
@@ -1945,6 +1948,7 @@ def tech_debt_dashboard(
         source_rows_total=source_rows_total,
         included_count=included_count,
         excluded_count=excluded_count,
+        no_cost_count=no_cost_count,
         redundant_category_count=len(sprawl_by_category),
         spend_by_category=spend_by_category,
         sprawl_by_category=sprawl_by_category,

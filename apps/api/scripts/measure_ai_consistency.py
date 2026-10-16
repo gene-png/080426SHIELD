@@ -764,7 +764,7 @@ def _key_refused(job: str, row: Mapping[str, Any], context: Any) -> bool:
     """Would the apply path drop this answer by its KEY, before reading any
     value? The FIRST refusal on each path (#867 re-review F1, B-1's twin):
 
-    * zt_score: `rows.get(code)` is None (`unknown_key`);
+    * zt_score: the code was not sent (`unknown_key`; `no_notes` if blank, #1084);
     * csf_score: `rows.get("tier|subcategory_code")` is None (`unknown_key`),
       or the entry was answered only out of its batch (`not_in_batch`);
     * mitre_map: no row for the code, or a computed parent
@@ -1134,10 +1134,11 @@ ZT_DOWNSTREAM_TARGET_BASIS = (
 
 def zt_no_result_count(inputs: Mapping[str, Any], data: Mapping[str, Any]) -> int:
     """Capabilities the run asked about that no entry named (#806, C3). Under
-    the approved prompt a blank or placeholder note, and a DoD capability that
-    is Not Assessed, get no result by design, so this is a count to read, not a
-    fault. Locks are not modelled: this is what the model answered, not what a
-    run would write."""
+    the approved prompt a placeholder note ("N/A", "TBD"), and a DoD capability
+    that is Not Assessed, get no result by design, so this is a count to read,
+    not a fault. A capability with blank notes is never asked about (#1084), so
+    it is not in `capabilities` and never counted here. Locks are not modelled:
+    this is what the model answered, not what a run would write."""
     asked = {c for c in inputs.get("capabilities") or [] if isinstance(c, str)}
     named = {
         row["code"]
@@ -1788,7 +1789,9 @@ def measure_zt(
         price=price,
         progress=progress,
     )
-    scope = ZtScope(max_stage=req.max_stage, codes=frozenset(req.rows), framework=fw)
+    scope = ZtScope(
+        max_stage=req.max_stage, codes=frozenset(req.preview.inputs["capabilities"]), framework=fw
+    )
     report = summarize(
         "zt_score",
         records,

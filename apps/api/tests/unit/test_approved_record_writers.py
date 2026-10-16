@@ -174,6 +174,10 @@ WRITER_VERDICTS: dict[str, tuple[str, str]] = {
         "EXCLUDED",
         "T: a status transition into APPROVED (idempotent on APPROVED) or the release flip APPROVED -> RELEASED, with its ParentGuard (A4, #736 6136101129); and A1: re-approving overwrites approved_membership, approved_at, approved_by and approved_revision",
     ),
+    "app/routes/tech_debt.py::bulk_confirm_security_classification": (
+        "EXCLUDED",
+        "A1: a Tech Debt APPROVED list stays editable; an edit makes the approval stale and release refuses it in the flip (#640, #657; ruled #736 6136101129)",
+    ),
     "app/routes/tech_debt.py::bulk_set_disposition": (
         "EXCLUDED",
         "A1: a Tech Debt APPROVED list stays editable; an edit makes the approval stale and release refuses it in the flip (#640, #657; ruled #736 6136101129)",

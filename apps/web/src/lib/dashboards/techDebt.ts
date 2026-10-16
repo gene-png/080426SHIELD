@@ -72,6 +72,12 @@ export interface TechDebtDashboardData {
    * the true number of excluded rows is unknown, and may be higher.
    */
   excluded_count_exact: boolean;
+  /**
+   * TD-10 (for #1048): source items (not a split bundle's parts) with no
+   * recorded cost, which `annual_spend_usd` leaves out. A recorded $0 is a
+   * cost and is not counted.
+   */
+  no_cost_count: number;
   redundant_category_count: number;
   spend_by_category: CategorySpend[];
   sprawl_by_category: CategorySpend[];
