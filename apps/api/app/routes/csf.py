@@ -2440,8 +2440,9 @@ def _omitted_keys(
     only) it asks for keys that are not rows. Such a key keeps no score, so
     it is not an omitted row. Approved on #736 (comment 6067815887).
 
-    An omitted row keeps its previous values -- zeros on a new Playbook, which
-    `score_tier` reads as Level 1 -- so it is counted and named. Not a
+    An omitted row keeps its previous values -- zeros on a new Playbook, so,
+    under the current rules, not scored (frozen rules read them as Ad hoc) --
+    so it is counted and named. Not a
     `dropped` reason: the W1 identity is over values the model SENT, and an
     omitted row sent none.
 
@@ -2637,11 +2638,14 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
     # Leaving the row NULL after an AI run gives the same "fixture may refresh
     # its own output" behaviour with none of that. A consultant re-editing the
     # row restamps `consultant` and restores protection.
-    if not diffs:
+    if not diffs and batched.total:
         # FAIL LOUDLY: a run that parsed but changed nothing is the exact
         # symptom of the T0 schema-drift bug (a compliant response silently
         # discarded). Surface it — a re-run that suggests identical values also
         # trips this, which is still worth a "did this do anything?" signal.
+        # Not when nothing was sent (`batched.total` 0, CSF Option 1): no
+        # response came back to be discarded, and `csf.run_ai.nothing_to_send`
+        # already said why.
         _log.warning(
             "csf_run_ai_no_changes",
             service_id=str(ctx.service_id),
@@ -2727,7 +2731,8 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
             "batches_failed": batched.failed,
             # #836: a count, never the row keys (codes and counts only).
             "omitted_count": len(omitted_rows),
-            # #1000: rows a live run did not assess (no notes); None offline.
+            # #1000 and C4: rows the run did not assess (no notes), counted in
+            # every mode since CSF Option 1; None only on a result from before.
             "no_notes_count": no_notes_count,
         },
     )
@@ -2767,7 +2772,9 @@ def _last_live_run_no_notes_note(
     files say what that run did, and notes typed since did not change it.
 
     None, and the sentence is omitted, when no live run has completed (an
-    offline run assesses every row, so it has nothing to state), or when the
+    offline run's answers are fixture output, so the client files state no
+    count from one, though it counts its left-out rows since CSF Option 1),
+    or when the
     latest live run was stored before #1000 and carries no count: "not
     counted" is not zero, and a number we do not have is not printed."""
     run = db.execute(

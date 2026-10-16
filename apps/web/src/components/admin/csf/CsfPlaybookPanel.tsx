@@ -236,8 +236,9 @@ function tierLabel(tier: string): string {
 
 /**
  * #836: rows a batch was asked for and left out. They keep the scores they had,
- * which on a Playbook nobody scored is all zeros, read as Level 1 -- so the
- * Playbook looks scored when it is not. Keyed on the COUNT, never on whether the
+ * which on a Playbook nobody scored is all zeros, which stay not scored (C5),
+ * and on one already scored the previous values -- so the Playbook can look
+ * complete when this run did not score it. Keyed on the COUNT, never on whether the
  * field exists: a run stored before #836 carries neither and says nothing here.
  * Copy O1/O2 approved on #836.
  */
@@ -362,6 +363,17 @@ function RunAiAccounting({
       way &mdash; this line is the only place that says otherwise.
     </p>
   ) : null;
+
+  // CSF Option 1 (#1203 review): with no subcategory's notes to send, the run
+  // made no call (`batches_total` 0). That is not a lost response, so no alert
+  // and no "the parser drifted"; C4's count says why nothing was scored.
+  if (result.batches_total === 0) {
+    return (
+      <div className="space-y-2">
+        <NoNotesLine result={result} />
+      </div>
+    );
+  }
 
   // A run that received NOTHING is not a clean run. The response parsed, so no
   // error path fired, and "applied 0 of 0" reads as calmly as "applied 12 of
@@ -889,7 +901,12 @@ export function CsfPlaybookPanel({
 
           {/* C3 (Options 1 and 3): scored + self-reported + not answered,
               stated at zero too. The same counts the playbook files state. */}
-          {seeded && enterprise?.coverage ? (
+          {/* Not on a frozen assessment (rules 1 or 2): its unscored
+              subcategories keep the levels it was delivered with, so "not
+              scored" counts would contradict the table (#1203 review). */}
+          {seeded &&
+          enterprise?.coverage &&
+          enterprise.evidence_cap === false ? (
             <p
               className="text-sm text-ink-secondary"
               data-testid="csf-coverage"

@@ -2016,6 +2016,15 @@ def measure_csf(
             req.preview.inputs.get("answers") or {},
             corpus_written[1],
         )
+    if not req.preview.inputs["subcategories"]:
+        # CSF Option 1: the route leaves every subcategory without notes out,
+        # and makes no call when none is left (`_csf_run_work`). Measuring that
+        # would pay for calls that ask for nothing, so it is refused, typed.
+        raise Refused(
+            "csf_nothing_to_send",
+            "No subcategory of this assessment has notes, so the route would send "
+            "nothing. Give answers notes (--notes-corpus) before measuring.",
+        )
     batches = _csf_batch_inputs(req.preview.inputs)
     all_batches = len(batches)
     if probe_batches is not None:

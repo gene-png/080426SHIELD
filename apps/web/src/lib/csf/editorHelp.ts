@@ -124,8 +124,10 @@ export const RUBRIC_ROWS: readonly (readonly [
  * because `score_tier` caps on two paths: the Implementation clamp, and the
  * level clamp alone on a row whose Implementation is already 0 or 1 (#1076).
  */
+// The level by name since the W sweep (#736 6205956728, "levels as words,
+// everywhere else"). Shown only on an assessment approved before Option 3.
 export const CAPPED_NOTE =
-  "Without evidence, Implementation counts as no more than 1 in the total, and the level cannot go above L2.";
+  "Without evidence, Implementation counts as no more than 1 in the total, and the level cannot go above Developing.";
 
 /**
  * S2: under Target, only when this tier's row has none. The gap is judged per

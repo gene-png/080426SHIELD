@@ -147,10 +147,14 @@ describe("CsfPlaybookPanel, Options 1 and 3", () => {
     expect(screen.getByTestId("csf-evidence-coverage")).toHaveTextContent(E3);
   });
 
-  it("states C3 but no E3 on a frozen assessment, whose evidence caps", async () => {
+  it("states neither line on a frozen assessment, whose unscored rows keep their levels", async () => {
+    // #1203 review: on rules 1 or 2 an unscored subcategory keeps the level
+    // it was delivered with, so a "not scored" count would contradict the
+    // table, and under the cap "notional" describes nothing.
     ent.mockResolvedValue(profile(true));
     render(<CsfPlaybookPanel serviceId="svc-1" />);
-    expect(await screen.findByTestId("csf-coverage")).toHaveTextContent(C3);
+    expect(await screen.findByText("GV.OC-01")).toBeInTheDocument(); // positive first
+    expect(screen.queryByTestId("csf-coverage")).toBeNull();
     expect(screen.queryByTestId("csf-evidence-coverage")).toBeNull();
   });
 

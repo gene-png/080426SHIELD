@@ -121,5 +121,14 @@ def test_a_frozen_assessment_export_keeps_the_cap_copy(
     sheets = _sheets(files["xlsx"])
     assert "Evidence capped" in sheets["High"][1], "tier sheet header"
     cover = _cover_text(sheets)
-    assert " subcategories scored; " in cover, cover  # positive first: the C3 line
-    assert "Of the " not in cover, "no E3 line where evidence caps the level"
+    # #1203 review: neither C3 nor E3 on a frozen assessment, whose unscored
+    # rows keep their delivered levels. The cover's approval line is the
+    # positive control that the cover was read.
+    assert "Approved by Kentro." in cover, cover
+    assert " subcategories scored; " not in cover, cover
+    assert "Of the " not in cover, cover
+    for kind in ("full_pdf", "full_docx", "exec_pdf", "exec_docx"):
+        assert " subcategories scored; " not in _flat_text(kind, files[kind]), kind
+    # And the average is the delivered one: CODE's Defined (3) beside 105
+    # unscored rows that read Ad hoc (1) there, round() over all 106, so 1.
+    assert "averages 1 of 5 (Ad hoc)." in full, full[:2000]

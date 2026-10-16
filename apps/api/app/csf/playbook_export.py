@@ -743,8 +743,8 @@ def _evidence_cell(r: Any) -> str:
     return " · ".join(f"{word} ({', '.join(tiers)})" for word, tiers in groups.items())
 
 
-# PENDING GENE'S VERBATIM APPROVAL (#736 6204461502). Placeholders, worded as
-# proposed there, swapped for the approved text in one commit:
+# Approved by Gene (#736 6205956728), as written in 6204461502 with the
+# advisor's C3 and E3 changes (6205425122 item 3):
 def coverage_line(coverage: Any) -> str:
     """C3, stated at zero too, with the fourth count the advisor recommended
     for Q-A (#736 6205425122 item 3)."""
@@ -771,15 +771,14 @@ def evidence_line(coverage: Any) -> str:
 
 
 def coverage_lines(coverage: Any, *, evidence_cap: bool) -> list[str]:
-    """The C3 line, and the E3 line unless the frozen cap applies: under the
-    cap, evidence limits the level, so "notional" does not describe it."""
-    if coverage is None:
+    """The C3 and E3 lines, and neither on an assessment approved before
+    Options 1 and 3 (`evidence_cap`): its unscored subcategories keep the
+    levels it was delivered with, so a count of them as "not scored" would
+    contradict its own tables, and under its cap "notional" describes nothing
+    (#1203 review)."""
+    if coverage is None or evidence_cap:
         return []
-    return (
-        [coverage_line(coverage)]
-        if evidence_cap
-        else [coverage_line(coverage), evidence_line(coverage)]
-    )
+    return [coverage_line(coverage), evidence_line(coverage)]
 
 
 #: C8, the tier sheet's evidence column and values, when the cap does not apply.
