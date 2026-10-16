@@ -10,6 +10,7 @@ import {
   StatusPill,
 } from "@shield/design-system";
 
+import { AI_ESTIMATE_LABEL } from "@/lib/tech_debt/costEstimate";
 import type { OverlapAnalysis, OverlapBucket } from "@/lib/tech_debt/types";
 
 import type { JSX } from "react";
@@ -222,6 +223,10 @@ export function OverlapDashboard({
                     <span className="text-sm font-semibold text-ink-primary">
                       {fmtUsd(i.annual_cost_usd)}
                     </span>
+                    {/* TD-5 (for #1060), copy E5. */}
+                    {i.ai_estimate === true ? (
+                      <StatusPill tone="info">{AI_ESTIMATE_LABEL}</StatusPill>
+                    ) : null}
                   </div>
                 </li>
               ))}

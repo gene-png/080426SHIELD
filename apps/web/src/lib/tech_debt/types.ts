@@ -195,6 +195,8 @@ export interface TopCostItem {
   vendor: string | null;
   category: string | null;
   annual_cost_usd: number;
+  /** TD-5 (for #1060): the cost is an AI estimate, labelled (copy E5). */
+  ai_estimate: boolean;
 }
 
 export interface OverlapAnalysis {

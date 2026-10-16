@@ -195,3 +195,22 @@ def test_the_dashboard_marks_each_estimated_row(app_client) -> None:  # noqa: F8
     assert flags["Splunk ES"] is True
     # POSITIVE CONTROL: a supplied cost is not marked.
     assert flags["CrowdStrike Falcon"] is False
+
+
+def test_the_admin_top_cost_list_marks_an_estimated_row(app_client) -> None:  # noqa: F811
+    """E3: labelled wherever it appears, the admin overlap view's top-cost
+    list included."""
+    c, provider = app_client
+    admin = _register(c, "admin@example.com")
+    bearer = admin["tokens"]["access_token"]
+    svc_id = _seed_release(c, provider, bearer, release=False)
+    _mark_estimated("Splunk ES")
+    r = c.get(
+        f"/tech-debt/services/{svc_id}/overlap-analysis",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    assert r.status_code == 200, r.text
+    flags = {i["name"]: i["ai_estimate"] for i in r.json()["top_cost_items"]}
+    assert flags["Splunk ES"] is True
+    # POSITIVE CONTROL: a supplied cost is not marked.
+    assert flags["CrowdStrike Falcon"] is False
