@@ -2321,9 +2321,7 @@ def _mitre_map_batches(
     `codes` asks for those techniques only, with the same payload otherwise
     (#1047's re-ask). None asks for every code the request carries."""
     if codes is None:
-        codes = [
-            c for c in (req.preview.inputs.get("technique_codes") or []) if isinstance(c, str)
-        ]
+        codes = [c for c in (req.preview.inputs.get("technique_codes") or []) if isinstance(c, str)]
     batches = _mitre_batches(codes)
     out = run_batches(
         db,
@@ -2349,9 +2347,8 @@ def _mitre_map_batches(
 def _mitre_batches(codes: list[str]) -> list[list[str]]:
     """`codes` in slices of `_MITRE_BATCH_SIZE`. No codes is one empty batch:
     `run_batches` refuses an empty list as a caller's bug."""
-    return [
-        codes[i : i + _MITRE_BATCH_SIZE] for i in range(0, len(codes), _MITRE_BATCH_SIZE)
-    ] or [[]]
+    batches = [codes[i : i + _MITRE_BATCH_SIZE] for i in range(0, len(codes), _MITRE_BATCH_SIZE)]
+    return batches or [[]]
 
 
 @dataclass(frozen=True)
@@ -2373,9 +2370,7 @@ class _Reask:
     skipped_past_deadline: bool = False
 
 
-def _reask_omitted(
-    db: Session, ctx: RunContext, req: AttackAiRequest, omitted: set[str]
-) -> _Reask:
+def _reask_omitted(db: Session, ctx: RunContext, req: AttackAiRequest, omitted: set[str]) -> _Reask:
     """#1047: ask once more for the techniques a SUCCESSFUL first-pass batch
     left out (`_omitted_codes`), with the same prompt and batching.
 
