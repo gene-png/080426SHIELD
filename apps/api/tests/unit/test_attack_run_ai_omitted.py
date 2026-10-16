@@ -107,8 +107,12 @@ class World:
         return attack_run_ai(self.c, self.svc_id, self.h)
 
     def batch_of(self, code: str) -> list[str]:
-        (batch,) = [b for b in self.sent if code in b]
-        return batch
+        """The FIRST-PASS batch that asked for `code`. Since #1047 a technique
+        a successful batch left out is asked again in a later call, and the
+        re-ask starts only after every first-pass batch has answered."""
+        batches = [b for b in self.sent if code in b]
+        assert batches, f"no batch asked for {code}"
+        return batches[0]
 
     def audit(self, runs: int = 1) -> dict:
         """The LAST `attack.run_ai` audit row, after asserting how many runs

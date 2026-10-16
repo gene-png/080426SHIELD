@@ -10,7 +10,7 @@ import {
   StatusPill,
 } from "@shield/design-system";
 
-import type { CatalogStage, GapAnalysis } from "@/lib/zt/types";
+import type { CatalogStage, GapAnalysis, GapItem } from "@/lib/zt/types";
 import { MIN_TARGET_STAGE } from "@/lib/assessment-targets";
 
 import type { JSX } from "react";
@@ -27,6 +27,36 @@ export interface ZtGapListProps {
    * nothing.
    */
   targetNote?: string | null;
+}
+
+// Z4 (#736 6204461502 section 6, approved by Gene at 6205956728 with Q-B "the
+// order plus the working"): stages by name, the gap in words, and the
+// priority with its working.
+
+/** The catalog's name for a stage; the bare number only if it has none. */
+function stageName(stages: CatalogStage[], stage: number): string {
+  return stages.find((s) => s.stage === stage)?.label ?? String(stage);
+}
+
+function stagesBelowTarget(n: number): string {
+  return n === 1 ? "1 stage below target" : `${n} stages below target`;
+}
+
+/**
+ * One decimal, rounded DOWN, as approved: 3.45 shows as 3.4, where
+ * `toFixed(1)` would round it up to 3.5. The engine stores two decimals
+ * (`round(gap * weight, 2)`); for every such value from 0 to 10, `x * 10`
+ * floors to the right tenth (checked with node, 2026-10-16).
+ */
+function priorityOneDecimal(score: number): string {
+  return (Math.floor(score * 10) / 10).toFixed(1);
+}
+
+function priorityWorking(g: GapItem): string {
+  const head = `Priority ${priorityOneDecimal(g.priority_score)}: ${stagesBelowTarget(g.gap_size)}`;
+  return g.pillar_weight === undefined
+    ? head
+    : `${head} × ${g.pillar_weight} (${g.pillar_name} weighting)`;
 }
 
 function severityTone(gapSize: number): "warning" | "info" | "success" {
@@ -145,13 +175,14 @@ export function ZtGapList({
                   </div>
                   <div className="flex flex-col items-end gap-1 text-right">
                     <StatusPill tone={severityTone(g.gap_size)}>
-                      gap {g.gap_size}
+                      {stagesBelowTarget(g.gap_size)}
                     </StatusPill>
                     <span className="text-xs text-ink-tertiary">
-                      S{g.current_stage} → S{g.target_stage}
+                      {stageName(stages, g.current_stage)} →{" "}
+                      {stageName(stages, g.target_stage)}
                     </span>
                     <span className="text-xs text-ink-tertiary">
-                      priority {g.priority_score.toFixed(2)}
+                      {priorityWorking(g)}
                     </span>
                   </div>
                 </div>
