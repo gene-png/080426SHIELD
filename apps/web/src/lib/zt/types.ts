@@ -208,6 +208,8 @@ export interface GapItem {
   target_stage: number;
   gap_size: number;
   priority_score: number;
+  /** Z4: the pillar weight the priority multiplies by, as the engine stores it. */
+  pillar_weight?: number;
   notes: string | null;
 }
 
