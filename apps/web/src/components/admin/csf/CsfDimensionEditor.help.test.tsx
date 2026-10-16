@@ -89,15 +89,17 @@ const H1 =
   "Score each of the five dimensions 0, 1 or 2 for this subcategory, for the systems in the selected impact tier. 0 means not demonstrated, 1 means partial or informal, and 2 means established: formal, consistently performed, and applied across the tier's systems. When a score is between two values, choose the lower one unless the notes or evidence show the higher one is met. These are the same definitions Run AI is told to use.";
 const H2_INTRO =
   "The five scores add up to a total from 0 to 10, and the total sets the maturity level:";
+// W1 and C7 (#736 6205956728), as approved: level names, and evidence that
+// labels a level rather than capping it.
 const H2_BANDS = [
-  "0 to 2: L1",
-  "3 to 5: L2",
-  "6 to 7: L3",
-  "8 to 9: L4",
-  "10: L5",
+  "0 to 2: Ad hoc",
+  "3 to 5: Developing",
+  "6 to 7: Defined",
+  "8 to 9: Managed",
+  "10: Optimized",
 ];
 const H3 =
-  'Tick "Evidence on file" only when evidence for this subcategory and tier is held. Without it, Implementation counts as no more than 1 and the level cannot exceed L2, whatever the scores. Run AI never ticks this box, and a file the client attached to the questionnaire does not tick it either: a consultant has to.';
+  'Choose "Evidence on file" only when evidence for this subcategory and tier is held, or "Confirmed in discussion" when the client confirmed it with you but nothing is held. Neither changes the scores or the level. With "Neither", the level is shown as not validated by evidence, and a Managed or Optimized level is shown as notional. Run AI never sets this, and a file the client attached to the questionnaire does not set it either: a consultant has to.';
 const H4 =
   'Target is the level the client should reach for this subcategory in this tier. The Enterprise profile reads the in-scope tiers that have been scored, or every in-scope tier while none has been scored. It compares their rolled-up level, usually the lowest, with the highest target among them. Below the target is a gap. If none of them has a target, the subcategory is not checked for a gap: it is counted as "not measured" when another in-scope tier has a target, and as "with no target" otherwise, never as met.';
 const H5 =
