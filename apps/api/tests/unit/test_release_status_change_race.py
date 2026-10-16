@@ -14,9 +14,10 @@ drives APPROVED -> RELEASED.
 A FIRST release is refused with the approved typed 409 and nothing is
 released. On main 2f89930b every one of those returned 200: the release
 committed over a parent that moved. A REPAIR re-release (the deliverable is
-already with the client) is not refused, because "nothing was released" would
-be false; the positive and repair tests below pin that. The message is quoted
-from the ruling, never imported.
+already with the client) is refused too, with its own typed 409 whose message
+is true for a delivered report (#736 6220094031 item 6): "nothing was
+released" would be false there, and a log line alone would be silent. The
+messages are quoted from the rulings, never imported.
 """
 
 from __future__ import annotations
@@ -39,6 +40,30 @@ CHANGED = (
     "This assessment changed while the report was being released, so nothing "
     "was released. Reload the page, check the assessment, and release again."
 )
+
+
+#: PENDING the advisor's approval as seen in the PR (#736 6220094031 item 6,
+#: proposed verbatim there): a repair re-release whose parent did not flip.
+DELIVERED = (
+    "This report is already with the client, but its assessment changed after "
+    "the report was built, so the assessment's status was not updated. Generate "
+    "a new version to release the change."
+)
+
+
+def assert_repair_refused(r) -> None:
+    assert r.status_code == 409, r.text
+    err = r.json()["error"]  # the D-016 envelope
+    assert (err["reason"], err["message"]) == (
+        "parent_changed_after_release",
+        DELIVERED,
+    ), err
+
+
+def _released_at(deliverable_id: str):
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=engine, future=True)() as s:
+        return s.get(Deliverable, uuid.UUID(deliverable_id)).released_at
 
 
 def assert_refused(r) -> None:
@@ -176,16 +201,17 @@ def test_a_zt_release_with_nothing_moved_still_releases(app_client) -> None:  # 
     assert _released(deliv_id)
 
 
-def test_a_repair_re_release_over_a_moved_parent_keeps_the_earlier_release(
+def test_a_repair_re_release_over_a_moved_parent_is_refused_and_the_earlier_release_stands(
     app_client, capsys  # noqa: F811
 ) -> None:
-    """The REPAIR path (#1123 review F1): a deliverable already with the client
-    whose parent is stuck on APPROVED (pre-W4) is re-released while the parent
-    moves. "Nothing was released" would be false here, so it is not raised: the
-    earlier release stands and the move is logged.
+    """The REPAIR path (#1123; ruled at #736 6220094031 item 6): a deliverable
+    already with the client whose parent is stuck on APPROVED (pre-W4) is
+    re-released while the parent moves. It is refused with the repair 409,
+    whose message is true for a delivered report, and the earlier release
+    stands unchanged. It used to be logged only, which is silent.
 
     Red-on-revert: make `_release_parent` ignore its `repair` flag and this
-    answers 409 about a delivered report."""
+    answers the first-release 409, "nothing was released"."""
     from app.models.zt_assessment import ZtAssessment, ZtAssessmentStatus
     from tests.unit.test_frozen_engagement_target import (
         _register,
@@ -205,28 +231,29 @@ def test_a_repair_re_release_over_a_moved_parent_keeps_the_earlier_release(
     with sessionmaker(bind=engine, future=True)() as s:
         s.get(ZtAssessment, parent).status = ZtAssessmentStatus.APPROVED  # pre-W4 shape
         s.commit()
+    released_at = _released_at(deliv_id)
     capsys.readouterr()
 
     with _status_moves_before_the_flip(ZtAssessment, parent, ZtAssessmentStatus.DRAFT) as fired:
         r = c.post(f"/zt/deliverables/{deliv_id}/release", headers=h)
 
     assert fired, "the hook never ran -- the repair flip was not driven"
-    assert r.status_code == 200, r.text
-    assert r.json()["released_at"] is not None
-    assert _released(deliv_id)
+    assert_repair_refused(r)
+    assert _released_at(deliv_id) == released_at, "the earlier release did not stand"
     assert "release_repair_parent_changed" in capsys.readouterr().out
 
 
-def test_a_zt_repair_re_release_does_not_apply_the_first_release_guard(
+def test_a_zt_repair_re_release_keeps_guard_a_and_refuses_with_the_repair_message(
     app_client,  # noqa: F811
 ) -> None:
-    """The ZT route passes guard (a) on a FIRST release only (#1123 review of
-    08fcb0b6, F1). On a repair re-release the report is already with the
-    client, so a version approved after its finalize must not be answered with
-    "nothing was released": the repair completes and the parent is flipped.
+    """Guard (a) holds on the repair re-release too (#736 6220094031 item 6):
+    a version approved after its report was finalized is not flipped to
+    RELEASED. The report is already with the client, so the refusal is the
+    repair 409, not "nothing was released", and the earlier release stands.
 
-    Red-on-revert: pass `parent_guard=_zt_release_guard(...)` on every release
-    in the ZT route and this answers 409."""
+    Red-on-revert: pass no guard on a repair in the ZT route and this answers
+    200 with the parent flipped; drop the guard's repair refusal and it answers
+    "nothing was released"."""
     from datetime import UTC, datetime, timedelta
 
     from app.models.zt_assessment import ZtAssessment, ZtAssessmentStatus
@@ -250,13 +277,14 @@ def test_a_zt_repair_re_release_does_not_apply_the_first_release_guard(
         row.status = ZtAssessmentStatus.APPROVED  # pre-W4 shape
         row.approved_at = datetime.now(UTC) + timedelta(hours=1)  # guard (a) misses
         s.commit()
+    released_at = _released_at(deliv_id)
 
     r = c.post(f"/zt/deliverables/{deliv_id}/release", headers=h)
 
-    assert r.status_code == 200, r.text
-    assert _released(deliv_id)
+    assert_repair_refused(r)
+    assert _released_at(deliv_id) == released_at, "the earlier release did not stand"
     with sessionmaker(bind=engine, future=True)() as s:
-        assert s.get(ZtAssessment, parent).status == ZtAssessmentStatus.RELEASED
+        assert s.get(ZtAssessment, parent).status == ZtAssessmentStatus.APPROVED
 
 
 # --- ATT&CK -------------------------------------------------------------------
