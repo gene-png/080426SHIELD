@@ -278,6 +278,15 @@ export function IntakeWizard(): JSX.Element {
     }
   }
 
+  // #1282: Step 3's own inputs show the submitter's OWN details. `contact` is
+  // the primary-contact override once one names someone, and each input saves
+  // on blur, so reading it wrote the override onto the account. An api that
+  // sends no `submitter` falls back to `contact` only when it is not an
+  // override.
+  const ownDetails =
+    viewState?.submitter ??
+    (viewState?.contact?.is_override ? null : viewState?.contact);
+
   const isFirst = STEP_INDEX[step] === 0;
   const isLast = STEP_INDEX[step] === WIZARD_STEPS.length - 1;
 
@@ -330,10 +339,10 @@ export function IntakeWizard(): JSX.Element {
               // so a title or phone typed here came back blank on the next
               // visit even though it had saved (UX finding 9).
               defaults={{
-                display_name: viewState.contact?.display_name ?? userName,
-                title: viewState.contact?.title ?? null,
-                phone: viewState.contact?.phone ?? null,
-                timezone: viewState.contact?.timezone ?? null,
+                display_name: ownDetails?.display_name ?? userName,
+                title: ownDetails?.title ?? null,
+                phone: ownDetails?.phone ?? null,
+                timezone: ownDetails?.timezone ?? null,
                 email: userEmail,
               }}
               override={{

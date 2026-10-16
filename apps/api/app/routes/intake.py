@@ -68,6 +68,17 @@ _ZT_FRAMEWORK_BY_SERVICE = {
 }
 
 
+def _submitter_details(user: User) -> IntakeContactResponse:
+    """#1282: the submitting user's OWN account details, never an override's.
+
+    Step 3's "your details" inputs read these. They used to read the effective
+    contact, which is the override once one names someone, and each input
+    saves on blur, so tabbing through Step 3 wrote the override's name, title
+    and phone onto the submitter's own account.
+    """
+    return IntakeContactResponse.model_validate(user, from_attributes=True)
+
+
 def _effective_contact(client: Client | None, user: User) -> IntakeContactResponse:
     """Whose details this engagement actually uses.
 
@@ -311,6 +322,7 @@ def read_intake(
         service_requests=list(requests),
         intake_completed_at=client.intake_completed_at,
         contact=_effective_contact(client, user),
+        submitter=_submitter_details(user),
     )
 
 
@@ -360,6 +372,7 @@ def patch_intake(
         service_requests=list(requests),
         intake_completed_at=client.intake_completed_at,
         contact=_effective_contact(client, user),
+        submitter=_submitter_details(user),
     )
 
 
@@ -484,6 +497,7 @@ def submit_intake(
         service_requests=list(all_requests),
         intake_completed_at=client.intake_completed_at,
         contact=_effective_contact(client, user),
+        submitter=_submitter_details(user),
     )
 
 
